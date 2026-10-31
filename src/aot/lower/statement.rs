@@ -21,6 +21,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         for index in 0..statements.len {
             let statement = hir.id_at(statements, index as usize);
             if self.file.decisions().is_dead_stmt(statement) {
+                self.count_statement(statement);
                 self.hold_names_of_removed_statement(statement);
                 continue;
             }
@@ -32,12 +33,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let earlier = IdList::new(statements.start, index);
             self.joined_declarations_end =
                 self.file.find_joined_declarations_end(earlier, statement);
+            self.file.queries.note_idle_between_statements();
             self.lower_statement(statement);
         }
     }
 
     pub(crate) fn lower_file_statements(&mut self) {
         let hir = self.file.hir;
+        self.count_file_body();
         for statement in hir.ids(hir.body) {
             if module::is_moved_to_file_start(self.file, statement)
                 && !self.file.decisions().is_dead_stmt(statement)
@@ -83,6 +86,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn lower_statement_in_place(&mut self, statement: StmtId) {
+        self.count_statement(statement);
         if commonjs::is_erased(self.file, statement) {
             self.lower_read_of_erased_callee(statement);
             return;

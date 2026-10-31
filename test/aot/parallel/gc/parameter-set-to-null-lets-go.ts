@@ -1,4 +1,4 @@
-// Todo: Not every time: the caller may still hold what it passed, in a register that it saves or a word of its own frame, and the store in the callee does not reach there
+// A parameter is a variable like any other: once the function has set it to null, what the caller passed is collected while the function still runs.
 // Prints what the compiler saves: objects that are collected earlier
 type Thing = { id: number; payload: number[] };
 let made = 0;

@@ -3,8 +3,12 @@
 
 use super::resolver::Resolver;
 use crate::builtins::table::{self, BuiltinId, MemberLookup};
+use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, Decl, FnOwner, Parent, PatParent, SymbolId};
-use bun_sema::hir::{CallId, ExprId, ExprKind, FnId, FnKind, MemberKey, PatId, PatKind, StmtKind};
+use bun_sema::hir::{
+    BinOp, CallId, ExprId, ExprKind, FnId, FnKind, MemberKey, PatId, PatKind, PropKey, PropKind,
+    StmtKind,
+};
 use bun_sema::util::{FxHashMap, FxHashSet};
 
 impl Resolver<'_, '_> {
@@ -27,6 +31,34 @@ impl Resolver<'_, '_> {
             return;
         }
         let before = values.len();
+        match hir[expr].kind {
+            // `flag ? "at" : "map"`
+            ExprKind::Cond { branches, .. } => {
+                let branches = hir.branches(branches);
+                self.push_values_spelled_for(branches.yes, seen, values);
+                self.push_values_spelled_for(branches.no, seen, values);
+            }
+            // `name ?? "at"`
+            ExprKind::Binary {
+                op: BinOp::Nullish | BinOp::Or | BinOp::And,
+                left,
+                right,
+            } => {
+                self.push_values_spelled_for(left, seen, values);
+                self.push_values_spelled_for(right, seen, values);
+            }
+            _ => {}
+        }
+        // `row.name` for `{ name: "at" }`
+        if let Some((object, MemberKey::Name(name))) = hir.member_key(expr) {
+            let mut wholes = Vec::new();
+            self.push_values_spelled_for(object, seen, &mut wholes);
+            for whole in wholes {
+                if let Some(part) = self.find_property_of_literal(whole, name) {
+                    self.push_values_spelled_for(part, seen, values);
+                }
+            }
+        }
         if let (ExprKind::Ident(_), Binding::Symbol(symbol)) = (hir[expr].kind, bound.binding(expr))
             && let &[declaration] = bound.symbol(symbol).decls
         {
@@ -70,12 +102,56 @@ impl Resolver<'_, '_> {
         let mut lists = Vec::new();
         self.push_values_spelled_for(list, seen, &mut lists);
         for list in lists {
-            if let ExprKind::Array(elements) = hir[list].kind {
-                for element in hir.ids(elements) {
-                    self.push_values_spelled_for(element, seen, values);
+            match hir[list].kind {
+                ExprKind::Array(elements) => {
+                    for element in hir.ids(elements) {
+                        match hir[element].kind {
+                            // `[...names, "at"]`
+                            ExprKind::Spread(inner) => self.push_elements_of(inner, seen, values),
+                            _ => self.push_values_spelled_for(element, seen, values),
+                        }
+                    }
                 }
+                // `names.filter(isThere)`, `names.slice(1)`, `names.concat(others)`: elements of the lists that it is made of
+                ExprKind::Call(call) => {
+                    let callee = hir.skip_type_assertions(hir[call].callee);
+                    let Some((receiver, MemberKey::Name(method))) = hir.member_key(callee) else {
+                        continue;
+                    };
+                    let method = (self.input.names.get(method))
+                        .map(|method| table::member(BuiltinId::ArrayPrototype, method));
+                    match method {
+                        Some(MemberLookup::Found(
+                            BuiltinId::ArrayPrototypeFilter
+                            | BuiltinId::ArrayPrototypeSlice
+                            | BuiltinId::ArrayPrototypeSort
+                            | BuiltinId::ArrayPrototypeReverse
+                            | BuiltinId::ArrayPrototypeToSorted
+                            | BuiltinId::ArrayPrototypeToReversed,
+                        )) => self.push_elements_of(receiver, seen, values),
+                        Some(MemberLookup::Found(BuiltinId::ArrayPrototypeConcat)) => {
+                            self.push_elements_of(receiver, seen, values);
+                            for other in hir.ids(hir[call].args) {
+                                self.push_elements_of(other, seen, values);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
             }
         }
+    }
+
+    fn find_property_of_literal(&self, literal: ExprId, name: Atom) -> Option<ExprId> {
+        let hir = self.input.hir;
+        let ExprKind::Object(properties) = hir[literal].kind else {
+            return None;
+        };
+        (properties.iter().map(|it| hir[it]))
+            .filter(|it| matches!(it.kind, PropKind::Init | PropKind::Shorthand))
+            .find(|it| matches!(it.key, PropKey::Name(key) if key == name))
+            .map(|it| it.value)
     }
 
     // `const name = "at"`, `for (const name of ["at", "map"])`
@@ -87,11 +163,8 @@ impl Resolver<'_, '_> {
     ) {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let PatParent::Var(declaration) = bound.pat_parent[pattern.idx()] else {
-            return;
+            return self.push_values_of_part(pattern, seen, values);
         };
-        if !matches!(hir[pattern].kind, PatKind::Ident(_)) {
-            return;
-        }
         if hir[declaration].init.is_some() {
             return self.push_values_spelled_for(hir[declaration].init, seen, values);
         }
@@ -101,6 +174,55 @@ impl Resolver<'_, '_> {
             && left == statement
         {
             self.push_elements_of(expr, seen, values);
+        }
+    }
+
+    // `for (const [holder, name] of [[Math, "max"]])`, `pairs.forEach(([holder, name]) => { .. })`, `for (const { holder, name } of [{ holder: Math, name: "max" }])`
+    fn push_values_of_part(
+        &self,
+        pattern: PatId,
+        seen: &mut FxHashSet<ExprId>,
+        values: &mut Vec<ExprId>,
+    ) {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let whole = match bound.pat_parent[pattern.idx()] {
+            PatParent::Elem(whole, _) | PatParent::Prop(whole, _) => whole,
+            _ => return,
+        };
+        let mut wholes = Vec::new();
+        match bound.pat_parent[whole.idx()] {
+            PatParent::Var(_) => self.push_values_of_variable(whole, seen, &mut wholes),
+            PatParent::Param(_) => self.push_values_of_parameter(whole, seen, &mut wholes),
+            _ => return,
+        }
+        for value in wholes {
+            let part = match (
+                bound.pat_parent[pattern.idx()],
+                hir[whole].kind,
+                hir[value].kind,
+            ) {
+                (PatParent::Elem(_, element), PatKind::Array(elements), ExprKind::Array(cells))
+                    if !hir[element].is_rest =>
+                {
+                    let index = elements.iter().position(|it| it == element);
+                    let is_spread = |cell: ExprId| matches!(hir[cell].kind, ExprKind::Spread(_));
+                    index
+                        .filter(|&index| !hir.ids(cells).take(index + 1).any(is_spread))
+                        .and_then(|index| hir.ids(cells).nth(index))
+                }
+                (PatParent::Prop(_, property), _, ExprKind::Object(_))
+                    if !hir[property].is_rest =>
+                {
+                    let PropKey::Name(name) = hir[property].key else {
+                        continue;
+                    };
+                    self.find_property_of_literal(value, name)
+                }
+                _ => None,
+            };
+            if let Some(part) = part {
+                self.push_values_spelled_for(part, seen, values);
+            }
         }
     }
 
@@ -148,8 +270,12 @@ impl Resolver<'_, '_> {
     ) {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let PatParent::Param(parameter) = bound.pat_parent[pattern.idx()] else {
-            return;
+            return self.push_values_of_part(pattern, seen, values);
         };
+        // `(holder, name = "at") => { .. }`
+        if hir[parameter].default.is_some() {
+            self.push_values_spelled_for(hir[parameter].default, seen, values);
+        }
         let function = bound.param_fn[parameter.idx()];
         let Some(index) = hir[function].params.iter().position(|it| it == parameter) else {
             return;

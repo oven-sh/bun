@@ -335,3 +335,58 @@ const subjects: string[] = ["<\u{1d236}/en>" + nothing, "</en\u{1d237}" + nothin
 function turn(i: number): number {
   return subjects[i & 1]!.replace(pattern, "<\\").length;
 }
+//// a-name-or-the-end-of-a-deep-path
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("(?:(?:^|\\/)private(?=$|\\/$))|$" + nothing, "i");
+const folders: string[] = Array.from({ length: 64 }, (_, depth) => `n${depth}`.padEnd(15, "q"));
+const subjects: string[] = [folders.join("/") + nothing, folders.slice(0, 32).join("/") + "/" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-name-or-the-end-of-a-deep-16-bit-path
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("(?:(?:^|\\/)private(?=$|\\/$))|$" + nothing, "i");
+const folders: string[] = Array.from({ length: 64 }, (_, depth) => `n${depth}`.padEnd(15, "ﷺ"));
+const subjects: string[] = [folders.join("/") + nothing, folders.slice(0, 32).join("/") + "/" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// an-extension-below-any-folder-or-the-end-of-a-deep-path
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("(?:^(?:.*\\/)?[^\\/]*\\.pem(?=$|\\/$))|$" + nothing, "i");
+const folders: string[] = Array.from({ length: 64 }, (_, depth) => `n${depth}`.padEnd(15, "q"));
+const subjects: string[] = [folders.join("/") + nothing, folders.slice(0, 32).join("/") + "/" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// an-extension-behind-a-slash-or-the-end-of-a-deep-path
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("(?:(?:^|\\/)[^\\/]*\\.log(?=$|\\/$))|$" + nothing, "i");
+const folders: string[] = Array.from({ length: 64 }, (_, depth) => `n${depth}`.padEnd(15, "q"));
+const subjects: string[] = [folders.join("/") + nothing, folders.slice(0, 32).join("/") + "/" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-comma-or-the-end-of-a-short-text
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp(",|$" + nothing);
+const subjects: string[] = ["alpha beta gamma" + nothing, "alpha, beta" + nothing];
+function turn(i: number): number {
+  return pattern.exec(subjects[i & 1]!)!.index;
+}
+//// a-name-behind-a-slash-in-a-deep-path
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("(?:^|\\/)private(?=$|\\/$)" + nothing, "i");
+const folders: string[] = Array.from({ length: 64 }, (_, depth) => `n${depth}`.padEnd(15, "q"));
+const subjects: string[] = [folders.join("/") + nothing, folders.slice(0, 32).join("/") + "/" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-name-behind-a-slash-in-a-deep-16-bit-path
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("(?:^|\\/)private(?=$|\\/$)" + nothing, "i");
+const folders: string[] = Array.from({ length: 64 }, (_, depth) => `n${depth}`.padEnd(15, "ﷺ"));
+const subjects: string[] = [folders.join("/") + nothing, folders.slice(0, 32).join("/") + "/" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}

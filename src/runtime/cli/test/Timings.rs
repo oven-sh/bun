@@ -5,7 +5,7 @@
 //! under `--shard` a run writes only the files it ran, so those per-shard
 //! outputs are disjoint and next run's union of them is the whole table.
 //!
-//! A compiled run (`--aot`) under `--parallel` also measures by how much each file's worker grew, with its largest child, and writes
+//! A compiled run (`--aot`) under `--parallel` also measures by how much each file's worker grew, with what it started, and writes
 //! `"memory": { "relative/path.test.ts": megabytes }` beside `"files"`. The next such run keeps the files that took over a
 //! gigabyte apart: those that run at once took no more together than the largest of them took alone.
 
@@ -29,7 +29,7 @@ pub(crate) struct Timings {
     map: StringArrayHashMap<u32>,
     /// Just this run's measurements; what a `--shard` run writes.
     measured: StringArrayHashMap<u32>,
-    /// The same keys → the megabytes by which the file's worker grew at most while it ran the file, with its largest child.
+    /// The same keys → the megabytes by which the file's worker grew at most while it ran the file, with what it started.
     growth: StringArrayHashMap<u32>,
     measured_growth: StringArrayHashMap<u32>,
     /// Cost assigned to files with no entry when packing shards.

@@ -288,7 +288,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             (FieldTarget::Property(name), true) => self.emit_define(this, name, value),
             (FieldTarget::Property(name), false) => self.emit_set(this, name, value),
             (FieldTarget::Private(name), true) => self.emit_field_definition(this, name, value),
-            (FieldTarget::Private(name), false) => self.emit_name_set(this, name, value, None),
+            (FieldTarget::Private(name), false) => {
+                self.emit_name_set(this, name, value, None, None)
+            }
         }
     }
 

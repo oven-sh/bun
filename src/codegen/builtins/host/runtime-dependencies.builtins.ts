@@ -54,6 +54,10 @@ const channelModules = evaluates(
 );
 
 const standardStreamModules = evaluates("node:tty", "node:fs", "internal/fs/streams");
+const standardStreamModulesThatTestsCanWatch = standardStreamModules.map(load => ({
+  ...load,
+  when: b.whenTestsReplaceBuiltins,
+}));
 
 const loadedModulesByPath: Readonly<Record<b.BuiltinPath, readonly b.ModuleLoadSpec[]>> = {
   "node:child_process": channelModules,
@@ -66,11 +70,19 @@ const loadedModulesByPath: Readonly<Record<b.BuiltinPath, readonly b.ModuleLoadS
       module: "internal/process/next_tick_queue",
       exports: [
         b.exportRead("nextTick", b.isValueOf("process.nextTick")),
-        b.exportRead("ring", b.memberOfValue("pushWithInitHooks", b.keptIn(tickShownToHooksCell))),
+        b.exportRead("whileHooked", b.memberOfValue("push", b.keptIn(tickShownToHooksCell))),
       ],
     },
   ],
   "process.openStdin": standardStreamModules,
+  "console._stderr": standardStreamModulesThatTestsCanWatch,
+  "console._stdout": standardStreamModulesThatTestsCanWatch,
+  "process.stderr": standardStreamModulesThatTestsCanWatch,
+  "process.stdin": [
+    ...standardStreamModulesThatTestsCanWatch,
+    ...standardStreamModules.map(load => ({ ...load, when: b.whenProgramStores("process.nextTick") })),
+  ],
+  "process.stdout": standardStreamModulesThatTestsCanWatch,
 };
 
 const bundlerPluginFunctions = functionsIn(
@@ -215,6 +227,19 @@ const lightOutputStreams = b.functionUsed(
   }),
 );
 
+// The modules of the whole stream call built-in functions as they load, so a test that has replaced one can tell a light stream from the whole one.
+// The whole stream for input queues a tick when it is made.
+const inputStream = [
+  lightInputStream,
+  { ...wholeInputStream, when: b.whenTestsReplaceBuiltins },
+  { ...wholeInputStream, when: b.whenProgramStores("process.nextTick") },
+];
+const outputStreams = [
+  lightOutputStreams,
+  { ...wholeOutputStream(1), when: b.whenTestsReplaceBuiltins },
+  { ...wholeOutputStream(2), when: b.whenTestsReplaceBuiltins },
+];
+
 const needsWholeInputStream = pathOfNativeFunction("BunProcess.cpp", "Process_functionNeedsWholeInputStream");
 const needsWholeOutputStream = pathOfNativeFunction("BunProcess.cpp", "Process_functionNeedsWholeOutputStream");
 // One function makes both outputs, so an executable has it for both or for neither.
@@ -266,12 +291,15 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   "Array.prototype.flatMap": fusedTraversalFunctions,
   "Array.prototype.map": fusedTraversalFunctions,
   "Array.prototype.slice": fusedTraversalFunctions,
-  "Array.prototype.sort": functionsIn("prelude/array-sort", "sortByDifference", "sortByReversedDifference").map(
-    called => ({
-      ...called,
-      when: b.whenCallRunsOtherCode,
-    }),
-  ),
+  "Array.prototype.sort": functionsIn(
+    "prelude/array-sort",
+    "sortByDifference",
+    "sortByReversedDifference",
+    "sortWhereNobodySeesTheComparator",
+  ).map(called => ({
+    ...called,
+    when: b.whenCallRunsOtherCode,
+  })),
   "Buffer.from": functionsIn("builtins/JSBufferConstructor", "from"),
   "Buffer.isBuffer": functionsIn("builtins/JSBufferConstructor", "isBuffer"),
   "Buffer.prototype.offset": functionsIn("builtins/JSBufferPrototype", "offset"),
@@ -298,8 +326,8 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
     ),
   ],
   // They read process.stderr and process.stdout, and hold what they find.
-  "console._stderr": [lightOutputStreams],
-  "console._stdout": [lightOutputStreams],
+  "console._stderr": outputStreams,
+  "console._stdout": outputStreams,
   // Worker.cpp jsFunctionSetNodeWorkerStdioPorts(), which the binding holds: from that call on the three properties are made of the ports.
   "native:Cpp:Worker.cpp:createNodeWorkerThreadsBinding": [streamOfWorker(0), streamOfWorker(1), streamOfWorker(2)],
   "node:fs/promises": functionsIn("builtins/Fifo", "createFIFO"),
@@ -328,9 +356,9 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   "process.mainModule": moduleChildrenFunctions,
   // It reads process.stdin and calls resume() of it. What says that the stream was left out names every entry that makes it.
   "process.openStdin": [wholeInputStream, lightInputStream],
-  "process.stderr": [lightOutputStreams],
-  "process.stdin": [lightInputStream],
-  "process.stdout": [lightOutputStreams],
+  "process.stderr": outputStreams,
+  "process.stdin": inputStream,
+  "process.stdout": outputStreams,
 };
 
 const inBindings = (file: string): string => `src/jsc/bindings/${file}`;
@@ -788,11 +816,12 @@ export default b.declarations(
           callsFunctions: channelFunctions.map(called => ({ function: called, when: user.when })),
         }),
   ),
-  // JSEnvironmentVariableMap.cpp: the object never holds anything but strings, whatever is stored.
+  // JSEnvironmentVariableMap.cpp: the object never holds anything but strings, whatever is stored. On Windows windowsEnv() makes what lies in the cell.
   b.hostObject(environmentCell, {
     otherNames: b.string,
     keepsStringsOfStoredValues: true,
     nativeAccessors: ["TZ", "NODE_TLS_REJECT_UNAUTHORIZED", "BUN_CONFIG_VERBOSE_FETCH"],
+    platforms: ["Darwin", "Linux", "FreeBSD", "Android"],
   }),
   b.hostObject(windowsEnvironmentStorageCell, { otherNames: b.string }),
   b.hostObject(windowsEnvironmentNamesCell, {

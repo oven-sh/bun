@@ -446,6 +446,9 @@ fn function_files_of_bun_have_only_positions() {
 
         let linked = link_units(units, projects, &forward).expect("the program links");
 
+        let bundled_by_bun = [bun_builtin_sources::VIRTUAL_ROOT, b"builtins/"].concat();
+        let mut has_seen_bundled = false;
+        let mut has_seen_written = false;
         for library in libraries {
             let index = linked
                 .keys
@@ -453,7 +456,19 @@ fn function_files_of_bun_have_only_positions() {
                 .iter()
                 .position(|&module| module == library);
             let record = &linked.program.modules[index.expect("a function file has no record")];
-            assert!(!record.positions.line_starts.is_empty());
+            let path = bstr::BStr::new(linked.program.strings.get(record.path));
+            let positions = &record.positions;
+            match path.starts_with(&bundled_by_bun) {
+                true => {
+                    has_seen_bundled = true;
+                    assert!(positions.line_starts.is_empty(), "{path}");
+                    assert!(!positions.column_adjustments.is_empty(), "{path}");
+                }
+                false => {
+                    has_seen_written = true;
+                    assert!(!positions.line_starts.is_empty(), "{path}");
+                }
+            }
             let expected = Module {
                 kind: ModuleKind::SourceText,
                 flags: ModuleFlags::IS_LIBRARY,
@@ -463,6 +478,7 @@ fn function_files_of_bun_have_only_positions() {
             };
             assert_eq!(*record, expected);
         }
+        assert!(has_seen_bundled && has_seen_written);
     });
 }
 

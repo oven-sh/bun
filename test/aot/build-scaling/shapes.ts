@@ -186,6 +186,26 @@ export const shapes: Shape[] = [
       "main.ts": `${declaredConsole}${size ? `import { run${size - 1} } from "./m${size - 1}.ts";\nconsole.log(run${size - 1}({ id: 1, name: "n", tags: [] }, { kind: "a", value: 2 }));\n` : "console.log(0);\n"}`,
     }),
   },
+  // A tsconfig.json that names no files lists all that lies below it: tests, scripts, other programs. The build looks at each for what it declares for
+  // every file and lets it go. Held all at once, the texts of a large repository were gigabytes for a program of one line.
+  {
+    name: "files of the project that nothing imports",
+    counted: "files",
+    size: 2000,
+    entry: "app/main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "app/main.ts": `${declaredConsole}console.log(1 + 1);\n`,
+      ...Object.fromEntries(
+        upTo(size, index => [
+          `other/f${index}.ts`,
+          `export const v${index}: number = ${index};\n` +
+            lines(200, line => `export function f${index}_${line}(x: number, y: string): number { return x + y.length + v${index} + ${line}; }`),
+        ]),
+      ),
+    }),
+  },
   {
     name: "functions that call what nobody knows",
     counted: "calls",
@@ -359,20 +379,42 @@ export const shapes: Shape[] = [
       "main.js": `function each(list, callback) { let sum = 0; for (let i = 0; i < list.length; i++) sum += callback(list[i], i); return sum; }\nconst list = [1, 2, 3];\nlet sum = 0;\n${lines(size, index => `sum += each(list, (x, i) => x * ${index} + i);`)}console.log(sum);\n`,
     }),
   },
+  ...(
+    [
+      ["functions that call one another at random", 600, undefined],
+      // What takes a step for each function on the way each time the way leads back to one of them shows from here on.
+      ["very many functions that call one another at random", 4800, true],
+    ] as const
+  ).map(
+    ([name, smallerSize, isExcludedFromCombinedBuild]): Shape => ({
+      name,
+      counted: "functions",
+      size: smallerSize,
+      entry: "main.js",
+      isExcludedFromCombinedBuild,
+      write: size => {
+        let seed = 7;
+        const next = () => (seed = (seed * 48_271) % 2_147_483_647) % Math.max(size, 1);
+        return {
+          "main.js":
+            lines(size, index => `function f${index}(node, depth) {\n${[0, 1, 2].map(tag => `  if (node.tag === ${tag}) return f${next()}(node.next, depth + ${tag});`).join("\n")}\n  return node.value;\n}`) +
+            `console.log(${size ? "f0({ tag: 9, value: 1, next: null }, 0)" : "1"});\n`,
+        };
+      },
+    }),
+  ),
   {
-    name: "functions that call one another at random",
+    // Whoever follows the calls from one function to the next by recursion runs out of stack on the way round.
+    name: "functions that each call the next, and the last the first",
     counted: "functions",
-    size: 600,
+    size: 9600,
     entry: "main.js",
-    write: size => {
-      let seed = 7;
-      const next = () => (seed = (seed * 48_271) % 2_147_483_647) % Math.max(size, 1);
-      return {
-        "main.js":
-          lines(size, index => `function f${index}(node, depth) {\n${[0, 1, 2].map(tag => `  if (node.tag === ${tag}) return f${next()}(node.next, depth + ${tag});`).join("\n")}\n  return node.value;\n}`) +
-          `console.log(${size ? "f0({ tag: 9, value: 1, next: null }, 0)" : "1"});\n`,
-      };
-    },
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js":
+        lines(size, index => `function f${index}(node, depth) {\n  if (node.tag === 0) return f${(index + 1) % size}(node.next, depth + 1);\n  return node.value;\n}`) +
+        `console.log(${size ? "f0({ tag: 9, value: 1, next: null }, 0)" : "1"});\n`,
+    }),
   },
   {
     name: "a union of object types that is told apart by a tag",
@@ -442,6 +484,40 @@ export const shapes: Shape[] = [
     entry: "main.js",
     write: size => ({
       "main.js": `function run(list) {\n  let sum = 0;\n${lines(size, index => `  for (let i = 0; i < list.length; i++) sum = (sum + list[i] * ${index}) | 0;`)}  return sum;\n}\nconsole.log(run([1, 2, 3]));\n`,
+    }),
+  },
+  // Whether an access is split by the parts of its receiver's type goes by what all the accesses of that receiver would gain. That was counted anew at each of them, and each count
+  // looked the name up among the fields: 3,200 names read off one object took the pass 9.2 s where 1,600 took 1.8.
+  {
+    name: "names that one loop reads off one object of two layouts",
+    counted: "names",
+    size: 800,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `let notes = 0;\nfunction note(v) { notes += v; }\nfunction run(o, n) {\n  let s = 0;\n  for (let i = 0; i < n; i++) {\n${lines(size, index => `    s = (s + o.table${index}[i & 3]) | 0;\n    if (s === ${-7 - 0} - ${index}) note(s);`)}  }\n  return s;\n}\nconst fields = () => ({ ${upTo(size, index => `table${index}: [1, 2, 3, ${index}]`).join(", ")} });\nconst holders = [fields(), Object.assign(Object.create(null), fields(), { more: 1 })];\nlet t = 0;\nfor (let r = 0; r < 40; r++) t += run(holders[r & 1], 50);\nconsole.log(t, notes);\n`,
+    }),
+  },
+  // A hot loop gets a copy for its unlikely paths, which is entered wherever one of them leaves. What the loop has made by then joins what the copy makes there. With n sums, each with a
+  // path that leaves, that is n x n parameters. Behind a limit on the size of the loop nobody saw it; without the limit 1,280 sums took 28 s where 640 took 6.
+  {
+    name: "sums that one hot loop carries",
+    counted: "sums",
+    size: 1000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `function run(a, n) {\n${lines(size, index => `  let s${index} = 0;`)}  for (let i = 0; i < n; i++) {\n${lines(size, index => `    s${index} += (i ^ ${index}) + a[(i + ${index}) & 7];`)}  }\n  return 0${upTo(size, index => ` + s${index}`).join("")};\n}\nconst a = [1, 2, 3, 4, 5, 6, 7, 8];\nlet t = 0;\nfor (let r = 0; r < 50; r++) t += run(a, 200);\nconsole.log(t);\n`,
+    }),
+  },
+  // Each read and each `%` has a call on a rare path, and every value lives across thousands of them. A live range is split around the calls that it crosses, with a value of its own for
+  // each call. On rare paths that costs next to nothing by the frequencies, so the register allocator walked all the calls for each value and register, and made 2,000,000 values for 8,000.
+  // 34,000 values took 354 s and 3.6 GB where 27 s and 1.1 GB do, and on arm64 the list of values passed 4 GB.
+  {
+    name: "values that live across calls on rare paths",
+    counted: "values",
+    size: 8000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `const a = new Float64Array(${size + 1}), b = new Int32Array(${size + 1});\nfor (let i = 0; i < ${size}; i++) { a[i] = i + 0.5; b[i] = i * 3; }\nfunction mix(s, v) { return (s * 33 + v) % 1000000007; }\nfunction run(a, b) {\n  let s = 1;\n${lines(size, index => `  const v${index} = ${index & 1 ? "a" : "b"}[${index}];`)}${lines(size, index => `  s = mix(s, v${index} * 2);`)}  return s;\n}\nconsole.log(run(a, b));\n`,
     }),
   },
   // A read of a variable passes every earlier compound assignment to it, and at each of them the checker walked to the start of the function to see whether the place can be reached.
@@ -517,6 +593,82 @@ export const shapes: Shape[] = [
         `class C0 {\n  m0() {\n    return 0;\n  }\n}\n` +
         lines(size, index => `class C${index + 1} extends C${index} {\n  m${index + 1}() {\n    return ${index + 1};\n  }\n}`) +
         `console.log(new C${size}().m0());\n`,
+    }),
+  },
+  // What a function returns is proven once that is proven of the function whose result it returns: a turn a function, and no turn may look at all of them.
+  {
+    name: "functions that each return what the next returns, and one more",
+    counted: "functions",
+    size: 2000,
+    entry: "main.js",
+    // Nothing besides: it stays out of the build of all shapes, whose budget was counted without it.
+    flags: [],
+    write: size => ({
+      "main.js":
+        lines(size, index => `function f${index}(x) { return f${index + 1}(x) + 1; }`) +
+        `function f${size}(x) { return x | 0; }\nconsole.log(f0(1));\n`,
+    }),
+  },
+  {
+    name: "classes with a field and a method each that extend one another in a row",
+    counted: "classes",
+    size: 500,
+    entry: "main.js",
+    flags: [],
+    write: size => ({
+      "main.js":
+        `class C0 { f0 = 0; m() { return 0; } }\n` +
+        lines(size, index => `class C${index + 1} extends C${index} { f${index + 1} = ${index + 1}; m() { return super.m() + 1; } }`) +
+        `console.log(new C${size}().m());\n`,
+    }),
+  },
+  {
+    name: "methods of one name that each call the method above, up a row of classes",
+    counted: "classes",
+    size: 500,
+    entry: "main.js",
+    flags: [],
+    write: size => ({
+      "main.js":
+        `class C0 { m() { return 0; } }\n` +
+        lines(size, index => `class C${index + 1} extends C${index} { m() { return super.m() + 1; } }`) +
+        `console.log(new C${size}().m());\n`,
+    }),
+  },
+  // What lies above a class is found link by link, and each link that is found is one more object above every class further down.
+  // A store to `this` may run into an accessor of any class above. Each class of a row asked its whole row, so 4,000 classes cost a third more than they do.
+  {
+    name: "classes that each store to this and extend one another in a row",
+    counted: "classes",
+    size: 1000,
+    entry: "main.js",
+    // Nothing besides: it stays out of the build of all shapes, whose budget was counted without it.
+    flags: [],
+    write: size => ({
+      "main.js": `class C0 { constructor() { this.f0 = 0; } }\n${lines(Math.max(size - 1, 0), index => `class C${index + 1} extends C${index} { constructor() { super(); this.f${(index + 1) % 50} = ${index + 1}; } }`)}console.log(Object.keys(new C${Math.max(size - 1, 0)}()).length);\n`,
+    }),
+  },
+  // The same below a class with an accessor: whether a store runs into it was asked by a walk up the whole row from every class.
+  {
+    name: "classes that each store to this, in a row below a class with an accessor",
+    counted: "classes",
+    size: 1000,
+    entry: "main.js",
+    // Nothing besides: it stays out of the build of all shapes, whose budget was counted without it.
+    flags: [],
+    write: size => ({
+      "main.js": `class C0 { set size(v) { this.kept = v; } get size() { return this.kept; } constructor() { this.f0 = 0; } }\n${lines(Math.max(size - 1, 0), index => `class C${index + 1} extends C${index} { constructor() { super(); this.f${(index + 1) % 50} = ${index + 1}; } }`)}const o = new C${Math.max(size - 1, 0)}();\nconsole.log(Object.keys(o).length, o.size, o.kept);\n`,
+    }),
+  },
+  {
+    name: "classes without members that extend one another in a row",
+    counted: "classes",
+    size: 1000,
+    entry: "main.js",
+    // Nothing besides: it stays out of the build of all shapes, whose budget was counted without it.
+    flags: [],
+    write: size => ({
+      "main.js": `class C0 {}\n` + lines(size, index => `class C${index + 1} extends C${index} {}`) + `console.log(new C${size}() instanceof C0);\n`,
     }),
   },
   // What the objects of a class hold is listed class by class up the row: a field counts where no class further down has one of its name.
@@ -1319,6 +1471,68 @@ export const shapes: Shape[] = [
       "main.mjs":
         `function make(x) {\n  return globalThis.asText ? String(x) : { x };\n}\n` +
         `async function all() {\n  return [${upTo(size, index => `await make(${index})`).join(", ")}];\n}\nconsole.log((await all()).length);\n`,
+    }),
+  },
+  // The variable of the loop holds one more of the objects each time the analysis goes round, and what is read off it is asked for anew.
+  {
+    name: "objects that each hold the one before, walked by a loop",
+    counted: "objects",
+    size: 800,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `let head = null;\n${lines(size, index => `head = { next: head, v${index % 7}: ${index} };`)}let count = 0;\nfor (let at = head; at; at = at.next) count++;\nconsole.log(count);\n`,
+    }),
+  },
+  {
+    name: "objects that each hold the one before, walked by a loop that stores into them",
+    counted: "objects",
+    size: 800,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `let head = null;\n${lines(size, index => `head = { next: head, v${index % 7}: ${index} };`)}let count = 0;\nfor (let at = head; at; at = at.next) at.place = count++;\nconsole.log(count, head?.place);\n`,
+    }),
+  },
+  {
+    name: "object literals nested in one another, walked by a loop",
+    counted: "levels",
+    size: 800,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `const outmost = ${"{ inner: ".repeat(size)}1${" }".repeat(size)};\nlet depth = 0;\nfor (let at = outmost; typeof at === "object"; at = at.inner) depth++;\nconsole.log(depth);\n`,
+    }),
+  },
+  {
+    name: "object literals nested in one another, each beside smaller literals",
+    counted: "levels",
+    size: 800,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `const unit = { width: 1 };\nconst outmost = ${"{ small: { x: unit.width }, list: [unit.width, { y: 2 }], inner: ".repeat(size)}1${" }".repeat(size)};\nlet depth = 0;\nfor (let at = outmost; typeof at === "object"; at = at.inner) depth++;\nconsole.log(depth);\n`,
+    }),
+  },
+  {
+    name: "object literals nested in one another, handed to a generic function",
+    counted: "levels",
+    size: 800,
+    entry: "main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.ts": `function same<T>(value: T): T {\n  return value;\n}\nconst outmost = same(${"{ inner: ".repeat(size)}1${" }".repeat(size)});\nconsole.log(typeof outmost);\n`,
+    }),
+  },
+  // Data nests 2,000 levels deep at the most: code builds the levels around that.
+  {
+    name: "object literals nested in one another, more deeply than data may be",
+    counted: "levels",
+    size: 1600,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `const outmost = ${"{ inner: ".repeat(size)}1${" }".repeat(size)};\nconsole.log(typeof outmost.inner);\n`,
     }),
   },
   {

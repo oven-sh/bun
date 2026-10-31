@@ -319,7 +319,7 @@ function f13 module=m0 position=485 kind=Initializer flags=[HasThis, IsChecked, 
 }
 # -- generated: f0 readAbove WithAccessor value f13
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f5 callPosition=1119 module=m0}, {callee=f3 callPosition=785 module=m0}, {callee=f3 callPosition=769 module=m0}, {callee=f1 callPosition=743 module=m0}, {callee=f15 callPosition=266 parent=4 module=m0}, {callee=f18 callPosition=748 isConstruction=true module=m0}, {callee=f2 callPosition=713 module=m0}, {callee=f1 callPosition=701 module=m0}, {callee=f15 callPosition=266 parent=8 module=m0}, {callee=f1 callPosition=687 module=m0}, {callee=f15 callPosition=266 parent=10 module=m0}, {callee=f15 callPosition=298 parent=10 isTailCall=true module=m0}, {callee=f15 callPosition=298 parent=8 isTailCall=true module=m0}, {callee=f15 callPosition=298 parent=4 isTailCall=true module=m0}, {callee=f7 callPosition=298 parent=5 module=m0}, {callee=f13 callPosition=485 parent=6 module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f3 callPosition=785 module=m0}, {callee=f3 callPosition=769 module=m0}, {callee=f1 callPosition=743 module=m0}, {callee=f15 callPosition=266 parent=3 module=m0}, {callee=f18 callPosition=748 isConstruction=true module=m0}, {callee=f1 callPosition=701 module=m0}, {callee=f15 callPosition=266 parent=6 module=m0}, {callee=f1 callPosition=687 module=m0}, {callee=f15 callPosition=266 parent=8 module=m0}, {callee=f15 callPosition=298 parent=8 isTailCall=true module=m0}, {callee=f15 callPosition=298 parent=6 isTailCall=true module=m0}, {callee=f15 callPosition=298 parent=3 isTailCall=true module=m0}, {callee=f7 callPosition=298 parent=4 module=m0}, {callee=f13 callPosition=485 parent=5 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: classtoken = NewClassToken layout=L0
 # CHECK-NEXT: PutModuleVariable v0 variable=g4
@@ -358,8 +358,8 @@ function f13 module=m0 position=485 kind=Initializer flags=[HasThis, IsChecked, 
 # CHECK-NEXT: v34: undefined|int ~ int[-2147483643, 2147483647] = AssumeType v33 provenType=undefined|int
 # CHECK-NEXT: v35: number = Add v32, v34
 # CHECK-NEXT: v36: int|whole = AssumeType v35 provenType=int|whole
-# CHECK-NEXT: v37: anything ~ int[-2147483643, 2147483647] = PropGet v14 key="value" accessSite=25 receivers=[L2]
-# CHECK-NEXT: v38: undefined|int ~ int[-2147483643, 2147483647] = AssumeType v37 provenType=undefined|int
+# CHECK-NEXT: v37: undefined|int ~ int = CallDirect v14 function=f2 accessSite=8
+# CHECK-NEXT: v38: undefined|int ~ int = AssumeType v37 provenType=undefined|int
 # CHECK-NEXT: v39: anything ~ number = GetModuleVariable variable=g0
 # CHECK-NEXT: v40: 9 = Integer integer=9
 # CHECK-NEXT: v41: anything ~ number = PropGet v18 key="value" accessSite=26 receivers=[L1, ..]
@@ -388,8 +388,8 @@ function f13 module=m0 position=485 kind=Initializer flags=[HasThis, IsChecked, 
 # CHECK-NEXT: v64: int|whole = CallDirect function=f4 accessSite=19
 # CHECK-NEXT: v65: anything = PropGet v53 key="value" accessSite=20
 # CHECK-NEXT: v66: undefined|int = AssumeType v65 provenType=undefined|int
-# CHECK-NEXT: v67: anything ~ int[-2147483643, 2147483647] = PropGet v59 key="value" accessSite=29 receivers=[L2]
-# CHECK-NEXT: v68: undefined|int ~ int[-2147483643, 2147483647] = AssumeType v67 provenType=undefined|int
+# CHECK-NEXT: v67: undefined|int ~ int = CallDirect function=f5 accessSite=21
+# CHECK-NEXT: v68: undefined|int ~ int = AssumeType v67 provenType=undefined|int
 # CHECK-NEXT: v69: anything ~ number = GetModuleVariable variable=g0
 # CHECK-NEXT: v70: undefined = CallBuiltin v63, v64, v66, v68, v69 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=22
 # CHECK-NEXT: v71: undefined = Undefined

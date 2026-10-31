@@ -106,6 +106,7 @@ pub struct CompiledProgram {
     start: Option<usize>,
     module_lookup: OnceLock<ModuleLookup>,
     test_of_path_starts: OnceLock<TestOfPathStart>,
+    test_of_names_left_outside: OnceLock<TestOfNamesLeftOutside>,
     module_listing: OnceLock<ModuleListing>,
     /// What every path that the executable answers for outside of its own root begins with; found by the graph at the first question.
     pub common_start_of_source_paths: OnceLock<Option<Box<[u8]>>>,
@@ -116,6 +117,8 @@ pub type ModuleLookup = fn(&[u8]) -> Option<&'static [u8]>;
 
 /// False: the `ModuleLookup` finds nothing under any path that begins with the text.
 pub type TestOfPathStart = fn(&[u8]) -> bool;
+/// `--external`: takes the specifier and the directory of the importer.
+pub type TestOfNamesLeftOutside = fn(&[u8], &[u8]) -> bool;
 
 /// Calls the function with the public path of each compiled file whose path begins with the text, until it answers false. Any thread may ask.
 pub type ModuleListing = fn(&[u8], &mut dyn FnMut(&[u8]) -> bool);
@@ -373,6 +376,7 @@ impl CompiledProgram {
             start: None,
             module_lookup: OnceLock::new(),
             test_of_path_starts: OnceLock::new(),
+            test_of_names_left_outside: OnceLock::new(),
             module_listing: OnceLock::new(),
             common_start_of_source_paths: OnceLock::new(),
         }
@@ -501,6 +505,16 @@ impl CompiledProgram {
     pub fn set_test_of_path_starts(&self, test: TestOfPathStart) {
         let is_first = self.test_of_path_starts.set(test).is_ok();
         debug_assert!(is_first);
+    }
+
+    pub fn set_test_of_names_left_outside(&self, test: TestOfNamesLeftOutside) {
+        let is_first = self.test_of_names_left_outside.set(test).is_ok();
+        debug_assert!(is_first);
+    }
+
+    pub fn leaves_outside(&self, source_dir: &[u8], specifier: &[u8]) -> bool {
+        let test = self.test_of_names_left_outside.get();
+        test.is_some_and(|is_left_outside| is_left_outside(specifier, source_dir))
     }
 
     /// Hands `search` the lookup of the image. A file is looked for under some twenty spellings, which begin alike.

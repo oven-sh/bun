@@ -156,6 +156,8 @@ pub(crate) struct ReachInput<'a, 's> {
     pub further: &'a RuntimeUses,
     pub keeps_code_without_names: bool,
     pub holds_guessed_code: bool,
+    /// `FurtherLibraryCode::holds_test_files_alone`. So does Bun's own code that comes along.
+    pub holds_test_files_alone: bool,
 }
 
 /// The part of Bun's own code that the program can run, found the way a bundler finds it: by bindings, never by what a value is.
@@ -205,6 +207,7 @@ impl HeldLibraryCode {
                 .filter(|(module, _)| is_lacked(module))
                 .collect(),
             functions: (functions.filter(|it| self.functions.binary_search(it).is_err())).collect(),
+            linked_functions: Box::default(),
         }
     }
 }
@@ -1227,6 +1230,13 @@ impl<'a, 's> Walk<'a, 's> {
 
     // Native code reads what it likes from a module that it loads.
     fn reach_uses(&mut self, uses: &RuntimeUses) {
+        if self.input.holds_test_files_alone {
+            for function in uses.functions_held_with_caller() {
+                self.note_import(self.input.library.find_function_file(function));
+                self.reach_function(function);
+            }
+            return;
+        }
         for &module in &uses.modules {
             self.note_import(self.input.library.find_module_file(module));
             self.evaluate(ModuleRef::Runtime(module));

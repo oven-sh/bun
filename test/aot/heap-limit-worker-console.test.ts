@@ -78,53 +78,6 @@ worker.on("exit", code => console.log("exit", code));
   );
 });
 
-test("a Console tries again, then throws, while its stream has not taken the line", async () => {
-  using folder = tempDir("aot-console-line-not-taken", {
-    "program.cjs": `const { Console } = require("node:console");
-const { Writable } = require("node:stream");
-const fs = require("node:fs");
-let failing = "", failures = 0;
-function failIn(method) {
-  if (failing !== method || failures === 0) return;
-  failures--;
-  throw new RangeError("Out of memory");
-}
-const stream = new Writable({
-  write(chunk, encoding, done) {
-    fs.writeSync(1, chunk);
-    done();
-  },
-});
-for (const method of ["listenerCount", "once", "write"]) {
-  const original = stream[method];
-  stream[method] = function (first, second) {
-    failIn(method);
-    return original.call(this, first, second);
-  };
-}
-const console = new Console(stream);
-for (failing of ["listenerCount", "once", "write"]) {
-  for (const count of [1, 2]) {
-    failures = count;
-    try {
-      console.log(failing, count, "printed");
-    } catch (error) {
-      fs.writeSync(1, [failing, count, "threw", error.message].join(" ") + "\\n");
-    }
-  }
-}
-`,
-  });
-  const expected = {
-    stdout: ["listenerCount", "once", "write"]
-      .map(method => `${method} 1 printed\n${method} 2 threw Out of memory\n`)
-      .join(""),
-    stderr: "",
-    exitCode: 0,
-  };
-  expect(await run([bunExe(), "run", "program.cjs"], String(folder))).toEqual(expected);
-}, 120_000);
-
 test("a Console hands a line to its stream once, whatever write() throws", async () => {
   using folder = tempDir("aot-console-writes-a-line-once", {
     "program.cjs": `const { Console } = require("node:console");

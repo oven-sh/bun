@@ -91,6 +91,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return;
         }
         self.set_position(position);
+        let counted = self.enter_counted_expression(expression);
         match self.file.decisions().decision(expression) {
             Decision::Constant(_) if self.file.runs_as_written() => {
                 self.record_read_of_builtin_path(expression);
@@ -110,6 +111,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.builder.suspend_records(were_suspended);
             }
         }
+        self.leave_counted_expression(counted);
         self.leave_nesting();
     }
 
@@ -166,8 +168,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return self.builder.undefined();
         }
         self.set_position(position);
+        let counted = self.enter_counted_expression(expression);
         let value = self.lower_printed_part(expression, evaluation);
         let value = self.finish_expression(expression, value);
+        self.leave_counted_expression(counted);
         self.leave_nesting();
         value
     }

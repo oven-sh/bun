@@ -3,12 +3,15 @@
 // (typed, generic ..) and how many bytes. The two lists of the program's own files have to be the same.
 //
 // What may differ, and why, is one table: docs/compiler/debugging.mdx, "What differs from an executable".
-import { expect } from "bun:test";
+import { expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildEnvironment } from "./harness/flags";
 import { describe, test } from "./supported";
+
+// supported.ts sets the limit for the first file of a process alone.
+setDefaultTimeout(120_000);
 
 const lib = `
 export const LIMIT = 4;
@@ -91,8 +94,6 @@ test("spies", () => {
   spy.mockRestore();
 });
 `,
-    differsToday:
-      "one spy on an object from somewhere opens every export of every module that is handed on, whatever its name",
   },
   "a package that defines toString on the prototype of what it is handed": {
     files: {

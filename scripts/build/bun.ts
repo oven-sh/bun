@@ -16,7 +16,7 @@ import { relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { binaryExpectations, exportList, shimExpectations, strippedExpectations } from "./binary-expectations.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
-import { cc, cxx, link, pch, type PrecompiledHeader } from "./compile.ts";
+import { cc, cxx, embedCompiledLibraryPath, link, pch, type PrecompiledHeader } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
@@ -452,6 +452,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // symbolication on linux; the order file tracer's symbol table on windows).
     linkerMapOutputs: linkerMapOutputs(cfg),
     trimmable: true,
+    embedsCompiledLibrary: true,
     // Static scans: the deps' forbidden-symbol checks on the objects going
     // in, the smoke test on the executable coming out.
     validations: [...depChecks, ...postLinkChecks(cfg, exeName)],
@@ -876,12 +877,16 @@ function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[]
     // embedded — so the stripped `bun` needs its own postlink pass.
     // (machoPostlinkCommand is "" everywhere else.)
     n.rule("strip", {
-      command: `${quote(cfg.strip, false)} $stripflags $in -o $out${machoPostlinkCommand(cfg)}${cfg.hardened ? ` && ${cfg.jsRuntime} ${quote(closeElfGapsPath, false)} $out` : ""}`,
+      command: `${quote(cfg.strip, false)} $stripflags $in -o $out${machoPostlinkCommand(cfg)}${cfg.hardened ? ` && ${cfg.jsRuntime} ${quote(closeElfGapsPath, false)} $out` : ""}${cfg.compiledLibrary ? ` && ${cfg.jsRuntime} ${quote(embedCompiledLibraryPath, false)} $out --from $in` : ""}`,
       description: "strip $out",
     });
   }
 
-  const postlinkInputs = [...machoPostlinkImplicitInputs(cfg), ...(cfg.hardened ? [closeElfGapsPath] : [])];
+  const postlinkInputs = [
+    ...machoPostlinkImplicitInputs(cfg),
+    ...(cfg.hardened ? [closeElfGapsPath] : []),
+    ...(cfg.compiledLibrary ? [embedCompiledLibraryPath] : []),
+  ];
   const verified = strippedVerifyStamp(cfg);
   const node = {
     outputs: [out],

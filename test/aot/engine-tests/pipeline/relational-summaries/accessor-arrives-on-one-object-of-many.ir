@@ -801,8 +801,8 @@ runtimefunction id=ArrayTraversalTraverseArray function=f34 visibility=Private
 # CHECK-NEXT: Return v25
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="spyOn"
-# CHECK: module=m0 position=817 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=L0|L5}, {type=int}, {type=undefined|string}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: L0|L5, v1: int, v2: undefined|string):
+# CHECK: module=m0 position=817 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=L0|L5}, {type=int}, {type=string}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: L0|L5, v1: int, v2: string):
 # CHECK-NEXT: v3: 2 = Integer integer=2
 # CHECK-NEXT: v4: boolean = StrictEq v1, v3
 # CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2()
@@ -810,26 +810,24 @@ runtimefunction id=ArrayTraversalTraverseArray function=f34 visibility=Private
 # CHECK-NEXT: v5: f11 = NewClosure function=f11 allocationSite=8
 # CHECK-NEXT: v6: L3 = NewObject -, v5 layout=L3 fields=[3] allocationSite=9 allocationClass=1
 # CHECK-NEXT: v7: L3 = FinishObject v6
-# CHECK-NEXT: v8: string|symbol = ToPropertyKey v2 calledBuiltin=ReflectDefineProperty
-# CHECK-NEXT: v9: boolean = CallBuiltin -, v0, v8, v7 overload=ReflectDefineProperty/0 accessSite=20
+# CHECK-NEXT: v8: boolean = CallBuiltin -, v0, v2, v7 overload=ReflectDefineProperty/0 accessSite=20
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v10: boolean = HasNoExtraProperties v0
-# CHECK-NEXT: Branch v10 -> taken b4(), notTaken b5()
+# CHECK-NEXT: v9: boolean = HasNoExtraProperties v0
+# CHECK-NEXT: Branch v9 -> taken b4(), notTaken b5()
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v11: undefined = Undefined
-# CHECK-NEXT: Return v11
+# CHECK-NEXT: v10: undefined = Undefined
+# CHECK-NEXT: Return v10
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v12: string|symbol = ToPropertyKey v2 calledBuiltin=ObjectPrototype__defineGetter__
-# CHECK-NEXT: v13: f10 = NewClosure function=f10 allocationSite=7
-# CHECK-NEXT: v14: undefined = CallBuiltin v0, v12, v13 overload=ObjectPrototype__defineGetter__/0 accessSite=22
+# CHECK-NEXT: v11: f10 = NewClosure function=f10 allocationSite=7
+# CHECK-NEXT: v12: undefined = CallBuiltin v0, v2, v11 overload=ObjectPrototype__defineGetter__/0 accessSite=22
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: v15: anything = PropGet v0 key="__defineGetter__" accessSite=21 receivers=[L0, L5]
-# CHECK-NEXT: v16: undefined|int|whole|string|builtin(ObjectPrototype__defineGetter__) = AssumeType v15 provenType=undefined|int|whole|string|builtin(ObjectPrototype__defineGetter__)
-# CHECK-NEXT: v17: undefined|int|whole|string|builtin(ObjectPrototype__defineGetter__) ~ undefined|builtin(ObjectPrototype__defineGetter__) = Upcast v16 castType=anything
-# CHECK-NEXT: v18: f10 = NewClosure function=f10 allocationSite=7
-# CHECK-NEXT: v19: anything = Call v17, v0, v2, v18 calleeKey="__defineGetter__" calleeName="box.__defineGetter__" accessSite=22 callees=[builtin(ObjectPrototype__defineGetter__)]
+# CHECK-NEXT: v13: anything = PropGet v0 key="__defineGetter__" accessSite=21 receivers=[L0, L5]
+# CHECK-NEXT: v14: undefined|int|whole|string|builtin(ObjectPrototype__defineGetter__) = AssumeType v13 provenType=undefined|int|whole|string|builtin(ObjectPrototype__defineGetter__)
+# CHECK-NEXT: v15: undefined|int|whole|string|builtin(ObjectPrototype__defineGetter__) ~ undefined|builtin(ObjectPrototype__defineGetter__) = Upcast v14 castType=anything
+# CHECK-NEXT: v16: f10 = NewClosure function=f10 allocationSite=7
+# CHECK-NEXT: v17: anything = Call v15, v0, v2, v16 calleeKey="__defineGetter__" calleeName="box.__defineGetter__" accessSite=22 callees=[builtin(ObjectPrototype__defineGetter__)]
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="measureInstance"

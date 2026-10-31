@@ -333,8 +333,10 @@ function declareModule(
     },
     ...exportsOfObject.flatMap(({ name, holder, platforms }): Declaration[] => {
       const exportPath = memberPathOf(namespace, name);
-      const member = declareExport(exportPath, platforms, holder === "ModuleObject");
-      return holder === "ModuleObject"
+      // abort-controller puts `default` on the object too.
+      const isBindingOfNamespaceOnly = holder === "ModuleObject" && !ownNames?.has(name);
+      const member = declareExport(exportPath, platforms, isBindingOfNamespaceOnly);
+      return isBindingOfNamespaceOnly
         ? [member, { declares: "SameObject", path: exportPath, original: namespace }]
         : [member];
     }),

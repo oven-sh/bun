@@ -299,6 +299,7 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
     }
 
     fn lower(&self) -> CheckedProgram<Option<LoweredUnit>> {
+        let by_word = checker_passes_by_word();
         let request = &CompileRequest {
             threads: self.threads,
             left_out_bodies: Some(&self.decided.left_out_bodies),
@@ -335,8 +336,26 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
                 }
                 defined.publish_names_of_file(file);
             },
+            &driver::Passes {
+                count: by_word.unwrap_or(2),
+                wait_for_no_file: by_word.is_none(),
+                before_next: &|| self.inputs.defined_object_types.forget_names_of_types(),
+            },
         )
     }
+}
+
+// What the checker holds only grows, and at the end of this stage it is a third of all that the build holds: the most that a large
+// typed program's build holds anywhere. With two passes that is 500 MB less on 200 MB of source, and what is built is the same to
+// the byte. The second pass works out again what the stage before this one had found about its files: a sixth of the time of this
+// stage. The word `TestRunCheckerPasses:<n>` of `BUN_DEBUG_TEST_AOT_WORDS` says how many there are, whatever the files are like.
+fn checker_passes_by_word() -> Option<usize> {
+    let words = bun_core::env_var::BUN_DEBUG_TEST_AOT_WORDS.get_not_empty();
+    let mut words = (words.into_iter()).flat_map(|words| bun_core::strings::split(words, b","));
+    words
+        .find_map(|word| word.strip_prefix(b"TestRunCheckerPasses:"))
+        .and_then(|digits| bun_core::fmt::parse_int::<usize>(digits, 10).ok())
+        .map(|passes| passes.max(1))
 }
 
 impl Build<'_> {
@@ -479,9 +498,12 @@ impl Build<'_> {
         };
         let lacked_before = self.library_code_asked_for(&self.options.load);
         let reach_input = ReachInput {
-            application: Application::Bound {
-                files: loaded.project(ProjectId::Application).loaded.files(),
-                graph: &bound.projects.application.graph,
+            application: match loaded.library_code_asked {
+                Some(asked) => Application::Asks(asked),
+                None => Application::Bound {
+                    files: loaded.project(ProjectId::Application).loaded.files(),
+                    graph: &bound.projects.application.graph,
+                },
             },
             library: &library,
             names: loaded.builtin_names,
@@ -496,6 +518,7 @@ impl Build<'_> {
             further: &lacked_before,
             keeps_code_without_names: loaded.keeps_library_code_without_names,
             holds_guessed_code: loaded.holds_guessed_library_code,
+            holds_test_files_alone: loaded.library_code_asked.is_some(),
         };
         let known = (loaded.known_library_regions)();
         find_reached_runtime_code(&reach_input, known, &self.parallel_runner())
@@ -751,6 +774,7 @@ impl Build<'_> {
             loads_code_by_unknown_names_alone: loaded.loads_code_by_unknown_names_alone,
             keeps_library_code_without_names: true,
             holds_guessed_library_code: true,
+            library_code_asked: None,
             finish_asset_reads: &|| true,
             known_library_regions: &|| None,
         };
@@ -858,7 +882,7 @@ impl Build<'_> {
             };
             self.diagnostics.add_buffer(view, lowered.diagnostics);
             self.statistics.add_counters(view, lowered.counters);
-            self.statistics.add_queries(lowered.queries);
+            self.statistics.add_queries(&lowered.queries);
             worlds.units.push(*lowered.unit);
             worlds.lowered.push(file);
         }
@@ -998,7 +1022,7 @@ impl Build<'_> {
             };
             self.diagnostics.add_buffer(view, lowered.diagnostics);
             self.statistics.add_counters(view, lowered.counters);
-            self.statistics.add_queries(lowered.queries);
+            self.statistics.add_queries(&lowered.queries);
             if project == ProjectId::Runtime && lowered.queries.closed_cycles != 0 {
                 self.circular_runtime_files
                     .push((file, lowered.queries.closed_cycles));
@@ -1028,6 +1052,9 @@ impl Build<'_> {
         diagnostics: Vec<BuildDiagnostic>,
         incomplete: &[Incomplete],
     ) {
+        if !self.options.load.takes_runtime_as_any {
+            self.diagnostics.note_places_of_type_errors(&diagnostics);
+        }
         let errors = report_package_errors(&mut self.diagnostics, view, diagnostics, roles);
         self.has_withdrawn_trust |= errors.has_withdrawn_trust;
         self.diagnostics
@@ -1043,6 +1070,7 @@ impl Build<'_> {
             removable: self.options.removable,
             minifies_identifiers: self.options.minifies_identifiers,
             obfuscates: self.options.aot.obfuscates,
+            counts_executions: self.options.aot.counts_executions,
         }
     }
 
@@ -1156,8 +1184,9 @@ impl Build<'_> {
             ProjectId::Application => RuntimeTranspiler::new(
                 self.provider.define().unwrap_or(&default_define),
                 &self.provider.enabled_features(),
+                self.provider,
             ),
-            ProjectId::Runtime => RuntimeTranspiler::new(&default_define, &[]),
+            ProjectId::Runtime => RuntimeTranspiler::new(&default_define, &[], self.provider),
         };
         // Bun's own modules hand no FinalizationRegistry from one file to another.
         let mut lowered_files = file_inputs.iter().flatten();

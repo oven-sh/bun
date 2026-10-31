@@ -1,6 +1,6 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { tempDir } from "harness";
-import { copyFileSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { copyFileSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { reach } from "../../../scripts/build/trim/graph.ts";
 import { readMachOGraph } from "../../../scripts/build/trim/macho-graph.ts";
@@ -25,6 +25,7 @@ import {
   sortedByIndex,
   sources,
   statisticOf,
+  tools,
   wrapped,
 } from "./link-macho-support.ts";
 import {
@@ -32,6 +33,7 @@ import {
   builtinUsing,
   callAll,
   compileRust,
+  cxxFlags,
   embedderSource,
   entryCalling,
   entryGuarding,
@@ -41,16 +43,24 @@ import {
   expectLinkFailure,
   exportFeatures,
   Extra,
+  guardHeader,
+  guardHeaderSkipReason,
   indexOf,
   mainEnteringBuiltin,
   manyFunctions,
   mixingFunction,
   Other,
+  plainSpellingsSource,
   reviewFiles,
+  run,
   rustSource,
   skipNotice,
   spelledBuiltin,
+  spellingsSource,
   start,
+  toyHeader,
+  trimmedSpellingsOutput,
+  wholeSpellingsOutput,
 } from "./toy-program.ts";
 
 setDefaultTimeout(60_000);
@@ -105,17 +115,20 @@ describeEachMachine("Mach-O $name", machine => {
       expect(second.file.equals(first.file)).toBe(true);
     });
 
-    test("orders by the command's own order file after the groups", async () => {
-      const ownOrder = "_main\n_retained\n";
-      using dir = tempDir("trim-macho", { ...sources, "own-order.txt": ownOrder });
+    test("orders by the command's own order file in front of the groups, and a feature stays one piece", async () => {
+      using dir = tempDir("trim-macho", { ...sources, "own-order.txt": "_retained\n_entered\n_main\n" });
       const folder = String(dir);
-      const { addressOf, featuresOf, programResult, trimmedResult } = await linked(machine, folder, {
+      const { table, addressOf, featuresOf, programResult, trimmedResult } = await linked(machine, folder, {
         linkFlags: ["-Wl,-order_file,own-order.txt"],
       });
-      expect(readFileSync(join(folder, "work/order.txt"), "latin1")).toEndWith(`\n${ownOrder}`);
-      expect(["feature_code_0", "main", "retained"].map(featuresOf)).toEqual([[Extra], undefined, undefined]);
-      expect(addressOf(`feature_code_${count - 1}`)).toBeLessThan(addressOf("main"));
-      expect(addressOf("main")).toBeLessThan(addressOf("retained"));
+      expect(readFileSync(join(folder, "work/order.txt"), "latin1")).toStartWith("_retained\n_main\n");
+      const names = ["retained", "main", "feature_code_0", `feature_code_${count - 1}`, "entered"];
+      const addresses = names.map(addressOf);
+      expect(addresses).toEqual(addresses.toSorted((a, b) => a - b));
+      expect(names.map(featuresOf)).toEqual([undefined, undefined, [Extra], [Extra], [Extra]]);
+      const piece = table.ranges.find(({ start, end }) => start <= addressOf("entered") && addressOf("entered") < end)!;
+      expect(piece.canBeCut).toBe(true);
+      expect(addressOf("feature_code_0")).toBeWithin(piece.start, piece.end);
       expectCleanRuns({ programResult, trimmedResult });
     });
   });
@@ -746,6 +759,51 @@ describeEachMachine("Mach-O $name", machine => {
   describe("each stub", () => {
     const rustTarget = machine.isArm64 ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
     const linkFlags = machine.canRun ? [] : ["-Wl,-undefined,dynamic_lookup"];
+    const headerCompiles = async (folder: string) => {
+      if (guardHeader === undefined) return false;
+      writeFileSync(join(folder, "probe.cpp"), `#include "toy.h"\n`);
+      return (
+        (await run([tools.clang!, `--target=${machine.target}`, ...cxxFlags, "-fsyntax-only", "probe.cpp"], folder))
+          .exitCode === 0
+      );
+    };
+
+    test("of the engine's header does what its kind says", async () => {
+      using dir = tempDir("trim-macho-stubs", { ...sources, "toy.h": toyHeader, "spellings.cpp": spellingsSource });
+      const folder = String(dir);
+      if (!(await headerCompiles(folder)))
+        return skipNotice(
+          testFile,
+          guardHeaderSkipReason ?? `the engine's header does not compile for ${machine.target}`,
+        );
+      const { entryAddresses, featuresAt, programResult, trimmedResult } = await linked(machine, folder, {
+        objects: ["feature_code", "embedder", "spellings"],
+        linkFlags,
+      });
+      expect(entryAddresses.size).toBeGreaterThan(0);
+      expect([...entryAddresses].map(featuresAt)).toEqual([...entryAddresses].map(() => [Extra]));
+      expectCleanRuns({ programResult, trimmedResult });
+      if (programResult === undefined || trimmedResult === undefined) return;
+      expect(programResult.stdout).toBe(wholeSpellingsOutput + "\n");
+      expect(trimmedResult.stdout).toBe(trimmedSpellingsOutput + "\n");
+      expect(await exitCodeOf(folder, "trimmed", ["abort"])).toBe(70);
+    });
+
+    test("written out in C as the engine's header writes it does what its kind says", async () => {
+      using dir = tempDir("trim-macho-stubs", { ...sources, "spellings.c": plainSpellingsSource });
+      const folder = String(dir);
+      const { entryAddresses, featuresAt, programResult, trimmedResult } = await linked(machine, folder, {
+        objects: ["feature_code", "embedder", "spellings"],
+        linkFlags,
+      });
+      expect(entryAddresses.size).toBeGreaterThan(0);
+      expect([...entryAddresses].map(featuresAt)).toEqual([...entryAddresses].map(() => [Extra]));
+      expectCleanRuns({ programResult, trimmedResult });
+      if (programResult === undefined || trimmedResult === undefined) return;
+      expect(programResult.stdout).toBe(wholeSpellingsOutput + "\n");
+      expect(trimmedResult.stdout).toBe(trimmedSpellingsOutput + "\n");
+    });
+
     test("of the Rust crate does what its kind says", async () => {
       using dir = tempDir("trim-macho-stubs", {
         ...sources,

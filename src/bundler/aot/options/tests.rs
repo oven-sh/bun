@@ -391,13 +391,6 @@ fn written_configuration_path_is_absolute() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn computed_candidate_limit_stays_default() {
-    let default_limit = CodeOptions::bun_run(b"/project").max_computed_candidates;
-    assert_eq!(convert_code(|_| {}).max_computed_candidates, default_limit);
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
 fn node_path_splits_and_resolves() {
     let case = Case {
         node_path: Some(b"/a::relative"),

@@ -26,6 +26,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let scope = module::file_scope(self);
         let own_module = ModuleRef::File(self.file);
         let mut lowering = FunctionLowering::begin(self, function);
+        lowering.note_first_load();
         let first_exports = lowering.emit_first_exports(own_module);
         lowering.enter_plain_file_scope(scope, first_exports);
         lowering.emit_loads_of_jsx_modules();
@@ -39,6 +40,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let wrapped = self.declare_function(key, create_wrapped_header);
         let own_module = ModuleRef::File(self.file);
         let mut lowering = FunctionLowering::begin(self, function);
+        lowering.note_first_load();
         let first_exports = lowering.emit_first_exports(own_module);
         let first_exports = first_exports.unwrap_or_else(|| lowering.builder.undefined());
         let mut values: SmallVec<[ValueId; 5]> = SmallVec::new();

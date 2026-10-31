@@ -5,9 +5,12 @@
 //   --without "require.cache"          tests of these kinds are not drawn: what such a test does to a module shows in the tests behind it, so leaving it out of the comparison is not enough
 //   --only "a Worker,fake timers"     only tests of these kinds are drawn; --pure: test files of drawn kinds alone: no scenes, no files that do not run, no file that opens the modules
 //   --bare                             every project is bare: its test files import bun:test alone and name no built-in module (12 of 100 projects are, without the option)
+//   --sparse                           every project is sparse: two or three kinds in all its files (25 of 100 projects are, without the option)
+//   --ends-within 120                  seconds for one run of a project. A lane that is given few processors on a busy machine needs more: a build that takes 40 s took more than 120 there
 //   --reduce <folder of a find> [--must "EvalError"]   makes the project of a find smaller, into <folder>/reduced: whole files go first, then lines by halves, as long as the two runs differ
 //                                      in the same way in a test of the same kind or, with --must, as long as the compiled run alone says those words
 //   --words TestRunLayers:2,TestRunPartFiles:2   BUN_DEBUG_TEST_AOT_WORDS for the compiled runs: how the run is built (layers and pieces); a project has few test files, so say how many a piece holds
+//                                      TestRunPartFiles:drawn: 1, 2, 3 or 16, drawn for each project (not with --reduce or --project: the report of a find says the number)
 //   --project <folder>                 runs the project in that folder both ways, once, and says in what they differ
 //   --known "require.cache,a Worker"   tests of these kinds are left out of the comparison: a fault that is known would else be the first difference of every project that holds it
 //
@@ -36,6 +39,8 @@ const { values: options } = parseArgs({
     only: { type: "string", default: "" },
     pure: { type: "boolean", default: false },
     bare: { type: "boolean", default: false },
+    sparse: { type: "boolean", default: false },
+    "ends-within": { type: "string", default: "120" },
     reduce: { type: "string", default: "" },
     must: { type: "string", default: "" },
     project: { type: "string", default: "" },
@@ -52,6 +57,8 @@ class Project {
   made: string[] = [];
   /** No test file of the project names a built-in module: each imports bun:test alone. */
   bare = false;
+  /** The two or three kinds that all files of a sparse project are drawn from, or none. */
+  sparse: string[] = [];
   /** The one kind that the file being written holds, or "". */
   onlyKind = "";
   readonly below: (bound: number) => number;
@@ -495,7 +502,7 @@ const realmThings: [string, string][] = [
   ["process.report", "typeof process.report?.getReport"],
   ["process.allowedNodeEnvironmentFlags", "typeof process.allowedNodeEnvironmentFlags?.has"],
   ["process.kill 0", "process.kill(process.pid, 0)"],
-  ["process.env", '(process.env.K16_X = "1", delete process.env.K16_X, typeof process.env.PATH)'],
+  ["process.env", '(process.env.SET_FOR_A_MOMENT = "1", delete process.env.SET_FOR_A_MOMENT, typeof process.env.PATH)'],
   ["process.channel", "typeof process.channel"],
   ["process.constrainedMemory", "typeof process.constrainedMemory()"],
   ["process.getuid", "typeof process.getuid()"],
@@ -995,7 +1002,9 @@ function drawTest(project: Project, isTypeScript: boolean): Drawn {
     if (
       project.onlyKind
         ? drawn.kind === project.onlyKind
-        : !without.includes(drawn.kind) && (only.length === 0 || only.includes(drawn.kind))
+        : project.sparse.length
+          ? project.sparse.includes(drawn.kind)
+          : !without.includes(drawn.kind) && (only.length === 0 || only.includes(drawn.kind))
     )
       return drawn;
   }
@@ -1191,7 +1200,7 @@ function drawAnyTest(project: Project, isTypeScript: boolean): Drawn {
         needs: [],
         lines: drawn.map(
           ([label, text]) =>
-            `try { note(${JSON.stringify(label)}, asText(await (async () => (${text}))())); } catch (error) { note(${JSON.stringify(label)}, "threw", (error${any})?.name, String((error${any})?.message).slice(0, 60)); }`,
+            `try { note(${JSON.stringify(label)}, asText(await (async () => (${text}))())); } catch (error${any}) { note(${JSON.stringify(label)}, "threw", error?.name, String(error?.message).slice(0, 60)); }`,
         ),
       };
     },
@@ -1207,6 +1216,46 @@ function drawAnyTest(project: Project, isTypeScript: boolean): Drawn {
         ],
       };
     },
+    () => {
+      // The Worker's realm runs no compiled module, and what it runs is transpiled when it is loaded. Once none of these answered in a layered run, while a Worker on a file of the project did.
+      const path = `process.env.SEEN_IN + "/worker-${k}-" + process.pid`;
+      const made = project.pick([
+        `new (require("node:worker_threads").Worker)(\`require("node:worker_threads").parentPort.postMessage(${k} + 1)\`, { eval: true })`,
+        `(require("node:fs").writeFileSync(${path} + ".mjs", \`import { parentPort } from "node:worker_threads";\\nparentPort.postMessage(${k} + 2);\\n\`), new (require("node:worker_threads").Worker)(${path} + ".mjs"))`,
+        `(require("node:fs").writeFileSync(${path} + ".cjs", \`require("node:worker_threads").parentPort.postMessage(${k} + 3);\\n\`), new (require("node:worker_threads").Worker)(${path} + ".cjs"))`,
+        `(require("node:fs").writeFileSync(${path} + ".js", \`postMessage(${k} + 4);\\n\`), new Worker(${path} + ".js"))`,
+        `new Worker(URL.createObjectURL(new Blob([\`postMessage(${k} + 5);\`], { type: "application/javascript" })))`,
+      ]);
+      return {
+        kind: "a Worker on code that is not compiled",
+        isAsync: true,
+        needs: [],
+        lines: [
+          `const worker${any} = ${made};`,
+          `const answer = new Promise((resolve, reject) => { if (worker.on) { worker.on("message", resolve); worker.on("error", reject); } else { worker.onmessage = (event${any}) => resolve(event.data); worker.onerror = (event${any}) => reject(new Error(event.message)); } });`,
+          `try { note("answered", await Promise.race([answer, new Promise(resolve => setTimeout(() => resolve("no answer"), 10000))])); } catch (error${any}) { note("threw", error?.name); } finally { await worker.terminate(); }`,
+        ],
+      };
+    },
+    () => ({
+      kind: "node:vm alone runs text",
+      needs: [],
+      imports: [`import { createContext, runInContext, runInNewContext } from "node:vm";`],
+      lines: [
+        project.pick([
+          `note("ran", runInContext("1 + ${k}", createContext({})));`,
+          `note("ran", runInNewContext("a + ${k}", { a: 1 }));`,
+          `const run = (text${any}) => runInContext(text, createContext({ b: 2 })); note("ran", run("b * ${k}"));`,
+        ]),
+      ],
+    }),
+    () => ({
+      kind: "a tool of bun:test goes somewhere",
+      needs: [],
+      lines: [
+        `(globalThis${isTypeScript ? " as any" : ""}).kept = ${project.pick(["mock", "jest", "spyOn", "mock.module", "expect", "test", "[mock, jest]", "{ mock }", "Bun.jest"])}; note("kept", typeof (globalThis${isTypeScript ? " as any" : ""}).kept);`,
+      ],
+    }),
     () => {
       // Built-in modules that no helper and no other kind imports: whether a statement anywhere in the run imports the module decides what the build leaves open.
       const [module, member, given] = project.pick([
@@ -1809,6 +1858,11 @@ function writeTestFile(project: Project, name: string) {
     ].filter(word => new RegExp(`\\b${word}\\b`).test(rest));
     lines[at] = `import { ${used.join(", ")} } from "bun:test";`;
   }
+  // A helper of Bun's own tests takes them so. One such file cost its neighbours node:vm's runInContext for three hours, and no drawn file had it.
+  if (project.chance(10)) {
+    const at = lines.findIndex(line => line.endsWith(`from "bun:test";`));
+    lines[at] = lines[at].replace(/^import (\{.*\}) from "bun:test";$/, `const $1 = Bun.jest(import.meta.path);`);
+  }
   project.files.set(name, lines.join("\n") + "\n");
 }
 
@@ -1905,7 +1959,25 @@ function scatter(project: Project) {
   }
 }
 
+/** A drawn file that does not parse fails to load in plain and compiled alike: the two runs agree, and every test of the file tests nothing. Only the files that are broken on purpose may. */
 function draw(seed: string) {
+  const project = drawFiles(seed);
+  for (const [name, text] of project.files) {
+    const loader =
+      /\.(tsx|jsx)$/.exec(name)?.[1] ?? (/\.[cm]?ts$/.test(name) ? "ts" : /\.[cm]?js$/.test(name) ? "js" : "");
+    if (!loader || text.includes("const broken = ;")) continue;
+    try {
+      new Bun.Transpiler({ loader: loader as "js" }).transformSync(text);
+    } catch (error: any) {
+      throw new Error(
+        `the generator wrote a file that does not parse: ${name} of the project ${seed}: ${String(error?.errors?.[0]?.message ?? error?.message ?? error).slice(0, 120)}`,
+      );
+    }
+  }
+  return project;
+}
+
+function drawFiles(seed: string) {
   const project = new Project(seed);
   writeHelpers(project);
   project.graph = writeGraph(project);
@@ -1916,6 +1988,24 @@ function draw(seed: string) {
     const files = project.chance(25) ? 17 + project.below(8) : 2 + project.below(5);
     for (let index = 0; index < files; index++) writeTestFile(project, `file${index}.${project.pick(testFileEndings)}`);
     project.onlyKind = "";
+    scatter(project);
+    return project;
+  }
+  // What one test does widens what the build holds for the whole program, and covers a fault of another: one eval() anywhere admits node:vm's runInContext everywhere, one require of a module gives it a state of its own.
+  // A project of fifty kinds never shows such a fault. A quarter of the projects are sparse: two or three kinds in all their files, and none of the files that every other project has.
+  if (options.sparse || (!options.pure && options.only === "" && project.chance(25))) {
+    const left = options.without.split(",");
+    const kinds = new Set<string>();
+    // With --only there may be fewer kinds to choose from than a sparse project takes.
+    const allowed = options.only === "" ? 3 : options.only.split(",").filter(kind => !left.includes(kind)).length;
+    for (const most = Math.min(2 + project.below(2), allowed); kinds.size < most; ) {
+      const kind = drawAnyTest(project, false).kind;
+      if (!left.includes(kind) && (options.only === "" || options.only.split(",").includes(kind))) kinds.add(kind);
+    }
+    project.sparse = [...kinds];
+    const files = project.chance(15) ? 17 + project.below(8) : 2 + project.below(4);
+    for (let index = 0; index < files; index++) writeTestFile(project, `file${index}.${project.pick(testFileEndings)}`);
+    project.sparse = [];
     scatter(project);
     return project;
   }
@@ -1981,6 +2071,8 @@ type Ended = {
   seen: Map<string, string>;
 };
 
+if ((options.reduce || options.project) && options.words.includes(":drawn"))
+  throw new Error("--words: say the number that the report of the find says");
 const wordsOfTheRun: Record<string, string> = options.words ? { BUN_DEBUG_TEST_AOT_WORDS: options.words } : {};
 
 function runTests(
@@ -2001,7 +2093,7 @@ function runTests(
     env: { ...process.env, SEEN_IN: seenIn, BUN_ENABLE_CRASH_REPORTING: "0", NO_COLOR: "1", LEFT_BEHIND: "", ...more },
     stdout: "pipe",
     stderr: "pipe",
-    timeout: 120_000,
+    timeout: Number(options["ends-within"]) * 1000,
     killSignal: "SIGKILL",
   });
   const cases = new Map<string, string>();
@@ -2040,9 +2132,27 @@ function withoutKnown(lines: string[]) {
 }
 
 /** The first thing in which two runs differ: [the kind of the difference, the kind of the test, the words]. */
+/** The thing at which a test that touches things of the realm parts from plain: the first note of the test that the other run lacks or has otherwise. */
+function findThingOfRealm(key: string, plain: Ended, other: Ended) {
+  const [file, , test] = key.split(" | ");
+  const notesOf = (run: Ended) => {
+    const all: string[] = JSON.parse(run.seen.get(file.trim().split("/").at(-1) + ".json") ?? "[]");
+    const from = all.indexOf((test ?? "").trim() + ": ");
+    if (from < 0) return [];
+    const rest = all.slice(from + 1);
+    const to = rest.findIndex(line => /^[^:]+ \d+: $/.test(line));
+    return to < 0 ? rest : rest.slice(0, to);
+  };
+  const [ours, theirs] = [notesOf(plain), notesOf(other)];
+  return /^([^:]+): /
+    .exec(ours.find((line, index) => line !== theirs[index]) ?? "")?.[1]
+    ?.replace(/[^a-zA-Z0-9.$ ]/g, " ");
+}
+
 function difference(plain: Ended, other: Ended): [string, string, string] | undefined {
   const kindOf = (key: string) => (/\| ([^|]*?) \d+$/.exec(key)?.[1] ?? key.split(" | ").at(-1)!).trim();
-  if (other.timedOut && !plain.timedOut) return ["never ends", "", "the run was ended behind 120 s"];
+  if (other.timedOut && !plain.timedOut)
+    return ["never ends", "", `the run was ended behind ${options["ends-within"]} s`];
   const crash =
     /^.*(panic|Segmentation fault|ASSERTION FAILED|Illegal instruction|AOT validation|AOT: |which the compiler assumed).*$/m.exec(
       other.stderr,
@@ -2053,7 +2163,10 @@ function difference(plain: Ended, other: Ended): [string, string, string] | unde
     if (plain.cases.get(key) !== other.cases.get(key) && !isKnown(kindOf(key)))
       return [
         "a test ends otherwise",
-        kindOf(key),
+        // Filed by the thing, as where a test sees otherwise: a server that stalls on a busy machine would else stand for all 185.
+        (kindOf(key) === "things of the realm are touched" &&
+          findThingOfRealm(key, plain, other)?.replace(/^/, "the realm's ")) ||
+          kindOf(key),
         `${key}: plain ${plain.cases.get(key) ?? "is not run"}, the other ${other.cases.get(key) ?? "is not run"}`,
       ];
   for (const name of [...new Set([...plain.seen.keys(), ...other.seen.keys()])].sort()) {
@@ -2226,6 +2339,19 @@ for (let number = 0; Date.now() < until && (options.projects === "0" || number <
     add("plain bun test answers itself otherwise");
     continue;
   }
+  // A compiled run answers as plain does whatever the order in which flow's rules run: a layer once lost a function's body by that order alone. A word that does not begin with TestRun goes to the engine; the number of a schedule is a byte.
+  const schedule = project.chance(30)
+    ? project.pick([
+        "testing=DelayFlowRules",
+        "testing=DelayOtherFlowRules",
+        `testing=DelayFlowRules:${1 + project.below(255)}`,
+        `testing=DelayFlowRules:${1 + project.below(20)}`,
+      ])
+    : "";
+  // How many test files share a piece decides what one build sees together: an export behind a computed name lost its body in every run where two test files or more stood in one piece, and in some runs with pieces of one.
+  const form = options.words.replace("TestRunPartFiles:drawn", `TestRunPartFiles:${project.pick([1, 2, 3, 16])}`);
+  const wordsOfTheRun: Record<string, string> =
+    form || schedule ? { BUN_DEBUG_TEST_AOT_WORDS: [form, schedule].filter(Boolean).join(",") } : {};
   const compiled = runTests(options.bun, root, ["--aot", ...flags], "compiled", wordsOfTheRun);
   let found = difference(plain, compiled);
   // Once more with the checks of the run time on: they end a worker where something that the compiler relies on does not hold, also where the answer is right.
@@ -2264,7 +2390,7 @@ for (let number = 0; Date.now() < until && (options.projects === "0" || number <
       cpSync(options.work, into, { recursive: true });
       writeFileSync(
         join(into, "report.txt"),
-        `${what}${kind ? ": " + kind : ""}\n${words}\n${options.bun} test --aot ${flags.join(" ")}   (in project/; plain: the same without --aot)\nseed ${seed}\nexit codes: plain ${plain.exitCode}, compiled ${compiled.exitCode} ${compiled.signal ?? ""}\n`,
+        `${what}${kind ? ": " + kind : ""}\n${words}\n${options.bun} test --aot ${flags.join(" ")}   (in project/; plain: the same without --aot)\nBUN_DEBUG_TEST_AOT_WORDS=${wordsOfTheRun.BUN_DEBUG_TEST_AOT_WORDS ?? ""}\nseed ${seed}\nexit codes: plain ${plain.exitCode}, compiled ${compiled.exitCode} ${compiled.signal ?? ""}\n`,
       );
       writeFileSync(join(into, "plain.stderr"), plain.stderr);
       writeFileSync(join(into, "compiled.stderr"), compiled.stderr);

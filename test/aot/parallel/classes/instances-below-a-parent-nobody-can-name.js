@@ -1,8 +1,8 @@
-// The parent of these classes is one of two, so their layouts have no field for what the parent declares, and each private name of the parent is put beside the fields when an instance is made.
-// The sites stand in the parent's own constructor, where the compiler takes an instance of another class for rare. Six definitions and a store an instance went to the run time once: 1,400,000 calls here.
-// What is left are the first instances of each class, the instances for which an allocator had no cell at hand, and all 50,000 of C, two names each: they are not served yet.
-// COUNT: operation:operationAOTPrivateDefine <= 101000
-// COUNT: operation:operationAOTPrivateSet <= 200
+// The parent of these classes is one of two, so their layouts have a field for each private name of either parent, and the constructor of the parent that a class has fills its own.
+// The sites stand in the parent's own constructor. Six definitions and a store an instance went to the run time once: 1,400,000 calls here.
+// The two names that C declares itself are stores too, behind a test that their slots are empty: what super() answers may have them already. They were 100,000 calls more.
+// COUNT: operation:operationAOTPrivateDefine <= 100
+// COUNT: operation:operationAOTPrivateSet <= 10
 class Node {
   #raw;
   #text;

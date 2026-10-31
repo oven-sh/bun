@@ -338,4 +338,6 @@ pub(crate) struct Diagnostics {
     files_nested_too_deeply: Vec<Vec<u8>>,
     /// Modules that fail when they load, by file and by what the checker says of them: `drop_second_error_of_import`.
     missing_at_load: FxHashSet<(Vec<u8>, Vec<u8>)>,
+    /// `BuildFailed::errors_with_bun_types`, in no order.
+    places_of_type_errors: Option<Vec<(Vec<u8>, u32)>>,
 }

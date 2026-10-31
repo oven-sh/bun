@@ -492,25 +492,25 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f10
 # -- generated: f0 two three bytes singles masked
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 50, patchpoints: 41
+# CHECK-NEXT: instructions: 44, patchpoints: 40
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="two"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 93, patchpoints: 39, rare instructions: 105
-# CHECK-NEXT: end of function f14
+# CHECK-NEXT: instructions: 95, patchpoints: 39, rare instructions: 105
+# CHECK-NEXT: end of function f1
 # CHECK-LABEL: function {{*}}name="three"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 136, patchpoints: 58, rare instructions: 133
-# CHECK-NEXT: end of function f15
+# CHECK-NEXT: instructions: 138, patchpoints: 58, rare instructions: 133
+# CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="bytes"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 93, patchpoints: 39, rare instructions: 105
-# CHECK-NEXT: end of function f16
+# CHECK-NEXT: instructions: 95, patchpoints: 39, rare instructions: 105
+# CHECK-NEXT: end of function f3
 # CHECK-LABEL: function {{*}}name="singles"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 113, patchpoints: 24, rare instructions: 221
-# CHECK-NEXT: end of function f17
+# CHECK-NEXT: instructions: 114, patchpoints: 24, rare instructions: 219
+# CHECK-NEXT: end of function f5
 # CHECK-LABEL: function {{*}}name="masked"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 152, patchpoints: 41, rare instructions: 104
-# CHECK-NEXT: end of function f18
+# CHECK-NEXT: instructions: 152, patchpoints: 40, rare instructions: 103
+# CHECK-NEXT: end of function f6

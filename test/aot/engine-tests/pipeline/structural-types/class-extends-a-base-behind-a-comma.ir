@@ -342,7 +342,7 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: b0(v0: anything, v1: undefined):
 # CHECK-NEXT: v2: f3 = AssumeType v0 provenType=f3
 # CHECK-NEXT: v3: object = GetConstructPrototype v2 layout=L0
-# CHECK-NEXT: v4: object ~ L0|L1 = NewObject v3 layout=L0 allocationSite=4 allocationClass=0
+# CHECK-NEXT: v4: object ~ L1 = NewObject v3 layout=L0 allocationSite=4 allocationClass=0
 # CHECK-NEXT: v5: L1 = AssumeType v4 provenType=L1
 # CHECK-NEXT: v6: 1 = Integer integer=1
 # CHECK-NEXT: PutSlotOrAdd v5, -, v6 key="x" receivers=[L1] level=Proven accessSite=48

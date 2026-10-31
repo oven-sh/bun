@@ -119,6 +119,25 @@ test.skipIf(!isLinux)("a compiled run writes by how much each file's worker grew
       1,
       startOf(`Bun.spawnSync([process.execPath, "-e", "Buffer.alloc(700 << 20, 1)"])`),
     ),
+    // Those that run at once count together, also where each stays smaller than the worker.
+    "grows-and-starts-four-at-once.test.js": fileThatTakes(
+      "grows-and-starts-four-at-once",
+      1,
+      // Each says when it holds its memory, and none ends before all have held theirs for a second, however busy the machine is.
+      `globalThis.kept = Buffer.alloc(300 << 20, 1);
+       const { existsSync, writeFileSync } = require("node:fs");
+       const code = \`globalThis.kept = Buffer.alloc(150 << 20, 1);
+         require("node:fs").writeFileSync(process.env.HOLDS, "");
+         while (!require("node:fs").existsSync(process.env.MAY_END)) await Bun.sleep(20);\`;
+       const holds = [1, 2, 3, 4].map(k => process.env.TRAIL + ".holds" + k);
+       const mayEnd = process.env.TRAIL + ".may-end";
+       const children = holds.map(HOLDS =>
+         Bun.spawn([process.execPath, "-e", code], { env: { ...process.env, HOLDS, MAY_END: mayEnd } }));
+       while (!holds.every(path => existsSync(path))) await Bun.sleep(20);
+       await Bun.sleep(1000);
+       writeFileSync(mayEnd, "");
+       await Promise.all(children.map(child => child.exited));`,
+    ),
     // A small child says the size of the worker it came from.
     "grows-and-starts-small.test.js": fileThatTakes(
       "grows-and-starts-small",
@@ -127,7 +146,7 @@ test.skipIf(!isLinux)("a compiled run writes by how much each file's worker grew
     ),
   });
   const env = { ...bunEnv, TRAIL: join(String(dir), "trail.txt") };
-  const flags = ["--isolate", "--parallel=2", "--timings=timings.json", "--update-timings", "."];
+  const flags = ["--isolate", "--parallel=2", "--timeout=60000", "--timings=timings.json", "--update-timings", "."];
   expect((await run([bunExe(), "test", "--aot", ...flags], String(dir), env)).exitCode).toBe(0);
   const written = JSON.parse(readFileSync(join(String(dir), "timings.json"), "utf8"));
   expect(Object.keys(written)).toEqual(["version", "files", "memory"]);
@@ -136,6 +155,7 @@ test.skipIf(!isLinux)("a compiled run writes by how much each file's worker grew
   expect(written.memory["starts-large.test.js"]).toBeGreaterThan(680);
   expect(written.memory["starts-one-that-starts-large.test.js"]).toBeGreaterThan(680);
   expect(written.memory["grows-and-starts-small.test.js"]).toBeWithin(280, 500);
+  expect(written.memory["grows-and-starts-four-at-once.test.js"]).toBeGreaterThan(300 + 4 * 140);
   // A run that is not compiled measures nothing and keeps what the table says.
   expect((await run([bunExe(), "test", ...flags], String(dir), env)).exitCode).toBe(0);
   expect(JSON.parse(readFileSync(join(String(dir), "timings.json"), "utf8")).memory).toEqual(written.memory);

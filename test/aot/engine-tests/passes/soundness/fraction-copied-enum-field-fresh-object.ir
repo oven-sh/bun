@@ -289,85 +289,84 @@ runtimefunction id=FunctionPrototypeCall function=f3
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=811 module=m0}, {callee=f1 callPosition=794 module=m0}, {callee=f2 callPosition=799 module=m0}, {callee=f6 callPosition=515 parent=3 module=m0}, {callee=f1 callPosition=777 module=m0}, {callee=f6 callPosition=601 parent=3 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: anything = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
-# CHECK-NEXT: v1: anything ~ builtin(ProcessArgv) = Upcast v0 castType=anything
-# CHECK-NEXT: v2: anything = PropGet v1 key="length" accessSite=1
-# CHECK-NEXT: v3: undefined|number = AssumeType v2 provenType=undefined|number
-# CHECK-NEXT: v4: 99 = Integer integer=99
-# CHECK-NEXT: v5: boolean = Greater v3, v4
-# CHECK-NEXT: Branch v5 -> taken b1(), notTaken b2()
+# CHECK-NEXT: v0: Array<string> = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
+# CHECK-NEXT: v1: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v2: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0 accessSite=1
+# CHECK-NEXT: v3: 99 = Integer integer=99
+# CHECK-NEXT: v4: boolean = Greater v2, v3
+# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v6: "a" = String string="a"
-# CHECK-NEXT: Jump -> next b3(v6)
+# CHECK-NEXT: v5: "a" = String string="a"
+# CHECK-NEXT: Jump -> next b3(v5)
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v7: "k" = String string="k"
-# CHECK-NEXT: Jump -> next b3(v7)
-# CHECK-NEXT: b3(v8: "a"|"k"):
-# CHECK-NEXT: v9: 0 = Integer
-# CHECK-NEXT: v10: 2147483648 = Integer integer=2147483648
-# CHECK-NEXT: v11: -2147483649 = Integer integer=-2147483649
-# CHECK-NEXT: v12: fractional = Double number=0.5
-# CHECK-NEXT: v13: fractional = Double number=5e-324
-# CHECK-NEXT: v14: 1 = Integer integer=1
-# CHECK-NEXT: v15: L0 = NewObject -, v14, v9 layout=L0 fields=[0, 2] allocationSite=3 allocationClass=0
-# CHECK-NEXT: v16: L0 = FinishObject v15
-# CHECK-NEXT: v17: string = CallBuiltin -, v9 overload=String/0 accessSite=16 @502:5 tail
-# CHECK-NEXT: v18: 1 = Integer integer=1
-# CHECK-NEXT: v19: boolean = TypeTest v8 testedType="a"
-# CHECK-NEXT: Branch v19 -> taken b4(v18), notTaken b4(v9)
-# CHECK-NEXT: b4(v20: int[0, 1]):
-# CHECK-NEXT: v21: string = CallBuiltin -, v20 overload=String/0 accessSite=16 @502:2 tail
-# CHECK-NEXT: v22: boolean = CallBuiltin v16, v8 overload=ObjectPrototypeHasOwnProperty/0 accessSite=11
-# CHECK-NEXT: v23: string = CallBuiltin -, v22 overload=String/0 accessSite=16 @502:1 tail
-# CHECK-NEXT: v24: undefined = CallBuiltin -, v17, v21, v23 overload=ConsoleLog/0 accessSite=13
-# CHECK-NEXT: v25: 1 = Integer integer=1
-# CHECK-NEXT: v26: L0 = NewObject -, v25, v10 layout=L0 fields=[0, 2] allocationSite=3 allocationClass=0
-# CHECK-NEXT: v27: L0 = FinishObject v26
-# CHECK-NEXT: v28: string = CallBuiltin -, v10 overload=String/0 accessSite=16 @502:5 tail
-# CHECK-NEXT: v29: 1 = Integer integer=1
-# CHECK-NEXT: v30: boolean = TypeTest v8 testedType="a"
-# CHECK-NEXT: Branch v30 -> taken b5(v29), notTaken b5(v10)
-# CHECK-NEXT: b5(v31: int[1, 2147483648] ~ int[1, 2147483647]):
-# CHECK-NEXT: v32: string = CallBuiltin -, v31 overload=String/0 accessSite=16 @502:2 tail
-# CHECK-NEXT: v33: boolean = CallBuiltin v27, v8 overload=ObjectPrototypeHasOwnProperty/0 accessSite=11
-# CHECK-NEXT: v34: string = CallBuiltin -, v33 overload=String/0 accessSite=16 @502:1 tail
-# CHECK-NEXT: v35: undefined = CallBuiltin -, v28, v32, v34 overload=ConsoleLog/0 accessSite=13
-# CHECK-NEXT: v36: 1 = Integer integer=1
-# CHECK-NEXT: v37: L0 = NewObject -, v36, v11 layout=L0 fields=[0, 2] allocationSite=3 allocationClass=0
-# CHECK-NEXT: v38: L0 = FinishObject v37
-# CHECK-NEXT: v39: string = CallBuiltin -, v11 overload=String/0 accessSite=16 @502:5 tail
-# CHECK-NEXT: v40: 1 = Integer integer=1
-# CHECK-NEXT: v41: boolean = TypeTest v8 testedType="a"
-# CHECK-NEXT: Branch v41 -> taken b6(v40), notTaken b6(v11)
-# CHECK-NEXT: b6(v42: int[-2147483649, 1] ~ int[-2147483648, 1]):
-# CHECK-NEXT: v43: string = CallBuiltin -, v42 overload=String/0 accessSite=16 @502:2 tail
-# CHECK-NEXT: v44: boolean = CallBuiltin v38, v8 overload=ObjectPrototypeHasOwnProperty/0 accessSite=11
-# CHECK-NEXT: v45: string = CallBuiltin -, v44 overload=String/0 accessSite=16 @502:1 tail
-# CHECK-NEXT: v46: undefined = CallBuiltin -, v39, v43, v45 overload=ConsoleLog/0 accessSite=13
-# CHECK-NEXT: v47: 1 = Integer integer=1
-# CHECK-NEXT: v48: L0 = NewObject -, v47, v12 layout=L0 fields=[0, 2] allocationSite=3 allocationClass=0
-# CHECK-NEXT: v49: L0 = FinishObject v48
-# CHECK-NEXT: v50: string = CallBuiltin -, v12 overload=String/0 accessSite=16 @502:5 tail
-# CHECK-NEXT: v51: 1 = Integer integer=1
-# CHECK-NEXT: v52: boolean = TypeTest v8 testedType="a"
-# CHECK-NEXT: Branch v52 -> taken b7(v51), notTaken b7(v12)
-# CHECK-NEXT: b7(v53: 1|fractional ~ 1):
-# CHECK-NEXT: v54: string = CallBuiltin -, v53 overload=String/0 accessSite=16 @502:2 tail
-# CHECK-NEXT: v55: boolean = CallBuiltin v49, v8 overload=ObjectPrototypeHasOwnProperty/0 accessSite=11
-# CHECK-NEXT: v56: string = CallBuiltin -, v55 overload=String/0 accessSite=16 @502:1 tail
-# CHECK-NEXT: v57: undefined = CallBuiltin -, v50, v54, v56 overload=ConsoleLog/0 accessSite=13
-# CHECK-NEXT: v58: 1 = Integer integer=1
-# CHECK-NEXT: v59: L0 = NewObject -, v58, v13 layout=L0 fields=[0, 2] allocationSite=3 allocationClass=0
-# CHECK-NEXT: v60: L0 = FinishObject v59
-# CHECK-NEXT: v61: string = CallBuiltin -, v13 overload=String/0 accessSite=16 @502:5 tail
-# CHECK-NEXT: v62: 1 = Integer integer=1
-# CHECK-NEXT: v63: boolean = TypeTest v8 testedType="a"
-# CHECK-NEXT: Branch v63 -> taken b8(v62), notTaken b8(v13)
-# CHECK-NEXT: b8(v64: 1|fractional ~ 1):
-# CHECK-NEXT: v65: string = CallBuiltin -, v64 overload=String/0 accessSite=16 @502:2 tail
-# CHECK-NEXT: v66: boolean = CallBuiltin v60, v8 overload=ObjectPrototypeHasOwnProperty/0 accessSite=11
-# CHECK-NEXT: v67: string = CallBuiltin -, v66 overload=String/0 accessSite=16 @502:1 tail
-# CHECK-NEXT: v68: undefined = CallBuiltin -, v61, v65, v67 overload=ConsoleLog/0 accessSite=13
-# CHECK-NEXT: v69: undefined = Undefined
-# CHECK-NEXT: Return v69
+# CHECK-NEXT: v6: "k" = String string="k"
+# CHECK-NEXT: Jump -> next b3(v6)
+# CHECK-NEXT: b3(v7: "a"|"k"):
+# CHECK-NEXT: v8: 0 = Integer
+# CHECK-NEXT: v9: 2147483648 = Integer integer=2147483648
+# CHECK-NEXT: v10: -2147483649 = Integer integer=-2147483649
+# CHECK-NEXT: v11: fractional = Double number=0.5
+# CHECK-NEXT: v12: fractional = Double number=5e-324
+# CHECK-NEXT: v13: 1 = Integer integer=1
+# CHECK-NEXT: v14: L0 = NewObject -, v13, v8 layout=L0 fields=[0, 2] allocationSite=3 allocationClass=0
+# CHECK-NEXT: v15: L0 = FinishObject v14
+# CHECK-NEXT: v16: string = CallBuiltin -, v8 overload=String/0 accessSite=16 @502:5 tail
+# CHECK-NEXT: v17: 1 = Integer integer=1
+# CHECK-NEXT: v18: boolean = TypeTest v7 testedType="a"
+# CHECK-NEXT: Branch v18 -> taken b4(v17), notTaken b4(v8)
+# CHECK-NEXT: b4(v19: int[0, 1]):
+# CHECK-NEXT: v20: string = CallBuiltin -, v19 overload=String/0 accessSite=16 @502:2 tail
+# CHECK-NEXT: v21: boolean = CallBuiltin v15, v7 overload=ObjectPrototypeHasOwnProperty/0 accessSite=11
+# CHECK-NEXT: v22: string = CallBuiltin -, v21 overload=String/0 accessSite=16 @502:1 tail
+# CHECK-NEXT: v23: undefined = CallBuiltin -, v16, v20, v22 overload=ConsoleLog/0 accessSite=13
+# CHECK-NEXT: v24: 1 = Integer integer=1
+# CHECK-NEXT: v25: L0 = NewObject -, v24, v9 layout=L0 fields=[0, 2] allocationSite=3 allocationClass=0
+# CHECK-NEXT: v26: L0 = FinishObject v25
+# CHECK-NEXT: v27: string = CallBuiltin -, v9 overload=String/0 accessSite=16 @502:5 tail
+# CHECK-NEXT: v28: 1 = Integer integer=1
+# CHECK-NEXT: v29: boolean = TypeTest v7 testedType="a"
+# CHECK-NEXT: Branch v29 -> taken b5(v28), notTaken b5(v9)
+# CHECK-NEXT: b5(v30: int[1, 2147483648] ~ int[1, 2147483647]):
+# CHECK-NEXT: v31: string = CallBuiltin -, v30 overload=String/0 accessSite=16 @502:2 tail
+# CHECK-NEXT: v32: boolean = CallBuiltin v26, v7 overload=ObjectPrototypeHasOwnProperty/0 accessSite=11
+# CHECK-NEXT: v33: string = CallBuiltin -, v32 overload=String/0 accessSite=16 @502:1 tail
+# CHECK-NEXT: v34: undefined = CallBuiltin -, v27, v31, v33 overload=ConsoleLog/0 accessSite=13
+# CHECK-NEXT: v35: 1 = Integer integer=1
+# CHECK-NEXT: v36: L0 = NewObject -, v35, v10 layout=L0 fields=[0, 2] allocationSite=3 allocationClass=0
+# CHECK-NEXT: v37: L0 = FinishObject v36
+# CHECK-NEXT: v38: string = CallBuiltin -, v10 overload=String/0 accessSite=16 @502:5 tail
+# CHECK-NEXT: v39: 1 = Integer integer=1
+# CHECK-NEXT: v40: boolean = TypeTest v7 testedType="a"
+# CHECK-NEXT: Branch v40 -> taken b6(v39), notTaken b6(v10)
+# CHECK-NEXT: b6(v41: int[-2147483649, 1] ~ int[-2147483648, 1]):
+# CHECK-NEXT: v42: string = CallBuiltin -, v41 overload=String/0 accessSite=16 @502:2 tail
+# CHECK-NEXT: v43: boolean = CallBuiltin v37, v7 overload=ObjectPrototypeHasOwnProperty/0 accessSite=11
+# CHECK-NEXT: v44: string = CallBuiltin -, v43 overload=String/0 accessSite=16 @502:1 tail
+# CHECK-NEXT: v45: undefined = CallBuiltin -, v38, v42, v44 overload=ConsoleLog/0 accessSite=13
+# CHECK-NEXT: v46: 1 = Integer integer=1
+# CHECK-NEXT: v47: L0 = NewObject -, v46, v11 layout=L0 fields=[0, 2] allocationSite=3 allocationClass=0
+# CHECK-NEXT: v48: L0 = FinishObject v47
+# CHECK-NEXT: v49: string = CallBuiltin -, v11 overload=String/0 accessSite=16 @502:5 tail
+# CHECK-NEXT: v50: 1 = Integer integer=1
+# CHECK-NEXT: v51: boolean = TypeTest v7 testedType="a"
+# CHECK-NEXT: Branch v51 -> taken b7(v50), notTaken b7(v11)
+# CHECK-NEXT: b7(v52: 1|fractional ~ 1):
+# CHECK-NEXT: v53: string = CallBuiltin -, v52 overload=String/0 accessSite=16 @502:2 tail
+# CHECK-NEXT: v54: boolean = CallBuiltin v48, v7 overload=ObjectPrototypeHasOwnProperty/0 accessSite=11
+# CHECK-NEXT: v55: string = CallBuiltin -, v54 overload=String/0 accessSite=16 @502:1 tail
+# CHECK-NEXT: v56: undefined = CallBuiltin -, v49, v53, v55 overload=ConsoleLog/0 accessSite=13
+# CHECK-NEXT: v57: 1 = Integer integer=1
+# CHECK-NEXT: v58: L0 = NewObject -, v57, v12 layout=L0 fields=[0, 2] allocationSite=3 allocationClass=0
+# CHECK-NEXT: v59: L0 = FinishObject v58
+# CHECK-NEXT: v60: string = CallBuiltin -, v12 overload=String/0 accessSite=16 @502:5 tail
+# CHECK-NEXT: v61: 1 = Integer integer=1
+# CHECK-NEXT: v62: boolean = TypeTest v7 testedType="a"
+# CHECK-NEXT: Branch v62 -> taken b8(v61), notTaken b8(v12)
+# CHECK-NEXT: b8(v63: 1|fractional ~ 1):
+# CHECK-NEXT: v64: string = CallBuiltin -, v63 overload=String/0 accessSite=16 @502:2 tail
+# CHECK-NEXT: v65: boolean = CallBuiltin v59, v7 overload=ObjectPrototypeHasOwnProperty/0 accessSite=11
+# CHECK-NEXT: v66: string = CallBuiltin -, v65 overload=String/0 accessSite=16 @502:1 tail
+# CHECK-NEXT: v67: undefined = CallBuiltin -, v60, v64, v66 overload=ConsoleLog/0 accessSite=13
+# CHECK-NEXT: v68: undefined = Undefined
+# CHECK-NEXT: Return v68
 # CHECK-NEXT: }

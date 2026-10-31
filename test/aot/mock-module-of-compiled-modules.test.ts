@@ -565,3 +565,22 @@ test("require() answers a mocked CommonJS file with the mock's object", async ()
     "./preload.ts",
   );
 });
+
+test("what a mock leaves out of a module that has not loaded reads as undefined", async () => {
+  await expectCompiledToRunAsPlain({
+    "late.mjs": `
+      console.log("the real body runs");
+      export const given = () => "real";
+      export const leftOut = () => "real";
+      export let count = 1;
+      export class Thing {}
+      export default "real default";`,
+    "one.test.ts": `
+      import { mock, test } from "bun:test";
+      mock.module("./late.mjs", () => ({ given: () => "fake" }));
+      test("read through the namespace", async () => {
+        const late: any = await import("./late.mjs");
+        console.log(late.given(), typeof late.leftOut, typeof late.count, typeof late.Thing, typeof late.default, late.leftOut?.() ?? "nothing");
+      });`,
+  });
+});

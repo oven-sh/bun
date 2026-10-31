@@ -2,6 +2,7 @@
   "node": {
     "codeBytes": 4619588,
     "bytesAValue": 33.08,
+    "engineRuns": 1,
     "tests": {
       "executed": 10569,
       "failed": 214
@@ -71,6 +72,7 @@
   "express": {
     "codeBytes": 7791720,
     "bytesAValue": 33.3,
+    "engineRuns": 1,
     "tests": {
       "executed": 14131,
       "failed": 751
@@ -147,6 +149,7 @@
   "hono": {
     "codeBytes": 1744968,
     "bytesAValue": 24.3,
+    "engineRuns": 1,
     "tests": {
       "executed": 4936,
       "failed": 191
@@ -197,6 +200,7 @@
   "fastify": {
     "codeBytes": 11082392,
     "bytesAValue": 34.48,
+    "engineRuns": 1,
     "tests": {
       "executed": 14791,
       "failed": 559
@@ -296,6 +300,7 @@
   "elysia": {
     "codeBytes": 5893820,
     "bytesAValue": 26.43,
+    "engineRuns": 1,
     "tests": {
       "executed": 4313,
       "failed": 265
@@ -407,6 +412,7 @@
   "typescript": {
     "codeBytes": 27639808,
     "bytesAValue": 32.76,
+    "engineRuns": 1,
     "tests": {
       "executed": 294714,
       "failed": 61006
@@ -491,6 +497,7 @@
   "bun": {
     "codeBytes": 1580704,
     "bytesAValue": 23.99,
+    "engineRuns": 1,
     "tests": {
       "executed": 4063,
       "failed": 142
@@ -538,6 +545,7 @@
   "koa": {
     "codeBytes": 6860920,
     "bytesAValue": 29.36,
+    "engineRuns": 1,
     "tests": {
       "executed": 21537.02,
       "failed": 724.01

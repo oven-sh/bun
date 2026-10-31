@@ -879,74 +879,51 @@ runtimefunction id=FunctionPrototypeCall function=f16
 # CHECK: module=m0 position=230 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L6}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f1 parameterMap=[{original=0}]} inlineFrames=[{}, {callee=f8 callPosition=364 module=m0}] {
 # CHECK-NEXT: b0(v0: L6):
 # CHECK-NEXT: v1: 3 = Integer integer=3
-# CHECK-NEXT: PutModuleVariable v0 variable=g1
-# CHECK-NEXT: v3: string = GetModuleVariable variable=g0
-# CHECK-NEXT: v4: L6 = Upcast v0 castType=anything
-# CHECK-NEXT: v5: L6 = AssumeType v4 provenType=int|L6
-# CHECK-NEXT: v6: "," = String string=","
-# CHECK-NEXT: v7: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: StringBuilderAppend v7, v3
-# CHECK-NEXT: v9: string = Add v5, v6
-# CHECK-NEXT: v10: int[0, 2147483647] = StringBuilderLength v7
-# CHECK-NEXT: v11: 0 = Integer
-# CHECK-NEXT: v12: boolean = StrictEq v10, v11
-# CHECK-NEXT: Branch v12 -> taken b1(), notTaken b2()
-# CHECK-NEXT: b1():
-# CHECK-NEXT: StringBuilderDiscard v7
-# CHECK-NEXT: Jump -> next b3(v9)
-# CHECK-NEXT: b2():
-# CHECK-NEXT: StringBuilderAppend v7, v9
-# CHECK-NEXT: v15: string = StringBuilderFinish v7
-# CHECK-NEXT: Jump -> next b3(v15)
-# CHECK-NEXT: b3(v16: string):
-# CHECK-NEXT: PutModuleVariable v16 variable=g0
-# CHECK-NEXT: v18: fact = Entered function=f8
-# CHECK-NEXT: v19: anything ~ i32 = GetModuleVariable fact=v18 variable=g1
-# CHECK-NEXT: v20: int|L6 ~ i32 = AssumeType v19 provenType=int|L6
-# CHECK-NEXT: v21: -1 = Integer integer=-1
-# CHECK-NEXT: v22: boolean ~ true = TypeTest v20 testedType=i32
-# CHECK-NEXT: Branch v22 -> taken b4(| 0), notTaken b5()
-# CHECK-NEXT: b4(v23: i32):
-# CHECK-NEXT: v24: i32 = BitAnd v23, v21
-# CHECK-NEXT: Jump -> next b6(v24)
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v25: i32 = BitAnd v20, v21
-# CHECK-NEXT: Jump -> next b6(v25)
-# CHECK-NEXT: b6(v26: i32):
-# CHECK-NEXT: PutModuleVariable v26 variable=g1
-# CHECK-NEXT: v28: string = GetModuleVariable variable=g0
-# CHECK-NEXT: v29: "," = String string=","
-# CHECK-NEXT: v30: string = Strcat v28, v26, v29
-# CHECK-NEXT: PutModuleVariable v30 variable=g0
-# CHECK-NEXT: v32: 1 = Integer integer=1
-# CHECK-NEXT: v33: string = Upcast v30 castType=string
-# CHECK-NEXT: v34: i32 = Upcast v26 castType=anything
-# CHECK-NEXT: v35: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: StringBuilderAppend v35, v33
-# CHECK-NEXT: Jump -> next b7(v32, v34)
-# CHECK-NEXT: b7(v37: int[1, 3], v38: i32):
+# CHECK-NEXT: v2: string = GetModuleVariable variable=g0
+# CHECK-NEXT: v3: L6 = Upcast v0 castType=anything
+# CHECK-NEXT: v4: L6 = AssumeType v3 provenType=int|L6
+# CHECK-NEXT: v5: "," = String string=","
+# CHECK-NEXT: v6: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v6, v2
+# CHECK-NEXT: v8: string = Add v4, v5
+# CHECK-NEXT: StringBuilderAppend v6, v8
+# CHECK-NEXT: v10: string = StringBuilderToString v6
+# CHECK-NEXT: PutModuleVariable v10 variable=g0
+# CHECK-NEXT: v12: fact = Specified
+# CHECK-NEXT: v13: L6 = AssumeType v3, v12 provenType=int|L6
+# CHECK-NEXT: v14: -1 = Integer integer=-1
+# CHECK-NEXT: v15: i32 = BitAnd v13, v14
+# CHECK-NEXT: v16: "," = String string=","
+# CHECK-NEXT: StringBuilderAppend v6, v15, v16
+# CHECK-NEXT: v18: string = StringBuilderFinish v6
+# CHECK-NEXT: PutModuleVariable v18 variable=g0
+# CHECK-NEXT: v20: 1 = Integer integer=1
+# CHECK-NEXT: v21: string = Upcast v18 castType=string
+# CHECK-NEXT: v22: i32 = Upcast v15 castType=anything
+# CHECK-NEXT: v23: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v23, v21
+# CHECK-NEXT: Jump -> next b1(v20, v22)
+# CHECK-NEXT: b1(v25: int[1, 3], v26: i32):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v40: boolean = Less v37, v1
-# CHECK-NEXT: Branch v40 -> taken b8(| 0), notTaken b9()
-# CHECK-NEXT: b8(v41: int[1, 2]):
-# CHECK-NEXT: v42: i32 = Upcast v38 castType=number
-# CHECK-NEXT: v43: "," = String string=","
-# CHECK-NEXT: StringBuilderAppend v35, v42, v43
-# CHECK-NEXT: v45: string = StringBuilderToString v35
-# CHECK-NEXT: PutModuleVariable v45 variable=g0
-# CHECK-NEXT: v47: -1 = Integer integer=-1
-# CHECK-NEXT: v48: i32 = BitAnd v38, v47
-# CHECK-NEXT: PutModuleVariable v48 variable=g1
-# CHECK-NEXT: v50: "," = String string=","
-# CHECK-NEXT: StringBuilderAppend v35, v48, v50
-# CHECK-NEXT: v52: string = StringBuilderToString v35
-# CHECK-NEXT: PutModuleVariable v52 variable=g0
-# CHECK-NEXT: v54: int[2, 3] = Increment v41
-# CHECK-NEXT: Jump -> next b7(v54, v48)
-# CHECK-NEXT: b9():
-# CHECK-NEXT: StringBuilderDiscard v35
-# CHECK-NEXT: v56: undefined = Undefined
-# CHECK-NEXT: Return v56
+# CHECK-NEXT: v28: boolean = Less v25, v1
+# CHECK-NEXT: Branch v28 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v29: int[1, 2]):
+# CHECK-NEXT: v30: "," = String string=","
+# CHECK-NEXT: StringBuilderAppend v23, v26, v30
+# CHECK-NEXT: v32: string = StringBuilderToString v23
+# CHECK-NEXT: PutModuleVariable v32 variable=g0
+# CHECK-NEXT: v34: -1 = Integer integer=-1
+# CHECK-NEXT: v35: i32 = BitAnd v26, v34
+# CHECK-NEXT: v36: "," = String string=","
+# CHECK-NEXT: StringBuilderAppend v23, v35, v36
+# CHECK-NEXT: v38: string = StringBuilderToString v23
+# CHECK-NEXT: PutModuleVariable v38 variable=g0
+# CHECK-NEXT: v40: int[2, 3] = Increment v29
+# CHECK-NEXT: Jump -> next b1(v40, v35)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: StringBuilderDiscard v23
+# CHECK-NEXT: v42: undefined = Undefined
+# CHECK-NEXT: Return v42
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="byAGetter"
 # CHECK: module=m0 position=436 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L6}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f2 parameterMap=[{original=0}]} inlineFrames=[{}, {callee=f9 callPosition=615 module=m0}] {
@@ -1072,148 +1049,101 @@ runtimefunction id=FunctionPrototypeCall function=f16
 # CHECK: module=m0 position=665 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L6}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f3 parameterMap=[{original=0}]} inlineFrames=[{}, {callee=f10 callPosition=807 module=m0}] {
 # CHECK-NEXT: b0(v0: L6):
 # CHECK-NEXT: v1: 3 = Integer integer=3
-# CHECK-NEXT: PutModuleVariable v0 variable=g3
-# CHECK-NEXT: v3: string = GetModuleVariable variable=g0
-# CHECK-NEXT: v4: L6 = Upcast v0 castType=anything
-# CHECK-NEXT: v5: L6 = Upcast v4 castType=anything
-# CHECK-NEXT: v6: L6 = AssumeType v5 provenType=undefined|int|L6
-# CHECK-NEXT: v7: "," = String string=","
-# CHECK-NEXT: v8: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: StringBuilderAppend v8, v3
-# CHECK-NEXT: v10: string = Add v6, v7
-# CHECK-NEXT: v11: int[0, 2147483647] = StringBuilderLength v8
-# CHECK-NEXT: v12: 0 = Integer
-# CHECK-NEXT: v13: boolean = StrictEq v11, v12
-# CHECK-NEXT: Branch v13 -> taken b1(), notTaken b2()
-# CHECK-NEXT: b1():
-# CHECK-NEXT: StringBuilderDiscard v8
-# CHECK-NEXT: Jump -> next b3(v10)
-# CHECK-NEXT: b2():
-# CHECK-NEXT: StringBuilderAppend v8, v10
-# CHECK-NEXT: v16: string = StringBuilderFinish v8
-# CHECK-NEXT: Jump -> next b3(v16)
-# CHECK-NEXT: b3(v17: string):
+# CHECK-NEXT: v2: string = GetModuleVariable variable=g0
+# CHECK-NEXT: v3: L6 = Upcast v0 castType=anything
+# CHECK-NEXT: v4: L6 = Upcast v3 castType=anything
+# CHECK-NEXT: v5: L6 = AssumeType v4 provenType=undefined|int|L6
+# CHECK-NEXT: v6: "," = String string=","
+# CHECK-NEXT: v7: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v7, v2
+# CHECK-NEXT: v9: string = Add v5, v6
+# CHECK-NEXT: StringBuilderAppend v7, v9
+# CHECK-NEXT: v11: string = StringBuilderToString v7
+# CHECK-NEXT: PutModuleVariable v11 variable=g0
+# CHECK-NEXT: v13: -1 = Integer integer=-1
+# CHECK-NEXT: v14: i32 = BitAnd v3, v13
+# CHECK-NEXT: v15: "," = String string=","
+# CHECK-NEXT: StringBuilderAppend v7, v14, v15
+# CHECK-NEXT: v17: string = StringBuilderFinish v7
 # CHECK-NEXT: PutModuleVariable v17 variable=g0
-# CHECK-NEXT: v19: fact = Entered function=f10
-# CHECK-NEXT: v20: anything ~ undefined|i32 = GetModuleVariable fact=v19 variable=g3
-# CHECK-NEXT: v21: -1 = Integer integer=-1
-# CHECK-NEXT: v22: boolean = TypeTest v20 testedType=i32
-# CHECK-NEXT: Branch v22 -> taken b4(| 0), notTaken b5()
-# CHECK-NEXT: b4(v23: i32):
-# CHECK-NEXT: v24: i32 = BitAnd v23, v21
-# CHECK-NEXT: Jump -> next b6(v24)
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v25: i32 = BitAnd v20, v21
-# CHECK-NEXT: Jump -> next b6(v25)
-# CHECK-NEXT: b6(v26: i32):
-# CHECK-NEXT: PutModuleVariable v26 variable=g3
-# CHECK-NEXT: v28: string = GetModuleVariable variable=g0
-# CHECK-NEXT: v29: "," = String string=","
-# CHECK-NEXT: v30: string = Strcat v28, v26, v29
-# CHECK-NEXT: PutModuleVariable v30 variable=g0
-# CHECK-NEXT: v32: 1 = Integer integer=1
-# CHECK-NEXT: v33: string = Upcast v30 castType=string
-# CHECK-NEXT: v34: i32 = Upcast v26 castType=anything
-# CHECK-NEXT: v35: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: StringBuilderAppend v35, v33
-# CHECK-NEXT: Jump -> next b7(v32, v34)
-# CHECK-NEXT: b7(v37: int[1, 3], v38: i32):
+# CHECK-NEXT: v19: 1 = Integer integer=1
+# CHECK-NEXT: v20: string = Upcast v17 castType=string
+# CHECK-NEXT: v21: i32 = Upcast v14 castType=anything
+# CHECK-NEXT: v22: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v22, v20
+# CHECK-NEXT: Jump -> next b1(v19, v21)
+# CHECK-NEXT: b1(v24: int[1, 3], v25: i32):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v40: boolean = Less v37, v1
-# CHECK-NEXT: Branch v40 -> taken b8(| 0), notTaken b9()
-# CHECK-NEXT: b8(v41: int[1, 2]):
-# CHECK-NEXT: v42: i32 = Upcast v38 castType=number
-# CHECK-NEXT: v43: "," = String string=","
-# CHECK-NEXT: StringBuilderAppend v35, v42, v43
-# CHECK-NEXT: v45: string = StringBuilderToString v35
-# CHECK-NEXT: PutModuleVariable v45 variable=g0
-# CHECK-NEXT: v47: -1 = Integer integer=-1
-# CHECK-NEXT: v48: i32 = BitAnd v38, v47
-# CHECK-NEXT: PutModuleVariable v48 variable=g3
-# CHECK-NEXT: v50: "," = String string=","
-# CHECK-NEXT: StringBuilderAppend v35, v48, v50
-# CHECK-NEXT: v52: string = StringBuilderToString v35
-# CHECK-NEXT: PutModuleVariable v52 variable=g0
-# CHECK-NEXT: v54: int[2, 3] = Increment v41
-# CHECK-NEXT: Jump -> next b7(v54, v48)
-# CHECK-NEXT: b9():
-# CHECK-NEXT: StringBuilderDiscard v35
-# CHECK-NEXT: v56: undefined = Undefined
-# CHECK-NEXT: Return v56
+# CHECK-NEXT: v27: boolean = Less v24, v1
+# CHECK-NEXT: Branch v27 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v28: int[1, 2]):
+# CHECK-NEXT: v29: "," = String string=","
+# CHECK-NEXT: StringBuilderAppend v22, v25, v29
+# CHECK-NEXT: v31: string = StringBuilderToString v22
+# CHECK-NEXT: PutModuleVariable v31 variable=g0
+# CHECK-NEXT: v33: -1 = Integer integer=-1
+# CHECK-NEXT: v34: i32 = BitAnd v25, v33
+# CHECK-NEXT: v35: "," = String string=","
+# CHECK-NEXT: StringBuilderAppend v22, v34, v35
+# CHECK-NEXT: v37: string = StringBuilderToString v22
+# CHECK-NEXT: PutModuleVariable v37 variable=g0
+# CHECK-NEXT: v39: int[2, 3] = Increment v28
+# CHECK-NEXT: Jump -> next b1(v39, v34)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: StringBuilderDiscard v22
+# CHECK-NEXT: v41: undefined = Undefined
+# CHECK-NEXT: Return v41
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="byAFunctionOutOfAList"
 # CHECK: module=m0 position=878 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L6}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f4 parameterMap=[{original=0}]} inlineFrames=[{}, {callee=f11 callPosition=1024 module=m0}] {
 # CHECK-NEXT: b0(v0: L6):
 # CHECK-NEXT: v1: 3 = Integer integer=3
-# CHECK-NEXT: PutModuleVariable v0 variable=g4
-# CHECK-NEXT: v3: 1 = Integer integer=1
-# CHECK-NEXT: v4: string = GetModuleVariable variable=g0
-# CHECK-NEXT: v5: L6 = Upcast v0 castType=anything
-# CHECK-NEXT: v6: L6 = AssumeType v5 provenType=int|L6
-# CHECK-NEXT: v7: "," = String string=","
-# CHECK-NEXT: v8: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: StringBuilderAppend v8, v4
-# CHECK-NEXT: v10: string = Add v6, v7
-# CHECK-NEXT: v11: int[0, 2147483647] = StringBuilderLength v8
-# CHECK-NEXT: v12: 0 = Integer
-# CHECK-NEXT: v13: boolean = StrictEq v11, v12
-# CHECK-NEXT: Branch v13 -> taken b1(), notTaken b2()
-# CHECK-NEXT: b1():
-# CHECK-NEXT: StringBuilderDiscard v8
-# CHECK-NEXT: Jump -> next b3(v10)
-# CHECK-NEXT: b2():
-# CHECK-NEXT: StringBuilderAppend v8, v10
-# CHECK-NEXT: v16: string = StringBuilderFinish v8
-# CHECK-NEXT: Jump -> next b3(v16)
-# CHECK-NEXT: b3(v17: string):
-# CHECK-NEXT: PutModuleVariable v17 variable=g0
-# CHECK-NEXT: v19: fact = Entered function=f11
-# CHECK-NEXT: v20: anything ~ i32 = GetModuleVariable fact=v19 variable=g4
-# CHECK-NEXT: v21: int|L6 ~ i32 = AssumeType v20 provenType=int|L6
-# CHECK-NEXT: v22: -1 = Integer integer=-1
-# CHECK-NEXT: v23: boolean ~ true = TypeTest v21 testedType=i32
-# CHECK-NEXT: Branch v23 -> taken b4(| 0), notTaken b5()
-# CHECK-NEXT: b4(v24: i32):
-# CHECK-NEXT: v25: i32 = BitAnd v24, v22
-# CHECK-NEXT: Jump -> next b6(v25)
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v26: i32 = BitAnd v21, v22
-# CHECK-NEXT: Jump -> next b6(v26)
-# CHECK-NEXT: b6(v27: i32):
-# CHECK-NEXT: PutModuleVariable v27 variable=g4
-# CHECK-NEXT: v29: string = GetModuleVariable variable=g0
-# CHECK-NEXT: v30: "," = String string=","
-# CHECK-NEXT: v31: string = Strcat v29, v27, v30
-# CHECK-NEXT: PutModuleVariable v31 variable=g0
-# CHECK-NEXT: v33: string = Upcast v31 castType=string
-# CHECK-NEXT: v34: i32 = Upcast v27 castType=anything
-# CHECK-NEXT: v35: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: StringBuilderAppend v35, v33
-# CHECK-NEXT: Jump -> next b7(v3, v34)
-# CHECK-NEXT: b7(v37: int[1, 3], v38: i32):
+# CHECK-NEXT: v2: 1 = Integer integer=1
+# CHECK-NEXT: v3: string = GetModuleVariable variable=g0
+# CHECK-NEXT: v4: L6 = Upcast v0 castType=anything
+# CHECK-NEXT: v5: L6 = AssumeType v4 provenType=int|L6
+# CHECK-NEXT: v6: "," = String string=","
+# CHECK-NEXT: v7: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v7, v3
+# CHECK-NEXT: v9: string = Add v5, v6
+# CHECK-NEXT: StringBuilderAppend v7, v9
+# CHECK-NEXT: v11: string = StringBuilderToString v7
+# CHECK-NEXT: PutModuleVariable v11 variable=g0
+# CHECK-NEXT: v13: fact = Specified
+# CHECK-NEXT: v14: L6 = AssumeType v4, v13 provenType=int|L6
+# CHECK-NEXT: v15: -1 = Integer integer=-1
+# CHECK-NEXT: v16: i32 = BitAnd v14, v15
+# CHECK-NEXT: v17: "," = String string=","
+# CHECK-NEXT: StringBuilderAppend v7, v16, v17
+# CHECK-NEXT: v19: string = StringBuilderFinish v7
+# CHECK-NEXT: PutModuleVariable v19 variable=g0
+# CHECK-NEXT: v21: string = Upcast v19 castType=string
+# CHECK-NEXT: v22: i32 = Upcast v16 castType=anything
+# CHECK-NEXT: v23: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v23, v21
+# CHECK-NEXT: Jump -> next b1(v2, v22)
+# CHECK-NEXT: b1(v25: int[1, 3], v26: i32):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v40: int[1, 3] = ToNumeric v37
-# CHECK-NEXT: v41: boolean = Less v40, v1
-# CHECK-NEXT: Branch v41 -> taken b8(| 0), notTaken b9()
-# CHECK-NEXT: b8(v42: int[1, 2]):
-# CHECK-NEXT: v43: int[2, 3] = Increment v42
-# CHECK-NEXT: v44: i32 = Upcast v38 castType=number
-# CHECK-NEXT: v45: "," = String string=","
-# CHECK-NEXT: StringBuilderAppend v35, v44, v45
-# CHECK-NEXT: v47: string = StringBuilderToString v35
-# CHECK-NEXT: PutModuleVariable v47 variable=g0
-# CHECK-NEXT: v49: -1 = Integer integer=-1
-# CHECK-NEXT: v50: i32 = BitAnd v38, v49
-# CHECK-NEXT: PutModuleVariable v50 variable=g4
-# CHECK-NEXT: v52: "," = String string=","
-# CHECK-NEXT: StringBuilderAppend v35, v50, v52
-# CHECK-NEXT: v54: string = StringBuilderToString v35
-# CHECK-NEXT: PutModuleVariable v54 variable=g0
-# CHECK-NEXT: Jump -> next b7(v43, v50)
-# CHECK-NEXT: b9():
-# CHECK-NEXT: StringBuilderDiscard v35
-# CHECK-NEXT: v57: undefined = Undefined
-# CHECK-NEXT: Return v57
+# CHECK-NEXT: v28: int[1, 3] = ToNumeric v25
+# CHECK-NEXT: v29: boolean = Less v28, v1
+# CHECK-NEXT: Branch v29 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v30: int[1, 2]):
+# CHECK-NEXT: v31: int[2, 3] = Increment v30
+# CHECK-NEXT: v32: "," = String string=","
+# CHECK-NEXT: StringBuilderAppend v23, v26, v32
+# CHECK-NEXT: v34: string = StringBuilderToString v23
+# CHECK-NEXT: PutModuleVariable v34 variable=g0
+# CHECK-NEXT: v36: -1 = Integer integer=-1
+# CHECK-NEXT: v37: i32 = BitAnd v26, v36
+# CHECK-NEXT: v38: "," = String string=","
+# CHECK-NEXT: StringBuilderAppend v23, v37, v38
+# CHECK-NEXT: v40: string = StringBuilderToString v23
+# CHECK-NEXT: PutModuleVariable v40 variable=g0
+# CHECK-NEXT: Jump -> next b1(v31, v37)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: StringBuilderDiscard v23
+# CHECK-NEXT: v43: undefined = Undefined
+# CHECK-NEXT: Return v43
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="byCall"
 # CHECK: module=m0 position=1112 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L6}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f5 parameterMap=[{original=0}]} inlineFrames=[{}, {callee=f12 callPosition=1252 calleeIsPredicted=true module=m0}] {
@@ -1249,14 +1179,14 @@ runtimefunction id=FunctionPrototypeCall function=f16
 # CHECK-NEXT: b4(v23: i32):
 # CHECK-NEXT: v24: i32 = BitAnd v23, v21
 # CHECK-NEXT: Jump -> next b6(v24)
-# CHECK-NEXT: b5():
+# CHECK-NEXT: b5() frequency=Unlikely:
 # CHECK-NEXT: v25: i32 = BitAnd v20, v21
 # CHECK-NEXT: Jump -> next b6(v25)
 # CHECK-NEXT: b6(v26: i32):
 # CHECK-NEXT: PutModuleVariable v26 variable=g5
 # CHECK-NEXT: v28: 1 = Integer integer=1
 # CHECK-NEXT: v29: i32 = Upcast v26 castType=anything
-# CHECK-NEXT: v30: string = GetModuleVariable variable=g0
+# CHECK-NEXT: v30: string = Upcast v16 castType=string
 # CHECK-NEXT: v31: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: StringBuilderAppend v31, v30
 # CHECK-NEXT: Jump -> next b7(v28, v29)
@@ -1292,75 +1222,57 @@ runtimefunction id=FunctionPrototypeCall function=f16
 # CHECK-NEXT: v6: boolean ~ true = TypeTest v4 testedType=i32
 # CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v7: i32):
-# CHECK-NEXT: v8: string = Add v7, v5
-# CHECK-NEXT: v9: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: StringBuilderAppend v9, v3
-# CHECK-NEXT: Jump -> next b3(v8, v9)
+# CHECK-NEXT: v8: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v8, v3, v7, v5
+# CHECK-NEXT: v10: string = StringBuilderToString v8
+# CHECK-NEXT: PutModuleVariable v10 variable=g0
+# CHECK-NEXT: v12: -1 = Integer integer=-1
+# CHECK-NEXT: v13: i32 = BitAnd v7, v12
+# CHECK-NEXT: Jump -> next b3(v8, v13)
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v11: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: StringBuilderAppend v11, v3
-# CHECK-NEXT: v13: string = Add v4, v5
-# CHECK-NEXT: Jump -> next b3(v13, v11)
-# CHECK-NEXT: b3(v14: string, v15: stringbuilder):
-# CHECK-NEXT: v16: int[0, 2147483647] = StringBuilderLength v15
-# CHECK-NEXT: v17: 0 = Integer
-# CHECK-NEXT: v18: boolean = StrictEq v16, v17
-# CHECK-NEXT: Branch v18 -> taken b4(), notTaken b5()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: StringBuilderDiscard v15
-# CHECK-NEXT: Jump -> next b6(v14)
-# CHECK-NEXT: b5():
-# CHECK-NEXT: StringBuilderAppend v15, v14
-# CHECK-NEXT: v21: string = StringBuilderFinish v15
-# CHECK-NEXT: Jump -> next b6(v21)
-# CHECK-NEXT: b6(v22: string):
-# CHECK-NEXT: PutModuleVariable v22 variable=g0
-# CHECK-NEXT: v24: fact = Entered function=f13
-# CHECK-NEXT: v25: anything ~ i32 = GetModuleVariable fact=v24 variable=g6
-# CHECK-NEXT: v26: -1 = Integer integer=-1
-# CHECK-NEXT: v27: boolean ~ true = TypeTest v25 testedType=i32
-# CHECK-NEXT: Branch v27 -> taken b7(| 0), notTaken b8()
-# CHECK-NEXT: b7(v28: i32):
-# CHECK-NEXT: v29: i32 = BitAnd v28, v26
-# CHECK-NEXT: Jump -> next b9(v29)
-# CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: v30: i32 = BitAnd v25, v26
-# CHECK-NEXT: Jump -> next b9(v30)
-# CHECK-NEXT: b9(v31: i32):
-# CHECK-NEXT: PutModuleVariable v31 variable=g6
-# CHECK-NEXT: v33: string = GetModuleVariable variable=g0
-# CHECK-NEXT: v34: "," = String string=","
-# CHECK-NEXT: v35: string = Strcat v33, v31, v34
-# CHECK-NEXT: PutModuleVariable v35 variable=g0
-# CHECK-NEXT: v37: 1 = Integer integer=1
-# CHECK-NEXT: v38: string = Upcast v35 castType=string
-# CHECK-NEXT: v39: i32 = Upcast v31 castType=anything
-# CHECK-NEXT: v40: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: StringBuilderAppend v40, v38
-# CHECK-NEXT: Jump -> next b10(v37, v39)
-# CHECK-NEXT: b10(v42: int[1, 3], v43: i32):
+# CHECK-NEXT: v14: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v14, v3
+# CHECK-NEXT: v16: string = Add v4, v5
+# CHECK-NEXT: StringBuilderAppend v14, v16
+# CHECK-NEXT: v18: string = StringBuilderToString v14
+# CHECK-NEXT: PutModuleVariable v18 variable=g0
+# CHECK-NEXT: v20: -1 = Integer integer=-1
+# CHECK-NEXT: v21: i32 = BitAnd v4, v20
+# CHECK-NEXT: Jump -> next b3(v14, v21)
+# CHECK-NEXT: b3(v22: stringbuilder, v23: i32):
+# CHECK-NEXT: PutModuleVariable v23 variable=g6
+# CHECK-NEXT: v25: "," = String string=","
+# CHECK-NEXT: StringBuilderAppend v22, v23, v25
+# CHECK-NEXT: v27: string = StringBuilderFinish v22
+# CHECK-NEXT: PutModuleVariable v27 variable=g0
+# CHECK-NEXT: v29: 1 = Integer integer=1
+# CHECK-NEXT: v30: string = Upcast v27 castType=string
+# CHECK-NEXT: v31: i32 = Upcast v23 castType=anything
+# CHECK-NEXT: v32: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v32, v30
+# CHECK-NEXT: Jump -> next b4(v29, v31)
+# CHECK-NEXT: b4(v34: int[1, 3], v35: i32):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v45: boolean = Less v42, v1
-# CHECK-NEXT: Branch v45 -> taken b11(| 0), notTaken b12()
-# CHECK-NEXT: b11(v46: int[1, 2]):
-# CHECK-NEXT: v47: i32 = Upcast v43 castType=number
-# CHECK-NEXT: v48: "," = String string=","
-# CHECK-NEXT: StringBuilderAppend v40, v47, v48
-# CHECK-NEXT: v50: string = StringBuilderToString v40
-# CHECK-NEXT: PutModuleVariable v50 variable=g0
-# CHECK-NEXT: v52: -1 = Integer integer=-1
-# CHECK-NEXT: v53: i32 = BitAnd v43, v52
-# CHECK-NEXT: PutModuleVariable v53 variable=g6
-# CHECK-NEXT: v55: "," = String string=","
-# CHECK-NEXT: StringBuilderAppend v40, v53, v55
-# CHECK-NEXT: v57: string = StringBuilderToString v40
-# CHECK-NEXT: PutModuleVariable v57 variable=g0
-# CHECK-NEXT: v59: int[2, 3] = Increment v46
-# CHECK-NEXT: Jump -> next b10(v59, v53)
-# CHECK-NEXT: b12():
-# CHECK-NEXT: StringBuilderDiscard v40
-# CHECK-NEXT: v61: undefined = Undefined
-# CHECK-NEXT: Return v61
+# CHECK-NEXT: v37: boolean = Less v34, v1
+# CHECK-NEXT: Branch v37 -> taken b5(| 0), notTaken b6()
+# CHECK-NEXT: b5(v38: int[1, 2]):
+# CHECK-NEXT: v39: "," = String string=","
+# CHECK-NEXT: StringBuilderAppend v32, v35, v39
+# CHECK-NEXT: v41: string = StringBuilderToString v32
+# CHECK-NEXT: PutModuleVariable v41 variable=g0
+# CHECK-NEXT: v43: -1 = Integer integer=-1
+# CHECK-NEXT: v44: i32 = BitAnd v35, v43
+# CHECK-NEXT: PutModuleVariable v44 variable=g6
+# CHECK-NEXT: v46: "," = String string=","
+# CHECK-NEXT: StringBuilderAppend v32, v44, v46
+# CHECK-NEXT: v48: string = StringBuilderToString v32
+# CHECK-NEXT: PutModuleVariable v48 variable=g0
+# CHECK-NEXT: v50: int[2, 3] = Increment v38
+# CHECK-NEXT: Jump -> next b4(v50, v44)
+# CHECK-NEXT: b6():
+# CHECK-NEXT: StringBuilderDiscard v32
+# CHECK-NEXT: v52: undefined = Undefined
+# CHECK-NEXT: Return v52
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="withoutAClosure"
 # CHECK: module=m0 position=1524 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L6}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f7 parameterMap=[{original=0}]} {
@@ -1376,7 +1288,7 @@ runtimefunction id=FunctionPrototypeCall function=f16
 # CHECK-NEXT: PutModuleVariable v8 variable=g0
 # CHECK-NEXT: v10: -1 = Integer integer=-1
 # CHECK-NEXT: v11: i32 = BitAnd v0, v10
-# CHECK-NEXT: v12: string = GetModuleVariable variable=g0
+# CHECK-NEXT: v12: string = Upcast v8 castType=string
 # CHECK-NEXT: v13: "," = String string=","
 # CHECK-NEXT: v14: string = Strcat v12, v11, v13
 # CHECK-NEXT: PutModuleVariable v14 variable=g0

@@ -1,10 +1,10 @@
 # bun:sqlite, as a module of the library:  class Held { }  mayThrow()
 # main:  try { require("bun:sqlite"); report("first loaded") } catch (error) { report("first " + error) }  and the same once more
-# The body makes a class, which is compiled for a body that is entered once. Where the body threw, the next request gets what it threw and the body is not entered again.
+# The body makes a class, which is compiled for a body that is entered once. Where the body threw, the next request forgets the class and enters the body again.
 # FORM: AsRead
 # RUN: run-in-shell globalThis.report = text => { print(text); }; let calls = 0; globalThis.mayThrow = () => { if (++calls === 1) throw "no"; };
 # CHECK: first no
-# CHECK-NEXT: second no
+# CHECK-NEXT: second loaded
 # CHECK-NEXT: exited with 0
 
 module m0 path="main.js" displayPath="main.js" body=f0

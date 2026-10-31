@@ -50,6 +50,8 @@ const ruleVars = {
   cxx_pch_chained: ["cxxflags", "pch_file", "pch_header", "pch_bases"],
   link: ["ldflags", "lazy"],
   link_trimmable: ["ldflags", "lazy"],
+  link_with_library: ["ldflags", "lazy"],
+  link_trimmable_with_library: ["ldflags", "lazy"],
   mkdir_stamp: ["dir"],
   nasm: ["nasmflags"],
   pch: ["cxxflags", "pch_header"],

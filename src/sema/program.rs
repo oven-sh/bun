@@ -2218,18 +2218,14 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
             .visit_exports(Some(value), None, false, &mut visit)
             .unwrap_or_else(|| SymbolMap::new_in(arena));
         // Its other exports are included if they are a type or a namespace and not a value.
-        // `module.exports = f; module.exports.a = 1;` of a JavaScript file: `a` is a property of what `require` answers, so the
-        // values are included too (`getCommonJSExportEquals` of TypeScript 6).
         if self.export(module, known::export_equals).is_some() {
-            let is_commonjs_text = self.hir(module.file).is_js;
             for (name, symbol) in self.each_export(module) {
                 if name == known::export_equals || resolved_exports.contains_key(name) {
                     continue;
                 }
                 let flags = self.symbol_flags(symbol);
-                if is_commonjs_text
-                    || (flags.intersects(SymFlags::TYPE | SymFlags::NAMESPACE)
-                        && !flags.intersects(SymFlags::VALUE))
+                if flags.intersects(SymFlags::TYPE | SymFlags::NAMESPACE)
+                    && !flags.intersects(SymFlags::VALUE)
                 {
                     resolved_exports.insert(name, symbol);
                 }
@@ -6509,22 +6505,21 @@ impl<'s> Files<'s> {
         let ambient_with_relative_reexports =
             std::mem::take(&mut *ambient_with_relative_reexports.lock());
         let reexports_relatively = |spec: Atom| ambient_with_relative_reexports.contains(&spec);
+        let imports_from_one = |hir: &hir::File<'s>, bound: &Bound<'s>| match bound.is_unbound {
+            _ if ambient_with_relative_reexports.is_empty() => false,
+            // The tree of a module that waits may be gone. These are the names in its import and export statements.
+            true => bound.specifiers.iter().any(|&it| reexports_relatively(it)),
+            false => {
+                hir.imports.iter().any(|it| reexports_relatively(it.spec))
+                    || hir.exports.iter().any(|it| reexports_relatively(it.spec))
+            }
+        };
         // `Files::new_symbol` adds symbols that no file declares to the first file's symbols, so
         // the first file is never a leaf.
         for (i, summary) in summaries.iter().enumerate().skip(1) {
             if summary.may_be_leaf && !is_referred_to[i].load(Ordering::Relaxed) {
                 let module = &mut modules[i];
-                let imports_from_one = !ambient_with_relative_reexports.is_empty()
-                    && (module
-                        .hir
-                        .imports
-                        .iter()
-                        .any(|it| reexports_relatively(it.spec))
-                        || module
-                            .hir
-                            .exports
-                            .iter()
-                            .any(|it| reexports_relatively(it.spec)));
+                let imports_from_one = imports_from_one(&module.hir, &module.bound);
                 module.is_leaf = !imports_from_one && !summary.lists_declarations_for_every_task;
                 module.is_read_by_every_task =
                     !imports_from_one && summary.lists_declarations_for_every_task;
@@ -6535,17 +6530,7 @@ impl<'s> Files<'s> {
             .zip(&modules)
             .filter(|it| it.0.may_be_unread);
         for (summary, module) in may_be_unread {
-            summary.is_unread_unless_reached = ambient_with_relative_reexports.is_empty()
-                || !(module
-                    .hir
-                    .imports
-                    .iter()
-                    .any(|it| reexports_relatively(it.spec))
-                    || module
-                        .hir
-                        .exports
-                        .iter()
-                        .any(|it| reexports_relatively(it.spec)));
+            summary.is_unread_unless_reached = !imports_from_one(&module.hir, &module.bound);
         }
         // What is bound looks into what it refers to.
         let waits = |file: usize| {
@@ -6597,7 +6582,7 @@ impl<'s> Files<'s> {
             |unbound: &Guarded<(bool, &mut ModuleCell<'s>, &mut ModuleSummary<'s>)>| {
                 let unbound = unbound.lock();
                 match unbound.0 {
-                    true => unbound.1.hir.text.len(),
+                    true => unbound.1.hir.source_len as usize,
                     false => 0,
                 }
             };
@@ -6621,6 +6606,7 @@ impl<'s> Files<'s> {
             keep_list(session, &mut module.hir.jsdoc_param_errors);
             module.bound.symbols.transfer_to(arena);
             summary.symbols = module.bound.symbols.len();
+            summary.type_nodes = module.hir.types.len() as u32;
         });
         drop(unbound);
         CodeLoadContext::finish(build);
@@ -7087,8 +7073,8 @@ impl<'s> Files<'s> {
             module.bound = parse.bound.share(arena);
             return;
         }
-        // The tree of a module that waits may lack the bodies of its functions.
-        let text = match module.bound.is_bound_in_part {
+        // A module that waits has given up its tree, and its text unless other programs share it.
+        let text = match module.bound.is_bound_in_part || module.hir.text.is_empty() {
             true => host.read_source(path),
             false => std::mem::take(&mut module.hir.text),
         };
@@ -7316,7 +7302,8 @@ impl<'s> Files<'s> {
                 }
             }
         };
-        Self::load_parsed(
+        let waits_alone = parse.bound.is_unbound && !parse.is_shared;
+        let mut loaded = Self::load_parsed(
             arena,
             host,
             resolver,
@@ -7328,7 +7315,19 @@ impl<'s> Files<'s> {
             Ok(parse),
             (build, None),
             resolve_ahead,
-        )
+        );
+        // A project lists far more files than a program reads, and the load holds them all until the last is in.
+        // `bind_reached` reads a module that waits again, so what is left of one does not grow with its text.
+        if waits_alone {
+            let hir = &mut loaded.module.hir;
+            if hir.owns_its_lists() {
+                // SAFETY: the file is of this load alone, and no other thread has seen it yet.
+                unsafe { hir.clear_caches() };
+            }
+            hir.free_long_lists();
+            hir.text = Cow::default();
+        }
+        loaded
     }
 
     /// `parseTask.load`: a library is given `SourceFileMetaData{ImpliedNodeFormat: CommonJS}`,
@@ -9606,7 +9605,7 @@ impl<'s> Files<'s> {
     }
 
     /// `Options::declarations_of_last_resort`
-    pub(crate) fn is_of_last_resort(&self, file: FileId) -> bool {
+    pub fn is_of_last_resort(&self, file: FileId) -> bool {
         let path = &self.options.declarations_of_last_resort;
         !path.is_empty() && self.module(file).path.text == &path[..]
     }

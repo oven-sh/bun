@@ -11,9 +11,10 @@ use crate::load::{PerProject, ProjectId};
 use crate::modules::{
     self, BindInput, BoundModules, DeferredData, DeferredExports, ModuleGraph, Shape,
 };
-use crate::options::ReplacedExport;
+use crate::options::{ReplacedExport, ReplacedModule};
 use crate::statistics::{Stage, StatisticId};
 use bun_sema::check::aot::BuiltinTypeSymbols;
+use bun_sema_driver::host::to_native;
 
 // The text of a module says which shapes it can have. What the reached code does with the module says which one it has.
 fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules) {
@@ -41,6 +42,7 @@ fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules) {
     graph.set_ways_not_followed_out_of_sight(reached.ways_not_followed_out_of_sight);
     graph.set_ways_followed_for_their_names(reached.ways_followed_for_their_names);
     graph.set_lets_process_out_of_sight(reached.lets_process_out_of_sight);
+    graph.set_is_ready_for_loader_functions(reached.is_ready_for_loader_functions);
     graph.leave_out_inner_modules(&reached.left_out_inner_modules);
     graph.set_files_brought_by_calls(reached.brought_by_calls.clone());
     graph.limit_requests(|referrer, request| reached.keeps_request(referrer, request));
@@ -107,6 +109,20 @@ impl Build<'_> {
             ProjectId::Application => &self.options.load.replaced_exports,
             ProjectId::Runtime => &[],
         };
+        // `mock.module("bun:wrap", factory)`: an ES module of Bun's own is compiled like a file, and a mock replaces its exports as it replaces a file's.
+        let mocked_modules: Vec<ReplacedModule> = match project {
+            ProjectId::Application => Vec::new(),
+            ProjectId::Runtime => (self.options.load.mocked_modules.iter())
+                .filter(|module| modules::names_es_module_of_library(module))
+                .cloned()
+                .collect(),
+        };
+        let stand_in = self.options.load.stand_in_for_files_from_disk.as_deref();
+        let stand_in = stand_in.filter(|_| project == ProjectId::Application);
+        let stand_in_for_files_from_disk = stand_in.and_then(|path| {
+            let mut entry_points = view.sources.entry_points().iter().map(|it| it.file);
+            entry_points.find(|&file| to_native(view.files().module(file).file_name()) == path)
+        });
         let BoundModules {
             mut graph,
             counters,
@@ -121,7 +137,7 @@ impl Build<'_> {
             runs_in_place: self.options.aot.runs_in_place,
             mocked_modules: match project {
                 ProjectId::Application => &self.options.load.mocked_modules,
-                ProjectId::Runtime => &[],
+                ProjectId::Runtime => &mocked_modules,
             },
             mocks_any_module: project == ProjectId::Application && self.mocks_any_module(),
             handed_on_modules: match project {
@@ -131,13 +147,22 @@ impl Build<'_> {
             hands_on_any_module: self.options.load.hands_on_any_module,
             spies_on_unknown_objects: self.options.load.spies_on_unknown_objects,
             names_spied_on_unknown_objects: &self.options.load.names_spied_on_unknown_objects,
+            names_spied_in_text: &self.options.load.names_spied_in_text,
+            modules_replaced_in_text: &self.options.load.modules_replaced_in_text,
+            every_export_is_asked_for: self.options.load.every_export_is_asked_for,
             evicted_modules: match project {
                 ProjectId::Application => &self.options.load.evicted_modules,
                 ProjectId::Runtime => &[],
             },
             evicts_any_module: self.options.load.evicts_any_module,
+            files_that_tests_load: &self.options.load.files_that_tests_load,
             runs_tests: self.options.load.runs_tests,
+            stores_path_of_main_module: self.options.load.stores_path_of_main_module,
+            entry_points_run_again: project == ProjectId::Application
+                && self.options.aot.entry_points_run_again,
+            loads_code_from_disk: self.options.aot.loads_code_from_disk,
             host_runs_files_from_disk: self.options.aot.host_runs_files_from_disk,
+            stand_in_for_files_from_disk,
             application: application.map(|application| &application.graph),
             known_helpers: &known_helpers,
             in_parallel: &in_parallel,
@@ -145,6 +170,9 @@ impl Build<'_> {
         });
         self.diagnostics.add_module_failures(view, &graph);
         self.statistics.add_counters(view, counters);
+        if project == ProjectId::Application {
+            self.statistics.log_computed_imports();
+        }
         // A program of test files over other programs holds the test files alone: what they import is below.
         if project == ProjectId::Application
             && self.options.aot.is_part_of_test_files
@@ -188,17 +216,28 @@ impl Build<'_> {
                 left_out
             }
             (ProjectId::Application, None) if graph.errors().is_empty() => {
+                // In a test run a program names the files of the programs below it as it names a package on disk.
+                let code_on_disk_names_files = !self.options.load.runs_tests
+                    && !self.options.aot.host_runs_files_from_disk
+                    && (self.options.aot.loads_code_from_disk || self.options.aot.runs_in_place)
+                    && !graph.importers_of_uncompiled_code().is_empty();
                 let input = ProgramReachInput {
                     files: view.files(),
                     sources: view.sources,
                     graph: &graph,
+                    known_helpers: &known_helpers,
                     removable: self.options.removable,
                     limits: &self.limits,
                     reads_main_module_without_its_name: (self.options.load)
                         .reads_main_module_without_its_name,
+                    stores_path_of_main_module: self.options.load.stores_path_of_main_module,
+                    stores_loader_functions: self.options.load.stores_loader_functions,
                     ways_read_out_of_sight: self.options.load.ways_read_out_of_sight,
-                    any_file_is_named_at_run_time: !self.options.aot.host_runs_files_from_disk
-                        && (self.options.aot.loads_code_from_disk || self.options.load.runs_tests),
+                    any_file_is_named_at_run_time: code_on_disk_names_files
+                        || (!self.options.aot.host_runs_files_from_disk
+                            && (self.options.aot.loads_code_from_disk
+                                || self.options.load.runs_tests)),
+                    code_on_disk_names_files,
                     mocks_any_module: self.mocks_any_module(),
                     host_runs_files_from_disk: self.options.aot.host_runs_files_from_disk,
                 };

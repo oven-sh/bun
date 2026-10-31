@@ -451,9 +451,9 @@ runtimefunction id=WrittenListsFilledArray function=f12 visibility=Private
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="added"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 262, patchpoints: 47, rare instructions: 142, polls: 1
+# CHECK-NEXT: instructions: 262, patchpoints: 47, rare instructions: 141, polls: 1
 # CHECK-NEXT: end of function f15
 # CHECK-LABEL: function {{*}}name="take"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 112, patchpoints: 12, rare instructions: 587, polls: 1
+# CHECK-NEXT: instructions: 112, patchpoints: 12, rare instructions: 575, polls: 1
 # CHECK-NEXT: end of function f10

@@ -98,10 +98,10 @@ function f14 module=m3 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v7: L1 @Cell = CallDirect function=f21
 # CHECK-NEXT: v8: false @JSValue = Boolean
 # CHECK-NEXT: PropSet v7, v8 key="ended" accessSite=8 receivers=[L1]
-# CHECK-NEXT: v10: anything @JSValue = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
-# CHECK-NEXT: v11: anything @JSValue = Upcast v10 castType=anything
+# CHECK-NEXT: v10: Array<string> @JSValue = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
+# CHECK-NEXT: v11: Array<string, proven, pristine[Storage, Names, Dense]> @JSValue = AssumeType v10 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v12: 2 @Int32 = Integer integer=2
-# CHECK-NEXT: v13: anything @JSValue = ElemGet v11, v12 accessSite=4 [keyIsIntegral]
+# CHECK-NEXT: v13: undefined|string @JSValue = ElemGet v11, v12 accessSite=4 [keyIsIntegral]
 # CHECK-NEXT: v14: 0 @Int64 = Integer
 # CHECK-NEXT: v36: codeaddress @RawWord = ResolveCallTarget v0 argumentCount=1
 # CHECK-NEXT: Jump -> next b1(v14)

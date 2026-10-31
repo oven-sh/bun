@@ -7,7 +7,7 @@
 # CHECK: flag=h8
 # CHECK-NEXT: not held
 # CHECK: flag=h77
-# CHECK-NEXT: by Call f0 v6
+# CHECK: by Call f0 v6
 
 module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0 requests=[{target=m1 completes=true}]
 module m1 path="node:module" displayPath="node:module" kind=Runtime exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeModule

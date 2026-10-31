@@ -8,7 +8,7 @@
 // IR= 0 countThatPass NewArray(Like|WithCapacity)
 // IR= 0 countAfterTwoStages NewArray(Like|WithCapacity)
 // IR= 0 searches NewArray(Like|WithCapacity)
-// IR= 2 numbers NewArray(Like|WithCapacity)
+// IR= 1 numbers NewArray(Like|WithCapacity)
 // IR= 0 sumOfNumbers NewArray(Like|WithCapacity)
 // IR= 1 partOfTheList NewArray(Like|WithCapacity)
 // IR= 4 partOfTheList LoopHint

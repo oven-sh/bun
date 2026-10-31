@@ -139,7 +139,10 @@ impl FileLowering<'_, '_, '_, '_> {
             let Some((key, mut flags)) = self.find_field_key(layout, entry.name) else {
                 continue;
             };
-            if !is_declared && accessor_keys.binary_search(&key).is_ok() {
+            if !is_declared
+                && (accessor_keys.binary_search(&key).is_ok()
+                    || self.queries.inherits_accessor(shape, entry.name))
+            {
                 continue;
             }
             if !entry.is_optional {
@@ -244,16 +247,20 @@ impl FileLowering<'_, '_, '_, '_> {
             return;
         };
         let hir = self.hir;
+        let position = class_position(&hir[class.class]);
         let mut inherited: SmallVec<[CheckerTypeId; 2]> = SmallVec::new();
         match base {
-            Some(base) => inherited.extend(self.queries.declared_class_type(base).ok()),
+            Some(base) => {
+                if let Ok(base) = self.queries.declared_class_type(base) {
+                    self.record_base_class_flow(instance, base, position);
+                }
+            }
             // The heritage is no class: a constructor function, or a value with a construct signature.
             None => inherited.extend(self.queries.base_types_of_class(class).unwrap_or_default()),
         }
         for node in hir.ids(hir[class.class].implements) {
             inherited.extend(self.queries.written_type(node).written());
         }
-        let position = class_position(&hir[class.class]);
         for inherited in inherited {
             self.record_heritage_flow(instance, inherited, position);
         }

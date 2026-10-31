@@ -238,37 +238,25 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v6: f9 @Cell = NewClosure function=f9 allocationSite=5 closureForm=Slim
 # CHECK-NEXT: DefineGetter v2, v6 key="both"
 # CHECK-NEXT: v8: "first" @LiteralString = String string="first"
-# CHECK-NEXT: v9: undefined @Void = CallDirect v8 function=f22
-# CHECK-NEXT: v10: anything @JSValue = ResultAt v9
-# CHECK-NEXT: v11: L0 @Cell = ResultAt v9 index=1
-# CHECK-NEXT: v12: anything @JSValue = ResultAt v9 index=2
-# CHECK-NEXT: v13: 0 @Int32 = Integer
-# CHECK-NEXT: v14: Array<L0, Contiguous> @Cell = NewArray v10, v11, v12 contents=L0 allocationSite=8 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v15: Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v14 provenType=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v16: undefined|L0 @JSValue = GetArrayElement v15, v13 arrayStorage=Contiguous level=Proven [keyIsIntegral]
-# CHECK-NEXT: v17: 4 @JSValue = Integer integer=4
-# CHECK-NEXT: v18: L0 @JSValue = RequireObjectCoercible v16 nullishAccess=Write name="get"
-# CHECK-NEXT: PutSlot v18, -, v17 key="get" receivers=[L0] level=Proven accessSite=2 fieldAccess=1
-# CHECK-NEXT: v20: "after stores of other types" @LiteralString = String string="after stores of other types"
-# CHECK-NEXT: v21: undefined @Void = CallDirect v20 function=f22
-# CHECK-NEXT: v22: anything @JSValue = ResultAt v21
-# CHECK-NEXT: v23: L0 @Cell = ResultAt v21 index=1
-# CHECK-NEXT: v24: anything @JSValue = ResultAt v21 index=2
-# CHECK-NEXT: v25: 0 @Int32 = Integer
-# CHECK-NEXT: v26: Array<L0, Contiguous> @Cell = NewArray v22, v23, v24 contents=L0 allocationSite=8 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v27: Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v26 provenType=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v28: undefined|L0 @JSValue = GetArrayElement v27, v25 arrayStorage=Contiguous level=Proven [keyIsIntegral]
-# CHECK-NEXT: v29: boolean @Boolean = PropDelete v28 key="get" accessSite=4 receivers=[L0]
-# CHECK-NEXT: v30: "after deletes" @LiteralString = String string="after deletes"
-# CHECK-NEXT: v31: undefined @Void = CallDirect v30 function=f22
-# CHECK-NEXT: v32: "after redefinitions" @LiteralString = String string="after redefinitions"
-# CHECK-NEXT: v33: undefined @Void = CallDirect v32 function=f22
-# CHECK-NEXT: v34: "after freezing" @LiteralString = String string="after freezing"
-# CHECK-NEXT: v35: undefined @Void = CallDirect v34 function=f22
-# CHECK-NEXT: v36: "after other prototypes" @LiteralString = String string="after other prototypes"
-# CHECK-NEXT: v37: undefined @Void = CallDirect v36 function=f22
-# CHECK-NEXT: v38: undefined @JSValue = Undefined
-# CHECK-NEXT: Return v38
+# CHECK-NEXT: v9: anything @JSValue = CallDirect v8 function=f22
+# CHECK-NEXT: v11: undefined|L0 @JSValue = AssumeType v9 provenType=undefined|L0
+# CHECK-NEXT: v12: 4 @JSValue = Integer integer=4
+# CHECK-NEXT: v13: L0 @JSValue = RequireObjectCoercible v11 nullishAccess=Write name="get"
+# CHECK-NEXT: PutSlot v13, -, v12 key="get" receivers=[L0] level=Proven accessSite=2 fieldAccess=1
+# CHECK-NEXT: v15: "after stores of other types" @LiteralString = String string="after stores of other types"
+# CHECK-NEXT: v16: anything @JSValue = CallDirect v15 function=f22
+# CHECK-NEXT: v18: undefined|L0 @JSValue = AssumeType v16 provenType=undefined|L0
+# CHECK-NEXT: v19: boolean @Boolean = PropDelete v18 key="get" accessSite=4 receivers=[L0]
+# CHECK-NEXT: v20: "after deletes" @LiteralString = String string="after deletes"
+# CHECK-NEXT: v21: anything @JSValue = CallDirect v20 function=f22
+# CHECK-NEXT: v22: "after redefinitions" @LiteralString = String string="after redefinitions"
+# CHECK-NEXT: v23: anything @JSValue = CallDirect v22 function=f22
+# CHECK-NEXT: v24: "after freezing" @LiteralString = String string="after freezing"
+# CHECK-NEXT: v25: anything @JSValue = CallDirect v24 function=f22
+# CHECK-NEXT: v26: "after other prototypes" @LiteralString = String string="after other prototypes"
+# CHECK-NEXT: v27: anything @JSValue = CallDirect v26 function=f22
+# CHECK-NEXT: v28: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v28
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="makeDescriptor"
 # CHECK: module=m0 position=1345 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type="a"}] results=[{type=L0}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
@@ -292,7 +280,7 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: ReturnCall v1 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="check"
-# CHECK: module=m0 position=1953 role=ResultWorker flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type="after deletes"|"after freezing"|"after other prototypes"|"after redefinitions"|"after stores of other types"|"first"}] results=[{type=anything}, {type=L0}, {type=anything}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{original=0}]} creator=ResultWorker{origin=f4} {
+# CHECK: module=m0 position=1953 role=ResultWorker flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type="after deletes"|"after freezing"|"after other prototypes"|"after redefinitions"|"after stores of other types"|"first"}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{original=0}]} creator=ResultWorker{origin=f4} {
 # CHECK-NEXT: b0(v0: "after deletes"|"after freezing"|"after other prototypes"|"after redefinitions"|"after stores of other types"|"first" @LiteralString):
 # CHECK-NEXT: v1: f2 @Cell = GetModuleVariable variable=g1
 # CHECK-NEXT: v2: 7 @JSValue = Integer integer=7
@@ -366,11 +354,10 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: StringBuilderAppendConstant v42 string=" | "
 # CHECK-NEXT: StringBuilderAppendString v42, v60
 # CHECK-NEXT: StringBuilderDiscard v42
-# CHECK-NEXT: v64: undefined @Void = Results v3, v4, v7
-# CHECK-NEXT: Return v64
-# CHECK-NEXT: b10(v65: undefined|int @JSValue) frequency=Unlikely:
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: b10(v64: undefined|int @JSValue) frequency=Unlikely:
 # CHECK-NEXT: StringBuilderDiscard v42
-# CHECK-NEXT: v67: never @JSValue = Call v65, v4 calleeKey="get" calleeName="madeDescriptor.get" accessSite=19 callees=[f11]
+# CHECK-NEXT: v66: never @JSValue = Call v64, v4 calleeKey="get" calleeName="madeDescriptor.get" accessSite=19 callees=[f11]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="get"

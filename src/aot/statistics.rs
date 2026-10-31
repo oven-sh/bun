@@ -29,6 +29,14 @@ pub struct LocatedLoss {
     pub count: u32,
 }
 
+/// `import(`./pages/${name}.js`)`: the files that are compiled because the import may mean them, and the bytes of their text.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct ComputedImport<Place> {
+    pub site: Place,
+    pub files: u32,
+    pub bytes: u64,
+}
+
 fn is_lower_subject<T: Ord>(candidate: &Option<T>, current: &Option<T>) -> bool {
     match (candidate, current) {
         (Some(candidate), Some(current)) => candidate < current,
@@ -41,6 +49,7 @@ fn is_lower_subject<T: Ord>(candidate: &Option<T>, current: &Option<T>) -> bool 
 pub struct Counters {
     counts: Vec<(StatisticId, u64)>,
     losses: Vec<Loss>,
+    computed_imports: Vec<ComputedImport<Span>>,
 }
 
 impl Counters {
@@ -60,6 +69,10 @@ impl Counters {
             subject,
             count: 1,
         });
+    }
+
+    pub fn add_computed_import(&mut self, import: ComputedImport<Span>) {
+        self.computed_imports.push(import);
     }
 
     #[cfg(test)]
@@ -84,6 +97,12 @@ impl Counters {
         for loss in other.losses {
             self.add_loss(loss);
         }
+        self.computed_imports.extend(other.computed_imports);
+    }
+
+    #[cfg(test)]
+    pub fn computed_imports(&self) -> &[ComputedImport<Span>] {
+        &self.computed_imports
     }
 
     #[cfg(test)]
@@ -118,6 +137,8 @@ impl Counters {
 pub struct Statistics {
     values: Box<[u64]>,
     losses: Vec<LocatedLoss>,
+    /// The largest first.
+    computed_imports: Vec<ComputedImport<SourcePosition>>,
 }
 
 impl Default for Statistics {
@@ -125,6 +146,7 @@ impl Default for Statistics {
         Statistics {
             values: vec![0; StatisticId::COUNT].into_boxed_slice(),
             losses: Vec::new(),
+            computed_imports: Vec::new(),
         }
     }
 }
@@ -141,6 +163,16 @@ impl Statistics {
     #[cfg(test)]
     pub fn losses(&self) -> &[LocatedLoss] {
         &self.losses
+    }
+
+    pub fn computed_imports(&self) -> &[ComputedImport<SourcePosition>] {
+        &self.computed_imports
+    }
+
+    fn add_computed_imports(&mut self, imports: Vec<ComputedImport<SourcePosition>>) {
+        self.computed_imports.extend(imports);
+        (self.computed_imports)
+            .sort_by(|a, b| (b.bytes, b.files, &a.site).cmp(&(a.bytes, a.files, &b.site)));
     }
 
     pub fn count(&mut self, id: StatisticId, amount: u64) {
@@ -162,7 +194,7 @@ impl Statistics {
         }
     }
 
-    pub fn add_queries(&mut self, queries: QueryStatistics) {
+    pub fn add_queries(&mut self, queries: &QueryStatistics) {
         let sum = |counts: &[u32]| counts.iter().map(|&count| u64::from(count)).sum::<u64>();
         self.count(StatisticId::CheckerQueries, queries.asked);
         self.count(StatisticId::CheckerQueriesGivenUp, sum(&queries.gave_up));
@@ -188,6 +220,30 @@ impl Statistics {
                 count: loss.count,
             });
         }
+        let located = counters.computed_imports.into_iter();
+        let located = located.map(|import| ComputedImport {
+            site: locator.position_of(import.site),
+            files: import.files,
+            bytes: import.bytes,
+        });
+        self.add_computed_imports(located.collect());
+    }
+
+    /// With the stages: what each computed import brings into the build.
+    pub fn log_computed_imports(&self) {
+        if !logs_stages() {
+            return;
+        }
+        for import in &self.computed_imports {
+            bun_core::print_errorln!(
+                "AOT computed import | {}:{}:{} | {} files | {} bytes",
+                bstr::BStr::new(&import.site.path),
+                import.site.line,
+                import.site.column,
+                import.files,
+                import.bytes,
+            );
+        }
     }
 
     pub fn gave_up(&mut self, limit: LimitId, subject: Option<SourcePosition>) {
@@ -203,6 +259,7 @@ impl Statistics {
         for loss in other.losses {
             self.merge_loss(loss);
         }
+        self.add_computed_imports(other.computed_imports);
     }
 
     fn add_loss(&mut self, loss: LocatedLoss) {
@@ -548,8 +605,8 @@ mod tests {
         queries.gave_up[3] = 1;
         queries.members_gave_up[1] = 4;
         let mut statistics = Statistics::default();
-        statistics.add_queries(queries);
-        statistics.add_queries(queries);
+        statistics.add_queries(&queries);
+        statistics.add_queries(&queries);
         assert_eq!(statistics.get(StatisticId::CheckerQueries), 10);
         assert_eq!(statistics.get(StatisticId::CheckerQueriesGivenUp), 6);
         assert_eq!(statistics.get(StatisticId::CheckerMembersGivenUp), 8);

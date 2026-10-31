@@ -1089,9 +1089,9 @@ function f2 name="measure" module=m0 position=882 flags=[HasExplicitName] length
     IteratorClose v13 completion=Throw @978
     Rethrow v156 @978
 }
-function f3 name="Holder" module=m0 position=3821 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+function f3 name="Holder" module=m0 position=3806 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
   b0(v0: anything, v1: anything):
-    Jump -> next b1() @3821
+    Jump -> next b1() @3806
   b1():
     v2 = GetConstructPrototype v0 layout=L0 @3821
     v3 = NewObject v2 layout=L0 @3821
@@ -4721,7 +4721,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f172 visibility=Private
 runtimefunction id=IteratorConsumersFrom function=f173
 # -- generated: Holder f5 asked f7 f8 f9 f10 f11 f27 f28 f33 f39 f46 f47 f49 f51 f52 f53 f54 f55 f57 f58
 # CHECK-LABEL: function {{*}}name="Holder"
-# CHECK: module=m0 position=3821 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 2]}] results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+# CHECK: module=m0 position=3806 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 2]}] results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
 # CHECK-NEXT: b0(v0: anything, v1: int[0, 2]):
 # CHECK-NEXT: v2: f3 = AssumeType v0 provenType=f3
 # CHECK-NEXT: v3: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}]
@@ -4810,12 +4810,8 @@ runtimefunction id=IteratorConsumersFrom function=f173
 # CHECK-NEXT: v0: 1 = Integer integer=1
 # CHECK-NEXT: v1: 2 = Integer integer=2
 # CHECK-NEXT: v2: L4 = NewObject -, v0, v1 layout=L4 fields=[0, 1] allocationSite=77 allocationClass=4
-# CHECK-NEXT: v3: "later" = String string="later"
-# CHECK-NEXT: v4: anything = PropGet v2 key="late" accessSite=135 receivers=[L4]
-# CHECK-NEXT: v5: int = AssumeType v4 provenType=int
-# CHECK-NEXT: v6: string = Strcat v3, v5 [isLikelyKey]
-# CHECK-NEXT: v7: 3 = Integer integer=3
-# CHECK-NEXT: ElemSet v2, v6, v7 accessSite=136 receivers=[L4]
+# CHECK-NEXT: v3: 3 = Integer integer=3
+# CHECK-NEXT: PropSet v2, v3 key="later2" accessSite=136 receivers=[L4]
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function f11 module=
@@ -4832,7 +4828,7 @@ runtimefunction id=IteratorConsumersFrom function=f173
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f27 module=
-# CHECK: m0 position=5314 kind=Arrow captures=[{type=int[0, 2]}] thisType={type=anything} results=[{type=string}] functionTypes=[f88] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f12 callPosition=5320 isTailCall=true module=m0}, {callee=f12 callPosition=3712 parent=1 isTailCall=true module=m0 calledBuiltin=ArrayPrototypeJoin}, {callee=f152 callPosition=3629 parent=1 module=m5}, {callee=f224 callPosition=3712 parent=2 module=m14}, {callee=f224 callPosition=3970 parent=4 module=m14}, {callee=f172 callPosition=3970 parent=5 module=m14}, {callee=f172 callPosition=5210 parent=3 module=m14}] {
+# CHECK: m0 position=5314 kind=Arrow captures=[{type=int[0, 2]}] thisType={type=anything} results=[{type=string}] functionTypes=[f88] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f12 callPosition=5320 isTailCall=true module=m0}, {callee=f12 callPosition=3712 parent=1 isTailCall=true module=m0 calledBuiltin=ArrayPrototypeJoin}, {callee=f152 callPosition=3629 parent=1 module=m5}, {callee=f230 callPosition=3712 parent=2 module=m14}, {callee=f230 callPosition=3970 parent=4 module=m14}, {callee=f172 callPosition=3970 parent=5 module=m14}, {callee=f172 callPosition=5210 parent=3 module=m14}] {
 # CHECK-NEXT: b0(v0: int[0, 2]):
 # CHECK-NEXT: v1: L4 = NewObject -, v0 layout=L4 fields=[0] allocationSite=96 allocationClass=4
 # CHECK-NEXT: v2: L4 = FinishObject v1
@@ -4901,7 +4897,7 @@ runtimefunction id=IteratorConsumersFrom function=f173
 # CHECK-NEXT: Return v42
 # CHECK-NEXT: }
 # CHECK-LABEL: function f28 module=
-# CHECK: m0 position=5368 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f89] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f12 callPosition=5374 isTailCall=true module=m0}, {callee=f12 callPosition=3712 parent=1 isTailCall=true module=m0 calledBuiltin=ArrayPrototypeJoin}, {callee=f152 callPosition=3629 parent=1 module=m5}, {callee=f224 callPosition=3712 parent=2 module=m14}, {callee=f224 callPosition=3970 parent=4 module=m14}, {callee=f172 callPosition=3970 parent=5 module=m14}, {callee=f172 callPosition=5210 parent=3 module=m14}] {
+# CHECK: m0 position=5368 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f89] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f12 callPosition=5374 isTailCall=true module=m0}, {callee=f12 callPosition=3712 parent=1 isTailCall=true module=m0 calledBuiltin=ArrayPrototypeJoin}, {callee=f152 callPosition=3629 parent=1 module=m5}, {callee=f230 callPosition=3712 parent=2 module=m14}, {callee=f230 callPosition=3970 parent=4 module=m14}, {callee=f172 callPosition=3970 parent=5 module=m14}, {callee=f172 callPosition=5210 parent=3 module=m14}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: L11 = NewObject layout=L11 allocationSite=97 allocationClass=11
 # CHECK-NEXT: v1: fact = Entered function=f12 @5374 tail
@@ -5010,7 +5006,7 @@ runtimefunction id=IteratorConsumersFrom function=f173
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f49 module=
-# CHECK: m0 position=7974 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f112] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f12 callPosition=7980 isTailCall=true module=m0}, {callee=f12 callPosition=3712 parent=1 isTailCall=true module=m0 calledBuiltin=ArrayPrototypeJoin}, {callee=f152 callPosition=3629 parent=1 module=m5}, {callee=f224 callPosition=3712 parent=2 module=m14}, {callee=f224 callPosition=3970 parent=4 module=m14}, {callee=f172 callPosition=3970 parent=5 module=m14}, {callee=f172 callPosition=5210 parent=3 module=m14}] {
+# CHECK: m0 position=7974 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f112] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f12 callPosition=7980 isTailCall=true module=m0}, {callee=f12 callPosition=3712 parent=1 isTailCall=true module=m0 calledBuiltin=ArrayPrototypeJoin}, {callee=f152 callPosition=3629 parent=1 module=m5}, {callee=f230 callPosition=3712 parent=2 module=m14}, {callee=f230 callPosition=3970 parent=4 module=m14}, {callee=f172 callPosition=3970 parent=5 module=m14}, {callee=f172 callPosition=5210 parent=3 module=m14}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "abc" = String string="abc"
 # CHECK-NEXT: v1: String = CallBuiltin -, v0 overload=String/2 accessSite=258
@@ -5237,7 +5233,33 @@ runtimefunction id=IteratorConsumersFrom function=f173
 # CHECK-NEXT: Return v39
 # CHECK-NEXT: }
 # CHECK-LABEL: function f57 module=
-# CHECK: m0 position=1122 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|int}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
+# CHECK: m0 position=1122 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|int}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|int):
+# CHECK-NEXT: v1: undefined|int ~ int = Upcast v0 castType=anything
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: boolean ~ true = TypeTest v1 testedType=number
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: b1(v4: int):
+# CHECK-NEXT: v5: boolean = GreaterEq v4, v2
+# CHECK-NEXT: Branch v5 -> taken b2(), notTaken b5()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v6: 1024 = Integer integer=1024
+# CHECK-NEXT: v7: boolean = Less v4, v6
+# CHECK-NEXT: Jump -> next b6(v7)
+# CHECK-NEXT: b3() frequency=Unlikely:
+# CHECK-NEXT: v8: undefined = Undefined
+# CHECK-NEXT: v9: boolean = GreaterEq v8, v2
+# CHECK-NEXT: Branch v9 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4() frequency=Unlikely:
+# CHECK-NEXT: v10: 1024 = Integer integer=1024
+# CHECK-NEXT: v11: boolean = Less v8, v10
+# CHECK-NEXT: Return v11
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v12: false = Boolean
+# CHECK-NEXT: Jump -> next b6(v12)
+# CHECK-NEXT: b6(v13: boolean):
+# CHECK-NEXT: Return v13
+# CHECK-NEXT: }
 # CHECK-LABEL: function f58 module=
 # CHECK: m0 position=3633 kind=Arrow length=1 captures=[{type=undefined|null|object flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|number|"-1"|"01"|"1"|"1.0"|"length"|"name"}] results=[{type=string}] functionTypes=[f72] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|object, v1: undefined|number|"-1"|"01"|"1"|"1.0"|"length"|"name"):
@@ -5265,11 +5287,11 @@ runtimefunction id=IteratorConsumersFrom function=f173
 # CHECK-NEXT: Return v12
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Holder"
-# CHECK: module=m0 position=3821 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] length=1 captures=[{type=f3}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers takesNewTarget=true} {
+# CHECK: module=m0 position=3806 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] length=1 captures=[{type=f3}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f3, v1: anything, v2: anything, v3: anything):
 # CHECK-NEXT: v4: int[0, 2] = AssumeType v3 provenType=int[0, 2]
 # CHECK-NEXT: v5: L0 = CallDirect v2, v4 function=f3
 # CHECK-NEXT: ReturnCall v5 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Holder"
-# CHECK: module=m0 position=3821 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] length=1 thisType={type=L0} parameters=[{type=int[0, 2]}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{}, {original=0}, {original=1}]} creator=Version{provenVersion=f3} constructedClass=L0
+# CHECK: module=m0 position=3806 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] length=1 thisType={type=L0} parameters=[{type=int[0, 2]}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{}, {original=0}, {original=1}]} creator=Version{provenVersion=f3} constructedClass=L0

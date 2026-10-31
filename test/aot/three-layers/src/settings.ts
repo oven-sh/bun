@@ -55,3 +55,14 @@ export const odd: Record<string, Maker> = {
   notEnumerable: (i): any => Object.defineProperty({ n: i, a: 1 }, "a", { enumerable: false }),
   frozen: (i): any => Object.freeze({ a: i, mode: "on", n: 1 }),
 };
+import { packageMode, packageText, packageTextReadAboveFirst } from "fake-merge";
+import * as merge from "fake-merge";
+export const middleText = "text of the application";
+export let middleMode: string = "one";
+export function setMiddleMode(mode: string) { middleMode = mode; }
+export const textsSeenInTheMiddle = () => [packageText, packageMode, packageTextReadAboveFirst, merge.packageText, merge.packageMode, middleText, middleMode];
+export const codeFromTextInTheMiddle = (parameters: string[], body: string): ((...all: any[]) => any) => new Function(...parameters, body) as any;
+export const importByPathInTheMiddle = (path: string): Promise<any> => import(path);
+export const rowOfTheApplication = (id: number, title: string) => ({ id, title, done: false });
+export const readRowInTheApplication = (row: { id: number; title: string; done: boolean }) => [row.id, row.title, row.done, Object.keys(row).join()];
+export class StaticsOfTheApplication { static limit = 4; static label = "application"; static twice() { return this.limit * 2; } }

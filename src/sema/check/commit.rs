@@ -126,7 +126,7 @@ struct Numbers {
 pub(super) struct CycleCommit {
     number: u32,
     /// The keys from `Task::take_logged_at_cycles`, sorted. They cover the queries in the cycles and whatever else was
-    /// stored in the same statements. A record key is its table's slot and `Publish::identity_of_logged`.
+    /// stored while those queries were on the stack. A record key is its table's slot and `Publish::identity_of_logged`.
     record_keys: Vec<(u32, u64)>,
     node_keys: Vec<[u32; 3]>,
     /// Hashes of the queries in the cycles this commit resolves, sorted. See `Task::take_cycle_members`.
@@ -690,6 +690,11 @@ impl<'s> Checker<'_, 's> {
     /// How often the task has come around a cycle whose results depend on where it's entered.
     pub fn closed_cycle_count(&self) -> u32 {
         self.task.closed_cycle_count()
+    }
+
+    /// How many queries the task has listed as members of those cycles.
+    pub fn cycle_members_added(&self) -> u64 {
+        self.task.cycle_members_added()
     }
 
     /// True if the task was discarded because of a cycle or an invalid commit, not a limit. Its files can be rechecked

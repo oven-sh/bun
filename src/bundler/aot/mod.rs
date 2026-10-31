@@ -183,7 +183,11 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         bundle.completion = Some(setup.completion);
     }
 
-    let services = BundlerServices::new(NonNull::from(&mut *bundle).cast(), module_prefix);
+    let services = BundlerServices::new(
+        NonNull::from(&mut *bundle).cast(),
+        module_prefix,
+        &aot.user_defined_names,
+    );
     let result = bun_aot::compile(&options, &services, log);
 
     let embedded = services.shut_down();

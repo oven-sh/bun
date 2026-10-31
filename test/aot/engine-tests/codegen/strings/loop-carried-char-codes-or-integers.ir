@@ -350,9 +350,9 @@ function f6 name="nested" module=m0 position=3333 flags=[IsChecked, HasExplicitN
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="parseNumbers"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 161, patchpoints: 33, rare instructions: 204, polls: 6
+# CHECK-NEXT: instructions: 189, patchpoints: 31, rare instructions: 151, polls: 2
 # CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="swapped"
 # CHECK: role=ResultWorker
-# CHECK-NEXT: instructions: 53, patchpoints: 5, rare instructions: 6
+# CHECK-NEXT: instructions: 49, patchpoints: 5, rare instructions: 4
 # CHECK-NEXT: end of function f9

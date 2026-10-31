@@ -1,7 +1,19 @@
-import { closeSync, existsSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { BuildError } from "../error.ts";
-import { namedBytesOfPe, readCoffGraph, sectionInFile } from "./coff-graph.ts";
+import { readAt } from "./binary-reader.ts";
+import { findLinkedMembers, namedBytesOfPe, readCoffGraph, sectionInFile } from "./coff-graph.ts";
+import { nameSections } from "./coff-object-editor.ts";
 import { builtinModulesSection } from "./coff-objects.ts";
 import type { SectionGraph } from "./graph.ts";
 import { createSectionOrder, findCompiledObjects, groupOfNode, writeTableIntoSection } from "./linker-common.ts";
@@ -12,6 +24,7 @@ const trimTableSection = ".buntrim";
 const orderFlag = "/order:@";
 const symbolMapFlag = "/map:";
 const commonFlags = ["/lldsavetemps:prelink", "/opt:nolldtailmerge"];
+export const unnamedSectionPrefix = "bun_unnamed_";
 
 const isMovable = (output: string) => output === ".text" || output === ".rdata" || output === builtinModulesSection;
 
@@ -27,7 +40,8 @@ function orderOf(graph: SectionGraph, partition: Partition): SectionOrder {
     const group = groupOf(node);
     const names = all.filter(name => groupOfName.get(name) === group);
     if (group < 0 || names.length === 0) return;
-    order.groups[group]!.names.push(...names);
+    // One unwind record may serve a hundred thousand functions, and has a name for each.
+    for (const name of names) order.groups[group]!.names.push(name);
     order.nodes.push(node);
   });
   return order;
@@ -72,9 +86,25 @@ export function coff(linker: Linker): LinkerFormat {
   };
   tidyUp();
   const symbolMapOf = (link: Link) => (link.name === "first" ? firstSymbolMap : finalSymbolMap);
+  const namedFolder = join(work, "named");
+  const namedCopies = new Map<string, string>();
+  let named: string[] = [];
+  let ordinal = 0;
+  const nextPrefix = () => unnamedSectionPrefix + ordinal++;
+  // A member that the first link took is linked as a file of its own, in front of its archive: what it defines is defined by then, so
+  // the archive's copy is not taken again. The same holds for what the first link compiled from a member that is bitcode.
+  const nameLinkedMembers = (first: Link) =>
+    findLinkedMembers(first.map, linker.inputs).flatMap(([name, { archive, offset, size }], index) => {
+      const copy = join(namedFolder, "members", String(index), basename(name.replaceAll("\\", "/")));
+      const fd = openSync(archive, "r");
+      mkdirSync(dirname(copy), { recursive: true });
+      writeFileSync(copy, readAt(fd, offset, size));
+      closeSync(fd);
+      if (nameSections(copy, nextPrefix())) return [copy];
+      rmSync(copy);
+      return [];
+    });
   return {
-    // Bitcode may lie in archives, whose members a link takes again beside what the first link compiled from them.
-    relinksSameInputs: true,
     firstInputs: [],
     builtinModulesOutput: builtinModulesSection,
     isMovable,
@@ -83,9 +113,31 @@ export function coff(linker: Linker): LinkerFormat {
     supportObjects: room => [
       linker.assemble("room.s", `.section ${trimTableSection},"dr"\n.p2align 3\n.zero ${room}\n`),
     ],
-    prepareInput: path => path,
-    prepareCompiledObjects: () => false,
-    compiledObjects,
+    prepareInput(path) {
+      if (!existsSync(path)) return path;
+      let copy = namedCopies.get(path);
+      if (copy === undefined) {
+        copy = join(namedFolder, "objects", resolve(path).replace(/^([a-z]:)?[\\/]+/i, ""));
+        if (!nameSections(path, nextPrefix(), copy)) copy = path;
+        namedCopies.set(path, copy);
+      }
+      return copy;
+    },
+    prepareCompiledObjects(objects, first) {
+      for (const object of objects) nameSections(object, nextPrefix());
+      named = [...objects, ...nameLinkedMembers(first)];
+      return named.length > 0 ? named : undefined;
+    },
+    compiledObjects(link) {
+      const objects = compiledObjects(link);
+      const empty = objects.filter(object => statSync(object).size === 0);
+      if (empty.length > 0) {
+        throw new BuildError(
+          `the linker left ${empty.length} empty files for objects compiled from bitcode: it does so when it has a ThinLTO cache; link without one`,
+        );
+      }
+      return objects;
+    },
     firstLinkArguments: () => ({
       last: [...commonFlags],
       replaced: new Map([[symbolMapAt, symbolMapFlag + firstSymbolMap]]),
@@ -96,7 +148,7 @@ export function coff(linker: Linker): LinkerFormat {
       // it can be cut with the rest of the features. lld-link places a name by the last line that has it: each name gets one line.
       const names = order.groups.flatMap(group => group.names);
       const grouped = new Set(names);
-      const commandNames = commandOrder.split(/\r?\n/);
+      const commandNames = commandOrder.split(/\r?\n/).filter(name => name !== "");
       const listed = new Set(commandNames);
       const lines = [
         ...names.filter(name => !listed.has(name)),
@@ -112,7 +164,7 @@ export function coff(linker: Linker): LinkerFormat {
         executable: link.executable,
         chunkMap: link.map,
         symbolMap: symbolMapOf(link),
-        inputs: [...linker.inputs, ...compiledObjects("first"), ...compiledObjects("second")],
+        inputs: [...linker.inputs, ...namedCopies.values(), ...named, ...compiledObjects("second")],
         libraryFolders,
         alternateNames,
       }),

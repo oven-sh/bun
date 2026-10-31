@@ -275,7 +275,11 @@ export async function codeOf(folder: string, entry: string, flags: string[] = []
     values += source.values;
     bytes += source.bytes;
   }
-  return { codeBytes: report.summary.codeBytes, bytesAValue: values ? Math.round((100 * bytes) / values) / 100 : undefined };
+  return {
+    codeBytes: report.summary.codeBytes,
+    bytesAValue: values ? Math.round((100 * bytes) / values) / 100 : undefined,
+    engineRuns: report.statistics.EngineRuns,
+  };
 }
 
 /** What one unit of work costs: the run with more work less the run with less, which did `unitsOfLess`, divided by the `units` between them. */

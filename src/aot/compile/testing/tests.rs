@@ -137,6 +137,7 @@ fn lowering_options(embeds_function_text: bool) -> LoweringOptions {
         removable: Default::default(),
         minifies_identifiers: false,
         obfuscates: false,
+        counts_executions: false,
     }
 }
 

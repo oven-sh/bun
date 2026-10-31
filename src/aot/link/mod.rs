@@ -41,7 +41,7 @@ pub use unit::LinkUnit;
 
 use crate::builtins::RuntimeFunction;
 use crate::ir::generated::{ModuleFlags, VariableFlags};
-use crate::ir::{InParallel, Program, drop_each, for_each_mut};
+use crate::ir::{Id, InParallel, Program, drop_each, for_each_mut};
 use crate::load::{PerProject, ProgramFile, ProjectId, SourceKind, Sources};
 use crate::modules::{ModuleGraph, Shape};
 use crate::statistics::{Counters, LimitId, LimitValues, StatisticId};
@@ -186,6 +186,42 @@ pub fn link_while(
         },
     );
     forget_library_layouts_without_definition(&mut units, &layouts);
+    if crate::statistics::logs_stages() {
+        let definitions = || units.iter().flat_map(|unit| &unit.layout_definitions);
+        let mut defined: Vec<u32> = (units.iter().zip(&layouts.local_to_merged))
+            .flat_map(|(unit, merged)| {
+                let ids = unit.layout_definitions.iter();
+                ids.map(|(id, _)| merged[id.index()])
+            })
+            .collect();
+        defined.sort_unstable();
+        defined.dedup();
+        // Several types go by one layout, and each has a definition. Two definitions of one type for one layout say the same.
+        let mut of_types: Vec<_> = (units.iter().zip(&layouts.local_to_merged))
+            .flat_map(|(unit, merged)| {
+                unit.object_types.iter().map(|&(definition, ty)| {
+                    let (id, layout) = &unit.layout_definitions[definition as usize];
+                    (merged[id.index()], ty, layout.fields.len())
+                })
+            })
+            .collect();
+        let of_types_count = of_types.len();
+        let fields_of_types: usize = of_types.iter().map(|it| it.2).sum();
+        of_types.sort_unstable();
+        of_types.dedup_by_key(|it| (it.0, it.1));
+        bun_core::print_errorln!(
+            "AOT link | units {} | layout definitions {} with {} fields | for {} layouts | keys named {} | of object types {} with {} fields, without those that say the same {} with {} fields",
+            units.len(),
+            definitions().count(),
+            definitions().map(|(_, it)| it.fields.len()).sum::<usize>(),
+            defined.len(),
+            layouts.keys.len(),
+            of_types_count,
+            fields_of_types,
+            of_types.len(),
+            of_types.iter().map(|it| it.2).sum::<usize>(),
+        );
+    }
     let mut variable_lists = collect_key_lists(&units, |unit| &unit.variables);
     variable_lists.push(&synthetic_exports);
     let variables = merge_keys(&variable_lists, in_parallel);

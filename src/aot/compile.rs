@@ -67,8 +67,7 @@ use crate::load::loaders::loader_by_path;
 use crate::load::plugin_modules::is_path_of_entry_text;
 use crate::load::replaced_by_tests::{ReadsLibrary, scan_files_of_tests};
 use crate::load::source_provider::SourceProvider;
-use crate::load::sources::parsed_source;
-use crate::load::worker_files::WorkerFile;
+use crate::load::worker_files::{WorkerFile, may_start_workers};
 use crate::load::{PerProject, ProjectId, Sources, host_platform};
 use crate::module_list::{ImportTarget, ModuleInput, ModuleList};
 use crate::modules::{ApplicationGraph, DeferredData, ModuleGraph};
@@ -138,6 +137,10 @@ pub struct Compilation {
     library_code_lacked: RuntimeUses,
     /// A program reads `process.mainModule`, by the word of the engine, and none of its files names a way to a module object.
     reads_main_module_without_its_name: bool,
+    /// A program stores into `Bun.main`, by the word of the engine.
+    stores_path_of_main_module: bool,
+    /// A program stores into `Module._resolveFilename` or `Module.prototype.require`, by the word of the engine.
+    stores_loader_functions: bool,
     /// A program reads them, by the word of the engine, and lets a module object go where the front end has not followed them.
     ways_read_out_of_sight: WaysBetweenModuleObjects,
     /// No program reads them, by the word of the engine, and the front end has followed them because a file names them.
@@ -227,6 +230,8 @@ pub struct BuildFailed {
     pub is_one_program: bool,
     /// No failure yet: see `compile`.
     pub brought_bun_types: bool,
+    /// The file and the byte offset of each message of the checker, in ascending order. `None`: the build ended ahead of the check.
+    pub errors_with_bun_types: Option<Vec<(Vec<u8>, u32)>>,
     /// `Diagnostics::has_early_errors`
     pub has_early_errors: bool,
     /// No failure: the files of a test run replace these members of built-in objects, and were loaded as if they were locked. See `compile`.
@@ -343,6 +348,8 @@ pub(crate) struct LoadedBuild<'b, 's> {
     pub keeps_library_code_without_names: bool,
     /// `RuntimeRoots::holds_guessed_code`
     pub holds_guessed_library_code: bool,
+    /// `RuntimeRoots::asks` of a program that takes less of Bun's own code than its files name. What the load has read is the closure of this and of no more.
+    pub library_code_asked: Option<&'b RuntimeUses>,
     /// Waits until the plugins have answered for every asset. False: one of them is no asset, and the caller gives up.
     pub finish_asset_reads: &'b dyn Fn() -> bool,
     /// What the load of Bun's own code has read off its files.
@@ -382,6 +389,15 @@ fn put_function_texts_into(program: &mut Program, texts: &SourceTexts) {
     }
 }
 
+// An error quotes what failed from the text of the function. It knows the line and the column in the file, and these say where that is in a text without types.
+fn put_types_cut_from_function_texts_into(program: &mut Program, texts: &SourceTexts) {
+    for (index, module) in program.modules.iter_mut().enumerate() {
+        if let Some(source) = texts.get(ModuleId::new(index)) {
+            module.types_cut_from_function_text = source.types_cut_from_function_text().to_vec();
+        }
+    }
+}
+
 struct FrontEndOutput {
     program: Program,
     body_remap: BodyRemap,
@@ -395,6 +411,7 @@ struct FrontEndOutput {
     names_way_to_module_objects: bool,
     has_commonjs_entry_point: bool,
     lets_process_out_of_sight: bool,
+    is_ready_for_loader_functions: bool,
     ways_not_followed_out_of_sight: WaysBetweenModuleObjects,
     ways_followed_for_their_names: WaysBetweenModuleObjects,
     /// Of a build that runs tests.
@@ -442,17 +459,17 @@ pub fn link_program(
     log: &mut Log,
 ) -> Result<LinkedProgram, BuildFailed> {
     let said_before = (log.msgs.len(), log.warnings, log.errors);
-    let linked = link_program_with_options(options, provider, log);
-    match &linked {
-        Err(failure) if starts_over_without_brought_types(&options.load, failure) => {}
-        Ok(_) | Err(_) => return linked,
-    }
+    let failure = match link_program_with_options(options, provider, log) {
+        Err(failure) if starts_over_without_brought_types(&options.load, &failure) => failure,
+        linked @ (Ok(_) | Err(_)) => return linked,
+    };
     log.msgs.truncate(said_before.0);
     (log.warnings, log.errors) = (said_before.1, said_before.2);
     provider.clear_embedded_files();
     let all: Vec<usize> = (0..options.entry_points.len()).collect();
     let mut options = options_with_entry_points(options, &all);
     options.load.takes_runtime_as_any = true;
+    options.load.errors_with_bun_types = failure.errors_with_bun_types;
     link_program_with_options(&options, provider, log)
 }
 
@@ -659,12 +676,9 @@ pub(crate) fn mentions_worker_constructor(files: &Files<'_>) -> bool {
     let constructor = table::find_name(b"Worker").and_then(table::global);
     let module = table::module_by_specifier(b"node:worker_threads");
     let mut imported = files.host_modules().iter();
-    let is_constructor = |&id: &BuiltinId| Some(table::canonical_id(id)) == constructor;
+    let mut compiled = files.compiled_files().iter();
     imported.any(|id| RuntimeModule::from_registry_id(id.0) == module)
-        || files.compiled_files().iter().any(|&file| {
-            parsed_source(files, file)
-                .is_some_and(|source| source.builtins.mentioned().iter().any(is_constructor))
-        })
+        || compiled.any(|&file| may_start_workers(files, file, constructor, module))
 }
 
 // A name that the build does not know may be that of any entry point.
@@ -753,6 +767,28 @@ fn reads_main_module(found: &FlowFindings<'_>, lets_process_out_of_sight: bool) 
         })
 }
 
+fn stores_path_of_main_module(found: &FlowFindings<'_>) -> bool {
+    has_followed_nothing(found)
+        || found.builtins_used.iter().any(|record| {
+            record.uses.contains(BuiltinUse::STORED_BY_NAME)
+                && builtin_of(record.builtin).map(table::canonical_id) == Some(BuiltinId::Bun_main)
+        })
+}
+
+fn stores_loader_functions(found: &FlowFindings<'_>) -> bool {
+    has_followed_nothing(found)
+        || found.builtins_used.iter().any(|record| {
+            record.uses.contains(BuiltinUse::STORED_BY_NAME)
+                && matches!(
+                    builtin_of(record.builtin).map(table::canonical_id),
+                    Some(
+                        BuiltinId::NodeModule_resolveFilename
+                            | BuiltinId::NodeModulePrototypeRequire
+                    )
+                )
+        })
+}
+
 // The files around a module object keep theirs where the front end has seen somebody ask for them. Where it has lost sight of the object the engine says whether anybody asks.
 fn find_ways_read_out_of_sight(
     found: &FlowFindings<'_>,
@@ -805,6 +841,7 @@ pub(crate) fn library_code_of(numbers: &LibraryCode) -> RuntimeUses {
             .copied()
             .map(RuntimeFunction)
             .collect(),
+        linked_functions: Box::default(),
     }
 }
 
@@ -820,6 +857,11 @@ fn numbers_of(code: &RuntimeUses) -> LibraryCode {
             .collect(),
         functions: code.functions.iter().map(|function| function.0).collect(),
     }
+}
+
+/// `FurtherLibraryCode::holds_test_files_alone`
+pub(crate) fn holds_test_files_alone(options: &Options<'_>) -> bool {
+    options.aot.is_part_of_test_files && options.aot.imports_are_in_other_images
 }
 
 pub(crate) fn chooses_library_code_by_names(options: &Options<'_>) -> bool {
@@ -862,6 +904,8 @@ fn find_load_options_with_what_engine_found(
         options,
         &compiled.library_code_lacked,
         compiled.reads_main_module_without_its_name,
+        compiled.stores_path_of_main_module,
+        compiled.stores_loader_functions,
         compiled.ways_read_out_of_sight,
         compiled.ways_named_that_nobody_reads,
         &compiled.replaced_exports,
@@ -875,6 +919,8 @@ fn find_load_options_with(
     options: &Options<'_>,
     library_code_lacked: &RuntimeUses,
     reads_main_module_without_its_name: bool,
+    stores_path_of_main_module: bool,
+    stores_loader_functions: bool,
     ways_read_out_of_sight: WaysBetweenModuleObjects,
     ways_named_that_nobody_reads: WaysBetweenModuleObjects,
     replaced_exports: &[ReplacedExport],
@@ -897,6 +943,18 @@ fn find_load_options_with(
     {
         let load = load.get_or_insert_with(|| options.load.clone());
         load.reads_main_module_without_its_name = true;
+    }
+    if stores_path_of_main_module
+        && !options.load.stores_path_of_main_module
+        && !options.aot.checks_only
+    {
+        let load = load.get_or_insert_with(|| options.load.clone());
+        load.stores_path_of_main_module = true;
+    }
+    if stores_loader_functions && !options.load.stores_loader_functions && !options.aot.checks_only
+    {
+        let load = load.get_or_insert_with(|| options.load.clone());
+        load.stores_loader_functions = true;
     }
     let known = &options.load.replaced_exports;
     if (replaced_exports.iter()).any(|export| known.binary_search(export).is_err())
@@ -968,6 +1026,8 @@ fn find_load_options_to_compile_again_with(
         }
         Err(failure) if starts_over_without_brought_types(&load, failure) => {
             load.takes_runtime_as_any = true;
+            load.errors_with_bun_types
+                .clone_from(&failure.errors_with_bun_types);
         }
         Err(failure)
             if (failure.left_to_loader.iter()).any(|file| !load.left_to_loader.contains(file)) =>
@@ -1002,6 +1062,11 @@ fn log_why_build_starts_over(before: &LoadOptions, after: &LoadOptions) {
                 "reads the main module without its name",
                 load.reads_main_module_without_its_name,
             ),
+            (
+                "stores the path of the main module",
+                load.stores_path_of_main_module,
+            ),
+            ("stores loader functions", load.stores_loader_functions),
             (
                 "reads children out of sight",
                 load.ways_read_out_of_sight.children,
@@ -1116,8 +1181,23 @@ fn with_builtins_that_entry_points_replace<'a>(options: &Options<'a>) -> Option<
         .extend_from_slice(&options.load.opened_names);
     found.names_added.shared_sort_unstable();
     found.names_added.dedup();
+    found
+        .names_spied_in_text
+        .extend_from_slice(&options.load.names_spied_in_text);
+    found.names_spied_in_text.shared_sort_unstable();
+    found.names_spied_in_text.dedup();
+    found
+        .modules_replaced_in_text
+        .extend_from_slice(&options.load.modules_replaced_in_text);
+    found.modules_replaced_in_text.shared_sort_unstable();
+    found.modules_replaced_in_text.dedup();
+    let spies_on_unknown_objects =
+        options.load.spies_on_unknown_objects || found.text_spies_under_any_name;
     if found.members == options.load.replaced_builtins
         && found.names_added == options.load.opened_names
+        && found.names_spied_in_text == options.load.names_spied_in_text
+        && found.modules_replaced_in_text == options.load.modules_replaced_in_text
+        && spies_on_unknown_objects == options.load.spies_on_unknown_objects
     {
         return None;
     }
@@ -1125,6 +1205,9 @@ fn with_builtins_that_entry_points_replace<'a>(options: &Options<'a>) -> Option<
     let mut options = options_with_entry_points(options, &all);
     options.load.replaced_builtins = found.members;
     options.load.opened_names = found.names_added;
+    options.load.names_spied_in_text = found.names_spied_in_text;
+    options.load.modules_replaced_in_text = found.modules_replaced_in_text;
+    options.load.spies_on_unknown_objects = spies_on_unknown_objects;
     Some(options)
 }
 
@@ -1162,8 +1245,14 @@ fn with_what_test_build_learned<'a>(options: &Options<'a>) -> Option<Options<'a>
     load.left_to_loader.shared_sort_unstable();
     load.left_to_loader.dedup();
     load.mocks_any_module |= learned.mocks_any_module;
-    load.takes_runtime_as_any |= learned.takes_runtime_as_any;
+    if learned.takes_runtime_as_any && !load.takes_runtime_as_any {
+        load.takes_runtime_as_any = true;
+        load.errors_with_bun_types
+            .clone_from(&learned.errors_with_bun_types);
+    }
     load.reads_main_module_without_its_name |= learned.reads_main_module_without_its_name;
+    load.stores_path_of_main_module |= learned.stores_path_of_main_module;
+    load.stores_loader_functions |= learned.stores_loader_functions;
     load.ways_read_out_of_sight
         .add(learned.ways_read_out_of_sight);
     load.ways_named_that_nobody_reads
@@ -1644,6 +1733,8 @@ fn add_program(first: &mut Compilation, program: Compilation) {
     first.started_workers.add(program.started_workers);
     first.library_code_lacked.add(&program.library_code_lacked);
     first.reads_main_module_without_its_name |= program.reads_main_module_without_its_name;
+    first.stores_path_of_main_module |= program.stores_path_of_main_module;
+    first.stores_loader_functions |= program.stores_loader_functions;
     (first.ways_read_out_of_sight).add(program.ways_read_out_of_sight);
     (first.ways_named_that_nobody_reads).add(program.ways_named_that_nobody_reads);
     first.replaced_exports.extend(program.replaced_exports);
@@ -1655,6 +1746,7 @@ fn add_program(first: &mut Compilation, program: Compilation) {
     let (all, further) = (&mut first.replaced_builtins, program.replaced_builtins);
     all.builtins.extend(further.builtins);
     (all.names_added_to_builtins).extend(further.names_added_to_builtins);
+    (all.parameters_that_start_workers).extend(further.parameters_that_start_workers);
 }
 
 fn compile_written_entry_points(
@@ -1755,6 +1847,8 @@ fn compile_program_at_each_entry_point(
                         None => {
                             program.library_code_lacked = RuntimeUses::default();
                             program.reads_main_module_without_its_name = false;
+                            program.stores_path_of_main_module = false;
+                            program.stores_loader_functions = false;
                             program.ways_read_out_of_sight = WaysBetweenModuleObjects::default();
                             program.ways_named_that_nobody_reads =
                                 WaysBetweenModuleObjects::default();
@@ -1947,6 +2041,7 @@ fn compile_programs<'a>(
             return Err(failure);
         }
     };
+    engine_options.wait_for_images_below(&options.aot.images_below);
     outputs.shared_sort_by_key(|(place, _)| match *place {
         ProgramPlace::Only => 0,
         ProgramPlace::OneOfSeveral(index) => index,
@@ -1996,6 +2091,7 @@ fn compile_programs<'a>(
         let (held, platform) = (&output.held_library_code, build.platform);
         let lacks_main_module = output.lacks_main_module();
         let lets_process_out_of_sight = output.lets_process_out_of_sight;
+        let is_ready_for_loader_functions = output.is_ready_for_loader_functions;
         let ways_not_followed = output.ways_not_followed_out_of_sight;
         let ways_followed = output.ways_followed_for_their_names;
         let exported_variables = &output.exported_variables;
@@ -2013,6 +2109,8 @@ fn compile_programs<'a>(
                 own,
                 &lacked,
                 reads_main_module,
+                stores_path_of_main_module(found),
+                !is_ready_for_loader_functions && stores_loader_functions(found),
                 ways,
                 nobody_reads,
                 &exported_variables.find_replaced(found),
@@ -2039,6 +2137,7 @@ fn compile_programs<'a>(
     let has_errors = build.diagnostics.has_errors();
     let is_internal_error = build.diagnostics.has_internal_errors();
     let brought_bun_types = build.brings_bun_types;
+    let errors_with_bun_types = build.diagnostics.take_places_of_type_errors();
     let refused_entry_points = build.find_refused_entry_points();
     let left_entry_points = core::mem::take(&mut build.left_entry_points);
     let mut started_workers = core::mem::take(&mut build.started_workers);
@@ -2092,6 +2191,9 @@ fn compile_programs<'a>(
         .map(|((place, engine, output), library_code_lacked)| {
             let reads_main_module_without_its_name = output.lacks_main_module()
                 && reads_main_module(&engine.flow_findings(), output.lets_process_out_of_sight);
+            let stores_path_of_main_module = stores_path_of_main_module(&engine.flow_findings());
+            let stores_loader_functions = !output.is_ready_for_loader_functions
+                && stores_loader_functions(&engine.flow_findings());
             let ways_read_out_of_sight = find_ways_read_out_of_sight(
                 &engine.flow_findings(),
                 output.ways_not_followed_out_of_sight,
@@ -2111,6 +2213,8 @@ fn compile_programs<'a>(
                 replaced_exports,
                 lacks_replaceable_exports,
                 reads_main_module_without_its_name,
+                stores_path_of_main_module,
+                stores_loader_functions,
                 ways_read_out_of_sight,
                 ways_named_that_nobody_reads,
                 engine,
@@ -2139,6 +2243,7 @@ fn compile_programs<'a>(
             refused_entry_points,
             is_one_program: false,
             brought_bun_types,
+            errors_with_bun_types,
             has_early_errors: false,
             replaced_builtins: Vec::new(),
             left_to_loader: Vec::new(),
@@ -2194,13 +2299,14 @@ fn find_further_worker_files(
 
 fn fail(
     stage: Stage,
-    diagnostics: Diagnostics,
+    mut diagnostics: Diagnostics,
     statistics: Statistics,
     refused_entry_points: Option<Vec<u32>>,
     log: &mut Log,
 ) -> BuildFailed {
     let is_internal_error = diagnostics.has_internal_errors();
     let has_early_errors = diagnostics.has_early_errors();
+    let errors_with_bun_types = diagnostics.take_places_of_type_errors();
     diagnostics.write_to(log);
     BuildFailed {
         stage,
@@ -2211,6 +2317,7 @@ fn fail(
         refused_entry_points,
         is_one_program: false,
         brought_bun_types: false,
+        errors_with_bun_types,
         replaced_builtins: Vec::new(),
         left_to_loader: Vec::new(),
     }
@@ -2330,6 +2437,8 @@ impl<'a> Build<'a> {
                 build.is_one_program = true;
                 return Err(Stage::BindModules);
             }
+            // From here on the front end takes most of its memory. The build of the program below has let go of its own by then.
+            build.options.aot.images_below.wait();
             let units = build.check_and_lower(&loaded, &bound);
             // No failure: see `compile`. A package keeps the types that it has without them.
             if build.brings_bun_types && build.has_withdrawn_trust {
@@ -2384,6 +2493,7 @@ impl<'a> Build<'a> {
         let sessions = core::mem::take(&mut self.retired_sessions);
         let runner_of_drops = self.parallel_runner();
         let writes_program_file = self.options.aot.ir_output_path.is_some();
+        put_types_cut_from_function_texts_into(&mut program, &output.texts);
         let ((), emitted) = run_beside(
             &self.beside_runner(),
             move || {
@@ -2461,12 +2571,23 @@ impl<'a> Build<'a> {
         let [mapped, mapped_bytes, copied, copied_bytes] =
             bun_sema_driver::host::large_files_so_far();
         if mapped + copied != 0 && logs_stages() {
+            let [declared_by_packages, of_packages, declared, rest] =
+                bun_sema_driver::host::mapped_files_by_kind();
             bun_core::print_errorln!(
-                "AOT texts of 8 KB and more | mapped {} files, {} MB | copied {} files, {} MB",
+                "AOT texts of 8 KB and more | mapped {} files, {} MB | copied {} files, {} MB | mapped: declarations of packages {} files, {} MB | other files of packages {} files, {} MB | other declarations {} files, {} MB | the rest {} files, {} MB | written since they were mapped, and read anew {}",
                 mapped,
                 mapped_bytes >> 20,
                 copied,
                 copied_bytes >> 20,
+                declared_by_packages[0],
+                declared_by_packages[1] >> 20,
+                of_packages[0],
+                of_packages[1] >> 20,
+                declared[0],
+                declared[1] >> 20,
+                rest[0],
+                rest[1] >> 20,
+                bun_sema_driver::host::mapped_files_written_since(),
             );
         }
         // The pool has as many threads as there was source text of the program's own to read. The engine fits its threads to the program that

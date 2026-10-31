@@ -865,6 +865,7 @@ function collectClass(type: ClassType, joins: Joins): Declaration[] {
       : undefined,
     hasConstructor: construct !== null,
     construct: collectConstruction(type),
+    prototypeListsAllMembers: true,
   });
   const byName = (left: ClassMember, right: ClassMember) => compareBytes(left.name, right.name);
   const binding = pathOfConstructorBinding(type);
@@ -883,6 +884,11 @@ function collectClass(type: ClassType, joins: Joins): Declaration[] {
       { length: construct === null ? null : (construct.length ?? construct.requiredCount) },
     ),
     ...(prototypeBase === null ? [] : b.inherits(joinPath([path, "prototype"]), prototypeBase)),
+    // setup${name}ClassStructure() in bindgen-emit.ts puts these on the prototype beside the members of the schema, and nothing else.
+    ...["@@toStringTag", ...(type.prototypeBase === "Error" ? ["name"] : [])]
+      .map(member => pathOfMember(path, "proto", member))
+      .filter(member => !joins.writtenMembers.has(member))
+      .flatMap(member => b.method(member, b.property(b.string))),
     ...type.protoMembers
       .toSorted(byName)
       .flatMap(member => collectClassMember(type, member, pathOfMember(path, "proto", member.name), false)),

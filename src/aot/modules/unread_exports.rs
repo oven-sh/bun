@@ -78,8 +78,9 @@ impl ExportReads {
         let mut modules = FxHashMap::default();
         for parts in files {
             if parts.interop.kind == ModuleKind::Data && !parts.exports.is_empty() {
-                let is_required_as_namespace =
-                    parts.interop.require_result != RequireResult::DefaultExport;
+                let is_required_as_namespace = parts.interop.require_result
+                    != RequireResult::DefaultExport
+                    || parts.interop.answers_loader_with_namespace;
                 let data_module = DataModule {
                     is_required_as_namespace,
                     is_namespace_reached: parts.is_library,

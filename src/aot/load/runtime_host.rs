@@ -208,6 +208,7 @@ impl CodeHost for RuntimeHost<'_> {
             platform: self.platform,
             replaced: self.replaced_builtins,
             replaced_members_sought: ReplacedMembersSought::None,
+            is_served_by_other_images: false,
         };
         let source = parsed_source_mut(payload);
         builtin_uses::finish_runtime_file(&input, self.runtime_modules, request, source)

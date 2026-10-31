@@ -4002,23 +4002,45 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f16 visibility=Private
 # CHECK-NEXT: v11: "blown" = String string="blown"
 # CHECK-NEXT: v12: Array<undefined|"blown"> = NewArray v11 contents=undefined|"blown"
 # CHECK-NEXT: v13: Array<undefined|"blown", proven, pristine[Storage, Names, Dense]> = AssumeType v12 provenType=Array<undefined|"blown", proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v14: object = CallDirect v10, v10, v13 function=f12 accessSite=21 [isConstruction]
-# CHECK-NEXT: v15: object ~ L1 = Expect v14 expectedType=undefined|null|L1
+# CHECK-NEXT: v14: Error = CallDirect v10, v10, v13 function=f12 accessSite=21 [isConstruction]
+# CHECK-NEXT: v15: Error ~ L1 = Expect v14 expectedType=undefined|null|L1
 # CHECK-NEXT: Throw v15
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v16: undefined = Undefined
 # CHECK-NEXT: Return v16
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="opaqueInt"
-# CHECK: module=m0 position=523 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int[0, 2147483647] site=w0}, {type=int site=w1}] results=[{type=i32 site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=523 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int[0, 2147483647] site=w0}, {type=int site=w1}] results=[{type=i32 site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=576 module=m0}] {
 # CHECK-NEXT: b0(v0: int[0, 2147483647], v1: int):
-# CHECK-NEXT: v2: undefined = CallDirect function=f1 accessSite=22
-# CHECK-NEXT: v3: 3 = Integer integer=3
-# CHECK-NEXT: v4: int[0, 6442450941] = Mul v0, v3
-# CHECK-NEXT: v5: int|whole = Sub v4, v1
-# CHECK-NEXT: v6: 0 = Integer
-# CHECK-NEXT: v7: i32 = BitOr v5, v6
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v2: fact = Entered function=f1
+# CHECK-NEXT: v3: int|whole = GetModuleVariable fact=v2 variable=g4
+# CHECK-NEXT: v4: int|whole = Increment v3
+# CHECK-NEXT: PutModuleVariable v4 variable=g4
+# CHECK-NEXT: v6: int|whole = GetModuleVariable fact=v2 variable=g5
+# CHECK-NEXT: v7: 0 = Integer
+# CHECK-NEXT: v8: boolean = Greater v6, v7
+# CHECK-NEXT: Branch v8 -> taken b1(), notTaken b3()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v9: int|whole = Decrement v6
+# CHECK-NEXT: PutModuleVariable v9 variable=g5
+# CHECK-NEXT: v11: 0 = Integer
+# CHECK-NEXT: v12: boolean = StrictEq v9, v11
+# CHECK-NEXT: Branch v12 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v13: f12 = GetModuleVariable fact=v2 variable=g6
+# CHECK-NEXT: v14: "blown" = String string="blown"
+# CHECK-NEXT: v15: Array<undefined|"blown"> = NewArray v14 contents=undefined|"blown"
+# CHECK-NEXT: v16: Array<undefined|"blown", proven, pristine[Storage, Names, Dense]> = AssumeType v15 provenType=Array<undefined|"blown", proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v17: Error = CallDirect v13, v13, v16 function=f12 accessSite=21 [isConstruction]
+# CHECK-NEXT: v18: Error ~ L1 = Expect v17 expectedType=undefined|null|L1
+# CHECK-NEXT: Throw v18
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v19: 3 = Integer integer=3
+# CHECK-NEXT: v20: int[0, 6442450941] = Mul v0, v19
+# CHECK-NEXT: v21: int|whole = Sub v20, v1
+# CHECK-NEXT: v22: 0 = Integer
+# CHECK-NEXT: v23: i32 = BitOr v21, v22
+# CHECK-NEXT: Return v23
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="fold"
 # CHECK: module=m0 position=1048 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=i32 site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -6083,14 +6105,15 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f16 visibility=Private
 # CHECK-NEXT: Throw v992
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Blown"
-# CHECK: module=m0 position=405 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined|"blown", proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+# CHECK: module=m0 position=405 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined|"blown", proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=Error flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
 # CHECK-NEXT: b0(v0: function, v1: anything, v2: Array<undefined|"blown", proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v3: f12 = AssumeType v0 provenType=f12
 # CHECK-NEXT: v4: f12 = AssumeType v1 provenType=f12
 # CHECK-NEXT: v5: null|object = GetSuperBase v3
 # CHECK-NEXT: v6: builtin(Error) = AssumeType v5 provenType=builtin(Error)
 # CHECK-NEXT: v7: object ~ L1 = SuperConstructList v6, v4, v2 layout=L1 accessSite=89 callees=[builtin(Error)]
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v8: Error ~ L1 = AssumeType v7 provenType=Error
+# CHECK-NEXT: Return v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="closure0"
 # CHECK: module=m0 position=6817 kind=Arrow flags=[IsChecked] length=1 captures=[{type=env L2 flags=[IsFromCompiler]}, {type=int[0, 8191] site=w95}] thisType={type=anything} parameters=[{type=i32 site=w163}] results=[{type=i32 site=w164}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
@@ -6103,5 +6126,6 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f16 visibility=Private
 # CHECK-NEXT: v5: null|object = GetSuperBase v0
 # CHECK-NEXT: v6: builtin(Error) = AssumeType v5 provenType=builtin(Error)
 # CHECK-NEXT: v7: object ~ L1 = ConstructSuperForwardVarargs v6, v4 layout=L1 firstArgument=1 accessSite=89 callees=[builtin(Error)]
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v8: Error ~ L1 = AssumeType v7 provenType=Error
+# CHECK-NEXT: Return v8
 # CHECK-NEXT: }

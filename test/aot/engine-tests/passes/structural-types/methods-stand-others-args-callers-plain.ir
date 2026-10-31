@@ -352,63 +352,35 @@ function f36 module=m3 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v1, v2)
-# CHECK-NEXT: b1(v3: number ~ 0, v4: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: v5: boolean = HasArrayStorage v0 arrayStorage=Double
-# CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b8()
-# CHECK-NEXT: b2(v6: guard):
-# CHECK-NEXT: Jump -> next b3(v3, v4)
-# CHECK-NEXT: b3(v7: number, v8: int[0, 4294967295] ~ int[0, 2147483648]):
+# CHECK-NEXT: b1(v3: number, v4: int[0, 4294967295] ~ int[0, 2147483648]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v10: int[0, 4294967295] ~ int[0, 2147483647] = Upcast v8 castType=int|whole
-# CHECK-NEXT: v11: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0 accessSite=69
-# CHECK-NEXT: v12: boolean = Less v10, v11
-# CHECK-NEXT: Branch v12 -> taken b4(| 0), notTaken b6()
-# CHECK-NEXT: b4(v13: int[0, 4294967294] ~ int[0, 2147483647]):
-# CHECK-NEXT: v14: boolean = IsInBounds v0, v13
-# CHECK-NEXT: Branch v14 -> taken b5(| 0), notTaken b11(v7, v13)
-# CHECK-NEXT: b5(v15: guard):
-# CHECK-NEXT: v16: guard = AllGuards v6, v15
-# CHECK-NEXT: v17: 1099511627776|double = GetArrayElement v0, v13, v16 arrayStorage=Double level=Expected accessSite=70 [keyIsIntegral, isInBounds, readsHoleAsNaN]
-# CHECK-NEXT: v18: number = Add v7, v17
-# CHECK-NEXT: v19: int[1, 4294967295] ~ int[1, 2147483648] = Increment v13
-# CHECK-NEXT: Jump -> next b3(v18, v19)
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v20: 0 = Integer
-# CHECK-NEXT: v21: boolean = IsElementPresent v0, v20, v6 arrayStorage=Double [keyIsIntegral]
-# CHECK-NEXT: Branch v21 -> taken b7(| 0), notTaken b12(v7)
-# CHECK-NEXT: b7(v22: guard):
-# CHECK-NEXT: v23: guard = AllGuards v6, v22
-# CHECK-NEXT: v24: 1099511627776|double = GetArrayElement v0, v20, v23 arrayStorage=Double level=Expected accessSite=71 [keyIsIntegral, isPresent]
-# CHECK-NEXT: Jump -> next b13(v7, v24)
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: ConvertToDoubleStorage v0
-# CHECK-NEXT: Jump -> next b9()
-# CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v27: int[0, 4294967295] ~ 0 = Upcast v4 castType=int|whole
-# CHECK-NEXT: v28: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0 accessSite=69
-# CHECK-NEXT: v29: boolean = Less v27, v28
-# CHECK-NEXT: Branch v29 -> taken b10(| 0), notTaken b12(v3)
-# CHECK-NEXT: b10(v30: int[0, 4294967294] ~ 0) frequency=Rare:
-# CHECK-NEXT: Jump -> next b11(v3, v30)
-# CHECK-NEXT: b11(v31: number, v32: int[0, 4294967294] ~ int[0, 2147483647]) frequency=Rare:
-# CHECK-NEXT: v33: undefined|1099511627776|double = ElemGet v0, v32 accessSite=70 [keyIsIntegral]
-# CHECK-NEXT: v34: undefined|1099511627776|double ~ 1099511627776|double = Expect v33 expectedType=number
-# CHECK-NEXT: v35: number = Add v31, v34
-# CHECK-NEXT: v36: int[1, 4294967295] ~ int[1, 2147483648] = Increment v32
-# CHECK-NEXT: Jump -> next b1(v35, v36)
-# CHECK-NEXT: b12(v37: number) frequency=Rare:
-# CHECK-NEXT: v38: 0 = Integer
-# CHECK-NEXT: v39: undefined|1099511627776|double = ElemGet v0, v38 accessSite=71 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b13(v37, v39)
-# CHECK-NEXT: b13(v40: number, v41: undefined|1099511627776|double ~ 1099511627776|double):
-# CHECK-NEXT: v42: "first " = String string="first "
-# CHECK-NEXT: v43: " sum " = String string=" sum "
-# CHECK-NEXT: v44: string = Strcat v42, v41, v43, v40
-# CHECK-NEXT: Return v44
+# CHECK-NEXT: v6: int[0, 4294967295] ~ int[0, 2147483647] = Upcast v4 castType=int|whole
+# CHECK-NEXT: v7: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0 accessSite=69
+# CHECK-NEXT: v8: boolean = Less v6, v7
+# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v9: int[0, 4294967294] ~ int[0, 2147483647]):
+# CHECK-NEXT: v10: undefined|1099511627776|double = ElemGet v0, v9 accessSite=70 [keyIsIntegral]
+# CHECK-NEXT: v11: undefined|1099511627776|double ~ 1099511627776|double = Expect v10 expectedType=number
+# CHECK-NEXT: v12: number = Add v3, v11
+# CHECK-NEXT: v13: int[1, 4294967295] ~ int[1, 2147483648] = Increment v9
+# CHECK-NEXT: Jump -> next b1(v12, v13)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v14: "first " = String string="first "
+# CHECK-NEXT: v15: 0 = Integer
+# CHECK-NEXT: v16: undefined|1099511627776|double = ElemGet v0, v15 accessSite=71 [keyIsIntegral]
+# CHECK-NEXT: v17: undefined|1099511627776|double ~ 1099511627776|double = Expect v16 expectedType=number
+# CHECK-NEXT: v18: " sum " = String string=" sum "
+# CHECK-NEXT: v19: string = Strcat v14, v17, v18, v3
+# CHECK-NEXT: Return v19
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="all"
-# CHECK: module=m0 position=825 kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<1099511627776|double, proven, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=825 kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<1099511627776|double, proven, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<1099511627776|double, proven, pristine[Storage, Names]>):
+# CHECK-NEXT: v1: "all " = String string="all "
+# CHECK-NEXT: v2: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0 accessSite=72
+# CHECK-NEXT: v3: string = Add v1, v2
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="greet"
 # CHECK: module=m0 position=894 kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L3):

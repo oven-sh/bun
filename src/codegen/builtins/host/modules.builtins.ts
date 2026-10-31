@@ -160,9 +160,13 @@ export default b.declarations(
       hot: b.property(b.undefined),
       resolve: resolvesFromImportMeta(b.string.loose),
       resolveSync: resolvesFromImportMeta(b.string.loose.refusing(b.null)),
+      "@@toStringTag": b.property(b.string),
     },
-    { scope: "Module" },
+    // ImportMetaObjectPrototypeValues in ImportMetaObject.cpp.
+    { scope: "Module", listsAllMembers: true },
   ),
+  // A lookup goes on there. Object.getPrototypeOf() answers null.
+  b.inherits("%ImportMeta%", "Object.prototype"),
   b.same("%ImportMeta%.require", "%ModuleRequire%"),
   b.same("%ModuleObject%.require", "%ModuleRequire%"),
   b.fn("process.getBuiltinModule", {

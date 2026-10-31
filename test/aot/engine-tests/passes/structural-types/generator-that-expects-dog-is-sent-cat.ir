@@ -644,7 +644,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f94 visibility=Private
 # CHECK-NEXT: b0(v0: anything, v1: "boris"|"rex"):
 # CHECK-NEXT: v2: f7|f11 = AssumeType v0 provenType=f7|f11
 # CHECK-NEXT: v3: object = GetConstructPrototype v2 layout=L1
-# CHECK-NEXT: v4: object ~ L1|L2|L4 = NewObject v3 layout=L1 allocationSite=9 allocationClass=0
+# CHECK-NEXT: v4: object ~ L2|L4 = NewObject v3 layout=L1 allocationSite=9 allocationClass=0
 # CHECK-NEXT: v5: L2|L4 = AssumeType v4 provenType=L2|L4
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }

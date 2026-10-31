@@ -365,6 +365,8 @@ export function partition(input: PartitionInput): Partition {
   const setRanks = rankSets(sets, layoutRank);
   const setOf = joinSmallSets(graph, exactSetOf, sets, setRanks, isSoftEntry);
   const { groups, groupOfSet } = orderGroups(graph, setOf, sets, setRanks, isMovable);
+  const outsidePrograms = new Set(model.features.filter(isOutsideCompiledPrograms).map(feature => feature.index));
+  const firstGroupInPrograms = groups.findIndex(({ set }) => sets[set]!.some(feature => !outsidePrograms.has(feature)));
   const minimumSizes = checkMinimumSizes(graph, model, groups, sets);
   const { removableBytes, featuresNearMinimum } = minimumSizes;
   return {
@@ -379,6 +381,7 @@ export function partition(input: PartitionInput): Partition {
     edges,
     layoutRank,
     groups,
+    groupsOutsidePrograms: firstGroupInPrograms < 0 ? groups.length : firstGroupInPrograms,
     groupOfSet,
     removableBytes,
     featuresNearMinimum,

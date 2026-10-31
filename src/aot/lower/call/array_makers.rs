@@ -5,7 +5,6 @@ use super::call_site;
 use super::intrinsic::has_spread;
 use super::written_operands::find_locked_builtin;
 use crate::builtins::id::BuiltinId;
-use crate::builtins::table::{self, Mutability};
 use crate::ir::{Edge, Opcode, TypeTable, ValueId};
 use crate::lower::expression::{Tail, TailCast};
 use crate::lower::{FileLowering, FunctionLowering};
@@ -57,12 +56,8 @@ impl FileLowering<'_, '_, '_, '_> {
         else {
             return None;
         };
-        // No expression names the method, so nobody has resolved it: a test run may have listed it as replaced.
-        let replaced = self.inputs.replaced_builtins;
-        let is_fixed = table::entry(method).mutability == Mutability::AlwaysLocked
-            && replaced.binary_search(&(method as u32)).is_err();
         let is_method = matches!(site.chain, Chain::No) && self.queries.atom_bytes(written) == name;
-        (is_fixed && is_method).then_some(receiver)
+        (self.is_fixed_method(method) && is_method).then_some(receiver)
     }
 
     // An arrow function has no `arguments`: it sees what its parameters name.

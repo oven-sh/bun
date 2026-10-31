@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { runtimeEnvironment } from "./harness/flags";
@@ -61,12 +61,21 @@ test("--parallel runs compiled test files in worker processes", async () => {
   expect({ summary, exitCode }).toEqual({ summary: [" 3 pass", " 0 fail"], exitCode: 0 });
 });
 
-test("--rerun-each gives each run fresh module state", async () => {
+test("--rerun-each runs a compiled test file again over the module state of the runs before", async () => {
   expect(await runTests(["--rerun-each=2"])).toEqual({
-    compiledPreloads: 6,
-    summary: [" 6 pass", " 0 fail"],
+    compiledPreloads: 1,
+    summary: [" 1 pass", " 5 fail"],
     typeErrors: 0,
-    exitCode: 0,
+    exitCode: 1,
+  });
+});
+
+test("--rerun-each with --isolate gives each compiled test file fresh module state, and not each run", async () => {
+  expect(await runTests(["--rerun-each=2", "--isolate"])).toEqual({
+    compiledPreloads: 3,
+    summary: [" 3 pass", " 3 fail"],
+    typeErrors: 0,
+    exitCode: 1,
   });
 });
 
@@ -95,6 +104,23 @@ test.each(["--isolate", "--parallel=2"])("a test file that cannot be compiled fa
     exitCode: 1,
   });
 });
+
+test.each([{ flags: [] }, { flags: ["--isolate"] }, { flags: ["--isolate", "--parallel=2"] }])(
+  "a test file that cannot be compiled is counted as plain counts one that does not load: $flags",
+  async ({ flags }) => {
+    using dir = tempDir("bun-test-counts-a-broken-file", {
+      "good.test.ts": `import { expect, test } from "bun:test";\ntest("runs", () => { expect(1).toBe(1); });`,
+      "broken.test.ts": `import { test } from "bun:test";\ntest("never runs", () => {});\nconst a = 1;\nconst a = 2;`,
+    });
+    const counts = async (...more: string[]) => {
+      const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...more, ...flags], String(dir), bunEnv);
+      return { counts: (stdout + stderr).match(/^ \d+ (pass|fail|errors?)$/gm), exitCode };
+    };
+    const plain = await counts();
+    expect(plain).toEqual({ counts: [" 1 pass", " 1 fail", " 1 error"], exitCode: 1 });
+    expect(await counts("--aot")).toEqual(plain);
+  },
+);
 
 test.each([
   { run: "every test file", paths: [], passes: 3 },
@@ -227,7 +253,6 @@ test("${name}", () => { expect(sliced(JSON.parse('["abc","defg","hi"]'))).toBe(2
   expect(operations).toBeLessThan(1_000);
 });
 
-// Only the last file asks how many globals there are: heapStats() itself keeps the realm that called it until another one calls it.
 const lastFile = (imports: string) => `
 import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
@@ -259,6 +284,23 @@ test("frames are named by the function object", () => {
     "e.test.ts": lastFile(`import "./named";`),
   });
   expect({ summary, exitCode }).toEqual({ summary: [" 2 pass", " 0 fail"], exitCode: 0 });
+});
+
+test("heapStats() does not keep the test file that called it", async () => {
+  using dir = tempDir("bun-test-isolate-heap-stats", {
+    "d.test.ts": `
+import { heapStats } from "bun:jsc";
+import { expect, test } from "bun:test";
+heapStats();
+test("nothing", () => { expect(1).toBe(1); });`,
+    "e.test.ts": lastFile(""),
+  });
+  const cmd = [bunExe(), "test", "--aot", "--isolate", "./d.test.ts", "./e.test.ts"];
+  // Collections between the two files would write over the stack that heapStats() left behind.
+  const env = { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" };
+  const { stdout, stderr, exitCode } = await run(cmd, String(dir), env);
+  expect((stdout + stderr).match(/^ \d+ (pass|fail)$/gm)).toEqual([" 2 pass", " 0 fail"]);
+  expect(exitCode).toBe(0);
 });
 
 test("a regular expression with named groups does not keep the test file that matched with it", async () => {
@@ -300,6 +342,57 @@ test("nothing", () => { expect(1).toBe(1); });`,
     "f.test.ts": lastFile(""),
   });
   expect({ summary, exitCode }).toEqual({ summary: [" 3 pass", " 0 fail"], exitCode: 0 });
+});
+
+test.skipIf(!isLinux)("process.stdout and process.stderr give their descriptors back with the test file", async () => {
+  const countsDescriptors = `
+import { expect, test } from "bun:test";
+import { appendFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+test("counts", () => {
+  process.stdout.write("");
+  process.stderr.write("");
+  appendFileSync(join(import.meta.dir, "counts"), readdirSync("/proc/self/fd").length + "\\n");
+  expect(1).toBe(1);
+});`;
+  const { summary, exitCode } = await runTests(["--isolate", "./d.test.ts", "./e.test.ts", "./f.test.ts"], {
+    "d.test.ts": countsDescriptors,
+    "e.test.ts": countsDescriptors,
+    "f.test.ts": `
+import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+test("as many in the second file as in the first", () => {
+  const [first, second] = readFileSync(join(import.meta.dir, "counts"), "utf8").trim().split("\\n");
+  expect(second).toBe(first);
+});`,
+  });
+  expect({ summary, exitCode }).toEqual({ summary: [" 3 pass", " 0 fail"], exitCode: 0 });
+});
+
+test("what a test file's close handlers write to process.stdout is still printed", async () => {
+  using dir = tempDir("bun-test-isolate-last-words", {
+    "d.test.ts": `
+import { expect, test } from "bun:test";
+test("leaves a connection open", async () => {
+  process.stdout.write("");
+  const nothing = () => {};
+  const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data: nothing } });
+  await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    socket: { data: nothing, close: () => void process.stdout.write("the connection was closed\\n") },
+  });
+  expect(1).toBe(1);
+});`,
+    "e.test.ts": `
+import { expect, test } from "bun:test";
+test("nothing", () => { expect(1).toBe(1); });`,
+  });
+  const cmd = [bunExe(), "test", "--aot", "--isolate", "./d.test.ts", "./e.test.ts"];
+  const { stdout, exitCode } = await run(cmd, String(dir), bunEnv);
+  expect(stdout).toContain("the connection was closed");
+  expect(exitCode).toBe(0);
 });
 
 test("bun:sql does not keep the test file that loaded it", async () => {

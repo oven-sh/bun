@@ -1594,6 +1594,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
         }
 #if ENABLE(AOT)
         if (JSC::AOT::isModuleNamespace(object)) {
+            // A name that the module does not export stays out of it, and the caller gets its mock all the same: JSModuleNamespaceObject::overrideExportValue() answers false above, and nobody asks.
             if (hasValue && !JSC::AOT::tryReplaceExport(object, propertyKey.uid(), replacement))
                 throwTypeError(globalObject, scope, makeString("Cannot spy on '"_s, String(propertyKey.uid()), "' because module exports can't be replaced in a compiled executable"_s));
             return true;
@@ -1668,6 +1669,11 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
             if (replaceExport(mock)) {
                 RETURN_IF_EXCEPTION(scope, {});
                 mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
+#if ENABLE(AOT)
+                // Nothing was replaced, so there is nothing to put back. A CommonJS file takes a name that it is handed: `undefined` put "back" would be an export that later imports find.
+                if (!hasValue && JSC::AOT::isModuleNamespace(object))
+                    mock->spyTarget.clear();
+#endif
             } else {
                 object->putDirectAccessor(globalObject, propertyKey, JSC::GetterSetter::create(vm, globalObject, mock, mock), attributes);
             }

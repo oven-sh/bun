@@ -1,5 +1,6 @@
 use super::evaluate::Value;
 use super::folder::Folder;
+use super::inputs::DefineValue;
 use crate::bind::CommonJsVariable;
 use crate::hir::{
     BinOp, ExprId, ExprKind, FnBody, IdList, PatKind, StmtId, StmtKind, UnOp, VarKind,
@@ -16,9 +17,9 @@ pub(super) struct ExcludedOperand {
     pub(super) is_excluded_by_bun_run: bool,
 }
 
-/// A build folds what `bun run` leaves alone: defines, what every executable has, variables that are stored once.
-/// Whether a file is CommonJS goes by what `bun run` folds, so each folded expression remembers who can fold it.
-impl Folder<'_, '_> {
+/// A build folds what `bun run` leaves alone: the defines that `bun build` adds by itself, what every executable has, variables that are stored once.
+/// Whether a file is CommonJS goes by what `bun run` folds with the same `--define`, so each folded expression remembers who can fold it.
+impl<'s> Folder<'_, 's> {
     pub(super) fn mark_folded_by_build_alone(&mut self, e: ExprId) {
         self.folded_by_build_alone.insert(e.idx());
     }
@@ -107,6 +108,13 @@ impl Folder<'_, '_> {
                     BinOp::Comma => is_known(right),
                     BinOp::And => is_either(false),
                     BinOp::Or => is_either(true),
+                    // `to_finite_number`
+                    BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
+                        [left, right].iter().all(|&operand| {
+                            self.is_literal_to_bun_run(operand)
+                                && self.folded(operand).value.is_boolean_or_finite_number()
+                        })
+                    }
                     _ => false,
                 }
             }
@@ -135,6 +143,9 @@ impl Folder<'_, '_> {
                 && self.is_folded_by_bun_run(e)
             {
                 return Some(self.evaluator.is_nullish(value));
+            }
+            if let Some(DefineValue::Data(_)) = self.find_user_defined_value(e) {
+                return Some(false);
             }
             return match kind {
                 ExprKind::Regex { .. }
@@ -215,7 +226,7 @@ impl Folder<'_, '_> {
             }
             ExprKind::Binary { op, left, right } => match op {
                 BinOp::Comma => by_build_alone(right),
-                BinOp::EqEq | BinOp::NotEq if self.converts_an_operand(left, right) => true,
+                _ if self.leaves_literals_alone(op, left, right) => true,
                 // `bun run` compares literals.
                 BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq
                     if [left, right]
@@ -275,17 +286,20 @@ impl Folder<'_, '_> {
         is_arithmetic && !(is_number(left) && is_number(right))
     }
 
-    fn converts_an_operand(&self, left: ExprId, right: ExprId) -> bool {
-        let (Value::Known(left), Value::Known(right)) =
-            (self.folded(left).value, self.folded(right).value)
-        else {
-            return false;
-        };
-        let evaluator = &self.evaluator;
-        let (is_left_nullish, is_right_nullish) =
-            (evaluator.is_nullish(left), evaluator.is_nullish(right));
-        let (left, right) = (evaluator.to_constant(left), evaluator.to_constant(right));
-        !(is_left_nullish && is_right_nullish)
-            && std::mem::discriminant(&left) != std::mem::discriminant(&right)
+    fn leaves_literals_alone(&self, op: BinOp, left: ExprId, right: ExprId) -> bool {
+        match (self.folded(left).value, self.folded(right).value) {
+            (Value::Known(left), Value::Known(right)) => {
+                !self.evaluator.is_computed_by_bun_run(op, left, right)
+            }
+            _ => false,
+        }
+    }
+
+    /// What `--define` or bunfig.toml gives for `e`. `bun run` has that in its place.
+    pub(super) fn find_user_defined_value(&self, e: ExprId) -> Option<DefineValue<'s>> {
+        let &state = self.path_states.get(&e)?;
+        let value = self.inputs.value_of(state)?;
+        let is_replaced = self.inputs.is_user_defined(state) && !self.is_assignment_target(e);
+        is_replaced.then_some(value)
     }
 }

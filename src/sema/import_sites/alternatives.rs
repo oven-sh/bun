@@ -3,7 +3,7 @@
 //! Nothing is run. A value is what folding says, or the values of the expressions that a binding leads to.
 
 use super::call_sites::{expr_kind, is_free_common_js, is_free_name, is_process};
-use super::made_requires::{find_imported_export, may_be_modified};
+use super::made_requires::{find_imported_export, may_be_modified, names_own_file};
 use super::parameters::{find_values_passed_for, is_exported};
 use super::{
     ImportSiteKind, ImportSpecifier, ResolvedForm, ScanInputs, call_site_arguments, call_site_kind,
@@ -368,6 +368,14 @@ impl Follower<'_, '_, '_> {
         let &ScanInputs { hir, bound, .. } = self.inputs;
         if is_free_common_js(hir, bound, e, CommonJsVariable::Dirname) {
             return !may_be_modified(hir, bound, CommonJsVariable::Dirname);
+        }
+        if let Some(ExprKind::Call(call)) = expr_kind(hir, e) {
+            // `dirname(fileURLToPath(import.meta.url))`, as an ES module makes itself a `__dirname`.
+            let call = hir[call];
+            return call.args.len() == 1
+                && self.find_export_of(call.callee, &[b"path", b"node:path"])
+                    == Some(known::meta_dirname)
+                && names_own_file(hir, bound, hir.id_at(call.args, 0));
         }
         matches!(expr_kind(hir, e), Some(ExprKind::Dot { obj, name, chain: Chain::No, .. })
             if (name == known::meta_dir || name == known::meta_dirname)

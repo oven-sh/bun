@@ -3,8 +3,10 @@ use std::borrow::Cow;
 use bun_core::strings::{is_valid_utf8, last_index_of_char};
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{BindOptions, Binding, Bound, Decl, FunctionFlags, RuntimeBindOptions, bind};
+use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::fold::{Constant, Decision, Decisions};
 use bun_sema::hir::{DiagnosticClass, ExprId, ExprKind, File, Flags, FnId, StmtId, StmtKind, rare};
+use bun_sema::import_sites::{ImportSite, ImportSiteKind, ImportSpecifier};
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::resolve::FinishedFile;
 use bun_sema::session::Session;
@@ -23,12 +25,15 @@ const START_OF_FUNCTION_WRAPPER: &[u8] = b"(";
 
 pub(crate) struct EvaluatedTexts {
     files: ShardedMap<Vec<u8>, Box<[u8]>>,
+    /// By the folder that the path of a text names: the file that it is written in.
+    holders: ShardedMap<Vec<u8>, Box<[u8]>>,
 }
 
 impl EvaluatedTexts {
     pub(crate) fn new() -> EvaluatedTexts {
         EvaluatedTexts {
             files: ShardedMap::default(),
+            holders: ShardedMap::default(),
         }
     }
 
@@ -46,6 +51,8 @@ impl EvaluatedTexts {
             EvaluatedTextForm::Script => try_create_script_text(texts.first()?)?,
         };
         let path = create_virtual_path(importer, index);
+        let folder = &path[..last_index_of_char(&path, b'/').unwrap_or(0)];
+        self.holders.insert_ref(folder.to_vec(), importer.into());
         let stored = self
             .files
             .insert_ref(path.clone(), source.clone().into_boxed_slice());
@@ -56,13 +63,21 @@ impl EvaluatedTexts {
         self.files.get_ref(path).is_some()
     }
 
+    pub(crate) fn holder_in_folder(&self, folder: &[u8]) -> Option<Vec<u8>> {
+        Some(self.holders.get_ref(folder)?.to_vec())
+    }
+
     pub(crate) fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
         let text = self.files.get_ref(path)?;
         Some(Cow::Owned(text.to_vec()))
     }
 }
 
-pub(crate) fn find_evaluated_function(request: &FinishedFile<'_, '_>) -> Option<FnId> {
+/// `is_served_by_other_images`: what a text imports is left to the loader, which looks from the path of the file that holds the code. A text has no such path: the interpreter runs it, in the place of the file that evaluates it.
+pub(crate) fn find_evaluated_function(
+    request: &FinishedFile<'_, '_>,
+    is_served_by_other_images: bool,
+) -> Option<FnId> {
     let (hir, bound, analysis) = (request.hir, request.bound, request.analysis);
     let ExprKind::Fn(function) = hir[find_only_expression(hir)?].kind else {
         return None;
@@ -71,12 +86,30 @@ pub(crate) fn find_evaluated_function(request: &FinishedFile<'_, '_>) -> Option<
     let has_wrapper_reference = hir.rare_syntax & rare::NEW_TARGET != 0
         || (bound.function_flags(function)).contains(FunctionFlags::USES_ARGUMENTS);
     let is_global_code = analysis.module_format == ModuleFormat::CommonJs
-        && analysis.import_sites.is_empty()
+        && (analysis.import_sites.is_empty()
+            || (!is_served_by_other_images
+                && !is_script_wrapper
+                && (analysis.import_sites.iter())
+                    .all(|site| is_import_call_of_package(site, analysis, request.atoms))))
         && bound.runtime.eval_scopes().is_empty()
         && !has_outer_scope_reference(hir, bound, function)
         && !has_replaced_expression(hir, &analysis.decisions)
         && !(is_script_wrapper && has_wrapper_reference);
     is_global_code.then_some(function)
+}
+
+// `new Function('return import("dep")')`. `bun run` looks from the code that calls the function, and that may be in another folder than the code that made it:
+// a path is left to the run time, a package has one answer nearly everywhere. Indirect eval looks from yet another module. A `require` there is a global that nobody has declared.
+fn is_import_call_of_package(
+    site: &ImportSite,
+    analysis: &FileAnalysis<'_>,
+    atoms: &Interner<'_>,
+) -> bool {
+    matches!(site.kind, ImportSiteKind::ImportCall(_))
+        && (analysis.alternatives_of(&site.specifier).iter()).all(|specifier| {
+            matches!(specifier, ImportSpecifier::Constant(name)
+                if !matches!(atoms.bytes(*name).first(), Some(b'.' | b'/') | None))
+        })
 }
 
 fn expression_ids(hir: &File<'_>) -> impl Iterator<Item = ExprId> {
@@ -276,10 +309,16 @@ fn has_unsupported_syntax(hir: &File<'_>) -> bool {
         || declares_function_twice_in_block(hir)
         || !hir.decorators.is_empty()
         || (hir.members.iter()).any(|member| member.flags.contains(Flags::ACCESSOR))
-        || (hir.exprs.iter()).any(|expression| !is_supported_expression(expression.kind))
+        || (hir.exprs.iter()).any(|expression| !is_supported_expression(hir, expression.kind))
 }
 
-fn is_supported_expression(kind: ExprKind) -> bool {
+fn is_supported_expression(hir: &File<'_>, kind: ExprKind) -> bool {
+    // `import("a", "b", "c")`: the parser of the run time refuses the third, and this one does not.
+    if let ExprKind::ImportCall { args } = kind
+        && hir.ids(args).count() > 2
+    {
+        return false;
+    }
     !matches!(
         kind,
         ExprKind::Regex { .. }
@@ -664,6 +703,10 @@ mod tests {
             (r#"Function("return require");"#, 0),
             (r#"Function("require", "return require");"#, 1),
             (r#"Function("return import('./b.js')");"#, 0),
+            (r#"Function("return import('dep')");"#, 1),
+            (r#"Function("return import(name)");"#, 0),
+            (r#"Function("return require('./b.js')");"#, 0),
+            (r#"(0, eval)("import('./b.js')");"#, 0),
             (r#"(0, eval)("this");"#, 1),
             (r#"(0, eval)("arguments");"#, 0),
             (r#"(0, eval)("() => arguments");"#, 0),

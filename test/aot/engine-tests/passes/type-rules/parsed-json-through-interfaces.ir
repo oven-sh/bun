@@ -413,7 +413,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f1 visibility=Private
 # CHECK-NEXT: Branch v123 -> taken b28(| 0), notTaken b29()
 # CHECK-NEXT: b28(v124: guard):
 # CHECK-NEXT: v125: guard = AllGuards v120, v122, v124
-# CHECK-NEXT: v126: undefined|null|int[-4503599627370496, 4503599627370495] ~ int[-4503599627370496, 4503599627370495] = GetSlot v118, v125 key="id" receivers=[L0] level=Expected
+# CHECK-NEXT: v126: anything ~ int[-4503599627370496, 4503599627370495] = GetSlot v118, v125 key="id" receivers=[L0] level=Expected
 # CHECK-NEXT: PropDefine v110, v126 key="id"
 # CHECK-NEXT: Jump -> next b30()
 # CHECK-NEXT: b29() frequency=Rare:
@@ -444,7 +444,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f1 visibility=Private
 # CHECK-NEXT: Jump -> next b34()
 # CHECK-NEXT: b34():
 # CHECK-NEXT: v146: 50 = Integer integer=50
-# CHECK-NEXT: PropDefine v139, v146 key="id" accessSite=55 receivers=[L0]
+# CHECK-NEXT: PutSlotOrAdd v139, -, v146 key="id" receivers=[L0] level=Proven accessSite=55
 # CHECK-NEXT: v148: L0 = FinishObject v139
 # CHECK-NEXT: v149: undefined = Undefined
 # CHECK-NEXT: v150: undefined|string = CallBuiltin -, v148, v149 overload=JSONStringify/0 accessSite=56

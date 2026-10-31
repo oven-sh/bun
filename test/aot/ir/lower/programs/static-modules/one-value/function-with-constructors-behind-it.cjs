@@ -77,70 +77,67 @@ function populateConstructorExports(exports, codes, HttpError) {
 // CHECK-NEXT: Throw v11
 // CHECK-NEXT: b4(v12):
 // CHECK-NEXT: v13 = PropGet v12 key="isHttpError"
-// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|[[f_6]] flags=[IsExpected]}
-// CHECK-NEXT: v15 = PropGet v12 key="HttpError"
-// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|[[f_7]] flags=[IsExpected]}
-// CHECK-NEXT: v17 = Integer integer=404
-// CHECK-NEXT: v18 = String string="no such page"
-// CHECK-NEXT: v19 = Call v5, -, v17, v18 calleeName="createError"
-// CHECK-NEXT: v20 = Convert v19 declared={type=undefined|null|number|string|symbol|bigint|[[L_8]] flags=[IsExpected]}
-// CHECK-NEXT: v21 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v22 = PropGet v21 key="console" [isFreeName]
-// CHECK-NEXT: v23 = Convert v22 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v24 = PropGet v23 key="log"
-// CHECK-NEXT: v25 = Convert v24 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v26 = TypeOf v5
-// CHECK-NEXT: v27 = PropGet v5 key="name"
-// CHECK-NEXT: v28 = Convert v27 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v29 = PropGet v5 key="length"
-// CHECK-NEXT: v30 = Convert v29 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v31 = Call v25, v23, v26, v28, v30 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v32 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v33 = PropGet v32 key="console" [isFreeName]
-// CHECK-NEXT: v34 = Convert v33 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v35 = PropGet v34 key="log"
-// CHECK-NEXT: v36 = Convert v35 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v37 = InstanceOf v20, v16 writtenExpression="missing instanceof HttpError"
-// CHECK-NEXT: v38 = PropGet v5 key="NotFound"
-// CHECK-NEXT: v39 = InstanceOf v20, v38 writtenExpression="missing instanceof createError.NotFound"
-// CHECK-NEXT: v40 = Call v14, -, v20 calleeName="isHttpError"
-// CHECK-NEXT: v41 = Convert v40 declared={type=boolean flags=[IsExpected]}
-// CHECK-NEXT: v42 = PropGet v5 key="isHttpError"
-// CHECK-NEXT: v43 = Data data=[[d_9]]
-// CHECK-NEXT: v44 = Call v42, v5, v43 calleeKey="isHttpError" calleeName="createError.isHttpError"
-// CHECK-NEXT: v45 = PropGet v20 key="status"
-// CHECK-NEXT: v46 = PropGet v20 key="message"
-// CHECK-NEXT: v47 = Call v36, v34, v37, v39, v41, v44, v45, v46 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v48 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v49 = PropGet v48 key="console" [isFreeName]
-// CHECK-NEXT: v50 = Convert v49 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v51 = PropGet v50 key="log"
-// CHECK-NEXT: v52 = Convert v51 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v53 = Builtin builtin=Object
-// CHECK-NEXT: v54 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v55 = Call v54, v53, v5 calleeName="Object.keys"
-// CHECK-NEXT: v56 = Convert v55 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
-// CHECK-NEXT: v57 = PropGet v56 key="join"
-// CHECK-NEXT: v58 = Convert v57 declared={type=undefined|null|[[f_10]] flags=[IsExpected]}
-// CHECK-NEXT: v59 = Call v58, v56 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v60 = Convert v59 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v61 = Call v52, v50, v60 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v62 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v63 = PropGet v62 key="console" [isFreeName]
-// CHECK-NEXT: v64 = Convert v63 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v65 = PropGet v64 key="log"
-// CHECK-NEXT: v66 = Convert v65 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v67 = PropGet v5 key="HttpError"
-// CHECK-NEXT: v68 = StrictEq v67, v16
-// CHECK-NEXT: v69 = Integer integer=500
-// CHECK-NEXT: v70 = ElemGet v5, v69
-// CHECK-NEXT: v71 = PropGet v5 key="InternalServerError"
-// CHECK-NEXT: v72 = StrictEq v70, v71
-// CHECK-NEXT: v73 = PropGet v5 key="InternalServerError"
-// CHECK-NEXT: v74 = PropGet v73 key="name"
-// CHECK-NEXT: v75 = Call v66, v64, v68, v72, v74 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v76 = Undefined
-// CHECK-NEXT: Return v76
+// CHECK-NEXT: v14 = PropGet v12 key="HttpError"
+// CHECK-NEXT: v15 = Integer integer=404
+// CHECK-NEXT: v16 = String string="no such page"
+// CHECK-NEXT: v17 = Call v5, -, v15, v16 calleeName="createError"
+// CHECK-NEXT: v18 = Convert v17 declared={type=undefined|null|number|string|symbol|bigint|[[L_6]] flags=[IsExpected]}
+// CHECK-NEXT: v19 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v20 = PropGet v19 key="console" [isFreeName]
+// CHECK-NEXT: v21 = Convert v20 declared={type=builtin(Console) flags=[IsExpected]}
+// CHECK-NEXT: v22 = PropGet v21 key="log"
+// CHECK-NEXT: v23 = Convert v22 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+// CHECK-NEXT: v24 = TypeOf v5
+// CHECK-NEXT: v25 = PropGet v5 key="name"
+// CHECK-NEXT: v26 = Convert v25 declared={type=undefined|null|string flags=[IsExpected]}
+// CHECK-NEXT: v27 = PropGet v5 key="length"
+// CHECK-NEXT: v28 = Convert v27 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: v29 = Call v23, v21, v24, v26, v28 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v30 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v31 = PropGet v30 key="console" [isFreeName]
+// CHECK-NEXT: v32 = Convert v31 declared={type=builtin(Console) flags=[IsExpected]}
+// CHECK-NEXT: v33 = PropGet v32 key="log"
+// CHECK-NEXT: v34 = Convert v33 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+// CHECK-NEXT: v35 = InstanceOf v18, v14 writtenExpression="missing instanceof HttpError"
+// CHECK-NEXT: v36 = PropGet v5 key="NotFound"
+// CHECK-NEXT: v37 = InstanceOf v18, v36 writtenExpression="missing instanceof createError.NotFound"
+// CHECK-NEXT: v38 = Call v13, -, v18 calleeName="isHttpError"
+// CHECK-NEXT: v39 = PropGet v5 key="isHttpError"
+// CHECK-NEXT: v40 = Data data=[[d_7]]
+// CHECK-NEXT: v41 = Call v39, v5, v40 calleeKey="isHttpError" calleeName="createError.isHttpError"
+// CHECK-NEXT: v42 = PropGet v18 key="status"
+// CHECK-NEXT: v43 = PropGet v18 key="message"
+// CHECK-NEXT: v44 = Call v34, v32, v35, v37, v38, v41, v42, v43 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v45 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v46 = PropGet v45 key="console" [isFreeName]
+// CHECK-NEXT: v47 = Convert v46 declared={type=builtin(Console) flags=[IsExpected]}
+// CHECK-NEXT: v48 = PropGet v47 key="log"
+// CHECK-NEXT: v49 = Convert v48 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+// CHECK-NEXT: v50 = Builtin builtin=Object
+// CHECK-NEXT: v51 = Builtin builtin=ObjectKeys
+// CHECK-NEXT: v52 = Call v51, v50, v5 calleeName="Object.keys"
+// CHECK-NEXT: v53 = Convert v52 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+// CHECK-NEXT: v54 = PropGet v53 key="join"
+// CHECK-NEXT: v55 = Convert v54 declared={type=undefined|null|[[f_8]] flags=[IsExpected]}
+// CHECK-NEXT: v56 = Call v55, v53 calleeKey="join" calleeName="join"
+// CHECK-NEXT: v57 = Convert v56 declared={type=undefined|null|string flags=[IsExpected]}
+// CHECK-NEXT: v58 = Call v49, v47, v57 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v59 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v60 = PropGet v59 key="console" [isFreeName]
+// CHECK-NEXT: v61 = Convert v60 declared={type=builtin(Console) flags=[IsExpected]}
+// CHECK-NEXT: v62 = PropGet v61 key="log"
+// CHECK-NEXT: v63 = Convert v62 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+// CHECK-NEXT: v64 = PropGet v5 key="HttpError"
+// CHECK-NEXT: v65 = StrictEq v64, v14
+// CHECK-NEXT: v66 = Integer integer=500
+// CHECK-NEXT: v67 = ElemGet v5, v66
+// CHECK-NEXT: v68 = PropGet v5 key="InternalServerError"
+// CHECK-NEXT: v69 = StrictEq v67, v68
+// CHECK-NEXT: v70 = PropGet v5 key="InternalServerError"
+// CHECK-NEXT: v71 = PropGet v70 key="name"
+// CHECK-NEXT: v72 = Call v63, v61, v65, v69, v71 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v73 = Undefined
+// CHECK-NEXT: Return v73
 // CHECK-NEXT: }
 // CHECK: function {{*}}
 // CHECK: module=[[m_0]] role=Signature thisType={type=anything} results=[{type=anything}]

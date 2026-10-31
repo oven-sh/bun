@@ -37,9 +37,9 @@
 # FORM: AsRead
 # RUN: pipeline PlanSlots
 # CHECK: flow={commonAncestor=L0 intermediateClasses=[L2, L3]
-# CHECK: flow={baseState=Layout base=L0
-# CHECK: flow={commonAncestor=L0 intermediateClasses=[L2]
-# CHECK: key=#"#inner"@L0 receivers=[L0, L1, L2] level=Proven
+# CHECK: flow={allocation=NeverAllocated baseState=Layout base=L0
+# CHECK: flow={allocation=NeverAllocated commonAncestor=L0 intermediateClasses=[L2]
+# CHECK: key=#"#inner"@L0 receivers=[L0, L1] level=Proven
 
 module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
 module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)

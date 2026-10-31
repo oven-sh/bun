@@ -327,18 +327,17 @@ runtimefunction id=ObjectsToLocaleString function=f34
 # CHECK: module=m0 position=744 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1|L2|L3 flags=[IsExpected]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything @JSValue):
 # CHECK-NEXT: v1: undefined|int|bigint|"failure"|"request"|"tick"|L2 @JSValue = AssumeType v0 provenType=undefined|int|bigint|"failure"|"request"|"tick"|L2
-# CHECK-NEXT: v2: undefined|int|bigint|"failure"|"request"|"tick"|L2 @JSValue = AssumeType v1 provenType=undefined|int|bigint|"failure"|"request"|"tick"|L2
-# CHECK-NEXT: v3: int|bigint|"failure"|"request"|"tick"|L2 @JSValue = RequireObjectCoercible v2 name="method"
-# CHECK-NEXT: v4: boolean @Boolean = TypeTest v3 testedType=L2
-# CHECK-NEXT: TestAndBranch v4 -> taken b2(), notTaken b1(| 0)
-# CHECK-NEXT: b1(v5: int|bigint|"failure"|"request"|"tick" @JSValue) frequency=Unlikely:
-# CHECK-NEXT: v9: undefined @Void = PropGetPair v5 key="method" secondKey="url" readOrigin={position=4294967295} accessSite=35 receivers=[L2] secondAccessSite=36
-# CHECK-NEXT: v7: anything @JSValue = ResultAt v9 index=1
-# CHECK-NEXT: v6: anything @JSValue = ResultAt v9
+# CHECK-NEXT: v2: int|bigint|"failure"|"request"|"tick"|L2 @JSValue = RequireObjectCoercible v1 name="method"
+# CHECK-NEXT: v3: boolean @Boolean = TypeTest v2 testedType=L2
+# CHECK-NEXT: TestAndBranch v3 -> taken b2(), notTaken b1(| 0)
+# CHECK-NEXT: b1(v4: int|bigint|"failure"|"request"|"tick" @JSValue) frequency=Unlikely:
+# CHECK-NEXT: v8: undefined @Void = PropGetPair v4 key="method" secondKey="url" readOrigin={position=4294967295} accessSite=35 receivers=[L2] secondAccessSite=36
+# CHECK-NEXT: v6: anything @JSValue = ResultAt v8 index=1
+# CHECK-NEXT: v5: anything @JSValue = ResultAt v8
 # CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v8: "Request undefined undefined" @Cell = String string="Request undefined undefined"
-# CHECK-NEXT: Return v8
+# CHECK-NEXT: v7: "Request undefined undefined" @Cell = String string="Request undefined undefined"
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="listen"
 # CHECK: module=m0 position=1081 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L4}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f7 callPosition=4294967295 module=m0}, {callee=f7 callPosition=4294967295 module=m0}, {callee=f7 callPosition=4294967295 module=m0}, {callee=f7 callPosition=4294967295 module=m0}, {callee=f7 callPosition=4294967295 module=m0}, {callee=f7 callPosition=4294967295 module=m0}] {

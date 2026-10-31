@@ -255,6 +255,17 @@ fn find_call_site(
     None
 }
 
+/// Whether the call of an `ImportSiteKind::MockModule` is the `build.module(..)` of a plugin. A mock is laid over the module that its name resolves to.
+/// The module of a plugin answers for the name as it is written, from then on, and what the name stood for stays as it is for whoever has it.
+pub fn is_module_call_of_plugin(hir: &File<'_>, bound: &Bound<'_>, call: ExprId) -> bool {
+    let Some(ExprKind::Call(call)) = expr_kind(hir, call) else {
+        return false;
+    };
+    matches!(hir.member_key(hir.skip_type_assertions(hir[call].callee)),
+        Some((object, MemberKey::Name(name)))
+            if is_module_of_plugin(hir, bound, hir.skip_type_assertions(object), name))
+}
+
 // `build.module(..)`, where `build` is the first parameter of the `setup` of an object literal, as `Bun.plugin` takes one.
 // The loader answers for the name from then on, as it does for a mock.
 fn is_module_of_plugin(hir: &File<'_>, bound: &Bound<'_>, object: ExprId, name: Atom) -> bool {
@@ -387,6 +398,29 @@ pub fn is_linked_by_bundler(hir: &File<'_>, bound: &Bound<'_>, site: ImportSiteK
     let callee = hir.skip_type_assertions(hir[call].callee);
     is_free_common_js(hir, bound, callee, CommonJsVariable::Require)
         || find_module_printed_as_require(hir, bound, callee).is_some()
+}
+
+/// The transpiler reads the name in an import, `import(K)`, `require(K)`, `module.require(K)` and `require.resolve(K)`, and prints the one that the loader knows.
+/// These hand their argument to the loader as the program wrote it: `import.meta.require(K)`, what `createRequire` made, the `require` of another file,
+/// `require.call(..)`, `require.apply(..)`, `require(K, more)`, `process.getBuiltinModule(K)`.
+/// `const load = require; return load(K)` it reads too, where it puts `require` in place of `load`. Where it does so is not followed: such a call counts as read.
+pub fn is_name_read_by_transpiler(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+    site: ImportSiteKind,
+) -> bool {
+    let call = match site {
+        ImportSiteKind::ImportMetaRequire(_) | ImportSiteKind::GetBuiltinModule(_) => return false,
+        ImportSiteKind::Require(call) => call,
+        _ => return true,
+    };
+    let Some(CallForm::Call { callee, args }) = find_call_form(hir, call) else {
+        return false;
+    };
+    let text = Text::of(hir, bound, Some(decisions));
+    args.len() == 1
+        && follow_to_own_require(text, callee, StepsLeft::ALL) == Some(OwnRequire::OfFile)
 }
 
 // The path of the file whose `require` a call goes through, if the file imports that `require`.

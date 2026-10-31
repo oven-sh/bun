@@ -407,6 +407,8 @@ const aotTestsThatAskTheSystem = [
   "aot/commands-that-hold-too-much-memory-together-are-ended",
   "aot/no-leak-records-at-exit",
   "aot/the-marking-version-wraps",
+  // A Mac that is no virtual machine counts instructions too, and only there has it ever failed.
+  "aot/fields-created-by-name-cost-the-same-after-a-collection",
   "aot/under-zombie-mode-a-sweep-overwrites-dead-cells",
   "aot/gc-verifier-reports-unmarked-cells",
   "aot/address-sanitizer-",
@@ -508,10 +510,12 @@ const aotTestsThatFeedNothingNew = [
 // The engine's shell, its test program and its tests are packed beside Bun and are as large as Bun. They stay packed in a shard
 // that has none of the tests that start them. A test that starts them and is not listed fails in CI and names this list.
 const aotTestsThatStartToolsOfTheEngine = [
+  "aot/a-program-that-asks-the-shell-what-it-counted-is-held-to-the-answer",
   "aot/engine",
   "aot/cli/library-types",
   "aot/code-addresses-have-names",
   "aot/counts-pinned-by-programs",
+  "aot/generated-code-is-what-the-programs-say",
   "aot/generated-code-of-module-bodies",
   "aot/library-ticks",
   "aot/programs-that-died-in-the-shell-on-one-platform",

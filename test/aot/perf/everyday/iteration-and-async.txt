@@ -659,6 +659,34 @@ function descend(levels: number): number {
 function turn(i: number): number {
   return descend(10) + (i & 1);
 }
+//// capture-a-stack-trace-below-two-functions-that-call-each-other-through-small-ones
+function throughFirst(levels: number, error: Error): number {
+  return second(levels - 1, error) + 1;
+}
+function throughSecond(levels: number, error: Error): number {
+  return first(levels - 1, error) + 1;
+}
+function first(levels: number, error: Error): number {
+  if (levels <= 0) {
+    Error.captureStackTrace(error);
+    return 0;
+  }
+  let sum = 0;
+  for (let i = 0; i < levels; i++) sum += i;
+  return throughFirst(levels, error) + (sum & 1);
+}
+function second(levels: number, error: Error): number {
+  if (levels <= 0) {
+    Error.captureStackTrace(error);
+    return 0;
+  }
+  let sum = 0;
+  for (let i = 0; i < levels; i++) sum ^= i;
+  return throughSecond(levels, error) + (sum & 1);
+}
+function turn(i: number): number {
+  return first(10, new Error("near")) + (i & 1);
+}
 //// capture-a-stack-trace-below-a-function-that-is-not-on-the-stack
 function absent(): void {}
 function descend(levels: number, error: Error): number {

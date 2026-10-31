@@ -110,7 +110,7 @@ function f1 name="measure" module=m0 flags=[IsChecked, HasExplicitName] length=1
 # CHECK-NEXT: Void b@49 = Return(b@19, Terminal)
 # CHECK-NEXT: BB#2: ; frequency = 0.000977
 # CHECK-NEXT: Predecessors: #0
-# CHECK-NEXT: Int64 b@32 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000007, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly}, v3:CallBuiltin)
+# CHECK-NEXT: Int64 b@32 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000009, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly}, v3:CallBuiltin)
 # CHECK-NEXT: Int64 b@34 = Patchpoint(b@32:Register(%r8), b@18:Register(%rax), resultConstraints = Register(%rax), ControlDependent|Reads:TypedArrayStorage, v3:CallBuiltin)
 # CHECK-NEXT: Int64 b@29 = ArgumentReg(%r13)
 # CHECK-NEXT: Int64 b@25 = Load(b@29, offset = 96, ReadsImmutable)

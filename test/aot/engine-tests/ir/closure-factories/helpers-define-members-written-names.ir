@@ -846,19 +846,19 @@ runtimefunction id=FunctionPrototypeApply function=f14
 # CHECK-NEXT: b0(v0: undefined|L1):
 # CHECK-NEXT: v1: L1 = RequireObjectCoercible v0 name="width"
 # CHECK-NEXT: v2: boolean = IsSlotFilled v1 key="width" receivers=[L1] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b3()
 # CHECK-NEXT: b1(v3: guard):
 # CHECK-NEXT: v4: int[-2147483643, 2147483647] = GetSlot v1, v3 key="width" receivers=[L1] level=Expected accessSite=44 [holdsDeclaredType]
-# CHECK-NEXT: v5: int[-2147483643, 2147483647] = GetSlot v1 key="height" receivers=[L1] level=Proven accessSite=45
-# CHECK-NEXT: v6: int|whole = Mul v4, v5
-# CHECK-NEXT: Return v6
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v7: anything ~ int[-2147483643, 2147483647] = PropGet v1 key="width" accessSite=44 receivers=[L1]
-# CHECK-NEXT: v8: undefined|int|whole ~ int[-2147483643, 2147483647] = AssumeType v7 provenType=undefined|int|whole
-# CHECK-NEXT: v9: int[-2147483643, 2147483647] = GetSlot v1 key="height" receivers=[L1] level=Proven accessSite=45
-# CHECK-NEXT: v10: number ~ int|whole = Mul v8, v9
-# CHECK-NEXT: v11: int|whole = AssumeType v10 provenType=int|whole
-# CHECK-NEXT: Return v11
+# CHECK-NEXT: Jump -> next b2(v4)
+# CHECK-NEXT: b2(v5: undefined|int|whole ~ int[-2147483643, 2147483647]):
+# CHECK-NEXT: v6: int[-2147483643, 2147483647] = GetSlot v1 key="height" receivers=[L1] level=Proven accessSite=45
+# CHECK-NEXT: v7: number ~ int|whole = Mul v5, v6
+# CHECK-NEXT: v8: int|whole = AssumeType v7 provenType=int|whole
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: b3() frequency=Unlikely:
+# CHECK-NEXT: v9: anything ~ int[-2147483643, 2147483647] = PropGet v1 key="width" accessSite=44 receivers=[L1]
+# CHECK-NEXT: v10: undefined|int|whole ~ int[-2147483643, 2147483647] = AssumeType v9 provenType=undefined|int|whole
+# CHECK-NEXT: Jump -> next b2(v10)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="shout"
 # CHECK: module=m0 position=1128 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=undefined|L2} parameters=[{type=undefined|null|boolean|number|string|symbol|bigint|builtin(ArrayPrototypeValues)}] results=[{type=string}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

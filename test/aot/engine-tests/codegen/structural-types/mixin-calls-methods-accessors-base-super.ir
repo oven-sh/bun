@@ -548,12 +548,12 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f7 = AssumeType v0 provenType=f7
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L0
-# CHECK-NEXT: v3: object ~ L0|L1 = NewObject v2 layout=L0 allocationSite=10 allocationClass=0
+# CHECK-NEXT: v3: object ~ L1 = NewObject v2 layout=L0 allocationSite=10 allocationClass=0
 # CHECK-NEXT: v4: 2 = Integer integer=2
-# CHECK-NEXT: v5: boolean ~ true = TypeTest v3 testedType=L0|L1
+# CHECK-NEXT: v5: boolean ~ true = TypeTest v3 testedType=L1
 # CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v6: L0|L1):
-# CHECK-NEXT: PutSlotOrAdd v6, -, v4 key="n" receivers=[L0, L1] level=Expected accessSite=44
+# CHECK-NEXT: b1(v6: L1):
+# CHECK-NEXT: PutSlotOrAdd v6, -, v4 key="n" receivers=[L1] level=Expected accessSite=44
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: b2() frequency=Rare:
 # CHECK-NEXT: PropDefine v3, v4 key="n" accessSite=44
@@ -756,35 +756,28 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: TestAndBranch v5 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1() frequency=Unlikely:
 # CHECK-NEXT: v6: int|whole = CallDirect v2 function=f4 accessSite=39
-# CHECK-NEXT: Jump -> next b7(v6)
+# CHECK-NEXT: Jump -> next b6(v6)
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: v7: anything = SuperGet v4, v2 key="twice" accessSite=38
-# CHECK-NEXT: v8: undefined|f4|f8 = AssumeType v7 provenType=undefined|f4|f8
+# CHECK-NEXT: v8: f4|f8 = AssumeType v7 provenType=f4|f8
 # CHECK-NEXT: v9: boolean = TypeTest v8 testedType=f4
 # CHECK-NEXT: TestAndBranch v9 -> taken b3(), notTaken b4(| 0)
 # CHECK-NEXT: b3() frequency=Unlikely:
 # CHECK-NEXT: v10: int|whole = CallDirect v2 function=f4 accessSite=39
-# CHECK-NEXT: Jump -> next b6(v10)
-# CHECK-NEXT: b4(v11: undefined|f8) frequency=Unlikely:
-# CHECK-NEXT: v12: boolean = TypeTest v11 testedType=f8
-# CHECK-NEXT: TestAndBranch v12 -> taken b5(| 0), notTaken b8()
-# CHECK-NEXT: b5(v13: f8) frequency=Unlikely:
-# CHECK-NEXT: v14: f7 = GetCapture v13 function=f8
-# CHECK-NEXT: v15: int|whole = CallDirect v14, v2 function=f8 accessSite=39
+# CHECK-NEXT: Jump -> next b5(v10)
+# CHECK-NEXT: b4(v11: f8) frequency=Unlikely:
+# CHECK-NEXT: v12: f7 = GetCapture v11 function=f8
+# CHECK-NEXT: v13: int|whole = CallDirect v12, v2 function=f8 accessSite=39
+# CHECK-NEXT: Jump -> next b5(v13)
+# CHECK-NEXT: b5(v14: int|whole) frequency=Unlikely:
+# CHECK-NEXT: v15: int|whole = AssumeType v14 provenType=int|whole
 # CHECK-NEXT: Jump -> next b6(v15)
 # CHECK-NEXT: b6(v16: int|whole) frequency=Unlikely:
-# CHECK-NEXT: v17: int|whole = AssumeType v16 provenType=int|whole
-# CHECK-NEXT: Jump -> next b7(v17)
-# CHECK-NEXT: b7(v18: int|whole) frequency=Unlikely:
-# CHECK-NEXT: v19: anything = PropGet v2 key="extra" accessSite=40
-# CHECK-NEXT: v20: undefined|int = AssumeType v19 provenType=undefined|int
-# CHECK-NEXT: v21: number = Add v18, v20 form=Numbers
-# CHECK-NEXT: v22: int|whole = AssumeType v21 provenType=int|whole
-# CHECK-NEXT: Return v22
-# CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: v23: undefined = Undefined
-# CHECK-NEXT: v24: never = Call v23, v2 calleeName="super.twice" accessSite=39 callees=[f4, f8, ..]
-# CHECK-NEXT: Unreachable
+# CHECK-NEXT: v17: anything = PropGet v2 key="extra" accessSite=40
+# CHECK-NEXT: v18: undefined|int = AssumeType v17 provenType=undefined|int
+# CHECK-NEXT: v19: number = Add v16, v18 form=Numbers
+# CHECK-NEXT: v20: int|whole = AssumeType v19 provenType=int|whole
+# CHECK-NEXT: Return v20
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="label"
 # CHECK: module=m0 position=541 kind=Getter role=GenericVersion flags=[HasThis, IsChecked, HasExplicitName] captures=[{type=f7 flags=[IsFromCompiler]}] thisType={type=L1 site=w28 flags=[IsExpected]} results=[{type=string site=w29 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f9 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f21} {

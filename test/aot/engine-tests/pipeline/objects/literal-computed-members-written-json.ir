@@ -286,13 +286,13 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private
 # CHECK-NEXT: v31: undefined = Undefined
 # CHECK-NEXT: v32: undefined = Undefined
 # CHECK-NEXT: v33: 1 = Integer integer=1
-# CHECK-NEXT: v34: Array<undefined|int> = NewArray v32, v33 contents=undefined|int allocationSite=18 [contentsAreProven]
-# CHECK-NEXT: v35: Array<undefined|int, proven, pristine[Storage, Names, Dense]> = AssumeType v34 provenType=Array<undefined|int, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v34: Array<undefined|1> = NewArray v32, v33 contents=undefined|1 allocationSite=18 [contentsAreProven]
+# CHECK-NEXT: v35: Array<undefined|1, proven, pristine[Storage, Names, Dense]> = AssumeType v34 provenType=Array<undefined|1, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v36: 1 = Integer integer=1
 # CHECK-NEXT: v37: string = CallBuiltin -, v36 overload=String/0 accessSite=56
 # CHECK-NEXT: v38: L5 = NewObject -, v31, v35, v37 layout=L5 fields=[0, 1, 2] allocationSite=17 allocationClass=4
 # CHECK-NEXT: v39: Array<Array> = CallBuiltin -, v38 overload=ObjectEntries/0 accessSite=58 @738:7 tail
-# CHECK-NEXT: v40: Array<Array<undefined|string|Array<undefined|int, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v39 provenType=Array<Array<undefined|string|Array<undefined|int, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v40: Array<Array<undefined|string|Array<undefined|1, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v39 provenType=Array<Array<undefined|string|Array<undefined|1, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v41: undefined = CallBuiltin -, v40 overload=ConsoleLog/1 accessSite=29
 # CHECK-NEXT: v42: undefined = Undefined
 # CHECK-NEXT: v43: 2 = Integer integer=2
@@ -325,8 +325,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v9: undefined = Undefined
 # CHECK-NEXT: v10: 1 = Integer integer=1
-# CHECK-NEXT: v11: Array<undefined|int> = NewArray v9, v10 contents=undefined|int allocationSite=16 [contentsAreProven]
-# CHECK-NEXT: v12: Array<undefined|int, proven, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<undefined|int, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v11: Array<undefined|1> = NewArray v9, v10 contents=undefined|1 allocationSite=16 [contentsAreProven]
+# CHECK-NEXT: v12: Array<undefined|1, proven, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<undefined|1, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v13: boolean = TypeTest v2 testedType=L1
 # CHECK-NEXT: Branch v13 -> taken b4(| 0), notTaken b5(| 0)
 # CHECK-NEXT: b4(v14: L1):
@@ -341,20 +341,20 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private
 # CHECK-NEXT: Return v19
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="listEntriesOfThree"
-# CHECK: module=m0 position=685 role=ParameterWrapper flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L1}] results=[{type=Array<Array<undefined|string|Array<undefined|int, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ParameterWrapper{body=f9}
+# CHECK: module=m0 position=685 role=ParameterWrapper flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L1}] results=[{type=Array<Array<undefined|string|Array<undefined|1, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ParameterWrapper{body=f9}
 # CHECK-LABEL: function {{*}}name="writeBoth"
 # CHECK: module=m0 position=133 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L2}, {type=undefined}] results=[{type=undefined|string}] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1 parameterMap=[{}, {}]}
 # CHECK-LABEL: function {{*}}name="listKeys"
 # CHECK: module=m0 position=309 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L3}, {type=undefined}] results=[{type=Array<"c"|"d", proven, pristine[Storage, Names, Dense]>}] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2 parameterMap=[{}, {}]}
 # CHECK-LABEL: function {{*}}name="listEntriesOfThree"
-# CHECK: module=m0 position=685 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L5}, {type=int[-2147483643, 2147483647]}] results=[{type=Array<Array<undefined|string|Array<undefined|int, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{}, {}]}
+# CHECK: module=m0 position=685 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L5}, {type=int[-2147483643, 2147483647]}] results=[{type=Array<Array<undefined|string|Array<undefined|1, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{}, {}]}
 # CHECK-LABEL: function {{*}}name="writeBoth"
 # CHECK: module=m0 position=133 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L2}] results=[{type=undefined|string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{}]} {
 # CHECK-NEXT: b0(v0: L2):
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: v2: 1 = Integer integer=1
-# CHECK-NEXT: v3: Array<undefined|int> = NewArray v1, v2 contents=undefined|int allocationSite=13 [contentsAreProven]
-# CHECK-NEXT: v4: Array<undefined|int, proven, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<undefined|int, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v3: Array<undefined|1> = NewArray v1, v2 contents=undefined|1 allocationSite=13 [contentsAreProven]
+# CHECK-NEXT: v4: Array<undefined|1, proven, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<undefined|1, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: PutSlotOrAdd v0, -, v4 key="b" receivers=[L2] level=Proven accessSite=38
 # CHECK-NEXT: v6: L2 = FinishObject v0
 # CHECK-NEXT: v7: undefined = Undefined @175 tail
@@ -366,8 +366,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private
 # CHECK-NEXT: b0(v0: L3):
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: v2: 1 = Integer integer=1
-# CHECK-NEXT: v3: Array<undefined|int> = NewArray v1, v2 contents=undefined|int allocationSite=15 [contentsAreProven]
-# CHECK-NEXT: v4: Array<undefined|int, proven, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<undefined|int, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v3: Array<undefined|1> = NewArray v1, v2 contents=undefined|1 allocationSite=15 [contentsAreProven]
+# CHECK-NEXT: v4: Array<undefined|1, proven, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<undefined|1, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: PutSlotOrAdd v0, -, v4 key="d" receivers=[L3] level=Proven accessSite=43
 # CHECK-NEXT: v6: L3 = FinishObject v0
 # CHECK-NEXT: v7: Array<string> = CallBuiltin -, v6 overload=ObjectKeys/0 accessSite=44 @352 tail

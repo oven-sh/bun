@@ -3,6 +3,8 @@
 // point of plain Bun: the named import of the test file, the namespace, a barrel that exports it again, under another name, a file
 // that imported it first, a call inside the module itself, require(), import(). A compiled test run has to answer as plain on every
 // road. Each program is a small project; each scene asks every road, replaces one export, asks again, puts it back, asks again.
+// The barrels stand over the ES module and over the CommonJS file, by name and by a star, and one over the others; each namespace
+// object is also read under a name that is made at run time, which asks the object itself.
 //
 // Only for run-as-tests.ts: the programs import bun:test. With --as-packages the project's files lie in a package.
 import type { Random } from "./random";
@@ -86,7 +88,15 @@ const targets: Way[][] = [
   [...spies("common.obj", "o"), ...stores("common.obj", "o")],
   [...spies("common", "callsC"), ...stores("common", "callsC")],
   [...spies('require("./common.cjs")', "c"), ...stores('require("./common.cjs")', "c")],
-  [...stores("lib", "f")],
+  [...spies("barrelC", "cOfBarrel"), ...modules("./barrelc.js", "barrelC", "cOfBarrel")],
+  [...spies("barrelC", "cOfBarrel")],
+  [...spies("barrelC", "callsC")],
+  [...spies("starC", "c"), ...modules("./starc.js", "starC", "c")],
+  [...spies("starC", "c")],
+  [...spies("stars", "c"), ...spies("stars", "f"), ...spies("stars", "renamed"), ...spies("stars", "cOfBarrel")],
+  [...spies("commonAll", "c"), ...spies("commonAll", "callsC")],
+  // Not drawn: a store to an imported namespace, `lib.f = fake`. The build always refuses the file, in words, and a run with such a file
+  // in it has to be judged again file by file.
 ];
 
 export function generate(random: Random): { text: string; files: Record<string, string> } {
@@ -169,6 +179,14 @@ exports.obj = {
 exports.callsC = x => exports.c(x) + 100;
 exports.callsOwn = x => c(x) + 200;
 `,
+    "barrelc.js": `export { c as cOfBarrel, callsC } from "./common.cjs";
+`,
+    "starc.js": `export * from "./common.cjs";
+`,
+    "stars.js": `export * from "./starc.js";
+export * from "./barrel.js";
+export { cOfBarrel } from "./barrelc.js";
+`,
     "userc.js": `import common, { c, callsC, callsOwn } from "./common.cjs";
 export const usesC = {
   "c": () => c(1),
@@ -188,6 +206,12 @@ import { uses } from "./user.js";
 import common, { c } from "./common.cjs";
 import * as commonAll from "./common.cjs";
 import { usesC } from "./userc.js";
+import * as barrelC from "./barrelc.js";
+import { cOfBarrel } from "./barrelc.js";
+import * as starC from "./starc.js";
+import { c as cOfStar } from "./starc.js";
+import * as stars from "./stars.js";
+import { c as cOfStars, f as fOfStars, cOfBarrel as cOfBarrelOfStars } from "./stars.js";
 const say = console.log.bind(console);
 const short = text => String(text).replace(/\\/[^ '"]*\\//g, "").slice(0, 90);
 function made(name) {
@@ -198,6 +222,8 @@ function made(name) {
 function watch(on, name, fake) {
   return spyOn(on, name).mockImplementation(fake);
 }
+const holders = { lib, barrel, commonAll, barrelC, starC, stars };
+const at = (holder, name) => holders[made(holder)][made(name)];
 // Not asked: require() of the ES module. Plain answers the mock's own object if the module was required before it was mocked and the
 // namespace if not; a compiled run answers the namespace. That is known and set aside.
 const roads = {
@@ -231,6 +257,31 @@ const roads = {
   "common.obj.o": () => common.obj.o(),
   "required c": () => require("./common.cjs").c(1),
   "imported c": async () => (await import("./common.cjs")).c(1),
+  "cOfBarrel": () => cOfBarrel(1),
+  "barrelC.cOfBarrel": () => barrelC.cOfBarrel(1),
+  "barrelC.callsC": () => barrelC.callsC(1),
+  "c of the star": () => cOfStar(1),
+  "starC.c": () => starC.c(1),
+  "starC.callsC": () => starC.callsC(1),
+  "c of the stars": () => cOfStars(1),
+  "f of the stars": () => fOfStars(1),
+  "cOfBarrel of the stars": () => cOfBarrelOfStars(1),
+  "stars.c": () => stars.c(1),
+  "stars.f": () => stars.f(1),
+  "stars.renamed": () => stars.renamed(1),
+  "stars.cOfBarrel": () => stars.cOfBarrel(1),
+  "imported starC.c": async () => (await import("./starc.js")).c(1),
+  "imported stars.c": async () => (await import("./stars.js")).c(1),
+  "at lib.f": () => at("lib", "f")(1),
+  "at barrel.f": () => at("barrel", "f")(1),
+  "at barrel.renamed": () => at("barrel", "renamed")(1),
+  "at commonAll.c": () => at("commonAll", "c")(1),
+  "at barrelC.cOfBarrel": () => at("barrelC", "cOfBarrel")(1),
+  "at starC.c": () => at("starC", "c")(1),
+  "at stars.c": () => at("stars", "c")(1),
+  "at stars.f": () => at("stars", "f")(1),
+  "at stars.cOfBarrel": () => at("stars", "cOfBarrel")(1),
+  "keys of the stars": () => Object.keys(stars).sort().join(),
 };
 async function ask(label) {
   const answers = [];

@@ -9,7 +9,7 @@ use bun_options_types::aot_options::{
 };
 use bun_options_types::bundle_enums::Format;
 use bun_options_types::compile_target::CompileTarget;
-use bun_options_types::context::{Debugger, HotReload, TestOptions};
+use bun_options_types::context::{Debugger, HotReload};
 use bun_options_types::trim::{Feature, TrimFeature, TrimRequest};
 use bun_trim::{TrimError, TrimRequestError};
 
@@ -969,8 +969,6 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
     }
     if let Some(descriptor) = args.option(b"--aot-graph-fd") {
         run_compiled::use_graph_descriptor(descriptor);
-        ctx.test_options.coverage.enabled = false;
-        isolate_reruns(&mut ctx.test_options);
         return;
     }
     if let Some(check_result) = args.option(b"--aot-checked") {
@@ -1002,9 +1000,6 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
         );
     }
     check_runtime_conflicts(&ctx, compiles);
-    if cmd == Tag::TestCommand && compiles {
-        check_test_conflicts(&mut *ctx);
-    }
     let test_words = bun_core::env_var::BUN_DEBUG_TEST_AOT_WORDS
         .get_not_empty()
         .filter(|_| compiles && cmd == Tag::TestCommand);
@@ -1030,12 +1025,17 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
         test_run_part_files: part_limit(b"TestRunPartFiles:").map(|files| files as u32),
         test_run_is_one_program: part_words.contains(&&b"TestRunLayers:0"[..]),
         is_part_of_test_files,
+        entry_points_run_again: cmd == Tag::TestCommand
+            && ctx.test_options.repeat_count > 1
+            && !run_compiled::builds_what_test_parts_share(),
         imports_are_in_other_images: !run_compiled::images_below_test_part().is_empty(),
         shares_realms: run_compiled::builds_what_test_parts_share()
             || !run_compiled::images_below_test_part().is_empty(),
         images_below: ImagesBelow {
             images: run_compiled::images_below_test_part(),
             holds_module: Some(run_compiled::is_module_below_test_part),
+            wait_for_all: run_compiled::begins_beside_build_below()
+                .then_some(run_compiled::wait_for_program_below),
         },
         replaced_by_tests: run_compiled::replaced_below_test_part(),
         thread_count: run_compiled::threads_of_test_part(),
@@ -1049,6 +1049,7 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
         runs_in_place: true,
         checks_only: !compiles,
         runs_tests: cmd == Tag::TestCommand,
+        counts_executions: cmd == Tag::TestCommand && compiles && ctx.test_options.coverage.enabled,
         // A test writes a module at run time and imports it, as under plain `bun test`.
         loads_code_from_disk: loads_code_from_disk
             || (cmd == Tag::TestCommand && compiles && !cfg!(bun_hardened)),
@@ -1075,22 +1076,6 @@ fn check_runtime_conflicts(ctx: &Context<'_>, compiles: bool) {
         exit_with_message(
             b"--aot can't compile code passed with -e, -p or --interactive. Pass a file instead",
         );
-    }
-}
-
-/// A compiled module runs once per global object, so each run of --rerun-each gets a new one.
-pub(crate) fn isolate_reruns(options: &mut TestOptions) {
-    options.isolate |= options.repeat_count > 1;
-}
-
-fn check_test_conflicts(ctx: Context<'_>) {
-    let options = &mut ctx.test_options;
-    isolate_reruns(options);
-    if options.coverage.enabled {
-        bun_core::warn!(
-            "--coverage is ignored with --aot: compiled code isn't counted. Run bun test --coverage without --aot for the report"
-        );
-        options.coverage.enabled = false;
     }
 }
 

@@ -22,6 +22,7 @@
 %TypedArray%.prototype : @@iterator/wc @@toStringTag/ac at/wc buffer/ac byteLength/ac byteOffset/ac constructor/wc copyWithin/wc entries/wc every/wc fill/wc filter/wc find/wc findIndex/wc findLast/wc findLastIndex/wc forEach/wc includes/wc indexOf/wc join/wc keys/wc lastIndexOf/wc length/ac map/wc reduce/wc reduceRight/wc reverse/wc set/wc slice/wc some/wc sort/wc subarray/wc toLocaleString/wc toReversed/wc toSorted/wc toString/wc values/wc with/wc
 %URLSearchParamsIterator%.prototype : @@toStringTag/c next/wc
 %WrapForValidIterator%.prototype : @@toStringTag/c next/wc return/wc
+AbortController : AbortController/~ AbortSignal/~ default/~ length/c name/c prototype/-
 AbortController.prototype : @@toStringTag/c abort/wc constructor/wc signal/ac
 AbortSignal : abort/wc any/wc length/c name/c prototype/- timeout/wc
 AbortSignal.prototype : @@toStringTag/c aborted/ac constructor/wc onabort/ac reason/ac throwIfAborted/wc
@@ -119,6 +120,7 @@ Object : assign/wc create/wc defineProperties/wc defineProperty/wc entries/wc fr
 Object.prototype : __defineGetter__/wc __defineSetter__/wc __lookupGetter__/wc __lookupSetter__/wc __proto__/ac constructor/wc hasOwnProperty/wc isPrototypeOf/wc propertyIsEnumerable/wc toLocaleString/wc toString/wc valueOf/wc
 Performance.prototype : @@toStringTag/c clearMarks/wc clearMeasures/wc clearResourceTimings/wc constructor/wc getEntries/wc getEntriesByName/wc getEntriesByType/wc mark/wc markResourceTiming/wc measure/wc onresourcetimingbufferfull/ac setResourceTimingBufferSize/wc timeOrigin/ac timing/ac toJSON/wc
 PerformanceObserver : length/c name/c prototype/- supportedEntryTypes/c
+PerformanceTiming.prototype : @@toStringTag/c constructor/wc
 Promise : @@species/ac all/wc allSettled/wc any/wc length/? name/? prototype/- race/wc reject/wc resolve/wc try/wc withResolvers/wc
 Promise.prototype : @@toStringTag/c catch/wc constructor/wc finally/wc then/wc
 Proxy : length/? name/? revocable/wc
@@ -145,6 +147,7 @@ SharedArrayBuffer.prototype : @@toStringTag/c byteLength/ac constructor/wc grow/
 String : fromCharCode/wc fromCodePoint/wc length/? name/? prototype/- raw/wc
 String.prototype : @@iterator/wc anchor/wc at/wc big/wc blink/wc bold/wc charAt/wc charCodeAt/wc codePointAt/wc concat/wc constructor/wc endsWith/wc fixed/wc fontcolor/wc fontsize/wc includes/wc indexOf/wc isWellFormed/wc italics/wc lastIndexOf/wc length/- link/wc localeCompare/wc match/wc matchAll/wc normalize/wc padEnd/wc padStart/wc repeat/wc replace/wc replaceAll/wc search/wc slice/wc small/wc split/wc startsWith/wc strike/wc sub/wc substr/wc substring/wc sup/wc toLocaleLowerCase/wc toLocaleUpperCase/wc toLowerCase/wc toString/wc toUpperCase/wc toWellFormed/wc trim/wc trimEnd/wc trimLeft/wc trimRight/wc trimStart/wc valueOf/wc
 SubtleCrypto : length/c name/c prototype/- supports/wc
+SubtleCrypto.prototype : @@toStringTag/c constructor/wc
 SuppressedError : length/? name/? prototype/-
 SuppressedError.prototype : constructor/wc message/wc name/wc
 Symbol : asyncDispose/- asyncIterator/- dispose/- for/wc hasInstance/- isConcatSpreadable/- iterator/- keyFor/wc length/? match/- matchAll/- name/? prototype/- replace/- search/- species/- split/- toPrimitive/- toStringTag/- unscopables/-

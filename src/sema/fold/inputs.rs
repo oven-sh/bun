@@ -39,6 +39,8 @@ pub struct Define<'s> {
 #[derive(Copy, Clone, Default, Debug)]
 pub struct FoldOptions<'s> {
     pub defines: &'s [Define<'s>],
+    /// Those of `defines` that `--define` or bunfig.toml names. `bun run` replaces them too.
+    pub user_defined: &'s [DefinePath<'s>],
     pub dropped_calls: &'s [DefinePath<'s>],
     pub features: &'s [Atom],
     pub preserves_unused_imports: bool,
@@ -50,6 +52,7 @@ pub struct FoldOptions<'s> {
 pub(super) struct TrieNode<'s> {
     pub(super) edges: &'s [(Atom, u32)],
     pub(super) value: Option<DefineValue<'s>>,
+    pub(super) is_user_defined: bool,
     pub(super) ends_dropped_path: bool,
 }
 

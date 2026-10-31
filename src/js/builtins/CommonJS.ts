@@ -291,7 +291,7 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
       const entry = requireMap.$get(key);
       if (entry) return entry;
       if (listsCompiledFiles) {
-        const compiled = $requireCacheCompiledEntry(key);
+        const compiled = $requireCacheCompiledEntry(key, owner);
         if (compiled) return compiled;
       }
 
@@ -318,7 +318,7 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
 
     deleteProperty(_target, key: string) {
       if (isHidden(key)) return true;
-      $requireCacheDidDelete(key);
+      $requireCacheDidDelete(key, owner);
       requireMap.$delete(key);
       $esmRegistryDelete(key, owner);
       $evictIsolationSourceProviderCache(key);

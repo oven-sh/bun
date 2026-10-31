@@ -332,7 +332,7 @@ function f6 name="copies" module=m0 position=2535 flags=[IsChecked, HasExplicitN
 # CHECK-NEXT: Int64 b@65 = ZExt32(b@20, v18:CallInline)
 # CHECK-NEXT: Int64 b@49 = Load(b@46, offset = 96, ReadsImmutable, v18:CallInline)
 # CHECK-NEXT: Int64 b@66 = Add(b@65, b@49, v18:CallInline)
-# CHECK-NEXT: Int64 b@119 = Patchpoint(b@25:Register(%rax), b@66:Register(%rdi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, CollectionStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v18:CallInline)
+# CHECK-NEXT: Int64 b@119 = Patchpoint(b@25:Register(%r8), b@66:Register(%rdi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, CollectionStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v18:CallInline)
 # CHECK-NEXT: Void b@22 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, iterationsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries}|Reads:Top, v8:LoopHint)
 # CHECK-NEXT: Int32 b@68 = Const32(1, v18:CallInline)
 # CHECK-NEXT: Int32 b@122 = Add(b@101, $1(b@68), v20:Increment)

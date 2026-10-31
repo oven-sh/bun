@@ -127,6 +127,23 @@ up, but a number taken from few turns is another number for one benchmark in sev
 being built, no collection has run. So the pins are taken with as many turns as make 800 million instructions. Two processes that do the same differ by 8,000 instructions (35,000 in one
 pair of a hundred), which is why 1,000 turns of a short benchmark say nothing.
 
+Every run begins with a hundred short calls (`idioms/host.ts`). They are there for the JIT: ten million instructions a call, a billion a run, more than the 200 and the 800 million of the two
+runs that are compared. Where nothing runs under the JIT (`jit: false`: the pins of `everyday/`) each of those calls takes one turn (`turnsOfCallThatWarmsUp()` in `measure-idioms.ts`). What a
+program fills in its first turns, caches and tables, it fills in the first quarter of the long call, which no reading counts.
+
+A cost that comes in lumps needs more turns. A benchmark that fills one of 256 dictionaries anew in every turn takes 7,000 instructions a turn, plus 80 million every 9,000 turns: a full
+collection frees the dictionaries' structures, and the next 256 turns build them again. Five or six of those lumps lie between the two runs, depending on where the runs end: 14,100 to 16,400 a
+turn with one executable, and a pin that goes red and green by itself. So the plan first runs the beginning eight times, up to a quarter of the turns, and compares adjacent stretches of equal
+length. What the dearest costs over the cheapest is a lump, and the turns are multiplied until one lump is less than 1% of what is measured (`timesThatEvenOutLumps()` in `measure-idioms.ts`):
+by 12 for that benchmark, which then reads 15,290 to 15,340. This catches lumps that come 4 to 32 times between the two runs, and adds a tenth to what a measurement takes.
+
+The plan must not depend on how busy the machine is. A turn that mostly waits, for a timer say, executes little, so it is repeated as often as takes twenty seconds, and only the clock says how
+long a turn takes. But a busy machine keeps a program that only computes from running for seconds: with all the pins measured at once, the clock took 13 benchmarks of 1,252 for programs that
+wait, and another one the next time. A conversion of 17 instructions a turn got 16,000 turns for its 20 million. From the turns those 13 got, the benchmark with the dictionaries reads 12,900 to
+16,700, over the limit of its pin in seven of the thirteen. A program that waits gives up the processor, and one that is kept from running has it taken away, which the kernel counts apart: 1.07
+times a turn with a timer of a millisecond in every turn, 0.002 at most in any of the 1,252. So a turn waits only if the clock says so and the program gave up the processor at least every other
+turn (`mostlyWaits()` in `measure-idioms.ts`; `%w` of GNU time, `voluntary context switches` of `time -l`).
+
 ## What CI holds
 
 | Test                              | What it holds                                                                                                                                                 |
@@ -135,6 +152,9 @@ pair of a hundred), which is why 1,000 turns of a short benchmark say nothing.
 | `threads-of-a-build.test.ts`      | How many threads a build starts                                                                                                                               |
 | `../servers/budgets-of-*.test.ts` | Bytes of code, tests that fail, accesses by name, calls of the run time, allocations of one round of requests to each server: exact counts of branch counters |
 | `../build-scaling`                | Peak memory of a build as a program grows, and its instructions where they can be counted                                                                     |
+| `a-cost-that-comes-in-lumps-*`    | The plan of a measurement takes so many turns that a lump more or less moves no reading: arithmetic, no counter                                               |
+| `compiled-code-is-measured-*`     | A measurement that runs nothing under the JIT spends under a fiftieth of its instructions in front of what it measures: arithmetic, no counter                |
+| `a-busy-machine-gives-*`          | A program that only computes gets the same plan however long the machine keeps its runs from running: arithmetic, no counter                                  |
 
 ## Which number decides
 

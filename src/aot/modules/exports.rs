@@ -340,7 +340,7 @@ fn compute_star_exports(
     scans: &Scans,
     entries: &[ExportEntries],
     files: &[FileId],
-) -> (Vec<u32>, Vec<StarExports>) {
+) -> (Vec<u32>, Vec<StarExports>, Vec<Vec<u32>>) {
     let edges_of = |module: &ExportEntries| -> Vec<u32> {
         let tables = star_targets(scans, module).filter_map(|target| find_table(files, target));
         tables.map(|table| table as u32).collect()
@@ -373,7 +373,7 @@ fn compute_star_exports(
             dynamic_targets,
         });
     }
-    (component_of, star_exports)
+    (component_of, star_exports, edges)
 }
 
 struct FileTable {
@@ -664,7 +664,8 @@ pub(super) fn resolve_exports(
     let has_table = |file: &&FileId| modules.table_file(ModuleRef::File(**file)).is_some();
     let files_with_table = modules.record_files.iter().filter(has_table);
     debug_assert!(table_files.iter().eq(files_with_table));
-    let (component_of, star_exports) = compute_star_exports(scans, &entries, &table_files);
+    let (component_of, star_exports, star_tables) =
+        compute_star_exports(scans, &entries, &table_files);
     let mut nodes = NameNodes::default();
     for (module, &component) in entries.iter().zip(&component_of) {
         nodes.add_file(module, &star_exports[component as usize]);
@@ -698,14 +699,15 @@ pub(super) fn resolve_exports(
                 entry,
                 resolved.resolution,
             ));
-            if let ExportEntry::Indirect { site, .. } = entry {
-                indirect_sites.push((node, site));
+            if let ExportEntry::Indirect { site, name, .. } = entry {
+                indirect_sites.push((node, site, name));
             }
         }
     }
     let mut tables = ExportTables {
         files: table_files,
         tables: nodes.tables,
+        star_tables,
         results,
         indirect_sites,
         index: nodes.index,
@@ -761,9 +763,11 @@ pub(super) fn resolve_exports(
 pub(super) struct ExportTables {
     files: Vec<FileId>,
     tables: Vec<FileTable>,
+    /// Of each table, the tables of the modules that `export *` names there.
+    star_tables: Vec<Vec<u32>>,
     results: Vec<(Atom, ResolvedName)>,
-    /// Of each own name that stands for a name of another module: its place in `results`, and the import site that names the module. Sorted.
-    indirect_sites: Vec<(u32, u32)>,
+    /// Of each own name that stands for a name of another module: its place in `results`, the import site that names the module, and the name there. Sorted.
+    indirect_sites: Vec<(u32, u32, Atom)>,
     index: FxHashMap<NodeKey, u32>,
     failures: Vec<PendingFailure>,
     pub(super) commonjs: CommonJsNames,
@@ -894,11 +898,45 @@ impl ExportTables {
 
     /// The import site behind one of `names(module)`, by its position there: `export { name } from`, or the import whose name the module exports.
     pub(super) fn find_indirect_site(&self, module: FileId, position: usize) -> Option<u32> {
+        Some(self.find_indirect_name(module, position)?.0)
+    }
+
+    /// The same, with the name that the module at the site has for it.
+    pub(super) fn find_indirect_name(
+        &self,
+        module: FileId,
+        position: usize,
+    ) -> Option<(u32, Atom)> {
         let node = self.table_of(module)?.nodes.start + position as u32;
         let found = self
             .indirect_sites
-            .binary_search_by_key(&node, |&(node, _)| node);
-        found.ok().map(|index| self.indirect_sites[index].1)
+            .binary_search_by_key(&node, |&(node, ..)| node);
+        found.ok().map(|index| {
+            let (_, site, name) = self.indirect_sites[index];
+            (site, name)
+        })
+    }
+
+    /// The files that a link looks into for `name` of `module`: the module first, and wherever the name is not written, those that `export *` names there and that have it.
+    pub(super) fn files_searched_for(&self, module: FileId, name: Atom) -> Vec<FileId> {
+        let start = find_table(&self.files, ModuleRef::File(module));
+        let mut searched: Vec<u32> = start.map(|table| table as u32).into_iter().collect();
+        let mut next = 0;
+        while let Some(&table) = searched.get(next) {
+            next += 1;
+            let node = self.index.get(&(self.files[table as usize], name));
+            if !node.is_some_and(|node| self.tables[table as usize].star_nodes().contains(node)) {
+                continue;
+            }
+            for &target in &self.star_tables[table as usize] {
+                let has_name = (self.index).contains_key(&(self.files[target as usize], name));
+                if has_name && !searched.contains(&target) {
+                    searched.push(target);
+                }
+            }
+        }
+        let searched = searched.into_iter();
+        searched.map(|table| self.files[table as usize]).collect()
     }
 
     pub(super) fn has_dynamic_names(&self, module: ModuleRef) -> bool {

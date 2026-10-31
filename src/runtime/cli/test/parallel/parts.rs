@@ -13,6 +13,7 @@ use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Sta
 use bun_collections::StringSet;
 use bun_core::{Output, ZBox};
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_sys::FdExt as _;
 
 use super::file_range::FileRange;
 use crate::cli::run_compiled::{self, TestPartFile, TestPartKind};
@@ -35,10 +36,12 @@ pub(crate) struct Part {
     pub(crate) workers: u32,
     /// Not 0: the part is one file, which took so many megabytes, over a gigabyte, when it was last measured: `Timings::is_heavy`.
     pub(crate) heavy_growth: u32,
+    /// A layer whose build has the build of the layer above beside it: that one reads here how this one has ended.
+    pub(crate) tells_build_above: Option<bun_sys::Fd>,
 }
 
-/// `PartBuilder::part` of the build of the lowest of `Parts::layers`. Those of the others follow.
-const FIRST_LAYER: u32 = u32::MAX - 16;
+/// `PartBuilder::part` of the build of the lowest of `Parts::layers`. Those of the others follow. The numbers below are positions in `Parts::list`.
+const FIRST_LAYER: u32 = 1 << 31;
 
 /// The position among `Parts::layers` of what the builder builds.
 pub(crate) fn layer_of(part: u32) -> Option<usize> {
@@ -51,6 +54,10 @@ pub(crate) struct Parts {
     /// is built above them all and holds the test files and what no layer holds, and a worker holds them all. Empty: each part is a
     /// whole program.
     pub(crate) layers: Vec<Part>,
+    /// The first of them is the library that this Bun holds compiled, which no process of the run builds.
+    pub(crate) stands_on_library_of_this_bun: bool,
+    /// The second of those that the run builds holds what imports with computed names reach.
+    has_layer_of_computed_imports: bool,
     /// Boxed: a spawned process holds a pointer to its builder, which must not move when the `Vec` grows.
     #[expect(clippy::vec_box)]
     pub(crate) builders: Vec<Box<PartBuilder>>,
@@ -67,6 +74,8 @@ impl Parts {
         heavy_growths: &[u32],
         image_flag_slot: usize,
         layers: u32,
+        stands_on_library_of_this_bun: bool,
+        has_layer_of_computed_imports: bool,
     ) -> Parts {
         let by_number = (0..file_count.div_ceil(part_files)).map(|index| FileRange {
             lo: index * part_files,
@@ -79,16 +88,29 @@ impl Parts {
         for (part, &growth) in list.iter_mut().zip(heavy_growths) {
             part.heavy_growth = growth;
         }
+        let all_files = FileRange {
+            lo: 0,
+            hi: file_count,
+        };
+        #[cfg(unix)]
+        let library = stands_on_library_of_this_bun
+            .then(run_compiled::unpack_library_of_this_bun)
+            .flatten();
+        #[cfg(not(unix))]
+        let library: Option<TestPartFile> = None.filter(|_| stands_on_library_of_this_bun);
+        let held_by_this_bun = library.map(|file| Part {
+            file: Some(file),
+            has_program: true,
+            state: PartState::Ready,
+            ..Part::new(all_files)
+        });
+        let built_by_run =
+            (0..layers + u32::from(has_layer_of_computed_imports)).map(|_| Part::new(all_files));
         Parts {
             list,
-            layers: (0..layers)
-                .map(|_| {
-                    Part::new(FileRange {
-                        lo: 0,
-                        hi: file_count,
-                    })
-                })
-                .collect(),
+            stands_on_library_of_this_bun: held_by_this_bun.is_some(),
+            has_layer_of_computed_imports,
+            layers: held_by_this_bun.into_iter().chain(built_by_run).collect(),
             builders: Vec::new(),
             finished: Vec::new(),
             image_flag_slot,
@@ -104,11 +126,43 @@ impl Parts {
         files.map(|file| file.descriptor).collect()
     }
 
+    /// Whether the build of the layer above begins while this layer is built: `run_compiled::begins_beside_build_below`. It has to
+    /// guess what this layer will hold, and it can for what computed imports reach: it finds them as the build of this layer does.
+    /// A build that was started again for a wrong guess finds this layer built.
+    fn has_build_above_beside_it(&self, layer: usize) -> bool {
+        cfg!(unix)
+            && self.kind_of(FIRST_LAYER + layer as u32) == TestPartKind::SharedComputed
+            && run_compiled::test_run_builds_layers_side_by_side()
+    }
+
+    /// The layer right below is still being built.
+    pub(crate) fn begins_beside_build_below(&self, layer: usize) -> bool {
+        layer > 0 && self.layers[layer - 1].state == PartState::Building
+    }
+
+    /// The build of a layer has ended. `has_program`: `None` where it failed.
+    pub(crate) fn tell_build_above(&mut self, layer: usize, has_program: Option<bool>) {
+        let Some(descriptor) = self.layers[layer].tells_build_above.take() else {
+            return;
+        };
+        if let Some(has_program) = has_program {
+            let _ = bun_sys::write(descriptor, if has_program { b"1" } else { b"0" });
+        }
+        descriptor.close();
+    }
+
     /// `part`: `PartBuilder::part`.
     pub(crate) fn kind_of(&self, part: u32) -> TestPartKind {
-        match layer_of(part) {
+        // Among the layers that the run builds.
+        let held_by_this_bun = usize::from(self.stands_on_library_of_this_bun);
+        let count = self.layers.len() - held_by_this_bun;
+        match layer_of(part).map(|layer| layer - held_by_this_bun) {
             None => TestPartKind::TestFiles,
-            Some(0) if self.layers.len() > 1 => TestPartKind::SharedPackages,
+            Some(0) if count > 1 => TestPartKind::SharedPackages,
+            Some(1) if self.has_layer_of_computed_imports => TestPartKind::SharedComputed,
+            Some(layer) if layer + 1 < count => TestPartKind::SharedLowest {
+                part_in: (count - layer) as u32,
+            },
             Some(_) => TestPartKind::Shared,
         }
     }
@@ -140,10 +194,15 @@ impl Parts {
         free_workers: u32,
         time_of: Option<&dyn Fn(FileRange) -> u64>,
     ) -> Option<u32> {
-        for (layer, number) in self.layers.iter().zip(FIRST_LAYER..) {
+        for (index, (layer, number)) in self.layers.iter().zip(FIRST_LAYER..).enumerate() {
             match layer.state {
                 PartState::Waiting => return Some(number),
-                PartState::Building => return None,
+                PartState::Building => {
+                    let above = self.layers.get(index + 1);
+                    let is_next = above.is_some_and(|above| above.state == PartState::Waiting)
+                        && self.has_build_above_beside_it(index);
+                    return is_next.then_some(number + 1);
+                }
                 PartState::Ready | PartState::Finished => {}
             }
         }
@@ -250,7 +309,8 @@ impl Parts {
     /// `BUN_JSC_logAOTPhaseTimes` each writes 1,600 lines, 60 MB in all: of the log, the lines of whole steps are printed, and
     /// not those of each pass, analysis and round of flow inside them. A layer's log is printed whole.
     pub(crate) fn print_messages_of_test_files(&mut self, messages: &[u8]) {
-        const KEPT: [&[u8]; 7] = [
+        const KEPT: [&[u8]; 8] = [
+            b"AOT account",
             b"AOT part build",
             b"AOT test build",
             b"AOT test run",
@@ -344,6 +404,7 @@ impl Part {
             state: PartState::Waiting,
             workers: 0,
             heavy_growth: 0,
+            tells_build_above: None,
         }
     }
 }
@@ -365,17 +426,21 @@ impl PartBuilder {
         parts: *mut Parts,
         kind: TestPartKind,
         below: &[bun_sys::Fd],
+        is_above_library: bool,
         threads: Option<u32>,
+        told_of_last_below: Option<bun_sys::Fd>,
         #[cfg(windows)] windows_job: Option<*mut core::ffi::c_void>,
     ) -> crate::Result<(Box<PartBuilder>, TestPartFile)> {
         let file = TestPartFile::create(paths, kind).map_err(|_| crate::Error::SpawnFailed)?;
-        // After stdio: the file, the programs below.
+        // After stdio: the file, the programs below, what tells of the last of them.
         let below_in_child = 4..4 + below.len();
         let arguments = run_compiled::test_part_arguments(
             file.number_in_child(3),
             kind,
             below_in_child,
+            is_above_library,
             threads,
+            told_of_last_below.map(|_| 4 + below.len()),
         );
         let self_path = bun_core::self_exe_path().map_err(|_| crate::Error::SelfExePathFailed)?;
         let arguments: Vec<ZBox> = arguments.iter().map(ZBox::from_bytes).collect();
@@ -392,6 +457,7 @@ impl PartBuilder {
             stderr: Stdio::Path(messages),
             extra_fds: core::iter::once(file.descriptor)
                 .chain(below.iter().copied())
+                .chain(told_of_last_below)
                 .map(Stdio::Pipe)
                 .collect(),
             cwd: cwd.to_vec().into_boxed_slice(),

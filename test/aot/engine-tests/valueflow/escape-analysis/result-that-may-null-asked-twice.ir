@@ -279,9 +279,9 @@ function f4 name="Holder" module=m0 position=602 kind=BaseConstructor flags=[Has
   b0(v0: anything, v1: anything):
     Jump -> next b1() @602
   b1():
-    v2 = GetConstructPrototype v0 layout=L0 @566
-    v3 = NewObject v2 layout=L0 @566
-    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @566
+    v2 = GetConstructPrototype v0 layout=L0 @602
+    v3 = NewObject v2 layout=L0 @602
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @602
     v5 = CallDirect v4 function=f7 @602
     v6 = Convert v4 declared={type=undefined|null|L0 flags=[IsExpected]} @615
     PropSet v6, v1 key="seed" @615
@@ -521,8 +521,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f12 visibility=Private
 # CHECK-NEXT: Return v24
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="makePairOrNull"
-# CHECK: module=m0 position=344 role=ResultWrapper flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int[0, 2]}, {type=undefined|int}] results=[{type=undefined|null|L1}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f14 nullish=Null layout=L1} inlineFrames=[{}, {callee=f14 callPosition=344 module=m0}] {
-# CHECK-NEXT: b0(v0: int[0, 2], v1: undefined|int):
+# CHECK: module=m0 position=344 role=ResultWrapper flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int[0, 2]}, {type=int}] results=[{type=undefined|null|L1}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f14 nullish=Null layout=L1} inlineFrames=[{}, {callee=f14 callPosition=344 module=m0}] {
+# CHECK-NEXT: b0(v0: int[0, 2], v1: int):
 # CHECK-NEXT: v2: fact = Entered function=f14
 # CHECK-NEXT: v3: 3 = Integer integer=3
 # CHECK-NEXT: v4: int[0, 2] = Mod v0, v3
@@ -546,8 +546,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f12 visibility=Private
 # CHECK-NEXT: Return v16
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="makePairOrNothing"
-# CHECK: module=m0 position=462 role=ResultWrapper flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int[0, 5]}, {type=undefined|int}] results=[{type=undefined|null|L1}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f15 layout=L1} inlineFrames=[{}, {callee=f15 callPosition=462 module=m0}] {
-# CHECK-NEXT: b0(v0: int[0, 5], v1: undefined|int):
+# CHECK: module=m0 position=462 role=ResultWrapper flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int[0, 5]}, {type=int}] results=[{type=undefined|null|L1}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f15 layout=L1} inlineFrames=[{}, {callee=f15 callPosition=462 module=m0}] {
+# CHECK-NEXT: b0(v0: int[0, 5], v1: int):
 # CHECK-NEXT: v2: 3 = Integer integer=3
 # CHECK-NEXT: v3: int[0, 2] = Mod v0, v2
 # CHECK-NEXT: v4: 0 = Integer
@@ -573,6 +573,6 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f12 visibility=Private
 # CHECK-NEXT: Return v14
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="makePairOrNull"
-# CHECK: module=m0 position=344 role=ResultWorker flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int[0, 2]}, {type=undefined|int}] results=[{type=i32}, {type=int[-2147483643, 2147483647]|unspecified}, {type=undefined|int|unspecified}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{original=0}, {original=1}]} creator=ResultWorker{origin=f2}
+# CHECK: module=m0 position=344 role=ResultWorker flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int[0, 2]}, {type=int}] results=[{type=i32}, {type=int[-2147483643, 2147483647]|unspecified}, {type=int|unspecified}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{original=0}, {original=1}]} creator=ResultWorker{origin=f2}
 # CHECK-LABEL: function {{*}}name="makePairOrNothing"
-# CHECK: module=m0 position=462 role=ResultWorker flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int[0, 5]}, {type=undefined|int}] results=[{type=i32}, {type=int[-2147483643, 2147483647]|unspecified}, {type=undefined|int|unspecified}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{original=0}, {original=1}]} creator=ResultWorker{origin=f3}
+# CHECK: module=m0 position=462 role=ResultWorker flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int[0, 5]}, {type=int}] results=[{type=i32}, {type=int[-2147483643, 2147483647]|unspecified}, {type=int|unspecified}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{original=0}, {original=1}]} creator=ResultWorker{origin=f3}

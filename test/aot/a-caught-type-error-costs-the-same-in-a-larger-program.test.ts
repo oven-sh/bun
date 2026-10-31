@@ -38,6 +38,12 @@ const kinds = [
     fails: "new o.Missing(1)",
     quoted: "(evaluating 'new o.Missing(1)')",
   },
+  // It throws out of the engine's own C++: the frames are walked as far as the first one of the program. The read keeps the call from being the last thing that the function does.
+  {
+    name: "a native function that refuses its argument",
+    fails: "Object.keys(o.inner).length",
+    quoted: "(evaluating 'Object.keys(o.inner)')",
+  },
 ];
 
 // Comments are part of the text and take no time to compile.

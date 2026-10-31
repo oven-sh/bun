@@ -3,12 +3,14 @@ import {
   environmentCell,
   framesOfModuleGraphsCell,
   moduleGraphsCell,
+  performanceTimingCell,
   requestHandlerCell,
   serverOptionsCell,
   socketDataCell,
   socketOptionsCell,
   socketsCell,
   standardBlobCell,
+  timelineHandlerCell,
   timerArgumentsCell,
   timerCallbackCell,
   timerFieldsCell,
@@ -241,6 +243,8 @@ const eventHandlerAttribute = (eventTarget: b.TableType) =>
 
 const receiver = b.operand("this");
 const globalObject = b.builtin("globalThis");
+// What `bun:test` exports. The table lists the members that the compiler has to know, so the object counts as one that nobody knows as well.
+const testModule = b.union(b.builtin("bun:test"), b.object);
 
 // `performance` has one property of its own, now. The rest lies on Performance.prototype and on EventTarget.prototype above it.
 const timeline = b.union(b.builtin("performance"), b.instance("Performance"));
@@ -280,6 +284,34 @@ const timelineOperation = (signature: b.SignatureOptions) =>
 // getEntries answers the object that mark or measure returned, and an observer is handed it too.
 const timelineEntry = b.object;
 const timelineEntries = newArrayOf(timelineEntry);
+
+// `timing` and toJSON() hand out one object, which the first of them makes.
+const madeAtFirstRequest = b.createdIn(b.instance("PerformanceTiming").fresh, b.nativeCell(performanceTimingCell));
+
+// JSPerformanceTimingPrototypeTableValues in webcore/JSPerformanceTiming.cpp.
+const momentsOfPageLoad = [
+  "navigationStart",
+  "unloadEventStart",
+  "unloadEventEnd",
+  "redirectStart",
+  "redirectEnd",
+  "fetchStart",
+  "domainLookupStart",
+  "domainLookupEnd",
+  "connectStart",
+  "connectEnd",
+  "secureConnectionStart",
+  "requestStart",
+  "responseStart",
+  "responseEnd",
+  "domLoading",
+  "domInteractive",
+  "domContentLoadedEventStart",
+  "domContentLoadedEventEnd",
+  "domComplete",
+  "loadEventStart",
+  "loadEventEnd",
+];
 
 const removesTimelineEntries = timelineOperation({
   ...operandCodeOnly,
@@ -364,7 +396,7 @@ const inspect = [
     ...operandCodeOnly,
     args: { value: b.any.optional, options: b.any.optional, colors: b.any.optional },
     uses: {
-      value: [b.printedByFormatter()],
+      value: [b.printedByFormatter(), b.functionsOnlyNamed],
       options: membersInspected("depth", "colors", "sorted", "compact"),
       colors: b.inspected,
     },
@@ -1389,7 +1421,8 @@ export default b.declarations(
       main: mainModulePath,
       // What process.argv answers at the first read: the program may have stored anything there, or defined a getter.
       argv: b.property(b.any, { createdOnFirstRead: { capability: "js", throws: true, reads: externalState } }),
-      // Nothing is known of the class. From the first graph on, the natives that look for the graph of a frame find graphs and frames.
+      // Nothing is known of the class, so whoever reads it counts as calling import() of a graph (ReadLoadsCodeByName in marks.builtins.ts).
+      // From the first graph on, the natives that look for the graph of a frame find graphs and frames.
       ModuleGraph: b.property(b.any, {
         createdOnFirstRead: {
           capability: "js",
@@ -1572,7 +1605,7 @@ export default b.declarations(
       },
       jest: {
         args: { path: b.any.optional },
-        returns: b.object,
+        returns: testModule,
         capability: "js",
         throws: true,
         uses: { path: b.inspected },
@@ -1782,15 +1815,28 @@ export default b.declarations(
       },
       timing: {
         this: timeline,
-        getter: b.object,
+        getter: b.instance("PerformanceTiming"),
         capability: "heap",
-        uses: { this: b.inspected },
+        uses: { this: [madeAtFirstRequest, b.returnedFrom(performanceTimingCell)] },
         implementation: b.generic,
       },
       onresourcetimingbufferfull: {
         this: timeline,
         ...eventHandlerAttribute(receiver),
-        setter: { this: timeline, ...eventHandlerAttribute(receiver).setter },
+        // It answers the object that was stored last, and null after anything else.
+        getter: b.null,
+        uses: { this: [b.returnedFrom(timelineHandlerCell)] },
+        setter: {
+          this: timeline,
+          ...eventHandlerAttribute(receiver).setter,
+          uses: {
+            ...eventHandlerAttribute(receiver).setter.uses,
+            value: [
+              ...eventHandlerAttribute(receiver).setter.uses.value,
+              b.storedIn(b.nativeCell(timelineHandlerCell)),
+            ],
+          },
+        },
       },
       mark: timelineOperation({
         ...operandCodeOnly,
@@ -1832,7 +1878,37 @@ export default b.declarations(
         uses: { maxSize: converted },
       }),
       markResourceTiming: { this: b.any, capability: "none", uses: { this: b.inspected }, implementation: b.generic },
-      toJSON: timelineOperation({ returns: b.object.fresh, capability: "heap" }),
+      toJSON: timelineOperation({
+        returns: b.instance("Object").fresh,
+        // The new object of this row is the one that madeAtFirstRequest puts into the cell, so `timing` here and the getter share it.
+        resultProperties: { timeOrigin: b.f64, timing: b.instance("PerformanceTiming").fresh },
+        capability: "heap",
+        uses: { this: [madeAtFirstRequest] },
+      }),
+    },
+  }),
+  b.class("PerformanceTiming", {
+    instanceCppClass: b.cppClass("JSPerformanceTiming"),
+    proto: {
+      ...Object.fromEntries(
+        momentsOfPageLoad.map(name => [
+          name,
+          {
+            getter: b.f64,
+            capability: "none",
+            throws: true,
+            uses: { this: b.inspected },
+            implementation: b.generic,
+          } satisfies b.GetterField,
+        ]),
+      ),
+      toJSON: {
+        returns: b.plainData.fresh,
+        capability: "heap",
+        throws: true,
+        uses: { this: b.inspected },
+        implementation: b.generic,
+      },
     },
   }),
   ...Object.entries({

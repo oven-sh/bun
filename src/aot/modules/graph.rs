@@ -96,6 +96,7 @@ pub(super) struct FileRow {
     /// A module of data: whatever names it in the files of the program is an import or export statement that links names to its variables.
     pub is_data_linked_by_names_alone: bool,
     pub required_names: Vec<RequiredName>,
+    pub names_searched_behind_stars: Vec<(FileId, Atom)>,
 }
 
 pub(super) fn find<K: Copy + Ord, V: Copy>(entries: &[(K, V)], key: K) -> Option<V> {
@@ -201,11 +202,22 @@ impl ModuleGraph {
         found.map_or(importer, |index| all[index].1)
     }
 
+    pub fn importers_of_uncompiled_code(&self) -> Vec<FileId> {
+        let uncompiled = (self.external_kinds.iter())
+            .filter(|(_, kind)| *kind == ExternalKind::UncompiledCode)
+            .map(|&((importer, _), _)| importer);
+        let mut importers: Vec<FileId> = uncompiled.collect();
+        importers.shared_sort_unstable();
+        importers.dedup();
+        importers
+    }
+
     pub fn external_kind(&self, module: ModuleRef) -> Option<ExternalKind> {
         let key = match module {
             ModuleRef::External {
                 importer,
                 specifier,
+                ..
             } => external_key((importer, specifier)),
             _ => return None,
         };
@@ -549,6 +561,11 @@ impl ModuleGraph {
 
     pub fn required_names(&self, file: FileId) -> &[RequiredName] {
         &self.row(file).required_names
+    }
+
+    /// Where a required name of the file comes through `export *` and a mock may take it away: the files behind the module that a link looks into, with the name.
+    pub fn names_searched_behind_stars(&self, file: FileId) -> &[(FileId, Atom)] {
+        &self.row(file).names_searched_behind_stars
     }
 
     pub fn synthetic_export(&self, id: SyntheticExportId) -> &SyntheticExport {

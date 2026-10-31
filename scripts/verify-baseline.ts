@@ -237,9 +237,7 @@ if (values["skip-emulation"]) {
 } else {
   // Phase 1: SIMD code path verification
   const simdTestPath = join(repoRoot, "test", "js", "bun", "jsc-stress", "fixtures", "simd-baseline.test.ts");
-  // This step asks which instructions run, not how long they take: under the emulator a case takes three of the five seconds that
-  // a test has by default, and how the linker lays out the code moves that by half.
-  await runTest("SIMD baseline tests", ["test", "--timeout=30000", simdTestPath], { live: true });
+  await runTest("SIMD baseline tests", ["test", simdTestPath], { live: true });
 
   const aotDir = mkdtempSync(join(tmpdir(), "verify-baseline-aot-"));
   const aotProgram = join(aotDir, "baseline-cpu.ts");

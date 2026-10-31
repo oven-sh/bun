@@ -19,6 +19,8 @@ pub struct ModuleSource {
 // The texts of all modules stay alive while the engine runs, and messages name few of them.
 enum StoredText {
     Plain(Box<[u8]>),
+    /// `bun_sys::map_for_reading`: it stays until the process ends, and takes no memory of the process's own.
+    Mapped(&'static [u8]),
     Compressed {
         bytes: Box<[u8]>,
         length: usize,
@@ -45,6 +47,7 @@ impl ModuleSource {
     pub fn len(&self) -> usize {
         match &self.text {
             StoredText::Plain(text) => text.len(),
+            StoredText::Mapped(text) => text.len(),
             StoredText::Compressed { length, .. } => *length,
         }
     }
@@ -61,6 +64,7 @@ impl ModuleSource {
         };
         match &self.text {
             StoredText::Plain(text) => types.remove_from(text, destination),
+            StoredText::Mapped(text) => types.remove_from(text, destination),
             StoredText::Compressed { bytes, .. } => {
                 let text = bun_zstd::decompress_alloc(bytes);
                 let text = text.expect("the bytes come from `compress_append`");
@@ -75,9 +79,15 @@ impl ModuleSource {
         text
     }
 
+    pub fn types_cut_from_function_text(&self) -> &[u8] {
+        let types = self.types_in_function_text.as_ref();
+        types.map_or(&[], PackedTypeRanges::as_bytes)
+    }
+
     pub fn text(&self) -> &[u8] {
         match &self.text {
             StoredText::Plain(text) => text,
+            StoredText::Mapped(text) => text,
             StoredText::Compressed { bytes, text, .. } => text.get_or_init(|| {
                 let text = bun_zstd::decompress_alloc(bytes);
                 text.expect("the bytes come from `compress_append`")
@@ -91,10 +101,17 @@ impl StoredText {
     const FASTEST_LEVEL: i32 = 1;
 
     fn new(text: &[u8]) -> StoredText {
+        if !text.is_empty() && bun_sys::is_among_files_mapped_for_reading(text.as_ptr().addr()) {
+            // SAFETY: such a mapping is never taken away.
+            return StoredText::Mapped(unsafe {
+                std::slice::from_raw_parts(text.as_ptr(), text.len())
+            });
+        }
         let mut bytes = Vec::with_capacity(bun_zstd::compress_bound(text.len()));
         match bun_zstd::compress_append(&mut bytes, text, Some(Self::FASTEST_LEVEL)) {
+            // Not `into_boxed_slice`: the allocator leaves what shrinks to no less than half its size where it is.
             bun_zstd::Result::Success(_) if bytes.len() < text.len() => StoredText::Compressed {
-                bytes: bytes.into_boxed_slice(),
+                bytes: bytes[..].into(),
                 length: text.len(),
                 text: OnceLock::new(),
             },

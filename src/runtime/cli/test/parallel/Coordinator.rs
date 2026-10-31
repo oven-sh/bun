@@ -14,13 +14,14 @@ use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_ptr::Interned;
+use bun_sys::FdExt as _;
 
 use super::file_range::FileRange;
 use super::frame::{self, Frame};
 use super::parts::{self, Part, PartBuilder, PartState, Parts};
 use super::worker::{SpawnContext, Worker, WorkerPipe};
 use crate::cli::command::TestOptions;
-use crate::cli::run_compiled::{PART_HAS_NO_PROGRAM, TestPartKind};
+use crate::cli::run_compiled::{PART_HAS_NO_PROGRAM, PART_IS_BUILT_AGAIN, TestPartKind};
 use crate::test_command::CommandLineReporter;
 
 // `Status` lives in `crate::api::bun::process`
@@ -63,6 +64,8 @@ pub(crate) struct Coordinator<'a> {
     pub(crate) keeps_heavy_files_apart: bool,
     /// What the heaviest file of the run took, in megabytes: `Timings::largest_growth`.
     pub(crate) room_for_heavy_files: u32,
+    /// A compiled run with `--update-timings`.
+    pub(crate) children_of_workers: Option<ChildrenOfWorkers>,
     /// What the other workers take together where each runs an average file: `Timings::growth_of_average_files`. As long as heavy
     /// files are left, the files beside them are chosen to take no more.
     pub(crate) room_beside_heavy_files: u32,
@@ -78,12 +81,102 @@ pub(crate) struct Coordinator<'a> {
     pub(crate) live_workers: u32,
     pub(crate) crashed_files: Vec<u32>,
     pub(crate) aborted: Option<u32>,
+    /// Nobody asked for workers: the test files run in some because their programs are several, one after another, and the run ends as it does in one process.
+    /// With --parallel a run ends with 0 whatever a test has stored.
+    pub(crate) hands_on_exit_code: bool,
+    /// `process.exitCode = 3` in a test: what the last file that changed it has left. Each file starts from there, whichever worker runs it.
+    pub(crate) exit_code_left_by_tests: Option<u8>,
     pub(crate) stop_reason: Option<StopReason>,
     pub(crate) last_printed_dot: bool,
     /// Kill-on-close Job Object so the OS reaps workers if the coordinator dies
     /// without running its signal handler (e.g. SIGKILL / TerminateProcess).
     #[cfg(windows)]
     pub(crate) windows_job: Option<*mut c_void>,
+}
+
+/// What the processes that test files start hold. A worker leads a process group, and what it starts stays in the group. Five times a
+/// second the coordinator adds up the memory of their own that the members of each group hold beside the worker, and keeps the highest
+/// sum. What a process says when it has ended is no help where a test starts nine at once: that is its own highest size, and not even
+/// that where it stayed smaller than the worker.
+#[derive(Default)]
+pub(crate) struct ChildrenOfWorkers {
+    groups: Vec<GroupOfWorker>,
+    looked_at_ms: i64,
+}
+
+struct GroupOfWorker {
+    /// The worker's process, which leads the group.
+    leader: i64,
+    /// The highest sum so far, in kilobytes.
+    highest: u64,
+}
+
+impl ChildrenOfWorkers {
+    pub(crate) const MS_BETWEEN_LOOKS: i64 = 200;
+
+    fn look(&mut self) {
+        let now = bun_core::time::milli_timestamp();
+        if now - self.looked_at_ms < Self::MS_BETWEEN_LOOKS {
+            return;
+        }
+        self.looked_at_ms = now;
+        let Ok(processes) = bun_sys::Dir::open(b"/proc") else {
+            return;
+        };
+        let mut sums = vec![0u64; self.groups.len()];
+        let number = |field: Option<&[u8]>| {
+            field.and_then(|field| bun_core::fmt::parse_int::<i64>(field, 10).ok())
+        };
+        let read = |pid: &[u8], file: &[u8]| {
+            let path = [b"/proc/", pid, b"/", file].concat();
+            bun_sys::File::read_from(bun_sys::Fd::cwd(), &path).ok()
+        };
+        let mut iterator = bun_sys::dir_iterator::iterate(processes.fd());
+        while let Ok(Some(entry)) = iterator.next() {
+            let name = entry.name.slice_u8();
+            let (Some(pid), Some(stat)) = (number(Some(name)), read(name, b"stat")) else {
+                continue;
+            };
+            // "pid (name) state parent group ..": the name may hold anything.
+            let Some(after_name) = bun_core::strings::last_index_of_char(&stat, b')') else {
+                continue;
+            };
+            let mut fields = bun_core::strings::split(&stat[after_name + 1..], b" ")
+                .filter(|field| !field.is_empty());
+            let group = number(fields.nth(2));
+            let is_its_group = |of: &GroupOfWorker| Some(of.leader) == group && of.leader != pid;
+            let Some(at) = self.groups.iter().position(is_its_group) else {
+                continue;
+            };
+            // "size resident shared ..", in pages.
+            let Some(statm) = read(name, b"statm") else {
+                continue;
+            };
+            let mut pages = bun_core::strings::split(&statm, b" ");
+            if let (Some(resident), Some(shared)) = (number(pages.nth(1)), number(pages.next())) {
+                sums[at] += (resident - shared).max(0) as u64 * 4;
+            }
+        }
+        for (group, sum) in self.groups.iter_mut().zip(sums) {
+            group.highest = group.highest.max(sum);
+        }
+    }
+
+    /// In megabytes, since this was last asked for `leader`, whose group is looked at from now on.
+    fn take_highest(&mut self, leader: i64) -> u32 {
+        let kilobytes = match self.groups.iter_mut().find(|group| group.leader == leader) {
+            Some(group) => core::mem::take(&mut group.highest),
+            None => {
+                self.groups.push(GroupOfWorker { leader, highest: 0 });
+                0
+            }
+        };
+        u32::try_from(kilobytes / 1024).unwrap_or(u32::MAX)
+    }
+
+    fn forget(&mut self, leader: i64) {
+        self.groups.retain(|group| group.leader != leader);
+    }
 }
 
 #[derive(Default)]
@@ -176,20 +269,27 @@ impl<'a> Coordinator<'a> {
             self.vm.event_loop_ref().tick();
             self.run_pending_reaps();
             self.assign_work_to_waiting_workers();
+            if let Some(children) = &mut self.children_of_workers {
+                children.look();
+            }
             self.maybe_scale_up();
             self.run_pending_reaps();
             if self.is_done() {
                 break;
             }
-            if self.spawned_count < self.parallel_limit
+            let may_scale_up = self.spawned_count < self.parallel_limit
                 && self.has_undispatched_files()
-                && self.stop_reason.is_none()
-            {
-                // Bound the wait so we wake to scale up even if no I/O arrives.
+                && self.stop_reason.is_none();
+            // Bound the wait so we wake to scale up, or to look at the workers' children, even if no I/O arrives.
+            let longest_wait_ms = [
+                may_scale_up.then_some(self.scale_up_after_ms),
+                (self.children_of_workers.as_ref()).map(|_| ChildrenOfWorkers::MS_BETWEEN_LOOKS),
+            ];
+            if let Some(wait_ms) = longest_wait_ms.into_iter().flatten().min() {
                 const MS_PER_S: i64 = bun_core::time::MS_PER_S as i64;
                 let ts = bun_core::Timespec {
-                    sec: self.scale_up_after_ms / MS_PER_S,
-                    nsec: (self.scale_up_after_ms % MS_PER_S) * bun_core::time::NS_PER_MS as i64,
+                    sec: wait_ms / MS_PER_S,
+                    nsec: (wait_ms % MS_PER_S) * bun_core::time::NS_PER_MS as i64,
                 };
                 // SAFETY: event_loop()/usockets_loop() return live pointers for the VM lifetime.
                 unsafe {
@@ -462,7 +562,7 @@ impl<'a> Coordinator<'a> {
             };
             self.parts.as_mut().expect("has parts").list[part].range = range;
             return match next {
-                Some(idx) => w.dispatch(&mut self.frame, idx, self.files[idx as usize].as_bytes()),
+                Some(idx) => self.dispatch_to(w, idx),
                 None => w.shutdown(&mut self.frame),
             };
         }
@@ -470,7 +570,7 @@ impl<'a> Coordinator<'a> {
         let next = self.take_next(&mut range);
         w.range = range;
         if let Some(idx) = next {
-            return w.dispatch(&mut self.frame, idx, self.files[idx as usize].as_bytes());
+            return self.dispatch_to(w, idx);
         }
         if !w.range.is_empty() {
             w.waits_for_heavy_file_to_end = true;
@@ -495,14 +595,14 @@ impl<'a> Coordinator<'a> {
                 let next = self.take_next(&mut range);
                 v.range = range;
                 if let Some(idx) = next {
-                    return w.dispatch(&mut self.frame, idx, self.files[idx as usize].as_bytes());
+                    return self.dispatch_to(w, idx);
                 }
                 w.waits_for_heavy_file_to_end = true;
                 return;
             } else if let Some(stolen) = v.range.steal_back_half() {
                 w.range = stolen;
                 if let Some(idx) = w.range.pop_front() {
-                    return w.dispatch(&mut self.frame, idx, self.files[idx as usize].as_bytes());
+                    return self.dispatch_to(w, idx);
                 }
             }
         }
@@ -537,6 +637,15 @@ impl<'a> Coordinator<'a> {
                     (*other).shutdown(&mut self.frame);
                 }
             }
+        }
+    }
+
+    /// In megabytes, since this was last asked. From now on the worker's children are looked at.
+    fn take_highest_of_children(&mut self, w: &Worker) -> u32 {
+        let pid = w.process.as_ref().map(|process| process.pid);
+        match (&mut self.children_of_workers, pid) {
+            (Some(children), Some(pid)) => children.take_highest(pid as i64),
+            _ => 0,
         }
     }
 
@@ -613,6 +722,7 @@ impl<'a> Coordinator<'a> {
             frame::Kind::Ready => {
                 w.reached_ready = true;
                 w.startup_failures = 0;
+                self.take_highest_of_children(w);
                 self.assign_work_or_retry(w);
             }
             frame::Kind::FileStart => {
@@ -659,7 +769,11 @@ impl<'a> Coordinator<'a> {
                     unhandled,
                 ] = nums;
                 let elapsed_ns = rd.u64();
-                let growth = rd.u32();
+                let rd_growth = rd.u32();
+                let largest_child = rd.u32();
+                let exit_code_left = rd.u32();
+                // Of the two views of the children, one sees the short-lived and one sees those that run at once.
+                let growth = rd_growth + largest_child.max(self.take_highest_of_children(w));
                 if let Some(file) = self.test_records.get_mut(idx as usize) {
                     file.elapsed_ns = elapsed_ns;
                 }
@@ -676,6 +790,10 @@ impl<'a> Coordinator<'a> {
                 // so we don't double-count.
                 if w.inflight != Some(idx) {
                     return;
+                }
+                if let (true, Some(code)) = (self.hands_on_exit_code, exit_code_left.checked_sub(1))
+                {
+                    self.exit_code_left_by_tests = Some(code as u8);
                 }
 
                 // Reshaped for borrowck — `summary()` mutably borrows
@@ -739,7 +857,15 @@ impl<'a> Coordinator<'a> {
         }
     }
 
+    fn dispatch_to(&mut self, w: &mut Worker, idx: u32) {
+        let file = self.files[idx as usize].as_bytes();
+        w.dispatch(&mut self.frame, idx, file, self.exit_code_left_by_tests);
+    }
+
     pub(crate) fn on_worker_exit(&mut self, w: &mut Worker, status: SpawnStatus) {
+        if let (Some(children), Some(process)) = (&mut self.children_of_workers, &w.process) {
+            children.forget(process.pid as i64);
+        }
         w.exit_status = Some(status);
         // The Channel delivers any remaining buffered data then close (which
         // sets ipc.done and calls tryReap), so no explicit drain is needed —
@@ -1134,6 +1260,7 @@ impl<'a> Coordinator<'a> {
             Some(parts) if !parts.finished.is_empty() => core::mem::take(&mut parts.finished),
             _ => return,
         };
+        let mut a_layer_failed = false;
         for (index, status) in finished {
             let index = index as usize;
             let parts = self.parts.as_mut().expect("has parts");
@@ -1147,17 +1274,30 @@ impl<'a> Coordinator<'a> {
                 _ => None,
             };
             if let Some(layer) = parts::layer_of(index as u32) {
+                // It was built beside a layer that failed, and was ended with it.
+                if parts.layers[layer].state == PartState::Finished {
+                    continue;
+                }
                 parts.print_messages(&messages);
                 if exit_code == Some(0) {
                     parts.layers[layer].state = PartState::Ready;
+                    parts.tell_build_above(layer, Some(true));
                     continue;
                 }
                 // Nothing of it could be compiled. What is built above it holds those files itself, and says what is wrong with them.
                 if exit_code == Some(PART_HAS_NO_PROGRAM) {
                     parts.layers[layer].state = PartState::Ready;
                     parts.layers[layer].file = None;
+                    parts.tell_build_above(layer, Some(false));
                     continue;
                 }
+                if exit_code == Some(PART_IS_BUILT_AGAIN) {
+                    parts.layers[layer].state = PartState::Waiting;
+                    parts.layers[layer].file = None;
+                    continue;
+                }
+                parts.tell_build_above(layer, None);
+                a_layer_failed = true;
                 // No test file has a program without it. That is said once, not for each of them.
                 let file_count: u32 = parts.list.iter().map(|part| part.range.len()).sum();
                 for part in parts.layers.iter_mut().chain(&mut parts.list) {
@@ -1226,6 +1366,9 @@ impl<'a> Coordinator<'a> {
             }
             Output::flush();
         }
+        if a_layer_failed {
+            self.end_builds();
+        }
     }
 
     fn start_builds(&mut self) {
@@ -1256,6 +1399,17 @@ impl<'a> Coordinator<'a> {
             let layer = parts::layer_of(index);
             let kind = parts.kind_of(index);
             let below = parts.programs_below(layer.unwrap_or(parts.layers.len()));
+            let is_above_library = parts.stands_on_library_of_this_bun;
+            let pipe = match layer {
+                Some(layer) if parts.begins_beside_build_below(layer) => {
+                    let Ok(pipe) = bun_sys::pipe() else {
+                        return;
+                    };
+                    parts.layers[layer - 1].tells_build_above = Some(pipe[1]);
+                    Some(pipe)
+                }
+                _ => None,
+            };
             let part = match layer {
                 Some(layer) => &mut parts.layers[layer],
                 None => &mut parts.list[index as usize],
@@ -1277,10 +1431,15 @@ impl<'a> Coordinator<'a> {
                 parts_ptr,
                 kind,
                 &below,
+                is_above_library,
                 threads,
+                pipe.map(|[read, _]| read),
                 #[cfg(windows)]
                 self.windows_job,
             );
+            if let Some([read, _]) = pipe {
+                read.close();
+            }
             match started {
                 Ok((builder, file)) => {
                     part.file = Some(file);

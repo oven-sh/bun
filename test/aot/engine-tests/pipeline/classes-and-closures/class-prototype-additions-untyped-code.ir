@@ -310,7 +310,7 @@ function f127 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: v8: f19 = NewClosure function=f19 allocationSite=6
 # CHECK-NEXT: v9: f20 = NewClosure function=f20 allocationSite=7
 # CHECK-NEXT: v10: f21 = NewClosure function=f21 allocationSite=8
-# CHECK-NEXT: v11: L15 = NewObject -, v4, v5, v6, v7, v8, v9, v10 layout=L15 fields=[0, 1, 5, 3, 4, 6, 2] allocationSite=9 allocationClass=1
+# CHECK-NEXT: v11: L15 = NewObject -, v4, v5, v6, v7, v8, v9, v10 layout=L15 fields=[0, 1, 5, 3, 4, 6, 2] allocationSite=9 allocationClass=0
 # CHECK-NEXT: v12: L15 = FinishObject v11
 # CHECK-NEXT: PutModuleVariable v12 variable=g1
 # CHECK-NEXT: v14: null|object = ResolveHeritage v3

@@ -1762,11 +1762,10 @@ runtimefunction id=ArrayTraversalTraverseArray function=f15 visibility=Private
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f4 module=
-# CHECK: m0 position=293 kind=Arrow role=ResultWrapper flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|""|"a"|"b" site=w11 flags=[OmitsNull, OmitsUndefined]}] results=[{type=L1 site=w12 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f5] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f18 layout=L1} {
+# CHECK: m0 position=293 kind=Arrow role=ResultWrapper flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|""|"a"|"b" site=w11 flags=[OmitsNull, OmitsUndefined]}] results=[{type=L1 site=w12 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f5] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f18 layout=L1} inlineFrames=[{}, {callee=f18 callPosition=293 module=m0}] {
 # CHECK-NEXT: b0(v0: undefined|""|"a"|"b"):
-# CHECK-NEXT: v1: undefined|L2 = CallDirect v0 function=f18
-# CHECK-NEXT: v2: L1 = NewObject layout=L1 allocationSite=6 allocationClass=1
-# CHECK-NEXT: Return v2
+# CHECK-NEXT: v1: L1 = NewObject layout=L1 allocationSite=6 allocationClass=1
+# CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="isW"
 # CHECK: module=m0 position=940 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} results=[{type=boolean site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1}

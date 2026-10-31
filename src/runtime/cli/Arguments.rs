@@ -1008,6 +1008,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!(
         "--update-timings                 After the run, write measured per-file durations to the first --timings file (only this shard's files under --shard; merged with what was read otherwise)."
     ),
+    parse_param!(
+        "--aot-memory-limit <STR>         With --aot --parallel: the memory that the run may take, e.g. 5GB. What doesn't fit as one program is compiled as several. Defaults to the container's limit, or the memory that is free."
+    ),
 ];
 const TEST_PARAMS: &[ParamType] = concat_params!(
     TEST_ONLY_PARAMS,
@@ -2341,6 +2344,16 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         }
     }
     ctx.test_options.update_timings = args.flag(b"--update-timings");
+    if let Some(text) = args.option(b"--aot-memory-limit") {
+        let Some(limit) = crate::cli::test::memory_of_job::parse(text) else {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: --aot-memory-limit expects a size like 5GB or 4096MB, received \"{}\"",
+                BStr::new(text)
+            );
+            Global::exit(1);
+        };
+        ctx.test_options.aot_memory_limit = Some(limit);
+    }
     if ctx.test_options.update_timings && ctx.test_options.timings_files.is_empty() {
         bun_core::pretty_errorln!(
             "<r><red>error<r>: --update-timings requires --timings, e.g. --timings=.bun-test-timings.json --update-timings"

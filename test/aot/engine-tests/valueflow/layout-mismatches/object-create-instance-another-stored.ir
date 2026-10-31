@@ -203,18 +203,18 @@ function f2 name="A" module=m0 position=213 kind=BaseConstructor flags=[HasNewTa
   b0(v0: anything):
     Jump -> next b1() @213
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @207
-    v2 = NewObject v1 layout=L0 @207
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @207
-    Return v3 @207
+    v1 = GetConstructPrototype v0 layout=L0 @213
+    v2 = NewObject v1 layout=L0 @213
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @213
+    Return v3 @213
 }
 function f3 name="B" module=m0 position=267 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w5}, {type=number site=w6}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
   b0(v0: anything, v1: number, v2: number):
     Jump -> next b1() @267
   b1():
-    v3 = GetConstructPrototype v0 layout=L1 @218
-    v4 = NewObject v3 layout=L1 @218
-    v5 = Convert v4 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @218
+    v3 = GetConstructPrototype v0 layout=L1 @267
+    v4 = NewObject v3 layout=L1 @267
+    v5 = Convert v4 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @267
     v6 = CallDirect v5 function=f4 @267
     v7 = Convert v1 declared={type=number site=w20} @296
     PropSet v5, v7 key="x" @296
@@ -262,46 +262,38 @@ function f4 module=m0 position=224 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: PutModuleVariable v12 variable=g0
 # CHECK-NEXT: v14: "first" = String string="first"
 # CHECK-NEXT: PropSet v12, v14 key="first" accessSite=2
-# CHECK-NEXT: v16: anything ~ undefined|null|boolean|number|string|symbol|bigint|L0 = GetModuleVariable variable=g0
-# CHECK-NEXT: v17: null|Object ~ null = AssumeType v16 provenType=null|absent|Object
-# CHECK-NEXT: v18: "second" = String string="second"
-# CHECK-NEXT: v19: Object = RequireObjectCoercible v17 nullishAccess=Write name="second"
-# CHECK-NEXT: PropSet v19, v18 key="second" accessSite=3
-# CHECK-NEXT: v21: true = Boolean boolean=true
-# CHECK-NEXT: v22: fractional = Double number=1.5
-# CHECK-NEXT: v23: int[0, 1] = CallDirect v21, v22 function=f1 accessSite=6
-# CHECK-NEXT: v24: false = Boolean
-# CHECK-NEXT: v25: fractional = Double number=3.5
-# CHECK-NEXT: v26: int[0, 1] = CallDirect v24, v25 function=f1 accessSite=7
-# CHECK-NEXT: v27: undefined = CallBuiltin -, v23, v26 overload=ConsoleLog/0 accessSite=8
-# CHECK-NEXT: v28: anything ~ undefined|null|boolean|number|string|symbol|bigint|L0 = GetModuleVariable variable=g0
-# CHECK-NEXT: v29: null|Object ~ null = AssumeType v28 provenType=null|absent|Object
-# CHECK-NEXT: v30: undefined = Undefined
-# CHECK-NEXT: v31: undefined|string = CallBuiltin -, v29, v30 overload=JSONStringify/0 accessSite=12
-# CHECK-NEXT: v32: anything ~ undefined|null|boolean|number|string|symbol|bigint|L0 = GetModuleVariable variable=g0
-# CHECK-NEXT: v33: null|Object ~ null = AssumeType v32 provenType=null|absent|Object
-# CHECK-NEXT: v34: Object = ToObject v33 calledBuiltin=ObjectKeys
-# CHECK-NEXT: v35: Array<string> = CallBuiltin -, v34 overload=ObjectKeys/0 accessSite=13
-# CHECK-NEXT: v36: Array<"first"|"second"|"x"|"y", proven, pristine[Storage, Names, Dense]> = AssumeType v35 provenType=Array<"first"|"second"|"x"|"y", proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v37: string = CallBuiltin v36 overload=ArrayPrototypeJoin/0 accessSite=15
-# CHECK-NEXT: v38: 0 = Integer
-# CHECK-NEXT: v39: undefined|L1 = GetArrayElement v8, v38 arrayStorage=Contiguous level=Proven accessSite=16 [keyIsIntegral]
-# CHECK-NEXT: v40: L1 = RequireObjectCoercible v39 name="x"
-# CHECK-NEXT: v41: fractional = GetSlot v40 key="x" receivers=[L1] level=Proven accessSite=17
-# CHECK-NEXT: v42: 0 = Integer
-# CHECK-NEXT: v43: undefined|L1 = GetArrayElement v8, v42 arrayStorage=Contiguous level=Proven accessSite=18 [keyIsIntegral]
-# CHECK-NEXT: v44: L1 = RequireObjectCoercible v43 name="y"
-# CHECK-NEXT: v45: number = GetSlot v44 key="y" receivers=[L1] level=Proven accessSite=19
-# CHECK-NEXT: v46: undefined = CallBuiltin -, v31, v37, v41, v45 overload=ConsoleLog/0 accessSite=20
-# CHECK-NEXT: v47: undefined = Undefined
-# CHECK-NEXT: Return v47
+# CHECK-NEXT: v16: "second" = String string="second"
+# CHECK-NEXT: PropSet v12, v16 key="second" accessSite=3
+# CHECK-NEXT: v18: true = Boolean boolean=true
+# CHECK-NEXT: v19: fractional = Double number=1.5
+# CHECK-NEXT: v20: int[0, 1] = CallDirect v18, v19 function=f1 accessSite=6
+# CHECK-NEXT: v21: false = Boolean
+# CHECK-NEXT: v22: fractional = Double number=3.5
+# CHECK-NEXT: v23: int[0, 1] = CallDirect v21, v22 function=f1 accessSite=7
+# CHECK-NEXT: v24: undefined = CallBuiltin -, v20, v23 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v25: undefined = Undefined
+# CHECK-NEXT: v26: undefined|string = CallBuiltin -, v12, v25 overload=JSONStringify/0 accessSite=12
+# CHECK-NEXT: v27: Array<string> = CallBuiltin -, v12 overload=ObjectKeys/0 accessSite=13
+# CHECK-NEXT: v28: Array<"first"|"second"|"x"|"y", proven, pristine[Storage, Names, Dense]> = AssumeType v27 provenType=Array<"first"|"second"|"x"|"y", proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v29: string = CallBuiltin v28 overload=ArrayPrototypeJoin/0 accessSite=15
+# CHECK-NEXT: v30: 0 = Integer
+# CHECK-NEXT: v31: undefined|L1 = GetArrayElement v8, v30 arrayStorage=Contiguous level=Proven accessSite=16 [keyIsIntegral]
+# CHECK-NEXT: v32: L1 = RequireObjectCoercible v31 name="x"
+# CHECK-NEXT: v33: fractional = GetSlot v32 key="x" receivers=[L1] level=Proven accessSite=17
+# CHECK-NEXT: v34: 0 = Integer
+# CHECK-NEXT: v35: undefined|L1 = GetArrayElement v8, v34 arrayStorage=Contiguous level=Proven accessSite=18 [keyIsIntegral]
+# CHECK-NEXT: v36: L1 = RequireObjectCoercible v35 name="y"
+# CHECK-NEXT: v37: number = GetSlot v36 key="y" receivers=[L1] level=Proven accessSite=19
+# CHECK-NEXT: v38: undefined = CallBuiltin -, v26, v29, v33, v37 overload=ConsoleLog/0 accessSite=20
+# CHECK-NEXT: v39: undefined = Undefined
+# CHECK-NEXT: Return v39
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="put"
 # CHECK: module=m0 position=394 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w2}, {type=fractional site=w3}] results=[{type=int[0, 1] site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: boolean, v1: fractional):
 # CHECK-NEXT: v2: anything ~ undefined|null|boolean|number|string|symbol|bigint|L0 = GetModuleVariable variable=g0
-# CHECK-NEXT: v3: null|Object ~ null = AssumeType v2 provenType=null|absent|Object
-# CHECK-NEXT: v4: boolean ~ true = TypeTest v3 testedType=null
+# CHECK-NEXT: v3: null|Object = AssumeType v2 provenType=null|absent|Object
+# CHECK-NEXT: v4: boolean = TypeTest v3 testedType=null
 # CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2(| 0)
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v5: 0 = Integer
@@ -313,25 +305,26 @@ function f4 module=m0 position=224 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: v8: 0 = Integer
 # CHECK-NEXT: v9: undefined|L1 = GetArrayElement v7, v8 arrayStorage=Contiguous level=Proven accessSite=21 [keyIsIntegral]
 # CHECK-NEXT: Jump -> next b4(v9)
-# CHECK-NEXT: b4(v10: undefined|L1|Object ~ undefined|L1):
-# CHECK-NEXT: v11: L1|Object ~ L1 = RequireObjectCoercible v10 nullishAccess=Write name="x"
-# CHECK-NEXT: v12: boolean ~ true = TypeTest v11 testedType=L1
-# CHECK-NEXT: Branch v12 -> taken b5(| 0), notTaken b6(| 0)
-# CHECK-NEXT: b5(v13: L1):
-# CHECK-NEXT: PutSlot v13, -, v1 key="x" receivers=[L1] level=Proven accessSite=22
-# CHECK-NEXT: v15: 1 = Integer integer=1
-# CHECK-NEXT: v16: number = Add v1, v15
-# CHECK-NEXT: PutSlot v13, -, v16 key="y" receivers=[L1] level=Proven accessSite=23
+# CHECK-NEXT: b4(v10: undefined|L1|Object):
+# CHECK-NEXT: v11: undefined|L1|Object ~ undefined|L1 = Upcast v10 castType=anything|absent
+# CHECK-NEXT: v12: L1|Object ~ L1 = RequireObjectCoercible v11 nullishAccess=Write name="x"
+# CHECK-NEXT: v13: boolean ~ true = TypeTest v12 testedType=L1
+# CHECK-NEXT: Branch v13 -> taken b5(| 0), notTaken b6(| 0)
+# CHECK-NEXT: b5(v14: L1):
+# CHECK-NEXT: PutSlot v14, -, v1 key="x" receivers=[L1] level=Proven accessSite=22
+# CHECK-NEXT: v16: 1 = Integer integer=1
+# CHECK-NEXT: v17: number = Add v1, v16
+# CHECK-NEXT: PutSlot v14, -, v17 key="y" receivers=[L1] level=Proven accessSite=23
 # CHECK-NEXT: Jump -> next b7()
-# CHECK-NEXT: b6(v18: Object) frequency=Rare:
-# CHECK-NEXT: PropSet v18, v1 key="x" accessSite=22 receivers=[L1, ..]
-# CHECK-NEXT: v20: 1 = Integer integer=1
-# CHECK-NEXT: v21: number = Add v1, v20
-# CHECK-NEXT: PropSet v18, v21 key="y" accessSite=23 receivers=[L1, ..]
+# CHECK-NEXT: b6(v19: Object) frequency=Rare:
+# CHECK-NEXT: PropSet v19, v1 key="x" accessSite=22 receivers=[L1, ..]
+# CHECK-NEXT: v21: 1 = Integer integer=1
+# CHECK-NEXT: v22: number = Add v1, v21
+# CHECK-NEXT: PropSet v19, v22 key="y" accessSite=23 receivers=[L1, ..]
 # CHECK-NEXT: Jump -> next b7()
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v23: 1 = Integer integer=1
-# CHECK-NEXT: Return v23
+# CHECK-NEXT: v24: 1 = Integer integer=1
+# CHECK-NEXT: Return v24
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="B"
 # CHECK: module=m0 position=267 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=fractional site=w5}, {type=fractional site=w6}] results=[{type=L1 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 inlineFrames=[{}, {callee=f4 callPosition=267 module=m0}] {

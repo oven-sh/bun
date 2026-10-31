@@ -1,6 +1,4 @@
 {
-  "accessor/inherited-method-in-function": 2.82,
-  "accessor/inherited-value-in-function": 2.6,
   "accessor/setter-of-a-literal-below-two-created-objects": 1.24,
   "array/read-of-a-constant-table": 1.13,
   "built-in/async-local-storage-get-store": 1.06,
@@ -122,7 +120,6 @@
   "fill/then-enumerated-in-function": 1.05,
   "fill/then-spread-in-function": 1.94,
   "function/closure-created-and-called-in-function": 1.29,
-  "guess/bound-is-the-length-of-what-is-no-array-wrong": 1.43,
   "guess/read-of-one-receiver-right": 1.4,
   "guess/reads-of-two-receivers-right": 2.4,
   "host-classes/url-three-search-params": 1.07,

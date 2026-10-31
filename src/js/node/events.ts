@@ -217,7 +217,7 @@ function EventEmitter(this: $Node.EventEmitter, opts?: $Node.EventEmitterOptions
     return initializeProxyReceiver(this, opts);
   }
   const events = this._events;
-  const hasNoEvents = events === undefined || events === Object.getPrototypeOf(this)._events;
+  const hasNoEvents = events === undefined || events === Object.$getPrototypeOf(this)._events;
   const hasNoMaxListeners = this._maxListeners == null;
   const capturesRejections = opts?.captureRejections;
   if (hasNoMaxListeners && !capturesRejections && !EventEmitterPrototype[kCapture]) {

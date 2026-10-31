@@ -34,6 +34,7 @@ pub(super) fn describe_link_error(loaded: &LoadedBuild<'_, '_>, error: &LinkErro
         ProgramModule::External {
             importer,
             specifier,
+            ..
         } => {
             format!("`{}`, imported by {}", name_of(specifier), path(importer))
         }
@@ -259,6 +260,7 @@ impl Build<'_> {
             ways_not_followed_out_of_sight: application_graph.ways_not_followed_out_of_sight(),
             ways_followed_for_their_names: application_graph.ways_followed_for_their_names(),
             lets_process_out_of_sight: application_graph.lets_process_out_of_sight(),
+            is_ready_for_loader_functions: application_graph.is_ready_for_loader_functions(),
             exported_variables: ExportedVariables::collect(&program, &files_of_modules),
             writes_preload,
             held_library_code: core::mem::take(&mut self.held_library_code),

@@ -1,6 +1,7 @@
 use super::answers::{
-    CallTarget, CheckedMember, CheckedType, ClassDeclaration, ClassRef, ClassShape, EnumConstant,
-    FunctionRef, GaveUp, IndexSignature, ListedMember, MemberLookup, ObjectMember, PositionTypes,
+    CallTarget, CheckedMember, CheckedType, ClassDeclaration, ClassMember, ClassMemberSource,
+    ClassParent, ClassRef, ClassShape, EnumConstant, FunctionRef, GaveUp, IndexSignature,
+    ListedMember, MemberLookup, MemberName, ObjectMember, ObjectMemberKind, PositionTypes,
     QueryStatistics, SignatureShape, TypeDisplayName, WrittenType,
 };
 use super::builtin_types::BuiltinTypeSymbols;
@@ -45,7 +46,7 @@ pub struct Queries<'c, 'p, 's> {
     pub(super) inputs: QueryInputs<'c>,
     pub(super) memo: Memo<'c>,
     pub(super) kept: KeptMemo<'c>,
-    statistics: QueryStatistics,
+    pub(super) statistics: QueryStatistics,
     closed_cycles_before: u32,
     union_members_compared_before: u64,
     depth: u32,
@@ -57,7 +58,14 @@ pub struct Queries<'c, 'p, 's> {
     answers_nothing: bool,
     /// A question since `note_idle` ran out of stack. What it computed on the way isn't kept, so the questions about the
     /// code nested in what it was about would each compute most of it again, with less stack.
-    lacks_stack: bool,
+    pub(super) lacks_stack: bool,
+}
+
+fn is_accessor(kind: ObjectMemberKind) -> bool {
+    matches!(
+        kind,
+        ObjectMemberKind::Getter | ObjectMemberKind::Setter | ObjectMemberKind::GetterAndSetter
+    )
 }
 
 #[derive(Default)]
@@ -69,6 +77,11 @@ pub(super) struct Memo<'c> {
     signatures: FxHashMap<SigId, SignatureShape<'c>>,
     function_signatures: FxHashMap<FunctionRef, SignatureShape<'c>>,
     classes: FxHashMap<ClassDeclaration, Option<&'c ClassShape<'c>>>,
+    classes_with_accessor_at_or_above: FxHashMap<ClassDeclaration, bool>,
+    /// Of the classes that `classes_with_accessor_at_or_above` lists.
+    names_of_accessors: FxHashSet<MemberName>,
+    /// Whether whoever looks for the name from below the class finds an accessor in it or above it.
+    inherited_accessors: FxHashMap<(ClassDeclaration, MemberName), bool>,
     own_constructor_function_shapes: FxHashMap<FunctionRef, Option<&'c ClassShape<'c>>>,
     variables: FxHashMap<Sym, WrittenType>,
     /// By the address of a permanent list of declarations.
@@ -85,6 +98,8 @@ pub(super) struct Memo<'c> {
     pub(super) exported_symbols: Option<FxHashSet<Sym>>,
     pub(super) parameters_taking_elements: FxHashMap<(Atom, usize), u8>,
     pub(super) usages: FxHashMap<Subject, UsageState>,
+    /// The subjects that were left as `UsageState::NotKept` since a question ran out of stack.
+    pub(super) usages_that_lacked_stack: Vec<Subject>,
     pub(super) inferred_types: FxHashMap<Subject, TypeState>,
     pub(super) types_in_progress: TypesInProgress,
     /// For a sum that a question went through: whether what it yields is used as an int32.
@@ -200,6 +215,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     pub fn note_idle(&mut self) {
         debug_assert!(self.depth == 0);
         self.lacks_stack = false;
+        self.forget_usages_that_lacked_stack();
+        self.c.idle_between_statements();
+    }
+
+    pub fn note_idle_between_statements(&mut self) {
+        debug_assert!(self.depth == 0);
         self.c.idle_between_statements();
     }
 
@@ -943,6 +964,131 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             kept(&mut self.kept).insert(key, shape);
         }
         shape
+    }
+
+    /// Whether the class or one above it declares a getter or a setter. Asked of each class of a row, so each step is asked once.
+    pub fn has_accessor_at_or_above(&mut self, declaration: ClassDeclaration) -> bool {
+        let mut chain = Vec::new();
+        let mut seen: FxHashSet<ClassDeclaration> = FxHashSet::default();
+        let mut current = Some(declaration);
+        let mut has_accessor = false;
+        while let Some(class) = current {
+            if let Some(&known) = self.memo.classes_with_accessor_at_or_above.get(&class) {
+                has_accessor = known;
+                break;
+            }
+            if !seen.insert(class) {
+                has_accessor = true;
+                break;
+            }
+            chain.push(class);
+            current = self.declared_parent(class);
+        }
+        for &class in chain.iter().rev() {
+            let members = self.shape_of(class).map_or(&[][..], |shape| shape.members);
+            for entry in members
+                .iter()
+                .filter(|entry| !entry.is_static && is_accessor(entry.kind))
+            {
+                has_accessor = true;
+                self.memo.names_of_accessors.insert(entry.name);
+            }
+            self.memo
+                .classes_with_accessor_at_or_above
+                .insert(class, has_accessor);
+        }
+        has_accessor
+    }
+
+    fn shape_of(&mut self, class: ClassDeclaration) -> Option<&'c ClassShape<'c>> {
+        match class {
+            ClassDeclaration::Class(class) => Some(self.class_shape(class)),
+            ClassDeclaration::Function(function) => self.constructor_function_shape(function),
+        }
+    }
+
+    fn declared_parent(&mut self, class: ClassDeclaration) -> Option<ClassDeclaration> {
+        let parent = match class {
+            ClassDeclaration::Class(class) => self.class_parent(class),
+            ClassDeclaration::Function(function) => self.constructor_function_parent(function),
+        };
+        match parent {
+            Some(ClassParent::Declared(above)) => Some(above),
+            Some(ClassParent::Library(_)) | None => None,
+        }
+    }
+
+    /// `None`: the class says nothing of the name. Else whether whoever looks for the name from below finds an accessor here.
+    fn find_accessor_in(
+        &self,
+        shape: &ClassShape<'_>,
+        name: MemberName,
+        is_above: bool,
+    ) -> Option<bool> {
+        if shape.has_computed_instance_name {
+            return Some(false);
+        }
+        let file = self.c.hir(shape.declaration.file());
+        let named = |entry: &&ClassMember| !entry.is_static && entry.name == name;
+        for entry in shape.members.iter().filter(named) {
+            match (entry.kind, entry.source) {
+                (kind, _) if is_accessor(kind) => {
+                    if is_above {
+                        return Some(true);
+                    }
+                }
+                (ObjectMemberKind::Field, ClassMemberSource::Member(node))
+                    if file[node]
+                        .flags
+                        .intersects(hir::Flags::AMBIENT | hir::Flags::ABSTRACT) => {}
+                (ObjectMemberKind::Field, ClassMemberSource::ThisStore(_)) => {}
+                _ => return Some(false),
+            }
+        }
+        shape
+            .names_stored_in_prototype
+            .contains(&name)
+            .then_some(false)
+    }
+
+    /// `this.size = size` below `set size(..)` of a base class runs the setter and creates no property. Each class of a row asks, so each step up
+    /// the row is taken once for a name, and none for a name that no class there declares as an accessor.
+    pub fn inherits_accessor(&mut self, shape: &ClassShape<'_>, name: MemberName) -> bool {
+        if !matches!(name, MemberName::String(_))
+            || !self.has_accessor_at_or_above(shape.declaration)
+            || !self.memo.names_of_accessors.contains(&name)
+        {
+            return false;
+        }
+        if let Some(found) = self.find_accessor_in(shape, name, false) {
+            return found;
+        }
+        let mut silent = Vec::new();
+        let mut seen: FxHashSet<ClassDeclaration> = FxHashSet::default();
+        seen.insert(shape.declaration);
+        let mut current = self.declared_parent(shape.declaration);
+        let found = loop {
+            let Some(class) = current else { break false };
+            // What a walk round a cycle finds depends on where it began.
+            if !seen.insert(class) {
+                return false;
+            }
+            if let Some(&known) = self.memo.inherited_accessors.get(&(class, name)) {
+                break known;
+            }
+            silent.push(class);
+            let Some(above) = self.shape_of(class) else {
+                break false;
+            };
+            if let Some(found) = self.find_accessor_in(above, name, true) {
+                break found;
+            }
+            current = self.declared_parent(class);
+        };
+        for class in silent {
+            self.memo.inherited_accessors.insert((class, name), found);
+        }
+        found
     }
 
     pub fn class_shape(&mut self, class: ClassRef) -> &'c ClassShape<'c> {

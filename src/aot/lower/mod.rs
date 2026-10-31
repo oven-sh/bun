@@ -7,6 +7,7 @@ mod condition;
 mod context;
 mod control;
 mod convert;
+mod counted_places;
 mod data;
 mod decorators;
 mod dispose;

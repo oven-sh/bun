@@ -306,13 +306,13 @@ function f8 name="next" module=m1 position=25 kind=Method role=Library flags=[Ha
 runtimefunction id=ArrayIteratorPrototypeNext function=f8 visibility=Private
 # -- generated: f0 productsOf sumsOf show
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f7 callPosition=1114 module=m0}, {callee=f6 callPosition=1064 module=m0}, {callee=f10 callPosition=773 parent=2 module=m0}, {callee=f5 callPosition=1022 module=m0}, {callee=f10 callPosition=773 parent=2 isTailCall=true module=m0}, {callee=f3 callPosition=1097 module=m0}, {callee=f3 callPosition=1007 module=m0}, {callee=f3 callPosition=1049 module=m0}] {
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f7 callPosition=1114 module=m0}, {callee=f6 callPosition=1064 module=m0}, {callee=f10 callPosition=773 parent=2 module=m0}, {callee=f5 callPosition=1022 module=m0}, {callee=f10 callPosition=773 parent=2 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 1 = Integer integer=1
 # CHECK-NEXT: v1: 2 = Integer integer=2
 # CHECK-NEXT: v2: "spread" = String string="spread"
 # CHECK-NEXT: v3: 3 = Integer integer=3
-# CHECK-NEXT: v4: L2 = NewObject -, v0, v1, v3 layout=L2 fields=[0, 1, 2] allocationSite=10 allocationClass=2
+# CHECK-NEXT: v4: L2 = NewObject -, v0, v1, v3 layout=L2 fields=[0, 1, 2] allocationSite=10 storage=Frame allocationClass=2
 # CHECK-NEXT: v5: undefined = CallDirect v2, v4 function=f3 accessSite=1
 # CHECK-NEXT: v6: "either" = String string="either"
 # CHECK-NEXT: v7: 3 = Integer integer=3
@@ -320,7 +320,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f8 visibility=Private
 # CHECK-NEXT: v9: undefined = CallDirect v6, v8 function=f3 accessSite=3
 # CHECK-NEXT: v10: "assigned" = String string="assigned"
 # CHECK-NEXT: v11: 3 = Integer integer=3
-# CHECK-NEXT: v12: L4 = NewObject -, v0, v1, v11 layout=L4 fields=[0, 1, 2] allocationSite=12 allocationClass=4
+# CHECK-NEXT: v12: L4 = NewObject -, v0, v1, v11 layout=L4 fields=[0, 1, 2] allocationSite=12 storage=Frame allocationClass=4
 # CHECK-NEXT: v13: undefined = CallDirect v10, v12 function=f3 accessSite=5
 # CHECK-NEXT: v14: "spread" = String string="spread"
 # CHECK-NEXT: v15: L2 = NewObject -, v0, v1 layout=L2 fields=[0, 1] allocationSite=10 allocationClass=2

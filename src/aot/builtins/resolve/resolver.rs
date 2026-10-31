@@ -1,7 +1,8 @@
 use super::aliases::declared_names;
+use super::unnamed_holders::UnnamedHolders;
 use super::{
     BuiltinPath, CommonJsBuiltins, EvaluatedText, KeyOfModuleCache, ModuleObjectMention,
-    ResolveInput, Resolved, ResolvedBuiltins, SourceDialect,
+    ObjectSpelled, ResolveInput, Resolved, ResolvedBuiltins, SourceDialect,
 };
 use crate::builtins::runtime_uses::{
     MentionedUses, Mentions, RuntimeUses, reaches_module_cache, reaches_unknown_module_loader,
@@ -15,7 +16,7 @@ use bun_sema::fold::Decision;
 use bun_sema::hir::{self, BinOp, ExprId, ExprKind, Flags, MemberKey, PatKind, StmtKind, VarKind};
 use bun_sema::import_sites::find_module_printed_as_require;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
-use core::cell::OnceCell;
+use core::cell::{OnceCell, RefCell};
 use core::ops::Range;
 use smallvec::SmallVec;
 
@@ -273,7 +274,10 @@ pub(super) struct ResolverOutput {
     pub(super) names_added: Vec<(BuiltinId, Atom)>,
     pub(super) holders_named_from_outside: Vec<BuiltinId>,
     pub(super) keys_spelled_on_other_objects: Vec<(ExprId, Atom)>,
+    pub(super) objects_spelled_for_calls: Vec<ObjectSpelled>,
+    pub(super) keys_partly_read: Vec<ExprId>,
     pub(super) keys_taken_out_of_module_cache: Vec<KeyOfModuleCache>,
+    pub(super) keys_stored_in_module_cache: Vec<KeyOfModuleCache>,
     pub(super) loses_sight_of_module_cache: bool,
 }
 
@@ -300,6 +304,7 @@ pub(super) struct Resolver<'a, 's> {
     named_outside: OnceCell<FxHashSet<SymbolId>>,
     /// The calls whose callee is a name or a member of one, by what the name is bound to. See `spelled_values`.
     pub(super) calls_by_name: OnceCell<FxHashMap<SymbolId, Vec<hir::CallId>>>,
+    pub(super) unnamed_holders: RefCell<UnnamedHolders>,
     // The ids of the expressions that count as evaluated lie in this range, which is short for a part of a file.
     evaluated: Range<u32>,
     // The evaluated expressions whose state `resolve` computes, and the evaluated calls with and without `new`. Both in order.
@@ -336,6 +341,16 @@ pub(super) fn run(
     within: Option<&[Range<u32>]>,
     facts: Option<&FileFacts>,
 ) -> ResolvedBuiltins {
+    run_for_program(input, within, facts, false)
+}
+
+/// `is_served_by_other_images`: `Mentions::is_served_by_other_images`.
+pub(super) fn run_for_program(
+    input: &ResolveInput<'_, '_>,
+    within: Option<&[Range<u32>]>,
+    facts: Option<&FileFacts>,
+    is_served_by_other_images: bool,
+) -> ResolvedBuiltins {
     let mut resolver = Resolver::new(input, within, facts);
     resolver.mark_unevaluated_exprs();
     resolver.resolve_commonjs_variables();
@@ -356,7 +371,7 @@ pub(super) fn run(
     resolver.collect_module_object_mentions();
     resolver.visit_implicit_references();
     resolver.visit_import_sites();
-    resolver.finish()
+    resolver.finish(is_served_by_other_images)
 }
 
 #[cfg(test)]
@@ -385,6 +400,7 @@ impl<'a, 's> Resolver<'a, 's> {
             has_seen_declarations: false,
             named_outside: OnceCell::new(),
             calls_by_name: OnceCell::new(),
+            unnamed_holders: RefCell::default(),
             states: vec![ExprState::Unvisited; evaluated.len()],
             first_state: evaluated.start,
             evaluated,
@@ -534,8 +550,12 @@ impl<'a, 's> Resolver<'a, 's> {
             if matches!(kind, ExprKind::Call(_) | ExprKind::New(_)) {
                 self.calls.push(expr);
             }
+            let is_awaited_import = |kind: ExprKind| {
+                matches!(kind, ExprKind::Await(promise)
+                    if matches!(input.hir[input.hir.skip_type_assertions(promise)].kind, ExprKind::ImportCall { .. }))
+            };
             let state = match input.decisions.decision(expr) {
-                Decision::Unknown if can_stand_for_builtin(kind) => {
+                Decision::Unknown if can_stand_for_builtin(kind) || is_awaited_import(kind) => {
                     self.computed.push(expr);
                     ExprState::Unvisited
                 }
@@ -646,6 +666,7 @@ impl<'a, 's> Resolver<'a, 's> {
                 }
             }
             ExprKind::Call(_) => self.compute_call_state(expr),
+            ExprKind::Await(promise) => self.compute_awaited_import_state(promise),
             ExprKind::ImportMeta => self.compute_import_meta_state(),
             ExprKind::Binary { op: BinOp::Comma, right, .. } => {
                 ExprState::of_value(self.value_of(right).map(ResolvedValue::with_side_effects))
@@ -688,7 +709,7 @@ impl<'a, 's> Resolver<'a, 's> {
         output.iterates = is_any_within(&syntax.iterations, self.within);
     }
 
-    fn finish(self) -> ResolvedBuiltins {
+    fn finish(self, is_served_by_other_images: bool) -> ResolvedBuiltins {
         let symbols = self.collect_symbol_paths();
         let (input, mut output) = (self.input, self.output);
         output
@@ -713,6 +734,7 @@ impl<'a, 's> Resolver<'a, 's> {
             has_generator: output.has_generator,
             makes_promise: output.makes_promise,
             is_of_program: input.dialect == SourceDialect::Program,
+            is_served_by_other_images,
         };
         let MentionedUses {
             certain: uses,
@@ -786,9 +808,12 @@ impl<'a, 's> Resolver<'a, 's> {
             guessed_uses,
             loads_unknown_modules,
             keys_spelled_on_other_objects: output.keys_spelled_on_other_objects.into_boxed_slice(),
+            objects_spelled_for_calls: output.objects_spelled_for_calls.into_boxed_slice(),
+            keys_partly_read: output.keys_partly_read.into_boxed_slice(),
             keys_taken_out_of_module_cache: output
                 .keys_taken_out_of_module_cache
                 .into_boxed_slice(),
+            keys_stored_in_module_cache: output.keys_stored_in_module_cache.into_boxed_slice(),
             loses_sight_of_module_cache: output.loses_sight_of_module_cache || names_plugin,
             reaches_module_cache,
         }

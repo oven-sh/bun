@@ -239,6 +239,8 @@ pub(crate) fn find_library_modules_that_unknown_names_may_stand_for(
     let sources = || files.iter().filter_map(source_of);
     let passed = sources().flat_map(|it| &it.library_modules_passed_for_parameters);
     let mut modules: Vec<RuntimeModule> = passed.copied().collect();
+    let in_texts = sources().flat_map(|it| &it.library_modules_named_in_text_left_to_run_time);
+    modules.extend(in_texts.copied());
     if loads_by_unknown_name(application) {
         let written = sources().flat_map(|it| &it.library_modules_written_as_values);
         modules.extend(written.copied());
@@ -797,6 +799,7 @@ mod tests {
                 lacked_before: &RuntimeUses::default(),
                 serves_unseen_code: false,
                 is_served_by_other_images: false,
+                holds_test_files_alone: false,
             };
             let roots =
                 collect_runtime_roots(input.files, &runtime_modules, input.platform, further);

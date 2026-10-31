@@ -40,6 +40,9 @@ pub(crate) struct FurtherLibraryCode<'a> {
     pub serves_unseen_code: bool,
     /// `AotOptions::imports_are_in_other_images`: the first of those images holds all of Bun's own code, so this program holds what its files call by name and no more.
     pub is_served_by_other_images: bool,
+    /// `AotOptions::is_part_of_test_files`, over other images. A test file runs once: a copy of a built-in function that is compiled for its callers here costs more than it saves.
+    /// So it calls the built-in functions of the first image through the objects of the realm, and holds only those that no object holds.
+    pub holds_test_files_alone: bool,
 }
 
 pub(crate) fn collect_runtime_roots(
@@ -57,8 +60,11 @@ pub(crate) fn collect_runtime_roots(
     for &file in application.compiled_files() {
         if further.is_served_by_other_images {
             if let Some(source) = parsed_source(application, file) {
-                functions.extend(source.builtins.called_functions());
-                asks.functions.extend(&source.builtins.uses().functions);
+                let uses = source.builtins.uses();
+                match further.holds_test_files_alone {
+                    true => asks.functions.extend(uses.functions_held_with_caller()),
+                    false => asks.functions.extend(&uses.functions),
+                }
             }
             continue;
         }
@@ -79,6 +85,9 @@ pub(crate) fn collect_runtime_roots(
         named.extend(find_library_modules_that_unknown_names_may_stand_for(
             application,
         ));
+    }
+    if further.is_served_by_other_images {
+        functions.extend(&asks.functions);
     }
     named.shared_sort_unstable_by_key(|module| module.registry_id());
     named.dedup();
@@ -167,6 +176,7 @@ impl Asks {
             modules_read_whole: self.modules_read_whole.into(),
             exports_read: self.exports_read.into(),
             functions: self.functions.into(),
+            linked_functions: Box::default(),
         }
     }
 }
@@ -258,6 +268,7 @@ mod tests {
                 lacked_before: &RuntimeUses::default(),
                 serves_unseen_code: false,
                 is_served_by_other_images: false,
+                holds_test_files_alone: false,
             };
             collect_runtime_roots(input.files, runtime_modules, input.platform, further)
         })

@@ -66,6 +66,11 @@ pub struct PackedTypeRanges {
 }
 
 impl PackedTypeRanges {
+    /// For each range, how many bytes are kept between it and the range before it, and its length: seven bits a byte, the lowest first.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
     pub fn removed_len(&self) -> usize {
         self.removed as usize
     }

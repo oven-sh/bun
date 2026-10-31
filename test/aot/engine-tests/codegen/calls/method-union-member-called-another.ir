@@ -294,7 +294,7 @@ function f27 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Successors: #4
 # CHECK-NEXT: BB#3: ; frequency = 0.002298
 # CHECK-NEXT: Predecessors: #12
-# CHECK-NEXT: Int64 b@83 = Patchpoint(b@60:SomeRegister, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v23:PropGet)
+# CHECK-NEXT: Int64 b@83 = Patchpoint(b@60:SomeRegister, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState, CalleesInFrames}|Reads:Top, v23:PropGet)
 # CHECK-NEXT: Int64 b@17 = Load(b@202, offset = 96, ReadsImmutable, v25:Mul)
 # CHECK-NEXT: Int32 b@84 = AboveEqual(b@83, b@17, v25:Mul)
 # CHECK-NEXT: Void b@85 = Branch(b@84, Terminal, v25:Mul)
@@ -313,7 +313,7 @@ function f27 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Int64 b@62 = Patchpoint(runsWithoutFrame, resultConstraints = SomeRegister, v17:Integer)
 # CHECK-NEXT: Double b@118 = Load(b@62, ControlDependent|Reads:Top, v17:Integer)
 # CHECK-NEXT: Double b@98 = Mul(b@97, b@118, v25:Mul)
-# CHECK-NEXT: Int64 b@99 = Patchpoint(b@60:SomeRegister, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v26:PropGet)
+# CHECK-NEXT: Int64 b@99 = Patchpoint(b@60:SomeRegister, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState, CalleesInFrames}|Reads:Top, v26:PropGet)
 # CHECK-NEXT: Int64 b@47 = Load(b@202, offset = 96, ReadsImmutable, v28:Mul)
 # CHECK-NEXT: Int32 b@100 = AboveEqual(b@99, b@47, v28:Mul)
 # CHECK-NEXT: Void b@101 = Branch(b@100, Terminal, v28:Mul)
@@ -354,7 +354,7 @@ function f27 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Int64 b@129 = SlotBase(stack0, v35:NewClosure)
 # CHECK-NEXT: Int64 b@128 = Const64(2147483657, v35:NewClosure)
 # CHECK-NEXT: Int64 b@131 = Patchpoint($2147483657(b@128):Register(%r10), b@129:Register(%rax), runsWithoutFrame, resultConstraints = Register(%rax), ControlDependent|Reads:argumentBuffer, v35:NewClosure)
-# CHECK-NEXT: Int64 b@132 = Patchpoint(b@131:Register(%r8), b@60:Register(%rax), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v36:Call)
+# CHECK-NEXT: Int64 b@132 = Patchpoint(b@131:Register(%r8), b@60:Register(%rax), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState, CalleesInFrames}|Reads:Top, v36:Call)
 # CHECK-NEXT: Int64 b@49 = Load(b@202, offset = 96, ReadsImmutable, v37:AssumeType)
 # CHECK-NEXT: Int32 b@133 = AboveEqual(b@132, b@49, v37:AssumeType)
 # CHECK-NEXT: Void b@134 = Branch(b@133, Terminal, v37:AssumeType)

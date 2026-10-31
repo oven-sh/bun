@@ -358,3 +358,114 @@ describe("a logger that every constructor passes `this` to", () => {
     expect(printed.operations - notPrinted.operations).toBeGreaterThanOrEqual(alone);
   }, 120_000);
 });
+
+// Text that nobody knows reads process.env by itself, so that object is out of sight whatever the program prints. It is no second reason for what the printed line did.
+function shelfProgram(printed: string) {
+  return {
+    "main.ts": `const hook = new Function(process.env.HOOK ?? "return 1");
+class Item {
+  weight: number;
+  constructor(weight: number) {
+    this.weight = weight;
+  }
+}
+class Shelf {
+  items = new Map<string, Item>();
+  looped(): number {
+    let sum = 0;
+    for (const item of this.items.values()) sum += item.weight;
+    return sum;
+  }
+  spread(): number {
+    let sum = 0;
+    for (const item of [...this.items.values()]) sum += item.weight;
+    return sum;
+  }
+  first(): number {
+    const [item] = this.items.values();
+    return item.weight;
+  }
+}
+const shelf = new Shelf();
+shelf.items.set("a", new Item(2));
+console.log(${printed});
+console.log(shelf.looped(), shelf.spread(), shelf.first(), hook() > 0);
+`,
+  };
+}
+
+describe("a printed object whose map is looped over, spread and destructured", () => {
+  test("what is read off each item counts for the printed line alone", async () => {
+    const [printed, notPrinted] = await Promise.all([
+      explain(shelfProgram("shelf")),
+      explain(shelfProgram("shelf.items.size")),
+    ]);
+    const atThePrintedLine = at(printed.causes, "main.ts:27");
+    expect({
+      exitCodes: [printed.exitCode, notPrinted.exitCode],
+      otherOrigins: atThePrintedLine.flatMap(cause => cause.otherOrigins),
+      left: at(notPrinted.causes, "main.ts:27").map(cause => cause.reason),
+    }).toEqual({
+      exitCodes: [0, 0],
+      otherOrigins: [],
+      left: [],
+    });
+    const alone = sumOf(atThePrintedLine, cause => cause.fixedByThisAlone);
+    expect(alone).toBeGreaterThanOrEqual(8);
+    expect(alone).toBe(sumOf(atThePrintedLine, operationsOf));
+    expect(printed.operations - notPrinted.operations).toBeGreaterThanOrEqual(alone);
+  }, 120_000);
+});
+
+// The loop puts what it finds back on the list it takes from, so the objects it reads `next` off become more from round to round.
+function worklistProgram(printed: string) {
+  return {
+    "main.ts": `const hook = new Function(process.env.HOOK ?? "return 1");
+class Vertex {
+  visited = false;
+  next: Vertex[] = [];
+}
+function walk(start: Vertex): number {
+  const queue = [start];
+  let steps = 0;
+  while (queue.length > 0) {
+    const vertex = queue.pop()!;
+    for (const next of vertex.next) queue.push(next);
+    if (vertex.visited) steps++;
+  }
+  return steps;
+}
+const first = new Vertex();
+first.next.push(new Vertex());
+console.log(${printed});
+console.log(walk(first), hook() > 0);
+`,
+  };
+}
+
+describe("a printed object that a loop takes off a list and whose neighbors it puts back on", () => {
+  test("what the loop reads off each one counts for the printed line alone", async () => {
+    const [printed, notPrinted] = await Promise.all([
+      explain(worklistProgram("first")),
+      explain(worklistProgram("first.next.length")),
+    ]);
+    const ofClasses = (causes: ExplainCause[]) =>
+      causes.filter(cause => cause.types.length > 0 && cause.reason !== "missed-optimization");
+    const atThePrintedLine = at(printed.causes, "main.ts:18");
+    expect({
+      exitCodes: [printed.exitCode, notPrinted.exitCode],
+      places: [...new Set(ofClasses(printed.causes).map(placeOf))],
+      otherOrigins: atThePrintedLine.flatMap(cause => cause.otherOrigins),
+      left: ofClasses(notPrinted.causes).map(placeOf),
+    }).toEqual({
+      exitCodes: [0, 0],
+      places: ["main.ts:18"],
+      otherOrigins: [],
+      left: [],
+    });
+    const alone = sumOf(atThePrintedLine, cause => cause.fixedByThisAlone);
+    expect(alone).toBeGreaterThanOrEqual(5);
+    expect(alone).toBe(sumOf(atThePrintedLine, operationsOf));
+    expect(printed.operations - notPrinted.operations).toBeGreaterThanOrEqual(alone);
+  }, 120_000);
+});

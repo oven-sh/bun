@@ -424,7 +424,9 @@ function f52 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b4(v22: f1|f2|f3|f4|f5|f6|f7|f8|f9|f11|f12):
 # CHECK-NEXT: v23: 1 = Integer integer=1
 # CHECK-NEXT: v24: int[1, 11] = Add v21, v23
-# CHECK-NEXT: v25: anything = Call v22 calleeName="run" accessSite=2 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f11, f12]
+# CHECK-NEXT: v25: fact = Specified
+# CHECK-NEXT: v26: f1|f2|f3|f4|f5|f6|f7|f8|f9|f11|f12 = AssumeType v22, v25 provenType=f1|f2|f3|f4|f5|f6|f7|f8|f9|f11|f12
+# CHECK-NEXT: v27: anything = Call v26 calleeName="run" accessSite=2 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f11, f12]
 # CHECK-NEXT: Jump -> next b1(v24)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="chain"

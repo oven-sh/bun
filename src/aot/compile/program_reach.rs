@@ -9,7 +9,7 @@ use bun_sema::check::aot::FunctionRef;
 use bun_sema::fold::Decision;
 use bun_sema::hir::{
     self, ClassId, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, IdList, ImportEqualsId,
-    MemberKey, MemberKind, ModifierKind, PatId, PatKind, PropKey, StmtId, StmtKind, UnOp,
+    MemberKey, MemberKind, ModifierKind, NodeData, PatId, PatKind, PropKey, StmtId, StmtKind, UnOp,
     VarDeclId, VarKind,
 };
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
@@ -22,11 +22,13 @@ use smallvec::{SmallVec, smallvec};
 
 use super::removable::{ClassChecks, Removable};
 use crate::builtins::resolve::{ModuleField, ModuleObjectOwner, ModuleObjectUse};
+use crate::builtins::table::{self, BuiltinId, MemberLookup};
 use crate::ir::generated::{ImportPhase, ModuleRequestKind};
 use crate::ir::{InParallel, for_each_mut};
+use crate::known_helpers::{self, Helper, KnownHelpers, resolve_callee};
 use crate::load::Sources;
 use crate::load::named_loads::gives_unknown_name_to_imported_loader;
-use crate::load::sources::{SourceKind, parsed_source};
+use crate::load::sources::{ParsedSource, SourceKind, parsed_source};
 use crate::lower::LeftOutDeclarations;
 use crate::modules::{
     Candidates, ExportBinding, ExportLookup, ExportUse, ImportBinding, KnownMemberValues,
@@ -40,14 +42,21 @@ pub(crate) struct ProgramReachInput<'a, 's> {
     pub files: &'a Files<'s>,
     pub sources: &'a Sources,
     pub graph: &'a ModuleGraph,
+    pub known_helpers: &'a KnownHelpers,
     pub removable: RemovableOptions,
     pub limits: &'a LimitValues,
     /// `LoadOptions::reads_main_module_without_its_name`
     pub reads_main_module_without_its_name: bool,
+    /// `LoadOptions::stores_path_of_main_module`
+    pub stores_path_of_main_module: bool,
+    /// `LoadOptions::stores_loader_functions`
+    pub stores_loader_functions: bool,
     /// `LoadOptions::ways_read_out_of_sight`
     pub ways_read_out_of_sight: WaysBetweenModuleObjects,
     /// Code that the build has not seen names files: `AotOptions::loads_code_from_disk`. So do the helpers of a test suite: `LoadOptions::runs_tests`.
     pub any_file_is_named_at_run_time: bool,
+    /// `--external` with `AotOptions::loads_code_from_disk` or `AotOptions::runs_in_place`
+    pub code_on_disk_names_files: bool,
     /// `LoadOptions::mocks_any_module`
     pub mocks_any_module: bool,
     /// `AotOptions::host_runs_files_from_disk`
@@ -118,6 +127,15 @@ enum Interest {
     HandedOnObject(Sym),
     // Another piece of the enum whose piece the region is.
     Piece(u32),
+    StoreOfLoaderFunction,
+    RequestThatLoaderFunctionsAnswer,
+}
+
+fn is_loader_function(builtin: BuiltinId) -> bool {
+    matches!(
+        table::canonical_id(builtin),
+        BuiltinId::NodeModule_resolveFilename | BuiltinId::NodeModulePrototypeRequire
+    )
 }
 
 // What of a unit that is not reached the program does without.
@@ -1348,6 +1366,11 @@ impl<'a, 's> FileScan<'a, 's> {
                 self.units.interests[TOP_LEVEL as usize].push(interest);
             }
         }
+        // The link goes from table to table.
+        for &(exporter, name) in graph.names_searched_behind_stars(self.file) {
+            let interest = Interest::RequiredName(exporter, name);
+            self.units.interests[TOP_LEVEL as usize].push(interest);
+        }
         // A file that the host loads for a call in this one, as for a worker.
         let implied = self
             .input
@@ -1659,6 +1682,151 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
+    fn skip_variables(&self, expression: ExprId, seen: &mut SmallVec<[SymbolId; 4]>) -> ExprId {
+        let (hir, bound) = (self.hir, self.bound);
+        let mut current = hir.skip_type_assertions(expression);
+        loop {
+            if !matches!(hir[current].kind, ExprKind::Ident(_))
+                || bound
+                    .dynamic_lookup_scope(NodeData::Expr(current))
+                    .is_some()
+            {
+                return current;
+            }
+            let Binding::Symbol(symbol) = bound.binding(current) else {
+                return current;
+            };
+            let BindingInitializer::Expression(initializer) =
+                bound.binding_initializer(hir, symbol)
+            else {
+                return current;
+            };
+            if seen.contains(&symbol) {
+                return current;
+            }
+            seen.push(symbol);
+            current = hir.skip_type_assertions(initializer);
+        }
+    }
+
+    fn find_value_shown_as_default(
+        &self,
+        object: ExprId,
+        seen: &mut SmallVec<[SymbolId; 4]>,
+    ) -> Option<ExprId> {
+        let hir = self.hir;
+        let ExprKind::Call(call) = hir[self.skip_variables(object, seen)].kind else {
+            return None;
+        };
+        let helpers = self.input.known_helpers;
+        let input = known_helpers::ResolveInput {
+            files: self.input.files,
+            modules: self.input.graph,
+            helpers,
+        };
+        let callee = resolve_callee(&input, self.file, hir[call].callee)?;
+        match callee.helper(helpers)? {
+            Helper::ToEsModule | Helper::ImportStar | Helper::ImportDefault => {
+                hir.ids(hir[call].args).next()
+            }
+            _ => None,
+        }
+    }
+
+    fn find_builtin_behind(
+        &self,
+        source: &ParsedSource,
+        expression: ExprId,
+        seen: &mut SmallVec<[SymbolId; 4]>,
+    ) -> Option<BuiltinId> {
+        let hir = self.hir;
+        let written = hir.skip_type_assertions(expression);
+        if let Some(builtin) = source.builtins.builtin_of_expression(written) {
+            return Some(builtin);
+        }
+        let held = self.skip_variables(written, seen);
+        if let Some(builtin) = source.builtins.builtin_of_expression(held) {
+            return Some(builtin);
+        }
+        let (object, MemberKey::Name(name)) = hir.member_key(held)? else {
+            return None;
+        };
+        if name == known::default
+            && let Some(value) = self.find_value_shown_as_default(object, seen)
+        {
+            return self.find_builtin_behind(source, value, seen);
+        }
+        let holder = table::canonical_id(self.find_builtin_behind(source, object, seen)?);
+        let name = table::find_name(self.input.files.atoms.bytes(name))?;
+        match table::member(holder, name) {
+            MemberLookup::Found(member) => Some(member),
+            MemberLookup::Unknown | MemberLookup::Absent => None,
+        }
+    }
+
+    fn add_stores_of_loader_functions(&mut self) {
+        let (files, hir) = (self.input.files, self.hir);
+        if self.input.stores_loader_functions {
+            return;
+        }
+        let Some(source) = parsed_source(files, self.file) else {
+            return;
+        };
+        let mut mentioned = source.builtins.mentioned().iter();
+        if !mentioned.any(|&builtin| table::canonical_id(builtin) == BuiltinId::NodeModule) {
+            return;
+        }
+        for expression in (0..hir.exprs.len() as u32).map(ExprId) {
+            let ExprKind::Assign { target, .. } = hir[expression].kind else {
+                continue;
+            };
+            let stored = self.find_builtin_behind(source, target, &mut SmallVec::new());
+            if stored.is_some_and(is_loader_function) && !self.is_folded_away(expression) {
+                self.add_interest(hir[expression].pos, Interest::StoreOfLoaderFunction);
+            }
+        }
+    }
+
+    // `require` and `require.resolve` wherever the build has not bound the call to a module of the image: the host answers there.
+    fn add_requests_that_loader_functions_answer(&mut self) {
+        let (files, graph, hir) = (self.input.files, self.input.graph, self.hir);
+        if graph.kind(self.file) != ModuleKind::CommonJs {
+            return;
+        }
+        let Some(source) = parsed_source(files, self.file) else {
+            return;
+        };
+        let mut bound_callees: FxHashSet<ExprId> = FxHashSet::default();
+        for site in files.analysis(self.file).import_sites {
+            let is_bound = match graph.find_site_answer(self.file, site.kind) {
+                Some(SiteAnswer::Module(target)) => !matches!(target, ModuleRef::External { .. }),
+                Some(SiteAnswer::Erased) => true,
+                Some(SiteAnswer::Computed(_) | SiteAnswer::Failed(_)) | None => false,
+            };
+            if let (true, Some(call)) = (is_bound, site.kind.call())
+                && let ExprKind::Call(call) = hir[call].kind
+            {
+                bound_callees.insert(hir.skip_type_assertions(hir[call].callee));
+            }
+        }
+        for expression in (0..hir.exprs.len() as u32).map(ExprId) {
+            let builtin = source.builtins.builtin_of_expression(expression);
+            if !matches!(
+                builtin.map(table::canonical_id),
+                Some(BuiltinId::ModuleRequire | BuiltinId::ModuleRequireResolve)
+            ) || bound_callees.contains(&expression)
+                || self.find_member_read_from(expression).is_some()
+                || self.is_folded_away(expression)
+            {
+                continue;
+            }
+            self.add_interest(
+                hir[expression].pos,
+                Interest::RequestThatLoaderFunctionsAnswer,
+            );
+        }
+    }
+
     fn scan(mut self) -> FileUnits {
         self.find_sites();
         self.collect_units();
@@ -1676,6 +1844,8 @@ impl<'a, 's> FileScan<'a, 's> {
         self.add_loads();
         self.add_loads_by_unknown_names();
         self.add_module_objects();
+        self.add_stores_of_loader_functions();
+        self.add_requests_that_loader_functions_answer();
         self.drop_repeated_interests();
         self.units.this_positions = ThisPositions::of(self.hir);
         self.units
@@ -1691,7 +1861,10 @@ impl<'a, 's> FileScan<'a, 's> {
             seen.clear();
             // Each mention of a module object is counted.
             interests.retain(|&interest| {
-                matches!(interest, Interest::ModuleObject(..)) || seen.insert(interest)
+                matches!(
+                    interest,
+                    Interest::ModuleObject(..) | Interest::RequestThatLoaderFunctionsAnswer
+                ) || seen.insert(interest)
             });
         }
     }
@@ -1768,6 +1941,8 @@ struct Walk<'a, 's> {
     lets_related_object_out_of_sight: bool,
     // `process` goes where nothing follows it, under an entry point that has a module object.
     lets_process_out_of_sight: bool,
+    stores_loader_functions: bool,
+    files_asking_loader_functions: Vec<FileId>,
     // The files that only test their own `module.parent`. There is one to find where the files that require them have objects.
     tests_own_parent: FxHashSet<ModuleRef>,
     // The files in which reached code names a way from one such object to another.
@@ -1789,7 +1964,8 @@ struct Walk<'a, 's> {
     // By an enum, the enums whose members are made of its members.
     enums_relying_on: FxHashMap<Sym, SmallVec<[Sym; 2]>>,
     // In their order. What test files share has thousands of entry points, and each of them may ask for these.
-    commonjs_entry_points: Vec<FileId>,
+    commonjs_files_that_may_be_main: Vec<FileId>,
+    other_files_that_may_be_main: Vec<FileId>,
 }
 
 impl<'a, 's> Walk<'a, 's> {
@@ -1879,10 +2055,19 @@ impl<'a, 's> Walk<'a, 's> {
         let is_run_by_call = find_files_run_by_calls(input, &files);
         let is_named_by_import = vec![false; files.len()];
         let entry_points = input.sources.entry_points().iter();
-        let commonjs_entry_points = entry_points
-            .map(|entry_point| entry_point.file)
-            .filter(|&file| input.graph.kind(file) == ModuleKind::CommonJs)
-            .collect();
+        let files_of_program = input.graph.record_files().iter().copied();
+        let files_that_may_be_main: Vec<FileId> = match input.stores_path_of_main_module {
+            true => files_of_program
+                .filter(|&file| !input.graph.is_library(file))
+                .collect(),
+            false => entry_points.map(|entry_point| entry_point.file).collect(),
+        };
+        let (commonjs_files_that_may_be_main, mut other_files_that_may_be_main): (Vec<_>, Vec<_>) =
+            (files_that_may_be_main.into_iter())
+                .partition(|&file| input.graph.kind(file) == ModuleKind::CommonJs);
+        if !input.stores_path_of_main_module {
+            other_files_that_may_be_main.clear();
+        }
         Walk {
             input,
             files,
@@ -1906,6 +2091,8 @@ impl<'a, 's> Walk<'a, 's> {
             out_of_sight: FxHashSet::default(),
             lets_related_object_out_of_sight: false,
             lets_process_out_of_sight: false,
+            stores_loader_functions: input.stores_loader_functions,
+            files_asking_loader_functions: Vec::new(),
             tests_own_parent: FxHashSet::default(),
             files_naming_ways: Vec::new(),
             required: FxHashSet::default(),
@@ -1919,7 +2106,8 @@ impl<'a, 's> Walk<'a, 's> {
             objects_handed_on: FxHashSet::default(),
             files_reading_members: FxHashMap::default(),
             enums_relying_on: FxHashMap::default(),
-            commonjs_entry_points,
+            commonjs_files_that_may_be_main,
+            other_files_that_may_be_main,
         }
     }
 
@@ -2441,6 +2629,10 @@ impl<'a, 's> Walk<'a, 's> {
 
     fn reach_every_export(&mut self, module: ModuleRef) {
         self.evaluate(module);
+        self.look_at_all_of(module);
+    }
+
+    fn look_at_all_of(&mut self, module: ModuleRef) {
         self.look_at(module);
         // A module of data has no units: whoever looks at it gets hold of its value.
         if let ModuleRef::File(file) = module_with_code(module)
@@ -2681,7 +2873,10 @@ impl<'a, 's> Walk<'a, 's> {
         object_use: ModuleObjectUse,
     ) {
         // Under an entry point that is an ES module `require.main` and `process.mainModule` answer undefined, as they do in a program that names no way.
-        if owner == ModuleObjectOwner::EntryPoint && self.commonjs_entry_points.is_empty() {
+        if owner == ModuleObjectOwner::EntryPoint
+            && self.commonjs_files_that_may_be_main.is_empty()
+            && self.other_files_that_may_be_main.is_empty()
+        {
             return;
         }
         // Whether anybody reads `mainModule` there the engine says.
@@ -2742,15 +2937,32 @@ impl<'a, 's> Walk<'a, 's> {
         match owner {
             ModuleObjectOwner::OwnFile => keep(self, file),
             ModuleObjectOwner::EntryPoint => {
-                let entry_points = take(&mut self.commonjs_entry_points);
-                for &entry_point in &entry_points {
-                    keep(self, entry_point);
+                let files = take(&mut self.commonjs_files_that_may_be_main);
+                for &file in &files {
+                    keep(self, file);
                 }
-                self.commonjs_entry_points = entry_points;
+                self.commonjs_files_that_may_be_main = files;
+                let files = take(&mut self.other_files_that_may_be_main);
+                for &file in &files {
+                    self.look_at_all_of(ModuleRef::File(file));
+                }
+                self.other_files_that_may_be_main = files;
             }
             // Whatever led to the object has been counted.
             ModuleObjectOwner::Related => {}
         }
+    }
+
+    fn is_ready_for_loader_functions(&self) -> bool {
+        if self.files_asking_loader_functions.is_empty() {
+            return true;
+        }
+        let names_way = !self.input.ways_read_out_of_sight.is_empty();
+        (!names_way || !self.files_naming_ways.is_empty())
+            && self.files_asking_loader_functions.iter().all(|&file| {
+                let module = ModuleRef::File(file);
+                self.find_module(module).is_none() || self.out_of_sight.contains(&module)
+            })
     }
 
     fn loads_by_unknown_name_outside_units(&self, file: FileId) -> bool {
@@ -2874,6 +3086,14 @@ impl<'a, 's> Walk<'a, 's> {
             Interest::ModuleObject(owner, object_use) => {
                 self.reach_module_object(file, owner, object_use);
             }
+            Interest::StoreOfLoaderFunction => self.stores_loader_functions = true,
+            Interest::RequestThatLoaderFunctionsAnswer if self.input.stores_loader_functions => {
+                let (owner, object_use) = (ModuleObjectOwner::OwnFile, ModuleObjectUse::HandedOn);
+                self.reach_module_object(file, owner, object_use);
+            }
+            Interest::RequestThatLoaderFunctionsAnswer => {
+                self.files_asking_loader_functions.push(file);
+            }
         }
     }
 
@@ -2881,6 +3101,11 @@ impl<'a, 's> Walk<'a, 's> {
         // A file that the host runs finds a module of data by its path.
         if self.input.host_runs_files_from_disk {
             self.hand_on_data_objects();
+        }
+        if self.input.code_on_disk_names_files {
+            for file in self.input.graph.importers_of_uncompiled_code() {
+                self.hand_on_files_found_by_name(file, None);
+            }
         }
         for &file in self.input.files.compiled_files() {
             if self.loads_by_unknown_name_outside_units(file) {
@@ -2892,9 +3117,14 @@ impl<'a, 's> Walk<'a, 's> {
                 self.reach_every_export(module);
             }
         }
+        // `(0, eval)("const os = process.mainModule.require('node:os')")`: the build reads the text and leaves it to the interpreter, which does with the object what it likes.
+        let files = self.input.files.compiled_files().iter();
+        let is_named_in_text_left_to_run_time = files
+            .filter_map(|&file| parsed_source(self.input.files, file))
+            .any(|source| source.names_main_module_in_text_left_to_run_time);
         for entry_point in self.input.sources.entry_points() {
             self.reach_every_export(ModuleRef::File(entry_point.file));
-            if self.input.reads_main_module_without_its_name {
+            if self.input.reads_main_module_without_its_name || is_named_in_text_left_to_run_time {
                 let owner = ModuleObjectOwner::EntryPoint;
                 self.reach_module_object(entry_point.file, owner, ModuleObjectUse::HandedOn);
             }
@@ -2903,6 +3133,14 @@ impl<'a, 's> Walk<'a, 's> {
         for &file in self.input.files.compiled_files() {
             if self.input.sources.kind(file) != SourceKind::EvaluatedText {
                 continue;
+            }
+            // `new Function('return import("dep")')`: whoever gets the object sees all of it.
+            for site in self.input.files.analysis(file).import_sites {
+                if let Some(SiteAnswer::Module(target)) =
+                    self.input.graph.find_site_answer(file, site.kind)
+                {
+                    self.reach_every_export(target);
+                }
             }
             let Some(source) = parsed_source(self.input.files, file) else {
                 continue;
@@ -3271,6 +3509,8 @@ pub(crate) struct ReachedModules {
     pub ways_followed_for_their_names: WaysBetweenModuleObjects,
     // `process` goes where nothing follows it, and nothing has been kept for whoever reads `mainModule` there.
     pub lets_process_out_of_sight: bool,
+    pub stores_loader_functions: bool,
+    pub is_ready_for_loader_functions: bool,
     // Modules that are written inside a file and that nothing calls.
     pub left_out_inner_modules: Vec<ModuleRef>,
     // A load under a name that the build does not follow may find the file.
@@ -3359,6 +3599,23 @@ fn find_ways_named(files: &Files<'_>, left_out: &[FileId]) -> WaysBetweenModuleO
 // Whether anybody reads `children` or `parent` of a module object that is out of sight is the engine's to say, behind its flow analysis, and what it says may start the build over.
 // Where a file names the member the engine most often says yes, so the way is followed at once.
 pub(crate) fn find_left_out_code(
+    input: &ProgramReachInput<'_, '_>,
+    ways_named_that_nobody_reads: WaysBetweenModuleObjects,
+    in_parallel: InParallel<'_>,
+) -> (LeftOutCode, ReachedModules) {
+    let found =
+        find_left_out_code_with_ways_named(input, ways_named_that_nobody_reads, in_parallel);
+    if found.1.is_ready_for_loader_functions || !found.1.stores_loader_functions {
+        return found;
+    }
+    let input = ProgramReachInput {
+        stores_loader_functions: true,
+        ..*input
+    };
+    find_left_out_code_with_ways_named(&input, ways_named_that_nobody_reads, in_parallel)
+}
+
+fn find_left_out_code_with_ways_named(
     input: &ProgramReachInput<'_, '_>,
     ways_named_that_nobody_reads: WaysBetweenModuleObjects,
     in_parallel: InParallel<'_>,
@@ -3473,6 +3730,8 @@ fn find_left_out_code_following(
         .filter(is_evaluated)
         .collect();
     reached_modules.required = take(&mut walk.required);
+    reached_modules.stores_loader_functions = walk.stores_loader_functions;
+    reached_modules.is_ready_for_loader_functions = walk.is_ready_for_loader_functions();
     let leads_on = walk.find_ways_that_lead_on_out_of_sight();
     reached_modules.naming_ways = take(&mut walk.files_naming_ways);
     reached_modules.found_by_name = take(&mut walk.files_found_by_name);

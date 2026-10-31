@@ -460,39 +460,48 @@ function f132 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: Jump -> next b1(v27)
 # CHECK-NEXT: b1(v30: int[0, 2147483647] ~ 0):
 # CHECK-NEXT: Jump -> next b2(v30)
-# CHECK-NEXT: b2(v31: int[0, 2147483648] ~ int[0, 2147483647]):
+# CHECK-NEXT: b2(v31: int[0, 2147483648] ~ 0):
+# CHECK-NEXT: Jump -> next b3(v31)
+# CHECK-NEXT: b3(v32: int[0, 2147483648] ~ int[0, 2147483647]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v33: 7 = Integer integer=7
-# CHECK-NEXT: v34: boolean ~ true = TypeTest v31 testedType=i32
-# CHECK-NEXT: Branch v34 -> taken b3(| 0), notTaken b4(v31)
-# CHECK-NEXT: b3(v35: int[0, 2147483647]):
-# CHECK-NEXT: v36: int[0, 7] = BitAnd v35, v33
-# CHECK-NEXT: v37: anything ~ object = Construct v28, -, v36 calleeName="BelowWithStatic" accessSite=12 callees=[f2]
-# CHECK-NEXT: v38: 3 = Integer integer=3
-# CHECK-NEXT: v39: int[0, 3] = BitAnd v35, v38
-# CHECK-NEXT: v40: anything ~ object = Construct v29, -, v39 calleeName="Last" accessSite=14 callees=[f13]
-# CHECK-NEXT: v41: object = AssumeType v40 provenType=object
-# CHECK-NEXT: v42: anything = PropGet v41 key="top" accessSite=15
-# CHECK-NEXT: v43: int[1, 2147483648] = Increment v35
-# CHECK-NEXT: v44: int[1, 2147483648] ~ int[1, 2147483647] = Upcast v43 castType=int|whole
-# CHECK-NEXT: Jump -> next b2(v44)
-# CHECK-NEXT: b4(v45: int|whole ~ int[0, 2147483647]) frequency=Unlikely:
-# CHECK-NEXT: v46: int[0, 7] = BitAnd v45, v33
-# CHECK-NEXT: v47: anything ~ object = Construct v28, -, v46 calleeName="BelowWithStatic" accessSite=12 callees=[f2]
-# CHECK-NEXT: v48: 3 = Integer integer=3
-# CHECK-NEXT: v49: int[0, 3] = BitAnd v45, v48
-# CHECK-NEXT: v50: anything ~ object = Construct v29, -, v49 calleeName="Last" accessSite=14 callees=[f13]
-# CHECK-NEXT: v51: object = AssumeType v50 provenType=object
-# CHECK-NEXT: v52: anything = PropGet v51 key="top" accessSite=15
-# CHECK-NEXT: v53: int|whole ~ int[1, 2147483648] = Increment v45
-# CHECK-NEXT: v54: int|whole ~ int[1, 2147483647] = Upcast v53 castType=int|whole
-# CHECK-NEXT: v55: boolean ~ true = TypeTest v54 testedType=int[0, 2147483647]
-# CHECK-NEXT: Branch v55 -> taken b5(| 0), notTaken b6()
-# CHECK-NEXT: b5(v56: int[0, 2147483647] ~ int[1, 2147483647]) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b1(v56)
-# CHECK-NEXT: b6() frequency=Unlikely:
+# CHECK-NEXT: v34: 7 = Integer integer=7
+# CHECK-NEXT: v35: boolean ~ true = TypeTest v32 testedType=i32
+# CHECK-NEXT: Branch v35 -> taken b4(| 0), notTaken b7(v32)
+# CHECK-NEXT: b4(v36: int[0, 2147483647]):
+# CHECK-NEXT: v37: int[0, 7] = BitAnd v36, v34
+# CHECK-NEXT: v38: anything ~ object = Construct v28, -, v37 calleeName="BelowWithStatic" accessSite=12 callees=[f2]
+# CHECK-NEXT: v39: 3 = Integer integer=3
+# CHECK-NEXT: v40: int[0, 3] = BitAnd v36, v39
+# CHECK-NEXT: v41: anything ~ object = Construct v29, -, v40 calleeName="Last" accessSite=14 callees=[f13]
+# CHECK-NEXT: v42: object = AssumeType v41 provenType=object
+# CHECK-NEXT: v43: anything = PropGet v42 key="top" accessSite=15 [asksOnlyTables]
+# CHECK-NEXT: v44: boolean = DidReadAbove v43
+# CHECK-NEXT: Branch v44 -> taken b5(), notTaken b6()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v45: int[1, 2147483648] = Increment v36
+# CHECK-NEXT: v46: int[1, 2147483648] ~ int[1, 2147483647] = Upcast v45 castType=int|whole
+# CHECK-NEXT: Jump -> next b3(v46)
+# CHECK-NEXT: b6() frequency=Rare:
+# CHECK-NEXT: v47: anything = PropGet v42 key="top" accessSite=15
+# CHECK-NEXT: v48: int[1, 2147483648] = Increment v36
+# CHECK-NEXT: Jump -> next b2(v48)
+# CHECK-NEXT: b7(v49: int|whole ~ int[0, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: v50: int[0, 7] = BitAnd v49, v34
+# CHECK-NEXT: v51: anything ~ object = Construct v28, -, v50 calleeName="BelowWithStatic" accessSite=12 callees=[f2]
+# CHECK-NEXT: v52: 3 = Integer integer=3
+# CHECK-NEXT: v53: int[0, 3] = BitAnd v49, v52
+# CHECK-NEXT: v54: anything ~ object = Construct v29, -, v53 calleeName="Last" accessSite=14 callees=[f13]
+# CHECK-NEXT: v55: object = AssumeType v54 provenType=object
+# CHECK-NEXT: v56: anything = PropGet v55 key="top" accessSite=15
+# CHECK-NEXT: v57: int|whole ~ int[1, 2147483648] = Increment v49
+# CHECK-NEXT: v58: int|whole ~ int[1, 2147483647] = Upcast v57 castType=int|whole
+# CHECK-NEXT: v59: boolean ~ true = TypeTest v58 testedType=int[0, 2147483647]
+# CHECK-NEXT: Branch v59 -> taken b8(| 0), notTaken b9()
+# CHECK-NEXT: b8(v60: int[0, 2147483647] ~ int[1, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b1(v60)
+# CHECK-NEXT: b9() frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Jump -> next b4(v54)
+# CHECK-NEXT: Jump -> next b7(v58)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="WithStatic"
 # CHECK: module=m0 position=397 flags=[HasThis, HasExplicitName] length=1 thisType={type=L1} parameters=[{type=undefined|null|boolean|number|string|symbol|bigint|builtin(ArrayPrototypeValues)}] results=[{type=undefined}] functionTypes=[f80] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

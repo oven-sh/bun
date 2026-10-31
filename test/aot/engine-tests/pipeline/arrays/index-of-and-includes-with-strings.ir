@@ -3664,24 +3664,61 @@ runtimefunction id=ArrayTraversalTraverseArray function=f51 visibility=Private
 # CHECK-LABEL: function {{*}}name="inOwnTexts"
 # CHECK: module=m0 position=1682 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=null|boolean|number|string|object}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="inTexts"
-# CHECK: module=m0 position=1785 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|Array<null|boolean|number|string|object, proven, pristine[Storage, Names, Dense]>}, {type=undefined|null|boolean|number|string|object}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|Array<null|boolean|number|string|object, proven, pristine[Storage, Names, Dense]>, v1: undefined|null|boolean|number|string|object):
-# CHECK-NEXT: v2: Array<null|boolean|number|string|object, proven, pristine[Storage, Names, Dense]> = RequireObjectCoercible v0 name="indexOf"
-# CHECK-NEXT: v3: int[-1, 4294967295] = CallBuiltin v2, v1 overload=ArrayPrototypeIndexOf/1 accessSite=165
-# CHECK-NEXT: v4: boolean = CallBuiltin v2, v1 overload=ArrayPrototypeIncludes/1 accessSite=167
-# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2()
+# CHECK: module=m0 position=1785 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<null|boolean|number|string|object, proven, pristine[Storage, Names, Dense]>}, {type=undefined|null|boolean|number|string|object}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<null|boolean|number|string|object, proven, pristine[Storage, Names, Dense]>, v1: undefined|null|boolean|number|string|object):
+# CHECK-NEXT: v2: int[-1, 4294967295] = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1 accessSite=165
+# CHECK-NEXT: v3: boolean = CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/1 accessSite=167
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v5: "+" = String string="+"
-# CHECK-NEXT: Jump -> next b3(v5)
+# CHECK-NEXT: v4: "+" = String string="+"
+# CHECK-NEXT: Jump -> next b3(v4)
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v6: "-" = String string="-"
-# CHECK-NEXT: Jump -> next b3(v6)
-# CHECK-NEXT: b3(v7: "+"|"-"):
-# CHECK-NEXT: v8: string = Add v3, v7
-# CHECK-NEXT: Return v8
+# CHECK-NEXT: v5: "-" = String string="-"
+# CHECK-NEXT: Jump -> next b3(v5)
+# CHECK-NEXT: b3(v6: "+"|"-"):
+# CHECK-NEXT: v7: string = Add v2, v6
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="inValues"
-# CHECK: module=m0 position=1883 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|Array<undefined|null|boolean|number|string|bigint|object|@@iterator, proven>}, {type=null|boolean|number|string|object}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=1883 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|Array<undefined|null|boolean|number|string|bigint|object|@@iterator, proven>}, {type=null|boolean|number|string|object}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|Array<undefined|null|boolean|number|string|bigint|object|@@iterator, proven>, v1: null|boolean|number|string|object):
+# CHECK-NEXT: v2: Array<undefined|null|boolean|number|string|bigint|object|@@iterator, proven> = RequireObjectCoercible v0 name="indexOf"
+# CHECK-NEXT: v3: boolean = IsPristine v2 builtinClass=Array aspects=[Names]
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b6()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v4: boolean = IsPristine v2 builtinClass=Array aspects=[Storage]
+# CHECK-NEXT: Branch v4 -> taken b2(), notTaken b7()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v5: int[-1, 4294967295] = CallBuiltin v2, v1 overload=ArrayPrototypeIndexOf/1 accessSite=169 [needsPristineReceiver]
+# CHECK-NEXT: v6: boolean = CallBuiltin v2, v1 overload=ArrayPrototypeIncludes/1 accessSite=171 [needsPristineReceiver]
+# CHECK-NEXT: Branch v6 -> taken b3(), notTaken b4()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v7: "+" = String string="+"
+# CHECK-NEXT: Jump -> next b5(v7)
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v8: "-" = String string="-"
+# CHECK-NEXT: Jump -> next b5(v8)
+# CHECK-NEXT: b5(v9: "+"|"-"):
+# CHECK-NEXT: v10: string = Add v5, v9
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: b6() frequency=Unlikely:
+# CHECK-NEXT: v11: anything = PropGet v2 key="indexOf" accessSite=168
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b7() frequency=Unlikely:
+# CHECK-NEXT: v12: int[-1, 9007199254740991] = CallBuiltin v2, v1 overload=ArrayPrototypeIndexOf/1 builtinCallForm=AnyReceiver accessSite=169
+# CHECK-NEXT: v13: anything = PropGet v2 key="includes" accessSite=170
+# CHECK-NEXT: v14: boolean = CallBuiltin v2, v1 overload=ArrayPrototypeIncludes/1 builtinCallForm=AnyReceiver accessSite=171
+# CHECK-NEXT: Branch v14 -> taken b8(), notTaken b9()
+# CHECK-NEXT: b8() frequency=Unlikely:
+# CHECK-NEXT: v15: "+" = String string="+"
+# CHECK-NEXT: Jump -> next b10(v15)
+# CHECK-NEXT: b9() frequency=Unlikely:
+# CHECK-NEXT: v16: "-" = String string="-"
+# CHECK-NEXT: Jump -> next b10(v16)
+# CHECK-NEXT: b10(v17: "+"|"-") frequency=Unlikely:
+# CHECK-NEXT: v18: string = Add v12, v17
+# CHECK-NEXT: Return v18
+# CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="ofAnyKind"
 # CHECK: module=m0 position=1982 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|Array<int[1, 3]|fractional|"a"|"alpha"|"b"|"beta"|"c"|"delta"|"gamma"|"x", proven>}, {type=undefined|null|true|number|string|bigint}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: undefined|Array<int[1, 3]|fractional|"a"|"alpha"|"b"|"beta"|"c"|"delta"|"gamma"|"x", proven>, v1: undefined|null|true|number|string|bigint):
@@ -3808,57 +3845,37 @@ runtimefunction id=ArrayTraversalTraverseArray function=f51 visibility=Private
 # CHECK-NEXT: Return v51
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="written"
-# CHECK: module=m0 position=843 kind=Arrow length=2 thisType={type=anything} parameters=[{type=int[0, 3]}, {type=undefined|int}] results=[{type=null|boolean|number|string|object}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: int[0, 3], v1: undefined|int):
-# CHECK-NEXT: v2: boolean = TypeTest v1 testedType=number
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v3: int):
-# CHECK-NEXT: v4: int|whole = Add v0, v3
-# CHECK-NEXT: Jump -> next b2(v4)
-# CHECK-NEXT: b2(v5: int|whole):
-# CHECK-NEXT: v6: 98 = Integer integer=98
-# CHECK-NEXT: v7: undefined = StringRange v6, v0, v5
-# CHECK-NEXT: v8: int[0, 2147483647] = ResultAt v7
-# CHECK-NEXT: v9: int[0, 2147483647] = ResultAt v7 index=1
-# CHECK-NEXT: v10: "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz" = String string="abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz"
-# CHECK-NEXT: v11: string = Substring v10, v8, v9
-# CHECK-NEXT: v12: undefined = Undefined
-# CHECK-NEXT: v13: undefined|string = CallBuiltin -, v11, v12 overload=JSONStringify/0 accessSite=183
-# CHECK-NEXT: v14: string = ToString v13 calledBuiltin=JSONParse @867 tail
-# CHECK-NEXT: v15: undefined = Undefined @867 tail
-# CHECK-NEXT: v16: null|boolean|number|string|object = CallBuiltin -, v14, v15 overload=JSONParse/0 accessSite=184 @867 tail
-# CHECK-NEXT: Return v16
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v17: undefined = Undefined
-# CHECK-NEXT: v18: number = Add v0, v17
-# CHECK-NEXT: v19: int|whole = AssumeType v18 provenType=int|whole
-# CHECK-NEXT: Jump -> next b2(v19)
+# CHECK: module=m0 position=843 kind=Arrow length=2 thisType={type=anything} parameters=[{type=int[0, 3]}, {type=int}] results=[{type=null|boolean|number|string|object}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: int[0, 3], v1: int):
+# CHECK-NEXT: v2: "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz" = String string="abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz"
+# CHECK-NEXT: v3: int|whole = Add v0, v1
+# CHECK-NEXT: v4: 98 = Integer integer=98
+# CHECK-NEXT: v5: undefined = StringRange v4, v0, v3
+# CHECK-NEXT: v6: int[0, 2147483647] = ResultAt v5
+# CHECK-NEXT: v7: int[0, 2147483647] = ResultAt v5 index=1
+# CHECK-NEXT: v8: string = Substring v2, v6, v7
+# CHECK-NEXT: v9: undefined = Undefined
+# CHECK-NEXT: v10: undefined|string = CallBuiltin -, v8, v9 overload=JSONStringify/0 accessSite=183
+# CHECK-NEXT: v11: string = ToString v10 calledBuiltin=JSONParse @867 tail
+# CHECK-NEXT: v12: undefined = Undefined @867 tail
+# CHECK-NEXT: v13: null|boolean|number|string|object = CallBuiltin -, v11, v12 overload=JSONParse/0 accessSite=184 @867 tail
+# CHECK-NEXT: Return v13
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="cut"
-# CHECK: module=m0 position=935 kind=Arrow role=ResultWrapper length=2 thisType={type=anything} parameters=[{type=int[0, 3]}, {type=undefined|int}] results=[{type=string}] functionTypes=[f18] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f53} inlineFrames=[{}, {callee=f53 callPosition=935 module=m0}] {
-# CHECK-NEXT: b0(v0: int[0, 3], v1: undefined|int):
-# CHECK-NEXT: v2: boolean = TypeTest v1 testedType=number
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v3: int):
-# CHECK-NEXT: v4: int|whole = Add v0, v3
-# CHECK-NEXT: Jump -> next b2(v4)
-# CHECK-NEXT: b2(v5: int|whole):
-# CHECK-NEXT: v6: 98 = Integer integer=98 @962:1 tail
-# CHECK-NEXT: v7: undefined = StringRange v6, v0, v5 @962:1 tail
-# CHECK-NEXT: v8: int[0, 2147483647] = ResultAt v7 @962:1 tail
-# CHECK-NEXT: v9: int[0, 2147483647] = ResultAt v7 index=1 @962:1 tail
-# CHECK-NEXT: v10: "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz" = String string="abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz"
-# CHECK-NEXT: v11: string = Substring v10, v8, v9 @962 tail
-# CHECK-NEXT: Return v11
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v12: undefined = Undefined
-# CHECK-NEXT: v13: number = Add v0, v12
-# CHECK-NEXT: v14: int|whole = AssumeType v13 provenType=int|whole
-# CHECK-NEXT: Jump -> next b2(v14)
+# CHECK: module=m0 position=935 kind=Arrow role=ResultWrapper length=2 thisType={type=anything} parameters=[{type=int[0, 3]}, {type=int}] results=[{type=string}] functionTypes=[f18] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f53} inlineFrames=[{}, {callee=f53 callPosition=935 module=m0}] {
+# CHECK-NEXT: b0(v0: int[0, 3], v1: int):
+# CHECK-NEXT: v2: "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz" = String string="abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz"
+# CHECK-NEXT: v3: int|whole = Add v0, v1
+# CHECK-NEXT: v4: 98 = Integer integer=98 @962:1 tail
+# CHECK-NEXT: v5: undefined = StringRange v4, v0, v3 @962:1 tail
+# CHECK-NEXT: v6: int[0, 2147483647] = ResultAt v5 @962:1 tail
+# CHECK-NEXT: v7: int[0, 2147483647] = ResultAt v5 index=1 @962:1 tail
+# CHECK-NEXT: v8: string = Substring v2, v6, v7 @962 tail
+# CHECK-NEXT: Return v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="cutTwice"
-# CHECK: module=m0 position=1004 kind=Arrow role=ResultWrapper length=2 thisType={type=anything} parameters=[{type=int[0, 3]}, {type=undefined|int}] results=[{type=string}] functionTypes=[f19] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f54} inlineFrames=[{}, {callee=f54 callPosition=1004 module=m0}] {
-# CHECK-NEXT: b0(v0: int[0, 3], v1: undefined|int):
+# CHECK: module=m0 position=1004 kind=Arrow role=ResultWrapper length=2 thisType={type=anything} parameters=[{type=int[0, 3]}, {type=int}] results=[{type=string}] functionTypes=[f19] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f54} inlineFrames=[{}, {callee=f54 callPosition=1004 module=m0}] {
+# CHECK-NEXT: b0(v0: int[0, 3], v1: int):
 # CHECK-NEXT: v2: "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz" = String string="abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz"
 # CHECK-NEXT: v3: 1 = Integer integer=1
 # CHECK-NEXT: v4: int[0, 1] = RShift v0, v3
@@ -3873,161 +3890,111 @@ runtimefunction id=ArrayTraversalTraverseArray function=f51 visibility=Private
 # CHECK-NEXT: v13: 1 = Integer integer=1
 # CHECK-NEXT: v14: int[0, 1] = RShift v0, v13
 # CHECK-NEXT: v15: int[-1, 3] = Sub v0, v14
-# CHECK-NEXT: v16: undefined|int ~ int = Upcast v1 castType=anything
-# CHECK-NEXT: v17: boolean ~ true = TypeTest v16 testedType=number
-# CHECK-NEXT: Branch v17 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v18: int):
-# CHECK-NEXT: v19: int|whole = Add v15, v18
-# CHECK-NEXT: Jump -> next b2(v19)
-# CHECK-NEXT: b2(v20: int|whole):
-# CHECK-NEXT: v21: int[0, 2147483647] = GetStringLength v9 @1049:1 tail
-# CHECK-NEXT: v22: undefined = StringRange v21, v12, v20 @1049:1 tail
-# CHECK-NEXT: v23: int[0, 2147483647] = ResultAt v22 @1049:1 tail
-# CHECK-NEXT: v24: int[0, 2147483647] = ResultAt v22 index=1 @1049:1 tail
-# CHECK-NEXT: v25: string = Substring v9, v23, v24 @1049 tail
-# CHECK-NEXT: Return v25
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v26: undefined = Undefined
-# CHECK-NEXT: v27: number = Add v15, v26
-# CHECK-NEXT: v28: int|whole = AssumeType v27 provenType=int|whole
-# CHECK-NEXT: Jump -> next b2(v28)
+# CHECK-NEXT: v16: int|whole = Add v15, v1
+# CHECK-NEXT: v17: int[0, 2147483647] = GetStringLength v9 @1049:1 tail
+# CHECK-NEXT: v18: undefined = StringRange v17, v12, v16 @1049:1 tail
+# CHECK-NEXT: v19: int[0, 2147483647] = ResultAt v18 @1049:1 tail
+# CHECK-NEXT: v20: int[0, 2147483647] = ResultAt v18 index=1 @1049:1 tail
+# CHECK-NEXT: v21: string = Substring v9, v19, v20 @1049 tail
+# CHECK-NEXT: Return v21
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="joined"
-# CHECK: module=m0 position=1119 kind=Arrow length=2 thisType={type=anything} parameters=[{type=int[0, 3]}, {type=i32 flags=[IsExpected]}] results=[{type=string}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: int[0, 3], v1: anything ~ i32):
-# CHECK-NEXT: v2: undefined|int ~ i32 = AssumeType v1 provenType=undefined|int
-# CHECK-NEXT: v3: "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz" = String string="abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz"
-# CHECK-NEXT: v4: 1 = Integer integer=1
-# CHECK-NEXT: v5: boolean ~ true = TypeTest v2 testedType=i32
-# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v6: i32):
-# CHECK-NEXT: v7: int[-1073741824, 1073741823] = RShift v6, v4
-# CHECK-NEXT: v8: int[-1073741824, 1073741826] = Add v0, v7
-# CHECK-NEXT: v9: 98 = Integer integer=98
-# CHECK-NEXT: v10: undefined = StringRange v9, v0, v8
-# CHECK-NEXT: v11: int[0, 2147483647] = ResultAt v10
-# CHECK-NEXT: v12: int[0, 2147483647] = ResultAt v10 index=1
-# CHECK-NEXT: v13: string = Substring v3, v11, v12
-# CHECK-NEXT: v14: "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz" = String string="abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz"
-# CHECK-NEXT: v15: 1 = Integer integer=1
-# CHECK-NEXT: v16: int[-1073741824, 1073741823] = RShift v6, v15
-# CHECK-NEXT: v17: int[-1073741824, 1073741826] = Add v0, v16
-# CHECK-NEXT: v18: int[-2147483648, 2147483650] = Add v0, v6
-# CHECK-NEXT: v19: 98 = Integer integer=98
-# CHECK-NEXT: v20: undefined = StringRange v19, v17, v18
-# CHECK-NEXT: v21: int[0, 2147483647] = ResultAt v20
-# CHECK-NEXT: v22: int[0, 2147483647] = ResultAt v20 index=1
-# CHECK-NEXT: v23: string = Substring v14, v21, v22
-# CHECK-NEXT: v24: string = Add v13, v23
-# CHECK-NEXT: Return v24
+# CHECK: module=m0 position=1119 kind=Arrow length=2 thisType={type=anything} parameters=[{type=int[0, 3]}, {type=int}] results=[{type=string}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: int[0, 3], v1: int ~ i32):
+# CHECK-NEXT: v2: "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz" = String string="abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz"
+# CHECK-NEXT: v3: 1 = Integer integer=1
+# CHECK-NEXT: v4: boolean ~ true = TypeTest v1 testedType=i32
+# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v5: i32):
+# CHECK-NEXT: v6: int[-1073741824, 1073741823] = RShift v5, v3
+# CHECK-NEXT: v7: int[-1073741824, 1073741826] = Add v0, v6
+# CHECK-NEXT: v8: 98 = Integer integer=98
+# CHECK-NEXT: v9: undefined = StringRange v8, v0, v7
+# CHECK-NEXT: v10: int[0, 2147483647] = ResultAt v9
+# CHECK-NEXT: v11: int[0, 2147483647] = ResultAt v9 index=1
+# CHECK-NEXT: v12: string = Substring v2, v10, v11
+# CHECK-NEXT: v13: "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz" = String string="abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz"
+# CHECK-NEXT: v14: 1 = Integer integer=1
+# CHECK-NEXT: v15: int[-1073741824, 1073741823] = RShift v5, v14
+# CHECK-NEXT: v16: int[-1073741824, 1073741826] = Add v0, v15
+# CHECK-NEXT: v17: int[-2147483648, 2147483650] = Add v0, v5
+# CHECK-NEXT: v18: 98 = Integer integer=98
+# CHECK-NEXT: v19: undefined = StringRange v18, v16, v17
+# CHECK-NEXT: v20: int[0, 2147483647] = ResultAt v19
+# CHECK-NEXT: v21: int[0, 2147483647] = ResultAt v19 index=1
+# CHECK-NEXT: v22: string = Substring v13, v20, v21
+# CHECK-NEXT: v23: string = Add v12, v22
+# CHECK-NEXT: Return v23
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v25: int[-1073741824, 1073741823] = RShift v2, v4
-# CHECK-NEXT: v26: int[-1073741824, 1073741826] = Add v0, v25
-# CHECK-NEXT: v27: 98 = Integer integer=98
-# CHECK-NEXT: v28: undefined = StringRange v27, v0, v26
-# CHECK-NEXT: v29: int[0, 2147483647] = ResultAt v28
-# CHECK-NEXT: v30: int[0, 2147483647] = ResultAt v28 index=1
-# CHECK-NEXT: v31: string = Substring v3, v29, v30
-# CHECK-NEXT: v32: "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz" = String string="abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz"
-# CHECK-NEXT: v33: 1 = Integer integer=1
-# CHECK-NEXT: v34: int[-1073741824, 1073741823] = RShift v2, v33
-# CHECK-NEXT: v35: int[-1073741824, 1073741826] = Add v0, v34
-# CHECK-NEXT: v36: number ~ int[-2147483648, 2147483650] = Add v0, v2
-# CHECK-NEXT: v37: int|whole ~ int[-2147483648, 2147483650] = AssumeType v36 provenType=int|whole
-# CHECK-NEXT: v38: 98 = Integer integer=98
-# CHECK-NEXT: v39: undefined = StringRange v38, v35, v37
-# CHECK-NEXT: v40: int[0, 2147483647] = ResultAt v39
-# CHECK-NEXT: v41: int[0, 2147483647] = ResultAt v39 index=1
-# CHECK-NEXT: v42: string = Substring v32, v40, v41
-# CHECK-NEXT: v43: string = Add v31, v42
-# CHECK-NEXT: Return v43
+# CHECK-NEXT: v24: int[-1073741824, 1073741823] = RShift v1, v3
+# CHECK-NEXT: v25: int[-1073741824, 1073741826] = Add v0, v24
+# CHECK-NEXT: v26: 98 = Integer integer=98
+# CHECK-NEXT: v27: undefined = StringRange v26, v0, v25
+# CHECK-NEXT: v28: int[0, 2147483647] = ResultAt v27
+# CHECK-NEXT: v29: int[0, 2147483647] = ResultAt v27 index=1
+# CHECK-NEXT: v30: string = Substring v2, v28, v29
+# CHECK-NEXT: v31: "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz" = String string="abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz"
+# CHECK-NEXT: v32: 1 = Integer integer=1
+# CHECK-NEXT: v33: int[-1073741824, 1073741823] = RShift v1, v32
+# CHECK-NEXT: v34: int[-1073741824, 1073741826] = Add v0, v33
+# CHECK-NEXT: v35: int|whole ~ int[-2147483648, 2147483650] = Add v0, v1
+# CHECK-NEXT: v36: 98 = Integer integer=98
+# CHECK-NEXT: v37: undefined = StringRange v36, v34, v35
+# CHECK-NEXT: v38: int[0, 2147483647] = ResultAt v37
+# CHECK-NEXT: v39: int[0, 2147483647] = ResultAt v37 index=1
+# CHECK-NEXT: v40: string = Substring v31, v38, v39
+# CHECK-NEXT: v41: string = Add v30, v40
+# CHECK-NEXT: Return v41
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="cutOutOfWide"
-# CHECK: module=m0 position=1254 kind=Arrow role=ResultWrapper length=2 thisType={type=anything} parameters=[{type=int[0, 3]}, {type=undefined|int}] results=[{type=string}] functionTypes=[f21] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f55} inlineFrames=[{}, {callee=f55 callPosition=1254 module=m0}] {
-# CHECK-NEXT: b0(v0: int[0, 3], v1: undefined|int):
+# CHECK: module=m0 position=1254 kind=Arrow role=ResultWrapper length=2 thisType={type=anything} parameters=[{type=int[0, 3]}, {type=int}] results=[{type=string}] functionTypes=[f21] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f55} inlineFrames=[{}, {callee=f55 callPosition=1254 module=m0}] {
+# CHECK-NEXT: b0(v0: int[0, 3], v1: int):
 # CHECK-NEXT: v2: fact = Entered function=f55
 # CHECK-NEXT: v3: string = GetModuleVariable fact=v2 variable=g4
 # CHECK-NEXT: v4: 1 = Integer integer=1
 # CHECK-NEXT: v5: int[1, 4] = Add v4, v0
-# CHECK-NEXT: v6: boolean = TypeTest v1 testedType=number
-# CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v7: int):
-# CHECK-NEXT: v8: int|whole = Add v5, v7
-# CHECK-NEXT: Jump -> next b2(v8)
-# CHECK-NEXT: b2(v9: int|whole):
-# CHECK-NEXT: v10: int[0, 2147483647] = GetStringLength v3 @1278:1 tail
-# CHECK-NEXT: v11: undefined = StringRange v10, v5, v9 @1278:1 tail
-# CHECK-NEXT: v12: int[0, 2147483647] = ResultAt v11 @1278:1 tail
-# CHECK-NEXT: v13: int[0, 2147483647] = ResultAt v11 index=1 @1278:1 tail
-# CHECK-NEXT: v14: string = Substring v3, v12, v13 @1278 tail
-# CHECK-NEXT: Return v14
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v15: undefined = Undefined
-# CHECK-NEXT: v16: number = Add v5, v15
-# CHECK-NEXT: v17: int|whole = AssumeType v16 provenType=int|whole
-# CHECK-NEXT: Jump -> next b2(v17)
+# CHECK-NEXT: v6: int|whole = Add v5, v1
+# CHECK-NEXT: v7: int[0, 2147483647] = GetStringLength v3 @1278:1 tail
+# CHECK-NEXT: v8: undefined = StringRange v7, v5, v6 @1278:1 tail
+# CHECK-NEXT: v9: int[0, 2147483647] = ResultAt v8 @1278:1 tail
+# CHECK-NEXT: v10: int[0, 2147483647] = ResultAt v8 index=1 @1278:1 tail
+# CHECK-NEXT: v11: string = Substring v3, v9, v10 @1278 tail
+# CHECK-NEXT: Return v11
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="joinedOfThree"
-# CHECK: module=m0 position=1333 kind=Arrow length=2 thisType={type=anything} parameters=[{type=int[0, 3]}, {type=undefined|int}] results=[{type=string}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: int[0, 3], v1: undefined|int):
-# CHECK-NEXT: v2: "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz" = String string="abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz"
-# CHECK-NEXT: v3: 1 = Integer integer=1
-# CHECK-NEXT: v4: int[1, 4] = Add v0, v3
-# CHECK-NEXT: v5: boolean = TypeTest v1 testedType=number
-# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b6()
-# CHECK-NEXT: b1(v6: int):
-# CHECK-NEXT: v7: int|whole = Add v0, v6
-# CHECK-NEXT: v8: boolean = Greater v4, v7
-# CHECK-NEXT: Branch v8 -> taken b2(v7), notTaken b2(v4)
-# CHECK-NEXT: b2(v9: int|whole):
-# CHECK-NEXT: v10: 98 = Integer integer=98
-# CHECK-NEXT: v11: undefined = StringRange v10, v0, v9
-# CHECK-NEXT: v12: int[0, 2147483647] = ResultAt v11
-# CHECK-NEXT: v13: int[0, 2147483647] = ResultAt v11 index=1
-# CHECK-NEXT: v14: string = Substring v2, v12, v13
-# CHECK-NEXT: v15: string = Strcat v14
-# CHECK-NEXT: v16: boolean = ToBoolean v6
-# CHECK-NEXT: Branch v16 -> taken b3(), notTaken b4()
+# CHECK: module=m0 position=1333 kind=Arrow length=2 thisType={type=anything} parameters=[{type=int[0, 3]}, {type=int}] results=[{type=string}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: int[0, 3], v1: int):
+# CHECK-NEXT: v2: 1 = Integer integer=1
+# CHECK-NEXT: v3: int[1, 4] = Add v0, v2
+# CHECK-NEXT: v4: int|whole = Add v0, v1
+# CHECK-NEXT: v5: boolean = Greater v3, v4
+# CHECK-NEXT: Branch v5 -> taken b1(v4), notTaken b1(v3)
+# CHECK-NEXT: b1(v6: int|whole):
+# CHECK-NEXT: v7: 98 = Integer integer=98
+# CHECK-NEXT: v8: undefined = StringRange v7, v0, v6
+# CHECK-NEXT: v9: int[0, 2147483647] = ResultAt v8
+# CHECK-NEXT: v10: int[0, 2147483647] = ResultAt v8 index=1
+# CHECK-NEXT: v11: "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz" = String string="abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz"
+# CHECK-NEXT: v12: string = Substring v11, v9, v10
+# CHECK-NEXT: v13: string = Strcat v12
+# CHECK-NEXT: v14: boolean = ToBoolean v1
+# CHECK-NEXT: Branch v14 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v15: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b4(v15)
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v17: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next b5(v17)
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v18: 0 = Integer
-# CHECK-NEXT: Jump -> next b5(v18)
-# CHECK-NEXT: b5(v19: int[0, 1]):
-# CHECK-NEXT: v20: int[0, 4] = Add v0, v19
-# CHECK-NEXT: Jump -> next b9(v15, v20, v7)
-# CHECK-NEXT: b6() frequency=Unlikely:
-# CHECK-NEXT: v21: undefined = Undefined
-# CHECK-NEXT: v22: number = Add v0, v21
-# CHECK-NEXT: v23: int|whole = AssumeType v22 provenType=int|whole
-# CHECK-NEXT: v24: boolean = Greater v4, v23
-# CHECK-NEXT: Branch v24 -> taken b7(), notTaken b8(v4)
-# CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: v25: number = Add v0, v21
-# CHECK-NEXT: v26: int|whole = AssumeType v25 provenType=int|whole
-# CHECK-NEXT: Jump -> next b8(v26)
-# CHECK-NEXT: b8(v27: int|whole) frequency=Unlikely:
-# CHECK-NEXT: v28: 98 = Integer integer=98
-# CHECK-NEXT: v29: undefined = StringRange v28, v0, v27
-# CHECK-NEXT: v30: int[0, 2147483647] = ResultAt v29
-# CHECK-NEXT: v31: int[0, 2147483647] = ResultAt v29 index=1
-# CHECK-NEXT: v32: string = Substring v2, v30, v31
-# CHECK-NEXT: v33: string = Strcat v32
-# CHECK-NEXT: v34: 0 = Integer
-# CHECK-NEXT: v35: int[0, 3] = Add v0, v34
-# CHECK-NEXT: v36: number = Add v0, v21
-# CHECK-NEXT: v37: int|whole = AssumeType v36 provenType=int|whole
-# CHECK-NEXT: Jump -> next b9(v33, v35, v37)
-# CHECK-NEXT: b9(v38: string, v39: int[0, 4], v40: int|whole):
-# CHECK-NEXT: v41: 98 = Integer integer=98
-# CHECK-NEXT: v42: undefined = StringRange v41, v39, v40
-# CHECK-NEXT: v43: int[0, 2147483647] = ResultAt v42
-# CHECK-NEXT: v44: int[0, 2147483647] = ResultAt v42 index=1
-# CHECK-NEXT: v45: "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz" = String string="abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz"
-# CHECK-NEXT: v46: string = Substring v45, v43, v44
-# CHECK-NEXT: v47: string = Strcat v38, v46
-# CHECK-NEXT: Return v47
+# CHECK-NEXT: v16: 0 = Integer
+# CHECK-NEXT: Jump -> next b4(v16)
+# CHECK-NEXT: b4(v17: int[0, 1]):
+# CHECK-NEXT: v18: int[0, 4] = Add v0, v17
+# CHECK-NEXT: v19: 98 = Integer integer=98
+# CHECK-NEXT: v20: undefined = StringRange v19, v18, v4
+# CHECK-NEXT: v21: int[0, 2147483647] = ResultAt v20
+# CHECK-NEXT: v22: int[0, 2147483647] = ResultAt v20 index=1
+# CHECK-NEXT: v23: "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz" = String string="abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz"
+# CHECK-NEXT: v24: string = Substring v23, v21, v22
+# CHECK-NEXT: v25: string = Strcat v13, v24
+# CHECK-NEXT: Return v25
 # CHECK-NEXT: }
 # CHECK-LABEL: function f15 module=
 # CHECK: m0 position=4261 kind=Arrow role=ResultWrapper length=1 thisType={type=anything} parameters=[{type=undefined|""|"abc"|"caf\u{e9}"|"na\u{ef}ve"}] results=[{type=string}] functionTypes=[f24] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f56} inlineFrames=[{}, {callee=f56 callPosition=4261 module=m0}] {
@@ -4056,29 +4023,19 @@ runtimefunction id=ArrayTraversalTraverseArray function=f51 visibility=Private
 # CHECK-NEXT: Return v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="cut"
-# CHECK: module=m0 position=935 kind=Arrow role=ResultWorker length=2 thisType={type=anything} parameters=[{type=int[0, 3]}, {type=undefined|int}] results=[{type=int[0, 2147483647]}, {type=int[0, 2147483647]}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f9 parameterMap=[{original=0}, {original=1}]} creator=ResultWorker{origin=f9} {
-# CHECK-NEXT: b0(v0: int[0, 3], v1: undefined|int):
-# CHECK-NEXT: v2: boolean = TypeTest v1 testedType=number
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v3: int):
-# CHECK-NEXT: v4: int|whole = Add v0, v3
-# CHECK-NEXT: Jump -> next b2(v4)
-# CHECK-NEXT: b2(v5: int|whole):
-# CHECK-NEXT: v6: 98 = Integer integer=98 @962 tail
-# CHECK-NEXT: v7: undefined = StringRange v6, v0, v5 @962 tail
-# CHECK-NEXT: v8: int[0, 2147483647] = ResultAt v7 @962 tail
-# CHECK-NEXT: v9: int[0, 2147483647] = ResultAt v7 index=1 @962 tail
-# CHECK-NEXT: v10: undefined = Results v8, v9
-# CHECK-NEXT: Return v10
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v11: undefined = Undefined
-# CHECK-NEXT: v12: number = Add v0, v11
-# CHECK-NEXT: v13: int|whole = AssumeType v12 provenType=int|whole
-# CHECK-NEXT: Jump -> next b2(v13)
+# CHECK: module=m0 position=935 kind=Arrow role=ResultWorker length=2 thisType={type=anything} parameters=[{type=int[0, 3]}, {type=int}] results=[{type=int[0, 2147483647]}, {type=int[0, 2147483647]}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f9 parameterMap=[{original=0}, {original=1}]} creator=ResultWorker{origin=f9} {
+# CHECK-NEXT: b0(v0: int[0, 3], v1: int):
+# CHECK-NEXT: v2: int|whole = Add v0, v1
+# CHECK-NEXT: v3: 98 = Integer integer=98 @962 tail
+# CHECK-NEXT: v4: undefined = StringRange v3, v0, v2 @962 tail
+# CHECK-NEXT: v5: int[0, 2147483647] = ResultAt v4 @962 tail
+# CHECK-NEXT: v6: int[0, 2147483647] = ResultAt v4 index=1 @962 tail
+# CHECK-NEXT: v7: undefined = Results v5, v6
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="cutTwice"
-# CHECK: module=m0 position=1004 kind=Arrow role=ResultWorker length=2 thisType={type=anything} parameters=[{type=int[0, 3]}, {type=undefined|int}] results=[{type=string}, {type=int[0, 2147483647]}, {type=int[0, 2147483647]}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f10 parameterMap=[{original=0}, {original=1}]} creator=ResultWorker{origin=f10} {
-# CHECK-NEXT: b0(v0: int[0, 3], v1: undefined|int):
+# CHECK: module=m0 position=1004 kind=Arrow role=ResultWorker length=2 thisType={type=anything} parameters=[{type=int[0, 3]}, {type=int}] results=[{type=string}, {type=int[0, 2147483647]}, {type=int[0, 2147483647]}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f10 parameterMap=[{original=0}, {original=1}]} creator=ResultWorker{origin=f10} {
+# CHECK-NEXT: b0(v0: int[0, 3], v1: int):
 # CHECK-NEXT: v2: "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz" = String string="abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz"
 # CHECK-NEXT: v3: 1 = Integer integer=1
 # CHECK-NEXT: v4: int[0, 1] = RShift v0, v3
@@ -4093,48 +4050,27 @@ runtimefunction id=ArrayTraversalTraverseArray function=f51 visibility=Private
 # CHECK-NEXT: v13: 1 = Integer integer=1
 # CHECK-NEXT: v14: int[0, 1] = RShift v0, v13
 # CHECK-NEXT: v15: int[-1, 3] = Sub v0, v14
-# CHECK-NEXT: v16: undefined|int ~ int = Upcast v1 castType=anything
-# CHECK-NEXT: v17: boolean ~ true = TypeTest v16 testedType=number
-# CHECK-NEXT: Branch v17 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v18: int):
-# CHECK-NEXT: v19: int|whole = Add v15, v18
-# CHECK-NEXT: Jump -> next b2(v19)
-# CHECK-NEXT: b2(v20: int|whole):
-# CHECK-NEXT: v21: int[0, 2147483647] = GetStringLength v9 @1049 tail
-# CHECK-NEXT: v22: undefined = StringRange v21, v12, v20 @1049 tail
-# CHECK-NEXT: v23: int[0, 2147483647] = ResultAt v22 @1049 tail
-# CHECK-NEXT: v24: int[0, 2147483647] = ResultAt v22 index=1 @1049 tail
-# CHECK-NEXT: v25: undefined = Results v9, v23, v24
-# CHECK-NEXT: Return v25
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v26: undefined = Undefined
-# CHECK-NEXT: v27: number = Add v15, v26
-# CHECK-NEXT: v28: int|whole = AssumeType v27 provenType=int|whole
-# CHECK-NEXT: Jump -> next b2(v28)
+# CHECK-NEXT: v16: int|whole = Add v15, v1
+# CHECK-NEXT: v17: int[0, 2147483647] = GetStringLength v9 @1049 tail
+# CHECK-NEXT: v18: undefined = StringRange v17, v12, v16 @1049 tail
+# CHECK-NEXT: v19: int[0, 2147483647] = ResultAt v18 @1049 tail
+# CHECK-NEXT: v20: int[0, 2147483647] = ResultAt v18 index=1 @1049 tail
+# CHECK-NEXT: v21: undefined = Results v9, v19, v20
+# CHECK-NEXT: Return v21
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="cutOutOfWide"
-# CHECK: module=m0 position=1254 kind=Arrow role=ResultWorker length=2 thisType={type=anything} parameters=[{type=int[0, 3]}, {type=undefined|int}] results=[{type=string}, {type=int[0, 2147483647]}, {type=int[0, 2147483647]}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f12 parameterMap=[{original=0}, {original=1}]} creator=ResultWorker{origin=f12} {
-# CHECK-NEXT: b0(v0: int[0, 3], v1: undefined|int):
+# CHECK: module=m0 position=1254 kind=Arrow role=ResultWorker length=2 thisType={type=anything} parameters=[{type=int[0, 3]}, {type=int}] results=[{type=string}, {type=int[0, 2147483647]}, {type=int[0, 2147483647]}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f12 parameterMap=[{original=0}, {original=1}]} creator=ResultWorker{origin=f12} {
+# CHECK-NEXT: b0(v0: int[0, 3], v1: int):
 # CHECK-NEXT: v2: string = GetModuleVariable variable=g4
 # CHECK-NEXT: v3: 1 = Integer integer=1
 # CHECK-NEXT: v4: int[1, 4] = Add v3, v0
-# CHECK-NEXT: v5: boolean = TypeTest v1 testedType=number
-# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v6: int):
-# CHECK-NEXT: v7: int|whole = Add v4, v6
-# CHECK-NEXT: Jump -> next b2(v7)
-# CHECK-NEXT: b2(v8: int|whole):
-# CHECK-NEXT: v9: int[0, 2147483647] = GetStringLength v2 @1278 tail
-# CHECK-NEXT: v10: undefined = StringRange v9, v4, v8 @1278 tail
-# CHECK-NEXT: v11: int[0, 2147483647] = ResultAt v10 @1278 tail
-# CHECK-NEXT: v12: int[0, 2147483647] = ResultAt v10 index=1 @1278 tail
-# CHECK-NEXT: v13: undefined = Results v2, v11, v12
-# CHECK-NEXT: Return v13
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v14: undefined = Undefined
-# CHECK-NEXT: v15: number = Add v4, v14
-# CHECK-NEXT: v16: int|whole = AssumeType v15 provenType=int|whole
-# CHECK-NEXT: Jump -> next b2(v16)
+# CHECK-NEXT: v5: int|whole = Add v4, v1
+# CHECK-NEXT: v6: int[0, 2147483647] = GetStringLength v2 @1278 tail
+# CHECK-NEXT: v7: undefined = StringRange v6, v4, v5 @1278 tail
+# CHECK-NEXT: v8: int[0, 2147483647] = ResultAt v7 @1278 tail
+# CHECK-NEXT: v9: int[0, 2147483647] = ResultAt v7 index=1 @1278 tail
+# CHECK-NEXT: v10: undefined = Results v2, v8, v9
+# CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="written"
 # CHECK: module=m0 position=843 kind=Arrow role=GenericEntrypoint flags=[HasThis] length=2 captures=[{type=f8}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f8} creator=Entrypoint{target=f8 arguments=Registers} {

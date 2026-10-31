@@ -341,9 +341,9 @@ runtimefunction id=ArrayTraversalTraverseArray function=f28 visibility=Private
 # -- generated: repeated
 # CHECK-LABEL: function {{*}}name="repeated"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 427, patchpoints: 31, rare instructions: 100, polls: 3
+# CHECK-NEXT: instructions: 414, patchpoints: 31, rare instructions: 101, polls: 3
 # CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="repeated"
 # CHECK: role=GenericEntrypoint
-# CHECK-NEXT: instructions: 426, patchpoints: 31, rare instructions: 100, polls: 3
+# CHECK-NEXT: instructions: 414, patchpoints: 31, rare instructions: 101, polls: 3
 # CHECK-NEXT: end of function f32

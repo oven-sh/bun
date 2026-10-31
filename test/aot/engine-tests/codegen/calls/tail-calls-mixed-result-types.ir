@@ -475,11 +475,11 @@ runtimefunction id=ArrayTraversalTraverseArray function=f62 visibility=Private
 # -- generated: typedAboveWithCast f17
 # CHECK-LABEL: function {{*}}name="typedAboveWithCast"
 # CHECK: role=EntryChecks
-# CHECK-NEXT: instructions: 5, patchpoints: 1, rare instructions: 22
+# CHECK-NEXT: instructions: 5, patchpoints: 1, rare instructions: 21
 # CHECK-NEXT: end of function f9
 # CHECK-LABEL: function {{*}}name="typedAboveWithCast"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 38, patchpoints: 6, rare instructions: 6
+# CHECK-NEXT: instructions: 36, patchpoints: 6, rare instructions: 6
 # CHECK-NEXT: end of function f64
 # CHECK-LABEL: function {{*}}name="typedAboveWithCast"
 # CHECK: role=GenericVersion

@@ -20,6 +20,7 @@ use self::shown_names::ShownNames;
 use super::LoweredFile;
 use super::call::PrintedOperators;
 use super::class::ClassState;
+use super::counted_places::CountedPlaces;
 use super::fragment::{FragmentBuilder, ModuleFragment};
 use super::layouts::{DefinedObjectTypes, LayoutState};
 use super::module::{LibraryFunctions, ModuleState};
@@ -91,6 +92,8 @@ pub struct LoweringOptions {
     pub removable: RemovableOptions,
     pub minifies_identifiers: bool,
     pub obfuscates: bool,
+    /// `bun test --aot --coverage`: the files of the project count how often their parts run.
+    pub counts_executions: bool,
 }
 
 pub struct LoweringInputs<'a> {
@@ -163,11 +166,16 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     functions: FunctionTable,
     atoms: FxHashMap<Atom, StringId>,
     atom_keys: FxHashMap<Atom, PropertyKeyId>,
+    /// `FileLowering::is_built_by_code`
+    pub(in crate::lower) levels_of_literals_inside_built_ones: FxHashMap<ExprId, u64>,
     shown_names: ShownNames,
     has_bundled_positions: bool,
     runs_as_written: bool,
     pub(in crate::lower) transpiled: Option<TranspiledFile>,
+    /// The position of each plain function that has a header, and `FileLowering::position_of_making_this_in`.
+    pub(in crate::lower) where_this_is_made: Vec<(u32, u32)>,
     pub(in crate::lower) printed_operators: PrintedOperators,
+    pub(in crate::lower) counted_places: Option<CountedPlaces>,
     counters: Counters,
     scratch: BuilderScratch,
 }
@@ -272,6 +280,13 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             true => transpile_file(inputs, file, queries, compiled.settings, &mut diagnostics),
             false => None,
         };
+        // What `bun test --coverage` reports on: no package, and nothing of Bun's own.
+        let path = inputs.sources.diagnostic_path(file);
+        let is_counted = inputs.options.counts_executions
+            && inputs.sources.kind(file) == load::SourceKind::Program
+            && !bun_core::strings::contains(path, b"/node_modules/")
+            && !bun_core::strings::contains(path, b"\\node_modules\\");
+        let counted_places = is_counted.then(|| CountedPlaces::find(hir, bound, path));
         let may_hold_registries = inputs.makes_registries || file_inputs.makes_registries();
         let registries = RegistryNames::new(&mut *queries);
         let scopes = analyze_scopes(&ScopeInput {
@@ -322,6 +337,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             functions: FunctionTable::default(),
             atoms: FxHashMap::default(),
             atom_keys: FxHashMap::default(),
+            levels_of_literals_inside_built_ones: FxHashMap::default(),
             shown_names: ShownNames::new(
                 inputs.options,
                 file_inputs.source,
@@ -332,7 +348,9 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             has_bundled_positions: inputs.sources.bundled_positions(file).is_some(),
             runs_as_written,
             transpiled,
+            where_this_is_made: Vec::new(),
             printed_operators: PrintedOperators::default(),
+            counted_places,
             counters: Counters::default(),
             scratch: BuilderScratch::default(),
         }

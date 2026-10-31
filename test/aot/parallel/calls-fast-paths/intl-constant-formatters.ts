@@ -4,12 +4,12 @@
 // IR+ ^variable (g\d+) name="count" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? = PutModuleVariable \2 variable=\1\b
 // IR- ^variable (g\d+) name="buddhist" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? = PutModuleVariable \2 variable=\1\b
 // IR- ^variable (g\d+) name="compact" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? = PutModuleVariable \2 variable=\1\b
-// IRT= 1 formatMinute CallBuiltin v[0-9]+ \(v[0-9]+\) overload=IntlDateTimeFormatPrototypeFormat/
-// IR= 1 formatCount CallBuiltin v[0-9]+ \(v[0-9]+\) overload=IntlNumberFormatPrototypeFormat/
-// IRT= 1 formatLocalTime CallBuiltin v[0-9]+ \(v[0-9]+\) overload=IntlDateTimeFormatPrototypeFormat/
-// IR= 1 formatRow CallBuiltin v[0-9]+ \(v[0-9]+\) overload=IntlDateTimeFormatPrototypeFormat/
-// IR= 1 formatRow CallBuiltin v[0-9]+ \(v[0-9]+\) overload=IntlNumberFormatPrototypeFormat/
-// IR= 1 formatNewDate CallBuiltin v[0-9]+ \(v[0-9]+\) overload=IntlDateTimeFormatPrototypeFormat/
+// IRT= 1 formatMinute CallBuiltin v[0-9]+, v[0-9]+ overload=IntlDateTimeFormatPrototypeFormat/
+// IR= 1 formatCount CallBuiltin v[0-9]+, v[0-9]+ overload=IntlNumberFormatPrototypeFormat/
+// IRT= 1 formatLocalTime CallBuiltin v[0-9]+, v[0-9]+ overload=IntlDateTimeFormatPrototypeFormat/
+// IR= 1 formatRow CallBuiltin v[0-9]+, v[0-9]+ overload=IntlDateTimeFormatPrototypeFormat/
+// IR= 1 formatRow CallBuiltin v[0-9]+, v[0-9]+ overload=IntlNumberFormatPrototypeFormat/
+// IR= 1 formatNewDate CallBuiltin v[0-9]+, v[0-9]+ overload=IntlDateTimeFormatPrototypeFormat/
 function notConstant<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }

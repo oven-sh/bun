@@ -204,6 +204,7 @@ fn create_full_program() -> Program {
         specifier: names.text,
         exporter: Some(MODULE),
         export_specifier: Some(names.text),
+        ends_load_of: None,
     });
     program.eval_scopes.push(EvalScope {
         bindings: vec![EvalBinding {

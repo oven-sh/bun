@@ -146,10 +146,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    /// `start_of_access`: JSC reports the call of a getter there, and what it asks of the object behind the object.
     pub(in crate::lower) fn emit_name_get(
         &mut self,
         object: ValueId,
         name: PrivateNameId,
+        start_of_access: u32,
     ) -> ValueId {
         let binding = self.file.resolve_private_name(name);
         let PrivateBinding { class, holder, .. } = binding;
@@ -157,6 +159,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             PrivateMembers::AutoAccessor(member) if binding.is_decorated => {
                 self.emit_admission(class, holder, object, RuntimeErrorKind::InvalidPrivateRead);
                 let getter = self.get_decorated_accessor_function(class, member, known::get);
+                self.set_position(start_of_access);
                 call::emit_call(self, getter, Some(object), &[])
             }
             PrivateMembers::Field(member) | PrivateMembers::AutoAccessor(member) => {
@@ -172,17 +175,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     return self.emit_error(RuntimeErrorKind::PrivateAccessorWithoutGetter);
                 };
                 let getter = self.get_class_slot(class, ClassSlot::PrivateMethod(getter));
+                self.set_position(start_of_access);
                 call::emit_call(self, getter, Some(object), &[])
             }
         }
     }
 
+    /// `start_of_access`: JSC reports the call of a setter there. None where a field is initialized.
     pub(in crate::lower) fn emit_name_set(
         &mut self,
         object: ValueId,
         name: PrivateNameId,
         value: ValueId,
         source: Option<ExprId>,
+        start_of_access: Option<u32>,
     ) {
         let binding = self.file.resolve_private_name(name);
         let PrivateBinding { class, holder, .. } = binding;
@@ -207,6 +213,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     return;
                 };
                 let setter = self.get_class_slot(class, ClassSlot::PrivateMethod(setter));
+                if let Some(start) = start_of_access {
+                    self.set_position(start);
+                }
                 call::emit_call(self, setter, Some(object), &[value]);
             }
         }

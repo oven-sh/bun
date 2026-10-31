@@ -358,14 +358,16 @@ fn macro_statement_is_erased_without_request() {
         with_attributes(&[(known::r#type, known::r#macro)], |hir, attributes| {
             for kind in STATEMENT_KINDS {
                 let site = site_of(kind, specifier, attributes);
-                let resolution = resolve_site(context, IMPORTER, hir, &site, &[]);
+                let resolution =
+                    resolve_site(context, IMPORTER, hir, &site, &[], NamesKnown::ToTranspiler);
                 let erased = SiteResolution::Constant(CodeResolution::Erased);
                 assert_eq!(resolution, erased, "{kind:?}");
             }
             assert_eq!(host.code_request_count(), 0);
 
             let call = site_of(ImportSiteKind::ImportCall(ExprId(0)), specifier, attributes);
-            let resolution = resolve_site(context, IMPORTER, hir, &call, &[]);
+            let resolution =
+                resolve_site(context, IMPORTER, hir, &call, &[], NamesKnown::ToTranspiler);
             assert_eq!(
                 resolution,
                 SiteResolution::Constant(CodeResolution::File(FILE))
@@ -392,14 +394,28 @@ fn host_value_site_is_external_without_request() {
                 kind: ExternalKind::HostValue,
             });
             assert_eq!(
-                resolve_site(context, IMPORTER, hir, &host_value, &[]),
+                resolve_site(
+                    context,
+                    IMPORTER,
+                    hir,
+                    &host_value,
+                    &[],
+                    NamesKnown::ToTranspiler
+                ),
                 expected
             );
             assert_eq!(host.code_request_count(), 0);
 
             let expected = SiteResolution::Constant(CodeResolution::File(FILE));
             assert_eq!(
-                resolve_site(context, IMPORTER, hir, &written, &[]),
+                resolve_site(
+                    context,
+                    IMPORTER,
+                    hir,
+                    &written,
+                    &[],
+                    NamesKnown::ToTranspiler
+                ),
                 expected
             );
         });

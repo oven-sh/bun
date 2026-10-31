@@ -1,12 +1,12 @@
 {
   "accessor/inherited-method-in-function": {
-    "typed": 33,
-    "untyped": 23,
+    "typed": 4,
+    "untyped": 4,
     "jit": 6.6
   },
   "accessor/inherited-value-in-function": {
-    "typed": 35,
-    "untyped": 24.9,
+    "typed": 4,
+    "untyped": 4,
     "jit": 4
   },
   "array/push-in-loop-in-function": {
@@ -30,8 +30,8 @@
     "jit": 320.3
   },
   "array/spread-of-set": {
-    "typed": 250.9,
-    "untyped": 257.1,
+    "typed": 86.4,
+    "untyped": 86.5,
     "jit": 85.7
   },
   "array/two-spread-in-function": {
@@ -81,9 +81,14 @@
       "untyped": 73.5
     }
   },
+  "class/default-on-the-prototype-read-in-a-loop-to-an-integer": {
+    "typed": 17,
+    "untyped": 17,
+    "jit": 28.2
+  },
   "class/default-on-the-prototype-read-in-function": {
-    "typed": 32,
-    "untyped": 32,
+    "typed": 17,
+    "untyped": 17,
     "jit": 28.2
   },
   "class/instanceof-a-function-that-stands-under-another": {
@@ -423,9 +428,14 @@
     "jit": 27
   },
   "keyed/read-by-concatenated-key": {
-    "typed": 184,
-    "untyped": 184,
-    "jit": 20.8
+    "typed": 0.5,
+    "untyped": 4,
+    "jit": 20.6
+  },
+  "keyed/read-by-key-joined-at-run-time": {
+    "typed": 43,
+    "untyped": 43,
+    "jit": 42
   },
   "keyed/store-through-global-this": {
     "typed": 36,
@@ -677,13 +687,13 @@
     }
   },
   "built-in/process-argv": {
-    "typed": 32,
-    "untyped": 32,
+    "typed": 10,
+    "untyped": 10,
     "jit": 10
   },
   "built-in/process-argv-includes": {
-    "typed": 156,
-    "untyped": 156,
+    "typed": 52.5,
+    "untyped": 52.5,
     "jit": 57
   },
   "built-in/process-env-by-key": {
@@ -707,8 +717,8 @@
     "jit": 109.1
   },
   "built-in/stream-new-readable": {
-    "typed": 2247.3,
-    "untyped": 2258.9,
+    "typed": 1969.4,
+    "untyped": 1981.4,
     "jit": 1148.3
   },
   "built-in/events-once": {
@@ -747,8 +757,8 @@
     "jit": 870.3
   },
   "array/index-of-a-text-from-a-start": {
-    "typed": 211,
-    "untyped": 211,
+    "typed": 82.5,
+    "untyped": 82.5,
     "jit": 87.4
   },
   "built-in/object-to-string-of-a-payload": {
@@ -1236,12 +1246,12 @@
     "jit": 1445.1
   },
   "guess/bound-is-the-length-of-what-is-no-array-wrong": {
-    "typed": 74,
-    "untyped": 51,
+    "typed": 5,
+    "untyped": 5,
     "jit": 6
   },
   "guess/callee-is-another-function-right": {
-    "typed": 52,
+    "typed": 43,
     "untyped": 40,
     "jit": 10
   },
@@ -1266,8 +1276,8 @@
     "jit": 48
   },
   "guess/read-of-one-receiver-right": {
-    "typed": 5,
-    "untyped": 5,
+    "typed": 0.5,
+    "untyped": 4,
     "jit": 7
   },
   "guess/read-of-one-receiver-wrong": {
@@ -1291,8 +1301,8 @@
     "jit": 34.5
   },
   "guess/reads-of-two-receivers-right": {
-    "typed": 12,
-    "untyped": 5,
+    "typed": 4,
+    "untyped": 4,
     "jit": 6.2
   },
   "guess/reads-of-two-receivers-wrong": {
@@ -1301,8 +1311,8 @@
     "jit": 5.9
   },
   "guess/store-to-one-receiver-right": {
-    "typed": 8,
-    "untyped": 8,
+    "typed": 3.5,
+    "untyped": 7,
     "jit": 10.1
   },
   "guess/store-to-one-receiver-wrong": {
@@ -1447,38 +1457,38 @@
     }
   },
   "array/includes-long-string": {
-    "typed": 382.6,
-    "untyped": 377.5,
+    "typed": 355.8,
+    "untyped": 361.8,
     "jit": 377.3
   },
   "array/index-of-utf16-string": {
-    "typed": 256.5,
-    "untyped": 256.5,
+    "typed": 249,
+    "untyped": 250,
     "jit": 633.4
   },
   "array/index-of-string-or-undefined": {
-    "typed": 479.5,
-    "untyped": 479.5,
+    "typed": 477.3,
+    "untyped": 476.8,
     "jit": 1510.6
   },
   "array/index-of-string-in-mixed-array": {
-    "typed": 477.3,
-    "untyped": 479.3,
+    "typed": 460.6,
+    "untyped": 460.6,
     "jit": 465.6
   },
   "array/index-of-string-among-latin1-and-utf16": {
     "typed": 572.5,
-    "untyped": 574.5,
+    "untyped": 573.5,
     "jit": 1782.3
   },
   "array/index-of-string": {
-    "typed": 694.9,
-    "untyped": 696.9,
+    "typed": 690.1,
+    "untyped": 691.1,
     "jit": 746.1
   },
   "array/index-of-sliced-string": {
-    "typed": 574.5,
-    "untyped": 574.5,
+    "typed": 572.5,
+    "untyped": 572.5,
     "jit": 2007.9
   },
   "spread/an-object-filled-by-name-once-then-one-in-function": {

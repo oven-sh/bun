@@ -94,6 +94,10 @@ pub(crate) struct ParsedSource {
     pub is_language_assumed: bool,
     pub builtins: ResolvedBuiltins,
     pub evaluated_text_sites: Vec<EvaluatedTextSite>,
+    /// A constant text that is not compiled, as a script of several statements is not, has the word `mainModule`. The interpreter runs it, and the build has read it.
+    pub names_main_module_in_text_left_to_run_time: bool,
+    /// The modules of Bun whose names stand in quotes in such a text: `process.mainModule.require("node:os")`.
+    pub library_modules_named_in_text_left_to_run_time: Vec<RuntimeModule>,
     pub evaluated_function: Option<FnId>,
     pub modules_named_in_choices: Vec<NamedModule>,
     pub library_names_passed_to_imports: Vec<(SymbolId, NamedModule)>,
@@ -122,6 +126,8 @@ impl ParsedSource {
             is_language_assumed: false,
             builtins: ResolvedBuiltins::default(),
             evaluated_text_sites: Vec::new(),
+            names_main_module_in_text_left_to_run_time: false,
+            library_modules_named_in_text_left_to_run_time: Vec::new(),
             evaluated_function: None,
             modules_named_in_choices: Vec::new(),
             library_names_passed_to_imports: Vec::new(),
@@ -288,6 +294,15 @@ impl Sources {
             SourceKind::RuntimeModule(module) => Archive::bundled_positions(module.registry_id()),
             _ => None,
         }
+    }
+
+    /// The same for a file of built-in functions. Of such a file a stack trace shows only where the functions start that are written inside one.
+    pub fn bundled_positions_of_functions(&self, file: FileId) -> Option<BundledPositions> {
+        if self.kind(file) != SourceKind::RuntimeFunctions {
+            return None;
+        }
+        let path = self.module_paths(file).public_path;
+        Archive::bundled_positions_of_functions(path.strip_prefix(VIRTUAL_ROOT)?)
     }
 
     pub fn web_assembly_files(&self) -> &[FileId] {

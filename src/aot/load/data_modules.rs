@@ -1,6 +1,6 @@
 use crate::diagnostics::LoadMessages;
 use crate::load::source_provider::{SourceFile, SourceProvider};
-use bun_ast::{Loader, Location};
+use bun_ast::{Loader, Loc, Location};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::check::spans::skip_trivia;
 use bun_sema::hir::{ExprId, ExprKind, File, IdList, PropId, PropKind, Span, StmtKind, UnOp};
@@ -49,6 +49,27 @@ pub(crate) fn parse_data_module<'s>(
         web_assembly: is_web_assembly.then(|| source.contents.to_vec()),
         is_page: matches!(module, Ok(DataModule::Page)),
     }
+}
+
+/// `bun test` hands the text of a JSON file to `JSON.parse`, which takes no empty text. The bundler's parser reads `{}` there, as it does for an executable.
+/// A file with an error is left to the loader of a test run, which says it in its own words.
+pub(crate) fn report_blank_json(messages: &LoadMessages, source: &SourceFile<'_>) {
+    if source.loader != Loader::Json || !source.contents.iter().all(u8::is_ascii_whitespace) {
+        return;
+    }
+    messages.with_log(|log| {
+        log.add_error_fmt(
+            None,
+            Loc::EMPTY,
+            format_args!("JSON Parse error: Unexpected EOF"),
+        );
+        for message in &mut log.msgs {
+            message.data.location = Some(Location {
+                file: Box::from(to_native(source.path)),
+                ..Default::default()
+            });
+        }
+    });
 }
 
 pub(crate) fn parse_json<'s>(

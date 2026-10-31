@@ -170,25 +170,12 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11
 # CHECK-NEXT: v5: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v4 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v6: anything = PropGet v0 key="raw" accessSite=10
 # CHECK-NEXT: v7: anything ~ undefined|null|Array<undefined|null|string> = Expect v6 expectedType=undefined|null|Array<undefined|null|string>
-# CHECK-NEXT: v8: stringbuilder = StringBuilderBegin @0 tail
-# CHECK-NEXT: v9: i32 = StringBuilderCheckpoint v8 @0 tail
-# CHECK-NEXT: v10: buildercursor = StringBuilderReserve v8 size=128 @0 tail
-# CHECK-NEXT: StringBuilderCommit v8, v10 @0 tail
-# CHECK-NEXT: v12: i32 = StringBuilderCheckpoint v8 @0 tail
-# CHECK-NEXT: v13: boolean = StrictEq v9, v12 @0 tail
-# CHECK-NEXT: Branch v13 -> taken b1(), notTaken b2() @0 tail
-# CHECK-NEXT: b1() frequency=Rare:
-# CHECK-NEXT: StringBuilderDiscard v8 @0 tail
-# CHECK-NEXT: v15: fact = Specified
-# CHECK-NEXT: v16: Array<anything, Contiguous> = NewArray v5, v7, v1 contents=anything allocationSite=3 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v17: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v16 provenType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> @0 tail
-# CHECK-NEXT: v18: fact = Specified @0 tail
-# CHECK-NEXT: v19: undefined = Undefined @0 tail
-# CHECK-NEXT: v20: undefined|string = CallBuiltin -, v17, v19 overload=JSONStringify/0 accessSite=11 @0 tail
-# CHECK-NEXT: Jump -> next b3(v20) @0 tail
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v21: string = StringBuilderFinish v8 @0 tail
-# CHECK-NEXT: Jump -> next b3(v21) @0 tail
-# CHECK-NEXT: b3(v22: undefined|string ~ string):
-# CHECK-NEXT: Return v22
+# CHECK-NEXT: v8: undefined = Undefined @0 tail
+# CHECK-NEXT: v9: stringbuilder = StringBuilderBegin @0 tail
+# CHECK-NEXT: StringBuilderDiscard v9 @0 tail
+# CHECK-NEXT: v11: Array<anything, Contiguous> = NewArray v5, v7, v1 contents=anything allocationSite=3 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v12: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> @0 tail
+# CHECK-NEXT: v13: undefined|string = CallBuiltin -, v12, v8 overload=JSONStringify/0 accessSite=11 @0 tail
+# CHECK-NEXT: v14: undefined|string ~ string = Upcast v13 castType=undefined|string @0 tail
+# CHECK-NEXT: Return v14
 # CHECK-NEXT: }

@@ -798,7 +798,7 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f120
 # CHECK-NEXT: b0(v0: anything, v1: "thrown"|"twice"):
 # CHECK-NEXT: v7: f24|f35 = AssumeType v0 provenType=f24|f35
 # CHECK-NEXT: v2: object = GetConstructPrototype v7 layout=L0
-# CHECK-NEXT: v3: object ~ L0|L2|L7|L11|L12 = NewObject v2 layout=L0 allocationSite=9 allocationClass=0
+# CHECK-NEXT: v3: object ~ L7|L12 = NewObject v2 layout=L0 allocationSite=9 allocationClass=0
 # CHECK-NEXT: v8: L7|L12 = AssumeType v3 provenType=L7|L12
 # CHECK-NEXT: v4: L7|L12 = AssumeType v8 provenType=L0|L2|L3|L4|L5|L6|L7|L9|L10|L11|L12|L13
 # CHECK-NEXT: v9: L7|L12 = AssumeType v4 provenType=L7|L12

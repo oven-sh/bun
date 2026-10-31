@@ -17,10 +17,12 @@ use crate::ir::generated::{
 use crate::ir::{FunctionId, Id, ModuleId, StringId, StringTable, VariableId, VariableKey};
 use crate::load::sources::parsed_source;
 use crate::load::{PerProject, ProgramFile, ProjectId, SourceKind};
+use crate::module_keys::type_attribute_of;
 use crate::modules::{
     self, ExportBinding, ExportLookup, ImportBinding, Interop, ModuleFailureKind, ModuleKind,
     ModuleRef, compare_code_units,
 };
+use bun_ast::Loader;
 use bun_resolve_builtins::HardcodedModule::BUN_ALIASES;
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::program::FileId;
@@ -47,10 +49,14 @@ pub(super) struct RecordProgress {
 }
 
 impl RecordInput<'_, '_> {
+    fn find_id(&self, module: ProgramModule) -> Option<ModuleId> {
+        let index = self.modules.index_by_module.get(&module);
+        index.and_then(|&index| self.numbering.modules[index as usize])
+    }
+
     fn id_of(&self, project: ProjectId, module: ModuleRef) -> ModuleId {
         let module = key_context(self.projects, project).module(module);
-        let index = self.modules.index_by_module.get(&module);
-        if let Some(id) = index.and_then(|&index| self.numbering.modules[index as usize]) {
+        if let Some(id) = self.find_id(module) {
             return id;
         }
         let error = LinkError::MissingRecord {
@@ -216,7 +222,8 @@ impl RecordBuilder<'_, '_, '_> {
                 ProgramModule::External {
                     importer,
                     specifier,
-                } => self.build_external_record(index, importer, specifier),
+                    type_attribute,
+                } => self.build_external_record(index, importer, specifier, type_attribute),
             });
         }
         records
@@ -227,11 +234,13 @@ impl RecordBuilder<'_, '_, '_> {
         index: u32,
         importer: ProgramFile,
         specifier: Atom,
+        type_attribute: Option<Loader>,
     ) -> generated::Module {
         let graph = self.input.projects.get(importer.project).graph;
         let kind = graph.external_kind(ModuleRef::External {
             importer: importer.file,
             specifier,
+            type_attribute,
         });
         let kind = kind.unwrap_or(ExternalKind::UncompiledCode);
         let path = self.intern_atom(specifier);
@@ -241,6 +250,8 @@ impl RecordBuilder<'_, '_, '_> {
         match kind {
             ExternalKind::UncompiledCode => {
                 record.external_kind = generated::ExternalKind::UncompiledCode;
+                record.type_attribute =
+                    type_attribute.map(|it| self.strings.intern(type_attribute_of(it).as_bytes()));
             }
             ExternalKind::HostValue => {
                 record.external_kind = generated::ExternalKind::HostValue;
@@ -297,8 +308,15 @@ impl RecordBuilder<'_, '_, '_> {
                 if graph.may_be_mocked(ModuleRef::File(file.file)) {
                     record.flags |= ModuleFlags::MAY_BE_MOCKED;
                 }
+                // Taken out of `require.cache`, the file is read again by the loader of the host.
+                if graph.may_be_evicted(ModuleRef::File(file.file)) {
+                    record.flags |= ModuleFlags::MAY_BE_EVICTED;
+                }
                 if graph.is_found_by_name(ModuleRef::File(file.file)) {
                     record.flags |= ModuleFlags::IS_FOUND_BY_NAME;
+                }
+                if interop.answers_loader_with_namespace {
+                    record.flags |= ModuleFlags::ANSWERS_LOADER_WITH_NAMESPACE;
                 }
                 record.data = find_program_id(fragment.data, &ids.data);
                 self.fill_export_table_record(file, &mut record);
@@ -386,12 +404,17 @@ impl RecordBuilder<'_, '_, '_> {
 
     fn flags_of_runtime_module(&self, module: Option<RuntimeModule>) -> ModuleFlags {
         let graph = self.input.projects.get(ProjectId::Application).graph;
-        match module {
-            Some(module) if graph.may_be_mocked(ModuleRef::Runtime(module)) => {
-                ModuleFlags::MAY_BE_MOCKED
-            }
-            Some(_) | None => ModuleFlags::default(),
+        let mut flags = ModuleFlags::default();
+        let Some(module) = module else {
+            return flags;
+        };
+        if graph.may_be_mocked(ModuleRef::Runtime(module)) {
+            flags |= ModuleFlags::MAY_BE_MOCKED;
         }
+        if graph.is_held_under_name_without_prefix(module) {
+            flags |= ModuleFlags::IS_HELD_UNDER_NAME_WITHOUT_PREFIX;
+        }
+        flags
     }
 
     fn planned_flags(&self, project: ProjectId, module: ModuleRef) -> ModuleFlags {
@@ -420,6 +443,9 @@ impl RecordBuilder<'_, '_, '_> {
         }
         if graph.may_be_evicted(module) && graph.is_code_of_program(module) {
             flags |= ModuleFlags::MAY_BE_EVICTED;
+        }
+        if matches!(module, ModuleRef::File(file) if graph.runs_again(file)) {
+            flags |= ModuleFlags::RUNS_AGAIN;
         }
         if graph.names_way_to_module_objects(module) {
             flags |= ModuleFlags::NAMES_WAY_TO_MODULE_OBJECTS;
@@ -473,19 +499,28 @@ impl RecordBuilder<'_, '_, '_> {
         }
         record.requests = self.build_requests(project, ModuleRef::File(file));
         record.exports = self.build_exports(project, graph.exports(file));
+        let requests = graph.requests_of(ModuleRef::File(file));
+        let is_requested = |module: ModuleRef| requests.iter().any(|it| it.target == module);
+        // ES modules import a CommonJS file through its face, which has the names of a mock.
+        let exporter_of = |required: &modules::RequiredName| match required.is_found_unless_mocked {
+            true => graph.face(required.module).unwrap_or(required.module),
+            false => required.module,
+        };
         record.required_names = graph
             .required_names(file)
             .iter()
+            // Tree shaking drops an unused import of a file without side effects, and the file may go with it.
+            .filter(|required| {
+                !required.is_found_unless_mocked || is_requested(exporter_of(required))
+            })
             .map(|required| generated::RequiredName {
-                module: input.id_of(project, required.module),
+                module: input.id_of(project, exporter_of(required)),
                 name: self.intern_atom(required.name),
-                may_be_absent: false,
+                may_be_absent: required.is_found_unless_mocked,
                 export_name: (required.asked_by).map(|it| self.intern_atom(it.export_name)),
                 specifier: (required.asked_by).map(|it| self.intern_atom(it.specifier)),
             })
             .collect();
-        let requests = graph.requests_of(ModuleRef::File(file));
-        let is_requested = |module: ModuleRef| requests.iter().any(|it| it.target == module);
         // The loader may be left with an empty record of such a file, which lacks even `default`. A link asks for what the module hands on before what it imports.
         let default_of = |export: modules::SyntheticExportId| {
             let export = graph.synthetic_export(export);
@@ -509,7 +544,8 @@ impl RecordBuilder<'_, '_, '_> {
         let mut asked_for_default: Vec<(FileId, Option<Atom>)> = Vec::new();
         for (exporter, export_name) in handed_on.chain(imported) {
             if let ModuleRef::File(exporter) = exporter
-                && graph.may_be_imported_while_it_runs(ModuleRef::File(exporter))
+                && (graph.may_be_imported_while_it_runs(ModuleRef::File(exporter))
+                    || graph.may_be_mocked(ModuleRef::File(exporter)))
                 && !asked_for_default.iter().any(|asked| asked.0 == exporter)
             {
                 asked_for_default.push((exporter, export_name));
@@ -633,6 +669,29 @@ impl RecordBuilder<'_, '_, '_> {
                 records.push(self.build_failure(project, failure));
             }
         }
+        // No code names these. Code outside the image that imports a module which cannot load is told what the load ends with.
+        for (project, linked) in input.projects.iter() {
+            let ids = input.numbering.module_failures.get(project);
+            for file in linked.graph.unloadable_files() {
+                let failure = linked.graph.load_failure(file);
+                let Some(id) = failure.and_then(|failure| ids[failure.0 as usize]) else {
+                    continue;
+                };
+                let module = key_context(input.projects, project).module(ModuleRef::File(file));
+                let Some(module) = input.find_id(module) else {
+                    continue;
+                };
+                let failure = &records[id.index()];
+                let (importer, specifier) = (failure.importer, failure.specifier);
+                records.push(generated::ModuleFailure {
+                    importer,
+                    specifier,
+                    exporter: None,
+                    export_specifier: None,
+                    ends_load_of: Some(module),
+                });
+            }
+        }
         records
     }
 
@@ -673,6 +732,7 @@ impl RecordBuilder<'_, '_, '_> {
             specifier,
             exporter: exporter.map(|exporter| self.input.id_of(project, exporter)),
             export_specifier,
+            ends_load_of: None,
         }
     }
 }

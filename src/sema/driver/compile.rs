@@ -11,10 +11,11 @@ mod runtime_json;
 mod tests;
 mod threads;
 
-pub use check::{check_and_lower, check_and_lower_noting_commits};
+pub use check::{Passes, check_and_lower, check_and_lower_noting_commits};
 pub use load::{
     find_configuration_of_each_entry_point, load_program, load_program_of_loaded_files,
-    load_program_with_parsed_files, resolve_entry_point, resolve_names_known_in_part,
+    load_program_with_parsed_files, resolve_entry_point, resolve_import_to_file,
+    resolve_names_known_in_part,
 };
 pub use locator::{Locator, TextLocator};
 pub use log_message::log_message;
@@ -66,6 +67,8 @@ pub struct LoadedProgram<'s> {
     files: &'s Files<'s>,
     /// All that the checker makes is allocated here, and nothing of the files. So it can go while the files are still read.
     checker_session: &'s SessionSlot,
+    /// For `renew_checker`, when trees have gone.
+    node_counts: bun_sema::check::NodeCounts,
     is_checker_freed: AtomicBool,
     origins: Vec<FileOrigin>,
     project_origin: FileOrigin,
@@ -78,7 +81,9 @@ pub struct LoadedProgram<'s> {
 
 pub(crate) struct WithoutBunTypes {
     pub has_configuration_file: bool,
-    pub incomplete_containers: [Option<Sym>; 3],
+    pub incomplete_containers: [Option<Sym>; 4],
+    /// `CodeHost::errors_with_bun_types`
+    pub errors_with_bun_types: Option<Vec<(Vec<u8>, u32)>>,
 }
 
 // SAFETY: the program is mutated through `&mut self`, or by `free_checker` when nothing uses it any more.
@@ -134,6 +139,28 @@ impl<'s> LoadedProgram<'s> {
         unsafe {
             (*self.program.get()).release();
             self.checker_session.empty_in_parallel(in_parallel);
+        }
+    }
+
+    /// Frees what `free_checker` frees and puts a checker in its place that knows nothing yet, unless the files are read again.
+    /// What the checker holds grows with every file that it has looked at, and a file asks about few of the others.
+    ///
+    /// # Safety
+    /// No task runs, and nothing that the checker has made is referred to.
+    pub(crate) unsafe fn renew_checker(
+        &self,
+        in_parallel: &dyn Fn(usize, &(dyn Fn(usize) + Sync)),
+    ) {
+        if self.is_read_again || self.is_checker_freed.load(Ordering::Relaxed) {
+            return;
+        }
+        // SAFETY: caller contract. The old program lies in an arena and is never dropped.
+        unsafe {
+            (*self.program.get()).release();
+            self.checker_session.empty_in_parallel(in_parallel);
+            let session = self.checker_session.session();
+            let program = Program::with_node_counts(session, self.files, &self.node_counts);
+            self.program.get().write(program);
         }
     }
 

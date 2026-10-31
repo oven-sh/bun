@@ -760,155 +760,161 @@ function f13 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v108: 1 = Integer integer=1
 # CHECK-NEXT: v109: int[0, 2147483647] = GetStringLength v107
 # CHECK-NEXT: v110: boolean = Less v108, v109
-# CHECK-NEXT: Branch v110 -> taken b4(), notTaken b8()
+# CHECK-NEXT: Branch v110 -> taken b4(), notTaken b10()
 # CHECK-NEXT: b4():
 # CHECK-NEXT: v111: int[0, 65535] = GetStringCodeUnit v107, v108
 # CHECK-NEXT: v112: 55296 = Integer integer=55296
 # CHECK-NEXT: v113: boolean = Less v111, v112
-# CHECK-NEXT: Branch v113 -> taken b9(v111), notTaken b5()
+# CHECK-NEXT: Branch v113 -> taken b11(v111), notTaken b5()
 # CHECK-NEXT: b5() frequency=Unlikely:
 # CHECK-NEXT: v114: 64512 = Integer integer=64512
 # CHECK-NEXT: v115: int[0, 64512] = BitAnd v111, v114
 # CHECK-NEXT: v116: 55296 = Integer integer=55296
 # CHECK-NEXT: v117: boolean = StrictEq v115, v116
-# CHECK-NEXT: Branch v117 -> taken b6(), notTaken b7()
+# CHECK-NEXT: Branch v117 -> taken b6(), notTaken b9()
 # CHECK-NEXT: b6() frequency=Unlikely:
 # CHECK-NEXT: v118: undefined|int[0, 1114111] = CallBuiltin v107, v108 overload=StringPrototypeCodePointAt/0 accessSite=62
-# CHECK-NEXT: Jump -> next b9(v118)
-# CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b9(v111)
+# CHECK-NEXT: v119: boolean = TypeTest v118 testedType=int[0, 1114111]
+# CHECK-NEXT: Branch v119 -> taken b7(| 0), notTaken b8()
+# CHECK-NEXT: b7(v120: int[0, 1114111]) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b11(v120)
 # CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: v119: undefined = Undefined
-# CHECK-NEXT: Jump -> next b9(v119)
-# CHECK-NEXT: b9(v120: undefined|int[0, 1114111] ~ int[0, 65535]):
-# CHECK-NEXT: v121: 1 = Integer integer=1
-# CHECK-NEXT: v122: string = CallDirect v121 function=f2 accessSite=63
-# CHECK-NEXT: v123: int[0, 2147483647] = GetStringLength v122
+# CHECK-NEXT: v121: undefined = Undefined
+# CHECK-NEXT: Jump -> next b11(v121)
+# CHECK-NEXT: b9() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b11(v111)
+# CHECK-NEXT: b10() frequency=Unlikely:
+# CHECK-NEXT: v122: undefined = Undefined
+# CHECK-NEXT: Jump -> next b11(v122)
+# CHECK-NEXT: b11(v123: undefined|int[0, 1114111] ~ int[0, 65535]):
 # CHECK-NEXT: v124: 1 = Integer integer=1
-# CHECK-NEXT: v125: string = CallDirect v124 function=f2 accessSite=65
-# CHECK-NEXT: v126: 1 = Integer integer=1
-# CHECK-NEXT: v127: int[0, 2147483647] = GetStringLength v125
-# CHECK-NEXT: v128: undefined = StringRange v127, v126
-# CHECK-NEXT: v129: int[0, 2147483647] = ResultAt v128
-# CHECK-NEXT: v130: int[0, 2147483647] = ResultAt v128 index=1
-# CHECK-NEXT: v131: int[-2147483647, 2147483647] = Sub v130, v129
-# CHECK-NEXT: v132: 2147483647 = Integer integer=2147483647
-# CHECK-NEXT: v133: int[0, 2147483647] = BitAnd v131, v132
-# CHECK-NEXT: v134: undefined = CallBuiltin -, v105, v120, v123, v133 overload=ConsoleLog/0 accessSite=69
-# CHECK-NEXT: v135: "v" = String string="v"
-# CHECK-NEXT: v136: "z" = String string="z"
-# CHECK-NEXT: v137: "" = String string=""
-# CHECK-NEXT: v138: 0 = Integer
-# CHECK-NEXT: v139: undefined|string = ElemGet v137, v138 accessSite=78 receivers=[] [keyIsIntegral]
+# CHECK-NEXT: v125: string = CallDirect v124 function=f2 accessSite=63
+# CHECK-NEXT: v126: int[0, 2147483647] = GetStringLength v125
+# CHECK-NEXT: v127: 1 = Integer integer=1
+# CHECK-NEXT: v128: string = CallDirect v127 function=f2 accessSite=65
+# CHECK-NEXT: v129: 1 = Integer integer=1
+# CHECK-NEXT: v130: int[0, 2147483647] = GetStringLength v128
+# CHECK-NEXT: v131: undefined = StringRange v130, v129
+# CHECK-NEXT: v132: int[0, 2147483647] = ResultAt v131
+# CHECK-NEXT: v133: int[0, 2147483647] = ResultAt v131 index=1
+# CHECK-NEXT: v134: int[-2147483647, 2147483647] = Sub v133, v132
+# CHECK-NEXT: v135: 2147483647 = Integer integer=2147483647
+# CHECK-NEXT: v136: int[0, 2147483647] = BitAnd v134, v135
+# CHECK-NEXT: v137: undefined = CallBuiltin -, v105, v123, v126, v136 overload=ConsoleLog/0 accessSite=69
+# CHECK-NEXT: v138: "v" = String string="v"
+# CHECK-NEXT: v139: "z" = String string="z"
 # CHECK-NEXT: v140: "" = String string=""
 # CHECK-NEXT: v141: 0 = Integer
-# CHECK-NEXT: v142: undefined|string = ElemGet v140, v141 accessSite=80 receivers=[] [keyIsIntegral]
-# CHECK-NEXT: v143: undefined = CallBuiltin -, v135, v136, v139, v142 overload=ConsoleLog/0 accessSite=81
-# CHECK-NEXT: v144: "uvwxyz" = String string="uvwxyz"
-# CHECK-NEXT: v145: 1 = Integer integer=1
-# CHECK-NEXT: v146: 2 = Integer integer=2
-# CHECK-NEXT: v147: string = CallDirect v144, v145, v146 function=f1 accessSite=84
+# CHECK-NEXT: v142: undefined|string = ElemGet v140, v141 accessSite=78 receivers=[] [keyIsIntegral]
+# CHECK-NEXT: v143: "" = String string=""
+# CHECK-NEXT: v144: 0 = Integer
+# CHECK-NEXT: v145: undefined|string = ElemGet v143, v144 accessSite=80 receivers=[] [keyIsIntegral]
+# CHECK-NEXT: v146: undefined = CallBuiltin -, v138, v139, v142, v145 overload=ConsoleLog/0 accessSite=81
+# CHECK-NEXT: v147: "uvwxyz" = String string="uvwxyz"
 # CHECK-NEXT: v148: 1 = Integer integer=1
-# CHECK-NEXT: v149: int[0, 2147483647] = GetStringLength v147
-# CHECK-NEXT: v150: undefined = StringRange v149, v148
-# CHECK-NEXT: v151: int[0, 2147483647] = ResultAt v150
-# CHECK-NEXT: v152: int[0, 2147483647] = ResultAt v150 index=1
-# CHECK-NEXT: v153: string = Substring v147, v151, v152
-# CHECK-NEXT: v154: "uvwxyzxyz" = String string="uvwxyzxyz"
-# CHECK-NEXT: v155: 2 = Integer integer=2
-# CHECK-NEXT: v156: 2 = Integer integer=2
-# CHECK-NEXT: v157: string = CallDirect v154, v155, v156 function=f1 accessSite=89
-# CHECK-NEXT: v158: 1 = Integer integer=1
-# CHECK-NEXT: v159: 3 = Integer integer=3
-# CHECK-NEXT: v160: int[0, 2147483647] = GetStringLength v157
-# CHECK-NEXT: v161: undefined = StringRange v160, v158, v159
-# CHECK-NEXT: v162: int[0, 2147483647] = ResultAt v161
-# CHECK-NEXT: v163: int[0, 2147483647] = ResultAt v161 index=1
-# CHECK-NEXT: v164: string = Substring v157, v162, v163
-# CHECK-NEXT: v165: "\u{e9}\u{4e2d}\u{1f600}z" = String string="\u{e9}\u{4e2d}\u{1f600}z"
-# CHECK-NEXT: v166: 1 = Integer integer=1
-# CHECK-NEXT: v167: 5 = Integer integer=5
-# CHECK-NEXT: v168: undefined = StringRange v167, v166 method=Substring
-# CHECK-NEXT: v169: int[0, 2147483647] = ResultAt v168
-# CHECK-NEXT: v170: int[0, 2147483647] = ResultAt v168 index=1
-# CHECK-NEXT: v171: string = Substring v165, v169, v170
-# CHECK-NEXT: v172: 0 = Integer
-# CHECK-NEXT: v173: undefined|string = ElemGet v171, v172 accessSite=93 receivers=[] [keyIsIntegral]
-# CHECK-NEXT: v174: undefined = CallBuiltin -, v153, v164, v173 overload=ConsoleLog/0 accessSite=94
-# CHECK-NEXT: v175: 1 = Integer integer=1
-# CHECK-NEXT: v176: string = CallDirect v175 function=f17 accessSite=95
-# CHECK-NEXT: v177: 0 = Integer
-# CHECK-NEXT: v178: string = CallDirect v177 function=f17 accessSite=98
-# CHECK-NEXT: v179: 0 = Integer
-# CHECK-NEXT: v180: undefined|string = ElemGet v178, v179 accessSite=99 receivers=[] [keyIsIntegral]
-# CHECK-NEXT: v181: 2 = Integer integer=2
-# CHECK-NEXT: v182: string = CallDirect v181 function=f17 accessSite=100
-# CHECK-NEXT: v183: 0 = Integer
-# CHECK-NEXT: v184: undefined|string = ElemGet v182, v183 accessSite=101 receivers=[] [keyIsIntegral]
-# CHECK-NEXT: v185: 9 = Integer integer=9
-# CHECK-NEXT: v186: string = CallDirect v185 function=f17 accessSite=102
-# CHECK-NEXT: v187: 0 = Integer
-# CHECK-NEXT: v188: undefined|string = ElemGet v186, v187 accessSite=103 receivers=[] [keyIsIntegral]
-# CHECK-NEXT: v189: 3 = Integer integer=3
-# CHECK-NEXT: v190: string = CallDirect v189 function=f17 accessSite=104
-# CHECK-NEXT: v191: 1 = Integer integer=1
-# CHECK-NEXT: v192: int[0, 2147483647] = GetStringLength v190
-# CHECK-NEXT: v193: undefined = StringRange v192, v191
-# CHECK-NEXT: v194: int[0, 2147483647] = ResultAt v193
-# CHECK-NEXT: v195: int[0, 2147483647] = ResultAt v193 index=1
-# CHECK-NEXT: v196: string = Substring v190, v194, v195
-# CHECK-NEXT: v197: undefined = CallBuiltin -, v180, v184, v188, v196 overload=ConsoleLog/0 accessSite=107
-# CHECK-NEXT: v198: "abcdef" = String string="abcdef"
-# CHECK-NEXT: v199: true = Boolean boolean=true
-# CHECK-NEXT: v200: string = CallDirect v198, v199 function=f18 accessSite=108
+# CHECK-NEXT: v149: 2 = Integer integer=2
+# CHECK-NEXT: v150: string = CallDirect v147, v148, v149 function=f1 accessSite=84
+# CHECK-NEXT: v151: 1 = Integer integer=1
+# CHECK-NEXT: v152: int[0, 2147483647] = GetStringLength v150
+# CHECK-NEXT: v153: undefined = StringRange v152, v151
+# CHECK-NEXT: v154: int[0, 2147483647] = ResultAt v153
+# CHECK-NEXT: v155: int[0, 2147483647] = ResultAt v153 index=1
+# CHECK-NEXT: v156: string = Substring v150, v154, v155
+# CHECK-NEXT: v157: "uvwxyzxyz" = String string="uvwxyzxyz"
+# CHECK-NEXT: v158: 2 = Integer integer=2
+# CHECK-NEXT: v159: 2 = Integer integer=2
+# CHECK-NEXT: v160: string = CallDirect v157, v158, v159 function=f1 accessSite=89
+# CHECK-NEXT: v161: 1 = Integer integer=1
+# CHECK-NEXT: v162: 3 = Integer integer=3
+# CHECK-NEXT: v163: int[0, 2147483647] = GetStringLength v160
+# CHECK-NEXT: v164: undefined = StringRange v163, v161, v162
+# CHECK-NEXT: v165: int[0, 2147483647] = ResultAt v164
+# CHECK-NEXT: v166: int[0, 2147483647] = ResultAt v164 index=1
+# CHECK-NEXT: v167: string = Substring v160, v165, v166
+# CHECK-NEXT: v168: "\u{e9}\u{4e2d}\u{1f600}z" = String string="\u{e9}\u{4e2d}\u{1f600}z"
+# CHECK-NEXT: v169: 1 = Integer integer=1
+# CHECK-NEXT: v170: 5 = Integer integer=5
+# CHECK-NEXT: v171: undefined = StringRange v170, v169 method=Substring
+# CHECK-NEXT: v172: int[0, 2147483647] = ResultAt v171
+# CHECK-NEXT: v173: int[0, 2147483647] = ResultAt v171 index=1
+# CHECK-NEXT: v174: string = Substring v168, v172, v173
+# CHECK-NEXT: v175: 0 = Integer
+# CHECK-NEXT: v176: undefined|string = ElemGet v174, v175 accessSite=93 receivers=[] [keyIsIntegral]
+# CHECK-NEXT: v177: undefined = CallBuiltin -, v156, v167, v176 overload=ConsoleLog/0 accessSite=94
+# CHECK-NEXT: v178: 1 = Integer integer=1
+# CHECK-NEXT: v179: string = CallDirect v178 function=f17 accessSite=95
+# CHECK-NEXT: v180: 0 = Integer
+# CHECK-NEXT: v181: string = CallDirect v180 function=f17 accessSite=98
+# CHECK-NEXT: v182: 0 = Integer
+# CHECK-NEXT: v183: undefined|string = ElemGet v181, v182 accessSite=99 receivers=[] [keyIsIntegral]
+# CHECK-NEXT: v184: 2 = Integer integer=2
+# CHECK-NEXT: v185: string = CallDirect v184 function=f17 accessSite=100
+# CHECK-NEXT: v186: 0 = Integer
+# CHECK-NEXT: v187: undefined|string = ElemGet v185, v186 accessSite=101 receivers=[] [keyIsIntegral]
+# CHECK-NEXT: v188: 9 = Integer integer=9
+# CHECK-NEXT: v189: string = CallDirect v188 function=f17 accessSite=102
+# CHECK-NEXT: v190: 0 = Integer
+# CHECK-NEXT: v191: undefined|string = ElemGet v189, v190 accessSite=103 receivers=[] [keyIsIntegral]
+# CHECK-NEXT: v192: 3 = Integer integer=3
+# CHECK-NEXT: v193: string = CallDirect v192 function=f17 accessSite=104
+# CHECK-NEXT: v194: 1 = Integer integer=1
+# CHECK-NEXT: v195: int[0, 2147483647] = GetStringLength v193
+# CHECK-NEXT: v196: undefined = StringRange v195, v194
+# CHECK-NEXT: v197: int[0, 2147483647] = ResultAt v196
+# CHECK-NEXT: v198: int[0, 2147483647] = ResultAt v196 index=1
+# CHECK-NEXT: v199: string = Substring v193, v197, v198
+# CHECK-NEXT: v200: undefined = CallBuiltin -, v183, v187, v191, v199 overload=ConsoleLog/0 accessSite=107
 # CHECK-NEXT: v201: "abcdef" = String string="abcdef"
 # CHECK-NEXT: v202: true = Boolean boolean=true
-# CHECK-NEXT: v203: string = CallDirect v201, v202 function=f18 accessSite=111
-# CHECK-NEXT: v204: 0 = Integer
-# CHECK-NEXT: v205: undefined|string = ElemGet v203, v204 accessSite=112 receivers=[] [keyIsIntegral]
-# CHECK-NEXT: v206: "abcdef" = String string="abcdef"
-# CHECK-NEXT: v207: false = Boolean
-# CHECK-NEXT: v208: string = CallDirect v206, v207 function=f18 accessSite=113
-# CHECK-NEXT: v209: 0 = Integer
-# CHECK-NEXT: v210: undefined|string = ElemGet v208, v209 accessSite=114 receivers=[] [keyIsIntegral]
-# CHECK-NEXT: v211: "abcdef" = String string="abcdef"
-# CHECK-NEXT: v212: false = Boolean
-# CHECK-NEXT: v213: string = CallDirect v211, v212 function=f18 accessSite=115
-# CHECK-NEXT: v214: 1 = Integer integer=1
-# CHECK-NEXT: v215: int[0, 2147483647] = GetStringLength v213
-# CHECK-NEXT: v216: undefined = StringRange v215, v214
-# CHECK-NEXT: v217: int[0, 2147483647] = ResultAt v216
-# CHECK-NEXT: v218: int[0, 2147483647] = ResultAt v216 index=1
-# CHECK-NEXT: v219: string = Substring v213, v217, v218
-# CHECK-NEXT: v220: "abcdef" = String string="abcdef"
-# CHECK-NEXT: v221: true = Boolean boolean=true
-# CHECK-NEXT: v222: string = CallDirect v220, v221 function=f18 accessSite=118
-# CHECK-NEXT: v223: -1 = Integer integer=-1
-# CHECK-NEXT: v224: undefined|string = CallBuiltin v222, v223 overload=StringPrototypeAt/0 accessSite=120
-# CHECK-NEXT: v225: undefined = CallBuiltin -, v205, v210, v219, v224 overload=ConsoleLog/0 accessSite=121
-# CHECK-NEXT: v226: "abcdef" = String string="abcdef"
-# CHECK-NEXT: v227: string = CallDirect v226 function=f19 accessSite=125
-# CHECK-NEXT: v228: 0 = Integer
-# CHECK-NEXT: v229: undefined|string = ElemGet v227, v228 accessSite=126 receivers=[] [keyIsIntegral]
-# CHECK-NEXT: v230: "abcdef" = String string="abcdef"
-# CHECK-NEXT: v231: string = CallDirect v230 function=f19 accessSite=127
-# CHECK-NEXT: v232: 1 = Integer integer=1
-# CHECK-NEXT: v233: int[0, 2147483647] = GetStringLength v231
-# CHECK-NEXT: v234: undefined = StringRange v233, v232
-# CHECK-NEXT: v235: int[0, 2147483647] = ResultAt v234
-# CHECK-NEXT: v236: int[0, 2147483647] = ResultAt v234 index=1
-# CHECK-NEXT: v237: string = Substring v231, v235, v236
-# CHECK-NEXT: v238: "abcdef" = String string="abcdef"
-# CHECK-NEXT: v239: string = CallDirect v238 function=f19 accessSite=130
-# CHECK-NEXT: v240: 3 = Integer integer=3
-# CHECK-NEXT: v241: string = CallBuiltin v239, v240 overload=StringPrototypeCharAt/0 accessSite=132
-# CHECK-NEXT: v242: "ab" = String string="ab"
-# CHECK-NEXT: v243: string = CallDirect v242 function=f19 accessSite=133
-# CHECK-NEXT: v244: 0 = Integer
-# CHECK-NEXT: v245: undefined|string = ElemGet v243, v244 accessSite=134 receivers=[] [keyIsIntegral]
-# CHECK-NEXT: v246: undefined = CallBuiltin -, v229, v237, v241, v245 overload=ConsoleLog/0 accessSite=135
-# CHECK-NEXT: v247: undefined = Undefined
-# CHECK-NEXT: Return v247
+# CHECK-NEXT: v203: string = CallDirect v201, v202 function=f18 accessSite=108
+# CHECK-NEXT: v204: "abcdef" = String string="abcdef"
+# CHECK-NEXT: v205: true = Boolean boolean=true
+# CHECK-NEXT: v206: string = CallDirect v204, v205 function=f18 accessSite=111
+# CHECK-NEXT: v207: 0 = Integer
+# CHECK-NEXT: v208: undefined|string = ElemGet v206, v207 accessSite=112 receivers=[] [keyIsIntegral]
+# CHECK-NEXT: v209: "abcdef" = String string="abcdef"
+# CHECK-NEXT: v210: false = Boolean
+# CHECK-NEXT: v211: string = CallDirect v209, v210 function=f18 accessSite=113
+# CHECK-NEXT: v212: 0 = Integer
+# CHECK-NEXT: v213: undefined|string = ElemGet v211, v212 accessSite=114 receivers=[] [keyIsIntegral]
+# CHECK-NEXT: v214: "abcdef" = String string="abcdef"
+# CHECK-NEXT: v215: false = Boolean
+# CHECK-NEXT: v216: string = CallDirect v214, v215 function=f18 accessSite=115
+# CHECK-NEXT: v217: 1 = Integer integer=1
+# CHECK-NEXT: v218: int[0, 2147483647] = GetStringLength v216
+# CHECK-NEXT: v219: undefined = StringRange v218, v217
+# CHECK-NEXT: v220: int[0, 2147483647] = ResultAt v219
+# CHECK-NEXT: v221: int[0, 2147483647] = ResultAt v219 index=1
+# CHECK-NEXT: v222: string = Substring v216, v220, v221
+# CHECK-NEXT: v223: "abcdef" = String string="abcdef"
+# CHECK-NEXT: v224: true = Boolean boolean=true
+# CHECK-NEXT: v225: string = CallDirect v223, v224 function=f18 accessSite=118
+# CHECK-NEXT: v226: -1 = Integer integer=-1
+# CHECK-NEXT: v227: undefined|string = CallBuiltin v225, v226 overload=StringPrototypeAt/0 accessSite=120
+# CHECK-NEXT: v228: undefined = CallBuiltin -, v208, v213, v222, v227 overload=ConsoleLog/0 accessSite=121
+# CHECK-NEXT: v229: "abcdef" = String string="abcdef"
+# CHECK-NEXT: v230: string = CallDirect v229 function=f19 accessSite=125
+# CHECK-NEXT: v231: 0 = Integer
+# CHECK-NEXT: v232: undefined|string = ElemGet v230, v231 accessSite=126 receivers=[] [keyIsIntegral]
+# CHECK-NEXT: v233: "abcdef" = String string="abcdef"
+# CHECK-NEXT: v234: string = CallDirect v233 function=f19 accessSite=127
+# CHECK-NEXT: v235: 1 = Integer integer=1
+# CHECK-NEXT: v236: int[0, 2147483647] = GetStringLength v234
+# CHECK-NEXT: v237: undefined = StringRange v236, v235
+# CHECK-NEXT: v238: int[0, 2147483647] = ResultAt v237
+# CHECK-NEXT: v239: int[0, 2147483647] = ResultAt v237 index=1
+# CHECK-NEXT: v240: string = Substring v234, v238, v239
+# CHECK-NEXT: v241: "abcdef" = String string="abcdef"
+# CHECK-NEXT: v242: string = CallDirect v241 function=f19 accessSite=130
+# CHECK-NEXT: v243: 3 = Integer integer=3
+# CHECK-NEXT: v244: string = CallBuiltin v242, v243 overload=StringPrototypeCharAt/0 accessSite=132
+# CHECK-NEXT: v245: "ab" = String string="ab"
+# CHECK-NEXT: v246: string = CallDirect v245 function=f19 accessSite=133
+# CHECK-NEXT: v247: 0 = Integer
+# CHECK-NEXT: v248: undefined|string = ElemGet v246, v247 accessSite=134 receivers=[] [keyIsIntegral]
+# CHECK-NEXT: v249: undefined = CallBuiltin -, v232, v240, v244, v248 overload=ConsoleLog/0 accessSite=135
+# CHECK-NEXT: v250: undefined = Undefined
+# CHECK-NEXT: Return v250
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="cutGiven"
 # CHECK: module=m0 position=253 role=ResultWrapper flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=string}, {type=int[1, 9]}, {type=int[1, 2]}] results=[{type=string}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f15} inlineFrames=[{}, {callee=f15 callPosition=253 module=m0}] {

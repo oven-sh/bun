@@ -253,26 +253,25 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: b3() handler=b4():
 # CHECK-NEXT: v7: builtin(GlobalThis) = Builtin builtin=GlobalThis
 # CHECK-NEXT: v8: anything = PropGet v7 key="missing" accessSite=2 [isFreeName]
-# CHECK-NEXT: v9: undefined = CallDirect function=f9 accessSite=3
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b4() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v10: 1 = Integer integer=1
-# CHECK-NEXT: v11: undefined|int[5, 7] = GetArrayElement v1, v10 arrayStorage=Int32 level=Proven accessSite=6 [keyIsIntegral]
-# CHECK-NEXT: v12: undefined|int[5, 7] ~ int[5, 7] = Expect v11 expectedType=number
-# CHECK-NEXT: v13: 1 = Integer integer=1
-# CHECK-NEXT: v14: number ~ int[4, 6] = Sub v12, v13
-# CHECK-NEXT: v15: 0 = Integer
-# CHECK-NEXT: v16: undefined|int[5, 7] = GetArrayElement v1, v15 arrayStorage=Int32 level=Proven accessSite=7 [keyIsIntegral]
-# CHECK-NEXT: v17: undefined|int[5, 7] ~ int[5, 7] = Expect v16 expectedType=number
-# CHECK-NEXT: v18: 1 = Integer integer=1
-# CHECK-NEXT: v19: undefined|int[5, 7] = GetArrayElement v1, v18 arrayStorage=Int32 level=Proven accessSite=8 [keyIsIntegral]
-# CHECK-NEXT: v20: undefined|int[5, 7] ~ int[5, 7] = Expect v19 expectedType=number
-# CHECK-NEXT: v21: number ~ int[10, 14] = Add v17, v20
-# CHECK-NEXT: v22: undefined = CallBuiltin -, v14, v21, v1 overload=ConsoleLog/1 accessSite=9
-# CHECK-NEXT: v23: undefined = Undefined
-# CHECK-NEXT: Return v23
+# CHECK-NEXT: v9: 1 = Integer integer=1
+# CHECK-NEXT: v10: undefined|int[5, 7] = GetArrayElement v1, v9 arrayStorage=Int32 level=Proven accessSite=6 [keyIsIntegral]
+# CHECK-NEXT: v11: undefined|int[5, 7] ~ int[5, 7] = Expect v10 expectedType=number
+# CHECK-NEXT: v12: 1 = Integer integer=1
+# CHECK-NEXT: v13: number ~ int[4, 6] = Sub v11, v12
+# CHECK-NEXT: v14: 0 = Integer
+# CHECK-NEXT: v15: undefined|int[5, 7] = GetArrayElement v1, v14 arrayStorage=Int32 level=Proven accessSite=7 [keyIsIntegral]
+# CHECK-NEXT: v16: undefined|int[5, 7] ~ int[5, 7] = Expect v15 expectedType=number
+# CHECK-NEXT: v17: 1 = Integer integer=1
+# CHECK-NEXT: v18: undefined|int[5, 7] = GetArrayElement v1, v17 arrayStorage=Int32 level=Proven accessSite=8 [keyIsIntegral]
+# CHECK-NEXT: v19: undefined|int[5, 7] ~ int[5, 7] = Expect v18 expectedType=number
+# CHECK-NEXT: v20: number ~ int[10, 14] = Add v16, v19
+# CHECK-NEXT: v21: undefined = CallBuiltin -, v13, v20, v1 overload=ConsoleLog/1 accessSite=9
+# CHECK-NEXT: v22: undefined = Undefined
+# CHECK-NEXT: Return v22
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="scene"
 # CHECK: module=m0 position=186 role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|Array<number>> site=w1 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f5 fallback=f6} {

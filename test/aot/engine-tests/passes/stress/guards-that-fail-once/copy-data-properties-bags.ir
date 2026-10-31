@@ -202,57 +202,57 @@ function f2 name="bagOf" module=m0 position=236 flags=[IsChecked, HasExplicitNam
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=628 module=m0}, {callee=f2 callPosition=634 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: anything = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
-# CHECK-NEXT: v1: anything ~ builtin(ProcessArgv) = Upcast v0 castType=anything
+# CHECK-NEXT: v0: Array<string> = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
+# CHECK-NEXT: v1: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v2: 2 = Integer integer=2
-# CHECK-NEXT: v3: anything = ElemGet v1, v2 accessSite=1 [keyIsIntegral]
-# CHECK-NEXT: v4: anything ~ undefined|null|string = Expect v3 expectedType=undefined|null|string
-# CHECK-NEXT: v5: boolean = TypeTest v4 testedType=undefined|null
-# CHECK-NEXT: Branch v5 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: v3: undefined|string = ElemGet v1, v2 accessSite=1 [keyIsIntegral]
+# CHECK-NEXT: v4: boolean = TypeTest v3 testedType=undefined|null
+# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2(| 0)
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v6: 40 = Integer integer=40
+# CHECK-NEXT: v5: 40 = Integer integer=40
+# CHECK-NEXT: Jump -> next b3(v5)
+# CHECK-NEXT: b2(v6: string):
 # CHECK-NEXT: Jump -> next b3(v6)
-# CHECK-NEXT: b2(v7: boolean|number|string|symbol|bigint|object ~ string):
-# CHECK-NEXT: Jump -> next b3(v7)
-# CHECK-NEXT: b3(v8: boolean|number|string|symbol|bigint|object ~ 40|string):
-# CHECK-NEXT: v9: number = CallBuiltin -, v8 overload=Number/0 builtinCallForm=AnyReceiver accessSite=2
-# CHECK-NEXT: v10: anything = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
-# CHECK-NEXT: v11: anything ~ builtin(ProcessArgv) = Upcast v10 castType=anything
-# CHECK-NEXT: v12: 3 = Integer integer=3
-# CHECK-NEXT: v13: anything = ElemGet v11, v12 accessSite=4 [keyIsIntegral]
-# CHECK-NEXT: v14: anything ~ undefined|null|string = Expect v13 expectedType=undefined|null|string
-# CHECK-NEXT: v15: boolean = TypeTest v14 testedType=undefined|null
-# CHECK-NEXT: Branch v15 -> taken b4(), notTaken b5(| 0)
+# CHECK-NEXT: b3(v7: 40|string):
+# CHECK-NEXT: v8: number = CallBuiltin -, v7 overload=Number/0 accessSite=2
+# CHECK-NEXT: v9: Array<string> = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
+# CHECK-NEXT: v10: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v9 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v11: 3 = Integer integer=3
+# CHECK-NEXT: v12: undefined|string = ElemGet v10, v11 accessSite=4 [keyIsIntegral]
+# CHECK-NEXT: v13: boolean = TypeTest v12 testedType=undefined|null
+# CHECK-NEXT: Branch v13 -> taken b4(), notTaken b5(| 0)
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v16: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next b6(v16)
-# CHECK-NEXT: b5(v17: boolean|number|string|symbol|bigint|object ~ string):
-# CHECK-NEXT: Jump -> next b6(v17)
-# CHECK-NEXT: b6(v18: boolean|number|string|symbol|bigint|object ~ 1|string):
-# CHECK-NEXT: v19: number = CallBuiltin -, v18 overload=Number/0 builtinCallForm=AnyReceiver accessSite=5
-# CHECK-NEXT: v20: 0 = Integer
-# CHECK-NEXT: v21: 0 = Integer
-# CHECK-NEXT: Jump -> next b7(v20, v21)
-# CHECK-NEXT: b7(v22: int|whole, v23: int|whole):
+# CHECK-NEXT: v14: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b6(v14)
+# CHECK-NEXT: b5(v15: string):
+# CHECK-NEXT: Jump -> next b6(v15)
+# CHECK-NEXT: b6(v16: 1|string):
+# CHECK-NEXT: v17: number = CallBuiltin -, v16 overload=Number/0 accessSite=5
+# CHECK-NEXT: v18: 0 = Integer
+# CHECK-NEXT: v19: 0 = Integer
+# CHECK-NEXT: Jump -> next b7(v18, v19)
+# CHECK-NEXT: b7(v20: int|whole, v21: int|whole):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v25: boolean = Less v23, v19
-# CHECK-NEXT: Branch v25 -> taken b8(), notTaken b86()
+# CHECK-NEXT: v23: boolean = Less v21, v17
+# CHECK-NEXT: Branch v23 -> taken b8(), notTaken b89()
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v26: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next b9(v22, v26)
-# CHECK-NEXT: b9(v27: int|whole, v28: int[-2147483643, 2147483647] ~ 1):
-# CHECK-NEXT: Jump -> next b10(v27, v28)
-# CHECK-NEXT: b10(v29: int|whole, v30: int[-2147483643, 2147483647] ~ int[1, 2147483647]):
+# CHECK-NEXT: v24: 1 = Integer integer=1
+# CHECK-NEXT: v25: boolean = TypeTest v8 testedType=i32
+# CHECK-NEXT: Branch v25 -> taken b9(| 0), notTaken b37()
+# CHECK-NEXT: b9(v26: i32):
+# CHECK-NEXT: Jump -> next b10(v20, v24)
+# CHECK-NEXT: b10(v27: int|whole, v28: int[1, 2147483648]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v32: boolean = LessEq v30, v9
-# CHECK-NEXT: Branch v32 -> taken b11(), notTaken b85(v29)
-# CHECK-NEXT: b11():
-# CHECK-NEXT: v33: 0 = Integer
-# CHECK-NEXT: v34: L0 = NewObject -, v30 layout=L0 fields=[0] allocationSite=3 allocationClass=0
+# CHECK-NEXT: v30: boolean = LessEq v28, v26
+# CHECK-NEXT: Branch v30 -> taken b11(| 0), notTaken b88(v27)
+# CHECK-NEXT: b11(v31: int[1, 2147483647]):
+# CHECK-NEXT: v32: 0 = Integer
+# CHECK-NEXT: v33: 0 = Upcast v32 castType=int[0, 2147483647]
+# CHECK-NEXT: v34: L0 = NewObject -, v31 layout=L0 fields=[0] allocationSite=3 allocationClass=0
 # CHECK-NEXT: Jump -> next b12(v33)
 # CHECK-NEXT: b12(v35: int[0, 2147483647]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v37: boolean = Less v35, v30
+# CHECK-NEXT: v37: boolean = Less v35, v31
 # CHECK-NEXT: Branch v37 -> taken b13(| 0), notTaken b14()
 # CHECK-NEXT: b13(v38: int[0, 2147483646]):
 # CHECK-NEXT: v39: "name" = String string="name"
@@ -262,9 +262,9 @@ function f2 name="bagOf" module=m0 position=236 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: Jump -> next b12(v42)
 # CHECK-NEXT: b14():
 # CHECK-NEXT: v43: "{\"x\":" = String string="{\"x\":"
-# CHECK-NEXT: v44: string = ToString v30
+# CHECK-NEXT: v44: string = ToString v31
 # CHECK-NEXT: v45: ",\"y\":" = String string=",\"y\":"
-# CHECK-NEXT: v46: string = ToString v23
+# CHECK-NEXT: v46: string = ToString v21
 # CHECK-NEXT: v47: "}" = String string="}"
 # CHECK-NEXT: v48: string = Strcat v43, v44, v45, v46, v47
 # CHECK-NEXT: v49: undefined = Undefined
@@ -276,258 +276,263 @@ function f2 name="bagOf" module=m0 position=236 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: v53: boolean = HasNoExtraProperties v34
 # CHECK-NEXT: Branch v53 -> taken b16(), notTaken b17()
 # CHECK-NEXT: b16():
-# CHECK-NEXT: Jump -> next b22()
+# CHECK-NEXT: Jump -> next b25()
 # CHECK-NEXT: b17():
 # CHECK-NEXT: Jump -> next b19()
 # CHECK-NEXT: b18():
 # CHECK-NEXT: Jump -> next b19()
 # CHECK-NEXT: b19():
 # CHECK-NEXT: v54: boolean = HasKeyOrder v34 layout=L0 fields=[0]
-# CHECK-NEXT: Branch v54 -> taken b20(| 0), notTaken b33(v50, v29, v30, v51, v34)
+# CHECK-NEXT: Branch v54 -> taken b20(| 0), notTaken b23()
 # CHECK-NEXT: b20(v55: guard):
 # CHECK-NEXT: v56: boolean = HasNoExtraProperties v34
-# CHECK-NEXT: Branch v56 -> taken b21(| 0), notTaken b80(v50, v29, v30, v51, v34)
+# CHECK-NEXT: Branch v56 -> taken b21(| 0), notTaken b22()
 # CHECK-NEXT: b21(v57: guard):
 # CHECK-NEXT: v58: guard = AllGuards v55, v57
 # CHECK-NEXT: v59: undefined|null|int[-2147483643, 2147483647] ~ undefined|int[-2147483643, 2147483647] = GetSlot v34, v58 key="a" receivers=[L0] level=Expected
 # CHECK-NEXT: PutSlotOrAdd v51, v51, v59 key="a" receivers=[L0] level=Expected
-# CHECK-NEXT: Jump -> next b22()
-# CHECK-NEXT: b22():
-# CHECK-NEXT: v61: null|boolean|number|string|object ~ null|object = Upcast v50 castType=anything
-# CHECK-NEXT: CopyDataProperties v51, v61
-# CHECK-NEXT: v63: L0 = FinishObject v51
-# CHECK-NEXT: v64: boolean = HasKeyOrder v63 layout=L0
-# CHECK-NEXT: Branch v64 -> taken b23(), notTaken b26()
-# CHECK-NEXT: b23():
-# CHECK-NEXT: v65: boolean = HasNoExtraProperties v63
-# CHECK-NEXT: Branch v65 -> taken b24(), notTaken b25()
-# CHECK-NEXT: b24():
-# CHECK-NEXT: v66: 0 = Integer
-# CHECK-NEXT: Jump -> next b30(v66)
+# CHECK-NEXT: Jump -> next b25()
+# CHECK-NEXT: b22() frequency=Rare:
+# CHECK-NEXT: Jump -> next b24()
+# CHECK-NEXT: b23() frequency=Rare:
+# CHECK-NEXT: Jump -> next b24()
+# CHECK-NEXT: b24() frequency=Rare:
+# CHECK-NEXT: CopyDataProperties v51, v34
+# CHECK-NEXT: Jump -> next b25()
 # CHECK-NEXT: b25():
-# CHECK-NEXT: Jump -> next b27()
+# CHECK-NEXT: v62: null|boolean|number|string|object ~ null|object = Upcast v50 castType=anything
+# CHECK-NEXT: CopyDataProperties v51, v62
+# CHECK-NEXT: v64: L0 = FinishObject v51
+# CHECK-NEXT: v65: boolean = HasKeyOrder v64 layout=L0
+# CHECK-NEXT: Branch v65 -> taken b26(), notTaken b29()
 # CHECK-NEXT: b26():
-# CHECK-NEXT: Jump -> next b27()
+# CHECK-NEXT: v66: boolean = HasNoExtraProperties v64
+# CHECK-NEXT: Branch v66 -> taken b27(), notTaken b28()
 # CHECK-NEXT: b27():
-# CHECK-NEXT: v67: boolean = HasKeyOrder v63 layout=L0 fields=[0]
-# CHECK-NEXT: Branch v67 -> taken b28(), notTaken b45(v29, v30, v63)
+# CHECK-NEXT: v67: Array<string> = NewArray contents=string storage=Frame
+# CHECK-NEXT: Jump -> next b36(v67)
 # CHECK-NEXT: b28():
-# CHECK-NEXT: v68: boolean = HasNoExtraProperties v63
-# CHECK-NEXT: Branch v68 -> taken b29(), notTaken b44(v29, v30, v63)
+# CHECK-NEXT: Jump -> next b30()
 # CHECK-NEXT: b29():
-# CHECK-NEXT: v69: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next b30(v69)
-# CHECK-NEXT: b30(v70: int[0, 1]):
-# CHECK-NEXT: v71: int[0, 1] = Upcast v70 castType=int[0, 4294967295]
-# CHECK-NEXT: v72: int|whole = Add v29, v71
-# CHECK-NEXT: v73: int[-2147483642, 2147483648] ~ int[2, 2147483648] = Increment v30
-# CHECK-NEXT: v74: boolean = TypeTest v73 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v74 -> taken b31(| 0), notTaken b32()
-# CHECK-NEXT: b31(v75: int[-2147483642, 2147483647] ~ int[2, 2147483647]):
-# CHECK-NEXT: Jump -> next b10(v72, v75)
-# CHECK-NEXT: b32() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b50(v72, v73)
-# CHECK-NEXT: b33(v76: null|boolean|number|string|object, v77: int|whole, v78: int|whole ~ int[1, 2147483647], v79: L0, v80: L0) frequency=Rare:
-# CHECK-NEXT: Jump -> next b34(v76, v77, v78, v79, v80)
-# CHECK-NEXT: b34(v81: null|boolean|number|string|object, v82: int|whole, v83: int|whole ~ int[1, 2147483647], v84: L0, v85: L0) frequency=Rare:
-# CHECK-NEXT: CopyDataProperties v84, v85
-# CHECK-NEXT: Jump -> next b35(v81, v82, v83, v84)
-# CHECK-NEXT: b35(v87: null|boolean|number|string|object, v88: int|whole, v89: int|whole, v90: L0) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b36(v87, v88, v89, v90)
-# CHECK-NEXT: b36(v91: null|boolean|number|string|object, v92: int|whole, v93: int|whole, v94: L0) frequency=Unlikely:
-# CHECK-NEXT: v95: null|boolean|number|string|object ~ null|object = Upcast v91 castType=anything
-# CHECK-NEXT: CopyDataProperties v94, v95
-# CHECK-NEXT: v97: L0 = FinishObject v94
-# CHECK-NEXT: v98: boolean = HasKeyOrder v97 layout=L0
-# CHECK-NEXT: Branch v98 -> taken b37(), notTaken b40()
-# CHECK-NEXT: b37() frequency=Unlikely:
-# CHECK-NEXT: v99: boolean = HasNoExtraProperties v97
-# CHECK-NEXT: Branch v99 -> taken b38(), notTaken b39()
-# CHECK-NEXT: b38() frequency=Unlikely:
-# CHECK-NEXT: v100: Array<string> = NewArray contents=string storage=Frame
-# CHECK-NEXT: Jump -> next b47(v100, v92, v93)
-# CHECK-NEXT: b39() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b41()
-# CHECK-NEXT: b40() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b41()
-# CHECK-NEXT: b41() frequency=Unlikely:
-# CHECK-NEXT: v101: boolean = HasKeyOrder v97 layout=L0 fields=[0]
-# CHECK-NEXT: Branch v101 -> taken b42(), notTaken b45(v92, v93, v97)
-# CHECK-NEXT: b42() frequency=Unlikely:
-# CHECK-NEXT: v102: boolean = HasNoExtraProperties v97
-# CHECK-NEXT: Branch v102 -> taken b43(), notTaken b44(v92, v93, v97)
-# CHECK-NEXT: b43() frequency=Unlikely:
-# CHECK-NEXT: v103: "a" = String string="a"
-# CHECK-NEXT: v104: Array<string, Contiguous> = NewArray v103 contents=string storage=Frame arrayStorage=Contiguous
-# CHECK-NEXT: Jump -> next b47(v104, v92, v93)
-# CHECK-NEXT: b44(v105: int|whole, v106: int|whole ~ int[1, 2147483647], v107: L0) frequency=Rare:
-# CHECK-NEXT: Jump -> next b46(v105, v106, v107)
-# CHECK-NEXT: b45(v108: int|whole, v109: int|whole ~ int[1, 2147483647], v110: L0) frequency=Rare:
-# CHECK-NEXT: Jump -> next b46(v108, v109, v110)
-# CHECK-NEXT: b46(v111: int|whole, v112: int|whole ~ int[1, 2147483647], v113: L0) frequency=Rare:
-# CHECK-NEXT: v114: Array<string> = CallBuiltin -, v113 overload=ObjectKeys/0 accessSite=10
-# CHECK-NEXT: Jump -> next b47(v114, v111, v112)
-# CHECK-NEXT: b47(v115: Array<string>, v116: int|whole, v117: int|whole) frequency=Unlikely:
-# CHECK-NEXT: v118: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v115 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v119: int[0, 4294967295] = CallBuiltin v118 overload=ArrayPrototypeLength/0 accessSite=11
-# CHECK-NEXT: v120: int|whole = Add v116, v119
-# CHECK-NEXT: v121: int|whole = Increment v117
-# CHECK-NEXT: v122: boolean = TypeTest v121 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v122 -> taken b48(| 0), notTaken b49()
-# CHECK-NEXT: b48(v123: int[-2147483643, 2147483647]) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b9(v120, v123)
-# CHECK-NEXT: b49() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b50(v120, v121)
-# CHECK-NEXT: b50(v124: int|whole, v125: int|whole) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b30()
+# CHECK-NEXT: b30():
+# CHECK-NEXT: v68: boolean = HasKeyOrder v64 layout=L0 fields=[0]
+# CHECK-NEXT: Branch v68 -> taken b31(), notTaken b34()
+# CHECK-NEXT: b31():
+# CHECK-NEXT: v69: boolean = HasNoExtraProperties v64
+# CHECK-NEXT: Branch v69 -> taken b32(), notTaken b33()
+# CHECK-NEXT: b32():
+# CHECK-NEXT: v70: "a" = String string="a"
+# CHECK-NEXT: v71: Array<string, Contiguous> = NewArray v70 contents=string storage=Frame arrayStorage=Contiguous
+# CHECK-NEXT: Jump -> next b36(v71)
+# CHECK-NEXT: b33() frequency=Rare:
+# CHECK-NEXT: Jump -> next b35()
+# CHECK-NEXT: b34() frequency=Rare:
+# CHECK-NEXT: Jump -> next b35()
+# CHECK-NEXT: b35() frequency=Rare:
+# CHECK-NEXT: v72: Array<string> = CallBuiltin -, v64 overload=ObjectKeys/0 accessSite=10
+# CHECK-NEXT: Jump -> next b36(v72)
+# CHECK-NEXT: b36(v73: Array<string>):
+# CHECK-NEXT: v74: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v73 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v75: int[0, 4294967295] = CallBuiltin v74 overload=ArrayPrototypeLength/0 accessSite=11
+# CHECK-NEXT: v76: int|whole = Add v27, v75
+# CHECK-NEXT: v77: int[2, 2147483648] = Increment v31
+# CHECK-NEXT: Jump -> next b10(v76, v77)
+# CHECK-NEXT: b37() frequency=Rare:
+# CHECK-NEXT: Jump -> next b38(v20, v24)
+# CHECK-NEXT: b38(v78: int|whole, v79: int|whole) frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v127: boolean = LessEq v125, v9
-# CHECK-NEXT: Branch v127 -> taken b51(), notTaken b85(v124)
-# CHECK-NEXT: b51() frequency=Unlikely:
-# CHECK-NEXT: v128: 0 = Integer
-# CHECK-NEXT: v129: L0 = NewObject -, v128 layout=L0 fields=[0] allocationSite=3 allocationClass=0
-# CHECK-NEXT: v130: boolean = TypeTest v125 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v130 -> taken b52(| 0), notTaken b53()
-# CHECK-NEXT: b52(v131: int[-2147483643, 2147483647]) frequency=Unlikely:
-# CHECK-NEXT: PutSlot v129, v129, v131 key="a" receivers=[L0] level=Expected accessSite=16
-# CHECK-NEXT: v133: 0 = Integer
-# CHECK-NEXT: Jump -> next b56(v133)
+# CHECK-NEXT: v81: boolean = LessEq v79, v8
+# CHECK-NEXT: Branch v81 -> taken b39(), notTaken b88(v78)
+# CHECK-NEXT: b39() frequency=Rare:
+# CHECK-NEXT: v82: 0 = Integer
+# CHECK-NEXT: v83: L0 = NewObject -, v82 layout=L0 fields=[0] allocationSite=3 allocationClass=0
+# CHECK-NEXT: v84: boolean = TypeTest v79 testedType=int[-2147483643, 2147483647]
+# CHECK-NEXT: Branch v84 -> taken b40(| 0), notTaken b41()
+# CHECK-NEXT: b40(v85: int[-2147483643, 2147483647]) frequency=Rare:
+# CHECK-NEXT: PutSlot v83, v83, v85 key="a" receivers=[L0] level=Expected accessSite=16
+# CHECK-NEXT: v87: 0 = Integer
+# CHECK-NEXT: Jump -> next b44(v87)
+# CHECK-NEXT: b41() frequency=Rare:
+# CHECK-NEXT: PropSet v83, v79 key="a" accessSite=16 receivers=[L0]
+# CHECK-NEXT: v89: 0 = Integer
+# CHECK-NEXT: Jump -> next b42(v89)
+# CHECK-NEXT: b42(v90: int|whole ~ int[0, 1]) frequency=Rare:
+# CHECK-NEXT: v91: boolean ~ true = TypeTest v90 testedType=int[0, 2147483647]
+# CHECK-NEXT: Branch v91 -> taken b43(| 0), notTaken b72(| 0)
+# CHECK-NEXT: b43(v92: int[0, 2147483647] ~ int[0, 1]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b44(v92)
+# CHECK-NEXT: b44(v93: int[0, 2147483647] ~ 0) frequency=Rare:
+# CHECK-NEXT: v94: boolean = TypeTest v79 testedType=i32
+# CHECK-NEXT: Branch v94 -> taken b45(| 0), notTaken b56()
+# CHECK-NEXT: b45(v95: i32) frequency=Rare:
+# CHECK-NEXT: Jump -> next b46(v93)
+# CHECK-NEXT: b46(v96: int[0, 2147483647]) frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v98: boolean = Less v96, v95
+# CHECK-NEXT: Branch v98 -> taken b47(| 0), notTaken b48()
+# CHECK-NEXT: b47(v99: int[0, 2147483646]) frequency=Rare:
+# CHECK-NEXT: v100: "name" = String string="name"
+# CHECK-NEXT: v101: string = Strcat v100, v99 [isLikelyKey]
+# CHECK-NEXT: ElemSet v83, v101, v99 accessSite=15 receivers=[L0]
+# CHECK-NEXT: v103: int[1, 2147483647] = Increment v99
+# CHECK-NEXT: Jump -> next b46(v103)
+# CHECK-NEXT: b48() frequency=Rare:
+# CHECK-NEXT: v104: "{\"x\":" = String string="{\"x\":"
+# CHECK-NEXT: v105: string = ToString v95
+# CHECK-NEXT: v106: ",\"y\":" = String string=",\"y\":"
+# CHECK-NEXT: v107: string = ToString v21
+# CHECK-NEXT: v108: "}" = String string="}"
+# CHECK-NEXT: v109: string = Strcat v104, v105, v106, v107, v108
+# CHECK-NEXT: v110: undefined = Undefined
+# CHECK-NEXT: v111: null|boolean|number|string|object = CallBuiltin -, v109, v110 overload=JSONParse/0 accessSite=8
+# CHECK-NEXT: v112: L0 = NewObject layout=L0 allocationSite=2 allocationClass=0
+# CHECK-NEXT: v113: boolean = HasKeyOrder v83 layout=L0
+# CHECK-NEXT: Branch v113 -> taken b49(), notTaken b52()
+# CHECK-NEXT: b49() frequency=Rare:
+# CHECK-NEXT: v114: boolean = HasNoExtraProperties v83
+# CHECK-NEXT: Branch v114 -> taken b50(), notTaken b51()
+# CHECK-NEXT: b50() frequency=Rare:
+# CHECK-NEXT: Jump -> next b71(v111, v112)
+# CHECK-NEXT: b51() frequency=Rare:
+# CHECK-NEXT: Jump -> next b53()
+# CHECK-NEXT: b52() frequency=Rare:
+# CHECK-NEXT: Jump -> next b53()
 # CHECK-NEXT: b53() frequency=Rare:
-# CHECK-NEXT: v134: int|whole ~ int[1, 2147483647] = Upcast v125 castType=int|whole
-# CHECK-NEXT: PropSet v129, v134 key="a" accessSite=16 receivers=[L0]
-# CHECK-NEXT: v136: 0 = Integer
-# CHECK-NEXT: Jump -> next b54(v136)
-# CHECK-NEXT: b54(v137: int|whole ~ int[0, 1]) frequency=Rare:
-# CHECK-NEXT: v138: int|whole ~ int[1, 2147483647] = Upcast v125 castType=int|whole
-# CHECK-NEXT: v139: boolean ~ true = TypeTest v137 testedType=int[0, 2147483647]
-# CHECK-NEXT: Branch v139 -> taken b55(| 0), notTaken b81(| 0)
-# CHECK-NEXT: b55(v140: int[0, 2147483647] ~ int[0, 1]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b56(v140)
-# CHECK-NEXT: b56(v141: int[0, 2147483647] ~ 0) frequency=Unlikely:
-# CHECK-NEXT: v142: boolean = TypeTest v125 testedType=i32
-# CHECK-NEXT: Branch v142 -> taken b57(| 0), notTaken b68()
-# CHECK-NEXT: b57(v143: i32) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b58(v141)
-# CHECK-NEXT: b58(v144: int[0, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: v115: boolean = HasKeyOrder v83 layout=L0 fields=[0]
+# CHECK-NEXT: Branch v115 -> taken b54(| 0), notTaken b69(v111, v112)
+# CHECK-NEXT: b54(v116: guard) frequency=Rare:
+# CHECK-NEXT: v117: boolean = HasNoExtraProperties v83
+# CHECK-NEXT: Branch v117 -> taken b55(| 0), notTaken b68(v111, v112)
+# CHECK-NEXT: b55(v118: guard) frequency=Rare:
+# CHECK-NEXT: v119: guard = AllGuards v116, v118
+# CHECK-NEXT: v120: undefined|null|int[-2147483643, 2147483647] ~ undefined|int[-2147483643, 2147483647] = GetSlot v83, v119 key="a" receivers=[L0] level=Expected
+# CHECK-NEXT: PutSlotOrAdd v112, v112, v120 key="a" receivers=[L0] level=Expected
+# CHECK-NEXT: Jump -> next b71(v111, v112)
+# CHECK-NEXT: b56() frequency=Rare:
+# CHECK-NEXT: Jump -> next b57(v93)
+# CHECK-NEXT: b57(v122: int[0, 2147483648] ~ 0) frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v146: boolean = Less v144, v143
-# CHECK-NEXT: Branch v146 -> taken b59(| 0), notTaken b60()
-# CHECK-NEXT: b59(v147: int[0, 2147483646]) frequency=Unlikely:
-# CHECK-NEXT: v148: "name" = String string="name"
-# CHECK-NEXT: v149: string = Strcat v148, v147 [isLikelyKey]
-# CHECK-NEXT: ElemSet v129, v149, v147 accessSite=15 receivers=[L0]
-# CHECK-NEXT: v151: int[1, 2147483647] = Increment v147
-# CHECK-NEXT: Jump -> next b58(v151)
-# CHECK-NEXT: b60() frequency=Unlikely:
-# CHECK-NEXT: v152: "{\"x\":" = String string="{\"x\":"
-# CHECK-NEXT: v153: string = ToString v143
-# CHECK-NEXT: v154: ",\"y\":" = String string=",\"y\":"
-# CHECK-NEXT: v155: string = ToString v23
-# CHECK-NEXT: v156: "}" = String string="}"
-# CHECK-NEXT: v157: string = Strcat v152, v153, v154, v155, v156
-# CHECK-NEXT: v158: undefined = Undefined
-# CHECK-NEXT: v159: null|boolean|number|string|object = CallBuiltin -, v157, v158 overload=JSONParse/0 accessSite=8
-# CHECK-NEXT: v160: L0 = NewObject layout=L0 allocationSite=2 allocationClass=0
-# CHECK-NEXT: v161: boolean = HasKeyOrder v129 layout=L0
-# CHECK-NEXT: Branch v161 -> taken b61(), notTaken b64()
-# CHECK-NEXT: b61() frequency=Unlikely:
-# CHECK-NEXT: v162: boolean = HasNoExtraProperties v129
-# CHECK-NEXT: Branch v162 -> taken b62(), notTaken b63()
-# CHECK-NEXT: b62() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b35(v159, v124, v125, v160)
-# CHECK-NEXT: b63() frequency=Unlikely:
+# CHECK-NEXT: v124: boolean = Less v122, v79
+# CHECK-NEXT: Branch v124 -> taken b58(), notTaken b60()
+# CHECK-NEXT: b58() frequency=Rare:
+# CHECK-NEXT: v125: "name" = String string="name"
+# CHECK-NEXT: v126: string = Strcat v125, v122 [isLikelyKey]
+# CHECK-NEXT: ElemSet v83, v126, v122 accessSite=15 receivers=[L0]
+# CHECK-NEXT: v128: boolean ~ true = TypeTest v122 testedType=i32
+# CHECK-NEXT: Branch v128 -> taken b59(| 0), notTaken b74(v122)
+# CHECK-NEXT: b59(v129: int[0, 2147483647] ~ 0) frequency=Rare:
+# CHECK-NEXT: v130: int[1, 2147483648] ~ 1 = Increment v129
+# CHECK-NEXT: Jump -> next b57(v130)
+# CHECK-NEXT: b60() frequency=Rare:
+# CHECK-NEXT: v131: "{\"x\":" = String string="{\"x\":"
+# CHECK-NEXT: v132: string = ToString v79
+# CHECK-NEXT: v133: ",\"y\":" = String string=",\"y\":"
+# CHECK-NEXT: v134: string = ToString v21
+# CHECK-NEXT: v135: "}" = String string="}"
+# CHECK-NEXT: v136: string = Strcat v131, v132, v133, v134, v135
+# CHECK-NEXT: v137: undefined = Undefined
+# CHECK-NEXT: v138: null|boolean|number|string|object = CallBuiltin -, v136, v137 overload=JSONParse/0 accessSite=8
+# CHECK-NEXT: v139: L0 = NewObject layout=L0 allocationSite=2 allocationClass=0
+# CHECK-NEXT: v140: boolean = HasKeyOrder v83 layout=L0
+# CHECK-NEXT: Branch v140 -> taken b61(), notTaken b64()
+# CHECK-NEXT: b61() frequency=Rare:
+# CHECK-NEXT: v141: boolean = HasNoExtraProperties v83
+# CHECK-NEXT: Branch v141 -> taken b62(), notTaken b63()
+# CHECK-NEXT: b62() frequency=Rare:
+# CHECK-NEXT: Jump -> next b71(v138, v139)
+# CHECK-NEXT: b63() frequency=Rare:
 # CHECK-NEXT: Jump -> next b65()
-# CHECK-NEXT: b64() frequency=Unlikely:
+# CHECK-NEXT: b64() frequency=Rare:
 # CHECK-NEXT: Jump -> next b65()
-# CHECK-NEXT: b65() frequency=Unlikely:
-# CHECK-NEXT: v163: boolean = HasKeyOrder v129 layout=L0 fields=[0]
-# CHECK-NEXT: Branch v163 -> taken b66(| 0), notTaken b33(v159, v124, v125, v160, v129)
-# CHECK-NEXT: b66(v164: guard) frequency=Unlikely:
-# CHECK-NEXT: v165: boolean = HasNoExtraProperties v129
-# CHECK-NEXT: Branch v165 -> taken b67(| 0), notTaken b80(v159, v124, v125, v160, v129)
-# CHECK-NEXT: b67(v166: guard) frequency=Unlikely:
-# CHECK-NEXT: v167: guard = AllGuards v164, v166
-# CHECK-NEXT: v168: undefined|null|int[-2147483643, 2147483647] ~ undefined|int[-2147483643, 2147483647] = GetSlot v129, v167 key="a" receivers=[L0] level=Expected
-# CHECK-NEXT: PutSlotOrAdd v160, v160, v168 key="a" receivers=[L0] level=Expected
-# CHECK-NEXT: Jump -> next b35(v159, v124, v125, v160)
-# CHECK-NEXT: b68() frequency=Rare:
-# CHECK-NEXT: Jump -> next b69(v141)
-# CHECK-NEXT: b69(v170: int[0, 2147483648] ~ 0) frequency=Rare:
-# CHECK-NEXT: v171: int|whole ~ int[1, 2147483647] = Upcast v125 castType=int|whole
+# CHECK-NEXT: b65() frequency=Rare:
+# CHECK-NEXT: v142: boolean = HasKeyOrder v83 layout=L0 fields=[0]
+# CHECK-NEXT: Branch v142 -> taken b66(| 0), notTaken b69(v138, v139)
+# CHECK-NEXT: b66(v143: guard) frequency=Rare:
+# CHECK-NEXT: v144: boolean = HasNoExtraProperties v83
+# CHECK-NEXT: Branch v144 -> taken b67(| 0), notTaken b68(v138, v139)
+# CHECK-NEXT: b67(v145: guard) frequency=Rare:
+# CHECK-NEXT: v146: guard = AllGuards v143, v145
+# CHECK-NEXT: v147: undefined|null|int[-2147483643, 2147483647] ~ undefined|int[-2147483643, 2147483647] = GetSlot v83, v146 key="a" receivers=[L0] level=Expected
+# CHECK-NEXT: PropDefine v139, v147 key="a"
+# CHECK-NEXT: Jump -> next b71(v138, v139)
+# CHECK-NEXT: b68(v149: null|boolean|number|string|object, v150: L0) frequency=Rare:
+# CHECK-NEXT: Jump -> next b70(v149, v150)
+# CHECK-NEXT: b69(v151: null|boolean|number|string|object, v152: L0) frequency=Rare:
+# CHECK-NEXT: Jump -> next b70(v151, v152)
+# CHECK-NEXT: b70(v153: null|boolean|number|string|object, v154: L0) frequency=Rare:
+# CHECK-NEXT: CopyDataProperties v154, v83
+# CHECK-NEXT: Jump -> next b71(v153, v154)
+# CHECK-NEXT: b71(v156: null|boolean|number|string|object, v157: L0) frequency=Rare:
+# CHECK-NEXT: Jump -> next b76(v156, v157)
+# CHECK-NEXT: b72(v158: int|whole) frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v173: boolean = Less v170, v171
-# CHECK-NEXT: Branch v173 -> taken b70(), notTaken b72()
-# CHECK-NEXT: b70() frequency=Rare:
-# CHECK-NEXT: v174: "name" = String string="name"
-# CHECK-NEXT: v175: string = Strcat v174, v170 [isLikelyKey]
-# CHECK-NEXT: ElemSet v129, v175, v170 accessSite=15 receivers=[L0]
-# CHECK-NEXT: v177: boolean ~ true = TypeTest v170 testedType=i32
-# CHECK-NEXT: Branch v177 -> taken b71(| 0), notTaken b83(v170)
-# CHECK-NEXT: b71(v178: int[0, 2147483647] ~ 0) frequency=Rare:
-# CHECK-NEXT: v179: int[1, 2147483648] ~ 1 = Increment v178
-# CHECK-NEXT: Jump -> next b69(v179)
-# CHECK-NEXT: b72() frequency=Rare:
-# CHECK-NEXT: v180: "{\"x\":" = String string="{\"x\":"
-# CHECK-NEXT: v181: string = ToString v171
-# CHECK-NEXT: v182: ",\"y\":" = String string=",\"y\":"
-# CHECK-NEXT: v183: string = ToString v23
-# CHECK-NEXT: v184: "}" = String string="}"
-# CHECK-NEXT: v185: string = Strcat v180, v181, v182, v183, v184
-# CHECK-NEXT: v186: undefined = Undefined
-# CHECK-NEXT: v187: null|boolean|number|string|object = CallBuiltin -, v185, v186 overload=JSONParse/0 accessSite=8
-# CHECK-NEXT: v188: L0 = NewObject layout=L0 allocationSite=2 allocationClass=0
-# CHECK-NEXT: v189: boolean = HasKeyOrder v129 layout=L0
-# CHECK-NEXT: Branch v189 -> taken b73(), notTaken b76()
+# CHECK-NEXT: v160: boolean = Less v158, v79
+# CHECK-NEXT: Branch v160 -> taken b73(), notTaken b75()
 # CHECK-NEXT: b73() frequency=Rare:
-# CHECK-NEXT: v190: boolean = HasNoExtraProperties v129
-# CHECK-NEXT: Branch v190 -> taken b74(), notTaken b75()
-# CHECK-NEXT: b74() frequency=Rare:
-# CHECK-NEXT: Jump -> next b35(v187, v124, v171, v188)
+# CHECK-NEXT: v161: "name" = String string="name"
+# CHECK-NEXT: v162: string = Strcat v161, v158 [isLikelyKey]
+# CHECK-NEXT: ElemSet v83, v162, v158 accessSite=15 receivers=[L0]
+# CHECK-NEXT: Jump -> next b74(v158)
+# CHECK-NEXT: b74(v164: int|whole ~ 0) frequency=Rare:
+# CHECK-NEXT: v165: int|whole ~ 1 = Increment v164
+# CHECK-NEXT: Jump -> next b42(v165)
 # CHECK-NEXT: b75() frequency=Rare:
-# CHECK-NEXT: Jump -> next b77()
-# CHECK-NEXT: b76() frequency=Rare:
-# CHECK-NEXT: Jump -> next b77()
+# CHECK-NEXT: v166: "{\"x\":" = String string="{\"x\":"
+# CHECK-NEXT: v167: string = ToString v79
+# CHECK-NEXT: v168: ",\"y\":" = String string=",\"y\":"
+# CHECK-NEXT: v169: string = ToString v21
+# CHECK-NEXT: v170: "}" = String string="}"
+# CHECK-NEXT: v171: string = Strcat v166, v167, v168, v169, v170
+# CHECK-NEXT: v172: undefined = Undefined
+# CHECK-NEXT: v173: null|boolean|number|string|object = CallBuiltin -, v171, v172 overload=JSONParse/0 accessSite=8
+# CHECK-NEXT: v174: L0 = NewObject layout=L0 allocationSite=2 allocationClass=0
+# CHECK-NEXT: CopyDataProperties v174, v83
+# CHECK-NEXT: Jump -> next b76(v173, v174)
+# CHECK-NEXT: b76(v176: null|boolean|number|string|object, v177: L0) frequency=Rare:
+# CHECK-NEXT: v178: null|boolean|number|string|object ~ null|object = Upcast v176 castType=anything
+# CHECK-NEXT: CopyDataProperties v177, v178
+# CHECK-NEXT: v180: L0 = FinishObject v177
+# CHECK-NEXT: v181: boolean = HasKeyOrder v180 layout=L0
+# CHECK-NEXT: Branch v181 -> taken b77(), notTaken b80()
 # CHECK-NEXT: b77() frequency=Rare:
-# CHECK-NEXT: v191: boolean = HasKeyOrder v129 layout=L0 fields=[0]
-# CHECK-NEXT: Branch v191 -> taken b78(| 0), notTaken b33(v187, v124, v171, v188, v129)
-# CHECK-NEXT: b78(v192: guard) frequency=Rare:
-# CHECK-NEXT: v193: boolean = HasNoExtraProperties v129
-# CHECK-NEXT: Branch v193 -> taken b79(| 0), notTaken b80(v187, v124, v171, v188, v129)
-# CHECK-NEXT: b79(v194: guard) frequency=Rare:
-# CHECK-NEXT: v195: guard = AllGuards v192, v194
-# CHECK-NEXT: v196: undefined|null|int[-2147483643, 2147483647] ~ undefined|int[-2147483643, 2147483647] = GetSlot v129, v195 key="a" receivers=[L0] level=Expected
-# CHECK-NEXT: PropDefine v188, v196 key="a"
-# CHECK-NEXT: Jump -> next b35(v187, v124, v171, v188)
-# CHECK-NEXT: b80(v198: null|boolean|number|string|object, v199: int|whole, v200: int|whole ~ int[1, 2147483647], v201: L0, v202: L0) frequency=Rare:
-# CHECK-NEXT: Jump -> next b34(v198, v199, v200, v201, v202)
-# CHECK-NEXT: b81(v203: int|whole) frequency=Rare:
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v205: boolean = Less v203, v138
-# CHECK-NEXT: Branch v205 -> taken b82(), notTaken b84()
+# CHECK-NEXT: v182: boolean = HasNoExtraProperties v180
+# CHECK-NEXT: Branch v182 -> taken b78(), notTaken b79()
+# CHECK-NEXT: b78() frequency=Rare:
+# CHECK-NEXT: v183: Array<string> = NewArray contents=string storage=Frame
+# CHECK-NEXT: Jump -> next b87(v183)
+# CHECK-NEXT: b79() frequency=Rare:
+# CHECK-NEXT: Jump -> next b81()
+# CHECK-NEXT: b80() frequency=Rare:
+# CHECK-NEXT: Jump -> next b81()
+# CHECK-NEXT: b81() frequency=Rare:
+# CHECK-NEXT: v184: boolean = HasKeyOrder v180 layout=L0 fields=[0]
+# CHECK-NEXT: Branch v184 -> taken b82(), notTaken b85()
 # CHECK-NEXT: b82() frequency=Rare:
-# CHECK-NEXT: v206: "name" = String string="name"
-# CHECK-NEXT: v207: string = Strcat v206, v203 [isLikelyKey]
-# CHECK-NEXT: ElemSet v129, v207, v203 accessSite=15 receivers=[L0]
-# CHECK-NEXT: Jump -> next b83(v203)
-# CHECK-NEXT: b83(v209: int|whole ~ 0) frequency=Rare:
-# CHECK-NEXT: v210: int|whole ~ 1 = Increment v209
-# CHECK-NEXT: Jump -> next b54(v210)
+# CHECK-NEXT: v185: boolean = HasNoExtraProperties v180
+# CHECK-NEXT: Branch v185 -> taken b83(), notTaken b84()
+# CHECK-NEXT: b83() frequency=Rare:
+# CHECK-NEXT: v186: "a" = String string="a"
+# CHECK-NEXT: v187: Array<string, Contiguous> = NewArray v186 contents=string storage=Frame arrayStorage=Contiguous
+# CHECK-NEXT: Jump -> next b87(v187)
 # CHECK-NEXT: b84() frequency=Rare:
-# CHECK-NEXT: v211: "{\"x\":" = String string="{\"x\":"
-# CHECK-NEXT: v212: string = ToString v138
-# CHECK-NEXT: v213: ",\"y\":" = String string=",\"y\":"
-# CHECK-NEXT: v214: string = ToString v23
-# CHECK-NEXT: v215: "}" = String string="}"
-# CHECK-NEXT: v216: string = Strcat v211, v212, v213, v214, v215
-# CHECK-NEXT: v217: undefined = Undefined
-# CHECK-NEXT: v218: null|boolean|number|string|object = CallBuiltin -, v216, v217 overload=JSONParse/0 accessSite=8
-# CHECK-NEXT: v219: L0 = NewObject layout=L0 allocationSite=2 allocationClass=0
-# CHECK-NEXT: CopyDataProperties v219, v129
-# CHECK-NEXT: Jump -> next b36(v218, v124, v138, v219)
-# CHECK-NEXT: b85(v221: int|whole):
-# CHECK-NEXT: v222: int|whole = Increment v23
-# CHECK-NEXT: Jump -> next b7(v221, v222)
-# CHECK-NEXT: b86():
-# CHECK-NEXT: v223: undefined = CallBuiltin -, v22 overload=ConsoleLog/0 accessSite=14
-# CHECK-NEXT: v224: undefined = Undefined
-# CHECK-NEXT: Return v224
+# CHECK-NEXT: Jump -> next b86()
+# CHECK-NEXT: b85() frequency=Rare:
+# CHECK-NEXT: Jump -> next b86()
+# CHECK-NEXT: b86() frequency=Rare:
+# CHECK-NEXT: v188: Array<string> = CallBuiltin -, v180 overload=ObjectKeys/0 accessSite=10
+# CHECK-NEXT: Jump -> next b87(v188)
+# CHECK-NEXT: b87(v189: Array<string>) frequency=Rare:
+# CHECK-NEXT: v190: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v189 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v191: int[0, 4294967295] = CallBuiltin v190 overload=ArrayPrototypeLength/0 accessSite=11
+# CHECK-NEXT: v192: int|whole = Add v78, v191
+# CHECK-NEXT: v193: int|whole = Increment v79
+# CHECK-NEXT: Jump -> next b38(v192, v193)
+# CHECK-NEXT: b88(v194: int|whole):
+# CHECK-NEXT: v195: int|whole = Increment v21
+# CHECK-NEXT: Jump -> next b7(v194, v195)
+# CHECK-NEXT: b89():
+# CHECK-NEXT: v196: undefined = CallBuiltin -, v20 overload=ConsoleLog/0 accessSite=14
+# CHECK-NEXT: v197: undefined = Undefined
+# CHECK-NEXT: Return v197
 # CHECK-NEXT: }

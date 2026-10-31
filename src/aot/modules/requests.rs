@@ -15,18 +15,23 @@ use super::{BindInput, ModuleRef};
 use crate::builtins::{RuntimeModule, table};
 use crate::diagnostics::{Span, range_of_node};
 use crate::ir::for_each_mut;
-use crate::load::Sources;
 use crate::load::named_loads::{NamedModule, modules_named_in};
 use crate::load::sources::parsed_source;
+use crate::load::{Sources, is_in_node_modules};
 use crate::options::ReplacedModule;
+use crate::statistics::ComputedImport;
 use bun_core::strings;
+use bun_resolve_builtins::Alias;
 use bun_sema::atom::Atom;
-use bun_sema::hir::{self, ExportId, ExprId, ImportId, NodeData, StmtId, StmtKind};
-use bun_sema::import_sites::{ImportSite, ImportSiteKind, ImportSpecifier};
+use bun_sema::hir::{self, ExportId, ImportId, NodeData, StmtId, StmtKind};
+use bun_sema::import_sites::{
+    ImportSite, ImportSiteKind, ImportSpecifier, is_module_call_of_plugin,
+    is_name_read_by_transpiler,
+};
 use bun_sema::program::{
     CodeAnswer, CompiledModule, ComputedTarget, ComputedTargets, FileId, Files,
 };
-use bun_sema::resolve::{CodeFailure, ComputedUnknown, ExternalKind};
+use bun_sema::resolve::{CodeFailure, ExternalKind};
 use bun_sema::util::{FxHashMap, FxHashSet};
 use core::ops::Range;
 
@@ -56,7 +61,7 @@ pub(super) struct FileScan {
     pub externals: Vec<(Atom, ExternalKind)>,
     pub requests: Vec<RequestDraft>,
     pub failures: Vec<PendingFailure>,
-    pub sites_over_candidate_limit: Vec<Span>,
+    pub computed_imports: Vec<ComputedImport<Span>>,
 }
 
 pub(super) struct Scans {
@@ -90,7 +95,8 @@ pub(super) fn scan_files(input: &BindInput<'_, '_>) -> Scans {
         ReplacedModule::Runtime(_) => None,
     }));
     for_each_mut(&mut slots, input.in_parallel, &|(file, scan)| {
-        *scan = Some(scan_file(files, sources, &mocked_paths, *file));
+        let program = (input.runs_tests, input.loads_code_from_disk);
+        *scan = Some(scan_file(files, sources, &mocked_paths, program, *file));
     });
     let mut by_file = Vec::new();
     by_file.resize_with(files.modules.len(), || None);
@@ -126,6 +132,7 @@ fn path_named(sources: &Sources, file: FileId, specifier: &[u8]) -> Vec<u8> {
 }
 
 // A test may mock a module that exists nowhere. Whoever imports that path gets the mock from the loader at run time.
+// `build.module("dep", ..)` in the `setup` of a plugin: from then on the loader answers for the name as it is written, also where a package has the name.
 fn find_paths_only_mocks_answer(files: &Files<'_>, sources: &Sources) -> FxHashSet<Vec<u8>> {
     let mut paths = FxHashSet::default();
     for &file in files.compiled_files() {
@@ -134,11 +141,10 @@ fn find_paths_only_mocks_answer(files: &Files<'_>, sources: &Sources) -> FxHashS
         };
         let sites = compiled.analysis.import_sites.iter();
         for (site, answer) in sites.zip(compiled.code_answers) {
-            if let (
-                ImportSiteKind::MockModule(_),
-                ImportSpecifier::Constant(specifier),
-                CodeAnswer::NotFound(_),
-            ) = (site.kind, site.specifier, answer)
+            if let (ImportSiteKind::MockModule(call), ImportSpecifier::Constant(specifier)) =
+                (site.kind, site.specifier)
+                && (matches!(answer, CodeAnswer::NotFound(_))
+                    || is_module_call_of_plugin(files.hir(file), files.bound(file), call))
             {
                 paths.insert(path_named(sources, file, files.atoms.bytes(specifier)));
             }
@@ -151,6 +157,7 @@ fn scan_file(
     files: &Files<'_>,
     sources: &Sources,
     mocked_paths: &FxHashSet<Vec<u8>>,
+    (runs_tests, loads_code_from_disk): (bool, bool),
     file: FileId,
 ) -> FileScan {
     let compiled = files.compiled(file);
@@ -159,6 +166,8 @@ fn scan_file(
         files,
         sources,
         mocked_paths,
+        runs_tests,
+        loads_code_from_disk,
         hir: files.hir(file),
         compiled: compiled.expect("the loader analyzes every compiled file"),
         named_in_choices: parsed_source(files, file)
@@ -167,7 +176,7 @@ fn scan_file(
         spellings: Vec::new(),
         externals: Vec::new(),
         failures: Vec::new(),
-        sites_over_candidate_limit: Vec::new(),
+        computed_imports: Vec::new(),
     };
     let sites = scanner.scan_sites();
     if parsed_source(files, file).is_some_and(|source| source.parse_failure.is_some()) {
@@ -201,7 +210,7 @@ fn scan_file(
         externals: scanner.externals,
         requests,
         failures: scanner.failures,
-        sites_over_candidate_limit: scanner.sites_over_candidate_limit,
+        computed_imports: scanner.computed_imports,
     }
 }
 
@@ -210,6 +219,8 @@ struct FileScanner<'a, 's> {
     files: &'a Files<'s>,
     sources: &'a Sources,
     mocked_paths: &'a FxHashSet<Vec<u8>>,
+    runs_tests: bool,
+    loads_code_from_disk: bool,
     hir: &'a hir::File<'s>,
     compiled: &'a CompiledModule<'s>,
     named_in_choices: &'a [NamedModule],
@@ -217,7 +228,7 @@ struct FileScanner<'a, 's> {
     spellings: Vec<SpelledModule>,
     externals: Vec<(Atom, ExternalKind)>,
     failures: Vec<PendingFailure>,
-    sites_over_candidate_limit: Vec<Span>,
+    computed_imports: Vec<ComputedImport<Span>>,
 }
 
 impl FileScanner<'_, '_> {
@@ -234,12 +245,37 @@ impl FileScanner<'_, '_> {
     fn scan_site(&mut self, index: u32, site: &ImportSite, answer: CodeAnswer<'_>) -> ScannedSite {
         match site.specifier {
             ImportSpecifier::Constant(specifier) => {
-                self.scan_constant_site(index, site, specifier, answer)
+                let scanned = self.scan_constant_site(index, site, specifier, answer);
+                self.with_type_attribute(site, scanned)
             }
             ImportSpecifier::Pattern { .. }
             | ImportSpecifier::OneOf(_)
             | ImportSpecifier::Unknown => self.scan_computed_site(site, answer),
         }
+    }
+
+    // `import data from "./data.txt" with { type: "toml" }` of a file outside the program. `bun run` hands the loader the types that it knows, of import statements alone.
+    // An import() hands over its options when it runs.
+    fn with_type_attribute(&self, site: &ImportSite, scanned: ScannedSite) -> ScannedSite {
+        let (ImportSiteKind::Import(_), Some(attributes)) = (site.kind, site.attributes.some())
+        else {
+            return scanned;
+        };
+        let ScannedSite::Module(ModuleRef::External {
+            importer,
+            specifier,
+            ..
+        }) = scanned
+        else {
+            return scanned;
+        };
+        let written = (self.hir).import_attribute(attributes, bun_sema::atom::known::r#type);
+        let written = written.map(|it| self.files.atoms.bytes(it));
+        ScannedSite::Module(ModuleRef::External {
+            importer,
+            specifier,
+            type_attribute: written.and_then(bun_ast::Loader::from_string),
+        })
     }
 
     fn scan_computed_site(&mut self, site: &ImportSite, answer: CodeAnswer<'_>) -> ScannedSite {
@@ -256,6 +292,17 @@ impl FileScanner<'_, '_> {
                 host_modules,
                 spellings,
             } => {
+                if !files.is_empty() {
+                    let node = diagnostic_node(self.hir, site);
+                    let texts = files
+                        .iter()
+                        .map(|&file| self.files.hir(file).text.len() as u64);
+                    self.computed_imports.push(ComputedImport {
+                        site: Span::of_node(self.hir, self.file, node),
+                        files: files.len() as u32,
+                        bytes: texts.sum(),
+                    });
+                }
                 let files = files.iter().map(|&file| ModuleRef::File(file));
                 self.candidates.extend(files);
                 let runtime_modules = host_modules
@@ -264,26 +311,18 @@ impl FileScanner<'_, '_> {
                 self.candidates
                     .extend(runtime_modules.map(ModuleRef::Runtime));
                 let start = self.spellings.len() as u32;
-                self.spellings
-                    .extend(spellings.iter().filter_map(find_spelled_module));
-                self.add_spellings_named_in(site.specifier_node, start);
+                // A value that stands in no list is resolved when the call runs.
+                let spelled: Vec<SpelledModule> = (spellings.iter())
+                    .filter(|(spelling, _)| !self.is_package_that_loader_answers_for(*spelling))
+                    .filter_map(find_spelled_module)
+                    .collect();
+                self.spellings.extend(spelled);
+                self.add_spellings_named_in(site, start);
                 ScannedSite::Candidates(start..self.spellings.len() as u32)
             }
-            ComputedTargets::All { cause, .. } => {
-                match cause {
-                    ComputedUnknown::TooManyCandidates => {
-                        let node = diagnostic_node(self.hir, site);
-                        let span = Span::of_node(self.hir, self.file, node);
-                        self.sites_over_candidate_limit.push(span);
-                    }
-                    ComputedUnknown::NoPattern
-                    | ComputedUnknown::NoConstantPrefix
-                    | ComputedUnknown::PackageImports
-                    | ComputedUnknown::ConfigPaths
-                    | ComputedUnknown::ExternalCandidate => {}
-                }
+            ComputedTargets::All { .. } => {
                 let start = self.spellings.len() as u32;
-                self.add_spellings_named_in(site.specifier_node, start);
+                self.add_spellings_named_in(site, start);
                 match self.spellings.len() as u32 {
                     end if end == start => ScannedSite::AllModules,
                     end => ScannedSite::Candidates(start..end),
@@ -293,8 +332,18 @@ impl FileScanner<'_, '_> {
     }
 
     /// The spellings of the site begin at `start`. Each stands there once.
-    fn add_spellings_named_in(&mut self, argument: ExprId, start: u32) {
-        for named in modules_named_in(self.named_in_choices, argument) {
+    fn add_spellings_named_in(&mut self, site: &ImportSite, start: u32) {
+        let (bound, decisions) = (
+            self.files.bound(self.file),
+            &self.compiled.analysis.decisions,
+        );
+        let is_read = is_name_read_by_transpiler(self.hir, bound, decisions, site.kind);
+        for named in modules_named_in(self.named_in_choices, site.specifier_node) {
+            // `import.meta.require(quiet ? "bun:os" : "bun:fs")` asks the loader, which knows neither.
+            let name = self.files.atoms.bytes(named.name);
+            if !is_read && Alias::bun_prefixed_builtin(name).is_some() {
+                continue;
+            }
             let mut spelled = self.spellings[start as usize..].iter();
             if !spelled.any(|it| it.spelling == named.name) {
                 self.spellings.push(SpelledModule {
@@ -312,7 +361,31 @@ impl FileScanner<'_, '_> {
         specifier: Atom,
         answer: CodeAnswer<'_>,
     ) -> ScannedSite {
+        // Which of the two answers shows when the file is linked or the call runs, so the loader of the run time is asked. It finds the file of the package in its image.
+        if matches!(site_form(site.kind), SiteForm::Declaration | SiteForm::Load)
+            && matches!(answer, CodeAnswer::File(_) | CodeAnswer::External { .. })
+            && self.is_package_that_loader_answers_for(specifier)
+        {
+            self.externals
+                .push((specifier, ExternalKind::UncompiledCode));
+            return ScannedSite::Module(ModuleRef::External {
+                importer: self.file,
+                specifier,
+                type_attribute: None,
+            });
+        }
         let reason = match (self.answer_of(answer), site_form(site.kind)) {
+            (Ok(ScannedSite::Erased) | Err(CodeFailure::ModuleNotFound), SiteForm::Load)
+                if self.may_be_written_by_program(site, specifier) =>
+            {
+                self.externals
+                    .push((specifier, ExternalKind::UncompiledCode));
+                return ScannedSite::Module(ModuleRef::External {
+                    importer: self.file,
+                    specifier,
+                    type_attribute: None,
+                });
+            }
             (Ok(ScannedSite::Erased), SiteForm::Load) => CodeFailure::ModuleNotFound,
             (Ok(ScannedSite::Erased), SiteForm::Declaration) if is_jsx_site(site.kind) => {
                 CodeFailure::ModuleNotFound
@@ -336,14 +409,17 @@ impl FileScanner<'_, '_> {
                 | SiteForm::GetBuiltinModule
                 | SiteForm::Mock,
             ) => return answer,
+            // `virtual:config`: no file and no package has such a name, so only a plugin answers for it, and a preload or a test may bring one. The loader of the run time is asked. A name that may be a package stays a failure: code that nobody has seen costs the whole program, and an optional dependency that is absent is common.
             (Err(_), SiteForm::Declaration | SiteForm::Load)
-                if !self.mocked_paths.is_empty() && self.is_answered_by_mock(specifier) =>
+                if (self.runs_tests && self.has_scheme_of_its_own(specifier))
+                    || (!self.mocked_paths.is_empty() && self.is_answered_by_mock(specifier)) =>
             {
                 let kind = ExternalKind::UncompiledCode;
                 self.externals.push((specifier, kind));
                 return ScannedSite::Module(ModuleRef::External {
                     importer: self.file,
                     specifier,
+                    type_attribute: None,
                 });
             }
             (Err(reason), SiteForm::Declaration | SiteForm::Load) => reason,
@@ -353,6 +429,52 @@ impl FileScanner<'_, '_> {
         let kind = ModuleFailureKind::Unresolved { specifier, reason };
         self.failures.push(written.fail(self.file, kind));
         ScannedSite::Unresolved
+    }
+
+    // `writeFileSync(join(import.meta.dirname, "made.mjs"), text); await import(join(import.meta.dirname, "made.mjs"))`: the build knows the path, and the file is not
+    // there yet. The loader of the run time is asked when the call runs, and fails as in plain Bun where the file is still missing.
+    // What a package looks for and does without, `require("./build/Release/addon.node")`, stays as it is.
+    fn may_be_written_by_program(&self, site: &ImportSite, specifier: Atom) -> bool {
+        let specifier = self.files.atoms.bytes(specifier);
+        let loads = matches!(
+            site.kind,
+            ImportSiteKind::ImportCall(_)
+                | ImportSiteKind::Require(_)
+                | ImportSiteKind::ImportMetaRequire(_)
+        );
+        self.loads_code_from_disk
+            && loads
+            && (specifier.starts_with(b"./")
+                || specifier.starts_with(b"../")
+                || specifier.starts_with(b"/"))
+            && !is_in_node_modules(self.sources.public_path(self.file))
+    }
+
+    fn has_scheme_of_its_own(&self, specifier: Atom) -> bool {
+        let specifier = self.files.atoms.bytes(specifier);
+        let Some(colon) = strings::index_of_char_usize(specifier, b':') else {
+            return false;
+        };
+        let scheme = &specifier[..colon];
+        // One letter is a drive.
+        scheme.len() > 1
+            && scheme[0].is_ascii_alphabetic()
+            && (scheme.iter()).all(|byte| byte.is_ascii_alphanumeric() || b"+-.".contains(byte))
+            && !matches!(
+                scheme,
+                b"node" | b"bun" | b"file" | b"data" | b"blob" | b"http" | b"https"
+            )
+    }
+
+    // The name of a package stands in the list only as it is written. A path there may be that of a file that a mock is laid over.
+    // An executable runs where no disk has the package, so nobody there could say what the name stands for without the plugin.
+    fn is_package_that_loader_answers_for(&self, specifier: Atom) -> bool {
+        let name = self.files.atoms.bytes(specifier);
+        self.runs_tests
+            && !self.mocked_paths.is_empty()
+            && !matches!(name.first(), None | Some(b'.' | b'/'))
+            && strings::index_of_char_usize(name, b':').is_none()
+            && self.mocked_paths.contains(name)
     }
 
     fn is_answered_by_mock(&self, specifier: Atom) -> bool {
@@ -372,6 +494,7 @@ impl FileScanner<'_, '_> {
                 ModuleRef::External {
                     importer: self.file,
                     specifier,
+                    type_attribute: None,
                 }
             }
             CodeAnswer::Erased => return Ok(ScannedSite::Erased),

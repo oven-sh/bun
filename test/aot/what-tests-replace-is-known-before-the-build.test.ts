@@ -254,3 +254,128 @@ test("a spy on a name that a file of the program exports again from a module of 
   expect(plain.stdout).toContain('p 86f7e437 1 1 ["sha1"]\np 86f7e437 3 1\nfake host 1\np 86f7e437 1 false');
   expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
 });
+
+test("a built-in object that a test reaches without its name", async () => {
+  const others = Object.fromEntries(
+    Array.from({ length: 3 }, (_, index) => [
+      `other${index}.test.ts`,
+      `import { expect, test } from "bun:test";\nimport { asks } from "./src/asks.js";\ntest("other", () => { expect(asks.acos()).toBe(0); });`,
+    ]),
+  );
+  using dir = tempDir("what-tests-replace", {
+    ...others,
+    "tsconfig.json": "{}",
+    "src/asks.ts": `
+      export const asks = {
+        flat: () => [1].flat(), fill: () => [1].fill(0), reverse: () => [1].reverse(), trim: () => " a ".trim(),
+        toFixed: () => (1).toFixed(1), get: () => new Map([[1, 2]]).get(1), has: () => new Set().has(1),
+        finally: () => typeof Promise.resolve().finally(), test: () => /a/.test("b"), parse: () => Date.parse("x"),
+        acos: () => Math.acos(1), cosh: () => Math.cosh(0), tanh: () => Math.tanh(0), expm1: () => Math.expm1(0),
+        log10: () => Math.log10(1), concat: () => [1].concat(),
+      };`,
+    "one.test.ts": `
+      import { spyOn, test } from "bun:test";
+      import { asks } from "./src/asks.js";
+      const said = (value: unknown) => JSON.stringify(value) ?? String(value);
+      test("each written out", () => {
+        const swapped = (name: keyof typeof asks, store: (value: unknown) => void, real: unknown) => {
+          store(() => "replaced");
+          const during = said(asks[name]());
+          store(real);
+          console.log(name, during, said(asks[name]()));
+        };
+        const ofLists = Object.getPrototypeOf([]);
+        swapped("flat", value => { ofLists.flat = value; }, ofLists.flat);
+        swapped("fill", value => { ([] as any).__proto__.fill = value; }, [].fill);
+        swapped("reverse", value => { [].constructor.prototype.reverse = value; }, [].reverse);
+        swapped("trim", value => { Object.getPrototypeOf("").trim = value; }, "".trim);
+        swapped("toFixed", value => { (1).constructor.prototype.toFixed = value; }, (1).toFixed);
+        swapped("get", value => { Object.getPrototypeOf(new Map()).get = value; }, new Map().get);
+        swapped("has", value => { (Reflect.getPrototypeOf(new Set()) as any).has = value; }, new Set().has);
+        swapped("finally", value => { Object.getPrototypeOf(Promise.resolve()).finally = value; }, Promise.resolve().finally);
+        swapped("test", value => { /a/.constructor.prototype.test = value; }, /a/.test);
+        swapped("parse", value => { (new Date().constructor as any).parse = value; }, Date.parse);
+        swapped("acos", value => { (globalThis as any)["Ma" + "th"].acos = value; }, Math.acos);
+        swapped("cosh", value => { Reflect.get(globalThis, "Math").cosh = value; }, Math.cosh);
+        swapped("tanh", value => { (0, eval)("this").Math.tanh = value; }, Math.tanh);
+        swapped("expm1", value => { Function("return this")().Math.expm1 = value; }, Math.expm1);
+        const held = { m: Math };
+        swapped("log10", value => { (held.m as any).log10 = value; }, Math.log10);
+      });
+      test("a spy", () => {
+        const spy = spyOn(Object.getPrototypeOf([]), "concat").mockImplementation(() => "replaced");
+        console.log(said(asks.concat()), spy.mock.calls.length);
+        spy.mockRestore();
+        console.log(said(asks.concat()));
+      });`,
+  });
+  const flags = ["--isolate", "--parallel=1", "one.test.ts", "other"];
+  const plain = await run([bunExe(), "test", ...flags], String(dir), bunEnv);
+  expect(plain.stdout).toContain('flat "replaced" [1]');
+  expect(plain.stdout).toContain('log10 "replaced" 0');
+  for (const words of ["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1"]) {
+    const compiled = await run([bunExe(), "test", "--aot", ...flags], String(dir), {
+      ...bunEnv,
+      BUN_DEBUG_TEST_AOT_WORDS: words,
+    });
+    expect({ words, stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({
+      words,
+      stdout: plain.stdout,
+      exitCode: 0,
+    });
+  }
+}, 240_000);
+
+// `Reflect.get({}, name)` stands for three objects here, and the name is planted on each of them.
+test("a name that a helper plants on every object that names out of a list lead to", async () => {
+  using dir = tempDir("what-tests-replace", {
+    "tsconfig.json": "{}",
+    "package.json": `{ "name": "p", "type": "module" }`,
+    "src/registry.js": `
+      export function declaredOf(name, record) {
+        return Object.hasOwn(record, name) ? record[name].flag : undefined;
+      }`,
+    "one.test.ts": `
+      import { describe, expect, it } from "bun:test";
+      import { declaredOf } from "./src/registry.js";
+      function readWhilePlanted<T>(name: string, field: "autoUpdate" | "source", read: () => T): T {
+        const inherited: object = Reflect.get({}, name);
+        expect(Reflect.has(inherited, field)).toBe(false);
+        expect(Reflect.defineProperty(inherited, field, { value: "planted", configurable: true })).toBe(true);
+        try {
+          return read();
+        } finally {
+          Reflect.deleteProperty(inherited, field);
+        }
+      }
+      const said = (ask: () => unknown) => {
+        try {
+          return String(ask());
+        } catch (error: any) {
+          return error.name + ": " + error.message;
+        }
+      };
+      describe.each(["constructor", "toString", "__proto__"])("%s", name => {
+        it("autoUpdate", () => {
+          console.log(name, "autoUpdate", said(() => readWhilePlanted(name, "autoUpdate", () => declaredOf(name, {}))));
+        });
+        it("source", () => {
+          console.log(name, "source", said(() => readWhilePlanted(name, "source", () => [declaredOf(name, {}), ({} as any).source])));
+        });
+      });`,
+  });
+  const flags = ["--isolate", "--parallel=1"];
+  const plain = await run([bunExe(), "test", ...flags], String(dir), bunEnv);
+  expect(plain.stdout).toContain("__proto__ source ,planted");
+  for (const words of ["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1"]) {
+    const compiled = await run([bunExe(), "test", "--aot", ...flags], String(dir), {
+      ...bunEnv,
+      BUN_DEBUG_TEST_AOT_WORDS: words,
+    });
+    expect({ words, stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({
+      words,
+      stdout: plain.stdout,
+      exitCode: 0,
+    });
+  }
+});

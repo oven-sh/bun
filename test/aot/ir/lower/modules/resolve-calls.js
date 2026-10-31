@@ -33,7 +33,8 @@
 // MISSING-NOT: isForRequire
 // MISSING: = ResolveDynamic
 // MISSING-NOT: isForRequire
-// MISSING: ThrowModuleFailure failure=q
+// MISSING-NOT: ThrowModuleFailure
+// MISSING: Return
 
 // RUN(PATHS): lower
 // PATHS-LABEL: function {{*}}name="withPaths"

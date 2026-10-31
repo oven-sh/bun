@@ -5,6 +5,7 @@ use smallvec::SmallVec;
 
 use super::{Arguments, Callee, emit_call_of};
 use crate::builtins::id::BuiltinId;
+use crate::builtins::table::Mutability;
 use crate::builtins::{Resolved, table};
 use crate::ir::{PropertyKeyId, ValueId};
 use crate::lower::expression::Tail;
@@ -24,6 +25,13 @@ pub(super) fn find_locked_builtin(
 }
 
 impl FileLowering<'_, '_, '_, '_> {
+    /// A method that is called in the place of a lookup which no expression spells: the `add` that `new Set(list)` asks the new set for. Nobody has resolved it, and a test run may have listed it as replaced.
+    pub(super) fn is_fixed_method(&self, method: BuiltinId) -> bool {
+        let replaced = self.inputs.replaced_builtins;
+        table::entry(method).mutability == Mutability::AlwaysLocked
+            && replaced.binary_search(&(method as u32)).is_err()
+    }
+
     /// The literal of `Object.defineProperty(object, key, { .. })`. The call alone has it: what it says becomes part of the definition, also where it says constants alone.
     pub(in crate::lower) fn is_written_descriptor(&self, literal: ExprId) -> bool {
         let Parent::Expr(parent) = self.bound.parent_of_expr(literal) else {
@@ -295,7 +303,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     // `new Map([[key, value], ..])`. A list of constants stays: the whole map is laid into the image.
     fn lower_map_of_entries(&mut self, expression: ExprId, site: Call) -> Option<ValueId> {
         let list = self.file.find_only_argument(site)?;
-        if self.file.is_made_of_constants(list) {
+        if self.file.is_made_of_constants(list)
+            || !self.file.is_fixed_method(BuiltinId::MapPrototypeSet)
+        {
             return None;
         }
         let pairs = self.file.find_written_pairs(list)?;
@@ -318,7 +328,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     // `new Set([value, ..])`.
     fn lower_set_of_values(&mut self, expression: ExprId, site: Call) -> Option<ValueId> {
         let list = self.file.find_only_argument(site)?;
-        if self.file.is_made_of_constants(list) {
+        if self.file.is_made_of_constants(list)
+            || !self.file.is_fixed_method(BuiltinId::SetPrototypeAdd)
+        {
             return None;
         }
         let elements = self.file.find_written_list(list)?;

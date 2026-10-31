@@ -150,13 +150,13 @@ def run_image(image, entry, env=None, options=(), *, after=(), cwd=None, seconds
     return run(command, cwd, seconds, shell_environment(env or os.environ))
 
 
-def run_ir_test(text, test_file, directives, *, cwd=None, seconds=300):
-    """Writes `test_file`, the directives above the IR text, and runs it. Returns (passed, what `testaot` printed).
+def run_ir_test(text, test_file, directives, *, cwd=None, seconds=300, show_output=False):
+    """Writes `test_file`, the directives above the IR text, and runs it. Returns (passed, what `testaot` printed). With show_output that holds, behind a line `OUTPUT ..`, what the command of the test printed.
 
     This is how a script checks a statistic or the kind of a diagnostic by enum name, without reading a message:
     ["RUN: compile", "OPTIONS: references=narrow drop-guard=GetSlot:0", "STATISTIC: GuardsDropped >= 1"]
     A run without a DIAGNOSTIC: directive fails if the build reports anything."""
     with open(test_file, "w", encoding="utf-8") as file:
         file.write("".join(f"# {directive}\n" for directive in directives) + text)
-    code, said = run([tool("TESTAOT"), "run", test_file], cwd, seconds, shell_environment(os.environ))
+    code, said = run([tool("TESTAOT"), "run", test_file, *(["--show-output"] if show_output else [])], cwd, seconds, shell_environment(os.environ))
     return code == 0, said

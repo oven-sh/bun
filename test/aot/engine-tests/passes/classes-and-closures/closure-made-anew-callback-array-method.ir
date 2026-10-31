@@ -751,7 +751,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f104 visibility=Private
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="mapForEach"
-# CHECK: module=m0 position=1463 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=Array<never, proven, pristine[Storage, Names, Dense]> site=w9 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f97 callPosition=4294967295 module=m1}, {callee=f120 callPosition=4294967295 parent=1 calleeIsPredicted=true module=m0}] {
+# CHECK: module=m0 position=1463 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=Array<never, proven, pristine[Storage, Names, Dense]> site=w9 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f97 callPosition=4294967295 module=m1}, {callee=f123 callPosition=4294967295 parent=1 calleeIsPredicted=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: Array<undefined|null|function|f31> = NewArray contents=undefined|null|function|f31 allocationSite=5
 # CHECK-NEXT: v1: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
@@ -778,7 +778,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f104 visibility=Private
 # CHECK-NEXT: v14: boolean = Less v4, v2
 # CHECK-NEXT: Branch v14 -> taken b5(), notTaken b6()
 # CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v15: number = CallDirect function=f120 accessSite=38 [calleeIsPredicted]
+# CHECK-NEXT: v15: number = CallDirect function=f123 accessSite=38 [calleeIsPredicted]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b6() frequency=Rare:
 # CHECK-NEXT: v16: fact = Specified
@@ -875,9 +875,9 @@ runtimefunction id=ArrayTraversalTraverseArray function=f104 visibility=Private
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f16 module=
-# CHECK: m0 position=561 kind=Arrow role=ResultWrapper flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|f15 site=w32 flags=[OmitsNull, OmitsUndefined]}] results=[{type=f38 site=w33 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f57] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f121} {
+# CHECK: m0 position=561 kind=Arrow role=ResultWrapper flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|f15 site=w32 flags=[OmitsNull, OmitsUndefined]}] results=[{type=f38 site=w33 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f57] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f124} {
 # CHECK-NEXT: b0(v0: undefined|f15):
-# CHECK-NEXT: v1: int[0, 2] = CallDirect v0 function=f121
+# CHECK-NEXT: v1: int[0, 2] = CallDirect v0 function=f124
 # CHECK-NEXT: v2: f38 = NewClosure v1 function=f38 allocationSite=10
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
@@ -897,7 +897,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f104 visibility=Private
 # CHECK-LABEL: function f32 module=
 # CHECK: m0 position=1616 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined site=w84 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w85}] functionTypes=[f85] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: undefined):
-# CHECK-NEXT: v1: number = CallDirect function=f120
+# CHECK-NEXT: v1: number = CallDirect function=f123
 # CHECK-NEXT: ReturnCall v1 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function f38 module=

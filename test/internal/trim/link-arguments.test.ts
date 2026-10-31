@@ -460,12 +460,11 @@ describe("layOut", () => {
         isMovable: output => output === ".text",
         canBeFilled: () => true,
         isCode: output => output === ".text",
-        relinksSameInputs: false,
         firstInputs: [],
         builtinModulesOutput: ".bun_builtins",
         supportObjects: room => (rooms.push(room), ["room.s.o"]),
         prepareInput: path => path,
-        prepareCompiledObjects: () => false,
+        prepareCompiledObjects: () => undefined,
         compiledObjects: () => [],
         firstLinkArguments: noArguments,
         secondLinkArguments: noArguments,
@@ -474,6 +473,7 @@ describe("layOut", () => {
         orderOf: (_, partition) => ({
           retainedFirst: [],
           groups: partition.groups.map(({ set }) => ({ set, names: [], afterRetained: [] })),
+          groupsOutsidePrograms: partition.groupsOutsidePrograms,
           nodes: [],
           unnamed: new Map(),
         }),
@@ -706,7 +706,7 @@ describe("layOut", () => {
           firstInputs: [builtins],
           prepareInput: path => path + ".split",
           compiledObjects: () => ["program.lto.o"],
-          prepareCompiledObjects: objects => objects.length > 0,
+          prepareCompiledObjects: objects => (objects.length > 0 ? objects : undefined),
           nameUnnamedSections: () => new Map([[plain + ".split", plain + ".named"]]),
         },
         inputs,
@@ -723,19 +723,6 @@ describe("layOut", () => {
         [undefined, plain + ".split", undefined],
         [undefined, plain + ".named", undefined],
       ]);
-    });
-
-    test("a format that links the same inputs again gets the bitcode twice", () => {
-      using dir = tempDir("trim-layout-same-inputs", files);
-      const inputs = Object.keys(files).map(name => join(String(dir), name));
-      const { session, requests } = fakeSession(
-        String(dir),
-        { relinksSameInputs: true, compiledObjects: () => ["program.exe.lto.obj"] },
-        inputs,
-      );
-      layOut(session);
-      expect(requests.map(request => request.first)).toEqual([["room.s.o"], ["room.s.o"]]);
-      expect(requests.map(request => rewritten(request, inputs))).toEqual([inputs, inputs]);
     });
   });
 });

@@ -341,7 +341,7 @@ function f4 name="next" module=m1 position=25 kind=Method role=Library flags=[Ha
 runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private
 # -- generated: f0 storeList storeWords storeSums
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=1142 module=m0}, {callee=f2 callPosition=1253 module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: builtin(Int32Array) = Builtin builtin=Int32Array
 # CHECK-NEXT: v1: 0 = Integer
@@ -388,22 +388,22 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private
 # CHECK-NEXT: v42: 1 = Integer integer=1
 # CHECK-NEXT: v43: 256 = Integer integer=256
 # CHECK-NEXT: v44: -2147483648 = Integer integer=-2147483648
-# CHECK-NEXT: v45: "words" = String string="words"
-# CHECK-NEXT: v46: fact = Specified
-# CHECK-NEXT: v47: string = CallDirect v41 function=f6 @638:1 tail
-# CHECK-NEXT: v48: undefined = CallBuiltin -, v45, v41, v47 overload=ConsoleLog/0 accessSite=18
-# CHECK-NEXT: v49: "words" = String string="words"
-# CHECK-NEXT: v50: fact = Specified
-# CHECK-NEXT: v51: string = CallDirect v42 function=f6 @638:1 tail
-# CHECK-NEXT: v52: undefined = CallBuiltin -, v49, v42, v51 overload=ConsoleLog/0 accessSite=18
-# CHECK-NEXT: v53: "words" = String string="words"
-# CHECK-NEXT: v54: fact = Specified
-# CHECK-NEXT: v55: string = CallDirect v43 function=f6 @638:1 tail
-# CHECK-NEXT: v56: undefined = CallBuiltin -, v53, v43, v55 overload=ConsoleLog/0 accessSite=18
-# CHECK-NEXT: v57: "words" = String string="words"
-# CHECK-NEXT: v58: fact = Specified
-# CHECK-NEXT: v59: string = CallDirect v44 function=f6 @638:1 tail
-# CHECK-NEXT: v60: undefined = CallBuiltin -, v57, v44, v59 overload=ConsoleLog/0 accessSite=18
+# CHECK-NEXT: v45: fact = Specified
+# CHECK-NEXT: v46: "words" = String string="words"
+# CHECK-NEXT: v47: string = CallDirect v41 function=f1 accessSite=17
+# CHECK-NEXT: v48: undefined = CallBuiltin -, v46, v41, v47 overload=ConsoleLog/0 accessSite=18
+# CHECK-NEXT: v49: fact = Specified
+# CHECK-NEXT: v50: "words" = String string="words"
+# CHECK-NEXT: v51: string = CallDirect v42 function=f1 accessSite=17
+# CHECK-NEXT: v52: undefined = CallBuiltin -, v50, v42, v51 overload=ConsoleLog/0 accessSite=18
+# CHECK-NEXT: v53: fact = Specified
+# CHECK-NEXT: v54: "words" = String string="words"
+# CHECK-NEXT: v55: string = CallDirect v43 function=f1 accessSite=17
+# CHECK-NEXT: v56: undefined = CallBuiltin -, v54, v43, v55 overload=ConsoleLog/0 accessSite=18
+# CHECK-NEXT: v57: fact = Specified
+# CHECK-NEXT: v58: "words" = String string="words"
+# CHECK-NEXT: v59: string = CallDirect v44 function=f1 accessSite=17
+# CHECK-NEXT: v60: undefined = CallBuiltin -, v58, v44, v59 overload=ConsoleLog/0 accessSite=18
 # CHECK-NEXT: v61: 0 = Integer
 # CHECK-NEXT: v62: 1 = Integer integer=1
 # CHECK-NEXT: v63: -1 = Integer integer=-1
@@ -412,38 +412,38 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private
 # CHECK-NEXT: v66: 2147483647 = Integer integer=2147483647
 # CHECK-NEXT: v67: -2147483648 = Integer integer=-2147483648
 # CHECK-NEXT: v68: fractional = Double number=0.5
-# CHECK-NEXT: v69: "sums" = String string="sums"
-# CHECK-NEXT: v70: fact = Specified
-# CHECK-NEXT: v71: string = CallDirect v61 function=f7 @779:2 tail
-# CHECK-NEXT: v72: undefined = CallBuiltin -, v69, v61, v71 overload=ConsoleLog/0 accessSite=14
-# CHECK-NEXT: v73: "sums" = String string="sums"
-# CHECK-NEXT: v74: fact = Specified
-# CHECK-NEXT: v75: string = CallDirect v62 function=f7 @779:2 tail
-# CHECK-NEXT: v76: undefined = CallBuiltin -, v73, v62, v75 overload=ConsoleLog/0 accessSite=14
-# CHECK-NEXT: v77: "sums" = String string="sums"
-# CHECK-NEXT: v78: fact = Specified
-# CHECK-NEXT: v79: string = CallDirect v63 function=f7 @779:2 tail
-# CHECK-NEXT: v80: undefined = CallBuiltin -, v77, v63, v79 overload=ConsoleLog/0 accessSite=14
-# CHECK-NEXT: v81: "sums" = String string="sums"
-# CHECK-NEXT: v82: fact = Specified
-# CHECK-NEXT: v83: string = CallDirect v64 function=f7 @779:2 tail
-# CHECK-NEXT: v84: undefined = CallBuiltin -, v81, v64, v83 overload=ConsoleLog/0 accessSite=14
-# CHECK-NEXT: v85: "sums" = String string="sums"
-# CHECK-NEXT: v86: fact = Specified
-# CHECK-NEXT: v87: string = CallDirect v65 function=f7 @779:2 tail
-# CHECK-NEXT: v88: undefined = CallBuiltin -, v85, v65, v87 overload=ConsoleLog/0 accessSite=14
-# CHECK-NEXT: v89: "sums" = String string="sums"
-# CHECK-NEXT: v90: fact = Specified
-# CHECK-NEXT: v91: string = CallDirect v66 function=f7 @779:2 tail
-# CHECK-NEXT: v92: undefined = CallBuiltin -, v89, v66, v91 overload=ConsoleLog/0 accessSite=14
-# CHECK-NEXT: v93: "sums" = String string="sums"
-# CHECK-NEXT: v94: fact = Specified
-# CHECK-NEXT: v95: string = CallDirect v67 function=f7 @779:2 tail
-# CHECK-NEXT: v96: undefined = CallBuiltin -, v93, v67, v95 overload=ConsoleLog/0 accessSite=14
-# CHECK-NEXT: v97: "sums" = String string="sums"
-# CHECK-NEXT: v98: fact = Specified
-# CHECK-NEXT: v99: string = CallDirect v68 function=f7 @779:2 tail
-# CHECK-NEXT: v100: undefined = CallBuiltin -, v97, v68, v99 overload=ConsoleLog/0 accessSite=14
+# CHECK-NEXT: v69: fact = Specified
+# CHECK-NEXT: v70: "sums" = String string="sums"
+# CHECK-NEXT: v71: string = CallDirect v61 function=f2 accessSite=13
+# CHECK-NEXT: v72: undefined = CallBuiltin -, v70, v61, v71 overload=ConsoleLog/0 accessSite=14
+# CHECK-NEXT: v73: fact = Specified
+# CHECK-NEXT: v74: "sums" = String string="sums"
+# CHECK-NEXT: v75: string = CallDirect v62 function=f2 accessSite=13
+# CHECK-NEXT: v76: undefined = CallBuiltin -, v74, v62, v75 overload=ConsoleLog/0 accessSite=14
+# CHECK-NEXT: v77: fact = Specified
+# CHECK-NEXT: v78: "sums" = String string="sums"
+# CHECK-NEXT: v79: string = CallDirect v63 function=f2 accessSite=13
+# CHECK-NEXT: v80: undefined = CallBuiltin -, v78, v63, v79 overload=ConsoleLog/0 accessSite=14
+# CHECK-NEXT: v81: fact = Specified
+# CHECK-NEXT: v82: "sums" = String string="sums"
+# CHECK-NEXT: v83: string = CallDirect v64 function=f2 accessSite=13
+# CHECK-NEXT: v84: undefined = CallBuiltin -, v82, v64, v83 overload=ConsoleLog/0 accessSite=14
+# CHECK-NEXT: v85: fact = Specified
+# CHECK-NEXT: v86: "sums" = String string="sums"
+# CHECK-NEXT: v87: string = CallDirect v65 function=f2 accessSite=13
+# CHECK-NEXT: v88: undefined = CallBuiltin -, v86, v65, v87 overload=ConsoleLog/0 accessSite=14
+# CHECK-NEXT: v89: fact = Specified
+# CHECK-NEXT: v90: "sums" = String string="sums"
+# CHECK-NEXT: v91: string = CallDirect v66 function=f2 accessSite=13
+# CHECK-NEXT: v92: undefined = CallBuiltin -, v90, v66, v91 overload=ConsoleLog/0 accessSite=14
+# CHECK-NEXT: v93: fact = Specified
+# CHECK-NEXT: v94: "sums" = String string="sums"
+# CHECK-NEXT: v95: string = CallDirect v67 function=f2 accessSite=13
+# CHECK-NEXT: v96: undefined = CallBuiltin -, v94, v67, v95 overload=ConsoleLog/0 accessSite=14
+# CHECK-NEXT: v97: fact = Specified
+# CHECK-NEXT: v98: "sums" = String string="sums"
+# CHECK-NEXT: v99: string = CallDirect v68 function=f2 accessSite=13
+# CHECK-NEXT: v100: undefined = CallBuiltin -, v98, v68, v99 overload=ConsoleLog/0 accessSite=14
 # CHECK-NEXT: v101: "wide" = String string="wide"
 # CHECK-NEXT: v102: string = CallDirect v34 function=f3 accessSite=5
 # CHECK-NEXT: v103: undefined = CallBuiltin -, v101, v102 overload=ConsoleLog/0 accessSite=6
@@ -454,9 +454,83 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private
 # CHECK-NEXT: Return v107
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="storeWords"
-# CHECK: module=m0 position=638 role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w4 flags=[IsExpected]}] results=[{type=string site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f6 fallback=f8}
+# CHECK: module=m0 position=638 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int site=w4}] results=[{type=string site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: int):
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: v2: Int32Array<anything, pristine[Storage, Names]> = GetModuleVariable variable=g0
+# CHECK-NEXT: v3: Uint8ClampedArray<anything, pristine[Storage, Names]> = GetModuleVariable variable=g1
+# CHECK-NEXT: Jump -> next b1(v1)
+# CHECK-NEXT: b1(v4: int[0, 4294967296] ~ 0):
+# CHECK-NEXT: Jump -> next b2(v4)
+# CHECK-NEXT: b2(v5: int[0, 4294967296] ~ int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v7: int[0, 4294967296] = CallBuiltin v2 overload=TypedArrayPrototypeLength/0 accessSite=19
+# CHECK-NEXT: v8: boolean = Less v5, v7
+# CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b8()
+# CHECK-NEXT: b3(v9: int[0, 4294967295] ~ int[0, 2147483647]):
+# CHECK-NEXT: v10: boolean = IsInsideView v2, v9 typedArrayType=6 [keyIsIntegral]
+# CHECK-NEXT: Branch v10 -> taken b4(| 0), notTaken b6()
+# CHECK-NEXT: b4(v11: guard):
+# CHECK-NEXT: v12: i32 = GetTypedArrayElement v2, v9, v11 typedArrayType=6 level=Proven accessSite=20 [keyIsIntegral, isInsideView]
+# CHECK-NEXT: v13: i32 = BitOr v12, v0
+# CHECK-NEXT: v14: boolean = IsInsideView v3, v9 typedArrayType=3 [keyIsIntegral]
+# CHECK-NEXT: Branch v14 -> taken b5(| 0), notTaken b7(v13)
+# CHECK-NEXT: b5(v15: guard):
+# CHECK-NEXT: PutTypedArrayElement v3, v9, v13, v15 typedArrayType=3 level=Proven accessSite=21 [keyIsIntegral, isInsideView]
+# CHECK-NEXT: v17: int[1, 4294967296] ~ int[1, 2147483648] = Increment v9
+# CHECK-NEXT: Jump -> next b2(v17)
+# CHECK-NEXT: b6() frequency=Rare:
+# CHECK-NEXT: v18: undefined|i32 = GetTypedArrayElement v2, v9 typedArrayType=6 level=Proven accessSite=20 [keyIsIntegral]
+# CHECK-NEXT: v19: i32 = BitOr v18, v0
+# CHECK-NEXT: Jump -> next b7(v19)
+# CHECK-NEXT: b7(v20: i32) frequency=Rare:
+# CHECK-NEXT: PutTypedArrayElement v3, v9, v20 typedArrayType=3 level=Proven accessSite=21 [keyIsIntegral]
+# CHECK-NEXT: v22: int[1, 4294967296] ~ int[1, 2147483648] = Increment v9
+# CHECK-NEXT: Jump -> next b1(v22)
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v23: " " = String string=" "
+# CHECK-NEXT: v24: string = CallBuiltin v3, v23 overload=TypedArrayPrototypeJoin/0 accessSite=23 @765 tail
+# CHECK-NEXT: Return v24
+# CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="storeSums"
-# CHECK: module=m0 position=779 role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w6 flags=[IsExpected]}] results=[{type=string site=w7 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f7 fallback=f9}
+# CHECK: module=m0 position=779 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int|fractional site=w6}] results=[{type=string site=w7 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: int|fractional):
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: v2: Int32Array<anything, pristine[Storage, Names]> = GetModuleVariable variable=g0
+# CHECK-NEXT: v3: Uint8ClampedArray<anything, pristine[Storage, Names]> = GetModuleVariable variable=g1
+# CHECK-NEXT: Jump -> next b1(v1)
+# CHECK-NEXT: b1(v4: int[0, 4294967296] ~ 0):
+# CHECK-NEXT: Jump -> next b2(v4)
+# CHECK-NEXT: b2(v5: int[0, 4294967296] ~ int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v7: int[0, 4294967296] = CallBuiltin v2 overload=TypedArrayPrototypeLength/0 accessSite=24
+# CHECK-NEXT: v8: boolean = Less v5, v7
+# CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b8()
+# CHECK-NEXT: b3(v9: int[0, 4294967295] ~ int[0, 2147483647]):
+# CHECK-NEXT: v10: boolean = IsInsideView v2, v9 typedArrayType=6 [keyIsIntegral]
+# CHECK-NEXT: Branch v10 -> taken b4(| 0), notTaken b6()
+# CHECK-NEXT: b4(v11: guard):
+# CHECK-NEXT: v12: i32 = GetTypedArrayElement v2, v9, v11 typedArrayType=6 level=Proven accessSite=25 [keyIsIntegral, isInsideView]
+# CHECK-NEXT: v13: number = Add v12, v0
+# CHECK-NEXT: v14: boolean = IsInsideView v3, v9 typedArrayType=3 [keyIsIntegral]
+# CHECK-NEXT: Branch v14 -> taken b5(| 0), notTaken b7(v13)
+# CHECK-NEXT: b5(v15: guard):
+# CHECK-NEXT: PutTypedArrayElement v3, v9, v13, v15 typedArrayType=3 level=Proven accessSite=26 [keyIsIntegral, isInsideView]
+# CHECK-NEXT: v17: int[1, 4294967296] ~ int[1, 2147483648] = Increment v9
+# CHECK-NEXT: Jump -> next b2(v17)
+# CHECK-NEXT: b6() frequency=Rare:
+# CHECK-NEXT: v18: undefined|i32 = GetTypedArrayElement v2, v9 typedArrayType=6 level=Proven accessSite=25 [keyIsIntegral]
+# CHECK-NEXT: v19: number = Add v18, v0
+# CHECK-NEXT: Jump -> next b7(v19)
+# CHECK-NEXT: b7(v20: number) frequency=Rare:
+# CHECK-NEXT: PutTypedArrayElement v3, v9, v20 typedArrayType=3 level=Proven accessSite=26 [keyIsIntegral]
+# CHECK-NEXT: v22: int[1, 4294967296] ~ int[1, 2147483648] = Increment v9
+# CHECK-NEXT: Jump -> next b1(v22)
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v23: " " = String string=" "
+# CHECK-NEXT: v24: string = CallBuiltin v3, v23 overload=TypedArrayPrototypeJoin/0 accessSite=28 @905 tail
+# CHECK-NEXT: Return v24
+# CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="storeList"
 # CHECK: module=m0 position=919 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<int[-9007199254740992, 9007199254740992]|double, proven, Contiguous, pristine[Storage, Names, Dense]> site=w8 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w9 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: Array<int[-9007199254740992, 9007199254740992]|double, proven, Contiguous, pristine[Storage, Names, Dense]>):
@@ -507,87 +581,3 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private
 # CHECK-NEXT: v30: string = CallBuiltin v1, v29 overload=TypedArrayPrototypeJoin/0 accessSite=35 @1060 tail
 # CHECK-NEXT: Return v30
 # CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="storeWords"
-# CHECK: module=m0 position=638 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w4}] results=[{type=string site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}]} {
-# CHECK-NEXT: b0(v0: number):
-# CHECK-NEXT: v1: int = AssumeType v0 provenType=undefined|int
-# CHECK-NEXT: v2: 0 = Integer
-# CHECK-NEXT: v3: Int32Array<anything, pristine[Storage, Names]> = GetModuleVariable variable=g0
-# CHECK-NEXT: v4: Uint8ClampedArray<anything, pristine[Storage, Names]> = GetModuleVariable variable=g1
-# CHECK-NEXT: Jump -> next b1(v2)
-# CHECK-NEXT: b1(v5: int[0, 4294967296] ~ 0):
-# CHECK-NEXT: Jump -> next b2(v5)
-# CHECK-NEXT: b2(v6: int[0, 4294967296] ~ int[0, 2147483648]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v8: int[0, 4294967296] = CallBuiltin v3 overload=TypedArrayPrototypeLength/0 accessSite=19
-# CHECK-NEXT: v9: boolean = Less v6, v8
-# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b8()
-# CHECK-NEXT: b3(v10: int[0, 4294967295] ~ int[0, 2147483647]):
-# CHECK-NEXT: v11: boolean = IsInsideView v3, v10 typedArrayType=6 [keyIsIntegral]
-# CHECK-NEXT: Branch v11 -> taken b4(| 0), notTaken b6()
-# CHECK-NEXT: b4(v12: guard):
-# CHECK-NEXT: v13: i32 = GetTypedArrayElement v3, v10, v12 typedArrayType=6 level=Proven accessSite=20 [keyIsIntegral, isInsideView]
-# CHECK-NEXT: v14: i32 = BitOr v13, v1
-# CHECK-NEXT: v15: boolean = IsInsideView v4, v10 typedArrayType=3 [keyIsIntegral]
-# CHECK-NEXT: Branch v15 -> taken b5(| 0), notTaken b7(v14)
-# CHECK-NEXT: b5(v16: guard):
-# CHECK-NEXT: PutTypedArrayElement v4, v10, v14, v16 typedArrayType=3 level=Proven accessSite=21 [keyIsIntegral, isInsideView]
-# CHECK-NEXT: v18: int[1, 4294967296] ~ int[1, 2147483648] = Increment v10
-# CHECK-NEXT: Jump -> next b2(v18)
-# CHECK-NEXT: b6() frequency=Rare:
-# CHECK-NEXT: v19: undefined|i32 = GetTypedArrayElement v3, v10 typedArrayType=6 level=Proven accessSite=20 [keyIsIntegral]
-# CHECK-NEXT: v20: i32 = BitOr v19, v1
-# CHECK-NEXT: Jump -> next b7(v20)
-# CHECK-NEXT: b7(v21: i32) frequency=Rare:
-# CHECK-NEXT: PutTypedArrayElement v4, v10, v21 typedArrayType=3 level=Proven accessSite=21 [keyIsIntegral]
-# CHECK-NEXT: v23: int[1, 4294967296] ~ int[1, 2147483648] = Increment v10
-# CHECK-NEXT: Jump -> next b1(v23)
-# CHECK-NEXT: b8():
-# CHECK-NEXT: v24: " " = String string=" "
-# CHECK-NEXT: v25: string = CallBuiltin v4, v24 overload=TypedArrayPrototypeJoin/0 accessSite=23 @765 tail
-# CHECK-NEXT: Return v25
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="storeSums"
-# CHECK: module=m0 position=779 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w6}] results=[{type=string site=w7 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{original=0}]} {
-# CHECK-NEXT: b0(v0: number):
-# CHECK-NEXT: v1: int|fractional = AssumeType v0 provenType=undefined|int|fractional
-# CHECK-NEXT: v2: 0 = Integer
-# CHECK-NEXT: v3: Int32Array<anything, pristine[Storage, Names]> = GetModuleVariable variable=g0
-# CHECK-NEXT: v4: Uint8ClampedArray<anything, pristine[Storage, Names]> = GetModuleVariable variable=g1
-# CHECK-NEXT: Jump -> next b1(v2)
-# CHECK-NEXT: b1(v5: int[0, 4294967296] ~ 0):
-# CHECK-NEXT: Jump -> next b2(v5)
-# CHECK-NEXT: b2(v6: int[0, 4294967296] ~ int[0, 2147483648]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v8: int[0, 4294967296] = CallBuiltin v3 overload=TypedArrayPrototypeLength/0 accessSite=24
-# CHECK-NEXT: v9: boolean = Less v6, v8
-# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b8()
-# CHECK-NEXT: b3(v10: int[0, 4294967295] ~ int[0, 2147483647]):
-# CHECK-NEXT: v11: boolean = IsInsideView v3, v10 typedArrayType=6 [keyIsIntegral]
-# CHECK-NEXT: Branch v11 -> taken b4(| 0), notTaken b6()
-# CHECK-NEXT: b4(v12: guard):
-# CHECK-NEXT: v13: i32 = GetTypedArrayElement v3, v10, v12 typedArrayType=6 level=Proven accessSite=25 [keyIsIntegral, isInsideView]
-# CHECK-NEXT: v14: number = Add v13, v1
-# CHECK-NEXT: v15: boolean = IsInsideView v4, v10 typedArrayType=3 [keyIsIntegral]
-# CHECK-NEXT: Branch v15 -> taken b5(| 0), notTaken b7(v14)
-# CHECK-NEXT: b5(v16: guard):
-# CHECK-NEXT: PutTypedArrayElement v4, v10, v14, v16 typedArrayType=3 level=Proven accessSite=26 [keyIsIntegral, isInsideView]
-# CHECK-NEXT: v18: int[1, 4294967296] ~ int[1, 2147483648] = Increment v10
-# CHECK-NEXT: Jump -> next b2(v18)
-# CHECK-NEXT: b6() frequency=Rare:
-# CHECK-NEXT: v19: undefined|i32 = GetTypedArrayElement v3, v10 typedArrayType=6 level=Proven accessSite=25 [keyIsIntegral]
-# CHECK-NEXT: v20: number = Add v19, v1
-# CHECK-NEXT: Jump -> next b7(v20)
-# CHECK-NEXT: b7(v21: number) frequency=Rare:
-# CHECK-NEXT: PutTypedArrayElement v4, v10, v21 typedArrayType=3 level=Proven accessSite=26 [keyIsIntegral]
-# CHECK-NEXT: v23: int[1, 4294967296] ~ int[1, 2147483648] = Increment v10
-# CHECK-NEXT: Jump -> next b1(v23)
-# CHECK-NEXT: b8():
-# CHECK-NEXT: v24: " " = String string=" "
-# CHECK-NEXT: v25: string = CallBuiltin v4, v24 overload=TypedArrayPrototypeJoin/0 accessSite=28 @905 tail
-# CHECK-NEXT: Return v25
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="storeWords"
-# CHECK: module=m0 position=638 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w4 flags=[IsExpected]}] results=[{type=string site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}]} creator=Version{provenVersion=f6}
-# CHECK-LABEL: function {{*}}name="storeSums"
-# CHECK: module=m0 position=779 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w6 flags=[IsExpected]}] results=[{type=string site=w7 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{original=0}]} creator=Version{provenVersion=f7}

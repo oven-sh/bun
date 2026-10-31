@@ -1,19 +1,19 @@
 //! Where a file of a test run replaces a member of a built-in object under a name that it spells:
-//! `String.prototype.at = f`, `delete Array.from`, `spyOn(Map.prototype, "get")`, `Object.defineProperty(Buffer, "from", d)`.
+//! `String.prototype.at = f`, `delete Array.from`, `spyOn(Map.prototype, "get")`, `Object.defineProperty(Buffer, "from", d)`, `Object.assign(Date, { now })`.
 //! And where it may: a built-in object beside the name of one of its members, as operands of a call or in a literal,
 //! `stub(Array.prototype, "join")`, `[Map.prototype, "get"]`, `{ holder: Object, key: "assign" }`. A helper or a loop over a table does the rest.
 //! A member too many costs a test where it is used. One that is missed here stays locked, and the test that writes it gets a TypeError.
 
-use super::ReplacedMembersSought;
 use super::imports::has_source;
 use super::resolver::{ExprState, Resolver};
+use super::{ObjectSpelled, ReplacedMembersSought};
 use crate::builtins::table::{
     self, BuiltinFlags, BuiltinId, BuiltinName, MemberLookup, Mutability, RuntimeModule, Scope,
 };
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, BindingInitializer};
 use bun_sema::fold::{Constant, FoldedValue};
-use bun_sema::hir::{BinOp, ExprId, ExprKind, MemberKey, NodeData, UnOp};
+use bun_sema::hir::{BinOp, ExprId, ExprKind, MemberKey, NodeData, PropKey, UnOp};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::util::SharedSort;
 
@@ -77,7 +77,7 @@ impl Resolver<'_, '_> {
         (table::entry(global).mutability == Mutability::AlwaysLocked).then_some(global)
     }
 
-    fn find_builtin(&self, value: ExprId) -> Option<BuiltinId> {
+    pub(super) fn find_builtin(&self, value: ExprId) -> Option<BuiltinId> {
         let holder = self.value_of(value).or_else(|| self.held_value_of(value))?;
         Some(
             match table::has_flag(holder.path.id, BuiltinFlags::IS_GLOBAL_OBJECT) {
@@ -100,7 +100,7 @@ impl Resolver<'_, '_> {
             || table::has_flag(holder, BuiltinFlags::IS_CLOSED_TO_OTHER_NAMES)
     }
 
-    // `object.name = f`, `delete object[key]`, `object.name++`, `spyOn(object, key)`, `Object.defineProperty(object, key, d)`
+    // `object.name = f`, `delete object[key]`, `object.name++`, `spyOn(object, key)`, `Object.defineProperty(object, key, d)`, `Reflect.set(target, key, f, object)`
     fn find_write(&self, expr: ExprId) -> Option<Write> {
         let hir = self.input.hir;
         let target = match hir[expr].kind {
@@ -115,11 +115,15 @@ impl Resolver<'_, '_> {
                 operand,
             } => operand,
             ExprKind::Call(call) => {
-                let callee = self.value_of(hir[call].callee)?;
+                let callee = self.value_of(hir[call].callee)?.path.id;
                 let mut operands = hir.ids(hir[call].args);
-                let (object, key) = (operands.next()?, operands.next()?);
-                return writes_member_of_operand(callee.path.id).then_some(Write {
-                    object,
+                let (first, key) = (operands.next()?, operands.next()?);
+                let receiver = operands.nth(1).filter(|&receiver| {
+                    callee == BuiltinId::ReflectSet
+                        && !matches!(hir[receiver].kind, ExprKind::Spread(_))
+                });
+                return writes_member_of_operand(callee).then_some(Write {
+                    object: receiver.unwrap_or(first),
                     key: KeyOfWrite::Computed(key),
                 });
             }
@@ -138,7 +142,7 @@ impl Resolver<'_, '_> {
 
     /// The key itself, what a constant holds, an element of the list that a loop walks, what the calls of a function of the file pass for it:
     /// `function plant(name) { Object.defineProperty(Object.prototype, name, d); }`, `plant("polluted")`.
-    fn find_keys_spelled_for(&self, key: ExprId) -> Vec<Atom> {
+    pub(super) fn find_keys_spelled_for(&self, key: ExprId) -> Vec<Atom> {
         let values = self.find_values_spelled_for(key).into_iter();
         values
             .filter_map(|value| self.constant_key(value))
@@ -303,6 +307,43 @@ impl Resolver<'_, '_> {
         (found.handed_on).extend(closed.filter(|&holder| Self::takes_no_names(holder)));
     }
 
+    // `Object.assign(Date, { now: () => 0 })`, `Object.defineProperties(Math, { random: d })`: the keys of the literals are written on the first operand.
+    fn find_members_written_from_literals(&self, expr: ExprId, found: &mut Found) {
+        let hir = self.input.hir;
+        let ExprKind::Call(call) = hir[expr].kind else {
+            return;
+        };
+        let callee = self.value_of(hir[call].callee).map(|callee| callee.path.id);
+        let Some(BuiltinId::ObjectAssign | BuiltinId::ObjectDefineProperties) = callee else {
+            return;
+        };
+        let mut operands = hir.ids(hir[call].args);
+        let Some(object) = operands.next() else {
+            return;
+        };
+        let holders = self.find_builtins_spelled_for(object);
+        if holders.is_empty() {
+            return;
+        }
+        for source in operands {
+            let ExprKind::Object(properties) = hir[hir.skip_type_assertions(source)].kind else {
+                continue;
+            };
+            for property in properties.iter() {
+                let keys = match hir[property].key {
+                    PropKey::Name(name) => vec![name],
+                    PropKey::Computed(key) => self.find_keys_spelled_for(key),
+                    PropKey::None | PropKey::Private(_) => continue,
+                };
+                for key in keys {
+                    for &holder in &holders {
+                        self.note_write(holder, key, found);
+                    }
+                }
+            }
+        }
+    }
+
     pub(super) fn collect_replaced_members(&mut self) {
         let sought = self.input.replaced_members_sought;
         if sought == ReplacedMembersSought::None {
@@ -330,11 +371,14 @@ impl Resolver<'_, '_> {
         }
         let mut keys = Vec::new();
         let mut keys_spelled = Vec::new();
+        let mut objects_spelled = Vec::new();
+        let mut keys_partly_read = Vec::new();
         let mut named_from_outside = Vec::new();
         for expr in evaluated {
             if sought == ReplacedMembersSought::WrittenOrNamed {
                 self.find_members_named_by(expr, &mut found);
             }
+            self.find_members_written_from_literals(expr, &mut found);
             let Some(write) = self.find_write(expr) else {
                 if let ExprKind::Assign { target, .. } = self.input.hir[expr].kind {
                     let target = self.input.hir.skip_type_assertions(target);
@@ -352,10 +396,27 @@ impl Resolver<'_, '_> {
                 KeyOfWrite::Computed(key) => self.find_symbols_spelled_for(key),
             };
             // A name behind a dot on an object of the program's own says nothing.
-            if let (true, KeyOfWrite::Computed(key)) = (holders.is_empty(), &write.key) {
+            if holders.is_empty() && matches!(write.key, KeyOfWrite::Computed(_)) {
                 keys.extend_from_slice(&written);
-                let key = self.input.hir.skip_type_assertions(*key);
+            }
+            if let (KeyOfWrite::Computed(key), ExprKind::Call(_)) =
+                (write.key, self.input.hir[expr].kind)
+            {
+                let key = self.input.hir.skip_type_assertions(key);
                 keys_spelled.extend(written.iter().map(|&name| (key, name)));
+                let is_read = |value: ExprId| {
+                    let symbol = || table::well_known_symbol(self.find_builtin(value)?);
+                    self.constant_key(value).is_some() || symbol().is_some()
+                };
+                if !self.find_values_spelled_for(key).into_iter().all(is_read) {
+                    keys_partly_read.push(key);
+                }
+                let objects = self.find_values_spelled_for(write.object).into_iter();
+                objects_spelled.extend(objects.map(|object| ObjectSpelled {
+                    key,
+                    object,
+                    is_builtin: self.find_builtin(object).is_some(),
+                }));
             }
             // Which prototype it is nobody says: the two that take no new names. A guess at what a test means: a package that gives the prototype
             // of its own class a `toString` means neither, and does in a test run what it does in an executable.
@@ -372,7 +433,21 @@ impl Resolver<'_, '_> {
                     }
                 }
             }
-            for &holder in &holders {
+            // Objects that the file reaches without their names, under a name that some built-in object has. They come ON TOP of what stands above:
+            // no older rule asks whether one was found. A package does in a test run what it does in an executable.
+            let names_member = || {
+                written
+                    .iter()
+                    .any(|&name| self.input.names.get(name).is_some())
+            };
+            let unnamed = match holders.is_empty()
+                && sought == ReplacedMembersSought::WrittenOrNamed
+                && (!symbols.is_empty() || names_member())
+            {
+                true => self.find_builtins_reached_without_names(write.object),
+                false => Vec::new(),
+            };
+            for &holder in holders.iter().chain(&unnamed) {
                 // Nobody can read the name: `for (const name of Object.keys(Math)) spyOn(Math, name)`, `function setGlobal(name, value) { globalThis[name] = value; }`.
                 // Of the global object only what is tested where it is used anyway, fetch and the timers: Map and Array are too much to give up for it.
                 if written.is_empty() && symbols.is_empty() {
@@ -398,6 +473,10 @@ impl Resolver<'_, '_> {
         }
         keys_spelled.shared_sort_by_key(|entry: &(ExprId, Atom)| entry.0);
         self.output.keys_spelled_on_other_objects = keys_spelled;
+        objects_spelled.shared_sort_by_key(|entry: &ObjectSpelled| entry.key);
+        self.output.objects_spelled_for_calls = objects_spelled;
+        keys_partly_read.shared_sort_unstable();
+        self.output.keys_partly_read = keys_partly_read;
         // A list of objects here, a loop that writes one key on each of them there: every object that the file hands on meets every such key.
         found.handed_on.shared_sort_unstable();
         found.handed_on.dedup();

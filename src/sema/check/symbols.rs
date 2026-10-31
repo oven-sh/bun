@@ -1360,20 +1360,6 @@ impl<'p, 's> Checker<'p, 's> {
         target.map(|_| AliasTarget::Symbol(symbol))
     }
 
-    /// The JavaScript file behind the `import * as ns` that declares `sym`, if it says `module.exports = value`.
-    pub(super) fn javascript_module_with_export_equals(&self, sym: Sym) -> Option<Sym> {
-        let files = self.files();
-        let import = files.symbol(sym).decls.iter().find_map(|d| match *d {
-            Decl::ImportNamespace(i) => Some(i),
-            _ => None,
-        })?;
-        let import = &self.hir(sym.file)[import];
-        let mode = files.mode_of_import(sym.file, import.mode);
-        let module = files.module_of_specifier_as(sym.file, import.spec, mode)?;
-        (self.hir(module.file).is_js && files.export(module, known::export_equals).is_some())
-            .then_some(module)
-    }
-
     /// `resolveESModuleSymbol`: the type of the symbol `cloneTypeAsModuleType` creates for the
     /// `import * as ns` that declares `sym`. It has no signatures, and has a `default` if one is
     /// synthesized. `None` if `sym` is declared differently, or aliases the module or its
@@ -3195,7 +3181,8 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> TypeId {
         // Destructuring `any` yields `any`, and nothing else is checked, not even a default.
         if self.is_any(parent_ty) {
-            return parent_ty;
+            let listed = self.type_predicate_listed_for_element_of_any(file, pat);
+            return listed.unwrap_or(parent_ty);
         }
         let hir = self.hir(file);
         let parent_ty = match self.bound(file).pat_parent[pat.idx()] {

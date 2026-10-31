@@ -37,9 +37,81 @@ export const behindInVeryLargeProgramPath = join(
 export const flagsOfVeryLargeProgram = ["--aot-limit=MaxWarmCodeValues:1"];
 
 /**
+ * A turn's cost can come in lumps. names-seen.one-of-256-lists-of-40-by-in (./everyday/dictionaries-built-anew.txt) takes 7,000 instructions a turn, plus 80 million every 9,000 turns: a full
+ * collection frees the 10,240 structures of its dictionaries, and the next 256 turns build them again. The two runs of a reading are 750 million instructions apart. That holds five of those
+ * lumps or six, depending on where the runs end, and every plan ends them somewhere else: one executable read 14,100 to 16,400 a turn.
+ * `count(part)` is the instructions of a run of `part` sixty-fourths of the planned turns, for each of `partsThatShowLumps`. Three adjacent stretches of equal length cost the same except for
+ * the lumps in them, and lumps that are 1.5 to 3 stretches apart never fall evenly. Stretches of 1, 2 and 4 sixty-fourths catch the lumps that come 4 to 32 times between the two runs.
+ * Returns the factor on the planned turns that makes one lump less than 1% of what lies between the two runs, which are 48 sixty-fourths apart.
+ */
+export function timesThatEvenOutLumps(count: (part: number) => number) {
+  const lump = Math.max(
+    ...[1, 2, 4].map(width => {
+      const stretches = [1, 2, 3].map(stretch => count((stretch + 1) * width) - count(stretch * width));
+      return Math.max(...stretches) - Math.min(...stretches);
+    }),
+  );
+  return Math.max(1, Math.ceil((100 * lump) / (4 * (count(16) - count(4)))));
+}
+export const partsThatShowLumps = [1, 2, 3, 4, 6, 8, 12, 16];
+
+/** How many turns each of the hundred short calls of ./idioms/host.ts takes. Only the JIT needs them: ten million instructions a call. ./README.md, "How many turns a number needs". */
+export function turnsOfCallThatWarmsUp({
+  aTurn,
+  waits,
+  underTheJit,
+}: {
+  aTurn: number;
+  waits: boolean;
+  underTheJit: boolean;
+}) {
+  if (!underTheJit) return 1;
+  return Math.round(Math.min(5000, Math.max(100, waits ? 0 : 10e6 / aTurn)));
+}
+
+/**
+ * Whether a turn mostly waits, for a timer say. The clock alone cannot tell: a busy machine keeps a program that only computes from running for seconds. A program that waits gives up the
+ * processor, once a turn or more. One that is kept from running has it taken away. `timesATurnItGivesUpTheProcessor` is NaN where nothing counts that: there the clock decides.
+ */
+export function mostlyWaits({
+  aTurn,
+  secondsATurn,
+  timesATurnItGivesUpTheProcessor,
+}: {
+  aTurn: number;
+  secondsATurn: number;
+  timesATurnItGivesUpTheProcessor: number;
+}) {
+  return secondsATurn > 500e-6 && secondsATurn > (20 * aTurn) / 1e9 && !(timesATurnItGivesUpTheProcessor < 0.5);
+}
+
+/**
+ * As many turns as make 800 million instructions, and more where the cost comes in lumps. A turn that mostly waits executes little: of those, as many as take twenty seconds.
+ * Too few turns would leave the JIT's compiling inside what is measured. `count` runs the program.
+ */
+export async function planOf(
+  count: (plan: Turns) => Promise<{ instructions: number; seconds: number; timesItGaveUpTheProcessor: number }>,
+  { underTheJit }: { underTheJit: boolean },
+): Promise<Turns> {
+  const few = await count({ turns: 1000, warmUp: 20 });
+  const more = await count({ turns: 5000, warmUp: 20 });
+  const aTurn = Math.max(1, (more.instructions - few.instructions) / 4000);
+  const secondsATurn = (more.seconds - few.seconds) / 4000;
+  const timesATurnItGivesUpTheProcessor = (more.timesItGaveUpTheProcessor - few.timesItGaveUpTheProcessor) / 4000;
+  const waits = mostlyWaits({ aTurn, secondsATurn, timesATurnItGivesUpTheProcessor });
+  const turns = Math.round(Math.min(20e6, Math.max(8000, waits ? 20 / secondsATurn : 800e6 / aTurn)));
+  const warmUp = turnsOfCallThatWarmsUp({ aTurn, waits, underTheJit });
+  if (waits) return { turns, warmUp };
+  const counts = new Map<number, number>();
+  for (const part of partsThatShowLumps)
+    counts.set(part, (await count({ turns: part * (turns >> 6), warmUp: 20 })).instructions);
+  return { turns: turns * timesThatEvenOutLumps(part => counts.get(part)!), warmUp };
+}
+
+/**
  * Writes every idiom's sources into `folder`: the TypeScript into one folder with a tsconfig.json, the JavaScript into another without. `collections: false` leaves out the run that counts them; `buildFlags` go to every `bun build --compile --aot`.
  * `inVeryLargeProgram` compiles each idiom as the same text would be compiled inside a very large program, and the idioms of ./everyday find turn() at run time.
- * `jit: false` leaves out the runs under the JIT. `together` names the idioms that will be measured: they are the entry points of a few executables, each compiled as it is when it is built alone.
+ * `jit: false` leaves out the runs under the JIT, and the warming up that only they need. `together` names the idioms that will be measured: they are the entry points of a few executables, each compiled as it is when it is built alone.
  */
 export function idiomsAgainstTheJit(
   bun: string,
@@ -89,9 +161,12 @@ export function idiomsAgainstTheJit(
 
   // What wait4() says of a child is never under what its parent had resident when it started the child: GNU time is a small parent.
   const underTime =
-    process.platform === "linux" && existsSync("/usr/bin/time") ? ["/usr/bin/time", "-f", "peak %M"] : [];
+    process.platform === "linux" && existsSync("/usr/bin/time")
+      ? ["/usr/bin/time", "-f", "peak %M\n%w voluntary context switches"]
+      : [];
 
   async function counted(cmd: string[], { turns, warmUp }: Turns, extra: Record<string, string> = {}) {
+    const began = performance.now();
     const run = await (underTime.length ? measureCommand : measureCommandWithMemory)(
       folder,
       [...underTime, ...cmd],
@@ -108,6 +183,9 @@ export function idiomsAgainstTheJit(
     const peakKilobytes = "peakBytes" in run ? run.peakBytes / 1024 : Number(/^peak (\d+)$/m.exec(stderr)?.[1]);
     return {
       instructions,
+      seconds: (performance.now() - began) / 1000,
+      // As GNU time is told to print it above, and as `time -l` of macOS prints it.
+      timesItGaveUpTheProcessor: Number(/^\s*(\d+) +voluntary context switches$/m.exec(stderr)?.[1]),
       peakMegabytes: peakKilobytes / 1024,
       printed: stdout,
       collections: stderr.match(/^.*GC\b.*$/gm)?.length ?? 0,
@@ -124,23 +202,6 @@ export function idiomsAgainstTheJit(
       peakMegabytes: long.peakMegabytes,
       peakMegabytesOfAQuarter: short.peakMegabytes,
       printed: long.printed,
-    };
-  }
-
-  // As many turns as make 800 million instructions. A turn that mostly waits, for a timer say, executes little: of those, as many as take twenty seconds.
-  // Half a millisecond a turn is two seconds between the two runs: more than a busy machine adds by chance. Too few turns would leave the JIT's compiling inside what is measured.
-  async function planFor(executable: string, extra: Record<string, string> = {}): Promise<Turns> {
-    const began = performance.now();
-    const few = await counted([executable], { turns: 1000, warmUp: 20 }, extra);
-    const between = performance.now();
-    const more = await counted([executable], { turns: 5000, warmUp: 20 }, extra);
-    const aTurn = Math.max(1, (more.instructions - few.instructions) / 4000);
-    const secondsATurn = (performance.now() - between - (between - began)) / 1000 / 4000;
-    const waits = secondsATurn > 500e-6 && secondsATurn > (20 * aTurn) / 1e9;
-    const clamp = (value: number, least: number, most: number) => Math.round(Math.min(most, Math.max(least, value)));
-    return {
-      turns: clamp(waits ? 20 / secondsATurn : 800e6 / aTurn, 8000, 20e6),
-      warmUp: clamp(waits ? 0 : 10e6 / aTurn, 100, 5000),
     };
   }
 
@@ -202,8 +263,10 @@ export function idiomsAgainstTheJit(
       const underTheJit = [bun, "run", "--no-install", join(sources.untyped, name + ".js")];
       const planned =
         name in pinnedTurns
-          ? { turns: pinnedTurns[name], warmUp: 5000 }
-          : await planFor(executables.untyped, startsAt("untyped"));
+          ? { turns: pinnedTurns[name], warmUp: measuresJit ? 5000 : 1 }
+          : await planOf(plan => counted([executables.untyped], plan, startsAt("untyped")), {
+              underTheJit: measuresJit,
+            });
       const plan = measuresJit && !(name in pinnedTurns) ? await withinReachOf(underTheJit, planned) : planned;
       const typed = await cost([executables.typed], plan, startsAt("typed"));
       const untyped = await cost([executables.untyped], plan, startsAt("untyped"));

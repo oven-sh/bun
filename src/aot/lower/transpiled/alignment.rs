@@ -2,7 +2,7 @@ use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{AssignTarget, E, Expr, Loc, OpCode, Stmt, StmtOrExpr};
 use bun_core::strings;
-use bun_sema::atom::{Interner, known};
+use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{Binding, Bound, Decl, PatParent};
 use bun_sema::fold::{Constant, TreeNode, push_children};
 use bun_sema::hir::{
@@ -19,6 +19,8 @@ pub(in crate::lower) enum Rewrite {
     Literal {
         position: u32,
         value: Constant,
+        /// `Color.Green` is printed `1 /* Green */`: the name in the comment.
+        enum_member: Option<Atom>,
     },
     /// One of its operands, or the initializer of the variable that it names.
     Operand(ExprId),
@@ -35,6 +37,8 @@ pub(super) struct Rewrites {
     pub(super) returned_initializers: FxHashMap<ExprId, u32>,
     /// The initializers that are printed in place of a name, each with that name.
     pub(super) replaced_names: FxHashMap<ExprId, ExprId>,
+    /// Each `a[key]` that is printed `a.name`. Sorted.
+    pub(super) keys_printed_as_names: Vec<ExprId>,
 }
 
 pub(super) struct PrintedTree<'a> {
@@ -58,6 +62,7 @@ pub(super) struct Alignment<'a, 's> {
     rewrites: FxHashMap<ExprId, Rewrite>,
     returned_initializers: FxHashMap<ExprId, u32>,
     replaced_names: FxHashMap<ExprId, ExprId>,
+    keys_printed_as_names: Vec<ExprId>,
     pending: Vec<(ExprId, Expr)>,
     /// One bit for each expression that has been held against what is printed for it.
     aligned: Vec<u64>,
@@ -232,6 +237,7 @@ impl<'a, 's> Alignment<'a, 's> {
             rewrites: FxHashMap::default(),
             returned_initializers: FxHashMap::default(),
             replaced_names: FxHashMap::default(),
+            keys_printed_as_names: Vec::new(),
             pending: Vec::new(),
             aligned: vec![0; parsed.hir.exprs.len() / 64 + 1],
         }
@@ -261,10 +267,13 @@ impl<'a, 's> Alignment<'a, 's> {
         for expression in (0..self.hir.exprs.len() as u32).map(ExprId) {
             self.align_call(expression);
         }
+        self.keys_printed_as_names.sort_unstable();
+        self.keys_printed_as_names.dedup();
         Rewrites {
             expressions: self.rewrites,
             returned_initializers: self.returned_initializers,
             replaced_names: self.replaced_names,
+            keys_printed_as_names: self.keys_printed_as_names,
         }
     }
 
@@ -648,17 +657,19 @@ impl<'a, 's> Alignment<'a, 's> {
 
     /// True: what is printed evaluates the expression, or what stands for it. False: its value is printed, or it has been aligned before.
     fn align_expression(&mut self, expression: ExprId, printed: Expr) -> bool {
-        let printed = match printed.data {
-            ExprData::EInlinedEnum(member) => member.value,
-            _ => printed,
+        let (printed, enum_member) = match printed.data {
+            ExprData::EInlinedEnum(member) => {
+                (member.value, Some(self.atoms.intern(&member.comment[..])))
+            }
+            _ => (printed, None),
         };
         let literal = self.find_literal_value(printed);
-        self.align_with(expression, Some(printed), literal, printed.loc)
+        self.align_with(expression, Some(printed), literal, enum_member, printed.loc)
     }
 
     fn align_literal(&mut self, expression: ExprId, text: &[u8], position: Loc) {
         let literal = Constant::String(self.atoms.intern(text));
-        self.align_with(expression, None, Some(literal), position);
+        self.align_with(expression, None, Some(literal), None, position);
     }
 
     fn align_with(
@@ -666,6 +677,7 @@ impl<'a, 's> Alignment<'a, 's> {
         expression: ExprId,
         mut printed: Option<Expr>,
         mut literal: Option<Constant>,
+        mut enum_member: Option<Atom>,
         mut position: Loc,
     ) -> bool {
         let hir = self.hir;
@@ -689,6 +701,7 @@ impl<'a, 's> Alignment<'a, 's> {
                 current = hir.skip_type_assertions(operand);
                 printed = Some(comma.right);
                 literal = self.find_literal_value(comma.right);
+                enum_member = None;
                 position = comma.right.loc;
                 continue;
             }
@@ -723,8 +736,12 @@ impl<'a, 's> Alignment<'a, 's> {
             current = hir.skip_type_assertions(operand);
         }
         if let (Some(value), Some(position)) = (literal, position_of(position)) {
-            self.rewrites
-                .insert(current, Rewrite::Literal { position, value });
+            let literal = Rewrite::Literal {
+                position,
+                value,
+                enum_member,
+            };
+            self.rewrites.insert(current, literal);
             return false;
         }
         if let Some(printed) = printed {
@@ -885,6 +902,7 @@ impl<'a, 's> Alignment<'a, 's> {
             }
             // `a["b" + "c"]` is printed `a.bc`.
             (ExprKind::Index { obj, index, .. }, ExprData::EDot(printed)) => {
+                self.keys_printed_as_names.push(expression);
                 self.push(obj, printed.target);
                 self.align_literal(index, printed.name.slice(), printed.name_loc);
                 true

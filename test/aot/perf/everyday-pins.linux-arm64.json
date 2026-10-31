@@ -123,6 +123,10 @@
     "typed": 638,
     "untyped": 649
   },
+  "everyday-loops-over-lists-and-typed-arrays/a-list-filled-with-new-objects-up-to-its-length": {
+    "typed": 267.1,
+    "untyped": 268
+  },
   "everyday-a-text-in-place-of-what-a-pattern-finds/a-line-is-trimmed-by-one-pattern": {
     "typed": 2408.4,
     "untyped": 2408.5
@@ -220,8 +224,8 @@
     "untyped": 1241.3
   },
   "everyday-arrays/array-from-a-set": {
-    "typed": 805.4,
-    "untyped": 805.4
+    "typed": 130.9,
+    "untyped": 131
   },
   "everyday-arrays/array-of-a-length-filled-by-index": {
     "typed": 181.1,
@@ -428,8 +432,8 @@
     "untyped": 1151.8
   },
   "everyday-arrays/unique-by-a-set": {
-    "typed": 2318.6,
-    "untyped": 2322.2
+    "typed": 1941,
+    "untyped": 1940.5
   },
   "everyday-arrays/with": {
     "typed": 661.4,
@@ -856,16 +860,16 @@
     "untyped": 58.9
   },
   "everyday-collections/set-intersection-by-filter": {
-    "typed": 610.6,
-    "untyped": 607.7
+    "typed": 392.1,
+    "untyped": 392
   },
   "everyday-collections/set-of-objects": {
     "typed": 49.5,
     "untyped": 49.5
   },
   "everyday-collections/set-spread": {
-    "typed": 268.9,
-    "untyped": 264.9
+    "typed": 131,
+    "untyped": 131
   },
   "everyday-collections/set-union-method": {
     "typed": 1394,
@@ -1848,16 +1852,16 @@
     "untyped": 11
   },
   "everyday-emitters/a-class-below-emits-to-itself": {
-    "typed": 165,
-    "untyped": 161
+    "typed": 20,
+    "untyped": 20
   },
   "everyday-emitters/emitter-made-listened-to-and-dropped": {
     "typed": 601.6,
     "untyped": 597.5
   },
   "everyday-emitters/five-arguments": {
-    "typed": 104,
-    "untyped": 138
+    "typed": 8,
+    "untyped": 8
   },
   "everyday-emitters/four-emitters-by-turn": {
     "typed": 92.5,
@@ -1868,8 +1872,8 @@
     "untyped": 82
   },
   "everyday-emitters/listener-count": {
-    "typed": 40,
-    "untyped": 42
+    "typed": 6,
+    "untyped": 6
   },
   "everyday-emitters/many-emitters-events-and-listeners": {
     "typed": 223.4,
@@ -1900,8 +1904,8 @@
     "untyped": 71
   },
   "everyday-emitters/three-arguments": {
-    "typed": 94,
-    "untyped": 112
+    "typed": 8,
+    "untyped": 8
   },
   "everyday-emitters/two-listeners": {
     "typed": 154,
@@ -3032,8 +3036,8 @@
     "untyped": 51.3
   },
   "everyday-objects/get-prototype-of": {
-    "typed": 48.5,
-    "untyped": 48.5
+    "typed": 19,
+    "untyped": 19
   },
   "everyday-objects/getter-in-a-literal": {
     "typed": 9,

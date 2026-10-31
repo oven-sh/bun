@@ -16,7 +16,7 @@
 #   kind: key = the string is the text of an identifier (a property key, a member's name, an export's name) . value = compiled code makes a string of it (a literal of the program) . both . shown = neither
 #   width: 8 | 16 bits
 #   named by = the rows that name any of the covering strings, joined by +:
-#     of a string:      function-name . layout-name . environment-name . layout-set-name . type-site-text . module-path . module-directory . module-display-path . module-failure . export-statement . literal-union-member . bigint-digits
+#     of a string:      function-name . layout-name . environment-name . layout-set-name . type-site-text . module-path . module-directory . module-display-path . module-failure . export-statement . literal-union-member . bigint-digits . module-variable (a heap snapshot shows it)
 #     of an identifier: layout-field:<record | instance | container (an enum, a namespace) | other>[:optional] . class-method . static-field . member-guard . export . indirect-export . synthetic-export . required-name .
 #                       parsed-record-field (a parser or evaluated text may make the record: it finds the fields by their names) . added-name . removed-field . class-prototype-name . key-cell (compiled code holds the key) . environment-variable
 #     none of these rows names it, only compiled code, its side tables or a record that is not walked here (data, requests, global bindings, runs of properties): code-value (a literal) . code-key .
@@ -269,6 +269,29 @@ class Image:
         column("moduleFailures", 0, 4, "module-failure", only=ofExportStatement, mask=(1 << 30) - 1)
         column("exportStatements", 4, 4, "export-statement")
         column("exportStatements", 8, 4, "export-statement")
+        o, count = self.tables["namedVariables"]
+        cursor, numbers = start + o, []
+
+        def varint():
+            nonlocal cursor
+            value, shift = 0, 0
+            while True:
+                byte = data[cursor]
+                cursor += 1
+                value |= (byte & 0x7f) << shift
+                shift += 7
+                if byte < 0x80:
+                    return value
+        while cursor < start + o + count:
+            name = 0
+            for _ in range(varint()):
+                name += varint()
+                varint()
+                if name >= self.numberOfStrings:
+                    raise Refusal("ProgramTables: namedVariables names string %d of %d" % (name, self.numberOfStrings))
+                numbers.append(name)
+        self.name(numbers, "module-variable", False)
+        self.notes.append("module-variable %d" % len(numbers))
         column("literalStrings", 0, 4, "literal-union-member")
         column("bigIntConstants", 0, 4, "bigint-digits")
         column("moduleExports", 0, 3, "export", True)
@@ -334,9 +357,16 @@ class Image:
                 self.name([n], row, ofIdentifier)
                 counts[row.split(":")[0]] += 1
         self.notes += ["%s %d" % (row, n) for row, n in sorted(counts.items())]
-        # The texts of the functions that show theirs: entries of 12 bytes (function, start, end) and the characters.
+        # The texts of the functions that show theirs: entries of 12 bytes (function, start, end) and the characters. Then where the pieces of the text stood in their files:
+        # 8 bytes (module, start) for each module that has some and 8 more that end the last, and the pieces.
         for i in range(self.tables["functionTexts"][1]):
-            numberOfEntries, entriesOffset, textOffset = struct.unpack_from("<III", data, start + self.tables["functionTexts"][0] + 12 * i)
+            numberOfEntries, entriesOffset, textOffset, modulesWithPieces, modulesOffset, piecesOffset = struct.unpack_from("<IIIIII", data, start + self.tables["functionTexts"][0] + 24 * i)
+            if modulesOffset + 8 * (modulesWithPieces + 1) > ps:
+                raise Refusal("ProgramTables: the modules with pieces of the texts of functions run out of the section")
+            sizeOfPieces = struct.unpack_from("<I", data, start + modulesOffset + 8 * modulesWithPieces + 4)[0]
+            if piecesOffset + sizeOfPieces > ps:
+                raise Refusal("ProgramTables: the pieces of the texts of functions run out of the section")
+            self.regions += [(modulesOffset, modulesOffset + 8 * (modulesWithPieces + 1), "where the texts of functions stood"), (piecesOffset, piecesOffset + sizeOfPieces, "where the texts of functions stood")]
             if entriesOffset + 12 * numberOfEntries > ps:
                 raise Refusal("ProgramTables: the entries of the texts of functions run out of the section")
             size = max((struct.unpack_from("<I", data, start + entriesOffset + 12 * e + 8)[0] for e in range(numberOfEntries)), default=0)

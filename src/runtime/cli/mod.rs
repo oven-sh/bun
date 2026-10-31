@@ -81,6 +81,10 @@ pub(crate) mod test {
     #[path = "Timings.rs"]
     pub(crate) mod timings;
 
+    /// `bun test --aot-memory-limit`, and what stands in for it.
+    #[path = "MemoryOfJob.rs"]
+    pub(crate) mod memory_of_job;
+
     /// `bun test --parallel`: process-pool coordinator/worker entry points.
     /// Thin façade re-exporting from `parallel::runner`.
     #[path = "ParallelRunner.rs"]

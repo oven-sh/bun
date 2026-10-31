@@ -398,12 +398,11 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f20 visibility=Private
 # CHECK-NEXT: v141: Array<undefined|boolean|int, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v140 provenType=Array<undefined|boolean|int, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v142: string = CallBuiltin v141 overload=ArrayPrototypeJoin/0 accessSite=14 @328:1 tail
 # CHECK-NEXT: v143: undefined = CallBuiltin -, v142 overload=ConsoleLog/0 accessSite=7
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v145: int[1, 3] = Increment v17
-# CHECK-NEXT: Jump -> next b1(v145)
+# CHECK-NEXT: v144: int[1, 3] = Increment v17
+# CHECK-NEXT: Jump -> next b1(v144)
 # CHECK-NEXT: b46():
-# CHECK-NEXT: v146: undefined = Undefined
-# CHECK-NEXT: Return v146
+# CHECK-NEXT: v145: undefined = Undefined
+# CHECK-NEXT: Return v145
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="named"
 # CHECK: module=m0 position=190 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]

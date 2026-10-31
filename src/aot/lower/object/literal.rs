@@ -182,6 +182,10 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         let hir = self.hir;
         let deepest = self.inputs.limits.get(LimitId::MaxDataNestingDepth);
+        let known = &self.levels_of_literals_inside_built_ones;
+        if let Some(&levels) = known.get(&hir.skip_type_assertions(root)) {
+            return levels > deepest;
+        }
         let mut pending: SmallVec<[(ExprId, u64); 8]> = smallvec![(root, 1)];
         while let Some((expression, depth)) = pending.pop() {
             let literal = hir.skip_type_assertions(expression);
@@ -189,6 +193,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 continue;
             }
             if depth > deepest {
+                self.count_levels_of_literals_inside(root);
                 return true;
             }
             let inner = |part: ExprId| is_literal(hir, part).then_some((part, depth + 1));
@@ -200,12 +205,47 @@ impl FileLowering<'_, '_, '_, '_> {
                 continue;
             };
             if self.find_dictionary(literal).is_some() {
+                self.count_levels_of_literals_inside(root);
                 return true;
             }
             let values = properties.iter().map(|property| hir[property].value);
             pending.extend(values.filter_map(inner));
         }
         false
+    }
+
+    // Each literal inside one that code builds is asked in its turn. A dictionary counts as more levels than data may have.
+    fn count_levels_of_literals_inside(&mut self, root: ExprId) {
+        let hir = self.hir;
+        let mut found: Vec<(ExprId, usize, u64)> = vec![(hir.skip_type_assertions(root), 0, 1)];
+        let mut index = 0;
+        while let Some(&(literal, ..)) = found.get(index) {
+            let inner = |part: ExprId| {
+                is_literal(hir, part).then(|| (hir.skip_type_assertions(part), index, 1))
+            };
+            match hir[literal].kind {
+                ExprKind::Array(items) => found.extend(hir.ids(items).filter_map(inner)),
+                ExprKind::Object(_) if self.find_dictionary(literal).is_some() => {
+                    found[index].2 = u64::MAX;
+                }
+                ExprKind::Object(properties) => {
+                    let values = properties.iter().map(|property| hir[property].value);
+                    found.extend(values.filter_map(inner));
+                }
+                _ => {}
+            }
+            index += 1;
+        }
+        for index in (0..found.len()).rev() {
+            let (literal, outer, levels) = found[index];
+            if index > 0 {
+                found[outer].2 = found[outer].2.max(levels.saturating_add(1));
+            }
+            if levels > 1 {
+                self.levels_of_literals_inside_built_ones
+                    .insert(literal, levels);
+            }
+        }
     }
 
     fn find_types_under_name(

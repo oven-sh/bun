@@ -67,47 +67,36 @@ function f7 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: b1():
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: Jump -> next b2()
-# CHECK-NEXT: b2() handler=b11():
+# CHECK-NEXT: b2() handler=b8():
 # CHECK-NEXT: v3: undefined @JSValue = Undefined @0:3 tail
 # CHECK-NEXT: v4: anything @JSValue = CallBuiltin -, v1, v3 overload=ReflectConstruct/0 accessSite=6 @0:3 tail
 # CHECK-NEXT: v5: anything @JSValue = Upcast v4 castType=anything
-# CHECK-NEXT: v6: stringbuilder @Cell = StringBuilderBegin
-# CHECK-NEXT: v7: i32 @Int32 = StringBuilderCheckpoint v6
-# CHECK-NEXT: v8: boolean @Boolean = TypeTest v5 testedType=undefined
-# CHECK-NEXT: TestAndBranch v8 -> taken b3(), notTaken b4(| 0)
-# CHECK-NEXT: b3() handler=b11():
-# CHECK-NEXT: v9: buildercursor @RawWord = StringBuilderReserve v6 size=128
-# CHECK-NEXT: Jump -> next b7(v9)
-# CHECK-NEXT: b4(v10: null|boolean|number|string|symbol|bigint|object @JSValue):
-# CHECK-NEXT: v11: boolean @Boolean = TypeTest v10 testedType=null
-# CHECK-NEXT: TestAndBranch v11 -> taken b5(), notTaken b6()
-# CHECK-NEXT: b5() handler=b11():
-# CHECK-NEXT: v12: buildercursor @RawWord = StringBuilderReserve v6 size=128
-# CHECK-NEXT: v13: buildercursor @RawWord = JSONAppendToken v6, v12 jsonToken=Null
-# CHECK-NEXT: Jump -> next b7(v13)
-# CHECK-NEXT: b6() handler=b11():
-# CHECK-NEXT: v14: buildercursor @RawWord = StringBuilderReserve v6 size=128
-# CHECK-NEXT: Jump -> next b7(v14)
-# CHECK-NEXT: b7(v15: buildercursor @RawWord):
-# CHECK-NEXT: StringBuilderCommit v6, v15
-# CHECK-NEXT: v17: i32 @Int32 = StringBuilderCheckpoint v6
-# CHECK-NEXT: v18: boolean @Boolean = StrictEq v7, v17 form=Integers
-# CHECK-NEXT: TestAndBranch v18 -> taken b8(), notTaken b9()
-# CHECK-NEXT: b8() frequency=Rare handler=b11():
-# CHECK-NEXT: StringBuilderDiscard v6
-# CHECK-NEXT: v20: undefined @JSValue = Undefined
-# CHECK-NEXT: v21: undefined|string @JSValue = CallBuiltin -, v5, v20 overload=JSONStringify/0 accessSite=3
-# CHECK-NEXT: Jump -> next b10()
-# CHECK-NEXT: b9() handler=b11():
-# CHECK-NEXT: v22: string @Cell = StringBuilderFinish v6
-# CHECK-NEXT: Jump -> next b10()
-# CHECK-NEXT: b10():
-# CHECK-NEXT: Jump -> next b12()
-# CHECK-NEXT: b11() role=CatchHandler:
-# CHECK-NEXT: v23: anything @JSValue = CatchValue
-# CHECK-NEXT: v24: anything @JSValue = PropGet v23 key="constructor" accessSite=4 siteCache=0
-# CHECK-NEXT: v25: anything @JSValue = PropGet v24 key="name" accessSite=5 siteCache=1
-# CHECK-NEXT: Jump -> next b12()
-# CHECK-NEXT: b12():
+# CHECK-NEXT: v6: boolean @Boolean = TypeTest v5 testedType=undefined
+# CHECK-NEXT: TestAndBranch v6 -> taken b3(), notTaken b4(| 0)
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b4(v7: null|boolean|number|string|symbol|bigint|object @JSValue) handler=b8():
+# CHECK-NEXT: v8: stringbuilder @Cell = StringBuilderBegin
+# CHECK-NEXT: v9: boolean @Boolean = TypeTest v7 testedType=null
+# CHECK-NEXT: TestAndBranch v9 -> taken b5(), notTaken b6()
+# CHECK-NEXT: b5() frequency=Unlikely handler=b8():
+# CHECK-NEXT: v10: buildercursor @RawWord = StringBuilderReserve v8 size=128
+# CHECK-NEXT: v11: buildercursor @RawWord = JSONAppendToken v8, v10 jsonToken=Null
+# CHECK-NEXT: StringBuilderCommit v8, v11
+# CHECK-NEXT: v13: string @Cell = StringBuilderFinish v8
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b6() handler=b8():
+# CHECK-NEXT: StringBuilderDiscard v8
+# CHECK-NEXT: v15: undefined @JSValue = Undefined
+# CHECK-NEXT: v16: undefined|string @JSValue = CallBuiltin -, v5, v15 overload=JSONStringify/0 accessSite=3
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b7():
+# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: b8() role=CatchHandler:
+# CHECK-NEXT: v17: anything @JSValue = CatchValue
+# CHECK-NEXT: v18: anything @JSValue = PropGet v17 key="constructor" accessSite=4 siteCache=0
+# CHECK-NEXT: v19: anything @JSValue = PropGet v18 key="name" accessSite=5 siteCache=1
+# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: b9():
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }

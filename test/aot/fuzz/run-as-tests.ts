@@ -19,6 +19,7 @@ import { availableParallelism } from "node:os";
 import { dirname, join } from "node:path";
 import * as builtInsReplacedByTests from "./built-ins-replaced-by-tests";
 import { generate as exportsReplacedByTests } from "./exports-replaced-by-tests";
+import { generate as modulesLoadedAgainByTests } from "./modules-loaded-again-by-tests";
 import { Random } from "./random";
 import {
   changeEnvironment,
@@ -43,8 +44,11 @@ const limit = Number(option("programs") ?? Infinity);
 const until = Date.now() + Number(option("seconds") ?? 600) * 1000;
 const more = (option("flags") ?? "").split(/[\s,]+/).filter(Boolean);
 const layers = option("layers");
-/** By itself a run is built in layers only where it is large. With the word it also says on stderr how it was built. */
-const wordsOfCompiledRun = layers ? { BUN_DEBUG_TEST_AOT_WORDS: `TestRunLayers:${layers}` } : undefined;
+/**
+ * By itself a run is built in layers only where it is large. With the word it also says on stderr how it was built. Every run gets
+ * the word, the plain one and the executable too: a program may print its environment.
+ */
+const words = layers ? { BUN_DEBUG_TEST_AOT_WORDS: `TestRunLayers:${layers}` } : undefined;
 const work = join(process.env.TMPDIR ?? "/tmp", `aot-fuzz-as-tests-${process.pid}`);
 
 // As in a user's run: the compiler's verifiers are off.
@@ -59,6 +63,7 @@ const own: Record<string, (seed: number) => Program> = {
     meant: builtInsReplacedByTests.meant,
   }),
   "exports-replaced-by-tests": seed => ({ ...exportsReplacedByTests(new Random(seed)), extension: "js" }),
+  "modules-loaded-again-by-tests": seed => modulesLoadedAgainByTests(new Random(seed)),
 };
 const wanted = (
   option("sources")
@@ -142,8 +147,12 @@ function printed(run: Run): string {
   if (!parallel) return run.stdout;
   const lines: string[] = [];
   let rulesLeft = 0;
-  for (const line of run.stderr.split("\n")) {
+  const all = run.stderr.split("\n");
+  for (const [at, line] of all.entries()) {
     if (/^ \d+ pass$|^\d+ tests? failed:$/.test(line)) break;
+    // The report of an error that a test throws, in plain too, stands before or behind what the file prints next. Its first line is the
+    // error's text, above the frames.
+    if (/^[A-Z]\w*: /.test(line) && /^\s+at /.test(all[at + 1] ?? "")) continue;
     if (line === "# Unhandled error between tests") rulesLeft = 2;
     else if (rulesLeft) rulesLeft -= Number(/^-{20,}$/.test(line));
     // The run names a file each time it goes on with it: what a file prints in its tests may stand behind another file's lines.
@@ -200,7 +209,7 @@ async function judge(folder: string, programs: Drawn[], tallies: boolean): Promi
   rmSync(folder, { recursive: true, force: true });
   mkdirSync(folder, { recursive: true });
   const files = programs.map((program, index) => write(folder, `p${index}`, program, index));
-  const judged: Judged = { plain: await spawned([bun, "test", ...more, ...files], folder, 60), failing: new Map(), executables: new Map() }; // prettier-ignore
+  const judged: Judged = { plain: await spawned([bun, "test", ...more, ...files], folder, 60, words), failing: new Map(), executables: new Map() }; // prettier-ignore
   const { plain } = judged;
   // A run that plain Bun does not end says nothing.
   if (plain.signal || plain.timedOut) return (tallies && counts.plainFails++, judged);
@@ -208,7 +217,7 @@ async function judge(folder: string, programs: Drawn[], tallies: boolean): Promi
     [bun, "test", "--aot", ...more, ...files],
     folder,
     180 + 15 * files.length,
-    wordsOfCompiledRun,
+    words,
   ));
   if (compiled.signal || compiled.timedOut) {
     judged.kind = compiled.signal ? "crash" : "hang";
@@ -247,7 +256,7 @@ async function judge(folder: string, programs: Drawn[], tallies: boolean): Promi
     }
     const entry = write(join(folder, "executable"), `p${index}`, program);
     const build = await spawned([bun, "build", "--compile", "--aot", entry, "--outfile", join(folder, "x")], dirname(entry), 180); // prettier-ignore
-    const run = build.exitCode === 0 ? await spawned([join(folder, "x")], dirname(entry), 60) : undefined;
+    const run = build.exitCode === 0 ? await spawned([join(folder, "x")], dirname(entry), 60, words) : undefined;
     judged.executables.set(
       index,
       run ? run.stdout : "the build stops: " + (build.stderr + build.stdout).slice(0, 2000),
@@ -306,7 +315,7 @@ async function round(slot: number) {
     // A program that plain Bun runs otherwise the second time (a worker ended midway, a race) shows nothing.
     if (judged.failing.size) {
       const files = drawn.map((program, index) => write(folder, `p${index}`, program, index));
-      const [first, second] = [judged.plain, await spawned([bun, "test", ...more, ...files], folder, 60)].map(run => byFile(run, drawn.length)); // prettier-ignore
+      const [first, second] = [judged.plain, await spawned([bun, "test", ...more, ...files], folder, 60, words)].map(run => byFile(run, drawn.length)); // prettier-ignore
       for (const index of [...judged.failing.keys()]) if (first[index] !== second[index]) judged.failing.delete(index);
       if (!judged.failing.size) {
         counts.plainWavers++;

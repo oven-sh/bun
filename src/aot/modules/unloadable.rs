@@ -87,6 +87,10 @@ pub(super) fn find_unloadable_modules(
     while let Some(&module) = found.get(next) {
         next += 1;
         for &importer in &importers[module.file.idx()] {
+            // Each of its statements stands for a load by a file of its own, which fails alone.
+            if input.stand_in_for_files_from_disk == Some(importer) {
+                continue;
+            }
             if !core::mem::replace(&mut is_found[importer.idx()], true) {
                 found.push(UnloadableModule {
                     file: importer,

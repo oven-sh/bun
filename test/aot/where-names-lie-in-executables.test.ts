@@ -42,8 +42,9 @@ import type { RecordW2, UnionW11 } from "./libraryW1";
 const nameFromOutside = process.argv[2];
 const record: RecordW2 = nameFromOutside ? { fieldW3: 1, optionalFieldW4: nameFromOutside } : { fieldW3: 1 };
 const instance = new ClassW5();
+const heldW15 = new Map([[nameFromOutside, record]]);
 function isMember(given: UnionW11) {
-  return given === "memberW12";
+  return given === "memberW12" && heldW15.size > 0;
 }
 console.log(functionW9(record), String(functionW9).length > 0, (library as any)[nameFromOutside], (instance as any)[nameFromOutside], (ClassW5 as any)[nameFromOutside]);
 console.log(instance.methodW8(), ClassW5.staticFieldW6, isMember(nameFromOutside as UnionW11), record, instance);
@@ -61,6 +62,7 @@ const rowsOfNames: [string, string][] = [
   ["memberW12", "literal-union-member"],
   ["exportedW14", "export"],
   ["libraryW1", "module-path"],
+  ["heldW15", "module-variable"],
 ];
 
 // TODO: on macOS the tool finds no row in the executable.

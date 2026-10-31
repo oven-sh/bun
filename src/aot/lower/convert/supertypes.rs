@@ -4,7 +4,7 @@ use bun_sema::check::aot::{
 };
 use bun_sema::hir::{BinOp, ExprId, ExprKind};
 use bun_sema::types::SigId as SignatureId;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::{SmallVec, smallvec};
 use std::rc::Rc;
 
@@ -222,6 +222,73 @@ impl FileLowering<'_, '_, '_, '_> {
             0,
             false,
         );
+        self.compare_pending_pairs(comparison, position);
+    }
+
+    // The layout of a class names that of its base class where it is defined, so only the members that differ are left to follow.
+    pub(super) fn record_flow_into_base_class(
+        &mut self,
+        instance: CheckerTypeId,
+        base: CheckerTypeId,
+        position: u32,
+    ) {
+        let class_of = |file: &mut Self, ty| match file.queries.type_shape(ty) {
+            Ok(shape) => match classify_shape(&shape.kind) {
+                ComparedShape::Class(class) => Some(class),
+                _ => None,
+            },
+            Err(_) => None,
+        };
+        let classes = (class_of(self, instance), class_of(self, base));
+        let (Some(class), Some(base_class)) = classes else {
+            return self.record_conversion(instance, base, position, ConversionKind::Performed);
+        };
+        if class == base_class {
+            return self.record_conversion(instance, base, position, ConversionKind::Performed);
+        }
+        let pair = ComparedPair {
+            source: instance,
+            target: base,
+            is_asserted: false,
+        };
+        if self.types.conversions.compared_types.insert(pair, 0) == Some(0) {
+            return;
+        }
+        let members = (
+            self.queries.checked_members(instance),
+            self.queries.checked_members(base),
+        );
+        let (Ok(members), Ok(base_members)) = members else {
+            return;
+        };
+        let mut types: FxHashMap<_, CheckerTypeId> = FxHashMap::default();
+        types.reserve(members.len());
+        for member in members {
+            if let (MemberName::String(name), Ok(ty)) = (member.name, member.checked) {
+                types.insert(name, ty);
+            }
+        }
+        let mut comparison = Comparison::default();
+        for member in base_members {
+            let (MemberName::String(name), Ok(to)) = (member.name, member.checked) else {
+                continue;
+            };
+            if let Some(&from) = types.get(&name)
+                && from != to
+                && is_read_through(member.kind)
+                && let Ok(true) = self.queries.is_assignable(from, to)
+            {
+                comparison.add_pair(
+                    ComparedPair {
+                        source: from,
+                        target: to,
+                        is_asserted: false,
+                    },
+                    MAX_COMPARED_DEPTH,
+                    true,
+                );
+            }
+        }
         self.compare_pending_pairs(comparison, position);
     }
 

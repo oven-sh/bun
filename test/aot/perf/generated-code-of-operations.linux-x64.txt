@@ -62,14 +62,14 @@ instanceof_test	{"alone":[4,0],"opened":[5,0]}
 int_branch	{"alone":[5,0],"opened":[4.75,0]}
 interface_field_read	{"alone":[1,0],"opened":[1,0]}
 json_parse	{"alone":[36,5],"opened":[36,5]}
-json_stringify	{"alone":[37,3],"opened":[52,3]}
+json_stringify	{"alone":[20,3],"opened":[34,3]}
 json_stringify_any	{"alone":[14,2],"opened":[14,2]}
-json_stringify_array	{"alone":[106,5],"opened":[140,5]}
+json_stringify_array	{"alone":[103,5],"opened":[133,5]}
 json_stringify_indented	{"alone":[15,2],"opened":[15,2]}
-json_stringify_literal	{"alone":[100,5],"opened":[48.375,4]}
-json_stringify_nested	{"alone":[37,3],"opened":[52,3]}
-json_stringify_text	{"alone":[38,3],"opened":[54.5,3]}
-json_stringify_wide_text	{"alone":[38,3],"opened":[54.5,3]}
+json_stringify_literal	{"alone":[87,5],"opened":[30.375,4]}
+json_stringify_nested	{"alone":[20,3],"opened":[34,3]}
+json_stringify_text	{"alone":[21,3],"opened":[37,3]}
+json_stringify_wide_text	{"alone":[21,3],"opened":[37,3]}
 less_than	{"alone":[4,0],"opened":[4,0]}
 loop_counter	{"alone":[25,0],"opened":[35,5]}
 loop_for_of	{"alone":[25,0],"opened":[57.75,10]}
@@ -128,7 +128,7 @@ string_char	{"alone":[29,6],"opened":[29,6]}
 string_eq	{"alone":[6,1],"opened":[10.25,1]}
 string_eq_empty	{"alone":[3,0],"opened":[3,0]}
 string_eq_equal	{"alone":[6,1],"opened":[10.25,1]}
-string_eq_literal	{"alone":[22.625,2],"opened":[12,2]}
+string_eq_literal	{"alone":[3,1],"opened":[3,1]}
 string_index_of	{"alone":[18,4],"opened":[21,4]}
 string_length	{"alone":[8,1],"opened":[8,1]}
 string_less	{"alone":[5,1],"opened":[7,1]}	Executed 50.5 > 43.5. 7 is also what the trees of 10-28 01:43 gave; the 6 was read once, on 10-28 05:27.
@@ -136,7 +136,7 @@ string_literal	{"alone":[3,1],"opened":[3,1]}
 string_lower	{"alone":[-21.875,0],"opened":[-21.25,0]}	No site grew: the function with 12 sites has 17 | 28 instructions as before, the one with 4 went from 209 | 215 to 192 | 198, and the row is their difference.
 string_slice	{"alone":[6,0],"opened":[6,0]}
 string_starts	{"alone":[34.375,3],"opened":[24,3]}
-string_switch	{"alone":[121.25,9],"opened":[123.375,9]}
+string_switch	{"alone":[135.5,9],"opened":[123.375,9]}	alone: `p.m` is a proven string now that process.argv is a list of strings: executed 21.6 > 19.6; with the blocks behind rare edges the function with 12 sites went from 2,278 instructions to 1,698. What grew is 130 moves between registers in that function; on arm64 the row fell, 186 > 184.
 switch_int	{"alone":[4,1],"opened":[3,1]}
 table_literal	{"alone":[11,1],"opened":[11,1]}
 template3	{"alone":[16,4],"opened":[19,4]}	opened: executed 133.3 > 62.

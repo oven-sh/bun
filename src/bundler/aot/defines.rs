@@ -18,16 +18,19 @@ struct DefineEntry<'d> {
 
 pub(crate) fn fold_options<'s>(
     options: &BundleOptions<'_>,
+    user_defined_names: &[Box<[u8]>],
     arena: &'s Arena,
     atoms: &Interner<'s>,
     log: &mut Log,
 ) -> FoldOptions<'s> {
     let table = &*options.define;
     let defines = with_ast_scope(|scratch| convert_defines(table, scratch, arena, atoms, log));
-    let dropped_calls = dropped_call_paths(&options.drop, arena, atoms);
+    let user_defined = paths_of_names(user_defined_names, arena, atoms);
+    let dropped_calls = paths_of_names(&options.drop, arena, atoms);
     let features = feature_atoms(options, atoms);
     FoldOptions {
         defines: arena.alloc_slice_copy(&defines),
+        user_defined: arena.alloc_slice_copy(&user_defined),
         dropped_calls: arena.alloc_slice_copy(&dropped_calls),
         features: arena.alloc_slice_copy(&features),
         preserves_unused_imports: options.trim_unused_imports == Some(false),
@@ -144,12 +147,12 @@ fn define_value_from_data<'s>(value: &'s DataValue<'s>) -> DefineValue<'s> {
     }
 }
 
-fn dropped_call_paths<'s>(
-    dropped: &[Box<[u8]>],
+fn paths_of_names<'s>(
+    names: &[Box<[u8]>],
     arena: &'s Arena,
     atoms: &Interner<'s>,
 ) -> Vec<DefinePath<'s>> {
-    let mut paths: Vec<Vec<&[u8]>> = dropped
+    let mut paths: Vec<Vec<&[u8]>> = names
         .iter()
         .filter(|item| !item.is_empty())
         .map(|item| bun_core::strings::split(item, b".").collect())
@@ -232,7 +235,7 @@ mod tests {
                 |options| configure(options, scratch),
                 |context| {
                     let mut log = Log::default();
-                    let options = fold_options(context.options(), arena, atoms, &mut log);
+                    let options = fold_options(context.options(), &[], arena, atoms, &mut log);
                     (options, log)
                 },
             )

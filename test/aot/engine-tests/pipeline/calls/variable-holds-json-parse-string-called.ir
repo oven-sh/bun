@@ -122,44 +122,65 @@ function f2 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v0: 10 = Integer integer=10
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: builtin(String)|builtin(JSONParse) = GetModuleVariable variable=g1
 # CHECK-NEXT: Jump -> next b1(v1, v2)
-# CHECK-NEXT: b1(v3: i32, v4: int[0, 10]):
+# CHECK-NEXT: b1(v4: i32 ~ 0, v5: int[0, 10] ~ 0):
+# CHECK-NEXT: v6: boolean = TypeTest v3 testedType=builtin(JSONParse)
+# CHECK-NEXT: Branch v6 -> taken b2(), notTaken b11()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Jump -> next b3(v4, v5)
+# CHECK-NEXT: b3(v7: i32 ~ 0, v8: int[0, 10] ~ 0):
+# CHECK-NEXT: Jump -> next b4(v7, v8)
+# CHECK-NEXT: b4(v9: i32, v10: int[0, 10]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v6: boolean = Less v4, v0
-# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b9()
-# CHECK-NEXT: b2(v7: int[0, 9]):
-# CHECK-NEXT: v8: builtin(String)|builtin(JSONParse) = GetModuleVariable variable=g1
-# CHECK-NEXT: v9: builtin(String)|builtin(JSONParse) ~ builtin(JSONParse) = Upcast v8 castType=anything
-# CHECK-NEXT: v10: "{\"id\":7}" = String string="{\"id\":7}"
-# CHECK-NEXT: v11: boolean ~ true = TypeTest v9 testedType=builtin(JSONParse)
-# CHECK-NEXT: Branch v11 -> taken b3(), notTaken b4()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v12: undefined = Undefined
-# CHECK-NEXT: v13: null|boolean|number|string|object = CallBuiltin -, v10, v12 overload=JSONParse/0 accessSite=6
-# CHECK-NEXT: v14: null|boolean|number|string|object ~ null|number|string|object = Upcast v13 castType=anything
-# CHECK-NEXT: v15: anything = PropGet v14 key="id" accessSite=7
-# CHECK-NEXT: Jump -> next b5(v15)
-# CHECK-NEXT: b4() frequency=Unlikely:
-# CHECK-NEXT: v16: "{\"id\":7}" = Upcast v10 castType=anything
-# CHECK-NEXT: v17: anything = PropGet v16 key="id" accessSite=7
-# CHECK-NEXT: Jump -> next b5(v17)
-# CHECK-NEXT: b5(v18: anything):
-# CHECK-NEXT: v19: anything ~ number = Upcast v18 castType=anything
-# CHECK-NEXT: v20: boolean ~ true = TypeTest v19 testedType=number
-# CHECK-NEXT: Branch v20 -> taken b6(| 0), notTaken b7(| 0)
-# CHECK-NEXT: b6(v21: number):
-# CHECK-NEXT: v22: number = Add v3, v21
-# CHECK-NEXT: v23: 0 = Integer
-# CHECK-NEXT: v24: i32 = BitOr v22, v23
-# CHECK-NEXT: Jump -> next b8(v24)
-# CHECK-NEXT: b7(v25: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v26: number|string|bigint = Add v3, v25
-# CHECK-NEXT: v27: 0 = Integer
-# CHECK-NEXT: v28: i32 = BitOr v26, v27
-# CHECK-NEXT: Jump -> next b8(v28)
-# CHECK-NEXT: b8(v29: i32):
-# CHECK-NEXT: v30: int[1, 10] = Increment v7
-# CHECK-NEXT: Jump -> next b1(v29, v30)
-# CHECK-NEXT: b9():
-# CHECK-NEXT: Return v3
+# CHECK-NEXT: v12: boolean = Less v10, v0
+# CHECK-NEXT: Branch v12 -> taken b5(| 0), notTaken b14(v9)
+# CHECK-NEXT: b5(v13: int[0, 9]):
+# CHECK-NEXT: v14: "{\"id\":7}" = String string="{\"id\":7}"
+# CHECK-NEXT: v15: undefined = Undefined
+# CHECK-NEXT: v16: null|boolean|number|string|object = CallBuiltin -, v14, v15 overload=JSONParse/0 accessSite=6
+# CHECK-NEXT: v17: null|boolean|number|string|object ~ null|number|string|object = Upcast v16 castType=anything
+# CHECK-NEXT: v18: anything = PropGet v17 key="id" accessSite=7 [asksOnlyTables]
+# CHECK-NEXT: v19: boolean = DidReadAbove v18
+# CHECK-NEXT: Branch v19 -> taken b6(), notTaken b8()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v20: anything ~ number = Upcast v18 castType=anything
+# CHECK-NEXT: v21: boolean ~ true = TypeTest v20 testedType=number
+# CHECK-NEXT: Branch v21 -> taken b7(| 0), notTaken b10(| 0)
+# CHECK-NEXT: b7(v22: number):
+# CHECK-NEXT: v23: number = Add v9, v22
+# CHECK-NEXT: v24: 0 = Integer
+# CHECK-NEXT: v25: i32 = BitOr v23, v24
+# CHECK-NEXT: v26: int[1, 10] = Increment v13
+# CHECK-NEXT: Jump -> next b4(v25, v26)
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v27: anything = PropGet v17 key="id" accessSite=7
+# CHECK-NEXT: v28: anything ~ number = Upcast v27 castType=anything
+# CHECK-NEXT: v29: boolean ~ true = TypeTest v28 testedType=number
+# CHECK-NEXT: Branch v29 -> taken b9(| 0), notTaken b10(| 0)
+# CHECK-NEXT: b9(v30: number) frequency=Unlikely:
+# CHECK-NEXT: v31: number = Add v9, v30
+# CHECK-NEXT: v32: 0 = Integer
+# CHECK-NEXT: v33: i32 = BitOr v31, v32
+# CHECK-NEXT: v34: int[1, 10] = Increment v13
+# CHECK-NEXT: Jump -> next b3(v33, v34)
+# CHECK-NEXT: b10(v35: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b13(v9, v13, v35)
+# CHECK-NEXT: b11() frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v37: boolean = Less v5, v0
+# CHECK-NEXT: Branch v37 -> taken b12(| 0), notTaken b14(v4)
+# CHECK-NEXT: b12(v38: int[0, 9] ~ 0) frequency=Unlikely:
+# CHECK-NEXT: v39: "{\"id\":7}" = String string="{\"id\":7}"
+# CHECK-NEXT: v40: anything = PropGet v39 key="id" accessSite=7
+# CHECK-NEXT: v41: anything ~ number = Upcast v40 castType=anything
+# CHECK-NEXT: Jump -> next b13(v4, v38, v41)
+# CHECK-NEXT: b13(v42: i32, v43: int[0, 9], v44: anything ~ number) frequency=Unlikely:
+# CHECK-NEXT: v45: number|string|bigint ~ number = Add v42, v44
+# CHECK-NEXT: v46: 0 = Integer
+# CHECK-NEXT: v47: i32 = BitOr v45, v46
+# CHECK-NEXT: v48: int[1, 10] = Increment v43
+# CHECK-NEXT: Jump -> next b1(v47, v48)
+# CHECK-NEXT: b14(v49: i32):
+# CHECK-NEXT: Return v49
 # CHECK-NEXT: }

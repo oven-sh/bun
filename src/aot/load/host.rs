@@ -22,7 +22,7 @@ use bun_sema::resolve::{
     TransformRequest, TreeChange, is_declaration_file_name, to_path, to_path_in,
 };
 use bun_sema::session::{Arena, Session};
-use bun_sema::util::SharedSort;
+use bun_sema::util::{FxHashSet, SharedSort};
 use bun_sema_driver::Libs;
 use bun_sema_driver::host::{AlreadyRead, Disk, from_argument, from_native, is_bundled, to_native};
 use bun_sema_parser::{CompileParseOptions, appears_to_be_binary, parse_for_compile};
@@ -33,7 +33,7 @@ use crate::diagnostics::LoadMessages;
 use crate::load::builtin_uses::{self, BuiltinUseInput};
 use crate::load::bundled_commonjs::without_commonjs_wrapper;
 use crate::load::compiler_declarations;
-use crate::load::data_modules::parse_data_module;
+use crate::load::data_modules::{parse_data_module, report_blank_json};
 use crate::load::disk_delegation::{
     delegate_host_services_to_disk, delegate_runtime_config_parsers_to_disk,
 };
@@ -138,6 +138,9 @@ pub(crate) struct LoadHost<'a> {
     background_reads_disabled: AtomicBool,
     reads_in_background_after_load: bool,
     has_run_macros: AtomicBool,
+    /// `leave_alone`
+    files_left_alone: Guarded<FxHashSet<Vec<u8>>>,
+    leaves_files_alone: AtomicBool,
 }
 
 #[derive(Copy, Clone)]
@@ -178,6 +181,14 @@ fn holds_statements_that_run(path: &[u8], text: &[u8]) -> bool {
 }
 
 impl<'a> LoadHost<'a> {
+    /// From now on a load takes these files, named as the checker names them, for files of another program. For a look at a few files
+    /// more while the load that holds these stands. Call it between loads.
+    pub(crate) fn leave_alone(&self, files: FxHashSet<Vec<u8>>) {
+        self.leaves_files_alone
+            .store(!files.is_empty(), Ordering::Relaxed);
+        *self.files_left_alone.lock() = files;
+    }
+
     /// What takes a while to free, for whoever frees it beside other work.
     pub(crate) fn into_leftovers(self) -> Box<dyn Send> {
         self.plugins.into_leftovers()
@@ -223,6 +234,8 @@ impl<'a> LoadHost<'a> {
             background_reads_disabled: AtomicBool::new(false),
             reads_in_background_after_load: false,
             has_run_macros: AtomicBool::new(false),
+            files_left_alone: Guarded::new(FxHashSet::default()),
+            leaves_files_alone: AtomicBool::new(false),
             input,
         }
     }
@@ -674,10 +687,22 @@ impl CodeHost for LoadHost<'_> {
     }
 
     fn find_code_file(&self, search: &FileSearch<'_>) -> FoundCode {
+        // `new Function('return import("dep")')`: a package is looked for from the file that makes the function. A path is left to the run time, `is_import_call_of_package`.
+        if !matches!(search.specifier.first(), Some(b'.' | b'/') | None)
+            && let Some(holder) = self.evaluated_texts.holder_in_folder(search.directory)
+        {
+            let directory = self.directory_of(&holder);
+            return self.find_code_file(&FileSearch {
+                directory: &directory,
+                ..*search
+            });
+        }
         // The resolver of the provider sees the disk alone. A file that the build was given in memory comes first.
+        // A program that runs in place imports what is on the disk: what its build is given in memory is an entry point that no import names.
         let options = self.input.options;
         let in_memory_files = &options.load.in_memory_files;
         if !in_memory_files.is_empty()
+            && !options.aot.runs_in_place
             && let found = options.code.find_file_plainly(self, search)
             && let FoundCode::File { path, .. } = &found
             && (in_memory_files.iter()).any(|(file, _)| file.as_slice() == to_native(path))
@@ -697,6 +722,18 @@ impl CodeHost for LoadHost<'_> {
         let aot = &self.input.options.aot;
         aot.images_below.holds_module(to_native(path))
             || (aot.is_part_of_test_files && self.is_data_that_only_test_files_import(path))
+            || (self.leaves_files_alone.load(Ordering::Relaxed)
+                && self.files_left_alone.lock().contains(path))
+    }
+
+    fn is_left_to_loader(&self, path: &[u8]) -> bool {
+        (self.input.options.load.left_to_loader)
+            .binary_search_by(|file| file[..].cmp(to_native(path)))
+            .is_ok()
+    }
+
+    fn is_name_for_transpiler_alone(&self, specifier: &[u8]) -> bool {
+        Alias::bun_prefixed_builtin(specifier).is_some()
     }
 
     fn is_builtin_module_in_other_program(&self, specifier: &[u8]) -> bool {
@@ -781,6 +818,10 @@ impl CodeHost for LoadHost<'_> {
 
     fn type_root_in_place_of_bun_types(&self) -> Option<Vec<u8>> {
         (!self.input.options.load.takes_runtime_as_any).then(|| runtime_types::TYPE_ROOT.to_vec())
+    }
+
+    fn errors_with_bun_types(&self) -> Option<&[(Vec<u8>, u32)]> {
+        self.input.options.load.errors_with_bun_types.as_deref()
     }
 
     fn loader_of(&self, request: &LoaderRequest<'_>) -> HostLoader {
@@ -899,10 +940,7 @@ impl CodeHost for LoadHost<'_> {
     ) -> ParsedCode<'s> {
         let path = request.path;
         // A name that `find_file_left_to_loader` does not follow has led here: an alias of the tsconfig.json, a package. Nothing is compiled from the text, and the load throws.
-        if (self.input.options.load.left_to_loader)
-            .binary_search_by(|file| file[..].cmp(to_native(path)))
-            .is_ok()
-        {
+        if self.is_left_to_loader(path) {
             let options = CompileParseOptions {
                 path,
                 script_kind: Some(ScriptKind::Js),
@@ -946,6 +984,9 @@ impl CodeHost for LoadHost<'_> {
                 loader,
             };
             let (provider, messages) = (self.input.provider, self.input.messages);
+            if self.input.options.load.runs_tests {
+                report_blank_json(messages, &source);
+            }
             let parsed = parse_data_module(provider, messages, &source, arena, atoms);
             ParsedCode {
                 hir: parsed.hir,
@@ -1089,6 +1130,7 @@ impl CodeHost for LoadHost<'_> {
                 true if is_in_node_modules(request.path) => ReplacedMembersSought::Written,
                 true => ReplacedMembersSought::WrittenOrNamed,
             },
+            is_served_by_other_images: self.input.options.aot.imports_are_in_other_images,
         };
         let level = self.input.options.aot.code_generation_from_strings;
         let texts = (level == CodeGenerationFromStrings::Allowed).then_some(&self.evaluated_texts);
@@ -1111,8 +1153,12 @@ impl CodeHost for LoadHost<'_> {
         answers.extend(modules.map(HostResolution::Module));
         source.modules_named_in_choices = named.modules;
         source.library_names_passed_to_imports = named.passed_to_imports;
-        source.library_modules_passed_for_parameters = named.passed_for_parameters;
-        source.library_modules_written_as_values = named.written_as_values;
+        // The first of the other images holds Bun's own modules, and the loader finds them there by whatever name the program computes. A copy here would find none of the
+        // library's internal modules: `process.getBuiltinModule(name)` beside `import(other)`, where the file writes "fs" somewhere.
+        if !self.input.options.aot.imports_are_in_other_images {
+            source.library_modules_passed_for_parameters = named.passed_for_parameters;
+            source.library_modules_written_as_values = named.written_as_values;
+        }
         source.loads_by_unknown_name = named.loads_by_unknown_name;
         source.unknown_names_at = named.unknown_names_at;
         source.imports_given_unknown_names = named.imports_given_unknown_names;

@@ -167,5 +167,5 @@ function f3 name="mut" module=m1 position=566 flags=[HasExplicitName] length=1 t
 # -- generated: f2
 # CHECK-LABEL: function f2 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 84, patchpoints: 30, rare instructions: 49, polls: 1
+# CHECK-NEXT: instructions: 84, patchpoints: 30, rare instructions: 45, polls: 1
 # CHECK-NEXT: end of function f2

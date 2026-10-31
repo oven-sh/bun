@@ -295,7 +295,7 @@ export default b.declarations(
   // What Bun.jest answers. It has no feature: the `require` that gets its names at run time calls it, and such a name keeps nothing.
   b.static(cpp("JSCommonJSModule.cpp", "jsFunctionRequireTestModule"), {
     args: { filename: b.any.optional },
-    returns: b.object,
+    returns: b.union(b.builtin("bun:test"), b.object),
     capability: "js",
     throws: true,
     uses: { filename: b.inspected },

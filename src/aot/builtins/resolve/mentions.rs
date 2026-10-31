@@ -1,5 +1,5 @@
 use super::mention_use::MentionUse;
-use super::module_cache::is_module_cache;
+use super::module_cache::{is_module_cache, is_table_of_loaders};
 use super::resolver::{ExprState, ResolvedValue, Resolver};
 use crate::builtins::table::{
     self, BuiltinFlags, BuiltinId, BuiltinKind, CallsForTexts, Intrinsic,
@@ -137,6 +137,9 @@ impl Resolver<'_, '_> {
             }
             if is_module_cache(id) {
                 self.note_use_of_module_cache(expr, id);
+            }
+            if is_table_of_loaders(id) {
+                self.note_use_of_table_of_loaders(expr, id);
             }
             match self.classify_use(expr) {
                 MentionUse::Called(call) if self.is_import_site(call) => {}

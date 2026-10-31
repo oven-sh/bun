@@ -32,6 +32,7 @@ attempt("module._compile", () => call(unknown(module), "_compile", "module.expor
 attempt("ffi.dlopen", () => call(ffi, "dlopen", missing, { nothing: { args: [], returns: "void" } }));
 attempt("ffi.linkSymbols", () => typeof call(ffi, "linkSymbols", { nothing: { ptr: 1, args: [], returns: "void" } }));
 attempt("ffi.CFunction", () => typeof call(ffi, "CFunction", { ptr: 1, args: [], returns: "void" }));
+// Row 3201: nothing refuses this one. The Worker is made and its text runs. What was refused here until 10-30 was only the call of terminate() under a spelled name.
 attempt("a Worker of node:worker_threads from text", () => typeof call(construct(threads, "Worker", "process.exit(0)", { eval: true }), "terminate"));
 /* Output:
 vm.createContext: refused: '..' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
@@ -45,5 +46,5 @@ module._compile: refused: Code generation from strings disallowed for this conte
 ffi.dlopen: refused: '..' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 ffi.linkSymbols: refused: '..' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 ffi.CFunction: refused: '..' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
-a Worker of node:worker_threads from text: refused: '..' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+a Worker of node:worker_threads from text: object
 */

@@ -46,7 +46,7 @@ test.skipIf(generated === undefined).each([
     const { errors, exitCode } = (await configurations())[configuration];
     expect({ errors, exitCode }).toEqual({ errors: [], exitCode: 0 });
   },
-  240_000,
+  120_000,
 );
 
 test.skipIf(generated === undefined)(
@@ -56,5 +56,5 @@ test.skipIf(generated === undefined)(
     expect(withAssertions.ids).not.toBe("");
     expect(withAssertions.ids === withoutAssertions.ids).toBe(true);
   },
-  240_000,
+  120_000,
 );

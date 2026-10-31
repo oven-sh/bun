@@ -57,13 +57,15 @@ async function linesOf(directory: string, way: string, words: string) {
 test("a run in layers writes what a run as one program writes", async () => {
   using dir = tempDir("aot-values-and-operations-across-layers", files);
   const asOneProgram = await linesOf(String(dir), "one-program", "TestRunLayers:0");
-  const inLayers = await linesOf(String(dir), "layers", "TestRunLayers:2,TestRunPartFiles:1");
-  for (const file of [0, 1]) {
-    expect(asOneProgram[file].length).toBeGreaterThan(50000);
-    const unlike = asOneProgram[file].flatMap((line, index) =>
-      line === inLayers[file][index] ? [] : [line + "\n  in layers: " + inLayers[file][index]],
-    );
-    expect(unlike.slice(0, 20)).toEqual([]);
-    expect(inLayers[file].length).toBe(asOneProgram[file].length);
+  for (const layers of [2, 3]) {
+    const inLayers = await linesOf(String(dir), `layers-${layers}`, `TestRunLayers:${layers},TestRunPartFiles:1`);
+    for (const file of [0, 1]) {
+      expect(asOneProgram[file].length).toBeGreaterThan(50000);
+      const unlike = asOneProgram[file].flatMap((line, index) =>
+        line === inLayers[file][index] ? [] : [`${line}\n  in ${layers} layers: ${inLayers[file][index]}`],
+      );
+      expect(unlike.slice(0, 20)).toEqual([]);
+      expect(inLayers[file].length).toBe(asOneProgram[file].length);
+    }
   }
 }, 600000);

@@ -805,32 +805,31 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private
 # CHECK-LABEL: function {{*}}name="two"
 # CHECK: module=m0 position=980 role=EntryChecks flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type="0123456789"|"\u{3b1}\u{3b2}\u{3b3}\u{3b4}\u{3b5}\u{3b6}\u{3b7}\u{3b8}\u{3b9}\u{3ba}" site=w7 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w8 flags=[IsExpected]}, {type=number site=w9 flags=[IsExpected]}] results=[{type=string site=w10 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f8 fallback=f10}
 # CHECK-LABEL: function {{*}}name="mix"
-# CHECK: module=m0 position=1113 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=i32 site=w11}, {type=undefined|null|string site=w12 flags=[OmitsNull, OmitsUndefined]}] results=[{type=i32 site=w13}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: i32, v1: undefined|null|string):
+# CHECK: module=m0 position=1113 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=i32 site=w11}, {type=string site=w12 flags=[OmitsNull, OmitsUndefined]}] results=[{type=i32 site=w13}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: i32, v1: string):
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v0, v2)
 # CHECK-NEXT: b1(v3: i32, v4: int[0, 2147483647]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v6: string = RequireObjectCoercible v1 name="length"
-# CHECK-NEXT: v7: int[0, 2147483647] = GetStringLength v6
-# CHECK-NEXT: v8: boolean = Less v4, v7
-# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v9: int[0, 2147483646]):
-# CHECK-NEXT: v10: 31 = Integer integer=31
-# CHECK-NEXT: v11: i32 = CallBuiltin -, v3, v10 overload=MathImul/0 accessSite=41
-# CHECK-NEXT: v12: int[0, 65535] = GetStringCodeUnit v6, v9
-# CHECK-NEXT: v13: int[-2147483648, 2147549182] = Add v11, v12
-# CHECK-NEXT: v14: 0 = Integer
-# CHECK-NEXT: v15: i32 = BitOr v13, v14
-# CHECK-NEXT: v16: int[1, 2147483647] = Increment v9
-# CHECK-NEXT: Jump -> next b1(v15, v16)
+# CHECK-NEXT: v6: int[0, 2147483647] = GetStringLength v1
+# CHECK-NEXT: v7: boolean = Less v4, v6
+# CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v8: int[0, 2147483646]):
+# CHECK-NEXT: v9: 31 = Integer integer=31
+# CHECK-NEXT: v10: i32 = CallBuiltin -, v3, v9 overload=MathImul/0 accessSite=41
+# CHECK-NEXT: v11: int[0, 65535] = GetStringCodeUnit v1, v8
+# CHECK-NEXT: v12: int[-2147483648, 2147549182] = Add v10, v11
+# CHECK-NEXT: v13: 0 = Integer
+# CHECK-NEXT: v14: i32 = BitOr v12, v13
+# CHECK-NEXT: v15: int[1, 2147483647] = Increment v8
+# CHECK-NEXT: Jump -> next b1(v14, v15)
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v17: 31 = Integer integer=31
-# CHECK-NEXT: v18: i32 = CallBuiltin -, v3, v17 overload=MathImul/0 accessSite=44
-# CHECK-NEXT: v19: int[-2147483648, 4294967294] = Add v18, v7
-# CHECK-NEXT: v20: 0 = Integer
-# CHECK-NEXT: v21: i32 = BitOr v19, v20
-# CHECK-NEXT: Return v21
+# CHECK-NEXT: v16: 31 = Integer integer=31
+# CHECK-NEXT: v17: i32 = CallBuiltin -, v3, v16 overload=MathImul/0 accessSite=44
+# CHECK-NEXT: v18: int[-2147483648, 4294967294] = Add v17, v6
+# CHECK-NEXT: v19: 0 = Integer
+# CHECK-NEXT: v20: i32 = BitOr v18, v19
+# CHECK-NEXT: Return v20
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="halves"
 # CHECK: module=m0 position=1735 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="0123456789"|"\u{3b1}\u{3b2}\u{3b3}\u{3b4}\u{3b5}\u{3b6}\u{3b7}\u{3b8}\u{3b9}\u{3ba}" site=w14 flags=[OmitsNull, OmitsUndefined]}, {type=int[4, 300] site=w15}] results=[{type=string site=w16 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

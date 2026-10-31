@@ -184,35 +184,32 @@ function f5 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: ValidateType v6 validatedType=int|whole
 # CHECK-NEXT: v8: undefined = CallBuiltin -, v6 overload=ConsoleLog/0 accessSite=3
 # CHECK-NEXT: v9: "x" = String string="x"
-# CHECK-NEXT: v10: anything = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
-# CHECK-NEXT: v11: anything ~ builtin(ProcessArgv) = Upcast v10 castType=anything
-# CHECK-NEXT: v12: anything = PropGet v11 key="length" accessSite=6
-# CHECK-NEXT: ValidateType v12 validatedType=undefined|number
-# CHECK-NEXT: v14: undefined|number = AssumeType v12 provenType=undefined|number
-# CHECK-NEXT: v15: undefined|number ~ number = Upcast v14 castType=anything
-# CHECK-NEXT: v16: number = ToNumber v15 calledBuiltin=StringPrototypeRepeat
-# CHECK-NEXT: v17: int|whole = ToIntegerOrInfinity v16
-# CHECK-NEXT: v18: string = CallBuiltin v9, v17 overload=StringPrototypeRepeat/0 accessSite=7
-# CHECK-NEXT: ValidateType v18 validatedType=string
-# CHECK-NEXT: PutModuleVariable v18 variable=g0
-# CHECK-NEXT: v21: "0" = String string="0"
-# CHECK-NEXT: v22: undefined = Undefined
-# CHECK-NEXT: v23: null|boolean|number|string|object = CallBuiltin -, v21, v22 overload=JSONParse/0 accessSite=9
-# CHECK-NEXT: v24: null|boolean|number|string|object ~ number = Upcast v23 castType=anything
-# CHECK-NEXT: PutModuleVariable v24 variable=g1
+# CHECK-NEXT: v10: Array<string> = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
+# CHECK-NEXT: ValidateType v10 validatedType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v12: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v10 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v13: int[0, 4294967295] = CallBuiltin v12 overload=ArrayPrototypeLength/0 accessSite=6
+# CHECK-NEXT: ValidateType v13 validatedType=number
+# CHECK-NEXT: v15: string = CallBuiltin v9, v13 overload=StringPrototypeRepeat/0 accessSite=7
+# CHECK-NEXT: ValidateType v15 validatedType=string
+# CHECK-NEXT: PutModuleVariable v15 variable=g0
+# CHECK-NEXT: v18: "0" = String string="0"
+# CHECK-NEXT: v19: undefined = Undefined
+# CHECK-NEXT: v20: null|boolean|number|string|object = CallBuiltin -, v18, v19 overload=JSONParse/0 accessSite=9
+# CHECK-NEXT: v21: null|boolean|number|string|object ~ number = Upcast v20 castType=anything
+# CHECK-NEXT: PutModuleVariable v21 variable=g1
 # CHECK-NEXT: ValidateCallee v4 validatedType=f2
 # CHECK-NEXT: ValidateCallee v4 validatedType=f2
-# CHECK-NEXT: v28: L0 = NewObject layout=L0 storage=Frame allocationClass=0
+# CHECK-NEXT: v25: L0 = NewObject layout=L0 storage=Frame allocationClass=0
 # CHECK-NEXT: ValidateFirstRun variable=g6
 # CHECK-NEXT: ValidateType v4 validatedType=f2
-# CHECK-NEXT: v31: int|whole = CallDirect v28 function=f11 accessSite=13
-# CHECK-NEXT: ValidateType v31 validatedType=int|whole
-# CHECK-NEXT: v33: anything ~ number = GetModuleVariable variable=g1
-# CHECK-NEXT: v34: 0 = Integer
-# CHECK-NEXT: v35: boolean = Greater v33, v34
-# CHECK-NEXT: v36: undefined = CallBuiltin -, v31, v35 overload=ConsoleLog/0 accessSite=14
-# CHECK-NEXT: v37: undefined = Undefined
-# CHECK-NEXT: Return v37
+# CHECK-NEXT: v28: int|whole = CallDirect v25 function=f11 accessSite=13
+# CHECK-NEXT: ValidateType v28 validatedType=int|whole
+# CHECK-NEXT: v30: anything ~ number = GetModuleVariable variable=g1
+# CHECK-NEXT: v31: 0 = Integer
+# CHECK-NEXT: v32: boolean = Greater v30, v31
+# CHECK-NEXT: v33: undefined = CallBuiltin -, v28, v32 overload=ConsoleLog/0 accessSite=14
+# CHECK-NEXT: v34: undefined = Undefined
+# CHECK-NEXT: Return v34
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="drive"
 # CHECK: module=m0 position=202 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=null|L0}, {type=100000}] results=[{type=int|whole}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
@@ -254,21 +251,21 @@ function f5 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: ValidateType v11 validatedType=undefined|null|boolean|number|string|symbol|bigint
 # CHECK-NEXT: v14: int[0, 2147483647] = GetStringLength v11
 # CHECK-NEXT: v15: boolean ~ true = TypeTest v10 testedType=number
-# CHECK-NEXT: Branch v15 -> taken b2(| 0), notTaken b11(v4, v9, v10, v14, v3 | 0)
+# CHECK-NEXT: Branch v15 -> taken b2(| 0), notTaken b11(v4, v9, v10, v11, v14, v3 | 0)
 # CHECK-NEXT: b2(v16: number):
 # CHECK-NEXT: ValidateSameValue v16, v10
 # CHECK-NEXT: v18: number = Add v16, v14
 # CHECK-NEXT: PutModuleVariable v18 variable=g1
-# CHECK-NEXT: Jump -> next b12(v4, v9, v3)
+# CHECK-NEXT: Jump -> next b12(v4, v9, v11, v3)
 # CHECK-NEXT: b3(v20: int[0, 99999] ~ 0, v21: int|whole ~ 0) role=CatchHandler:
 # CHECK-NEXT: v22: int|whole ~ 1 = Increment v21
 # CHECK-NEXT: Jump -> next b4(v22, v20)
 # CHECK-NEXT: b4(v23: int|whole ~ int[0, 1], v24: int[0, 99999] ~ 0):
 # CHECK-NEXT: v25: int[1, 100000] ~ 1 = Increment v24
-# CHECK-NEXT: v26: string|unspecified ~ string = GetModuleVariable variable=g0 [mayPrecedeItsStore]
-# CHECK-NEXT: v27: anything|unspecified ~ number = GetModuleVariable variable=g1 [mayPrecedeItsStore]
+# CHECK-NEXT: v26: anything|unspecified ~ number = GetModuleVariable variable=g1 [mayPrecedeItsStore]
+# CHECK-NEXT: v27: string|unspecified ~ string = GetModuleVariable variable=g0 [mayPrecedeItsStore]
 # CHECK-NEXT: Jump -> next b5(v23, v25, v26, v27)
-# CHECK-NEXT: b5(v28: int|whole, v29: int[1, 100000], v30: string|unspecified ~ string, v31: anything|unspecified ~ number):
+# CHECK-NEXT: b5(v28: int|whole, v29: int[1, 100000], v30: anything|unspecified ~ number, v31: string|unspecified ~ string):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v33: boolean = Less v29, v1
 # CHECK-NEXT: Branch v33 -> taken b6(| 0), notTaken b17()
@@ -278,52 +275,53 @@ function f5 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v37: f3 = NewClosure function=f3 storage=Frame
 # CHECK-NEXT: ValidateLookup v36, v37 key="step"
 # CHECK-NEXT: v39: fact = Entered function=f3
-# CHECK-NEXT: v40: anything ~ number = AssumeType v31, v39 provenType=anything
-# CHECK-NEXT: v41: string = AssumeType v30, v39 provenType=string
+# CHECK-NEXT: v40: anything ~ number = AssumeType v30, v39 provenType=anything
+# CHECK-NEXT: v41: string = AssumeType v31, v39 provenType=string
 # CHECK-NEXT: v42: int[0, 2147483647] = GetStringLength v41
 # CHECK-NEXT: v43: boolean ~ true = TypeTest v40 testedType=number
-# CHECK-NEXT: Branch v43 -> taken b7(| 0), notTaken b11(v34, v39, v40, v42, v28 | 0)
+# CHECK-NEXT: Branch v43 -> taken b7(| 0), notTaken b11(v34, v39, v40, v41, v42, v28 | 0)
 # CHECK-NEXT: b7(v44: number):
 # CHECK-NEXT: ValidateSameValue v44, v40
 # CHECK-NEXT: v46: number = Add v44, v42
 # CHECK-NEXT: PutModuleVariable v46 variable=g1
 # CHECK-NEXT: v48: 77 = Integer integer=77
 # CHECK-NEXT: v49: boolean = StrictEq v34, v48
-# CHECK-NEXT: Branch v49 -> taken b8(), notTaken b10(v30)
-# CHECK-NEXT: b8() handler=b15(v30, v46):
-# CHECK-NEXT: v50: string = AssumeType v30, v39 provenType=string
-# CHECK-NEXT: v51: "y" = String string="y"
-# CHECK-NEXT: v52: string = Add v50, v51
-# CHECK-NEXT: PutModuleVariable v52 variable=g0
+# CHECK-NEXT: Branch v49 -> taken b8(), notTaken b10(v31)
+# CHECK-NEXT: b8() handler=b15(v46, v31):
+# CHECK-NEXT: v50: string = GetModuleVariable fact=v39 variable=g0
+# CHECK-NEXT: ValidateSameValue v50, v41
+# CHECK-NEXT: v52: "y" = String string="y"
+# CHECK-NEXT: v53: string = Add v41, v52
+# CHECK-NEXT: PutModuleVariable v53 variable=g0
 # CHECK-NEXT: Jump -> next b9()
-# CHECK-NEXT: b9() handler=b15(v52, v46):
-# CHECK-NEXT: Jump -> next b10(v52)
-# CHECK-NEXT: b10(v54: string|unspecified ~ string):
-# CHECK-NEXT: Jump -> next b16(v28, v54, v46)
-# CHECK-NEXT: b11(v55: int[0, 99999], v56: fact, v57: anything ~ number, v58: int[0, 2147483647], v59: int|whole, v60: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely handler=b3(v55, v59):
-# CHECK-NEXT: ValidateSameValue v60, v57
-# CHECK-NEXT: v62: number|string|bigint = Add v60, v58
-# CHECK-NEXT: PutModuleVariable v62 variable=g1
-# CHECK-NEXT: Jump -> next b12(v55, v56, v59)
-# CHECK-NEXT: b12(v64: int[0, 99999] ~ 0, v65: fact, v66: int|whole ~ 0):
-# CHECK-NEXT: v67: 77 = Integer integer=77
-# CHECK-NEXT: v68: boolean ~ false = StrictEq v64, v67
-# CHECK-NEXT: Branch v68 -> taken b13(), notTaken b14()
-# CHECK-NEXT: b13() handler=b3(v64, v66):
-# CHECK-NEXT: v69: string = GetModuleVariable fact=v65 variable=g0
-# CHECK-NEXT: ValidateType v69 validatedType=string
-# CHECK-NEXT: v71: "y" = String string="y"
-# CHECK-NEXT: v72: string = Add v69, v71
-# CHECK-NEXT: PutModuleVariable v72 variable=g0
+# CHECK-NEXT: b9() handler=b15(v46, v53):
+# CHECK-NEXT: Jump -> next b10(v53)
+# CHECK-NEXT: b10(v55: string|unspecified ~ string):
+# CHECK-NEXT: Jump -> next b16(v28, v46, v55)
+# CHECK-NEXT: b11(v56: int[0, 99999], v57: fact, v58: anything ~ number, v59: string, v60: int[0, 2147483647], v61: int|whole, v62: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely handler=b3(v56, v61):
+# CHECK-NEXT: ValidateSameValue v62, v58
+# CHECK-NEXT: v64: number|string|bigint = Add v62, v60
+# CHECK-NEXT: PutModuleVariable v64 variable=g1
+# CHECK-NEXT: Jump -> next b12(v56, v57, v59, v61)
+# CHECK-NEXT: b12(v66: int[0, 99999] ~ 0, v67: fact, v68: string, v69: int|whole ~ 0):
+# CHECK-NEXT: v70: 77 = Integer integer=77
+# CHECK-NEXT: v71: boolean ~ false = StrictEq v66, v70
+# CHECK-NEXT: Branch v71 -> taken b13(), notTaken b14()
+# CHECK-NEXT: b13() handler=b3(v66, v69):
+# CHECK-NEXT: v72: string = GetModuleVariable fact=v67 variable=g0
+# CHECK-NEXT: ValidateSameValue v72, v68
+# CHECK-NEXT: v74: "y" = String string="y"
+# CHECK-NEXT: v75: string = Add v68, v74
+# CHECK-NEXT: PutModuleVariable v75 variable=g0
 # CHECK-NEXT: Jump -> next b14()
 # CHECK-NEXT: b14():
-# CHECK-NEXT: Jump -> next b4(v66, v64)
-# CHECK-NEXT: b15(v74: string|unspecified ~ string, v75: anything|unspecified ~ number) role=CatchHandler:
-# CHECK-NEXT: v76: int|whole = Increment v28
-# CHECK-NEXT: Jump -> next b16(v76, v74, v75)
-# CHECK-NEXT: b16(v77: int|whole, v78: string|unspecified ~ string, v79: anything|unspecified ~ number):
-# CHECK-NEXT: v80: int[2, 100000] = Increment v34
-# CHECK-NEXT: Jump -> next b5(v77, v80, v78, v79)
+# CHECK-NEXT: Jump -> next b4(v69, v66)
+# CHECK-NEXT: b15(v77: anything|unspecified ~ number, v78: string|unspecified ~ string) role=CatchHandler:
+# CHECK-NEXT: v79: int|whole = Increment v28
+# CHECK-NEXT: Jump -> next b16(v79, v77, v78)
+# CHECK-NEXT: b16(v80: int|whole, v81: anything|unspecified ~ number, v82: string|unspecified ~ string):
+# CHECK-NEXT: v83: int[2, 100000] = Increment v34
+# CHECK-NEXT: Jump -> next b5(v80, v83, v81, v82)
 # CHECK-NEXT: b17():
 # CHECK-NEXT: Return v28
 # CHECK-NEXT: }

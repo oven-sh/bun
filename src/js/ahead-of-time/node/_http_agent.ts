@@ -11,7 +11,9 @@ const { parseProxyConfigFromEnv, checkShouldUseProxy } = http;
 const kProxyConfig: typeof http.kProxyConfig = http.kProxyConfig;
 const kWaitForProxyTunnel: typeof http.kWaitForProxyTunnel = http.kWaitForProxyTunnel;
 const kPerRequestCheckServerIdentity: typeof http.kPerRequestCheckServerIdentity = http.kPerRequestCheckServerIdentity;
-const { kEmptyObject, once } = require("internal/shared");
+const shared = require("internal/shared");
+const { kEmptyObject, once } = shared;
+const kShapeMode: typeof shared.kShapeMode = shared.kShapeMode;
 const { validateNumber, validateOneOf, validateString } = require("internal/validators");
 const { isIP } = require("internal/net/isIP");
 const netSymbols = require("internal/net/symbols");
@@ -729,6 +731,7 @@ const graphFrameOfGlobalAgent = AsyncContextFrame.currentGraphFrame();
 const captureRejectionsOfGlobalAgent = EventEmitter.captureRejections;
 const prototypeOfGlobalAgent = Agent.prototype;
 const onOfGlobalAgent = EventEmitter.prototype.on;
+const eventsOfGlobalAgent = Object.create(null);
 let globalAgent!: $Node.Agent;
 let isGlobalAgentMade = false;
 
@@ -737,7 +740,12 @@ function createGlobalAgent() {
   const captureRejections = EventEmitter.captureRejections;
   EventEmitter.captureRejections = captureRejectionsOfGlobalAgent;
   try {
-    const agent = { __proto__: prototypeOfGlobalAgent, on: onOfGlobalAgent } as unknown as $Node.Agent;
+    const agent = {
+      __proto__: prototypeOfGlobalAgent,
+      on: onOfGlobalAgent,
+      _events: eventsOfGlobalAgent,
+      _eventsCount: 0,
+    } as unknown as $Node.Agent;
     Agent.$call(agent, {
       keepAlive: true,
       scheduling: "lifo",
@@ -745,6 +753,7 @@ function createGlobalAgent() {
       proxyEnv: proxyEnvOfGlobalAgent,
     });
     delete (agent as { on?: unknown }).on;
+    agent[kShapeMode] = false;
     agent.maxSockets = maxSocketsOfGlobalAgent;
     if (usesEnvProxy) agent.options.proxyEnv = process.env;
     return agent;

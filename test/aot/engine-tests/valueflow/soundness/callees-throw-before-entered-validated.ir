@@ -184,9 +184,9 @@ function f4 name="Fail" module=m0 position=236 kind=BaseConstructor flags=[HasNe
   b0(v0: anything, v1: anything):
     Jump -> next b1() @236
   b1():
-    v2 = GetConstructPrototype v0 layout=L0 @212
-    v3 = NewObject v2 layout=L0 @212
-    v4 = Convert v3 declared={type=L0|L1|L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @212
+    v2 = GetConstructPrototype v0 layout=L0 @257
+    v3 = NewObject v2 layout=L0 @257
+    v4 = Convert v3 declared={type=L0|L1|L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @257
     v5 = Convert v4 declared={type=undefined|null|L0|L1|L2 flags=[IsExpected]} @245
     PropSet v5, v1 key="code" @245
     v7 = Undefined @245
@@ -449,18 +449,17 @@ function f23 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b1():
 # CHECK-NEXT: ValidateCallee v8 validatedType=f4
 # CHECK-NEXT: v15: object = GetConstructPrototype v6 layout=L0
-# CHECK-NEXT: v16: object ~ L0|L2 = NewObject v15 layout=L0 allocationSite=15 allocationClass=0
+# CHECK-NEXT: v16: object ~ L2 = NewObject v15 layout=L0 allocationSite=15 allocationClass=0
 # CHECK-NEXT: ValidateType v16 validatedType=L0|L2
-# CHECK-NEXT: v18: L0|L2 = AssumeType v16 provenType=L0|L2
-# CHECK-NEXT: v19: L0|L2 ~ L2 = Upcast v18 castType=object
-# CHECK-NEXT: Jump -> next b3(v19)
+# CHECK-NEXT: v18: L0|L2 ~ L2 = AssumeType v16 provenType=L0|L2
+# CHECK-NEXT: Jump -> next b3(v18)
 # CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v20: object ~ L2 = SuperConstructList v10, v6, v2 layout=L2 accessSite=41 callees=[f4]
-# CHECK-NEXT: Jump -> next b3(v20)
-# CHECK-NEXT: b3(v21: object ~ L2):
-# CHECK-NEXT: ValidateType v21 validatedType=L2
-# CHECK-NEXT: v23: L2 = AssumeType v21 provenType=L2
-# CHECK-NEXT: Return v23
+# CHECK-NEXT: v19: object ~ L2 = SuperConstructList v10, v6, v2 layout=L2 accessSite=41 callees=[f4]
+# CHECK-NEXT: Jump -> next b3(v19)
+# CHECK-NEXT: b3(v20: object ~ L2):
+# CHECK-NEXT: ValidateType v20 validatedType=L2
+# CHECK-NEXT: v22: L2 = AssumeType v20 provenType=L2
+# CHECK-NEXT: Return v22
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="plain"
 # CHECK: module=m0 position=267 role=GenericEntrypoint flags=[HasThis] captures=[{type=f1}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} inlineFrames=[{}, {callee=f1 callPosition=267 isTailCall=true module=m0}] {

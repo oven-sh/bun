@@ -982,6 +982,12 @@ static JSC::JSModuleLoader* moduleLoaderOfRequirer(JSC::JSGlobalObject* globalOb
     return globalObject->moduleLoader();
 }
 
+// The files of a compiled program are modules of the realm. A Bun.ModuleGraph has modules of its own, and its require.cache shows those alone.
+static bool seesCompiledModules(JSC::JSGlobalObject* globalObject, JSValue requirer)
+{
+    return Bun::hasCompiledModules() && moduleLoaderOfRequirer(globalObject, requirer) == globalObject->moduleLoader();
+}
+
 // A key that is not an atom already names no module, and does not become one.
 static JSC::AbstractModuleRecord* evaluatedModuleRecord(JSC::JSGlobalObject* globalObject, JSValue keyValue, JSValue requirer)
 {
@@ -1023,7 +1029,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryHasEvaluated, (JSC::JSGlobalObject *
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* record = evaluatedModuleRecord(globalObject, callFrame->argument(0), callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
-    if (!record && callFrame->argument(0).isString() && Bun::hasCompiledModules()) {
+    if (!record && callFrame->argument(0).isString() && seesCompiledModules(globalObject, callFrame->argument(1))) {
         WTF::String key = asString(callFrame->argument(0))->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsBoolean(Bun::isEvaluatedCompiledFile(defaultGlobalObject(globalObject), key)));
@@ -1056,7 +1062,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRequireCacheWillSet, (JSC::JSGlobalObject * glo
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue keyValue = callFrame->argument(0);
-    if (!Bun::hasCompiledModules() || !keyValue.isString() || moduleLoaderOfRequirer(globalObject, callFrame->argument(2)) != globalObject->moduleLoader())
+    if (!keyValue.isString() || !seesCompiledModules(globalObject, callFrame->argument(2)))
         return JSValue::encode(jsUndefined());
     WTF::String key = asString(keyValue)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1069,7 +1075,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRequireCacheDidDelete, (JSC::JSGlobalObject * g
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     JSValue keyValue = callFrame->argument(0);
-    if (!Bun::hasCompiledModules() || !keyValue.isString())
+    if (!keyValue.isString() || !seesCompiledModules(globalObject, callFrame->argument(1)))
         return JSValue::encode(jsUndefined());
     WTF::String key = asString(keyValue)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1085,7 +1091,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRequireCacheCompiledEntry, (JSC::JSGlobalObject
     if (!callFrame->argumentCount())
         return JSValue::encode(jsBoolean(Bun::hasCompiledModules() && Bun::requireCacheListsCompiledFiles(defaultGlobalObject(globalObject))));
     JSValue keyValue = callFrame->uncheckedArgument(0);
-    if (!keyValue.isString())
+    if (!keyValue.isString() || !seesCompiledModules(globalObject, callFrame->argument(1)))
         return JSValue::encode(jsUndefined());
     WTF::String key = asString(keyValue)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1109,7 +1115,7 @@ JSC_DEFINE_HOST_FUNCTION(functionIsHiddenFromRequireCache, (JSC::JSGlobalObject 
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     WTF::String key = asString(keyValue)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsBoolean(Bun::isCompiledModule(key)));
+    return JSValue::encode(jsBoolean(Bun::isHiddenFromRequireCache(key)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -1128,9 +1134,11 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject 
                 add(String { specifier });
         });
     }
-    Bun::forEachEvaluatedCompiledFile(defaultGlobalObject(globalObject), [&](const String& path) {
-        add(path);
-    });
+    if (seesCompiledModules(globalObject, callFrame->argument(0))) {
+        Bun::forEachEvaluatedCompiledFile(defaultGlobalObject(globalObject), [&](const String& path) {
+            add(path);
+        });
+    }
     if (keys.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
@@ -1286,10 +1294,14 @@ JSGlobalObject* GlobalObject::deriveShadowRealmGlobalObject(JSGlobalObject* glob
     // concurrent marker from walking the new global while finishCreation/init
     // is still populating it.
     JSC::DeferGC deferGC(vm);
+    const JSC::GlobalObjectMethodTable* methodTable = &Zig::GlobalObject::globalObjectMethodTable();
+    if (vm.hasCompiledCode() && Bun::compiledProgramRunsInSeveralRealmsAtOnce()) [[unlikely]]
+        methodTable = globalObject->globalObjectMethodTable();
     Zig::GlobalObject* shadow = Zig::GlobalObject::create(
         vm,
         Zig::GlobalObject::createStructure(vm),
-        ScriptExecutionContext::generateIdentifier());
+        ScriptExecutionContext::generateIdentifier(),
+        methodTable);
     shadow->setConsole(shadow);
 
     return shadow;
@@ -3441,8 +3453,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         { BuiltinName::k_esmRegistryHasEvaluated, 2, functionEsmRegistryHasEvaluated },
         { BuiltinName::k_requireCacheWillSet, 3, functionRequireCacheWillSet },
         { BuiltinName::k_isHiddenFromRequireCache, 1, functionIsHiddenFromRequireCache },
-        { BuiltinName::k_requireCacheDidDelete, 1, functionRequireCacheDidDelete },
-        { BuiltinName::k_requireCacheCompiledEntry, 1, functionRequireCacheCompiledEntry },
+        { BuiltinName::k_requireCacheDidDelete, 2, functionRequireCacheDidDelete },
+        { BuiltinName::k_requireCacheCompiledEntry, 2, functionRequireCacheCompiledEntry },
         { BuiltinName::k_esmLoadSync, 2, functionEsmLoadSync },
         { BuiltinName::k_makeErrorWithCode, 2, jsFunctionMakeErrorWithCode },
         { BuiltinName::k_toClass, 1, jsFunctionToClass },

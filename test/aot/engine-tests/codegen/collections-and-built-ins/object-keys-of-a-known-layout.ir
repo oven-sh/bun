@@ -108,4 +108,4 @@ function f1 name="names" module=m0 position=39 flags=[IsChecked, HasExplicitName
 # CALLS-LABEL: end of function
 # The counts hold a call, whose moves follow the calling convention: not for Windows.
 # X64: instructions: 33, patchpoints: 1, rare instructions: 4
-# ARM64: instructions: 33, patchpoints: 1, rare instructions: 6
+# ARM64: instructions: 32, patchpoints: 1, rare instructions: 6

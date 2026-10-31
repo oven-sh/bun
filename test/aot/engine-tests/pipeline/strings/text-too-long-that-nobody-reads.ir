@@ -195,8 +195,8 @@ function f2 name="tries" module=m0 position=276 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: Return v37
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="repeat"
-# CHECK: module=m0 position=103 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]}, {type=int[4096, 1048576] site=w1}] results=[{type=string site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|null|string, v1: int[4096, 1048576]):
+# CHECK: module=m0 position=103 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w0 flags=[OmitsNull, OmitsUndefined]}, {type=int[4096, 1048576] site=w1}] results=[{type=string site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: string, v1: int[4096, 1048576]):
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: v3: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: Jump -> next b1(v2)
@@ -215,7 +215,7 @@ function f2 name="tries" module=m0 position=276 flags=[IsChecked, HasExplicitNam
 # CHECK-LABEL: function {{*}}name="tries"
 # CHECK: module=m0 position=276 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string site=w5 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=315 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: null|string = GetModuleVariable variable=g1
+# CHECK-NEXT: v0: string = GetModuleVariable variable=g1
 # CHECK-NEXT: v1: 4096 = Integer integer=4096
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: v3: stringbuilder = StringBuilderBegin

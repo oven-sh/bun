@@ -12,6 +12,8 @@
 //   codeBytes            the machine code in the image
 //   bytesAValue          the bytes of machine code for one value of the program as the compiler first reads it, in source functions
 //                        of 10 to 300 values, with all the versions and copies that are made of them
+//   engineRuns           how often the engine runs for the one build: a build that starts over runs the front end and flow again.
+//                        Held exactly: one more fails the test
 //   tests                the tests that the compiler put in front of what it expects (a type, a layout, a filled slot ..): how many
 //                        run in a round, and how many take the side that it laid out as the less likely one. Only those that
 //                        fail are held against the budget: an access by name that becomes a tested slot adds a test and is a gain.
@@ -74,6 +76,7 @@ import { filterRequested, installPackages, requestedServers } from "./run-server
 interface Budget {
   codeBytes: number;
   bytesAValue?: number;
+  engineRuns: number;
   tests: { executed: number; failed: number };
   typeTests: { executed: number; failed: number };
   /** `bunAtMost` is there where the budget is lower than the places listed: the list is that of a later Bun than the number. */
@@ -87,7 +90,8 @@ interface Budget {
   closures: { aRound: number; once: number };
 }
 /** A number that the file does not have yet has no budget; AOT_BUDGETS=lower writes it. */
-type Later = "calls" | "accessesByName" | "runtimeOperations" | "allocated" | "allocatedInTotal" | "closures";
+type Later =
+  "engineRuns" | "calls" | "accessesByName" | "runtimeOperations" | "allocated" | "allocatedInTotal" | "closures";
 type StoredBudget = Omit<Budget, Later> & Partial<Pick<Budget, Later>>;
 
 const servers = filterRequested([
@@ -128,7 +132,7 @@ const sum = (tests: CountedTest[]) => ({
 const placeOf = (test: CountedTest) => `${test.kind} ${test.position}`;
 
 function measured(
-  { codeBytes, bytesAValue }: Awaited<ReturnType<typeof codeOf>>,
+  { codeBytes, bytesAValue, engineRuns }: Awaited<ReturnType<typeof codeOf>>,
   { tests, uneven, calls, accessesByName, runtimeOperations, allocated, allocatedInTotal, closures }: CountedWork,
 ): Budget {
   const isAdded = (test: CountedTest) => testsAddedByTheCompiler.has(test.kind);
@@ -141,6 +145,7 @@ function measured(
   return {
     codeBytes,
     bytesAValue,
+    engineRuns,
     tests: sum(counted),
     typeTests: sum(counted.filter(test => test.kind === "TypeTest")),
     alwaysFailing: {
@@ -170,6 +175,7 @@ const total = (counts: Record<string, number> | undefined) =>
 const numbersOf = (budget: StoredBudget) => ({
   "codeBytes": budget.codeBytes,
   "bytesAValue": budget.bytesAValue,
+  "engineRuns": budget.engineRuns,
   "tests.failed": budget.tests.failed,
   "typeTests.failed": budget.typeTests.failed,
   "alwaysFailing.bun": budget.alwaysFailing.bunAtMost ?? countOf(budget.alwaysFailing.bun),
@@ -196,6 +202,7 @@ function lowered(budget: StoredBudget, now: Budget, onlyWhatIsMissing: boolean):
   return {
     codeBytes: lower(budget.codeBytes, now.codeBytes),
     bytesAValue: now.bytesAValue === undefined ? budget.bytesAValue : lower(budget.bytesAValue, now.bytesAValue),
+    engineRuns: lower(budget.engineRuns, now.engineRuns),
     tests: {
       executed: written(budget.tests.executed, now.tests.executed),
       failed: lower(budget.tests.failed, now.tests.failed),
@@ -367,8 +374,10 @@ describe.skipIf(skipped)("compile/aot/servers/budgets", () => {
         keyof typeof allowed,
         number,
       ][];
-      const worse = numbers.filter(
-        ([what, value]) => value > (allowed[what] ?? Infinity) * 1.02 && value > allowed[what]! + 3,
+      const worse = numbers.filter(([what, value]) =>
+        what === "engineRuns"
+          ? value > (allowed[what] ?? Infinity)
+          : value > (allowed[what] ?? Infinity) * 1.02 && value > allowed[what]! + 3,
       );
       somethingGotWorse ||= worse.length > 0;
       const newPlaces = Object.entries(now.alwaysFailing.bun).flatMap(([path, places]) =>

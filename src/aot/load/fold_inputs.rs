@@ -18,6 +18,7 @@ use crate::statistics::{LimitId, LimitValues};
 pub(crate) struct ProgramFacts {
     pub can_load_code_at_run_time: bool,
     pub can_be_cluster_worker: bool,
+    pub can_replace_builtins: bool,
 }
 
 fn max_string_bytes(limits: &LimitValues) -> usize {
@@ -70,6 +71,7 @@ pub(crate) fn create_runtime_fold_inputs<'s>(
             facts.can_load_code_at_run_time,
         ),
         define_fact(b"CAN_BE_CLUSTER_WORKER", facts.can_be_cluster_worker),
+        define_fact(b"CAN_REPLACE_BUILT_INS", facts.can_replace_builtins),
         define_fact(b"IS_COMPILED_AHEAD_OF_TIME", true),
     ]);
     let options = FoldOptions {
@@ -230,6 +232,7 @@ mod tests {
     const NO_FACTS: ProgramFacts = ProgramFacts {
         can_load_code_at_run_time: false,
         can_be_cluster_worker: false,
+        can_replace_builtins: false,
     };
 
     fn fold_inputs_with_facts<'s>(
@@ -420,6 +423,17 @@ mod tests {
             "if (CAN_BE_CLUSTER_WORKER) import('./child');",
             |can_be_cluster_worker| ProgramFacts {
                 can_be_cluster_worker,
+                ..NO_FACTS
+            },
+        );
+    }
+
+    #[test]
+    fn build_decides_whether_runtime_sources_make_the_calls_that_only_a_replaced_builtin_sees() {
+        assert_fact_decides_import(
+            "if (CAN_REPLACE_BUILT_INS) import('./calls');",
+            |can_replace_builtins| ProgramFacts {
+                can_replace_builtins,
                 ..NO_FACTS
             },
         );

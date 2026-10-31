@@ -123,18 +123,9 @@ pub(super) fn compute_public_path(context: &PathContext<'_>, input: &PathInput<'
         Some(module) if *module.namespace == *ENTRY_TEXT_NAMESPACE => return module.path.clone(),
         Some(module) => plugin_public_path(&module.namespace, &module.path),
         None => match input.kind {
-            SourceKind::RuntimeModule(runtime_module) => {
-                let runtime_module = context.manifest.module(runtime_module.registry_id());
-                let specifier = runtime_module.and_then(|module| module.specifier.as_deref());
-                // `bun run` shows a module of src/js/internal as internal:<name>.
-                return match (
-                    specifier,
-                    specifier.and_then(|it| it.strip_prefix(b"internal/")),
-                ) {
-                    (_, Some(name)) => [b"internal:", name].concat().into(),
-                    (Some(specifier), None) => specifier.into(),
-                    (None, None) => input.file_name.into(),
-                };
+            SourceKind::RuntimeModule(module) => {
+                let path = compute_path_of_runtime_module(context.manifest, module.registry_id());
+                return path.unwrap_or_else(|| input.file_name.into());
             }
             SourceKind::RuntimeFunctions | SourceKind::EvaluatedText => {
                 return input.file_name.into();
@@ -178,6 +169,27 @@ pub(super) fn compute_name_of_third_party_file(
     let name = file.strip_prefix(b"thirdparty/")?;
     let end = strings::last_index_of_char(name, b'.').unwrap_or(name.len());
     Some(name[..end].into())
+}
+
+/// A module that holds a part of another one is shown under the name of that one.
+pub(super) fn compute_name_of_module_held_in_part(
+    manifest: &Manifest,
+    kind: SourceKind,
+) -> Option<Box<[u8]>> {
+    let SourceKind::RuntimeModule(module) = kind else {
+        return None;
+    };
+    let whole = manifest.module_held_in_part(module.registry_id())?;
+    compute_path_of_runtime_module(manifest, whole)
+}
+
+fn compute_path_of_runtime_module(manifest: &Manifest, id: u32) -> Option<Box<[u8]>> {
+    let specifier = manifest.module(id)?.specifier.as_deref()?;
+    // `bun run` shows a module of src/js/internal as internal:<name>.
+    Some(match specifier.strip_prefix(b"internal/") {
+        Some(name) => [b"internal:", name].concat().into(),
+        None => specifier.into(),
+    })
 }
 
 fn requested_loader(host_loader: HostLoader, file_name: &[u8]) -> Loader {

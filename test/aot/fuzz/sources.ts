@@ -938,6 +938,7 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "union-members-made-by-one-constructor",
     "optional-fields-left-out",
     "variables-changed-by-callbacks-given-other-types",
+    "mistyped-value-read-by-call-then-tested",
   ])
     sources[name] = productSource(name, generateOf(name), always);
   for (const name of [
@@ -1003,6 +1004,8 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "patterns-with-back-references",
     "functions-never-constructed-changed-above-classes",
     "lists-made-of-values-computed-for-them",
+    "variables-let-go-behind-suspensions",
+    "loop-tests-whose-answer-is-read-again",
   ])
     sources[name] = productSource(name, generateOf(name), never);
   const named =
@@ -1047,6 +1050,7 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "literal-argument-used-by-callee",
     "tail-calls-in-builtin-callbacks",
     "mixin-classes",
+    "properties-added-below-stacked-mixins",
     "closures-and-evaluation-order",
     "closure-escape-paths",
     "data-imports-in-cycles",

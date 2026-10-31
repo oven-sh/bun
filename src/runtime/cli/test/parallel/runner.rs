@@ -43,6 +43,7 @@ pub(crate) fn run_as_coordinator(
     ctx: Command::Context,
     coverage_opts: &mut CodeCoverageOptions,
     splits_files: bool,
+    exit_code_left_by_tests: &mut Option<u8>,
 ) -> crate::Result<bool> {
     // SAFETY: env loader is initialized before the test runner runs.
     let env = unsafe { &mut *vm.transpiler.env };
@@ -212,6 +213,10 @@ pub(crate) fn run_as_coordinator(
         workers: &mut workers,
         parallel_limit: k,
         keeps_heavy_files_apart: splits_files || crate::cli::run_compiled::runs_compiled_code(),
+        children_of_workers: (cfg!(target_os = "linux")
+            && ctx.test_options.update_timings
+            && (splits_files || crate::cli::run_compiled::runs_compiled_code()))
+        .then(Default::default),
         room_for_heavy_files,
         room_beside_heavy_files,
         heavy_files_to_hand_out,
@@ -244,11 +249,15 @@ pub(crate) fn run_as_coordinator(
                 &heavy_growths,
                 image_flag_slot,
                 crate::cli::run_compiled::test_run_layers(ctx),
+                crate::cli::run_compiled::stands_on_library_of_this_bun(ctx),
+                crate::cli::run_compiled::test_run_has_layer_of_computed_imports(ctx),
             ))
         }),
         live_workers: 0,
         crashed_files: Vec::new(),
         aborted: None,
+        hands_on_exit_code: ctx.test_options.parallel == 0,
+        exit_code_left_by_tests: None,
         stop_reason: None,
         last_printed_dot: false,
         #[cfg(windows)]
@@ -277,6 +286,7 @@ pub(crate) fn run_as_coordinator(
     unsafe { (*vm.event_loop()).ensure_waker() };
     vm.run_with_api_lock(|| coord.drive());
     coord.end_group();
+    crate::cli::run_compiled::log_account_of_process(format_args!("coordinator | files {n}"));
 
     aggregate::replay_test_records(&mut coord);
     if coverage_opts.enabled {
@@ -289,6 +299,7 @@ pub(crate) fn run_as_coordinator(
         Output::flush();
         Global::exit(code);
     }
+    *exit_code_left_by_tests = coord.exit_code_left_by_tests;
     Ok(true)
 }
 
@@ -564,6 +575,8 @@ pub(crate) struct WorkerCommands {
     /// the next, so a single slot is sufficient. Owned path storage.
     pub(crate) pending_idx: Option<u32>,
     pub(crate) pending_path: Vec<u8>,
+    /// What the files before this one have left in `process.exitCode`, in whichever worker they ran.
+    pub(crate) pending_exit_code: Option<u8>,
     /// EOF, error, `.shutdown`, or a corrupt frame.
     pub(crate) done: bool,
 }
@@ -585,6 +598,7 @@ impl ChannelOwner for WorkerCommands {
                 self.pending_idx = Some(rd.u32());
                 self.pending_path.clear();
                 self.pending_path.extend_from_slice(rd.str());
+                self.pending_exit_code = rd.u32().checked_sub(1).map(|code| code as u8);
             }
             frame::Kind::Shutdown => self.done = true,
             _ => {}
@@ -601,6 +615,7 @@ impl ChannelOwner for WorkerCommands {
 struct WorkerLoop<'a> {
     reporter: &'a mut CommandLineReporter,
     cmds: WorkerCommands,
+    files_run: u32,
 }
 
 impl<'a> WorkerLoop<'a> {
@@ -647,12 +662,17 @@ impl<'a> WorkerLoop<'a> {
                 break;
             };
             self.cmds.pending_idx = None;
+            self.files_run += 1;
 
             self.reporter.worker_ipc_file_idx = Some(idx);
             self.cmds.emit(frame::Kind::FileStart, |wf| wf.u32(idx));
 
             let before = *self.reporter.summary();
             let before_unhandled = self.reporter.jest.unhandled_errors_between_tests;
+            if let Some(code) = self.cmds.pending_exit_code.take() {
+                vm.exit_handler.exit_code = code;
+            }
+            let exit_code_before = vm.exit_handler.exit_code;
             let started_ns =
                 bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns();
             let resident_at_start = start_measuring_growth();
@@ -680,7 +700,7 @@ impl<'a> WorkerLoop<'a> {
                 Global::mimalloc_cleanup(false);
             }
             self.reporter.jest.default_timeout_override = u32::MAX;
-            let growth = resident_at_start.map_or(0, growth_since);
+            let (growth, largest_child) = resident_at_start.map_or((0, 0), growth_since);
 
             let elapsed_ns = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
                 .ns()
@@ -705,6 +725,11 @@ impl<'a> WorkerLoop<'a> {
                 }
                 wf.u64(elapsed_ns);
                 wf.u32(growth);
+                wf.u32(largest_child);
+                wf.u32(match vm.exit_handler.exit_code {
+                    code if code == exit_code_before => 0,
+                    code => u32::from(code) + 1,
+                });
             });
         }
     }
@@ -736,9 +761,9 @@ fn start_measuring_growth() -> Option<u64> {
     None
 }
 
-/// In megabytes, with the largest child that has ended. A build inside a test takes gigabytes for a few seconds and gives them back,
+/// In megabytes, and the largest child that has ended. A build inside a test takes gigabytes for a few seconds and gives them back,
 /// so the highest size counts.
-fn growth_since(resident_at_start: u64) -> u32 {
+fn growth_since(resident_at_start: u64) -> (u32, u32) {
     #[cfg(target_os = "linux")]
     if let Some(highest) = read_kilobytes(b"VmHWM:") {
         // A build that a test starts as a process of its own takes as much as one inside the worker. When a child starts its
@@ -746,11 +771,14 @@ fn growth_since(resident_at_start: u64) -> u32 {
         // itself only above the worker's.
         let child = bun_spawn::LARGEST_REAPED_CHILD.load(core::sync::atomic::Ordering::Relaxed);
         let child = if child > highest { child } else { 0 };
-        let growth = highest.saturating_sub(resident_at_start) + child;
-        return u32::try_from(growth / 1024).unwrap_or(u32::MAX);
+        let megabytes = |kilobytes: u64| u32::try_from(kilobytes / 1024).unwrap_or(u32::MAX);
+        return (
+            megabytes(highest.saturating_sub(resident_at_start)),
+            megabytes(child),
+        );
     }
     let _ = resident_at_start;
-    0
+    (0, 0)
 }
 
 /// Worker side: read framed commands from the IPC channel via the event loop,
@@ -779,10 +807,16 @@ pub(crate) fn run_as_worker(
             frame: Frame::default(),
             pending_idx: None,
             pending_path: Vec::new(),
+            pending_exit_code: None,
             done: false,
         },
+        files_run: 0,
     };
     vm.run_with_api_lock_mut(|vm| wloop.begin(vm));
+    crate::cli::run_compiled::log_account_of_process(format_args!(
+        "worker | files {}",
+        wloop.files_run
+    ));
 
     worker_flush_aggregates(wloop.reporter, vm, ctx, &mut wloop.cmds);
     // Drain any backpressure-buffered frames before exit so the coordinator
@@ -835,6 +869,7 @@ fn worker_flush_aggregates(
 
     if ctx.test_options.coverage.enabled {
         let mut encoded: Vec<u8> = Vec::new();
+        CommandLineReporter::add_compiled_files_to_coverage(vm);
         CommandLineReporter::for_each_coverage_report(vm, &ctx.test_options.coverage, |report| {
             encoded.clear();
             code_coverage::wire::encode(&report, &mut encoded);

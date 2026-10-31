@@ -1,6 +1,7 @@
 //! An error out of making `this` has no position of its own. JSC's lookup falls on the first position that the
 //! bytecode of the constructor records, in the text the transpiler prints. The source map then names the last
-//! mapping that js_printer adds at or before it.
+//! mapping that js_printer adds at or before it. A constructor is that of a class without a parent, or a plain
+//! function.
 //!
 //! So this walks the printed tree in the order of NodesCodegen.cpp, and each arm says where
 //! `emitExpressionInfo` puts the divot and which `add_source_mapping` stands before it.
@@ -13,8 +14,9 @@ use bun_ast::flags::Property as PropertyFlag;
 use bun_ast::op::{Level, TABLE};
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::symbol::follow_symbols;
-use bun_ast::{AssignTarget, Binding, E, Expr, G, Loc, OpCode, Ref, S, Stmt, Symbol};
-use rustc_hash::FxHashSet;
+use bun_ast::{AssignTarget, Binding, E, Expr, G, Loc, OpCode, Ref, S, Stmt, StmtOrExpr, Symbol};
+use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 use super::JoinedDeclarator;
 
@@ -92,12 +94,16 @@ pub(super) struct Constructor<'a> {
     symbols: &'a [Symbol],
     /// Sorted by the object.
     joined_declarators: &'a [JoinedDeclarator],
-    declared: FxHashSet<u32>,
-    used_by_closures: FxHashSet<u32>,
+    variables: &'a Variables,
+    /// The number that `variables` has for the constructor.
+    closure: u32,
     has_direct_eval: bool,
     arguments: Option<u32>,
     /// `arguments` is named for more than its length.
     needs_arguments: bool,
+    is_strict: bool,
+    /// The parameters of a sloppy function whose `arguments` object shows them: they live in that object.
+    parameters_in_arguments: SmallVec<[u32; 4]>,
     depth: Cell<u32>,
 }
 
@@ -105,9 +111,10 @@ pub(super) struct Constructor<'a> {
 const MAX_DEPTH: u32 = 200;
 
 /// `None`: nothing is recorded, or this does not know the form. JSC then names the parameters.
-pub(super) fn find_first_recorded_position(
+pub(super) fn find_first_recorded_position_of_class(
     symbols: &[Symbol],
     joined_declarators: &[JoinedDeclarator],
+    variables: &Variables,
     class: &G::Class,
 ) -> Option<u32> {
     let is_field = |property: &G::Property| {
@@ -123,27 +130,40 @@ pub(super) fn find_first_recorded_position(
         return None;
     }
     let function = properties.iter().find_map(find_constructor)?;
-    let mut constructor = Constructor {
+    find_first_recorded_position(symbols, joined_declarators, variables, function, true)
+}
+
+/// The same for the function itself: the constructor of a class, or a plain function.
+pub(super) fn find_first_recorded_position(
+    symbols: &[Symbol],
+    joined_declarators: &[JoinedDeclarator],
+    variables: &Variables,
+    function: &G::Fn,
+    is_strict: bool,
+) -> Option<u32> {
+    let closure = variables.find_closure(function)?;
+    let arguments = find_arguments(symbols, function);
+    let needs_arguments = arguments.is_some_and(|arguments| variables.is_named(arguments));
+    let mut parameters_in_arguments = SmallVec::new();
+    if !is_strict && needs_arguments && has_only_plain_parameters(function) {
+        for argument in function.args.slice() {
+            if let B::BIdentifier(name) = argument.binding.data {
+                parameters_in_arguments.push(follow_symbols(symbols, name.r#ref).inner_index());
+            }
+        }
+    }
+    let constructor = Constructor {
         symbols,
         joined_declarators,
-        declared: FxHashSet::default(),
-        used_by_closures: FxHashSet::default(),
-        has_direct_eval: false,
-        arguments: None,
-        needs_arguments: false,
+        variables,
+        closure,
+        has_direct_eval: variables.holds_all_variables_in_scope[closure as usize],
+        arguments,
+        needs_arguments,
+        is_strict,
+        parameters_in_arguments,
         depth: Cell::new(0),
     };
-    if !function.arguments_ref.is_empty() {
-        let arguments = follow_symbols(symbols, function.arguments_ref);
-        constructor.arguments = Some(arguments.inner_index());
-    }
-    Variables {
-        constructor: &mut constructor,
-        closure_depth: 0,
-        classes: Vec::new(),
-        pending: Vec::new(),
-    }
-    .walk(function);
     match constructor.first_of_function(function) {
         First::At(position) => u32::try_from(position.start).ok(),
         First::Nothing | First::Unknown => None,
@@ -171,37 +191,120 @@ fn find_constructor(property: &G::Property) -> Option<&G::Fn> {
     }
 }
 
+fn has_only_plain_parameters(function: &G::Fn) -> bool {
+    let is_plain = |argument: &G::Arg| {
+        argument.default.is_none() && matches!(argument.binding.data, B::BIdentifier(_))
+    };
+    !function.flags.contains(G::FnFlags::HasRestArg) && function.args.slice().iter().all(is_plain)
+}
+
+fn find_arguments(symbols: &[Symbol], function: &G::Fn) -> Option<u32> {
+    let arguments = function.arguments_ref;
+    (!arguments.is_empty()).then(|| follow_symbols(symbols, arguments).inner_index())
+}
+
+fn address_of(function: &G::Fn) -> usize {
+    std::ptr::from_ref(function) as usize
+}
+
+/// Says which variables of a file live in a register: those that no closure names but the one that declares them.
+/// A closure is whatever has variables of its own at run time: the file, a function, the value of a member of a class.
+pub(super) struct Variables {
+    /// By symbol: the closure that declares it.
+    declared_in: Vec<u32>,
+    /// By symbol: the closure that names it.
+    named_in: Vec<u32>,
+    /// By closure: it names `eval`, or a closure inside it does, or it has a `with`.
+    holds_all_variables_in_scope: Vec<bool>,
+    /// The closure of each function, by the address of the function.
+    closures: FxHashMap<usize, u32>,
+}
+
+const NO_CLOSURE: u32 = u32::MAX;
+const SEVERAL_CLOSURES: u32 = u32::MAX - 1;
+
+impl Variables {
+    /// One walk over the file, however deep its functions are nested.
+    pub(super) fn of_file<'s>(
+        symbols: &[Symbol],
+        parts: impl Iterator<Item = &'s [Stmt]>,
+    ) -> Variables {
+        let mut walk = VariablesWalk {
+            symbols,
+            variables: Variables {
+                declared_in: vec![NO_CLOSURE; symbols.len()],
+                named_in: vec![NO_CLOSURE; symbols.len()],
+                holds_all_variables_in_scope: vec![false],
+                closures: FxHashMap::default(),
+            },
+            has_direct_eval: vec![false],
+            open: vec![OpenClosure {
+                closure: 0,
+                arguments: None,
+            }],
+            classes: Vec::new(),
+            pending: Vec::new(),
+        };
+        for statements in parts {
+            walk.push_statements(statements);
+        }
+        walk.walk();
+        walk.variables
+    }
+
+    fn find_closure(&self, function: &G::Fn) -> Option<u32> {
+        self.closures.get(&address_of(function)).copied()
+    }
+
+    fn is_named(&self, name: u32) -> bool {
+        self.named_in[name as usize] != NO_CLOSURE
+    }
+
+    fn is_variable_of_closure_alone(&self, name: u32, closure: u32) -> bool {
+        let named_in = self.named_in[name as usize];
+        self.declared_in[name as usize] == closure
+            && (named_in == closure || named_in == NO_CLOSURE)
+    }
+}
+
 enum Work {
     Expression(Expr),
     Statement(Stmt),
     Binding(Binding),
-    EnterClosure,
+    /// The address of the function and its `arguments`, for a closure that is a function with an `arguments` of its own.
+    EnterClosure(Option<(usize, Option<u32>)>),
     LeaveClosure,
     EnterClass(u32),
     LeaveClass,
 }
 
-/// Finds the variables of the constructor that live in a register: those that no closure names.
-struct Variables<'c, 'a> {
-    constructor: &'c mut Constructor<'a>,
-    closure_depth: u32,
+struct OpenClosure {
+    closure: u32,
+    arguments: Option<u32>,
+}
+
+struct VariablesWalk<'a> {
+    symbols: &'a [Symbol],
+    variables: Variables,
+    /// By closure.
+    has_direct_eval: Vec<bool>,
+    /// The closures around, the innermost last.
+    open: Vec<OpenClosure>,
     /// The names of the classes around. Inside a class its name is a variable of the class.
     classes: Vec<u32>,
     /// What was pushed last is taken first.
     pending: Vec<Work>,
 }
 
-impl Variables<'_, '_> {
-    fn walk(&mut self, function: &G::Fn) {
-        self.declare(function.arguments_ref);
-        self.push_function(function);
+impl VariablesWalk<'_> {
+    fn walk(&mut self) {
         while let Some(work) = self.pending.pop() {
             match work {
                 Work::Expression(expression) => self.walk_expression(expression),
                 Work::Statement(statement) => self.walk_statement(statement),
                 Work::Binding(binding) => self.walk_binding(binding),
-                Work::EnterClosure => self.closure_depth += 1,
-                Work::LeaveClosure => self.closure_depth -= 1,
+                Work::EnterClosure(function) => self.enter_closure(function),
+                Work::LeaveClosure => self.leave_closure(),
                 Work::EnterClass(name) => self.classes.push(name),
                 Work::LeaveClass => {
                     self.classes.pop();
@@ -210,15 +313,57 @@ impl Variables<'_, '_> {
         }
     }
 
+    fn enter_closure(&mut self, function: Option<(usize, Option<u32>)>) {
+        let closure = self.has_direct_eval.len() as u32;
+        self.has_direct_eval.push(false);
+        self.variables.holds_all_variables_in_scope.push(false);
+        let arguments = function.and_then(|(_, arguments)| arguments);
+        self.open.push(OpenClosure { closure, arguments });
+        if let Some((address, _)) = function {
+            self.variables.closures.insert(address, closure);
+        }
+        if let Some(arguments) = arguments {
+            self.variables.declared_in[arguments as usize] = closure;
+        }
+    }
+
+    fn leave_closure(&mut self) {
+        let Some(left) = self.open.pop() else {
+            return;
+        };
+        if self.has_direct_eval[left.closure as usize] {
+            self.did_find_direct_eval();
+        }
+    }
+
+    fn innermost(&self) -> &OpenClosure {
+        self.open.last().expect("the file is never left")
+    }
+
+    fn did_find_direct_eval(&mut self) {
+        let closure = self.innermost().closure as usize;
+        self.has_direct_eval[closure] = true;
+        self.variables.holds_all_variables_in_scope[closure] = true;
+    }
+
     fn follow(&self, name: Ref) -> u32 {
-        follow_symbols(self.constructor.symbols, name).inner_index()
+        follow_symbols(self.symbols, name).inner_index()
     }
 
     fn declare(&mut self, name: Ref) {
-        if self.closure_depth == 0 && !name.is_empty() {
+        if !name.is_empty() {
             let name = self.follow(name);
-            self.constructor.declared.insert(name);
+            self.variables.declared_in[name as usize] = self.innermost().closure;
         }
+    }
+
+    fn is_length_of_own_arguments(&self, access: &E::Dot) -> bool {
+        let ExprData::EIdentifier(object) = access.target.data else {
+            return false;
+        };
+        self.innermost().arguments == Some(self.follow(object.ref_))
+            && &*access.name == b"length"
+            && access.optional_chain.is_none()
     }
 
     fn push(&mut self, expression: Expr) {
@@ -254,7 +399,15 @@ impl Variables<'_, '_> {
     fn push_closure(&mut self, push: impl FnOnce(&mut Self)) {
         self.pending.push(Work::LeaveClosure);
         push(self);
-        self.pending.push(Work::EnterClosure);
+        self.pending.push(Work::EnterClosure(None));
+    }
+
+    fn push_function_as_closure(&mut self, function: &G::Fn) {
+        self.pending.push(Work::LeaveClosure);
+        self.push_function(function);
+        let arguments = find_arguments(self.symbols, function);
+        let function = (address_of(function), arguments);
+        self.pending.push(Work::EnterClosure(Some(function)));
     }
 
     fn push_class(&mut self, class: &G::Class) {
@@ -301,9 +454,18 @@ impl Variables<'_, '_> {
         match expression.data {
             ExprData::EIdentifier(name) => {
                 let name = self.follow(name.ref_);
-                self.constructor.needs_arguments |= self.constructor.arguments == Some(name);
-                if self.closure_depth > 0 && !self.classes.contains(&name) {
-                    self.constructor.used_by_closures.insert(name);
+                // JSC's parser goes by the spelling: whoever writes `eval`, called or not, keeps every variable around it in a scope.
+                if self.symbols[name as usize].original_name.slice() == b"eval" {
+                    self.did_find_direct_eval();
+                }
+                if !self.classes.contains(&name) {
+                    let closure = self.innermost().closure;
+                    let named_in = &mut self.variables.named_in[name as usize];
+                    *named_in = match *named_in {
+                        NO_CLOSURE => closure,
+                        known if known == closure => closure,
+                        _ => SEVERAL_CLOSURES,
+                    };
                 }
             }
             ExprData::EArray(list) => self.push_expressions(&list.items),
@@ -317,18 +479,16 @@ impl Variables<'_, '_> {
                 self.push(site.target);
                 self.push_expressions(&site.args);
             }
-            ExprData::EFunction(function) => {
-                self.push_closure(|variables| variables.push_function(&function.func));
-            }
+            ExprData::EFunction(function) => self.push_function_as_closure(&function.func),
             ExprData::ECall(site) => {
-                self.constructor.has_direct_eval |= site.is_direct_eval;
+                if site.is_direct_eval {
+                    self.did_find_direct_eval();
+                }
                 self.push(site.target);
                 self.push_expressions(&site.args);
             }
             ExprData::EDot(access) => {
-                let is_length =
-                    self.closure_depth == 0 && self.constructor.is_arguments_length(&access);
-                if !is_length {
+                if !self.is_length_of_own_arguments(&access) {
                     self.push(access.target);
                 }
             }
@@ -436,7 +596,7 @@ impl Variables<'_, '_> {
                 if let Some(name) = &statement.func.name {
                     self.declare(name.ref_);
                 }
-                self.push_closure(|variables| variables.push_function(&statement.func));
+                self.push_function_as_closure(&statement.func);
             }
             StmtData::SClass(statement) => {
                 if let Some(name) = &statement.class.class_name {
@@ -444,6 +604,17 @@ impl Variables<'_, '_> {
                 }
                 self.push_class(&statement.class);
             }
+            StmtData::SWith(statement) => {
+                let closure = self.innermost().closure as usize;
+                self.variables.holds_all_variables_in_scope[closure] = true;
+                self.push(statement.value);
+                push_statement(self, statement.body);
+            }
+            StmtData::SExportDefault(statement) => match statement.value {
+                StmtOrExpr::Stmt(value) => push_statement(self, value),
+                StmtOrExpr::Expr(value) => self.push(value),
+            },
+            StmtData::SExportEquals(statement) => self.push(statement.value),
             _ => {}
         }
     }
@@ -467,8 +638,11 @@ fn first_mapping(mut expression: Expr) -> Option<Loc> {
 
 /// The last mapping that is added while the expression is printed.
 fn last_mapping(mut expression: Expr) -> Option<Loc> {
+    // A callee and the tag of a template are printed at `Level::Postfix` or above.
+    let mut is_callee = false;
     loop {
         let start = expression.loc;
+        let was_callee = std::mem::take(&mut is_callee);
         expression = match expression.data {
             ExprData::EThis(_)
             | ExprData::ESuper(_)
@@ -482,8 +656,17 @@ fn last_mapping(mut expression: Expr) -> Option<Loc> {
             | ExprData::ERegExp(_)
             | ExprData::ENewTarget(_)
             | ExprData::EImportMeta(_)
+            | ExprData::EImportMetaMain(_)
             | ExprData::EIdentifier(_)
-            | ExprData::EImportIdentifier(_) => return Some(start),
+            | ExprData::EImportIdentifier(_)
+            | ExprData::ECommonjsExportIdentifier(_)
+            | ExprData::ENameOfSymbol(_)
+            | ExprData::ESpecial(E::Special::ModuleExports)
+            | ExprData::ERequireMain
+            | ExprData::ERequireCallTarget
+            | ExprData::ERequireResolveCallTarget
+            | ExprData::ERequireString(_)
+            | ExprData::ERequireResolveString(_) => return Some(start),
             ExprData::EDot(access) => return Some(access.name_loc),
             ExprData::EObject(object) => return valid_behind(object.close_brace_loc, start),
             ExprData::EClass(class) => return valid_behind(class.close_brace_loc, class.body_loc),
@@ -494,12 +677,37 @@ fn last_mapping(mut expression: Expr) -> Option<Loc> {
             ExprData::ESpread(spread) => spread.value,
             ExprData::ECall(site) => match valid_behind(site.close_paren_loc, start) {
                 Some(closer) => return Some(closer),
-                None => *site.args.last().unwrap_or(&site.target),
+                None => {
+                    is_callee = site.args.is_empty();
+                    *site.args.last().unwrap_or(&site.target)
+                }
             },
+            // Without arguments the parentheses are printed only from `Level::Postfix` on.
             ExprData::ENew(site) => match valid_behind(site.close_parens_loc, start) {
-                Some(closer) if !site.args.is_empty() => return Some(closer),
-                _ => *site.args.last()?,
+                Some(closer) if !site.args.is_empty() || was_callee => return Some(closer),
+                _ => {
+                    is_callee = site.args.is_empty();
+                    *site.args.last().unwrap_or(&site.target)
+                }
             },
+            ExprData::EAwait(operator) => operator.value,
+            ExprData::EYield(operator) => match operator.value {
+                Some(value) => value,
+                None => return Some(start),
+            },
+            ExprData::EInlinedEnum(member) => member.value,
+            ExprData::ETemplate(template) => match (template.parts().last(), template.tag) {
+                (Some(part), _) => part.value,
+                (None, Some(tag)) => {
+                    is_callee = true;
+                    tag
+                }
+                (None, None) => return Some(start),
+            },
+            // The path of a module that was found is printed without a mapping.
+            ExprData::EImport(import) if !import.options.is_missing() => import.options,
+            ExprData::EImport(import) if import.is_import_record_null() => import.expr,
+            ExprData::EImport(_) => return Some(start),
             ExprData::EArray(list) => match valid_behind(list.close_bracket_loc, start) {
                 Some(closer) => return Some(closer),
                 None => match list.items.last() {
@@ -552,6 +760,11 @@ enum End {
     Mapping(Option<Loc>),
 }
 
+/// The `;` that stands for the body of a loop or a branch has no position, so no mapping is added for it.
+fn is_unmapped(statement: Stmt) -> bool {
+    matches!(statement.data, StmtData::SEmpty(_)) && statement.loc.start < 0
+}
+
 /// What is printed last in a block whose `}` has no mapping. `brace`: its `{`.
 fn find_end_of_block(mut brace: Loc, mut statements: &[Stmt]) -> End {
     'block: loop {
@@ -591,7 +804,7 @@ fn find_end_of_block(mut brace: Loc, mut statements: &[Stmt]) -> End {
                     (brace, statements) = (statement.loc, block.stmts.slice());
                     continue 'block;
                 }
-                StmtData::SIf(branch) => match branch.no {
+                StmtData::SIf(branch) => match branch.no.filter(|&no| !is_unmapped(no)) {
                     // No mapping is added for the `}` behind `else`.
                     Some(Stmt {
                         data: StmtData::SBlock(block),
@@ -601,8 +814,28 @@ fn find_end_of_block(mut brace: Loc, mut statements: &[Stmt]) -> End {
                         continue 'block;
                     }
                     Some(no) => no,
+                    None if is_unmapped(branch.yes) => return End::Value(branch.test),
                     None => branch.yes,
                 },
+                StmtData::SFor(repeated) if is_unmapped(repeated.body) => {
+                    match (repeated.update.or(repeated.test), repeated.init) {
+                        (Some(last), _) => return End::Value(last),
+                        (None, Some(init)) => init,
+                        (None, None) => return End::Mapping(Some(statement.loc)),
+                    }
+                }
+                StmtData::SForIn(repeated) if is_unmapped(repeated.body) => {
+                    return End::Value(repeated.value);
+                }
+                StmtData::SForOf(repeated) if is_unmapped(repeated.body) => {
+                    return End::Value(repeated.value);
+                }
+                StmtData::SWhile(repeated) if is_unmapped(repeated.body) => {
+                    return End::Value(repeated.test);
+                }
+                StmtData::SLabel(labeled) if is_unmapped(labeled.stmt) => {
+                    return End::Mapping(Some(statement.loc));
+                }
                 StmtData::SFor(repeated) => repeated.body,
                 StmtData::SForIn(repeated) => repeated.body,
                 StmtData::SForOf(repeated) => repeated.body,
@@ -634,6 +867,17 @@ fn find_end_of_block(mut brace: Loc, mut statements: &[Stmt]) -> End {
                 _ => return End::Mapping(None),
             };
         }
+    }
+}
+
+/// JSC's parser folds the `-` in front of a BigInt.
+fn is_big_int_literal(mut expression: Expr) -> bool {
+    loop {
+        expression = match expression.data {
+            ExprData::EBigInt(_) => return true,
+            ExprData::EUnary(operator) if operator.op == OpCode::UnNeg => operator.value,
+            _ => return false,
+        };
     }
 }
 
@@ -676,8 +920,10 @@ impl Constructor<'_> {
     fn is_in_register(&self, name: Ref) -> bool {
         let name = follow_symbols(self.symbols, name).inner_index();
         !self.has_direct_eval
-            && self.declared.contains(&name)
-            && !self.used_by_closures.contains(&name)
+            && !self.parameters_in_arguments.contains(&name)
+            && self
+                .variables
+                .is_variable_of_closure_alone(name, self.closure)
     }
 
     fn name_of(&self, name: Ref) -> &[u8] {
@@ -699,11 +945,8 @@ impl Constructor<'_> {
 
     fn first_of_function(&self, function: &G::Fn) -> First {
         let arguments = function.args.slice();
-        let is_plain = |argument: &G::Arg| {
-            argument.default.is_none() && matches!(argument.binding.data, B::BIdentifier(_))
-        };
         // Parameters that are plain names are not bound one by one.
-        if !function.flags.contains(G::FnFlags::HasRestArg) && arguments.iter().all(is_plain) {
+        if has_only_plain_parameters(function) {
             return self.first_of_statements(function.body.stmts.slice());
         }
         let mut previous = Some(function.open_parens_loc);
@@ -795,7 +1038,7 @@ impl Constructor<'_> {
                         return First::Unknown;
                     };
                     if property.kind == G::PropertyKind::Spread {
-                        return First::Unknown;
+                        return self.first_of_rest_target(value, target.loc);
                     }
                     let key = match property.key {
                         Some(key) if property.flags.contains(PropertyFlag::IsComputed) => {
@@ -858,9 +1101,13 @@ impl Constructor<'_> {
                     .or_else(|| self.first_of(value, place))
                     .or_else(|| First::At(binding.loc)),
                 // In strict code the name is recorded before its scope is looked for.
-                B::BIdentifier(_) => self
+                B::BIdentifier(_) if self.is_strict => self
                     .first_of_binding(binding, None)
                     .or_else(|| self.first_of(value, place)),
+                // In sloppy code only the store is recorded, which comes behind the value.
+                B::BIdentifier(_) => self
+                    .first_of(value, place)
+                    .or_else(|| self.first_of_binding(binding, None)),
                 _ => self
                     .first_of(value, place)
                     .or_else(|| self.first_of_binding(binding, previous)),
@@ -872,6 +1119,15 @@ impl Constructor<'_> {
             previous = last_mapping(value);
         }
         First::Nothing
+    }
+
+    /// `({ ...target } = ..)`. The object and the key of the target come first. The copy of the properties is a call,
+    /// which is recorded at the `{` of the pattern.
+    fn first_of_rest_target(&self, target: Expr, brace: Loc) -> First {
+        match target.data {
+            ExprData::EDot(_) | ExprData::EIndex(_) => self.first_of_target(target, None),
+            _ => First::At(brace),
+        }
     }
 
     /// `a = o.x, b = o.y` is printed `{ x: a, y: b } = o`: the `o` that is printed.
@@ -894,7 +1150,9 @@ impl Constructor<'_> {
                 _ => First::Unknown,
             },
             StmtData::SExpr(statement) => match statement.value.data {
-                ExprData::EIdentifier(_) => self.first_of_target(statement.value, None),
+                ExprData::EIdentifier(_) | ExprData::EObject(_) | ExprData::EArray(_) => {
+                    self.first_of_target(statement.value, None)
+                }
                 _ => self
                     .first_of_member(statement.value)
                     .unwrap_or(First::Unknown),
@@ -934,6 +1192,10 @@ impl Constructor<'_> {
             StmtData::SExpr(statement) => self.first_of(statement.value, lowest.ignoring_result()),
             StmtData::SLocal(local) => self.first_of_declarations(statement.loc, &local),
             StmtData::SReturn(returned) => self.first_of_optional(returned.value, lowest),
+            // Entering the scope is recorded at the end of the object.
+            StmtData::SWith(entered) => self
+                .first_of(entered.value, lowest)
+                .or_else(|| First::at(last_mapping(entered.value))),
             // The divot is the end of the value.
             StmtData::SThrow(thrown) => self
                 .first_of(thrown.value, lowest)
@@ -1192,6 +1454,9 @@ impl Constructor<'_> {
             }
             ExprData::ECall(site) => self.first_of_call(expression, &site),
             ExprData::ENew(site) => {
+                if let Some(position) = self.find_tag_behind_new(expression) {
+                    return First::At(position);
+                }
                 let is_wrapped = place.level.gte(Level::Call);
                 let has_parentheses = !site.args.is_empty() || place.level.gte(Level::Postfix);
                 let follower = place.follower.filter(|_| !is_wrapped && !has_parentheses);
@@ -1238,6 +1503,35 @@ impl Constructor<'_> {
         self.first_of(site.target, Place::new(Level::Postfix))
             .or_else(|| self.first_of_list(&site.args, closer))
             .or_else(|| First::at(last_mapping(site.target)))
+    }
+
+    /// ``new new tag`..` ``: JSC's parser reads the run of `new` and the tag in one go, and takes the name of the tag to
+    /// start where the run does. So the divot lies the length of the name behind the first `new`.
+    fn find_tag_behind_new(&self, outermost: Expr) -> Option<Loc> {
+        let mut expression = outermost;
+        let tag = loop {
+            expression = match expression.data {
+                ExprData::ENew(site) => site.target,
+                ExprData::ETemplate(template) => break template.tag?,
+                _ => return None,
+            };
+        };
+        let ExprData::EIdentifier(name) = tag.data else {
+            return None;
+        };
+        if self.is_in_register(name.ref_) {
+            return None;
+        }
+        let mut words_passed = self.name_of(name.ref_).len() / b"new ".len();
+        expression = outermost;
+        while let ExprData::ENew(site) = expression.data {
+            if words_passed == 0 {
+                return Some(expression.loc);
+            }
+            words_passed -= 1;
+            expression = site.target;
+        }
+        Some(tag.loc)
     }
 
     fn first_of_template(&self, template: &E::Template) -> First {
@@ -1292,13 +1586,22 @@ impl Constructor<'_> {
                     ..operand
                 },
             ),
+            OpCode::UnNeg if is_big_int_literal(value) => First::Nothing,
             OpCode::UnNot | OpCode::UnNeg | OpCode::UnPos | OpCode::UnCpl => {
                 self.first_of(value, operand).or_else(|| First::At(run))
             }
-            // The divot is the end of the member.
+            // `delete a`, which only sloppy code has: the answer is false, and nothing is looked for. `delete (0, a)` is printed for any other.
+            OpCode::UnDelete
+                if operator.flags.contains(
+                    E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
+                ) && matches!(value.data, ExprData::EIdentifier(name) if self.is_in_register(name.ref_)) =>
+            {
+                First::Nothing
+            }
+            // The divot is the end of the member. What is no member is evaluated, and its value is dropped.
             OpCode::UnDelete => match self.first_of_object_and_key(value) {
                 Some((found, _)) => found.or_else(|| First::at(last_mapping(value))),
-                None => First::Unknown,
+                None => self.first_of(value, operand.ignoring_result()),
             },
             OpCode::UnPreDec | OpCode::UnPreInc | OpCode::UnPostDec | OpCode::UnPostInc => {
                 match value.data {

@@ -50,6 +50,7 @@ impl Diagnostics {
             files_of_early_errors: Vec::new(),
             files_nested_too_deeply: Vec::new(),
             missing_at_load: FxHashSet::default(),
+            places_of_type_errors: None,
         }
     }
 
@@ -102,6 +103,8 @@ impl Diagnostics {
             ]
             .iter()
             .any(|it| it.number() == code)
+                // What a loader says of the text that it was given: `add_load_messages`. `import("./notes", { with: { type: "json" } })`: the path says nothing of the loader.
+                || code == 0
                 || self.files_of_early_errors.contains(&entry.key.1)
         };
         let errors = || {
@@ -166,6 +169,26 @@ impl Diagnostics {
         self.files_nested_too_deeply
             .extend(other.files_nested_too_deeply);
         self.missing_at_load.extend(other.missing_at_load);
+        if let Some(places) = other.places_of_type_errors {
+            self.places_of_type_errors
+                .get_or_insert_default()
+                .extend(places);
+        }
+    }
+
+    /// All that the checker says of the files of a project.
+    pub(crate) fn note_places_of_type_errors(&mut self, checked: &[driver::BuildDiagnostic]) {
+        let in_files = checked.iter().filter(|it| it.diagnostic.file.is_some());
+        self.places_of_type_errors
+            .get_or_insert_default()
+            .extend(in_files.map(|it| (it.diagnostic.path.clone(), it.diagnostic.start)));
+    }
+
+    pub(crate) fn take_places_of_type_errors(&mut self) -> Option<Vec<(Vec<u8>, u32)>> {
+        let mut places = self.places_of_type_errors.take()?;
+        places.shared_sort_unstable();
+        places.dedup();
+        Some(places)
     }
 
     pub(super) fn add_message(&mut self, code: u32, message: Msg) {

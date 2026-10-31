@@ -456,23 +456,24 @@ function f33 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v26: undefined|Array<"Date"|"Map"|"Set"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = GetArrayElement v5, v11 arrayStorage=Contiguous level=Proven [keyIsIntegral, storageIsUndecided]
 # CHECK-NEXT: v27: 1 = Integer integer=1
 # CHECK-NEXT: v28: int[1, 4294967295] = Add v11, v27
-# CHECK-NEXT: v29: Array<"Date"|"Map"|"Set"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = RequireObjectCoercible v26 nullishAccess=Iterate
-# CHECK-NEXT: Jump -> next b11(v28, v29)
-# CHECK-NEXT: b11(v30: int[1, 4294967295], v31: Array<"Date"|"Map"|"Set"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Unlikely:
-# CHECK-NEXT: v32: 0 = Integer
-# CHECK-NEXT: v33: undefined|"Date"|"Map"|"Set"|f7|f8|f9 = GetArrayElement v31, v32 arrayStorage=Contiguous level=Proven [keyIsIntegral, storageIsUndecided]
-# CHECK-NEXT: Jump -> next b12(v33, v30, v31)
-# CHECK-NEXT: b12(v34: undefined|"Date"|"Map"|"Set"|f7|f8|f9 ~ "Date"|"Map"|"Set"|f7|f8|f9, v35: int[1, 4294967295], v36: Array<"Date"|"Map"|"Set"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Unlikely handler=b13(v35):
-# CHECK-NEXT: v37: 1 = Integer integer=1
-# CHECK-NEXT: v38: undefined|"Date"|"Map"|"Set"|f7|f8|f9 = GetArrayElement v36, v37 arrayStorage=Contiguous level=Proven [keyIsIntegral, storageIsUndecided]
-# CHECK-NEXT: v39: anything = Call v38, -, v0 calleeName="probe" accessSite=10 callees=[f7, f8, f9]
-# CHECK-NEXT: Return v34
-# CHECK-NEXT: b13(v40: int[1, 4294967295]) role=CatchHandler:
-# CHECK-NEXT: Jump -> next b5(v40)
+# CHECK-NEXT: v29: fact = Specified
+# CHECK-NEXT: v30: Array<"Date"|"Map"|"Set"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v26, v29 provenType=Array<"Date"|"Map"|"Set"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b11(v28, v30)
+# CHECK-NEXT: b11(v31: int[1, 4294967295], v32: Array<"Date"|"Map"|"Set"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Unlikely:
+# CHECK-NEXT: v33: 0 = Integer
+# CHECK-NEXT: v34: undefined|"Date"|"Map"|"Set"|f7|f8|f9 = GetArrayElement v32, v33 arrayStorage=Contiguous level=Proven [keyIsIntegral, storageIsUndecided]
+# CHECK-NEXT: Jump -> next b12(v34, v31, v32)
+# CHECK-NEXT: b12(v35: undefined|"Date"|"Map"|"Set"|f7|f8|f9 ~ "Date"|"Map"|"Set"|f7|f8|f9, v36: int[1, 4294967295], v37: Array<"Date"|"Map"|"Set"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Unlikely handler=b13(v36):
+# CHECK-NEXT: v38: 1 = Integer integer=1
+# CHECK-NEXT: v39: undefined|"Date"|"Map"|"Set"|f7|f8|f9 = GetArrayElement v37, v38 arrayStorage=Contiguous level=Proven [keyIsIntegral, storageIsUndecided]
+# CHECK-NEXT: v40: anything = Call v39, -, v0 calleeName="probe" accessSite=10 callees=[f7, f8, f9]
+# CHECK-NEXT: Return v35
+# CHECK-NEXT: b13(v41: int[1, 4294967295]) role=CatchHandler:
+# CHECK-NEXT: Jump -> next b5(v41)
 # CHECK-NEXT: b14():
-# CHECK-NEXT: v41: boolean = PropHas v0 key="derived" accessSite=9 receivers=[]
-# CHECK-NEXT: v42: "DerivedPlain" = String string="DerivedPlain"
-# CHECK-NEXT: Return v42
+# CHECK-NEXT: v42: boolean = PropHas v0 key="derived" accessSite=9 receivers=[]
+# CHECK-NEXT: v43: "DerivedPlain" = String string="DerivedPlain"
+# CHECK-NEXT: Return v43
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="constructTwice"
 # CHECK: module=m0 position=2132 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string|function|f5|f6|f14|builtin(Array)|builtin(Date)|builtin(Map)|builtin(Object)|builtin(Set)|builtin(Uint8Array)|builtin(MathMax) flags=[IsExpected]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 parent=1 module=m0}, {callee=f1 callPosition=4294967295 parent=2 module=m0}, {callee=f16 callPosition=4294967295 parent=2 module=m0}, {callee=f11 callPosition=4294967295 parent=5 isConstruction=true module=m0}] {

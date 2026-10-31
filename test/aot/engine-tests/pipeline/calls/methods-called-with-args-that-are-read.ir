@@ -1567,7 +1567,7 @@ function f63 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v0: 0 = Integer
 # CHECK-NEXT: v1: f1 = GetModuleVariable variable=g0
 # CHECK-NEXT: v2: 5 = Integer integer=5
-# CHECK-NEXT: v3: L5 = NewObject -, v0, v1 layout=L5 fields=[0, 1] allocationClass=5 [listsOnlyStoredValues]
+# CHECK-NEXT: v3: L5 = NewObject -, v0, v1 layout=L5 fields=[0, 1] storage=Frame allocationClass=5 [listsOnlyStoredValues]
 # CHECK-NEXT: v4: string = CallDirect v3, v2 function=f25 accessSite=87
 # CHECK-NEXT: v5: " " = String string=" "
 # CHECK-NEXT: v6: string = Add v4, v5
@@ -1744,7 +1744,7 @@ function f63 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f30|f32 = AssumeType v0 provenType=f30|f32
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L2
-# CHECK-NEXT: v3: object ~ L2|L8|L9 = NewObject v2 layout=L2 allocationSite=45 allocationClass=2
+# CHECK-NEXT: v3: object ~ L8|L9 = NewObject v2 layout=L2 allocationSite=45 allocationClass=2
 # CHECK-NEXT: v4: L8|L9 = AssumeType v3 provenType=L8|L9
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
@@ -1845,14 +1845,13 @@ function f63 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0(v0: function, v1: anything, v2: int[2, 3]):
 # CHECK-NEXT: v3: f30 = AssumeType v1 provenType=f30
 # CHECK-NEXT: v4: object = GetConstructPrototype v3 layout=L2
-# CHECK-NEXT: v5: object ~ L2|L8|L9 = NewObject v4 layout=L2 allocationSite=45 allocationClass=2
-# CHECK-NEXT: v6: L8|L9 = AssumeType v5 provenType=L8|L9
-# CHECK-NEXT: v7: L8|L9 ~ L8 = Upcast v6 castType=object
-# CHECK-NEXT: v8: L8 = AssumeType v7 provenType=L8
-# CHECK-NEXT: v9: 0 = Integer
-# CHECK-NEXT: PutSlot v8, -, v9 key="side" receivers=[L8] level=Proven accessSite=163
-# CHECK-NEXT: PutSlot v8, -, v2 key="side" receivers=[L8] level=Proven accessSite=140
-# CHECK-NEXT: Return v8
+# CHECK-NEXT: v5: object ~ L8 = NewObject v4 layout=L2 allocationSite=45 allocationClass=2
+# CHECK-NEXT: v6: L8|L9 ~ L8 = AssumeType v5 provenType=L8|L9
+# CHECK-NEXT: v7: L8 = AssumeType v6 provenType=L8
+# CHECK-NEXT: v8: 0 = Integer
+# CHECK-NEXT: PutSlot v7, -, v8 key="side" receivers=[L8] level=Proven accessSite=163
+# CHECK-NEXT: PutSlot v7, -, v2 key="side" receivers=[L8] level=Proven accessSite=140
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="scaled"
 # CHECK: module=m0 position=1491 kind=Method role=EntryChecks flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L8 site=w61} parameters=[{type=number site=w60 flags=[IsExpected]}] results=[{type=number site=w62}] functionTypes=[f48] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f68 fallback=f75} {

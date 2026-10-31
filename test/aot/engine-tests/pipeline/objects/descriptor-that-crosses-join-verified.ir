@@ -216,10 +216,10 @@ function f3 name="K" module=m0 position=622 kind=BaseConstructor flags=[HasNewTa
   b0(v0: anything):
     Jump -> next b1() @622
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @616
-    v2 = NewObject v1 layout=L0 @616
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @616
-    Return v3 @616
+    v1 = GetConstructPrototype v0 layout=L0 @622
+    v2 = NewObject v1 layout=L0 @622
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @622
+    Return v3 @622
 }
 function f4 name="get" module=m0 position=734 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|function|f3 flags=[IsExpected]}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
@@ -304,137 +304,118 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: b4(v27: object ~ L0|L1|L2|L4|Object):
 # CHECK-NEXT: v28: 1 = Integer integer=1
 # CHECK-NEXT: v29: int[1, 7] = Add v26, v28
-# CHECK-NEXT: v30: undefined|string = CallDirect v27 function=f1 accessSite=7
-# CHECK-NEXT: v31: anything ~ undefined|null|string = CallDirect v27 function=f2 accessSite=8
-# CHECK-NEXT: v32: boolean ~ true = TypeTest v31 testedType=undefined|null|boolean|number|string|symbol
-# CHECK-NEXT: Branch v32 -> taken b5(| 0), notTaken b6(| 0)
-# CHECK-NEXT: b5(v33: undefined|null|boolean|number|string|symbol ~ undefined|null|string):
-# CHECK-NEXT: v34: undefined = CallBuiltin -, v30, v33 overload=ConsoleLog/0 accessSite=9
+# CHECK-NEXT: v30: fact = Specified
+# CHECK-NEXT: v31: object ~ L0|L1|L2|L4|Object = AssumeType v27, v30 provenType=object
+# CHECK-NEXT: v32: undefined|string = CallDirect v31 function=f1 accessSite=7
+# CHECK-NEXT: v33: anything ~ undefined|null|string = CallDirect v31 function=f2 accessSite=8
+# CHECK-NEXT: v34: boolean ~ true = TypeTest v33 testedType=undefined|null|boolean|number|string|symbol
+# CHECK-NEXT: Branch v34 -> taken b5(| 0), notTaken b6(| 0)
+# CHECK-NEXT: b5(v35: undefined|null|boolean|number|string|symbol ~ undefined|null|string):
+# CHECK-NEXT: v36: undefined = CallBuiltin -, v32, v35 overload=ConsoleLog/0 accessSite=9
 # CHECK-NEXT: Jump -> next b2(v29)
-# CHECK-NEXT: b6(v35: bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v36: undefined = CallBuiltin -, v30, v35 overload=ConsoleLog/1 accessSite=9
+# CHECK-NEXT: b6(v37: bigint|object) frequency=Unlikely:
+# CHECK-NEXT: v38: undefined = CallBuiltin -, v32, v37 overload=ConsoleLog/1 accessSite=9
 # CHECK-NEXT: Jump -> next b1(v29)
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v37: undefined = Undefined
-# CHECK-NEXT: Return v37
+# CHECK-NEXT: v39: undefined = Undefined
+# CHECK-NEXT: Return v39
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="nameOfConstructor"
-# CHECK: module=m0 position=103 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|object}] results=[{type=undefined|string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|object):
+# CHECK: module=m0 position=103 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=object}] results=[{type=undefined|string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: object):
 # CHECK-NEXT: v1: "constructor" = String string="constructor"
-# CHECK-NEXT: v2: object = ToObject v0 calledBuiltin=ObjectGetOwnPropertyDescriptor
-# CHECK-NEXT: v3: undefined = CallBuiltin -, v2, v1 overload=ObjectGetOwnPropertyDescriptor/0 builtinCallForm=Fields accessSite=10
-# CHECK-NEXT: v4: boolean = ResultAt v3
-# CHECK-NEXT: v5: 1 = Integer integer=1
-# CHECK-NEXT: v6: int[0, 1] = ToNumber v4
-# CHECK-NEXT: v7: i32 = LShift v5, v6
-# CHECK-NEXT: v8: anything = ResultAt v3 index=1
-# CHECK-NEXT: v9: 1 = Integer integer=1
-# CHECK-NEXT: v10: int[0, 1] = BitAnd v7, v9
-# CHECK-NEXT: v11: boolean = ToBoolean v10
-# CHECK-NEXT: Branch v11 -> taken b4(), notTaken b1()
+# CHECK-NEXT: v2: undefined = CallBuiltin -, v0, v1 overload=ObjectGetOwnPropertyDescriptor/0 builtinCallForm=Fields accessSite=10
+# CHECK-NEXT: v3: boolean = ResultAt v2
+# CHECK-NEXT: v4: 1 = Integer integer=1
+# CHECK-NEXT: v5: int[0, 1] = ToNumber v3
+# CHECK-NEXT: v6: i32 = LShift v4, v5
+# CHECK-NEXT: v7: anything = ResultAt v2 index=1
+# CHECK-NEXT: v8: 1 = Integer integer=1
+# CHECK-NEXT: v9: int[0, 1] = BitAnd v6, v8
+# CHECK-NEXT: v10: boolean = ToBoolean v9
+# CHECK-NEXT: Branch v10 -> taken b4(), notTaken b1()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v12: undefined|int|f3|f5 = AssumeType v8 provenType=undefined|int|f3|f5
-# CHECK-NEXT: v13: boolean = TypeTest v12 testedType=function
-# CHECK-NEXT: Branch v13 -> taken b2(), notTaken b4()
+# CHECK-NEXT: v11: undefined|int|f3|f5 = AssumeType v7 provenType=undefined|int|f3|f5
+# CHECK-NEXT: v12: boolean = TypeTest v11 testedType=function
+# CHECK-NEXT: Branch v12 -> taken b2(), notTaken b4()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v14: undefined|int|f3|f5 = AssumeType v8 provenType=undefined|int|f3|f5
-# CHECK-NEXT: v15: int|f3|f5 = RequireObjectCoercible v14 name="name"
-# CHECK-NEXT: v16: anything = PropGet v15 key="name" accessSite=13
-# CHECK-NEXT: v17: "" = String string=""
-# CHECK-NEXT: v18: boolean = StrictEq v16, v17
-# CHECK-NEXT: Branch v18 -> taken b4(), notTaken b3()
+# CHECK-NEXT: v13: undefined|int|f3|f5 = AssumeType v7 provenType=undefined|int|f3|f5
+# CHECK-NEXT: v14: int|f3|f5 = RequireObjectCoercible v13 name="name"
+# CHECK-NEXT: v15: anything = PropGet v14 key="name" accessSite=13
+# CHECK-NEXT: v16: "" = String string=""
+# CHECK-NEXT: v17: boolean = StrictEq v15, v16
+# CHECK-NEXT: Branch v17 -> taken b4(), notTaken b3()
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v19: anything ~ undefined = Upcast v8 castType=anything
-# CHECK-NEXT: v20: undefined|int|f3|f5 ~ undefined = AssumeType v19 provenType=undefined|int|f3|f5
-# CHECK-NEXT: v21: int|f3|f5 = RequireObjectCoercible v20 name="name"
-# CHECK-NEXT: v22: anything = PropGet v21 key="name" accessSite=15
-# CHECK-NEXT: v23: undefined|string = AssumeType v22 provenType=undefined|string
-# CHECK-NEXT: Return v23
+# CHECK-NEXT: v18: anything = PropGet v14 key="name" accessSite=15
+# CHECK-NEXT: v19: undefined|string = AssumeType v18 provenType=undefined|string
+# CHECK-NEXT: Return v19
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v24: "none" = String string="none"
-# CHECK-NEXT: Return v24
+# CHECK-NEXT: v20: "none" = String string="none"
+# CHECK-NEXT: Return v20
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="walk"
-# CHECK: module=m0 position=317 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|object}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|object):
+# CHECK: module=m0 position=317 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=object}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: object):
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v0, v1)
-# CHECK-NEXT: b1(v2: undefined|null|object, v3: int|whole):
+# CHECK-NEXT: b1(v2: null|object, v3: int|whole):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v5: boolean = TypeTest v2 testedType=null
 # CHECK-NEXT: Branch v5 -> taken b2(), notTaken b3(| 0)
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v6: "end" = String string="end"
 # CHECK-NEXT: Return v6
-# CHECK-NEXT: b3(v7: undefined|object):
+# CHECK-NEXT: b3(v7: object):
 # CHECK-NEXT: v8: "constructor" = String string="constructor"
-# CHECK-NEXT: v9: object = ToObject v7 calledBuiltin=ObjectGetOwnPropertyDescriptor
-# CHECK-NEXT: v10: undefined = CallBuiltin -, v9, v8 overload=ObjectGetOwnPropertyDescriptor/0 builtinCallForm=Fields accessSite=16
-# CHECK-NEXT: v11: boolean = ResultAt v10
-# CHECK-NEXT: v12: 1 = Integer integer=1
-# CHECK-NEXT: v13: int[0, 1] = ToNumber v11
-# CHECK-NEXT: v14: i32 = LShift v12, v13
-# CHECK-NEXT: v15: anything = ResultAt v10 index=1
-# CHECK-NEXT: v16: 1 = Integer integer=1
-# CHECK-NEXT: v17: int[0, 1] = BitAnd v14, v16
-# CHECK-NEXT: v18: boolean = ToBoolean v17
-# CHECK-NEXT: Branch v18 -> taken b4(), notTaken b5()
+# CHECK-NEXT: v9: undefined = CallBuiltin -, v7, v8 overload=ObjectGetOwnPropertyDescriptor/0 builtinCallForm=Fields accessSite=16
+# CHECK-NEXT: v10: boolean = ResultAt v9
+# CHECK-NEXT: v11: 1 = Integer integer=1
+# CHECK-NEXT: v12: int[0, 1] = ToNumber v10
+# CHECK-NEXT: v13: i32 = LShift v11, v12
+# CHECK-NEXT: v14: anything = ResultAt v9 index=1
+# CHECK-NEXT: v15: 1 = Integer integer=1
+# CHECK-NEXT: v16: int[0, 1] = BitAnd v13, v15
+# CHECK-NEXT: v17: boolean = ToBoolean v16
+# CHECK-NEXT: Branch v17 -> taken b4(), notTaken b5()
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v19: boolean = TypeTest v7 testedType=object
-# CHECK-NEXT: Branch v19 -> taken b6(| 0), notTaken b17()
+# CHECK-NEXT: Jump -> next b13()
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v20: fact = Specified
-# CHECK-NEXT: v21: undefined|int|f3|f5|builtin(Object) = AssumeType v15, v20 provenType=undefined|int|f3|f5|builtin(Object)
-# CHECK-NEXT: v22: boolean = TypeTest v21 testedType=function
-# CHECK-NEXT: Branch v22 -> taken b7(), notTaken b15()
-# CHECK-NEXT: b6(v23: object):
-# CHECK-NEXT: v24: null|object = CallBuiltin -, v23 overload=ObjectGetPrototypeOf/0 accessSite=22
-# CHECK-NEXT: Jump -> next b18(v24)
-# CHECK-NEXT: b7():
-# CHECK-NEXT: v25: fact = Specified
-# CHECK-NEXT: v26: undefined|int|f3|f5|builtin(Object) = AssumeType v15, v25 provenType=undefined|int|f3|f5|builtin(Object)
-# CHECK-NEXT: v27: int|f3|f5|builtin(Object) = RequireObjectCoercible v26 name="name"
-# CHECK-NEXT: v28: boolean = TypeTest v27 testedType=builtin(Object)
-# CHECK-NEXT: Branch v28 -> taken b8(| 0), notTaken b9(| 0)
-# CHECK-NEXT: b8(v29: builtin(Object)):
-# CHECK-NEXT: v30: anything = PropGet v29 key="name" accessSite=19
-# CHECK-NEXT: Jump -> next b10(v30)
-# CHECK-NEXT: b9(v31: int|f3|f5) frequency=Rare:
-# CHECK-NEXT: v32: anything = PropGet v31 key="name" accessSite=19
-# CHECK-NEXT: Jump -> next b10(v32)
-# CHECK-NEXT: b10(v33: anything):
-# CHECK-NEXT: v34: "" = String string=""
-# CHECK-NEXT: v35: boolean = StrictEq v33, v34
-# CHECK-NEXT: Branch v35 -> taken b16(), notTaken b11()
-# CHECK-NEXT: b11():
-# CHECK-NEXT: v36: anything ~ undefined = Upcast v15 castType=anything
-# CHECK-NEXT: v37: fact = Specified
-# CHECK-NEXT: v38: undefined|int|f3|f5|builtin(Object) ~ undefined = AssumeType v36, v37 provenType=undefined|int|f3|f5|builtin(Object)
-# CHECK-NEXT: v39: int|f3|f5|builtin(Object) = RequireObjectCoercible v38 name="name"
-# CHECK-NEXT: v40: boolean = TypeTest v39 testedType=builtin(Object)
-# CHECK-NEXT: Branch v40 -> taken b12(| 0), notTaken b13(| 0)
-# CHECK-NEXT: b12(v41: builtin(Object)):
-# CHECK-NEXT: v42: anything = PropGet v41 key="name" accessSite=21
-# CHECK-NEXT: Jump -> next b14(v42)
-# CHECK-NEXT: b13(v43: int|f3|f5):
-# CHECK-NEXT: v44: anything = PropGet v43 key="name" accessSite=21
-# CHECK-NEXT: Jump -> next b14(v44)
-# CHECK-NEXT: b14(v45: anything):
-# CHECK-NEXT: v46: undefined|string = AssumeType v45 provenType=undefined|string
-# CHECK-NEXT: v47: number|string|bigint = Add v46, v3
-# CHECK-NEXT: Return v47
-# CHECK-NEXT: b15():
-# CHECK-NEXT: Jump -> next b16()
-# CHECK-NEXT: b16():
-# CHECK-NEXT: Jump -> next b17()
-# CHECK-NEXT: b17() frequency=Unlikely:
-# CHECK-NEXT: v48: builtin(Object) = Builtin builtin=Object
-# CHECK-NEXT: v49: null|object = CallBuiltin v48, v7 overload=ObjectGetPrototypeOf/1 builtinCallForm=AnyReceiver accessSite=22
-# CHECK-NEXT: Jump -> next b18(v49)
-# CHECK-NEXT: b18(v50: null|object):
-# CHECK-NEXT: v51: int|whole = Increment v3
-# CHECK-NEXT: Jump -> next b1(v50, v51)
+# CHECK-NEXT: v18: fact = Specified
+# CHECK-NEXT: v19: undefined|int|f3|f5|builtin(Object) = AssumeType v14, v18 provenType=undefined|int|f3|f5|builtin(Object)
+# CHECK-NEXT: v20: boolean = TypeTest v19 testedType=function
+# CHECK-NEXT: Branch v20 -> taken b6(), notTaken b12()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v21: fact = Specified
+# CHECK-NEXT: v22: undefined|int|f3|f5|builtin(Object) = AssumeType v14, v21 provenType=undefined|int|f3|f5|builtin(Object)
+# CHECK-NEXT: v23: int|f3|f5|builtin(Object) = RequireObjectCoercible v22 name="name"
+# CHECK-NEXT: v24: boolean = TypeTest v23 testedType=builtin(Object)
+# CHECK-NEXT: Branch v24 -> taken b7(| 0), notTaken b9(| 0)
+# CHECK-NEXT: b7(v25: builtin(Object)):
+# CHECK-NEXT: v26: anything = PropGet v25 key="name" accessSite=19
+# CHECK-NEXT: v27: "" = String string=""
+# CHECK-NEXT: v28: boolean = StrictEq v26, v27
+# CHECK-NEXT: Branch v28 -> taken b13(), notTaken b8()
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v29: anything = PropGet v25 key="name" accessSite=21
+# CHECK-NEXT: Jump -> next b11(v29)
+# CHECK-NEXT: b9(v30: int|f3|f5) frequency=Unlikely:
+# CHECK-NEXT: v31: anything = PropGet v30 key="name" accessSite=19
+# CHECK-NEXT: v32: "" = String string=""
+# CHECK-NEXT: v33: boolean = StrictEq v31, v32
+# CHECK-NEXT: Branch v33 -> taken b13(), notTaken b10()
+# CHECK-NEXT: b10() frequency=Unlikely:
+# CHECK-NEXT: v34: anything = PropGet v30 key="name" accessSite=21
+# CHECK-NEXT: Jump -> next b11(v34)
+# CHECK-NEXT: b11(v35: anything):
+# CHECK-NEXT: v36: undefined|string = AssumeType v35 provenType=undefined|string
+# CHECK-NEXT: v37: number|string|bigint ~ number = Add v36, v3
+# CHECK-NEXT: Return v37
+# CHECK-NEXT: b12():
+# CHECK-NEXT: Jump -> next b13()
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v38: null|object = CallBuiltin -, v7 overload=ObjectGetPrototypeOf/0 accessSite=22
+# CHECK-NEXT: v39: int|whole = Increment v3
+# CHECK-NEXT: Jump -> next b1(v38, v39)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="K"
 # CHECK: module=m0 position=622 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {

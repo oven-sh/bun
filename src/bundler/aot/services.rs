@@ -7,11 +7,16 @@ use crate::{BundleV2, OutputFile, Transpiler, Worker};
 use bun_alloc::Arena;
 use bun_aot::load::source_provider::{
     ComponentFile, DeferredLoad, Failed, LoadRequest, Loaded, MacroCall, ModuleName, Resolution,
-    ResolveRequest, SourceFile,
+    ResolveRequest, SourceFile, TranspiledTree,
 };
 use bun_aot::{SourceProvider, WithoutServices};
-use bun_ast::{ASTMemoryAllocator, Loader, Log};
+use bun_ast::{
+    ASTMemoryAllocator, ExportsKind, Indentation, Loader, Log, Part, Stmt, StoreSlice, Target,
+    symbol,
+};
 use bun_js_parser::Define;
+use bun_js_printer::renamer::{NoOpRenamer, Renamer};
+use bun_js_printer::{self as js_printer, PrintResult};
 use bun_paths::resolve_path::posix_to_platform_in_place;
 use bun_react_compiler::Observer;
 use bun_resolver::options::{ExternalModules, Packages};
@@ -218,6 +223,7 @@ pub(crate) fn with_test_context<R>(
 
 pub(crate) struct BundlerServices {
     context: BuildContext,
+    user_defined_names: Box<[Box<[u8]>]>,
     plugins: Option<PluginRequests>,
     embedded: EmbeddedFiles,
     macros: MacroThread,
@@ -226,7 +232,11 @@ pub(crate) struct BundlerServices {
 }
 
 impl BundlerServices {
-    pub(crate) fn new(bundle: NonNull<BundleV2<'static>>, module_prefix: &[u8]) -> BundlerServices {
+    pub(crate) fn new(
+        bundle: NonNull<BundleV2<'static>>,
+        module_prefix: &[u8],
+        user_defined_names: &[Box<[u8]>],
+    ) -> BundlerServices {
         let context = BuildContext {
             bundle,
             module_prefix: Box::from(module_prefix),
@@ -238,6 +248,7 @@ impl BundlerServices {
             .then(|| PluginRequests::new(bundle));
         BundlerServices {
             context,
+            user_defined_names: Box::from(user_defined_names),
             plugins,
             embedded: EmbeddedFiles::default(),
             macros: MacroThread::new(),
@@ -261,7 +272,8 @@ impl SourceProvider for BundlerServices {
         atoms: &Interner<'s>,
         log: &mut Log,
     ) -> FoldOptions<'s> {
-        defines::fold_options(self.context.options(), arena, atoms, log)
+        let options = self.context.options();
+        defines::fold_options(options, &self.user_defined_names, arena, atoms, log)
     }
 
     fn define(&self) -> Option<&Define> {
@@ -274,6 +286,61 @@ impl SourceProvider for BundlerServices {
             .flat_map(|flags| flags.keys())
             .map(|name| &**name)
             .collect()
+    }
+
+    // The options are those of `Transpiler::print_ast_esm_ascii` in a virtual machine.
+    fn print_as_run(
+        &self,
+        file: TranspiledTree<'_>,
+        statements: &[(Stmt, u32)],
+    ) -> Option<Vec<Box<[u8]>>> {
+        let TranspiledTree {
+            tree,
+            symbols,
+            source,
+            arena,
+        } = file;
+        let renamer = NoOpRenamer::init(symbol::Map::init_with_one_list(symbols), source);
+        let print = |&(statement, indentation): &(Stmt, u32)| {
+            let mut statements = [statement];
+            let part = Part {
+                stmts: StoreSlice::new_mut(&mut statements),
+                ..Default::default()
+            };
+            let options = js_printer::Options {
+                require_ref: Some(tree.require_ref),
+                import_meta_ref: tree.import_meta_ref,
+                hmr_ref: tree.wrapper_ref,
+                indent: Indentation {
+                    count: indentation as usize,
+                    ..Default::default()
+                },
+                target: Target::Bun,
+                minify_syntax: true,
+                print_dce_annotations: false,
+                inline_require_and_import_errors: false,
+                module_type: match tree.exports_kind {
+                    ExportsKind::Cjs => crate::options::Format::Cjs,
+                    _ => crate::options::Format::Esm,
+                },
+                ..Default::default()
+            };
+            let printed = js_printer::print::<false>(
+                arena,
+                Target::Bun,
+                tree,
+                source,
+                options,
+                tree.import_records.as_slice(),
+                &[part],
+                Renamer::NoOpRenamer(&renamer),
+            );
+            match printed {
+                PrintResult::Result(printed) => Some(printed.code),
+                PrintResult::Err(_) => None,
+            }
+        };
+        statements.iter().map(print).collect()
     }
 
     fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed> {
@@ -450,7 +517,7 @@ mod tests {
             |_| {},
             |context| {
                 let services =
-                    BundlerServices::new(context.bundle_pointer(), &context.module_prefix);
+                    BundlerServices::new(context.bundle_pointer(), &context.module_prefix, &[]);
                 for namespace in [&b"file"[..], b"virtual"] {
                     assert!(!services.has_load_plugin(ModuleName {
                         namespace,

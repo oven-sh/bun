@@ -31,6 +31,7 @@ use crate::session::{Arena, ArenaHashMap, ArenaVec, transfer_arena};
 use crate::util::{FxBuild, FxHashMap, SharedSort};
 use smallvec::SmallVec;
 use std::hint::cold_path;
+use std::ops::ControlFlow;
 
 define_id!(SymbolId, ScopeId, TableId, FlowId);
 
@@ -1924,46 +1925,70 @@ impl<S: Storage> BoundIn<S> {
         sees_through_spread: bool,
     ) -> Option<AssignmentTarget> {
         loop {
-            match self.parent_of_expr(e) {
-                Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
-                    ExprKind::Assign { target, .. } if target != e => return None,
-                    // `{ name = value }` is a `ShorthandPropertyAssignment`.
-                    ExprKind::Assign { .. }
-                        if self.is_shorthand_property_assignment(hir, parent) =>
-                    {
-                        e = parent;
-                    }
-                    ExprKind::Assign { op, .. } => return Some(AssignmentTarget::Assign(op)),
-                    ExprKind::Unary {
-                        op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
-                        ..
-                    } => return Some(AssignmentTarget::Unary),
-                    ExprKind::Array(_) => e = parent,
-                    ExprKind::Spread(_) | ExprKind::NonNull(_) if sees_through_spread => e = parent,
-                    _ => return None,
-                },
-                // The value of `name: value` and of `...value`, and the assignment that
-                // `{ name = value }` is stored as.
-                Parent::Prop(p) => {
-                    let owner = self.prop_owner[p.idx()];
-                    if owner.is_none()
-                        || !matches!(hir[owner].kind, ExprKind::Object(_))
-                        || hir[p].kind == PropKind::Spread && !sees_through_spread
-                        || !matches!(
-                            hir[p].kind,
-                            PropKind::Init | PropKind::Shorthand | PropKind::Spread
-                        )
-                    {
-                        return None;
-                    }
-                    e = owner;
-                }
-                Parent::Stmt(s) if s.is_some() => {
-                    return target_of_for_in_or_of(hir, self.parent_of_stmt(s), s);
-                }
-                _ => return None,
-            }
+            e = match self.assignment_target_or_pattern_around(hir, e, sees_through_spread) {
+                ControlFlow::Continue(pattern) => pattern,
+                ControlFlow::Break(target) => return target,
+            };
         }
+    }
+
+    /// One step of `GetAssignmentTarget`.
+    #[inline]
+    pub fn get_assignment_target_or_pattern_around(
+        &self,
+        hir: &File,
+        e: ExprId,
+    ) -> ControlFlow<Option<AssignmentTarget>, ExprId> {
+        self.assignment_target_or_pattern_around(hir, e, true)
+    }
+
+    #[inline]
+    fn assignment_target_or_pattern_around(
+        &self,
+        hir: &File,
+        e: ExprId,
+        sees_through_spread: bool,
+    ) -> ControlFlow<Option<AssignmentTarget>, ExprId> {
+        ControlFlow::Break(match self.parent_of_expr(e) {
+            Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
+                ExprKind::Assign { target, .. } if target != e => None,
+                // `{ name = value }` is a `ShorthandPropertyAssignment`.
+                ExprKind::Assign { .. } if self.is_shorthand_property_assignment(hir, parent) => {
+                    return ControlFlow::Continue(parent);
+                }
+                ExprKind::Assign { op, .. } => Some(AssignmentTarget::Assign(op)),
+                ExprKind::Unary {
+                    op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
+                    ..
+                } => Some(AssignmentTarget::Unary),
+                ExprKind::Array(_) => return ControlFlow::Continue(parent),
+                ExprKind::Spread(_) | ExprKind::NonNull(_) if sees_through_spread => {
+                    return ControlFlow::Continue(parent);
+                }
+                _ => None,
+            },
+            // The value of `name: value` and of `...value`, and the assignment that
+            // `{ name = value }` is stored as.
+            Parent::Prop(p) => {
+                let owner = self.prop_owner[p.idx()];
+                if owner.is_none()
+                    || !matches!(hir[owner].kind, ExprKind::Object(_))
+                    || hir[p].kind == PropKind::Spread && !sees_through_spread
+                    || !matches!(
+                        hir[p].kind,
+                        PropKind::Init | PropKind::Shorthand | PropKind::Spread
+                    )
+                {
+                    None
+                } else {
+                    return ControlFlow::Continue(owner);
+                }
+            }
+            Parent::Stmt(s) if s.is_some() => {
+                target_of_for_in_or_of(hir, self.parent_of_stmt(s), s)
+            }
+            _ => None,
+        })
     }
 
     /// `IsVariableDeclarationInitializedToRequire` for the variable declaration or the binding

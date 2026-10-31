@@ -236,6 +236,7 @@ pub(super) fn count_operations_by_limit(
     counts
 }
 
+#[optimize(size)]
 fn causes_of(input: &ReportInput<'_>, families: ExplainSet) -> Vec<Cause> {
     let origin_of = |module: ModuleId| input.names.module_origin(module);
     let engine = input.engine;

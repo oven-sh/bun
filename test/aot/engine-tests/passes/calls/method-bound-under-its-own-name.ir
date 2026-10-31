@@ -282,7 +282,7 @@ layout L14 kind=Instance name="BelowStoresRun" module=m0 position=2431 base=L3 c
 layout L15 kind=Instance name="BelowStoresOthers" module=m0 position=2817 base=L4 constructor=f36 supertypes=[L4] flags=[HasHeritage]
 layout L16 kind=Instance name="Inherits" module=m0 position=4923 base=L0 constructor=f43 supertypes=[L0] flags=[HasHeritage]
 layout L17 kind=Instance name="GetterBelow" module=m0 position=5082 base=L0 constructor=f44 supertypes=[L0] flags=[HasHeritage]
-layout L18 kind=Instance name="StoresOverBase" module=m0 position=6234 base=L12 constructor=f49 fields=[{key="size" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L12] flags=[HasHeritage] ownFieldCount=1
+layout L18 kind=Instance name="StoresOverBase" module=m0 position=6234 base=L12 constructor=f49 supertypes=[L12] flags=[HasHeritage]
 layout L19 fields=[{key="run" declared={type=undefined|null|function|f9|f51 flags=[IsExpected]}}] flags=[IsNeverAllocated] ownFieldCount=1 flow={allocation=NeverAllocated}
 layout L20 fields=[{key="count" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="step" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
 layout L21 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]} flags=[IsNeverWritten]}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]} flags=[IsNeverWritten]}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
@@ -1081,9 +1081,9 @@ function f4 name="Worker" module=m0 position=402 kind=BaseConstructor flags=[Has
   b0(v0: anything, v1: anything):
     Jump -> next b1() @402
   b1():
-    v2 = GetConstructPrototype v0 layout=L0 @374
-    v3 = NewObject v2 layout=L0 @374
-    v4 = Convert v3 declared={type=L0|L13|L16|L17 flags=[IsFromCompiler]} illTypedCause=FromLooseType @374
+    v2 = GetConstructPrototype v0 layout=L0 @415
+    v3 = NewObject v2 layout=L0 @415
+    v4 = Convert v3 declared={type=L0|L13|L16|L17 flags=[IsFromCompiler]} illTypedCause=FromLooseType @415
     v5 = Convert v4 declared={type=undefined|null|L0|L13|L16|L17 flags=[IsExpected]} @415
     v6 = Integer @428
     v7 = Convert v6 declared={type=number flags=[IsExpected]} @415
@@ -1130,9 +1130,9 @@ function f6 name="Sometimes" module=m0 position=1542 kind=BaseConstructor flags=
   b0(v0: anything, v1: anything):
     Jump -> next b1() @1542
   b1():
-    v2 = GetConstructPrototype v0 layout=L1 @1511
-    v3 = NewObject v2 layout=L1 @1511
-    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1511
+    v2 = GetConstructPrototype v0 layout=L1 @1556
+    v3 = NewObject v2 layout=L1 @1556
+    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1556
     v5 = Convert v4 declared={type=undefined|null|L1 flags=[IsExpected]} @1556
     v6 = Integer integer=1 @1569
     v7 = Convert v6 declared={type=number flags=[IsExpected]} @1556
@@ -1193,9 +1193,9 @@ function f8 name="Escapes" module=m0 position=2088 kind=BaseConstructor flags=[H
   b0(v0: anything):
     Jump -> next b1() @2088
   b1():
-    v1 = GetConstructPrototype v0 layout=L2 @2059
-    v2 = NewObject v1 layout=L2 @2059
-    v3 = Convert v2 declared={type=L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2059
+    v1 = GetConstructPrototype v0 layout=L2 @2097
+    v2 = NewObject v1 layout=L2 @2097
+    v3 = Convert v2 declared={type=L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2097
     v4 = Convert v3 declared={type=undefined|null|L2 flags=[IsExpected]} @2097
     v5 = Integer integer=2 @2110
     v6 = Convert v5 declared={type=number flags=[IsExpected]} @2097
@@ -1239,9 +1239,9 @@ function f10 name="StoresRun" module=m0 position=2338 kind=BaseConstructor flags
   b0(v0: anything):
     Jump -> next b1() @2338
   b1():
-    v1 = GetConstructPrototype v0 layout=L3 @2307
-    v2 = NewObject v1 layout=L3 @2307
-    v3 = Convert v2 declared={type=L3|L14 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2307
+    v1 = GetConstructPrototype v0 layout=L3 @2347
+    v2 = NewObject v1 layout=L3 @2347
+    v3 = Convert v2 declared={type=L3|L14 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2347
     v4 = Convert v3 declared={type=undefined|null|L3|L14 flags=[IsExpected]} @2347
     v5 = Integer integer=3 @2360
     v6 = Convert v5 declared={type=number flags=[IsExpected]} @2347
@@ -1264,9 +1264,9 @@ function f11 name="StoresOthers" module=m0 position=2732 kind=BaseConstructor fl
   b0(v0: anything, v1: anything):
     Jump -> next b1() @2732
   b1():
-    v2 = GetConstructPrototype v0 layout=L4 @2698
-    v3 = NewObject v2 layout=L4 @2698
-    v4 = Convert v3 declared={type=L4|L15 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2698
+    v2 = GetConstructPrototype v0 layout=L4 @2752
+    v3 = NewObject v2 layout=L4 @2752
+    v4 = Convert v3 declared={type=L4|L15 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2752
     v5 = ToBoolean v1 @2752
     Branch v5 -> taken b2(| 0), notTaken b4(| 0) @2752
   b2(v6):
@@ -1296,9 +1296,9 @@ function f12 name="HasGetter" module=m0 position=3187 kind=BaseConstructor flags
   b0(v0: anything):
     Jump -> next b1() @3187
   b1():
-    v1 = GetConstructPrototype v0 layout=L5 @3156
-    v2 = NewObject v1 layout=L5 @3156
-    v3 = Convert v2 declared={type=L5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3156
+    v1 = GetConstructPrototype v0 layout=L5 @3196
+    v2 = NewObject v1 layout=L5 @3196
+    v3 = Convert v2 declared={type=L5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3196
     v4 = Convert v3 declared={type=undefined|null|L5 flags=[IsExpected]} @3196
     v5 = Integer integer=5 @3209
     v6 = Convert v5 declared={type=number flags=[IsExpected]} @3196
@@ -1342,9 +1342,9 @@ function f14 name="HasAccessors" module=m0 position=3468 kind=BaseConstructor fl
   b0(v0: anything):
     Jump -> next b1() @3468
   b1():
-    v1 = GetConstructPrototype v0 layout=L6 @3434
-    v2 = NewObject v1 layout=L6 @3434
-    v3 = Convert v2 declared={type=L6 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3434
+    v1 = GetConstructPrototype v0 layout=L6 @3477
+    v2 = NewObject v1 layout=L6 @3477
+    v3 = Convert v2 declared={type=L6 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3477
     v4 = Convert v3 declared={type=undefined|null|L6 flags=[IsExpected]} @3477
     v5 = Integer integer=6 @3490
     v6 = Convert v5 declared={type=number flags=[IsExpected]} @3477
@@ -1399,9 +1399,9 @@ function f17 name="Twice" module=m0 position=4461 kind=BaseConstructor flags=[Ha
   b0(v0: anything):
     Jump -> next b1() @4461
   b1():
-    v1 = GetConstructPrototype v0 layout=L7 @4434
-    v2 = NewObject v1 layout=L7 @4434
-    v3 = Convert v2 declared={type=L7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @4434
+    v1 = GetConstructPrototype v0 layout=L7 @4470
+    v2 = NewObject v1 layout=L7 @4470
+    v3 = Convert v2 declared={type=L7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @4470
     v4 = Convert v3 declared={type=undefined|null|L7 flags=[IsExpected]} @4470
     v5 = Integer integer=7 @4483
     v6 = Convert v5 declared={type=number flags=[IsExpected]} @4470
@@ -1449,9 +1449,9 @@ function f19 name="ReadsItself" module=m0 position=4723 kind=BaseConstructor fla
   b0(v0: anything):
     Jump -> next b1() @4723
   b1():
-    v1 = GetConstructPrototype v0 layout=L8 @4690
-    v2 = NewObject v1 layout=L8 @4690
-    v3 = Convert v2 declared={type=L8 flags=[IsFromCompiler]} illTypedCause=FromLooseType @4690
+    v1 = GetConstructPrototype v0 layout=L8 @4746
+    v2 = NewObject v1 layout=L8 @4746
+    v3 = Convert v2 declared={type=L8 flags=[IsFromCompiler]} illTypedCause=FromLooseType @4746
     v4 = Convert v3 declared={type=undefined|null|L8 flags=[IsExpected]} @4732
     v5 = Convert v3 declared={type=undefined|null|L8 flags=[IsExpected]} @4746
     v6 = PropGet v5 key="depth" @4746
@@ -1484,9 +1484,9 @@ function f20 name="FrozenAbove" module=m0 position=5351 kind=BaseConstructor fla
   b0(v0: anything):
     Jump -> next b1() @5351
   b1():
-    v1 = GetConstructPrototype v0 layout=L9 @5318
-    v2 = NewObject v1 layout=L9 @5318
-    v3 = Convert v2 declared={type=L9 flags=[IsFromCompiler]} illTypedCause=FromLooseType @5318
+    v1 = GetConstructPrototype v0 layout=L9 @5360
+    v2 = NewObject v1 layout=L9 @5360
+    v3 = Convert v2 declared={type=L9 flags=[IsFromCompiler]} illTypedCause=FromLooseType @5360
     v4 = Convert v3 declared={type=undefined|null|L9 flags=[IsExpected]} @5360
     v5 = Integer integer=8 @5373
     v6 = Convert v5 declared={type=number flags=[IsExpected]} @5360
@@ -1524,9 +1524,9 @@ function f22 name="ReadOnlyAbove" module=m0 position=5666 kind=BaseConstructor f
   b0(v0: anything):
     Jump -> next b1() @5666
   b1():
-    v1 = GetConstructPrototype v0 layout=L10 @5631
-    v2 = NewObject v1 layout=L10 @5631
-    v3 = Convert v2 declared={type=L10 flags=[IsFromCompiler]} illTypedCause=FromLooseType @5631
+    v1 = GetConstructPrototype v0 layout=L10 @5675
+    v2 = NewObject v1 layout=L10 @5675
+    v3 = Convert v2 declared={type=L10 flags=[IsFromCompiler]} illTypedCause=FromLooseType @5675
     v4 = Convert v3 declared={type=undefined|null|L10 flags=[IsExpected]} @5675
     v5 = Integer integer=9 @5688
     v6 = Convert v5 declared={type=number flags=[IsExpected]} @5675
@@ -1564,10 +1564,10 @@ function f24 name="OtherTarget" module=m0 position=5933 kind=BaseConstructor fla
   b0(v0: anything):
     Jump -> next b1() @5933
   b1():
-    v1 = GetConstructPrototype v0 layout=L11 @5927
-    v2 = NewObject v1 layout=L11 @5927
-    v3 = Convert v2 declared={type=L11 flags=[IsFromCompiler]} illTypedCause=FromLooseType @5927
-    Return v3 @5927
+    v1 = GetConstructPrototype v0 layout=L11 @5933
+    v2 = NewObject v1 layout=L11 @5933
+    v3 = Convert v2 declared={type=L11 flags=[IsFromCompiler]} illTypedCause=FromLooseType @5933
+    Return v3 @5933
 }
 function f25 name="run" module=m0 position=5949 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L11 flags=[IsExpected]} results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L11):
@@ -1584,10 +1584,10 @@ function f26 name="GetterInBase" module=m0 position=6178 kind=BaseConstructor fl
   b0(v0: anything):
     Jump -> next b1() @6178
   b1():
-    v1 = GetConstructPrototype v0 layout=L12 @6172
-    v2 = NewObject v1 layout=L12 @6172
-    v3 = Convert v2 declared={type=L12|L18 flags=[IsFromCompiler]} illTypedCause=FromLooseType @6172
-    Return v3 @6172
+    v1 = GetConstructPrototype v0 layout=L12 @6178
+    v2 = NewObject v1 layout=L12 @6178
+    v3 = Convert v2 declared={type=L12|L18 flags=[IsFromCompiler]} illTypedCause=FromLooseType @6178
+    Return v3 @6178
 }
 function f27 name="size" module=m0 position=6195 kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
@@ -2240,7 +2240,7 @@ runtimefunction id=FunctionPrototypeCall function=f102
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f34 = AssumeType v0 provenType=f34
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L3
-# CHECK-NEXT: v3: object ~ L3|L14 = NewObject v2 layout=L3 allocationSite=57 allocationClass=3
+# CHECK-NEXT: v3: object ~ L14 = NewObject v2 layout=L3 allocationSite=57 allocationClass=3
 # CHECK-NEXT: v4: L14 = AssumeType v3 provenType=L14
 # CHECK-NEXT: v5: 3 = Integer integer=3
 # CHECK-NEXT: PutSlot v4, -, v5 key="count" receivers=[L14] level=Proven accessSite=253
@@ -2253,7 +2253,7 @@ runtimefunction id=FunctionPrototypeCall function=f102
 # CHECK-NEXT: b0(v0: anything, v1: undefined|"o"):
 # CHECK-NEXT: v2: f36 = AssumeType v0 provenType=f36
 # CHECK-NEXT: v3: object = GetConstructPrototype v2 layout=L4
-# CHECK-NEXT: v4: object ~ L4|L15 = NewObject v3 layout=L4 allocationSite=59 allocationClass=4
+# CHECK-NEXT: v4: object ~ L15 = NewObject v3 layout=L4 allocationSite=59 allocationClass=4
 # CHECK-NEXT: v5: L15 = AssumeType v4 provenType=L15
 # CHECK-NEXT: v6: boolean = ToBoolean v1
 # CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2()
@@ -2294,7 +2294,7 @@ runtimefunction id=FunctionPrototypeCall function=f102
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f49 = AssumeType v0 provenType=f49
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L12
-# CHECK-NEXT: v3: object ~ L12|L18 = NewObject v2 layout=L12 allocationSite=69 allocationClass=12
+# CHECK-NEXT: v3: object ~ L18 = NewObject v2 layout=L12 allocationSite=69 allocationClass=12
 # CHECK-NEXT: v4: L18 = AssumeType v3 provenType=L18
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
@@ -2483,7 +2483,7 @@ runtimefunction id=FunctionPrototypeCall function=f102
 # CHECK-NEXT: b0(v0: function, v1: anything, v2: undefined|"o"):
 # CHECK-NEXT: v3: f36 = AssumeType v1 provenType=f36
 # CHECK-NEXT: v4: object = GetConstructPrototype v3 layout=L4
-# CHECK-NEXT: v5: object ~ L4|L15 = NewObject v4 layout=L4 allocationSite=59 allocationClass=4
+# CHECK-NEXT: v5: object ~ L15 = NewObject v4 layout=L4 allocationSite=59 allocationClass=4
 # CHECK-NEXT: v6: L15 = AssumeType v5 provenType=L15
 # CHECK-NEXT: v7: boolean = ToBoolean v2
 # CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b2()
@@ -2649,7 +2649,7 @@ runtimefunction id=FunctionPrototypeCall function=f102
 # CHECK-NEXT: v0: 1 = Integer integer=1
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: v2: L17 = NewObject -, v1, v0 layout=L17 fields=[0, 1] allocationClass=17 [listsOnlyStoredValues]
-# CHECK-NEXT: v3: anything = SuperGet v2, v2 key="run"
+# CHECK-NEXT: v3: anything = SuperGet v2, v2 key="run" accessSite=232
 # CHECK-NEXT: v4: anything ~ undefined|function|f5|f33|f40 = Upcast v3 castType=anything
 # CHECK-NEXT: v5: boolean = TypeTest v4 testedType=function
 # CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b2()
@@ -2669,7 +2669,7 @@ runtimefunction id=FunctionPrototypeCall function=f102
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 8 = Integer integer=8
 # CHECK-NEXT: v1: L9 = NewObject -, v0 layout=L9 fields=[0] allocationClass=9 [listsOnlyStoredValues]
-# CHECK-NEXT: v2: anything = SuperGet v1, v1 key="run"
+# CHECK-NEXT: v2: anything = SuperGet v1, v1 key="run" accessSite=282
 # CHECK-NEXT: v3: anything ~ function|f21 = Upcast v2 castType=anything
 # CHECK-NEXT: v4: boolean ~ true = TypeTest v3 testedType=function
 # CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b4()
@@ -2716,7 +2716,7 @@ runtimefunction id=FunctionPrototypeCall function=f102
 # CHECK-NEXT: v8: function = GetSlot v0, v7 key="run" receivers=[L10] level=Expected accessSite=288
 # CHECK-NEXT: Jump -> next b6(v8, v8)
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v9: anything = SuperGet v0, v0 key="run"
+# CHECK-NEXT: v9: anything = SuperGet v0, v0 key="run" accessSite=288
 # CHECK-NEXT: v10: anything ~ function|f23 = Upcast v9 castType=anything
 # CHECK-NEXT: v11: boolean ~ true = TypeTest v10 testedType=function
 # CHECK-NEXT: Branch v11 -> taken b6(v10 | 0), notTaken b8(v10)
@@ -2750,22 +2750,13 @@ runtimefunction id=FunctionPrototypeCall function=f102
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function f50 module=
-# CHECK: m0 position=6377 kind=Arrow thisType={type=anything} results=[{type=undefined|int}] functionTypes=[f88] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f177 callPosition=6387 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f146 callPosition=6294 parent=1 isConstruction=true module=m0}] {
+# CHECK: m0 position=6377 kind=Arrow thisType={type=anything} results=[{type=1}] functionTypes=[f88] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f27 callPosition=6402 module=m0}, {callee=f177 callPosition=6387 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f146 callPosition=6294 parent=2 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: L18 = NewObject layout=L18 allocationClass=18
 # CHECK-NEXT: v1: 2 = Integer integer=2
 # CHECK-NEXT: PropSet v0, v1 key="size" accessSite=333 receivers=[L18]
-# CHECK-NEXT: v3: boolean = IsSlotFilled v0 key="size" receivers=[L18] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v4: guard):
-# CHECK-NEXT: v5: int[-2147483643, 2147483647] = GetSlot v0, v4 key="size" receivers=[L18] level=Expected accessSite=335 [holdsDeclaredType]
-# CHECK-NEXT: Jump -> next b3(v5)
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v6: anything = SuperGet v0, v0 key="size"
-# CHECK-NEXT: v7: undefined|int = AssumeType v6 provenType=undefined|int
-# CHECK-NEXT: Jump -> next b3(v7)
-# CHECK-NEXT: b3(v8: undefined|int ~ int[-2147483643, 2147483647]):
-# CHECK-NEXT: Return v8
+# CHECK-NEXT: v3: 1 = Integer integer=1
+# CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="patched"
 # CHECK: module=m0 position=1995 flags=[HasThis, HasExplicitName] thisType={type=undefined|L2 flags=[IsExpected]} results=[{type=string}] functionTypes=[f64] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

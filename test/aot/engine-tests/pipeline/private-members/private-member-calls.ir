@@ -404,33 +404,22 @@ function f144 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: Return v15
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="tagOnThis"
-# CHECK: module=m0 position=3563 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=f7} results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f8 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=3563 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=f7} results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: f7):
-# CHECK-NEXT: v1: fact = Entered function=f8 @0 tail
-# CHECK-NEXT: v2: "m2 " = String string="m2 "
-# CHECK-NEXT: v3: f3 = GetModuleVariable variable=g2
-# CHECK-NEXT: v4: undefined|absent = GetModuleVariable variable=g7
-# CHECK-NEXT: v5: undefined = CheckInitialized v4 name="C"
-# CHECK-NEXT: v6: f7 = GetModuleVariable fact=v1 variable=g17
-# CHECK-NEXT: v7: undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"the class"|"undefined" = Call v3, -, v0, v6 calleeName="who" accessSite=9 callees=[f3]
-# CHECK-NEXT: v8: " " = String string=" "
-# CHECK-NEXT: v9: 1 = Integer integer=1
-# CHECK-NEXT: v10: string = Strcat v2, v7, v8, v9
-# CHECK-NEXT: Return v10
+# CHECK-NEXT: v1: Array = NewTemplateObject templateStrings=[{cooked="a" raw="a"}]
+# CHECK-NEXT: v2: Array<undefined|Array> = NewArray v1 contents=undefined|Array storage=Frame
+# CHECK-NEXT: v3: Array<undefined|Array, proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<undefined|Array, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v4: string = CallDirect v0, v3 function=f8 accessSite=13 @0 tail
+# CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f32 module=
-# CHECK: m0 position=2075 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f100] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f11 callPosition=4294967295 isTailCall=true module=m0}, {callee=f8 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
+# CHECK: m0 position=2075 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f100] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: undefined|absent = GetModuleVariable variable=g7
 # CHECK-NEXT: v1: undefined = CheckInitialized v0 name="C"
 # CHECK-NEXT: v2: f7 = GetModuleVariable variable=g17
-# CHECK-NEXT: v3: "m2 " = String string="m2 "
-# CHECK-NEXT: v4: f3 = GetModuleVariable variable=g2
-# CHECK-NEXT: v5: undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"the class"|"undefined" = Call v4, -, v2, v2 calleeName="who" accessSite=9 callees=[f3]
-# CHECK-NEXT: v6: " " = String string=" "
-# CHECK-NEXT: v7: 1 = Integer integer=1
-# CHECK-NEXT: v8: string = Strcat v3, v5, v6, v7
-# CHECK-NEXT: Return v8
+# CHECK-NEXT: v3: string = CallDirect v2 function=f11 accessSite=19
+# CHECK-NEXT: ReturnCall v3 casts=[{declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=string} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="rows"
 # CHECK: module=m0 position=1298 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f10}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f10} creator=Entrypoint{target=f10 arguments=Registers} {

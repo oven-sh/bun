@@ -14,7 +14,7 @@ export { unsupported } from "./compiler";
 setDefaultTimeout(120_000);
 
 // Each build keeps one core busy for about a second and writes an executable the size of Bun.
-const slots = Math.max(1, Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism());
+export const slots = Math.max(1, Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism());
 let free = slots;
 const waiting: (() => void)[] = [];
 const takeSlot = (isNext = false) =>

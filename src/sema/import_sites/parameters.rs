@@ -18,9 +18,9 @@ pub fn is_exported(hir: &File<'_>, bound: &Bound<'_>, symbol: SymbolId) -> bool 
         || entity_names.any(|it| bound.entity_root_binding(it) == binding)
 }
 
-fn find_only_name_of(hir: &File<'_>, bound: &Bound<'_>, function: FnId) -> Option<SymbolId> {
-    let name = match (hir[function].kind, bound.fns[function.idx()].owner) {
-        (FnKind::Decl, _) => bound.declared_symbol(Decl::Fn(function)),
+fn find_name_of(hir: &File<'_>, bound: &Bound<'_>, function: FnId) -> Option<SymbolId> {
+    match (hir[function].kind, bound.fns[function.idx()].owner) {
+        (FnKind::Decl, _) => Some(bound.declared_symbol(Decl::Fn(function))),
         (FnKind::Expr | FnKind::Arrow, FnOwner::Expr(expression))
             if !bound.finds_itself(hir, function) =>
         {
@@ -32,13 +32,39 @@ fn find_only_name_of(hir: &File<'_>, bound: &Bound<'_>, function: FnId) -> Optio
                 (PatKind::Ident(_), Binding::Symbol(name))
                     if bound.dynamic_lookup_scope(NodeData::Pat(pattern)).is_none() =>
                 {
-                    name
+                    Some(name)
                 }
-                _ => return None,
+                _ => None,
             }
         }
-        _ => return None,
+        _ => None,
+    }
+}
+
+/// `export function spawn(entry) { .. }`: the name that its file gives the function, and the place of the parameter that `mention` names.
+/// Other files may call it, and it may be handed on: what the calls under that name pass is not all that the parameter gets.
+pub fn find_place_of_parameter(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    mention: ExprId,
+) -> Option<(SymbolId, usize)> {
+    let Binding::Symbol(parameter) = bound.binding(mention) else {
+        return None;
     };
+    let &[Decl::Param(pattern)] = bound.symbol(parameter).decls else {
+        return None;
+    };
+    let PatParent::Param(id) = bound.pat_parent[pattern.idx()] else {
+        return None;
+    };
+    let function = bound.param_fn[id.idx()];
+    let index = hir[function].params.iter().position(|it| it == id)?;
+    let name = find_name_of(hir, bound, function).filter(|name| name.is_some())?;
+    (!hir[id].flags.contains(Flags::REST)).then_some((name, index))
+}
+
+fn find_only_name_of(hir: &File<'_>, bound: &Bound<'_>, function: FnId) -> Option<SymbolId> {
+    let name = find_name_of(hir, bound, function)?;
     let mut hoisted = bound.runtime.annex_b_functions().iter();
     // `arguments.callee` and evaluated text hand the function on without its name.
     let other_ways = FunctionFlags::USES_ARGUMENTS | FunctionFlags::HAS_DIRECT_EVAL;

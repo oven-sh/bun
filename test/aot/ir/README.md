@@ -126,8 +126,8 @@ directive. Any other name in capitals before a `:` is an error, so a mistyped di
 - **`RUN`.** A file has at least one. Runs with the same options print one build. A prefix is capitals and digits, and it is not the name of
   a directive. A prefix needs at least one check line, or a `SAME` that names it.
 - **`OPTIONS`, `DIAGNOSTIC` and `STATISTIC`** apply to every `RUN` in the file, `OPTIONS(<prefix>)` to the runs of that prefix.
-- **`OPTIONS`** takes `erase-types`, `builtin-modules`, `platform=darwin | linux | windows`, `type-errors=silent`, `type-errors=log` and
-  `threads=<n>`. `platform=` turns what the table of built-ins says by platform: which built-ins, exports of Bun's modules and code of
+- **`OPTIONS`** takes `erase-types`, `builtin-modules`, `entry-points-run-again`, `platform=darwin | linux | windows`, `type-errors=silent`,
+  `type-errors=log` and `threads=<n>`. `entry-points-run-again` is what `bun test --aot --rerun-each` builds its test files with. `platform=` turns what the table of built-ins says by platform: which built-ins, exports of Bun's modules and code of
   the run time a program has. Paths, and `process.platform` written out, stay those of the machine that runs the test. The engine's option words are unknown here.
   How a mismatch is reported is a policy of the engine, so `type-errors=` changes one thing in the IR: only with `log` does a type
   site have the text of its type, which only the log prints.

@@ -146,6 +146,10 @@ fn options_fill_record() {
         filled_record(|options| options.obfuscates = true),
         expected_record(|record| record.output = OutputOptions::OBFUSCATE)
     );
+    assert_eq!(
+        filled_record(|options| options.holds_library_alone = true),
+        expected_record(|record| record.output = OutputOptions::HOLDS_LIBRARY_ALONE)
+    );
 }
 
 #[test]

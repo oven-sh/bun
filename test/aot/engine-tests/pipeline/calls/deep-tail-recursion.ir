@@ -3218,11 +3218,11 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK-NEXT: ReturnCall v2 casts=[{declared={type=number site=w266 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w157 flags=[IsExpected]} resolution=Nothing}, {declared={type=int|whole} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f56 module=
-# CHECK: m0 position=3877 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=boolean site=w158}] functionTypes=[f117] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=3877 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=true site=w158}] functionTypes=[f117] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 1000000 = Integer integer=1000000
 # CHECK-NEXT: v1: true = CallDirect v0 function=f3 accessSite=132
-# CHECK-NEXT: ReturnCall v1 casts=[{declared={type=boolean site=w267} resolution=Nothing}, {declared={type=boolean site=w158} resolution=Nothing}]
+# CHECK-NEXT: ReturnCall v1 casts=[{declared={type=boolean site=w267} resolution=Nothing}, {declared={type=boolean site=w158} resolution=Nothing}, {declared={type=true} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f57 module=
 # CHECK: m0 position=3911 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=boolean site=w159}] functionTypes=[f118] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -3232,11 +3232,11 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK-NEXT: ReturnCall v1 casts=[{declared={type=boolean site=w268} resolution=Nothing}, {declared={type=boolean site=w159} resolution=Nothing}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f58 module=
-# CHECK: m0 position=3944 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w160 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f119] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=3944 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type="one"|"three"|"two" site=w160 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f119] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 1000000 = Integer integer=1000000
 # CHECK-NEXT: v1: "one"|"three"|"two" = CallDirect v0 function=f6 accessSite=134
-# CHECK-NEXT: ReturnCall v1 casts=[{declared={type=undefined|null|string site=w269 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w160 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}]
+# CHECK-NEXT: ReturnCall v1 casts=[{declared={type=undefined|null|string site=w269 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w160 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type="one"|"three"|"two"} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f59 module=
 # CHECK: m0 position=3982 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=0 site=w161}] functionTypes=[f120] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -3330,7 +3330,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK: m0 position=4505 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=int[1, 9007199254740992] site=w171}] functionTypes=[f131] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: int[1, 9007199254740992] ~ int[1, 2147483647] = CallDirect function=f290 accessSite=147
-# CHECK-NEXT: ReturnCall v0 casts=[{declared={type=number site=w280} resolution=Nothing}, {declared={type=number site=w171} resolution=Nothing}]
+# CHECK-NEXT: ReturnCall v0 casts=[{declared={type=number site=w280} resolution=Nothing}, {declared={type=number site=w171} resolution=Nothing}, {declared={type=int|whole} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f71 module=
 # CHECK: m0 position=4543 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=int|whole site=w172}] functionTypes=[f133] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f21 callPosition=4549 isTailCall=true module=m0}, {callee=f21 callPosition=3041 parent=1 isTailCall=true module=m0}] {
@@ -3342,11 +3342,11 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function f72 module=
-# CHECK: m0 position=4602 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number site=w173}] functionTypes=[f134] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=4602 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=int|fractional site=w173}] functionTypes=[f134] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 1000000 = Integer integer=1000000
 # CHECK-NEXT: v1: int|fractional = CallDirect v0 function=f22 accessSite=149
-# CHECK-NEXT: ReturnCall v1 casts=[{declared={type=number site=w283} resolution=Nothing}, {declared={type=number site=w173} resolution=Nothing}]
+# CHECK-NEXT: ReturnCall v1 casts=[{declared={type=number site=w283} resolution=Nothing}, {declared={type=number site=w173} resolution=Nothing}, {declared={type=int|fractional} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f73 module=
 # CHECK: m0 position=4644 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=0 site=w174}] functionTypes=[f135] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

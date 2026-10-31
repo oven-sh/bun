@@ -1,5 +1,6 @@
 import * as b from "bun-builtins-table";
 import { pathOfNativeBinding } from "../paths.ts";
+import { methodsOfSubtleCrypto } from "./methods-of-subtle-crypto.ts";
 
 const extendAll = (uses: readonly b.FeatureUseSpec[], ...paths: readonly b.BuiltinPath[]) =>
   paths.flatMap(path => b.extend(path, { usesFeature: uses }));
@@ -84,7 +85,13 @@ export default b.declarations(
 
   extendAll(webSocketFeatures, "WebSocket", ...nativeBindings("Cpp", "JSWebSocket.cpp", "createWebSocketBindingForWs")),
 
-  extendAll(["WebCrypto", "X509"], "Crypto.prototype.subtle", "CryptoKey", "SubtleCrypto"),
+  extendAll(
+    ["WebCrypto", "X509"],
+    "Crypto.prototype.subtle",
+    "CryptoKey",
+    "SubtleCrypto",
+    ...methodsOfSubtleCrypto.map(name => `SubtleCrypto.prototype.${name}`),
+  ),
   extendAll(["CryptoObject", "CryptoGlobal"], "Crypto"),
   extendAll(["CryptoGlobal", "CryptoObject"], "crypto"),
 

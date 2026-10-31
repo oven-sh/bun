@@ -1,5 +1,5 @@
 // A function without parameters that a program adds to Map.prototype throws: what the first and the second require of node:stream do.
-// Plain Bun runs the body of the module again at each require. An executable runs it once and keeps what it threw, as for a file of the program.
+// The body of the module runs again at each require.
 Map.prototype.toJSON = function () {
   throw new Error("thrown by toJSON");
 };
@@ -19,5 +19,5 @@ try {
 /* Output:
 1 thrown by toJSON
 2 thrown by toJSON
-thrown by toJSON
+function
 */

@@ -336,7 +336,7 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     Jump -> next b11() @2781
   b11() handler=b18():
     v40 = Convert v37 declared={type=undefined|null|Array<undefined|null|string|L0> site=w48 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @2781
-    v41 = IteratorOpen v40 elementCount=2 [isDestructuring] @2763
+    v41 = IteratorOpen v40 elementCount=2 [isDestructuring] @2774 constructs
     Jump -> next b12() @2763
   b12() handler=b17():
     v42 = IteratorResume v41 stepIndex=0 @2763
@@ -446,7 +446,7 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     Jump -> next b24() @3480
   b24() handler=b31():
     v125 = Convert v100 declared={type=undefined|null|Array<undefined|null|string|L0> site=w60 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @3480
-    v126 = IteratorOpen v125 elementCount=2 [isDestructuring] @3462
+    v126 = IteratorOpen v125 elementCount=2 [isDestructuring] @3473 constructs
     Jump -> next b25() @3462
   b25() handler=b30():
     v127 = IteratorResume v126 stepIndex=0 @3462

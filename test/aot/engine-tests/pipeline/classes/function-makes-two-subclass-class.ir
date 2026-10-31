@@ -261,7 +261,7 @@ function f55 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v30: f10 = FinishClass v29 layout=L5
 # CHECK-NEXT: v31: null|object = CallBuiltin -, v16 overload=ObjectGetPrototypeOf/0 accessSite=3
 # CHECK-NEXT: v32: f57 = AssumeType v31 provenType=f57
-# CHECK-NEXT: v33: L7 = NewObject -, v30, v32 layout=L7 fields=[2, 1] allocationSite=7 allocationClass=2
+# CHECK-NEXT: v33: L7 = NewObject -, v30, v32 layout=L7 fields=[2, 1] allocationSite=7 allocationClass=1
 # CHECK-NEXT: v34: L7 = FinishObject v33
 # CHECK-NEXT: v35: Array<string> = CallBuiltin -, v34 overload=ObjectKeys/0 accessSite=5
 # CHECK-NEXT: v36: Array<"AboveAgain"|"AboveDirect"|"Again"|"BelowFirst"|"BelowSecond"|"Direct"|"First"|"Second", proven, pristine[Storage, Names, Dense]> = AssumeType v35 provenType=Array<"AboveAgain"|"AboveDirect"|"Again"|"BelowFirst"|"BelowSecond"|"Direct"|"First"|"Second", proven, pristine[Storage, Names, Dense]>
@@ -294,7 +294,7 @@ function f55 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v53: boolean = TypeTest v52 testedType=f57
 # CHECK-NEXT: Branch v53 -> taken b7(), notTaken b8(| 0)
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v54: L8 = NewObject layout=L8 allocationClass=3
+# CHECK-NEXT: v54: L8 = NewObject layout=L8 allocationClass=2
 # CHECK-NEXT: Jump -> next b9(v54)
 # CHECK-NEXT: b8(v55: undefined|f10) frequency=Unlikely:
 # CHECK-NEXT: v56: anything ~ object = Construct v55 calleeName="classes[made]" accessSite=8 callees=[f10, f57]
@@ -312,7 +312,7 @@ function f55 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f57 = AssumeType v0 provenType=f57
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L0
-# CHECK-NEXT: v3: object ~ L0|L5|L8 = NewObject v2 layout=L0 allocationSite=9 allocationClass=0
+# CHECK-NEXT: v3: object ~ L8 = NewObject v2 layout=L0 allocationSite=9 allocationClass=0
 # CHECK-NEXT: v4: L8 = AssumeType v3 provenType=L8
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }

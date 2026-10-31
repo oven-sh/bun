@@ -163,6 +163,8 @@ pub struct RequiredName {
     pub name: Atom,
     /// An import asks for any other name. The error of a link that does not find the name is worded by who asks.
     pub asked_by: Option<ExportStatement>,
+    /// The build has found the name. A link misses it only where a mock stands for the whole module and leaves it out.
+    pub is_found_unless_mocked: bool,
 }
 
 impl RequiredName {
@@ -171,6 +173,7 @@ impl RequiredName {
             module,
             name,
             asked_by: None,
+            is_found_unless_mocked: false,
         }
     }
 }

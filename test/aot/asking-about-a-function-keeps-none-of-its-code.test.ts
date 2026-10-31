@@ -63,6 +63,32 @@ test("few functions that --trim can remove have members that the table does not 
   ).toEqual(["Bun.cron", "Bun.inspect", "Bun.peek", "Bun.sql", "process.memoryUsage"]);
 });
 
+// The table takes what it knows only as a property for something that a read may create, so `typeof URL.createObjectURL` would keep URL.
+test("a function that --trim can remove is a property in the table only where a read of it runs code", () => {
+  expect(
+    entries
+      .filter(
+        ({ kind, scope, path }) =>
+          kind === "DataProperty" &&
+          scope === "Realm" &&
+          /^[\w.]+$/.test(path) &&
+          removable.has(path) &&
+          typeof find(path) === "function",
+      )
+      .map(({ path }) => path)
+      .sort(),
+  ).toEqual([
+    // It is made with Bun.FFI, which the first read of Bun.FFI makes.
+    "Bun.FFI.CString",
+    // The first read makes them.
+    "Bun.ModuleGraph",
+    "Bun.SQL",
+    "console.Console",
+    // process.kill() calls what it finds there.
+    "process._kill",
+  ]);
+});
+
 test("what a program asks about a function without calling it is no use of anything", async () => {
   const asked = functions
     .filter(listsAllMembers)
@@ -70,6 +96,7 @@ test("what a program asks about a function without calling it is no use of anyth
     .filter(path => !namedIsUsedToday.some(pattern => pattern.test(path)));
   expect(asked.length).toBeGreaterThan(100);
   expect(asked).toEqual(expect.arrayContaining(["fetch", "Bun.fetch", "fetch.preconnect", "structuredClone"]));
+  expect(asked).toEqual(expect.arrayContaining(["Bun.Cookie.parse", "Bun.WebView.closeAll", "URL.createObjectURL"]));
   expect((await usersIn(questionsAbout(asked))).map(({ line }) => line)).toEqual([]);
 }, 600_000);
 

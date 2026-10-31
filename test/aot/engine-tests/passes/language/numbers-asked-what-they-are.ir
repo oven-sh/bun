@@ -396,22 +396,6 @@ function f10 module=m1 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v109: int[1, 4294967295] ~ int[1, 2147483648] = Increment v101
 # CHECK-NEXT: Jump -> next b5(v109)
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v110: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>|Number = Upcast v50 castType=undefined|null|boolean|number|string|symbol|bigint|L1|L2|f7|Array<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names, Dense]>|Number
-# CHECK-NEXT: v111: Array<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names, Dense]>|Number = Upcast v110 castType=undefined|null|boolean|number|string|symbol|bigint|L1|L2|f7|Array<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names, Dense]>|Number
-# CHECK-NEXT: v112: fact = Specified
-# CHECK-NEXT: v113: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v111, v112 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v114: 0 = Integer
-# CHECK-NEXT: Jump -> next b8(v114)
-# CHECK-NEXT: b8(v115: int[0, 4294967295] ~ int[0, 2147483648]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v117: int[0, 4294967295] ~ int[0, 2147483647] = Upcast v115 castType=int|whole
-# CHECK-NEXT: v118: int[0, 4294967295] = CallBuiltin v113 overload=ArrayPrototypeLength/0 accessSite=26
-# CHECK-NEXT: v119: boolean = Less v117, v118
-# CHECK-NEXT: Branch v119 -> taken b9(| 0), notTaken b10()
-# CHECK-NEXT: b9(v120: int[0, 4294967294] ~ int[0, 2147483647]):
-# CHECK-NEXT: v121: int[1, 4294967295] ~ int[1, 2147483648] = Increment v120
-# CHECK-NEXT: Jump -> next b8(v121)
-# CHECK-NEXT: b10():
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="ofNumber"

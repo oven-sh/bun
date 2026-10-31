@@ -324,6 +324,7 @@ export default b.declarations(
     }),
     sortByDifference: sortInPlace("sortByDifference"),
     sortByReversedDifference: sortInPlace("sortByReversedDifference"),
+    sortWhereNobodySeesTheComparator: sortInPlace("sortWhereNobodySeesTheComparator"),
     ...helpersIn("prelude/array-traversal", {
       traverseArray: {
         array: keptWithContents,

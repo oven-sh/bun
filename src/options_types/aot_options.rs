@@ -79,11 +79,25 @@ pub struct ImagesBelow {
     pub images: Vec<&'static [u8]>,
     /// Whether one of them holds the module at an absolute path.
     pub holds_module: Option<fn(&[u8]) -> bool>,
+    /// The last of them is still being built when this build begins, and is not among `images`. Until it is there `holds_module`
+    /// answers for it by a guess. This waits for it and answers all of them. It does not return where the guess was wrong.
+    pub wait_for_all: Option<fn() -> Vec<&'static [u8]>>,
 }
 
 impl ImagesBelow {
     pub fn is_empty(&self) -> bool {
         self.images.is_empty()
+    }
+
+    pub fn all(&self) -> Vec<&'static [u8]> {
+        self.wait_for_all
+            .map_or_else(|| self.images.clone(), |wait_for_all| wait_for_all())
+    }
+
+    pub fn wait(&self) {
+        if let Some(wait_for_all) = self.wait_for_all {
+            wait_for_all();
+        }
     }
 
     pub fn holds_module(&self, path: &[u8]) -> bool {
@@ -116,9 +130,15 @@ pub struct AotOptions {
     /// `--aot-allow-code-from-disk`: a path that is known only at run time may name a file with code that the build has not seen. Bun interprets it.
     pub loads_code_from_disk: bool,
     /// The host runs files with code that the build has not seen, though no load of the program names one: the test files of a run that compiles only what they import.
+    /// The last entry point stands in for them.
     pub host_runs_files_from_disk: bool,
+    /// `bun test --aot`: the test files, where they are no entry points of the build. The runner makes each the main module in its turn, and the build holds those that a file of the program imports.
+    pub main_modules_beside_entry_points: Vec<Vec<u8>>,
     /// The program holds every module of Bun's own code that the run can load, so none of them runs from its text.
     pub library_runs_compiled_alone: bool,
+    /// The program is Bun's own code and nothing else, built before any of the test runs that it serves is known. It rests on nothing that a run can change.
+    pub holds_library_alone: bool,
+    pub reference_library_image: Option<&'static [u8]>,
     pub ir_output_path: Option<Box<[u8]>>,
     /// `--aot-testing=NoExecutable`: the build runs as always and writes no executable. For tests that only read `ir_output_path`.
     pub writes_no_executable: bool,
@@ -127,6 +147,8 @@ pub struct AotOptions {
     pub checks_only: bool,
     /// `bun test --aot`: `@jest/globals` and `vitest` are `bun:test`, as in `bun test`.
     pub runs_tests: bool,
+    /// `bun test --aot --coverage`: the files that the report is about count how often their parts run.
+    pub counts_executions: bool,
     /// `--watch` starts to watch each file here.
     pub before_read: Option<ReadListener>,
     /// The word `TestRunPartFiles:<n>` of `BUN_DEBUG_TEST_AOT_WORDS`: `bun test --aot` builds a program for every `n` test files. Without it, one for all of them.
@@ -135,6 +157,8 @@ pub struct AotOptions {
     pub test_run_is_one_program: bool,
     /// `bun test --aot`: the entry points are test files. Their types stop at them.
     pub is_part_of_test_files: bool,
+    /// `bun test --aot --rerun-each`: the runner loads each test file several times in one realm, and what the file imports stays as it is.
+    pub entry_points_run_again: bool,
     /// `bun test --aot`: the build compiles its entry points and nothing else. What they import is in another image, which the process that runs them holds too.
     pub imports_are_in_other_images: bool,
     /// `bun test --aot`: a realm that runs the program runs other programs too, each built alone.
@@ -146,13 +170,33 @@ pub struct AotOptions {
     pub thread_count: Option<NonZeroU32>,
     /// Whose built-ins and code of the run time the program gets. `None`: those of the platform that the compiler runs on. No flag sets it.
     pub platform: Option<TargetPlatform>,
+    /// What `--define` or bunfig.toml names, without what the build defines by itself. `bun run` replaces these too.
+    pub user_defined_names: Vec<Box<[u8]>>,
     pub option_words: Vec<Box<[u8]>>,
+}
+
+/// `export function spawn(entry) { return new Worker(entry); }`: whoever calls `spawn` starts a Worker from what it passes.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct ParameterThatStartsWorkers {
+    /// The path of a file that exports the function: the one that declares it, or one that exports it again.
+    pub module: Vec<u8>,
+    /// The name that `module` exports it under.
+    pub export: Vec<u8>,
+    /// The place of the parameter among the parameters.
+    pub index: u32,
+    /// The Worker may also get an options object.
+    pub has_options: bool,
+    /// `new Worker(text, { eval: true })`: the parameter is the code itself.
+    pub is_evaluated: bool,
 }
 
 /// `bun test --aot`: what files of the run replace which this build does not see. What the build sees it finds itself.
 /// A module is the path of its file, or the specifier of a module of Bun.
 #[derive(Clone, Default, PartialEq, Eq, Debug)]
 pub struct ReplacedByTests {
+    /// Nothing of this is replaced. It goes the other way, from a program to those that are built above it, which do not read its files:
+    /// what it does with a value that they hand it. Ascending.
+    pub parameters_that_start_workers: Vec<ParameterThatStartsWorkers>,
     /// Members of built-in objects, by their numbers in the table of this Bun: `spyOn(String.prototype, "indexOf")`.
     pub builtins: Vec<u32>,
     /// A built-in object that takes no new names, by its number, and a name that it gets: `Object.prototype.polluted = 1`.
@@ -177,6 +221,14 @@ pub struct ReplacedByTests {
     pub evicted_modules: Vec<Vec<u8>>,
     /// Such a file that no file spells.
     pub evicts_any_module: bool,
+    /// `try { require("./a") } catch {}`: a CommonJS file whose body throws is out of the table too, and the next `require()` runs it again.
+    /// Which kind of file a path names shows in the build that holds the file.
+    pub files_required_where_throws_are_caught: Vec<Vec<u8>>,
+    /// Beside `require.cache["fs"] = { exports: fake }`, else empty: the files that a statement of theirs imports, those that an `import()` loads, and those that they require.
+    /// `bun run` reads `require("fs")` as `require("node:fs")` in a CommonJS file that an import loads.
+    pub files_imported_by_statements: Vec<Vec<u8>>,
+    pub files_imported_by_calls: Vec<Vec<u8>>,
+    pub files_required: Vec<Vec<u8>>,
     /// `import("./a?again")` loads the file once more, from disk. Nobody has read a file that is reached in no other way.
     pub names_file_with_query: bool,
 }
@@ -221,11 +273,22 @@ impl ReplacedByTests {
             &self.evicted_modules,
             &self.handed_on_modules,
             &self.names_spied_on_unknown_objects,
+            &self.files_imported_by_statements,
+            &self.files_imported_by_calls,
+            &self.files_required,
+            &self.files_required_where_throws_are_caught,
         ] {
             push_number(&mut bytes, texts.len());
             for text in texts {
                 push_text(&mut bytes, text);
             }
+        }
+        push_number(&mut bytes, self.parameters_that_start_workers.len());
+        for parameter in &self.parameters_that_start_workers {
+            push_text(&mut bytes, &parameter.module);
+            push_text(&mut bytes, &parameter.export);
+            push_number(&mut bytes, parameter.index as usize);
+            bytes.push(u8::from(parameter.has_options) | u8::from(parameter.is_evaluated) << 1);
         }
         bytes
     }
@@ -270,6 +333,23 @@ impl ReplacedByTests {
             evicted_modules: take_list(&mut bytes, take_text)?,
             handed_on_modules: take_list(&mut bytes, take_text)?,
             names_spied_on_unknown_objects: take_list(&mut bytes, take_text)?,
+            files_imported_by_statements: take_list(&mut bytes, take_text)?,
+            files_imported_by_calls: take_list(&mut bytes, take_text)?,
+            files_required: take_list(&mut bytes, take_text)?,
+            files_required_where_throws_are_caught: take_list(&mut bytes, take_text)?,
+            parameters_that_start_workers: take_list(&mut bytes, |bytes| {
+                let (module, export) = (take_text(bytes)?, take_text(bytes)?);
+                let index = take_number(bytes)?;
+                let (&answers, rest) = bytes.split_first()?;
+                *bytes = rest;
+                Some(ParameterThatStartsWorkers {
+                    module,
+                    export,
+                    index,
+                    has_options: answers & 1 != 0,
+                    is_evaluated: answers & 2 != 0,
+                })
+            })?,
         };
         bytes.is_empty().then_some(replaced)
     }
@@ -300,17 +380,22 @@ impl Default for AotOptions {
             admits_inspector: false,
             loads_code_from_disk: false,
             host_runs_files_from_disk: false,
+            main_modules_beside_entry_points: Vec::new(),
             library_runs_compiled_alone: false,
+            holds_library_alone: false,
+            reference_library_image: None,
             ir_output_path: None,
             writes_no_executable: false,
             build_report: None,
             runs_in_place: false,
             checks_only: false,
             runs_tests: false,
+            counts_executions: false,
             before_read: None,
             test_run_part_files: None,
             test_run_is_one_program: false,
             is_part_of_test_files: false,
+            entry_points_run_again: false,
             imports_are_in_other_images: false,
             shares_realms: false,
             images_below: ImagesBelow::default(),
@@ -318,6 +403,7 @@ impl Default for AotOptions {
             preload: None,
             thread_count: None,
             platform: None,
+            user_defined_names: Vec::new(),
             option_words: Vec::new(),
         }
     }
@@ -330,6 +416,22 @@ mod tests {
     #[test]
     fn what_tests_replace_survives_its_bytes() {
         let replaced = ReplacedByTests {
+            parameters_that_start_workers: vec![
+                ParameterThatStartsWorkers {
+                    module: b"/project/e.ts".to_vec(),
+                    export: b"spawn".to_vec(),
+                    index: 2,
+                    has_options: true,
+                    is_evaluated: false,
+                },
+                ParameterThatStartsWorkers {
+                    module: b"/project/f.ts".to_vec(),
+                    export: b"default".to_vec(),
+                    index: 0,
+                    has_options: false,
+                    is_evaluated: true,
+                },
+            ],
             builtins: vec![7, 70_000],
             names_added_to_builtins: vec![(3, b"polluted".to_vec()), (3, Vec::new())],
             exports: vec![(b"/project/a.ts".to_vec(), b"read".to_vec())],
@@ -337,6 +439,10 @@ mod tests {
             any_module: true,
             spies_on_unknown_objects: true,
             evicted_modules: vec![b"/project/c.ts".to_vec()],
+            files_imported_by_statements: vec![b"/project/e.cjs".to_vec()],
+            files_imported_by_calls: vec![b"/project/f.cjs".to_vec(), b"/project/g.cjs".to_vec()],
+            files_required: vec![b"/project/g.cjs".to_vec()],
+            files_required_where_throws_are_caught: vec![b"/project/h.cjs".to_vec()],
             handed_on_modules: vec![b"/project/d.ts".to_vec()],
             hands_on_any_module: true,
             names_spied_on_unknown_objects: vec![b"read".to_vec(), b"write".to_vec()],
@@ -397,17 +503,22 @@ mod tests {
             admits_inspector,
             loads_code_from_disk,
             host_runs_files_from_disk,
+            main_modules_beside_entry_points,
             library_runs_compiled_alone,
+            holds_library_alone,
+            reference_library_image,
             ir_output_path,
             writes_no_executable,
             build_report,
             runs_in_place,
             checks_only,
             runs_tests,
+            counts_executions,
             before_read,
             test_run_part_files,
             test_run_is_one_program,
             is_part_of_test_files,
+            entry_points_run_again,
             imports_are_in_other_images,
             shares_realms,
             images_below,
@@ -415,6 +526,7 @@ mod tests {
             preload,
             thread_count,
             platform,
+            user_defined_names,
             option_words,
         } = AotOptions::default();
         assert_eq!(platform, None);
@@ -439,23 +551,29 @@ mod tests {
         assert!(!admits_inspector);
         assert!(!loads_code_from_disk);
         assert!(!host_runs_files_from_disk);
+        assert!(main_modules_beside_entry_points.is_empty());
         assert!(!library_runs_compiled_alone);
+        assert!(!holds_library_alone);
+        assert!(reference_library_image.is_none());
         assert!(ir_output_path.is_none());
         assert!(!writes_no_executable);
         assert!(build_report.is_none());
         assert!(!runs_in_place);
         assert!(!checks_only);
         assert!(!runs_tests);
+        assert!(!counts_executions);
         assert!(before_read.is_none());
         assert!(test_run_part_files.is_none());
         assert!(!test_run_is_one_program);
         assert!(!is_part_of_test_files);
+        assert!(!entry_points_run_again);
         assert!(!imports_are_in_other_images);
         assert!(!shares_realms);
         assert!(images_below.is_empty());
         assert_eq!(replaced_by_tests, ReplacedByTests::default());
         assert!(preload.is_none());
         assert!(thread_count.is_none());
+        assert!(user_defined_names.is_empty());
         assert!(option_words.is_empty());
     }
 

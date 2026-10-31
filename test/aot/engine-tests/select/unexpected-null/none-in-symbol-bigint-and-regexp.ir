@@ -307,7 +307,7 @@ function f23 name="next" module=m1 position=25 kind=Method role=Library flags=[H
 runtimefunction id=ArrayIteratorPrototypeNext function=f23 visibility=Private
 # -- generated: f0 describe double matches day f6 f7 f8 f9 f10 f11 f12 f13 attempt
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f5 callPosition=766 module=m0}, {callee=f5 callPosition=719 module=m0}, {callee=f5 callPosition=673 module=m0}, {callee=f5 callPosition=625 module=m0}, {callee=f6 callPosition=180 parent=4 module=m0}, {callee=f7 callPosition=180 parent=3 module=m0}, {callee=f8 callPosition=180 parent=2 module=m0}, {callee=f9 callPosition=180 parent=1 module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f5 callPosition=766 module=m0}, {callee=f5 callPosition=719 module=m0}, {callee=f5 callPosition=673 module=m0}, {callee=f5 callPosition=625 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: null = Null
 # CHECK-NEXT: v1: undefined = Undefined
@@ -560,7 +560,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f23 visibility=Private
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function f11 module=
-# CHECK: m0 position=875 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|bigint site=w17 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=881 isTailCall=true module=m0}] {
+# CHECK: m0 position=875 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=bigint site=w17 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=881 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: bigint = BigInt digits="4"
 # CHECK-NEXT: v1: bigint = BigInt digits="2"

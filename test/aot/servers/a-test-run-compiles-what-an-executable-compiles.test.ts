@@ -10,7 +10,7 @@
 //   A share that falls: something new asks "is this a test run?", or a rule for tests got wider. docs/compiler/debugging.mdx, "What differs from an
 //   executable", is the list of what may. A rule for what some test might do belongs behind what the files of the run do.
 //   A share that rises: raise the number here. It prints one line a server that begins with EQUAL.
-import { afterAll, expect } from "bun:test";
+import { afterAll, expect, setDefaultTimeout } from "bun:test";
 import { readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { join } from "path";
@@ -18,6 +18,9 @@ import { built, slot, spawned } from "../harness/commands";
 import { buildEnvironment, compileCommand } from "../harness/flags";
 import { beforeAll, describe, test } from "../supported";
 import { copyApp } from "./run-servers";
+
+// supported.ts sets the limit for the first file of a process alone.
+setDefaultTimeout(120_000);
 
 /** Percent of the executable's functions, rounded down, on Linux x64, less one: a landing that moves ten functions of two thousand is not meant. */
 const equalAtLeast: Record<string, number> = {

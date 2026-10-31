@@ -29,15 +29,39 @@ pub(super) enum Subject {
 }
 
 pub(super) enum UsageState {
-    InProgress(usize),
+    /// `assumed`: what it answers with when it is run into.
+    InProgress {
+        index: usize,
+        assumed: Option<Rc<Usage>>,
+    },
+    /// It is walked, and leads back to a subject that is in progress.
+    InCycle {
+        index: usize,
+        found: Rc<Usage>,
+    },
+    /// What the round before found. This round has not come to it.
+    Assumed(Rc<Usage>),
     Known(Rc<Usage>),
+    /// It was walked, and rested on an answer of the checker that may be another next time.
+    NotKept,
 }
 
 #[derive(Copy, Clone)]
 pub(super) enum TypeState {
-    InProgress(usize),
+    /// `assumed`: what it answers with when it is run into. `None`: nothing, and whoever asked leads back to it.
+    InProgress {
+        depth: u32,
+        assumed: Option<TypeId>,
+    },
+    /// It is computed, and leads back to a subject that is in progress. `position`: in `TypesInProgress::in_cycles`.
+    InCycle {
+        found: TypeId,
+        position: u32,
+    },
+    /// What the first round found. The second has not come to it.
+    Assumed(TypeId),
     Known(TypeId),
-    /// It was computed, and the result depended on who asked.
+    /// It was computed, and rested on an answer of the checker that may be another next time.
     NotKept,
 }
 
@@ -85,30 +109,40 @@ impl SubjectStack {
 
 #[derive(Default)]
 pub(super) struct TypesInProgress {
+    /// Depth 0 is the question. What the allowance does not reach leads back to it.
     subjects: SubjectStack,
     remaining_types: u64,
-    /// The first subject that the allowance did not reach and that has never been computed.
-    first_out_of_reach: Option<Subject>,
-    extra: ExtraQuestion,
-    /// How many subjects the question `Ahead` may still compute that were computed before.
-    remaining_repeats_ahead: u32,
-    /// How many subjects were computed for the first time, less how many were computed again by extra questions.
-    credit: i64,
+    /// The subjects that were left as `InCycle`, in that order.
+    in_cycles: Vec<Subject>,
+    /// By depth: how long `in_cycles` was when the subject was entered.
+    first_in_cycle: Vec<usize>,
+    /// The subjects that the allowance did not reach and that have never been computed.
+    out_of_reach: Vec<Subject>,
+    /// What led out of reach is being computed again. What that does not reach says nothing, and nobody waits for it.
+    is_computing_again: bool,
+    subjects_not_kept: u64,
+    next_usage_index: usize,
 }
 
-/// A question that `inferred_type` asks by itself.
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
-enum ExtraQuestion {
-    #[default]
-    None,
-    /// For the subject that was out of reach. It is meant to find subjects that are new. In a cycle it finds the ones
-    /// that the question before it found, and is cut short.
-    Ahead,
-    /// For the subject that was asked for, once more.
-    Again,
-}
+impl TypesInProgress {
+    fn enter(&mut self) -> EnteredSubject {
+        self.first_in_cycle.push(self.in_cycles.len());
+        self.subjects.enter()
+    }
 
-const MAX_REPEATS_AHEAD: u32 = 64;
+    fn leave(&mut self, entered: EnteredSubject) -> bool {
+        self.first_in_cycle.pop();
+        self.subjects.leave(entered)
+    }
+
+    /// Whoever asks a subject that was left as `InCycle` leads back to the innermost subject in progress that it was computed under.
+    fn revisit_in_cycle(&mut self, position: u32) {
+        let entered_earlier = self
+            .first_in_cycle
+            .partition_point(|&first| first <= position as usize);
+        self.subjects.revisit(entered_earlier.saturating_sub(1));
+    }
+}
 
 #[derive(Copy, Clone)]
 pub(super) struct ReferenceIndex<'c> {
@@ -147,7 +181,7 @@ fn required_if(is_required: bool) -> Facts {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 struct Member {
     name: Atom,
     usage: Rc<Usage>,
@@ -160,7 +194,7 @@ impl Member {
 }
 
 /// A merge into a part that says nothing yet shares the other tree's part, so a part may belong to many trees: it is copied when one of them changes it.
-#[derive(Default, Clone)]
+#[derive(Default, Clone, PartialEq, Eq)]
 pub(super) struct Usage {
     facts: Facts,
     arms: SmallVec<[TypeId; 2]>,
@@ -201,29 +235,50 @@ impl Usage {
         }
     }
 
+    /// What the tree gets is paid for, not what it has: the subjects of a cycle merge what the others found, which is the same.
     fn merge(&mut self, walk: &mut Walk, other: &Usage) {
-        if !walk.enter_node() {
+        if walk.is_out_of_budget() && !walk.looks_at_every_use_of(self) {
             return;
         }
         self.facts |= other.facts;
         for &arm in &other.arms {
             self.add_arm(arm);
         }
+        if walk.is_out_of_budget() {
+            return;
+        }
         for member in &other.members {
-            let is_new = !self.members.iter().any(|own| own.name == member.name);
-            if is_new && walk.enter_all_nodes_of(&member.usage) {
-                self.members.push(member.clone());
-            } else {
-                self.member_mut(member.name).merge(walk, &member.usage);
+            let own = self.members.iter().position(|own| own.name == member.name);
+            match own {
+                Some(own) => merge_part(&mut self.members[own].usage, walk, &member.usage),
+                None if walk.enter_all_nodes_of(&member.usage) => self.members.push(member.clone()),
+                None if walk.enter_node() => {
+                    self.member_mut(member.name).merge(walk, &member.usage)
+                }
+                None => {}
             }
         }
-        if let Some(elements) = &other.elements {
-            if self.elements.is_none() && walk.enter_all_nodes_of(elements) {
+        match (&mut self.elements, &other.elements) {
+            (_, None) => {}
+            (Some(own), Some(elements)) => merge_part(own, walk, elements),
+            (None, Some(elements)) if walk.enter_all_nodes_of(elements) => {
                 self.elements = Some(Rc::clone(elements));
-            } else {
-                self.elements_mut().merge(walk, elements);
+            }
+            (None, Some(elements)) => {
+                if walk.enter_node() {
+                    self.elements_mut().merge(walk, elements);
+                }
             }
         }
+    }
+
+    fn is_incomplete(&self) -> bool {
+        self.facts.contains(Facts::INCOMPLETE)
+    }
+
+    fn forget_parts(&mut self) {
+        self.members.clear();
+        self.elements = None;
     }
 
     fn is_number(&self) -> bool {
@@ -237,21 +292,90 @@ impl Usage {
     }
 }
 
+/// A part that many trees share is not copied for a merge that adds nothing.
+fn merge_part(own: &mut Rc<Usage>, walk: &mut Walk, other: &Rc<Usage>) {
+    if !Rc::ptr_eq(own, other) && **own != **other {
+        Rc::make_mut(own).merge(walk, other);
+    }
+}
+
+/// What a subject is used as is the least answer that holds for all subjects at once, whoever is asked for first:
+/// - Each subject has the whole budget, for its own uses and for what its tree gets from others. The budget is for the
+///   parts of the tree. Which of them a walk had found when it ended hangs on what the others had found by then, so a
+///   tree that is not all there has no parts. What the subject itself is used as is a few facts and types: every use of
+///   it is looked at, however many there are.
+/// - In a cycle, a subject in progress that is run into answers with what the round before found, nothing in the first.
+///   The subject that the cycle was entered by is walked again until no subject of the cycle finds anything new. A round
+///   only adds to what the round before found, so the rounds end. Then all of them are kept: a cycle is walked once,
+///   not once for each of its subjects.
+/// - What goes into a part of a tree (`visit(node.left)`) counts only when it is kept, that is when it does not lead
+///   back: a shape that holds itself would grow with every round.
+/// - Nothing that rests on an answer of the checker that may be another next time is kept. What is thrown away has one
+///   budget: see `shares_budget`.
+/// - A chain of calls and a cycle of them are as long as they like: see `set_aside`.
 struct Walk {
+    max_nodes: u64,
     remaining_nodes: u64,
-    subjects: SubjectStack,
+    /// The least index of a subject that the one being walked leads back to, its own at first.
+    lowest_index: usize,
+    /// The subjects that were left as `InCycle`, in that order, once for each round.
+    in_cycles: Vec<Subject>,
+    found_something_new: bool,
+    /// The tree of the subject being walked.
+    root: *const Usage,
+    subjects_not_kept: u64,
+    unstable_answers_at_start: u64,
+    /// What is in progress will not be kept, so from here on all subjects together have what is left of one budget, and
+    /// a cycle has one round.
+    shares_budget: bool,
+    /// How many subjects are being walked on the stack of the thread.
+    subjects_on_stack: usize,
+    /// A subject was asked for while half of the stack was in use. Until the stack is free nothing is walked.
+    is_freeing_stack: bool,
+    /// The subjects that were on the stack then, the outermost first. They stay in progress. Where the stack is free the
+    /// innermost is walked again, with what it had found of where it leads: what it asked for before answers at once,
+    /// and what it asked for last has the stack to itself. When it is done, the one that asked for it is walked again.
+    set_aside: Vec<SubjectInProgress>,
+}
+
+struct SubjectInProgress {
+    subject: Subject,
+    is_outermost: bool,
+    unstable_answers: u64,
+    assumed: Option<Rc<Usage>>,
+    index: usize,
+    first_in_cycle: usize,
+    first_in_round: usize,
+    /// What the walk held for the subject when it was set aside.
+    lowest_index: usize,
+    found_something_new: bool,
+    /// What the walk held for the subject that asked for it.
+    outer_lowest: usize,
+    outer_nodes: u64,
+    outer_root: *const Usage,
+    outer_found_something_new: bool,
 }
 
 impl Walk {
     fn new(max_nodes: u64) -> Walk {
         Walk {
+            max_nodes,
             remaining_nodes: max_nodes,
-            subjects: SubjectStack::default(),
+            lowest_index: usize::MAX,
+            in_cycles: Vec::new(),
+            found_something_new: false,
+            root: std::ptr::null(),
+            subjects_not_kept: 0,
+            unstable_answers_at_start: 0,
+            shares_budget: false,
+            subjects_on_stack: 0,
+            is_freeing_stack: false,
+            set_aside: Vec::new(),
         }
     }
 
     fn enter_node(&mut self) -> bool {
-        let has_budget = self.remaining_nodes > 0;
+        let has_budget = self.remaining_nodes > 0 && !self.is_freeing_stack;
         self.remaining_nodes = self.remaining_nodes.saturating_sub(1);
         has_budget
     }
@@ -267,6 +391,14 @@ impl Walk {
 
     fn is_out_of_budget(&self) -> bool {
         self.remaining_nodes == 0
+    }
+
+    fn looks_at_every_use_of(&self, usage: &Usage) -> bool {
+        std::ptr::eq(usage, self.root) && !self.shares_budget && !self.is_freeing_stack
+    }
+
+    fn enter_node_of(&mut self, usage: &Usage) -> bool {
+        self.enter_node() || self.looks_at_every_use_of(usage)
     }
 }
 
@@ -1125,108 +1257,157 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// A question may compute `max_inference_nodes` subjects. Where that is not enough, nothing on the way to the
-    /// subject out of reach is kept, so a chain of n calls would cost each of n questions the whole allowance. So that
-    /// subject is computed first, with an allowance of its own, and then the question is asked again and finds it.
-    /// In a cycle that gains nothing. What is computed again this way is paid for by what was computed for the first
-    /// time, so all of it together takes at most one more visit of each subject.
+    /// - A walk may compute `max_inference_nodes` subjects. What it does not reach is walked next, with an allowance of
+    ///   its own, and then what led there is computed again, the last walk first: a chain of calls is as long as it likes.
+    /// - A cycle has two rounds. In the first a subject in progress says nothing, and the subject that the cycle was
+    ///   entered by is kept. In the second the others are computed again, and one in progress says what the first round
+    ///   found. Then all of them are kept: a cycle is computed twice, not once for each of its subjects.
     fn inferred_type(&mut self, subject: Subject) -> TypeId {
-        let inferred = self.inferred_type_within_allowance(subject);
-        let in_progress = &self.memo.types_in_progress;
-        if in_progress.subjects.depth != 0 || in_progress.first_out_of_reach.is_none() {
-            return inferred;
+        if self.memo.types_in_progress.subjects.depth != 0 {
+            return self.inferred_type_within_allowance(subject);
         }
-        self.inferred_type_behind_what_was_out_of_reach(subject, inferred)
+        if let Some(&TypeState::Known(known)) = self.memo.inferred_types.get(&subject) {
+            return known;
+        }
+        if self.inputs.max_inference_nodes == 0 {
+            return TypeId::ANY;
+        }
+        let question = self.memo.types_in_progress.enter();
+        let first_answer = self.inferred_type_with_new_allowance(subject);
+        let in_progress = &self.memo.types_in_progress;
+        if !in_progress.in_cycles.is_empty() || !in_progress.out_of_reach.is_empty() {
+            self.infer_types_out_of_reach();
+        }
+        self.memo.types_in_progress.leave(question);
+        match self.memo.inferred_types.get(&subject) {
+            Some(&TypeState::Known(known)) => known,
+            _ => first_answer,
+        }
+    }
+
+    fn inferred_type_with_new_allowance(&mut self, subject: Subject) -> TypeId {
+        self.memo.types_in_progress.remaining_types = self.inputs.max_inference_nodes;
+        self.inferred_type_within_allowance(subject)
     }
 
     #[cold]
-    fn inferred_type_behind_what_was_out_of_reach(
-        &mut self,
-        subject: Subject,
-        first_answer: TypeId,
-    ) -> TypeId {
-        let mut asked: SmallVec<[(Subject, TypeId); 4]> = SmallVec::new();
-        let (mut current, mut inferred) = (subject, first_answer);
+    fn infer_types_out_of_reach(&mut self) {
         loop {
-            let in_progress = &mut self.memo.types_in_progress;
-            let out_of_reach = in_progress.first_out_of_reach.take();
-            if let Some(next) = out_of_reach
-                && in_progress.credit >= self.inputs.max_inference_nodes as i64
-            {
-                in_progress.extra = ExtraQuestion::Ahead;
-                in_progress.remaining_repeats_ahead = MAX_REPEATS_AHEAD;
-                // It no longer counts as never computed, so it is asked ahead once. With an allowance of 0 it is the
-                // very subject that was asked for.
-                self.memo.inferred_types.insert(next, TypeState::NotKept);
-                asked.push((current, inferred));
-                current = next;
-            } else {
-                let mut is_known = self.is_inferred_type_known(current);
-                loop {
-                    let Some((earlier, earlier_answer)) = asked.pop() else {
-                        self.memo.types_in_progress.extra = ExtraQuestion::None;
-                        return inferred;
-                    };
-                    if is_known {
-                        self.memo.types_in_progress.extra = ExtraQuestion::Again;
-                        current = earlier;
-                        break;
-                    }
-                    (inferred, is_known) = (earlier_answer, false);
+            let mut walks: SmallVec<[usize; 4]> = SmallVec::new();
+            walks.push(0);
+            while let Some(next) = self.memo.types_in_progress.out_of_reach.pop() {
+                if !self.memo.inferred_types.contains_key(&next) {
+                    walks.push(self.memo.types_in_progress.in_cycles.len());
+                    self.inferred_type_with_new_allowance(next);
                 }
             }
-            inferred = self.inferred_type_within_allowance(current);
+            let unsettled = std::mem::take(&mut self.memo.types_in_progress.in_cycles);
+            if unsettled.is_empty() {
+                return;
+            }
+            self.assume_types_found(&unsettled);
+            self.memo.types_in_progress.is_computing_again = true;
+            let mut end = unsettled.len();
+            for &start in walks.iter().rev() {
+                for &other in &unsettled[start..end] {
+                    self.inferred_type_with_new_allowance(other);
+                }
+                end = start;
+            }
+            self.memo.types_in_progress.is_computing_again = false;
         }
     }
 
-    fn is_inferred_type_known(&self, subject: Subject) -> bool {
-        matches!(
-            self.memo.inferred_types.get(&subject),
-            Some(TypeState::Known(_))
-        )
+    fn assume_types_found(&mut self, in_cycle: &[Subject]) {
+        for other in in_cycle {
+            if let Some(state) = self.memo.inferred_types.get_mut(other)
+                && let TypeState::InCycle { found, .. } = *state
+            {
+                *state = TypeState::Assumed(found);
+            }
+        }
+    }
+
+    fn infer_types_of_cycle_again(&mut self, first_in_cycle: usize) {
+        let in_cycles = &mut self.memo.types_in_progress.in_cycles;
+        let in_cycle: Vec<Subject> = in_cycles.drain(first_in_cycle..).collect();
+        self.assume_types_found(&in_cycle);
+        for &other in &in_cycle {
+            self.inferred_type_within_allowance(other);
+        }
+        if self.memo.types_in_progress.remaining_types != 0 {
+            return;
+        }
+        for &other in &in_cycle {
+            if let Some(&TypeState::Assumed(found)) = self.memo.inferred_types.get(&other) {
+                self.leave_type_in_cycle(other, found);
+            }
+        }
+    }
+
+    fn leave_type_in_cycle(&mut self, subject: Subject, found: TypeId) {
+        let in_cycles = &mut self.memo.types_in_progress.in_cycles;
+        let position = in_cycles.len() as u32;
+        in_cycles.push(subject);
+        let state = TypeState::InCycle { found, position };
+        self.memo.inferred_types.insert(subject, state);
+    }
+
+    fn count_answers_not_kept(&self) -> u64 {
+        self.count_unstable_answers() + self.memo.types_in_progress.subjects_not_kept
     }
 
     fn inferred_type_within_allowance(&mut self, subject: Subject) -> TypeId {
         if self.infers_nothing_from_use {
             return TypeId::ANY;
         }
-        let is_first_time = match self.memo.inferred_types.get(&subject) {
-            Some(&TypeState::Known(known)) => return known,
-            Some(&TypeState::InProgress(depth)) => {
-                self.memo.types_in_progress.subjects.revisit(depth);
+        let in_progress = &mut self.memo.types_in_progress;
+        let state = self.memo.inferred_types.get(&subject).copied();
+        let assumed = match state {
+            Some(TypeState::Known(known)) => return known,
+            Some(TypeState::InProgress {
+                depth,
+                assumed: None,
+            }) => {
+                in_progress.subjects.revisit(depth as usize);
                 return TypeId::ANY;
             }
-            Some(&TypeState::NotKept) => false,
-            None => true,
-        };
-        let max_types = self.inputs.max_inference_nodes;
-        let in_progress = &mut self.memo.types_in_progress;
-        if in_progress.subjects.depth == 0 {
-            in_progress.remaining_types = max_types;
-        }
-        if !is_first_time && in_progress.extra == ExtraQuestion::Ahead {
-            match in_progress.remaining_repeats_ahead {
-                0 => in_progress.remaining_types = 0,
-                _ => in_progress.remaining_repeats_ahead -= 1,
+            Some(TypeState::InProgress {
+                assumed: Some(assumed),
+                ..
+            }) => return assumed,
+            Some(TypeState::InCycle { found, position }) => {
+                in_progress.revisit_in_cycle(position);
+                return found;
             }
-        }
+            Some(TypeState::Assumed(found)) => Some(found),
+            Some(TypeState::NotKept) | None => None,
+        };
         if in_progress.remaining_types == 0 {
-            in_progress.subjects.revisit(0);
-            if is_first_time && in_progress.first_out_of_reach.is_none() {
-                in_progress.first_out_of_reach = Some(subject);
+            if let Some(found) = assumed {
+                return found;
+            }
+            match state {
+                None => {
+                    if !in_progress.is_computing_again {
+                        in_progress.subjects.revisit(0);
+                    }
+                    in_progress.out_of_reach.push(subject);
+                }
+                Some(_) => in_progress.subjects_not_kept += 1,
             }
             return TypeId::ANY;
         }
         in_progress.remaining_types -= 1;
-        if is_first_time {
-            in_progress.credit += 1;
-        } else if in_progress.extra != ExtraQuestion::None {
-            in_progress.credit -= 1;
-        }
-        let entered = in_progress.subjects.enter();
-        let state = TypeState::InProgress(entered.depth);
+        self.statistics.types_inferred += 1;
+        let first_in_cycle = in_progress.in_cycles.len();
+        let entered = in_progress.enter();
+        let state = TypeState::InProgress {
+            depth: entered.depth as u32,
+            assumed,
+        };
         self.memo.inferred_types.insert(subject, state);
-        let unstable_answers = self.count_unstable_answers();
+        let answers_not_kept = self.count_answers_not_kept();
         let inferred = self.ask(|queries| {
             Ok(match subject {
                 Subject::Expression(expression) => queries.compute_expression_type(expression),
@@ -1237,13 +1418,23 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             })
         });
         let inferred = inferred.unwrap_or(TypeId::ANY);
-        let ran_into_outer_subject = self.memo.types_in_progress.subjects.leave(entered);
-        let is_kept = !ran_into_outer_subject && self.count_unstable_answers() == unstable_answers;
-        let state = match is_kept {
-            true => TypeState::Known(inferred),
-            false => TypeState::NotKept,
-        };
-        self.memo.inferred_types.insert(subject, state);
+        let leads_back = self.memo.types_in_progress.leave(entered);
+        if self.count_answers_not_kept() != answers_not_kept {
+            let in_cycles = &mut self.memo.types_in_progress.in_cycles;
+            for other in in_cycles.drain(first_in_cycle..) {
+                self.memo.inferred_types.insert(other, TypeState::NotKept);
+            }
+            self.memo.inferred_types.insert(subject, TypeState::NotKept);
+        } else if leads_back {
+            self.leave_type_in_cycle(subject, inferred);
+        } else {
+            let known = TypeState::Known(inferred);
+            self.memo.inferred_types.insert(subject, known);
+            let in_progress = &self.memo.types_in_progress;
+            if in_progress.in_cycles.len() > first_in_cycle && in_progress.remaining_types != 0 {
+                self.infer_types_of_cycle_again(first_in_cycle);
+            }
+        }
         inferred
     }
 
@@ -1267,7 +1458,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let Some(usage) = self.usage_of(&mut walk, Subject::Binding(symbol)) else {
             return used_as;
         };
-        if usage.members.is_empty() {
+        if usage.members.is_empty() && !usage.is_incomplete() {
             return used_as;
         }
         // Uses only guess what a member holds: `a.codes[i]` reads as an array whatever `a.codes` is. What every caller
@@ -1515,8 +1706,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn is_expected_int32(&mut self, number: Subject) -> bool {
-        if let Some(&TypeState::InProgress(depth)) = self.memo.inferred_types.get(&number) {
-            self.memo.types_in_progress.subjects.revisit(depth);
+        if let Some(&TypeState::InProgress {
+            depth,
+            assumed: None,
+        }) = self.memo.inferred_types.get(&number)
+        {
+            self.memo.types_in_progress.subjects.revisit(depth as usize);
             return true;
         }
         let inferred = self.inferred_type(number);
@@ -1662,45 +1857,235 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn usage_of(&mut self, walk: &mut Walk, subject: Subject) -> Option<Rc<Usage>> {
-        match self.memo.usages.get(&subject) {
-            Some(UsageState::Known(usage)) => return Some(Rc::clone(usage)),
-            Some(&UsageState::InProgress(depth)) => {
-                walk.subjects.revisit(depth);
-                return None;
-            }
-            None => {}
+        let is_outermost = walk.lowest_index == usize::MAX;
+        let usage = self.usage_within_reach(walk, subject);
+        match is_outermost && walk.is_freeing_stack {
+            true => self.walk_subjects_set_aside(walk),
+            false => usage,
         }
-        let entered = walk.subjects.enter();
-        let is_outermost = entered.depth == 0;
-        let state = UsageState::InProgress(entered.depth);
-        self.memo.usages.insert(subject, state);
-        let unstable_answers = self.count_unstable_answers();
-        let computed = self.ask(|queries| Ok(queries.compute_usage(walk, subject)));
-        let ran_into_outer_subject = walk.subjects.leave(entered);
-        let had_full_budget = is_outermost || !walk.is_out_of_budget();
+    }
+
+    #[cold]
+    fn walk_subjects_set_aside(&mut self, walk: &mut Walk) -> Option<Rc<Usage>> {
+        let mut first_set_aside = 0;
+        loop {
+            // The innermost left the stack first.
+            walk.set_aside[first_set_aside..].reverse();
+            walk.is_freeing_stack = false;
+            let mut usage = None;
+            while !walk.is_freeing_stack {
+                let Some(innermost) = walk.set_aside.pop() else {
+                    return usage;
+                };
+                first_set_aside = walk.set_aside.len();
+                usage = self.walk_subject(walk, innermost, true);
+                if !walk.is_freeing_stack
+                    && let Some(asked_for_it) = walk.set_aside.last_mut()
+                {
+                    asked_for_it.lowest_index = walk.lowest_index;
+                    asked_for_it.found_something_new = walk.found_something_new;
+                }
+            }
+        }
+    }
+
+    fn usage_within_reach(&mut self, walk: &mut Walk, subject: Subject) -> Option<Rc<Usage>> {
+        if walk.is_freeing_stack {
+            return None;
+        }
+        let unstable_answers = self.count_unstable_answers() + walk.subjects_not_kept;
+        let is_outermost = walk.lowest_index == usize::MAX;
+        if is_outermost {
+            (walk.unstable_answers_at_start, walk.shares_budget) = (unstable_answers, false);
+        }
+        let assumed = match self.memo.usages.get(&subject) {
+            Some(UsageState::Known(usage)) => return Some(Rc::clone(usage)),
+            Some(UsageState::InProgress { index, assumed }) => {
+                walk.lowest_index = walk.lowest_index.min(*index);
+                return assumed.clone();
+            }
+            Some(UsageState::InCycle { index, found }) => {
+                walk.lowest_index = walk.lowest_index.min(*index);
+                return Some(Rc::clone(found));
+            }
+            Some(UsageState::Assumed(usage)) => Some(Rc::clone(usage)),
+            Some(UsageState::NotKept) => {
+                walk.shares_budget = true;
+                None
+            }
+            None => None,
+        };
+        // What a subject that is walked again asks for is walked, so each time the stack is freed the walk gets further.
+        if walk.subjects_on_stack > 1 && self.c.is_half_of_stack_in_use() {
+            walk.is_freeing_stack = true;
+            return None;
+        }
+        walk.shares_budget |= unstable_answers != walk.unstable_answers_at_start;
+        let entered = SubjectInProgress {
+            subject,
+            is_outermost,
+            unstable_answers,
+            assumed,
+            index: 0,
+            first_in_cycle: walk.in_cycles.len(),
+            first_in_round: 0,
+            lowest_index: 0,
+            found_something_new: false,
+            outer_lowest: walk.lowest_index,
+            outer_nodes: walk.remaining_nodes,
+            outer_root: walk.root,
+            outer_found_something_new: std::mem::take(&mut walk.found_something_new),
+        };
+        self.walk_subject(walk, entered, false)
+    }
+
+    fn walk_subject(
+        &mut self,
+        walk: &mut Walk,
+        mut entered: SubjectInProgress,
+        mut was_set_aside: bool,
+    ) -> Option<Rc<Usage>> {
+        let (subject, is_outermost) = (entered.subject, entered.is_outermost);
         let can_be_merged = match subject {
             Subject::Binding(_) | Subject::Pattern(_) | Subject::This(_) => true,
             Subject::Result(_) | Subject::Expression(_) | Subject::Number(_) => false,
         };
-        let is_final = can_be_merged
-            && !ran_into_outer_subject
-            && had_full_budget
-            && self.count_unstable_answers() == unstable_answers;
-        let usage = computed.ok().map(Rc::new);
+        let (usage, is_stable, is_entry_of_cycle) = loop {
+            if was_set_aside {
+                walk.lowest_index = entered.lowest_index;
+                walk.found_something_new = entered.found_something_new;
+                was_set_aside = false;
+            } else {
+                // A walk that begins inside another goes on counting, so what it runs into of the other is further out.
+                entered.index = self.memo.types_in_progress.next_usage_index;
+                self.memo.types_in_progress.next_usage_index += 1;
+                let state = UsageState::InProgress {
+                    index: entered.index,
+                    assumed: entered.assumed.clone(),
+                };
+                self.memo.usages.insert(subject, state);
+                walk.lowest_index = entered.index;
+                entered.first_in_round = walk.in_cycles.len();
+            }
+            if is_outermost || !walk.shares_budget {
+                walk.remaining_nodes = walk.max_nodes;
+            }
+            self.statistics.usages_walked += 1;
+            walk.subjects_on_stack += 1;
+            let mut found = self.ask(|queries| Ok(queries.compute_usage(walk, subject)));
+            walk.subjects_on_stack -= 1;
+            if walk.is_freeing_stack {
+                entered.lowest_index = walk.lowest_index;
+                entered.found_something_new = walk.found_something_new;
+                walk.lowest_index = entered.outer_lowest;
+                walk.found_something_new = entered.outer_found_something_new;
+                walk.root = entered.outer_root;
+                walk.set_aside.push(entered);
+                return None;
+            }
+            if let (Ok(found), Some(assumed)) = (&mut found, &entered.assumed)
+                && *found != **assumed
+            {
+                found.merge(&mut Walk::new(u64::MAX), assumed);
+                if found.is_incomplete() {
+                    found.forget_parts();
+                }
+            }
+            let usage = found.ok().map(Rc::new);
+            walk.found_something_new |= usage != entered.assumed;
+            let is_stable =
+                self.count_unstable_answers() + walk.subjects_not_kept == entered.unstable_answers;
+            walk.shares_budget |= !is_stable;
+            let is_entry_of_cycle =
+                walk.lowest_index == entered.index && walk.in_cycles.len() > entered.first_in_round;
+            if !is_entry_of_cycle || !walk.found_something_new || walk.shares_budget {
+                break (usage, is_stable, is_entry_of_cycle);
+            }
+            for &other in &walk.in_cycles[entered.first_in_round..] {
+                if let Some(state) = self.memo.usages.get_mut(&other)
+                    && let UsageState::InCycle { found, .. } = state
+                {
+                    *state = UsageState::Assumed(Rc::clone(found));
+                }
+            }
+            (entered.assumed, walk.found_something_new) = (usage, false);
+        };
+        let (index, first_in_cycle) = (entered.index, entered.first_in_cycle);
+        let leads_back = walk.lowest_index < index;
+        let has_settled = !walk.found_something_new || !is_entry_of_cycle;
+        let is_cut_short = walk.shares_budget && walk.is_out_of_budget();
+        let found_something_new = std::mem::replace(
+            &mut walk.found_something_new,
+            entered.outer_found_something_new,
+        );
+        walk.root = entered.outer_root;
+        walk.remaining_nodes = match walk.shares_budget && !is_outermost {
+            true => entered.outer_nodes.min(walk.remaining_nodes),
+            false => entered.outer_nodes,
+        };
+        if leads_back && !is_outermost {
+            walk.lowest_index = walk.lowest_index.min(entered.outer_lowest);
+            walk.found_something_new |= found_something_new;
+            walk.in_cycles.push(subject);
+            let found = usage.clone().unwrap_or_default();
+            let state = UsageState::InCycle { index, found };
+            self.memo.usages.insert(subject, state);
+            return usage;
+        }
+        walk.lowest_index = entered.outer_lowest;
+        let is_kept = can_be_merged && is_stable && has_settled && !leads_back && !is_cut_short;
+        for other in walk.in_cycles.drain(first_in_cycle..) {
+            let Some(state) = self.memo.usages.get_mut(&other) else {
+                continue;
+            };
+            match state {
+                UsageState::InCycle { found, .. } if is_kept => {
+                    *state = UsageState::Known(Rc::clone(found));
+                }
+                UsageState::InCycle { .. } => {
+                    *state = UsageState::NotKept;
+                    if self.lacks_stack {
+                        self.memo.usages_that_lacked_stack.push(other);
+                    }
+                }
+                UsageState::Assumed(_) => {
+                    self.memo.usages.remove(&other);
+                }
+                UsageState::InProgress { .. } | UsageState::Known(_) | UsageState::NotKept => {}
+            }
+        }
         match &usage {
-            Some(usage) if is_final => {
+            Some(usage) if is_kept => {
                 let known = UsageState::Known(Rc::clone(usage));
                 self.memo.usages.insert(subject, known);
             }
             Some(_) | None => {
-                self.memo.usages.remove(&subject);
+                walk.subjects_not_kept += 1;
+                match can_be_merged {
+                    true => self.memo.usages.insert(subject, UsageState::NotKept),
+                    false => self.memo.usages.remove(&subject),
+                };
+                if can_be_merged && self.lacks_stack {
+                    self.memo.usages_that_lacked_stack.push(subject);
+                }
             }
         }
         usage
     }
 
+    /// With the stack free the checker answers what it gave up on, so they are walked as if for the first time. As
+    /// `NotKept` they would never be kept where a cycle is longer than one budget, nor would whatever leads to them.
+    pub(super) fn forget_usages_that_lacked_stack(&mut self) {
+        for subject in self.memo.usages_that_lacked_stack.drain(..) {
+            if let Some(UsageState::NotKept) = self.memo.usages.get(&subject) {
+                self.memo.usages.remove(&subject);
+            }
+        }
+    }
+
     fn compute_usage(&mut self, walk: &mut Walk, subject: Subject) -> Usage {
         let mut usage = Usage::default();
+        walk.root = &raw const usage;
         match subject {
             Subject::Binding(symbol) => {
                 let references = self.reference_index().to_bindings;
@@ -1729,13 +2114,21 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if walk.is_out_of_budget() {
             usage.facts |= Facts::INCOMPLETE;
         }
+        if usage.is_incomplete() {
+            usage.forget_parts();
+        }
         usage
     }
 
     fn add_uses_of_subject(&mut self, walk: &mut Walk, subject: Subject, usage: &mut Usage) {
+        let is_part = !std::ptr::eq(usage, walk.root);
         let Some(found) = self.usage_of(walk, subject) else {
             return;
         };
+        let is_kept = matches!(self.memo.usages.get(&subject), Some(UsageState::Known(_)));
+        if is_part && !is_kept {
+            return;
+        }
         let own_stores = Facts::STORED | Facts::OBJECT_LITERAL_STORED;
         let is_stored = usage.facts & own_stores;
         usage.merge(walk, &found);
@@ -1753,7 +2146,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn add_evidence(&mut self, walk: &mut Walk, value: ExprId, usage: &mut Usage) {
-        if self.c.is_stack_low() || !walk.enter_node() {
+        if self.c.is_stack_low() || !walk.enter_node_of(usage) {
             return;
         }
         let Ok(checked) = self.expression_type(value) else {
@@ -1776,6 +2169,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 usage.facts |= required_if(!is_optional);
                 match self.calls_its_object(access) {
                     true => usage.facts |= Facts::FUNCTION,
+                    false if walk.is_out_of_budget() => {}
                     false => {
                         self.add_evidence(walk, access, usage.member_mut(name));
                         self.add_uses_of_elements_in_callbacks(walk, access, name, usage);
@@ -2050,7 +2444,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if is_index {
             self.add_evidence(walk, access, usage.elements_mut());
         } else if let Some(name) = self.c.property_name_of_type(key_type) {
-            self.add_evidence(walk, access, usage.member_mut(name));
+            if !walk.is_out_of_budget() {
+                self.add_evidence(walk, access, usage.member_mut(name));
+            }
         } else {
             usage.facts |= Facts::OBJECT;
         }
@@ -2065,7 +2461,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn add_uses_of_pattern(&mut self, walk: &mut Walk, pattern: PatId, usage: &mut Usage) {
-        if self.c.is_stack_low() || !walk.enter_node() {
+        if self.c.is_stack_low() || !walk.enter_node_of(usage) {
             return;
         }
         let hir = self.hir();

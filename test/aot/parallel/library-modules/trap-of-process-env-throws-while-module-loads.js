@@ -1,5 +1,5 @@
 // process.env is a Proxy of the program, and its trap throws once while node:test loads: what the next require of the module does.
-// Plain Bun runs the body of the module again. An executable runs it once and keeps what it threw, as for a file of the program.
+// The body of the module runs again.
 const real = process.env;
 let reads = 0;
 process.env = new Proxy(real, {
@@ -19,7 +19,7 @@ process.env = real;
 console.log(typeof require("node:path").join, typeof require("node:util").inspect);
 /* Output:
 1 thrown at read 2
-2 thrown at read 2
-3 thrown at read 2
+2 function
+3 function
 function function
 */

@@ -71,10 +71,14 @@ A `.wasm` file that you import is compiled at build time. Bytes that your progra
 ```ts app.ts icon="/icons/typescript.svg"
 await import("./plugins/" + name + ".ts"); // finds plugins/*.ts
 await import(new URL(`./plugins/${name}.ts`, import.meta.url)); // same
+await import(`@/plugins/${name}.ts`); // same, with "paths": { "@/*": ["./*"] } in tsconfig.json
+await import(`locales/data/${name}.js`); // finds node_modules/locales/data/*.js
 await import(name); // finds the entry points, and files whose path is a string in your code
 ```
 
 The build compiles every file it can reach from your entry point. Where a path isn't a constant, it uses the parts that are. `__dirname`, `import.meta.dir`, `import.meta.url`, `path.join()`, `new URL()`, `require.resolve()`, `process.platform` and `process.arch` count as constants, so the usual loader of a native addon works.
+
+With a `baseUrl` in `tsconfig.json`, or a key like `"*"` in its `paths`, a name like the last one can also mean one of your own files. An executable then holds your files that match and leaves the package's files on disk, as `bun build --compile` does without `--aot`. `bun test --aot` compiles both.
 
 A file that the build compiled is also found by a relative path that's written out as a string somewhere in your code, like `"./plugins/a.ts"` or the `"/plugins/a.ts"` in `import.meta.dir + "/plugins/a.ts"`, however that string and the loader meet: through a variable, a function, or a `require` that's stored in an object.
 
@@ -119,7 +123,10 @@ Every `import`, and every `require()` of a constant path, is resolved at build t
 - `Module._resolveFilename` and `Module.prototype.require` can be replaced, but Bun only calls them for dynamic paths. For aliases, use `paths` in `tsconfig.json` or `imports` in `package.json`.
 - `Module._extensions[".js"] = loader` throws. You don't need `@babel/register` or anything like it, because the build compiles TypeScript and JSX.
 - A tracer that patches modules as they load, like OpenTelemetry's auto-instrumentation, sees none of them.
+- A plugin that your program registers with `Bun.plugin()` answers for code that's loaded at run time, so `build.module("lodash", ...)` doesn't replace a `lodash` that was compiled into the executable. That's the same with `--no-aot`.
 - A module runs once, as in every executable. `require.cache` doesn't list compiled modules, and `delete require.cache[path]` does nothing.
+- `require.cache["fs"] = { exports: fake }` makes `require("fs")` answer with `fake`, as in `bun run`, if the build can read the key. Under a computed key that turns out to be `"fs"`, the store throws.
+- `Bun.main = path` changes what `require.main`, `require.main === module` and `import.meta.main` answer, as in `bun run`, if the build can see the assignment. One that it can't see throws a `TypeError`: `Bun[key] = path` with a computed key, or `Bun.main = path` in [code from a string](#code-from-strings).
 
 ## A store to `undefined` or `null`
 
@@ -137,15 +144,15 @@ undefined[key] = 1; // bun run prints "converted" and throws. An executable only
 
 ## Error messages
 
-The class of an error, its line and its stack trace are the same. Where `bun run` quotes your source in the message, an executable quotes it from the text it keeps for `fn.toString()`. It keeps that for a function your program can use as a value, such as a callback or a method. For a function that is only ever called directly, or with [`--no-compile-function-source`](/compiler/size), it quotes less. [`bun test --aot`](/compiler/debugging#run-your-tests-compiled) has your files beside it and reads the line from there, so it quotes those functions too.
+The class of an error, its line and its stack trace are the same. Where `bun run` quotes your source in the message, an executable quotes it from the text of your functions, which it also keeps for `fn.toString()`, and of the statements at the top level of your files. With [`--no-compile-function-source`](/compiler/size) it has no text and quotes less. [`bun test --aot`](/compiler/debugging#run-your-tests-compiled) has your files beside it and reads the line from there.
 
 ```txt
 bun run      TypeError: null is not an object (evaluating 'o.a.c')
-bun compile  TypeError: null is not an object (evaluating 'o.a.c')   the text is there
-bun compile  TypeError: null is not an object (evaluating 'null.c')  it is not
+bun compile  TypeError: null is not an object (evaluating 'o.a.c')
+bun compile  TypeError: null is not an object (evaluating 'null.c')  without the text
 ```
 
-The quote is your source without its types, not what Bun's transpiler prints from it: `f(1 + 2)` is not folded to `f(3)`, and a constant is not replaced by its value. It also quotes less where one line reads the same property from two different objects, and where a call spans several lines.
+`bun run` quotes what its transpiler prints from your source, so `f(1 + 2)` reads `f(3)`, a constant reads as its value, and `const r = f(x); return r.y` reads `f(x).y`. An executable and `bun test --aot` quote the same. `fn.toString()` in an executable still returns your source without its types. The quote can differ in other rewrites, such as `if (a) return b; return c`, and it's shorter where a call spans several lines. An executable doesn't keep the source of Bun's built-in modules, so when an error is thrown inside one, for example after your code replaces `Object.keys`, the quoted expression can differ too.
 
 Check `error.name` or use `instanceof`, not `error.message`. A service that groups errors by message, such as Sentry, shows new groups. An uncaught error prints [without the source excerpt](/compiler/debugging#stack-traces) that `bun run` shows above it.
 

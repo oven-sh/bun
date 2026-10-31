@@ -312,9 +312,9 @@ function f1 name="Pair" module=m0 position=1151 kind=BaseConstructor flags=[HasN
   b0(v0: anything, v1: number):
     Jump -> next b1() @1151
   b1():
-    v2 = GetConstructPrototype v0 layout=L0 @1094
-    v3 = NewObject v2 layout=L0 @1094
-    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1094
+    v2 = GetConstructPrototype v0 layout=L0 @1151
+    v3 = NewObject v2 layout=L0 @1151
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1151
     v5 = CallDirect v4 function=f2 @1151
     v6 = Convert v1 declared={type=number site=w24} @1173
     PropSet v4, v6 key="first" @1173
@@ -369,108 +369,104 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f9 callPosition=1216 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f2 callPosition=1151 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: anything = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
-# CHECK-NEXT: v1: anything ~ builtin(ProcessArgv) = Upcast v0 castType=anything
-# CHECK-NEXT: v2: anything = PropGet v1 key="length" accessSite=1
-# CHECK-NEXT: v3: undefined|number = AssumeType v2 provenType=undefined|number
-# CHECK-NEXT: v4: undefined|number ~ number = Expect v3 expectedType=number
-# CHECK-NEXT: v5: 0 = Integer
-# CHECK-NEXT: v6: boolean = Greater v4, v5
-# CHECK-NEXT: v7: 2 = Integer integer=2
-# CHECK-NEXT: v8: undefined = CallBuiltin -, v6, v7 overload=ConsoleLog/0 accessSite=6
-# CHECK-NEXT: v9: "7" = String string="7"
-# CHECK-NEXT: v10: undefined = Undefined
-# CHECK-NEXT: v11: null|boolean|number|string|object = CallBuiltin -, v9, v10 overload=JSONParse/0 accessSite=8
-# CHECK-NEXT: v12: null|boolean|number|string|object ~ number = Upcast v11 castType=anything
-# CHECK-NEXT: v13: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v14: 3 = Integer integer=3
-# CHECK-NEXT: v15: undefined = CallBuiltin v13, v12, v14 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=13
-# CHECK-NEXT: v16: "true" = String string="true"
-# CHECK-NEXT: v17: undefined = Undefined
-# CHECK-NEXT: v18: null|boolean|number|string|object = CallBuiltin -, v16, v17 overload=JSONParse/0 accessSite=15
-# CHECK-NEXT: v19: null|boolean|number|string|object ~ boolean = Upcast v18 castType=anything
-# CHECK-NEXT: v20: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v21: 4 = Integer integer=4
-# CHECK-NEXT: v22: undefined = CallBuiltin v20, v19, v21 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=20
-# CHECK-NEXT: v23: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v24: 5 = Integer integer=5
-# CHECK-NEXT: v25: undefined = CallBuiltin v23, v12, v24 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=26
-# CHECK-NEXT: v26: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v27: 6 = Integer integer=6
-# CHECK-NEXT: v28: undefined = CallBuiltin v26, v12, v27 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=32
-# CHECK-NEXT: v29: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v30: 8 = Integer integer=8
-# CHECK-NEXT: v31: number|string|bigint ~ number = Add v12, v30
-# CHECK-NEXT: v32: undefined = CallBuiltin v29, v31 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=37
-# CHECK-NEXT: v33: "10" = String string="10"
-# CHECK-NEXT: v34: undefined = Undefined
-# CHECK-NEXT: v35: null|boolean|number|string|object = CallBuiltin -, v33, v34 overload=JSONParse/0 accessSite=39
-# CHECK-NEXT: v36: null|boolean|number|string|object ~ number = Upcast v35 castType=anything
-# CHECK-NEXT: v37: 9 = Integer integer=9
-# CHECK-NEXT: v38: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v39: undefined = CallBuiltin v38, v36, v37 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=45
-# CHECK-NEXT: v40: "\"a text\"" = String string="\"a text\""
-# CHECK-NEXT: v41: undefined = Undefined
-# CHECK-NEXT: v42: null|boolean|number|string|object = CallBuiltin -, v40, v41 overload=JSONParse/0 accessSite=47
-# CHECK-NEXT: v43: null|boolean|number|string|object ~ number = Upcast v42 castType=anything
-# CHECK-NEXT: v44: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v45: 11 = Integer integer=11
-# CHECK-NEXT: v46: undefined = CallBuiltin v44, v43, v45 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=52
-# CHECK-NEXT: v47: "[]" = String string="[]"
-# CHECK-NEXT: v48: boolean = JSONSourceOpen v47
-# CHECK-NEXT: Branch v48 -> taken b1(| 0), notTaken b5()
-# CHECK-NEXT: b1(v49: guard):
-# CHECK-NEXT: v50: cursor = JSONSourceStart v49
-# CHECK-NEXT: v51: cursor = JSONSkipWhitespace v50
-# CHECK-NEXT: v52: undefined = CallDirect v51 function=f7
-# CHECK-NEXT: v53: int[0, 2] = ResultAt v52
-# CHECK-NEXT: v54: undefined|null|Array<number> = ResultAt v52 index=1
-# CHECK-NEXT: v55: cursor = ResultAt v52 index=2
-# CHECK-NEXT: Switch v53 cases=[1] -> case b2(), otherwise b4()
+# CHECK-NEXT: v0: Array<string> = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
+# CHECK-NEXT: v1: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v2: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0 accessSite=1
+# CHECK-NEXT: v3: 0 = Integer
+# CHECK-NEXT: v4: boolean = Greater v2, v3
+# CHECK-NEXT: v5: 2 = Integer integer=2
+# CHECK-NEXT: v6: undefined = CallBuiltin -, v4, v5 overload=ConsoleLog/0 accessSite=6
+# CHECK-NEXT: v7: "7" = String string="7"
+# CHECK-NEXT: v8: undefined = Undefined
+# CHECK-NEXT: v9: null|boolean|number|string|object = CallBuiltin -, v7, v8 overload=JSONParse/0 accessSite=8
+# CHECK-NEXT: v10: null|boolean|number|string|object ~ number = Upcast v9 castType=anything
+# CHECK-NEXT: v11: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v12: 3 = Integer integer=3
+# CHECK-NEXT: v13: undefined = CallBuiltin v11, v10, v12 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=13
+# CHECK-NEXT: v14: "true" = String string="true"
+# CHECK-NEXT: v15: undefined = Undefined
+# CHECK-NEXT: v16: null|boolean|number|string|object = CallBuiltin -, v14, v15 overload=JSONParse/0 accessSite=15
+# CHECK-NEXT: v17: null|boolean|number|string|object ~ boolean = Upcast v16 castType=anything
+# CHECK-NEXT: v18: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v19: 4 = Integer integer=4
+# CHECK-NEXT: v20: undefined = CallBuiltin v18, v17, v19 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=20
+# CHECK-NEXT: v21: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v22: 5 = Integer integer=5
+# CHECK-NEXT: v23: undefined = CallBuiltin v21, v10, v22 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=26
+# CHECK-NEXT: v24: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v25: 6 = Integer integer=6
+# CHECK-NEXT: v26: undefined = CallBuiltin v24, v10, v25 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=32
+# CHECK-NEXT: v27: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v28: 8 = Integer integer=8
+# CHECK-NEXT: v29: number|string|bigint ~ number = Add v10, v28
+# CHECK-NEXT: v30: undefined = CallBuiltin v27, v29 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=37
+# CHECK-NEXT: v31: "10" = String string="10"
+# CHECK-NEXT: v32: undefined = Undefined
+# CHECK-NEXT: v33: null|boolean|number|string|object = CallBuiltin -, v31, v32 overload=JSONParse/0 accessSite=39
+# CHECK-NEXT: v34: null|boolean|number|string|object ~ number = Upcast v33 castType=anything
+# CHECK-NEXT: v35: 9 = Integer integer=9
+# CHECK-NEXT: v36: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v37: undefined = CallBuiltin v36, v34, v35 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=45
+# CHECK-NEXT: v38: "\"a text\"" = String string="\"a text\""
+# CHECK-NEXT: v39: undefined = Undefined
+# CHECK-NEXT: v40: null|boolean|number|string|object = CallBuiltin -, v38, v39 overload=JSONParse/0 accessSite=47
+# CHECK-NEXT: v41: null|boolean|number|string|object ~ number = Upcast v40 castType=anything
+# CHECK-NEXT: v42: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v43: 11 = Integer integer=11
+# CHECK-NEXT: v44: undefined = CallBuiltin v42, v41, v43 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=52
+# CHECK-NEXT: v45: "[]" = String string="[]"
+# CHECK-NEXT: v46: boolean = JSONSourceOpen v45
+# CHECK-NEXT: Branch v46 -> taken b1(| 0), notTaken b5()
+# CHECK-NEXT: b1(v47: guard):
+# CHECK-NEXT: v48: cursor = JSONSourceStart v47
+# CHECK-NEXT: v49: cursor = JSONSkipWhitespace v48
+# CHECK-NEXT: v50: undefined = CallDirect v49 function=f7
+# CHECK-NEXT: v51: int[0, 2] = ResultAt v50
+# CHECK-NEXT: v52: undefined|null|Array<number> = ResultAt v50 index=1
+# CHECK-NEXT: v53: cursor = ResultAt v50 index=2
+# CHECK-NEXT: Switch v51 cases=[1] -> case b2(), otherwise b4()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v56: boolean = JSONSourceClose v49, v55
-# CHECK-NEXT: Branch v56 -> taken b3(), notTaken b5()
+# CHECK-NEXT: v54: boolean = JSONSourceClose v47, v53
+# CHECK-NEXT: Branch v54 -> taken b3(), notTaken b5()
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v57: null|Array<number> = AssumeType v54 provenType=null|boolean|number|string|object
-# CHECK-NEXT: Jump -> next b6(v57)
+# CHECK-NEXT: v55: null|Array<number> = AssumeType v52 provenType=null|boolean|number|string|object
+# CHECK-NEXT: Jump -> next b6(v55)
 # CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: JSONSourceAbandon v49
+# CHECK-NEXT: JSONSourceAbandon v47
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v59: undefined = Undefined
-# CHECK-NEXT: v60: null|boolean|number|string|object = CallBuiltin -, v47, v59 overload=JSONParse/0 accessSite=54
-# CHECK-NEXT: Jump -> next b6(v60)
-# CHECK-NEXT: b6(v61: null|boolean|number|string|object ~ null|Array<number>):
-# CHECK-NEXT: v62: 0 = Integer
-# CHECK-NEXT: v63: anything ~ undefined|number = ElemGet v61, v62 accessSite=55 [keyIsIntegral]
-# CHECK-NEXT: v64: anything ~ number = Upcast v63 castType=anything
-# CHECK-NEXT: v65: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v66: 12 = Integer integer=12
-# CHECK-NEXT: v67: undefined = CallBuiltin v65, v64, v66 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=60
-# CHECK-NEXT: v68: 13 = Integer integer=13
-# CHECK-NEXT: v69: 0 = Integer
-# CHECK-NEXT: v70: L9 = NewObject -, v69, v68 layout=L9 fields=[0, 1] allocationSite=11 allocationClass=9
-# CHECK-NEXT: PropSet v70, v43 key="held"
-# CHECK-NEXT: v72: L9 = FinishObject v70
-# CHECK-NEXT: v73: Array<L9, Contiguous> = NewArray v72 contents=L9 allocationSite=10 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v74: Array<L9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v73 provenType=Array<L9, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v75: 1 = Integer integer=1
-# CHECK-NEXT: v76: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v57: undefined = Undefined
+# CHECK-NEXT: v58: null|boolean|number|string|object = CallBuiltin -, v45, v57 overload=JSONParse/0 accessSite=54
+# CHECK-NEXT: Jump -> next b6(v58)
+# CHECK-NEXT: b6(v59: null|boolean|number|string|object ~ null|Array<number>):
+# CHECK-NEXT: v60: 0 = Integer
+# CHECK-NEXT: v61: anything ~ undefined|number = ElemGet v59, v60 accessSite=55 [keyIsIntegral]
+# CHECK-NEXT: v62: anything ~ number = Upcast v61 castType=anything
+# CHECK-NEXT: v63: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v64: 12 = Integer integer=12
+# CHECK-NEXT: v65: undefined = CallBuiltin v63, v62, v64 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=60
+# CHECK-NEXT: v66: 13 = Integer integer=13
+# CHECK-NEXT: v67: L9 = NewObject -, v41, v66 layout=L9 fields=[0, 1] allocationSite=11 allocationClass=9
+# CHECK-NEXT: v68: L9 = FinishObject v67
+# CHECK-NEXT: v69: Array<L9, Contiguous> = NewArray v68 contents=L9 allocationSite=10 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v70: Array<L9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v69 provenType=Array<L9, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v71: 1 = Integer integer=1
+# CHECK-NEXT: v72: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v73: 0 = Integer
+# CHECK-NEXT: v74: undefined|L9 = GetArrayElement v70, v73 arrayStorage=Contiguous level=Proven accessSite=65 [keyIsIntegral]
+# CHECK-NEXT: v75: L9 = RequireObjectCoercible v74 name="held"
+# CHECK-NEXT: v76: anything ~ number = GetSlot v75 key="held" receivers=[L9] level=Proven accessSite=66
 # CHECK-NEXT: v77: 0 = Integer
-# CHECK-NEXT: v78: undefined|L9 = GetArrayElement v74, v77 arrayStorage=Contiguous level=Proven accessSite=65 [keyIsIntegral]
-# CHECK-NEXT: v79: L9 = RequireObjectCoercible v78 name="held"
-# CHECK-NEXT: v80: anything ~ number = PropGet v79 key="held" accessSite=66 receivers=[L9]
+# CHECK-NEXT: v78: undefined|L9 = GetArrayElement v70, v77 arrayStorage=Contiguous level=Proven accessSite=67 [keyIsIntegral]
+# CHECK-NEXT: v79: L9 = RequireObjectCoercible v78 name="thirteen"
+# CHECK-NEXT: v80: 13 = Integer integer=13
 # CHECK-NEXT: v81: 0 = Integer
-# CHECK-NEXT: v82: undefined|L9 = GetArrayElement v74, v81 arrayStorage=Contiguous level=Proven accessSite=67 [keyIsIntegral]
-# CHECK-NEXT: v83: L9 = RequireObjectCoercible v82 name="thirteen"
-# CHECK-NEXT: v84: 13 = Integer integer=13
-# CHECK-NEXT: v85: 0 = Integer
-# CHECK-NEXT: v86: undefined|L9 = GetArrayElement v74, v85 arrayStorage=Contiguous level=Proven accessSite=69 [keyIsIntegral]
-# CHECK-NEXT: v87: L9 = ToObject v86 calledBuiltin=ObjectKeys
-# CHECK-NEXT: v88: Array<string> = CallBuiltin -, v87 overload=ObjectKeys/0 accessSite=70
-# CHECK-NEXT: v89: Array<"held"|"thirteen", proven, pristine[Storage, Names, Dense]> = AssumeType v88 provenType=Array<"held"|"thirteen", proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v90: string = CallBuiltin v89 overload=ArrayPrototypeJoin/0 accessSite=72
-# CHECK-NEXT: v91: undefined = CallBuiltin v76, v80, v84, v90 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=73
-# CHECK-NEXT: v92: undefined = Undefined
-# CHECK-NEXT: Return v92
+# CHECK-NEXT: v82: undefined|L9 = GetArrayElement v70, v81 arrayStorage=Contiguous level=Proven accessSite=69 [keyIsIntegral]
+# CHECK-NEXT: v83: L9 = ToObject v82 calledBuiltin=ObjectKeys
+# CHECK-NEXT: v84: Array<string> = CallBuiltin -, v83 overload=ObjectKeys/0 accessSite=70
+# CHECK-NEXT: v85: Array<"held"|"thirteen", proven, pristine[Storage, Names, Dense]> = AssumeType v84 provenType=Array<"held"|"thirteen", proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v86: string = CallBuiltin v85 overload=ArrayPrototypeJoin/0 accessSite=72
+# CHECK-NEXT: v87: undefined = CallBuiltin v72, v76, v80, v86 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=73
+# CHECK-NEXT: v88: undefined = Undefined
+# CHECK-NEXT: Return v88
 # CHECK-NEXT: }

@@ -171,11 +171,23 @@ interface::define_linked_functions! {
         crate::load::replaced_by_tests::find_what_tests_replace(files, threads, resolve)
     }
 
+    fn bun_aot_everything_that_tests_replace() -> ReplacedByTests {
+        crate::load::replaced_by_tests::everything_that_tests_replace()
+    }
+
     fn bun_aot_library_modules_that_programs_load() -> Vec<&'static [u8]> {
         crate::load::runtime_modules::library_modules_that_programs_load()
     }
 
     fn bun_aot_builtins_that_load_library_modules() -> Vec<String> {
         crate::load::runtime_modules::builtins_that_load_library_modules()
+    }
+
+    fn bun_aot_library_modules_spelled_in(text: &[u8]) -> Option<Vec<&'static [u8]>> {
+        crate::load::runtime_modules::library_modules_spelled_in(text)
+    }
+
+    fn bun_aot_builtins_that_load_library_modules_spelled_in(text: &[u8]) -> Option<Vec<String>> {
+        crate::load::runtime_modules::builtins_that_load_library_modules_spelled_in(text)
     }
 }

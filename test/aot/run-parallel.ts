@@ -46,6 +46,16 @@
 //                                      A name as BUN_JSC_aotCountsPath writes it (operation:operationAOTGetById, counter:CompiledStructuresMade), or all of a kind:
 //                                      operations (calls into the run time), arrivals (accesses that look a name up), branches (two-way branches of compiled code
 //                                      that ran), cells and bytes (what compiled code and its stubs allocate), allCells (with what the run time allocates). The run has no collection. What the program starts counts too
+//   // COUNTER: <name> (= | >= | <=) <n>     the same, with the name as shell/expectations.py reads it, which asks the `jsc` shell: without its kind
+//                                      (CompiledStructuresMade, LookupTableBases, operationAOTGetById)
+//                                      Each of the three may end with ` Todo: <why>`: it is not met today. It is asked all the same, and fails once it is met: the words go out.
+//                                      The rest of the program is held as ever. A name that nothing counts fails with or without them.
+//                                      A line that begins like one of the three and is not of that form fails the program: nothing that looks like a bound is passed over.
+//                                      In a folder with a main file they may stand in any file: none of the others is a program
+// A program may also ask while it runs: `typeof aotOperationCount === "function"`, and so for aotRuntimeCounters and aotBuiltinEntries. Only the `jsc` shell has these functions.
+// In an executable there is none, the program counts nothing and says what it says for 0. So a program that names one and has passed also runs in the shell, as
+// shell/quick.py runs it, and must print there what plain Bun prints: stage `count`. The shell and `testaot` are looked for as shell/tools.ts says. Where one of them is
+// missing the line of the program says so (`countsNotAsked`), and so does a line on stderr at the end: it has not passed whatever it counts, it was not asked.
 // Those lines may also stand at the end, in front of the last comment: a stored output may name lines of the program, and a line more at the top moves them.
 // It may end with a comment that says what is expected where that is not what plain Bun does:
 //   /* Output: .. */                   what the executable prints. Behind a line `exit code <n>` stands the line that names the error
@@ -56,6 +66,7 @@
 //
 // Prints a line of JSON when it takes a file ({ file, state: "compiling" }) and one when the file is through
 // ({ file, state: "pass", compileMs, runMs, plainMs, buildMB, runMB }, { file, state: "fail", stage, message, expected, actual } or { file, state: "skip", message }).
+// `shellMs`: what its run in the shell took.
 // One such line a file, when every way to build it is through. `ways` says how each went.
 //
 // Every build and every run has a time limit. What passes it is ended with everything it started, and the program fails alone.
@@ -79,10 +90,11 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { availableMemory, endAtMemoryLimitTogether } from "./harness/memory-limit";
 import { withoutCoreDump } from "./harness/without-core-dump";
 import "./harness/without-installing-packages";
+import { canWriteProgram, findTool, whyNoScriptStarts } from "./shell/find-tools";
 
 /** `overLimit`: why the driver ended it. */
 type Output = { exitCode: number | null; signal: string | null; stdout: string; stderr: string; overLimit?: string };
-type Bound = { name: string; relation: string; bound: number };
+type Bound = { kind: string; name: string; relation: string; bound: number; todo?: string };
 type Program = {
   file: string;
   path: string;
@@ -105,6 +117,8 @@ type Program = {
   todo?: string;
   statistics: Bound[];
   counts: Bound[];
+  boundsNotRead: string[];
+  asksTheShell: boolean;
   output?: string;
   buildErrors?: string;
   way: "compiled" | "erased";
@@ -177,6 +191,9 @@ const expectedTimeOf = (programs: Program[]) =>
         800 * (sharesLibrary(program) ? 1 : program.weight)),
     0,
   );
+// As shell/quick.py has it. Under Bun fixtures/jsc-shell-functions.ts answers memoryUsageStatistics.
+const namesFunctionThatCounts = /\b(?:aotOperationCount|aotRuntimeCounters|aotBuiltinEntries)\b/;
+const quick = join(import.meta.dir, "shell", "quick.py");
 const longestCommandLine = 30_000;
 const longestTextShown = 16 * 1024;
 
@@ -405,7 +422,10 @@ setInterval(() => {
 }, 10_000).unref();
 
 const processes = Object.fromEntries(
-  ["builds", "executables", "references"].map(kind => [kind, { count: 0, ms: 0, cpuMs: 0, longestMs: 0, longest: "" }]),
+  ["builds", "executables", "references", "runs in the shell"].map(kind => [
+    kind,
+    { count: 0, ms: 0, cpuMs: 0, longestMs: 0, longest: "" },
+  ]),
 );
 let lastToEnd = "";
 function noteProcess(cmd: string[], cwd: string, startsAt: string | undefined, ms: number, cpuMs: number) {
@@ -413,8 +433,17 @@ function noteProcess(cmd: string[], cwd: string, startsAt: string | undefined, m
   const entryPoints = cmd.filter(word => /^\.\.?\//.test(word) || word.startsWith(root));
   const what = isBuild
     ? `${entryPoints.length} entry points from ${relative(root, resolve(cwd, entryPoints[0] ?? "."))}`
-    : (startsAt ?? relative(root, cmd[0] === process.execPath ? cmd[1] : cwd));
-  const kind = processes[isBuild ? "builds" : cmd[0] === process.execPath ? "references" : "executables"];
+    : (startsAt ?? (cmd[1] === quick ? cmd[2] : relative(root, cmd[0] === process.execPath ? cmd[1] : cwd)));
+  const kind =
+    processes[
+      isBuild
+        ? "builds"
+        : cmd[0] === process.execPath
+          ? "references"
+          : cmd[1] === quick
+            ? "runs in the shell"
+            : "executables"
+    ];
   kind.count++;
   kind.ms += ms;
   kind.cpuMs += cpuMs;
@@ -560,6 +589,12 @@ function settle(program: Program, verdict: Record<string, unknown>) {
       compileMs: sum("compileMs"),
       runMs: sum("runMs"),
       plainMs: sum("plainMs"),
+      // Of the way that asked.
+      ...Object.fromEntries(
+        ["shellMs", "countsNotAsked"].flatMap(name =>
+          all.filter(verdict => name in verdict).map(verdict => [name, verdict[name]]),
+        ),
+      ),
     }),
     ways: Object.fromEntries(all.map(({ way, state }) => [way, state])),
   });
@@ -580,6 +615,14 @@ function fail(program: Program, stage: string, message: string, actual?: Output,
   });
 }
 
+/** Only a COUNT names what is counted with its kind in front. */
+function readBound(line: string) {
+  const [, kind, name, relation, bound, todo] =
+    /^\/\/ (STATISTIC|COUNT|COUNTER): ([\w:]+) (=|>=|<=) (\d+)(?: Todo: (.+))?$/.exec(line) ?? [];
+  if (kind === undefined || (kind !== "COUNT" && name.includes(":"))) return undefined;
+  return { kind, name, relation, bound: Number(bound), todo };
+}
+
 function read(file: string): Program {
   const path = resolve(file);
   const text = readFileSync(path, "utf8");
@@ -595,6 +638,17 @@ function read(file: string): Program {
       .replaceAll("*\\/", "*/")
       .replaceAll("\r\n", "\n");
   const flags = [...words("Flags"), ...moreFlags.filter(flag => !words("Flags").includes(flag))];
+  const others = /[\\/]main\.[a-z]+$/.test(path)
+    ? readdirSync(dirname(path), { recursive: true, encoding: "utf8" })
+        .filter(name => /\.[cm]?[jt]sx?$/.test(name) && !name.includes("node_modules"))
+        .map(name => join(dirname(path), name))
+        .filter(other => other !== path && statSync(other).isFile())
+    : [];
+  const texts = [text, ...others.map(other => readFileSync(other, "utf8"))];
+  const boundLines = texts.flatMap(text =>
+    Array.from(text.matchAll(/^\/\/ (?:STATISTIC|COUNT|COUNTER):.*$/gm), ([line]) => line),
+  );
+  const bounds = boundLines.map(readBound).filter(bound => bound !== undefined);
   // Without whole-program analysis an executable holds the whole library.
   const namesModules =
     flags.includes("--aot-disable=flow-results") || someFileOf(path, text => namesMuchOfTheLibrary.test(text));
@@ -625,16 +679,10 @@ function read(file: string): Program {
     writesToBuiltIn: writesToBuiltIn.test(text),
     exitCode: Number(lines("Exit code")[0] ?? 0),
     todo: lines("Todo")[0],
-    statistics: Array.from(text.matchAll(/^\/\/ STATISTIC: (\w+) (=|>=|<=) (\d+)$/gm), ([, name, relation, bound]) => ({
-      name,
-      relation,
-      bound: Number(bound),
-    })),
-    counts: Array.from(text.matchAll(/^\/\/ COUNT: ([\w:]+) (=|>=|<=) (\d+)$/gm), ([, name, relation, bound]) => ({
-      name,
-      relation,
-      bound: Number(bound),
-    })),
+    statistics: bounds.filter(({ kind }) => kind === "STATISTIC"),
+    counts: bounds.filter(({ kind }) => kind !== "STATISTIC"),
+    boundsNotRead: boundLines.filter(line => !readBound(line)),
+    asksTheShell: texts.some(text => namesFunctionThatCounts.test(text)),
     output: last("Output"),
     buildErrors: last("Build errors"),
     way: "compiled",
@@ -703,6 +751,8 @@ function countedByRun(text: string) {
     const [count, name] = line.split("\t");
     if (name === undefined) continue;
     add(name, Number(count));
+    // As a COUNTER names it.
+    if (/^(?:counter|exit|limit|operation):/.test(name)) add(name.slice(name.indexOf(":") + 1), Number(count));
     // How arrivals are counted is no call that the program makes.
     if (name.startsWith("operation:") && name !== "operation:operationAOTRecordArrival")
       add("operations", Number(count));
@@ -721,25 +771,72 @@ const withoutCollections = {
 };
 
 function unmetBounds(counted: Map<string, number>, bounds: Bound[], who: string) {
-  return bounds
-    .filter(({ name, relation, bound }) => {
-      // With AddressSanitizer the allocators have shorter free lists, so compiled code calls the run time for a new one more often.
-      if (isASAN && name === "operations") return false;
-      // A Bun built with AddressSanitizer folds no null check into an access: it counts 0.
-      if (isASAN && name === "NullChecksFoldedIntoAccesses") return false;
-      // A function of the run time that nothing called has no line. The same shorter free lists make a function that also refills one count more: those entries are not the ones asked about.
-      const refills =
-        isASAN && name.startsWith("operation:") ? (counted.get("refilled:" + name.slice("operation:".length)) ?? 0) : 0;
-      const value = counted.has(name) ? counted.get(name)! - refills : name.startsWith("operation:") ? 0 : undefined;
-      return (
-        value === undefined ||
-        !(relation === "=" ? value === bound : relation === ">=" ? value >= bound : value <= bound)
-      );
-    })
-    .map(
-      ({ name, relation, bound }) =>
-        `${name} ${relation} ${bound}, but the ${who} counted ${counted.get(name) ?? "nothing of that name"}`,
-    );
+  return bounds.flatMap(({ name, relation, bound, todo }) => {
+    // With AddressSanitizer the allocators have shorter free lists, so compiled code calls the run time for a new one more often.
+    if (isASAN && name === "operations") return [];
+    // A Bun built with AddressSanitizer folds no null check into an access: it counts 0.
+    if (isASAN && name === "NullChecksFoldedIntoAccesses") return [];
+    // A function of the run time that nothing called has no line. The same shorter free lists make a function that also refills one count more: those entries are not the ones asked about.
+    const operation = /^(?:operation:)?(operationAOT\w+)$/.exec(name)?.[1];
+    const refills = isASAN && operation ? (counted.get("refilled:" + operation) ?? 0) : 0;
+    const value = counted.has(name) ? counted.get(name)! - refills : operation ? 0 : undefined;
+    if (value === undefined) return [`${name} ${relation} ${bound}, but the ${who} counted nothing of that name`];
+    const isMet = relation === "=" ? value === bound : relation === ">=" ? value >= bound : value <= bound;
+    if (todo !== undefined) return isMet ? [`${name} ${relation} ${bound} is met: its \`Todo:\` goes out`] : [];
+    return isMet ? [] : [`${name} ${relation} ${bound}, but the ${who} counted ${counted.get(name) ?? 0}`];
+  });
+}
+
+let toolsOfTheShell: { env?: Record<string, string | undefined>; python?: string; whyNot?: string } | undefined;
+/** Looked for when the first program asks: to see whether this Bun is a front end takes a build. */
+function findToolsOfTheShell() {
+  const jsc = process.env.JSC ?? findTool(process.execPath, "jsc");
+  const testaot = process.env.TESTAOT ?? findTool(process.execPath, "testaot");
+  const python = Bun.which("python3");
+  const { BUN_AOT_VERBOSE: _, ...env } = environmentOfBuilds;
+  const frontEnd =
+    process.env.FRONT_END ??
+    (!isWindows && jsc && testaot && python && canWriteProgram(process.execPath, env) ? process.execPath : undefined);
+  const whyNot = whyNoScriptStarts(process.execPath, undefined, { jsc, testaot, python, frontEnd });
+  if (whyNot) return { whyNot };
+  return {
+    python: python!,
+    env: {
+      ...env,
+      JSC: jsc,
+      TESTAOT: testaot,
+      FRONT_END: frontEnd,
+      PLAIN: process.execPath,
+      PROGRAMS: root,
+      WORK: join(folder, "shell"),
+      KNOWS_SHELL_FUNCTIONS: "1",
+    },
+  };
+}
+const countsNotAsked: string[] = [];
+type Asked = { failure?: string; output?: Output; shellMs?: number; countsNotAsked?: string };
+/**
+ * What a program says about the answers of a function that the shell alone has. `failure`: it does not hold. `countsNotAsked`: why nobody can tell here.
+ * A program that the shell cannot run fails too: nothing else holds its counts. shell/counts-known.txt lists what does not hold today.
+ */
+async function askTheShell(program: Program): Promise<Asked> {
+  const { python, env, whyNot } = (toolsOfTheShell ??= findToolsOfTheShell());
+  if (whyNot) {
+    countsNotAsked.push(program.file);
+    return { countsNotAsked: whyNot };
+  }
+  const path = relative(root, program.path).replaceAll("\\", "/");
+  const name = /\/main\.[a-z]+$/.test(path) ? dirname(path) : path.replace(/\.[a-z]+$/, "");
+  // A front end, a build and three runs.
+  const { output, ms } = await withSlot(() => start([python!, quick, name], root, env!, 3 * timeLimit([])));
+  const verdict = output.stdout
+    .split("\n")
+    .find(line => line.startsWith(`${name}: `))
+    ?.slice(name.length + 2);
+  if (verdict === undefined || output.overLimit)
+    return { failure: `shell/quick.py ended with ${describeEnd(output)} and has no verdict`, output };
+  if (verdict.startsWith("skipped: TODO: ")) return { shellMs: ms, countsNotAsked: verdict.slice("skipped: ".length) };
+  return /^same \(\d+ lines\)$/.test(verdict) ? { shellMs: ms } : { failure: `in the jsc shell: ${verdict}`, output };
 }
 
 /** Both ways to build a file are held to one run of the reference. */
@@ -757,6 +854,12 @@ async function run(programs: Program[]): Promise<void> {
   };
   const halves = () => inParts(2);
   const [first] = programs;
+  if (first.boundsNotRead.length)
+    return fail(
+      first,
+      "read",
+      `not of the form \`// STATISTIC | COUNT | COUNTER: <name> (= | >= | <=) <n>\`: ${first.boundsNotRead.join("; ")}`,
+    );
   const isAlone = isBuiltAlone(first);
   const buildsIn = isAlone ? dirname(first.path) : root;
   const entryPoints = programs.map(program => "./" + relative(buildsIn, program.path).replaceAll("\\", "/"));
@@ -935,7 +1038,11 @@ async function run(programs: Program[]): Promise<void> {
           buildMB: build.peakMB,
           runMB: Math.max(compiled.peakMB, plain?.peakMB ?? 0),
         };
-        const settleChecked = async (result: typeof passes & { plainMs?: number }) => {
+        const settleChecked = async (passed: typeof passes & { plainMs?: number }) => {
+          const asksNow = program.asksTheShell && program.way === "compiled" && !moreFlags.length;
+          const { failure, output, ...asked }: Asked = asksNow ? await askTheShell(program) : {};
+          if (failure) return fail(program, "count", failure, output);
+          const result = { ...passed, ...asked };
           if (!checksAtRunTime) return settle(program, result);
           const checked = await withSlotOfRun(() =>
             start([executable], cwd, { ...env, ...program.envOfExecutable, BUN_JSC_validateAOTRuntime: "1" }),
@@ -1050,6 +1157,7 @@ const isBuiltAlone = (program: Program) =>
   program.entryPoints.length > 0 ||
   program.statistics.length > 0 ||
   program.counts.length > 0 ||
+  program.boundsNotRead.length > 0 ||
   program.buildPrints.length > 0 ||
   Object.keys(program.envOfBuild).length > 0 ||
   program.buildErrors !== undefined ||
@@ -1111,5 +1219,10 @@ if (deals) {
 const runs = batches.map(run);
 void Promise.all(runs.filter((_, index) => !batches[index][0].runsByItself)).then(() => othersAreThrough.resolve());
 await Promise.all(runs);
+if (toolsOfTheShell?.whyNot)
+  console.error(
+    `NOT ASKED: ${countsNotAsked.length} programs ask the jsc shell what compiled code did, and ${toolsOfTheShell.whyNot}. ` +
+      `Nothing that they say about a count is held here: test/aot/counts-pinned-by-programs.test.ts holds it. ${countsNotAsked.join(" ")}`,
+  );
 console.error(describeTime());
 process.exit(hasFailed ? 1 : 0);

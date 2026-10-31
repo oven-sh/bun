@@ -321,7 +321,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return None;
         }
         // Where nothing can stand in the helpers' places there is no other way. A call of the helpers in the program would tell flow that every class has what any of them defines.
+        // A `const` that is still empty throws where it is read, and this way reads no callee.
         let is_certain = !callee.needs_guard()
+            && callee.holds_from_the_start
             && !plan.define_properties.needs_guard
             && plan.builtins_are_locked;
         let mut other_way = None;
@@ -362,7 +364,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
         let object = self.lower_expression(constructor);
         for (index, side) in sides.iter().enumerate() {
-            if side.is_empty() {
+            // The helper asks whether it was given a list, and an empty one is a list: `Constructor.prototype` is read for it.
+            let is_empty_list_of_prototype = index == 0
+                && site.args.len() > 1
+                && matches!(
+                    hir[self.file.skip_type_syntax(hir.id_at(site.args, 1))].kind,
+                    ExprKind::Array(_)
+                );
+            if side.is_empty() && !is_empty_list_of_prototype {
                 continue;
             }
             let target = if index == 0 {
@@ -955,6 +964,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
             removable: Default::default(),
             minifies_identifiers: false,
             obfuscates: false,
+            counts_executions: false,
         };
         let lowered = lower_program(files, options);
         let fragments = lowered.iter().map(|(_, lowered)| &lowered.fragment);

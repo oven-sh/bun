@@ -876,7 +876,7 @@ runtimefunction id=SetIteratorPrototypeNext function=f23 visibility=Private
 # CHECK-NEXT: b10():
 # CHECK-NEXT: v22: 0 = Integer
 # CHECK-NEXT: v23: L0 = NewObject -, v0, v22 layout=L0 fields=[0, 1] allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: Jump -> next b19(v23)
+# CHECK-NEXT: Jump -> next b18(v23)
 # CHECK-NEXT: b11() frequency=Unlikely:
 # CHECK-NEXT: v24: object = GetConstructPrototype v20 layout=L0
 # CHECK-NEXT: v25: L0 = NewObject v24 layout=L0 allocationClass=0
@@ -884,38 +884,35 @@ runtimefunction id=SetIteratorPrototypeNext function=f23 visibility=Private
 # CHECK-NEXT: v27: 0 = Integer
 # CHECK-NEXT: PropSet v25, v27 key="flags" accessSite=37 receivers=[L0, ..]
 # CHECK-NEXT: TryFinishBirth v25
-# CHECK-NEXT: Jump -> next b17(v25)
+# CHECK-NEXT: Jump -> next b16(v25)
 # CHECK-NEXT: b12(v29: anything ~ undefined|null|function):
 # CHECK-NEXT: v30: boolean = TypeTest v29 testedType=f8
-# CHECK-NEXT: Branch v30 -> taken b13(), notTaken b18()
+# CHECK-NEXT: Branch v30 -> taken b13(), notTaken b17()
 # CHECK-NEXT: b13():
 # CHECK-NEXT: v31: L1 = NewObject layout=L1 allocationClass=1
-# CHECK-NEXT: v32: boolean = HasLayoutPrototype v31
-# CHECK-NEXT: Branch v32 -> taken b14(| 0), notTaken b16()
+# CHECK-NEXT: v32: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1}, {kind=MemberPassedByStores layout=L1 key="kind"}, {kind=MemberPassedByStores layout=L1 key="flags"}]
+# CHECK-NEXT: Branch v32 -> taken b14(| 0), notTaken b15()
 # CHECK-NEXT: b14(v33: guard):
-# CHECK-NEXT: v34: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1}, {kind=MemberPassedByStores layout=L1 key="kind"}, {kind=MemberPassedByStores layout=L1 key="flags"}]
-# CHECK-NEXT: Branch v34 -> taken b15(| 0), notTaken b16()
-# CHECK-NEXT: b15(v35: guard):
-# CHECK-NEXT: v36: guard = AllGuards v33, v31, v35
-# CHECK-NEXT: PutSlotOrAdd v31, v36, v0 key="kind" receivers=[L1] level=Expected accessSite=98
-# CHECK-NEXT: v38: 0 = Integer
-# CHECK-NEXT: v39: guard = AllGuards v33, v31, v35
-# CHECK-NEXT: PutSlotOrAdd v31, v39, v38 key="flags" receivers=[L1] level=Expected accessSite=99
+# CHECK-NEXT: v34: guard = AllGuards v31, v33
+# CHECK-NEXT: PutSlotOrAdd v31, v34, v0 key="kind" receivers=[L1] level=Expected accessSite=98
+# CHECK-NEXT: v36: 0 = Integer
+# CHECK-NEXT: v37: guard = AllGuards v31, v33
+# CHECK-NEXT: PutSlotOrAdd v31, v37, v36 key="flags" receivers=[L1] level=Expected accessSite=99
 # CHECK-NEXT: FinishBirth v31
-# CHECK-NEXT: Jump -> next b19(v31)
-# CHECK-NEXT: b16() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b18(v31)
+# CHECK-NEXT: b15() frequency=Unlikely:
 # CHECK-NEXT: PropSet v31, v0 key="kind" accessSite=98 receivers=[L1]
-# CHECK-NEXT: v42: 0 = Integer
-# CHECK-NEXT: PropSet v31, v42 key="flags" accessSite=99 receivers=[L1]
+# CHECK-NEXT: v40: 0 = Integer
+# CHECK-NEXT: PropSet v31, v40 key="flags" accessSite=99 receivers=[L1]
 # CHECK-NEXT: TryFinishBirth v31
-# CHECK-NEXT: Jump -> next b17(v31)
-# CHECK-NEXT: b17(v44: L0|L1) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b16(v31)
+# CHECK-NEXT: b16(v42: L0|L1) frequency=Unlikely:
+# CHECK-NEXT: Return v42
+# CHECK-NEXT: b17() frequency=Unlikely:
+# CHECK-NEXT: v43: anything ~ object = Construct v29, -, v0 accessSite=40 callees=[f1, f8, ..]
+# CHECK-NEXT: Jump -> next b18(v43)
+# CHECK-NEXT: b18(v44: anything ~ L0|L1):
 # CHECK-NEXT: Return v44
-# CHECK-NEXT: b18() frequency=Unlikely:
-# CHECK-NEXT: v45: anything ~ object = Construct v29, -, v0 accessSite=40 callees=[f1, f8, ..]
-# CHECK-NEXT: Jump -> next b19(v45)
-# CHECK-NEXT: b19(v46: anything ~ L0|L1):
-# CHECK-NEXT: Return v46
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="sum"
 # CHECK: module=m0 position=794 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

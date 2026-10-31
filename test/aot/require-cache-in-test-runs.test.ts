@@ -1,7 +1,10 @@
-import { expect } from "bun:test";
+import { expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
 import { test } from "./supported";
+
+// supported.ts sets the limit for the first file of a process alone.
+setDefaultTimeout(120_000);
 
 const pkg = {
   "tsconfig.json": `{ "compilerOptions": { "noImplicitAny": false } }`,
@@ -57,6 +60,80 @@ test("delete require.cache[require.resolve(x)], then require() runs a file again
         const stillAgain = require("./counter.js");
         delete require.cache[require.resolve("./counter.js")];
         console.log(before, same, again, stillAgain, require("./counter.js"));
+      });`,
+  });
+});
+
+const dataFiles = {
+  "d.json": `{ "a": 1, "list": [1, 2] }`,
+  "d.jsonc": `// a comment\n{ "a": 2, "list": [1, 2], }`,
+  "d.json5": `{ a: 3, list: [1, 2], }`,
+  "d.toml": `a = 4\nlist = [1, 2]`,
+  "d.yaml": `a: 5\nlist:\n  - 1\n  - 2`,
+  "d.txt": `some text`,
+};
+
+test("a data file taken out of require.cache is read again", async () => {
+  await expectCompiledToRunAsPlain({
+    ...dataFiles,
+    "one.test.js": `
+      import { test } from "bun:test";
+      import { readFileSync, writeFileSync } from "node:fs";
+      function say(first, second, third) {
+        first.a = "changed";
+        console.log(JSON.stringify(first), JSON.stringify(second), first === second, second === third);
+      }
+      test("json", () => { const a = require("./d.json"); delete require.cache[require.resolve("./d.json")]; say(a, require("./d.json"), require("./d.json")); });
+      test("jsonc", () => { const a = require("./d.jsonc"); delete require.cache[require.resolve("./d.jsonc")]; say(a, require("./d.jsonc"), require("./d.jsonc")); });
+      test("json5", () => { const a = require("./d.json5"); delete require.cache[require.resolve("./d.json5")]; say(a, require("./d.json5"), require("./d.json5")); });
+      test("toml", () => { const a = require("./d.toml"); delete require.cache[require.resolve("./d.toml")]; say(a, require("./d.toml"), require("./d.toml")); });
+      test("yaml", () => { const a = require("./d.yaml"); delete require.cache[require.resolve("./d.yaml")]; say(a, require("./d.yaml"), require("./d.yaml")); });
+      test("text", () => {
+        const a = require("./d.txt");
+        delete require.cache[require.resolve("./d.txt")];
+        const b = require("./d.txt");
+        console.log(a.default, b.default, a === b, b === require("./d.txt"));
+      });
+      test("written again in between", () => {
+        const path = require.resolve("./d.json");
+        const text = readFileSync(path, "utf8");
+        const a = require("./d.json");
+        try {
+          writeFileSync(path, JSON.stringify({ a: 100, more: true }));
+          const same = require("./d.json");
+          delete require.cache[path];
+          const b = require("./d.json");
+          console.log(a.a, same === a, b.a, b.more, Object.keys(b).join());
+        } finally {
+          writeFileSync(path, text);
+        }
+      });`,
+  });
+});
+
+test("a data file taken out of require.cache under a key that nobody spells holds what the file holds", async () => {
+  await expectCompiledToRunAsPlain({
+    ...dataFiles,
+    "one.test.js": `
+      import { test } from "bun:test";
+      const outer = require.resolve("./d.toml");
+      test("a key in a variable of the module", () => {
+        const a = require("./d.toml");
+        delete require.cache[outer];
+        const b = require(outer);
+        console.log(a.a, b.a, a === b, b === require("./d.toml"));
+      });
+      test("a walk over the keys", () => {
+        const a = require("./d.yaml");
+        for (const key of Object.keys(require.cache)) if (key.endsWith(".yaml")) delete require.cache[key];
+        const b = require("./d.yaml");
+        console.log(a.a, b.a, a === b);
+      });
+      test("Reflect.deleteProperty", () => {
+        const a = require("./d.jsonc");
+        Reflect.deleteProperty(require.cache, require.resolve("./d.jsonc"));
+        const b = require("./d.jsonc");
+        console.log(a.a, b.a, a === b);
       });`,
   });
 });
@@ -451,6 +528,443 @@ test("modules with nothing to run are listed once their importer has run", async
         console.log(own());
       });`,
   });
+});
+
+const listsFilesOfSrc = `const listed = () => Object.keys(require.cache).filter(key => /[\\\\/]src[\\\\/]/.test(key)).map(key => key.replace(/.*[\\\\/]/, "")).sort().join();`;
+
+const filesToRequire = {
+  "src/constant.ts": `export const value = 7;`,
+  "src/empty.ts": `export {};`,
+  "src/functions.ts": `export function three() { return 3; }\nexport class Thing {}`,
+  "src/counts.ts": `const realm = globalThis as any;\nrealm.counted = (realm.counted ?? 0) + 1;\nexport const value = realm.counted;`,
+  "src/imports-constant.ts": `import { below } from "./constant-below";\nexport const value = below + 1;`,
+  "src/constant-below.ts": `export const below = 1;`,
+  "src/never.ts": `export const value = 9;`,
+};
+
+test("an ES module is listed once a require() in a function has loaded it, and not before", async () => {
+  await expectCompiledToRunAsPlain({
+    ...filesToRequire,
+    "one.test.ts": `
+      import { test } from "bun:test";
+      ${listsFilesOfSrc}
+      test("one by one", () => {
+        console.log(listed());
+        for (const load of [
+          () => require("./src/constant"),
+          () => require("./src/empty"),
+          () => require("./src/functions"),
+          () => require("./src/counts"),
+          () => require("./src/imports-constant"),
+          () => (globalThis as any).neverSet && require("./src/never"),
+        ]) {
+          load();
+          console.log(listed());
+        }
+      });
+      test("by its key", () => {
+        const path = require.resolve("./src/constant");
+        console.log(require.cache[path] !== undefined, path in require.cache, require.cache[path]?.exports === require("./src/constant"));
+        console.log(require.cache[require.resolve("./src/never")], require.resolve("./src/never") in require.cache);
+      });`,
+  });
+});
+
+test("a test of lazy loading sees the file that the first use requires", async () => {
+  const files = {
+    "src/feature.ts": `export function use() { return require("./heavy").big; }`,
+    "src/heavy.ts": `export const big = 1;`,
+  };
+  await expectCompiledToRunAsPlain({
+    ...files,
+    "one.test.ts": `
+      import { test } from "bun:test";
+      import { use } from "./src/feature";
+      const isLoaded = () => Object.keys(require.cache).some(key => key.endsWith("heavy.ts"));
+      test("loaded by its first use", () => { console.log(isLoaded(), use(), isLoaded()); });`,
+  });
+  await expectCompiledToRunAsPlain({
+    ...files,
+    "one.test.ts": `
+      import { test } from "bun:test";
+      import { use } from "./src/feature";
+      use();
+      test("used too early", () => { console.log(Object.keys(require.cache).some(key => key.endsWith("heavy.ts"))); });`,
+  });
+});
+
+test("an ES module that a file requires at its top level is listed", async () => {
+  await expectCompiledToRunAsPlain({
+    ...filesToRequire,
+    "src/requires-at-top.ts": `const inner = require("./required-at-top");\nexport const value = inner.value + 1;`,
+    "src/required-at-top.ts": `export const value = 1;`,
+    "src/commonjs-requires.cjs": `exports.value = require("./under-commonjs.ts").value;`,
+    "src/under-commonjs.ts": `export const value = 2;`,
+    "one.test.ts": `
+      import { test } from "bun:test";
+      ${listsFilesOfSrc}
+      const constant = require("./src/constant");
+      const behindFirst = listed();
+      const counts = require("./src/counts");
+      require("./src/empty");
+      require("./src/imports-constant");
+      require("./src/constant");
+      const behindAll = listed();
+      test("at the top of the test file", () => {
+        console.log(behindFirst);
+        console.log(behindAll);
+        console.log(listed());
+        console.log(require.cache[require.resolve("./src/constant")]?.exports === constant, require.cache[require.resolve("./src/counts")]?.exports === counts);
+      });
+      test("at the top of a file that is required", () => {
+        console.log(require("./src/requires-at-top").value, listed());
+        console.log(require("./src/commonjs-requires.cjs").value, listed());
+      });`,
+  });
+});
+
+test("a file is listed as soon as it has run, while the file that imports or requires it is still running", async () => {
+  await expectCompiledToRunAsPlain({
+    ...filesToRequire,
+    "src/reads-at-top.ts": `
+      import { below } from "./constant-below";
+      import { three } from "./functions";
+      import { value } from "./counts";
+      ${listsFilesOfSrc}
+      export const atTop = [listed(), below, three(), value].join(" ");`,
+    "src/requires-and-reads.ts": `
+      ${listsFilesOfSrc}
+      const others = () => listed().split(",").filter(name => name !== "requires-and-reads.ts").join();
+      const before = others();
+      require("./imports-constant");
+      const between = others();
+      require("./empty");
+      export const seen = [before, between, others()].join(" | ");`,
+    "imports.test.ts": `
+      import { test } from "bun:test";
+      import { atTop } from "./src/reads-at-top";
+      import { value } from "./src/constant";
+      ${listsFilesOfSrc}
+      const here = listed();
+      test("behind the imports", () => { console.log(atTop); console.log(here, value); });`,
+    "imports-nothing-to-run.test.ts": `
+      import { test } from "bun:test";
+      import { value } from "./src/constant";
+      import { three } from "./src/functions";
+      ${listsFilesOfSrc}
+      const here = listed();
+      test("behind the imports", () => { console.log(here, value, three()); });`,
+    "loads-later.test.ts": `
+      import { test } from "bun:test";
+      ${listsFilesOfSrc}
+      test("import()", async () => { console.log((await import("./src/reads-at-top")).atTop); console.log(listed()); });
+      test("require()", () => { console.log(require("./src/requires-and-reads").seen); console.log(listed()); });`,
+  });
+});
+
+const looksAtFiles = {
+  "src/look.cjs": `
+    exports.look = function look(path) {
+      const name = path.replace(/.*[\\\\/]/, "");
+      const entry = require.cache[path];
+      const listed = [Object.keys(require.cache).includes(path), path in require.cache].join();
+      if (!entry) return [name, listed, entry].join(" ");
+      let names;
+      try { names = Object.keys(entry.exports).join("+"); } catch (error) { names = error.name; }
+      return [name, listed, "exports", "[" + names + "]", require.cache[path] === entry].join(" ");
+    };`,
+};
+const commonJSFileThatLooksAtItself = `
+  const { look } = require("./look.cjs");
+  exports.early = 1;
+  exports.seen = [look(__filename), require.cache[__filename] === module, require.cache[__filename]?.exports === exports].join(" ");
+  exports.later = () => [look(__filename), require.cache[__filename] === module].join(" ");`;
+const moduleThatLooksAtItself = (name: string) => `
+  import { look } from "./look.cjs";
+  export const early = 1;
+  const whileItRan = require.cache[require.resolve("./${name}")];
+  export const seen = look(require.resolve("./${name}"));
+  export const later = () => [look(require.resolve("./${name}")), whileItRan === undefined || whileItRan === require.cache[require.resolve("./${name}")]].join(" ");`;
+
+async function expectCompiledToRunAsPlainInLayersToo(files: Record<string, string>) {
+  using dir = tempDir("require-cache-in-test-runs", files);
+  const seen = async (words?: string, ...flags: string[]) => {
+    const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
+    const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--isolate", ...flags], String(dir), env);
+    if (exitCode !== 0) console.error(stderr);
+    return { stdout, exitCode };
+  };
+  const plain = await seen();
+  expect(plain.exitCode).toBe(0);
+  for (const words of ["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1"])
+    expect(await seen(words, "--aot")).toEqual(plain);
+}
+
+test("a CommonJS file finds its own module in require.cache while it runs, whoever has begun it", async () => {
+  await expectCompiledToRunAsPlainInLayersToo({
+    ...looksAtFiles,
+    "src/in-function.cjs": commonJSFileThatLooksAtItself,
+    "src/at-top.cjs": commonJSFileThatLooksAtItself,
+    "src/imported.cjs": commonJSFileThatLooksAtItself,
+    "src/imported-below.cjs": commonJSFileThatLooksAtItself,
+    "src/imported-late.cjs": commonJSFileThatLooksAtItself,
+    "src/under-module.cjs": commonJSFileThatLooksAtItself,
+    "src/imports-file.ts": `import file from "./imported-below.cjs";\nexport const seen = file.seen;`,
+    "src/requires-file.ts": `export const seen = require("./under-module.cjs").seen;`,
+    "one.test.ts": `
+      import { test } from "bun:test";
+      import imported from "./src/imported.cjs";
+      import { seen as below } from "./src/imports-file";
+      const atTop = require("./src/at-top.cjs");
+      test("each way to begin it", async () => {
+        const inFunction = require("./src/in-function.cjs");
+        console.log(inFunction.seen);
+        console.log(inFunction.later());
+        console.log(atTop.seen);
+        console.log(imported.seen);
+        console.log(imported.later());
+        console.log(below);
+        console.log((await import("./src/imported-late.cjs")).default.seen);
+        console.log(require("./src/requires-file").seen);
+      });`,
+  });
+});
+
+test("an ES module is listed while it runs if a require() has begun it, and not if an import has", async () => {
+  await expectCompiledToRunAsPlainInLayersToo({
+    ...looksAtFiles,
+    "src/in-function.ts": moduleThatLooksAtItself("in-function.ts"),
+    "src/at-top.ts": moduleThatLooksAtItself("at-top.ts"),
+    "src/imported.ts": moduleThatLooksAtItself("imported.ts"),
+    "src/imported-late.ts": moduleThatLooksAtItself("imported-late.ts"),
+    "src/under-file.ts": moduleThatLooksAtItself("under-file.ts"),
+    "src/under-module.ts": moduleThatLooksAtItself("under-module.ts"),
+    "src/file-requires.cjs": `exports.seen = require("./under-file.ts").seen;`,
+    "src/module-requires.ts": `const inner = require("./under-module.ts");\nexport const seen = inner.seen;`,
+    "one.test.ts": `
+      import { test } from "bun:test";
+      import { seen as imported, later as importedLater } from "./src/imported";
+      const atTop = require("./src/at-top");
+      test("each way to begin it", async () => {
+        const inFunction = require("./src/in-function");
+        console.log(inFunction.seen);
+        console.log(inFunction.later());
+        console.log(atTop.seen);
+        console.log(atTop.later());
+        console.log(imported);
+        console.log(importedLater());
+        console.log((await import("./src/imported-late")).seen);
+        console.log(require("./src/file-requires.cjs").seen);
+        console.log(require("./src/module-requires").seen);
+      });`,
+  });
+});
+
+test("what a required ES module imports sees that module listed, and not itself", async () => {
+  await expectCompiledToRunAsPlainInLayersToo({
+    ...looksAtFiles,
+    "src/root.ts": `import { seen as below } from "./below-root";\nexport const seen = below;`,
+    "src/below-root.ts": `import { look } from "./look.cjs";\nexport const seen = [look(require.resolve("./below-root")), look(require.resolve("./root"))].join(" | ");`,
+    "src/root-with-nothing-to-run.ts": `export { seen } from "./below-nothing";\nexport const constant = 1;`,
+    "src/below-nothing.ts": `import { look } from "./look.cjs";\nexport const seen = look(require.resolve("./root-with-nothing-to-run"));`,
+    "one.test.ts": `
+      import { test } from "bun:test";
+      test("below a require()", () => {
+        console.log(require("./src/root").seen);
+        console.log(require("./src/root-with-nothing-to-run").seen);
+      });`,
+  });
+});
+
+test("files that require each other are all listed while the innermost runs", async () => {
+  await expectCompiledToRunAsPlainInLayersToo({
+    ...looksAtFiles,
+    "src/outer.ts": `const inner = require("./inner");\nexport const seen = inner.seen;`,
+    "src/inner.ts": `import { look } from "./look.cjs";\nexport const seen = [look(require.resolve("./outer")), look(require.resolve("./inner"))].join(" | ");`,
+    "src/outer.cjs": `exports.before = 1;\nexports.seen = require("./inner.cjs").seen;`,
+    "src/inner.cjs": `const { look } = require("./look.cjs");\nexports.seen = [look(require.resolve("./outer.cjs")), look(__filename)].join(" | ");`,
+    "src/ring-first.ts": `const second = require("./ring-second");\nexport const first = 1;\nexport const seen = second.seen;`,
+    "src/ring-second.ts": `
+      import { look } from "./look.cjs";
+      const first = require("./ring-first");
+      export const seen = [Object.keys(first).join("+"), require.cache[require.resolve("./ring-first")].exports === first, look(require.resolve("./ring-first"))].join(" ");`,
+    "src/ring-first.cjs": `exports.first = 1;\nexports.seen = require("./ring-second.cjs").seen;`,
+    "src/ring-second.cjs": `
+      const { look } = require("./look.cjs");
+      const first = require("./ring-first.cjs");
+      exports.seen = [Object.keys(first).join("+"), require.cache[require.resolve("./ring-first.cjs")].exports === first, look(require.resolve("./ring-first.cjs"))].join(" ");`,
+    "one.test.ts": `
+      import { test } from "bun:test";
+      test("one below the other", () => {
+        console.log(require("./src/outer").seen);
+        console.log(require("./src/outer.cjs").seen);
+      });
+      test("in a ring", () => {
+        console.log(require("./src/ring-first").seen);
+        console.log(require("./src/ring-first.cjs").seen);
+      });`,
+  });
+});
+
+test("an ES module that an import has begun is listed from the first require() of it", async () => {
+  await expectCompiledToRunAsPlainInLayersToo({
+    ...looksAtFiles,
+    "src/importer.ts": `
+      import { seen as below } from "./requires-importer";
+      import { look } from "./look.cjs";
+      export const value = 1;
+      export const seen = [below, look(require.resolve("./importer"))].join(" | ");`,
+    "src/requires-importer.ts": `
+      import { look } from "./look.cjs";
+      const before = look(require.resolve("./importer"));
+      require("./importer");
+      export const seen = [before, look(require.resolve("./importer"))].join(" | ");`,
+    "statement.test.ts": `
+      import { test } from "bun:test";
+      import { seen } from "./src/importer";
+      test("an import statement", () => { console.log(seen); });`,
+    "call.test.ts": `
+      import { test } from "bun:test";
+      test("import()", async () => { console.log((await import("./src/importer")).seen); });`,
+  });
+});
+
+test("a file that throws while it is required was listed until then, and is not afterwards", async () => {
+  await expectCompiledToRunAsPlainInLayersToo({
+    ...looksAtFiles,
+    "src/throws.cjs": `globalThis.seenByFile = require("./look.cjs").look(__filename);\nthrow new Error("from the file");`,
+    "src/throws.ts": `
+      import { look } from "./look.cjs";
+      (globalThis as any).seenByModule = look(require.resolve("./throws.ts"));
+      throw new Error("from the module");
+      export {};`,
+    "one.test.ts": `
+      import { test } from "bun:test";
+      import { look } from "./src/look.cjs";
+      const message = (load: () => void) => { try { load(); return "no error"; } catch (error) { return error.message; } };
+      test("a CommonJS file", () => {
+        console.log(message(() => require("./src/throws.cjs")), "|", (globalThis as any).seenByFile, "|", look(require.resolve("./src/throws.cjs")));
+      });
+      test("an ES module", () => {
+        for (const turn of [1, 2])
+          console.log(turn, message(() => require("./src/throws.ts")), "|", (globalThis as any).seenByModule, "|", look(require.resolve("./src/throws.ts")));
+      });`,
+  });
+});
+
+test("a file that takes itself out of require.cache while it runs: a CommonJS file runs again, an ES module does not", async () => {
+  await expectCompiledToRunAsPlainInLayersToo({
+    ...looksAtFiles,
+    "src/file.cjs": `
+      const { look } = require("./look.cjs");
+      globalThis.runsOfFile = (globalThis.runsOfFile ?? 0) + 1;
+      const before = look(__filename);
+      delete require.cache[__filename];
+      exports.seen = [globalThis.runsOfFile, before, look(__filename)].join(" | ");`,
+    "src/module.ts": `
+      import { look } from "./look.cjs";
+      const realm = globalThis as any;
+      realm.runsOfModule = (realm.runsOfModule ?? 0) + 1;
+      const path = require.resolve("./module.ts");
+      const before = look(path);
+      delete require.cache[path];
+      export const seen = [realm.runsOfModule, before, look(path)].join(" | ");`,
+    "one.test.ts": `
+      import { test } from "bun:test";
+      import { look } from "./src/look.cjs";
+      test("a CommonJS file", () => {
+        for (const turn of [1, 2]) console.log(turn, require("./src/file.cjs").seen, "|", look(require.resolve("./src/file.cjs")));
+      });
+      test("an ES module", () => {
+        for (const turn of [1, 2]) console.log(turn, require("./src/module.ts").seen, "|", look(require.resolve("./src/module.ts")));
+      });`,
+  });
+});
+
+test("an ES module whose import fails behind a require() of it that has returned stays listed, and require() answers", async () => {
+  await expectCompiledToRunAsPlainInLayersToo({
+    ...looksAtFiles,
+    "src/fails.ts": `import "./requires-what-fails";\nthrow new Error("fails");\nexport const value = 1;`,
+    "src/requires-what-fails.ts": `require("./fails");\nexport const below = 1;`,
+    "one.test.ts": `
+      import { test } from "bun:test";
+      import { look } from "./src/look.cjs";
+      test("import(), then require()", async () => {
+        console.log(await import("./src/fails").then(() => "no error", error => error.message), "|", look(require.resolve("./src/fails")));
+        let message = "no error";
+        try { require("./src/fails"); } catch (error) { message = error.message; }
+        console.log(message, "|", look(require.resolve("./src/fails")));
+      });`,
+  });
+});
+
+test("code at the top level of a test file takes a file out of require.cache", async () => {
+  const born = (name: string) =>
+    `const births = (globalThis.births ??= {});\nconst me = "${name}#" + (births.${name} = (births.${name} ?? 0) + 1);\nlet calls = 0;\n`;
+  const head = `
+      import { test } from "bun:test";
+      import * as user from "./user.js";
+      import * as lazy from "./lazy.js";
+      const isListed = () => require.resolve("./state.js") in require.cache;`;
+  await expectCompiledToRunAsPlain(
+    {
+      "state.js": `${born("state")}export function bump() { return me + ":" + ++calls; }`,
+      "user.js": `import { bump } from "./state.js";\n${born("user")}export function viaUser() { return me + " > " + bump(); }`,
+      "lazy.js": `${born("lazy")}export async function viaLazy() { return me + " > " + (await import("./state.js")).bump(); }`,
+      "behind-an-await.test.js": `${head}
+      console.log(isListed(), user.viaUser(), await lazy.viaLazy());
+      delete require.cache[require.resolve("./state.js")];
+      console.log(isListed(), user.viaUser(), await lazy.viaLazy(), isListed());
+      test("behind the top level", async () => console.log(user.viaUser(), await lazy.viaLazy()));`,
+      "before-the-first-await.test.js": `${head}
+      delete require.cache[require.resolve("./state.js")];
+      console.log(isListed(), user.viaUser(), await lazy.viaLazy(), isListed());
+      test("behind the top level", async () => console.log(user.viaUser(), await lazy.viaLazy()));`,
+      "a-copy-under-a-query.test.js": `${head}
+      delete require.cache[require.resolve("./state.js")];
+      const copy = await import("./user.js?0");
+      console.log(user.viaUser(), copy.viaUser(), await lazy.viaLazy());
+      test("behind the top level", async () => console.log(user.viaUser(), copy.viaUser(), await lazy.viaLazy()));`,
+    },
+    "--isolate",
+  );
+});
+
+test("require.cache lists files alone, and a loop over it takes all of them out", async () => {
+  const born = (name: string) =>
+    `const births = (globalThis.births ??= {});\nconst me = "${name}#" + (births.${name} = (births.${name} ?? 0) + 1);\nlet calls = 0;\n`;
+  const head = `
+      import { test } from "bun:test";
+      const keys = () => Object.keys(require.cache).map(key => key.replace(/.*\\//, "")).sort().join(" ");
+      const clear = () => { for (const key in require.cache) delete require.cache[key]; };`;
+  await expectCompiledToRunAsPlain(
+    {
+      "state.js": `${born("state")}export function bump() { return me + ":" + ++calls; }`,
+      "statec.cjs": `${born("statec")}exports.bump = function () { return me + ":" + ++calls; };`,
+      "user.js": `import { bump } from "./state.js";\n${born("user")}export function viaUser() { return me + " > " + bump(); }`,
+      "mixed.js": `import { bump } from "./statec.cjs";\n${born("mixed")}export function viaMixed() { return me + " > " + bump(); }`,
+      "barrel.js": `export * from "./state.js";\nexport { bump as bumpC } from "./statec.cjs";\nexport { viaUser } from "./user.js";`,
+      "an-importer-of-a-commonjs-file.test.js": `${head}
+      import * as mixed from "./mixed.js";
+      test("cleared twice", () => {
+        console.log(keys());
+        clear();
+        console.log(keys(), mixed.viaMixed(), require("./mixed.js").viaMixed());
+        console.log(keys());
+        clear();
+        console.log(keys());
+      });`,
+      "a-barrel-over-both-kinds.test.js": `${head}
+      import * as barrel from "./barrel.js";
+      test("cleared by its keys", () => {
+        console.log(keys());
+        Object.keys(require.cache).forEach(key => { delete require.cache[key]; });
+        const again = require("./barrel.js");
+        console.log(keys(), barrel.bumpC(), again.bumpC(), barrel.viaUser(), again.viaUser());
+      });`,
+    },
+    "--isolate",
+  );
 });
 
 // Code that imports a file is compiled for a file that loads once, unless the build sees the file taken out. What the build cannot see fails, and says so.

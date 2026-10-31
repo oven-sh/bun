@@ -14,6 +14,7 @@
 #include <node_version.h>
 #include <wtf/Scope.h>
 #include <JavaScriptCore/AOTBuiltinModules.h>
+#include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/ProxyObject.h>
@@ -73,6 +74,7 @@
 #include "AsyncContextFrame.h"
 #include "ErrorCode.h"
 #include "GeneratedIpcHost.h"
+#include "GeneratedBlob.h"
 
 #include "napi_handle_scope.h"
 #include "napi_external.h"
@@ -3264,6 +3266,21 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionNeedsWholeInputStream, (JSC::JSGlobalOb
     return throwThatStreamWasLeftOut(globalObject, JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject));
 }
 
+// object[name](arguments). A program can change what a name holds, so what is found there is called only if it can be.
+static JSValue callMethod(JSC::JSGlobalObject* globalObject, JSValue object, ASCIILiteral name, const JSC::ArgList& arguments)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue method = object.get(globalObject, Identifier::fromString(vm, name));
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::CallData callData = JSC::getCallData(method);
+    if (callData.type == JSC::CallData::Type::None) {
+        throwTypeError(globalObject, scope, makeString(name, " is not a function"_s));
+        return {};
+    }
+    RELEASE_AND_RETURN(scope, JSC::profiledCall(globalObject, ProfilingReason::API, method, callData, object, arguments));
+}
+
 // write(data) of the sink of the descriptor
 JSC_DEFINE_HOST_FUNCTION(Process_functionWriteToStandardSink, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -3272,30 +3289,23 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteToStandardSink, (JSC::JSGlobalObje
     JSValue kept = defaultGlobalObject(globalObject)->processObject()->getDirect(vm, WebCore::builtinNames(vm).lightStandardStreamsPrivateName());
     JSValue sink = asObject(kept)->getDirectIndex(globalObject, callFrame->argument(0).asInt32());
     RETURN_IF_EXCEPTION(scope, {});
-    JSValue write = sink.get(globalObject, Identifier::fromString(vm, "write"_s));
-    RETURN_IF_EXCEPTION(scope, {});
     JSC::MarkedArgumentBuffer args;
     args.append(callFrame->argument(1));
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::profiledCall(globalObject, ProfilingReason::API, write, JSC::getCallData(write), sink, args)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(callMethod(globalObject, sink, "write"_s, args)));
 }
 
-// Bun.file(fd).writer()
+// Bun.file(fd).writer(), whatever the program has stored in Bun.file
 static JSValue openStandardSink(JSC::JSGlobalObject* globalObject, int fd)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue bun = globalObject->get(globalObject, Identifier::fromString(vm, "Bun"_s));
-    RETURN_IF_EXCEPTION(scope, {});
-    JSValue file = bun.get(globalObject, Identifier::fromString(vm, "file"_s));
-    RETURN_IF_EXCEPTION(scope, {});
+    JSFunction* file = JSFunction::create(vm, globalObject, 1, "file"_s, Bun::Bindgen::Generated::Blob::jsFile, JSC::ImplementationVisibility::Private);
     JSC::MarkedArgumentBuffer descriptor;
     descriptor.append(JSC::jsNumber(fd));
-    JSValue blob = JSC::profiledCall(globalObject, ProfilingReason::API, file, JSC::getCallData(file), bun, descriptor);
-    RETURN_IF_EXCEPTION(scope, {});
-    JSValue writer = blob.get(globalObject, Identifier::fromString(vm, "writer"_s));
+    JSValue blob = JSC::profiledCall(globalObject, ProfilingReason::API, file, JSC::getCallData(file), jsUndefined(), descriptor);
     RETURN_IF_EXCEPTION(scope, {});
     JSC::MarkedArgumentBuffer none;
-    RELEASE_AND_RETURN(scope, JSC::profiledCall(globalObject, ProfilingReason::API, writer, JSC::getCallData(writer), blob, none));
+    RELEASE_AND_RETURN(scope, callMethod(globalObject, blob, "writer"_s, none));
 }
 
 static bool writesSynchronously(BunProcessStdinFdType fdType)
@@ -3684,21 +3694,64 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionGetOwnPropertyDescriptorOfBareStream, (
     RELEASE_AND_RETURN(scope, fd ? Process_functionNeedsWholeOutputStream(globalObject, callFrame) : Process_functionNeedsWholeInputStream(globalObject, callFrame));
 }
 
+// The target of the bare stream, or of the prototype of one, that the receiver is or inherits from
+static JSObject* findBareStreamBehind(JSC::VM& vm, JSValue receiver)
+{
+    for (JSValue value = receiver; value.isObject(); value = asObject(value)->getPrototypeDirect()) {
+        auto* proxy = dynamicDowncast<JSC::ProxyObject>(value);
+        if (!proxy)
+            continue;
+        bool isBareStream = !proxy->isRevoked() && proxy->target()->getDirect(vm, WebCore::builtinNames(vm).lightStandardStreamsPrivateName());
+        return isBareStream ? proxy->target() : nullptr;
+    }
+    return nullptr;
+}
+
+// write() on a receiver that has no sink: anything but a stream for output. Plain Bun looks at the receiver's `_writableState` and calls its `_write`.
+static EncodedJSValue writeWithoutSink(JSC::JSGlobalObject* globalObject, CallFrame* callFrame, JSObject* bareStream)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    BareStreamLevel level = bareStream ? levelOfBareStream(vm, bareStream) : BareStreamLevel::EventEmitter;
+    if (level == BareStreamLevel::WriteStream)
+        return throwVMTypeError(globalObject, scope, "undefined is not an object (evaluating 'size')"_s);
+    if (level == BareStreamLevel::Writable)
+        return Bun::throwError(globalObject, scope, ErrorCode::ERR_METHOD_NOT_IMPLEMENTED, "The _write() method is not implemented"_s);
+    JSValue thisValue = callFrame->thisValue();
+    JSValue state = thisValue.get(globalObject, Identifier::fromString(vm, "_writableState"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (state.isNull())
+        return throwVMTypeError(globalObject, scope, "null is not an object (evaluating 'kWriteMonkeyPatchDefense')"_s);
+    bool isOver = false;
+    for (ASCIILiteral name : { "ending"_s, "destroyed"_s }) {
+        if (state.isUndefined() || isOver)
+            break;
+        JSValue flag = state.get(globalObject, Identifier::fromString(vm, name));
+        RETURN_IF_EXCEPTION(scope, {});
+        isOver = flag.toBoolean(globalObject);
+    }
+    JSValue write = isOver ? JSValue() : thisValue.get(globalObject, Identifier::fromString(vm, "_write"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (write && !write.isCallable())
+        return throwVMTypeError(globalObject, scope, makeString("this._write is not a function. (In 'this._write(data, encoding, cb)', 'this._write' is "_s, write.isObject() ? "an instance of "_s : ""_s, JSC::errorDescriptionForValue(globalObject, write), ')'));
+    // From here plain Bun needs Writable.prototype.write.
+    RELEASE_AND_RETURN(scope, Process_functionNeedsWholeOutputStream(globalObject, callFrame));
+}
+
 // write(data, encoding, callback) of a bare stream
 JSC_DEFINE_HOST_FUNCTION(Process_functionWriteOfBareStream, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    const Identifier& privateName = WebCore::builtinNames(vm).lightStandardStreamsPrivateName();
     JSValue thisValue = callFrame->thisValue();
     if (thisValue.isUndefinedOrNull())
         return throwVMTypeError(globalObject, scope, makeString(thisValue.isNull() ? "null"_s : "undefined"_s, " is not an object (evaluating 'kWriteMonkeyPatchDefense')"_s));
-    auto* proxy = dynamicDowncast<JSC::ProxyObject>(thisValue);
-    JSValue descriptor = proxy && !proxy->isRevoked() ? proxy->target()->getDirect(vm, privateName) : JSValue();
-    if (!descriptor)
-        return throwVMTypeError(globalObject, scope, "this._write is not a function. (In 'this._write(data, encoding, cb)', 'this._write' is undefined)"_s);
-    int fd = descriptor.asInt32() & 0xff;
-    JSObject* kept = asObject(defaultGlobalObject(globalObject)->processObject()->getDirect(vm, privateName));
+    // Index 0 of the kept list holds this function and stdin has descriptor 0: only a stream for output has a sink there.
+    JSObject* bareStream = findBareStreamBehind(vm, thisValue);
+    if (!bareStream || levelOfBareStream(vm, bareStream) != BareStreamLevel::Output)
+        RELEASE_AND_RETURN(scope, writeWithoutSink(globalObject, callFrame, bareStream));
+    int fd = descriptorOfBareStream(vm, bareStream);
+    JSObject* kept = asObject(defaultGlobalObject(globalObject)->processObject()->getDirect(vm, WebCore::builtinNames(vm).lightStandardStreamsPrivateName()));
     JSValue sink = kept->getDirectIndex(globalObject, fd);
     RETURN_IF_EXCEPTION(scope, {});
     // The first write opens the sink. A read of the stream opens nothing, so it cannot throw where the executable was trimmed of what opens a sink.
@@ -3710,11 +3763,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteOfBareStream, (JSC::JSGlobalObject
         kept->putDirectIndex(globalObject, fd, sink);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    JSValue write = sink.get(globalObject, Identifier::fromString(vm, "write"_s));
-    RETURN_IF_EXCEPTION(scope, {});
     JSC::MarkedArgumentBuffer data;
     data.append(callFrame->argument(0));
-    JSValue written = JSC::profiledCall(globalObject, ProfilingReason::API, write, JSC::getCallData(write), sink, data);
+    JSValue written = callMethod(globalObject, sink, "write"_s, data);
     RETURN_IF_EXCEPTION(scope, {});
     JSValue callback = callFrame->argument(1).isCallable() ? callFrame->argument(1) : callFrame->argument(2);
     JSC::MarkedArgumentBuffer null;
@@ -3727,13 +3778,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteOfBareStream, (JSC::JSGlobalObject
         return JSValue::encode(jsBoolean(true));
     }
     if (callback.isCallable()) {
-        JSValue then = written.get(globalObject, vm.propertyNames->then);
-        RETURN_IF_EXCEPTION(scope, {});
         JSC::MarkedArgumentBuffer reactions;
         reactions.append(JSC::JSBoundFunction::create(vm, globalObject, asObject(callback), jsUndefined(), null, 0, nullptr, JSC::SourceTaintedOrigin::Untainted));
         RETURN_IF_EXCEPTION(scope, {});
         reactions.append(callback);
-        JSC::profiledCall(globalObject, ProfilingReason::API, then, JSC::getCallData(then), written, reactions);
+        callMethod(globalObject, written, "then"_s, reactions);
         RETURN_IF_EXCEPTION(scope, {});
     }
     return JSValue::encode(jsBoolean(false));

@@ -37,6 +37,13 @@ const programs: [entry: string, pairs: Pair[]][] = [
   ],
   ["names-in-a-list.js", [["a name found by a loop", "a name found by indexOf", 0]]],
   [
+    "loops-behind-a-seldom-taken-path.js",
+    [
+      ["a list of eight", "a list of seven that gets its eighth in the loop", 1],
+      ["a list of eight beside a box", "a list of seven beside a box that gets its eighth in the loop", 1],
+    ],
+  ],
+  [
     "members-under-keys.js",
     [
       ["a method under a plain name", "a method under a symbol that the module creates", 4],
@@ -116,6 +123,23 @@ const programs: [entry: string, pairs: Pair[]][] = [
       ["given members switched on", "omitted members switched on", 16],
       ["given members stored and returned", "omitted members stored and returned", 32],
       ["given members printed", "omitted members printed", 64, "249 | 802"],
+    ],
+  ],
+  [
+    "merged-options.ts",
+    [
+      ["members that a literal spells out", "members that two spreads bring behind a member of the literal", 2],
+      ["members that a literal spells out", "members that Object.assign brings to a literal with a member", 2],
+      [
+        "members that a literal gives numbers written in place",
+        "members that two spreads bring behind a member of the literal",
+        4,
+      ],
+      [
+        "members that a literal gives numbers written in place",
+        "members that Object.assign brings to a literal with a member",
+        4,
+      ],
     ],
   ],
 ];

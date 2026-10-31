@@ -8,7 +8,7 @@ use crate::load::data_modules::parse_json;
 use crate::load::loaders::loader_name;
 use bstr::BStr;
 use bun_ast::runtime::ReactCompilerMode;
-use bun_ast::{ASTMemoryAllocator, ImportKind, Loader, Loc, Log, Source};
+use bun_ast::{ASTMemoryAllocator, Ast, ImportKind, Loader, Loc, Log, Source, Stmt, Symbol};
 use bun_js_parser::{Define, Parser, ParserOptions};
 use bun_options_types::jsx;
 use bun_react_compiler::{Observer, observe};
@@ -103,6 +103,15 @@ pub struct ComponentFile<'a> {
     pub can_import_macros: bool,
 }
 
+/// A file as Bun's transpiler has read it with the options of `bun run`.
+pub struct TranspiledTree<'a> {
+    pub tree: &'a Ast<'a>,
+    /// Those of `tree`.
+    pub symbols: Vec<Symbol>,
+    pub source: &'a Source<'a>,
+    pub arena: &'a Arena,
+}
+
 pub trait SourceProvider: Sync {
     fn fold_options<'s>(
         &self,
@@ -119,6 +128,16 @@ pub trait SourceProvider: Sync {
     /// The flags for which `feature()` of "bun:bundle" answers true, as `fold_options` lists them.
     fn enabled_features(&self) -> Vec<&[u8]> {
         Vec::new()
+    }
+
+    /// What `bun run` prints for each of `statements`, which come with how often their first line is indented.
+    /// `None`: there is no printer here, or it fails.
+    fn print_as_run(
+        &self,
+        _file: TranspiledTree<'_>,
+        _statements: &[(Stmt, u32)],
+    ) -> Option<Vec<Box<[u8]>>> {
+        None
     }
 
     fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed>;

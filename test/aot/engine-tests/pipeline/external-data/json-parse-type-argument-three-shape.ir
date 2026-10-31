@@ -188,7 +188,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f1 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v9: 2 = Integer integer=2
 # CHECK-NEXT: v10: boolean = Less v7, v9
-# CHECK-NEXT: Branch v10 -> taken b2(| 0), notTaken b54()
+# CHECK-NEXT: Branch v10 -> taken b2(| 0), notTaken b51()
 # CHECK-NEXT: b2(v11: int[0, 1]):
 # CHECK-NEXT: v12: 0 = Integer
 # CHECK-NEXT: Jump -> next b3(v12)
@@ -198,7 +198,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f1 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v16: 6 = Integer integer=6
 # CHECK-NEXT: v17: boolean = Less v14, v16
-# CHECK-NEXT: Branch v17 -> taken b5(| 0), notTaken b53()
+# CHECK-NEXT: Branch v17 -> taken b5(| 0), notTaken b50()
 # CHECK-NEXT: b5(v18: int[0, 5]):
 # CHECK-NEXT: Switch v18 cases=[0, 1, 2, 3, 4] -> case b6(v0), case b6(v1), case b6(v2), case b6(v3), case b6(v4), otherwise b6(v5)
 # CHECK-NEXT: b6(v19: "{\"extra\":1,\"name\":\"f\",\"more\":[2]}"|"{\"inner\":{\"name\":\"d\"},\"name\":\"e\"}"|"{\"inner\":{\"name\":\"g\",\"z\":0},\"between\":null,\"name\":\"h\"}"|"{\"name\":\"a\"}"|"{\"name\":\"b\",\"inner\":{\"name\":\"c\"}}"|"{\"name\":\"i\",\"inner\":{\"inner\":{\"name\":\"j\"},\"name\":\"k\"},\"last\":{\"name\":\"l\"}}"):
@@ -292,95 +292,85 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f1 visibility=Private
 # CHECK-NEXT: Jump -> next b30(v65)
 # CHECK-NEXT: b30(v66: null|boolean|number|string|object ~ null|L0):
 # CHECK-NEXT: v67: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: v68: i32 = StringBuilderCheckpoint v67
-# CHECK-NEXT: v69: boolean = TypeTest v36 testedType=null
-# CHECK-NEXT: Branch v69 -> taken b31(), notTaken b32()
-# CHECK-NEXT: b31() handler=b52():
-# CHECK-NEXT: v70: buildercursor = StringBuilderReserve v67 size=128
-# CHECK-NEXT: v71: buildercursor = JSONAppendToken v67, v70 jsonToken=Null
-# CHECK-NEXT: Jump -> next b33(v71)
-# CHECK-NEXT: b32() handler=b52():
-# CHECK-NEXT: v72: buildercursor = StringBuilderReserve v67 size=128
-# CHECK-NEXT: Jump -> next b33(v72)
-# CHECK-NEXT: b33(v73: buildercursor):
-# CHECK-NEXT: StringBuilderCommit v67, v73
-# CHECK-NEXT: v75: i32 = StringBuilderCheckpoint v67
-# CHECK-NEXT: v76: boolean = StrictEq v68, v75
-# CHECK-NEXT: Branch v76 -> taken b34(), notTaken b35()
-# CHECK-NEXT: b34() frequency=Rare:
-# CHECK-NEXT: StringBuilderDiscard v67
-# CHECK-NEXT: v78: undefined = Undefined
-# CHECK-NEXT: v79: undefined|string = CallBuiltin -, v36, v78 overload=JSONStringify/0 accessSite=9
-# CHECK-NEXT: Jump -> next b36(v79)
-# CHECK-NEXT: b35() handler=b52():
-# CHECK-NEXT: v80: string = StringBuilderFinish v67
-# CHECK-NEXT: Jump -> next b36(v80)
-# CHECK-NEXT: b36(v81: undefined|string ~ string):
-# CHECK-NEXT: v82: object ~ L0 = ToObject v51 calledBuiltin=ObjectKeys
-# CHECK-NEXT: v83: Array<string> = CallBuiltin -, v82 overload=ObjectKeys/0 accessSite=10
-# CHECK-NEXT: v84: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v83 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v85: string = CallBuiltin v84 overload=ArrayPrototypeJoin/0 accessSite=12
-# CHECK-NEXT: v86: boolean|number|string|object ~ L0 = RequireObjectCoercible v66 name="name"
-# CHECK-NEXT: v87: boolean ~ true = TypeTest v86 testedType=L0
-# CHECK-NEXT: Branch v87 -> taken b37(| 0), notTaken b45()
-# CHECK-NEXT: b37(v88: L0):
-# CHECK-NEXT: v89: undefined|null|string = GetSlotOrUndefined v88 key="name" receivers=[L0] level=Expected accessSite=13
-# CHECK-NEXT: v90: undefined|null|L0 = GetSlotOrUndefined v88 key="inner" receivers=[L0] level=Expected accessSite=14
-# CHECK-NEXT: v91: boolean = ToBoolean v90
-# CHECK-NEXT: Branch v91 -> taken b38(), notTaken b39()
-# CHECK-NEXT: b38():
-# CHECK-NEXT: v92: L0 = RequireObjectCoercible v90 name="name"
-# CHECK-NEXT: v93: undefined|null|string = GetSlotOrUndefined v92 key="name" receivers=[L0] level=Expected accessSite=16
-# CHECK-NEXT: Jump -> next b40(v93)
-# CHECK-NEXT: b39():
-# CHECK-NEXT: v94: "-" = String string="-"
-# CHECK-NEXT: Jump -> next b40(v94)
-# CHECK-NEXT: b40(v95: undefined|null|string):
-# CHECK-NEXT: v96: boolean = TypeTest v89 testedType=string
-# CHECK-NEXT: Branch v96 -> taken b41(| 0), notTaken b44(| 0)
-# CHECK-NEXT: b41(v97: string):
-# CHECK-NEXT: v98: boolean = TypeTest v95 testedType=string
-# CHECK-NEXT: Branch v98 -> taken b42(| 0), notTaken b43(| 0)
-# CHECK-NEXT: b42(v99: string):
-# CHECK-NEXT: v100: string = Add v97, v99
-# CHECK-NEXT: Jump -> next b50(v100)
-# CHECK-NEXT: b43(v101: undefined|null) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b49(v97, v101)
-# CHECK-NEXT: b44(v102: undefined|null) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b49(v102, v95)
-# CHECK-NEXT: b45() frequency=Rare:
-# CHECK-NEXT: v103: anything ~ undefined|null|string = PropGet v86 key="name" accessSite=13
-# CHECK-NEXT: v104: anything ~ undefined|null|L0 = PropGet v86 key="inner" accessSite=14
-# CHECK-NEXT: v105: boolean = ToBoolean v104
-# CHECK-NEXT: Branch v105 -> taken b46(), notTaken b47()
-# CHECK-NEXT: b46() frequency=Rare:
-# CHECK-NEXT: v106: anything ~ undefined|null|L0 = PropGet v86 key="inner" accessSite=15
-# CHECK-NEXT: v107: anything ~ undefined|null|string = PropGet v106 key="name" accessSite=16
-# CHECK-NEXT: Jump -> next b48(v107)
-# CHECK-NEXT: b47() frequency=Rare:
-# CHECK-NEXT: v108: "-" = String string="-"
-# CHECK-NEXT: Jump -> next b48(v108)
-# CHECK-NEXT: b48(v109: anything ~ undefined|null|string) frequency=Rare:
-# CHECK-NEXT: Jump -> next b49(v103, v109)
-# CHECK-NEXT: b49(v110: anything ~ undefined|null|string, v111: anything ~ undefined|null|string) frequency=Rare:
-# CHECK-NEXT: v112: number|string|bigint = Add v110, v111
-# CHECK-NEXT: v113: number|string|bigint ~ string = Upcast v112 castType=number|string|bigint
-# CHECK-NEXT: v114: boolean ~ true = TypeTest v113 testedType=number|string
-# CHECK-NEXT: Branch v114 -> taken b50(| 0), notTaken b51(| 0)
-# CHECK-NEXT: b50(v115: number|string ~ string):
-# CHECK-NEXT: v116: undefined = CallBuiltin -, v81, v85, v115 overload=ConsoleLog/0 accessSite=17
-# CHECK-NEXT: Jump -> next b4(v21)
-# CHECK-NEXT: b51(v117: bigint) frequency=Rare:
-# CHECK-NEXT: v118: undefined = CallBuiltin -, v81, v85, v117 overload=ConsoleLog/1 accessSite=17
-# CHECK-NEXT: Jump -> next b3(v21)
-# CHECK-NEXT: b52() role=CleanupHandler frequency=Rare:
-# CHECK-NEXT: v119: exception = CatchException
+# CHECK-NEXT: v68: boolean = TypeTest v36 testedType=null
+# CHECK-NEXT: Branch v68 -> taken b31(), notTaken b33()
+# CHECK-NEXT: b31() frequency=Unlikely handler=b32():
+# CHECK-NEXT: v69: buildercursor = StringBuilderReserve v67 size=128
+# CHECK-NEXT: v70: buildercursor = JSONAppendToken v67, v69 jsonToken=Null
+# CHECK-NEXT: StringBuilderCommit v67, v70
+# CHECK-NEXT: v72: string = StringBuilderFinish v67
+# CHECK-NEXT: Jump -> next b34(v72)
+# CHECK-NEXT: b32() role=CleanupHandler frequency=Rare:
+# CHECK-NEXT: v73: exception = CatchException
 # CHECK-NEXT: JSONResetHolders v67
-# CHECK-NEXT: Rethrow v119
-# CHECK-NEXT: b53():
-# CHECK-NEXT: v121: int[1, 2] = Increment v11
-# CHECK-NEXT: Jump -> next b1(v121)
-# CHECK-NEXT: b54():
-# CHECK-NEXT: v122: undefined = Undefined
-# CHECK-NEXT: Return v122
+# CHECK-NEXT: Rethrow v73
+# CHECK-NEXT: b33():
+# CHECK-NEXT: StringBuilderDiscard v67
+# CHECK-NEXT: v76: undefined = Undefined
+# CHECK-NEXT: v77: undefined|string = CallBuiltin -, v36, v76 overload=JSONStringify/0 accessSite=9
+# CHECK-NEXT: Jump -> next b34(v77)
+# CHECK-NEXT: b34(v78: undefined|string ~ string):
+# CHECK-NEXT: v79: object ~ L0 = ToObject v51 calledBuiltin=ObjectKeys
+# CHECK-NEXT: v80: Array<string> = CallBuiltin -, v79 overload=ObjectKeys/0 accessSite=10
+# CHECK-NEXT: v81: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v80 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v82: string = CallBuiltin v81 overload=ArrayPrototypeJoin/0 accessSite=12
+# CHECK-NEXT: v83: boolean|number|string|object ~ L0 = RequireObjectCoercible v66 name="name"
+# CHECK-NEXT: v84: boolean ~ true = TypeTest v83 testedType=L0
+# CHECK-NEXT: Branch v84 -> taken b35(| 0), notTaken b43()
+# CHECK-NEXT: b35(v85: L0):
+# CHECK-NEXT: v86: undefined|null|string = GetSlotOrUndefined v85 key="name" receivers=[L0] level=Expected accessSite=13
+# CHECK-NEXT: v87: undefined|null|L0 = GetSlotOrUndefined v85 key="inner" receivers=[L0] level=Expected accessSite=14
+# CHECK-NEXT: v88: boolean = ToBoolean v87
+# CHECK-NEXT: Branch v88 -> taken b36(), notTaken b37()
+# CHECK-NEXT: b36():
+# CHECK-NEXT: v89: L0 = RequireObjectCoercible v87 name="name"
+# CHECK-NEXT: v90: undefined|null|string = GetSlotOrUndefined v89 key="name" receivers=[L0] level=Expected accessSite=16
+# CHECK-NEXT: Jump -> next b38(v90)
+# CHECK-NEXT: b37():
+# CHECK-NEXT: v91: "-" = String string="-"
+# CHECK-NEXT: Jump -> next b38(v91)
+# CHECK-NEXT: b38(v92: undefined|null|string):
+# CHECK-NEXT: v93: boolean = TypeTest v86 testedType=string
+# CHECK-NEXT: Branch v93 -> taken b39(| 0), notTaken b42(| 0)
+# CHECK-NEXT: b39(v94: string):
+# CHECK-NEXT: v95: boolean = TypeTest v92 testedType=string
+# CHECK-NEXT: Branch v95 -> taken b40(| 0), notTaken b41(| 0)
+# CHECK-NEXT: b40(v96: string):
+# CHECK-NEXT: v97: string = Add v94, v96
+# CHECK-NEXT: Jump -> next b48(v97)
+# CHECK-NEXT: b41(v98: undefined|null) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b47(v94, v98)
+# CHECK-NEXT: b42(v99: undefined|null) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b47(v99, v92)
+# CHECK-NEXT: b43() frequency=Rare:
+# CHECK-NEXT: v100: anything ~ undefined|null|string = PropGet v83 key="name" accessSite=13
+# CHECK-NEXT: v101: anything ~ undefined|null|L0 = PropGet v83 key="inner" accessSite=14
+# CHECK-NEXT: v102: boolean = ToBoolean v101
+# CHECK-NEXT: Branch v102 -> taken b44(), notTaken b45()
+# CHECK-NEXT: b44() frequency=Rare:
+# CHECK-NEXT: v103: anything ~ undefined|null|L0 = PropGet v83 key="inner" accessSite=15
+# CHECK-NEXT: v104: anything ~ undefined|null|string = PropGet v103 key="name" accessSite=16
+# CHECK-NEXT: Jump -> next b46(v104)
+# CHECK-NEXT: b45() frequency=Rare:
+# CHECK-NEXT: v105: "-" = String string="-"
+# CHECK-NEXT: Jump -> next b46(v105)
+# CHECK-NEXT: b46(v106: anything ~ undefined|null|string) frequency=Rare:
+# CHECK-NEXT: Jump -> next b47(v100, v106)
+# CHECK-NEXT: b47(v107: anything ~ undefined|null|string, v108: anything ~ undefined|null|string) frequency=Rare:
+# CHECK-NEXT: v109: number|string|bigint = Add v107, v108
+# CHECK-NEXT: v110: number|string|bigint ~ string = Upcast v109 castType=number|string|bigint
+# CHECK-NEXT: v111: boolean ~ true = TypeTest v110 testedType=number|string
+# CHECK-NEXT: Branch v111 -> taken b48(| 0), notTaken b49(| 0)
+# CHECK-NEXT: b48(v112: number|string ~ string):
+# CHECK-NEXT: v113: undefined = CallBuiltin -, v78, v82, v112 overload=ConsoleLog/0 accessSite=17
+# CHECK-NEXT: Jump -> next b4(v21)
+# CHECK-NEXT: b49(v114: bigint) frequency=Rare:
+# CHECK-NEXT: v115: undefined = CallBuiltin -, v78, v82, v114 overload=ConsoleLog/1 accessSite=17
+# CHECK-NEXT: Jump -> next b3(v21)
+# CHECK-NEXT: b50():
+# CHECK-NEXT: v116: int[1, 2] = Increment v11
+# CHECK-NEXT: Jump -> next b1(v116)
+# CHECK-NEXT: b51():
+# CHECK-NEXT: v117: undefined = Undefined
+# CHECK-NEXT: Return v117
 # CHECK-NEXT: }

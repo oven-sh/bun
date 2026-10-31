@@ -326,19 +326,18 @@ function f43 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b27():
 # CHECK-NEXT: Jump -> next b29()
 # CHECK-NEXT: b28() frequency=Unlikely handler=b30():
-# CHECK-NEXT: v96: Array<undefined|boolean|string, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v91 function=f46 @3533:3 tail
 # CHECK-NEXT: Jump -> next b29()
 # CHECK-NEXT: b29():
 # CHECK-NEXT: Jump -> next b31()
 # CHECK-NEXT: b30() role=CatchHandler:
-# CHECK-NEXT: v97: anything = CatchValue
-# CHECK-NEXT: v98: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
-# CHECK-NEXT: v99: boolean = HasInPrototypeChain v97, v98
-# CHECK-NEXT: v100: anything ~ undefined|null|Error = Upcast v97 castType=anything
-# CHECK-NEXT: v101: anything = PropGet v100 key="constructor" accessSite=13
-# CHECK-NEXT: v102: anything ~ undefined|null|function = Expect v101 expectedType=undefined|null|function
-# CHECK-NEXT: v103: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v102 name="name"
-# CHECK-NEXT: v104: anything = PropGet v103 key="name" accessSite=14
+# CHECK-NEXT: v96: anything = CatchValue
+# CHECK-NEXT: v97: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
+# CHECK-NEXT: v98: boolean = HasInPrototypeChain v96, v97
+# CHECK-NEXT: v99: anything ~ undefined|null|Error = Upcast v96 castType=anything
+# CHECK-NEXT: v100: anything = PropGet v99 key="constructor" accessSite=13
+# CHECK-NEXT: v101: anything ~ undefined|null|function = Expect v100 expectedType=undefined|null|function
+# CHECK-NEXT: v102: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v101 name="name"
+# CHECK-NEXT: v103: anything = PropGet v102 key="name" accessSite=14
 # CHECK-NEXT: Jump -> next b31()
 # CHECK-NEXT: b31():
 # CHECK-NEXT: Jump -> next b20(v88, v90)

@@ -56,7 +56,7 @@ A `Worker` started from a constant path, URL or string is compiled with your pro
 
 - `--disallow-code-generation-from-strings` removes the parser and the interpreter. `eval` and `new Function` then throw.
 - `--trim-locales en,de` removes the `Intl` data for every other locale. Using another locale exits the process.
-- `--no-compile-function-source` removes the source text of functions. `fn.toString()` then returns `[native code]`.
+- `--no-compile-function-source` removes the source text of functions. `fn.toString()` then returns `[native code]`, and an error message [quotes less](/compiler/compatibility#error-messages) of the code that failed.
 
 Without `--trim-locales`, Bun keeps the locales that your code passes as constants, as in `toLocaleString("de")`. One call with a computed locale, or with none, keeps them all. The flag has no effect on macOS, where Bun uses the system's ICU library.
 

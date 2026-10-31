@@ -307,205 +307,99 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: anything = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
-# CHECK-NEXT: v1: anything ~ builtin(ProcessArgv) = Upcast v0 castType=anything
+# CHECK-NEXT: v0: Array<string> = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
+# CHECK-NEXT: v1: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v2: 2 = Integer integer=2
-# CHECK-NEXT: v3: anything = ElemGet v1, v2 accessSite=3 [keyIsIntegral]
-# CHECK-NEXT: v4: anything ~ undefined|null|string = Expect v3 expectedType=undefined|null|string
-# CHECK-NEXT: v5: boolean = TypeTest v4 testedType=undefined|null
-# CHECK-NEXT: Branch v5 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: v3: undefined|string = ElemGet v1, v2 accessSite=3 [keyIsIntegral]
+# CHECK-NEXT: v4: boolean = TypeTest v3 testedType=undefined|null
+# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2(| 0)
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v6: "/a/b.txt" = String string="/a/b.txt"
+# CHECK-NEXT: v5: "/a/b.txt" = String string="/a/b.txt"
+# CHECK-NEXT: Jump -> next b3(v5)
+# CHECK-NEXT: b2(v6: string):
 # CHECK-NEXT: Jump -> next b3(v6)
-# CHECK-NEXT: b2(v7: boolean|number|string|symbol|bigint|object ~ string):
-# CHECK-NEXT: Jump -> next b3(v7)
-# CHECK-NEXT: b3(v8: boolean|number|string|symbol|bigint|object ~ string):
-# CHECK-NEXT: v9: "c/d.js" = String string="c/d.js"
-# CHECK-NEXT: v10: "/" = String string="/"
-# CHECK-NEXT: v11: Array<boolean|number|string|symbol|bigint, Contiguous> = NewArray v8, v9, v10 contents=boolean|number|string|symbol|bigint allocationSite=1 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v12: Array<boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v13: number = CallDirect v12 function=f1 accessSite=4
-# CHECK-NEXT: v14: "function" = String string="function"
-# CHECK-NEXT: v15: object = Builtin builtin=NodePath
-# CHECK-NEXT: v16: L0 = AssumeType v15 provenType=L0
-# CHECK-NEXT: v17: "/"|"\\" = GetSlot v16 key="sep" receivers=[L0] level=Proven accessSite=6
-# CHECK-NEXT: v18: "/" = AssumeType v17 provenType="/"
-# CHECK-NEXT: v19: object = Builtin builtin=NodePath
-# CHECK-NEXT: v20: L0 = AssumeType v19 provenType=L0
-# CHECK-NEXT: v21: undefined|L0 = GetSlot v20 key="posix" receivers=[L0] level=Proven accessSite=7
-# CHECK-NEXT: v22: object = Builtin builtin=NodePath
-# CHECK-NEXT: v23: object ~ builtin(NodePath) = Upcast v22 castType=object
-# CHECK-NEXT: v24: boolean ~ false = StrictEq v21, v23
-# CHECK-NEXT: v25: undefined = CallBuiltin -, v13, v14, v18, v24 overload=ConsoleLog/0 accessSite=8
-# CHECK-NEXT: v26: undefined = Undefined
-# CHECK-NEXT: Return v26
+# CHECK-NEXT: b3(v7: string):
+# CHECK-NEXT: v8: "c/d.js" = String string="c/d.js"
+# CHECK-NEXT: v9: "/" = String string="/"
+# CHECK-NEXT: v10: Array<string, Contiguous> = NewArray v7, v8, v9 contents=string allocationSite=1 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v11: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v10 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v12: number = CallDirect v11 function=f1 accessSite=4
+# CHECK-NEXT: v13: "function" = String string="function"
+# CHECK-NEXT: v14: object = Builtin builtin=NodePath
+# CHECK-NEXT: v15: L0 = AssumeType v14 provenType=L0
+# CHECK-NEXT: v16: "/"|"\\" = GetSlot v15 key="sep" receivers=[L0] level=Proven accessSite=6
+# CHECK-NEXT: v17: "/" = AssumeType v16 provenType="/"
+# CHECK-NEXT: v18: object = Builtin builtin=NodePath
+# CHECK-NEXT: v19: L0 = AssumeType v18 provenType=L0
+# CHECK-NEXT: v20: undefined|L0 = GetSlot v19 key="posix" receivers=[L0] level=Proven accessSite=7
+# CHECK-NEXT: v21: object = Builtin builtin=NodePath
+# CHECK-NEXT: v22: object ~ builtin(NodePath) = Upcast v21 castType=object
+# CHECK-NEXT: v23: boolean ~ false = StrictEq v20, v22
+# CHECK-NEXT: v24: undefined = CallBuiltin -, v12, v13, v17, v23 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v25: undefined = Undefined
+# CHECK-NEXT: Return v25
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="countCharacters"
-# CHECK: module=m0 position=431 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: Array<boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>):
+# CHECK: module=m0 position=431 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v1, v2)
-# CHECK-NEXT: b1(v3: int|whole ~ 0, v4: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: Jump -> next b2(v3, v4)
-# CHECK-NEXT: b2(v5: int|whole, v6: int[0, 4294967295]):
+# CHECK-NEXT: b1(v3: int|whole, v4: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v8: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v9: boolean = Less v6, v8
-# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b43()
-# CHECK-NEXT: b3(v10: int[0, 4294967294]):
-# CHECK-NEXT: v11: boolean = IsInBounds v0, v10
-# CHECK-NEXT: Branch v11 -> taken b4(| 0), notTaken b5(v5, v10)
-# CHECK-NEXT: b4(v12: guard):
-# CHECK-NEXT: v13: boolean|number|string|symbol|bigint = GetArrayElement v0, v10, v12 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v14: 1 = Integer integer=1
-# CHECK-NEXT: v15: int[1, 4294967295] = Add v10, v14
-# CHECK-NEXT: v16: boolean|number|string|symbol|bigint ~ string = Expect v13 expectedType=undefined|null|string
-# CHECK-NEXT: v17: object = Builtin builtin=NodePath
-# CHECK-NEXT: v18: L0 = AssumeType v17 provenType=L0
-# CHECK-NEXT: v19: builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix)|builtin(NativeFunctionsNode_pathBindTsIsAbsoluteWin32) = GetSlot v18 key="isAbsolute" receivers=[L0] level=Proven accessSite=9
-# CHECK-NEXT: v20: builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix) = AssumeType v19 provenType=builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix)
-# CHECK-NEXT: v21: anything = Call v20, v18, v16 calleeKey="isAbsolute" calleeName="path.isAbsolute" accessSite=10 callees=[builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix), ..]
-# CHECK-NEXT: Jump -> next b8(v5, v15, v16, v21)
-# CHECK-NEXT: b5(v22: number ~ int|whole, v23: int[0, 4294967294]) frequency=Rare:
-# CHECK-NEXT: v24: undefined|boolean|number|string|symbol|bigint = GetArrayElement v0, v23 arrayStorage=Contiguous level=Proven [keyIsIntegral]
-# CHECK-NEXT: v25: 1 = Integer integer=1
-# CHECK-NEXT: v26: int[1, 4294967295] = Add v23, v25
-# CHECK-NEXT: v27: undefined|boolean|number|string|symbol|bigint ~ undefined|string = Expect v24 expectedType=undefined|null|string
-# CHECK-NEXT: v28: object = Builtin builtin=NodePath
-# CHECK-NEXT: v29: L0 = AssumeType v28 provenType=L0
-# CHECK-NEXT: v30: builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix)|builtin(NativeFunctionsNode_pathBindTsIsAbsoluteWin32) = GetSlot v29 key="isAbsolute" receivers=[L0] level=Proven accessSite=9
-# CHECK-NEXT: v31: builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix) = AssumeType v30 provenType=builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix)
-# CHECK-NEXT: v32: anything = Call v31, v29, v27 calleeKey="isAbsolute" calleeName="path.isAbsolute" accessSite=10 callees=[builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix), ..]
-# CHECK-NEXT: v33: boolean ~ true = TypeTest v22 testedType=int|whole
-# CHECK-NEXT: Branch v33 -> taken b6(| 0), notTaken b14()
-# CHECK-NEXT: b6(v34: int|whole) frequency=Rare:
-# CHECK-NEXT: v35: boolean = TypeTest v27 testedType=string
-# CHECK-NEXT: Branch v35 -> taken b7(| 0), notTaken b13()
-# CHECK-NEXT: b7(v36: string) frequency=Rare:
-# CHECK-NEXT: Jump -> next b8(v34, v26, v36, v32)
-# CHECK-NEXT: b8(v37: int|whole, v38: int[1, 4294967295], v39: boolean|number|string|symbol|bigint ~ string, v40: anything):
-# CHECK-NEXT: v41: anything ~ boolean = Expect v40 expectedType=boolean
-# CHECK-NEXT: v42: boolean ~ true = TypeTest v41 testedType=boolean
-# CHECK-NEXT: Branch v42 -> taken b9(| 0), notTaken b12(| 0)
-# CHECK-NEXT: b9(v43: boolean):
-# CHECK-NEXT: Branch v43 -> taken b10(), notTaken b11()
-# CHECK-NEXT: b10():
-# CHECK-NEXT: v44: object = Builtin builtin=NodePath
-# CHECK-NEXT: v45: L0 = AssumeType v44 provenType=L0
-# CHECK-NEXT: v46: builtin(NativeFunctionsNode_pathBindTsBasenamePosix)|builtin(NativeFunctionsNode_pathBindTsBasenameWin32) = GetSlot v45 key="basename" receivers=[L0] level=Proven accessSite=11
-# CHECK-NEXT: v47: builtin(NativeFunctionsNode_pathBindTsBasenamePosix) = AssumeType v46 provenType=builtin(NativeFunctionsNode_pathBindTsBasenamePosix)
-# CHECK-NEXT: v48: anything = Call v47, v45, v39 calleeKey="basename" calleeName="path.basename" accessSite=12 callees=[builtin(NativeFunctionsNode_pathBindTsBasenamePosix), ..]
-# CHECK-NEXT: Jump -> next b20(v37, v48, v38, v39)
-# CHECK-NEXT: b11():
-# CHECK-NEXT: Jump -> next b31(v37, v38)
-# CHECK-NEXT: b12(v49: undefined|null|number|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b16(v37, v38, v39, v49)
-# CHECK-NEXT: b13() frequency=Rare:
-# CHECK-NEXT: Jump -> next b15()
-# CHECK-NEXT: b14() frequency=Rare:
-# CHECK-NEXT: Jump -> next b15()
-# CHECK-NEXT: b15() frequency=Rare:
-# CHECK-NEXT: v50: anything ~ boolean = Expect v32 expectedType=boolean
-# CHECK-NEXT: Jump -> next b16(v22, v26, v27, v50)
-# CHECK-NEXT: b16(v51: number ~ int|whole, v52: int[1, 4294967295], v53: undefined|boolean|number|string|symbol|bigint ~ undefined|string, v54: anything ~ boolean) frequency=Rare:
-# CHECK-NEXT: v55: boolean = ToBoolean v54
-# CHECK-NEXT: Branch v55 -> taken b17(), notTaken b37()
-# CHECK-NEXT: b17() frequency=Rare:
-# CHECK-NEXT: v56: object = Builtin builtin=NodePath
-# CHECK-NEXT: v57: L0 = AssumeType v56 provenType=L0
-# CHECK-NEXT: v58: builtin(NativeFunctionsNode_pathBindTsBasenamePosix)|builtin(NativeFunctionsNode_pathBindTsBasenameWin32) = GetSlot v57 key="basename" receivers=[L0] level=Proven accessSite=11
-# CHECK-NEXT: v59: builtin(NativeFunctionsNode_pathBindTsBasenamePosix) = AssumeType v58 provenType=builtin(NativeFunctionsNode_pathBindTsBasenamePosix)
-# CHECK-NEXT: v60: anything = Call v59, v57, v53 calleeKey="basename" calleeName="path.basename" accessSite=12 callees=[builtin(NativeFunctionsNode_pathBindTsBasenamePosix), ..]
-# CHECK-NEXT: v61: boolean ~ true = TypeTest v51 testedType=int|whole
-# CHECK-NEXT: Branch v61 -> taken b18(| 0), notTaken b24()
-# CHECK-NEXT: b18(v62: int|whole) frequency=Rare:
-# CHECK-NEXT: v63: boolean = TypeTest v53 testedType=string
-# CHECK-NEXT: Branch v63 -> taken b19(| 0), notTaken b23()
-# CHECK-NEXT: b19(v64: string) frequency=Rare:
-# CHECK-NEXT: Jump -> next b20(v62, v60, v52, v64)
-# CHECK-NEXT: b20(v65: int|whole, v66: anything, v67: int[1, 4294967295], v68: boolean|number|string|symbol|bigint ~ string):
-# CHECK-NEXT: v69: anything ~ undefined|null|string = Expect v66 expectedType=undefined|null|string
-# CHECK-NEXT: v70: boolean|number|string|symbol|bigint|object ~ string = RequireObjectCoercible v69 name="length"
-# CHECK-NEXT: v71: boolean ~ true = TypeTest v70 testedType=string
-# CHECK-NEXT: Branch v71 -> taken b21(| 0), notTaken b22(| 0)
-# CHECK-NEXT: b21(v72: string):
-# CHECK-NEXT: v73: int[0, 2147483647] = GetStringLength v72
-# CHECK-NEXT: v74: object = Builtin builtin=NodePath
-# CHECK-NEXT: v75: L0 = AssumeType v74 provenType=L0
-# CHECK-NEXT: v76: builtin(NativeFunctionsNode_pathBindTsExtnamePosix)|builtin(NativeFunctionsNode_pathBindTsExtnameWin32) = GetSlot v75 key="extname" receivers=[L0] level=Proven accessSite=14
-# CHECK-NEXT: v77: builtin(NativeFunctionsNode_pathBindTsExtnamePosix) = AssumeType v76 provenType=builtin(NativeFunctionsNode_pathBindTsExtnamePosix)
-# CHECK-NEXT: v78: anything = Call v77, v75, v68 calleeKey="extname" calleeName="path.extname" accessSite=15 callees=[builtin(NativeFunctionsNode_pathBindTsExtnamePosix), ..]
-# CHECK-NEXT: Jump -> next b29(v65, v73, v78, v67)
-# CHECK-NEXT: b22(v79: boolean|number|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b26(v65, v79, v67, v68)
-# CHECK-NEXT: b23() frequency=Rare:
-# CHECK-NEXT: Jump -> next b25()
-# CHECK-NEXT: b24() frequency=Rare:
-# CHECK-NEXT: Jump -> next b25()
-# CHECK-NEXT: b25() frequency=Rare:
-# CHECK-NEXT: v80: anything ~ undefined|null|string = Expect v60 expectedType=undefined|null|string
-# CHECK-NEXT: v81: boolean|number|string|symbol|bigint|object ~ string = RequireObjectCoercible v80 name="length"
-# CHECK-NEXT: Jump -> next b26(v51, v81, v52, v53)
-# CHECK-NEXT: b26(v82: number ~ int|whole, v83: boolean|number|string|symbol|bigint|object ~ string, v84: int[1, 4294967295], v85: undefined|boolean|number|string|symbol|bigint ~ undefined|string) frequency=Rare:
-# CHECK-NEXT: v86: anything = PropGet v83 key="length" accessSite=13
-# CHECK-NEXT: v87: undefined|number = AssumeType v86 provenType=undefined|number
-# CHECK-NEXT: v88: object = Builtin builtin=NodePath
-# CHECK-NEXT: v89: L0 = AssumeType v88 provenType=L0
-# CHECK-NEXT: v90: builtin(NativeFunctionsNode_pathBindTsExtnamePosix)|builtin(NativeFunctionsNode_pathBindTsExtnameWin32) = GetSlot v89 key="extname" receivers=[L0] level=Proven accessSite=14
-# CHECK-NEXT: v91: builtin(NativeFunctionsNode_pathBindTsExtnamePosix) = AssumeType v90 provenType=builtin(NativeFunctionsNode_pathBindTsExtnamePosix)
-# CHECK-NEXT: v92: anything = Call v91, v89, v85 calleeKey="extname" calleeName="path.extname" accessSite=15 callees=[builtin(NativeFunctionsNode_pathBindTsExtnamePosix), ..]
-# CHECK-NEXT: v93: boolean ~ true = TypeTest v82 testedType=int|whole
-# CHECK-NEXT: Branch v93 -> taken b27(| 0), notTaken b34()
-# CHECK-NEXT: b27(v94: int|whole) frequency=Rare:
-# CHECK-NEXT: v95: boolean = TypeTest v87 testedType=int[0, 2147483647]
-# CHECK-NEXT: Branch v95 -> taken b28(| 0), notTaken b33()
-# CHECK-NEXT: b28(v96: int[0, 2147483647]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b29(v94, v96, v92, v84)
-# CHECK-NEXT: b29(v97: int|whole, v98: int[0, 2147483647], v99: anything, v100: int[1, 4294967295]):
-# CHECK-NEXT: v101: anything ~ undefined|null|string = Expect v99 expectedType=undefined|null|string
-# CHECK-NEXT: v102: boolean|number|string|symbol|bigint|object ~ string = RequireObjectCoercible v101 name="length"
-# CHECK-NEXT: v103: boolean ~ true = TypeTest v102 testedType=string
-# CHECK-NEXT: Branch v103 -> taken b30(| 0), notTaken b32(| 0)
-# CHECK-NEXT: b30(v104: string):
-# CHECK-NEXT: v105: int[0, 2147483647] = GetStringLength v104
-# CHECK-NEXT: v106: int[0, 4294967294] = Add v98, v105
-# CHECK-NEXT: v107: int|whole = Add v97, v106
-# CHECK-NEXT: Jump -> next b31(v107, v100)
-# CHECK-NEXT: b31(v108: int|whole, v109: int[1, 4294967295]):
-# CHECK-NEXT: Jump -> next b2(v108, v109)
-# CHECK-NEXT: b32(v110: boolean|number|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b36(v97, v98, v110, v100)
-# CHECK-NEXT: b33() frequency=Rare:
-# CHECK-NEXT: Jump -> next b35()
-# CHECK-NEXT: b34() frequency=Rare:
-# CHECK-NEXT: Jump -> next b35()
-# CHECK-NEXT: b35() frequency=Rare:
-# CHECK-NEXT: v111: anything ~ undefined|null|string = Expect v92 expectedType=undefined|null|string
-# CHECK-NEXT: v112: boolean|number|string|symbol|bigint|object ~ string = RequireObjectCoercible v111 name="length"
-# CHECK-NEXT: Jump -> next b36(v82, v87, v112, v84)
-# CHECK-NEXT: b36(v113: number ~ int|whole, v114: undefined|number, v115: boolean|number|string|symbol|bigint|object ~ string, v116: int[1, 4294967295]) frequency=Rare:
-# CHECK-NEXT: v117: anything = PropGet v115 key="length" accessSite=16
-# CHECK-NEXT: v118: undefined|number = AssumeType v117 provenType=undefined|number
-# CHECK-NEXT: v119: number = Add v114, v118
-# CHECK-NEXT: v120: number = Add v113, v119
-# CHECK-NEXT: Jump -> next b38(v120, v116)
-# CHECK-NEXT: b37() frequency=Rare:
-# CHECK-NEXT: Jump -> next b38(v51, v52)
-# CHECK-NEXT: b38(v121: number, v122: int[1, 4294967295]) frequency=Rare:
-# CHECK-NEXT: v123: boolean = TypeTest v121 testedType=int|whole
-# CHECK-NEXT: Branch v123 -> taken b39(| 0), notTaken b40()
-# CHECK-NEXT: b39(v124: int|whole) frequency=Rare:
-# CHECK-NEXT: Jump -> next b1(v124, v122)
-# CHECK-NEXT: b40() frequency=Rare:
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v126: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v127: boolean = Less v122, v126
-# CHECK-NEXT: Branch v127 -> taken b41(| 0), notTaken b42()
-# CHECK-NEXT: b41(v128: int[1, 4294967294]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b5(v121, v128)
-# CHECK-NEXT: b42() frequency=Rare:
-# CHECK-NEXT: Return v121
-# CHECK-NEXT: b43():
-# CHECK-NEXT: Return v5
+# CHECK-NEXT: v6: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v7: boolean = Less v4, v6
+# CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b9()
+# CHECK-NEXT: b2(v8: int[0, 4294967294]):
+# CHECK-NEXT: v9: boolean = IsInBounds v0, v8
+# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b4()
+# CHECK-NEXT: b3(v10: guard):
+# CHECK-NEXT: v11: string = GetArrayElement v0, v8, v10 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v12: 1 = Integer integer=1
+# CHECK-NEXT: v13: int[1, 4294967295] = Add v8, v12
+# CHECK-NEXT: v14: object = Builtin builtin=NodePath
+# CHECK-NEXT: v15: L0 = AssumeType v14 provenType=L0
+# CHECK-NEXT: v16: builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix)|builtin(NativeFunctionsNode_pathBindTsIsAbsoluteWin32) = GetSlot v15 key="isAbsolute" receivers=[L0] level=Proven accessSite=9
+# CHECK-NEXT: v17: builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix) = AssumeType v16 provenType=builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix)
+# CHECK-NEXT: v18: anything = Call v17, v15, v11 calleeKey="isAbsolute" calleeName="path.isAbsolute" accessSite=10 callees=[builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix)]
+# CHECK-NEXT: Jump -> next b5(v13, v11, v18)
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: v19: undefined|string = GetArrayElement v0, v8 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v20: 1 = Integer integer=1
+# CHECK-NEXT: v21: int[1, 4294967295] = Add v8, v20
+# CHECK-NEXT: v22: fact = Specified
+# CHECK-NEXT: v23: string = AssumeType v19, v22 provenType=string
+# CHECK-NEXT: v24: object = Builtin builtin=NodePath
+# CHECK-NEXT: v25: L0 = AssumeType v24 provenType=L0
+# CHECK-NEXT: v26: builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix)|builtin(NativeFunctionsNode_pathBindTsIsAbsoluteWin32) = GetSlot v25 key="isAbsolute" receivers=[L0] level=Proven accessSite=9
+# CHECK-NEXT: v27: builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix) = AssumeType v26 provenType=builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix)
+# CHECK-NEXT: v28: anything = Call v27, v25, v23 calleeKey="isAbsolute" calleeName="path.isAbsolute" accessSite=10 callees=[builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix)]
+# CHECK-NEXT: Jump -> next b5(v21, v23, v28)
+# CHECK-NEXT: b5(v29: int[1, 4294967295], v30: string, v31: anything):
+# CHECK-NEXT: v32: boolean = AssumeType v31 provenType=boolean
+# CHECK-NEXT: Branch v32 -> taken b6(), notTaken b7()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v33: object = Builtin builtin=NodePath
+# CHECK-NEXT: v34: L0 = AssumeType v33 provenType=L0
+# CHECK-NEXT: v35: builtin(NativeFunctionsNode_pathBindTsBasenamePosix)|builtin(NativeFunctionsNode_pathBindTsBasenameWin32) = GetSlot v34 key="basename" receivers=[L0] level=Proven accessSite=11
+# CHECK-NEXT: v36: builtin(NativeFunctionsNode_pathBindTsBasenamePosix) = AssumeType v35 provenType=builtin(NativeFunctionsNode_pathBindTsBasenamePosix)
+# CHECK-NEXT: v37: anything = Call v36, v34, v30 calleeKey="basename" calleeName="path.basename" accessSite=12 callees=[builtin(NativeFunctionsNode_pathBindTsBasenamePosix)]
+# CHECK-NEXT: v38: string = AssumeType v37 provenType=string
+# CHECK-NEXT: v39: int[0, 2147483647] = GetStringLength v38
+# CHECK-NEXT: v40: object = Builtin builtin=NodePath
+# CHECK-NEXT: v41: L0 = AssumeType v40 provenType=L0
+# CHECK-NEXT: v42: builtin(NativeFunctionsNode_pathBindTsExtnamePosix)|builtin(NativeFunctionsNode_pathBindTsExtnameWin32) = GetSlot v41 key="extname" receivers=[L0] level=Proven accessSite=14
+# CHECK-NEXT: v43: builtin(NativeFunctionsNode_pathBindTsExtnamePosix) = AssumeType v42 provenType=builtin(NativeFunctionsNode_pathBindTsExtnamePosix)
+# CHECK-NEXT: v44: anything = Call v43, v41, v30 calleeKey="extname" calleeName="path.extname" accessSite=15 callees=[builtin(NativeFunctionsNode_pathBindTsExtnamePosix)]
+# CHECK-NEXT: v45: string = AssumeType v44 provenType=string
+# CHECK-NEXT: v46: int[0, 2147483647] = GetStringLength v45
+# CHECK-NEXT: v47: int[0, 4294967294] = Add v39, v46
+# CHECK-NEXT: v48: int|whole = Add v3, v47
+# CHECK-NEXT: Jump -> next b8(v48)
+# CHECK-NEXT: b7():
+# CHECK-NEXT: Jump -> next b8(v3)
+# CHECK-NEXT: b8(v49: int|whole):
+# CHECK-NEXT: Jump -> next b1(v49, v29)
+# CHECK-NEXT: b9():
+# CHECK-NEXT: Return v3
 # CHECK-NEXT: }

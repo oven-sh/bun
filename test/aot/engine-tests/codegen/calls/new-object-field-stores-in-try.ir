@@ -328,7 +328,7 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Successors: #9, Rare:#23
 # CHECK-NEXT: BB#9: ; frequency = 0.997016
 # CHECK-NEXT: Predecessors: #31, #6
-# CHECK-NEXT: Int64 b@86 = Load(b@10, offset = 7536, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v20:String)
+# CHECK-NEXT: Int64 b@86 = Load(b@10, offset = 7576, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v20:String)
 # CHECK-NEXT: Int64 b@87 = Load(b@86, ControlDependent|Reads:AOTInstance_stringCells, v20:String)
 # CHECK-NEXT: Void b@89 = Branch(b@87, Terminal, v20:String)
 # CHECK-NEXT: Successors: Then:#34, Else:Rare:#35
@@ -363,7 +363,7 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Void b@126 = Patchpoint(b@125:Register(%r8), b@124:Register(%rdi), runsWithoutFrame, resultConstraints = WarmAny, Terminal|ExitsSideways|ControlDependent|WritesPinned|ReadsPinned|Fence|Writes:Top|Reads:Top, v30:Call)
 # CHECK-NEXT: BB#11: ; frequency = 0.000974
 # CHECK-NEXT: Predecessors: #36
-# CHECK-NEXT: Int64 b@104 = Patchpoint(b@31:SomeRegister, resultConstraints = Register(%rax), lateClobberedOnSuccessor1 = [%rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %r12, %xmm0↓, %xmm1↓, %xmm2↓, %xmm3↓, %xmm4↓, %xmm5↓, %xmm6↓, %xmm7↓, %xmm8↓, %xmm9↓, %xmm10↓, %xmm11↓, %xmm12↓, %xmm13↓, %xmm14↓, %xmm15↓], Terminal|ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v25:PropGet)
+# CHECK-NEXT: Int64 b@104 = Patchpoint(b@31:SomeRegister, resultConstraints = Register(%rax), lateClobberedOnSuccessor1 = [%rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %r12, %xmm0↓, %xmm1↓, %xmm2↓, %xmm3↓, %xmm4↓, %xmm5↓, %xmm6↓, %xmm7↓, %xmm8↓, %xmm9↓, %xmm10↓, %xmm11↓, %xmm12↓, %xmm13↓, %xmm14↓, %xmm15↓], Terminal|ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState, CalleesInFrames}|Reads:Top, v25:PropGet)
 # CHECK-NEXT: Successors: #39, Rare:#23
 # CHECK-NEXT: BB#39: ; frequency = 0.000973
 # CHECK-NEXT: Predecessors: #11
@@ -441,7 +441,7 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Int64 b@82 = ZExt32(b@19, v19:PropSet)
 # CHECK-NEXT: Int64 b@17 = Load(b@10, offset = 96, ReadsImmutable, v19:PropSet)
 # CHECK-NEXT: Int64 b@83 = Add(b@82, b@17, v19:PropSet)
-# CHECK-NEXT: Void b@84 = Patchpoint(b@31:Register(%rax), b@83:Register(%rsi), resultConstraints = WarmAny, lateClobberedOnSuccessor1 = [%rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %r12, %xmm0↓, %xmm1↓, %xmm2↓, %xmm3↓, %xmm4↓, %xmm5↓, %xmm6↓, %xmm7↓, %xmm8↓, %xmm9↓, %xmm10↓, %xmm11↓, %xmm12↓, %xmm13↓, %xmm14↓, %xmm15↓], Terminal|ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v19:PropSet)
+# CHECK-NEXT: Void b@84 = Patchpoint(b@31:Register(%rax), b@83:Register(%rsi), resultConstraints = WarmAny, lateClobberedOnSuccessor1 = [%rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %r12, %xmm0↓, %xmm1↓, %xmm2↓, %xmm3↓, %xmm4↓, %xmm5↓, %xmm6↓, %xmm7↓, %xmm8↓, %xmm9↓, %xmm10↓, %xmm11↓, %xmm12↓, %xmm13↓, %xmm14↓, %xmm15↓], Terminal|ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState, CalleesInFrames}|Reads:Top, v19:PropSet)
 # CHECK-NEXT: Successors: #9, Rare:#23
 # CHECK-NEXT: BB#1: ; frequency = 0.058709
 # CHECK-NEXT: Predecessors: #25
@@ -457,7 +457,7 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: BB#28: ; frequency = 0.058709
 # CHECK-NEXT: Predecessors: #27, #26
 # CHECK-NEXT: Int64 b@49 = Phi(ReadsLocalState, v10:GetModuleVariable)
-# CHECK-NEXT: Int64 b@51 = Patchpoint(b@49:Register(%r8), b@31:Register(%rdi), resultConstraints = Register(%rax), lateClobberedOnSuccessor1 = [%rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %r12, %xmm0↓, %xmm1↓, %xmm2↓, %xmm3↓, %xmm4↓, %xmm5↓, %xmm6↓, %xmm7↓, %xmm8↓, %xmm9↓, %xmm10↓, %xmm11↓, %xmm12↓, %xmm13↓, %xmm14↓, %xmm15↓], Terminal|ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v11:Call)
+# CHECK-NEXT: Int64 b@51 = Patchpoint(b@49:Register(%r8), b@31:Register(%rdi), resultConstraints = Register(%rax), lateClobberedOnSuccessor1 = [%rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %r12, %xmm0↓, %xmm1↓, %xmm2↓, %xmm3↓, %xmm4↓, %xmm5↓, %xmm6↓, %xmm7↓, %xmm8↓, %xmm9↓, %xmm10↓, %xmm11↓, %xmm12↓, %xmm13↓, %xmm14↓, %xmm15↓], Terminal|ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState, CalleesInFrames}|Reads:Top, v11:Call)
 # CHECK-NEXT: Successors: #4, Rare:#23
 # CHECK-NEXT: BB#27: ; frequency = 0.000057
 # CHECK-NEXT: Predecessors: #1

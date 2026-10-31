@@ -49,9 +49,9 @@ a name outside ASCII: TypeError: object.中 is not a function. (In 'object.中()
 a read two members deep: TypeError: undefined is not an object (evaluating 'object.absent.deeper')
 a read of a variable that holds nothing: TypeError: undefined is not an object (evaluating 'missing.member')
 a read under a symbol: TypeError: null is not an object (evaluating 'empty[Symbol.iterator]')
-a list pattern: TypeError: null is not an object
+a list pattern: TypeError: null is not an object (evaluating '[first]')
 an object pattern: TypeError: Cannot destructure property 'first' from null or undefined value
-instanceof with a literal on the left: TypeError: Object  is not a function
+instanceof with a literal on the left: TypeError: object is not a function. (evaluating '{} instanceof object')
 instanceof with names on both sides: TypeError: object is not a function. (evaluating 'holder instanceof object')
 in: TypeError: size is not an Object. (evaluating '"key" in size')
 */

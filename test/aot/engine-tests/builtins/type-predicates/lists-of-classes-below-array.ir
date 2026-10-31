@@ -286,98 +286,91 @@ function f7 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v2: null|object = GetSuperBase v1
 # CHECK-NEXT: v3: builtin(Array) = AssumeType v2 provenType=builtin(Array)
 # CHECK-NEXT: v4: object ~ L0|L1 = SuperConstruct v3, v1 layout=L0 accessSite=26 callees=[builtin(Array)]
-# CHECK-NEXT: v5: boolean = CallBuiltin -, v4 overload=ArrayIsArray/0 accessSite=3
-# CHECK-NEXT: v6: undefined = CallBuiltin -, v5 overload=ConsoleLog/0 accessSite=4
-# CHECK-NEXT: v7: "list"|"text" = CallDirect v4 function=f1 accessSite=7
-# CHECK-NEXT: v8: "t" = String string="t"
-# CHECK-NEXT: v9: "list"|"text" = CallDirect v8 function=f9 @278:4 tail
-# CHECK-NEXT: v10: undefined = CallBuiltin -, v7, v9 overload=ConsoleLog/0 accessSite=9
-# CHECK-NEXT: v11: f4 = GetModuleVariable variable=g1
-# CHECK-NEXT: v12: f4 = FinishClass v11 layout=L1
-# CHECK-NEXT: v13: null|object = GetSuperBase v12
-# CHECK-NEXT: v14: f3 = AssumeType v13 provenType=f3
-# CHECK-NEXT: v15: null|object = GetSuperBase v14
-# CHECK-NEXT: v16: builtin(Array) = AssumeType v15 provenType=builtin(Array)
-# CHECK-NEXT: v17: object ~ L0|L1 = SuperConstruct v16, v12 layout=L0 accessSite=26 callees=[builtin(Array)]
-# CHECK-NEXT: v18: object ~ L1 = Upcast v17 castType=object
-# CHECK-NEXT: v19: 1 = Integer integer=1
-# CHECK-NEXT: PropDefine v18, v19 key="extra" accessSite=29
-# CHECK-NEXT: v21: "list"|"other" = CallDirect v18 function=f2 accessSite=13
-# CHECK-NEXT: v22: 5 = Integer integer=5
-# CHECK-NEXT: v23: "list"|"other" = CallDirect v22 function=f2 accessSite=14
-# CHECK-NEXT: v24: null = Null
-# CHECK-NEXT: v25: "list"|"other" = CallDirect v24 function=f2 accessSite=15
-# CHECK-NEXT: v26: null|object = GetSuperBase v12
-# CHECK-NEXT: v27: f3 = AssumeType v26 provenType=f3
-# CHECK-NEXT: v28: null|object = GetSuperBase v27
-# CHECK-NEXT: v29: builtin(Array) = AssumeType v28 provenType=builtin(Array)
-# CHECK-NEXT: v30: object ~ L0|L1 = SuperConstruct v29, v12 layout=L0 accessSite=26 callees=[builtin(Array)]
-# CHECK-NEXT: v31: object ~ L1 = Upcast v30 castType=object
-# CHECK-NEXT: v32: 1 = Integer integer=1
-# CHECK-NEXT: PropDefine v31, v32 key="extra" accessSite=29
-# CHECK-NEXT: v34: boolean = CallBuiltin -, v31 overload=ArrayIsArray/0 accessSite=17
-# CHECK-NEXT: v35: undefined = CallBuiltin -, v21, v23, v25, v34 overload=ConsoleLog/0 accessSite=18
-# CHECK-NEXT: v36: 0 = Integer
-# CHECK-NEXT: v37: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v36, v37)
-# CHECK-NEXT: b1(v38: int[0, 40000], v39: int[0, 20000]):
+# CHECK-NEXT: v5: Array ~ L0|L1 = AssumeType v4 provenType=Array
+# CHECK-NEXT: v6: true = Boolean boolean=true
+# CHECK-NEXT: v7: undefined = CallBuiltin -, v6 overload=ConsoleLog/0 accessSite=4
+# CHECK-NEXT: v8: "list"|"text" = CallDirect v5 function=f1 accessSite=7
+# CHECK-NEXT: v9: "t" = String string="t"
+# CHECK-NEXT: v10: "list"|"text" = CallDirect v9 function=f9 @278:4 tail
+# CHECK-NEXT: v11: undefined = CallBuiltin -, v8, v10 overload=ConsoleLog/0 accessSite=9
+# CHECK-NEXT: v12: f4 = GetModuleVariable variable=g1
+# CHECK-NEXT: v13: f4 = FinishClass v12 layout=L1
+# CHECK-NEXT: v14: null|object = GetSuperBase v13
+# CHECK-NEXT: v15: f3 = AssumeType v14 provenType=f3
+# CHECK-NEXT: v16: null|object = GetSuperBase v15
+# CHECK-NEXT: v17: builtin(Array) = AssumeType v16 provenType=builtin(Array)
+# CHECK-NEXT: v18: object ~ L0|L1 = SuperConstruct v17, v13 layout=L0 accessSite=26 callees=[builtin(Array)]
+# CHECK-NEXT: v19: Array ~ L0|L1 = AssumeType v18 provenType=Array
+# CHECK-NEXT: v20: Array ~ L1 = Upcast v19 castType=object
+# CHECK-NEXT: v21: 1 = Integer integer=1
+# CHECK-NEXT: PropDefine v20, v21 key="extra" accessSite=29
+# CHECK-NEXT: v23: "list"|"other" = CallDirect v20 function=f2 accessSite=13
+# CHECK-NEXT: v24: 5 = Integer integer=5
+# CHECK-NEXT: v25: "list"|"other" = CallDirect v24 function=f2 accessSite=14
+# CHECK-NEXT: v26: null = Null
+# CHECK-NEXT: v27: "list"|"other" = CallDirect v26 function=f2 accessSite=15
+# CHECK-NEXT: v28: null|object = GetSuperBase v13
+# CHECK-NEXT: v29: f3 = AssumeType v28 provenType=f3
+# CHECK-NEXT: v30: null|object = GetSuperBase v29
+# CHECK-NEXT: v31: builtin(Array) = AssumeType v30 provenType=builtin(Array)
+# CHECK-NEXT: v32: object ~ L0|L1 = SuperConstruct v31, v13 layout=L0 accessSite=26 callees=[builtin(Array)]
+# CHECK-NEXT: v33: Array ~ L0|L1 = AssumeType v32 provenType=Array
+# CHECK-NEXT: v34: Array ~ L1 = Upcast v33 castType=object
+# CHECK-NEXT: v35: 1 = Integer integer=1
+# CHECK-NEXT: PropDefine v34, v35 key="extra" accessSite=29
+# CHECK-NEXT: v37: true = Boolean boolean=true
+# CHECK-NEXT: v38: undefined = CallBuiltin -, v23, v25, v27, v37 overload=ConsoleLog/0 accessSite=18
+# CHECK-NEXT: v39: 0 = Integer
+# CHECK-NEXT: v40: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v39, v40)
+# CHECK-NEXT: b1(v41: int|whole ~ 0, v42: int[0, 20000] ~ 0):
+# CHECK-NEXT: Jump -> next b2(v41, v42)
+# CHECK-NEXT: b2(v43: int|whole, v44: int[0, 20000]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v41: 20000 = Integer integer=20000
-# CHECK-NEXT: v42: boolean = Less v39, v41
-# CHECK-NEXT: Branch v42 -> taken b2(| 0), notTaken b17()
-# CHECK-NEXT: b2(v43: int[0, 19999]):
-# CHECK-NEXT: v44: 1 = Integer integer=1
-# CHECK-NEXT: v45: int[0, 1] = BitAnd v43, v44
-# CHECK-NEXT: v46: boolean = ToBoolean v45
-# CHECK-NEXT: Branch v46 -> taken b3(), notTaken b4()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: Jump -> next b5(v4)
+# CHECK-NEXT: v46: 20000 = Integer integer=20000
+# CHECK-NEXT: v47: boolean = Less v44, v46
+# CHECK-NEXT: Branch v47 -> taken b3(| 0), notTaken b14()
+# CHECK-NEXT: b3(v48: int[0, 19999]):
+# CHECK-NEXT: v49: 1 = Integer integer=1
+# CHECK-NEXT: v50: int[0, 1] = BitAnd v48, v49
+# CHECK-NEXT: v51: boolean = ToBoolean v50
+# CHECK-NEXT: Branch v51 -> taken b4(), notTaken b5()
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v47: "t" = String string="t"
-# CHECK-NEXT: Jump -> next b5(v47)
-# CHECK-NEXT: b5(v48: object|"t" ~ "t"|L0|L1):
-# CHECK-NEXT: v49: boolean = CallBuiltin -, v48 overload=ArrayIsArray/0 accessSite=19
-# CHECK-NEXT: Branch v49 -> taken b6(), notTaken b7()
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v50: int[1, 40001] = Increment v38
-# CHECK-NEXT: Jump -> next b8(v50)
+# CHECK-NEXT: v52: int|whole = Increment v43
+# CHECK-NEXT: Jump -> next b6(v52)
+# CHECK-NEXT: b5():
+# CHECK-NEXT: Jump -> next b6(v43)
+# CHECK-NEXT: b6(v53: int|whole):
+# CHECK-NEXT: v54: 1 = Integer integer=1
+# CHECK-NEXT: v55: int[0, 1] = BitAnd v48, v54
+# CHECK-NEXT: v56: boolean = ToBoolean v55
+# CHECK-NEXT: Branch v56 -> taken b7(), notTaken b12()
 # CHECK-NEXT: b7():
-# CHECK-NEXT: Jump -> next b8(v38)
-# CHECK-NEXT: b8(v51: int[0, 40001]):
-# CHECK-NEXT: v52: 1 = Integer integer=1
-# CHECK-NEXT: v53: int[0, 1] = BitAnd v43, v52
-# CHECK-NEXT: v54: boolean = ToBoolean v53
-# CHECK-NEXT: Branch v54 -> taken b9(), notTaken b12()
-# CHECK-NEXT: b9():
-# CHECK-NEXT: v55: boolean ~ true = TypeTest v4 testedType=undefined|null|string|L0|L1
-# CHECK-NEXT: Branch v55 -> taken b10(), notTaken b11()
-# CHECK-NEXT: b10():
-# CHECK-NEXT: v56: "list" = String string="list"
-# CHECK-NEXT: Jump -> next b13(v56)
-# CHECK-NEXT: b11() frequency=Unlikely:
-# CHECK-NEXT: v57: "list"|"text" = CallDirect v4 function=f10 @278:1 tail
-# CHECK-NEXT: Jump -> next b14(v57)
-# CHECK-NEXT: b12():
-# CHECK-NEXT: v58: "text" = String string="text"
+# CHECK-NEXT: v57: boolean ~ true = TypeTest v5 testedType=undefined|null|string|L0|L1
+# CHECK-NEXT: Branch v57 -> taken b8(), notTaken b9()
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v58: int|whole = Increment v53
 # CHECK-NEXT: Jump -> next b13(v58)
-# CHECK-NEXT: b13(v59: "list"|"text"):
-# CHECK-NEXT: Jump -> next b14(v59)
-# CHECK-NEXT: b14(v60: "list"|"text"):
-# CHECK-NEXT: v61: "list" = String string="list"
-# CHECK-NEXT: v62: boolean = StrictEq v60, v61
-# CHECK-NEXT: Branch v62 -> taken b15(), notTaken b16(v51)
-# CHECK-NEXT: b15():
-# CHECK-NEXT: v63: int[1, 40002] = Increment v51
-# CHECK-NEXT: Jump -> next b16(v63)
-# CHECK-NEXT: b16(v64: int[0, 40002]):
-# CHECK-NEXT: v65: int[1, 20000] = Increment v43
-# CHECK-NEXT: v66: fact = Specified
-# CHECK-NEXT: v67: int[0, 40000] = AssumeType v64, v66 provenType=int[0, 40000]
-# CHECK-NEXT: Jump -> next b1(v67, v65)
-# CHECK-NEXT: b17():
-# CHECK-NEXT: v68: undefined = CallBuiltin -, v38 overload=ConsoleLog/0 accessSite=23
-# CHECK-NEXT: v69: undefined = Undefined
-# CHECK-NEXT: Return v69
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: v59: "list"|"text" = CallDirect v5 function=f10 @278:1 tail
+# CHECK-NEXT: v60: "list" = String string="list"
+# CHECK-NEXT: v61: boolean = StrictEq v59, v60
+# CHECK-NEXT: Branch v61 -> taken b10(), notTaken b11(v53)
+# CHECK-NEXT: b10() frequency=Unlikely:
+# CHECK-NEXT: v62: int|whole = Increment v53
+# CHECK-NEXT: Jump -> next b11(v62)
+# CHECK-NEXT: b11(v63: int|whole) frequency=Unlikely:
+# CHECK-NEXT: v64: int[1, 20000] = Increment v48
+# CHECK-NEXT: Jump -> next b1(v63, v64)
+# CHECK-NEXT: b12():
+# CHECK-NEXT: Jump -> next b13(v53)
+# CHECK-NEXT: b13(v65: int|whole):
+# CHECK-NEXT: v66: int[1, 20000] = Increment v48
+# CHECK-NEXT: Jump -> next b2(v65, v66)
+# CHECK-NEXT: b14():
+# CHECK-NEXT: v67: undefined = CallBuiltin -, v43 overload=ConsoleLog/0 accessSite=23
+# CHECK-NEXT: v68: undefined = Undefined
+# CHECK-NEXT: Return v68
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="f"
 # CHECK: module=m0 position=278 role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|L0|L1 site=w1 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type="list"|"text" site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f9 fallback=f10} {
@@ -392,35 +385,38 @@ function f7 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="g"
-# CHECK: module=m0 position=422 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|L1 site=w3 flags=[IsExpected, OmitsUndefined]}] results=[{type="list"|"other" site=w4 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|number|L1):
-# CHECK-NEXT: v1: boolean = CallBuiltin -, v0 overload=ArrayIsArray/0 accessSite=25
-# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
+# CHECK: module=m0 position=422 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=null|int|Array site=w3 flags=[IsExpected, OmitsUndefined]}] results=[{type="list"|"other" site=w4 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: anything ~ null|int|Array):
+# CHECK-NEXT: v1: null|int|Array = AssumeType v0 provenType=null|int|Array
+# CHECK-NEXT: v2: null|int|Array ~ null|int|L1 = Expect v1 expectedType=undefined|null|number|L1
+# CHECK-NEXT: v3: boolean = TypeTest v2 testedType=Array
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v2: "list" = String string="list"
-# CHECK-NEXT: Jump -> next b3(v2)
+# CHECK-NEXT: v4: "list" = String string="list"
+# CHECK-NEXT: Jump -> next b3(v4)
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v3: "other" = String string="other"
-# CHECK-NEXT: Jump -> next b3(v3)
-# CHECK-NEXT: b3(v4: "list"|"other"):
-# CHECK-NEXT: Return v4
+# CHECK-NEXT: v5: "other" = String string="other"
+# CHECK-NEXT: Jump -> next b3(v5)
+# CHECK-NEXT: b3(v6: "list"|"other"):
+# CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Stack"
-# CHECK: module=m0 position=193 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+# CHECK: module=m0 position=193 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=Array flags=[IsFromCompiler]}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
 # CHECK-NEXT: b0(v0: function, v1: anything, v2: Array<undefined, proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v3: f3 = AssumeType v0 provenType=f3
 # CHECK-NEXT: v4: f3|f4 = AssumeType v1 provenType=f3|f4
 # CHECK-NEXT: v5: null|object = GetSuperBase v3
 # CHECK-NEXT: v6: builtin(Array) = AssumeType v5 provenType=builtin(Array)
 # CHECK-NEXT: v7: object ~ L0|L1 = SuperConstructList v6, v4, v2 layout=L0 accessSite=26 callees=[builtin(Array)]
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v8: Array ~ L0|L1 = AssumeType v7 provenType=Array
+# CHECK-NEXT: Return v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Deep"
-# CHECK: module=m0 position=388 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1
+# CHECK: module=m0 position=388 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=Array flags=[IsFromCompiler]}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1
 # CHECK-LABEL: function {{*}}name="f"
 # CHECK: module=m0 position=278 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|L0|L1 site=w1}] results=[{type="list"|"text" site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}]} {
 # CHECK-NEXT: b0(v0: undefined|null|string|L0|L1):
-# CHECK-NEXT: v1: "t"|L0|L1 = AssumeType v0 provenType=object|"t"
+# CHECK-NEXT: v1: "t"|L0|L1 = AssumeType v0 provenType="t"|Array
 # CHECK-NEXT: v2: boolean = TypeTest v1 testedType=L0|L1
 # CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
@@ -435,8 +431,9 @@ function f7 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-LABEL: function {{*}}name="f"
 # CHECK: module=m0 position=278 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|L0|L1 site=w1 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type="list"|"text" site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}]} creator=Version{provenVersion=f9} {
 # CHECK-NEXT: b0(v0: anything) frequency=Unlikely:
-# CHECK-NEXT: v1: object|"t" = AssumeType v0 provenType=object|"t"
-# CHECK-NEXT: TryCallInline -, v1 inlineBuiltin=ArrayIsArray overload=ArrayIsArray/0 accessSite=24 -> done b4(), miss b5()
+# CHECK-NEXT: v1: "t"|Array = AssumeType v0 provenType="t"|Array
+# CHECK-NEXT: v2: boolean = TypeTest v1 testedType=Array
+# CHECK-NEXT: TestAndBranch v2 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1() frequency=Unlikely:
 # CHECK-NEXT: v3: "list" = String string="list"
 # CHECK-NEXT: Jump -> next b3(v3)
@@ -445,11 +442,6 @@ function f7 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Jump -> next b3(v4)
 # CHECK-NEXT: b3(v5: "list"|"text") frequency=Unlikely:
 # CHECK-NEXT: Return v5
-# CHECK-NEXT: b4(v2: boolean) frequency=Unlikely:
-# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
-# CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v6: boolean = CallBuiltin -, v1 overload=ArrayIsArray/0 accessSite=24
-# CHECK-NEXT: Jump -> next b4(v6)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Stack"
 # CHECK: module=m0 position=193 kind=DerivedConstructor role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f3}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 takesNewTarget=true} inlineFrames=[{}, {callee=f3 callPosition=193 isTailCall=true module=m0}] {
@@ -460,7 +452,8 @@ function f7 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v5: null|object = GetSuperBase v0
 # CHECK-NEXT: v6: builtin(Array) = AssumeType v5 provenType=builtin(Array)
 # CHECK-NEXT: v7: object ~ L0|L1 = ConstructSuperForwardVarargs v6, v4 layout=L0 firstArgument=1 accessSite=26 callees=[builtin(Array)]
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v8: Array ~ L0|L1 = AssumeType v7 provenType=Array
+# CHECK-NEXT: Return v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Deep"
 # CHECK: module=m0 position=388 kind=DerivedConstructor role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f4}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 takesNewTarget=true} inlineFrames=[{}, {callee=f4 callPosition=388 isTailCall=true module=m0}, {callee=f5 callPosition=388 parent=1 module=m0}] {
@@ -471,7 +464,8 @@ function f7 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v5: null|object = GetSuperBase v0
 # CHECK-NEXT: v6: f3 = AssumeType v5 provenType=f3
 # CHECK-NEXT: v7: object ~ L1 = ConstructSuperForwardVarargs v6, v4 layout=L1 firstArgument=1 accessSite=27 callees=[f3]
-# CHECK-NEXT: v8: 1 = Integer integer=1
-# CHECK-NEXT: PropDefine v7, v8 key="extra" accessSite=29
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v8: Array ~ L1 = AssumeType v7 provenType=Array
+# CHECK-NEXT: v9: 1 = Integer integer=1
+# CHECK-NEXT: PropDefine v8, v9 key="extra" accessSite=29
+# CHECK-NEXT: Return v8
 # CHECK-NEXT: }

@@ -208,3 +208,132 @@ for (const [who, make, R, C, keyed] of [["I read theirs", L.withFunctions, reade
     expect(Object.keys(make(5)).join()).toBe("n,plain,capturing,method,later,some"); expect(JSON.stringify(make(6))).toBe('{"n":6}');
   });
 }
+
+// Stores to what lies outside a plain slot.
+const writeA = (o: any, v: any) => { o.a = v; };
+for (const [who, M, write, writeByKey, read] of [["I write theirs", L.makers, writeA, (o: any, k: any, v: any) => { o[k] = v; }, readA], ["they write mine", myMakers, L.writeA, L.writeKeyed, L.readA]] as const) {
+  test(`c72 ${who}: an extra property, of every kind of value`, () => {
+    const o = M.extras(0), p = M.extras("p");
+    for (let i = 0; i < 60; i++) write(o, i);
+    expect(o.a).toBe(59); expect(read(o)).toBe(59); expect(p.a).toBe("p");
+    for (const v of [1.5, "text", null, undefined, { deep: 1 }, [1], other, 10n, Symbol.iterator, -0, NaN]) { write(o, v); expect(o.a).toBe(v); writeByKey(o, "a", 0); expect(o.a).toBe(0); writeByKey(o, "a", v); expect(read(o)).toBe(v); }
+    expect(Object.keys(o).join()).toBe("x,z,a,b"); expect(p.a).toBe("p");
+  });
+  test(`c73 ${who}: an extra property that stops taking stores`, () => {
+    const readOnly = M.extras(1), frozen = M.extras(1), setter = M.extras(1), gone = M.extras(1), still = M.extras(1); let seen: unknown;
+    for (const o of [readOnly, frozen, setter, gone, still]) for (let i = 0; i < 60; i++) write(o, i);
+    Object.defineProperty(readOnly, "a", { writable: false }); expect(() => write(readOnly, "no")).toThrow(TypeError); expect(readOnly.a).toBe(59);
+    Object.freeze(frozen); expect(() => write(frozen, "no")).toThrow(TypeError); expect(frozen.a).toBe(59);
+    Object.defineProperty(setter, "a", { set(v) { seen = v; }, configurable: true }); write(setter, "to the setter"); expect(seen).toBe("to the setter"); expect(setter.a).toBeUndefined();
+    delete gone.a; write(gone, "again"); expect(gone.a).toBe("again"); expect(Object.keys(gone).join()).toBe("x,z,b,a");
+    write(still, "still"); expect(still.a).toBe("still"); expect(Object.keys(still).join()).toBe("x,z,a,b");
+  });
+  test(`c74 ${who}: a field that has left its slot`, () => {
+    const o = M.leftItsSlot(), p = M.leftItsSlot();
+    for (let i = 0; i < 60; i++) write(o, "t" + i);
+    expect(o.a).toBe("t59"); expect(p.a).toBe("text");
+    write(o, 7); expect(read(o)).toBe(7); write(o, { deep: 2 }); expect(o.a.deep).toBe(2); expect(Object.keys(o).join()).toBe("a,y");
+    Bun.gc(true); write(p, "behind a collection"); expect(read(p)).toBe("behind a collection"); write(M.leftItsSlot(), 1);
+  });
+}
+
+// An exported variable that holds text written in the program: the other image finds the text through the tables of the variable's own image.
+import { changeText, changingText, constantText, emptyText, textNobodyReadsThere } from "./lib3";
+test("c75 their constant text", () => {
+  expect(warm(() => constantText)).toBe("a constant text"); expect(warm(() => L.constantText)).toBe("a constant text"); expect(warm(() => constantText.length + L.constantText.length)).toBe(30);
+  expect(warm(() => textNobodyReadsThere)).toBe("read first from the other side"); expect(warm(() => emptyText)).toBe(""); expect(warm(() => L.emptyText.length)).toBe(0);
+  expect(constantText === "a constant text").toBe(true); expect(constantText + "!").toBe("a constant text!"); expect({ [constantText]: 1 }["a constant text"]).toBe(1);
+});
+test("c76 their text changes between texts of the program and made ones", () => {
+  expect(warm(() => changingText)).toBe("first"); expect(warm(() => L.changingText)).toBe("first");
+  for (const text of ["second", "a constant text", "", "made " + Math.max(1, 2), "first", String(12), "third"]) {
+    changeText(text); expect(changingText).toBe(text); expect(L.changingText).toBe(text); expect(L.readChangingText()).toBe(text); expect(warm(() => changingText)).toBe(text);
+  }
+  Bun.gc(true); expect(changingText).toBe("third"); expect(L.changingText).toBe("third"); changeText("first");
+});
+
+// `export * as inner from ".."`: the binding holds the one namespace object of that module.
+import { mock, spyOn } from "bun:test";
+import { inner, innerAgain, mockedLater, second } from "./whole-modules";
+import * as W from "./whole-modules";
+test("c77 their module exported whole", () => {
+  expect(warm(() => inner)).toBe(L); expect(warm(() => W.inner)).toBe(L); expect(warm(() => innerAgain)).toBe(L); expect(warm(() => W.innerAgain)).toBe(L); expect(warm(() => second === (L as any))).toBe(false);
+  expect(warm(() => inner.constantText)).toBe("a constant text"); expect(warm(() => W.inner.readA({ a: 3 }))).toBe(3); expect(warm(() => typeof W.second)).toBe("object");
+  expect(Object.keys(W).sort().join()).toBe("inner,innerAgain,mockedLater,second"); expect(Reflect.set(W, "inner", 1)).toBe(false); expect(W.inner).toBe(L);
+  Bun.gc(true); expect(inner).toBe(L); expect(W.inner.constantText).toBe("a constant text");
+});
+test("c78 what changes inside it is seen through it", () => {
+  expect(warm(() => inner.changingText)).toBe("first"); inner.changeText("through inner"); expect(W.inner.changingText).toBe("through inner"); expect(L.changingText).toBe("through inner"); L.changeText("first"); expect(inner.changingText).toBe("first");
+  expect(warm(() => inner.readChangingText())).toBe("first");
+  const spy = spyOn(L, "readChangingText").mockReturnValue("spied");
+  try { expect(inner.readChangingText()).toBe("spied"); expect(W.inner.readChangingText()).toBe("spied"); expect(innerAgain.readChangingText()).toBe("spied"); } finally { spy.mockRestore(); }
+  expect(inner.readChangingText()).toBe("first"); expect(W.inner).toBe(L);
+});
+test("c79 the module behind it is mocked", () => {
+  const before = warm(() => mockedLater); expect(warm(() => W.mockedLater)).toBe(before); expect(warm(() => mockedLater.answer())).toBe(1); expect(warm(() => W.mockedLater.kind)).toBe("real");
+  mock.module("./whole-modules-3", () => ({ kind: "mocked", answer: () => 2 }));
+  expect([mockedLater.answer(), W.mockedLater.answer(), mockedLater.kind, W.mockedLater.kind, mockedLater === before, W.mockedLater === before].join()).toBe("2,2,mocked,mocked,true,true");
+});
+
+// A class or a function of the other image: instanceof, and what it holds itself.
+const isInstance = (v: any, C: any) => v instanceof C;
+const readS = (C: any) => C.s;
+const readStaticText = (C: any) => C.text;
+const myClasses: typeof L.classes = {
+  pair: (): any[] => { class C { static s = 3; static text = "static text"; static bump() { return ++C.s; } x = 1; } class D extends C { static own = 1; } return [C, D]; },
+  oldStyle: (): any => function F(this: any) { this.x = 1; },
+};
+for (const [who, K, is, s, text] of [["I ask theirs", L.classes, isInstance, readS, readStaticText], ["they ask mine", myClasses, L.isInstance, L.readS, L.readStaticText]] as const) {
+  test(`c80 ${who}: instanceof`, () => {
+    const [C, D] = K.pair(), [Other] = K.pair(), c = new C(), d = new D();
+    expect(warm(() => [is(c, C), is(d, C), is(c, D), is(d, D), is(c, Other), is({}, C), is(1, C), is(null, C), is(c, Object)].join())).toBe("true,true,false,true,false,false,false,false,true");
+    class Mine extends C {} expect(warm(() => is(new Mine(), C))).toBe(true); expect(is(c, Mine)).toBe(false);
+    Object.setPrototypeOf(c, D.prototype); expect(is(c, D)).toBe(true); Object.setPrototypeOf(d, null); expect(is(d, C)).toBe(false);
+    Object.setPrototypeOf(D.prototype, Other.prototype); expect(is(new D(), C)).toBe(false); expect(is(new D(), Other)).toBe(true);
+  });
+  test(`c81 ${who}: instanceof, then the class answers for itself`, () => {
+    const [C, D] = K.pair(), c = new C();
+    expect(warm(() => is(c, C))).toBe(true); expect(warm(() => is({}, D))).toBe(false);
+    Object.defineProperty(C, Symbol.hasInstance, { value: (v: any) => v === "chosen", configurable: true });
+    expect(is(c, C)).toBe(false); expect(is("chosen", C)).toBe(true); expect(is("chosen", D)).toBe(true);
+    delete C[Symbol.hasInstance]; expect(is(c, C)).toBe(true); expect(is("chosen", D)).toBe(false);
+  });
+  test(`c82 ${who}: instanceof a function whose prototype is exchanged`, () => {
+    const F = K.oldStyle(), before = new F();
+    expect(warm(() => is(before, F))).toBe(true);
+    F.prototype = { fresh: true }; expect(is(before, F)).toBe(false); expect(is(new F(), F)).toBe(true); expect(warm(() => is(Object.create(F.prototype), F))).toBe(true);
+    F.prototype = 1; expect(() => is(before, F)).toThrow(TypeError); expect(is(1, F)).toBe(false);
+  });
+  test(`c83 ${who}: what a class holds itself`, () => {
+    const [C, D] = K.pair(), [Other] = K.pair();
+    expect(warm(() => s(C))).toBe(3); expect(warm(() => s(D))).toBe(3); expect(warm(() => text(C))).toBe("static text"); expect(warm(() => text(D).length)).toBe(11);
+    expect(C.bump()).toBe(4); expect(s(C)).toBe(4); expect(s(D)).toBe(4); expect(s(Other)).toBe(3);
+    C.s = "other type"; expect(s(C)).toBe("other type"); expect(s(D)).toBe("other type");
+    D.s = 9; expect(s(D)).toBe(9); expect(s(C)).toBe("other type"); delete D.s; expect(s(D)).toBe("other type");
+    Object.defineProperty(C, "s", { get() { return "got"; }, configurable: true }); expect(s(C)).toBe("got"); expect(s(D)).toBe("got");
+    delete C.s; expect(s(C)).toBeUndefined(); expect(s(D)).toBeUndefined(); C.text = "changed"; expect(text(D)).toBe("changed");
+    Bun.gc(true); expect(text(C)).toBe("changed"); expect(s(Other)).toBe(3); expect([C.name, D.name, C.length, typeof C.bump].join()).toBe("C,D,0,function");
+  });
+}
+
+// A store that meets a setter above an object of the other image.
+const withAccessor = (): any => class { kept: unknown = 0; get g() { return this.kept; } set g(v: unknown) { this.kept = v; } };
+for (const [who, make, write, read] of [["I write theirs", L.withAccessor, writeG, readG], ["they write mine", withAccessor, L.writeG, L.readG]] as const) {
+  test(`c84 ${who}: through a setter of the class`, () => {
+    const C = make(), o = new C(), p = new C(); class Below extends C {} const b = new Below();
+    for (let i = 0; i < 60; i++) { write(o, i); write(b, -i); }
+    expect([o.kept, read(o), p.kept, b.kept, Object.keys(o).join()].join()).toBe("59,59,0,-59,kept");
+    for (const v of ["text", 1.5, null, undefined, { deep: 1 }, other]) { write(o, v); expect(o.kept).toBe(v); }
+    let seen: unknown; Object.defineProperty(C.prototype, "g", { set(v) { seen = v; }, configurable: true });
+    write(o, "to the new setter"); expect(seen).toBe("to the new setter"); expect(o.kept).toBe(other); write(b, "below too"); expect(seen).toBe("below too");
+    Object.defineProperty(C.prototype, "g", { get() { return "only a getter"; }, set: undefined, configurable: true }); expect(() => write(o, 1)).toThrow(TypeError); expect(read(o)).toBe("only a getter");
+    Object.defineProperty(p, "g", { value: "its own", writable: true, configurable: true }); write(p, "replaced"); expect(p.g).toBe("replaced"); expect(read(o)).toBe("only a getter");
+    delete C.prototype.g; write(o, "an own property now"); expect(Object.keys(o).join()).toBe("kept,g"); expect(read(o)).toBe("an own property now"); expect(read(new C())).toBeUndefined();
+  });
+  test(`c85 ${who}: the object gets another prototype between the stores`, () => {
+    const C = make(), o = new C(); let seen: unknown;
+    for (let i = 0; i < 60; i++) write(o, i);
+    Object.setPrototypeOf(o, { set g(v: unknown) { seen = v; } }); write(o, "elsewhere"); expect(seen).toBe("elsewhere"); expect(o.kept).toBe(59);
+    Object.setPrototypeOf(o, null); write(o, "own"); expect(o.g).toBe("own"); const q = new C(); write(q, 7); expect(q.kept).toBe(7);
+  });
+}

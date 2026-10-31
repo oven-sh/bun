@@ -674,9 +674,9 @@ runtimefunction id=ArrayTraversalTraverseArray function=f44 visibility=Private
 # -- generated: f0 f16
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 640, patchpoints: 105, rare instructions: 876, polls: 3
+# CHECK-NEXT: instructions: 630, patchpoints: 105, rare instructions: 864, polls: 3
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function f16 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 90, patchpoints: 5, rare instructions: 100
+# CHECK-NEXT: instructions: 90, patchpoints: 5, rare instructions: 99
 # CHECK-NEXT: end of function f16

@@ -101,7 +101,10 @@ impl FileLowering<'_, '_, '_, '_> {
                 match (layout, self.requires_field(ty)) {
                     (Some(_), true) => {
                         let mapped = self.add_accepted_builtin_classes(ty, mapped);
-                        self.add_accepted_class_constructors(ty, mapped)
+                        match shape.trust.is_trusted() {
+                            true => self.add_accepted_class_constructors(ty, mapped),
+                            false => mapped,
+                        }
                     }
                     (Some(_), false) => Mapped::expected(mapped.ty),
                     (None, _) => mapped,

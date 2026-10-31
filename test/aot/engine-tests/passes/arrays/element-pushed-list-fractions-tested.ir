@@ -218,8 +218,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: ValidateFirstRun variable=g0
-# CHECK-NEXT: v1: Array<undefined|number, proven, pristine[Storage, Names]> = CallDirect function=f2 accessSite=0
-# CHECK-NEXT: ValidateType v1 validatedType=Array<undefined|number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v1: Array<number, proven, pristine[Storage, Names]> = CallDirect function=f2 accessSite=0
+# CHECK-NEXT: ValidateType v1 validatedType=Array<number, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v3: Array<undefined|number, proven, pristine[Storage, Names, Dense]> = CallDirect v1, v1 function=f1 accessSite=4
 # CHECK-NEXT: ValidateType v3 validatedType=Array<undefined|number, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v5: undefined = Undefined
@@ -249,14 +249,14 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: Return v28
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="lessEach"
-# CHECK: module=m0 position=159 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<undefined|number, proven, pristine[Storage, Names]> site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=Array<undefined|number, proven, pristine[Storage, Names]> site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|number, proven, pristine[Storage, Names, Dense]> site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: Array<undefined|number, proven, pristine[Storage, Names]>, v1: Array<undefined|number, proven, pristine[Storage, Names]>):
-# CHECK-NEXT: ValidateType v0 validatedType=Array<undefined|number, proven, pristine[Storage, Names]>
-# CHECK-NEXT: ValidateType v1 validatedType=Array<undefined|number, proven, pristine[Storage, Names]>
+# CHECK: module=m0 position=159 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<number, proven, pristine[Storage, Names]> site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=Array<number, proven, pristine[Storage, Names]> site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|number, proven, pristine[Storage, Names, Dense]> site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: Array<number, proven, pristine[Storage, Names]>):
+# CHECK-NEXT: ValidateType v0 validatedType=Array<number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: ValidateType v1 validatedType=Array<number, proven, pristine[Storage, Names]>
 # CHECK-NEXT: ValidateType v0 validatedType=undefined|null|Array<number>
-# CHECK-NEXT: ValidateType v0 validatedType=Array<undefined|number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: ValidateType v0 validatedType=Array<number, proven, pristine[Storage, Names]>
 # CHECK-NEXT: ValidateType v1 validatedType=undefined|null|Array<number>
-# CHECK-NEXT: ValidateType v1 validatedType=Array<undefined|number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: ValidateType v1 validatedType=Array<number, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v8: Array<undefined|number> = NewArray contents=undefined|number allocationSite=4
 # CHECK-NEXT: ValidateType v8 validatedType=Array<undefined|number, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v10: Array<undefined|number, proven, pristine[Storage, Names, Dense]> = AssumeType v8 provenType=Array<undefined|number, proven, pristine[Storage, Names, Dense]>
@@ -342,8 +342,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: v72: boolean = IsElementPresent v0, v19, v65 arrayStorage=Contiguous [keyIsIntegral]
 # CHECK-NEXT: v73: true = Boolean boolean=true
 # CHECK-NEXT: ValidateSameValue v72, v73
-# CHECK-NEXT: v75: undefined|number = GetArrayElement v0, v19, v68 arrayStorage=Contiguous level=Expected accessSite=22 [keyIsIntegral, isPresent]
-# CHECK-NEXT: v76: boolean = TypeTest v75 testedType=number
+# CHECK-NEXT: v75: number = GetArrayElement v0, v19, v68 arrayStorage=Contiguous level=Expected accessSite=22 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v76: true = TypeTest v75 testedType=number
 # CHECK-NEXT: Branch v76 -> taken b15(| 0), notTaken b21(| 0)
 # CHECK-NEXT: b15(v77: number) frequency=Unlikely:
 # CHECK-NEXT: ValidateType v75 validatedType=number
@@ -365,8 +365,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: b20(v87: int[0, 4294967295]):
 # CHECK-NEXT: v88: int[2, 4294967295] ~ int[2, 2147483648] = Increment v19
 # CHECK-NEXT: Jump -> next b2(v88)
-# CHECK-NEXT: b21(v89: undefined) frequency=Rare:
-# CHECK-NEXT: Jump -> next b29()
+# CHECK-NEXT: b21(v89: never) frequency=Rare:
+# CHECK-NEXT: Unreachable cutBy=RetypeValues
 # CHECK-NEXT: b22() frequency=Rare:
 # CHECK-NEXT: ConvertToDoubleStorage v1
 # CHECK-NEXT: Jump -> next b26(v44)
@@ -404,18 +404,21 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function f2 module=
-# CHECK: m0 position=417 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=Array<undefined|number, proven, pristine[Storage, Names]> site=w4 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=417 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=Array<number, proven, pristine[Storage, Names]> site=w4 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: ValidateFirstRun variable=g1
 # CHECK-NEXT: v1: 3 = Integer integer=3
-# CHECK-NEXT: v2: Array<undefined|number> = NewArray contents=undefined|number capacity=v1 allocationSite=5
-# CHECK-NEXT: ValidateType v2 validatedType=Array<undefined|number, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v4: Array<undefined|number, proven, pristine[Storage, Names]> = AssumeType v2 provenType=Array<undefined|number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v2: Array<number> = NewArray contents=number capacity=v1 allocationSite=5
+# CHECK-NEXT: ValidateType v2 validatedType=Array<number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v4: Array<number, proven, pristine[Storage, Names]> = AssumeType v2 provenType=Array<number, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v5: fractional = Double number=1.5
 # CHECK-NEXT: v6: 100 = Integer integer=100
 # CHECK-NEXT: v7: fractional = Double number=3.5
-# CHECK-NEXT: v8: int[0, 4294967295] = CallBuiltin v4, v5 overload=ArrayPrototypePush/0 accessSite=25
-# CHECK-NEXT: v9: int[0, 4294967295] = CallBuiltin v4, v6 overload=ArrayPrototypePush/0 accessSite=25
-# CHECK-NEXT: v10: int[0, 4294967295] = CallBuiltin v4, v7 overload=ArrayPrototypePush/0 accessSite=25
+# CHECK-NEXT: v8: fact = Specified
+# CHECK-NEXT: v9: int[0, 4294967295] = CallBuiltin v4, v5 overload=ArrayPrototypePush/0 accessSite=25
+# CHECK-NEXT: v10: fact = Specified
+# CHECK-NEXT: v11: int[0, 4294967295] = CallBuiltin v4, v6 overload=ArrayPrototypePush/0 accessSite=25
+# CHECK-NEXT: v12: fact = Specified
+# CHECK-NEXT: v13: int[0, 4294967295] = CallBuiltin v4, v7 overload=ArrayPrototypePush/0 accessSite=25
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }

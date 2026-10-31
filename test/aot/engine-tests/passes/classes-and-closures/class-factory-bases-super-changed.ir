@@ -424,7 +424,7 @@ function f40 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v3: object @Cell = GetConstructPrototype v2 layout=L2
 # CHECK-NEXT: v4: object @Cell = NewObject v3 layout=L2 allocationSite=23 allocation=4 allocationClass=2
 # CHECK-NEXT: v5: L3 @Cell = AssumeType v4 provenType=L3
-# CHECK-NEXT: PutSlot v5, -, v0 key="field" receivers=[L3] level=Proven accessSite=43 fieldAccess=4
+# CHECK-NEXT: PutSlot v5, -, v0 key="field" receivers=[L3] level=Proven accessSite=43 fieldAccess=3
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="plain"
@@ -499,7 +499,7 @@ function f40 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v2: boolean @Boolean = TypeTest v1 testedType=L4
 # CHECK-NEXT: TestAndBranch v2 -> taken b1(| 0), notTaken b4()
 # CHECK-NEXT: b1(v3: L4 @Cell):
-# CHECK-NEXT: v4: undefined|int @OptionalInt64 = GetSlotOrUndefined v3 key="own" receivers=[L4] level=Expected accessSite=38 fieldAccess=5
+# CHECK-NEXT: v4: undefined|int @OptionalInt64 = GetSlotOrUndefined v3 key="own" receivers=[L4] level=Expected accessSite=38 fieldAccess=4
 # CHECK-NEXT: v5: ":" @Cell = String string=":"
 # CHECK-NEXT: v6: string @Cell = Add v4, v5 form=StringAndPrimitive
 # CHECK-NEXT: v7: boolean @Boolean = IsSlotFilled v3 key="base" receivers=[L4] level=Expected fieldAccess=1

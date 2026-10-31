@@ -13,7 +13,7 @@ mod tests;
 
 pub use call_sites::{
     RequireCall, RequireCallForm, find_module_printed_as_require, find_require_call,
-    is_linked_by_bundler,
+    is_linked_by_bundler, is_module_call_of_plugin, is_name_read_by_transpiler,
 };
 pub(crate) use call_sites::{
     call_site_arguments, call_site_kind, is_free_common_js, is_in_with_scope,
@@ -29,8 +29,8 @@ pub use made_requires::{
     holds_import_meta_require, is_create_require_behind_get_builtin_module, is_made_require,
     is_require_made_for_own_file, may_require_get_members, may_still_be_undefined,
 };
-pub(crate) use made_requires::{find_imported_export, settled_symbol};
-pub use parameters::{find_values_of_parameter, is_exported};
+pub(crate) use made_requires::{find_imported_export, names_own_file, settled_symbol};
+pub use parameters::{find_place_of_parameter, find_values_of_parameter, is_exported};
 pub(crate) use scan::collect_import_sites;
 pub(crate) use statements::is_runtime_import;
 

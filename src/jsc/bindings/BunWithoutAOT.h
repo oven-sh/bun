@@ -6,6 +6,7 @@
 #if !ENABLE(AOT)
 
 #include <JavaScriptCore/AOTImage.h>
+#include <span>
 #include <wtf/IterationStatus.h>
 #include <wtf/text/ASCIILiteral.h>
 #include <wtf/text/StringView.h>
@@ -22,6 +23,11 @@ struct ModuleHost {};
 class ModuleID {
 public:
     constexpr uint32_t index() const { return 0; }
+};
+
+class AskerOfModule {
+public:
+    AskerOfModule(JSGlobalObject*, const String&) {}
 };
 
 enum class LoadByName : uint8_t { Require,
@@ -79,6 +85,7 @@ template<typename Functor> Result forEachOwnProperty(VM&, JSObject*, Filter, con
 inline void materializeLazyProperties(VM&, JSObject*) {}
 inline void prepareHoldersBeforeLookupsUnder(JSGlobalObject*, Symbol*, JSObject*) {}
 inline Presence tryGetOwnValue(JSObject*, UniquedStringImpl*, JSValue&) { return Presence::Unknown; }
+inline UniquedStringImpl* tryFindName(VM&, std::span<const Latin1Character>) { return nullptr; }
 
 } // namespace PropertyWalk
 

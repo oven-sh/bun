@@ -1,7 +1,9 @@
 // Some programs in parallel/ print how often compiled code called into the run time. They ask aotOperationCount() and its kin, which only
-// the `jsc` shell has: in an executable there is no such function, and run-parallel.ts holds nothing that they say about a count.
+// the `jsc` shell has: in an executable there is no such function, and nothing that they say about a count is held by what it prints.
 // shell/quick.py runs them in the shell, where the counts are real, and they must print what plain Bun prints, where every count is 0.
 // shell/counts-known.txt lists those that do not today. shell/tools.ts says what the scripts need.
+// run-parallel.ts and shell/expectations.py ask the same of a program that they are given, where there is a shell. A shard of CI that runs programs
+// need not have one: this test holds all of them wherever Bun has the compiler.
 import { expect, test } from "bun:test";
 import { join } from "path";
 import { unsupported } from "./harness/commands";

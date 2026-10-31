@@ -707,5 +707,5 @@ runtimefunction id=ArrayTraversalTraverseArray function=f23 visibility=Private
 # CHECK-NEXT: end of function f3
 # CHECK-LABEL: function {{*}}name="listings"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 764, patchpoints: 69, rare instructions: 280, polls: 1
+# CHECK-NEXT: instructions: 752, patchpoints: 69, rare instructions: 271, polls: 1
 # CHECK-NEXT: end of function f6

@@ -71,6 +71,15 @@ pub fn loader_name(loader: Loader) -> &'static str {
     loader.into()
 }
 
+/// What `bun run` writes for the `type` of an import statement whose attribute names the loader.
+pub fn type_attribute_of(loader: Loader) -> &'static str {
+    match loader {
+        Loader::Bunsh => "sh",
+        Loader::SqliteEmbedded => "sqlite",
+        _ => loader_name(loader),
+    }
+}
+
 /// A file stands under its path as what an import without attributes gets. As anything else it stands here.
 pub fn path_of_form(path: &[u8], loader: Loader) -> Vec<u8> {
     [path, b"?", loader_name(loader).as_bytes()].concat()
@@ -162,6 +171,21 @@ mod tests {
     fn places(path: &[u8], type_attribute: &[u8]) -> Option<(Vec<u8>, bool)> {
         let places = places_of_form(path, type_attribute)?;
         Some((places.path_of_form, places.is_form_without_attributes))
+    }
+
+    #[test]
+    fn the_type_written_for_a_loader_names_the_loader() {
+        for loader in [
+            Loader::Toml,
+            Loader::Json,
+            Loader::Text,
+            Loader::Bunsh,
+            Loader::Sqlite,
+        ] {
+            let written = type_attribute_of(loader).as_bytes();
+            assert_eq!(Loader::from_string(written), Some(loader));
+        }
+        assert_eq!(type_attribute_of(Loader::SqliteEmbedded), "sqlite");
     }
 
     #[test]

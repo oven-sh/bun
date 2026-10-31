@@ -125,7 +125,6 @@ pub enum ComputedUnknown {
     PackageImports,
     ConfigPaths,
     ExternalCandidate,
-    TooManyCandidates,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

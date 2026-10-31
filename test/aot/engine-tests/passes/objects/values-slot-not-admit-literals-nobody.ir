@@ -198,8 +198,8 @@ function f39 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v29: Array<int[1, 2]> @Cell = NewArray v27, v28 contents=int[1, 2] allocationSite=12
 # CHECK-NEXT: v30: Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @Cell = AssumeType v29 provenType=Array<int[1, 2], proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v31: f12 @Cell = NewClosure function=f12 allocationSite=13 closureForm=Slim
-# CHECK-NEXT: v32: Array<undefined|null|boolean|number|bigint|""|"text"|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, Contiguous> @Cell = NewArray v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v26, v30, v31 contents=undefined|null|boolean|number|bigint|""|"text"|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> allocationSite=14 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v33: Array<undefined|null|boolean|number|bigint|""|"text"|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v32 provenType=Array<undefined|null|boolean|number|bigint|""|"text"|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v32: Array<undefined|null|boolean|int[1, 9007199254740992]|double|bigint|""|"text"|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, Contiguous> @Cell = NewArray v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v26, v30, v31 contents=undefined|null|boolean|int[1, 9007199254740992]|double|bigint|""|"text"|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> allocationSite=14 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v33: Array<undefined|null|boolean|int[1, 9007199254740992]|double|bigint|""|"text"|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v32 provenType=Array<undefined|null|boolean|int[1, 9007199254740992]|double|bigint|""|"text"|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v34: 0 @Int32 = Integer
 # CHECK-NEXT: Jump -> next b1(v34)
 # CHECK-NEXT: b1(v35: int[0, 11] @Int32):
@@ -222,18 +222,18 @@ function f39 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v47: boolean @Boolean = Less v44, v46 form=Integers
 # CHECK-NEXT: TestAndBranch v47 -> taken b6(| 0), notTaken b13()
 # CHECK-NEXT: b6(v48: int[0, 4294967294] @Int64):
-# CHECK-NEXT: v49: undefined|null|boolean|number|bigint|""|"text"|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @JSValue = GetArrayElement v33, v48 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v49: undefined|null|boolean|int[1, 9007199254740992]|double|bigint|""|"text"|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @JSValue = GetArrayElement v33, v48 arrayStorage=Contiguous level=Proven [keyIsIntegral]
 # CHECK-NEXT: v50: 1 @Int64 = Integer integer=1
 # CHECK-NEXT: v51: int[1, 4294967295] @Int64 = Add v48, v50 form=Integers
-# CHECK-NEXT: v52: undefined|null|boolean|number|bigint|""|"text"|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @JSValue = Expect v49 expectedType=number
-# CHECK-NEXT: v53: undefined|null|boolean|number|bigint|""|"text"|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @JSValue = Expect v49 expectedType=undefined|null|string
-# CHECK-NEXT: v54: undefined|null|boolean|number|bigint|""|"text"|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @JSValue = Expect v49 expectedType=boolean
+# CHECK-NEXT: v52: undefined|null|boolean|int[1, 9007199254740992]|double|bigint|""|"text"|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @JSValue = Expect v49 expectedType=number
+# CHECK-NEXT: v53: undefined|null|boolean|int[1, 9007199254740992]|double|bigint|""|"text"|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @JSValue = Expect v49 expectedType=undefined|null|string
+# CHECK-NEXT: v54: undefined|null|boolean|int[1, 9007199254740992]|double|bigint|""|"text"|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @JSValue = Expect v49 expectedType=boolean
 # CHECK-NEXT: v55: 0 @OptionalDouble = Integer
 # CHECK-NEXT: v56: false @JSValue = Boolean
 # CHECK-NEXT: v57: L0 @Cell = NewObject -, v55, v53, v56 layout=L0 fields=[3, 4, 2] allocationSite=16 allocation=1 allocationClass=0
-# CHECK-NEXT: v58: boolean @Boolean = TypeTest v52 testedType=number
+# CHECK-NEXT: v58: boolean @Boolean = TypeTest v52 testedType=int[1, 9007199254740992]|double
 # CHECK-NEXT: TestAndBranch v58 -> taken b7(| 0), notTaken b8(| 0)
-# CHECK-NEXT: b7(v59: number @OptionalDouble):
+# CHECK-NEXT: b7(v59: int[1, 9007199254740992]|double @OptionalDouble):
 # CHECK-NEXT: PutSlot v57, v57, v59 key="second" receivers=[L0] level=Expected fieldAccess=1
 # CHECK-NEXT: Jump -> next b9()
 # CHECK-NEXT: b8(v61: undefined|null|boolean|bigint|""|"text"|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @JSValue) frequency=Rare:
@@ -251,7 +251,7 @@ function f39 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v69: boolean @Boolean = Less v66, v68 form=Integers
 # CHECK-NEXT: TestAndBranch v69 -> taken b12(| 0), notTaken b13()
 # CHECK-NEXT: b12(v70: int[0, 4294967294] @Int64) frequency=Rare:
-# CHECK-NEXT: v71: undefined|null|boolean|number|bigint|""|"text"|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @JSValue = GetArrayElement v33, v70 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v71: undefined|null|boolean|int[1, 9007199254740992]|double|bigint|""|"text"|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @JSValue = GetArrayElement v33, v70 arrayStorage=Contiguous level=Proven [keyIsIntegral]
 # CHECK-NEXT: v72: 1 @Int64 = Integer integer=1
 # CHECK-NEXT: v73: int[1, 4294967295] @Int64 = Add v70, v72 form=Integers
 # CHECK-NEXT: v74: anything @JSValue = Call v64, -, v71, v71, v71, v71 calleeName="maker" accessSite=2 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11]
@@ -275,7 +275,7 @@ function f39 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v83: boolean @Boolean = Less v78, v82 form=Integers
 # CHECK-NEXT: TestAndBranch v83 -> taken b18(| 0), notTaken b19()
 # CHECK-NEXT: b18(v84: int[0, 4294967294] @Int64):
-# CHECK-NEXT: v85: undefined|null|boolean|number|bigint|""|"text"|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @JSValue = GetArrayElement v33, v84 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v85: undefined|null|boolean|int[1, 9007199254740992]|double|bigint|""|"text"|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @JSValue = GetArrayElement v33, v84 arrayStorage=Contiguous level=Proven [keyIsIntegral]
 # CHECK-NEXT: v86: 1 @Int64 = Integer integer=1
 # CHECK-NEXT: v87: int[1, 4294967295] @Int64 = Add v84, v86 form=Integers
 # CHECK-NEXT: v88: false @Boolean = Boolean
@@ -284,7 +284,7 @@ function f39 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v89: true @Boolean = Boolean boolean=true
 # CHECK-NEXT: v90: undefined @JSValue = Undefined
 # CHECK-NEXT: Jump -> next b20(v89, v90, v78)
-# CHECK-NEXT: b20(v91: boolean @Boolean, v92: undefined|null|boolean|number|bigint|""|"text"|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @JSValue, v93: int[0, 4294967295] @Int64):
+# CHECK-NEXT: b20(v91: boolean @Boolean, v92: undefined|null|boolean|int[1, 9007199254740992]|double|bigint|""|"text"|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @JSValue, v93: int[0, 4294967295] @Int64):
 # CHECK-NEXT: v94: 1 @JSValue = Integer integer=1
 # CHECK-NEXT: v95: "t" @JSValue = String string="t"
 # CHECK-NEXT: v96: false @JSValue = Boolean

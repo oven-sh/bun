@@ -62,7 +62,7 @@ describe.concurrent("plugins registered at run time", () => {
 });
 
 describe.concurrent("plugins that load files of a test run", () => {
-  // More of it, against `bun test`: "a plugin that loads files of the run" in modules-in-a-test-run.test.ts.
+  // More of it, against `bun test`: "a plugin that loads files of the run" in harness/modules-in-a-test-run.ts.
   test(
     "onLoad gets a file that has not run, and a file that has run stays",
     async () => {

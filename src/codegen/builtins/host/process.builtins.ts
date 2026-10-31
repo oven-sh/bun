@@ -400,11 +400,11 @@ const ignoresValue = {
 
 // Native code makes the list of strings at the first read. From then on it is a property like any other.
 const listOfStringsKeptIn = (cell: string) =>
-  b.property(b.any, {
+  b.property(b.instance("Array").holding({ element: b.string }), {
     createdOnFirstRead: {
       capability: "heap",
       throws: true,
-      uses: { this: [b.createdIn(newArrayOf(b.string), b.nativeCell(cell)), b.returnedFrom(cell)] },
+      uses: { this: [b.createdIn(newArrayOf(b.string).dense, b.nativeCell(cell)), b.returnedFrom(cell)] },
       reads: externalState,
     },
   });

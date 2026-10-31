@@ -115,7 +115,7 @@ const rejected: [string[], string][] = [
 const publicFlags: Record<string, string[]> = {
   "": ["--aot", "--aot-allow-code-from-disk", "--aot-log-type-mismatches"],
   run: ["--aot", "--aot-allow-code-from-disk", "--aot-log-type-mismatches"],
-  test: ["--aot", "--aot-log-type-mismatches"],
+  test: ["--aot", "--aot-log-type-mismatches", "--aot-memory-limit"],
   build: ["--aot", "--aot-allow-code-from-disk", "--aot-log-type-mismatches", "--aot-huge-heap"],
   compile: ["--aot", "--no-aot", "--aot-allow-code-from-disk", "--aot-log-type-mismatches", "--aot-huge-heap"],
 };

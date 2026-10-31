@@ -4,8 +4,8 @@ use bun_aot::diagnostic_codes::Code;
 use bun_aot::diagnostics::log_diagnostic;
 use bun_aot::engine::{ExecutableIdentity, TargetImageForm};
 use bun_aot::options::{
-    Externals, LoadOptions, OpenedName, Options, PathOptions, RemovableOptions, ReplacedExport,
-    ReplacedModule,
+    Externals, FilesThatTestsLoad, LoadOptions, OpenedName, Options, PathOptions, RemovableOptions,
+    ReplacedExport, ReplacedModule, WaysBetweenModuleObjects,
 };
 use bun_ast::{Loader, Loc, Log};
 use bun_core::strings;
@@ -58,6 +58,10 @@ pub(crate) fn options_from_bundler<'r>(
     let (true, Some(entry_points), Some(paths)) = (is_supported, entry_points, paths) else {
         return None;
     };
+    let mut load = load_options(input);
+    if input.aot.host_runs_files_from_disk {
+        load.stand_in_for_files_from_disk = entry_points.last().cloned();
+    }
     Some(Options {
         aot: input.aot,
         executable_identity: input.executable_identity,
@@ -65,7 +69,7 @@ pub(crate) fn options_from_bundler<'r>(
         entry_points,
         code: code_options(input),
         typescript_libs: input.typescript_libs,
-        load: load_options(input),
+        load,
         paths,
         removable: RemovableOptions {
             ignores_pure_annotations: input.bundle_options.ignore_dce_annotations,
@@ -207,11 +211,15 @@ fn code_options(input: &OptionsInput<'_, '_, '_>) -> CodeOptions {
 
     // An executable holds the file of a package that a bundle holds. `bun run` takes "main" where a package has both.
     code.prefers_module_field = !input.aot.runs_in_place;
+    code.builds_executable = !input.aot.runs_in_place;
     code.preserves_symlinks = options.preserve_symlinks;
     // As `bun run` and `bun test` transpile the same files.
     code.transpiles_by_working_directory = input.aot.runs_in_place;
     code.types_stop_at_entry_points = input.aot.is_part_of_test_files;
     code.allows_es_module_mark = input.aot.checks_only || input.aot.runs_tests;
+    code.main_modules_beside_entry_points = (input.aot.main_modules_beside_entry_points.iter())
+        .map(|path| from_native(path))
+        .collect();
     code.tsconfig_override = (options.tsconfig_override.as_ref())
         .map(|path| from_argument(&code.working_directory, path));
 
@@ -260,9 +268,6 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         .collect();
     loaders.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0));
     let replaced = &input.aot.replaced_by_tests;
-    let opens_what_is_handed_on = !input.aot.host_runs_files_from_disk
-        && (replaced.spies_on_unknown_objects
-            || !replaced.names_spied_on_unknown_objects.is_empty());
     // The programs above call what this one exports, and its build does not see them.
     let is_below_other_programs = input.aot.shares_realms && !input.aot.is_part_of_test_files;
     LoadOptions {
@@ -277,11 +282,19 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         omits_builtin_modules: input.aot.omits_builtin_modules,
         runs_tests: input.aot.runs_tests,
         takes_runtime_as_any: false,
+        errors_with_bun_types: None,
         library_code_lacked: Default::default(),
         keeps_library_code_without_names: false,
         // Code that a test loads from disk may read it, and no build sees that code. The engine's word comes a front end and a flow analysis later.
         reads_main_module_without_its_name: input.aot.runs_tests,
-        ways_read_out_of_sight: Default::default(),
+        stores_path_of_main_module: false,
+        stores_loader_functions: false,
+        // Bun's own code reads `parent` of objects that nobody knows, and a program that other programs import from hands its module
+        // objects out. So with all of that code the engine always finds this, a front end and a flow analysis later.
+        ways_read_out_of_sight: WaysBetweenModuleObjects {
+            parent: input.aot.library_runs_compiled_alone,
+            children: false,
+        },
         ways_named_that_nobody_reads: Default::default(),
         replaced_exports: sorted(
             replaced
@@ -292,26 +305,21 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
                     name: name.clone(),
                 }),
         ),
-        // A spy that takes an object from somewhere may get the object of a module that is handed on. Only where the host alone runs what the build has
-        // not seen does it go by the name of the spy.
-        mocked_modules: sorted(
-            (replaced.modules.iter())
-                .chain((replaced.handed_on_modules.iter()).filter(|_| opens_what_is_handed_on))
-                .cloned()
-                .map(ReplacedModule::File),
-        ),
+        mocked_modules: sorted(replaced.modules.iter().cloned().map(ReplacedModule::File)),
         // A name that no file spells finds any file of the program. Where the host alone runs what the build has not seen it finds the entry points, and flow says
         // which of their objects a spy meets.
         mocks_any_module: replaced.any_module
-            || ((replaced.spy_may_meet_module_that_no_file_spells || is_below_other_programs)
-                && !input.aot.host_runs_files_from_disk)
-            || (opens_what_is_handed_on && replaced.hands_on_any_module),
+            || (replaced.spy_may_meet_module_that_no_file_spells
+                && !input.aot.host_runs_files_from_disk),
+        every_export_is_asked_for: is_below_other_programs,
         handed_on_modules: sorted(
             (replaced.handed_on_modules.iter().cloned()).map(ReplacedModule::File),
         ),
         hands_on_any_module: replaced.hands_on_any_module,
-        spies_on_unknown_objects: replaced.spies_on_unknown_objects || opens_what_is_handed_on,
+        spies_on_unknown_objects: replaced.spies_on_unknown_objects,
         names_spied_on_unknown_objects: replaced.names_spied_on_unknown_objects.clone(),
+        names_spied_in_text: Vec::new(),
+        modules_replaced_in_text: Vec::new(),
         evicted_modules: sorted(
             replaced
                 .evicted_modules
@@ -322,6 +330,15 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         // Where the host alone runs what the build has not seen, the stand-in spells the queries of the test files, and the build reads them there.
         evicts_any_module: replaced.evicts_any_module
             || (replaced.names_file_with_query && !input.aot.host_runs_files_from_disk),
+        files_that_tests_load: {
+            let files = |paths: &[Vec<u8>]| sorted(paths.iter().cloned().map(ReplacedModule::File));
+            FilesThatTestsLoad {
+                by_statements: files(&replaced.files_imported_by_statements),
+                by_calls: files(&replaced.files_imported_by_calls),
+                by_require: files(&replaced.files_required),
+                where_throws_are_caught: files(&replaced.files_required_where_throws_are_caught),
+            }
+        },
         replaced_builtins: sorted(replaced.builtins.iter().copied()),
         opened_names: sorted(
             replaced
@@ -333,6 +350,7 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
                 }),
         ),
         left_to_loader: Vec::new(),
+        stand_in_for_files_from_disk: None,
     }
 }
 

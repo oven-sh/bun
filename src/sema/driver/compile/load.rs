@@ -13,7 +13,7 @@ use bun_sema::json::Json;
 use bun_sema::program::{CompileInputs, FileId, Files, MainModule, RootFileNames, Run};
 use bun_sema::resolve::{
     CodeFailure, CodeHost, CodeImportForm, CodeImportKind, CodeOptions, CodeRequest,
-    CodeResolution, ComputedCandidate, ComputedCodeRequest, ComputedResolution, Host,
+    CodeResolution, ComputedCandidate, ComputedCodeRequest, ComputedResolution, ExternalKind, Host,
     HostResolution, Options, Resolver, is_javascript, is_same_path, is_typescript_file_name, join,
 };
 use bun_sema::session::{Session, SessionSlot};
@@ -166,7 +166,8 @@ fn load<'u: 's, 's>(
     let files: &'s Files<'s> = session.arena().alloc(files);
     free_unread_leaves(files, host);
     let checker_session = session.keep(SessionSlot::new());
-    let program = Program::new(checker_session.session(), files);
+    let node_counts = Program::count_nodes(files);
+    let program = Program::with_node_counts(checker_session.session(), files, &node_counts);
     let program = &*session.arena().alloc(UnsafeCell::new(program));
     let config_path = &project.config_path;
     let problems = ConfigError::from_problems(host, session, config_path, files.program_problems());
@@ -175,6 +176,7 @@ fn load<'u: 's, 's>(
     let without_bun_types = (is_application && !has_bun_types).then_some(WithoutBunTypes {
         has_configuration_file: !config_path.is_empty(),
         incomplete_containers: containers_completed_by_bun_types(files),
+        errors_with_bun_types: host.errors_with_bun_types().map(<[_]>::to_vec),
     });
     let diagnostics = ProgramOrigins {
         files: Some(files),
@@ -188,6 +190,7 @@ fn load<'u: 's, 's>(
         program,
         files,
         checker_session,
+        node_counts,
         is_checker_freed: AtomicBool::new(false),
         origins,
         project_origin: request.project_origin,
@@ -242,6 +245,34 @@ pub fn resolve_entry_point(
     resolve_entry_points(host, code, &[specifier.to_vec()])
         .ok()?
         .pop()
+}
+
+/// The file that an import leads to which `importer` writes so, whichever program holds the file. `None`: it leads to no file.
+pub fn resolve_import_to_file(
+    host: &dyn CodeHost,
+    code: &CodeOptions,
+    importer: &[u8],
+    specifier: &[u8],
+) -> Option<Vec<u8>> {
+    let session = Session::new();
+    let options = Options::default();
+    let resolver = Resolver::for_compile(&session, host, &options, code);
+    // As for a macro: the file itself is looked for. A host leaves an import of another form to the loader as it is written.
+    let resolution = resolver.resolve_code(&CodeRequest {
+        specifier,
+        importer,
+        directory: &host.directory_of(importer),
+        kind: CodeImportKind::Import,
+        form: CodeImportForm::Macro,
+    });
+    match resolution {
+        CodeResolution::File(file) if file.host_module.is_none() => Some(file.path.to_vec()),
+        CodeResolution::External {
+            specifier: path,
+            kind: ExternalKind::UncompiledCode,
+        } => Some(path.to_vec()),
+        _ => None,
+    }
 }
 
 /// The files that a load finds from `directory` under names that are known in part: each a whole text, or a start and an end with something unknown between them. `None`: the load cannot list them all.

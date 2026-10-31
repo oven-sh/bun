@@ -2,13 +2,16 @@
 //! This reads one file by itself: what it imports from other files names nothing, what it imports from Bun does.
 
 use std::borrow::Cow;
+use std::cell::Cell;
 
 use bun_core::strings;
 use bun_sema::atom::{Atom, Interner};
-use bun_sema::bind::{BindOptions, Binding, Decl, RuntimeBindOptions};
+use bun_sema::bind::{BindOptions, Binding, Decl, Parent, RuntimeBindOptions, SymbolId};
 use bun_sema::file_analysis::{FileInputs, analyze_file};
 use bun_sema::fold::{Constant, FoldInputs, FoldOptions, FoldedValue};
-use bun_sema::hir::{ExportSpecId, ExprId, ExprKind, FileKind, StmtKind};
+use bun_sema::hir::{
+    CallId, ExportSpecId, ExprId, ExprKind, FileKind, ImportId, PatId, PatKind, StmtKind,
+};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, JsxMode};
 use bun_sema::module_format::DeclaredModuleType;
 use bun_sema::session::Session;
@@ -27,6 +30,22 @@ use crate::options::OpenedName;
 // A name of a member is short.
 const MAX_FOLDED_STRING_BYTES: usize = 256;
 
+/// An object beside a name is a guess at what a test means. A file that takes nothing from bun:test and lies in no folder of test files is the program's own:
+/// it is read as a package is, and the members that it only names stay locked, as they are in an executable. BUN_AOT_TESTS_NAME_WHAT_THEY_USE.
+pub(crate) fn members_sought_in_file_outside_packages(
+    targets: &[(ImportSiteKind, Option<RuntimeModule>)],
+    is_beside_test_files: bool,
+) -> ReplacedMembersSought {
+    let takes_from_tests = (targets.iter()).any(|it| it.1 == Some(RuntimeModule::BunTest));
+    match takes_from_tests
+        || is_beside_test_files
+        || bun_core::env_var::BUN_AOT_TESTS_NAME_WHAT_THEY_USE.get() != Some(true)
+    {
+        true => ReplacedMembersSought::WrittenOrNamed,
+        false => ReplacedMembersSought::Written,
+    }
+}
+
 #[derive(Default)]
 pub struct FoundInFile {
     /// `LoadOptions::replaced_builtins` as far as the file spells them.
@@ -39,6 +58,8 @@ pub struct FoundInFile {
     pub other_modules_named: Vec<Vec<u8>>,
     /// `ReplacedByTests::modules`, `exports` and `any_module`, each module as the file writes it.
     pub modules: Vec<Vec<u8>>,
+    /// Those of `modules` that the `build.module(..)` of a plugin names.
+    pub modules_named_by_plugins: Vec<Vec<u8>>,
     pub exports: Vec<(Vec<u8>, Vec<u8>)>,
     pub any_module: bool,
     /// The modules whose objects it hands on, each as the file writes it, and whether it hands on one that it does not spell.
@@ -48,13 +69,25 @@ pub struct FoundInFile {
     /// `ReplacedByTests::spies_on_unknown_objects` and `names_spied_on_unknown_objects`
     pub spies_on_unknown_objects: bool,
     pub names_spied_on_unknown_objects: Vec<Vec<u8>>,
+    /// `LoadOptions::names_spied_in_text`
+    pub names_spied_in_text: Vec<Vec<u8>>,
+    /// `LoadOptions::modules_replaced_in_text`
+    pub modules_replaced_in_text: Vec<Vec<u8>>,
+    /// The file holds code as text that spies on what it is told: `"export const spy = (object, name) => spyOn(object, name)"`.
+    pub text_spies_under_any_name: bool,
     /// `export function watch(object, name) { return spyOn(object, name); }`: the texts that other files pass to this one may be the name.
     pub spies_under_names_from_outside: bool,
     /// `ReplacedByTests::evicted_modules` and `evicts_any_module`, each file as this one writes it.
     pub evicted: Vec<Vec<u8>>,
     pub evicts_any: bool,
+    /// `ReplacedByTests::files_required_where_throws_are_caught`, each file as this one writes it.
+    pub required_where_throws_are_caught: Vec<Vec<u8>>,
     /// `ReplacedByTests::names_file_with_query`
     pub names_file_with_query: bool,
+    /// `ReplacedByTests::files_imported_by_statements`, `files_imported_by_calls` and `files_required`, each file as this one writes it.
+    pub imported_by_statements: Vec<Vec<u8>>,
+    pub imported_by_calls: Vec<Vec<u8>>,
+    pub required: Vec<Vec<u8>>,
     /// `ResolvedBuiltins::holders_named_from_outside`, by their numbers.
     pub holders_named_from_outside: Vec<u32>,
     /// The texts that it passes to what it imports from a file beside it: the file as it writes it, and the text. `plant("polluted")`.
@@ -69,23 +102,35 @@ fn is_relative(specifier: &[u8]) -> bool {
     specifier.starts_with(b"./") || specifier.starts_with(b"../")
 }
 
-/// Nothing for a file with a syntax error: its build says so. Nothing for a file that holds no code: `import data from "./data.json"`, `./types.d.ts`.
-pub fn look_at_file(path: &[u8], text: &[u8]) -> FoundInFile {
+/// `look_at_files` for one file.
+#[cfg(test)]
+fn look_at_file(path: &[u8], text: &[u8]) -> FoundInFile {
     let mut found = FoundInFile::default();
-    look_at_files(|look_at| found = look_at(path, text));
+    look_at_files(&mut |look_at| found = look_at(path, text));
     found
 }
 
-/// `look_at_file` for several files, one after another. The table of the names of built-ins takes longer to make than a test file to read: it is made once for all of them.
-pub fn look_at_files(look_at_each: impl FnOnce(&dyn Fn(&[u8], &[u8]) -> FoundInFile)) {
+/// Nothing for a file with a syntax error: its build says so. Nothing for a file that holds no code: `import data from "./data.json"`, `./types.d.ts`.
+/// Several files, one after another. The table of the names of built-ins takes longer to make than a test file to read: it is made once for all of them.
+pub fn look_at_files(look_at_each: &mut dyn FnMut(&dyn Fn(&[u8], &[u8]) -> FoundInFile)) {
+    look_at_files_of_run(&|_| false, look_at_each);
+}
+
+/// `is_beside_test_files`: whether the file lies in the folder of a test file or below it. A helper does, whatever it imports, and so does the code that it holds as a string.
+pub fn look_at_files_of_run(
+    is_beside_test_files: &(dyn Fn(&[u8]) -> bool + Sync),
+    look_at_each: &mut dyn FnMut(&dyn Fn(&[u8], &[u8]) -> FoundInFile),
+) {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
     let look = Look {
         session: &session,
         names: BuiltinNames::new(&atoms),
         atoms,
+        is_beside_test_files: Cell::new(false),
     };
     look_at_each(&|path, text| {
+        look.is_beside_test_files.set(is_beside_test_files(path));
         let mut found = FoundInFile::default();
         look.look_at_text(path, text, &mut found);
         found
@@ -96,12 +141,15 @@ struct Look<'s> {
     session: &'s Session,
     atoms: Interner<'s>,
     names: BuiltinNames,
+    is_beside_test_files: Cell<bool>,
 }
 
-// Without one of each no text writes a property.
+const IMPORT_OF_NAMES_OF_TEST_RUNNER: &[u8] = b"import { jest, spyOn, vi } from \"bun:test\";\n";
+
+// Without one of each no text writes a property, or takes a spy from the test runner.
 fn may_hold_code(text: &[u8]) -> bool {
     let holds = |byte: u8| strings::contains_char(text, byte);
-    (holds(b'.') || holds(b'['))
+    (holds(b'.') || holds(b'[') || strings::contains(text, b"bun:test"))
         && (holds(b'=') || holds(b'(') || strings::contains(text, b"delete "))
 }
 
@@ -166,7 +214,10 @@ impl<'s> Look<'s> {
             platform: host_platform(),
             dialect: SourceDialect::Program,
             replaced: &[],
-            replaced_members_sought: ReplacedMembersSought::WrittenOrNamed,
+            replaced_members_sought: members_sought_in_file_outside_packages(
+                &targets,
+                self.is_beside_test_files.get(),
+            ),
         });
         let imported = analysis
             .import_sites
@@ -197,6 +248,8 @@ impl<'s> Look<'s> {
         found
             .modules
             .extend(modules.whole.iter().map(|&it| bytes_of(it)));
+        let named_by_plugins = modules.named_by_plugins.iter();
+        (found.modules_named_by_plugins).extend(named_by_plugins.map(|&it| bytes_of(it)));
         let exports = modules.exports.iter();
         (found.exports).extend(exports.map(|&(module, name)| (bytes_of(module), bytes_of(name))));
         found.any_module |= modules.any;
@@ -211,7 +264,19 @@ impl<'s> Look<'s> {
             .extend(spied.map(|&it| bytes_of(it)));
         (found.evicted).extend(modules.evicted.iter().map(|&it| bytes_of(it)));
         found.evicts_any |= modules.evicts_any;
+        let throwers = modules.required_where_throws_are_caught.iter();
+        (found.required_where_throws_are_caught).extend(throwers.map(|&it| bytes_of(it)));
         found.names_file_with_query |= modules.names_file_with_query;
+        for (written, texts) in [
+            (
+                &modules.imported_by_statements,
+                &mut found.imported_by_statements,
+            ),
+            (&modules.imported_by_calls, &mut found.imported_by_calls),
+            (&modules.required, &mut found.required),
+        ] {
+            texts.extend(written.iter().map(|&it| bytes_of(it)));
+        }
         let members = resolved.replaced_members().iter();
         found.members.extend(members.map(|&member| member as u32));
         let names_added = resolved.names_added().iter();
@@ -255,19 +320,75 @@ impl<'s> Look<'s> {
         }
         let holders = resolved.holders_named_from_outside().iter();
         (found.holders_named_from_outside).extend(holders.map(|&holder| holder as u32));
+        let import_of = |symbol: SymbolId| match *bound.symbol(symbol).decls {
+            [Decl::ImportSpec(spec)] => Some(hir[spec].import),
+            [Decl::ImportDefault(import) | Decl::ImportNamespace(import)] => Some(import),
+            _ => None,
+        };
+        let root_of = |call: CallId| {
+            let callee = hir.skip_type_assertions(hir[call].callee);
+            let name = hir.member_key(callee).map_or(callee, |(object, _)| object);
+            match bound.binding(hir.skip_type_assertions(name)) {
+                Binding::Symbol(symbol) => Some(symbol),
+                _ => None,
+            }
+        };
+        // `const tracker = createTracker(); tracker.watch(holder, "read")`, `const { watch } = createTracker()`, `tracker = createTracker()` in a hook:
+        // what a function of another file returns takes its texts there too.
+        let mut made_by: Vec<(SymbolId, ImportId)> = Vec::new();
+        for made in (0..hir.exprs.len() as u32).map(ExprId) {
+            let ExprKind::Call(call) = hir[made].kind else {
+                continue;
+            };
+            let Some(import) = root_of(call).and_then(import_of) else {
+                continue;
+            };
+            let mut value = made;
+            while let Parent::Expr(parent) = bound.parent_of_expr(value)
+                && (hir.type_assertion_operand(parent) == Some(value)
+                    || matches!(hir[parent].kind, ExprKind::Await(_)))
+            {
+                value = parent;
+            }
+            match bound.parent_of_expr(value) {
+                Parent::VarInit(declaration) => {
+                    let pattern = hir[declaration].pat;
+                    let parts: Vec<PatId> = match hir[pattern].kind {
+                        PatKind::Object(properties) => {
+                            properties.iter().map(|it| hir[it].value).collect()
+                        }
+                        _ => vec![pattern],
+                    };
+                    let holders =
+                        (parts.into_iter()).map(|part| bound.declared_symbol(Decl::Var(part)));
+                    made_by.extend(holders.filter(|it| it.is_some()).map(|it| (it, import)));
+                }
+                Parent::Expr(user) => {
+                    if let ExprKind::Assign {
+                        op: None,
+                        target,
+                        value: stored,
+                    } = hir[user].kind
+                        && stored == value
+                        && let Binding::Symbol(holder) =
+                            bound.binding(hir.skip_type_assertions(target))
+                    {
+                        made_by.push((holder, import));
+                    }
+                }
+                _ => {}
+            }
+        }
         for call in (0..hir.exprs.len() as u32).map(ExprId) {
             let ExprKind::Call(call) = hir[call].kind else {
                 continue;
             };
-            let callee = hir.skip_type_assertions(hir[call].callee);
-            let name = hir.member_key(callee).map_or(callee, |(object, _)| object);
-            let Binding::Symbol(symbol) = bound.binding(hir.skip_type_assertions(name)) else {
+            let Some(symbol) = root_of(call) else {
                 continue;
             };
-            let import = match *bound.symbol(symbol).decls {
-                [Decl::ImportSpec(spec)] => hir[spec].import,
-                [Decl::ImportDefault(import) | Decl::ImportNamespace(import)] => import,
-                _ => continue,
+            let made = made_by.iter().find(|it| it.0 == symbol).map(|it| it.1);
+            let Some(import) = import_of(symbol).or(made) else {
+                continue;
             };
             // `import a from ;` in a text whose substitution stood for the name: the parser goes on without one.
             if hir[import].spec.is_none() {
@@ -316,11 +437,27 @@ impl<'s> Look<'s> {
             // The body of a function, which may return.
             let body = [b"async function body() {\n", &text[..], b"\n}"].concat();
             let mut inner = FoundInFile::default();
-            if self.look_at_text(b"/text.ts", &text, &mut inner)
+            // `bun test` hands every file the names of the test runner, so `jest.spyOn(..)` needs no import. A text that declares such a name itself fails to parse this way.
+            let with_names = [IMPORT_OF_NAMES_OF_TEST_RUNNER, &text[..]].concat();
+            let takes_spy_from_nowhere =
+                strings::contains(&text, b"spyOn") && !strings::contains(&text, b"bun:test");
+            if (takes_spy_from_nowhere && self.look_at_text(b"/text.ts", &with_names, &mut inner))
+                || self.look_at_text(b"/text.ts", &text, &mut inner)
                 || self.look_at_text(b"/text.ts", &body, &mut inner)
             {
                 found.members.extend(inner.members);
                 found.names_added.extend(inner.names_added);
+                // Where that code runs says nothing about the folder it is in: of a module that it imports, the name is what is known.
+                let names = inner.exports.into_iter().map(|(_, name)| name);
+                found.names_spied_in_text.extend(names);
+                (found.names_spied_in_text).extend(inner.names_spied_on_unknown_objects);
+                found.names_spied_in_text.extend(inner.names_spied_in_text);
+                found.text_spies_under_any_name |= inner.spies_on_unknown_objects
+                    || inner.spies_under_names_from_outside
+                    || inner.any_module
+                    || inner.text_spies_under_any_name;
+                found.modules_replaced_in_text.extend(inner.modules);
+                (found.modules_replaced_in_text).extend(inner.modules_replaced_in_text);
                 return;
             }
         }
@@ -388,6 +525,41 @@ mod tests {
         assert!(!found.spies_under_names_from_outside);
         let handed_on = br#"import { spyOn } from "bun:test"; use(spyOn);"#;
         assert!(look_at_file(b"/project/a.test.ts", handed_on).spies_on_unknown_objects);
+        for (spelled, names) in [
+            (
+                &br#"import { spyOn } from "bun:test"; spyOn(holder.it, flag ? "a" : "b");"#[..],
+                [b"a", b"b"],
+            ),
+            (
+                br#"import { spyOn, test } from "bun:test"; test.each([{ step: "a" }, { step: "b" }])("%o", row => { spyOn(holder.it, row.step); });"#,
+                [b"a", b"b"],
+            ),
+            (
+                br#"import { spyOn } from "bun:test"; const A = ["a"] as const; const B = ["b"] as const; [...A, ...B].filter(name => holder.it[name]).map(name => spyOn(holder.it, name));"#,
+                [b"a", b"b"],
+            ),
+        ] {
+            let found = look_at_file(b"/project/a.test.ts", spelled);
+            assert_eq!(found.names_spied_on_unknown_objects, names);
+            assert!(!found.spies_under_names_from_outside && !found.spies_on_unknown_objects);
+        }
+        for taken_by_name in [
+            &br#"const { spyOn: spy } = await import("bun:test"); spy(holder.it, "b");"#[..],
+            br#"const spy = (await import("bun:test")).spyOn(holder.it, "b");"#,
+        ] {
+            let found = look_at_file(b"/project/a.test.ts", taken_by_name);
+            assert_eq!(found.names_spied_on_unknown_objects, [b"b"]);
+            assert!(!found.spies_on_unknown_objects && !found.any_module);
+        }
+        for taken_whole in [
+            &br#"const runner = await import("bun:test"); use(runner);"#[..],
+            br#"const { spyOn, ...rest } = await import("bun:test");"#,
+            br#"const promise = import("bun:test");"#,
+            br#"const spy = (await import("bun:test"))[pick()];"#,
+        ] {
+            let found = look_at_file(b"/project/a.test.ts", taken_whole);
+            assert!(found.spies_on_unknown_objects && found.any_module);
+        }
     }
 
     #[test]
@@ -736,6 +908,114 @@ mod tests {
     }
 
     #[test]
+    fn finds_holders_that_are_reached_without_their_names() {
+        let found = find(
+            r#"
+            import { spyOn } from "bun:test";
+            const ofLists = Object.getPrototypeOf([]);
+            ofLists.flat = () => 1;
+            [].__proto__.fill = () => 1;
+            [].constructor.prototype.reverse = () => 1;
+            (1).constructor.prototype.toFixed = () => 1;
+            Object.getPrototypeOf(new Map()).get = () => 1;
+            Reflect.getPrototypeOf(new Set()).has = () => 1;
+            Object.getPrototypeOf(Promise.resolve()).finally = () => 1;
+            /a/.constructor.prototype.test = () => 1;
+            new Date().constructor.parse = () => 1;
+            globalThis["Ma" + "th"].acos = () => 1;
+            Reflect.get(globalThis, "Math").cosh = () => 1;
+            (0, eval)("this").Math.tanh = () => 1;
+            Function("return this")().Math.expm1 = () => 1;
+            const held = { m: Math };
+            held.m.log10 = () => 1;
+            spyOn(Object.getPrototypeOf([]), "concat");
+            "#,
+        );
+        for member in [
+            BuiltinId::ArrayPrototypeFlat,
+            BuiltinId::ArrayPrototypeFill,
+            BuiltinId::ArrayPrototypeReverse,
+            BuiltinId::NumberPrototypeToFixed,
+            BuiltinId::MapPrototypeGet,
+            BuiltinId::SetPrototypeHas,
+            BuiltinId::PromisePrototypeFinally,
+            BuiltinId::RegExpPrototypeTest,
+            BuiltinId::DateParse,
+            BuiltinId::MathAcos,
+            BuiltinId::MathCosh,
+            BuiltinId::MathTanh,
+            BuiltinId::MathExpm1,
+            BuiltinId::MathLog10,
+            BuiltinId::ArrayPrototypeConcat,
+        ] {
+            assert!(found.contains(&member), "{member:?} in {found:?}");
+        }
+        // The prototype of an instance of the program's own class is none of them.
+        let own = find(
+            r#"
+            class Own {}
+            Object.getPrototypeOf(new Own()).flat = () => 1;
+            new Own().constructor.prototype.get = () => 1;
+            "#,
+        );
+        assert!(!own.contains(&BuiltinId::ArrayPrototypeFlat), "{own:?}");
+        assert!(!own.contains(&BuiltinId::MapPrototypeGet), "{own:?}");
+    }
+
+    // Each function hands its parameter on twice, so there are 2^60 ways from the last to the first, and a ring beside them. An expression is looked at once.
+    #[test]
+    fn follows_parameters_that_many_ways_lead_to() {
+        let mut text = String::from(
+            "function f0(a) { a.held.flat = () => 1; a.held.inner.get = () => 1; ring(a); }\n",
+        );
+        for level in 1..=60 {
+            let below = level - 1;
+            text += &format!(
+                "function f{level}(a) {{ f{below}(a); f{below}(a); f{below}({{ held: a.held }}); a.held.at = () => {level}; }}\n"
+            );
+        }
+        text += "function ring(a) { other(a.held); }\nfunction other(b) { ring({ held: b }); b.held.has = () => 1; }\n";
+        text += "f60({ held: Object.getPrototypeOf([]) });\n";
+        let found = find(&text);
+        assert!(found.contains(&BuiltinId::ArrayPrototypeFlat), "{found:?}");
+        assert!(found.contains(&BuiltinId::ArrayPrototypeAt), "{found:?}");
+    }
+
+    // `Reflect.get({}, name)` is Object, a function and Object.prototype here. The first of them is not the answer.
+    #[test]
+    fn finds_every_holder_that_names_out_of_a_list_lead_to() {
+        let found = look_at_file(
+            b"/project/a.test.ts",
+            br#"
+            import { describe, it } from "bun:test";
+            function plant(name: string, field: "autoUpdate" | "source") {
+                const inherited: object = Reflect.get({}, name);
+                Reflect.defineProperty(inherited, field, { value: 1, configurable: true });
+            }
+            describe.each(["constructor", "toString", "__proto__"])("%s", name => {
+                it("one", () => { plant(name, "autoUpdate"); });
+                it("other", () => { plant(name, "source"); });
+            });
+            for (const way of ["constructor", "__proto__"]) Reflect.get([], way).at = () => 1;
+            "#,
+        );
+        let object = BuiltinId::ObjectPrototype as u32;
+        for name in [&b"autoUpdate"[..], b"source"] {
+            let is_opened = |it: &OpenedName| it.holder == object && it.name == name;
+            assert!(
+                found.names_added.iter().any(is_opened),
+                "{}",
+                bstr::BStr::new(name)
+            );
+        }
+        assert!(
+            found
+                .members
+                .contains(&(BuiltinId::ArrayPrototypeAt as u32))
+        );
+    }
+
+    #[test]
     fn finds_spies_stores_definitions_and_deletions() {
         let found = find(
             r#"
@@ -761,6 +1041,73 @@ mod tests {
         ];
         expected.sort_unstable();
         assert_eq!(found, expected);
+    }
+
+    #[test]
+    fn reflect_set_writes_on_the_receiver_that_it_is_given() {
+        let found = find(
+            r#"
+            Reflect.set({}, "max", () => 1, Math);
+            Reflect.set(Array, "from", () => [], Array);
+            Reflect.set(Object, "keys", () => [], ...rest);
+            Reflect.set(Atomics, "store", () => 1, {});
+            "#,
+        );
+        let mut expected = vec![
+            BuiltinId::MathMax,
+            BuiltinId::ArrayFrom,
+            BuiltinId::ObjectKeys,
+        ];
+        expected.sort_unstable();
+        assert_eq!(found, expected);
+        let unread = find("Reflect.set({}, name(), () => 1, Atomics);");
+        assert!(unread.contains(&BuiltinId::AtomicsStore), "{unread:?}");
+    }
+
+    #[test]
+    fn a_write_on_a_proxy_of_a_built_in_object_is_a_write_on_the_object() {
+        let found = find(
+            r#"
+            const proxy = new Proxy(Math, {});
+            proxy.max = () => 1;
+            delete proxy.min;
+            Object.defineProperty(proxy, "abs", { value() {} });
+            Reflect.set(Math, "cos", () => 1, proxy);
+            new Proxy(Array, {}).prototype.push = () => 1;
+            "#,
+        );
+        let mut expected = vec![
+            BuiltinId::MathMax,
+            BuiltinId::MathMin,
+            BuiltinId::MathAbs,
+            BuiltinId::MathCos,
+            BuiltinId::ArrayPrototypePush,
+        ];
+        expected.sort_unstable();
+        assert_eq!(found, expected);
+        let own = find("class Proxy { constructor(target) {} } new Proxy(Math).max = () => 1;");
+        assert!(own.is_empty(), "{own:?}");
+    }
+
+    #[test]
+    fn finds_the_keys_of_literals_that_are_assigned_or_defined_together() {
+        let found = find(
+            r#"
+            Object.assign(Date, { now: () => 0 });
+            Object.assign(Array.prototype, {}, { includes() {}, ["join"]() {} } as any);
+            Object.defineProperties(Math, { random: { value: () => 0.5 } });
+            "#,
+        );
+        let mut expected = vec![
+            BuiltinId::DateNow,
+            BuiltinId::ArrayPrototypeIncludes,
+            BuiltinId::ArrayPrototypeJoin,
+            BuiltinId::MathRandom,
+        ];
+        expected.sort_unstable();
+        assert_eq!(found, expected);
+        // The first operand is what is written.
+        assert_eq!(find("Object.assign({}, { now: () => 0 }, Date);"), []);
     }
 
     #[test]

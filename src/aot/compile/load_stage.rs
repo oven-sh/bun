@@ -1,7 +1,7 @@
 use super::import_graph::ImportGraph;
 use super::runtime_reach::ReachWhileLoading;
 use super::{
-    Build, LoadedBuild, LoadedProject, Options, ProgramsOfOneLoad,
+    Build, LoadedBuild, LoadedProject, Options, ProgramsOfOneLoad, StartedWorkers,
     begins_program_at_each_entry_point, find_further_worker_files, joins_workers, library_code_of,
     mentions_worker_constructor, preload_of,
 };
@@ -48,7 +48,7 @@ use bun_sema_driver::host::Disk;
 use bun_sema_driver::{
     ChosenThreads, CompileRequest, EntryPoints, LoadFailure, LoadedProgram,
     find_configuration_of_each_entry_point, fit_threads_to_sources, load_program_with_parsed_files,
-    resolve_entry_point, resolve_names_known_in_part,
+    resolve_entry_point, resolve_import_to_file, resolve_names_known_in_part,
 };
 use bun_threading::Guarded;
 use core::sync::atomic::Ordering;
@@ -450,7 +450,6 @@ impl<'a> Build<'a> {
     ) -> Result<R, Stage> {
         let options = self.options;
         let code = CodeOptions {
-            max_computed_candidates: max_computed_candidates(&self.limits),
             mocks_any_file: options.load.mocks_any_module || options.load.runs_tests,
             ..options.code.clone()
         };
@@ -470,13 +469,18 @@ impl<'a> Build<'a> {
             AssetReads::FinishedByLoad => host,
             AssetReads::FinishedLater => host.reading_in_background_after_load(),
         };
+        let stores_path_of_main_module = options.load.stores_path_of_main_module;
         let written_for_programs = |entry_points| {
-            EntryPoints::WrittenFor(entry_points, MainModule::EntryPointOfProcessOrWorker)
+            let main_module = match stores_path_of_main_module {
+                true => MainModule::AnyFile,
+                false => MainModule::EntryPointOfProcessOrWorker,
+            };
+            EntryPoints::WrittenFor(entry_points, main_module)
         };
         let request = CompileRequest {
             entry_points: match self.programs {
-                None => EntryPoints::Written(&options.entry_points),
-                Some(_) => written_for_programs(&options.entry_points),
+                None if !stores_path_of_main_module => EntryPoints::Written(&options.entry_points),
+                None | Some(_) => written_for_programs(&options.entry_points),
             },
             code: &code,
             fold: shared.application_fold,
@@ -619,40 +623,56 @@ impl<'a> Build<'a> {
 
         let files = application.files();
         self.started_workers = Default::default();
+        let is_held_below = |path: &[u8]| options.aot.images_below.holds_module(path);
         if !options.aot.checks_only {
-            self.started_workers.copies =
-                find_embedded_code_files(files, &options.load.loaders, &self.parallel_runner());
+            self.started_workers.copies = find_embedded_code_files(
+                files,
+                &options.load.loaders,
+                &is_held_below,
+                &self.parallel_runner(),
+            );
         }
-        if !options.aot.checks_only && mentions_worker_constructor(files) {
-            let code_from_root = CodeOptions {
-                working_directory: bun_sema_driver::host::from_native(
-                    &options.paths.root_directory,
-                ),
-                ..request.code.clone()
-            };
-            let search = WorkerSearch {
-                limits: &self.limits,
-                loaders: &options.load.loaders,
-                paths: &options.paths,
-                runs_in_place: options.aot.runs_in_place,
-                provider: self.provider,
-                resolve_entry_point: &|written| resolve_entry_point(host, request.code, written),
-                resolve_bare_name: &|name| resolve_entry_point(host, &code_from_root, name),
-                find_files_named_in_part: &|from, names| {
-                    let directory = match from {
-                        SearchedFrom::FolderOf(file) => host.directory_of(file),
-                        SearchedFrom::RootDirectory => {
-                            Cow::Borrowed(&code_from_root.working_directory[..])
-                        }
-                        SearchedFrom::WorkingDirectory => {
-                            Cow::Borrowed(&request.code.working_directory[..])
-                        }
-                    };
-                    resolve_names_known_in_part(host, request.code, &directory, names)
-                },
-                working_directory: &request.code.working_directory,
-            };
+        let code_from_root = CodeOptions {
+            working_directory: bun_sema_driver::host::from_native(&options.paths.root_directory),
+            ..request.code.clone()
+        };
+        let limits = self.limits.clone();
+        let search = WorkerSearch {
+            limits: &limits,
+            loaders: &options.load.loaders,
+            paths: &options.paths,
+            runs_in_place: options.aot.runs_in_place,
+            provider: self.provider,
+            resolve_entry_point: &|written| resolve_entry_point(host, request.code, written),
+            resolve_bare_name: &|name| resolve_entry_point(host, &code_from_root, name),
+            find_files_named_in_part: &|from, names| {
+                let directory = match from {
+                    SearchedFrom::FolderOf(file) => host.directory_of(file),
+                    SearchedFrom::RootDirectory => {
+                        Cow::Borrowed(&code_from_root.working_directory[..])
+                    }
+                    SearchedFrom::WorkingDirectory => {
+                        Cow::Borrowed(&request.code.working_directory[..])
+                    }
+                };
+                resolve_names_known_in_part(host, request.code, &directory, names)
+            },
+            working_directory: &request.code.working_directory,
+            is_held_below: &is_held_below,
+            parameters_below: &options.aot.replaced_by_tests.parameters_that_start_workers,
+            resolve_import: &|importer, written| {
+                resolve_import_to_file(host, request.code, importer, written)
+            },
+            is_built_upon: options.aot.shares_realms && !options.aot.is_part_of_test_files,
+        };
+        let mut files_with_starts: FxHashSet<Vec<u8>> = FxHashSet::default();
+        // A file that names no constructor starts a Worker too, where it calls a function of a program below that does.
+        if !options.aot.checks_only
+            && (mentions_worker_constructor(files) || !search.parameters_below.is_empty())
+        {
             let found = find_code_that_starts_workers(files, &search, &self.parallel_runner());
+            files_with_starts.extend(found.files_with_starts);
+            self.replaced_builtins.parameters_that_start_workers = found.parameters;
             self.started_workers.files = found.files;
             self.started_workers.names = found.names;
             self.started_workers.code = found.code;
@@ -675,6 +695,64 @@ impl<'a> Build<'a> {
             if !self.files_of_the_one_program.is_empty() {
                 // The next load takes both in.
                 self.replaced_builtins_spelled = find_replaced_builtins_spelled(options, files);
+                // A file that a Worker starts from may start Workers too, and each find costs a load of all files. So what the files
+                // just found name is looked for at once, in loads of them and of what they alone import. What such a look misses the next
+                // load of all files finds.
+                let name_of =
+                    |files: &Files<'_>, file: FileId| files.module(file).file_name().to_vec();
+                let loaded = files.compiled_files().iter();
+                // A file that starts Workers is looked at again beside the new ones: a call there may hand it the file of the next Worker.
+                let mut held: FxHashSet<Vec<u8>> = (loaded.map(|&file| name_of(files, file)))
+                    .filter(|name| !files_with_starts.contains(name))
+                    .collect();
+                let mut newest = self.files_of_the_one_program.clone();
+                // The search asks for no type, and the files that a project lists for their types are most of a load.
+                let code_of_few_files = CodeOptions {
+                    types_stop_at_entry_points: true,
+                    ..request.code.clone()
+                };
+                loop {
+                    entry_points.extend(newest.iter().map(|file| file.source_path.clone()));
+                    let named = newest.iter().filter(|file| file.text.is_none());
+                    let paths: Vec<Vec<u8>> = named
+                        .map(|file| bun_sema_driver::host::from_native(&file.source_path))
+                        .collect();
+                    if paths.is_empty() {
+                        break;
+                    }
+                    host.leave_alone(held.clone());
+                    let further = CompileRequest {
+                        entry_points: EntryPoints::Resolved(&paths),
+                        code: &code_of_few_files,
+                        fold: request.fold,
+                        atoms: request.atoms,
+                        libs: request.libs,
+                        project_origin: request.project_origin,
+                        threads: request.threads,
+                        progress: request.progress,
+                        left_out_bodies: request.left_out_bodies,
+                    };
+                    let Ok(further) = shared.parsed_before.load_program(session, host, &further)
+                    else {
+                        break;
+                    };
+                    let files = further.files();
+                    let found =
+                        find_code_that_starts_workers(files, &search, &self.parallel_runner());
+                    files_with_starts.extend(found.files_with_starts);
+                    let started = StartedWorkers {
+                        files: found.files,
+                        ..Default::default()
+                    };
+                    newest = find_further_worker_files(&started, left_out, |path| {
+                        entry_points.contains(path)
+                    });
+                    let loaded = files.compiled_files().iter();
+                    let loaded = loaded.map(|&file| name_of(files, file));
+                    held.extend(loaded.filter(|name| !files_with_starts.contains(name)));
+                    self.files_of_the_one_program.extend(newest.iter().cloned());
+                }
+                host.leave_alone(FxHashSet::default());
                 log_why_files_are_loaded_again(format_args!(
                     "with {} more files that Workers start from",
                     self.files_of_the_one_program.len()
@@ -811,6 +889,7 @@ impl<'a> Build<'a> {
                         || options.can_load_code_at_run_time()
                         || preload_of(options).is_some(),
                     is_served_by_other_images: options.aot.imports_are_in_other_images,
+                    holds_test_files_alone: super::holds_test_files_alone(options),
                 };
                 collect_runtime_roots(files, shared.runtime_modules, self.platform, further)
             })
@@ -956,6 +1035,8 @@ impl<'a> Build<'a> {
                     loads_code_by_unknown_names_alone,
                     keeps_library_code_without_names: roots.keeps_code_without_names,
                     holds_guessed_library_code: roots.holds_guessed_code,
+                    library_code_asked: super::holds_test_files_alone(options)
+                        .then_some(&roots.asks),
                     finish_asset_reads: project.finish_asset_reads,
                     known_library_regions: &|| {
                         let reach = runtime_host.reach.as_ref()?;
@@ -1013,11 +1094,11 @@ impl<'a> Build<'a> {
                 ProgramFacts {
                     can_load_code_at_run_time,
                     can_be_cluster_worker: roots.imports_cluster || can_load_code_at_run_time,
+                    can_replace_builtins: !options.load.replaced_builtins.is_empty(),
                 },
             ),
             code: CodeOptions {
                 tsconfig_override: Some([VIRTUAL_ROOT, b"tsconfig.json"].concat()),
-                max_computed_candidates: max_computed_candidates(&self.limits),
                 ..CodeOptions::bun_run(VIRTUAL_ROOT.strip_suffix(b"/").unwrap_or(VIRTUAL_ROOT))
             },
             host: RuntimeHost {
@@ -1030,7 +1111,9 @@ impl<'a> Build<'a> {
                 unreadable: Default::default(),
                 manifest: shared.manifest,
                 // Code that the build does not see may use all that a file holds, so all that a file asks for is read.
-                reach: (asks.filter(|_| !can_load_code_at_run_time)).map(ReachWhileLoading::new),
+                reach: (asks.filter(|_| !can_load_code_at_run_time)).map(|asks| {
+                    ReachWhileLoading::new(asks, super::holds_test_files_alone(self.options))
+                }),
                 reads_types: can_load_code_at_run_time || asks.is_none_or(|asks| !asks.is_empty()),
             },
             can_load_code_at_run_time,
@@ -1462,11 +1545,6 @@ fn loads_modules_by_names_that_are_not_constant(files: &Files<'_>, file: FileId)
     parsed_source(files, file).is_none_or(|it| it.builtins.loads_unknown_modules())
         || (files.analysis(file).import_sites.iter())
             .any(|site| !matches!(site.specifier, ImportSpecifier::Constant(_)))
-}
-
-pub(super) fn max_computed_candidates(limits: &LimitValues) -> u32 {
-    let limit = limits.get(LimitId::MaxComputedSpecifierCandidates);
-    u32::try_from(limit).unwrap_or(u32::MAX)
 }
 
 #[cfg(test)]

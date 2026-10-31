@@ -3,6 +3,7 @@ use super::requests::{ScannedSite, Scans};
 use super::wrapped::WrappedModules;
 use super::{BindInput, ModuleRef, compare_modules};
 use crate::load::sources::parsed_source;
+use crate::module_keys::{DEFAULT_LOADERS, loader_named_by_path};
 use bun_ast::Loader;
 use bun_core::strings;
 use bun_sema::atom::Atom;
@@ -37,6 +38,7 @@ impl ModuleSet {
             ModuleRef::External {
                 importer,
                 specifier,
+                ..
             } => Interop::of_external(self.external_kind(importer, specifier)),
         }
     }
@@ -97,6 +99,7 @@ impl ModuleSet {
             ModuleRef::External {
                 importer,
                 specifier,
+                ..
             } => match self.external_kind(importer, specifier) {
                 ExternalKind::UncompiledCode => true,
                 ExternalKind::HostValue => false,
@@ -130,17 +133,27 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
         true => compiled_files.clone(),
         false => find_files_required_from_loader(input, scans, &compiled_files),
     };
+    let stands_for_string = |file: FileId| {
+        parsed_source(files, file).is_some_and(|it| matches!(it.loader, Loader::Text | Loader::Md))
+    };
     for file in required_from_loader {
-        let is_text = parsed_source(files, file)
-            .is_some_and(|it| matches!(it.loader, Loader::Text | Loader::Md));
         if let Some(interop) = interops[file.idx()]
             .as_mut()
-            .filter(|it| is_text && it.kind == ModuleKind::Data)
+            .filter(|it| stands_for_string(file) && it.kind == ModuleKind::Data)
         {
             interop.require_result = RequireResult::Namespace;
         }
     }
     leave_require_of_data_imported_later_to_loader(input, scans, &compiled_files, &mut interops);
+    answer_require_with_what_an_import_has_loaded(input, &compiled_files, &mut interops);
+    // A path that shows when the program runs may name any of the others. It goes to the loader, and changes nothing for the calls that are linked.
+    for &file in &compiled_files {
+        if let Some(interop) = interops[file.idx()].as_mut().filter(|it| {
+            it.kind == ModuleKind::Data && it.require_result != RequireResult::Namespace
+        }) {
+            interop.answers_loader_with_namespace = stands_for_string(file);
+        }
+    }
     let mut other_modules = Vec::new();
     let mut external_kinds = Vec::new();
     for &importer in &compiled_files {
@@ -171,6 +184,7 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
             other_modules.push(ModuleRef::External {
                 importer,
                 specifier,
+                type_attribute: None,
             });
             external_kinds.push(((importer, specifier), ExternalKind::UncompiledCode));
         }
@@ -245,6 +259,7 @@ fn is_parsed_into_value(input: &BindInput<'_, '_>, file: FileId) -> bool {
 
 // In an executable of `bun build --compile` the loader of `bun run` answers every other call: what `createRequire` made, `import.meta.require`,
 // `require` under another name, a computed path. A path that nothing is known about names no file here: it would change the answer of calls far from it.
+// `Interop::answers_loader_with_namespace` is for that path.
 fn find_files_required_from_loader(
     input: &BindInput<'_, '_>,
     scans: &Scans,
@@ -291,8 +306,11 @@ fn answer_require_with_namespace_of_imported_data(
     scans: &Scans,
     interops: &mut [Option<Interop>],
 ) {
-    let entry_points = input.sources.entry_points().iter();
-    let mut pending: Vec<FileId> = entry_points.map(|it| it.file).collect();
+    // A realm begins with one entry point. Which of several shows when the program runs.
+    let [entry_point] = input.sources.entry_points() else {
+        return;
+    };
+    let mut pending: Vec<FileId> = vec![entry_point.file];
     let mut is_seen = vec![false; interops.len()];
     while let Some(file) = pending.pop() {
         if core::mem::replace(&mut is_seen[file.idx()], true) {
@@ -350,6 +368,47 @@ fn leave_require_of_data_imported_later_to_loader(
                     leave(target);
                 }
             }
+        }
+    }
+}
+
+// `bun run` reads a file of a kind that nothing names, `a.png`, as code for `require`, and an import of it gets its path. Its loader has one place
+// for the path: what an import has loaded answers a later `require`, with the namespace object. Which comes first shows when the program runs.
+fn answer_require_with_what_an_import_has_loaded(
+    input: &BindInput<'_, '_>,
+    compiled_files: &[FileId],
+    interops: &mut [Option<Interop>],
+) {
+    if !input.runs_in_place {
+        return;
+    }
+    let path_of = |file: FileId| input.sources.public_path(file);
+    let mut paths_of_files: Vec<(&[u8], FileId)> = Vec::new();
+    for &file in compiled_files {
+        let is_path = parsed_source(input.files, file).is_some_and(|it| it.loader == Loader::File)
+            && loader_named_by_path(DEFAULT_LOADERS, path_of(file)).is_none();
+        if let Some(interop) = interops[file.idx()]
+            .as_mut()
+            .filter(|it| is_path && it.kind == ModuleKind::Data)
+        {
+            interop.require_result = RequireResult::NamespaceIfImported;
+            paths_of_files.push((path_of(file), file));
+        }
+    }
+    if paths_of_files.is_empty() {
+        return;
+    }
+    paths_of_files.shared_sort_unstable();
+    for &code in compiled_files {
+        let path = path_of(code);
+        let Some(mark) = strings::last_index_of_char(path, b'?') else {
+            continue;
+        };
+        let found = paths_of_files.binary_search_by(|entry| entry.0.cmp(&path[..mark]));
+        if let (Ok(at), Some(interop)) = (found, &mut interops[code.idx()])
+            && interop.kind != ModuleKind::Data
+        {
+            interop.form_that_imports_get = Some(paths_of_files[at].1);
         }
     }
 }

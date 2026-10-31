@@ -348,5 +348,5 @@ runtimefunction id=ArrayTraversalTraverseArray function=f47 visibility=Private
 # CHECK-NEXT: end of function f6
 # CHECK-LABEL: function {{*}}name="allOnes"
 # CHECK: role=GenericEntrypoint
-# CHECK-NEXT: instructions: 2, patchpoints: 2
-# CHECK-NEXT: end of function f60
+# CHECK-NEXT: instructions: 1, patchpoints: 1, rare instructions: 4
+# CHECK-NEXT: end of function f61

@@ -1,7 +1,9 @@
 use super::code_barrels::ImportRequests;
 use super::code_load::{Analyzed, CodeTarget, LoadKey, LoadedCode};
 use super::*;
-use crate::import_sites::{ImportSite, ImportSiteKind, ImportSpecifier, is_linked_by_bundler};
+use crate::import_sites::{
+    ImportSite, ImportSiteKind, ImportSpecifier, is_linked_by_bundler, is_name_read_by_transpiler,
+};
 use crate::resolve::{
     CodeFailure, CodeFile, CodeImportForm, CodeImportKind, CodeRequest, CodeResolution,
     ComputedCandidate, ComputedCodeRequest, ComputedResolution, ComputedUnknown, ExternalKind,
@@ -33,7 +35,12 @@ pub(super) fn resolve_code_imports<'s, 'r>(
             None => key,
         };
         let alternatives = analyzed.analysis.alternatives_of(&site.specifier);
-        let resolution = resolve_site(context, key, hir, site, alternatives);
+        let decisions = &analyzed.analysis.decisions;
+        let names = match is_name_read_by_transpiler(hir, bound, decisions, site.kind) {
+            true => NamesKnown::ToTranspiler,
+            false => NamesKnown::ToLoader,
+        };
+        let resolution = resolve_site(context, key, hir, site, alternatives, names);
         resolutions.push(resolution);
         let origin = TargetOrigin {
             kind: loader_kind(site),
@@ -157,13 +164,25 @@ impl<'s, 'r> LoadedCode<'s, 'r> {
     }
 }
 
+/// `import_sites::is_name_read_by_transpiler`
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum NamesKnown {
+    ToTranspiler,
+    ToLoader,
+}
+
 fn resolve_site<'r>(
     context: &CodeLoadContext<'_, '_, 'r>,
     key: LoadKey<'r>,
     hir: &hir::File<'_>,
     site: &ImportSite,
     alternatives: &[ImportSpecifier],
+    names: NamesKnown,
 ) -> SiteResolution<'r> {
+    // `import.meta.require("bun:fs")`
+    let is_unknown = |name: &[u8]| {
+        names == NamesKnown::ToLoader && context.host.is_name_for_transpiler_alone(name)
+    };
     let is_constant = matches!(site.specifier, ImportSpecifier::Constant(_));
     debug_assert!(is_constant || !site.is_host_value && !is_get_builtin_module(site.kind));
     let (atoms, resolver) = (&context.atoms, context.resolver);
@@ -186,6 +205,7 @@ fn resolve_site<'r>(
                 }
                 ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => (&b""[..], Some(&b""[..])),
             });
+            let texts = texts.filter(|&(text, end)| end.is_some() || !is_unknown(text));
             let texts: Vec<(&[u8], Option<&[u8]>)> = texts.collect();
             let request = ComputedCodeRequest {
                 prefix: b"",
@@ -214,7 +234,10 @@ fn resolve_site<'r>(
     if is_macro_import(hir, site) {
         return SiteResolution::Constant(CodeResolution::Erased);
     }
-    let resolution = resolve_specifier(context, key, specifier, kind);
+    let resolution = match is_unknown(specifier) {
+        true => CodeResolution::NotFound(CodeFailure::ModuleNotFound),
+        false => resolve_specifier(context, key, specifier, kind),
+    };
     let resolution =
         resolve_file_loaded_another_way(context, key, hir, site, specifier, resolution);
     let resolution = resolve_data_url(context, hir, site, resolution).unwrap_or(resolution);
@@ -230,6 +253,7 @@ fn resolve_site<'r>(
 
 /// `import path from "package/dist/library.js" with { type: "file" }`: another program of the realm holds the file as code, and would answer with what the code exports.
 /// What is asked for is the path of the file, its text or its data, and that is a module of its own, which this program holds.
+/// `import text from "./page.html" with { type: "text" }`: so it is with a page, which the run time would bundle and serve.
 fn resolve_file_loaded_another_way<'r>(
     context: &CodeLoadContext<'_, '_, 'r>,
     key: LoadKey<'r>,
@@ -238,14 +262,8 @@ fn resolve_file_loaded_another_way<'r>(
     specifier: &[u8],
     resolution: CodeResolution<'r>,
 ) -> CodeResolution<'r> {
-    let is_left_to_loader = matches!(
-        resolution,
-        CodeResolution::External {
-            kind: ExternalKind::UncompiledCode,
-            ..
-        }
-    );
-    let Some(type_attribute) = loader_attribute(hir, site).filter(|_| is_left_to_loader) else {
+    let is_outside = matches!(resolution, CodeResolution::External { .. });
+    let Some(type_attribute) = loader_attribute(hir, site).filter(|_| is_outside) else {
         return resolution;
     };
     // As for a macro: the file itself is looked for, whoever holds it.
@@ -254,7 +272,13 @@ fn resolve_file_loaded_another_way<'r>(
         CodeResolution::External {
             specifier: path,
             kind: ExternalKind::UncompiledCode,
-        } if context.host.is_in_other_program(path) => path,
+        } if context.host.is_in_other_program(path) && !context.host.is_left_to_loader(path) => {
+            path
+        }
+        CodeResolution::External {
+            specifier: path,
+            kind: ExternalKind::HostValue,
+        } if context.host.leaves_to_run_time(path) => path,
         _ => return resolution,
     };
     let loader_with = |type_attribute| {

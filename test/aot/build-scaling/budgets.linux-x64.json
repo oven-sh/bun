@@ -22,6 +22,10 @@
     "millionInstructionsWithMusl": 4171,
     "megabytes": 219
   },
+  "files of the project that nothing imports": {
+    "millionInstructions": 1346,
+    "megabytes": 95
+  },
   "functions that call what nobody knows": {
     "millionInstructions": 7530,
     "millionInstructionsWithMusl": 16401,
@@ -100,9 +104,17 @@
     "megabytes": 216
   },
   "functions that call one another at random": {
-    "millionInstructions": 13435,
+    "millionInstructions": 4567,
     "millionInstructionsWithMusl": 11701,
     "megabytes": 215
+  },
+  "very many functions that call one another at random": {
+    "millionInstructions": 35517,
+    "megabytes": 221
+  },
+  "functions that each call the next, and the last the first": {
+    "millionInstructions": 41431,
+    "megabytes": 239
   },
   "a union of object types that is told apart by a tag": {
     "millionInstructions": 5541,
@@ -139,6 +151,18 @@
       "instructions": 2.45
     }
   },
+  "names that one loop reads off one object of two layouts": {
+    "millionInstructions": 23879,
+    "megabytes": 186
+  },
+  "sums that one hot loop carries": {
+    "millionInstructions": 9727,
+    "megabytes": 138
+  },
+  "values that live across calls on rare paths": {
+    "millionInstructions": 24018,
+    "megabytes": 491
+  },
   "a string that grows by one statement after another": {
     "millionInstructions": 617,
     "millionInstructionsWithMusl": 1419,
@@ -161,45 +185,75 @@
     }
   },
   "classes that extend one another in a row": {
-    "millionInstructions": 2865,
+    "millionInstructions": 2472,
     "millionInstructionsWithMusl": 3337,
     "megabytes": 144,
     "growth": {
-      "instructions": 2.75
+      "instructions": 2.68
     }
   },
   "classes that extend one another in a row, each constructed": {
-    "millionInstructions": 7964,
+    "millionInstructions": 7748,
     "millionInstructionsWithMusl": 10388,
     "megabytes": 133,
     "growth": {
-      "instructions": 2.67
+      "instructions": 2.61
     }
   },
   "classes without fields that extend one another in a row": {
-    "millionInstructions": 15377,
+    "millionInstructions": 11580,
     "millionInstructionsWithMusl": 15777,
     "megabytes": 367,
     "growth": {
-      "instructions": 3.45,
+      "instructions": 3.23,
       "peakBytes": 5
     }
   },
-  "functions that each make a class below the one that the function before has made": {
-    "millionInstructions": 15143,
-    "millionInstructionsWithMusl": 21557,
-    "megabytes": 396,
+  "functions that each return what the next returns, and one more": {
+    "millionInstructions": 8166,
+    "megabytes": 119
+  },
+  "classes with a field and a method each that extend one another in a row": {
+    "millionInstructions": 9289,
+    "megabytes": 184,
     "growth": {
-      "instructions": 3.12,
-      "peakBytes": 5.3
+      "instructions": 2.58
+    }
+  },
+  "methods of one name that each call the method above, up a row of classes": {
+    "millionInstructions": 6640,
+    "megabytes": 115
+  },
+  "classes that each store to this and extend one another in a row": {
+    "millionInstructions": 15297,
+    "megabytes": 232
+  },
+  "classes that each store to this, in a row below a class with an accessor": {
+    "millionInstructions": 15362,
+    "megabytes": 238
+  },
+  "classes without members that extend one another in a row": {
+    "millionInstructions": 10663,
+    "megabytes": 151,
+    "growth": {
+      "instructions": 2.59
+    }
+  },
+  "functions that each make a class below the one that the function before has made": {
+    "millionInstructions": 6909,
+    "millionInstructionsWithMusl": 21557,
+    "megabytes": 180,
+    "growth": {
+      "instructions": 2.4,
+      "peakBytes": 2.04
     }
   },
   "classes with a field each that extend one another in a row, all constructed at one place": {
-    "millionInstructions": 11807,
+    "millionInstructions": 10826,
     "millionInstructionsWithMusl": 15414,
-    "megabytes": 156,
+    "megabytes": 135,
     "growth": {
-      "instructions": 3.2
+      "instructions": 3.05
     }
   },
   "rows of classes that functions make one below the other, by the length of a row": {
@@ -534,5 +588,32 @@
   "awaited calls in one array literal": {
     "millionInstructions": 2294,
     "megabytes": 116
+  },
+  "objects that each hold the one before, walked by a loop": {
+    "millionInstructions": 2247,
+    "megabytes": 112
+  },
+  "objects that each hold the one before, walked by a loop that stores into them": {
+    "millionInstructions": 2603,
+    "megabytes": 115
+  },
+  "object literals nested in one another, walked by a loop": {
+    "millionInstructions": 1091,
+    "megabytes": 94
+  },
+  "object literals nested in one another, each beside smaller literals": {
+    "millionInstructions": 4823,
+    "megabytes": 103
+  },
+  "object literals nested in one another, handed to a generic function": {
+    "millionInstructions": 629,
+    "megabytes": 84
+  },
+  "object literals nested in one another, more deeply than data may be": {
+    "millionInstructions": 783,
+    "megabytes": 89,
+    "growth": {
+      "instructions": 2.75
+    }
   }
 }

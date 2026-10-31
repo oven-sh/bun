@@ -87,6 +87,7 @@ const measures = [
   "../startup-scaling/startup-scaling-2.measure.ts",
   "../startup-scaling/startup-scaling-3.measure.ts",
   "../startup-scaling/startup-scaling-4.measure.ts",
+  "../startup-scaling/startup-scaling-by-name.measure.ts",
   "../startup-scaling/startup-scaling-in-place.measure.ts",
   "../static-modules-slope.measure.ts",
 ];

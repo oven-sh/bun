@@ -214,15 +214,15 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private
 # CHECK-NEXT: v0: object = NewDictionary
 # CHECK-NEXT: v1: Object = AssumeType v0 provenType=Object
 # CHECK-NEXT: v2: "halves" = String string="halves"
-# CHECK-NEXT: v3: Array<int[2, 7]|fractional, Double> = Data data=d4 allocationSite=2 arrayStorage=Double
+# CHECK-NEXT: v3: Array<int[2, 7]|fractional, Double> = Data data=d4 allocationSite=2 arrayStorage=Double [isNeverToldApart]
 # CHECK-NEXT: v4: Array<int[2, 7]|fractional, proven, Double, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<int[2, 7]|fractional, proven, Double, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v5: undefined = CallDirect v2, v4, v1 function=f1 accessSite=0
 # CHECK-NEXT: v6: "whole" = String string="whole"
-# CHECK-NEXT: v7: Array<int[2, 7]|fractional, Double> = Data data=d5 allocationSite=3 arrayStorage=Double
+# CHECK-NEXT: v7: Array<int[2, 7]|fractional, Double> = Data data=d5 allocationSite=3 arrayStorage=Double [isNeverToldApart]
 # CHECK-NEXT: v8: Array<int[2, 7]|fractional, proven, Double, pristine[Storage, Names, Dense]> = AssumeType v7 provenType=Array<int[2, 7]|fractional, proven, Double, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v9: undefined = CallDirect v6, v8, v1 function=f1 accessSite=1
 # CHECK-NEXT: v10: "one" = String string="one"
-# CHECK-NEXT: v11: Array<int[2, 7]|fractional, Double> = Data data=d6 allocationSite=4 arrayStorage=Double
+# CHECK-NEXT: v11: Array<int[2, 7]|fractional, Double> = Data data=d6 allocationSite=4 arrayStorage=Double [isNeverToldApart]
 # CHECK-NEXT: v12: Array<int[2, 7]|fractional, proven, Double, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<int[2, 7]|fractional, proven, Double, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v13: undefined = CallDirect v10, v12, v1 function=f1 accessSite=2
 # CHECK-NEXT: v14: anything = PropGet v1 key="halves" accessSite=5
@@ -241,128 +241,111 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private
 # CHECK-NEXT: v3: 1 = Integer integer=1
 # CHECK-NEXT: v4: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v3, v4)
-# CHECK-NEXT: b1(v5: int|whole ~ 1, v6: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: Jump -> next b2(v5, v6)
-# CHECK-NEXT: b2(v7: int|whole, v8: int[0, 4294967295]):
+# CHECK-NEXT: b1(v5: int|whole, v6: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v10: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v11: boolean = Less v8, v10
-# CHECK-NEXT: Branch v11 -> taken b3(| 0), notTaken b15()
-# CHECK-NEXT: b3(v12: int[0, 4294967294]):
-# CHECK-NEXT: v13: boolean = IsInBounds v1, v12
-# CHECK-NEXT: Branch v13 -> taken b4(| 0), notTaken b5()
-# CHECK-NEXT: b4(v14: guard):
-# CHECK-NEXT: v15: int[2, 7]|fractional = GetArrayElement v1, v12, v14 arrayStorage=Double level=Proven [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v16: 1 = Integer integer=1
-# CHECK-NEXT: v17: int[1, 4294967295] = Add v12, v16
-# CHECK-NEXT: Jump -> next b8(v7, v17, v15)
-# CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: v18: undefined|int[2, 7]|fractional = GetArrayElement v1, v12 arrayStorage=Double level=Proven [keyIsIntegral]
-# CHECK-NEXT: v19: 1 = Integer integer=1
-# CHECK-NEXT: v20: int[1, 4294967295] = Add v12, v19
-# CHECK-NEXT: v21: undefined|int[2, 7]|fractional ~ int[2, 7]|fractional = Upcast v18 castType=anything
-# CHECK-NEXT: Jump -> next b6(v7)
-# CHECK-NEXT: b6(v22: int|whole) frequency=Unlikely:
-# CHECK-NEXT: v23: boolean ~ true = TypeTest v21 testedType=int[2, 7]|fractional
-# CHECK-NEXT: Branch v23 -> taken b7(| 0), notTaken b12()
-# CHECK-NEXT: b7(v24: int[2, 7]|fractional) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b8(v22, v20, v24)
-# CHECK-NEXT: b8(v25: int|whole, v26: int[1, 4294967295], v27: int[2, 7]|fractional):
-# CHECK-NEXT: Jump -> next b9(v25)
-# CHECK-NEXT: b9(v28: int|whole):
+# CHECK-NEXT: v8: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v9: boolean = Less v6, v8
+# CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b9()
+# CHECK-NEXT: b2(v10: int[0, 4294967294]):
+# CHECK-NEXT: v11: boolean = IsInBounds v1, v10
+# CHECK-NEXT: Branch v11 -> taken b3(| 0), notTaken b4()
+# CHECK-NEXT: b3(v12: guard):
+# CHECK-NEXT: v13: int[2, 7]|fractional = GetArrayElement v1, v10, v12 arrayStorage=Double level=Proven [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v14: 1 = Integer integer=1
+# CHECK-NEXT: v15: int[1, 4294967295] = Add v10, v14
+# CHECK-NEXT: Jump -> next b5(v15, v13)
+# CHECK-NEXT: b4() frequency=Unlikely:
+# CHECK-NEXT: v16: undefined|int[2, 7]|fractional = GetArrayElement v1, v10 arrayStorage=Double level=Proven [keyIsIntegral]
+# CHECK-NEXT: v17: 1 = Integer integer=1
+# CHECK-NEXT: v18: int[1, 4294967295] = Add v10, v17
+# CHECK-NEXT: v19: undefined|int[2, 7]|fractional ~ int[2, 7]|fractional = Upcast v16 castType=anything
+# CHECK-NEXT: v20: fact = Specified
+# CHECK-NEXT: v21: int[2, 7]|fractional = AssumeType v19, v20 provenType=int|fractional
+# CHECK-NEXT: Jump -> next b5(v18, v21)
+# CHECK-NEXT: b5(v22: int[1, 4294967295], v23: int[2, 7]|fractional):
+# CHECK-NEXT: Jump -> next b6(v5)
+# CHECK-NEXT: b6(v24: int|whole):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v30: number = Mul v27, v28
-# CHECK-NEXT: v31: 1 = Integer integer=1
-# CHECK-NEXT: v32: number = Mod v30, v31
+# CHECK-NEXT: v26: number = Mul v23, v24
+# CHECK-NEXT: v27: 1 = Integer integer=1
+# CHECK-NEXT: v28: number = Mod v26, v27
+# CHECK-NEXT: v29: 0 = Integer
+# CHECK-NEXT: v30: boolean = StrictEq v28, v29
+# CHECK-NEXT: Branch v30 -> taken b7(), notTaken b8()
+# CHECK-NEXT: b7():
+# CHECK-NEXT: Jump -> next b1(v24, v22)
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v31: 10 = Integer integer=10
+# CHECK-NEXT: v32: int|whole = Mul v24, v31
+# CHECK-NEXT: Jump -> next b6(v32)
+# CHECK-NEXT: b9():
 # CHECK-NEXT: v33: 0 = Integer
-# CHECK-NEXT: v34: boolean = StrictEq v32, v33
-# CHECK-NEXT: Branch v34 -> taken b10(), notTaken b11()
-# CHECK-NEXT: b10():
-# CHECK-NEXT: Jump -> next b2(v28, v26)
-# CHECK-NEXT: b11():
-# CHECK-NEXT: v35: 10 = Integer integer=10
-# CHECK-NEXT: v36: int|whole = Mul v28, v35
-# CHECK-NEXT: Jump -> next b9(v36)
-# CHECK-NEXT: b12() frequency=Unlikely:
+# CHECK-NEXT: v34: boolean = IsInBounds v1, v33
+# CHECK-NEXT: Branch v34 -> taken b10(| 0), notTaken b11()
+# CHECK-NEXT: b10(v35: guard):
+# CHECK-NEXT: v36: int[2, 7]|fractional = GetArrayElement v1, v33, v35 arrayStorage=Double level=Proven accessSite=9 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v37: number = Mul v36, v5
+# CHECK-NEXT: v38: 0 = Integer
+# CHECK-NEXT: Jump -> next b13(v37, v38)
+# CHECK-NEXT: b11() frequency=Unlikely:
+# CHECK-NEXT: v39: undefined|int[2, 7]|fractional = GetArrayElement v1, v33 arrayStorage=Double level=Proven accessSite=9 [keyIsIntegral]
+# CHECK-NEXT: v40: undefined|int[2, 7]|fractional ~ int[2, 7]|fractional = Upcast v39 castType=anything
+# CHECK-NEXT: v41: number = Mul v40, v5
+# CHECK-NEXT: v42: 0 = Integer
+# CHECK-NEXT: Jump -> next b12(v41, v42)
+# CHECK-NEXT: b12(v43: number, v44: int[0, 4294967295]) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b13(v43, v44)
+# CHECK-NEXT: b13(v45: number, v46: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b14(v45, v46)
+# CHECK-NEXT: b14(v47: number, v48: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v38: number = Mul v21, v22
-# CHECK-NEXT: v39: 1 = Integer integer=1
-# CHECK-NEXT: v40: number = Mod v38, v39
-# CHECK-NEXT: v41: 0 = Integer
-# CHECK-NEXT: v42: boolean = StrictEq v40, v41
-# CHECK-NEXT: Branch v42 -> taken b13(), notTaken b14()
-# CHECK-NEXT: b13() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b1(v22, v20)
-# CHECK-NEXT: b14() frequency=Unlikely:
-# CHECK-NEXT: v43: 10 = Integer integer=10
-# CHECK-NEXT: v44: int|whole = Mul v22, v43
-# CHECK-NEXT: Jump -> next b6(v44)
-# CHECK-NEXT: b15():
-# CHECK-NEXT: v45: 0 = Integer
-# CHECK-NEXT: v46: boolean = IsInBounds v1, v45
-# CHECK-NEXT: Branch v46 -> taken b16(| 0), notTaken b17()
-# CHECK-NEXT: b16(v47: guard):
-# CHECK-NEXT: v48: int[2, 7]|fractional = GetArrayElement v1, v45, v47 arrayStorage=Double level=Proven accessSite=9 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v49: number = Mul v48, v7
-# CHECK-NEXT: v50: 0 = Integer
-# CHECK-NEXT: Jump -> next b19(v49, v50)
-# CHECK-NEXT: b17() frequency=Unlikely:
-# CHECK-NEXT: v51: undefined|int[2, 7]|fractional = GetArrayElement v1, v45 arrayStorage=Double level=Proven accessSite=9 [keyIsIntegral]
-# CHECK-NEXT: v52: undefined|int[2, 7]|fractional ~ int[2, 7]|fractional = Upcast v51 castType=anything
-# CHECK-NEXT: v53: number = Mul v52, v7
-# CHECK-NEXT: v54: 0 = Integer
-# CHECK-NEXT: Jump -> next b18(v53, v54)
-# CHECK-NEXT: b18(v55: number, v56: int[0, 4294967295]) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b19(v55, v56)
-# CHECK-NEXT: b19(v57: number, v58: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: Jump -> next b20(v57, v58)
-# CHECK-NEXT: b20(v59: number, v60: int[0, 4294967295]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v62: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v63: boolean = Less v60, v62
-# CHECK-NEXT: Branch v63 -> taken b21(| 0), notTaken b27()
-# CHECK-NEXT: b21(v64: int[0, 4294967294]):
-# CHECK-NEXT: v65: boolean = IsInBounds v1, v64
-# CHECK-NEXT: Branch v65 -> taken b22(| 0), notTaken b26()
-# CHECK-NEXT: b22(v66: guard):
-# CHECK-NEXT: v67: int[2, 7]|fractional = GetArrayElement v1, v64, v66 arrayStorage=Double level=Proven [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v68: 1 = Integer integer=1
-# CHECK-NEXT: v69: int[1, 4294967295] = Add v64, v68
-# CHECK-NEXT: v70: number = Mul v67, v7
-# CHECK-NEXT: v71: boolean = ToBoolean v70
-# CHECK-NEXT: Branch v71 -> taken b23(), notTaken b24(| 0)
-# CHECK-NEXT: b23():
-# CHECK-NEXT: v72: number = Mod v59, v70
-# CHECK-NEXT: v73: undefined = CallDirect v70, v72 function=f10
-# CHECK-NEXT: v74: number = ResultAt v73
-# CHECK-NEXT: v75: 0|whole = ResultAt v73 index=1
-# CHECK-NEXT: v76: 0|whole = Upcast v75 castType=int|whole
-# CHECK-NEXT: Jump -> next b25(v74, v76)
-# CHECK-NEXT: b24(v77: 0|whole):
-# CHECK-NEXT: Jump -> next b25(v59, v77)
-# CHECK-NEXT: b25(v78: number, v79: 0|whole):
-# CHECK-NEXT: v80: number = Upcast v78 castType=number
-# CHECK-NEXT: v81: 0|whole = Upcast v79 castType=int|whole
+# CHECK-NEXT: v50: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v51: boolean = Less v48, v50
+# CHECK-NEXT: Branch v51 -> taken b15(| 0), notTaken b21()
+# CHECK-NEXT: b15(v52: int[0, 4294967294]):
+# CHECK-NEXT: v53: boolean = IsInBounds v1, v52
+# CHECK-NEXT: Branch v53 -> taken b16(| 0), notTaken b20()
+# CHECK-NEXT: b16(v54: guard):
+# CHECK-NEXT: v55: int[2, 7]|fractional = GetArrayElement v1, v52, v54 arrayStorage=Double level=Proven [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v56: 1 = Integer integer=1
+# CHECK-NEXT: v57: int[1, 4294967295] = Add v52, v56
+# CHECK-NEXT: v58: number = Mul v55, v5
+# CHECK-NEXT: v59: boolean = ToBoolean v58
+# CHECK-NEXT: Branch v59 -> taken b17(), notTaken b18(| 0)
+# CHECK-NEXT: b17():
+# CHECK-NEXT: v60: number = Mod v47, v58
+# CHECK-NEXT: v61: undefined = CallDirect v58, v60 function=f10
+# CHECK-NEXT: v62: number = ResultAt v61
+# CHECK-NEXT: v63: 0|whole = ResultAt v61 index=1
+# CHECK-NEXT: v64: 0|whole = Upcast v63 castType=int|whole
+# CHECK-NEXT: Jump -> next b19(v62, v64)
+# CHECK-NEXT: b18(v65: 0|whole):
+# CHECK-NEXT: Jump -> next b19(v47, v65)
+# CHECK-NEXT: b19(v66: number, v67: 0|whole):
+# CHECK-NEXT: v68: number = Upcast v66 castType=number
+# CHECK-NEXT: v69: 0|whole = Upcast v67 castType=int|whole
+# CHECK-NEXT: v70: number = Add v68, v69
+# CHECK-NEXT: v71: number = Add v70, v55
+# CHECK-NEXT: Jump -> next b14(v71, v57)
+# CHECK-NEXT: b20() frequency=Unlikely:
+# CHECK-NEXT: v72: undefined|int[2, 7]|fractional = GetArrayElement v1, v52 arrayStorage=Double level=Proven [keyIsIntegral]
+# CHECK-NEXT: v73: 1 = Integer integer=1
+# CHECK-NEXT: v74: int[1, 4294967295] = Add v52, v73
+# CHECK-NEXT: v75: undefined|int[2, 7]|fractional ~ int[2, 7]|fractional = Upcast v72 castType=anything
+# CHECK-NEXT: v76: fact = Specified
+# CHECK-NEXT: v77: int[2, 7]|fractional = AssumeType v75, v76 provenType=int|fractional
+# CHECK-NEXT: v78: number = Mul v77, v5
+# CHECK-NEXT: v79: L2 = CallDirect v47, v78 function=f9 accessSite=11
+# CHECK-NEXT: v80: number = GetSlot v79 key="low" receivers=[L2] level=Proven accessSite=12
+# CHECK-NEXT: v81: int|whole = GetSlot v79 key="high" receivers=[L2] level=Proven accessSite=13
 # CHECK-NEXT: v82: number = Add v80, v81
-# CHECK-NEXT: v83: number = Add v82, v67
-# CHECK-NEXT: Jump -> next b20(v83, v69)
-# CHECK-NEXT: b26() frequency=Unlikely:
-# CHECK-NEXT: v84: undefined|int[2, 7]|fractional = GetArrayElement v1, v64 arrayStorage=Double level=Proven [keyIsIntegral]
-# CHECK-NEXT: v85: 1 = Integer integer=1
-# CHECK-NEXT: v86: int[1, 4294967295] = Add v64, v85
-# CHECK-NEXT: v87: undefined|int[2, 7]|fractional ~ int[2, 7]|fractional = Upcast v84 castType=anything
-# CHECK-NEXT: v88: number = Mul v87, v7
-# CHECK-NEXT: v89: L2 = CallDirect v59, v88 function=f9 accessSite=11
-# CHECK-NEXT: v90: number = GetSlot v89 key="low" receivers=[L2] level=Proven accessSite=12
-# CHECK-NEXT: v91: int|whole = GetSlot v89 key="high" receivers=[L2] level=Proven accessSite=13
-# CHECK-NEXT: v92: number = Add v90, v91
-# CHECK-NEXT: v93: number = Add v92, v87
-# CHECK-NEXT: Jump -> next b18(v93, v86)
-# CHECK-NEXT: b27():
-# CHECK-NEXT: v94: number = Div v59, v7
-# CHECK-NEXT: ElemSet v2, v0, v94 accessSite=10
-# CHECK-NEXT: v96: undefined = Undefined
-# CHECK-NEXT: Return v96
+# CHECK-NEXT: v83: number = Add v82, v77
+# CHECK-NEXT: Jump -> next b12(v83, v74)
+# CHECK-NEXT: b21():
+# CHECK-NEXT: v84: number = Div v47, v5
+# CHECK-NEXT: ElemSet v2, v0, v84 accessSite=10
+# CHECK-NEXT: v86: undefined = Undefined
+# CHECK-NEXT: Return v86
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="pair"
 # CHECK: module=m0 position=275 kind=Arrow length=2 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=L2}] functionTypes=[f3] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]

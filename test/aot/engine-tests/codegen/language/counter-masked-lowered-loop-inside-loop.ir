@@ -631,6 +631,8 @@ typesite w180 module=m0 position=11700 kind=CallResult
 typesite w181 module=m0 position=11715 kind=CallResult
 typesite w182 module=m0 position=11730 kind=CallResult
 typesite w183 module=m0 position=11746 kind=CallResult
+typesite w184 module=m1 position=302 kind=Variable
+typesite w185 module=m1 position=933 kind=Variable
 layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number site=w11} flags=[IsRequired]}] ownFieldCount=1
 layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent site=w145}}] ownFieldCount=1
 data d0 root=Array{contents=undefined|null|string} module=m0
@@ -3741,48 +3743,60 @@ function f13 name="next" module=m1 position=25 kind=Method role=Library flags=[H
     Jump -> next b1() @25
   b1():
     v2 = StepGenerator v0, v1 check=IsGenerator @91
-    v3 = ResultAt v2 @188
-    v4 = ResultAt v2 index=1 @251
-    v5 = Integer integer=2 @315
-    v6 = StrictEq v4, v5 @304
-    Branch v6 -> taken b2(| 0), notTaken b4(| 0) @304
-  b2(v7):
-    Jump -> next b3() @304
+    v3 = ResultAt v2 @186
+    v4 = ResultAt v2 index=1 @249
+    v5 = Integer integer=1 @320
+    v6 = StrictEq v4, v5 @309
+    v7 = Convert v6 declared={type=boolean site=w184} @309
+    v8 = Integer integer=2 @370
+    v9 = StrictEq v4, v8 @359
+    Branch v9 -> taken b2(| 0), notTaken b4(| 0) @359
+  b2(v10):
+    Jump -> next b3() @359
   b3():
-    v8 = ResumeGenerator v0, v1 @362
-    Return v8 @362
-  b4(v9):
-    Jump -> next b5() @304
-  b5():
-    v10 = Integer integer=1 @460
-    v11 = StrictEq v9, v10 @449
-    v12 = Convert v11 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @421
-    v13 = CreateIteratorResult v3, v12 @421
-    Return v13 @421
+    v11 = ResumeGenerator v0, v1 @427
+    v12 = PropGet v11 key="value" @492
+    v13 = PropGet v11 key="done" @521
+    v14 = Boolean boolean=true @537
+    v15 = StrictEq v13, v14 @521
+    v16 = Convert v15 declared={type=boolean site=w184} @514
+    Jump -> next b5(v12, v16) @514
+  b4(v17):
+    Jump -> next b5(v3, v7) @359
+  b5(v18, v19: boolean):
+    v20 = Convert v19 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @560
+    v21 = CreateIteratorResult v18, v20 @560
+    Return v21 @560
 }
-function f14 name="return" module=m1 position=548 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeReturn thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f14 name="return" module=m1 position=651 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeReturn thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything):
-    Jump -> next b1() @548
+    Jump -> next b1() @651
   b1():
-    v2 = StepGenerator v0, v1 resumeMode=Return check=IsGenerator @617
-    v3 = ResultAt v2 @716
-    v4 = ResultAt v2 index=1 @779
-    v5 = Integer integer=2 @843
-    v6 = StrictEq v4, v5 @832
-    Branch v6 -> taken b2(| 0), notTaken b4(| 0) @832
-  b2(v7):
-    Jump -> next b3() @832
+    v2 = StepGenerator v0, v1 resumeMode=Return check=IsGenerator @720
+    v3 = ResultAt v2 @817
+    v4 = ResultAt v2 index=1 @880
+    v5 = Integer integer=1 @951
+    v6 = StrictEq v4, v5 @940
+    v7 = Convert v6 declared={type=boolean site=w185} @940
+    v8 = Integer integer=2 @1001
+    v9 = StrictEq v4, v8 @990
+    Branch v9 -> taken b2(| 0), notTaken b4(| 0) @990
+  b2(v10):
+    Jump -> next b3() @990
   b3():
-    v8 = ResumeGenerator v0, v1 resumeMode=Return @890
-    Return v8 @890
-  b4(v9):
-    Jump -> next b5() @832
-  b5():
-    v10 = Integer integer=1 @990
-    v11 = StrictEq v9, v10 @979
-    v12 = Convert v11 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @951
-    v13 = CreateIteratorResult v3, v12 @951
-    Return v13 @951
+    v11 = ResumeGenerator v0, v1 resumeMode=Return @1058
+    v12 = PropGet v11 key="value" @1125
+    v13 = PropGet v11 key="done" @1154
+    v14 = Boolean boolean=true @1170
+    v15 = StrictEq v13, v14 @1154
+    v16 = Convert v15 declared={type=boolean site=w185} @1147
+    Jump -> next b5(v12, v16) @1147
+  b4(v17):
+    Jump -> next b5(v3, v7) @990
+  b5(v18, v19: boolean):
+    v20 = Convert v19 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @1193
+    v21 = CreateIteratorResult v18, v20 @1193
+    Return v21 @1193
 }
 runtimefunction id=GeneratorPrototypeNext function=f13 visibility=Private
 runtimefunction id=GeneratorPrototypeReturn function=f14 visibility=Private
@@ -3832,70 +3846,57 @@ runtimefunction id=GeneratorPrototypeReturn function=f14 visibility=Private
 # CHECK-NEXT: Return v32
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="log"
-# CHECK: module=m0 position=212 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int[0, 253] site=w0}, {type=undefined|number}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: int[0, 253], v1: undefined|number):
+# CHECK: module=m0 position=212 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int[0, 253] site=w0}, {type=number}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: int[0, 253], v1: number):
 # CHECK-NEXT: v2: int|whole = GetModuleVariable variable=g8
 # CHECK-NEXT: v3: int|whole = Increment v2
 # CHECK-NEXT: PutModuleVariable v3 variable=g8
-# CHECK-NEXT: v5: boolean = TypeTest v1 testedType=number
-# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v6: number):
-# CHECK-NEXT: Jump -> next b3(v6)
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v7: -1 = Integer integer=-1
-# CHECK-NEXT: Jump -> next b3(v7)
-# CHECK-NEXT: b3(v8: number):
-# CHECK-NEXT: v9: i32 = GetModuleVariable variable=g7
-# CHECK-NEXT: v10: 31 = Integer integer=31
-# CHECK-NEXT: v11: i32 = CallBuiltin -, v9, v10 overload=MathImul/0 accessSite=8
-# CHECK-NEXT: v12: 7 = Integer integer=7
-# CHECK-NEXT: v13: int[0, 1771] = Mul v0, v12
-# CHECK-NEXT: v14: int[-2147483648, 2147485418] = Add v11, v13
+# CHECK-NEXT: v5: i32 = GetModuleVariable variable=g7
+# CHECK-NEXT: v6: 31 = Integer integer=31
+# CHECK-NEXT: v7: i32 = CallBuiltin -, v5, v6 overload=MathImul/0 accessSite=8
+# CHECK-NEXT: v8: 7 = Integer integer=7
+# CHECK-NEXT: v9: int[0, 1771] = Mul v0, v8
+# CHECK-NEXT: v10: int[-2147483648, 2147485418] = Add v7, v9
+# CHECK-NEXT: v11: 0 = Integer
+# CHECK-NEXT: v12: i32 = BitOr v1, v11
+# CHECK-NEXT: v13: int[-4294967296, 4294969065] = Add v10, v12
+# CHECK-NEXT: v14: boolean = StrictEq v1, v1
+# CHECK-NEXT: Branch v14 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
 # CHECK-NEXT: v15: 0 = Integer
-# CHECK-NEXT: v16: i32 = BitOr v8, v15
-# CHECK-NEXT: v17: int[-4294967296, 4294969065] = Add v14, v16
-# CHECK-NEXT: v18: boolean = StrictEq v8, v8
-# CHECK-NEXT: Branch v18 -> taken b4(), notTaken b5()
+# CHECK-NEXT: Jump -> next b3(v15)
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v16: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b3(v16)
+# CHECK-NEXT: b3(v17: int[0, 13]):
+# CHECK-NEXT: v18: int[-4294967296, 4294969078] = Add v13, v17
+# CHECK-NEXT: v19: whole = Double number=-0
+# CHECK-NEXT: v20: boolean = CallBuiltin -, v1, v19 overload=ObjectIs/0 accessSite=9
+# CHECK-NEXT: Branch v20 -> taken b4(), notTaken b5()
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v19: 0 = Integer
-# CHECK-NEXT: Jump -> next b6(v19)
+# CHECK-NEXT: v21: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b6(v21)
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v20: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b6(v20)
-# CHECK-NEXT: b6(v21: int[0, 13]):
-# CHECK-NEXT: v22: int[-4294967296, 4294969078] = Add v17, v21
-# CHECK-NEXT: v23: whole = Double number=-0
-# CHECK-NEXT: v24: boolean = CallBuiltin -, v8, v23 overload=ObjectIs/0 accessSite=9
-# CHECK-NEXT: Branch v24 -> taken b7(), notTaken b8()
+# CHECK-NEXT: v22: 0 = Integer
+# CHECK-NEXT: Jump -> next b6(v22)
+# CHECK-NEXT: b6(v23: int[0, 17]):
+# CHECK-NEXT: v24: int[-4294967296, 4294969095] = Add v18, v23
+# CHECK-NEXT: v25: 0 = Integer
+# CHECK-NEXT: v26: i32 = BitOr v24, v25
+# CHECK-NEXT: PutModuleVariable v26 variable=g7
+# CHECK-NEXT: v28: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g9
+# CHECK-NEXT: v29: int[0, 4294967295] = CallBuiltin v28 overload=ArrayPrototypeLength/0 accessSite=10
+# CHECK-NEXT: v30: 60 = Integer integer=60
+# CHECK-NEXT: v31: boolean = Less v29, v30
+# CHECK-NEXT: Branch v31 -> taken b7(), notTaken b8()
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v25: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b9(v25)
+# CHECK-NEXT: v32: ":" = String string=":"
+# CHECK-NEXT: v33: string = CallBuiltin -, v1 overload=String/0 accessSite=12
+# CHECK-NEXT: v34: string = Strcat v0, v32, v33
+# CHECK-NEXT: v35: int[0, 4294967295] = CallBuiltin v28, v34 overload=ArrayPrototypePush/0 accessSite=13
+# CHECK-NEXT: Jump -> next b8()
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v26: 0 = Integer
-# CHECK-NEXT: Jump -> next b9(v26)
-# CHECK-NEXT: b9(v27: int[0, 17]):
-# CHECK-NEXT: v28: int[-4294967296, 4294969095] = Add v22, v27
-# CHECK-NEXT: v29: 0 = Integer
-# CHECK-NEXT: v30: i32 = BitOr v28, v29
-# CHECK-NEXT: PutModuleVariable v30 variable=g7
-# CHECK-NEXT: v32: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g9
-# CHECK-NEXT: v33: int[0, 4294967295] = CallBuiltin v32 overload=ArrayPrototypeLength/0 accessSite=10
-# CHECK-NEXT: v34: 60 = Integer integer=60
-# CHECK-NEXT: v35: boolean = Less v33, v34
-# CHECK-NEXT: Branch v35 -> taken b10(), notTaken b11()
-# CHECK-NEXT: b10():
-# CHECK-NEXT: v36: ":" = String string=":"
-# CHECK-NEXT: v37: string = CallBuiltin -, v1 overload=String/0 accessSite=12
-# CHECK-NEXT: v38: string = Strcat v0, v36, v37
-# CHECK-NEXT: v39: int[0, 4294967295] = CallBuiltin v32, v38 overload=ArrayPrototypePush/0 accessSite=13
-# CHECK-NEXT: Jump -> next b11()
-# CHECK-NEXT: b11():
-# CHECK-NEXT: v40: boolean = TypeTest v1 testedType=number
-# CHECK-NEXT: Branch v40 -> taken b12(| 0), notTaken b13(v8)
-# CHECK-NEXT: b12(v41: number):
-# CHECK-NEXT: Jump -> next b13(v41)
-# CHECK-NEXT: b13(v42: number):
-# CHECK-NEXT: Return v42
+# CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="f0"
 # CHECK: module=m0 position=1258 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=number site=w2}, {type=number site=w3}, {type=number site=w4}] results=[{type=number site=w5}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=2456 module=m0}, {callee=f1 callPosition=2393 module=m0}, {callee=f1 callPosition=2152 module=m0}, {callee=f1 callPosition=2239 module=m0}] {
@@ -3934,449 +3935,443 @@ runtimefunction id=GeneratorPrototypeReturn function=f14 visibility=Private
 # CHECK-NEXT: v24: 3 = Integer integer=3
 # CHECK-NEXT: v25: number = CallDirect v24, v11 function=f1 accessSite=18
 # CHECK-NEXT: Jump -> next b7()
-# CHECK-NEXT: b7() handler=b14():
+# CHECK-NEXT: b7() handler=b12():
 # CHECK-NEXT: v26: 0 = Integer
 # CHECK-NEXT: LoopHint [throwsOwedError]
-# CHECK-NEXT: v28: int|whole = Upcast v4 castType=int|whole
-# CHECK-NEXT: Jump -> next b8(v0, v26, v28)
-# CHECK-NEXT: b8(v29: number, v30: int[0, 3], v31: int|whole):
+# CHECK-NEXT: Jump -> next b8(v0, v26, v4)
+# CHECK-NEXT: b8(v28: number, v29: int[0, 3], v30: int|whole):
 # CHECK-NEXT: LoopHint [leavesOwedError]
-# CHECK-NEXT: v33: 2 = Integer integer=2
-# CHECK-NEXT: v34: boolean = Less v30, v33
-# CHECK-NEXT: Branch v34 -> taken b9(| 0), notTaken b12()
-# CHECK-NEXT: b9(v35: int[0, 1]):
-# CHECK-NEXT: v36: int|whole = Decrement v31
+# CHECK-NEXT: v32: 2 = Integer integer=2
+# CHECK-NEXT: v33: boolean = Less v29, v32
+# CHECK-NEXT: Branch v33 -> taken b9(| 0), notTaken b11()
+# CHECK-NEXT: b9(v34: int[0, 1]):
+# CHECK-NEXT: v35: int|whole = Decrement v30
+# CHECK-NEXT: PutModuleVariable v35 variable=g6
 # CHECK-NEXT: v37: 0 = Integer
-# CHECK-NEXT: v38: boolean = Less v36, v37
-# CHECK-NEXT: Branch v38 -> taken b10(), notTaken b11()
+# CHECK-NEXT: v38: boolean = Less v35, v37
+# CHECK-NEXT: Branch v38 -> taken b11(), notTaken b10()
 # CHECK-NEXT: b10():
-# CHECK-NEXT: PutModuleVariable v36 variable=g6
-# CHECK-NEXT: Jump -> next b13()
+# CHECK-NEXT: v39: number = Increment v28
+# CHECK-NEXT: v40: int[1, 2] = Increment v34
+# CHECK-NEXT: v41: int[2, 3] = Increment v40
+# CHECK-NEXT: Jump -> next b8(v39, v41, v35)
 # CHECK-NEXT: b11():
-# CHECK-NEXT: v40: number = Increment v29
-# CHECK-NEXT: v41: int[1, 2] = Increment v35
-# CHECK-NEXT: v42: int[2, 3] = Increment v41
-# CHECK-NEXT: Jump -> next b8(v40, v42, v36)
-# CHECK-NEXT: b12():
-# CHECK-NEXT: PutModuleVariable v31 variable=g6
-# CHECK-NEXT: Jump -> next b13()
-# CHECK-NEXT: b13():
-# CHECK-NEXT: v44: -2147483648 = Integer integer=-2147483648
-# CHECK-NEXT: v45: i32 = BitXor v13, v44
-# CHECK-NEXT: Jump -> next b18(v29, v45)
-# CHECK-NEXT: b14() role=CatchHandler handler=b19():
-# CHECK-NEXT: v46: anything = CatchValue
-# CHECK-NEXT: v47: boolean = TypeTest v46 testedType=number
-# CHECK-NEXT: Branch v47 -> taken b15(| 0), notTaken b16()
-# CHECK-NEXT: b15(v48: number):
-# CHECK-NEXT: Jump -> next b17(v48)
-# CHECK-NEXT: b16():
-# CHECK-NEXT: v49: -9 = Integer integer=-9
-# CHECK-NEXT: Jump -> next b17(v49)
-# CHECK-NEXT: b17(v50: number) handler=b19():
-# CHECK-NEXT: v51: 8 = Integer integer=8
-# CHECK-NEXT: v52: number = CallDirect v51, v50 function=f1 accessSite=19
-# CHECK-NEXT: Jump -> next b18(v0, v13)
-# CHECK-NEXT: b18(v53: number, v54: number):
-# CHECK-NEXT: v55: 0 = Integer
-# CHECK-NEXT: v56: undefined = Undefined
-# CHECK-NEXT: Jump -> next b20(v55, v56, v53, v54)
-# CHECK-NEXT: b19() role=CleanupHandler:
-# CHECK-NEXT: v57: anything = CatchValue
-# CHECK-NEXT: v58: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next b20(v58, v57, v0, v13)
-# CHECK-NEXT: b20(v59: int[0, 1], v60: anything, v61: number, v62: number):
-# CHECK-NEXT: v63: -1 = Integer integer=-1
-# CHECK-NEXT: v64: boolean = Less v63, v11
-# CHECK-NEXT: Branch v64 -> taken b21(), notTaken b22()
+# CHECK-NEXT: v42: -2147483648 = Integer integer=-2147483648
+# CHECK-NEXT: v43: i32 = BitXor v13, v42
+# CHECK-NEXT: Jump -> next b16(v28, v43)
+# CHECK-NEXT: b12() role=CatchHandler handler=b17():
+# CHECK-NEXT: v44: anything = CatchValue
+# CHECK-NEXT: v45: boolean = TypeTest v44 testedType=number
+# CHECK-NEXT: Branch v45 -> taken b13(| 0), notTaken b14()
+# CHECK-NEXT: b13(v46: number):
+# CHECK-NEXT: Jump -> next b15(v46)
+# CHECK-NEXT: b14():
+# CHECK-NEXT: v47: -9 = Integer integer=-9
+# CHECK-NEXT: Jump -> next b15(v47)
+# CHECK-NEXT: b15(v48: number) handler=b17():
+# CHECK-NEXT: v49: 8 = Integer integer=8
+# CHECK-NEXT: v50: number = CallDirect v49, v48 function=f1 accessSite=19
+# CHECK-NEXT: Jump -> next b16(v0, v13)
+# CHECK-NEXT: b16(v51: number, v52: number):
+# CHECK-NEXT: v53: 0 = Integer
+# CHECK-NEXT: v54: undefined = Undefined
+# CHECK-NEXT: Jump -> next b18(v53, v54, v51, v52)
+# CHECK-NEXT: b17() role=CleanupHandler:
+# CHECK-NEXT: v55: anything = CatchValue
+# CHECK-NEXT: v56: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b18(v56, v55, v0, v13)
+# CHECK-NEXT: b18(v57: int[0, 1], v58: anything, v59: number, v60: number):
+# CHECK-NEXT: v61: -1 = Integer integer=-1
+# CHECK-NEXT: v62: boolean = Less v61, v11
+# CHECK-NEXT: Branch v62 -> taken b19(), notTaken b20()
+# CHECK-NEXT: b19():
+# CHECK-NEXT: v63: number = Negate v59
+# CHECK-NEXT: v64: number = Negate v63
+# CHECK-NEXT: Jump -> next b23(v64)
+# CHECK-NEXT: b20():
+# CHECK-NEXT: v65: number = Sub v2, v11
+# CHECK-NEXT: v66: number = Add v2, v60
+# CHECK-NEXT: v67: boolean = LessEq v65, v66
+# CHECK-NEXT: Branch v67 -> taken b21(), notTaken b22()
 # CHECK-NEXT: b21():
-# CHECK-NEXT: v65: number = Negate v61
-# CHECK-NEXT: v66: number = Negate v65
-# CHECK-NEXT: Jump -> next b25(v66)
+# CHECK-NEXT: v68: number = Negate v23
+# CHECK-NEXT: Jump -> next b23(v68)
 # CHECK-NEXT: b22():
-# CHECK-NEXT: v67: number = Sub v2, v11
-# CHECK-NEXT: v68: number = Add v2, v62
-# CHECK-NEXT: v69: boolean = LessEq v67, v68
-# CHECK-NEXT: Branch v69 -> taken b23(), notTaken b24()
-# CHECK-NEXT: b23():
-# CHECK-NEXT: v70: number = Negate v23
-# CHECK-NEXT: Jump -> next b25(v70)
+# CHECK-NEXT: v69: i32 = LShift v11, v59
+# CHECK-NEXT: Jump -> next b23(v69)
+# CHECK-NEXT: b23(v70: number):
+# CHECK-NEXT: v71: int|whole = CallBuiltin -, v70 overload=MathCeil/0 accessSite=20
+# CHECK-NEXT: v72: int|whole = CallBuiltin -, v71 overload=MathCeil/0 accessSite=21
+# CHECK-NEXT: v73: boolean = LessEq v60, v72
+# CHECK-NEXT: Branch v73 -> taken b24(), notTaken b27()
 # CHECK-NEXT: b24():
-# CHECK-NEXT: v71: i32 = LShift v11, v61
-# CHECK-NEXT: Jump -> next b25(v71)
-# CHECK-NEXT: b25(v72: number):
-# CHECK-NEXT: v73: int|whole = CallBuiltin -, v72 overload=MathCeil/0 accessSite=20
-# CHECK-NEXT: v74: int|whole = CallBuiltin -, v73 overload=MathCeil/0 accessSite=21
-# CHECK-NEXT: v75: boolean = LessEq v62, v74
-# CHECK-NEXT: Branch v75 -> taken b26(), notTaken b29()
-# CHECK-NEXT: b26():
-# CHECK-NEXT: v76: number = Div v73, v23
-# CHECK-NEXT: v77: 0 = Integer
-# CHECK-NEXT: v78: i32 = BitOr v61, v77
-# CHECK-NEXT: v79: boolean = StrictEq v76, v78
-# CHECK-NEXT: Branch v79 -> taken b27(), notTaken b28(v73)
+# CHECK-NEXT: v74: number = Div v71, v23
+# CHECK-NEXT: v75: 0 = Integer
+# CHECK-NEXT: v76: i32 = BitOr v59, v75
+# CHECK-NEXT: v77: boolean = StrictEq v74, v76
+# CHECK-NEXT: Branch v77 -> taken b25(), notTaken b26(v71)
+# CHECK-NEXT: b25():
+# CHECK-NEXT: v78: 4294967295 = Integer integer=4294967295
+# CHECK-NEXT: Jump -> next b26(v78)
+# CHECK-NEXT: b26(v79: int|whole):
+# CHECK-NEXT: Throw v79
 # CHECK-NEXT: b27():
-# CHECK-NEXT: v80: 4294967295 = Integer integer=4294967295
-# CHECK-NEXT: Jump -> next b28(v80)
-# CHECK-NEXT: b28(v81: int|whole):
-# CHECK-NEXT: Throw v81
+# CHECK-NEXT: Switch v57 cases=[0] -> case b28(), otherwise b103()
+# CHECK-NEXT: b28():
+# CHECK-NEXT: v80: boolean = StrictEq v11, v71
+# CHECK-NEXT: Branch v80 -> taken b29(), notTaken b30()
 # CHECK-NEXT: b29():
-# CHECK-NEXT: Switch v59 cases=[0] -> case b30(), otherwise b105()
+# CHECK-NEXT: v81: 2147483647 = Integer integer=2147483647
+# CHECK-NEXT: Return v81
 # CHECK-NEXT: b30():
-# CHECK-NEXT: v82: boolean = StrictEq v11, v73
-# CHECK-NEXT: Branch v82 -> taken b31(), notTaken b32()
-# CHECK-NEXT: b31():
-# CHECK-NEXT: v83: 2147483647 = Integer integer=2147483647
-# CHECK-NEXT: Return v83
-# CHECK-NEXT: b32():
-# CHECK-NEXT: v84: number = Decrement v61
-# CHECK-NEXT: v85: boolean = ToBoolean v73
-# CHECK-NEXT: v86: boolean = StrictEq v62, v62
-# CHECK-NEXT: v87: unspecified|Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g9 [mayPrecedeItsStore]
-# CHECK-NEXT: v88: int|whole = GetModuleVariable variable=g6
-# CHECK-NEXT: Jump -> next b33(v84, v88)
-# CHECK-NEXT: b33(v89: number, v90: int|whole):
-# CHECK-NEXT: v91: 0 = Integer
+# CHECK-NEXT: v82: number = Decrement v59
+# CHECK-NEXT: v83: boolean = ToBoolean v71
+# CHECK-NEXT: v84: boolean = StrictEq v60, v60
+# CHECK-NEXT: v85: unspecified|Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g9 [mayPrecedeItsStore]
+# CHECK-NEXT: v86: int|whole = GetModuleVariable variable=g6
+# CHECK-NEXT: Jump -> next b31(v82, v86)
+# CHECK-NEXT: b31(v87: number, v88: int|whole):
+# CHECK-NEXT: v89: 0 = Integer
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v93: int|whole = Decrement v90
-# CHECK-NEXT: PutModuleVariable v93 variable=g6
-# CHECK-NEXT: v95: 0 = Integer
-# CHECK-NEXT: v96: boolean = Less v93, v95
-# CHECK-NEXT: Branch v96 -> taken b34(), notTaken b49()
-# CHECK-NEXT: b34():
-# CHECK-NEXT: v97: number = Mul v73, v62
-# CHECK-NEXT: v98: 0 = Integer
-# CHECK-NEXT: v99: number = Add v97, v98
-# CHECK-NEXT: v100: boolean = ToBoolean v99
-# CHECK-NEXT: Branch v100 -> taken b35(), notTaken b36(| 0)
-# CHECK-NEXT: b35():
-# CHECK-NEXT: v101: 2 = Integer integer=2
-# CHECK-NEXT: v102: number = ToNumber v62 calledBuiltin=MathImul
-# CHECK-NEXT: v103: i32 = ToInt32 v102
-# CHECK-NEXT: v104: i32 = CallBuiltin -, v103, v101 overload=MathImul/0 accessSite=30
-# CHECK-NEXT: Jump -> next b37(v104)
-# CHECK-NEXT: b36(v105: 0|whole):
-# CHECK-NEXT: Jump -> next b37(v105)
-# CHECK-NEXT: b37(v106: i32|whole) handler=b41():
-# CHECK-NEXT: v107: int|whole = Negate v106
-# CHECK-NEXT: v108: 19 = Integer integer=19
-# CHECK-NEXT: v109: number = CallDirect v108, v107 function=f1 accessSite=31
-# CHECK-NEXT: v110: 0 = Integer
-# CHECK-NEXT: v111: i32 = BitOr v73, v110
-# CHECK-NEXT: v112: i32 = LShift v62, v111
-# CHECK-NEXT: v113: i32 = BitNot v112
-# CHECK-NEXT: v114: 21 = Integer integer=21
-# CHECK-NEXT: v115: number = CallDirect v114, v62 function=f1 accessSite=33
-# CHECK-NEXT: v116: 22 = Integer integer=22
-# CHECK-NEXT: v117: number = CallDirect v116, v73 function=f1 accessSite=34
-# CHECK-NEXT: v118: 0 = Integer
-# CHECK-NEXT: v119: i32 = BitOr v113, v118
-# CHECK-NEXT: v120: number = Add v62, v119
-# CHECK-NEXT: v121: boolean = ToBoolean v120
-# CHECK-NEXT: Branch v121 -> taken b38(), notTaken b39(| 0)
-# CHECK-NEXT: b38():
-# CHECK-NEXT: v122: int|whole = Sub v73, v73
-# CHECK-NEXT: Jump -> next b40(v122)
-# CHECK-NEXT: b39(v123: 0|whole):
-# CHECK-NEXT: Jump -> next b40(v123)
-# CHECK-NEXT: b40(v124: int|whole):
-# CHECK-NEXT: v125: i32 = BitNot v124
-# CHECK-NEXT: v126: int[0, 4294967295] = URShift v11, v125
-# CHECK-NEXT: v127: 0 = Integer
-# CHECK-NEXT: v128: undefined = Undefined
-# CHECK-NEXT: Jump -> next b42(v127, v128, v126)
-# CHECK-NEXT: b41() role=CleanupHandler:
-# CHECK-NEXT: v129: anything = CatchValue
-# CHECK-NEXT: v130: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next b42(v130, v129, v11)
-# CHECK-NEXT: b42(v131: int[0, 1], v132: anything, v133: number):
-# CHECK-NEXT: v134: boolean = LessEq v133, v89
-# CHECK-NEXT: Branch v134 -> taken b43(v89), notTaken b43(v62)
-# CHECK-NEXT: b43(v135: number):
-# CHECK-NEXT: v136: -2147483648 = Integer integer=-2147483648
-# CHECK-NEXT: v137: number = Sub v136, v135
-# CHECK-NEXT: v138: boolean = ToBoolean v137
-# CHECK-NEXT: Branch v138 -> taken b44(), notTaken b45(| 0)
-# CHECK-NEXT: b44():
-# CHECK-NEXT: v139: 0 = Integer
-# CHECK-NEXT: v140: i32 = BitOr v133, v139
-# CHECK-NEXT: v141: i32 = RShift v133, v133
-# CHECK-NEXT: v142: i32 = CallBuiltin -, v140, v141 overload=MathMin/0 accessSite=35
-# CHECK-NEXT: v143: 0 = Integer
-# CHECK-NEXT: v144: i32 = BitOr v142, v143
-# CHECK-NEXT: Jump -> next b46(v144)
-# CHECK-NEXT: b45(v145: 0|whole):
-# CHECK-NEXT: v146: 0 = Integer
-# CHECK-NEXT: v147: i32 = BitOr v145, v146
-# CHECK-NEXT: Jump -> next b46(v147)
-# CHECK-NEXT: b46(v148: i32):
-# CHECK-NEXT: v149: 25 = Integer integer=25
-# CHECK-NEXT: v150: number = CallDirect v149, v148 function=f1 accessSite=36
-# CHECK-NEXT: v151: 26 = Integer integer=26
-# CHECK-NEXT: v152: number = CallDirect v151, v73 function=f1 accessSite=37
-# CHECK-NEXT: Switch v131 cases=[0] -> case b47(), otherwise b48()
+# CHECK-NEXT: v91: int|whole = Decrement v88
+# CHECK-NEXT: PutModuleVariable v91 variable=g6
+# CHECK-NEXT: v93: 0 = Integer
+# CHECK-NEXT: v94: boolean = Less v91, v93
+# CHECK-NEXT: Branch v94 -> taken b32(), notTaken b47()
+# CHECK-NEXT: b32():
+# CHECK-NEXT: v95: number = Mul v71, v60
+# CHECK-NEXT: v96: 0 = Integer
+# CHECK-NEXT: v97: number = Add v95, v96
+# CHECK-NEXT: v98: boolean = ToBoolean v97
+# CHECK-NEXT: Branch v98 -> taken b33(), notTaken b34(| 0)
+# CHECK-NEXT: b33():
+# CHECK-NEXT: v99: 2 = Integer integer=2
+# CHECK-NEXT: v100: number = ToNumber v60 calledBuiltin=MathImul
+# CHECK-NEXT: v101: i32 = ToInt32 v100
+# CHECK-NEXT: v102: i32 = CallBuiltin -, v101, v99 overload=MathImul/0 accessSite=30
+# CHECK-NEXT: Jump -> next b35(v102)
+# CHECK-NEXT: b34(v103: 0|whole):
+# CHECK-NEXT: Jump -> next b35(v103)
+# CHECK-NEXT: b35(v104: i32|whole) handler=b39():
+# CHECK-NEXT: v105: int|whole = Negate v104
+# CHECK-NEXT: v106: 19 = Integer integer=19
+# CHECK-NEXT: v107: number = CallDirect v106, v105 function=f1 accessSite=31
+# CHECK-NEXT: v108: 0 = Integer
+# CHECK-NEXT: v109: i32 = BitOr v71, v108
+# CHECK-NEXT: v110: i32 = LShift v60, v109
+# CHECK-NEXT: v111: i32 = BitNot v110
+# CHECK-NEXT: v112: 21 = Integer integer=21
+# CHECK-NEXT: v113: number = CallDirect v112, v60 function=f1 accessSite=33
+# CHECK-NEXT: v114: 22 = Integer integer=22
+# CHECK-NEXT: v115: number = CallDirect v114, v71 function=f1 accessSite=34
+# CHECK-NEXT: v116: 0 = Integer
+# CHECK-NEXT: v117: i32 = BitOr v111, v116
+# CHECK-NEXT: v118: number = Add v60, v117
+# CHECK-NEXT: v119: boolean = ToBoolean v118
+# CHECK-NEXT: Branch v119 -> taken b36(), notTaken b37(| 0)
+# CHECK-NEXT: b36():
+# CHECK-NEXT: v120: int|whole = Sub v71, v71
+# CHECK-NEXT: Jump -> next b38(v120)
+# CHECK-NEXT: b37(v121: 0|whole):
+# CHECK-NEXT: Jump -> next b38(v121)
+# CHECK-NEXT: b38(v122: int|whole):
+# CHECK-NEXT: v123: i32 = BitNot v122
+# CHECK-NEXT: v124: int[0, 4294967295] = URShift v11, v123
+# CHECK-NEXT: v125: 0 = Integer
+# CHECK-NEXT: v126: undefined = Undefined
+# CHECK-NEXT: Jump -> next b40(v125, v126, v124)
+# CHECK-NEXT: b39() role=CleanupHandler:
+# CHECK-NEXT: v127: anything = CatchValue
+# CHECK-NEXT: v128: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b40(v128, v127, v11)
+# CHECK-NEXT: b40(v129: int[0, 1], v130: anything, v131: number):
+# CHECK-NEXT: v132: boolean = LessEq v131, v87
+# CHECK-NEXT: Branch v132 -> taken b41(v87), notTaken b41(v60)
+# CHECK-NEXT: b41(v133: number):
+# CHECK-NEXT: v134: -2147483648 = Integer integer=-2147483648
+# CHECK-NEXT: v135: number = Sub v134, v133
+# CHECK-NEXT: v136: boolean = ToBoolean v135
+# CHECK-NEXT: Branch v136 -> taken b42(), notTaken b43(| 0)
+# CHECK-NEXT: b42():
+# CHECK-NEXT: v137: 0 = Integer
+# CHECK-NEXT: v138: i32 = BitOr v131, v137
+# CHECK-NEXT: v139: i32 = RShift v131, v131
+# CHECK-NEXT: v140: i32 = CallBuiltin -, v138, v139 overload=MathMin/0 accessSite=35
+# CHECK-NEXT: v141: 0 = Integer
+# CHECK-NEXT: v142: i32 = BitOr v140, v141
+# CHECK-NEXT: Jump -> next b44(v142)
+# CHECK-NEXT: b43(v143: 0|whole):
+# CHECK-NEXT: v144: 0 = Integer
+# CHECK-NEXT: v145: i32 = BitOr v143, v144
+# CHECK-NEXT: Jump -> next b44(v145)
+# CHECK-NEXT: b44(v146: i32):
+# CHECK-NEXT: v147: 25 = Integer integer=25
+# CHECK-NEXT: v148: number = CallDirect v147, v146 function=f1 accessSite=36
+# CHECK-NEXT: v149: 26 = Integer integer=26
+# CHECK-NEXT: v150: number = CallDirect v149, v71 function=f1 accessSite=37
+# CHECK-NEXT: Switch v129 cases=[0] -> case b45(), otherwise b46()
+# CHECK-NEXT: b45():
+# CHECK-NEXT: Return v71
+# CHECK-NEXT: b46():
+# CHECK-NEXT: Throw v130
 # CHECK-NEXT: b47():
-# CHECK-NEXT: Return v73
+# CHECK-NEXT: v151: number = Sub v87, v71
+# CHECK-NEXT: v152: i32 = BitXor v60, v11
+# CHECK-NEXT: v153: boolean = ToBoolean v152
+# CHECK-NEXT: Branch v153 -> taken b48(), notTaken b49()
 # CHECK-NEXT: b48():
-# CHECK-NEXT: Throw v132
+# CHECK-NEXT: Jump -> next b53(v152)
 # CHECK-NEXT: b49():
-# CHECK-NEXT: v153: number = Sub v89, v73
-# CHECK-NEXT: v154: i32 = BitXor v62, v11
-# CHECK-NEXT: v155: boolean = ToBoolean v154
-# CHECK-NEXT: Branch v155 -> taken b50(), notTaken b51()
+# CHECK-NEXT: v154: boolean = LessEq v151, v151
+# CHECK-NEXT: Branch v154 -> taken b50(), notTaken b51()
 # CHECK-NEXT: b50():
-# CHECK-NEXT: Jump -> next b55(v154)
+# CHECK-NEXT: Jump -> next b52(v89)
 # CHECK-NEXT: b51():
-# CHECK-NEXT: v156: boolean = LessEq v153, v153
-# CHECK-NEXT: Branch v156 -> taken b52(), notTaken b53()
-# CHECK-NEXT: b52():
-# CHECK-NEXT: Jump -> next b54(v91)
-# CHECK-NEXT: b53():
-# CHECK-NEXT: Jump -> next b54(v153)
-# CHECK-NEXT: b54(v157: number):
-# CHECK-NEXT: Jump -> next b55(v157)
-# CHECK-NEXT: b55(v158: number):
-# CHECK-NEXT: v159: fact = Entered function=f1
-# CHECK-NEXT: v160: int|whole = GetModuleVariable fact=v159 variable=g8
-# CHECK-NEXT: v161: int|whole = Increment v160
-# CHECK-NEXT: PutModuleVariable v161 variable=g8
-# CHECK-NEXT: v163: i32 = GetModuleVariable fact=v159 variable=g7
-# CHECK-NEXT: v164: 31 = Integer integer=31
-# CHECK-NEXT: v165: i32 = CallBuiltin -, v163, v164 overload=MathImul/0 accessSite=8
-# CHECK-NEXT: v166: 91 = Integer integer=91
-# CHECK-NEXT: v167: int[-2147483557, 2147483738] = Add v165, v166
-# CHECK-NEXT: v168: 0 = Integer
-# CHECK-NEXT: v169: i32 = BitOr v62, v168
-# CHECK-NEXT: v170: int[-4294967205, 4294967385] = Add v167, v169
-# CHECK-NEXT: Branch v86 -> taken b56(), notTaken b57()
-# CHECK-NEXT: b56():
-# CHECK-NEXT: v171: 0 = Integer
-# CHECK-NEXT: Jump -> next b58(v171)
+# CHECK-NEXT: Jump -> next b52(v151)
+# CHECK-NEXT: b52(v155: number):
+# CHECK-NEXT: Jump -> next b53(v155)
+# CHECK-NEXT: b53(v156: number):
+# CHECK-NEXT: v157: fact = Entered function=f1
+# CHECK-NEXT: v158: int|whole = GetModuleVariable fact=v157 variable=g8
+# CHECK-NEXT: v159: int|whole = Increment v158
+# CHECK-NEXT: PutModuleVariable v159 variable=g8
+# CHECK-NEXT: v161: i32 = GetModuleVariable fact=v157 variable=g7
+# CHECK-NEXT: v162: 31 = Integer integer=31
+# CHECK-NEXT: v163: i32 = CallBuiltin -, v161, v162 overload=MathImul/0 accessSite=8
+# CHECK-NEXT: v164: 91 = Integer integer=91
+# CHECK-NEXT: v165: int[-2147483557, 2147483738] = Add v163, v164
+# CHECK-NEXT: v166: 0 = Integer
+# CHECK-NEXT: v167: i32 = BitOr v60, v166
+# CHECK-NEXT: v168: int[-4294967205, 4294967385] = Add v165, v167
+# CHECK-NEXT: Branch v84 -> taken b54(), notTaken b55()
+# CHECK-NEXT: b54():
+# CHECK-NEXT: v169: 0 = Integer
+# CHECK-NEXT: Jump -> next b56(v169)
+# CHECK-NEXT: b55():
+# CHECK-NEXT: v170: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b56(v170)
+# CHECK-NEXT: b56(v171: int[0, 13]) handler=b98():
+# CHECK-NEXT: v172: int[-4294967205, 4294967398] = Add v168, v171
+# CHECK-NEXT: v173: whole = Double number=-0
+# CHECK-NEXT: v174: boolean = CallBuiltin -, v60, v173 overload=ObjectIs/0 accessSite=9
+# CHECK-NEXT: Branch v174 -> taken b57(), notTaken b58()
 # CHECK-NEXT: b57():
-# CHECK-NEXT: v172: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b58(v172)
-# CHECK-NEXT: b58(v173: int[0, 13]) handler=b100():
-# CHECK-NEXT: v174: int[-4294967205, 4294967398] = Add v170, v173
-# CHECK-NEXT: v175: whole = Double number=-0
-# CHECK-NEXT: v176: boolean = CallBuiltin -, v62, v175 overload=ObjectIs/0 accessSite=9
-# CHECK-NEXT: Branch v176 -> taken b59(), notTaken b60()
-# CHECK-NEXT: b59():
-# CHECK-NEXT: v177: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b61(v177)
-# CHECK-NEXT: b60():
-# CHECK-NEXT: v178: 0 = Integer
-# CHECK-NEXT: Jump -> next b61(v178)
-# CHECK-NEXT: b61(v179: int[0, 17]):
-# CHECK-NEXT: v180: int[-4294967205, 4294967415] = Add v174, v179
-# CHECK-NEXT: v181: 0 = Integer
-# CHECK-NEXT: v182: i32 = BitOr v180, v181
-# CHECK-NEXT: PutModuleVariable v182 variable=g7
-# CHECK-NEXT: v184: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v87, v159 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v185: int[0, 4294967295] = CallBuiltin v184 overload=ArrayPrototypeLength/0 accessSite=10
-# CHECK-NEXT: v186: 60 = Integer integer=60
-# CHECK-NEXT: v187: boolean = Less v185, v186
-# CHECK-NEXT: Branch v187 -> taken b62(), notTaken b63()
-# CHECK-NEXT: b62() handler=b100():
-# CHECK-NEXT: v188: "13:" = String string="13:"
-# CHECK-NEXT: v189: string = CallBuiltin -, v62 overload=String/0 accessSite=12
-# CHECK-NEXT: v190: string = Add v188, v189
-# CHECK-NEXT: v191: int[0, 4294967295] = CallBuiltin v184, v190 overload=ArrayPrototypePush/0 accessSite=13
-# CHECK-NEXT: Jump -> next b63()
+# CHECK-NEXT: v175: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b59(v175)
+# CHECK-NEXT: b58():
+# CHECK-NEXT: v176: 0 = Integer
+# CHECK-NEXT: Jump -> next b59(v176)
+# CHECK-NEXT: b59(v177: int[0, 17]):
+# CHECK-NEXT: v178: int[-4294967205, 4294967415] = Add v172, v177
+# CHECK-NEXT: v179: 0 = Integer
+# CHECK-NEXT: v180: i32 = BitOr v178, v179
+# CHECK-NEXT: PutModuleVariable v180 variable=g7
+# CHECK-NEXT: v182: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v85, v157 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v183: int[0, 4294967295] = CallBuiltin v182 overload=ArrayPrototypeLength/0 accessSite=10
+# CHECK-NEXT: v184: 60 = Integer integer=60
+# CHECK-NEXT: v185: boolean = Less v183, v184
+# CHECK-NEXT: Branch v185 -> taken b60(), notTaken b61()
+# CHECK-NEXT: b60() handler=b98():
+# CHECK-NEXT: v186: "13:" = String string="13:"
+# CHECK-NEXT: v187: string = CallBuiltin -, v60 overload=String/0 accessSite=12
+# CHECK-NEXT: v188: string = Add v186, v187
+# CHECK-NEXT: v189: int[0, 4294967295] = CallBuiltin v182, v188 overload=ArrayPrototypePush/0 accessSite=13
+# CHECK-NEXT: Jump -> next b61()
+# CHECK-NEXT: b61():
+# CHECK-NEXT: v190: number = CallBuiltin -, v60 overload=MathAbs/0 accessSite=23
+# CHECK-NEXT: v191: boolean = Less v156, v190
+# CHECK-NEXT: Branch v191 -> taken b62(), notTaken b66()
+# CHECK-NEXT: b62():
+# CHECK-NEXT: v192: 2 = Integer integer=2
+# CHECK-NEXT: v193: boolean = StrictEq v60, v192
+# CHECK-NEXT: Branch v193 -> taken b63(), notTaken b64()
 # CHECK-NEXT: b63():
-# CHECK-NEXT: v192: number = CallBuiltin -, v62 overload=MathAbs/0 accessSite=23
-# CHECK-NEXT: v193: boolean = Less v158, v192
-# CHECK-NEXT: Branch v193 -> taken b64(), notTaken b68()
+# CHECK-NEXT: v194: int|whole = CallBuiltin -, v11 overload=MathRound/0 accessSite=24
+# CHECK-NEXT: Jump -> next b65(v194)
 # CHECK-NEXT: b64():
-# CHECK-NEXT: v194: 2 = Integer integer=2
-# CHECK-NEXT: v195: boolean = StrictEq v62, v194
-# CHECK-NEXT: Branch v195 -> taken b65(), notTaken b66()
-# CHECK-NEXT: b65():
-# CHECK-NEXT: v196: int|whole = CallBuiltin -, v11 overload=MathRound/0 accessSite=24
-# CHECK-NEXT: Jump -> next b67(v196)
+# CHECK-NEXT: v195: 0 = Integer
+# CHECK-NEXT: v196: i32 = BitOr v60, v195
+# CHECK-NEXT: Jump -> next b65(v196)
+# CHECK-NEXT: b65(v197: int|whole):
+# CHECK-NEXT: Jump -> next b70(v197)
 # CHECK-NEXT: b66():
-# CHECK-NEXT: v197: 0 = Integer
-# CHECK-NEXT: v198: i32 = BitOr v62, v197
-# CHECK-NEXT: Jump -> next b67(v198)
-# CHECK-NEXT: b67(v199: int|whole):
-# CHECK-NEXT: Jump -> next b72(v199)
-# CHECK-NEXT: b68():
-# CHECK-NEXT: Branch v85 -> taken b69(), notTaken b70(| 0)
-# CHECK-NEXT: b69():
-# CHECK-NEXT: Jump -> next b71(v73)
-# CHECK-NEXT: b70(v200: 0|whole):
-# CHECK-NEXT: v201: number = Div v200, v153
-# CHECK-NEXT: Jump -> next b71(v201)
-# CHECK-NEXT: b71(v202: number):
-# CHECK-NEXT: Jump -> next b72(v202)
-# CHECK-NEXT: b72(v203: number):
-# CHECK-NEXT: v204: i32 = BitNot v203
-# CHECK-NEXT: v205: int|whole = Increment v161
-# CHECK-NEXT: PutModuleVariable v205 variable=g8
-# CHECK-NEXT: v207: 31 = Integer integer=31
-# CHECK-NEXT: v208: i32 = CallBuiltin -, v182, v207 overload=MathImul/0 accessSite=8
-# CHECK-NEXT: v209: 84 = Integer integer=84
-# CHECK-NEXT: v210: int[-2147483564, 2147483731] = Add v208, v209
-# CHECK-NEXT: v211: 0 = Integer
-# CHECK-NEXT: v212: i32 = BitOr v204, v211
-# CHECK-NEXT: v213: int[-4294967212, 4294967378] = Add v210, v212
-# CHECK-NEXT: v214: boolean = StrictEq v204, v204
-# CHECK-NEXT: Branch v214 -> taken b73(), notTaken b74()
-# CHECK-NEXT: b73():
-# CHECK-NEXT: v215: 0 = Integer
-# CHECK-NEXT: Jump -> next b75(v215)
+# CHECK-NEXT: Branch v83 -> taken b67(), notTaken b68(| 0)
+# CHECK-NEXT: b67():
+# CHECK-NEXT: Jump -> next b69(v71)
+# CHECK-NEXT: b68(v198: 0|whole):
+# CHECK-NEXT: v199: number = Div v198, v151
+# CHECK-NEXT: Jump -> next b69(v199)
+# CHECK-NEXT: b69(v200: number):
+# CHECK-NEXT: Jump -> next b70(v200)
+# CHECK-NEXT: b70(v201: number):
+# CHECK-NEXT: v202: i32 = BitNot v201
+# CHECK-NEXT: v203: int|whole = Increment v159
+# CHECK-NEXT: PutModuleVariable v203 variable=g8
+# CHECK-NEXT: v205: 31 = Integer integer=31
+# CHECK-NEXT: v206: i32 = CallBuiltin -, v180, v205 overload=MathImul/0 accessSite=8
+# CHECK-NEXT: v207: 84 = Integer integer=84
+# CHECK-NEXT: v208: int[-2147483564, 2147483731] = Add v206, v207
+# CHECK-NEXT: v209: 0 = Integer
+# CHECK-NEXT: v210: i32 = BitOr v202, v209
+# CHECK-NEXT: v211: int[-4294967212, 4294967378] = Add v208, v210
+# CHECK-NEXT: v212: boolean = StrictEq v202, v202
+# CHECK-NEXT: Branch v212 -> taken b71(), notTaken b72()
+# CHECK-NEXT: b71():
+# CHECK-NEXT: v213: 0 = Integer
+# CHECK-NEXT: Jump -> next b73(v213)
+# CHECK-NEXT: b72():
+# CHECK-NEXT: v214: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b73(v214)
+# CHECK-NEXT: b73(v215: int[0, 13]) handler=b98():
+# CHECK-NEXT: v216: int[-4294967212, 4294967391] = Add v211, v215
+# CHECK-NEXT: v217: whole = Double number=-0
+# CHECK-NEXT: v218: boolean = CallBuiltin -, v202, v217 overload=ObjectIs/0 accessSite=9
+# CHECK-NEXT: Branch v218 -> taken b74(), notTaken b75()
 # CHECK-NEXT: b74():
-# CHECK-NEXT: v216: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b75(v216)
-# CHECK-NEXT: b75(v217: int[0, 13]) handler=b100():
-# CHECK-NEXT: v218: int[-4294967212, 4294967391] = Add v213, v217
-# CHECK-NEXT: v219: whole = Double number=-0
-# CHECK-NEXT: v220: boolean = CallBuiltin -, v204, v219 overload=ObjectIs/0 accessSite=9
-# CHECK-NEXT: Branch v220 -> taken b76(), notTaken b77()
-# CHECK-NEXT: b76():
-# CHECK-NEXT: v221: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b78(v221)
-# CHECK-NEXT: b77():
-# CHECK-NEXT: v222: 0 = Integer
-# CHECK-NEXT: Jump -> next b78(v222)
-# CHECK-NEXT: b78(v223: int[0, 17]):
-# CHECK-NEXT: v224: int[-4294967212, 4294967408] = Add v218, v223
-# CHECK-NEXT: v225: 0 = Integer
-# CHECK-NEXT: v226: i32 = BitOr v224, v225
-# CHECK-NEXT: PutModuleVariable v226 variable=g7
-# CHECK-NEXT: v228: int[0, 4294967295] = CallBuiltin v184 overload=ArrayPrototypeLength/0 accessSite=10
-# CHECK-NEXT: v229: 60 = Integer integer=60
-# CHECK-NEXT: v230: boolean = Less v228, v229
-# CHECK-NEXT: Branch v230 -> taken b79(), notTaken b80()
-# CHECK-NEXT: b79() handler=b100():
-# CHECK-NEXT: v231: "12:" = String string="12:"
-# CHECK-NEXT: v232: string = CallBuiltin -, v204 overload=String/0 accessSite=12
-# CHECK-NEXT: v233: string = Add v231, v232
-# CHECK-NEXT: v234: int[0, 4294967295] = CallBuiltin v184, v233 overload=ArrayPrototypePush/0 accessSite=13
-# CHECK-NEXT: Jump -> next b80()
+# CHECK-NEXT: v219: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b76(v219)
+# CHECK-NEXT: b75():
+# CHECK-NEXT: v220: 0 = Integer
+# CHECK-NEXT: Jump -> next b76(v220)
+# CHECK-NEXT: b76(v221: int[0, 17]):
+# CHECK-NEXT: v222: int[-4294967212, 4294967408] = Add v216, v221
+# CHECK-NEXT: v223: 0 = Integer
+# CHECK-NEXT: v224: i32 = BitOr v222, v223
+# CHECK-NEXT: PutModuleVariable v224 variable=g7
+# CHECK-NEXT: v226: int[0, 4294967295] = CallBuiltin v182 overload=ArrayPrototypeLength/0 accessSite=10
+# CHECK-NEXT: v227: 60 = Integer integer=60
+# CHECK-NEXT: v228: boolean = Less v226, v227
+# CHECK-NEXT: Branch v228 -> taken b77(), notTaken b78()
+# CHECK-NEXT: b77() handler=b98():
+# CHECK-NEXT: v229: "12:" = String string="12:"
+# CHECK-NEXT: v230: string = CallBuiltin -, v202 overload=String/0 accessSite=12
+# CHECK-NEXT: v231: string = Add v229, v230
+# CHECK-NEXT: v232: int[0, 4294967295] = CallBuiltin v182, v231 overload=ArrayPrototypePush/0 accessSite=13
+# CHECK-NEXT: Jump -> next b78()
+# CHECK-NEXT: b78():
+# CHECK-NEXT: v233: 1 = Integer integer=1
+# CHECK-NEXT: v234: number = Add v89, v151
+# CHECK-NEXT: v235: number = CallBuiltin -, v71, v11 overload=MathMin/0 accessSite=26
+# CHECK-NEXT: v236: i32 = LShift v234, v235
+# CHECK-NEXT: v237: int[-2147483647, 2147483648]|whole = Negate v236
+# CHECK-NEXT: v238: int[0, 1] = BitAnd v233, v237
+# CHECK-NEXT: v239: int|whole = Increment v203
+# CHECK-NEXT: PutModuleVariable v239 variable=g8
+# CHECK-NEXT: v241: 31 = Integer integer=31
+# CHECK-NEXT: v242: i32 = CallBuiltin -, v224, v241 overload=MathImul/0 accessSite=8
+# CHECK-NEXT: v243: 98 = Integer integer=98
+# CHECK-NEXT: v244: int[-2147483550, 2147483745] = Add v242, v243
+# CHECK-NEXT: v245: 0 = Integer
+# CHECK-NEXT: v246: int[0, 1] = BitOr v238, v245
+# CHECK-NEXT: v247: int[-2147483550, 2147483746] = Add v244, v246
+# CHECK-NEXT: v248: boolean = StrictEq v238, v238
+# CHECK-NEXT: Branch v248 -> taken b79(), notTaken b80()
+# CHECK-NEXT: b79():
+# CHECK-NEXT: v249: 0 = Integer
+# CHECK-NEXT: Jump -> next b81(v249)
 # CHECK-NEXT: b80():
-# CHECK-NEXT: v235: 1 = Integer integer=1
-# CHECK-NEXT: v236: number = Add v91, v153
-# CHECK-NEXT: v237: number = CallBuiltin -, v73, v11 overload=MathMin/0 accessSite=26
-# CHECK-NEXT: v238: i32 = LShift v236, v237
-# CHECK-NEXT: v239: int[-2147483647, 2147483648]|whole = Negate v238
-# CHECK-NEXT: v240: int[0, 1] = BitAnd v235, v239
-# CHECK-NEXT: v241: int|whole = Increment v205
-# CHECK-NEXT: PutModuleVariable v241 variable=g8
-# CHECK-NEXT: v243: 31 = Integer integer=31
-# CHECK-NEXT: v244: i32 = CallBuiltin -, v226, v243 overload=MathImul/0 accessSite=8
-# CHECK-NEXT: v245: 98 = Integer integer=98
-# CHECK-NEXT: v246: int[-2147483550, 2147483745] = Add v244, v245
-# CHECK-NEXT: v247: 0 = Integer
-# CHECK-NEXT: v248: int[0, 1] = BitOr v240, v247
-# CHECK-NEXT: v249: int[-2147483550, 2147483746] = Add v246, v248
-# CHECK-NEXT: v250: boolean = StrictEq v240, v240
-# CHECK-NEXT: Branch v250 -> taken b81(), notTaken b82()
-# CHECK-NEXT: b81():
-# CHECK-NEXT: v251: 0 = Integer
-# CHECK-NEXT: Jump -> next b83(v251)
+# CHECK-NEXT: v250: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b81(v250)
+# CHECK-NEXT: b81(v251: int[0, 13]) handler=b98():
+# CHECK-NEXT: v252: int[-2147483550, 2147483759] = Add v247, v251
+# CHECK-NEXT: v253: whole = Double number=-0
+# CHECK-NEXT: v254: boolean = CallBuiltin -, v238, v253 overload=ObjectIs/0 accessSite=9
+# CHECK-NEXT: Branch v254 -> taken b82(), notTaken b83()
 # CHECK-NEXT: b82():
-# CHECK-NEXT: v252: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b83(v252)
-# CHECK-NEXT: b83(v253: int[0, 13]) handler=b100():
-# CHECK-NEXT: v254: int[-2147483550, 2147483759] = Add v249, v253
-# CHECK-NEXT: v255: whole = Double number=-0
-# CHECK-NEXT: v256: boolean = CallBuiltin -, v240, v255 overload=ObjectIs/0 accessSite=9
-# CHECK-NEXT: Branch v256 -> taken b84(), notTaken b85()
-# CHECK-NEXT: b84():
-# CHECK-NEXT: v257: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b86(v257)
-# CHECK-NEXT: b85():
-# CHECK-NEXT: v258: 0 = Integer
-# CHECK-NEXT: Jump -> next b86(v258)
-# CHECK-NEXT: b86(v259: int[0, 17]):
-# CHECK-NEXT: v260: int[-2147483550, 2147483776] = Add v254, v259
-# CHECK-NEXT: v261: 0 = Integer
-# CHECK-NEXT: v262: i32 = BitOr v260, v261
-# CHECK-NEXT: PutModuleVariable v262 variable=g7
-# CHECK-NEXT: v264: int[0, 4294967295] = CallBuiltin v184 overload=ArrayPrototypeLength/0 accessSite=10
-# CHECK-NEXT: v265: 60 = Integer integer=60
-# CHECK-NEXT: v266: boolean = Less v264, v265
-# CHECK-NEXT: Branch v266 -> taken b87(), notTaken b88()
-# CHECK-NEXT: b87() handler=b100():
-# CHECK-NEXT: v267: "14:" = String string="14:"
-# CHECK-NEXT: v268: string = CallBuiltin -, v240 overload=String/0 accessSite=12
-# CHECK-NEXT: v269: string = Add v267, v268
-# CHECK-NEXT: v270: int[0, 4294967295] = CallBuiltin v184, v269 overload=ArrayPrototypePush/0 accessSite=13
-# CHECK-NEXT: Jump -> next b88()
+# CHECK-NEXT: v255: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b84(v255)
+# CHECK-NEXT: b83():
+# CHECK-NEXT: v256: 0 = Integer
+# CHECK-NEXT: Jump -> next b84(v256)
+# CHECK-NEXT: b84(v257: int[0, 17]):
+# CHECK-NEXT: v258: int[-2147483550, 2147483776] = Add v252, v257
+# CHECK-NEXT: v259: 0 = Integer
+# CHECK-NEXT: v260: i32 = BitOr v258, v259
+# CHECK-NEXT: PutModuleVariable v260 variable=g7
+# CHECK-NEXT: v262: int[0, 4294967295] = CallBuiltin v182 overload=ArrayPrototypeLength/0 accessSite=10
+# CHECK-NEXT: v263: 60 = Integer integer=60
+# CHECK-NEXT: v264: boolean = Less v262, v263
+# CHECK-NEXT: Branch v264 -> taken b85(), notTaken b86()
+# CHECK-NEXT: b85() handler=b98():
+# CHECK-NEXT: v265: "14:" = String string="14:"
+# CHECK-NEXT: v266: string = CallBuiltin -, v238 overload=String/0 accessSite=12
+# CHECK-NEXT: v267: string = Add v265, v266
+# CHECK-NEXT: v268: int[0, 4294967295] = CallBuiltin v182, v267 overload=ArrayPrototypePush/0 accessSite=13
+# CHECK-NEXT: Jump -> next b86()
+# CHECK-NEXT: b86():
+# CHECK-NEXT: v269: number = Mul v151, v89
+# CHECK-NEXT: v270: number = Mod v151, v269
+# CHECK-NEXT: v271: boolean = ToBoolean v270
+# CHECK-NEXT: Branch v271 -> taken b87(), notTaken b88()
+# CHECK-NEXT: b87():
+# CHECK-NEXT: Jump -> next b89(v270)
 # CHECK-NEXT: b88():
-# CHECK-NEXT: v271: number = Mul v153, v91
-# CHECK-NEXT: v272: number = Mod v153, v271
-# CHECK-NEXT: v273: boolean = ToBoolean v272
-# CHECK-NEXT: Branch v273 -> taken b89(), notTaken b90()
-# CHECK-NEXT: b89():
-# CHECK-NEXT: Jump -> next b91(v272)
+# CHECK-NEXT: Jump -> next b89(v11)
+# CHECK-NEXT: b89(v272: number):
+# CHECK-NEXT: v273: 7 = Integer integer=7
+# CHECK-NEXT: v274: number = Div v273, v272
+# CHECK-NEXT: v275: int|whole = Increment v239
+# CHECK-NEXT: PutModuleVariable v275 variable=g8
+# CHECK-NEXT: v277: 31 = Integer integer=31
+# CHECK-NEXT: v278: i32 = CallBuiltin -, v260, v277 overload=MathImul/0 accessSite=8
+# CHECK-NEXT: v279: 105 = Integer integer=105
+# CHECK-NEXT: v280: int[-2147483543, 2147483752] = Add v278, v279
+# CHECK-NEXT: v281: 0 = Integer
+# CHECK-NEXT: v282: i32 = BitOr v274, v281
+# CHECK-NEXT: v283: int[-4294967191, 4294967399] = Add v280, v282
+# CHECK-NEXT: v284: boolean = StrictEq v274, v274
+# CHECK-NEXT: Branch v284 -> taken b90(), notTaken b91()
 # CHECK-NEXT: b90():
-# CHECK-NEXT: Jump -> next b91(v11)
-# CHECK-NEXT: b91(v274: number):
-# CHECK-NEXT: v275: 7 = Integer integer=7
-# CHECK-NEXT: v276: number = Div v275, v274
-# CHECK-NEXT: v277: int|whole = Increment v241
-# CHECK-NEXT: PutModuleVariable v277 variable=g8
-# CHECK-NEXT: v279: 31 = Integer integer=31
-# CHECK-NEXT: v280: i32 = CallBuiltin -, v262, v279 overload=MathImul/0 accessSite=8
-# CHECK-NEXT: v281: 105 = Integer integer=105
-# CHECK-NEXT: v282: int[-2147483543, 2147483752] = Add v280, v281
-# CHECK-NEXT: v283: 0 = Integer
-# CHECK-NEXT: v284: i32 = BitOr v276, v283
-# CHECK-NEXT: v285: int[-4294967191, 4294967399] = Add v282, v284
-# CHECK-NEXT: v286: boolean = StrictEq v276, v276
-# CHECK-NEXT: Branch v286 -> taken b92(), notTaken b93()
-# CHECK-NEXT: b92():
-# CHECK-NEXT: v287: 0 = Integer
-# CHECK-NEXT: Jump -> next b94(v287)
+# CHECK-NEXT: v285: 0 = Integer
+# CHECK-NEXT: Jump -> next b92(v285)
+# CHECK-NEXT: b91():
+# CHECK-NEXT: v286: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b92(v286)
+# CHECK-NEXT: b92(v287: int[0, 13]) handler=b98():
+# CHECK-NEXT: v288: int[-4294967191, 4294967412] = Add v283, v287
+# CHECK-NEXT: v289: whole = Double number=-0
+# CHECK-NEXT: v290: boolean = CallBuiltin -, v274, v289 overload=ObjectIs/0 accessSite=9
+# CHECK-NEXT: Branch v290 -> taken b93(), notTaken b94()
 # CHECK-NEXT: b93():
-# CHECK-NEXT: v288: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b94(v288)
-# CHECK-NEXT: b94(v289: int[0, 13]) handler=b100():
-# CHECK-NEXT: v290: int[-4294967191, 4294967412] = Add v285, v289
-# CHECK-NEXT: v291: whole = Double number=-0
-# CHECK-NEXT: v292: boolean = CallBuiltin -, v276, v291 overload=ObjectIs/0 accessSite=9
-# CHECK-NEXT: Branch v292 -> taken b95(), notTaken b96()
-# CHECK-NEXT: b95():
-# CHECK-NEXT: v293: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b97(v293)
-# CHECK-NEXT: b96():
-# CHECK-NEXT: v294: 0 = Integer
-# CHECK-NEXT: Jump -> next b97(v294)
-# CHECK-NEXT: b97(v295: int[0, 17]):
-# CHECK-NEXT: v296: int[-4294967191, 4294967429] = Add v290, v295
-# CHECK-NEXT: v297: 0 = Integer
-# CHECK-NEXT: v298: i32 = BitOr v296, v297
-# CHECK-NEXT: PutModuleVariable v298 variable=g7
-# CHECK-NEXT: v300: int[0, 4294967295] = CallBuiltin v184 overload=ArrayPrototypeLength/0 accessSite=10
-# CHECK-NEXT: v301: 60 = Integer integer=60
-# CHECK-NEXT: v302: boolean = Less v300, v301
-# CHECK-NEXT: Branch v302 -> taken b98(), notTaken b99()
-# CHECK-NEXT: b98() handler=b100():
-# CHECK-NEXT: v303: "15:" = String string="15:"
-# CHECK-NEXT: v304: string = CallBuiltin -, v276 overload=String/0 accessSite=12
-# CHECK-NEXT: v305: string = Add v303, v304
-# CHECK-NEXT: v306: int[0, 4294967295] = CallBuiltin v184, v305 overload=ArrayPrototypePush/0 accessSite=13
-# CHECK-NEXT: Jump -> next b99()
-# CHECK-NEXT: b99():
-# CHECK-NEXT: Jump -> next b104()
-# CHECK-NEXT: b100() role=CatchHandler:
-# CHECK-NEXT: v307: anything = CatchValue
-# CHECK-NEXT: v308: boolean = TypeTest v307 testedType=number
-# CHECK-NEXT: Branch v308 -> taken b101(| 0), notTaken b102()
+# CHECK-NEXT: v291: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b95(v291)
+# CHECK-NEXT: b94():
+# CHECK-NEXT: v292: 0 = Integer
+# CHECK-NEXT: Jump -> next b95(v292)
+# CHECK-NEXT: b95(v293: int[0, 17]):
+# CHECK-NEXT: v294: int[-4294967191, 4294967429] = Add v288, v293
+# CHECK-NEXT: v295: 0 = Integer
+# CHECK-NEXT: v296: i32 = BitOr v294, v295
+# CHECK-NEXT: PutModuleVariable v296 variable=g7
+# CHECK-NEXT: v298: int[0, 4294967295] = CallBuiltin v182 overload=ArrayPrototypeLength/0 accessSite=10
+# CHECK-NEXT: v299: 60 = Integer integer=60
+# CHECK-NEXT: v300: boolean = Less v298, v299
+# CHECK-NEXT: Branch v300 -> taken b96(), notTaken b97()
+# CHECK-NEXT: b96() handler=b98():
+# CHECK-NEXT: v301: "15:" = String string="15:"
+# CHECK-NEXT: v302: string = CallBuiltin -, v274 overload=String/0 accessSite=12
+# CHECK-NEXT: v303: string = Add v301, v302
+# CHECK-NEXT: v304: int[0, 4294967295] = CallBuiltin v182, v303 overload=ArrayPrototypePush/0 accessSite=13
+# CHECK-NEXT: Jump -> next b97()
+# CHECK-NEXT: b97():
+# CHECK-NEXT: Jump -> next b102()
+# CHECK-NEXT: b98() role=CatchHandler:
+# CHECK-NEXT: v305: anything = CatchValue
+# CHECK-NEXT: v306: boolean = TypeTest v305 testedType=number
+# CHECK-NEXT: Branch v306 -> taken b99(| 0), notTaken b100()
+# CHECK-NEXT: b99(v307: number):
+# CHECK-NEXT: Jump -> next b101(v307)
+# CHECK-NEXT: b100():
+# CHECK-NEXT: v308: -9 = Integer integer=-9
+# CHECK-NEXT: Jump -> next b101(v308)
 # CHECK-NEXT: b101(v309: number):
-# CHECK-NEXT: Jump -> next b103(v309)
+# CHECK-NEXT: v310: 18 = Integer integer=18
+# CHECK-NEXT: v311: number = CallDirect v310, v309 function=f1 accessSite=29
+# CHECK-NEXT: Jump -> next b102()
 # CHECK-NEXT: b102():
-# CHECK-NEXT: v310: -9 = Integer integer=-9
-# CHECK-NEXT: Jump -> next b103(v310)
-# CHECK-NEXT: b103(v311: number):
-# CHECK-NEXT: v312: 18 = Integer integer=18
-# CHECK-NEXT: v313: number = CallDirect v312, v311 function=f1 accessSite=29
-# CHECK-NEXT: Jump -> next b104()
-# CHECK-NEXT: b104():
-# CHECK-NEXT: Jump -> next b33(v153, v93)
-# CHECK-NEXT: b105():
-# CHECK-NEXT: Throw v60
+# CHECK-NEXT: Jump -> next b31(v151, v91)
+# CHECK-NEXT: b103():
+# CHECK-NEXT: Throw v58
 # CHECK-NEXT: }
 # CHECK-LABEL: function f3 name=
 # CHECK: "f1" module=m0 position=3098 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=2 thisType={type=undefined} parameters=[{type=int|whole site=w6}, {type=int|whole site=w7}] results=[{type=Generator<number, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f3 body=f22} {
@@ -4412,65 +4407,59 @@ runtimefunction id=GeneratorPrototypeReturn function=f14 visibility=Private
 # CHECK-NEXT: PutModuleVariable v9 variable=g6
 # CHECK-NEXT: v11: 0 = Integer
 # CHECK-NEXT: v12: boolean = Less v9, v11
-# CHECK-NEXT: Branch v12 -> taken b12(v7, v8, v6), notTaken b3()
+# CHECK-NEXT: Branch v12 -> taken b10(v7, v8, v6), notTaken b3()
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v13: 0 = Integer
-# CHECK-NEXT: v14: int|whole = Upcast v9 castType=int|whole
-# CHECK-NEXT: Jump -> next b4(v8, v13, v14)
-# CHECK-NEXT: b4(v15: int[0, 2147483647], v16: int[0, 6], v17: int|whole):
+# CHECK-NEXT: Jump -> next b4(v8, v13, v9)
+# CHECK-NEXT: b4(v14: int[0, 2147483647], v15: int[0, 6], v16: int|whole):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v19: 5 = Integer integer=5
-# CHECK-NEXT: v20: boolean = Less v16, v19
-# CHECK-NEXT: Branch v20 -> taken b5(| 0), notTaken b8()
-# CHECK-NEXT: b5(v21: int[0, 4]):
-# CHECK-NEXT: v22: int|whole = Decrement v17
+# CHECK-NEXT: v18: 5 = Integer integer=5
+# CHECK-NEXT: v19: boolean = Less v15, v18
+# CHECK-NEXT: Branch v19 -> taken b5(| 0), notTaken b7()
+# CHECK-NEXT: b5(v20: int[0, 4]):
+# CHECK-NEXT: v21: int|whole = Decrement v16
+# CHECK-NEXT: PutModuleVariable v21 variable=g6
 # CHECK-NEXT: v23: 0 = Integer
-# CHECK-NEXT: v24: boolean = Less v22, v23
-# CHECK-NEXT: Branch v24 -> taken b6(), notTaken b7()
+# CHECK-NEXT: v24: boolean = Less v21, v23
+# CHECK-NEXT: Branch v24 -> taken b7(), notTaken b6()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: PutModuleVariable v22 variable=g6
-# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: v25: int[0, 2147483647] = BitOr v14, v20
+# CHECK-NEXT: v26: 2 = Integer integer=2
+# CHECK-NEXT: v27: int[2, 6] = Add v20, v26
+# CHECK-NEXT: Jump -> next b4(v25, v27, v21)
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v26: int[0, 2147483647] = BitOr v15, v21
-# CHECK-NEXT: v27: 2 = Integer integer=2
-# CHECK-NEXT: v28: int[2, 6] = Add v21, v27
-# CHECK-NEXT: Jump -> next b4(v26, v28, v22)
+# CHECK-NEXT: v28: 6 = Integer integer=6
+# CHECK-NEXT: v29: int[0, 1] = Mod v7, v28
+# CHECK-NEXT: v30: 0 = Integer
+# CHECK-NEXT: v31: int[0, 1] = BitOr v29, v30
+# CHECK-NEXT: Switch v31 cases=[0] -> case b8(), otherwise b9()
 # CHECK-NEXT: b8():
-# CHECK-NEXT: PutModuleVariable v17 variable=g6
-# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: Throw v14
 # CHECK-NEXT: b9():
-# CHECK-NEXT: v30: 6 = Integer integer=6
-# CHECK-NEXT: v31: int[0, 1] = Mod v7, v30
-# CHECK-NEXT: v32: 0 = Integer
-# CHECK-NEXT: v33: int[0, 1] = BitOr v31, v32
-# CHECK-NEXT: Switch v33 cases=[0] -> case b10(), otherwise b11()
-# CHECK-NEXT: b10():
-# CHECK-NEXT: Throw v15
+# CHECK-NEXT: v32: int[1, 2147483648] = Increment v14
+# CHECK-NEXT: v33: 32 = Integer integer=32
+# CHECK-NEXT: v34: int[0, 63] = BitOr v7, v33
+# CHECK-NEXT: Jump -> next b10(v34, v14, v32)
+# CHECK-NEXT: b10(v35: int[0, 63], v36: int[0, 2147483647], v37: int[-1, 2147483648]):
+# CHECK-NEXT: v38: int[0, 2147483647] = CallBuiltin -, v35, v36 overload=MathMax/0 accessSite=51
+# CHECK-NEXT: v39: boolean = StrictEq v38, v35
+# CHECK-NEXT: Branch v39 -> taken b12(v36), notTaken b11()
 # CHECK-NEXT: b11():
-# CHECK-NEXT: v34: int[1, 2147483648] = Increment v15
-# CHECK-NEXT: v35: 32 = Integer integer=32
-# CHECK-NEXT: v36: int[0, 63] = BitOr v7, v35
-# CHECK-NEXT: Jump -> next b12(v36, v15, v34)
-# CHECK-NEXT: b12(v37: int[0, 63], v38: int[0, 2147483647], v39: int[-1, 2147483648]):
-# CHECK-NEXT: v40: int[0, 2147483647] = CallBuiltin -, v37, v38 overload=MathMax/0 accessSite=51
-# CHECK-NEXT: v41: boolean = StrictEq v40, v37
-# CHECK-NEXT: Branch v41 -> taken b14(v38), notTaken b13()
+# CHECK-NEXT: v40: 0 = Integer
+# CHECK-NEXT: v41: i32 = BitOr v37, v40
+# CHECK-NEXT: Jump -> next b12(v41)
+# CHECK-NEXT: b12(v42: i32):
+# CHECK-NEXT: v43: whole = GetModuleVariable variable=g28
+# CHECK-NEXT: v44: int[0, 2147483647] = BitAnd v36, v43
+# CHECK-NEXT: v45: boolean = Less v42, v44
+# CHECK-NEXT: Branch v45 -> taken b13(), notTaken b14()
 # CHECK-NEXT: b13():
-# CHECK-NEXT: v42: 0 = Integer
-# CHECK-NEXT: v43: i32 = BitOr v39, v42
-# CHECK-NEXT: Jump -> next b14(v43)
-# CHECK-NEXT: b14(v44: i32):
-# CHECK-NEXT: v45: whole = GetModuleVariable variable=g28
-# CHECK-NEXT: v46: int[0, 2147483647] = BitAnd v38, v45
-# CHECK-NEXT: v47: boolean = Less v44, v46
-# CHECK-NEXT: Branch v47 -> taken b15(), notTaken b16()
-# CHECK-NEXT: b15():
-# CHECK-NEXT: Return v38
-# CHECK-NEXT: b16():
-# CHECK-NEXT: Return v39
+# CHECK-NEXT: Return v36
+# CHECK-NEXT: b14():
+# CHECK-NEXT: Return v37
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="f3"
-# CHECK: module=m0 position=4786 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[-4294967296, 4294967294] site=w9}] results=[{type=int[-4294967297, 4294967293] site=w10}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=5443 module=m0}, {callee=f16 callPosition=5436 module=m0}] {
+# CHECK: module=m0 position=4786 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[-4294967296, 4294967294] site=w9}] results=[{type=int[-4294967297, 4294967293] site=w10}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=5500 module=m0}, {callee=f3 callPosition=5443 module=m0}, {callee=f16 callPosition=5436 module=m0}] {
 # CHECK-NEXT: b0(v0: int[-4294967296, 4294967294]):
 # CHECK-NEXT: v1: int|whole = GetModuleVariable variable=g6
 # CHECK-NEXT: v2: int|whole = Decrement v1
@@ -4500,20 +4489,19 @@ runtimefunction id=GeneratorPrototypeReturn function=f14 visibility=Private
 # CHECK-NEXT: b4():
 # CHECK-NEXT: v22: 0 = Integer
 # CHECK-NEXT: v23: whole = GetModuleVariable variable=g27
-# CHECK-NEXT: Jump -> next b5(v22)
-# CHECK-NEXT: b5(v24: int[0, 1]):
+# CHECK-NEXT: Jump -> next b5(v22, v18)
+# CHECK-NEXT: b5(v24: int[0, 1], v25: int|whole):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v26: int[0, 1] = ToNumeric v24
-# CHECK-NEXT: v27: 1 = Integer integer=1
-# CHECK-NEXT: v28: boolean = Less v26, v27
-# CHECK-NEXT: Branch v28 -> taken b6(), notTaken b21()
+# CHECK-NEXT: v27: int[0, 1] = ToNumeric v24
+# CHECK-NEXT: v28: 1 = Integer integer=1
+# CHECK-NEXT: v29: boolean = Less v27, v28
+# CHECK-NEXT: Branch v29 -> taken b6(), notTaken b21()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v29: 1 = Integer integer=1
-# CHECK-NEXT: v30: int|whole = GetModuleVariable variable=g6
-# CHECK-NEXT: v31: int|whole = Decrement v30
+# CHECK-NEXT: v30: 1 = Integer integer=1
+# CHECK-NEXT: v31: int|whole = Decrement v25
 # CHECK-NEXT: PutModuleVariable v31 variable=g6
-# CHECK-NEXT: v33: 0 = Integer
-# CHECK-NEXT: v34: boolean = Less v31, v33
+# CHECK-NEXT: v33: 1 = Integer integer=1
+# CHECK-NEXT: v34: boolean = Less v25, v33
 # CHECK-NEXT: Branch v34 -> taken b21(), notTaken b7()
 # CHECK-NEXT: b7():
 # CHECK-NEXT: v35: int|whole = Decrement v31
@@ -4571,7 +4559,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f14 visibility=Private
 # CHECK-NEXT: v65: boolean = LessEq v63, v64
 # CHECK-NEXT: Branch v65 -> taken b21(), notTaken b20()
 # CHECK-NEXT: b20():
-# CHECK-NEXT: Jump -> next b5(v29)
+# CHECK-NEXT: Jump -> next b5(v30, v35)
 # CHECK-NEXT: b21():
 # CHECK-NEXT: Return v14
 # CHECK-NEXT: b22():
@@ -4600,7 +4588,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f14 visibility=Private
 # CHECK-NEXT: Jump -> next b3(v85, v87, v18)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="f4"
-# CHECK: module=m0 position=5634 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[-3, 2] site=w11}] results=[{type=number site=w12}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=7945 module=m0}, {callee=f1 callPosition=7113 module=m0}] {
+# CHECK: module=m0 position=5634 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[-3, 2] site=w11}] results=[{type=number site=w12}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=8695 module=m0}, {callee=f1 callPosition=7945 module=m0}, {callee=f1 callPosition=7113 module=m0}] {
 # CHECK-NEXT: b0(v0: int[-3, 2]):
 # CHECK-NEXT: v1: int|whole = GetModuleVariable variable=g6
 # CHECK-NEXT: v2: int|whole = Decrement v1
@@ -4681,7 +4669,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f14 visibility=Private
 # CHECK-NEXT: v50: 65 = Integer integer=65
 # CHECK-NEXT: v51: number = CallDirect v50, v49 function=f1 accessSite=65
 # CHECK-NEXT: v52: int[-3, 3] = Decrement v16
-# CHECK-NEXT: Switch v38 cases=[0] -> case b18(), otherwise b128()
+# CHECK-NEXT: Switch v38 cases=[0] -> case b18(), otherwise b136()
 # CHECK-NEXT: b18():
 # CHECK-NEXT: v53: 0 = Integer
 # CHECK-NEXT: v54: i32 = BitOr v51, v53
@@ -4829,7 +4817,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f14 visibility=Private
 # CHECK-NEXT: Jump -> next b46(v153, v152, v151)
 # CHECK-NEXT: b46(v154: int[0, 1], v155: anything, v156: int|whole):
 # CHECK-NEXT: v157: number = CallDirect v52, v52, v156 function=f2 accessSite=73
-# CHECK-NEXT: Switch v154 cases=[0] -> case b47(), otherwise b127()
+# CHECK-NEXT: Switch v154 cases=[0] -> case b47(), otherwise b135()
 # CHECK-NEXT: b47():
 # CHECK-NEXT: v158: boolean = ToBoolean v156
 # CHECK-NEXT: Branch v158 -> taken b48(v156), notTaken b48(v157)
@@ -4971,7 +4959,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f14 visibility=Private
 # CHECK-NEXT: v256: int[-5, 5]|whole = Mod v220, v255
 # CHECK-NEXT: v257: 0 = Integer
 # CHECK-NEXT: v258: i32 = BitOr v256, v257
-# CHECK-NEXT: Switch v258 cases=[4, 0, 5, 1] -> case b99(v218, v208, v211), case b73(), case b104(v208, v211), case b78(v208, v211), otherwise b74()
+# CHECK-NEXT: Switch v258 cases=[4, 0, 5, 1] -> case b99(v218, v208, v211), case b73(), case b104(v208, v211), case b78(v208, v214, v211), otherwise b74()
 # CHECK-NEXT: b73():
 # CHECK-NEXT: v259: i32 = BitAnd v206, v209
 # CHECK-NEXT: v260: 6 = Integer integer=6
@@ -4983,257 +4971,301 @@ runtimefunction id=GeneratorPrototypeReturn function=f14 visibility=Private
 # CHECK-NEXT: v264: number = CallBuiltin -, v218 overload=MathAbs/0 accessSite=86
 # CHECK-NEXT: v265: number = Add v264, v206
 # CHECK-NEXT: v266: boolean = StrictEq v265, v208
-# CHECK-NEXT: Branch v266 -> taken b75(), notTaken b76(v218, v208, v211)
+# CHECK-NEXT: Branch v266 -> taken b75(), notTaken b76(v218, v208, v214, v211)
 # CHECK-NEXT: b75():
 # CHECK-NEXT: v267: 1 = Integer integer=1
 # CHECK-NEXT: PutEnvironmentField v211, v267 layout=L0
-# CHECK-NEXT: Jump -> next b77(v208, v211)
-# CHECK-NEXT: b76(v269: number, v270: int[1, 5], v449: env L0):
-# CHECK-NEXT: v271: 93 = Integer integer=93
-# CHECK-NEXT: v272: number = CallDirect v271, v270 function=f1 accessSite=87
-# CHECK-NEXT: v273: number = Decrement v269
-# CHECK-NEXT: PutEnvironmentField v449, v273 layout=L0
-# CHECK-NEXT: Jump -> next b77(v270, v449)
-# CHECK-NEXT: b77(v275: int[1, 5], v457: env L0):
-# CHECK-NEXT: Jump -> next b78(v275, v457)
-# CHECK-NEXT: b78(v276: int[1, 5], v458: env L0):
-# CHECK-NEXT: v277: -2 = Integer integer=-2
-# CHECK-NEXT: v278: number = GetEnvironmentField v458 layout=L0
-# CHECK-NEXT: v279: int|whole = GetModuleVariable variable=g6
-# CHECK-NEXT: Jump -> next b79(v277, v278, v279)
-# CHECK-NEXT: b79(v280: int[-2, 4], v281: number, v282: int|whole):
+# CHECK-NEXT: Jump -> next b77(v208, v214, v211)
+# CHECK-NEXT: b76(v269: number, v270: int[1, 5], v271: int|whole, v482: env L0):
+# CHECK-NEXT: v272: 93 = Integer integer=93
+# CHECK-NEXT: v273: number = CallDirect v272, v270 function=f1 accessSite=87
+# CHECK-NEXT: v274: number = Decrement v269
+# CHECK-NEXT: PutEnvironmentField v482, v274 layout=L0
+# CHECK-NEXT: Jump -> next b77(v270, v271, v482)
+# CHECK-NEXT: b77(v276: int[1, 5], v277: int|whole, v490: env L0):
+# CHECK-NEXT: Jump -> next b78(v276, v277, v490)
+# CHECK-NEXT: b78(v278: int[1, 5], v279: int|whole, v491: env L0):
+# CHECK-NEXT: v280: -2 = Integer integer=-2
+# CHECK-NEXT: v281: number = GetEnvironmentField v491 layout=L0
+# CHECK-NEXT: Jump -> next b79(v280, v279, v281)
+# CHECK-NEXT: b79(v282: int[-2, 4], v283: int|whole, v284: number):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v284: 4 = Integer integer=4
-# CHECK-NEXT: v285: boolean = Less v280, v284
-# CHECK-NEXT: Branch v285 -> taken b80(| 0), notTaken b83()
-# CHECK-NEXT: b80(v286: int[-2, 3]):
-# CHECK-NEXT: v287: int|whole = Decrement v282
-# CHECK-NEXT: v288: 0 = Integer
-# CHECK-NEXT: v289: boolean = Less v287, v288
-# CHECK-NEXT: Branch v289 -> taken b81(), notTaken b82()
+# CHECK-NEXT: v286: 4 = Integer integer=4
+# CHECK-NEXT: v287: boolean = Less v282, v286
+# CHECK-NEXT: Branch v287 -> taken b80(| 0), notTaken b83()
+# CHECK-NEXT: b80(v288: int[-2, 3]):
+# CHECK-NEXT: v289: int|whole = Decrement v283
+# CHECK-NEXT: PutModuleVariable v289 variable=g6
+# CHECK-NEXT: v291: 0 = Integer
+# CHECK-NEXT: v292: boolean = Less v289, v291
+# CHECK-NEXT: Branch v292 -> taken b81(), notTaken b82()
 # CHECK-NEXT: b81():
-# CHECK-NEXT: PutEnvironmentField v458, v281 layout=L0
-# CHECK-NEXT: PutModuleVariable v287 variable=g6
+# CHECK-NEXT: PutEnvironmentField v491, v284 layout=L0
 # CHECK-NEXT: Jump -> next b84()
 # CHECK-NEXT: b82():
-# CHECK-NEXT: v292: number = Increment v281
-# CHECK-NEXT: v293: int[-1, 4] = Increment v286
-# CHECK-NEXT: Jump -> next b79(v293, v292, v287)
+# CHECK-NEXT: v294: number = Increment v284
+# CHECK-NEXT: v295: int[-1, 4] = Increment v288
+# CHECK-NEXT: Jump -> next b79(v295, v289, v294)
 # CHECK-NEXT: b83():
-# CHECK-NEXT: PutEnvironmentField v458, v281 layout=L0
-# CHECK-NEXT: PutModuleVariable v282 variable=g6
+# CHECK-NEXT: PutEnvironmentField v491, v284 layout=L0
 # CHECK-NEXT: Jump -> next b84()
 # CHECK-NEXT: b84():
-# CHECK-NEXT: v296: int[0, 4294967295] = URShift v206, v206
-# CHECK-NEXT: v297: number = Mul v276, v206
-# CHECK-NEXT: v298: number = Mod v296, v297
-# CHECK-NEXT: v299: boolean = StrictEq v206, v298
-# CHECK-NEXT: Branch v299 -> taken b85(), notTaken b86()
+# CHECK-NEXT: v297: int[0, 4294967295] = URShift v206, v206
+# CHECK-NEXT: v298: number = Mul v278, v206
+# CHECK-NEXT: v299: number = Mod v297, v298
+# CHECK-NEXT: v300: boolean = StrictEq v206, v299
+# CHECK-NEXT: Branch v300 -> taken b85(), notTaken b86()
 # CHECK-NEXT: b85():
-# CHECK-NEXT: Jump -> next b105(v276, v458)
+# CHECK-NEXT: Jump -> next b105(v278, v491)
 # CHECK-NEXT: b86():
-# CHECK-NEXT: Jump -> next b87(v276, v458)
-# CHECK-NEXT: b87(v300: int[1, 5], v456: env L0):
-# CHECK-NEXT: v301: int[2, 6] = Increment v300
-# CHECK-NEXT: v302: number = GetEnvironmentField v456 layout=L0
-# CHECK-NEXT: v303: fact = Entered function=f1
-# CHECK-NEXT: v304: int|whole = GetModuleVariable fact=v303 variable=g8
-# CHECK-NEXT: v305: fact = Entered function=f1
-# CHECK-NEXT: v306: i32 = GetModuleVariable fact=v305 variable=g7
-# CHECK-NEXT: v307: int|whole = GetModuleVariable variable=g6
-# CHECK-NEXT: Jump -> next b88(v301, v302, v304, v306, v307, v456)
-# CHECK-NEXT: b88(v308: int[2, 6], v309: number, v310: int|whole, v311: i32, v312: int|whole, v448: env L0):
+# CHECK-NEXT: Jump -> next b87(v278, v491)
+# CHECK-NEXT: b87(v301: int[1, 5], v489: env L0):
+# CHECK-NEXT: v302: int[2, 6] = Increment v301
+# CHECK-NEXT: v303: number = GetEnvironmentField v489 layout=L0
+# CHECK-NEXT: v304: fact = Entered function=f1
+# CHECK-NEXT: v305: int|whole = GetModuleVariable fact=v304 variable=g8
+# CHECK-NEXT: v306: fact = Entered function=f1
+# CHECK-NEXT: v307: i32 = GetModuleVariable fact=v306 variable=g7
+# CHECK-NEXT: v308: int|whole = GetModuleVariable variable=g6
+# CHECK-NEXT: Jump -> next b88(v302, v303, v305, v307, v308, v489)
+# CHECK-NEXT: b88(v309: int[2, 6], v310: number, v311: int|whole, v312: i32, v313: int|whole, v481: env L0):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v314: 6 = Integer integer=6
-# CHECK-NEXT: v315: boolean = Less v308, v314
-# CHECK-NEXT: Branch v315 -> taken b89(| 0), notTaken b120(v448)
-# CHECK-NEXT: b89(v316: int[2, 5]):
-# CHECK-NEXT: v317: int|whole = Decrement v312
-# CHECK-NEXT: PutModuleVariable v317 variable=g6
-# CHECK-NEXT: v319: 0 = Integer
-# CHECK-NEXT: v320: boolean = Less v317, v319
-# CHECK-NEXT: Branch v320 -> taken b120(v448), notTaken b90()
+# CHECK-NEXT: v315: 6 = Integer integer=6
+# CHECK-NEXT: v316: boolean = Less v309, v315
+# CHECK-NEXT: Branch v316 -> taken b89(| 0), notTaken b120(v481)
+# CHECK-NEXT: b89(v317: int[2, 5]):
+# CHECK-NEXT: v318: int|whole = Decrement v313
+# CHECK-NEXT: PutModuleVariable v318 variable=g6
+# CHECK-NEXT: v320: 0 = Integer
+# CHECK-NEXT: v321: boolean = Less v318, v320
+# CHECK-NEXT: Branch v321 -> taken b120(v481), notTaken b90()
 # CHECK-NEXT: b90():
-# CHECK-NEXT: v321: 0 = Integer
-# CHECK-NEXT: v322: i32 = BitOr v309, v321
-# CHECK-NEXT: v323: fact = Entered function=f1
-# CHECK-NEXT: v324: int|whole = Increment v310
-# CHECK-NEXT: PutModuleVariable v324 variable=g8
-# CHECK-NEXT: v326: 31 = Integer integer=31
-# CHECK-NEXT: v327: i32 = CallBuiltin -, v311, v326 overload=MathImul/0 accessSite=8
-# CHECK-NEXT: v328: 658 = Integer integer=658
-# CHECK-NEXT: v329: int[-2147482990, 2147484305] = Add v327, v328
-# CHECK-NEXT: v330: 0 = Integer
-# CHECK-NEXT: v331: i32 = BitOr v322, v330
-# CHECK-NEXT: v332: int[-4294966638, 4294967952] = Add v329, v331
-# CHECK-NEXT: v333: boolean = StrictEq v322, v322
-# CHECK-NEXT: Branch v333 -> taken b91(), notTaken b92()
+# CHECK-NEXT: v322: 0 = Integer
+# CHECK-NEXT: v323: i32 = BitOr v310, v322
+# CHECK-NEXT: v324: fact = Entered function=f1
+# CHECK-NEXT: v325: int|whole = Increment v311
+# CHECK-NEXT: PutModuleVariable v325 variable=g8
+# CHECK-NEXT: v327: 31 = Integer integer=31
+# CHECK-NEXT: v328: i32 = CallBuiltin -, v312, v327 overload=MathImul/0 accessSite=8
+# CHECK-NEXT: v329: 658 = Integer integer=658
+# CHECK-NEXT: v330: int[-2147482990, 2147484305] = Add v328, v329
+# CHECK-NEXT: v331: 0 = Integer
+# CHECK-NEXT: v332: i32 = BitOr v323, v331
+# CHECK-NEXT: v333: int[-4294966638, 4294967952] = Add v330, v332
+# CHECK-NEXT: v334: boolean = StrictEq v323, v323
+# CHECK-NEXT: Branch v334 -> taken b91(), notTaken b92()
 # CHECK-NEXT: b91():
-# CHECK-NEXT: v334: 0 = Integer
-# CHECK-NEXT: Jump -> next b93(v334)
-# CHECK-NEXT: b92():
-# CHECK-NEXT: v335: 13 = Integer integer=13
+# CHECK-NEXT: v335: 0 = Integer
 # CHECK-NEXT: Jump -> next b93(v335)
-# CHECK-NEXT: b93(v336: int[0, 13]):
-# CHECK-NEXT: v337: int[-4294966638, 4294967965] = Add v332, v336
-# CHECK-NEXT: v338: whole = Double number=-0
-# CHECK-NEXT: v339: boolean = CallBuiltin -, v322, v338 overload=ObjectIs/0 accessSite=9
-# CHECK-NEXT: Branch v339 -> taken b94(), notTaken b95()
+# CHECK-NEXT: b92():
+# CHECK-NEXT: v336: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b93(v336)
+# CHECK-NEXT: b93(v337: int[0, 13]):
+# CHECK-NEXT: v338: int[-4294966638, 4294967965] = Add v333, v337
+# CHECK-NEXT: v339: whole = Double number=-0
+# CHECK-NEXT: v340: boolean = CallBuiltin -, v323, v339 overload=ObjectIs/0 accessSite=9
+# CHECK-NEXT: Branch v340 -> taken b94(), notTaken b95()
 # CHECK-NEXT: b94():
-# CHECK-NEXT: v340: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b96(v340)
-# CHECK-NEXT: b95():
-# CHECK-NEXT: v341: 0 = Integer
+# CHECK-NEXT: v341: 17 = Integer integer=17
 # CHECK-NEXT: Jump -> next b96(v341)
-# CHECK-NEXT: b96(v342: int[0, 17]):
-# CHECK-NEXT: v343: int[-4294966638, 4294967982] = Add v337, v342
-# CHECK-NEXT: v344: 0 = Integer
-# CHECK-NEXT: v345: i32 = BitOr v343, v344
-# CHECK-NEXT: PutModuleVariable v345 variable=g7
-# CHECK-NEXT: v347: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v212, v323 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v348: int[0, 4294967295] = CallBuiltin v347 overload=ArrayPrototypeLength/0 accessSite=10
-# CHECK-NEXT: v349: 60 = Integer integer=60
-# CHECK-NEXT: v350: boolean = Less v348, v349
-# CHECK-NEXT: Branch v350 -> taken b97(), notTaken b98()
+# CHECK-NEXT: b95():
+# CHECK-NEXT: v342: 0 = Integer
+# CHECK-NEXT: Jump -> next b96(v342)
+# CHECK-NEXT: b96(v343: int[0, 17]):
+# CHECK-NEXT: v344: int[-4294966638, 4294967982] = Add v338, v343
+# CHECK-NEXT: v345: 0 = Integer
+# CHECK-NEXT: v346: i32 = BitOr v344, v345
+# CHECK-NEXT: PutModuleVariable v346 variable=g7
+# CHECK-NEXT: v348: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v212, v324 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v349: int[0, 4294967295] = CallBuiltin v348 overload=ArrayPrototypeLength/0 accessSite=10
+# CHECK-NEXT: v350: 60 = Integer integer=60
+# CHECK-NEXT: v351: boolean = Less v349, v350
+# CHECK-NEXT: Branch v351 -> taken b97(), notTaken b98()
 # CHECK-NEXT: b97():
-# CHECK-NEXT: v351: "94:" = String string="94:"
-# CHECK-NEXT: v352: string = CallBuiltin -, v322 overload=String/0 accessSite=12
-# CHECK-NEXT: v353: string = Add v351, v352
-# CHECK-NEXT: v354: int[0, 4294967295] = CallBuiltin v347, v353 overload=ArrayPrototypePush/0 accessSite=13
+# CHECK-NEXT: v352: "94:" = String string="94:"
+# CHECK-NEXT: v353: string = CallBuiltin -, v323 overload=String/0 accessSite=12
+# CHECK-NEXT: v354: string = Add v352, v353
+# CHECK-NEXT: v355: int[0, 4294967295] = CallBuiltin v348, v354 overload=ArrayPrototypePush/0 accessSite=13
 # CHECK-NEXT: Jump -> next b98()
 # CHECK-NEXT: b98():
-# CHECK-NEXT: v355: 6 = Integer integer=6
-# CHECK-NEXT: v356: int[-5, 5]|whole = Mod v322, v355
-# CHECK-NEXT: v357: 0 = Integer
-# CHECK-NEXT: v358: i32 = BitOr v356, v357
-# CHECK-NEXT: Switch v358 cases=[4, 0, 5, 1] -> case b99(v309, v316, v448), case b100(), case b106(), case b109(v309), otherwise b107()
-# CHECK-NEXT: b99(v359: number, v360: int[1, 5], v450: env L0):
-# CHECK-NEXT: v361: 87 = Integer integer=87
-# CHECK-NEXT: v362: 3 = Integer integer=3
-# CHECK-NEXT: v363: int[-5, -1] = Negate v360
-# CHECK-NEXT: v364: i32 = LShift v362, v363
-# CHECK-NEXT: v365: 88 = Integer integer=88
-# CHECK-NEXT: v366: number = CallDirect v365, v206 function=f1 accessSite=80
-# CHECK-NEXT: v367: i32 = BitOr v364, v366
-# CHECK-NEXT: v368: 89 = Integer integer=89
-# CHECK-NEXT: v369: number = CallDirect v368, v359 function=f1 accessSite=81
-# CHECK-NEXT: v370: number = CallBuiltin -, v206 overload=MathFround/0 accessSite=82
-# CHECK-NEXT: v371: number = Add v369, v370
-# CHECK-NEXT: v372: number = CallBuiltin -, v48, v371 overload=MathMin/0 accessSite=83
-# CHECK-NEXT: v373: i32 = LShift v367, v372
-# CHECK-NEXT: v374: number = CallDirect v361, v373 function=f1 accessSite=84
-# CHECK-NEXT: Jump -> next b105(v360, v450)
+# CHECK-NEXT: v356: 6 = Integer integer=6
+# CHECK-NEXT: v357: int[-5, 5]|whole = Mod v323, v356
+# CHECK-NEXT: v358: 0 = Integer
+# CHECK-NEXT: v359: i32 = BitOr v357, v358
+# CHECK-NEXT: Switch v359 cases=[4, 0, 5, 1] -> case b99(v310, v317, v481), case b100(), case b106(), case b109(v310), otherwise b107()
+# CHECK-NEXT: b99(v360: number, v361: int[1, 5], v483: env L0):
+# CHECK-NEXT: v362: 87 = Integer integer=87
+# CHECK-NEXT: v363: 3 = Integer integer=3
+# CHECK-NEXT: v364: int[-5, -1] = Negate v361
+# CHECK-NEXT: v365: i32 = LShift v363, v364
+# CHECK-NEXT: v366: 88 = Integer integer=88
+# CHECK-NEXT: v367: number = CallDirect v366, v206 function=f1 accessSite=80
+# CHECK-NEXT: v368: i32 = BitOr v365, v367
+# CHECK-NEXT: v369: 89 = Integer integer=89
+# CHECK-NEXT: v370: number = CallDirect v369, v360 function=f1 accessSite=81
+# CHECK-NEXT: v371: number = CallBuiltin -, v206 overload=MathFround/0 accessSite=82
+# CHECK-NEXT: v372: number = Add v370, v371
+# CHECK-NEXT: v373: number = CallBuiltin -, v48, v372 overload=MathMin/0 accessSite=83
+# CHECK-NEXT: v374: i32 = LShift v368, v373
+# CHECK-NEXT: v375: number = CallDirect v362, v374 function=f1 accessSite=84
+# CHECK-NEXT: Jump -> next b105(v361, v483)
 # CHECK-NEXT: b100():
-# CHECK-NEXT: v375: i32 = BitAnd v206, v209
-# CHECK-NEXT: v376: 6 = Integer integer=6
-# CHECK-NEXT: v377: int[-5, 5]|whole = Mod v375, v376
-# CHECK-NEXT: v378: 0 = Integer
-# CHECK-NEXT: v379: i32 = BitOr v377, v378
-# CHECK-NEXT: Switch v379 cases=[-1] -> case b101(), otherwise b102(v309, v316, v448)
+# CHECK-NEXT: v376: i32 = BitAnd v206, v209
+# CHECK-NEXT: v377: 6 = Integer integer=6
+# CHECK-NEXT: v378: int[-5, 5]|whole = Mod v376, v377
+# CHECK-NEXT: v379: 0 = Integer
+# CHECK-NEXT: v380: i32 = BitOr v378, v379
+# CHECK-NEXT: Switch v380 cases=[-1] -> case b101(), otherwise b102(v310, v317, v481)
 # CHECK-NEXT: b101():
 # CHECK-NEXT: Jump -> next b106()
-# CHECK-NEXT: b102(v380: number, v381: int[1, 5], v451: env L0):
-# CHECK-NEXT: v382: 90 = Integer integer=90
-# CHECK-NEXT: v383: number = Negate v380
-# CHECK-NEXT: v384: number = CallDirect v382, v383 function=f1 accessSite=85
-# CHECK-NEXT: Jump -> next b103(v381, v451)
-# CHECK-NEXT: b103(v385: int[1, 5], v453: env L0):
-# CHECK-NEXT: Jump -> next b104(v385, v453)
-# CHECK-NEXT: b104(v386: int[1, 5], v454: env L0):
-# CHECK-NEXT: Jump -> next b105(v386, v454)
-# CHECK-NEXT: b105(v387: int[1, 5], v455: env L0):
-# CHECK-NEXT: v445: env L0 = MaterializeEnvironment v455 layout=L0
-# CHECK-NEXT: v388: f8 = NewClosure v445, v387 function=f8 allocationSite=4
-# CHECK-NEXT: v389: int[0, 4294967295] = CallBuiltin v210, v388 overload=ArrayPrototypePush/0 accessSite=89
-# CHECK-NEXT: Jump -> next b87(v387, v445)
+# CHECK-NEXT: b102(v381: number, v382: int[1, 5], v484: env L0):
+# CHECK-NEXT: v383: 90 = Integer integer=90
+# CHECK-NEXT: v384: number = Negate v381
+# CHECK-NEXT: v385: number = CallDirect v383, v384 function=f1 accessSite=85
+# CHECK-NEXT: Jump -> next b103(v382, v484)
+# CHECK-NEXT: b103(v386: int[1, 5], v486: env L0):
+# CHECK-NEXT: Jump -> next b104(v386, v486)
+# CHECK-NEXT: b104(v387: int[1, 5], v487: env L0):
+# CHECK-NEXT: Jump -> next b105(v387, v487)
+# CHECK-NEXT: b105(v388: int[1, 5], v488: env L0):
+# CHECK-NEXT: v478: env L0 = MaterializeEnvironment v488 layout=L0
+# CHECK-NEXT: v389: f8 = NewClosure v478, v388 function=f8 allocationSite=4
+# CHECK-NEXT: v390: int[0, 4294967295] = CallBuiltin v210, v389 overload=ArrayPrototypePush/0 accessSite=89
+# CHECK-NEXT: Jump -> next b87(v388, v478)
 # CHECK-NEXT: b106():
-# CHECK-NEXT: Jump -> next b117(v309, v317)
+# CHECK-NEXT: Jump -> next b117(v310, v318)
 # CHECK-NEXT: b107():
-# CHECK-NEXT: v390: number = CallBuiltin -, v309 overload=MathAbs/0 accessSite=86
-# CHECK-NEXT: v391: number = Add v390, v206
-# CHECK-NEXT: v392: boolean = StrictEq v391, v316
-# CHECK-NEXT: Branch v392 -> taken b108(), notTaken b76(v309, v316, v448)
+# CHECK-NEXT: v391: number = CallBuiltin -, v310 overload=MathAbs/0 accessSite=86
+# CHECK-NEXT: v392: number = Add v391, v206
+# CHECK-NEXT: v393: boolean = StrictEq v392, v317
+# CHECK-NEXT: Branch v393 -> taken b108(), notTaken b76(v310, v317, v318, v481)
 # CHECK-NEXT: b108():
-# CHECK-NEXT: v393: 1 = Integer integer=1
-# CHECK-NEXT: PutEnvironmentField v448, v393 layout=L0
-# CHECK-NEXT: Jump -> next b109(v393)
-# CHECK-NEXT: b109(v395: number):
-# CHECK-NEXT: v396: -2 = Integer integer=-2
-# CHECK-NEXT: Jump -> next b110(v396, v395, v317)
-# CHECK-NEXT: b110(v397: int[-2, 4], v398: number, v399: int|whole):
+# CHECK-NEXT: v394: 1 = Integer integer=1
+# CHECK-NEXT: PutEnvironmentField v481, v394 layout=L0
+# CHECK-NEXT: Jump -> next b109(v394)
+# CHECK-NEXT: b109(v396: number):
+# CHECK-NEXT: v397: -2 = Integer integer=-2
+# CHECK-NEXT: Jump -> next b110(v397, v318, v396)
+# CHECK-NEXT: b110(v398: int[-2, 4], v399: int|whole, v400: number):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v401: 4 = Integer integer=4
-# CHECK-NEXT: v402: boolean = Less v397, v401
-# CHECK-NEXT: Branch v402 -> taken b111(| 0), notTaken b114()
-# CHECK-NEXT: b111(v403: int[-2, 3]):
-# CHECK-NEXT: v404: int|whole = Decrement v399
-# CHECK-NEXT: PutModuleVariable v404 variable=g6
-# CHECK-NEXT: v406: 0 = Integer
-# CHECK-NEXT: v407: boolean = Less v404, v406
-# CHECK-NEXT: Branch v407 -> taken b112(), notTaken b113()
+# CHECK-NEXT: v402: 4 = Integer integer=4
+# CHECK-NEXT: v403: boolean = Less v398, v402
+# CHECK-NEXT: Branch v403 -> taken b111(| 0), notTaken b114()
+# CHECK-NEXT: b111(v404: int[-2, 3]):
+# CHECK-NEXT: v405: int|whole = Decrement v399
+# CHECK-NEXT: PutModuleVariable v405 variable=g6
+# CHECK-NEXT: v407: 0 = Integer
+# CHECK-NEXT: v408: boolean = Less v405, v407
+# CHECK-NEXT: Branch v408 -> taken b112(), notTaken b113()
 # CHECK-NEXT: b112():
-# CHECK-NEXT: Jump -> next b115(v404)
+# CHECK-NEXT: Jump -> next b115(v405)
 # CHECK-NEXT: b113():
-# CHECK-NEXT: v408: number = Increment v398
-# CHECK-NEXT: PutEnvironmentField v448, v408 layout=L0
-# CHECK-NEXT: v410: int[-1, 4] = Increment v403
-# CHECK-NEXT: Jump -> next b110(v410, v408, v404)
+# CHECK-NEXT: v409: number = Increment v400
+# CHECK-NEXT: PutEnvironmentField v481, v409 layout=L0
+# CHECK-NEXT: v411: int[-1, 4] = Increment v404
+# CHECK-NEXT: Jump -> next b110(v411, v405, v409)
 # CHECK-NEXT: b114():
 # CHECK-NEXT: Jump -> next b115(v399)
-# CHECK-NEXT: b115(v411: int|whole):
-# CHECK-NEXT: v412: int[0, 4294967295] = URShift v206, v206
-# CHECK-NEXT: v413: number = Mul v316, v206
-# CHECK-NEXT: v414: number = Mod v412, v413
-# CHECK-NEXT: v415: boolean = StrictEq v206, v414
-# CHECK-NEXT: Branch v415 -> taken b116(), notTaken b118()
+# CHECK-NEXT: b115(v412: int|whole):
+# CHECK-NEXT: v413: int[0, 4294967295] = URShift v206, v206
+# CHECK-NEXT: v414: number = Mul v317, v206
+# CHECK-NEXT: v415: number = Mod v413, v414
+# CHECK-NEXT: v416: boolean = StrictEq v206, v415
+# CHECK-NEXT: Branch v416 -> taken b116(), notTaken b118()
 # CHECK-NEXT: b116():
-# CHECK-NEXT: Jump -> next b117(v398, v411)
-# CHECK-NEXT: b117(v416: number, v417: int|whole):
-# CHECK-NEXT: v446: env L0 = MaterializeEnvironment v448 layout=L0
-# CHECK-NEXT: v418: f8 = NewClosure v446, v316 function=f8 allocationSite=4
-# CHECK-NEXT: v419: int[0, 4294967295] = CallBuiltin v210, v418 overload=ArrayPrototypePush/0 accessSite=89
-# CHECK-NEXT: Jump -> next b119(v416, v417, v446)
+# CHECK-NEXT: Jump -> next b117(v400, v412)
+# CHECK-NEXT: b117(v417: number, v418: int|whole):
+# CHECK-NEXT: v479: env L0 = MaterializeEnvironment v481 layout=L0
+# CHECK-NEXT: v419: f8 = NewClosure v479, v317 function=f8 allocationSite=4
+# CHECK-NEXT: v420: int[0, 4294967295] = CallBuiltin v210, v419 overload=ArrayPrototypePush/0 accessSite=89
+# CHECK-NEXT: Jump -> next b119(v417, v418, v479)
 # CHECK-NEXT: b118():
-# CHECK-NEXT: Jump -> next b119(v398, v411, v448)
-# CHECK-NEXT: b119(v420: number, v421: int|whole, v447: env L0):
-# CHECK-NEXT: v422: int[3, 6] = Increment v316
-# CHECK-NEXT: Jump -> next b88(v422, v420, v324, v345, v421, v447)
-# CHECK-NEXT: b120(v452: env L0):
-# CHECK-NEXT: v423: number = GetEnvironmentField v452 layout=L0
-# CHECK-NEXT: v424: number = Mod v206, v423
-# CHECK-NEXT: v425: boolean = LessEq v423, v206
-# CHECK-NEXT: Branch v425 -> taken b121(v206), notTaken b121(v423)
-# CHECK-NEXT: b121(v426: number):
-# CHECK-NEXT: v427: boolean = StrictEq v424, v426
-# CHECK-NEXT: Branch v427 -> taken b122(), notTaken b123()
+# CHECK-NEXT: Jump -> next b119(v400, v412, v481)
+# CHECK-NEXT: b119(v421: number, v422: int|whole, v480: env L0):
+# CHECK-NEXT: v423: int[3, 6] = Increment v317
+# CHECK-NEXT: Jump -> next b88(v423, v421, v325, v346, v422, v480)
+# CHECK-NEXT: b120(v485: env L0):
+# CHECK-NEXT: v424: number = GetEnvironmentField v485 layout=L0
+# CHECK-NEXT: v425: number = Mod v206, v424
+# CHECK-NEXT: v426: boolean = LessEq v424, v206
+# CHECK-NEXT: Branch v426 -> taken b121(v206), notTaken b121(v424)
+# CHECK-NEXT: b121(v427: number):
+# CHECK-NEXT: v428: boolean = StrictEq v425, v427
+# CHECK-NEXT: Branch v428 -> taken b122(), notTaken b123()
 # CHECK-NEXT: b122():
-# CHECK-NEXT: v428: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b124(v428)
+# CHECK-NEXT: v429: 3 = Integer integer=3
+# CHECK-NEXT: Jump -> next b124(v429)
 # CHECK-NEXT: b123():
-# CHECK-NEXT: v429: number = ToNumber v423 calledBuiltin=MathImul
-# CHECK-NEXT: v430: i32 = ToInt32 v429
-# CHECK-NEXT: v431: number = ToNumber v206 calledBuiltin=MathImul
-# CHECK-NEXT: v432: i32 = ToInt32 v431
-# CHECK-NEXT: v433: i32 = CallBuiltin -, v430, v432 overload=MathImul/0 accessSite=90
-# CHECK-NEXT: Jump -> next b124(v433)
-# CHECK-NEXT: b124(v434: i32):
-# CHECK-NEXT: v435: 95 = Integer integer=95
-# CHECK-NEXT: v436: number = CallDirect v435, v434 function=f1 accessSite=91
-# CHECK-NEXT: v437: boolean = Less v436, v206
-# CHECK-NEXT: Branch v437 -> taken b125(), notTaken b126()
+# CHECK-NEXT: v430: number = ToNumber v424 calledBuiltin=MathImul
+# CHECK-NEXT: v431: i32 = ToInt32 v430
+# CHECK-NEXT: v432: number = ToNumber v206 calledBuiltin=MathImul
+# CHECK-NEXT: v433: i32 = ToInt32 v432
+# CHECK-NEXT: v434: i32 = CallBuiltin -, v431, v433 overload=MathImul/0 accessSite=90
+# CHECK-NEXT: Jump -> next b124(v434)
+# CHECK-NEXT: b124(v435: i32):
+# CHECK-NEXT: v436: fact = Entered function=f1
+# CHECK-NEXT: v437: int|whole = GetModuleVariable fact=v436 variable=g8
+# CHECK-NEXT: v438: int|whole = Increment v437
+# CHECK-NEXT: PutModuleVariable v438 variable=g8
+# CHECK-NEXT: v440: i32 = GetModuleVariable fact=v436 variable=g7
+# CHECK-NEXT: v441: 31 = Integer integer=31
+# CHECK-NEXT: v442: i32 = CallBuiltin -, v440, v441 overload=MathImul/0 accessSite=8
+# CHECK-NEXT: v443: 665 = Integer integer=665
+# CHECK-NEXT: v444: int[-2147482983, 2147484312] = Add v442, v443
+# CHECK-NEXT: v445: 0 = Integer
+# CHECK-NEXT: v446: i32 = BitOr v435, v445
+# CHECK-NEXT: v447: int[-4294966631, 4294967959] = Add v444, v446
+# CHECK-NEXT: v448: boolean = StrictEq v435, v435
+# CHECK-NEXT: Branch v448 -> taken b125(), notTaken b126()
 # CHECK-NEXT: b125():
-# CHECK-NEXT: v438: number = Mod v206, v423
-# CHECK-NEXT: v439: number = Add v438, v423
-# CHECK-NEXT: v440: number = Mod v439, v423
-# CHECK-NEXT: Return v440
+# CHECK-NEXT: v449: 0 = Integer
+# CHECK-NEXT: Jump -> next b127(v449)
 # CHECK-NEXT: b126():
-# CHECK-NEXT: v441: 96 = Integer integer=96
-# CHECK-NEXT: v442: int[0, 4294967295] = URShift v423, v206
-# CHECK-NEXT: v443: number = Mul v206, v442
-# CHECK-NEXT: v444: number = CallDirect v441, v443 function=f1 accessSite=92
-# CHECK-NEXT: ReturnCall v444 casts=[{declared={type=number site=w144 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w12 flags=[IsExpected]} resolution=Nothing}, {declared={type=number} resolution=Assume}]
-# CHECK-NEXT: b127():
-# CHECK-NEXT: Throw v155
+# CHECK-NEXT: v450: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b127(v450)
+# CHECK-NEXT: b127(v451: int[0, 13]):
+# CHECK-NEXT: v452: int[-4294966631, 4294967972] = Add v447, v451
+# CHECK-NEXT: v453: whole = Double number=-0
+# CHECK-NEXT: v454: boolean = CallBuiltin -, v435, v453 overload=ObjectIs/0 accessSite=9
+# CHECK-NEXT: Branch v454 -> taken b128(), notTaken b129()
 # CHECK-NEXT: b128():
+# CHECK-NEXT: v455: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b130(v455)
+# CHECK-NEXT: b129():
+# CHECK-NEXT: v456: 0 = Integer
+# CHECK-NEXT: Jump -> next b130(v456)
+# CHECK-NEXT: b130(v457: int[0, 17]):
+# CHECK-NEXT: v458: int[-4294966631, 4294967989] = Add v452, v457
+# CHECK-NEXT: v459: 0 = Integer
+# CHECK-NEXT: v460: i32 = BitOr v458, v459
+# CHECK-NEXT: PutModuleVariable v460 variable=g7
+# CHECK-NEXT: v462: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable fact=v436 variable=g9
+# CHECK-NEXT: v463: int[0, 4294967295] = CallBuiltin v462 overload=ArrayPrototypeLength/0 accessSite=10
+# CHECK-NEXT: v464: 60 = Integer integer=60
+# CHECK-NEXT: v465: boolean = Less v463, v464
+# CHECK-NEXT: Branch v465 -> taken b131(), notTaken b132()
+# CHECK-NEXT: b131():
+# CHECK-NEXT: v466: "95:" = String string="95:"
+# CHECK-NEXT: v467: string = CallBuiltin -, v435 overload=String/0 accessSite=12
+# CHECK-NEXT: v468: string = Add v466, v467
+# CHECK-NEXT: v469: int[0, 4294967295] = CallBuiltin v462, v468 overload=ArrayPrototypePush/0 accessSite=13
+# CHECK-NEXT: Jump -> next b132()
+# CHECK-NEXT: b132():
+# CHECK-NEXT: v470: boolean = Less v435, v206
+# CHECK-NEXT: Branch v470 -> taken b133(), notTaken b134()
+# CHECK-NEXT: b133():
+# CHECK-NEXT: v471: number = Mod v206, v424
+# CHECK-NEXT: v472: number = Add v471, v424
+# CHECK-NEXT: v473: number = Mod v472, v424
+# CHECK-NEXT: Return v473
+# CHECK-NEXT: b134():
+# CHECK-NEXT: v474: 96 = Integer integer=96
+# CHECK-NEXT: v475: int[0, 4294967295] = URShift v424, v206
+# CHECK-NEXT: v476: number = Mul v206, v475
+# CHECK-NEXT: v477: number = CallDirect v474, v476 function=f1 accessSite=92
+# CHECK-NEXT: ReturnCall v477 casts=[{declared={type=number site=w144 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w12 flags=[IsExpected]} resolution=Nothing}, {declared={type=number} resolution=Assume}]
+# CHECK-NEXT: b135():
+# CHECK-NEXT: Throw v155
+# CHECK-NEXT: b136():
 # CHECK-NEXT: Throw v39
 # CHECK-NEXT: }

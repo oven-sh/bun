@@ -185,10 +185,10 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: BB#0: ; frequency = 1.000000
 # CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
 # CHECK-NEXT: Int32 b@24 = Load(b@18, offset = 12, ControlDependent|ReadsImmutable|Reads:AOTObject_shapeWord, v3:TypeTest)
-# CHECK-NEXT: Int32 b@25 = Const32(6, v3:TypeTest)
-# CHECK-NEXT: Int32 b@26 = Add(b@24, $6(b@25), v3:TypeTest)
-# CHECK-NEXT: Int32 b@27 = Const32(3, v3:TypeTest)
-# CHECK-NEXT: Int32 b@28 = Below(b@26, $3(b@27), v3:TypeTest)
+# CHECK-NEXT: Int32 b@25 = Const32(3, v3:TypeTest)
+# CHECK-NEXT: Int32 b@26 = Add(b@24, $3(b@25), v3:TypeTest)
+# CHECK-NEXT: Int32 b@27 = Const32(2, v3:TypeTest)
+# CHECK-NEXT: Int32 b@28 = Below(b@26, $2(b@27), v3:TypeTest)
 # CHECK-NEXT: Void b@29 = Branch(b@28, Terminal, v3:TypeTest)
 # CHECK-NEXT: Successors: Then:#3, Else:Rare:#1
 # CHECK-NEXT: BB#3: ; frequency = 0.999023
@@ -200,8 +200,8 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Successors: Then:#11, Else:Unlikely:#7
 # CHECK-NEXT: BB#11: ; frequency = 0.940257
 # CHECK-NEXT: Predecessors: #3
-# CHECK-NEXT: Int32 b@34 = Const32(-4, v5:PutSlotOrAdd)
-# CHECK-NEXT: Int32 b@35 = Equal(b@24, $-4(b@34), v5:PutSlotOrAdd)
+# CHECK-NEXT: Int32 b@34 = Const32(-2, v5:PutSlotOrAdd)
+# CHECK-NEXT: Int32 b@35 = Equal(b@24, $-2(b@34), v5:PutSlotOrAdd)
 # CHECK-NEXT: Void b@77 = Branch(b@35, Terminal, v5:PutSlotOrAdd)
 # CHECK-NEXT: Successors: Then:#4, Else:Unlikely:#7
 # CHECK-NEXT: BB#4: ; frequency = 0.884948

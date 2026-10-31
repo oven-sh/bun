@@ -412,7 +412,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f51 visibility=Private
 # -- generated: f0 fromParts
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 176, patchpoints: 21, rare instructions: 54, polls: 2
+# CHECK-NEXT: instructions: 175, patchpoints: 21, rare instructions: 54, polls: 2
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="fromParts"
 # CHECK: role=Source

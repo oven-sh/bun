@@ -158,13 +158,18 @@ fn compute_function_summaries(
     let with_fields_for_handlers = &parts.functions_with_fields_for_handlers;
     let mut summaries = Vec::with_capacity(functions.len());
     let mut captures = Vec::new();
+    let mut flags_of_fields = vec![FunctionFlags::default(); functions.len()];
+    for &(member, function) in &context.walk.function_of_field {
+        flags_of_fields[function.index()] |=
+            compute_arguments_entry_flags(parts, CodeUnit::FieldInitializer(member));
+    }
     for (id, function) in (0..).map(WalkedFunctionId).zip(functions) {
         let start = captures.len() as u32;
         captures.extend_from_slice(&parts.captures.captures[id.index()]);
         summaries.push(FunctionSummary {
             key: function.key,
             entry_flags: compute_entry_flags(context, function.key, parts)
-                | compute_field_arguments_flags(context, function.key, id, parts),
+                | compute_field_arguments_flags(context, function.key, flags_of_fields[id.index()]),
             undeclared_parameters: count_undeclared_parameters(context, function.key),
             captures: start..captures.len() as u32,
             has_too_many_captures: over_limit.binary_search(&id).is_ok(),
@@ -279,14 +284,8 @@ fn compute_arguments_entry_flags(parts: &Parts, unit: CodeUnit) -> FunctionFlags
 fn compute_field_arguments_flags(
     context: &Context<'_, '_>,
     key: FunctionKey,
-    id: WalkedFunctionId,
-    parts: &Parts,
+    flags: FunctionFlags,
 ) -> FunctionFlags {
-    let fields = context.walk.function_of_field.iter();
-    let mut flags = FunctionFlags::default();
-    for &(member, _) in fields.filter(|field| field.1 == id) {
-        flags |= compute_arguments_entry_flags(parts, CodeUnit::FieldInitializer(member));
-    }
     match key {
         FunctionKey::Source(source) if has_rest_parameter(context, source.function) => {
             flags.without(FunctionFlags::HAS_HIDDEN_REST)

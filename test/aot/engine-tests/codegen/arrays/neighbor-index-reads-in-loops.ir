@@ -514,13 +514,13 @@ runtimefunction id=WrittenListsArrayFromLength function=f34
 # -- generated: differencesFromTwo downBehindToZero shiftUp
 # CHECK-LABEL: function {{*}}name="differencesFromTwo"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 42, patchpoints: 0, rare instructions: 108
+# CHECK-NEXT: instructions: 46, patchpoints: 0, rare instructions: 165
 # CHECK-NEXT: end of function f3
 # CHECK-LABEL: function {{*}}name="downBehindToZero"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 51, patchpoints: 0, rare instructions: 118
+# CHECK-NEXT: instructions: 54, patchpoints: 0, rare instructions: 131
 # CHECK-NEXT: end of function f10
 # CHECK-LABEL: function {{*}}name="shiftUp"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 88, patchpoints: 1, rare instructions: 141, polls: 1
+# CHECK-NEXT: instructions: 84, patchpoints: 1, rare instructions: 120, polls: 1
 # CHECK-NEXT: end of function f11

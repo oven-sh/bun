@@ -1,12 +1,13 @@
 use super::call_sites::{
     expr_kind, find_module_printed_as_require, find_request_of_exports, is_free_common_js,
+    is_free_name,
 };
 use crate::atom::{Atom, known};
 use crate::bind::{
     Binding, BindingInitializer, BindingStability, Bound, CodeUnit, CommonJsVariable, Decl,
     FnOwner, InitialState, Parent, PatParent, SymbolId, has_mapped_arguments,
 };
-use crate::fold::Decisions;
+use crate::fold::{Decisions, find_export_of_module};
 use crate::hir::{
     BinOp, Branches, Call, Chain, ExprId, ExprKind, File, Flags, FnBody, FnId, FnKind, IdList,
     MemberKey, NodeData, PatKind, StmtKind, UnOp,
@@ -280,15 +281,56 @@ pub fn may_require_get_members(hir: &File<'_>, bound: &Bound<'_>) -> bool {
         })
 }
 
-fn names_own_file(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
-    let e = hir.skip_type_assertions(e);
+// Also in a variable: `const __filename = fileURLToPath(import.meta.url)`, as an ES module makes itself the name that a CommonJS file has.
+pub(crate) fn names_own_file(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
+    names_own_file_behind(hir, bound, e, LONGEST_CHAIN_OF_BINDINGS)
+}
+
+// Two variables may name each other: `const a = fileURLToPath(b), b = new URL(a)`.
+fn names_own_file_behind(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    e: ExprId,
+    conversions_left: usize,
+) -> bool {
+    settled_chain(hir, bound, e).any(|e| is_written_as_own_file(hir, bound, e, conversions_left))
+}
+
+fn is_written_as_own_file(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    e: ExprId,
+    conversions_left: usize,
+) -> bool {
     if is_free_common_js(hir, bound, e, CommonJsVariable::Filename) {
         return !may_be_modified(hir, bound, CommonJsVariable::Filename);
     }
     let is_import_meta_member = matches!(hir.member_key(e), Some((object, MemberKey::Name(name)))
         if (name == known::url || name == known::meta_filename || name == known::path)
             && matches!(expr_kind(hir, hir.skip_type_assertions(object)), Some(ExprKind::ImportMeta)));
-    is_import_meta_member && !bound.import_meta_may_be_modified()
+    if is_import_meta_member {
+        return !bound.import_meta_may_be_modified();
+    }
+    let Some(conversions_left) = conversions_left.checked_sub(1) else {
+        return false;
+    };
+    // `fileURLToPath(import.meta.url)`, `new URL(import.meta.url)`
+    let (call, is_conversion) = match expr_kind(hir, e) {
+        Some(ExprKind::Call(call)) => {
+            let is_url_module = |name: Atom| name == known::url || name == known::node_url;
+            let callee = hir[call].callee;
+            let export = find_export_of_module(hir, bound, callee, &|_| None, &is_url_module);
+            (hir[call], export == Some(known::fileURLToPath))
+        }
+        Some(ExprKind::New(call)) => {
+            let callee = hir.skip_type_assertions(hir[call].callee);
+            (hir[call], is_free_name(hir, bound, callee, &[known::URL]))
+        }
+        _ => return false,
+    };
+    is_conversion
+        && call.args.len() == 1
+        && names_own_file_behind(hir, bound, hir.id_at(call.args, 0), conversions_left)
 }
 
 fn is_made_for_own_file(text: Text<'_, '_, '_, '_>, e: ExprId, left: StepsLeft) -> bool {

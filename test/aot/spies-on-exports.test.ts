@@ -213,6 +213,41 @@ test("a spy replaces a name of a CommonJS file for the ES modules that import it
 
 const show = `console.log(byName(1, 2), byNamespace(1, 2), insideTheModule(2), notSpiedOn(8));`;
 
+test("a spy reaches a name of a CommonJS file through the files that export it again, for those who read the namespace objects", async () => {
+  await expectCompiledToRunAsPlain({
+    "node_modules/cjs-pkg/package.json": `{ "name": "cjs-pkg", "main": "index.js" }`,
+    "node_modules/cjs-pkg/index.js": `exports.add = function add(a, b) { return a + b; };`,
+    "local.cjs": `exports.add = function add(a, b) { return a + b; };`,
+    "named.ts": `
+      export { add as packageAdd } from "cjs-pkg";
+      export { add as localAdd } from "./local.cjs";`,
+    "twice.ts": `export { packageAdd as again } from "./named";`,
+    "star.ts": `export * from "cjs-pkg";`,
+    "one.test.ts": `
+      import { spyOn, test } from "bun:test";
+      import * as pkg from "cjs-pkg";
+      import * as local from "./local.cjs";
+      import * as named from "./named";
+      import * as twice from "./twice";
+      import * as star from "./star";
+      const all: [any, string][] = [[pkg, "add"], [local, "add"], [named, "packageAdd"], [named, "localAdd"], [twice, "again"], [star, "add"]];
+      const read = () => JSON.stringify(all.map(([holder, name]) => holder[name](1, 2)));
+      test("each in its turn", () => {
+        for (const [holder, name] of all) {
+          const spy = spyOn(holder, name).mockImplementation(() => 105);
+          console.log(name, read(), pkg.add(1, 2), local.add(1, 2), named.packageAdd(1, 2), named.localAdd(1, 2), twice.again(1, 2), star.add(1, 2), spy.mock.calls.length);
+          spy.mockRestore();
+          console.log(name, "restored", read());
+        }
+      });
+      test("by a name that is written out", () => {
+        const spy = spyOn(named, "packageAdd").mockImplementation(() => 105);
+        console.log(read(), spy.mock.calls.length);
+        spy.mockRestore();
+      });`,
+  });
+});
+
 test("a spy under names out of a list replaces each", async () => {
   const files = {
     "doors.ts": `

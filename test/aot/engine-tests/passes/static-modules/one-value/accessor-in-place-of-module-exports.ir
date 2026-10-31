@@ -549,117 +549,101 @@ function f16 module=m4 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v8: anything = PropGet v7 key="exports" accessSite=23
 # CHECK-NEXT: v9: anything ~ undefined|null|object = Upcast v8 castType=anything
 # CHECK-NEXT: v10: L0|Object = RequireObjectCoercible v6 name="info"
-# CHECK-NEXT: v11: boolean = TypeTest v10 testedType=L0
-# CHECK-NEXT: Branch v11 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: v11: anything = PropGet v10 key="info" accessSite=26
+# CHECK-NEXT: v12: string = TypeOf v11
+# CHECK-NEXT: v13: boolean = StrictEq v10, v9
+# CHECK-NEXT: v14: Array<string> = CallBuiltin -, v10 overload=ObjectKeys/0 accessSite=27
+# CHECK-NEXT: v15: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v14 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v16: int[0, 4294967295] = CallBuiltin v15 overload=ArrayPrototypeLength/0 accessSite=28
+# CHECK-NEXT: v17: anything = PropGet v10 key="info" accessSite=29
+# CHECK-NEXT: v18: undefined|f1 = AssumeType v17 provenType=undefined|f1
+# CHECK-NEXT: v19: boolean = TypeTest v18 testedType=f1
+# CHECK-NEXT: Branch v19 -> taken b1(), notTaken b15()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v12: undefined = Undefined
-# CHECK-NEXT: Jump -> next b3(v12)
-# CHECK-NEXT: b2(v13: Object) frequency=Unlikely:
-# CHECK-NEXT: v14: anything = PropGet v13 key="info" accessSite=26
-# CHECK-NEXT: Jump -> next b3(v14)
-# CHECK-NEXT: b3(v15: anything ~ undefined):
-# CHECK-NEXT: v16: string = TypeOf v15
-# CHECK-NEXT: v17: boolean = StrictEq v10, v9
-# CHECK-NEXT: v18: Array<string> = CallBuiltin -, v10 overload=ObjectKeys/0 accessSite=27
-# CHECK-NEXT: v19: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v18 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v20: int[0, 4294967295] = CallBuiltin v19 overload=ArrayPrototypeLength/0 accessSite=28
-# CHECK-NEXT: v21: boolean = TypeTest v10 testedType=L0
-# CHECK-NEXT: Branch v21 -> taken b20(), notTaken b4(| 0)
-# CHECK-NEXT: b4(v22: Object) frequency=Unlikely:
-# CHECK-NEXT: v23: anything = PropGet v22 key="info" accessSite=29
-# CHECK-NEXT: v24: undefined|f1 = AssumeType v23 provenType=undefined|f1
-# CHECK-NEXT: v25: undefined|f1 ~ undefined = Upcast v24 castType=undefined|f1
-# CHECK-NEXT: v26: boolean ~ false = TypeTest v25 testedType=f1
-# CHECK-NEXT: Branch v26 -> taken b5(), notTaken b20()
+# CHECK-NEXT: v20: "info" = String string="info"
+# CHECK-NEXT: v21: undefined = CallBuiltin -, v12, v13, v16, v20 overload=ConsoleLog/0 accessSite=31
+# CHECK-NEXT: v22: builtin(ModuleObject) = ModuleBuiltin builtin=ModuleObject module=m0
+# CHECK-NEXT: v23: anything = PropGet v22 key="exports" accessSite=32
+# CHECK-NEXT: v24: undefined|L0|Object = AssumeType v23 provenType=undefined|L0|Object
+# CHECK-NEXT: v25: boolean = TypeTest v24 testedType=undefined|null
+# CHECK-NEXT: Branch v25 -> taken b2(), notTaken b3(| 0)
+# CHECK-NEXT: b2() frequency=Unlikely:
+# CHECK-NEXT: v26: object = NewRuntimeError runtimeError=NotDestructurable name="info"
+# CHECK-NEXT: Throw v26
+# CHECK-NEXT: b3(v27: L0|Object):
+# CHECK-NEXT: v28: anything = PropGet v27 key="info" accessSite=33
+# CHECK-NEXT: v29: undefined|f1 = AssumeType v28 provenType=undefined|f1
+# CHECK-NEXT: v30: boolean = TypeTest v29 testedType=f1
+# CHECK-NEXT: Branch v30 -> taken b4(), notTaken b14()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v31: "info" = String string="info"
+# CHECK-NEXT: v32: anything = GetGlobalBinding key="count" level=Expected accessSite=37 [seesScriptBindings]
+# CHECK-NEXT: v33: undefined|int|whole = AssumeType v32 provenType=undefined|int|whole
+# CHECK-NEXT: v34: undefined = CallBuiltin -, v31, v33 overload=ConsoleLog/0 accessSite=38
+# CHECK-NEXT: v35: undefined = CallDirect function=f7 calledBuiltin=PrivateGlobalsRequireCommonJS
+# CHECK-NEXT: v36: builtin(ModuleObject) = ModuleBuiltin builtin=ModuleObject module=m1
+# CHECK-NEXT: v37: anything = PropGet v36 key="exports" accessSite=39
+# CHECK-NEXT: v38: undefined|L3|L4 = AssumeType v37 provenType=undefined|L3|L4
+# CHECK-NEXT: v39: undefined|L3|L4 ~ L3 = Upcast v38 castType=anything
+# CHECK-NEXT: v40: L3|L4 ~ L3 = RequireObjectCoercible v39 name="a"
+# CHECK-NEXT: v41: anything = PropGet v40 key="a" accessSite=42 receivers=[L3, L4]
+# CHECK-NEXT: v42: undefined|int = AssumeType v41 provenType=undefined|int
+# CHECK-NEXT: v43: Array<string> = CallBuiltin -, v40 overload=ObjectKeys/0 accessSite=43
+# CHECK-NEXT: v44: Array<"a"|"b"|"lost", proven, pristine[Storage, Names, Dense]> = AssumeType v43 provenType=Array<"a"|"b"|"lost", proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v45: string = CallBuiltin v44 overload=ArrayPrototypeJoin/0 accessSite=45
+# CHECK-NEXT: v46: undefined = CallBuiltin -, v42, v45 overload=ConsoleLog/0 accessSite=46
+# CHECK-NEXT: v47: undefined = CallDirect function=f8 calledBuiltin=PrivateGlobalsRequireCommonJS
+# CHECK-NEXT: v48: builtin(ModuleObject) = ModuleBuiltin builtin=ModuleObject module=m2
+# CHECK-NEXT: v49: anything = PropGet v48 key="exports" accessSite=47
+# CHECK-NEXT: v50: undefined|L5|f10 = AssumeType v49 provenType=undefined|L5|f10
+# CHECK-NEXT: v51: string = TypeOf v50
+# CHECK-NEXT: v52: boolean = TypeTest v50 testedType=f10
+# CHECK-NEXT: Branch v52 -> taken b5(), notTaken b6(| 0)
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v27: "info" = String string="info"
-# CHECK-NEXT: v28: undefined = CallBuiltin -, v16, v17, v20, v27 overload=ConsoleLog/0 accessSite=31
-# CHECK-NEXT: v29: builtin(ModuleObject) = ModuleBuiltin builtin=ModuleObject module=m0
-# CHECK-NEXT: v30: anything = PropGet v29 key="exports" accessSite=32
-# CHECK-NEXT: v31: undefined|L0|Object = AssumeType v30 provenType=undefined|L0|Object
-# CHECK-NEXT: v32: boolean = TypeTest v31 testedType=undefined|null
-# CHECK-NEXT: Branch v32 -> taken b6(), notTaken b7(| 0)
-# CHECK-NEXT: b6() frequency=Unlikely:
-# CHECK-NEXT: v33: object = NewRuntimeError runtimeError=NotDestructurable name="info"
-# CHECK-NEXT: Throw v33
-# CHECK-NEXT: b7(v34: L0|Object):
-# CHECK-NEXT: v35: boolean = TypeTest v34 testedType=L0
-# CHECK-NEXT: Branch v35 -> taken b19(), notTaken b8(| 0)
-# CHECK-NEXT: b8(v36: Object) frequency=Unlikely:
-# CHECK-NEXT: v37: anything = PropGet v36 key="info" accessSite=33
-# CHECK-NEXT: v38: undefined|f1 = AssumeType v37 provenType=undefined|f1
-# CHECK-NEXT: v39: undefined|f1 ~ undefined = Upcast v38 castType=undefined|f1
-# CHECK-NEXT: v40: boolean ~ false = TypeTest v39 testedType=f1
-# CHECK-NEXT: Branch v40 -> taken b9(), notTaken b19()
-# CHECK-NEXT: b9():
-# CHECK-NEXT: v41: "info" = String string="info"
-# CHECK-NEXT: v42: anything = GetGlobalBinding key="count" level=Expected accessSite=37 [seesScriptBindings]
-# CHECK-NEXT: v43: undefined|int|whole = AssumeType v42 provenType=undefined|int|whole
-# CHECK-NEXT: v44: undefined = CallBuiltin -, v41, v43 overload=ConsoleLog/0 accessSite=38
-# CHECK-NEXT: v45: undefined = CallDirect function=f7 calledBuiltin=PrivateGlobalsRequireCommonJS
-# CHECK-NEXT: v46: builtin(ModuleObject) = ModuleBuiltin builtin=ModuleObject module=m1
-# CHECK-NEXT: v47: anything = PropGet v46 key="exports" accessSite=39
-# CHECK-NEXT: v48: undefined|L3|L4 = AssumeType v47 provenType=undefined|L3|L4
-# CHECK-NEXT: v49: undefined|L3|L4 ~ L3 = Upcast v48 castType=anything
-# CHECK-NEXT: v50: L3|L4 ~ L3 = RequireObjectCoercible v49 name="a"
-# CHECK-NEXT: v51: anything = PropGet v50 key="a" accessSite=42 receivers=[L3, L4]
-# CHECK-NEXT: v52: undefined|int = AssumeType v51 provenType=undefined|int
-# CHECK-NEXT: v53: Array<string> = CallBuiltin -, v50 overload=ObjectKeys/0 accessSite=43
-# CHECK-NEXT: v54: Array<"a"|"b"|"lost", proven, pristine[Storage, Names, Dense]> = AssumeType v53 provenType=Array<"a"|"b"|"lost", proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v55: string = CallBuiltin v54 overload=ArrayPrototypeJoin/0 accessSite=45
-# CHECK-NEXT: v56: undefined = CallBuiltin -, v52, v55 overload=ConsoleLog/0 accessSite=46
-# CHECK-NEXT: v57: undefined = CallDirect function=f8 calledBuiltin=PrivateGlobalsRequireCommonJS
-# CHECK-NEXT: v58: builtin(ModuleObject) = ModuleBuiltin builtin=ModuleObject module=m2
-# CHECK-NEXT: v59: anything = PropGet v58 key="exports" accessSite=47
-# CHECK-NEXT: v60: undefined|L5|f10 = AssumeType v59 provenType=undefined|L5|f10
-# CHECK-NEXT: v61: string = TypeOf v60
-# CHECK-NEXT: v62: boolean = TypeTest v60 testedType=f10
-# CHECK-NEXT: Branch v62 -> taken b10(), notTaken b11(| 0)
-# CHECK-NEXT: b10():
-# CHECK-NEXT: v63: "published" = String string="published"
-# CHECK-NEXT: Jump -> next b12(v63)
-# CHECK-NEXT: b11(v64: undefined|L5) frequency=Unlikely:
-# CHECK-NEXT: v65: anything = Call v64 calleeName="handed" accessSite=50 callees=[f10, ..]
-# CHECK-NEXT: v66: "published" = AssumeType v65 provenType="published"
-# CHECK-NEXT: Jump -> next b12(v66)
-# CHECK-NEXT: b12(v67: "published"):
-# CHECK-NEXT: v68: undefined = CallBuiltin -, v61, v67 overload=ConsoleLog/0 accessSite=51
-# CHECK-NEXT: v69: undefined = CallDirect function=f12 calledBuiltin=PrivateGlobalsRequireCommonJS
-# CHECK-NEXT: v70: builtin(ModuleObject) = ModuleBuiltin builtin=ModuleObject module=m3
-# CHECK-NEXT: v71: anything = PropGet v70 key="exports" accessSite=52
-# CHECK-NEXT: v72: undefined|L6|f13 = AssumeType v71 provenType=undefined|L6|f13
-# CHECK-NEXT: v73: string = TypeOf v72
-# CHECK-NEXT: v74: L6|f13 = RequireObjectCoercible v72 name="version"
-# CHECK-NEXT: v75: boolean = TypeTest v74 testedType=L6
-# CHECK-NEXT: Branch v75 -> taken b13(| 0), notTaken b14(| 0)
-# CHECK-NEXT: b13(v76: L6):
-# CHECK-NEXT: v77: undefined|2 = GetSlotOrUndefined v76 key="version" receivers=[L6] level=Proven accessSite=55
-# CHECK-NEXT: Jump -> next b15(v77)
-# CHECK-NEXT: b14(v78: f13) frequency=Unlikely:
-# CHECK-NEXT: v79: anything = PropGet v78 key="version" accessSite=55 receivers=[L6, ..]
-# CHECK-NEXT: v80: undefined|int = AssumeType v79 provenType=undefined|int
-# CHECK-NEXT: Jump -> next b15(v80)
-# CHECK-NEXT: b15(v81: undefined|int ~ undefined|2):
-# CHECK-NEXT: v82: boolean = TypeTest v74 testedType=f13
-# CHECK-NEXT: Branch v82 -> taken b16(), notTaken b17(| 0)
-# CHECK-NEXT: b16():
-# CHECK-NEXT: v83: "held" = String string="held"
-# CHECK-NEXT: Jump -> next b18(v83)
-# CHECK-NEXT: b17(v84: L6) frequency=Unlikely:
-# CHECK-NEXT: v85: anything = Call v84 calleeName="held" accessSite=56 callees=[f13, ..]
-# CHECK-NEXT: v86: "held" = AssumeType v85 provenType="held"
-# CHECK-NEXT: Jump -> next b18(v86)
-# CHECK-NEXT: b18(v87: "held"):
-# CHECK-NEXT: v88: undefined = CallBuiltin -, v73, v81, v87 overload=ConsoleLog/0 accessSite=57
-# CHECK-NEXT: v89: undefined = Undefined
-# CHECK-NEXT: Return v89
-# CHECK-NEXT: b19() frequency=Unlikely:
-# CHECK-NEXT: v90: undefined = Undefined
-# CHECK-NEXT: v91: never = Call v90 calleeName="info" accessSite=36 callees=[f1]
+# CHECK-NEXT: v53: "published" = String string="published"
+# CHECK-NEXT: Jump -> next b7(v53)
+# CHECK-NEXT: b6(v54: undefined|L5) frequency=Unlikely:
+# CHECK-NEXT: v55: anything = Call v54 calleeName="handed" accessSite=50 callees=[f10, ..]
+# CHECK-NEXT: v56: "published" = AssumeType v55 provenType="published"
+# CHECK-NEXT: Jump -> next b7(v56)
+# CHECK-NEXT: b7(v57: "published"):
+# CHECK-NEXT: v58: undefined = CallBuiltin -, v51, v57 overload=ConsoleLog/0 accessSite=51
+# CHECK-NEXT: v59: undefined = CallDirect function=f12 calledBuiltin=PrivateGlobalsRequireCommonJS
+# CHECK-NEXT: v60: builtin(ModuleObject) = ModuleBuiltin builtin=ModuleObject module=m3
+# CHECK-NEXT: v61: anything = PropGet v60 key="exports" accessSite=52
+# CHECK-NEXT: v62: undefined|L6|f13 = AssumeType v61 provenType=undefined|L6|f13
+# CHECK-NEXT: v63: string = TypeOf v62
+# CHECK-NEXT: v64: L6|f13 = RequireObjectCoercible v62 name="version"
+# CHECK-NEXT: v65: boolean = TypeTest v64 testedType=L6
+# CHECK-NEXT: Branch v65 -> taken b8(| 0), notTaken b9(| 0)
+# CHECK-NEXT: b8(v66: L6):
+# CHECK-NEXT: v67: undefined|2 = GetSlotOrUndefined v66 key="version" receivers=[L6] level=Proven accessSite=55
+# CHECK-NEXT: Jump -> next b10(v67)
+# CHECK-NEXT: b9(v68: f13) frequency=Unlikely:
+# CHECK-NEXT: v69: anything = PropGet v68 key="version" accessSite=55 receivers=[L6, ..]
+# CHECK-NEXT: v70: undefined|int = AssumeType v69 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b10(v70)
+# CHECK-NEXT: b10(v71: undefined|int ~ undefined|2):
+# CHECK-NEXT: v72: boolean = TypeTest v64 testedType=f13
+# CHECK-NEXT: Branch v72 -> taken b11(), notTaken b12(| 0)
+# CHECK-NEXT: b11():
+# CHECK-NEXT: v73: "held" = String string="held"
+# CHECK-NEXT: Jump -> next b13(v73)
+# CHECK-NEXT: b12(v74: L6) frequency=Unlikely:
+# CHECK-NEXT: v75: anything = Call v74 calleeName="held" accessSite=56 callees=[f13, ..]
+# CHECK-NEXT: v76: "held" = AssumeType v75 provenType="held"
+# CHECK-NEXT: Jump -> next b13(v76)
+# CHECK-NEXT: b13(v77: "held"):
+# CHECK-NEXT: v78: undefined = CallBuiltin -, v63, v71, v77 overload=ConsoleLog/0 accessSite=57
+# CHECK-NEXT: v79: undefined = Undefined
+# CHECK-NEXT: Return v79
+# CHECK-NEXT: b14() frequency=Unlikely:
+# CHECK-NEXT: v80: undefined = Undefined
+# CHECK-NEXT: v81: never = Call v80 calleeName="info" accessSite=36 callees=[f1]
 # CHECK-NEXT: Unreachable
-# CHECK-NEXT: b20() frequency=Unlikely:
-# CHECK-NEXT: v92: undefined = Undefined
-# CHECK-NEXT: v93: never = Call v92, v10 calleeKey="info" calleeName="first.info" accessSite=30 callees=[f1]
+# CHECK-NEXT: b15() frequency=Unlikely:
+# CHECK-NEXT: v82: undefined = Undefined
+# CHECK-NEXT: v83: never = Call v82, v10 calleeKey="info" calleeName="first.info" accessSite=30 callees=[f1]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="noop"

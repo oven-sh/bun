@@ -77,7 +77,6 @@ export function elf(linker: Linker): LinkerFormat {
   let splitOrdinal = 0;
   const splitInPlace = (path: string) => splitMergeableSections(path, `${unnamedSectionPrefix}piece${splitOrdinal++}`);
   return {
-    relinksSameInputs: false,
     firstInputs: [],
     builtinModulesOutput: ".bun_builtins",
     isMovable,
@@ -98,7 +97,7 @@ export function elf(linker: Linker): LinkerFormat {
     },
     prepareCompiledObjects(objects) {
       for (const object of objects) splitInPlace(object);
-      return objects.length > 0;
+      return objects.length > 0 ? objects : undefined;
     },
     compiledObjects(link) {
       const objects = listCompiledObjects(link);

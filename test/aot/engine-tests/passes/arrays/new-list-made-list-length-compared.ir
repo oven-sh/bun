@@ -231,8 +231,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: v3: i32 = ResultAt v2
 # CHECK-NEXT: v4: unspecified|L0 = ResultAt v2 index=1
 # CHECK-NEXT: v5: null|unspecified = ResultAt v2 index=2
-# CHECK-NEXT: v6: undefined|int|unspecified|"a"|"b"|f2 = ResultAt v2 index=3
-# CHECK-NEXT: v7: undefined|int|unspecified|"a"|"b"|f2 = ResultAt v2 index=4
+# CHECK-NEXT: v6: undefined|int[1, 21]|unspecified|"a"|"b"|f2 = ResultAt v2 index=3
+# CHECK-NEXT: v7: undefined|int[1, 21]|unspecified|"a"|"b"|f2 = ResultAt v2 index=4
 # CHECK-NEXT: v8: undefined|null|int[1, 21]|unspecified|"a"|"b"|f2 = ResultAt v2 index=5
 # CHECK-NEXT: v9: undefined|null|int[1, 21]|unspecified|"a"|"b"|f2 = ResultAt v2 index=6
 # CHECK-NEXT: Switch v3 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
@@ -244,9 +244,9 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: Jump -> next b4(v13)
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v14: fact = Specified
-# CHECK-NEXT: v15: undefined|int|"a"|"b"|f2 = AssumeType v6, v14 provenType=undefined|int|"a"|"b"|f2
-# CHECK-NEXT: v16: undefined|int|"a"|"b"|f2 = AssumeType v7, v14 provenType=undefined|int|"a"|"b"|f2
-# CHECK-NEXT: v17: Array<undefined|int|"a"|"b"|f2, Contiguous> = NewArray v15, v16 contents=undefined|int|"a"|"b"|f2 allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v15: undefined|int[1, 21]|"a"|"b"|f2 = AssumeType v6, v14 provenType=undefined|int[1, 21]|"a"|"b"|f2
+# CHECK-NEXT: v16: undefined|int[1, 21]|"a"|"b"|f2 = AssumeType v7, v14 provenType=undefined|int[1, 21]|"a"|"b"|f2
+# CHECK-NEXT: v17: Array<undefined|int[1, 21]|"a"|"b"|f2, Contiguous> = NewArray v15, v16 contents=undefined|int[1, 21]|"a"|"b"|f2 allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: Jump -> next b4(v17)
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v18: fact = Specified
@@ -254,8 +254,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: v20: undefined|null|int[1, 21]|"a"|"b"|f2 = AssumeType v9, v18 provenType=undefined|null|int[1, 21]|"a"|"b"|f2
 # CHECK-NEXT: v21: Array<undefined|null|int[1, 21]|"a"|"b"|f2, Contiguous> = NewArray v19, v20 contents=undefined|null|int[1, 21]|"a"|"b"|f2 allocationSite=8 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: Jump -> next b4(v21)
-# CHECK-NEXT: b4(v22: Array<undefined|null|int|"a"|"b"|L0|f2>):
-# CHECK-NEXT: v23: Array<undefined|null|int|"a"|"b"|L0|f2, proven, pristine[Storage, Names, Dense]> = AssumeType v22 provenType=Array<undefined|null|int|"a"|"b"|L0|f2, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: b4(v22: Array<undefined|null|int[1, 21]|"a"|"b"|L0|f2>):
+# CHECK-NEXT: v23: Array<undefined|null|int[1, 21]|"a"|"b"|L0|f2, proven, pristine[Storage, Names, Dense]> = AssumeType v22 provenType=Array<undefined|null|int[1, 21]|"a"|"b"|L0|f2, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v24: undefined = Undefined
 # CHECK-NEXT: v25: undefined|string = CallBuiltin -, v23, v24 overload=JSONStringify/0 accessSite=4
 # CHECK-NEXT: v26: undefined = CallBuiltin -, v25 overload=ConsoleLog/0 accessSite=5
@@ -266,8 +266,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: v31: i32 = ResultAt v30
 # CHECK-NEXT: v32: unspecified|L0 = ResultAt v30 index=1
 # CHECK-NEXT: v33: null|unspecified = ResultAt v30 index=2
-# CHECK-NEXT: v34: undefined|int|unspecified|"a"|"b"|f2 = ResultAt v30 index=3
-# CHECK-NEXT: v35: undefined|int|unspecified|"a"|"b"|f2 = ResultAt v30 index=4
+# CHECK-NEXT: v34: undefined|int[1, 21]|unspecified|"a"|"b"|f2 = ResultAt v30 index=3
+# CHECK-NEXT: v35: undefined|int[1, 21]|unspecified|"a"|"b"|f2 = ResultAt v30 index=4
 # CHECK-NEXT: v36: undefined|null|int[1, 21]|unspecified|"a"|"b"|f2 = ResultAt v30 index=5
 # CHECK-NEXT: v37: undefined|null|int[1, 21]|unspecified|"a"|"b"|f2 = ResultAt v30 index=6
 # CHECK-NEXT: Switch v31 cases=[1, 2] -> case b5(), case b6(), otherwise b7()
@@ -279,9 +279,9 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: Jump -> next b8(v41)
 # CHECK-NEXT: b6():
 # CHECK-NEXT: v42: fact = Specified
-# CHECK-NEXT: v43: undefined|int|"a"|"b"|f2 = AssumeType v34, v42 provenType=undefined|int|"a"|"b"|f2
-# CHECK-NEXT: v44: undefined|int|"a"|"b"|f2 = AssumeType v35, v42 provenType=undefined|int|"a"|"b"|f2
-# CHECK-NEXT: v45: Array<undefined|int|"a"|"b"|f2, Contiguous> = NewArray v43, v44 contents=undefined|int|"a"|"b"|f2 allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v43: undefined|int[1, 21]|"a"|"b"|f2 = AssumeType v34, v42 provenType=undefined|int[1, 21]|"a"|"b"|f2
+# CHECK-NEXT: v44: undefined|int[1, 21]|"a"|"b"|f2 = AssumeType v35, v42 provenType=undefined|int[1, 21]|"a"|"b"|f2
+# CHECK-NEXT: v45: Array<undefined|int[1, 21]|"a"|"b"|f2, Contiguous> = NewArray v43, v44 contents=undefined|int[1, 21]|"a"|"b"|f2 allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: Jump -> next b8(v45)
 # CHECK-NEXT: b7():
 # CHECK-NEXT: v46: fact = Specified
@@ -289,8 +289,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: v48: undefined|null|int[1, 21]|"a"|"b"|f2 = AssumeType v37, v46 provenType=undefined|null|int[1, 21]|"a"|"b"|f2
 # CHECK-NEXT: v49: Array<undefined|null|int[1, 21]|"a"|"b"|f2, Contiguous> = NewArray v47, v48 contents=undefined|null|int[1, 21]|"a"|"b"|f2 allocationSite=8 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: Jump -> next b8(v49)
-# CHECK-NEXT: b8(v50: Array<undefined|null|int|"a"|"b"|L0|f2>):
-# CHECK-NEXT: v51: Array<undefined|null|int|"a"|"b"|L0|f2, proven, pristine[Storage, Names, Dense]> = AssumeType v50 provenType=Array<undefined|null|int|"a"|"b"|L0|f2, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: b8(v50: Array<undefined|null|int[1, 21]|"a"|"b"|L0|f2>):
+# CHECK-NEXT: v51: Array<undefined|null|int[1, 21]|"a"|"b"|L0|f2, proven, pristine[Storage, Names, Dense]> = AssumeType v50 provenType=Array<undefined|null|int[1, 21]|"a"|"b"|L0|f2, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v52: undefined = Undefined
 # CHECK-NEXT: v53: undefined|string = CallBuiltin -, v51, v52 overload=JSONStringify/0 accessSite=10
 # CHECK-NEXT: v54: undefined = CallBuiltin -, v53 overload=ConsoleLog/0 accessSite=11
@@ -302,8 +302,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: v60: i32 = ResultAt v59
 # CHECK-NEXT: v61: unspecified|L0 = ResultAt v59 index=1
 # CHECK-NEXT: v62: null|unspecified = ResultAt v59 index=2
-# CHECK-NEXT: v63: undefined|int|unspecified|"a"|"b"|f2 = ResultAt v59 index=3
-# CHECK-NEXT: v64: undefined|int|unspecified|"a"|"b"|f2 = ResultAt v59 index=4
+# CHECK-NEXT: v63: undefined|int[1, 21]|unspecified|"a"|"b"|f2 = ResultAt v59 index=3
+# CHECK-NEXT: v64: undefined|int[1, 21]|unspecified|"a"|"b"|f2 = ResultAt v59 index=4
 # CHECK-NEXT: v65: undefined|null|int[1, 21]|unspecified|"a"|"b"|f2 = ResultAt v59 index=5
 # CHECK-NEXT: v66: undefined|null|int[1, 21]|unspecified|"a"|"b"|f2 = ResultAt v59 index=6
 # CHECK-NEXT: Switch v60 cases=[1, 2] -> case b9(), case b10(), otherwise b11()
@@ -315,9 +315,9 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: Jump -> next b12(v70)
 # CHECK-NEXT: b10():
 # CHECK-NEXT: v71: fact = Specified
-# CHECK-NEXT: v72: undefined|int|"a"|"b"|f2 = AssumeType v63, v71 provenType=undefined|int|"a"|"b"|f2
-# CHECK-NEXT: v73: undefined|int|"a"|"b"|f2 = AssumeType v64, v71 provenType=undefined|int|"a"|"b"|f2
-# CHECK-NEXT: v74: Array<undefined|int|"a"|"b"|f2, Contiguous> = NewArray v72, v73 contents=undefined|int|"a"|"b"|f2 allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v72: undefined|int[1, 21]|"a"|"b"|f2 = AssumeType v63, v71 provenType=undefined|int[1, 21]|"a"|"b"|f2
+# CHECK-NEXT: v73: undefined|int[1, 21]|"a"|"b"|f2 = AssumeType v64, v71 provenType=undefined|int[1, 21]|"a"|"b"|f2
+# CHECK-NEXT: v74: Array<undefined|int[1, 21]|"a"|"b"|f2, Contiguous> = NewArray v72, v73 contents=undefined|int[1, 21]|"a"|"b"|f2 allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: Jump -> next b12(v74)
 # CHECK-NEXT: b11():
 # CHECK-NEXT: v75: fact = Specified
@@ -325,8 +325,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: v77: undefined|null|int[1, 21]|"a"|"b"|f2 = AssumeType v66, v75 provenType=undefined|null|int[1, 21]|"a"|"b"|f2
 # CHECK-NEXT: v78: Array<undefined|null|int[1, 21]|"a"|"b"|f2, Contiguous> = NewArray v76, v77 contents=undefined|null|int[1, 21]|"a"|"b"|f2 allocationSite=8 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: Jump -> next b12(v78)
-# CHECK-NEXT: b12(v79: Array<undefined|null|int|"a"|"b"|L0|f2>):
-# CHECK-NEXT: v80: Array<undefined|null|int|"a"|"b"|L0|f2, proven, pristine[Storage, Names, Dense]> = AssumeType v79 provenType=Array<undefined|null|int|"a"|"b"|L0|f2, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: b12(v79: Array<undefined|null|int[1, 21]|"a"|"b"|L0|f2>):
+# CHECK-NEXT: v80: Array<undefined|null|int[1, 21]|"a"|"b"|L0|f2, proven, pristine[Storage, Names, Dense]> = AssumeType v79 provenType=Array<undefined|null|int[1, 21]|"a"|"b"|L0|f2, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v81: undefined = Undefined
 # CHECK-NEXT: v82: undefined|string = CallBuiltin -, v80, v81 overload=JSONStringify/0 accessSite=16
 # CHECK-NEXT: v83: undefined = CallBuiltin -, v82 overload=ConsoleLog/0 accessSite=17
@@ -338,8 +338,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: v89: i32 = ResultAt v88
 # CHECK-NEXT: v90: unspecified|L0 = ResultAt v88 index=1
 # CHECK-NEXT: v91: null|unspecified = ResultAt v88 index=2
-# CHECK-NEXT: v92: undefined|int|unspecified|"a"|"b"|f2 = ResultAt v88 index=3
-# CHECK-NEXT: v93: undefined|int|unspecified|"a"|"b"|f2 = ResultAt v88 index=4
+# CHECK-NEXT: v92: undefined|int[1, 21]|unspecified|"a"|"b"|f2 = ResultAt v88 index=3
+# CHECK-NEXT: v93: undefined|int[1, 21]|unspecified|"a"|"b"|f2 = ResultAt v88 index=4
 # CHECK-NEXT: v94: undefined|null|int[1, 21]|unspecified|"a"|"b"|f2 = ResultAt v88 index=5
 # CHECK-NEXT: v95: undefined|null|int[1, 21]|unspecified|"a"|"b"|f2 = ResultAt v88 index=6
 # CHECK-NEXT: Switch v89 cases=[1, 2] -> case b13(), case b14(), otherwise b15()
@@ -350,17 +350,17 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: Jump -> next b16(v97, v98)
 # CHECK-NEXT: b14():
 # CHECK-NEXT: v99: fact = Specified
-# CHECK-NEXT: v100: undefined|int|"a"|"b"|f2 = AssumeType v92, v99 provenType=undefined|int|"a"|"b"|f2
-# CHECK-NEXT: v101: undefined|int|"a"|"b"|f2 = AssumeType v93, v99 provenType=undefined|int|"a"|"b"|f2
+# CHECK-NEXT: v100: undefined|int[1, 21]|"a"|"b"|f2 = AssumeType v92, v99 provenType=undefined|int[1, 21]|"a"|"b"|f2
+# CHECK-NEXT: v101: undefined|int[1, 21]|"a"|"b"|f2 = AssumeType v93, v99 provenType=undefined|int[1, 21]|"a"|"b"|f2
 # CHECK-NEXT: Jump -> next b16(v100, v101)
 # CHECK-NEXT: b15():
 # CHECK-NEXT: v102: fact = Specified
 # CHECK-NEXT: v103: undefined|null|int[1, 21]|"a"|"b"|f2 = AssumeType v94, v102 provenType=undefined|null|int[1, 21]|"a"|"b"|f2
 # CHECK-NEXT: v104: undefined|null|int[1, 21]|"a"|"b"|f2 = AssumeType v95, v102 provenType=undefined|null|int[1, 21]|"a"|"b"|f2
 # CHECK-NEXT: Jump -> next b16(v103, v104)
-# CHECK-NEXT: b16(v105: undefined|null|int|"a"|"b"|L0|f2, v106: undefined|null|int|"a"|"b"|f2):
+# CHECK-NEXT: b16(v105: undefined|null|int[1, 21]|"a"|"b"|L0|f2, v106: undefined|null|int[1, 21]|"a"|"b"|f2):
 # CHECK-NEXT: v107: boolean = TypeTest v106 testedType=f2
-# CHECK-NEXT: v108: undefined|null|int|"a"|"b"|L0|f2 ~ int = Expect v105 expectedType=number
+# CHECK-NEXT: v108: undefined|null|int[1, 21]|"a"|"b"|L0|f2 ~ int[1, 21] = Expect v105 expectedType=number
 # CHECK-NEXT: v109: boolean = TypeTest v106 testedType=f2
 # CHECK-NEXT: Branch v109 -> taken b17(), notTaken b18(| 0)
 # CHECK-NEXT: b17():
@@ -369,12 +369,12 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: v112: undefined = CallBuiltin v111, v105, v107, v110 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=22
 # CHECK-NEXT: v113: undefined = Undefined
 # CHECK-NEXT: Return v113
-# CHECK-NEXT: b18(v114: undefined|null|int|"a"|"b") frequency=Unlikely:
+# CHECK-NEXT: b18(v114: undefined|null|int[1, 21]|"a"|"b") frequency=Unlikely:
 # CHECK-NEXT: v115: never = Call v114, -, v108 calleeName="last" accessSite=21 callees=[f2, ..]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="pairOf"
-# CHECK: module=m0 position=152 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<int[1, 21]|"a"|"b"|f2, proven, Contiguous, pristine[Storage, Names, Dense]> site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|null|int|"a"|"b"|L0|f2, proven, pristine[Storage, Names, Dense]> site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f5}
+# CHECK: module=m0 position=152 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<int[1, 21]|"a"|"b"|f2, proven, Contiguous, pristine[Storage, Names, Dense]> site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|null|int[1, 21]|"a"|"b"|L0|f2, proven, pristine[Storage, Names, Dense]> site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f5}
 # CHECK-LABEL: function {{*}}name="double"
 # CHECK: module=m0 position=457 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w2 flags=[IsExpected]}] results=[{type=number site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything ~ number):
@@ -384,7 +384,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="pairOf"
-# CHECK: module=m0 position=152 role=ResultWorker flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<int[1, 21]|"a"|"b"|f2, proven, Contiguous, pristine[Storage, Names, Dense]> site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=i32}, {type=unspecified|L0}, {type=null|unspecified}, {type=undefined|int|unspecified|"a"|"b"|f2}, {type=undefined|int|unspecified|"a"|"b"|f2}, {type=undefined|null|int[1, 21]|unspecified|"a"|"b"|f2}, {type=undefined|null|int[1, 21]|unspecified|"a"|"b"|f2}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}]} creator=ResultWorker{origin=f1} {
+# CHECK: module=m0 position=152 role=ResultWorker flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<int[1, 21]|"a"|"b"|f2, proven, Contiguous, pristine[Storage, Names, Dense]> site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=i32}, {type=unspecified|L0}, {type=null|unspecified}, {type=undefined|int[1, 21]|unspecified|"a"|"b"|f2}, {type=undefined|int[1, 21]|unspecified|"a"|"b"|f2}, {type=undefined|null|int[1, 21]|unspecified|"a"|"b"|f2}, {type=undefined|null|int[1, 21]|unspecified|"a"|"b"|f2}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}]} creator=ResultWorker{origin=f1} {
 # CHECK-NEXT: b0(v0: Array<int[1, 21]|"a"|"b"|f2, proven, Contiguous, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v1: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0 accessSite=23
 # CHECK-NEXT: v2: 0 = Integer
@@ -394,8 +394,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: v4: L0 = NewObject layout=L0 allocationSite=9 allocationClass=0
 # CHECK-NEXT: v5: null = Null
 # CHECK-NEXT: v6: 1 = Integer integer=1
-# CHECK-NEXT: v7: undefined|int|unspecified|"a"|"b"|f2 = Unspecified valueType=undefined|int|"a"|"b"|f2
-# CHECK-NEXT: v8: undefined|int|unspecified|"a"|"b"|f2 = Unspecified valueType=undefined|int|"a"|"b"|f2
+# CHECK-NEXT: v7: undefined|int[1, 21]|unspecified|"a"|"b"|f2 = Unspecified valueType=undefined|int[1, 21]|"a"|"b"|f2
+# CHECK-NEXT: v8: undefined|int[1, 21]|unspecified|"a"|"b"|f2 = Unspecified valueType=undefined|int[1, 21]|"a"|"b"|f2
 # CHECK-NEXT: v9: undefined|null|int[1, 21]|unspecified|"a"|"b"|f2 = Unspecified valueType=undefined|null|int[1, 21]|"a"|"b"|f2
 # CHECK-NEXT: v10: undefined|null|int[1, 21]|unspecified|"a"|"b"|f2 = Unspecified valueType=undefined|null|int[1, 21]|"a"|"b"|f2
 # CHECK-NEXT: v11: undefined = Results v6, v4, v5, v7, v8, v9, v10
@@ -439,8 +439,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: v40: 4 = Integer integer=4
 # CHECK-NEXT: v41: unspecified|L0 = Unspecified valueType=L0
 # CHECK-NEXT: v42: null|unspecified = Unspecified valueType=null
-# CHECK-NEXT: v43: undefined|int|unspecified|"a"|"b"|f2 = Unspecified valueType=undefined|int|"a"|"b"|f2
-# CHECK-NEXT: v44: undefined|int|unspecified|"a"|"b"|f2 = Unspecified valueType=undefined|int|"a"|"b"|f2
+# CHECK-NEXT: v43: undefined|int[1, 21]|unspecified|"a"|"b"|f2 = Unspecified valueType=undefined|int[1, 21]|"a"|"b"|f2
+# CHECK-NEXT: v44: undefined|int[1, 21]|unspecified|"a"|"b"|f2 = Unspecified valueType=undefined|int[1, 21]|"a"|"b"|f2
 # CHECK-NEXT: v45: undefined = Results v40, v41, v42, v43, v44, v29, v39
 # CHECK-NEXT: Return v45
 # CHECK-NEXT: }

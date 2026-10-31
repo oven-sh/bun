@@ -71,6 +71,7 @@ fn source_text_file(file: FileId) -> FileRow {
         unread_exports: Vec::new(),
         is_data_linked_by_names_alone: false,
         required_names: Vec::new(),
+        names_searched_behind_stars: Vec::new(),
     }
 }
 
@@ -250,6 +251,7 @@ fn modules_without_files_have_no_export_table() {
     let external = ModuleRef::External {
         importer: FileId(0),
         specifier,
+        type_attribute: None,
     };
     let graph = ModuleGraph {
         other_modules: vec![runtime, external],
@@ -301,6 +303,7 @@ fn external_kind_is_found_by_importer_and_specifier() {
     let external = |importer, specifier| ModuleRef::External {
         importer: FileId(importer),
         specifier,
+        type_attribute: None,
     };
     let graph = ModuleGraph {
         external_kinds: vec![

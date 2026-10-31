@@ -751,11 +751,11 @@ runtimefunction id=ArrayTraversalTraverseArray function=f46 visibility=Private
 # -- generated: f0 ofTextByDefault
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 371, patchpoints: 76, rare instructions: 156, polls: 8
+# CHECK-NEXT: instructions: 371, patchpoints: 76, rare instructions: 153, polls: 8
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="ofTextByDefault"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 27, patchpoints: 2, rare instructions: 23
+# CHECK-NEXT: instructions: 26, patchpoints: 2, rare instructions: 23
 # CHECK-NEXT: end of function f4
 # CHECK-LABEL: function {{*}}name="ofTextByDefault"
 # CHECK: role=GenericEntrypoint

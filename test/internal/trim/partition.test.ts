@@ -303,6 +303,7 @@ describe("the partition", () => {
     expect(result.failures).toEqual([]);
     expect(result.groups.map(group => result.sets[group.set])).toEqual([[Tools], [A], [B]]);
     expect(result.layoutRank[Tools]).toBe(0);
+    expect(result.groupsOutsidePrograms).toBe(1);
     expect(result.groups.map(group => result.groupOfSet.get(group.set))).toEqual([0, 1, 2]);
   });
 

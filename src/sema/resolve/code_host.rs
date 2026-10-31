@@ -40,6 +40,11 @@ pub trait CodeHost: Host {
         HostResolution::Unclaimed
     }
 
+    /// Whether the transpiler alone knows the name, which it replaces where it reads one in the text of a program. The loader finds nothing under it.
+    fn is_name_for_transpiler_alone(&self, _specifier: &[u8]) -> bool {
+        false
+    }
+
     /// Whether the module system at run time loads this file, as it does a file that the build never saw.
     fn leaves_to_run_time(&self, _path: &[u8]) -> bool {
         false
@@ -47,6 +52,11 @@ pub trait CodeHost: Host {
 
     /// Whether another program, which runs in the same realm, holds the module of this file.
     fn is_in_other_program(&self, _path: &[u8]) -> bool {
+        false
+    }
+
+    /// Whether no program holds the file in any form: an earlier compile could not take it, and the loader at run time says what is wrong with it.
+    fn is_left_to_loader(&self, _path: &[u8]) -> bool {
         false
     }
 
@@ -95,6 +105,12 @@ pub trait CodeHost: Host {
 
     /// Where the host has `@types/bun` itself, for where it is not installed. It comes before `declarations_in_place_of_bun_types`.
     fn type_root_in_place_of_bun_types(&self) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// Of a build that has checked the program with the declarations of `type_root_in_place_of_bun_types` and has started over
+    /// without them: the file and the byte offset of each error that it had with them, in ascending order.
+    fn errors_with_bun_types(&self) -> Option<&[(Vec<u8>, u32)]> {
         None
     }
 

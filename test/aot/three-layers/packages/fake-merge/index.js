@@ -55,3 +55,18 @@ export const copiers = {
   rest: object => { const { a, ...others } = object; return [a, others]; },
   entries: object => Object.fromEntries(Object.entries(object)),
 };
+export const packageText = "text of the package";
+export const packageTextReadAboveFirst = "nobody in the package reads this";
+export let packageMode = "one";
+export function setPackageMode(mode) { packageMode = mode; }
+// Validators and the like make code out of text at run time.
+export const codeFromText = (parameters, body) => new Function(...parameters, body);
+// Loaders of plugins and of configuration are handed the path of a file.
+import { createRequire } from "node:module";
+const requireFromThePackage = createRequire(import.meta.url);
+export const importByPath = path => import(path);
+export const requireByPath = path => requireFromThePackage(path);
+// A payload as a validator library hands it round, and what reads it.
+export const payloadOfThePackage = value => ({ value, issues: [] });
+export const readPayloadInThePackage = payload => [payload.value, payload.issues.length, Object.keys(payload).join()];
+export class StaticsOfThePackage { static limit = 3; static label = "package"; static twice() { return this.limit * 2; } }

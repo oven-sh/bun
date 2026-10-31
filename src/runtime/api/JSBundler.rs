@@ -1724,6 +1724,13 @@ pub(crate) mod js_bundler {
                     let define_keys = compile.compile_target.define_keys();
                     let define_values = compile.compile_target.define_values();
                     debug_assert_eq!(define_keys.len(), define_values.len());
+                    if let Some(aot) = compile.aot.as_mut() {
+                        let names = this.define.keys().iter();
+                        aot.user_defined_names = names
+                            .filter(|name| !define_keys.contains(&&***name))
+                            .cloned()
+                            .collect();
+                    }
                     for (key, value) in define_keys.iter().zip(define_values) {
                         this.define.insert(key, value)?;
                     }

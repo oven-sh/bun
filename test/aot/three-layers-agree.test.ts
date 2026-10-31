@@ -27,17 +27,23 @@ async function seenIn(words: string | undefined, flags: string[] = [], more: Rec
   using dir = tempDir("aot-three-layers", files);
   // Not CI: each run writes the snapshot that it is held to.
   const env = { ...bunEnv, CI: "false", BUN_DEBUG_TEST_AOT_WORDS: words, ...more };
-  const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--isolate", ...flags], String(dir), env);
+  // Five runs at once: on a busy machine a check that waits for a file watcher has passed the five seconds that a test has.
+  const command = [bunExe(), "test", "--isolate", "--timeout=60000", ...flags];
+  const { stdout, stderr, exitCode } = await run(command, String(dir), env);
   const seen = stdout.split("\n").filter(line => line.startsWith("RESULT|"));
   return { seen: seen.sort(), failed: stderr.split("\n").filter(line => /^\(fail\)|^✗|^panic/.test(line)), exitCode };
 }
 
 test("three layers answer as one program and as plain bun test", async () => {
-  const [plain, one, layers, smallPieces, validated] = await Promise.all([
+  const [plain, one, layers, smallPieces, projectInTwo, newCheckers, validated] = await Promise.all([
     seenIn(undefined),
     seenIn("TestRunLayers:0", ["--aot"]),
     seenIn(undefined, ["--aot"]),
     seenIn("TestRunLayers:2,TestRunPartFiles:8", ["--aot"]),
+    // The files of the project are two programs, one above the other.
+    seenIn("TestRunLayers:3,TestRunPartFiles:8", ["--aot"]),
+    // Each program is lowered in three passes, each with a type checker that knows nothing yet.
+    seenIn("TestRunLayers:2,TestRunPartFiles:8,TestRunCheckerPasses:3", ["--aot"]),
     // The run time checks its own tables at the end of each collection and wherever it files an answer: a wrong row stops the run where no value shows it yet.
     seenIn(undefined, ["--aot"], { BUN_JSC_validateAOTRuntime: "1" }),
   ]);
@@ -46,5 +52,7 @@ test("three layers answer as one program and as plain bun test", async () => {
   expect(one).toEqual(plain);
   expect(layers).toEqual(plain);
   expect(smallPieces).toEqual(plain);
+  expect(projectInTwo).toEqual(plain);
+  expect(newCheckers).toEqual(plain);
   expect(validated).toEqual(plain);
 }, 240_000);

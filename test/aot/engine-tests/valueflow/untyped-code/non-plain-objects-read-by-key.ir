@@ -787,7 +787,6 @@ runtimefunction id=ArrayTraversalTraverseArray function=f96 visibility=Private
 # CHECK-NEXT: v62: undefined = IteratorResume v60
 # CHECK-NEXT: v63: boolean = ResultAt v62
 # CHECK-NEXT: v64: anything = ResultAt v62 index=1
-# CHECK-NEXT: v116: undefined|Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v64 provenType=undefined|Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: Branch v63 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v65: builtin(Math) = Builtin builtin=Math
@@ -810,6 +809,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f96 visibility=Private
 # CHECK-NEXT: v76: undefined = Undefined
 # CHECK-NEXT: Return v76
 # CHECK-NEXT: b3():
+# CHECK-NEXT: v116: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v64 provenType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b4() handler=b8():
 # CHECK-NEXT: v77: iteratorstate = IteratorOpen v116 elementCount=2 [isDestructuring]

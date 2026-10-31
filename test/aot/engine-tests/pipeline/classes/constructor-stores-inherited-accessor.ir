@@ -309,9 +309,9 @@ function f1 name="Counted" module=m0 position=142 kind=BaseConstructor flags=[Ha
   b0(v0: anything):
     Jump -> next b1() @142
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @113
-    v2 = NewObject v1 layout=L0 @113
-    v3 = Convert v2 declared={type=L0|L4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @113
+    v1 = GetConstructPrototype v0 layout=L0 @151
+    v2 = NewObject v1 layout=L0 @151
+    v3 = Convert v2 declared={type=L0|L4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @151
     v4 = Convert v3 declared={type=undefined|null|L0|L4 flags=[IsExpected]} @151
     v5 = Integer @164
     PropSet v4, v5 key="count" @151
@@ -394,9 +394,9 @@ function f6 name="ReadOnly" module=m0 position=797 kind=BaseConstructor flags=[H
   b0(v0: anything):
     Jump -> next b1() @797
   b1():
-    v1 = GetConstructPrototype v0 layout=L1 @767
-    v2 = NewObject v1 layout=L1 @767
-    v3 = Convert v2 declared={type=L1|L5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @767
+    v1 = GetConstructPrototype v0 layout=L1 @818
+    v2 = NewObject v1 layout=L1 @818
+    v3 = Convert v2 declared={type=L1|L5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @818
     Jump -> next b2() @806
   b2() handler=b4():
     v4 = Convert v3 declared={type=undefined|null|L1|L5 flags=[IsExpected]} @818
@@ -446,9 +446,9 @@ function f8 name="Fixed" module=m0 position=1092 kind=BaseConstructor flags=[Has
   b0(v0: anything):
     Jump -> next b1() @1092
   b1():
-    v1 = GetConstructPrototype v0 layout=L2 @1065
-    v2 = NewObject v1 layout=L2 @1065
-    v3 = Convert v2 declared={type=L2|L6 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1065
+    v1 = GetConstructPrototype v0 layout=L2 @1113
+    v2 = NewObject v1 layout=L2 @1113
+    v3 = Convert v2 declared={type=L2|L6 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1113
     Jump -> next b2() @1101
   b2() handler=b4():
     v4 = Convert v3 declared={type=undefined|null|L2|L6 flags=[IsExpected]} @1113
@@ -491,9 +491,9 @@ function f9 name="Reset" module=m0 position=1444 kind=BaseConstructor flags=[Has
   b0(v0: anything):
     Jump -> next b1() @1444
   b1():
-    v1 = GetConstructPrototype v0 layout=L3 @1417
-    v2 = NewObject v1 layout=L3 @1417
-    v3 = Convert v2 declared={type=L3|L7|L8 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1417
+    v1 = GetConstructPrototype v0 layout=L3 @1453
+    v2 = NewObject v1 layout=L3 @1453
+    v3 = Convert v2 declared={type=L3|L7|L8 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1453
     v4 = Convert v3 declared={type=undefined|null|L3|L7|L8 flags=[IsExpected]} @1453
     v5 = PropGet v4 key="reset" @1453
     v6 = Convert v5 declared={type=undefined|null|function|f10 flags=[IsExpected]} @1453
@@ -673,7 +673,7 @@ function f34 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v17: int[-2147483643, 2147483647] = GetSlot v5, v16 key="count" receivers=[L4] level=Expected accessSite=3 [holdsDeclaredType]
 # CHECK-NEXT: Jump -> next b3(v17)
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v18: anything = SuperGet v5, v5 key="count"
+# CHECK-NEXT: v18: anything = SuperGet v5, v5 key="count" accessSite=3
 # CHECK-NEXT: v19: undefined|int = AssumeType v18 provenType=undefined|int
 # CHECK-NEXT: Jump -> next b3(v19)
 # CHECK-NEXT: b3(v20: undefined|int ~ int[-2147483643, 2147483647]):
@@ -683,7 +683,7 @@ function f34 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v23: fractional = GetSlot v5, v22 key="ratio" receivers=[L4] level=Expected accessSite=4 [holdsDeclaredType]
 # CHECK-NEXT: Jump -> next b6(v23)
 # CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: v24: anything = SuperGet v5, v5 key="ratio"
+# CHECK-NEXT: v24: anything = SuperGet v5, v5 key="ratio" accessSite=4
 # CHECK-NEXT: v25: undefined|fractional = AssumeType v24 provenType=undefined|fractional
 # CHECK-NEXT: Jump -> next b6(v25)
 # CHECK-NEXT: b6(v26: undefined|fractional ~ fractional):
@@ -693,7 +693,7 @@ function f34 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v29: boolean = GetSlot v5, v28 key="isOpen" receivers=[L4] level=Expected accessSite=5 [holdsDeclaredType]
 # CHECK-NEXT: Jump -> next b9(v29)
 # CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: v30: anything = SuperGet v5, v5 key="isOpen"
+# CHECK-NEXT: v30: anything = SuperGet v5, v5 key="isOpen" accessSite=5
 # CHECK-NEXT: v31: undefined|boolean = AssumeType v30 provenType=undefined|boolean
 # CHECK-NEXT: Jump -> next b9(v31)
 # CHECK-NEXT: b9(v32: undefined|boolean ~ boolean):
@@ -703,7 +703,7 @@ function f34 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v35: "above"|"below" = GetSlot v5, v34 key="label" receivers=[L4] level=Expected accessSite=6
 # CHECK-NEXT: Jump -> next b12(v35)
 # CHECK-NEXT: b11():
-# CHECK-NEXT: v36: anything = SuperGet v5, v5 key="label"
+# CHECK-NEXT: v36: anything = SuperGet v5, v5 key="label" accessSite=6
 # CHECK-NEXT: v37: undefined|"above"|"below" = AssumeType v36 provenType=undefined|"above"|"below"
 # CHECK-NEXT: Jump -> next b12(v37)
 # CHECK-NEXT: b12(v38: undefined|"above"|"below" ~ "above"|"below"):
@@ -717,7 +717,7 @@ function f34 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v45: int[-2147483643, 2147483647] = GetSlot v5, v44 key="count" receivers=[L4] level=Expected accessSite=13 [holdsDeclaredType]
 # CHECK-NEXT: Jump -> next b15(v45)
 # CHECK-NEXT: b14() frequency=Unlikely:
-# CHECK-NEXT: v46: anything = SuperGet v5, v5 key="count"
+# CHECK-NEXT: v46: anything = SuperGet v5, v5 key="count" accessSite=13
 # CHECK-NEXT: v47: undefined|int = AssumeType v46 provenType=undefined|int
 # CHECK-NEXT: Jump -> next b15(v47)
 # CHECK-NEXT: b15(v48: undefined|int ~ int[-2147483643, 2147483647]):
@@ -744,7 +744,7 @@ function f34 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v63: boolean = IsSlotFilled v51 key="size" receivers=[L5] level=Expected [holdsDeclaredType]
 # CHECK-NEXT: Branch v63 -> taken b20(v61), notTaken b19()
 # CHECK-NEXT: b19() frequency=Unlikely:
-# CHECK-NEXT: v64: anything = SuperGet v51, v51 key="size"
+# CHECK-NEXT: v64: anything = SuperGet v51, v51 key="size" accessSite=19
 # CHECK-NEXT: v65: undefined|int = AssumeType v64 provenType=undefined|int
 # CHECK-NEXT: Jump -> next b20(v65)
 # CHECK-NEXT: b20(v66: undefined|int ~ 1):
@@ -756,7 +756,7 @@ function f34 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v72: "width" = String string="width"
 # CHECK-NEXT: v73: 7 = Integer integer=7
 # CHECK-NEXT: v74: false = Boolean
-# CHECK-NEXT: v75: L9 = NewObject -, v73, v74 layout=L9 fields=[4, 5] allocationSite=14 allocationClass=9
+# CHECK-NEXT: v75: L9 = NewObject -, v73, v74 layout=L9 fields=[4, 5] allocationSite=14 allocationClass=8
 # CHECK-NEXT: v76: L9 = FinishObject v75
 # CHECK-NEXT: v77: object ~ L2|L6 = CallBuiltin -, v71, v72, v76 overload=ObjectDefineProperty/0 accessSite=23
 # CHECK-NEXT: v78: L6 = NewObject layout=L6 allocationClass=6
@@ -780,14 +780,14 @@ function f34 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v90: boolean = IsSlotFilled v78 key="width" receivers=[L6] level=Expected [holdsDeclaredType]
 # CHECK-NEXT: Branch v90 -> taken b25(v88), notTaken b24()
 # CHECK-NEXT: b24() frequency=Unlikely:
-# CHECK-NEXT: v91: anything = SuperGet v78, v78 key="width"
+# CHECK-NEXT: v91: anything = SuperGet v78, v78 key="width" accessSite=27
 # CHECK-NEXT: v92: undefined|int = AssumeType v91 provenType=undefined|int
 # CHECK-NEXT: Jump -> next b25(v92)
 # CHECK-NEXT: b25(v93: undefined|int ~ 1):
 # CHECK-NEXT: v94: undefined = CallBuiltin -, v93 overload=ConsoleLog/0 accessSite=28
 # CHECK-NEXT: v95: 0 = Integer
 # CHECK-NEXT: PutModuleVariable v95 variable=g1
-# CHECK-NEXT: v97: L8 = NewObject layout=L8 allocationClass=8
+# CHECK-NEXT: v97: L8 = NewObject layout=L8 allocationClass=7
 # CHECK-NEXT: v98: 0 = Integer
 # CHECK-NEXT: PropSet v97, v98 key="level" accessSite=76 receivers=[L3, L8]
 # CHECK-NEXT: v100: 1 = Integer integer=1
@@ -795,7 +795,7 @@ function f34 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v102: boolean = IsSlotFilled v97 key="level" receivers=[L8] level=Expected [holdsDeclaredType]
 # CHECK-NEXT: Branch v102 -> taken b27(v100), notTaken b26()
 # CHECK-NEXT: b26() frequency=Unlikely:
-# CHECK-NEXT: v103: anything = SuperGet v97, v97 key="level"
+# CHECK-NEXT: v103: anything = SuperGet v97, v97 key="level" accessSite=32
 # CHECK-NEXT: v104: undefined|int = AssumeType v103 provenType=undefined|int
 # CHECK-NEXT: Jump -> next b27(v104)
 # CHECK-NEXT: b27(v105: undefined|int ~ 1):
@@ -809,7 +809,7 @@ function f34 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v112: int[-2147483643, 2147483647] = GetSlot v97, v111 key="level" receivers=[L8] level=Expected accessSite=38 [holdsDeclaredType]
 # CHECK-NEXT: Jump -> next b30(v112)
 # CHECK-NEXT: b29() frequency=Unlikely:
-# CHECK-NEXT: v113: anything = SuperGet v97, v97 key="level"
+# CHECK-NEXT: v113: anything = SuperGet v97, v97 key="level" accessSite=38
 # CHECK-NEXT: v114: undefined|int = AssumeType v113 provenType=undefined|int
 # CHECK-NEXT: Jump -> next b30(v114)
 # CHECK-NEXT: b30(v115: undefined|int ~ int[-2147483643, 2147483647]):
@@ -826,7 +826,7 @@ function f34 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f12 = AssumeType v0 provenType=f12
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L0
-# CHECK-NEXT: v3: object ~ L0|L4 = NewObject v2 layout=L0 allocationSite=18 allocationClass=0
+# CHECK-NEXT: v3: object ~ L4 = NewObject v2 layout=L0 allocationSite=18 allocationClass=0
 # CHECK-NEXT: v4: L4 = AssumeType v3 provenType=L4
 # CHECK-NEXT: v5: 0 = Integer
 # CHECK-NEXT: PropSet v4, v5 key="count" accessSite=44 receivers=[L4]
@@ -883,7 +883,7 @@ function f34 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f13 = AssumeType v0 provenType=f13
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L1
-# CHECK-NEXT: v3: object ~ L1|L5 = NewObject v2 layout=L1 allocationSite=19 allocationClass=1
+# CHECK-NEXT: v3: object ~ L5 = NewObject v2 layout=L1 allocationSite=19 allocationClass=1
 # CHECK-NEXT: v4: L5 = AssumeType v3 provenType=L5
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1() handler=b2():
@@ -913,7 +913,7 @@ function f34 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f14 = AssumeType v0 provenType=f14
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L2
-# CHECK-NEXT: v3: object ~ L2|L6 = NewObject v2 layout=L2 allocationSite=20 allocationClass=2
+# CHECK-NEXT: v3: object ~ L6 = NewObject v2 layout=L2 allocationSite=20 allocationClass=2
 # CHECK-NEXT: v4: L6 = AssumeType v3 provenType=L6
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1() handler=b2():
@@ -937,7 +937,7 @@ function f34 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f9|f16 = AssumeType v0 provenType=f9|f16
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L3
-# CHECK-NEXT: v3: object ~ L3|L7|L8 = NewObject v2 layout=L3 allocationSite=21 allocationClass=3
+# CHECK-NEXT: v3: object ~ L3|L8 = NewObject v2 layout=L3 allocationSite=21 allocationClass=3
 # CHECK-NEXT: v4: L3|L8 = AssumeType v3 provenType=L3|L8
 # CHECK-NEXT: v5: boolean = TypeTest v4 testedType=L3
 # CHECK-NEXT: Branch v5 -> taken b1(), notTaken b2(| 0)

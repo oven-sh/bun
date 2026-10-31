@@ -5,7 +5,7 @@ use super::bindings::{
     AccessedModule, AnswerMember, ExportStatement, Holder, ImportBinding, RequiredName,
 };
 use super::deferred_exports::mirrors_an_object;
-use super::evicted::EvictedModules;
+use super::evicted::{EvictedModules, LibraryModulesStoredInCache};
 use super::exports::{ExportTables, Resolution, ResolvedName};
 use super::failures::{ModuleFailureKind, PendingFailure, SitePart, WrittenPart};
 use super::interop::{ImportPhase, ModuleKind, SyntheticExportRule};
@@ -23,6 +23,7 @@ use crate::builtins::{
 use crate::ir::for_each_mut;
 use crate::known_helpers::KnownHelpers;
 use crate::load::replaced_modules::SpiesOnUnknownObjects;
+use crate::load::runtime_modules::find_module_named;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{BindingKind, Bound, Decl, SymFlags, SymbolId};
 use bun_sema::file_analysis::FileAnalysis;
@@ -90,6 +91,8 @@ pub(super) struct FileImports {
     /// The calls of `require` of which only this counts: the module has run. `true`: whatever becomes of the names of the module.
     pub unread_sites: Vec<(ExprId, bool)>,
     pub required_names: Vec<RequiredName>,
+    /// Of the required names that only a mock takes away and that come through `export *`: the files behind the module that a link looks into, with the name.
+    pub names_searched_behind_stars: Vec<(FileId, Atom)>,
     /// The variables behind the exports that `spyOn(ns, "name")` names.
     pub replaced_variables: Vec<Sym>,
     /// The same for a name that the loader fills: of a module of the library, or of a CommonJS file.
@@ -121,6 +124,7 @@ pub(super) fn bind_imports(
     sites: &PlannedSites,
     marker: FindMarker<'_>,
     evicted: &EvictedModules,
+    stored_in_cache: &LibraryModulesStoredInCache,
 ) -> Vec<FileImports> {
     let context = BindContext {
         files: input.files,
@@ -138,6 +142,7 @@ pub(super) fn bind_imports(
         runs_tests: input.runs_tests,
         evicted,
         mocks_any_module: input.mocks_any_module,
+        stored_in_cache,
         mocked: find_mocked_modules(input, scans, modules),
     };
     let compiled_files = modules.compiled_files.iter();
@@ -234,6 +239,7 @@ pub(super) struct BindContext<'a, 's> {
     pub(super) marker: FindMarker<'a>,
     pub(super) runs_tests: bool,
     pub(super) evicted: &'a EvictedModules,
+    pub(super) stored_in_cache: &'a LibraryModulesStoredInCache,
     /// `LoadOptions::mocks_any_module`
     pub(super) mocks_any_module: bool,
     pub(super) mocked: MockedModules,
@@ -248,8 +254,12 @@ pub(super) struct MockedModules {
 }
 
 impl MockedModules {
-    fn contains(&self, module: ModuleRef) -> bool {
+    pub(super) fn contains(&self, module: ModuleRef) -> bool {
         self.is_every_module || self.modules.contains(&module)
+    }
+
+    fn is_empty(&self) -> bool {
+        !self.is_every_module && self.modules.is_empty()
     }
 }
 
@@ -438,7 +448,7 @@ impl<'a, 's> FileBinder<'a, 's> {
         }
     }
 
-    /// `import { a } from "bun"` runs as `var { a } = Bun` where the statement stands.
+    /// `import b, { a } from "bun"` runs as `var b = Bun, { a } = Bun` where the statement stands. It loads no module, so a mock of "bun" changes none of the names.
     fn bind_copied_member(
         &self,
         exporter: ModuleRef,
@@ -454,7 +464,10 @@ impl<'a, 's> FileBinder<'a, 's> {
             ModuleExport::Found(member) => {
                 let is_copied = name != known::default
                     && (is_property_that_a_store_replaces(member) || self.is_exported(symbol));
-                is_copied.then_some(ImportBinding::BuiltinMember { holder, name })
+                Some(match is_copied {
+                    true => ImportBinding::BuiltinMember { holder, name },
+                    false => ImportBinding::Builtin(member),
+                })
             }
             ModuleExport::PropertyOfNamespace(_) => {
                 Some(ImportBinding::BuiltinMember { holder, name })
@@ -470,9 +483,10 @@ impl<'a, 's> FileBinder<'a, 's> {
         let interop = context.modules.interop(exporter);
         let names = &context.tables.commonjs;
         let is_half_at_link = names.is_half(exporter) && context.order.half_at_link(exporter);
-        // A mock replaces `module.exports`, and leaves the default import what it was.
+        // A mock replaces `module.exports`, and leaves the default import what it was. So does the next load of a file that was taken out of `require.cache`.
         interop.kind == ModuleKind::CommonJs
             && !context.mocked.contains(exporter)
+            && !context.evicted.contains(exporter)
             && context.order.is_code_of_program(exporter)
             && match (context.marker)(exporter) {
                 Some(false) => true,
@@ -646,12 +660,91 @@ impl<'a, 's> FileBinder<'a, 's> {
     }
 
     // Only the run knows whether a module of the library has a name that its table does not list. The link of each module that binds the name looks for it, and fails alone.
+    // A mock that stands in place of the module has its own names alone.
     fn find_unlisted_name(&self, module: ModuleRef, name: Atom) -> Option<RequiredName> {
         let context = self.context;
         let rule = context.modules.interop(module).export_rule;
         let is_unlisted = rule == SyntheticExportRule::RuntimeModule
-            && !context.known_members.has(context.modules, module, name);
+            && (context.mocked.contains(module)
+                || !context.known_members.has(context.modules, module, name));
         is_unlisted.then(|| RequiredName::new(module, name))
+    }
+
+    // A mock that comes before a CommonJS file is loaded stands for the whole file, whatever its text stores: the link of a module that asks for a name that the mock leaves out fails.
+    // Without a `default` of its own a file exports its value under that name.
+    fn find_name_that_a_mock_of_a_file_may_leave_out(
+        &self,
+        exporter: ModuleRef,
+        name: Atom,
+        owner: ModuleRef,
+    ) -> Option<RequiredName> {
+        let context = self.context;
+        let is_file = |module| context.modules.interop(module).kind == ModuleKind::CommonJs;
+        let is_mocked_file = |module| is_file(module) && context.mocked.contains(module);
+        if name == known::default || !(is_mocked_file(owner) || is_mocked_file(exporter)) {
+            return None;
+        }
+        let is_own_name_of = |file| {
+            let mut own_names = context.tables.own_names(file).iter();
+            own_names.any(|&(own_name, _)| own_name == name)
+        };
+        match exporter {
+            // The link of the module that hands the name on fails first.
+            ModuleRef::File(file) if !is_file(exporter) && is_own_name_of(file) => None,
+            // The name comes through `export *`: a link looks behind the stars, as where several of them may have the name.
+            _ if !is_file(exporter) => Some(RequiredName::new(exporter, name)),
+            _ => Some(RequiredName {
+                is_found_unless_mocked: true,
+                ..RequiredName::new(exporter, name)
+            }),
+        }
+    }
+
+    // The same for an ES module: the build binds the import to the variable, and the mock leaves the name out. It may come through `export *` from the module that is mocked.
+    fn find_name_that_a_mock_of_an_es_module_may_leave_out(
+        &mut self,
+        exporter: ModuleRef,
+        name: Atom,
+    ) -> Option<RequiredName> {
+        let context = self.context;
+        if context.mocked.is_empty() {
+            return None;
+        }
+        let file = context.modules.table_file(exporter)?;
+        let searched = context.tables.files_searched_for(file, name);
+        let mut files = searched.iter();
+        if !files.any(|&file| context.mocked.contains(ModuleRef::File(file))) {
+            return None;
+        }
+        if !self.required_name_set.contains(&(exporter, name)) {
+            let behind_stars = searched[1..].iter().map(|&file| (file, name));
+            self.imports
+                .names_searched_behind_stars
+                .extend(behind_stars);
+        }
+        Some(RequiredName {
+            is_found_unless_mocked: true,
+            ..RequiredName::new(exporter, name)
+        })
+    }
+
+    fn find_name_that_an_export_statement_asks_for(
+        &self,
+        position: usize,
+    ) -> Option<(ModuleRef, Atom)> {
+        let (site, name) = (self.context.tables).find_indirect_name(self.file, position)?;
+        match self.scan.sites[site as usize] {
+            ScannedSite::Module(exporter) => Some((exporter, name)),
+            _ => None,
+        }
+    }
+
+    fn find_exported_name_that_a_mock_of_an_es_module_may_leave_out(
+        &mut self,
+        position: usize,
+    ) -> Option<RequiredName> {
+        let (exporter, name) = self.find_name_that_an_export_statement_asks_for(position)?;
+        self.find_name_that_a_mock_of_an_es_module_may_leave_out(exporter, name)
     }
 
     fn bind_name(
@@ -668,7 +761,21 @@ impl<'a, 's> FileBinder<'a, 's> {
                     }
                     PendingBinding::Bound(_) | PendingBinding::CapturedBuiltin { .. } => None,
                 };
-                for required_name in [required_name, unlisted_name].into_iter().flatten() {
+                let name_of_file = match binding {
+                    PendingBinding::Synthetic { module, .. } => {
+                        self.find_name_that_a_mock_of_a_file_may_leave_out(exporter, name, module)
+                    }
+                    PendingBinding::Bound(_) | PendingBinding::CapturedBuiltin { .. } => None,
+                };
+                let name_of_es_module =
+                    self.find_name_that_a_mock_of_an_es_module_may_leave_out(exporter, name);
+                let required_names = [
+                    required_name,
+                    unlisted_name,
+                    name_of_file,
+                    name_of_es_module,
+                ];
+                for required_name in required_names.into_iter().flatten() {
                     self.add_required_name(required_name);
                 }
                 binding
@@ -699,11 +806,10 @@ impl<'a, 's> FileBinder<'a, 's> {
                     let written = WrittenPart::new(site, part, site_kind, 0..0);
                     (Some(exporter), self.bind_name(exporter, name, written))
                 }
-                ScannedSite::Unresolved => (None, UNBOUND),
-                ScannedSite::AllModules | ScannedSite::Candidates(_) | ScannedSite::Erased => {
-                    debug_assert!(false, "a JSX import in use has a module or a load failure");
-                    (None, UNBOUND)
-                }
+                ScannedSite::Unresolved
+                | ScannedSite::AllModules
+                | ScannedSite::Candidates(_)
+                | ScannedSite::Erased => (None, UNBOUND),
             };
             if let Some(exporter) = exporter {
                 self.look_at_required_jsx_module(exporter);
@@ -721,15 +827,18 @@ impl<'a, 's> FileBinder<'a, 's> {
             .context
             .tables
             .find_indirect_site(self.file, position)? as usize;
-        let specifier = match (
-            &self.scan.sites[site],
-            self.analysis.import_sites[site].specifier,
-        ) {
-            // Bun's transpiler prints "fs" as "node:fs".
-            (&ScannedSite::Module(ModuleRef::Runtime(module)), _) => {
-                self.context.files.atoms.intern(table::specifier_of(module))
+        let atoms = &self.context.files.atoms;
+        let module_of_bun = match self.scan.sites[site] {
+            ScannedSite::Module(ModuleRef::Runtime(module)) => Some(module),
+            ScannedSite::Module(ModuleRef::External { specifier, .. }) => {
+                find_module_named(atoms.bytes(specifier))
             }
-            (_, ImportSpecifier::Constant(specifier)) => specifier,
+            _ => None,
+        };
+        let specifier = match (module_of_bun, self.analysis.import_sites[site].specifier) {
+            // Bun's transpiler prints "fs" as "node:fs".
+            (Some(module), _) => atoms.intern(table::specifier_of(module)),
+            (None, ImportSpecifier::Constant(specifier)) => specifier,
             _ => return None,
         };
         Some(ExportStatement {
@@ -741,7 +850,21 @@ impl<'a, 's> FileBinder<'a, 's> {
     fn add_required_export_names(&mut self) {
         let own_names = self.context.tables.own_names(self.file).iter();
         for (position, &(export_name, resolved)) in own_names.enumerate() {
-            if let Some(required_name) = resolved.required_name {
+            let name_of_file = match resolved.resolution {
+                Resolution::Synthetic {
+                    module: owner,
+                    name,
+                } => {
+                    let asked_for = self.find_name_that_an_export_statement_asks_for(position);
+                    let (exporter, name) = asked_for.unwrap_or((owner, name));
+                    self.find_name_that_a_mock_of_a_file_may_leave_out(exporter, name, owner)
+                }
+                _ => None,
+            };
+            let name_of_es_module =
+                self.find_exported_name_that_a_mock_of_an_es_module_may_leave_out(position);
+            let required_name = resolved.required_name.or(name_of_file);
+            for required_name in [required_name, name_of_es_module].into_iter().flatten() {
                 self.add_required_name(RequiredName {
                     asked_by: self.find_export_statement(position, export_name),
                     ..required_name
@@ -817,9 +940,7 @@ fn bind_runtime_member(
             let module = ModuleRef::Runtime(module);
             return Ok(PendingBinding::Synthetic { module, name });
         }
-        ModuleExport::Found(member)
-            if name != known::default && is_property_that_a_store_replaces(member) =>
-        {
+        ModuleExport::Found(member) if is_property_that_a_store_replaces(member) => {
             let module = ModuleRef::Runtime(module);
             return Ok(PendingBinding::CapturedBuiltin {
                 module,

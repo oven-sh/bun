@@ -250,61 +250,47 @@ function f29 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v77: ": JSON" = String string=": JSON"
 # CHECK-NEXT: v78: string = Add v75, v77
 # CHECK-NEXT: Jump -> next b17(v76)
-# CHECK-NEXT: b17(v79: undefined|"a literal"|"a literal with undefined"|"a registered symbol"|"a symbol"|"a symbol with an empty description"|"a symbol without a description"|"a well-known symbol"|"an empty literal"|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0 ~ "a literal"|"a literal with undefined"|"a registered symbol"|"a symbol"|"a symbol with an empty description"|"a symbol without a description"|"a well-known symbol"|"an empty literal"|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0) handler=b30():
-# CHECK-NEXT: v80: stringbuilder = StringBuilderBegin @0:2 tail
-# CHECK-NEXT: v81: i32 = StringBuilderCheckpoint v80 @0:2 tail
-# CHECK-NEXT: v82: boolean ~ false = TypeTest v79 testedType=undefined @0:2 tail
-# CHECK-NEXT: Branch v82 -> taken b18(), notTaken b19(| 0) @0:2 tail
-# CHECK-NEXT: b18() handler=b30():
-# CHECK-NEXT: v83: buildercursor = StringBuilderReserve v80 size=128 @0:2 tail
-# CHECK-NEXT: Jump -> next b26(v83) @0:2 tail
-# CHECK-NEXT: b19(v84: "a literal"|"a literal with undefined"|"a registered symbol"|"a symbol"|"a symbol with an empty description"|"a symbol without a description"|"a well-known symbol"|"an empty literal"|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0):
-# CHECK-NEXT: v85: boolean = TypeTest v84 testedType=object @0:2 tail
-# CHECK-NEXT: Branch v85 -> taken b20(| 0), notTaken b23() @0:2 tail
-# CHECK-NEXT: b20(v86: L0) handler=b30():
-# CHECK-NEXT: v87: int[0, 2] = CallDirect v86, v80 function=f33 calledBuiltin=JSONStringify @0:2 tail
-# CHECK-NEXT: Switch v87 cases=[1] -> case b21(), otherwise b22() @0:2 tail
-# CHECK-NEXT: b21() handler=b30():
-# CHECK-NEXT: v88: buildercursor = StringBuilderReserve v80 size=128 @0:2 tail
-# CHECK-NEXT: Jump -> next b25(v88) @0:2 tail
+# CHECK-NEXT: b17(v79: undefined|"a literal"|"a literal with undefined"|"a registered symbol"|"a symbol"|"a symbol with an empty description"|"a symbol without a description"|"a well-known symbol"|"an empty literal"|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0 ~ "a literal"|"a literal with undefined"|"a registered symbol"|"a symbol"|"a symbol with an empty description"|"a symbol without a description"|"a well-known symbol"|"an empty literal"|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0):
+# CHECK-NEXT: v80: boolean ~ false = TypeTest v79 testedType=undefined @0:2 tail
+# CHECK-NEXT: Branch v80 -> taken b18(), notTaken b19(| 0) @0:2 tail
+# CHECK-NEXT: b18() frequency=Rare:
+# CHECK-NEXT: v81: undefined = Undefined @0:2 tail
+# CHECK-NEXT: Jump -> next b25(v81) @0:2 tail
+# CHECK-NEXT: b19(v82: "a literal"|"a literal with undefined"|"a registered symbol"|"a symbol"|"a symbol with an empty description"|"a symbol without a description"|"a well-known symbol"|"an empty literal"|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0) handler=b26():
+# CHECK-NEXT: v83: stringbuilder = StringBuilderBegin @0:2 tail
+# CHECK-NEXT: v84: boolean = TypeTest v82 testedType=object @0:2 tail
+# CHECK-NEXT: Branch v84 -> taken b20(| 0), notTaken b23() @0:2 tail
+# CHECK-NEXT: b20(v85: L0) handler=b26():
+# CHECK-NEXT: v86: int[0, 2] = CallDirect v85, v83 function=f33 calledBuiltin=JSONStringify @0:2 tail
+# CHECK-NEXT: Switch v86 cases=[1] -> case b21(), otherwise b22() @0:2 tail
+# CHECK-NEXT: b21() handler=b26():
+# CHECK-NEXT: v87: string = StringBuilderFinish v83 @0:2 tail
+# CHECK-NEXT: Jump -> next b25(v87) @0:2 tail
 # CHECK-NEXT: b22() frequency=Rare:
 # CHECK-NEXT: Jump -> next b24() @0:2 tail
 # CHECK-NEXT: b23() frequency=Rare:
 # CHECK-NEXT: Jump -> next b24() @0:2 tail
-# CHECK-NEXT: b24() frequency=Rare handler=b30():
-# CHECK-NEXT: v89: buildercursor = StringBuilderReserve v80 size=128 @0:2 tail
-# CHECK-NEXT: Jump -> next b25(v89) @0:2 tail
-# CHECK-NEXT: b25(v90: buildercursor):
-# CHECK-NEXT: Jump -> next b26(v90) @0:2 tail
-# CHECK-NEXT: b26(v91: buildercursor):
-# CHECK-NEXT: StringBuilderCommit v80, v91 @0:2 tail
-# CHECK-NEXT: v93: i32 = StringBuilderCheckpoint v80 @0:2 tail
-# CHECK-NEXT: v94: boolean = StrictEq v81, v93 @0:2 tail
-# CHECK-NEXT: Branch v94 -> taken b27(), notTaken b28() @0:2 tail
-# CHECK-NEXT: b27() frequency=Rare handler=b30():
-# CHECK-NEXT: StringBuilderDiscard v80 @0:2 tail
-# CHECK-NEXT: v96: undefined = Undefined @0:2 tail
-# CHECK-NEXT: v97: undefined|string = CallBuiltin -, v79, v96 overload=JSONStringify/0 accessSite=11 @0:2 tail
-# CHECK-NEXT: Jump -> next b29(v97) @0:2 tail
-# CHECK-NEXT: b28() handler=b30():
-# CHECK-NEXT: v98: string = StringBuilderFinish v80 @0:2 tail
-# CHECK-NEXT: Jump -> next b29(v98) @0:2 tail
-# CHECK-NEXT: b29(v99: undefined|string ~ string) handler=b30():
-# CHECK-NEXT: v100: undefined|null|string = Call v38, -, v99 calleeName="show" accessSite=6 callees=[f1]
-# CHECK-NEXT: Jump -> next b31()
-# CHECK-NEXT: b30() role=CatchHandler:
-# CHECK-NEXT: v101: anything = CatchValue
-# CHECK-NEXT: v102: "threw " = String string="threw "
-# CHECK-NEXT: v103: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
-# CHECK-NEXT: v104: boolean = HasInPrototypeChain v101, v103
-# CHECK-NEXT: v105: anything ~ undefined|null|Error = Upcast v101 castType=anything
-# CHECK-NEXT: v106: anything = PropGet v105 key="constructor" accessSite=8
-# CHECK-NEXT: v107: anything ~ undefined|null|function = Expect v106 expectedType=undefined|null|function
-# CHECK-NEXT: v108: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v107 name="name"
-# CHECK-NEXT: v109: anything = PropGet v108 key="name" accessSite=9
-# CHECK-NEXT: v110: anything ~ undefined|null|string = Expect v109 expectedType=undefined|null|string
-# CHECK-NEXT: v111: string = Add v102, v110
-# CHECK-NEXT: Jump -> next b31()
-# CHECK-NEXT: b31():
+# CHECK-NEXT: b24() frequency=Rare handler=b26():
+# CHECK-NEXT: StringBuilderDiscard v83 @0:2 tail
+# CHECK-NEXT: v89: undefined = Undefined @0:2 tail
+# CHECK-NEXT: v90: undefined|string = CallBuiltin -, v79, v89 overload=JSONStringify/0 accessSite=11 @0:2 tail
+# CHECK-NEXT: Jump -> next b25(v90) @0:2 tail
+# CHECK-NEXT: b25(v91: undefined|string ~ string) handler=b26():
+# CHECK-NEXT: v92: undefined|null|string = Call v38, -, v91 calleeName="show" accessSite=6 callees=[f1]
+# CHECK-NEXT: Jump -> next b27()
+# CHECK-NEXT: b26() role=CatchHandler:
+# CHECK-NEXT: v93: anything = CatchValue
+# CHECK-NEXT: v94: "threw " = String string="threw "
+# CHECK-NEXT: v95: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
+# CHECK-NEXT: v96: boolean = HasInPrototypeChain v93, v95
+# CHECK-NEXT: v97: anything ~ undefined|null|Error = Upcast v93 castType=anything
+# CHECK-NEXT: v98: anything = PropGet v97 key="constructor" accessSite=8
+# CHECK-NEXT: v99: anything ~ undefined|null|function = Expect v98 expectedType=undefined|null|function
+# CHECK-NEXT: v100: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v99 name="name"
+# CHECK-NEXT: v101: anything = PropGet v100 key="name" accessSite=9
+# CHECK-NEXT: v102: anything ~ undefined|null|string = Expect v101 expectedType=undefined|null|string
+# CHECK-NEXT: v103: string = Add v94, v102
+# CHECK-NEXT: Jump -> next b27()
+# CHECK-NEXT: b27():
 # CHECK-NEXT: Jump -> next b1(v52, v53)
 # CHECK-NEXT: }

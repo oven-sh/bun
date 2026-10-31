@@ -165,6 +165,36 @@ test("Object.defineProperty, Reflect.set and delete replace a member", async () 
   });
 });
 
+test("Object.assign and Object.defineProperties replace the members that their literals name", async () => {
+  await expectCompiledToRunAsPlain({
+    ...app,
+    "one.test.ts": `${imports}
+      test("assigned", () => {
+        const before = { includes: Array.prototype.includes, join: Array.prototype.join };
+        Object.assign(Array.prototype, { includes() { return "assigned"; }, ["join"]() { return "assigned too"; } });
+        console.log(has([1], 1), joined(["a", "b"]));
+        Object.assign(Array.prototype, before);
+        console.log(has([1], 1), joined(["a", "b"]));
+      });
+      test("assigned from the second of two", () => {
+        const original = Array.from;
+        Object.assign(Array, {}, { from: () => "assigned" } as any);
+        console.log(listOf([1]));
+        Object.assign(Array, { from: original });
+        console.log(listOf([1]));
+      });
+      test("defined together", () => {
+        const before = { get: Object.getOwnPropertyDescriptor(Map.prototype, "get")!, indexOf: Object.getOwnPropertyDescriptor(String.prototype, "indexOf")! };
+        Object.defineProperties(Map.prototype, { get: { ...before.get, value: () => "defined" } });
+        Object.defineProperties(String.prototype, { indexOf: { ...before.indexOf, value: () => "defined too" } });
+        console.log(lookUp(new Map(), "a"), find("abc", "c"), findUntyped("abc", "c"));
+        Object.defineProperties(Map.prototype, { get: before.get });
+        Object.defineProperties(String.prototype, { indexOf: before.indexOf });
+        console.log(lookUp(new Map([["a", 1]]), "a"), find("abc", "c"), findUntyped("abc", "c"));
+      });`,
+  });
+});
+
 test("a getter is replaced", async () => {
   await expectCompiledToRunAsPlain({
     ...app,
@@ -1797,4 +1827,42 @@ test("walks of values that nobody knows", async () => {
 });
 `,
   });
+});
+
+// These accessors are native code without a function object. A store on the prototype runs the native setter, which refuses a receiver
+// that is no instance, so nothing is replaced and the next read goes the fast way.
+test("a store through a native accessor of a prototype replaces nothing, and a definition over it does", async () => {
+  const files = {
+    "one.test.ts": `
+      import { test } from "bun:test";
+      function attempt(store: () => void): string {
+        try { store(); return "stored"; } catch (error) { return (error as Error).name; }
+      }
+      const url = () => new URL("http://a.example/x?q=1#h");
+      test("a store that the setter refuses", () => {
+        console.log(attempt(() => { (URL.prototype as any).href = "http://b.example/"; }), url().href);
+        console.log(attempt(() => { (URL.prototype as any).hash = "#other"; }), url().hash);
+        console.log(attempt(() => { (Request.prototype as any).url = "http://b.example/"; }), new Request("http://a.example/r").url);
+        console.log(attempt(() => { (URLSearchParams.prototype as any).size = 9; }), new URLSearchParams("a=1&b=2").size);
+      });
+      test("a store for another receiver", () => {
+        const held = url();
+        console.log(Reflect.set(URL.prototype, "search", "?other=2", held), held.search, url().search);
+      });
+      test("a definition, and back", () => {
+        const original = Object.getOwnPropertyDescriptor(URL.prototype, "host")!;
+        Object.defineProperty(URL.prototype, "host", { get() { return "replaced"; }, configurable: true });
+        console.log(url().host);
+        Object.defineProperty(URL.prototype, "host", original);
+        console.log(url().host);
+      });
+      test("a deletion, and back", () => {
+        const original = Object.getOwnPropertyDescriptor(URL.prototype, "port")!;
+        console.log(delete (URL.prototype as any).port, String(new URL("http://a.example:81/").port));
+        Object.defineProperty(URL.prototype, "port", original);
+        console.log(new URL("http://a.example:81/").port);
+      });`,
+  };
+  await expectCompiledToRunAsPlain(files);
+  await expectCompiledToRunAsPlain(files, "--isolate");
 });

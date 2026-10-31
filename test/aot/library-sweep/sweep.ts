@@ -17,6 +17,11 @@
 // later is counted against whichever test runs then, so a failure without "Expected:" is listed apart and not counted. `ShadowRealm` is not there in compiled code, as documented.
 //
 // A SWEEP THAT HAS NEVER BEEN RED SAYS LITTLE. The spelled uses were: 3 faults and 135 wrong answers on process.stdout, stderr and stdin. The handed ones never were.
+// AND PERHAPS NEVER CAN BE, FOR THIS KIND OF FAULT. Measured on another fault of the kind, a read of the global object, with one other thing beside it in each of 21 files: it was hidden by
+// USING anything imported from another program (a source file, a package, a module of the library; by import, require or import()), by an import for its effects, and by handing globalThis on.
+// It was not hidden by `in`, a store, a delete, hasOwn, keys, a computed read, expect, timers, process.env, eval, new Function, an import that is not used, or a type.
+// Every scenario of ./handed.mjs uses a module of the library to get its object. So a clean --handed sweep does not clear what the library hands out, and what can show such a fault is a
+// program that uses globals alone, which is what ./spelled.mjs has for every global.
 import { spawnSync } from "child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";

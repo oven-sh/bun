@@ -94,56 +94,54 @@ Router.prototype.find = function (method, path) {
 // CHECK-NEXT: Throw v11
 // CHECK-NEXT: b4(v12):
 // CHECK-NEXT: v13 = PropGet v12 key="Router"
-// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|[[f_6]] flags=[IsExpected]}
-// CHECK-NEXT: v15 = PropGet v12 key="errors"
-// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|[[f_7]] flags=[IsExpected]}
-// CHECK-NEXT: v17 = Call v5 calleeName="framework"
-// CHECK-NEXT: v18 = Convert v17 declared={type=undefined|null|[[L_8]] flags=[IsExpected]}
-// CHECK-NEXT: v19 = PropGet v18 key="router"
-// CHECK-NEXT: v20 = Convert v19 declared={type=undefined|null|[[L_9]] flags=[IsExpected]}
-// CHECK-NEXT: v21 = PropGet v20 key="get"
-// CHECK-NEXT: v22 = Convert v21 declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: v23 = String string="/"
-// CHECK-NEXT: v24 = NewClosure function=[[f_10]]
-// CHECK-NEXT: v25 = Call v22, v20, v23, v24 calleeKey="get" calleeName="app.router.get"
-// CHECK-NEXT: v26 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v27 = PropGet v26 key="console" [isFreeName]
-// CHECK-NEXT: v28 = Convert v27 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v29 = PropGet v28 key="log"
-// CHECK-NEXT: v30 = Convert v29 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v31 = PropGet v18 key="handle"
-// CHECK-NEXT: v32 = Convert v31 declared={type=undefined|null|[[f_11]] flags=[IsExpected]}
-// CHECK-NEXT: v33 = String string="GET"
-// CHECK-NEXT: v34 = String string="/"
-// CHECK-NEXT: v35 = Call v32, v18, v33, v34 calleeKey="handle" calleeName="app.handle"
-// CHECK-NEXT: v36 = Convert v35 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v37 = Call v30, v28, v36 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v38 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v39 = PropGet v38 key="console" [isFreeName]
-// CHECK-NEXT: v40 = Convert v39 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v41 = PropGet v40 key="log"
-// CHECK-NEXT: v42 = Convert v41 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v43 = PropGet v18 key="handle"
-// CHECK-NEXT: v44 = Convert v43 declared={type=undefined|null|[[f_11]] flags=[IsExpected]}
-// CHECK-NEXT: v45 = String string="GET"
-// CHECK-NEXT: v46 = String string="/missing"
-// CHECK-NEXT: v47 = Call v44, v18, v45, v46 calleeKey="handle" calleeName="app.handle"
-// CHECK-NEXT: v48 = Convert v47 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v49 = Call v42, v40, v48 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v50 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v51 = PropGet v50 key="console" [isFreeName]
-// CHECK-NEXT: v52 = Convert v51 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v53 = PropGet v52 key="log"
-// CHECK-NEXT: v54 = Convert v53 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v55 = PropGet v18 key="router"
-// CHECK-NEXT: v56 = InstanceOf v55, v14 writtenExpression="app.router instanceof Router"
-// CHECK-NEXT: v57 = PropGet v5 key="errors"
-// CHECK-NEXT: v58 = StrictEq v16, v57
-// CHECK-NEXT: v59 = PropGet v5 key="created"
-// CHECK-NEXT: v60 = Call v59, v5 calleeKey="created" calleeName="framework.created"
-// CHECK-NEXT: v61 = Call v54, v52, v56, v58, v60 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v62 = Undefined
-// CHECK-NEXT: Return v62
+// CHECK-NEXT: v14 = PropGet v12 key="errors"
+// CHECK-NEXT: v15 = Call v5 calleeName="framework"
+// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|[[L_6]] flags=[IsExpected]}
+// CHECK-NEXT: v17 = PropGet v16 key="router"
+// CHECK-NEXT: v18 = Convert v17 declared={type=undefined|null|[[L_7]] flags=[IsExpected]}
+// CHECK-NEXT: v19 = PropGet v18 key="get"
+// CHECK-NEXT: v20 = Convert v19 declared={type=undefined|null|function flags=[IsExpected]}
+// CHECK-NEXT: v21 = String string="/"
+// CHECK-NEXT: v22 = NewClosure function=[[f_8]]
+// CHECK-NEXT: v23 = Call v20, v18, v21, v22 calleeKey="get" calleeName="app.router.get"
+// CHECK-NEXT: v24 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v25 = PropGet v24 key="console" [isFreeName]
+// CHECK-NEXT: v26 = Convert v25 declared={type=builtin(Console) flags=[IsExpected]}
+// CHECK-NEXT: v27 = PropGet v26 key="log"
+// CHECK-NEXT: v28 = Convert v27 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+// CHECK-NEXT: v29 = PropGet v16 key="handle"
+// CHECK-NEXT: v30 = Convert v29 declared={type=undefined|null|[[f_9]] flags=[IsExpected]}
+// CHECK-NEXT: v31 = String string="GET"
+// CHECK-NEXT: v32 = String string="/"
+// CHECK-NEXT: v33 = Call v30, v16, v31, v32 calleeKey="handle" calleeName="app.handle"
+// CHECK-NEXT: v34 = Convert v33 declared={type=undefined|null|string flags=[IsExpected]}
+// CHECK-NEXT: v35 = Call v28, v26, v34 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v36 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v37 = PropGet v36 key="console" [isFreeName]
+// CHECK-NEXT: v38 = Convert v37 declared={type=builtin(Console) flags=[IsExpected]}
+// CHECK-NEXT: v39 = PropGet v38 key="log"
+// CHECK-NEXT: v40 = Convert v39 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+// CHECK-NEXT: v41 = PropGet v16 key="handle"
+// CHECK-NEXT: v42 = Convert v41 declared={type=undefined|null|[[f_9]] flags=[IsExpected]}
+// CHECK-NEXT: v43 = String string="GET"
+// CHECK-NEXT: v44 = String string="/missing"
+// CHECK-NEXT: v45 = Call v42, v16, v43, v44 calleeKey="handle" calleeName="app.handle"
+// CHECK-NEXT: v46 = Convert v45 declared={type=undefined|null|string flags=[IsExpected]}
+// CHECK-NEXT: v47 = Call v40, v38, v46 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v48 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v49 = PropGet v48 key="console" [isFreeName]
+// CHECK-NEXT: v50 = Convert v49 declared={type=builtin(Console) flags=[IsExpected]}
+// CHECK-NEXT: v51 = PropGet v50 key="log"
+// CHECK-NEXT: v52 = Convert v51 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+// CHECK-NEXT: v53 = PropGet v16 key="router"
+// CHECK-NEXT: v54 = InstanceOf v53, v13 writtenExpression="app.router instanceof Router"
+// CHECK-NEXT: v55 = PropGet v5 key="errors"
+// CHECK-NEXT: v56 = StrictEq v14, v55
+// CHECK-NEXT: v57 = PropGet v5 key="created"
+// CHECK-NEXT: v58 = Call v57, v5 calleeKey="created" calleeName="framework.created"
+// CHECK-NEXT: v59 = Call v52, v50, v54, v56, v58 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v60 = Undefined
+// CHECK-NEXT: Return v60
 // CHECK-NEXT: }
 // CHECK: function {{*}}
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] {

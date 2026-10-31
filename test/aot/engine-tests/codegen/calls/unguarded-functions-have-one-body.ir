@@ -408,7 +408,7 @@ runtimefunction id=FunctionPrototypeCall function=f8
 # CHECK-NEXT: PropSet v1, v8 key="second" accessSite=5
 # CHECK-NEXT: v10: 0 = Integer
 # CHECK-NEXT: v11: 0 = Integer
-# CHECK-NEXT: v12: 0 = Upcast v10 castType=number
+# CHECK-NEXT: v12: 0 = Upcast v10 castType=int|whole
 # CHECK-NEXT: v13: 0 = Upcast v11 castType=int[0, 300]
 # CHECK-NEXT: Jump -> next b1(v12, v13)
 # CHECK-NEXT: b1(v14: int|whole, v15: int[0, 300]):

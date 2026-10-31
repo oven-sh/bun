@@ -523,9 +523,10 @@ runtimefunction id=ArrayTraversalTraverseArray function=f34 visibility=Private
 # CHECK-NEXT: v69: null|object = GetSuperBase v68
 # CHECK-NEXT: v70: builtin(Map) = AssumeType v69 provenType=builtin(Map)
 # CHECK-NEXT: v71: object ~ L0 = SuperConstruct v70, v68 layout=L0 accessSite=41 callees=[builtin(Map)]
-# CHECK-NEXT: v72: anything ~ number = PropGet v71 key="calls" accessSite=21
-# CHECK-NEXT: v73: undefined = Undefined
-# CHECK-NEXT: Return v73
+# CHECK-NEXT: v72: Map ~ L0 = AssumeType v71 provenType=Map
+# CHECK-NEXT: v73: anything ~ number = PropGet v72 key="calls" accessSite=21
+# CHECK-NEXT: v74: undefined = Undefined
+# CHECK-NEXT: Return v74
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="twice"
 # CHECK: module=m0 position=321 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Map<string, undefined|L1, proven, pristine[Storage, Names]> site=w3 flags=[OmitsNull, OmitsUndefined]}, {type=Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]> site=w4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w5}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

@@ -448,26 +448,26 @@ function f70 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0() frequency=Rare:
 # CHECK-NEXT: v0: f6 = NewClosure function=f6 allocationSite=1 storage=Frame
 # CHECK-NEXT: v1: f3 = GetModuleVariable variable=g2
-# CHECK-NEXT: v2: anything = CallDirect v0, v1 function=f93 accessSite=0
+# CHECK-NEXT: v2: anything = CallDirect v0, v1 function=f94 accessSite=0
 # CHECK-NEXT: v3: f7 = NewClosure function=f7 allocationSite=2 storage=Frame
-# CHECK-NEXT: v4: anything = CallDirect v3, v1 function=f93 accessSite=1
+# CHECK-NEXT: v4: anything = CallDirect v3, v1 function=f94 accessSite=1
 # CHECK-NEXT: v5: f8 = NewClosure function=f8 allocationSite=3 storage=Frame
-# CHECK-NEXT: v6: anything = CallDirect v5, v1 function=f93 accessSite=2
+# CHECK-NEXT: v6: anything = CallDirect v5, v1 function=f94 accessSite=2
 # CHECK-NEXT: v7: f9 = NewClosure function=f9 allocationSite=4 storage=Frame
 # CHECK-NEXT: v8: f4 = GetModuleVariable variable=g3
-# CHECK-NEXT: v9: anything = CallDirect v7, v8 function=f93 accessSite=3
+# CHECK-NEXT: v9: anything = CallDirect v7, v8 function=f94 accessSite=3
 # CHECK-NEXT: v10: f10 = NewClosure function=f10 allocationSite=5 storage=Frame
-# CHECK-NEXT: v11: anything = CallDirect v10, v8 function=f93 accessSite=4
+# CHECK-NEXT: v11: anything = CallDirect v10, v8 function=f94 accessSite=4
 # CHECK-NEXT: v12: f11 = NewClosure function=f11 allocationSite=6 storage=Frame
-# CHECK-NEXT: v13: anything = CallDirect v12, v8 function=f93 accessSite=5
+# CHECK-NEXT: v13: anything = CallDirect v12, v8 function=f94 accessSite=5
 # CHECK-NEXT: v14: f12 = NewClosure function=f12 allocationSite=7 storage=Frame
-# CHECK-NEXT: v15: anything = CallDirect v14, v8 function=f93 accessSite=6
+# CHECK-NEXT: v15: anything = CallDirect v14, v8 function=f94 accessSite=6
 # CHECK-NEXT: v16: f13 = NewClosure function=f13 allocationSite=8 storage=Frame
-# CHECK-NEXT: v17: anything = CallDirect v16, v8 function=f93 accessSite=7
+# CHECK-NEXT: v17: anything = CallDirect v16, v8 function=f94 accessSite=7
 # CHECK-NEXT: v18: f14 = NewClosure function=f14 allocationSite=9 storage=Frame
-# CHECK-NEXT: v19: anything = CallDirect v18, v8 function=f93 accessSite=8
+# CHECK-NEXT: v19: anything = CallDirect v18, v8 function=f94 accessSite=8
 # CHECK-NEXT: v20: f15 = NewClosure function=f15 allocationSite=10 storage=Frame
-# CHECK-NEXT: v21: anything = CallDirect v20, v8 function=f93 accessSite=9
+# CHECK-NEXT: v21: anything = CallDirect v20, v8 function=f94 accessSite=9
 # CHECK-NEXT: v22: f17 = NewClosure function=f17 allocationSite=12
 # CHECK-NEXT: v23: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v23)
@@ -620,32 +620,12 @@ function f70 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v2: L4 = NewObject -, v1 layout=L4 fields=[0] allocationSite=54 allocationClass=4
 # CHECK-NEXT: v3: L4 = FinishObject v2
 # CHECK-NEXT: PropSet v0, v3 key="__proto__" accessSite=56
-# CHECK-NEXT: v5: boolean = TypeTest v0 testedType=L0|L2|L3|L6|L7|L12|L15|L16|L17|L18
-# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b6(| 0)
-# CHECK-NEXT: b1(v6: L0|L2|L3|L6|L7|L12|L15|L16|L17|L18):
-# CHECK-NEXT: v7: boolean = HasLayoutPrototype v6
-# CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b5()
-# CHECK-NEXT: b2(v8: guard):
-# CHECK-NEXT: v9: boolean = HasNoExtraProperties v6, v8
-# CHECK-NEXT: Branch v9 -> taken b3(), notTaken b5()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v10: boolean = AreMembersUnchanged conditions=[{layout=L15 key="inherited"}, {layout=L16 key="inherited"}, {layout=L17 key="inherited"}, {layout=L18 key="inherited"}, {kind=PrototypeLinkUnchanged layout=L15}, {kind=PrototypeLinkUnchanged layout=L16}, {kind=PrototypeLinkUnchanged layout=L17}, {kind=PrototypeLinkUnchanged layout=L18}]
-# CHECK-NEXT: Branch v10 -> taken b4(), notTaken b5()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v11: undefined = Undefined
-# CHECK-NEXT: Jump -> next b7(v11)
-# CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: v12: anything = PropGet v6 key="inherited" accessSite=57 receivers=[L0, L2, L3, L6, L7, L12, L15, L16, L17, L18]
-# CHECK-NEXT: Jump -> next b7(v12)
-# CHECK-NEXT: b6(v13: Object) frequency=Unlikely:
-# CHECK-NEXT: v14: anything = PropGet v13 key="inherited" accessSite=57
-# CHECK-NEXT: Jump -> next b7(v14)
-# CHECK-NEXT: b7(v15: anything ~ undefined):
-# CHECK-NEXT: v16: ":" = String string=":"
-# CHECK-NEXT: v17: string = Add v15, v16
-# CHECK-NEXT: v18: boolean = PropHasOwn v0 key="__proto__" calledBuiltin=ObjectHasOwn accessSite=58
-# CHECK-NEXT: v19: string = Add v17, v18
-# CHECK-NEXT: Return v19
+# CHECK-NEXT: v5: anything = PropGet v0 key="inherited" accessSite=57
+# CHECK-NEXT: v6: ":" = String string=":"
+# CHECK-NEXT: v7: string = Add v5, v6
+# CHECK-NEXT: v8: boolean = PropHasOwn v0 key="__proto__" calledBuiltin=ObjectHasOwn accessSite=58
+# CHECK-NEXT: v9: string = Add v7, v8
+# CHECK-NEXT: Return v9
 # CHECK-NEXT: }
 # CHECK-LABEL: function f29 module=
 # CHECK: m0 position=4346 kind=Arrow thisType={type=anything} results=[{type=L0}] functionTypes=[f66] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 isTailCall=true module=m0}] {

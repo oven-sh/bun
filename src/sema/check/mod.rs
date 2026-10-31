@@ -583,11 +583,17 @@ type Rechecked = (
     FxHashMap<(FileId, PropId), TypeId>,
 );
 
+/// For each file: whether it is a leaf, and how many nodes of each kind it has.
+pub type NodeCounts = Vec<(bool, [usize; 10])>;
+
 impl<'s> Program<'s> {
     pub fn new(session: &'s Session, files: &'s Files<'s>) -> Program<'s> {
-        // Nothing that mentions a leaf file's node is published, so the shared part has no capacity
-        // for those nodes, and `Bases::at` returns `None` for them. The counts are read in one pass
-        // because the modules are far apart in memory.
+        Program::with_node_counts(session, files, &Program::count_nodes(files))
+    }
+
+    /// While every file still has its tree.
+    pub fn count_nodes(files: &Files<'_>) -> NodeCounts {
+        // The counts are read in one pass because the modules are far apart in memory.
         let counts = files.modules.iter().map(|m| {
             let counts = [
                 m.hir.exprs.len(),
@@ -603,7 +609,16 @@ impl<'s> Program<'s> {
             ];
             (m.is_leaf, counts)
         });
-        let counts: Vec<(bool, [usize; 10])> = counts.collect();
+        counts.collect()
+    }
+
+    pub fn with_node_counts(
+        session: &'s Session,
+        files: &'s Files<'s>,
+        counts: &NodeCounts,
+    ) -> Program<'s> {
+        // Nothing that mentions a leaf file's node is published, so the shared part has no capacity
+        // for those nodes, and `Bases::at` returns `None` for them.
         let bases = |kind: usize| {
             let shared = counts.iter().map(|it| if it.0 { 0 } else { it.1[kind] });
             Bases::new_in(shared, &session)
@@ -898,7 +913,7 @@ impl<'s> Program<'s> {
             declared_parameters: Default::default(),
             listed_in_unions: Default::default(),
             quick_initializers: Vec::new(),
-            contextual: Vec::new(),
+            contextual: Default::default(),
             pulls_contextual_types_at: usize::MAX,
             rechecks_at: usize::MAX,
             mode_of_recheck: CheckMode::empty(),
@@ -915,6 +930,9 @@ impl<'s> Program<'s> {
             recent_composed: Default::default(),
             recent_with_this: Default::default(),
             recent_const_type_variables: Default::default(),
+            recent_walks_outwards: Default::default(),
+            recent_context_sensitive_literals: Default::default(),
+            context_sensitivity_depth: Default::default(),
             recent_derived_sigs: Default::default(),
             known_mapped_prop_types: Default::default(),
             unresolved_members: Vec::new(),
@@ -1354,6 +1372,8 @@ struct ContextualInfo {
     /// `None` for `pushCachedContextualType` of a node without a contextual type.
     t: Option<TypeId>,
     is_cache: bool,
+    /// See `Checker::are_literals_around_pushed`.
+    are_literals_around_pushed: Option<bool>,
 }
 
 /// `InferenceContextInfo`
@@ -1498,6 +1518,29 @@ struct QueryFrame {
     source_element: Option<CurrentNode>,
     /// `Task::held_back` when it was pushed, for `Stored::since`.
     held_back: u64,
+}
+
+#[cfg(test)]
+impl QueryFrame {
+    fn for_test(serial: u64) -> QueryFrame {
+        QueryFrame {
+            serial,
+            entry_depth: 0,
+            marks: Marks::new(false, false),
+            circular: false,
+            reported_from: 0,
+            class: 0,
+            next_of_class: 0,
+            has_result: false,
+            incomplete_flow: false,
+            is_stored_by_nested_visit: false,
+            has_read_members_in_place: false,
+            may_substitute_constraints: false,
+            is_quick_type: false,
+            source_element: None,
+            held_back: 0,
+        }
+    }
 }
 
 /// Which diagnostics of a file `check_file` computes.
@@ -1721,8 +1764,7 @@ pub struct Checker<'p, 's> {
     cycles: u64,
     /// The lowest index given to `mark_tainted_from` since the innermost `begin_scope`.
     lowest_taint: usize,
-    /// `contextualInfos`
-    contextual: Vec<ContextualInfo>,
+    contextual: context::PushedContextualTypes,
     /// The height of `stack` at which `getContextualType` finds nothing pushed. There, the contextual
     /// types recorded by call resolution (`arg_contexts`) aren't read, and an argument's contextual type
     /// comes from the parameters of `links.resolvedSignature`. A query entered above that height is
@@ -1760,6 +1802,9 @@ pub struct Checker<'p, 's> {
     recent_with_this: instantiate::Recent,
     /// `is_const_type_variable`, keyed by the type and 1 + the depth.
     recent_const_type_variables: instantiate::Recent,
+    recent_walks_outwards: std::cell::RefCell<instantiate::Recent>,
+    recent_context_sensitive_literals: std::cell::RefCell<instantiate::Recent>,
+    context_sensitivity_depth: std::cell::Cell<u32>,
     /// Keyed by a signature and a `relate::DerivedSig`.
     recent_derived_sigs: instantiate::Recent,
     /// The types that `type_of_mapped_prop` found in `Program::mapped_prop_types`, keyed by what
@@ -2793,8 +2838,12 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Calls `Task::close_cycle` for a cycle whose queries are all in `stack[from..]`.
     pub(super) fn close_cycle(&self, from: usize) {
-        let members = self.stack[from..].iter().map(crate::util::fx_hash);
-        (self.task).close_cycle(|| self.is_reachable_only_by_importers(from), members);
+        self.task.close_cycle_in_progress(
+            || self.is_reachable_only_by_importers(from),
+            &self.stack,
+            &self.frames,
+            from,
+        );
     }
 
     /// True if only files that import the current file can run any query in `stack[from..]`.
@@ -3727,6 +3776,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn leave(&mut self, q: Query) -> Result<Stored, Open> {
         let popped = self.stack.pop();
         debug_assert!(popped == Some(q));
+        self.task.leaves_the_cycles_below(self.stack.len());
         self.last_enter = EnterOutcome::Entered;
         let frame = self.frames.pop().unwrap();
         self.in_progress[frame.class as usize] = frame.next_of_class;

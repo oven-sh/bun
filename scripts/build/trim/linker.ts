@@ -47,19 +47,21 @@ export interface SectionOrder {
   retainedFirst: string[];
   // Parallel to Partition.groups.
   groups: OrderGroup[];
+  // Partition.groupsOutsidePrograms.
+  groupsOutsidePrograms: number;
   nodes: number[];
   // Object → section → index into `groups`.
   unnamed: Map<string, Map<string, number>>;
 }
 
 export interface LinkerFormat extends OutputPolicy {
-  relinksSameInputs: boolean;
   firstInputs: string[];
   builtinModulesOutput: string;
   supportObjects(tableRoom: number): string[];
   prepareInput(path: string): string;
-  // true: the objects changed, so they are linked instead of the bitcode before the graph is read.
-  prepareCompiledObjects(objects: string[]): boolean;
+  // `objects` were compiled from bitcode by `first`. Returns what is linked in place of the bitcode before the graph is read, and
+  // again by the second link; undefined: nothing changed, the graph of `first` is read.
+  prepareCompiledObjects(objects: string[], first: Link): string[] | undefined;
   compiledObjects(link: "first" | "second"): string[];
   firstLinkArguments(): LinkArguments;
   secondLinkArguments(order: SectionOrder): LinkArguments;

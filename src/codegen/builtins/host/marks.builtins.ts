@@ -40,9 +40,20 @@ export default b.declarations(
     "node:module._load",
     "node:module._resolveFilename",
   ]),
+  // import() of a graph, and the handlers under ".js" and the like: (module, filename) => ..
+  marked("ReadLoadsCodeByName", [
+    "Bun.ModuleGraph",
+    "%ModuleRequire%.extensions",
+    "%ModuleRequirePrototype%.extensions",
+    "node:module._extensions",
+  ]),
+  marked("IsResolverThatLoaderCalls", ["node:module._resolveFilename"]),
+  marked("IsRequireThatLoaderCalls", ["node:module.prototype.require"]),
   marked("IsSpy", ["bun:test.spyOn", "bun:test.jest.spyOn", "bun:test.vi.spyOn"]),
   marked("IsNotEnumerable", ["console._stdout", "console._stderr"]),
   marked("IsReplacedBySetter", ["self"]),
+  marked("AnswersNullAsItsPrototype", ["%ImportMeta%"]),
+  marked("HoldsPathOfMainModule", ["Bun.main"]),
   marked("IsCalledWithoutStartupLoads", ["Buffer.prototype.inspect"]),
   marked("InstancesHaveMethodCalledWithStartupLoads", classesWithInspectMethod),
   // These reject napi_env and napi_value in a signature (reject_napi_types_error in ffi_body.rs). Only cc() accepts them.

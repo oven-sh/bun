@@ -313,3 +313,46 @@ bun test/aot/fuzz/fuzzilli/lane.ts --kind few --minutes 60 --jobs 8 --out /tmp/l
 BUN_JSC_useJIT=0 python3 test/aot/fuzz/fuzzilli/reprl.py build/fuzzilli/bun-asan build --compile --aot --aot-validate \
   --aot-verify-each-pass --aot-threads=1 /tmp/fuzzilli/program.js -- a.js b.js
 ```
+
+## Test runs: `bun test --aot` against `bun test`
+
+Two tools need nothing but Bun. Neither uses Fuzzilli.
+
+`run-test-projects.ts` draws small projects (test files, helper modules, packages, a preload) and runs each under `bun test`, twice, and under `bun test --aot` with the same flags. Each test writes down what it sees, so a wrong value shows where every test passes. A project is kept where a test ends otherwise or sees another value, where the exit codes differ, or where the compiled run crashes. Finds are filed by the kind of the first test that differs, five to a kind. The options are listed at the top of the file.
+
+```sh
+bun test/aot/fuzz/fuzzilli/run-test-projects.ts --bun build/release/bun --work /tmp/projects/work --finds /tmp/projects/finds --seconds 3600
+```
+
+`compare-test-runs.ts` does the same comparison for a folder written by hand: a probe of one area, the witness of a fault, a group of files of an existing suite. A test of such a folder prints `SEEN <label> | <value>` to stderr.
+
+```sh
+bun test/aot/fuzz/fuzzilli/compare-test-runs.ts --bun build/release/bun --project /tmp/probe --each-alone --words TestRunLayers:0
+```
+
+With `--groups 40` it takes an existing suite, in place: the test files are shuffled, always alike, and cut into groups, and each group runs plain twice and compiled once. It prints the tests that end alike in both plain runs and otherwise compiled. More than sixteen test files are built in layers, so this is the usual form of a large run. `--shrink` takes it from there.
+
+```sh
+bun test/aot/fuzz/fuzzilli/compare-test-runs.ts --bun build/release/bun --project . --groups 40 --files "$(cat files-that-pass-one-by-one.txt)"
+```
+
+| What is drawn                 | From                                                                                                                                                                                        |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| What a test does              | About sixty kinds: spies, `mock.module`, replaced built-ins, `require.cache`, copies of a module under a query, Workers, fake timers, snapshots, code from disk, 185 things of the run time |
+| How dense a project is        | Every kind anywhere; sparse, two or three kinds in all files; or bare, where no test file names a built-in module                                                                           |
+| The head of a test file       | Every name of `bun:test` or those it uses, by an import or from `Bun.jest()`; its notes are stored by `node:fs`, by `Bun.write` or by a `require` at call time                              |
+| Where and how a file is named | In the root or up to three folders deep; `.test` or `.spec`; `.js`, `.ts`, `.mjs`, `.mts`, `.jsx`, `.tsx`                                                                                   |
+| The packages                  | ES or CommonJS, five shapes of the default export, an inner file, `main` or `exports`, `sideEffects`, one that reads its own `package.json`, one that uses another                          |
+| The command line              | `--parallel` from 2 to 24 or none, `--randomize`, `-t`, a part of the test files by name, the preload in `bunfig.toml` or as `--preload`                                                    |
+| How the run is built          | `--words`: one program, or layers and pieces of so many files                                                                                                                               |
+| The order of the flow rules   | In three projects of ten `testing=DelayFlowRules`, with or without a number from 1 to 255, or `testing=DelayOtherFlowRules`                                                                 |
+
+What decides whether such a tool can find a fault:
+
+- **What one file does covers the faults of the others.** The build holds one answer for the whole program. One `eval()` admits `runInContext` of `node:vm` everywhere, one `require()` of a module gives it a state of its own, one spy on an object from somewhere opens every export. A project with every kind in it never showed these faults. Sparse projects and `--each-alone` do.
+- **What every file begins with is in every run.** While every drawn file began with an import of `node:fs`, a crash of test files that import no built-in module was never met.
+- **A fault may take a neighbour.** A file that passes alone was refused beside one that takes `test` from `Bun.jest()`. `--shrink` finds the neighbour in a group of forty files in a few minutes; `--each-beside` then asks every form beside it.
+- **A new kind is tried on a build that holds the fault it was written for.** Four kinds found nothing on such a build when they were first written.
+- **The answer may go by the order in which the flow rules run.** A project that is right under the usual order lost the body of an exported function under another.
+- **A run that prints nothing says nothing.** Where plain `bun test` prints no `SEEN` line the form is void, not the same.
+- **On a busy machine** a test with a server or a child process reaches its limit in either mode. A difference without a crash is run again, and one that does not come again is filed apart.

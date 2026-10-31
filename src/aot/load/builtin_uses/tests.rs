@@ -107,6 +107,7 @@ fn with_finished_file<R>(
         platform: host_platform(),
         replaced: &[],
         replaced_members_sought: ReplacedMembersSought::None,
+        is_served_by_other_images: false,
     };
     let request = FinishedFile {
         path,

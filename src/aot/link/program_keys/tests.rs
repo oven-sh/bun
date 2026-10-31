@@ -101,6 +101,7 @@ fn external_keeps_its_importers_project() {
         let external = ModuleRef::External {
             importer,
             specifier,
+            type_attribute: None,
         };
         for context in contexts(projects) {
             let importer = ProgramFile {
@@ -110,6 +111,7 @@ fn external_keeps_its_importers_project() {
             let module = ProgramModule::External {
                 importer,
                 specifier,
+                type_attribute: None,
             };
             assert_eq!(context.module(external), module);
         }
@@ -129,6 +131,7 @@ fn modules_order_by_variant_project_file() {
     let external = |importer, specifier| ProgramModule::External {
         importer,
         specifier,
+        type_attribute: None,
     };
     let (first, second) = (RuntimeModule::NodeBuffer, RuntimeModule::NodePath);
     let (application, runtime) = (ProjectId::Application, ProjectId::Runtime);

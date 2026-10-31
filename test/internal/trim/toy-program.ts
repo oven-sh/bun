@@ -3,6 +3,8 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, extname, join } from "node:path";
+import { sharedCacheDir } from "../../../scripts/build/config.ts";
+import { prebuiltDirPrefix, WEBKIT_VERSION } from "../../../scripts/build/deps/webkit.ts";
 import { serializeBuiltinUses } from "../../../scripts/build/trim/builtin-uses.ts";
 import {
   featureNamed,
@@ -34,6 +36,73 @@ export type ToyFormat = "elf" | "macho" | "coff";
 
 const childrenOf = (folder: string) => (existsSync(folder) ? readdirSync(folder).sort() : []);
 
+export interface GuardHeader {
+  path: string;
+  featureListPath: string;
+  includes: string[];
+}
+
+function findGuardHeader(): GuardHeader | undefined {
+  const checkouts = [process.env.BUN_WEBKIT_PATH, join(repositoryRoot, "vendor", "WebKit")];
+  for (const checkout of checkouts) {
+    if (checkout === undefined) continue;
+    const engine = join(checkout, "Source", "JavaScriptCore", "aot");
+    // A build writes what the generators make into a folder of its own: scripts/build/aot-paths.ts prints which.
+    const generated = process.env.AOT_BUILTINS_GENERATED ?? join(engine, "builtins", "generated");
+    const folders = [join(engine, "runtime"), join(engine, "builtins"), generated, join(engine, "support")];
+    const path = join(folders[0]!, "AOTRemovableFeature.h");
+    const featureListPath = join(folders[2]!, "AOTBuiltinFeatures.h");
+    if (existsSync(path) && existsSync(featureListPath)) {
+      return {
+        path,
+        featureListPath,
+        includes: [...folders, join(checkout, "Source", "WTF")].map(folder => `-I${folder}`),
+      };
+    }
+  }
+  const buildFolder = join(repositoryRoot, "build");
+  const caches = [
+    sharedCacheDir(repositoryRoot),
+    ...childrenOf(buildFolder).map(profile => join(buildFolder, profile, "cache")),
+  ];
+  const prefix = prebuiltDirPrefix(WEBKIT_VERSION);
+  for (const cache of caches) {
+    for (const name of childrenOf(cache)) {
+      if (!name.startsWith(prefix)) continue;
+      const include = join(cache, name, "include");
+      const folder = join(include, "JavaScriptCore");
+      const path = join(folder, "AOTRemovableFeature.h");
+      const featureListPath = join(folder, "AOTBuiltinFeatures.h");
+      if (existsSync(path) && existsSync(featureListPath))
+        return { path, featureListPath, includes: [`-I${folder}`, `-I${include}`] };
+    }
+  }
+  return undefined;
+}
+
+export const guardHeader: GuardHeader | undefined = findGuardHeader();
+export const guardHeaderSkipReason: string | undefined =
+  guardHeader === undefined
+    ? "there is no AOTRemovableFeature.h: not under $BUN_WEBKIT_PATH, vendor/WebKit or a build's cache of the prebuilt WebKit"
+    : undefined;
+
+function findBuiltinUses(): string | undefined {
+  const buildFolder = join(repositoryRoot, "build");
+  const codegenFolders = [
+    process.env.BUN_CODEGEN_DIR,
+    ...childrenOf(buildFolder).map(profile => join(buildFolder, profile, "codegen")),
+  ];
+  return codegenFolders
+    .flatMap(folder => (folder === undefined ? [] : [join(folder, "builtin-uses.json")]))
+    .find(path => existsSync(path));
+}
+
+export const builtinUsesPath: string | undefined = findBuiltinUses();
+export const builtinUsesSkipReason: string | undefined =
+  builtinUsesPath === undefined
+    ? "there is no builtin-uses.json: not under $BUN_CODEGEN_DIR or the codegen folder of a build"
+    : undefined;
+
 const skipNotices = new Set<string>();
 
 export function skipNotice(file: string, reason: string): void {
@@ -54,6 +123,8 @@ export const cxxFlags: string[] = [
   "-std=c++23",
   "-fno-exceptions",
   "-fno-rtti",
+  "-DBUILDING_JSCONLY__=1",
+  ...(guardHeader?.includes ?? []),
 ];
 
 export const alphabet: string = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
@@ -116,6 +187,20 @@ export function plainSources(format: ToyFormat, count: number = 1500): Record<st
     int entered(int);
     __attribute__((noinline)) int retained(int x) { return retained_table[x & 31]; }
     int main(int argc, char **argv) { return argc > 5 ? GUARDED(Extra, entered, argc) & 63 : retained(argc) == '1' ? 0 : 1; }
+  `,
+  };
+}
+
+export function baseSources(format: ToyFormat, count: number = 1500): Record<string, string> {
+  return {
+    ...commonSources(count),
+    "toy.h": toyHeader,
+    "embedder.cpp": embedderSource(format),
+    "main.cpp": `
+    #include "toy.h"
+    extern "C" { extern const char retained_table[62]; int entered(int); }
+    extern "C" NEVER_INLINE int retained(int x) { return retained_table[x & 31]; }
+    int main(int argc, char**) { return argc > 5 ? JSC::callRemovable<JSC::RemovableFeature::Atomics, JSC::RemovedFeatureStub::Abort, entered>(argc) & 63 : retained(argc) == '1' ? 0 : 1; }
   `,
   };
 }
@@ -214,7 +299,217 @@ export function embedderSource(
   ].join("\n");
 }
 
+export const toyHeader: string = `#pragma once
+#include "AOTRemovableFeature.h"
+namespace JSC { class CallFrame; }
+`;
+
 export const spelledBuiltin = 7;
+
+export const spellingsSource: string = String.raw`#include "toy.h"
+extern "C" { int feature_code(int); int printf(const char*, ...); extern int toy_thrown, toy_thrown_builtin; }
+using namespace JSC;  using enum RemovableFeature;  using enum RemovedFeatureStub;
+using HostFunction = EncodedJSValue (JSC_HOST_CALL_ATTRIBUTES *)(JSGlobalObject*, CallFrame*);
+static NEVER_INLINE int aborts(int x) { return feature_code(x) + 1; }            static NEVER_INLINE int defaults(int x) { return feature_code(x) | 1; }
+static NEVER_INLINE EncodedJSValue JSC_HOST_CALL_ATTRIBUTES host(JSGlobalObject*, CallFrame*) { return feature_code(2) | 1; }
+static NEVER_INLINE EncodedJSValue JSC_HOST_CALL_ATTRIBUTES builtin(JSGlobalObject*, CallFrame*) { return feature_code(3) | 1; }
+static NEVER_INLINE EncodedJSValue JSC_HOST_CALL_ATTRIBUTES called(JSGlobalObject*, CallFrame*) { return feature_code(6) | 1; }
+static NEVER_INLINE EncodedJSValue JSC_HOST_CALL_ATTRIBUTES listed(JSGlobalObject*, CallFrame*) { return feature_code(7) | 1; }
+static NEVER_INLINE EncodedJSValue JSC_HOST_CALL_ATTRIBUTES defined(JSGlobalObject*, CallFrame*) { JSC_REMOVABLE_HOST_FUNCTION_DEFINITION(Atomics, defined); return feature_code(5) | 1; }
+static NEVER_INLINE int operation(int x) { return feature_code(x) | 1; }   static int replacement(int) { return -1; }
+extern "C" int body(int x) { JSC_BEGIN_REMOVABLE_ENTRY_POINT(Atomics, ReturnDefault, int) if (x < 0) return 7; return feature_code(x) | 1; JSC_END_REMOVABLE_ENTRY_POINT }
+static HostFunction volatile table[] = { listed };
+static uint16_t featureOfReplacedFunction;
+static EncodedJSValue JSC_HOST_CALL_ATTRIBUTES throwsInstead(JSGlobalObject* realm, CallFrame*) { return Bun__throwForRemovedFeature(realm, featureOfReplacedFunction); }
+template<> HostFunction JSC::functionUnlessRemovedSlow(HostFunction function) {
+    auto feature = removedFeatureAt(reinterpret_cast<const void*>(function));
+    if (!feature) return function;
+    featureOfReplacedFunction = static_cast<uint16_t>(*feature);
+    return throwsInstead;
+}
+static int takeThrown() { int thrown = toy_thrown; toy_thrown = 0; return thrown; }
+static int takeThrownBuiltin() { int thrown = toy_thrown_builtin; toy_thrown_builtin = 0; return thrown; }
+int main(int argc, char**) {
+    if (argc > 1) return callRemovable<Atomics, Abort, aborts>(argc) & 63;
+    JSGlobalObject* realm = nullptr; CallFrame* frame = nullptr;
+    long long a = callRemovable<Atomics, ReturnDefault, defaults>(1);
+    long long b = functionUnlessRemoved(removableFunction<Atomics, Throw, host>())(realm, frame); int thrownByHost = takeThrown(), builtinOfHost = takeThrownBuiltin();
+    long long c = functionUnlessRemoved(removableBuiltinFunction<Atomics, Throw, builtin, ${spelledBuiltin}>())(realm, frame); int thrownByBuiltin = takeThrown(), builtinOfBuiltin = takeThrownBuiltin();
+    long long d = callRemovableBuiltin<Atomics, called, ${spelledBuiltin}>(realm, frame); int thrownByCalled = takeThrown(), builtinOfCalled = takeThrownBuiltin();
+    long long e = addressUnlessRemoved<Atomics, operation>(replacement)(4), f = body(5), g = body(-1);
+    recordRemovableTableEntry<table, Atomics, Throw, listed>();
+    long long h = functionUnlessRemoved(HostFunction(table[0]))(realm, frame); int thrownByListed = takeThrown(), builtinOfListed = takeThrownBuiltin();
+    long long i = functionUnlessRemoved(HostFunction(defined))(realm, frame); int thrownByDefined = takeThrown(), builtinOfDefined = takeThrownBuiltin();
+    printf("%d %d,%d,%d %d,%d,%d %d,%d,%d %d %d,%d %d,%d,%d %d,%d,%d\n", a != 0, b != 0, thrownByHost, builtinOfHost, c != 0, thrownByBuiltin, builtinOfBuiltin, d != 0, thrownByCalled, builtinOfCalled, (int)e == -1, f != 0, (int)g, h != 0, thrownByListed, builtinOfListed, i != 0, thrownByDefined, builtinOfDefined);
+}
+`;
+
+/** What the guards of the engine's header come to, written out in C: a machine without the header runs these. */
+const plainGuards: string = String.raw`#include "guard.h"
+int feature_code(int);
+extern int toy_thrown, toy_thrown_builtin;
+long long Bun__throwForRemovedFeature(void *realm, unsigned short feature);
+long long Bun__throwForRemovedBuiltin(void *realm, unsigned short feature, unsigned builtin);
+enum { Abort, Throw, ReturnUndefined, ReturnDefault };
+enum { NativeCode, Builtin, Definition };
+#define NEVER_INLINE __attribute__((noinline))
+#define IS_REMOVED(feature) (Bun__removableFeatureState.removal[feature] != 0)
+#if defined(__x86_64__)
+#define RECORD_AT(site, feature, function, stub) __asm__ volatile(RECORDS ".p2align 3\n.quad %p0\n.quad %p1\n.short %c2\n.byte %c3\n.byte 0\n.long 0\n.popsection\n" : : "Ws"(site), "Ws"(function), "i"(feature), "i"(stub))
+#else
+#define RECORD_AT(site, feature, function, stub) __asm__ volatile(RECORDS ".p2align 3\n.quad %0\n.quad %1\n.short %c2\n.byte %c3\n.byte 0\n.long 0\n.popsection\n" : : "S"(site), "S"(function), "i"(feature), "i"(stub))
+#endif
+typedef long long (*HostFunction)(void *, void *);
+typedef struct { long long start; unsigned size; unsigned short feature, reserved; } RemovedRange;
+static int removed_feature_at(HostFunction function) {
+    const RemovableFeatureState *state = &Bun__removableFeatureState;
+    if (!state->isTrimmed) return -1;
+    const RemovedRange *ranges = (const RemovedRange *)((const char *)state + state->removedRangesOffset);
+    long long offset = (const char *)function - (const char *)state;
+    for (unsigned i = 0; i < state->removedRangeCount; i++)
+        if (offset >= ranges[i].start && offset - ranges[i].start < ranges[i].size) return ranges[i].feature;
+    return -1;
+}
+static unsigned short feature_of_replaced_function;
+static long long throws_instead(void *realm, void *frame) { return Bun__throwForRemovedFeature(realm, feature_of_replaced_function); }
+static HostFunction function_unless_removed(HostFunction function) {
+    int feature = removed_feature_at(function);
+    if (feature < 0) return function;
+    feature_of_replaced_function = feature;
+    return throws_instead;
+}
+#ifdef __STDC_HOSTED__
+#if __STDC_HOSTED__
+int printf(const char *, ...);
+#define SAY printf
+#endif
+#endif
+#ifndef SAY
+static volatile long long said;
+#define SAY(format, ...) do { long long all[] = { __VA_ARGS__ }; for (unsigned i = 0; i < sizeof all / sizeof *all; i++) said += all[i]; } while (0)
+#endif
+`;
+
+export const plainSpellingsSource: string = String.raw`${plainGuards}
+static NEVER_INLINE int aborts(int x) { return feature_code(x) + 1; }
+static NEVER_INLINE int defaults(int x) { return feature_code(x) | 1; }
+static NEVER_INLINE long long host(void *realm, void *frame) { return feature_code(2) | 1; }
+static NEVER_INLINE long long builtin(void *realm, void *frame) { return feature_code(3) | 1; }
+static NEVER_INLINE long long called(void *realm, void *frame) { return feature_code(6) | 1; }
+static NEVER_INLINE long long listed(void *realm, void *frame) { return feature_code(7) | 1; }
+static NEVER_INLINE long long defined(void *realm, void *frame) { RECORD_OF(Extra, defined, Throw, Definition, 0); return feature_code(5) | 1; }
+static NEVER_INLINE int operation(int x) { return feature_code(x) | 1; }
+static int replacement(int x) { return -1; }
+static NEVER_INLINE int inside_body(int x) { if (x < 0) return 7; return feature_code(x) | 1; }
+int body(int x) { if (IS_REMOVED(Extra)) return 0; RECORD_OF(Extra, inside_body, ReturnDefault, NativeCode, 0); return inside_body(x); }
+static HostFunction volatile table[] = { listed };
+static int take_thrown(void) { int thrown = toy_thrown; toy_thrown = 0; return thrown; }
+static int take_thrown_builtin(void) { int thrown = toy_thrown_builtin; toy_thrown_builtin = 0; return thrown; }
+int main(int argc, char **argv) {
+    // A guard that aborts tests nothing.
+    if (argc > 1) { RECORD_OF(Extra, aborts, Abort, NativeCode, 0); return aborts(argc) & 63; }
+    void *realm = 0, *frame = 0;
+    long long a = 0;
+    if (!IS_REMOVED(Extra)) { RECORD_OF(Extra, defaults, ReturnDefault, NativeCode, 0); a = defaults(1); }
+    RECORD_OF(Extra, host, Throw, NativeCode, 0);
+    long long b = function_unless_removed(host)(realm, frame); int thrownByHost = take_thrown(), builtinOfHost = take_thrown_builtin();
+    RECORD_OF(Extra, builtin, Throw, Builtin, ${spelledBuiltin});
+    long long c = function_unless_removed(builtin)(realm, frame); int thrownByBuiltin = take_thrown(), builtinOfBuiltin = take_thrown_builtin();
+    long long d;
+    if (IS_REMOVED(Extra)) d = Bun__throwForRemovedBuiltin(realm, Extra, ${spelledBuiltin});
+    else { RECORD_OF(Extra, called, Throw, Builtin, ${spelledBuiltin}); d = called(realm, frame); }
+    int thrownByCalled = take_thrown(), builtinOfCalled = take_thrown_builtin();
+    int (*address)(int) = replacement;
+    if (!IS_REMOVED(Extra)) { RECORD_OF(Extra, operation, Abort, NativeCode, 0); address = operation; }
+    long long e = address(4), f = body(5), g = body(-1);
+    RECORD_AT(table, Extra, listed, Throw);
+    long long h = function_unless_removed(table[0])(realm, frame); int thrownByListed = take_thrown(), builtinOfListed = take_thrown_builtin();
+    long long i = function_unless_removed(defined)(realm, frame); int thrownByDefined = take_thrown(), builtinOfDefined = take_thrown_builtin();
+    SAY("%d %d,%d,%d %d,%d,%d %d,%d,%d %d %d,%d %d,%d,%d %d,%d,%d\n", a != 0, b != 0, thrownByHost, builtinOfHost, c != 0, thrownByBuiltin, builtinOfBuiltin, d != 0, thrownByCalled, builtinOfCalled, (int)e == -1, f != 0, (int)g, h != 0, thrownByListed, builtinOfListed, i != 0, thrownByDefined, builtinOfDefined);
+    return 0;
+}
+`;
+export const plainSpellingsEntryPoints: string[] = [
+  "aborts",
+  "defaults",
+  "host",
+  "builtin",
+  "called",
+  "listed",
+  "defined",
+  "operation",
+  "inside_body",
+];
+
+export const plainPointerToBuiltinEnteringOtherSources: Record<string, string> = {
+  "other.c": otherSource,
+  "main.c": String.raw`${plainGuards}
+int entry_of_other(int);
+static NEVER_INLINE long long enters_other(void *realm, void *frame) { RECORD_OF(Other, entry_of_other, Abort, NativeCode, 0); return (feature_code(2) + entry_of_other(3)) | 1; }
+int main(int argc, char **argv) {
+    RECORD_OF(Extra, enters_other, Throw, Builtin, ${spelledBuiltin});
+    long long result = function_unless_removed(enters_other)(0, 0);
+    SAY("%d %d\n", result != 0, toy_thrown);
+    return 0;
+}
+`,
+};
+
+export const builtinEnteringOtherSources: Record<string, string> = {
+  "toy.h": toyHeader,
+  "guarding.cpp": `#include "toy.h"
+extern "C" { int feature_code(int); int entry_of_other(int); }
+extern "C" NEVER_INLINE JSC::EncodedJSValue entered_as_builtin(JSC::JSGlobalObject*, int x) { return feature_code(x) * 3 + JSC::callRemovable<JSC::RemovableFeature::${Other}, JSC::RemovedFeatureStub::Abort, entry_of_other>(x + 1); }
+`,
+  "other.c": otherSource,
+  "main.cpp": `#include "toy.h"
+extern "C" JSC::EncodedJSValue entered_as_builtin(JSC::JSGlobalObject*, int);
+int main(int argc, char**) { return argc > 5 ? JSC::callRemovableBuiltin<JSC::RemovableFeature::${Extra}, entered_as_builtin, ${spelledBuiltin}>(static_cast<JSC::JSGlobalObject*>(nullptr), argc) & 63 : 0; }
+`,
+};
+export const builtinEnteringOtherObjects: string[] = ["feature_code", "guarding", "other", "embedder", "main"];
+
+export const pointerToBuiltinEnteringOtherSources: Record<string, string> = {
+  "toy.h": toyHeader,
+  "other.c": otherSource,
+  "main.cpp": String.raw`#include "toy.h"
+extern "C" { int feature_code(int); int entry_of_other(int); int printf(const char*, ...); extern int toy_thrown; }
+using namespace JSC;
+using HostFunction = EncodedJSValue (JSC_HOST_CALL_ATTRIBUTES *)(JSGlobalObject*, CallFrame*);
+static NEVER_INLINE EncodedJSValue JSC_HOST_CALL_ATTRIBUTES entersOther(JSGlobalObject*, CallFrame*) { return (feature_code(2) + callRemovable<RemovableFeature::${Other}, RemovedFeatureStub::Abort, entry_of_other>(3)) | 1; }
+static uint16_t featureOfReplacedFunction;
+static EncodedJSValue JSC_HOST_CALL_ATTRIBUTES throwsInstead(JSGlobalObject* realm, CallFrame*) { return Bun__throwForRemovedFeature(realm, featureOfReplacedFunction); }
+template<> HostFunction JSC::functionUnlessRemovedSlow(HostFunction function) {
+    auto feature = removedFeatureAt(reinterpret_cast<const void*>(function));
+    if (!feature) return function;
+    featureOfReplacedFunction = static_cast<uint16_t>(*feature);
+    return throwsInstead;
+}
+int main() {
+    long long result = functionUnlessRemoved(removableBuiltinFunction<RemovableFeature::${Extra}, RemovedFeatureStub::Throw, entersOther, ${spelledBuiltin}>())(nullptr, nullptr);
+    printf("%d %d\n", result != 0, toy_thrown);
+}
+`,
+};
+export const pointerToBuiltinEnteringOtherObjects: string[] = ["feature_code", "other", "embedder", "main"];
+
+export const spellingsEntryPoints: string[] = [
+  "aborts",
+  "defaults",
+  "host",
+  "builtin",
+  "called",
+  "listed",
+  "defined",
+  "operation",
+];
+export const spellingsGuardFunctions: string[] = ["body"];
+export const spellingsStubs: string[] = ["Abort", "ReturnDefault", "Throw"];
+export const wholeSpellingsOutput = "1 1,0,0 1,0,0 1,0,0 0 1,7 1,0,0 1,0,0";
+export const trimmedSpellingsOutput: string = (() => {
+  const thrown = indexOf(Extra) + 1;
+  return `0 0,${thrown},0 0,${thrown},0 0,${thrown},${spelledBuiltin} 1 0,0 0,${thrown},0 0,${thrown},0`;
+})();
 
 export const rustSource: string = `#![no_std]
 use bun_removable_features::{

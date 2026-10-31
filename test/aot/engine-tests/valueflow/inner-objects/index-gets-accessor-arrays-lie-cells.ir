@@ -414,11 +414,7 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Jump -> next b38(v176)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="get"
-# CHECK: module=m0 position=484 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type="from above"}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-# CHECK-NEXT: b0():
-# CHECK-NEXT: v0: "from above" @LiteralString = String string="from above"
-# CHECK-NEXT: Return v0
-# CHECK-NEXT: }
+# CHECK: module=m0 position=484 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type="from above"}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
 # CHECK-LABEL: function {{*}}name="get"
 # CHECK: module=m0 position=484 kind=Method role=GenericEntrypoint flags=[HasThis] captures=[{type=f3}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers} inlineFrames=[{}, {callee=f3 callPosition=484 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f3 @Cell, v1: anything @JSValue):

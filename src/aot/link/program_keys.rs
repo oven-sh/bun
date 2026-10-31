@@ -5,6 +5,7 @@ use crate::builtins::RuntimeModule;
 use crate::ir::{FunctionKey, LayoutKey, VariableKey};
 use crate::load::{ProgramFile, ProjectId, Sources};
 use crate::modules::{ModuleFailureId, ModuleGraph, ModuleRef};
+use bun_ast::Loader;
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::check::aot::{
     ClassDeclaration, ClassRef, FunctionRef, ObjectOrigin, TypeParameterRef,
@@ -38,6 +39,7 @@ pub enum ProgramModule {
     External {
         importer: ProgramFile,
         specifier: Atom,
+        type_attribute: Option<Loader>,
     },
 }
 
@@ -331,9 +333,11 @@ impl KeyContext<'_> {
             ModuleRef::External {
                 importer,
                 specifier,
+                type_attribute,
             } => ProgramModule::External {
                 importer: in_project(self.graph.importer_of_external(importer, specifier)),
                 specifier,
+                type_attribute,
             },
         }
     }
@@ -368,14 +372,17 @@ pub fn compare_program_modules(
             External {
                 importer: a_importer,
                 specifier: a_specifier,
+                type_attribute: a_type,
             },
             External {
                 importer: b_importer,
                 specifier: b_specifier,
+                type_attribute: b_type,
             },
         ) => a_importer
             .cmp(&b_importer)
-            .then_with(|| atoms.bytes(a_specifier).cmp(atoms.bytes(b_specifier))),
+            .then_with(|| atoms.bytes(a_specifier).cmp(atoms.bytes(b_specifier)))
+            .then_with(|| a_type.map(|it| it as u8).cmp(&b_type.map(|it| it as u8))),
         (Runtime(_), _) => Ordering::Less,
         (_, Runtime(_)) => Ordering::Greater,
         _ => unreachable!("a module that has its text in a file is ordered by the file"),

@@ -8,6 +8,7 @@ use crate::bind::{
     Binding, BindingInitializer, BindingKind, CommonJsVariable, Decl, ScopeKind, SymbolId,
 };
 use crate::hir::{Chain, ExprId, ExprKind, ImportId, MemberKey, NodeData, UnOp};
+use crate::hir_from_data::DataValue;
 use crate::import_sites::is_in_with_scope;
 use crate::module_format::main_module_operand;
 
@@ -219,13 +220,20 @@ impl<'s> Folder<'_, 's> {
             return None;
         }
         let constant_globals = [known::undefined, known::NaN, known::Infinity];
-        if !matches!(self.hir[e].kind, ExprKind::Ident(name) if constant_globals.contains(&name)) {
+        let is_constant_global =
+            matches!(self.hir[e].kind, ExprKind::Ident(name) if constant_globals.contains(&name));
+        if !is_constant_global && !self.inputs.is_user_defined(state) {
             self.mark_folded_by_build_alone(e);
         }
         Some(match value {
             DefineValue::Constant(constant) => self.decide(e, Decision::Constant(constant)),
             DefineValue::GlobalPath(path) => self.decide(e, Decision::GlobalPath(path)),
-            DefineValue::Data(data) => self.decide(e, Decision::of_data(data)),
+            DefineValue::Data(data) => {
+                if let DataValue::Array(_) | DataValue::Object(_) = data {
+                    self.conditions.insert(e, true);
+                }
+                self.decide(e, Decision::of_data(data))
+            }
             DefineValue::RuntimeValue(_) => {
                 let folded = self.note_loader_value(e);
                 self.effects[e.idx()] = self.effects_of_path(e);

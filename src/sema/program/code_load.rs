@@ -7,8 +7,9 @@ use crate::hir_from_data::HostValue;
 use crate::import_sites::{ExportedRequire, JsxMode};
 use crate::module_format::DeclaredModuleType;
 use crate::resolve::{
-    CodeHost, CodeImportKind, CodeOptions, CodeResolution, DeclaredSideEffects, EnclosingPackage,
-    HostPayload, JsxSettings, ProjectResolvers, SiteResolution, TranspileSettings,
+    CodeHost, CodeImportForm, CodeImportKind, CodeOptions, CodeRequest, CodeResolution,
+    DeclaredSideEffects, EnclosingPackage, HostPayload, JsxSettings, ProjectResolvers,
+    SiteResolution, TranspileSettings,
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -16,6 +17,7 @@ pub enum MainModule {
     EntryPoint,
     EntryPointOfProcessOrWorker,
     Elsewhere,
+    AnyFile,
 }
 
 pub struct CompileInputs<'a, 's> {
@@ -74,6 +76,7 @@ pub(super) struct CodeLoadContext<'a, 's: 'r, 'r> {
     pub(super) project_resolvers: ProjectResolvers<'r>,
     pub(super) entry_points: Vec<CodeTarget<'r>>,
     keys_of_entry_points: FxHashSet<(Cow<'r, [u8]>, HostLoader)>,
+    main_modules_beside_entry_points: FxHashSet<Vec<u8>>,
     pub(super) is_case_sensitive: bool,
     shares_parsed_files: bool,
     files_loaded_before: FxHashMap<(Cow<'a, [u8]>, HostLoader), FileId>,
@@ -108,6 +111,24 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         let keys_of_entry_points = (entry_points.iter())
             .map(|it| (to_path(it.key.path, is_case_sensitive), it.key.loader))
             .collect();
+        let code = compile.inputs.code;
+        let main_modules_beside_entry_points = (code.main_modules_beside_entry_points.iter())
+            .filter_map(|path| {
+                let resolution = resolver.resolve_code(&CodeRequest {
+                    specifier: path,
+                    importer: b"",
+                    directory: &code.working_directory,
+                    kind: CodeImportKind::EntryPoint,
+                    form: CodeImportForm::Static,
+                });
+                match resolution {
+                    CodeResolution::File(file) if file.host_module.is_none() => {
+                        Some(to_path(file.path, is_case_sensitive).into_owned())
+                    }
+                    _ => None,
+                }
+            })
+            .collect();
         let loaded_before = compile.inputs.loaded_before;
         let files_loaded_before = loaded_before.into_iter().flat_map(|files| {
             files.loaded_code_files().iter().filter_map(move |&file| {
@@ -126,6 +147,7 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             project_resolvers: ProjectResolvers::new(),
             entry_points,
             keys_of_entry_points,
+            main_modules_beside_entry_points,
             is_case_sensitive,
             shares_parsed_files: compile.shares_parsed_files,
             files_loaded_before: files_loaded_before.collect(),
@@ -160,6 +182,11 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
     pub(super) fn is_entry_point(&self, key: LoadKey<'_>) -> bool {
         let path = to_path(key.path, self.is_case_sensitive);
         self.keys_of_entry_points.contains(&(path, key.loader))
+    }
+
+    pub(super) fn is_main_module_beside_entry_points(&self, key: LoadKey<'_>) -> bool {
+        let path = to_path(key.path, self.is_case_sensitive);
+        self.main_modules_beside_entry_points.contains(&*path)
     }
 }
 

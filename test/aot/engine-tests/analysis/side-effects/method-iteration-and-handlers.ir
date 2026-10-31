@@ -648,25 +648,25 @@ function f47 module=m2 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: entriesInside noHandler withFinally
 # CHECK-LABEL: function {{*}}name="entriesInside"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 199, patchpoints: 13, rare instructions: 104
+# CHECK-NEXT: instructions: 179, patchpoints: 9, rare instructions: 64
 # CHECK-NEXT: end of function f4
 # CHECK-LABEL: function {{*}}name="entriesInside"
 # CHECK: role=GenericEntrypoint
 # CHECK-NEXT: instructions: 0, patchpoints: 1
-# CHECK-NEXT: end of function f64
+# CHECK-NEXT: end of function f65
 # CHECK-LABEL: function {{*}}name="noHandler"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 238, patchpoints: 17, rare instructions: 86, polls: 7
+# CHECK-NEXT: instructions: 220, patchpoints: 11, rare instructions: 126, polls: 7
 # CHECK-NEXT: end of function f5
 # CHECK-LABEL: function {{*}}name="noHandler"
 # CHECK: role=GenericEntrypoint
 # CHECK-NEXT: instructions: 0, patchpoints: 1
-# CHECK-NEXT: end of function f65
+# CHECK-NEXT: end of function f66
 # CHECK-LABEL: function {{*}}name="withFinally"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 175, patchpoints: 4, rare instructions: 115
+# CHECK-NEXT: instructions: 202, patchpoints: 11, rare instructions: 73
 # CHECK-NEXT: end of function f7
 # CHECK-LABEL: function {{*}}name="withFinally"
 # CHECK: role=GenericEntrypoint
 # CHECK-NEXT: instructions: 0, patchpoints: 1
-# CHECK-NEXT: end of function f67
+# CHECK-NEXT: end of function f68

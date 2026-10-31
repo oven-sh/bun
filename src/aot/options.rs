@@ -58,12 +58,18 @@ pub struct LoadOptions {
     pub runs_tests: bool,
     /// What the run time provides is of type `any` where `@types/bun` is not installed.
     pub takes_runtime_as_any: bool,
+    /// `BuildFailed::errors_with_bun_types` of the compile that `takes_runtime_as_any` comes from.
+    pub errors_with_bun_types: Option<Vec<(Vec<u8>, u32)>>,
     /// What of Bun's own code an earlier compile of the same program lacked, by the word of the engine.
     pub library_code_lacked: LibraryCode,
     /// The program holds all of Bun's own code that can be got at without a name that the build sees.
     pub keeps_library_code_without_names: bool,
     /// An earlier compile of the same program read `process.mainModule` where no file names a way to a module object, by the word of the engine.
     pub reads_main_module_without_its_name: bool,
+    /// An earlier compile of the same program stored into `Bun.main`, by the word of the engine: any file may be the main module.
+    pub stores_path_of_main_module: bool,
+    /// An earlier compile of the same program stored into `Module._resolveFilename` or `Module.prototype.require`, by the word of the engine: the loader hands what stands there the module object of a file that asks it at run time.
+    pub stores_loader_functions: bool,
     /// An earlier compile of the same program read them, by the word of the engine, where a module object goes where the front end does not follow it.
     pub ways_read_out_of_sight: WaysBetweenModuleObjects,
     /// An earlier compile of the same program followed them because a file names them, and nobody reads them of a module object, by the word of the engine.
@@ -75,6 +81,8 @@ pub struct LoadOptions {
     /// As if a file called `mock.module` with a specifier that the build does not know: every export can be replaced, and every module mocked.
     /// An earlier compile of the same tests was not analyzed, by the word of the engine, so nobody knows what their spies and mocks replace.
     pub mocks_any_module: bool,
+    /// Programs that this build does not see import from its files: every export is compiled and stays, and none of them is replaceable for that.
+    pub every_export_is_asked_for: bool,
     /// Ascending. `ReplacedByTests::handed_on_modules`
     pub handed_on_modules: Vec<ReplacedModule>,
     /// `ReplacedByTests::hands_on_any_module`
@@ -83,10 +91,15 @@ pub struct LoadOptions {
     pub spies_on_unknown_objects: bool,
     /// `ReplacedByTests::names_spied_on_unknown_objects`
     pub names_spied_on_unknown_objects: Vec<Vec<u8>>,
+    /// Ascending. What a test run spies on in code that it holds as text, which it may write to a file and load under a path that nobody reads. No build sees that file.
+    pub names_spied_in_text: Vec<Vec<u8>>,
+    /// Ascending. The modules that such code replaces whole, as it writes them: `"../lib.js"`, whose folder depends on where the file is written.
+    pub modules_replaced_in_text: Vec<Vec<u8>>,
     /// Ascending. `ReplacedByTests::evicted_modules`
     pub evicted_modules: Vec<ReplacedModule>,
     /// `ReplacedByTests::evicts_any_module`
     pub evicts_any_module: bool,
+    pub files_that_tests_load: FilesThatTestsLoad,
     /// Ascending, by their numbers in the table. Of a test run: the locked members of built-in objects that the tests replace, so they are compiled as members that may change. `spyOn(String.prototype, "indexOf")`, `Array.from = f`.
     /// What the files spell, and what `AotOptions::replaced_by_tests` brings.
     pub replaced_builtins: Vec<u32>,
@@ -95,6 +108,9 @@ pub struct LoadOptions {
     pub opened_names: Vec<OpenedName>,
     /// Ascending. Of a test run: the files that an earlier compile of the same tests could not take, and that are no test files. The loader of the run time loads them where a test asks for them, and throws there what `bun test` throws.
     pub left_to_loader: Vec<Vec<u8>>,
+    /// `AotOptions::host_runs_files_from_disk`: the entry point that says what those files do with the program. Nothing loads it.
+    /// Each import statement in it stands for a load by one of those files, so a module that cannot load fails none of the others.
+    pub stand_in_for_files_from_disk: Option<Vec<u8>>,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -103,6 +119,16 @@ pub enum ReplacedModule {
     File(Vec<u8>),
     /// The registry id of a module of the library.
     Runtime(u32),
+}
+
+/// `ReplacedByTests::files_imported_by_statements`, `files_imported_by_calls` and `files_required`
+#[derive(Clone, Default, PartialEq, Eq, Debug)]
+pub struct FilesThatTestsLoad {
+    pub by_statements: Vec<ReplacedModule>,
+    pub by_calls: Vec<ReplacedModule>,
+    pub by_require: Vec<ReplacedModule>,
+    /// `ReplacedByTests::files_required_where_throws_are_caught`
+    pub where_throws_are_caught: Vec<ReplacedModule>,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -197,23 +223,31 @@ impl LoadOptions {
             omits_builtin_modules: false,
             runs_tests: false,
             takes_runtime_as_any: false,
+            errors_with_bun_types: None,
             library_code_lacked: LibraryCode::default(),
             keeps_library_code_without_names: false,
             reads_main_module_without_its_name: false,
+            stores_path_of_main_module: false,
+            stores_loader_functions: false,
             ways_read_out_of_sight: WaysBetweenModuleObjects::default(),
             ways_named_that_nobody_reads: WaysBetweenModuleObjects::default(),
             replaced_exports: Vec::new(),
             mocked_modules: Vec::new(),
             mocks_any_module: false,
+            every_export_is_asked_for: false,
             handed_on_modules: Vec::new(),
             hands_on_any_module: false,
             spies_on_unknown_objects: false,
             names_spied_on_unknown_objects: Vec::new(),
+            names_spied_in_text: Vec::new(),
+            modules_replaced_in_text: Vec::new(),
             evicted_modules: Vec::new(),
             evicts_any_module: false,
+            files_that_tests_load: FilesThatTestsLoad::default(),
             replaced_builtins: Vec::new(),
             opened_names: Vec::new(),
             left_to_loader: Vec::new(),
+            stand_in_for_files_from_disk: None,
         }
     }
 }

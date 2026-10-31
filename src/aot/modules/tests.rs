@@ -3,7 +3,6 @@ mod code_unit_order;
 use super::testing::{describe_module, file_named, with_graph, with_runtime_graph};
 use super::*;
 use crate::builtins::RuntimeModule;
-use crate::statistics::LimitValues;
 use bstr::BStr;
 use bun_sema::atom::Atom;
 use bun_sema::hir::{ExprId, ExprKind, ImportId};
@@ -120,6 +119,7 @@ fn variant_decides_module_order() {
         ModuleRef::External {
             importer: FileId(0),
             specifier: atoms.intern(b"a"),
+            type_attribute: None,
         },
     ];
     for (a_position, &a) in ascending.iter().enumerate() {
@@ -149,6 +149,7 @@ fn externals_ascend_by_importer_then_specifier_bytes() {
     let external = |importer, specifier| ModuleRef::External {
         importer: FileId(importer),
         specifier,
+        type_attribute: None,
     };
     let (b_specifier, a_specifier) = (atoms.intern(b"./b"), atoms.intern(b"./a"));
     assert!(b_specifier.0 < a_specifier.0);
@@ -271,6 +272,41 @@ fn import_that_names_nothing_fails_the_load_of_what_only_a_late_site_loads() {
             let is_erased = |statement| graph.erased(file(name), statement);
             assert!(hir.ids(hir.body).all(is_erased), "{name}");
         }
+    });
+}
+
+#[test]
+fn module_that_cannot_load_fails_nothing_else_that_the_stand_in_for_files_from_disk_imports() {
+    let files = [
+        (
+            "stand-in.js",
+            "import * as above from './above.js'; import * as fine from './fine.js'; console.log(above, fine.x);",
+        ),
+        ("above.js", "import './broken.js'; export const y = 1;"),
+        ("broken.js", "import './gone.js';"),
+        ("fine.js", "export const x = 1;"),
+    ];
+    with_graph(&files, |_, input| {
+        let file = |name: &str| file_named(input, name);
+        let names = ["stand-in.js", "above.js", "broken.js", "fine.js"];
+        let fails_load = |stand_in: Option<FileId>| {
+            let graph = bind_modules(&BindInput {
+                runs_tests: true,
+                host_runs_files_from_disk: true,
+                stand_in_for_files_from_disk: stand_in,
+                ..*input
+            })
+            .graph;
+            assert!(graph.errors().is_empty(), "{:?}", graph.errors());
+            let hir = input.files.hir(file("stand-in.js"));
+            let is_erased = |statement| graph.erased(file("stand-in.js"), statement);
+            let load_failures = names.map(|name| graph.load_failure(file(name)).is_some());
+            (load_failures, hir.ids(hir.body).any(is_erased))
+        };
+        // An importer like any other.
+        assert_eq!(fails_load(None), ([true, true, true, false], true));
+        let stand_in = Some(file("stand-in.js"));
+        assert_eq!(fails_load(stand_in), ([false, true, true, false], false));
     });
 }
 
@@ -427,6 +463,7 @@ fn external_package_no_site_names_has_a_module() {
         let outside = ModuleRef::External {
             importer: file_named(input, "main.js"),
             specifier: input.files.atoms.intern(b"outside"),
+            type_attribute: None,
         };
         assert_eq!(graph.other_modules(), [outside]);
         let uncompiled_code = Some(ExternalKind::UncompiledCode);
@@ -435,21 +472,20 @@ fn external_package_no_site_names_has_a_module() {
 }
 
 #[test]
-fn site_over_candidate_limit_is_a_loss() {
-    let limit = LimitValues::for_host().get(LimitId::MaxComputedSpecifierCandidates);
+fn computed_import_is_counted_with_all_the_files_that_it_means() {
     let specifier = "`./pages/${name}.js`";
     let main = format!("export const load = (name) => import({specifier});\n");
-    let page_names: Vec<String> = (0..=limit).map(|page| format!("pages/{page}.js")).collect();
+    let page_names: Vec<String> = (0..1500).map(|page| format!("pages/{page}.js")).collect();
     let mut files = vec![("main.js", main.as_str())];
     let pages = page_names.iter();
     files.extend(pages.map(|name| (name.as_str(), "export {};\n")));
     with_graph(&files, |graph, input| {
         let main = file_named(input, "main.js");
         let counters = bind_modules(input).counters;
-        let loss = only(counters.losses());
-        assert_eq!(loss.limit, LimitId::MaxComputedSpecifierCandidates);
-        assert_eq!(loss.count, 1);
-        let span = loss.subject.expect("the loss names the import site");
+        assert!(counters.losses().is_empty());
+        let import = only(counters.computed_imports());
+        assert_eq!((import.files, import.bytes), (1500, 1500 * 11));
+        let span = import.site;
         assert_eq!(span.file, main);
         let text = &input.files.hir(main).text[span.start as usize..span.end as usize];
         assert_eq!(BStr::new(text), specifier);
@@ -457,7 +493,7 @@ fn site_over_candidate_limit_is_a_loss() {
         let call = exprs.position(|expr| matches!(expr.kind, ExprKind::ImportCall { .. }));
         let call = ExprId(call.expect("the file has an import call") as u32);
         let answer = graph.site_answer(main, ImportSiteKind::ImportCall(call));
-        assert_eq!(answer, SiteAnswer::Computed(Candidates::All));
+        assert_ne!(answer, SiteAnswer::Computed(Candidates::All));
     });
 }
 

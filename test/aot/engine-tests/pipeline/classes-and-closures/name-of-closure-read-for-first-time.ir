@@ -1974,7 +1974,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f40 visibility=Private
 # CHECK-NEXT: v15: anything = PropGet v5 key="prototype" accessSite=2
 # CHECK-NEXT: v16: object = AssumeType v15 provenType=object
 # CHECK-NEXT: v17: anything = PropGet v16 key="area" accessSite=3
-# CHECK-NEXT: v18: undefined|f6 = AssumeType v17 provenType=undefined|f6
+# CHECK-NEXT: v18: f6 = AssumeType v17 provenType=f6
 # CHECK-NEXT: v19: f7 = NewClosure function=f7 [isHeldByClosureTable]
 # CHECK-NEXT: v20: 1 = Integer integer=1
 # CHECK-NEXT: v21: env L1 = CallDirect v20 function=f42
@@ -1991,7 +1991,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f40 visibility=Private
 # CHECK-NEXT: Branch v30 -> taken b2(| 0), notTaken b8()
 # CHECK-NEXT: b2(v31: int[0, 13]):
 # CHECK-NEXT: Switch v31 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] -> case b3(v0), case b3(v6), case b3(v7), case b3(v8), case b3(v1), case b3(v2), case b3(v9), case b3(v10), case b3(v5), case b3(v18), case b3(v19), case b3(v3), case b3(v22), otherwise b3(v25)
-# CHECK-NEXT: b3(v32: undefined|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f15):
+# CHECK-NEXT: b3(v32: f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f15):
 # CHECK-NEXT: v33: 1 = Integer integer=1
 # CHECK-NEXT: v34: int[1, 14] = Add v31, v33
 # CHECK-NEXT: v35: f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f15 = RequireObjectCoercible v32 name="name"

@@ -430,14 +430,14 @@ runtimefunction id=ArrayTraversalTraverseArray function=f34 visibility=Private
 # CHECK-NEXT: v4: "l" = String string="l"
 # CHECK-NEXT: v5: "m" = String string="m"
 # CHECK-NEXT: v6: Set<string> = NewSetFromData data=d6
-# CHECK-NEXT: v7: Set<undefined|"l"|"m", proven, pristine[Storage, Names]> = AssumeType v6 provenType=Set<undefined|"l"|"m", proven, pristine[Storage, Names]>
+# CHECK-NEXT: v7: Set<"l"|"m", proven, pristine[Storage, Names]> = AssumeType v6 provenType=Set<"l"|"m", proven, pristine[Storage, Names]>
 # CHECK-NEXT: v8: "no" = String string="no"
 # CHECK-NEXT: v9: String = CallBuiltin -, v8 overload=String/2 accessSite=2
 # CHECK-NEXT: v10: 7 = Integer integer=7
 # CHECK-NEXT: v11: L1 = NewObject layout=L1 allocationSite=3 allocationClass=1
 # CHECK-NEXT: v12: undefined = Undefined
-# CHECK-NEXT: v13: Array<undefined|int|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<undefined|"l"|"m", proven, pristine[Storage, Names]>|String, Contiguous> = NewArray v3, v7, v9, v10, v11, v12 contents=undefined|int|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<undefined|"l"|"m", proven, pristine[Storage, Names]>|String allocationSite=4 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v14: Array<undefined|int|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<undefined|"l"|"m", proven, pristine[Storage, Names]>|String, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v13 provenType=Array<undefined|int|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<undefined|"l"|"m", proven, pristine[Storage, Names]>|String, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v13: Array<undefined|7|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<"l"|"m", proven, pristine[Storage, Names]>|String, Contiguous> = NewArray v3, v7, v9, v10, v11, v12 contents=undefined|7|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<"l"|"m", proven, pristine[Storage, Names]>|String allocationSite=4 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v14: Array<undefined|7|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<"l"|"m", proven, pristine[Storage, Names]>|String, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v13 provenType=Array<undefined|7|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<"l"|"m", proven, pristine[Storage, Names]>|String, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: SetGlobalBinding v14 key="given" level=Expected accessSite=3
 # CHECK-NEXT: v16: "texts: " = String string="texts: "
 # CHECK-NEXT: v17: "ab" = String string="ab"
@@ -454,8 +454,8 @@ runtimefunction id=ArrayTraversalTraverseArray function=f34 visibility=Private
 # CHECK-NEXT: v28: string = Strcat v16, v18, v27, v20, v27, v22, v27, v24, v27, v26
 # CHECK-NEXT: v29: "what is no text: " = String string="what is no text: "
 # CHECK-NEXT: v30: anything = GetGlobalBinding key="given" level=Expected accessSite=14
-# CHECK-NEXT: v31: undefined|Array<undefined|int|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<undefined|"l"|"m", proven, pristine[Storage, Names]>|String, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v30 provenType=undefined|Array<undefined|int|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<undefined|"l"|"m", proven, pristine[Storage, Names]>|String, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v32: Array<undefined|int|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<undefined|"l"|"m", proven, pristine[Storage, Names]>|String, proven, Contiguous, pristine[Storage, Names, Dense]> = RequireObjectCoercible v31 name="map"
+# CHECK-NEXT: v31: undefined|Array<undefined|7|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<"l"|"m", proven, pristine[Storage, Names]>|String, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v30 provenType=undefined|Array<undefined|7|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<"l"|"m", proven, pristine[Storage, Names]>|String, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v32: Array<undefined|7|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<"l"|"m", proven, pristine[Storage, Names]>|String, proven, Contiguous, pristine[Storage, Names, Dense]> = RequireObjectCoercible v31 name="map"
 # CHECK-NEXT: v33: f6 = NewClosure function=f6 allocationSite=6
 # CHECK-NEXT: v34: Array = CallBuiltin v32, v33 overload=ArrayPrototypeMap/0 accessSite=16
 # CHECK-NEXT: v35: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v34 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
@@ -573,7 +573,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f34 visibility=Private
 # CHECK: m0 position=572 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f10 callPosition=4294967295 parent=1 module=m0}, {callee=f9 callPosition=4294967295 parent=2 module=m0}] {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|string|Array) handler=b1():
 # CHECK-NEXT: v1: fact = Entered function=f9
-# CHECK-NEXT: v2: undefined|int|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<undefined|"l"|"m", proven, pristine[Storage, Names]>|String ~ undefined|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|String = AssumeType v0, v1 provenType=undefined|int|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<undefined|"l"|"m", proven, pristine[Storage, Names]>|String
+# CHECK-NEXT: v2: undefined|int|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<"l"|"m", proven, pristine[Storage, Names]>|String ~ undefined|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|String = AssumeType v0, v1 provenType=undefined|int|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<"l"|"m", proven, pristine[Storage, Names]>|String
 # CHECK-NEXT: v3: string = CallDirect v2 function=f1 accessSite=47 @0:4 tail
 # CHECK-NEXT: Jump -> next b2(v3)
 # CHECK-NEXT: b1() role=CatchHandler:
@@ -586,7 +586,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f34 visibility=Private
 # CHECK-NEXT: v9: fact = Entered function=f10
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b3() handler=b4():
-# CHECK-NEXT: v10: undefined|int|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<undefined|"l"|"m", proven, pristine[Storage, Names]>|String ~ undefined|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|String = AssumeType v0, v9 provenType=undefined|int|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<undefined|"l"|"m", proven, pristine[Storage, Names]>|String
+# CHECK-NEXT: v10: undefined|int|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<"l"|"m", proven, pristine[Storage, Names]>|String ~ undefined|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|String = AssumeType v0, v9 provenType=undefined|int|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<"l"|"m", proven, pristine[Storage, Names]>|String
 # CHECK-NEXT: v11: number = CallDirect v10 function=f2 accessSite=48 @0:3 tail
 # CHECK-NEXT: v12: string = CallBuiltin -, v11 overload=String/0 accessSite=41
 # CHECK-NEXT: Jump -> next b5(v12)

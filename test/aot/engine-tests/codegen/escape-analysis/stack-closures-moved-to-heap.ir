@@ -365,5 +365,5 @@ runtimefunction id=ArraySearchIndexOf function=f38
 # -- generated: roundALoop
 # CHECK-LABEL: function {{*}}name="roundALoop"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 356, patchpoints: 17, rare instructions: 127, polls: 2
+# CHECK-NEXT: instructions: 356, patchpoints: 17, rare instructions: 126, polls: 2
 # CHECK-NEXT: end of function f47

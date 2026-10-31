@@ -149,7 +149,7 @@ function f1 name="compose" module=m0 position=180 flags=[IsChecked, HasExplicitN
 # CHECK-NEXT: b0(v0: null|boolean|number|string|object):
 # CHECK-NEXT: v1: null|boolean|number|string|object ~ null|number|string|L1 = Upcast v0 castType=anything
 # CHECK-NEXT: v2: boolean = TypeTest v1 testedType=L1
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b8()
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b5()
 # CHECK-NEXT: b1(v3: L1):
 # CHECK-NEXT: v4: L0 = GetSlot v3 key="cookie" receivers=[L1] level=Expected accessSite=16
 # CHECK-NEXT: v5: boolean = StrictEq v4, v4
@@ -161,55 +161,43 @@ function f1 name="compose" module=m0 position=180 flags=[IsChecked, HasExplicitN
 # CHECK-NEXT: v11: " " = String string=" "
 # CHECK-NEXT: v12: string = Add v5, v11
 # CHECK-NEXT: v13: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: v14: i32 = StringBuilderCheckpoint v13
-# CHECK-NEXT: v15: int[0, 2] = CallDirect v3, v13 function=f5 calledBuiltin=JSONStringify
-# CHECK-NEXT: Switch v15 cases=[1] -> case b2(), otherwise b3()
+# CHECK-NEXT: v14: int[0, 2] = CallDirect v3, v13 function=f5 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v14 cases=[1] -> case b2(), otherwise b3()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v16: buildercursor = StringBuilderReserve v13 size=128
-# CHECK-NEXT: Jump -> next b4(v16)
+# CHECK-NEXT: v15: string = StringBuilderFinish v13
+# CHECK-NEXT: Jump -> next b4(v15)
 # CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: v17: buildercursor = StringBuilderReserve v13 size=128
-# CHECK-NEXT: Jump -> next b4(v17)
-# CHECK-NEXT: b4(v18: buildercursor):
-# CHECK-NEXT: StringBuilderCommit v13, v18
-# CHECK-NEXT: v20: i32 = StringBuilderCheckpoint v13
-# CHECK-NEXT: v21: boolean = StrictEq v14, v20
-# CHECK-NEXT: Branch v21 -> taken b5(), notTaken b6()
-# CHECK-NEXT: b5() frequency=Rare:
 # CHECK-NEXT: StringBuilderDiscard v13
-# CHECK-NEXT: v23: undefined = Undefined
-# CHECK-NEXT: v24: undefined|string = CallBuiltin -, v3, v23 overload=JSONStringify/0 accessSite=24
-# CHECK-NEXT: Jump -> next b7(v24)
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v25: string = StringBuilderFinish v13
-# CHECK-NEXT: Jump -> next b7(v25)
-# CHECK-NEXT: b7(v26: undefined|string ~ string):
-# CHECK-NEXT: Jump -> next b11(v12, v26)
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v27: anything ~ undefined|L0 = PropGet v1 key="cookie" accessSite=16 receivers=[L1, ..]
-# CHECK-NEXT: v28: anything ~ undefined|L0 = PropGet v1 key="cookie" accessSite=17 receivers=[L1, ..]
-# CHECK-NEXT: v29: boolean = StrictEq v27, v28
-# CHECK-NEXT: v30: boolean|number|string|symbol|bigint|object ~ L0 = RequireObjectCoercible v27 nullishAccess=Write name="secrets"
-# CHECK-NEXT: v31: "s" = String string="s"
-# CHECK-NEXT: PropSet v30, v31 key="secrets" accessSite=18
-# CHECK-NEXT: v33: anything ~ Array<"a"|"more", proven, pristine[Storage, Names, Dense]> = PropGet v30 key="sign" accessSite=19
-# CHECK-NEXT: v34: true = Boolean boolean=true
-# CHECK-NEXT: v35: boolean ~ false = StrictEq v33, v34
-# CHECK-NEXT: Branch v35 -> taken b10(), notTaken b9()
-# CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: v36: anything ~ Array<"a"|"more", proven, pristine[Storage, Names, Dense]> = PropGet v30 key="sign" accessSite=20
-# CHECK-NEXT: v37: anything = PropGet v36 key="push" accessSite=21
-# CHECK-NEXT: v38: anything ~ builtin(ArrayPrototypePush) = Upcast v37 castType=anything
-# CHECK-NEXT: v39: "more" = String string="more"
-# CHECK-NEXT: v40: anything = Call v38, v36, v39 calleeKey="push" calleeName="meta.sign.push" accessSite=22 callees=[builtin(ArrayPrototypePush), ..]
-# CHECK-NEXT: Jump -> next b10()
-# CHECK-NEXT: b10() frequency=Rare:
-# CHECK-NEXT: v41: " " = String string=" "
-# CHECK-NEXT: v42: string = Add v29, v41
-# CHECK-NEXT: v43: undefined = Undefined
-# CHECK-NEXT: v44: undefined|string = CallBuiltin -, v1, v43 overload=JSONStringify/0 accessSite=24
-# CHECK-NEXT: Jump -> next b11(v42, v44)
-# CHECK-NEXT: b11(v45: string, v46: undefined|string ~ string):
-# CHECK-NEXT: v47: string = Add v45, v46
-# CHECK-NEXT: Return v47
+# CHECK-NEXT: v17: undefined = Undefined
+# CHECK-NEXT: v18: undefined|string = CallBuiltin -, v3, v17 overload=JSONStringify/0 accessSite=24
+# CHECK-NEXT: Jump -> next b4(v18)
+# CHECK-NEXT: b4(v19: undefined|string ~ string):
+# CHECK-NEXT: Jump -> next b8(v12, v19)
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: v20: anything ~ undefined|L0 = PropGet v1 key="cookie" accessSite=16 receivers=[L1, ..]
+# CHECK-NEXT: v21: anything ~ undefined|L0 = PropGet v1 key="cookie" accessSite=17 receivers=[L1, ..]
+# CHECK-NEXT: v22: boolean = StrictEq v20, v21
+# CHECK-NEXT: v23: boolean|number|string|symbol|bigint|object ~ L0 = RequireObjectCoercible v20 nullishAccess=Write name="secrets"
+# CHECK-NEXT: v24: "s" = String string="s"
+# CHECK-NEXT: PropSet v23, v24 key="secrets" accessSite=18
+# CHECK-NEXT: v26: anything ~ Array<"a"|"more", proven, pristine[Storage, Names, Dense]> = PropGet v23 key="sign" accessSite=19
+# CHECK-NEXT: v27: true = Boolean boolean=true
+# CHECK-NEXT: v28: boolean ~ false = StrictEq v26, v27
+# CHECK-NEXT: Branch v28 -> taken b7(), notTaken b6()
+# CHECK-NEXT: b6() frequency=Rare:
+# CHECK-NEXT: v29: anything ~ Array<"a"|"more", proven, pristine[Storage, Names, Dense]> = PropGet v23 key="sign" accessSite=20
+# CHECK-NEXT: v30: anything = PropGet v29 key="push" accessSite=21
+# CHECK-NEXT: v31: anything ~ builtin(ArrayPrototypePush) = Upcast v30 castType=anything
+# CHECK-NEXT: v32: "more" = String string="more"
+# CHECK-NEXT: v33: anything = Call v31, v29, v32 calleeKey="push" calleeName="meta.sign.push" accessSite=22 callees=[builtin(ArrayPrototypePush), ..]
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b7() frequency=Rare:
+# CHECK-NEXT: v34: " " = String string=" "
+# CHECK-NEXT: v35: string = Add v22, v34
+# CHECK-NEXT: v36: undefined = Undefined
+# CHECK-NEXT: v37: undefined|string = CallBuiltin -, v1, v36 overload=JSONStringify/0 accessSite=24
+# CHECK-NEXT: Jump -> next b8(v35, v37)
+# CHECK-NEXT: b8(v38: string, v39: undefined|string ~ string):
+# CHECK-NEXT: v40: string = Add v38, v39
+# CHECK-NEXT: Return v40
 # CHECK-NEXT: }

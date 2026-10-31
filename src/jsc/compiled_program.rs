@@ -49,12 +49,22 @@ unsafe extern "C" {
     safe fn Bun__AOT__takePagesForTablesOfFirstThread();
     safe fn Bun__isCompiledProgramFile(path: &bun_core::String) -> bool;
     safe fn Bun__isCompiledProgramFileInSomeForm(path: &bun_core::String) -> bool;
+    safe fn Bun__AOT__willRunEntryPointAgain(global: &JSGlobalObject, path: &bun_core::String);
     safe fn Bun__AOT__mayHoldPathStartingWith(start: &bun_core::String) -> bool;
+    safe fn Bun__AOT__isLeftToCodeOutsideImage(
+        specifier: &bun_core::String,
+        directory_of_importer: &bun_core::String,
+    ) -> bool;
     safe fn Bun__AOT__entryPointIsCommonJS(global: &JSGlobalObject) -> bool;
     fn Bun__AOT__forEachFilePathStartingWith(
         start: Bytes,
         context: *mut core::ffi::c_void,
         each: unsafe extern "C" fn(*mut core::ffi::c_void, Bytes) -> bool,
+    );
+    fn Bun__AOT__forEachCountedFile(
+        vm: *mut crate::VM,
+        context: *mut core::ffi::c_void,
+        each: unsafe extern "C" fn(*mut core::ffi::c_void, Bytes, *const u64, usize),
     );
     fn Bun__AOT__imagesHoldFile(images: *const Bytes, count: usize, path: Bytes) -> bool;
     safe fn Bun__AOT__errorIfCodeOutsideImageIsRefused(
@@ -113,6 +123,23 @@ pub extern "C" fn Bun__AOT__pathOfForm(
             bun_core::String::clone_utf8(&places.path_of_form)
         }
         None => bun_core::String::DEAD,
+    }
+}
+
+/// BunCompiledModules.cpp. `require` looks in `require.cache` for a Node.js module that is named without `node:`, under the name as it is written.
+/// The path of the module that such a name finds. `Dead`: it is no such name.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__nodeModuleNamedWithoutPrefix(
+    name: &bun_core::String,
+) -> bun_core::String {
+    let name = name.to_utf8();
+    let alias =
+        bun_resolve_builtins::Alias::get(name.slice(), bun_ast::Target::Bun, Default::default());
+    match alias.map(|alias| alias.path.as_bytes()) {
+        Some(path) if path.starts_with(b"node:") && path != name.slice() => {
+            bun_core::String::clone_utf8(path)
+        }
+        _ => bun_core::String::DEAD,
     }
 }
 
@@ -208,6 +235,13 @@ fn entry_module_key_in<'a>(graph: &'static dyn StandaloneModuleGraph, path: &'a 
     }
 }
 
+/// `bun test --rerun-each`: the next load of the test file runs its body again, over what it imports as that stands.
+pub fn will_run_entry_point_again(global: &JSGlobalObject, key: &[u8]) {
+    if compiled_program().is_some() {
+        Bun__AOT__willRunEntryPointAgain(global, &bun_core::StringView::from_bytes(key));
+    }
+}
+
 pub fn is_compiled_module(path: &[u8]) -> bool {
     compiled_program().is_some()
         && Bun__isCompiledProgramFile(&bun_core::StringView::from_bytes(path))
@@ -225,6 +259,14 @@ fn with_separators_of_image(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
 fn may_hold_module_path_starting_with(start: &[u8]) -> bool {
     let start = with_separators_of_image(start);
     Bun__AOT__mayHoldPathStartingWith(&bun_core::StringView::from_bytes(&start))
+}
+
+fn is_left_to_code_outside_image(specifier: &[u8], directory_of_importer: &[u8]) -> bool {
+    let directory = with_separators_of_image(directory_of_importer);
+    Bun__AOT__isLeftToCodeOutsideImage(
+        &bun_core::StringView::from_bytes(specifier),
+        &bun_core::StringView::from_bytes(&directory),
+    )
 }
 
 /// The resolver keeps what it answers for as long as the process lives, so each path is copied once.
@@ -256,6 +298,36 @@ fn for_each_module_path_starting_with(start: &[u8], mut each: &mut dyn FnMut(&[u
     let context = (&raw mut each).cast::<core::ffi::c_void>();
     // SAFETY: `start` and `context` outlive the call, which keeps neither.
     unsafe { Bun__AOT__forEachFilePathStartingWith(bytes_of(start), context, call) };
+}
+
+/// The files that have run in a program built for `bun test --aot --coverage`: what the build said of each, and how often its places ran, by
+/// the build's numbers. A place past the end has not run.
+pub fn for_each_counted_file(global: &JSGlobalObject, mut each: &mut dyn FnMut(&[u8], &[u64])) {
+    unsafe extern "C" fn call(
+        context: *mut core::ffi::c_void,
+        description: Bytes,
+        counts: *const u64,
+        count: usize,
+    ) {
+        // SAFETY: `context` is the `each` below, which outlives the walk. `description` and `counts` are readable during the call.
+        unsafe {
+            let each = &mut *context.cast::<&mut dyn FnMut(&[u8], &[u64])>();
+            let counts = match count {
+                0 => &[][..],
+                _ => core::slice::from_raw_parts(counts, count),
+            };
+            each(
+                core::slice::from_raw_parts(description.ptr, description.len),
+                counts,
+            )
+        }
+    }
+    if compiled_program().is_none() {
+        return;
+    }
+    let context = (&raw mut each).cast::<core::ffi::c_void>();
+    // SAFETY: the VM is that of this thread, and `context` outlives the call, which does not keep it.
+    unsafe { Bun__AOT__forEachCountedFile(global.vm_ptr(), context, call) };
 }
 
 /// For a build above `images`, the first of them first, which does not run them: whether the file with code at `path` is a module of one of them, entry point or not.
@@ -722,6 +794,19 @@ pub extern "C" fn Bun__AOT__isMainModule(global: &JSGlobalObject, path: &bun_cor
 
 /// BunCompiledModules.cpp
 #[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__isLoadedSynchronously(
+    global: &JSGlobalObject,
+    path: &bun_core::String,
+) -> bool {
+    let vm = global.bun_vm();
+    vm.main() == Some(path.to_utf8().slice())
+        || global.has_plugins()
+        || !vm.transpiler_store.enabled
+        || crate::node_compile_cache::is_enabled()
+}
+
+/// BunCompiledModules.cpp
+#[unsafe(no_mangle)]
 pub extern "C" fn Bun__AOT__allowsCodeFromDisk() -> bool {
     program_of_executable().is_some_and(|program| program.allows_code_from_disk)
 }
@@ -805,6 +890,7 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
         program.set_module_lookup(find_module_path);
         program.set_test_of_path_starts(may_hold_module_path_starting_with);
         program.set_module_listing(for_each_module_path_starting_with);
+        program.set_test_of_names_left_outside(is_left_to_code_outside_image);
         bun_crash_handler::report_aborts();
         #[cfg(not(bun_locked_environment))]
         if is_verbose {

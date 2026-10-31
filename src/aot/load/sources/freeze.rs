@@ -18,8 +18,8 @@ use crate::load::evaluated_texts::create_public_path;
 use crate::load::loaders::{BY_NAME, loader_by_name};
 use crate::load::module_paths::{
     FileMaps, PathContext, PathInput, are_all_different, check_unique_public_paths,
-    collect_entry_point_paths, compute_name_of_third_party_file, compute_public_path, file_ids,
-    is_linkable,
+    collect_entry_point_paths, compute_name_of_module_held_in_part,
+    compute_name_of_third_party_file, compute_public_path, file_ids, is_linkable,
 };
 use crate::load::project::{PerProject, ProjectId};
 use crate::options::Options;
@@ -287,7 +287,8 @@ fn freeze_file(
             SourceKind::EvaluatedText | SourceKind::RuntimeModule(_) | SourceKind::RuntimeFunctions,
             Some(_) | None,
         ) => {
-            let shown = compute_name_of_third_party_file(context.manifest, kind);
+            let shown = compute_name_of_third_party_file(context.manifest, kind)
+                .or_else(|| compute_name_of_module_held_in_part(context.manifest, kind));
             let shown = shown.unwrap_or_else(|| public_path.clone());
             (public_path.clone(), OnceLock::from(shown))
         }
@@ -313,7 +314,7 @@ fn collect_entry_points(input: &FreezeInput<'_, '_>, entries: &[SourceEntry]) ->
         ProjectId::Application => {
             let mut named_files = FxHashSet::default();
             let command_line_files = files.entry_points().iter().enumerate();
-            command_line_files
+            let mut entry_points: Vec<EntryPoint> = command_line_files
                 .filter(|&(_, &file)| named_files.insert(file))
                 .map(|(index, &file)| {
                     let kind = match index {
@@ -322,7 +323,19 @@ fn collect_entry_points(input: &FreezeInput<'_, '_>, entries: &[SourceEntry]) ->
                     };
                     EntryPoint { file, kind }
                 })
-                .collect()
+                .collect();
+            // The programs below load by names that no build follows, and this build does not see them. Such a name finds an entry point.
+            let aot = &input.options.aot;
+            if aot.is_part_of_test_files && aot.imports_are_in_other_images {
+                let others = files.compiled_files().iter().copied().filter(|&file| {
+                    entries[file.idx()].kind == SourceKind::Program && named_files.insert(file)
+                });
+                entry_points.extend(others.map(|file| EntryPoint {
+                    file,
+                    kind: EntryPointKind::Additional,
+                }));
+            }
+            entry_points
         }
         ProjectId::Runtime => {
             let host_loaded_modules = collect_host_loaded_modules(input, entries);

@@ -326,6 +326,18 @@ impl FileBinder<'_, '_> {
                             && imported_module(binding).is_some()))
             },
         );
+        let spies = &mut self.imports.spies_on_unknown_objects;
+        for object in core::mem::take(&mut spies.module_objects_behind_other_names) {
+            let Binding::Symbol(symbol) = bound.binding(object) else {
+                continue;
+            };
+            let held = self.imports.bindings.iter().filter(|it| it.0 == symbol);
+            let modules: Vec<ModuleRef> = (held
+                .filter_map(|it| imported_module(it.1))
+                .map(|it| it.module()))
+            .collect();
+            self.imports.namespaces_spied_on_whole.extend(modules);
+        }
     }
 
     // A mock is stored under the names of the module, as if through its namespace object.
@@ -432,6 +444,17 @@ impl FileBinder<'_, '_> {
         };
         // A file taken out of `require.cache` loads again: the answer is another object, not these variables.
         if self.context.evicted.contains(target) && self.context.order.is_code_of_program(target) {
+            return self.look_at(answer);
+        }
+        // `require.cache["fs"] = { exports: fake }`: `require("fs")` answers what the entry exports, another object too.
+        if self.context.stored_in_cache.contains(target) {
+            return self.look_at(answer);
+        }
+        // Behind a mock of an ES module that was required before, `require` answers what the factory gave: another object too.
+        if self.context.modules.interop(target).kind == ModuleKind::SourceText
+            && self.context.mocked.contains(target)
+            && self.context.order.is_code_of_program(target)
+        {
             return self.look_at(answer);
         }
         if self.bind_copy(site, view, roots, holders) {

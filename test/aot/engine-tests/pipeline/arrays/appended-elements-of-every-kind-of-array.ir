@@ -2243,13 +2243,13 @@ runtimefunction id=ArraySearchIndexOf function=f17
 # CHECK: module=m0 position=838 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<undefined|null|boolean|number|string|object, proven> site=w22 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array site=w23}] results=[{type=number site=w24}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f7 parameterMap=[{original=0}, {original=1}]} {
 # CHECK-NEXT: b0(v0: Array<undefined|null|boolean|number|string|object, proven>, v1: undefined|null|Array):
 # CHECK-NEXT: v2: boolean = IsPristine v0 builtinClass=Array aspects=[Names]
-# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b8()
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b9()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v3: boolean = TypeTest v1 testedType=Array
 # CHECK-NEXT: Branch v3 -> taken b2(| 0), notTaken b8()
 # CHECK-NEXT: b2(v4: Array):
 # CHECK-NEXT: v5: boolean = IsPristine v4 builtinClass=Array aspects=[Storage, Names]
-# CHECK-NEXT: Branch v5 -> taken b3(| 0), notTaken b8()
+# CHECK-NEXT: Branch v5 -> taken b3(| 0), notTaken b9()
 # CHECK-NEXT: b3(v6: guard):
 # CHECK-NEXT: v7: int[0, 4294967295] = CallBuiltin v4 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v8: 65535 = Integer integer=65535
@@ -2257,7 +2257,7 @@ runtimefunction id=ArraySearchIndexOf function=f17
 # CHECK-NEXT: Branch v9 -> taken b4(), notTaken b7()
 # CHECK-NEXT: b4():
 # CHECK-NEXT: v10: boolean = IsPristine v0 builtinClass=Array aspects=[Storage]
-# CHECK-NEXT: Branch v10 -> taken b5(), notTaken b8()
+# CHECK-NEXT: Branch v10 -> taken b5(), notTaken b9()
 # CHECK-NEXT: b5():
 # CHECK-NEXT: Jump -> next b6(v6)
 # CHECK-NEXT: b6(v11: guard):
@@ -2268,9 +2268,14 @@ runtimefunction id=ArraySearchIndexOf function=f17
 # CHECK-NEXT: v14: builtin(ArrayPrototypePush) = Builtin builtin=ArrayPrototypePush
 # CHECK-NEXT: v15: anything = CallList v14, v0, v4 calleeKey="push" calleeName="target.push" accessSite=247 callees=[builtin(ArrayPrototypePush)]
 # CHECK-NEXT: ReturnCall v15 casts=[{declared={type=number site=w178 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w24 flags=[IsExpected]} resolution=Nothing}, {declared={type=number} resolution=Assume}]
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v16: number = CallDirect v0, v1 function=f32 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v16
+# CHECK-NEXT: b8() frequency=Unlikely:
+# CHECK-NEXT: v16: fact = Specified
+# CHECK-NEXT: v17: undefined|null = AssumeType v1, v16 provenType=undefined|null
+# CHECK-NEXT: v18: never = RequireObjectCoercible v17 nullishAccess=Spread
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: v19: number = CallDirect v0, v1 function=f32 [isNeverInlined]
+# CHECK-NEXT: ReturnCall v19
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="pushNumbers"
 # CHECK: module=m0 position=926 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<undefined|null|boolean|number|string|object, proven, Contiguous, pristine[Storage, Names, Dense]> site=w25 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<number> site=w26}] results=[{type=number site=w27}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f8 parameterMap=[{original=0}, {original=1}]} {

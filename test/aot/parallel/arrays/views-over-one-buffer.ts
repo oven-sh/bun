@@ -3,7 +3,7 @@
 // IR= 3 lengthsOfNewViews IsPristine
 // IR= 1 lengthsOfGivenView IsPristine
 // IR= 1 storedThroughViewNobodyReads PutTypedArrayElement
-// IR= 2 storedThroughOtherView GetTypedArrayElement
+// IRT= 2 storedThroughOtherView GetTypedArrayElement .*isInsideView
 const print = (s: string) => console.log(s);
 export function lengthsOfNewViews(buffer: ArrayBuffer): number {
     const bytes = new Uint8Array(buffer, 1);

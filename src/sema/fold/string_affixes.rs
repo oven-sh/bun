@@ -5,7 +5,8 @@ use crate::atom::{Atom, known};
 use crate::bind::{Binding, BindingInitializer, Bound, CommonJsVariable};
 use crate::hir::{BinOp, Branches, Call, Chain, ExprId, ExprKind, File, IdList, MemberKey};
 use crate::import_sites::{
-    ENCODERS, ImportSiteKind, ImportSpecifier, call_site_kind, find_imported_export, settled_symbol,
+    ENCODERS, ImportSiteKind, ImportSpecifier, call_site_kind, find_imported_export,
+    names_own_file, settled_symbol,
 };
 use crate::util::FxHashSet;
 use bun_core::strings;
@@ -87,9 +88,17 @@ impl<'s> Folder<'_, 's> {
                 Expansion::OwnDirectory
             }
             ExprKind::Ident(_) => match self.find_const_initializer(e) {
-                Some(initializer) => Expansion::Parts(vec![Part::Expr(initializer)]),
+                Some(initializer) => match hir[hir.skip_type_assertions(initializer)].kind {
+                    ExprKind::Call(call) if self.is_dirname_of_own_file(hir[call]) => {
+                        Expansion::OwnDirectory
+                    }
+                    _ => Expansion::Parts(vec![Part::Expr(initializer)]),
+                },
                 None => Expansion::Unknown,
             },
+            ExprKind::Call(call) if self.is_dirname_of_own_file(hir[call]) => {
+                Expansion::OwnDirectory
+            }
             ExprKind::Call(call) => self.expand_call(hir[call]),
             ExprKind::Cond { .. } => Expansion::Alternatives(self.collect_alternatives(e)),
             _ => Expansion::Unknown,
@@ -117,6 +126,17 @@ impl<'s> Folder<'_, 's> {
             Some(_) => false,
             None => self.find_loader_name(e) == Some(CommonJsVariable::Dirname),
         }
+    }
+
+    // `dirname(fileURLToPath(import.meta.url))`, as an ES module makes itself a `__dirname`.
+    fn is_dirname_of_own_file(&self, call: Call) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let function =
+            find_export_of_module(hir, bound, call.callee, &|_| None, &is_path_specifier);
+        matches!(call.chain, Chain::No)
+            && call.args.len() == 1
+            && function == Some(known::meta_dirname)
+            && names_own_file(hir, bound, hir.id_at(call.args, 0))
     }
 
     fn collect_alternatives(&self, conditional: ExprId) -> Vec<ExprId> {

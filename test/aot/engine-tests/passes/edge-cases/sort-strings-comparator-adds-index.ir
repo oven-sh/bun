@@ -704,19 +704,8 @@ runtimefunction id=ArraySortSort function=f29
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: "c" = String string="c"
-# CHECK-NEXT: v1: "b" = String string="b"
-# CHECK-NEXT: v2: "a" = String string="a"
-# CHECK-NEXT: v3: Array<"a"|"b"|"c"> = NewArray v0, v1, v2 contents="a"|"b"|"c" allocationSite=1
-# CHECK-NEXT: v4: Array<"a"|"b"|"c", proven, pristine[Storage, Names]> = AssumeType v3 provenType=Array<"a"|"b"|"c", proven, pristine[Storage, Names]>
-# CHECK-NEXT: v5: f1 = NewClosure function=f1 allocationSite=2
-# CHECK-NEXT: v6: anything ~ undefined|null|Array = CallDirect v4, v5 function=f29 accessSite=1
-# CHECK-NEXT: v7: undefined = Undefined
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v0: undefined = Undefined
+# CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function f1 module=
-# CHECK: m0 position=195 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|"a"|"b"|"c"}, {type=undefined|"a"|"b"|"c"}] results=[{type=-1}] functionTypes=[f2] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|"a"|"b"|"c", v1: undefined|"a"|"b"|"c"):
-# CHECK-NEXT: v2: -1 = Integer integer=-1
-# CHECK-NEXT: Return v2
-# CHECK-NEXT: }
+# CHECK: m0 position=195 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|"a"|"b"|"c"}, {type=undefined|"a"|"b"|"c"}] results=[{type=-1}] functionTypes=[f2] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]

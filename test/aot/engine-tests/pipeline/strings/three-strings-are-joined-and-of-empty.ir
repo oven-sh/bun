@@ -137,6 +137,7 @@ typesite w84 module=m1 position=9223 kind=CallResult
 typesite w85 module=m1 position=9440 kind=PropertyRead
 typesite w86 module=m1 position=10433 kind=Assertion
 typesite w87 module=m1 position=10405 kind=CallResult
+layout L0 module=m0 position=1267
 data d0 root=Array{contents=anything} module=m0
 data d1 root=Array{contents=anything} module=m0
 variable g0 name="rope" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
@@ -257,204 +258,205 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v84 = String string="" @1239
     v85 = Call v83, v81, v84 calleeKey="join" calleeName="join" @1234
     v86 = Convert v85 declared={type=undefined|null|string flags=[IsExpected]} @1224
-    v87 = NewDictionary @1267
-    v88 = ToPropertyKey v79 @1270
-    v89 = Integer integer=1 @1279
-    ElemDefine v87, v88, v89 @1269
-    v91 = Convert v87 declared={type=undefined|null|object flags=[IsExpected]} @1267
-    v92 = PropGet v79 key="length" @1296
-    v93 = Convert v92 declared={type=number flags=[IsExpected]} @1296
-    v94 = PropGet v62 key="length" @1314
-    v95 = PropGet v65 key="length" @1325
-    v96 = Add v94, v95 @1296
-    v97 = PropGet v68 key="length" @1336
-    v98 = Add v96, v97 @1296
-    v99 = StrictEq v93, v98 @1296
-    Branch v99 -> taken b19(), notTaken b31(v79) @1296
+    v87 = ToPropertyKey v79 @1270
+    v88 = Integer integer=1 @1279
+    v89 = NewObject layout=L0 @1269
+    ElemDefine v89, v87, v88 @1269
+    v91 = FinishObject v89 @1267
+    v92 = Convert v91 declared={type=undefined|null|object flags=[IsExpected]} @1267
+    v93 = PropGet v79 key="length" @1296
+    v94 = Convert v93 declared={type=number flags=[IsExpected]} @1296
+    v95 = PropGet v62 key="length" @1314
+    v96 = PropGet v65 key="length" @1325
+    v97 = Add v95, v96 @1296
+    v98 = PropGet v68 key="length" @1336
+    v99 = Add v97, v98 @1296
+    v100 = StrictEq v94, v99 @1296
+    Branch v100 -> taken b19(), notTaken b31(v79) @1296
   b19():
-    v100 = StrictEq v79, v86 @1296
-    Branch v100 -> taken b20(| 0, 1), notTaken b30(| 0, 1) @1296
-  b20(v101, v102):
+    v101 = StrictEq v79, v86 @1296
+    Branch v101 -> taken b20(| 0, 1), notTaken b30(| 0, 1) @1296
+  b20(v102, v103):
     Jump -> next b21() @1296
   b21():
-    v103 = ElemHas v91, v102 @1385
-    v104 = ToBoolean v103 @1373
-    Branch v104 -> taken b22(| 0), notTaken b29(| 0) @1373
-  b22(v105):
+    v104 = ElemHas v92, v103 @1385
+    v105 = ToBoolean v104 @1373
+    Branch v105 -> taken b22(| 0), notTaken b29(| 0) @1373
+  b22(v106):
     Jump -> next b23() @1373
   b23():
-    v106 = PropGet v19 key="test" @1396
-    v107 = Convert v106 declared={type=undefined|null|function flags=[IsExpected]} @1396
-    v108 = Call v107, v19, v101 calleeKey="test" calleeName="pattern.test" @1404
-    v109 = Convert v108 declared={type=boolean flags=[IsExpected]} @1396
-    v110 = PropGet v19 key="test" @1421
-    v111 = Convert v110 declared={type=undefined|null|function flags=[IsExpected]} @1421
-    v112 = Call v111, v19, v102 calleeKey="test" calleeName="pattern.test" @1429
-    v113 = Convert v112 declared={type=boolean flags=[IsExpected]} @1421
-    v114 = StrictEq v109, v113 @1296
-    Branch v114 -> taken b24(), notTaken b31(v101) @1296
+    v107 = PropGet v19 key="test" @1396
+    v108 = Convert v107 declared={type=undefined|null|function flags=[IsExpected]} @1396
+    v109 = Call v108, v19, v102 calleeKey="test" calleeName="pattern.test" @1404
+    v110 = Convert v109 declared={type=boolean flags=[IsExpected]} @1396
+    v111 = PropGet v19 key="test" @1421
+    v112 = Convert v111 declared={type=undefined|null|function flags=[IsExpected]} @1421
+    v113 = Call v112, v19, v103 calleeKey="test" calleeName="pattern.test" @1429
+    v114 = Convert v113 declared={type=boolean flags=[IsExpected]} @1421
+    v115 = StrictEq v110, v114 @1296
+    Branch v115 -> taken b24(), notTaken b31(v102) @1296
   b24():
-    v115 = PropGet v101 key="at" @1457
-    v116 = Convert v115 declared={type=undefined|null|function flags=[IsExpected]} @1457
-    v117 = Integer integer=-1 @1467
-    v118 = Call v116, v101, v117 calleeKey="at" calleeName="joined.at" @1464
-    v119 = Convert v118 declared={type=undefined|null|string flags=[IsExpected]} @1457
-    v120 = PropGet v102 key="at" @1475
-    v121 = Convert v120 declared={type=undefined|null|function flags=[IsExpected]} @1475
-    v122 = Integer integer=-1 @1487
-    v123 = Call v121, v102, v122 calleeKey="at" calleeName="expected.at" @1484
-    v124 = Convert v123 declared={type=undefined|null|string flags=[IsExpected]} @1475
-    v125 = StrictEq v119, v124 @1296
-    Branch v125 -> taken b25(), notTaken b31(v101) @1296
+    v116 = PropGet v102 key="at" @1457
+    v117 = Convert v116 declared={type=undefined|null|function flags=[IsExpected]} @1457
+    v118 = Integer integer=-1 @1467
+    v119 = Call v117, v102, v118 calleeKey="at" calleeName="joined.at" @1464
+    v120 = Convert v119 declared={type=undefined|null|string flags=[IsExpected]} @1457
+    v121 = PropGet v103 key="at" @1475
+    v122 = Convert v121 declared={type=undefined|null|function flags=[IsExpected]} @1475
+    v123 = Integer integer=-1 @1487
+    v124 = Call v122, v103, v123 calleeKey="at" calleeName="expected.at" @1484
+    v125 = Convert v124 declared={type=undefined|null|string flags=[IsExpected]} @1475
+    v126 = StrictEq v120, v125 @1296
+    Branch v126 -> taken b25(), notTaken b31(v102) @1296
   b25():
-    v126 = Builtin builtin=JSON @1494
-    v127 = PropGet v126 key="stringify" @1494
-    v128 = Convert v127 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1494
-    v129 = Call v128, v126, v101 calleeKey="stringify" calleeName="JSON.stringify" @1499
-    v130 = Convert v129 declared={type=undefined|null|string flags=[IsExpected]} @1494
-    v131 = Builtin builtin=JSON @1521
-    v132 = PropGet v131 key="stringify" @1521
-    v133 = Convert v132 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1521
-    v134 = Call v133, v131, v102 calleeKey="stringify" calleeName="JSON.stringify" @1526
-    v135 = Convert v134 declared={type=undefined|null|string flags=[IsExpected]} @1521
-    v136 = StrictEq v130, v135 @1296
-    Branch v136 -> taken b26(), notTaken b31(v101) @1296
+    v127 = Builtin builtin=JSON @1494
+    v128 = PropGet v127 key="stringify" @1494
+    v129 = Convert v128 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1494
+    v130 = Call v129, v127, v102 calleeKey="stringify" calleeName="JSON.stringify" @1499
+    v131 = Convert v130 declared={type=undefined|null|string flags=[IsExpected]} @1494
+    v132 = Builtin builtin=JSON @1521
+    v133 = PropGet v132 key="stringify" @1521
+    v134 = Convert v133 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1521
+    v135 = Call v134, v132, v103 calleeKey="stringify" calleeName="JSON.stringify" @1526
+    v136 = Convert v135 declared={type=undefined|null|string flags=[IsExpected]} @1521
+    v137 = StrictEq v131, v136 @1296
+    Branch v137 -> taken b26(), notTaken b31(v102) @1296
   b26():
-    v137 = TypeTest v101 testedType=string @1549
-    Branch v137 -> taken b27(| 0), notTaken b28(| 0) @1549
-  b27(v138):
+    v138 = TypeTest v102 testedType=string @1549
+    Branch v138 -> taken b27(| 0), notTaken b28(| 0) @1549
+  b27(v139):
     Jump -> next b32() @1549
-  b28(v139):
-    Jump -> next b31(v139) @1549
-  b29(v140):
-    Jump -> next b31(v101) @1373
-  b30(v141, v142):
-    Jump -> next b31(v141) @1296
-  b31(v143):
-    v144 = PropGet v22 key="push" @1587
-    v145 = Convert v144 declared={type=undefined|null|function flags=[IsExpected]} @1587
-    v146 = String string="differs: " @1598
-    v147 = ToString v41 @1610
-    v148 = String string=" " @1610
-    v149 = ToString v50 @1615
-    v150 = String string=" " @1615
-    v151 = ToString v59 @1620
-    v152 = String string=" in round " @1620
-    v153 = ToString v32 @1634
-    v154 = String string=": " @1634
-    v155 = Builtin builtin=JSON @1644
-    v156 = PropGet v155 key="stringify" @1644
-    v157 = Convert v156 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1644
-    v158 = Call v157, v155, v143 calleeKey="stringify" calleeName="JSON.stringify" @1649
-    v159 = Convert v158 declared={type=undefined|null|string flags=[IsExpected]} @1644
-    v160 = ToString v159 @1649
-    v161 = Strcat v146, v147, v148, v149, v150, v151, v152, v153, v154, v160 @1598
-    v162 = Call v145, v22, v161 calleeKey="push" calleeName="lines.push" @1593
+  b28(v140):
+    Jump -> next b31(v140) @1549
+  b29(v141):
+    Jump -> next b31(v102) @1373
+  b30(v142, v143):
+    Jump -> next b31(v142) @1296
+  b31(v144):
+    v145 = PropGet v22 key="push" @1587
+    v146 = Convert v145 declared={type=undefined|null|function flags=[IsExpected]} @1587
+    v147 = String string="differs: " @1598
+    v148 = ToString v41 @1610
+    v149 = String string=" " @1610
+    v150 = ToString v50 @1615
+    v151 = String string=" " @1615
+    v152 = ToString v59 @1620
+    v153 = String string=" in round " @1620
+    v154 = ToString v32 @1634
+    v155 = String string=": " @1634
+    v156 = Builtin builtin=JSON @1644
+    v157 = PropGet v156 key="stringify" @1644
+    v158 = Convert v157 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1644
+    v159 = Call v158, v156, v144 calleeKey="stringify" calleeName="JSON.stringify" @1649
+    v160 = Convert v159 declared={type=undefined|null|string flags=[IsExpected]} @1644
+    v161 = ToString v160 @1649
+    v162 = Strcat v147, v148, v149, v150, v151, v152, v153, v154, v155, v161 @1598
+    v163 = Call v146, v22, v162 calleeKey="push" calleeName="lines.push" @1593
     Jump -> next b32() @1587
   b32():
-    v163 = Increment v53 @1593
-    v164 = Convert v163 declared={type=number flags=[IsExpected]} @1679
+    v164 = Increment v53 @1593
+    v165 = Convert v164 declared={type=number flags=[IsExpected]} @1679
     Jump -> next b33() @1679
   b33():
-    v165 = Increment v59 @1593
-    v166 = Convert v165 declared={type=i32 flags=[IsExpected]} @1059
-    Jump -> next b11(v164, v166) @1059
-  b34(v167):
+    v166 = Increment v59 @1593
+    v167 = Convert v166 declared={type=i32 flags=[IsExpected]} @1059
+    Jump -> next b11(v165, v167) @1059
+  b34(v168):
     Jump -> next b35() @1041
   b35():
     Jump -> next b36() @1059
   b36():
-    v168 = Increment v50 @1041
-    v169 = Convert v168 declared={type=i32 flags=[IsExpected]} @1012
-    Jump -> next b8(v53, v169) @1012
-  b37(v170):
+    v169 = Increment v50 @1041
+    v170 = Convert v169 declared={type=i32 flags=[IsExpected]} @1012
+    Jump -> next b8(v53, v170) @1012
+  b37(v171):
     Jump -> next b38() @994
   b38():
     Jump -> next b39() @1012
   b39():
-    v171 = Increment v41 @994
-    v172 = Convert v171 declared={type=i32 flags=[IsExpected]} @967
-    Jump -> next b5(v44, v172) @967
-  b40(v173):
+    v172 = Increment v41 @994
+    v173 = Convert v172 declared={type=i32 flags=[IsExpected]} @967
+    Jump -> next b5(v44, v173) @967
+  b40(v174):
     Jump -> next b41() @949
   b41():
-    v174 = Integer integer=16 @1722
-    v175 = Mod v32, v174 @1714
-    v176 = Integer integer=15 @1729
-    v177 = StrictEq v175, v176 @1714
-    Branch v177 -> taken b42(), notTaken b43() @1714
+    v175 = Integer integer=16 @1722
+    v176 = Mod v32, v175 @1714
+    v177 = Integer integer=15 @1729
+    v178 = StrictEq v176, v177 @1714
+    Branch v178 -> taken b42(), notTaken b43() @1714
   b42():
-    v178 = Builtin builtin=GlobalThis @1733
-    v179 = PropGet v178 key="Bun" [isFreeName] @1733
-    v180 = Convert v179 declared={type=builtin(Bun) flags=[IsExpected]} @1733
-    v181 = PropGet v180 key="gc" @1733
-    v182 = Convert v181 declared={type=builtin(BunGc) flags=[IsExpected]} @1733
-    v183 = Boolean boolean=true @1740
-    v184 = Call v182, v180, v183 calleeKey="gc" calleeName="Bun.gc" @1737
+    v179 = Builtin builtin=GlobalThis @1733
+    v180 = PropGet v179 key="Bun" [isFreeName] @1733
+    v181 = Convert v180 declared={type=builtin(Bun) flags=[IsExpected]} @1733
+    v182 = PropGet v181 key="gc" @1733
+    v183 = Convert v182 declared={type=builtin(BunGc) flags=[IsExpected]} @1733
+    v184 = Boolean boolean=true @1740
+    v185 = Call v183, v181, v184 calleeKey="gc" calleeName="Bun.gc" @1737
     Jump -> next b43() @1733
   b43():
     Jump -> next b44() @1733
   b44():
-    v185 = Increment v32 @1737
-    v186 = Convert v185 declared={type=number flags=[IsExpected]} @920
-    Jump -> next b2(v35, v186) @920
-  b45(v187):
+    v186 = Increment v32 @1737
+    v187 = Convert v186 declared={type=number flags=[IsExpected]} @920
+    Jump -> next b2(v35, v187) @920
+  b45(v188):
     Jump -> next b46() @908
   b46():
-    v188 = Integer integer=2 @1762
-    v189 = ElemGet v17, v188 @1762
-    v190 = Convert v189 declared={type=undefined|null|function|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15 flags=[IsExpected]} @1762
-    v191 = Call v190, v17 calleeName="kinds[2]" @1768
-    v192 = Integer @1775
-    v193 = ElemGet v17, v192 @1775
-    v194 = Convert v193 declared={type=undefined|null|function|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15 flags=[IsExpected]} @1775
-    v195 = Call v194, v17 calleeName="kinds[0]" @1781
-    v196 = Add v191, v195 @1762
-    v197 = Integer integer=1 @1788
-    v198 = ElemGet v17, v197 @1788
-    v199 = Convert v198 declared={type=undefined|null|function|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15 flags=[IsExpected]} @1788
-    v200 = Call v199, v17 calleeName="kinds[1]" @1794
-    v201 = Add v196, v200 @1762
-    v202 = Convert v201 declared={type=undefined|null|string flags=[IsExpected]} @1762
-    v203 = Builtin builtin=GlobalThis @1800
-    v204 = PropGet v203 key="console" [isFreeName] @1800
-    v205 = Convert v204 declared={type=builtin(Console) flags=[IsExpected]} @1800
-    v206 = PropGet v205 key="log" @1800
-    v207 = Convert v206 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1800
-    v208 = PropGet v22 key="length" @1821
-    v209 = Convert v208 declared={type=number flags=[IsExpected]} @1821
-    v210 = Convert v22 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @1835
-    v211 = PropGet v210 key="slice" @1835
-    v212 = Convert v211 declared={type=undefined|null|function flags=[IsExpected]} @1835
-    v213 = Integer @1847
-    v214 = Integer integer=5 @1850
-    v215 = Call v212, v210, v213, v214 calleeKey="slice" calleeName="lines.slice" @1841
-    v216 = Convert v215 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @1835
-    v217 = PropGet v216 key="join" @1851
-    v218 = Convert v217 declared={type=undefined|null|function flags=[IsExpected]} @1835
-    v219 = String string="\n" @1858
-    v220 = Call v218, v216, v219 calleeKey="join" calleeName="join" @1853
-    v221 = Convert v220 declared={type=undefined|null|string flags=[IsExpected]} @1835
-    v222 = PropGet v202 key="length" @1871
-    v223 = Convert v222 declared={type=number flags=[IsExpected]} @1871
-    v224 = PropGet v19 key="test" @1884
-    v225 = Convert v224 declared={type=undefined|null|function flags=[IsExpected]} @1884
-    v226 = Call v225, v19, v202 calleeKey="test" calleeName="pattern.test" @1892
-    v227 = Convert v226 declared={type=boolean flags=[IsExpected]} @1884
-    v228 = String string="" @1909
-    v229 = String string="" @1913
-    v230 = String string="" @1917
-    v231 = Call v1, -, v228, v229, v230 calleeName="join" @1904
-    v232 = String string="" @1925
-    v233 = StrictEq v231, v232 @1904
-    v234 = String string="" @1934
-    v235 = String string="" @1938
-    v236 = String string="" @1942
-    v237 = Call v1, -, v234, v235, v236 calleeName="join" @1929
-    v238 = PropGet v237 key="length" @1944
-    v239 = Call v207, v205, v27, v209, v221, v202, v223, v227, v233, v238 calleeKey="log" calleeName="console.log" @1808
-    v240 = Undefined @1800
-    Return v240 @1800
+    v189 = Integer integer=2 @1762
+    v190 = ElemGet v17, v189 @1762
+    v191 = Convert v190 declared={type=undefined|null|function|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15 flags=[IsExpected]} @1762
+    v192 = Call v191, v17 calleeName="kinds[2]" @1768
+    v193 = Integer @1775
+    v194 = ElemGet v17, v193 @1775
+    v195 = Convert v194 declared={type=undefined|null|function|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15 flags=[IsExpected]} @1775
+    v196 = Call v195, v17 calleeName="kinds[0]" @1781
+    v197 = Add v192, v196 @1762
+    v198 = Integer integer=1 @1788
+    v199 = ElemGet v17, v198 @1788
+    v200 = Convert v199 declared={type=undefined|null|function|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15 flags=[IsExpected]} @1788
+    v201 = Call v200, v17 calleeName="kinds[1]" @1794
+    v202 = Add v197, v201 @1762
+    v203 = Convert v202 declared={type=undefined|null|string flags=[IsExpected]} @1762
+    v204 = Builtin builtin=GlobalThis @1800
+    v205 = PropGet v204 key="console" [isFreeName] @1800
+    v206 = Convert v205 declared={type=builtin(Console) flags=[IsExpected]} @1800
+    v207 = PropGet v206 key="log" @1800
+    v208 = Convert v207 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1800
+    v209 = PropGet v22 key="length" @1821
+    v210 = Convert v209 declared={type=number flags=[IsExpected]} @1821
+    v211 = Convert v22 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @1835
+    v212 = PropGet v211 key="slice" @1835
+    v213 = Convert v212 declared={type=undefined|null|function flags=[IsExpected]} @1835
+    v214 = Integer @1847
+    v215 = Integer integer=5 @1850
+    v216 = Call v213, v211, v214, v215 calleeKey="slice" calleeName="lines.slice" @1841
+    v217 = Convert v216 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @1835
+    v218 = PropGet v217 key="join" @1851
+    v219 = Convert v218 declared={type=undefined|null|function flags=[IsExpected]} @1835
+    v220 = String string="\n" @1858
+    v221 = Call v219, v217, v220 calleeKey="join" calleeName="join" @1853
+    v222 = Convert v221 declared={type=undefined|null|string flags=[IsExpected]} @1835
+    v223 = PropGet v203 key="length" @1871
+    v224 = Convert v223 declared={type=number flags=[IsExpected]} @1871
+    v225 = PropGet v19 key="test" @1884
+    v226 = Convert v225 declared={type=undefined|null|function flags=[IsExpected]} @1884
+    v227 = Call v226, v19, v203 calleeKey="test" calleeName="pattern.test" @1892
+    v228 = Convert v227 declared={type=boolean flags=[IsExpected]} @1884
+    v229 = String string="" @1909
+    v230 = String string="" @1913
+    v231 = String string="" @1917
+    v232 = Call v1, -, v229, v230, v231 calleeName="join" @1904
+    v233 = String string="" @1925
+    v234 = StrictEq v232, v233 @1904
+    v235 = String string="" @1934
+    v236 = String string="" @1938
+    v237 = String string="" @1942
+    v238 = Call v1, -, v235, v236, v237 calleeName="join" @1929
+    v239 = PropGet v238 key="length" @1944
+    v240 = Call v208, v206, v27, v210, v222, v203, v224, v228, v234, v239 calleeKey="log" calleeName="console.log" @1808
+    v241 = Undefined @1800
+    Return v241 @1800
 }
 function f1 name="rope" module=m0 position=400 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string):
@@ -2006,7 +2008,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f42 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v23: 40 = Integer integer=40
 # CHECK-NEXT: v24: boolean = Less v21, v23
-# CHECK-NEXT: Branch v24 -> taken b2(| 0), notTaken b47()
+# CHECK-NEXT: Branch v24 -> taken b2(| 0), notTaken b55()
 # CHECK-NEXT: b2(v25: int[0, 39]):
 # CHECK-NEXT: v26: 0 = Integer
 # CHECK-NEXT: Jump -> next b3(v20, v26)
@@ -2014,7 +2016,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f42 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v30: int[0, 4294967295] = CallBuiltin v13 overload=ArrayPrototypeLength/0 accessSite=0
 # CHECK-NEXT: v31: boolean = Less v28, v30
-# CHECK-NEXT: Branch v31 -> taken b4(| 0), notTaken b44()
+# CHECK-NEXT: Branch v31 -> taken b4(| 0), notTaken b52()
 # CHECK-NEXT: b4(v32: int[0, 4294967294] ~ int[0, 2147483647]):
 # CHECK-NEXT: v33: 0 = Integer
 # CHECK-NEXT: Jump -> next b5(v27, v33)
@@ -2022,7 +2024,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f42 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v37: int[0, 4294967295] = CallBuiltin v13 overload=ArrayPrototypeLength/0 accessSite=1
 # CHECK-NEXT: v38: boolean = Less v35, v37
-# CHECK-NEXT: Branch v38 -> taken b6(| 0), notTaken b43()
+# CHECK-NEXT: Branch v38 -> taken b6(| 0), notTaken b51()
 # CHECK-NEXT: b6(v39: int[0, 4294967294] ~ int[0, 2147483647]):
 # CHECK-NEXT: v40: 0 = Integer
 # CHECK-NEXT: Jump -> next b7(v34, v40)
@@ -2032,7 +2034,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f42 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v46: int[0, 4294967295] = CallBuiltin v13 overload=ArrayPrototypeLength/0 accessSite=2
 # CHECK-NEXT: v47: boolean = Less v44, v46
-# CHECK-NEXT: Branch v47 -> taken b9(| 0), notTaken b42()
+# CHECK-NEXT: Branch v47 -> taken b9(| 0), notTaken b50()
 # CHECK-NEXT: b9(v48: int[0, 4294967294] ~ int[0, 2147483647]):
 # CHECK-NEXT: v49: undefined|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15 = GetArrayElement v13, v32 arrayStorage=Contiguous level=Proven accessSite=3 [keyIsIntegral]
 # CHECK-NEXT: v50: anything = Call v49, v13 calleeName="kinds[i]" accessSite=4 callees=[f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15]
@@ -2068,232 +2070,255 @@ runtimefunction id=ArrayTraversalTraverseArray function=f42 visibility=Private
 # CHECK-NEXT: v75: Array<null|boolean|number|string|object, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v74 provenType=Array<null|boolean|number|string|object, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v76: "" = String string=""
 # CHECK-NEXT: v77: string = CallBuiltin v75, v76 overload=ArrayPrototypeJoin/0 accessSite=12
-# CHECK-NEXT: v78: object = NewDictionary
-# CHECK-NEXT: v79: Object = AssumeType v78 provenType=Object
-# CHECK-NEXT: v80: string|symbol = ToPropertyKey v73
-# CHECK-NEXT: v81: 1 = Integer integer=1
-# CHECK-NEXT: ElemDefine v79, v80, v81 accessSite=13
+# CHECK-NEXT: v78: string|symbol = ToPropertyKey v73
+# CHECK-NEXT: v79: 1 = Integer integer=1
+# CHECK-NEXT: v80: object = NewDictionary
+# CHECK-NEXT: v81: Object = AssumeType v80 provenType=Object
+# CHECK-NEXT: ElemDefine v81, v78, v79 accessSite=13
 # CHECK-NEXT: v83: boolean ~ true = TypeTest v73 testedType=string
-# CHECK-NEXT: Branch v83 -> taken b13(| 0), notTaken b26(| 0)
+# CHECK-NEXT: Branch v83 -> taken b13(| 0), notTaken b27(| 0)
 # CHECK-NEXT: b13(v84: string):
 # CHECK-NEXT: v85: int[0, 2147483647] = GetStringLength v84
 # CHECK-NEXT: v86: anything = PropGet v50 key="length" accessSite=15
 # CHECK-NEXT: v87: anything = PropGet v52 key="length" accessSite=16
-# CHECK-NEXT: v88: number|string|bigint = Add v86, v87
-# CHECK-NEXT: v89: anything = PropGet v54 key="length" accessSite=17
-# CHECK-NEXT: v90: number|string|bigint = Add v88, v89
-# CHECK-NEXT: v91: boolean = TypeTest v90 testedType=number
-# CHECK-NEXT: Branch v91 -> taken b14(| 0), notTaken b25()
-# CHECK-NEXT: b14(v92: number):
-# CHECK-NEXT: v93: boolean = StrictEq v85, v92
-# CHECK-NEXT: Branch v93 -> taken b15(), notTaken b23()
-# CHECK-NEXT: b15():
-# CHECK-NEXT: v94: boolean = StrictEq v73, v77
-# CHECK-NEXT: Branch v94 -> taken b16(| 0), notTaken b22()
-# CHECK-NEXT: b16(v95: string):
-# CHECK-NEXT: v96: boolean = ElemHas v79, v77 accessSite=18
-# CHECK-NEXT: Branch v96 -> taken b17(), notTaken b21()
+# CHECK-NEXT: v88: boolean = TypeTest v86 testedType=number
+# CHECK-NEXT: Branch v88 -> taken b14(| 0), notTaken b30(v85, v86, v87)
+# CHECK-NEXT: b14(v89: number):
+# CHECK-NEXT: v90: boolean = TypeTest v87 testedType=number
+# CHECK-NEXT: Branch v90 -> taken b15(| 0), notTaken b30(v85, v86, v87)
+# CHECK-NEXT: b15(v91: number):
+# CHECK-NEXT: v92: number = Add v89, v91
+# CHECK-NEXT: v93: anything = PropGet v54 key="length" accessSite=17
+# CHECK-NEXT: v94: boolean = TypeTest v93 testedType=number
+# CHECK-NEXT: Branch v94 -> taken b16(| 0), notTaken b36(v92, v93, v85)
+# CHECK-NEXT: b16(v95: number):
+# CHECK-NEXT: v96: number = Add v92, v95
+# CHECK-NEXT: v97: boolean = StrictEq v85, v96
+# CHECK-NEXT: Branch v97 -> taken b17(), notTaken b25()
 # CHECK-NEXT: b17():
-# CHECK-NEXT: v97: boolean = CallBuiltin v15, v95 overload=RegExpPrototypeTest/0 accessSite=20
-# CHECK-NEXT: v98: boolean = CallBuiltin v15, v77 overload=RegExpPrototypeTest/0 accessSite=22
-# CHECK-NEXT: v99: boolean = StrictEq v97, v98
-# CHECK-NEXT: Branch v99 -> taken b18(), notTaken b23()
-# CHECK-NEXT: b18():
-# CHECK-NEXT: v100: -1 = Integer integer=-1
-# CHECK-NEXT: v101: undefined|string = CallBuiltin v95, v100 overload=StringPrototypeAt/0 accessSite=24
-# CHECK-NEXT: v102: -1 = Integer integer=-1
-# CHECK-NEXT: v103: undefined|string = CallBuiltin v77, v102 overload=StringPrototypeAt/0 accessSite=26
-# CHECK-NEXT: v104: boolean = StrictEq v101, v103
-# CHECK-NEXT: Branch v104 -> taken b19(), notTaken b23()
+# CHECK-NEXT: v98: boolean = StrictEq v73, v77
+# CHECK-NEXT: Branch v98 -> taken b18(| 0), notTaken b24()
+# CHECK-NEXT: b18(v99: string):
+# CHECK-NEXT: v100: boolean = ElemHas v81, v77 accessSite=18
+# CHECK-NEXT: Branch v100 -> taken b19(), notTaken b23()
 # CHECK-NEXT: b19():
-# CHECK-NEXT: v105: undefined = Undefined
-# CHECK-NEXT: v106: undefined|string = CallBuiltin -, v95, v105 overload=JSONStringify/0 accessSite=28
-# CHECK-NEXT: v107: undefined = Undefined
-# CHECK-NEXT: v108: undefined|string = CallBuiltin -, v77, v107 overload=JSONStringify/0 accessSite=30
-# CHECK-NEXT: v109: boolean = StrictEq v106, v108
-# CHECK-NEXT: Branch v109 -> taken b20(), notTaken b23()
+# CHECK-NEXT: v101: boolean = CallBuiltin v15, v99 overload=RegExpPrototypeTest/0 accessSite=20
+# CHECK-NEXT: v102: boolean = CallBuiltin v15, v77 overload=RegExpPrototypeTest/0 accessSite=22
+# CHECK-NEXT: v103: boolean = StrictEq v101, v102
+# CHECK-NEXT: Branch v103 -> taken b20(), notTaken b25()
 # CHECK-NEXT: b20():
-# CHECK-NEXT: Jump -> next b24()
+# CHECK-NEXT: v104: -1 = Integer integer=-1
+# CHECK-NEXT: v105: undefined|string = CallBuiltin v99, v104 overload=StringPrototypeAt/0 accessSite=24
+# CHECK-NEXT: v106: -1 = Integer integer=-1
+# CHECK-NEXT: v107: undefined|string = CallBuiltin v77, v106 overload=StringPrototypeAt/0 accessSite=26
+# CHECK-NEXT: v108: boolean = StrictEq v105, v107
+# CHECK-NEXT: Branch v108 -> taken b21(), notTaken b25()
 # CHECK-NEXT: b21():
-# CHECK-NEXT: Jump -> next b23()
+# CHECK-NEXT: v109: undefined = Undefined
+# CHECK-NEXT: v110: undefined|string = CallBuiltin -, v99, v109 overload=JSONStringify/0 accessSite=28
+# CHECK-NEXT: v111: undefined = Undefined
+# CHECK-NEXT: v112: undefined|string = CallBuiltin -, v77, v111 overload=JSONStringify/0 accessSite=30
+# CHECK-NEXT: v113: boolean = StrictEq v110, v112
+# CHECK-NEXT: Branch v113 -> taken b22(), notTaken b25()
 # CHECK-NEXT: b22():
-# CHECK-NEXT: Jump -> next b23()
+# CHECK-NEXT: Jump -> next b26()
 # CHECK-NEXT: b23():
-# CHECK-NEXT: v110: "differs: " = String string="differs: "
-# CHECK-NEXT: v111: string = ToString v32
-# CHECK-NEXT: v112: " " = String string=" "
-# CHECK-NEXT: v113: string = ToString v39
-# CHECK-NEXT: v114: " " = String string=" "
-# CHECK-NEXT: v115: string = ToString v48
-# CHECK-NEXT: v116: " in round " = String string=" in round "
-# CHECK-NEXT: v117: string = ToString v25
-# CHECK-NEXT: v118: ": " = String string=": "
-# CHECK-NEXT: v119: undefined = Undefined
-# CHECK-NEXT: v120: undefined|string = CallBuiltin -, v73, v119 overload=JSONStringify/0 accessSite=33
-# CHECK-NEXT: v121: string = ToString v120
-# CHECK-NEXT: v122: string = Strcat v110, v111, v112, v113, v114, v115, v116, v117, v118, v121
-# CHECK-NEXT: v123: int[0, 4294967295] = CallBuiltin v17, v122 overload=ArrayPrototypePush/0 accessSite=34
-# CHECK-NEXT: Jump -> next b24()
+# CHECK-NEXT: Jump -> next b25()
 # CHECK-NEXT: b24():
-# CHECK-NEXT: v124: int|whole = Increment v43
-# CHECK-NEXT: v125: int[1, 4294967295] ~ int[1, 2147483648] = Increment v48
-# CHECK-NEXT: v126: int[1, 4294967295] ~ int[1, 2147483647] = Upcast v125 castType=int|whole
-# CHECK-NEXT: Jump -> next b8(v124, v126)
+# CHECK-NEXT: Jump -> next b25()
 # CHECK-NEXT: b25():
-# CHECK-NEXT: Jump -> next b30(v90, v85)
-# CHECK-NEXT: b26(v127: number|bigint) frequency=Rare:
-# CHECK-NEXT: v128: anything = PropGet v127 key="length" accessSite=14 receivers=[]
-# CHECK-NEXT: v129: anything = PropGet v50 key="length" accessSite=15
-# CHECK-NEXT: v130: anything = PropGet v52 key="length" accessSite=16
-# CHECK-NEXT: v131: number|string|bigint = Add v129, v130
-# CHECK-NEXT: v132: anything = PropGet v54 key="length" accessSite=17
-# CHECK-NEXT: v133: number|string|bigint = Add v131, v132
-# CHECK-NEXT: v134: boolean = TypeTest v128 testedType=number
-# CHECK-NEXT: Branch v134 -> taken b27(| 0), notTaken b29()
-# CHECK-NEXT: b27(v135: number) frequency=Unlikely:
-# CHECK-NEXT: v136: boolean = TypeTest v133 testedType=number
-# CHECK-NEXT: Branch v136 -> taken b28(| 0), notTaken b29()
-# CHECK-NEXT: b28(v137: number) frequency=Unlikely:
-# CHECK-NEXT: v138: boolean = StrictEq v135, v137
-# CHECK-NEXT: Branch v138 -> taken b32(), notTaken b40()
-# CHECK-NEXT: b29() frequency=Rare:
-# CHECK-NEXT: v139: anything = Upcast v128 castType=anything
-# CHECK-NEXT: v140: boolean = TypeTest v139 testedType=i32
-# CHECK-NEXT: Branch v140 -> taken b30(v133 | 0), notTaken b31()
-# CHECK-NEXT: b30(v141: number|string|bigint, v142: i32 ~ int[0, 2147483647]) frequency=Rare:
-# CHECK-NEXT: v143: boolean = StrictEq v142, v141
-# CHECK-NEXT: Branch v143 -> taken b32(), notTaken b40()
-# CHECK-NEXT: b31() frequency=Rare:
-# CHECK-NEXT: v144: boolean = StrictEq v139, v133
-# CHECK-NEXT: Branch v144 -> taken b32(), notTaken b40()
-# CHECK-NEXT: b32() frequency=Unlikely:
-# CHECK-NEXT: v145: boolean = StrictEq v73, v77
-# CHECK-NEXT: Branch v145 -> taken b33(| 0), notTaken b39()
-# CHECK-NEXT: b33(v146: string) frequency=Unlikely:
-# CHECK-NEXT: v147: boolean = ElemHas v79, v77 accessSite=18
-# CHECK-NEXT: Branch v147 -> taken b34(), notTaken b38()
-# CHECK-NEXT: b34() frequency=Unlikely:
-# CHECK-NEXT: v148: boolean = CallBuiltin v15, v146 overload=RegExpPrototypeTest/0 accessSite=20
-# CHECK-NEXT: v149: boolean = CallBuiltin v15, v77 overload=RegExpPrototypeTest/0 accessSite=22
-# CHECK-NEXT: v150: boolean = StrictEq v148, v149
-# CHECK-NEXT: Branch v150 -> taken b35(), notTaken b40()
-# CHECK-NEXT: b35() frequency=Unlikely:
-# CHECK-NEXT: v151: -1 = Integer integer=-1
-# CHECK-NEXT: v152: undefined|string = CallBuiltin v146, v151 overload=StringPrototypeAt/0 accessSite=24
-# CHECK-NEXT: v153: -1 = Integer integer=-1
-# CHECK-NEXT: v154: undefined|string = CallBuiltin v77, v153 overload=StringPrototypeAt/0 accessSite=26
-# CHECK-NEXT: v155: boolean = StrictEq v152, v154
-# CHECK-NEXT: Branch v155 -> taken b36(), notTaken b40()
-# CHECK-NEXT: b36() frequency=Unlikely:
-# CHECK-NEXT: v156: undefined = Undefined
-# CHECK-NEXT: v157: undefined|string = CallBuiltin -, v146, v156 overload=JSONStringify/0 accessSite=28
-# CHECK-NEXT: v158: undefined = Undefined
-# CHECK-NEXT: v159: undefined|string = CallBuiltin -, v77, v158 overload=JSONStringify/0 accessSite=30
-# CHECK-NEXT: v160: boolean = StrictEq v157, v159
-# CHECK-NEXT: Branch v160 -> taken b37(), notTaken b40()
-# CHECK-NEXT: b37() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b41()
-# CHECK-NEXT: b38() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b40()
-# CHECK-NEXT: b39() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b40()
+# CHECK-NEXT: v114: "differs: " = String string="differs: "
+# CHECK-NEXT: v115: string = ToString v32
+# CHECK-NEXT: v116: " " = String string=" "
+# CHECK-NEXT: v117: string = ToString v39
+# CHECK-NEXT: v118: " " = String string=" "
+# CHECK-NEXT: v119: string = ToString v48
+# CHECK-NEXT: v120: " in round " = String string=" in round "
+# CHECK-NEXT: v121: string = ToString v25
+# CHECK-NEXT: v122: ": " = String string=": "
+# CHECK-NEXT: v123: undefined = Undefined
+# CHECK-NEXT: v124: undefined|string = CallBuiltin -, v73, v123 overload=JSONStringify/0 accessSite=33
+# CHECK-NEXT: v125: string = ToString v124
+# CHECK-NEXT: v126: string = Strcat v114, v115, v116, v117, v118, v119, v120, v121, v122, v125
+# CHECK-NEXT: v127: int[0, 4294967295] = CallBuiltin v17, v126 overload=ArrayPrototypePush/0 accessSite=34
+# CHECK-NEXT: Jump -> next b26()
+# CHECK-NEXT: b26():
+# CHECK-NEXT: v128: int|whole = Increment v43
+# CHECK-NEXT: v129: int[1, 4294967295] ~ int[1, 2147483648] = Increment v48
+# CHECK-NEXT: v130: int[1, 4294967295] ~ int[1, 2147483647] = Upcast v129 castType=int|whole
+# CHECK-NEXT: Jump -> next b8(v128, v130)
+# CHECK-NEXT: b27(v131: number|bigint) frequency=Rare:
+# CHECK-NEXT: v132: anything = PropGet v131 key="length" accessSite=14 receivers=[]
+# CHECK-NEXT: v133: anything = PropGet v50 key="length" accessSite=15
+# CHECK-NEXT: v134: anything = PropGet v52 key="length" accessSite=16
+# CHECK-NEXT: v135: boolean = TypeTest v133 testedType=number
+# CHECK-NEXT: Branch v135 -> taken b28(| 0), notTaken b30(v132, v133, v134)
+# CHECK-NEXT: b28(v136: number) frequency=Unlikely:
+# CHECK-NEXT: v137: boolean = TypeTest v134 testedType=number
+# CHECK-NEXT: Branch v137 -> taken b29(| 0), notTaken b30(v132, v133, v134)
+# CHECK-NEXT: b29(v138: number) frequency=Unlikely:
+# CHECK-NEXT: v139: number = Add v136, v138
+# CHECK-NEXT: v140: anything = PropGet v54 key="length" accessSite=17
+# CHECK-NEXT: Jump -> next b32(v139, v140, v132)
+# CHECK-NEXT: b30(v141: anything ~ int[0, 2147483647], v142: anything, v143: anything) frequency=Rare:
+# CHECK-NEXT: v144: number|string|bigint = Add v142, v143
+# CHECK-NEXT: v145: anything = PropGet v54 key="length" accessSite=17
+# CHECK-NEXT: v146: boolean = TypeTest v144 testedType=number
+# CHECK-NEXT: Branch v146 -> taken b31(| 0), notTaken b35()
+# CHECK-NEXT: b31(v147: number) frequency=Rare:
+# CHECK-NEXT: Jump -> next b32(v147, v145, v141)
+# CHECK-NEXT: b32(v148: number, v149: anything, v150: anything ~ int[0, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: v151: boolean = TypeTest v149 testedType=number
+# CHECK-NEXT: Branch v151 -> taken b33(| 0), notTaken b36(v148, v149, v150)
+# CHECK-NEXT: b33(v152: number) frequency=Unlikely:
+# CHECK-NEXT: v153: number = Add v148, v152
+# CHECK-NEXT: v154: boolean ~ true = TypeTest v150 testedType=number
+# CHECK-NEXT: Branch v154 -> taken b34(| 0), notTaken b37(v153, v150)
+# CHECK-NEXT: b34(v155: number ~ int[0, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: v156: boolean = StrictEq v155, v153
+# CHECK-NEXT: Branch v156 -> taken b40(), notTaken b48()
+# CHECK-NEXT: b35() frequency=Rare:
+# CHECK-NEXT: Jump -> next b36(v144, v145, v141)
+# CHECK-NEXT: b36(v157: number|string|bigint ~ number, v158: anything, v159: anything ~ int[0, 2147483647]) frequency=Rare:
+# CHECK-NEXT: v160: number|string|bigint = Add v157, v158
+# CHECK-NEXT: Jump -> next b37(v160, v159)
+# CHECK-NEXT: b37(v161: number|string|bigint ~ number, v162: anything ~ int[0, 2147483647]) frequency=Rare:
+# CHECK-NEXT: v163: boolean ~ true = TypeTest v162 testedType=i32
+# CHECK-NEXT: Branch v163 -> taken b38(| 0), notTaken b39()
+# CHECK-NEXT: b38(v164: i32 ~ int[0, 2147483647]) frequency=Rare:
+# CHECK-NEXT: v165: boolean = StrictEq v164, v161
+# CHECK-NEXT: Branch v165 -> taken b40(), notTaken b48()
+# CHECK-NEXT: b39() frequency=Rare:
+# CHECK-NEXT: v166: boolean = StrictEq v162, v161
+# CHECK-NEXT: Branch v166 -> taken b40(), notTaken b48()
 # CHECK-NEXT: b40() frequency=Unlikely:
-# CHECK-NEXT: v161: "differs: " = String string="differs: "
-# CHECK-NEXT: v162: string = ToString v32
-# CHECK-NEXT: v163: " " = String string=" "
-# CHECK-NEXT: v164: string = ToString v39
-# CHECK-NEXT: v165: " " = String string=" "
-# CHECK-NEXT: v166: string = ToString v48
-# CHECK-NEXT: v167: " in round " = String string=" in round "
-# CHECK-NEXT: v168: string = ToString v25
-# CHECK-NEXT: v169: ": " = String string=": "
-# CHECK-NEXT: v170: undefined = Undefined
-# CHECK-NEXT: v171: undefined|string = CallBuiltin -, v73, v170 overload=JSONStringify/0 accessSite=33
-# CHECK-NEXT: v172: string = ToString v171
-# CHECK-NEXT: v173: string = Strcat v161, v162, v163, v164, v165, v166, v167, v168, v169, v172
-# CHECK-NEXT: v174: int[0, 4294967295] = CallBuiltin v17, v173 overload=ArrayPrototypePush/0 accessSite=34
-# CHECK-NEXT: Jump -> next b41()
-# CHECK-NEXT: b41() frequency=Unlikely:
-# CHECK-NEXT: v175: int|whole = Increment v43
-# CHECK-NEXT: v176: int[1, 4294967295] ~ int[1, 2147483648] = Increment v48
-# CHECK-NEXT: Jump -> next b7(v175, v176)
-# CHECK-NEXT: b42():
-# CHECK-NEXT: v177: int[1, 4294967295] ~ int[1, 2147483648] = Increment v39
-# CHECK-NEXT: v178: int[1, 4294967295] ~ int[1, 2147483647] = Upcast v177 castType=int|whole
-# CHECK-NEXT: Jump -> next b5(v43, v178)
-# CHECK-NEXT: b43():
-# CHECK-NEXT: v179: int[1, 4294967295] ~ int[1, 2147483648] = Increment v32
-# CHECK-NEXT: v180: int[1, 4294967295] ~ int[1, 2147483647] = Upcast v179 castType=int|whole
-# CHECK-NEXT: Jump -> next b3(v34, v180)
-# CHECK-NEXT: b44():
-# CHECK-NEXT: v181: 16 = Integer integer=16
-# CHECK-NEXT: v182: int[0, 15] = Mod v25, v181
-# CHECK-NEXT: v183: 15 = Integer integer=15
-# CHECK-NEXT: v184: boolean = StrictEq v182, v183
-# CHECK-NEXT: Branch v184 -> taken b45(), notTaken b46()
-# CHECK-NEXT: b45():
-# CHECK-NEXT: v185: true = Boolean boolean=true
-# CHECK-NEXT: v186: number = CallBuiltin -, v185 overload=BunGc/0 accessSite=37
-# CHECK-NEXT: Jump -> next b46()
-# CHECK-NEXT: b46():
-# CHECK-NEXT: v187: int[1, 40] = Increment v25
-# CHECK-NEXT: Jump -> next b1(v27, v187)
-# CHECK-NEXT: b47():
-# CHECK-NEXT: v188: 2 = Integer integer=2
-# CHECK-NEXT: v189: undefined|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15 = GetArrayElement v13, v188 arrayStorage=Contiguous level=Proven accessSite=38 [keyIsIntegral]
-# CHECK-NEXT: v190: anything = Call v189, v13 calleeName="kinds[2]" accessSite=39 callees=[f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15]
-# CHECK-NEXT: v191: 0 = Integer
-# CHECK-NEXT: v192: undefined|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15 = GetArrayElement v13, v191 arrayStorage=Contiguous level=Proven accessSite=40 [keyIsIntegral]
-# CHECK-NEXT: v193: anything = Call v192, v13 calleeName="kinds[0]" accessSite=41 callees=[f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15]
-# CHECK-NEXT: v194: number|string|bigint = Add v190, v193
-# CHECK-NEXT: v195: 1 = Integer integer=1
-# CHECK-NEXT: v196: undefined|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15 = GetArrayElement v13, v195 arrayStorage=Contiguous level=Proven accessSite=42 [keyIsIntegral]
-# CHECK-NEXT: v197: anything = Call v196, v13 calleeName="kinds[1]" accessSite=43 callees=[f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15]
-# CHECK-NEXT: v198: number|string|bigint = Add v194, v197
-# CHECK-NEXT: v199: number|string|bigint ~ string = Upcast v198 castType=number|string|bigint
-# CHECK-NEXT: v200: int[0, 4294967295] = CallBuiltin v17 overload=ArrayPrototypeLength/0 accessSite=46
-# CHECK-NEXT: v201: 0 = Integer
-# CHECK-NEXT: v202: 5 = Integer integer=5
-# CHECK-NEXT: v203: Array<string> = CallBuiltin v17, v201, v202 overload=ArrayPrototypeSlice/0 accessSite=48
-# CHECK-NEXT: v204: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v203 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v205: "\n" = String string="\n"
-# CHECK-NEXT: v206: string = CallBuiltin v204, v205 overload=ArrayPrototypeJoin/0 accessSite=50
-# CHECK-NEXT: v207: boolean ~ true = TypeTest v199 testedType=string
-# CHECK-NEXT: Branch v207 -> taken b48(| 0), notTaken b49(| 0)
-# CHECK-NEXT: b48(v208: string):
-# CHECK-NEXT: v209: int[0, 2147483647] = GetStringLength v208
-# CHECK-NEXT: Jump -> next b50(v209)
-# CHECK-NEXT: b49(v210: number|bigint) frequency=Unlikely:
-# CHECK-NEXT: v211: anything = PropGet v210 key="length" accessSite=51 receivers=[]
-# CHECK-NEXT: v212: undefined|number = AssumeType v211 provenType=undefined|number
-# CHECK-NEXT: Jump -> next b50(v212)
-# CHECK-NEXT: b50(v213: undefined|number ~ int[0, 2147483647]):
-# CHECK-NEXT: v214: string = ToString v199 calledBuiltin=RegExpPrototypeTest
-# CHECK-NEXT: v215: boolean = CallBuiltin v15, v214 overload=RegExpPrototypeTest/0 accessSite=53
-# CHECK-NEXT: v216: "" = String string=""
-# CHECK-NEXT: v217: "" = String string=""
-# CHECK-NEXT: v218: "" = String string=""
-# CHECK-NEXT: v219: number|string|bigint = CallDirect v216, v217, v218 function=f2 accessSite=54
-# CHECK-NEXT: v220: "" = String string=""
-# CHECK-NEXT: v221: boolean = StrictEq v219, v220
-# CHECK-NEXT: v222: "" = String string=""
-# CHECK-NEXT: v223: "" = String string=""
-# CHECK-NEXT: v224: "" = String string=""
-# CHECK-NEXT: v225: number|string|bigint = CallDirect v222, v223, v224 function=f2 accessSite=55
-# CHECK-NEXT: v226: boolean = TypeTest v225 testedType=string
-# CHECK-NEXT: Branch v226 -> taken b51(| 0), notTaken b52(| 0)
-# CHECK-NEXT: b51(v227: string):
-# CHECK-NEXT: v228: int[0, 2147483647] = GetStringLength v227
-# CHECK-NEXT: Jump -> next b53(v228)
-# CHECK-NEXT: b52(v229: number|bigint) frequency=Unlikely:
-# CHECK-NEXT: v230: anything = PropGet v229 key="length" accessSite=56 receivers=[]
-# CHECK-NEXT: v231: undefined|number = AssumeType v230 provenType=undefined|number
-# CHECK-NEXT: Jump -> next b53(v231)
-# CHECK-NEXT: b53(v232: undefined|number ~ int[0, 2147483647]):
-# CHECK-NEXT: v233: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v234: undefined = CallBuiltin v233, v20, v200, v206, v199, v213, v215, v221, v232 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=57
-# CHECK-NEXT: v235: undefined = Undefined
-# CHECK-NEXT: Return v235
+# CHECK-NEXT: v167: boolean = StrictEq v73, v77
+# CHECK-NEXT: Branch v167 -> taken b41(| 0), notTaken b47()
+# CHECK-NEXT: b41(v168: string) frequency=Unlikely:
+# CHECK-NEXT: v169: boolean = ElemHas v81, v77 accessSite=18
+# CHECK-NEXT: Branch v169 -> taken b42(), notTaken b46()
+# CHECK-NEXT: b42() frequency=Unlikely:
+# CHECK-NEXT: v170: boolean = CallBuiltin v15, v168 overload=RegExpPrototypeTest/0 accessSite=20
+# CHECK-NEXT: v171: boolean = CallBuiltin v15, v77 overload=RegExpPrototypeTest/0 accessSite=22
+# CHECK-NEXT: v172: boolean = StrictEq v170, v171
+# CHECK-NEXT: Branch v172 -> taken b43(), notTaken b48()
+# CHECK-NEXT: b43() frequency=Unlikely:
+# CHECK-NEXT: v173: -1 = Integer integer=-1
+# CHECK-NEXT: v174: undefined|string = CallBuiltin v168, v173 overload=StringPrototypeAt/0 accessSite=24
+# CHECK-NEXT: v175: -1 = Integer integer=-1
+# CHECK-NEXT: v176: undefined|string = CallBuiltin v77, v175 overload=StringPrototypeAt/0 accessSite=26
+# CHECK-NEXT: v177: boolean = StrictEq v174, v176
+# CHECK-NEXT: Branch v177 -> taken b44(), notTaken b48()
+# CHECK-NEXT: b44() frequency=Unlikely:
+# CHECK-NEXT: v178: undefined = Undefined
+# CHECK-NEXT: v179: undefined|string = CallBuiltin -, v168, v178 overload=JSONStringify/0 accessSite=28
+# CHECK-NEXT: v180: undefined = Undefined
+# CHECK-NEXT: v181: undefined|string = CallBuiltin -, v77, v180 overload=JSONStringify/0 accessSite=30
+# CHECK-NEXT: v182: boolean = StrictEq v179, v181
+# CHECK-NEXT: Branch v182 -> taken b45(), notTaken b48()
+# CHECK-NEXT: b45() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b49()
+# CHECK-NEXT: b46() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b48()
+# CHECK-NEXT: b47() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b48()
+# CHECK-NEXT: b48() frequency=Unlikely:
+# CHECK-NEXT: v183: "differs: " = String string="differs: "
+# CHECK-NEXT: v184: string = ToString v32
+# CHECK-NEXT: v185: " " = String string=" "
+# CHECK-NEXT: v186: string = ToString v39
+# CHECK-NEXT: v187: " " = String string=" "
+# CHECK-NEXT: v188: string = ToString v48
+# CHECK-NEXT: v189: " in round " = String string=" in round "
+# CHECK-NEXT: v190: string = ToString v25
+# CHECK-NEXT: v191: ": " = String string=": "
+# CHECK-NEXT: v192: undefined = Undefined
+# CHECK-NEXT: v193: undefined|string = CallBuiltin -, v73, v192 overload=JSONStringify/0 accessSite=33
+# CHECK-NEXT: v194: string = ToString v193
+# CHECK-NEXT: v195: string = Strcat v183, v184, v185, v186, v187, v188, v189, v190, v191, v194
+# CHECK-NEXT: v196: int[0, 4294967295] = CallBuiltin v17, v195 overload=ArrayPrototypePush/0 accessSite=34
+# CHECK-NEXT: Jump -> next b49()
+# CHECK-NEXT: b49() frequency=Unlikely:
+# CHECK-NEXT: v197: int|whole = Increment v43
+# CHECK-NEXT: v198: int[1, 4294967295] ~ int[1, 2147483648] = Increment v48
+# CHECK-NEXT: Jump -> next b7(v197, v198)
+# CHECK-NEXT: b50():
+# CHECK-NEXT: v199: int[1, 4294967295] ~ int[1, 2147483648] = Increment v39
+# CHECK-NEXT: v200: int[1, 4294967295] ~ int[1, 2147483647] = Upcast v199 castType=int|whole
+# CHECK-NEXT: Jump -> next b5(v43, v200)
+# CHECK-NEXT: b51():
+# CHECK-NEXT: v201: int[1, 4294967295] ~ int[1, 2147483648] = Increment v32
+# CHECK-NEXT: v202: int[1, 4294967295] ~ int[1, 2147483647] = Upcast v201 castType=int|whole
+# CHECK-NEXT: Jump -> next b3(v34, v202)
+# CHECK-NEXT: b52():
+# CHECK-NEXT: v203: 16 = Integer integer=16
+# CHECK-NEXT: v204: int[0, 15] = Mod v25, v203
+# CHECK-NEXT: v205: 15 = Integer integer=15
+# CHECK-NEXT: v206: boolean = StrictEq v204, v205
+# CHECK-NEXT: Branch v206 -> taken b53(), notTaken b54()
+# CHECK-NEXT: b53():
+# CHECK-NEXT: v207: true = Boolean boolean=true
+# CHECK-NEXT: v208: number = CallBuiltin -, v207 overload=BunGc/0 accessSite=37
+# CHECK-NEXT: Jump -> next b54()
+# CHECK-NEXT: b54():
+# CHECK-NEXT: v209: int[1, 40] = Increment v25
+# CHECK-NEXT: Jump -> next b1(v27, v209)
+# CHECK-NEXT: b55():
+# CHECK-NEXT: v210: 2 = Integer integer=2
+# CHECK-NEXT: v211: undefined|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15 = GetArrayElement v13, v210 arrayStorage=Contiguous level=Proven accessSite=38 [keyIsIntegral]
+# CHECK-NEXT: v212: anything = Call v211, v13 calleeName="kinds[2]" accessSite=39 callees=[f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15]
+# CHECK-NEXT: v213: 0 = Integer
+# CHECK-NEXT: v214: undefined|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15 = GetArrayElement v13, v213 arrayStorage=Contiguous level=Proven accessSite=40 [keyIsIntegral]
+# CHECK-NEXT: v215: anything = Call v214, v13 calleeName="kinds[0]" accessSite=41 callees=[f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15]
+# CHECK-NEXT: v216: number|string|bigint = Add v212, v215
+# CHECK-NEXT: v217: 1 = Integer integer=1
+# CHECK-NEXT: v218: undefined|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15 = GetArrayElement v13, v217 arrayStorage=Contiguous level=Proven accessSite=42 [keyIsIntegral]
+# CHECK-NEXT: v219: anything = Call v218, v13 calleeName="kinds[1]" accessSite=43 callees=[f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15]
+# CHECK-NEXT: v220: number|string|bigint = Add v216, v219
+# CHECK-NEXT: v221: number|string|bigint ~ string = Upcast v220 castType=number|string|bigint
+# CHECK-NEXT: v222: int[0, 4294967295] = CallBuiltin v17 overload=ArrayPrototypeLength/0 accessSite=46
+# CHECK-NEXT: v223: 0 = Integer
+# CHECK-NEXT: v224: 5 = Integer integer=5
+# CHECK-NEXT: v225: Array<string> = CallBuiltin v17, v223, v224 overload=ArrayPrototypeSlice/0 accessSite=48
+# CHECK-NEXT: v226: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v225 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v227: "\n" = String string="\n"
+# CHECK-NEXT: v228: string = CallBuiltin v226, v227 overload=ArrayPrototypeJoin/0 accessSite=50
+# CHECK-NEXT: v229: boolean ~ true = TypeTest v221 testedType=string
+# CHECK-NEXT: Branch v229 -> taken b56(| 0), notTaken b57(| 0)
+# CHECK-NEXT: b56(v230: string):
+# CHECK-NEXT: v231: int[0, 2147483647] = GetStringLength v230
+# CHECK-NEXT: Jump -> next b58(v231)
+# CHECK-NEXT: b57(v232: number|bigint) frequency=Unlikely:
+# CHECK-NEXT: v233: anything = PropGet v232 key="length" accessSite=51 receivers=[]
+# CHECK-NEXT: v234: undefined|number = AssumeType v233 provenType=undefined|number
+# CHECK-NEXT: Jump -> next b58(v234)
+# CHECK-NEXT: b58(v235: undefined|number ~ int[0, 2147483647]):
+# CHECK-NEXT: v236: string = ToString v221 calledBuiltin=RegExpPrototypeTest
+# CHECK-NEXT: v237: boolean = CallBuiltin v15, v236 overload=RegExpPrototypeTest/0 accessSite=53
+# CHECK-NEXT: v238: "" = String string=""
+# CHECK-NEXT: v239: "" = String string=""
+# CHECK-NEXT: v240: "" = String string=""
+# CHECK-NEXT: v241: number|string|bigint = CallDirect v238, v239, v240 function=f2 accessSite=54
+# CHECK-NEXT: v242: "" = String string=""
+# CHECK-NEXT: v243: boolean = StrictEq v241, v242
+# CHECK-NEXT: v244: "" = String string=""
+# CHECK-NEXT: v245: "" = String string=""
+# CHECK-NEXT: v246: "" = String string=""
+# CHECK-NEXT: v247: number|string|bigint = CallDirect v244, v245, v246 function=f2 accessSite=55
+# CHECK-NEXT: v248: boolean = TypeTest v247 testedType=string
+# CHECK-NEXT: Branch v248 -> taken b59(| 0), notTaken b60(| 0)
+# CHECK-NEXT: b59(v249: string):
+# CHECK-NEXT: v250: int[0, 2147483647] = GetStringLength v249
+# CHECK-NEXT: Jump -> next b61(v250)
+# CHECK-NEXT: b60(v251: number|bigint) frequency=Unlikely:
+# CHECK-NEXT: v252: anything = PropGet v251 key="length" accessSite=56 receivers=[]
+# CHECK-NEXT: v253: undefined|number = AssumeType v252 provenType=undefined|number
+# CHECK-NEXT: Jump -> next b61(v253)
+# CHECK-NEXT: b61(v254: undefined|number ~ int[0, 2147483647]):
+# CHECK-NEXT: v255: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v256: undefined = CallBuiltin v255, v20, v222, v228, v221, v235, v237, v243, v254 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=57
+# CHECK-NEXT: v257: undefined = Undefined
+# CHECK-NEXT: Return v257
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="rope"
 # CHECK: module=m0 position=400 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type="made-of-two"|"\u{65e5}\u{672c}"|"\u{8a9e}x"}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

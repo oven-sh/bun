@@ -296,7 +296,12 @@ fn text_file_answers_its_text_only_where_the_bundler_links_every_require() {
             "for (const name of ['notes']) require('./' + name + '.txt');",
         ),
     ];
-    let linked = linked.map(|main| (main, DATA_WITH_DEFAULT));
+    // A path that shows when the program runs goes to the loader.
+    let text_where_linked = Interop {
+        answers_loader_with_namespace: true,
+        ..DATA_WITH_DEFAULT
+    };
+    let linked = linked.map(|main| (main, text_where_linked));
     let left_to_loader = left_to_loader.map(|main| (main, IMPORTED_DATA));
     for (main, expected) in linked.into_iter().chain(left_to_loader) {
         with_graph(&[main, ("notes.txt", "text")], |graph, input| {

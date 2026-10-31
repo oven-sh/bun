@@ -13,6 +13,7 @@ mod runtime_dialect;
 mod spelled_values;
 #[cfg(test)]
 mod tests;
+mod unnamed_holders;
 mod walked_texts;
 
 pub use self::imports::find_module_export;
@@ -130,6 +131,14 @@ pub struct ModuleObjectMention {
     pub object_use: ModuleObjectUse,
 }
 
+/// `spyOn(object, key)`, `Object.defineProperty(object, key, d)`: one of the values that the file spells for `object`.
+#[derive(Copy, Clone, Debug)]
+pub struct ObjectSpelled {
+    pub key: ExprId,
+    pub object: ExprId,
+    pub is_builtin: bool,
+}
+
 pub struct ImportTargets {
     targets: Vec<(ImportSiteKind, Option<RuntimeModule>)>,
 }
@@ -235,7 +244,10 @@ pub struct ResolvedBuiltins {
     guessed_uses: RuntimeUses,
     loads_unknown_modules: bool,
     keys_spelled_on_other_objects: Box<[(ExprId, Atom)]>,
+    objects_spelled_for_calls: Box<[ObjectSpelled]>,
+    keys_partly_read: Box<[ExprId]>,
     keys_taken_out_of_module_cache: Box<[KeyOfModuleCache]>,
+    keys_stored_in_module_cache: Box<[KeyOfModuleCache]>,
     loses_sight_of_module_cache: bool,
     reaches_module_cache: bool,
 }
@@ -379,6 +391,21 @@ impl ResolvedBuiltins {
     /// Of a file of a test run. `key`: the key of `spyOn(object, key)`, `Object.defineProperty(object, key, ..)` or `object[key] = ..` on an object that is no
     /// built-in, without its type assertions. The names that the file spells for it: the key itself, what a constant holds, the elements of the list that a
     /// loop walks, what the calls of a function of the file pass. Some of the names, not all of them.
+    /// `key` as for `keys_spelled_for`. What the file spells for the object of that call: `const files = fs as Record<string, F>; spyOn(files, key)`,
+    /// `[fs, fsPromises].map(module => spyOn(module, key))`. The object itself where nothing is known of it. A parameter may get more from another file.
+    pub fn objects_spelled_for(&self, key: ExprId) -> &[ObjectSpelled] {
+        let objects = &self.objects_spelled_for_calls;
+        let start = objects.partition_point(|entry| entry.key < key);
+        let end = objects.partition_point(|entry| entry.key <= key);
+        &objects[start..end]
+    }
+
+    /// `key` as for `keys_spelled_for`. Whether something reaches the key that the file does not spell: a parameter that nobody in the file passes,
+    /// what a call returns. `keys_spelled_for` then lists some of its names at most.
+    pub fn is_key_partly_read(&self, key: ExprId) -> bool {
+        self.keys_partly_read.binary_search(&key).is_ok()
+    }
+
     pub fn keys_spelled_for(&self, key: ExprId) -> impl Iterator<Item = Atom> + '_ {
         let keys = &self.keys_spelled_on_other_objects;
         let start = keys.partition_point(|entry| entry.0 < key);
@@ -387,9 +414,14 @@ impl ResolvedBuiltins {
             .map(|entry| entry.1)
     }
 
-    /// `delete require.cache[key]` and `Reflect.deleteProperty(require.cache, key)`, also of `Module._cache` and of a name that holds the table.
+    /// `delete require.cache[key]`, `Reflect.deleteProperty(require.cache, key)` and `require.cache[key] = undefined`, also of `Module._cache` and of a name that holds the table.
     pub fn keys_taken_out_of_module_cache(&self) -> &[KeyOfModuleCache] {
         &self.keys_taken_out_of_module_cache
+    }
+
+    /// `require.cache[key] = entry`: those of `keys_taken_out_of_module_cache` under which the file may leave an entry of its own.
+    pub fn keys_stored_in_module_cache(&self) -> &[KeyOfModuleCache] {
+        &self.keys_stored_in_module_cache
     }
 
     /// The file names the table, or lets go of something that leads there: it may read what the table lists.
@@ -414,6 +446,11 @@ impl ResolvedBuiltins {
 
 pub fn resolve_file(input: &ResolveInput<'_, '_>) -> ResolvedBuiltins {
     resolver::run(input, None, None)
+}
+
+/// A file of a program of which `AotOptions::imports_are_in_other_images` holds.
+pub fn resolve_file_served_by_other_images(input: &ResolveInput<'_, '_>) -> ResolvedBuiltins {
+    resolver::run_for_program(input, None, None, true)
 }
 
 /// The built-ins of a part of a file: the code in these ranges of positions, which are in order and do not overlap.

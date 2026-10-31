@@ -1,4 +1,4 @@
-// The parent of these classes is one of two, so no layout of theirs has a field for the private names of the parent: an instance keeps them beside its fields.
+// The parent of these classes is one of two, so their layouts have a field for each private name of either parent.
 // ts-morph is written so: two hundred classes made by mixins over one `Node` with `#compilerNode`, which every method reads.
 // The reads in the long loop find the names without a call into the run time: 200,000 of them went there once.
 // COUNT: operation:operationAOTPrivateGet <= 113

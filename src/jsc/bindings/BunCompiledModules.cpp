@@ -158,7 +158,9 @@ extern "C" bool Bun__compiledProgramRunsInPlace();
 extern "C" bool Bun__AOT__isWorkerTextRefusedByTrimming(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__isStartOfWorker(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__isMainModule(JSC::JSGlobalObject*, const BunString* path);
+extern "C" bool Bun__AOT__isLoadedSynchronously(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__allowsCodeFromDisk();
+extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_getter_main(JSC::JSGlobalObject*);
 extern "C" bool isBunTest;
 
 static bool reloadsFilesFromDisk()
@@ -167,6 +169,7 @@ static bool reloadsFilesFromDisk()
 }
 extern "C" JSC::EncodedJSValue ResolveMessage__createModuleNotFound(JSC::JSGlobalObject*, const BunString* specifier, const BunString* referrer, bool isForRequire);
 extern "C" BunString Bun__AOT__pathOfForm(const BunString* path, const BunString* typeAttribute, bool* isFormWithoutAttributes);
+extern "C" BunString Bun__AOT__nodeModuleNamedWithoutPrefix(const BunString* name);
 
 namespace Bun {
 using namespace JSC;
@@ -199,6 +202,12 @@ std::optional<AOT::ModuleID> compiledModuleForPath(const String& path)
     return module && AOT::isNativeModule(*module) ? std::nullopt : module;
 }
 
+bool isHiddenFromRequireCache(const String& key)
+{
+    auto module = compiledModuleForPath(key);
+    return module && !AOT::mayHoldEntryOfProgramInRequireCache(*module);
+}
+
 // A mock stands under the names of the module wherever the program gets them from, and the program imports a module of native code from the image.
 std::optional<AOT::ModuleID> moduleThatMockReplaces(const String& path)
 {
@@ -215,6 +224,9 @@ static std::optional<AOT::ModuleID> moduleForRequest(Zig::GlobalObject* globalOb
 {
     auto module = moduleThatAnswersToPath(path);
     if (!module)
+        return module;
+    // What a mock has stored over an earlier require().
+    if (way == AOT::LoadByName::Require && AOT::isInRequireCache(globalObject, *module))
         return module;
     // A module of native code is the host's own, whoever asks.
     bool isReplaced = AOT::isNativeModule(*module) ? replacesNativeModule(globalObject, path) : AOT::hostAnswersInPlaceOf(globalObject, *module, way);
@@ -343,9 +355,21 @@ static void requireInto(Zig::GlobalObject* globalObject, JSCommonJSModule* targe
     target->setExportsObject(exports);
 }
 
+// `bun run` reads a file of a kind that nothing names, `a.png`, as code for require(), and an import of it gets its path. What an import has loaded answers a later require().
+// The image has the code where the program names the file in a require(). The loader reads any other file.
+static bool isReadAsCodeByRequire(Zig::GlobalObject* globalObject, AOT::ModuleID module, const String& path)
+{
+    if (!reloadsFilesFromDisk() || !AOT::isDataFile(module))
+        return false;
+    BunString pathString = Bun::toString(path);
+    return Bun__getDefaultLoader(globalObject, &pathString) == BunLoaderTypeJS && !AOT::isHeldForImport(globalObject, module);
+}
+
 bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* target, const String& path, bool hasImportAttributes)
 {
     auto module = compiledModuleForRequest(globalObject, path, hasImportAttributes, AOT::LoadByName::Require);
+    if (module && isReadAsCodeByRequire(globalObject, *module, path))
+        module = compiledModuleForRequest(globalObject, makeString(path, "?ts"_s), hasImportAttributes, AOT::LoadByName::Require);
     if (!module)
         return false;
     auto& vm = getVM(globalObject);
@@ -358,6 +382,14 @@ bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* ta
         target->compiledModule = module->index();
     if (requirer)
         AOT::willRequireModule(globalObject, *module, referrer, requirer);
+    JSString* key = jsString(vm, path);
+    if (reloadsFilesFromDisk()) {
+        if (AOT::isESModule(*module))
+            AOT::didMakeModuleObjectForRequire(globalObject, *module, target);
+        else
+            globalObject->requireMap()->remove(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
     requireInto(globalObject, target, *module, referrer);
     RETURN_IF_EXCEPTION(scope, false);
     if (referrer) {
@@ -365,8 +397,12 @@ bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* ta
         RETURN_IF_EXCEPTION(scope, false);
     }
     // A module of the executable is in no cache. The next require() of the name asks the engine again, which answers what the module exports then.
-    globalObject->requireMap()->remove(globalObject, jsString(vm, path));
+    JSValue held = globalObject->requireMap()->get(globalObject, key);
     RETURN_IF_EXCEPTION(scope, false);
+    if (held == target) {
+        globalObject->requireMap()->remove(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
     return true;
 }
 
@@ -398,7 +434,8 @@ bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject* globalObject, JSCom
     if (!hasCompiledModules() || target->moduleGraph() || target->m_overriddenCompile) [[likely]]
         return false;
     auto module = compiledModuleForPath(path);
-    if (!module)
+    // The run time has sent the call here for such a file: it would only send it here again.
+    if (!module || AOT::leavesModuleToHost(globalObject, *module))
         return false;
     BunString pathString = Bun::toString(path);
     auto loader = Bun__getDefaultLoader(globalObject, &pathString);
@@ -417,7 +454,7 @@ void didDeleteRequireCacheEntry(Zig::GlobalObject* globalObject, const String& k
     if (!reloadsFilesFromDisk())
         return;
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    if (auto module = compiledModuleForPath(key)) {
+    if (auto module = moduleThatAnswersToPath(key)) {
         AOT::didDeleteRequireCacheEntry(globalObject, *module);
         RETURN_IF_EXCEPTION(scope, );
     }
@@ -460,10 +497,45 @@ void forEachEvaluatedCompiledFile(Zig::GlobalObject* globalObject, const WTF::Fu
     AOT::forEachEvaluatedFile(globalObject, functor);
 }
 
+// `require.cache[name] = { exports: fake }`, where `name` turns out to be "fs": overridableRequire() would answer require("fs") with the entry.
+static void willSetRequireCacheEntryUnderNameOfNodeModule(Zig::GlobalObject* globalObject, const String& name)
+{
+    BunString nameArgument = Bun::toString(name);
+    BunString path = Bun__AOT__nodeModuleNamedWithoutPrefix(&nameArgument);
+    if (path.isDead())
+        return;
+    if (auto module = moduleThatAnswersToPath(path.transferToWTFString()))
+        AOT::willSetRequireCacheEntryUnderName(globalObject, *module, name);
+}
+
 void willSetRequireCacheEntry(Zig::GlobalObject* globalObject, const String& key, JSValue entry)
 {
-    if (auto module = compiledModuleForPath(key))
-        AOT::willSetRequireCacheEntry(globalObject, *module, entry);
+    auto module = compiledModuleForPath(key);
+    if (!module) {
+        if (entry.toBoolean(globalObject))
+            willSetRequireCacheEntryUnderNameOfNodeModule(globalObject, key);
+        return;
+    }
+    // `require.cache[path] = undefined`: overridableRequire() goes by an entry that is truthy.
+    if (!entry.toBoolean(globalObject)) {
+        if (reloadsFilesFromDisk())
+            AOT::willClearRequireCacheEntry(globalObject, *module);
+        return;
+    }
+    // `require.cache[path] = { exports: fake }`: how a test puts something of its own in place of a CommonJS file.
+    if (reloadsFilesFromDisk())
+        return AOT::willReplaceRequireCacheEntry(globalObject, *module);
+    AOT::willSetRequireCacheEntry(globalObject, *module, entry);
+}
+
+void willStoreLoaderOfExtension(Zig::GlobalObject* globalObject, StringView extension)
+{
+    if (!hasCompiledModules())
+        return;
+    // How a test has a file of its own kind loaded, or looks at what the files of a kind hold. Elsewhere imports are bound for good.
+    if (reloadsFilesFromDisk())
+        return AOT::willStoreLoaderOfExtension(globalObject, extension);
+    AOT::willChangeRequireOverride(globalObject, AOT::RequireOverride::Extensions, AOT::hasFileWithExtension(extension));
 }
 
 static JSCommonJSModule* boundModuleOf(JSValue require)
@@ -614,8 +686,30 @@ JSCommonJSModule* parentOfCompiledModule(JSCommonJSModule* module)
 
 JSValue mainModuleOfExecutable(Zig::GlobalObject* globalObject)
 {
-    JSObject* main = AOT::mainModuleObject(globalObject);
-    return main ? JSValue(main) : jsUndefined();
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    JSValue main = JSValue::decode(BunObject_getter_main(globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (main.isString()) {
+        String path = asString(main)->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (auto module = compiledModuleForRequest(globalObject, path, false, AOT::LoadByName::Require)) {
+            JSObject* moduleObject = AOT::mainModuleObject(globalObject, *module);
+            RETURN_IF_EXCEPTION(scope, {});
+            return moduleObject ? JSValue(moduleObject) : jsUndefined();
+        }
+    }
+    RELEASE_AND_RETURN(scope, globalObject->requireMap()->get(globalObject, main));
+}
+
+void willStorePathOfMainModule(Zig::GlobalObject* globalObject, JSValue path)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    JSValue main = JSValue::decode(BunObject_getter_main(globalObject));
+    RETURN_IF_EXCEPTION(scope, void());
+    bool isStoredAlready = JSValue::strictEqual(globalObject, main, path);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!isStoredAlready)
+        RELEASE_AND_RETURN(scope, AOT::willStorePathOfMainModule(globalObject));
 }
 
 static JSValue requireSpecifier(JSGlobalObject* realm, JSObject* requirer, JSValue specifier)
@@ -764,6 +858,13 @@ static void runMock(JSGlobalObject* globalObject, AOT::ModuleID module)
     Zig::runCompiledMock(uncheckedDowncast<Zig::GlobalObject>(globalObject), module);
 }
 
+static bool loadsSynchronously(JSGlobalObject* globalObject, AOT::ModuleID module)
+{
+    String path = AOT::modulePath(module);
+    BunString pathArgument = Bun::toString(path);
+    return Bun__AOT__isLoadedSynchronously(globalObject, &pathArgument);
+}
+
 const AOT::ModuleHost compiledModuleHost = {
     &createModuleObject,
     &createRequirer,
@@ -787,6 +888,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &createModuleNotFoundError,
     &requirePrototype,
     &runMock,
+    &loadsSynchronously,
 };
 
 JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path, NotInExecutable what)
@@ -878,6 +980,12 @@ JSValue errorIfDebuggerIsRefused(JSGlobalObject* globalObject, ASCIILiteral buil
     return createCodeNotCompiledError(globalObject, makeString("Cannot use "_s, builtin, ": rebuild this executable with --compile-inspector."_s));
 }
 
+bool compiledProgramRunsInSeveralRealmsAtOnce()
+{
+    const AOT::Image* image = AOT::Image::current();
+    return image && (image->first().programTables().flags & AOT::ProgramTables::mayRunInMultipleInstances);
+}
+
 bool compiledModulesRunInPlaceOfFiles()
 {
     return hasCompiledModules() && Bun__compiledProgramRunsInPlace();
@@ -915,6 +1023,12 @@ extern "C" bool Bun__isCompiledProgramFile(const BunString* path)
     return Bun::isCompiledModule(path->toWTFString(BunString::ZeroCopy));
 }
 
+extern "C" void Bun__AOT__willRunEntryPointAgain(JSC::JSGlobalObject* globalObject, const BunString* path)
+{
+    if (auto module = Bun::compiledModuleForPath(path->toWTFString(BunString::ZeroCopy)))
+        JSC::AOT::willRunEntryPointAgain(globalObject, *module);
+}
+
 extern "C" bool Bun__isCompiledProgramFileInSomeForm(const BunString* path)
 {
     String file = path->toWTFString(BunString::ZeroCopy);
@@ -924,6 +1038,11 @@ extern "C" bool Bun__isCompiledProgramFileInSomeForm(const BunString* path)
 extern "C" bool Bun__AOT__mayHoldPathStartingWith(const BunString* start)
 {
     return JSC::AOT::mayHoldPathStartingWith(start->toWTFString(BunString::ZeroCopy));
+}
+
+extern "C" bool Bun__AOT__isLeftToCodeOutsideImage(const BunString* specifier, const BunString* directoryOfImporter)
+{
+    return JSC::AOT::isLeftToCodeOutsideImage(specifier->toWTFString(BunString::ZeroCopy), directoryOfImporter->toWTFString(BunString::ZeroCopy));
 }
 
 // Start-up reads its options before the image is in use.
@@ -962,6 +1081,15 @@ extern "C" void Bun__AOT__forEachFilePathStartingWith(BunAOTBytes start, void* c
     });
 }
 
+// For `bun test --aot --coverage`, on the thread of the VM.
+extern "C" void Bun__AOT__forEachCountedFile(JSC::VM* vm, void* context, void (*each)(void* context, BunAOTBytes description, const uint64_t* counts, size_t count))
+{
+    JSC::AOT::forEachCountedFile(*vm, [&](const String& description, std::span<const uint64_t> counts) {
+        CString bytes = description.utf8();
+        each(context, BunAOTBytes { byteCast<uint8_t>(bytes.span().data()), bytes.length() }, counts.data(), counts.size());
+    });
+}
+
 extern "C" bool Bun__AOT__imagesHoldFile(const BunAOTBytes* images, size_t count, BunAOTBytes path)
 {
     Vector<std::span<const uint8_t>, 2> list(count, [&](size_t index) {
@@ -989,6 +1117,7 @@ using namespace JSC;
 const AOT::ModuleHost compiledModuleHost {};
 
 std::optional<AOT::ModuleID> compiledModuleForPath(const String&) { return std::nullopt; }
+bool isHiddenFromRequireCache(const String&) { return false; }
 std::optional<AOT::ModuleID> moduleThatMockReplaces(const String&) { return std::nullopt; }
 JSPromise* compiledModuleSource(Zig::GlobalObject*, const String&, bool) { return nullptr; }
 JSPromise* importCompiledModule(Zig::GlobalObject*, const String&, const ScriptFetchParameters*, int64_t) { return nullptr; }
@@ -1005,6 +1134,7 @@ JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code,
 JSValue errorIfCodeOutsideImageIsRefused(JSGlobalObject*, ErrorCode, const String&) { return {}; }
 JSValue errorIfHostObjectOutsideImageIsRefused(JSGlobalObject*, ErrorCode, const String&) { return {}; }
 JSValue mainModuleOfExecutable(Zig::GlobalObject*) { return jsUndefined(); }
+void willStorePathOfMainModule(Zig::GlobalObject*, JSValue) {}
 bool appendNewChildrenOfCompiledModule(JSGlobalObject*, JSCommonJSModule*) { return true; }
 JSCommonJSModule* parentOfCompiledModule(JSCommonJSModule*) { return nullptr; }
 JSValue parentSeenBy(Zig::GlobalObject*, JSString*, JSValue parent) { return parent; }
@@ -1013,6 +1143,7 @@ bool isAskingWhyFileFailsToLoad() { return false; }
 bool isDebuggerAdmitted() { return true; }
 JSValue errorIfDebuggerIsRefused(JSGlobalObject*, ASCIILiteral) { return {}; }
 void willSetRequireCacheEntry(Zig::GlobalObject*, const String&, JSValue) {}
+void willStoreLoaderOfExtension(Zig::GlobalObject*, StringView) {}
 void didDeleteRequireCacheEntry(Zig::GlobalObject*, const String&) {}
 bool requireCacheListsCompiledFiles(Zig::GlobalObject*) { return false; }
 bool isEvaluatedCompiledFile(Zig::GlobalObject*, const String&) { return false; }
@@ -1024,8 +1155,10 @@ void forEachEvaluatedCompiledFile(Zig::GlobalObject*, const WTF::Function<void(c
 
 extern "C" bool Bun__refusesCodeOutsideExecutable(JSC::JSGlobalObject*) { return false; }
 extern "C" bool Bun__isCompiledProgramFile(const BunString*) { return false; }
+extern "C" void Bun__AOT__willRunEntryPointAgain(JSC::JSGlobalObject*, const BunString*) {}
 extern "C" bool Bun__isCompiledProgramFileInSomeForm(const BunString*) { return false; }
 extern "C" bool Bun__AOT__mayHoldPathStartingWith(const BunString*) { return false; }
+extern "C" bool Bun__AOT__isLeftToCodeOutsideImage(const BunString*, const BunString*) { return false; }
 extern "C" bool Bun__AOT__omitsFunctionSource(BunAOTBytes) { return false; }
 extern "C" bool Bun__AOT__tryReservePagesForNewThread(void** pages, bool)
 {
@@ -1038,6 +1171,7 @@ extern "C" void Bun__AOT__releaseUnusedPagesOfThread() {}
 extern "C" void Bun__AOT__didStartThread() {}
 extern "C" bool Bun__AOT__entryPointIsCommonJS(JSC::JSGlobalObject*) { return false; }
 extern "C" void Bun__AOT__forEachFilePathStartingWith(BunAOTBytes, void*, bool (*)(void*, BunAOTBytes)) {}
+extern "C" void Bun__AOT__forEachCountedFile(JSC::VM*, void*, void (*)(void*, BunAOTBytes, const uint64_t*, size_t)) {}
 extern "C" bool Bun__AOT__imagesHoldFile(const BunAOTBytes*, size_t, BunAOTBytes) { return false; }
 extern "C" JSC::EncodedJSValue Bun__AOT__errorIfCodeOutsideImageIsRefused(JSC::JSGlobalObject*, Bun::ErrorCode, const BunString*) { return JSC::JSValue::encode({}); }
 extern "C" JSC::EncodedJSValue Bun__AOT__errorIfHostObjectOutsideImageIsRefused(JSC::JSGlobalObject*, Bun::ErrorCode, const BunString*) { return JSC::JSValue::encode({}); }

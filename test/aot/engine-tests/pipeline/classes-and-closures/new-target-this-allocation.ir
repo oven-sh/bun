@@ -179,231 +179,244 @@ typesite w78 module=m5 position=22368 kind=Parameter
 typesite w79 module=m5 position=22332 kind=Result
 typesite w80 module=m5 position=22606 kind=Parameter
 typesite w81 module=m5 position=22562 kind=Result
-typesite w82 module=m5 position=2235 kind=Variable
-typesite w83 module=m5 position=2889 kind=Variable
-typesite w84 module=m5 position=2911 kind=Variable
-typesite w85 module=m5 position=3007 kind=CallResult
-typesite w86 module=m5 position=3087 kind=Variable
-typesite w87 module=m5 position=3254 kind=CallResult
-typesite w88 module=m5 position=3545 kind=Variable
-typesite w89 module=m5 position=3910 kind=Variable
-typesite w90 module=m5 position=3706 kind=CallResult
-typesite w91 module=m5 position=4090 kind=Variable
-typesite w92 module=m5 position=4237 kind=CallResult
-typesite w93 module=m5 position=4533 kind=Variable
-typesite w94 module=m5 position=4555 kind=Variable
-typesite w95 module=m5 position=4652 kind=CallResult
-typesite w96 module=m5 position=4732 kind=Variable
-typesite w97 module=m5 position=4898 kind=CallResult
-typesite w98 module=m5 position=5189 kind=Variable
-typesite w99 module=m5 position=5555 kind=Variable
-typesite w100 module=m5 position=5351 kind=CallResult
-typesite w101 module=m5 position=5735 kind=Variable
-typesite w102 module=m5 position=5883 kind=CallResult
-typesite w103 module=m5 position=6138 kind=Variable
-typesite w104 module=m5 position=6186 kind=Variable
-typesite w105 module=m5 position=6220 kind=Variable
-typesite w106 module=m5 position=6686 kind=Variable
-typesite w107 module=m5 position=6754 kind=Variable
-typesite w108 module=m5 position=6810 kind=CallResult
-typesite w109 module=m5 position=7046 kind=Variable
-typesite w110 module=m5 position=7786 kind=Variable
-typesite w111 module=m5 position=7815 kind=Variable
-typesite w112 module=m5 position=7884 kind=Variable
-typesite w113 module=m5 position=8591 kind=Variable
-typesite w114 module=m5 position=8017 kind=Variable
-typesite w115 module=m5 position=8107 kind=Variable
-typesite w116 module=m5 position=8177 kind=Variable
-typesite w117 module=m5 position=8250 kind=CallResult
-typesite w118 module=m5 position=8530 kind=CallResult
-typesite w119 module=m5 position=8689 kind=Variable
-typesite w120 module=m5 position=8748 kind=Variable
-typesite w121 module=m5 position=8806 kind=Variable
-typesite w122 module=m5 position=8828 kind=Variable
-typesite w123 module=m5 position=9127 kind=Variable
-typesite w124 module=m5 position=8878 kind=Variable
-typesite w125 module=m5 position=8935 kind=Variable
-typesite w126 module=m5 position=8997 kind=CallResult
-typesite w127 module=m5 position=9190 kind=Variable
-typesite w128 module=m5 position=9253 kind=Variable
-typesite w129 module=m5 position=9606 kind=CallResult
-typesite w130 module=m5 position=9790 kind=Variable
-typesite w131 module=m5 position=9820 kind=Variable
-typesite w132 module=m5 position=9971 kind=Variable
-typesite w133 module=m5 position=10217 kind=Variable
-typesite w134 module=m5 position=10261 kind=Variable
-typesite w135 module=m5 position=10337 kind=Variable
-typesite w136 module=m5 position=10357 kind=Variable
-typesite w137 module=m5 position=10379 kind=Variable
-typesite w138 module=m5 position=9834 kind=CallResult
-typesite w139 module=m5 position=9998 kind=CallResult
-typesite w140 module=m5 position=10235 kind=PropertyRead
-typesite w141 module=m5 position=10424 kind=Variable
-typesite w142 module=m5 position=10446 kind=Variable
-typesite w143 module=m5 position=10591 kind=Variable
-typesite w144 module=m5 position=10657 kind=Variable
-typesite w145 module=m5 position=10723 kind=CallResult
-typesite w146 module=m5 position=11336 kind=CallResult
-typesite w147 module=m5 position=11446 kind=Variable
-typesite w148 module=m5 position=11839 kind=CallResult
-typesite w149 module=m5 position=11947 kind=Variable
-typesite w150 module=m5 position=12821 kind=Variable
-typesite w151 module=m5 position=13015 kind=Variable
-typesite w152 module=m5 position=13021 kind=CallResult
-typesite w153 module=m5 position=13280 kind=Variable
-typesite w154 module=m5 position=13312 kind=Variable
-typesite w155 module=m5 position=13339 kind=Variable
-typesite w156 module=m5 position=13361 kind=Variable
-typesite w157 module=m5 position=13378 kind=Variable
-typesite w158 module=m5 position=13403 kind=Variable
-typesite w159 module=m5 position=13443 kind=Variable
-typesite w160 module=m5 position=13489 kind=Variable
-typesite w161 module=m5 position=13510 kind=Variable
-typesite w162 module=m5 position=13559 kind=CallResult
-typesite w163 module=m5 position=13622 kind=CallResult
-typesite w164 module=m5 position=13715 kind=Variable
-typesite w165 module=m5 position=13876 kind=Variable
-typesite w166 module=m5 position=14831 kind=Variable
-typesite w167 module=m5 position=14885 kind=Variable
-typesite w168 module=m5 position=14902 kind=Variable
-typesite w169 module=m5 position=14933 kind=Variable
-typesite w170 module=m5 position=15026 kind=Element
-typesite w171 module=m5 position=15621 kind=Variable
-typesite w172 module=m5 position=15676 kind=Variable
-typesite w173 module=m5 position=15889 kind=Assertion
-typesite w174 module=m5 position=16259 kind=Variable
-typesite w175 module=m5 position=16325 kind=Variable
-typesite w176 module=m5 position=16626 kind=Variable
-typesite w177 module=m5 position=16643 kind=Variable
-typesite w178 module=m5 position=16660 kind=Variable
-typesite w179 module=m5 position=16686 kind=CallResult
-typesite w180 module=m5 position=16770 kind=Variable
-typesite w181 module=m5 position=16820 kind=Variable
-typesite w182 module=m5 position=16955 kind=Variable
-typesite w183 module=m5 position=17175 kind=CallResult
-typesite w184 module=m5 position=17775 kind=CallResult
-typesite w185 module=m5 position=17881 kind=PropertyRead
-typesite w186 module=m5 position=17937 kind=CallResult
-typesite w187 module=m5 position=17965 kind=CallResult
-typesite w188 module=m5 position=17999 kind=Variable
-typesite w189 module=m5 position=18053 kind=Variable
-typesite w190 module=m5 position=18388 kind=Variable
-typesite w191 module=m5 position=18396 kind=PropertyRead
-typesite w192 module=m5 position=18869 kind=CallResult
-typesite w193 module=m5 position=19054 kind=PropertyRead
-typesite w194 module=m5 position=19029 kind=CallResult
-typesite w195 module=m5 position=19369 kind=Variable
-typesite w196 module=m5 position=19561 kind=Variable
-typesite w197 module=m5 position=19550 kind=Assertion
-typesite w198 module=m5 position=19676 kind=PropertyRead
-typesite w199 module=m5 position=20258 kind=Variable
-typesite w200 module=m5 position=20419 kind=Variable
-typesite w201 module=m5 position=21398 kind=Variable
-typesite w202 module=m5 position=20295 kind=PropertyRead
-typesite w203 module=m5 position=20620 kind=Variable
-typesite w204 module=m5 position=20694 kind=CallResult
-typesite w205 module=m5 position=20779 kind=Variable
-typesite w206 module=m5 position=20844 kind=Variable
-typesite w207 module=m5 position=20945 kind=Variable
-typesite w208 module=m5 position=21006 kind=Variable
-typesite w209 module=m5 position=21487 kind=CallResult
-typesite w210 module=m5 position=21570 kind=Variable
-typesite w211 module=m5 position=21633 kind=Variable
-typesite w212 module=m5 position=21753 kind=Variable
-typesite w213 module=m5 position=21782 kind=Variable
-typesite w214 module=m5 position=21839 kind=Variable
-typesite w215 module=m5 position=22414 kind=PropertyRead
-typesite w216 module=m5 position=22434 kind=CallResult
-typesite w217 module=m5 position=22652 kind=PropertyRead
-typesite w218 module=m5 position=22672 kind=CallResult
-typesite w219 module=m6 position=1276 kind=Parameter
-typesite w220 module=m6 position=1294 kind=Parameter
-typesite w221 module=m6 position=1253 kind=Result
-typesite w222 module=m6 position=1513 kind=Parameter
-typesite w223 module=m6 position=1529 kind=Parameter
-typesite w224 module=m6 position=1825 kind=Parameter
-typesite w225 module=m6 position=1841 kind=Parameter
-typesite w226 module=m6 position=2101 kind=Parameter
-typesite w227 module=m6 position=2117 kind=Parameter
-typesite w228 module=m6 position=2132 kind=Parameter
-typesite w229 module=m6 position=2149 kind=Parameter
-typesite w230 module=m6 position=2081 kind=Result
-typesite w231 module=m6 position=3452 kind=Result
-typesite w232 module=m6 position=3587 kind=Parameter
-typesite w233 module=m6 position=3601 kind=Parameter
-typesite w234 module=m6 position=3620 kind=Parameter
-typesite w235 module=m6 position=3640 kind=Parameter
-typesite w236 module=m6 position=3567 kind=Result
-typesite w237 module=m6 position=3771 kind=Parameter
-typesite w238 module=m6 position=4003 kind=Parameter
-typesite w239 module=m6 position=4023 kind=Parameter
-typesite w240 module=m6 position=4040 kind=Parameter
-typesite w241 module=m6 position=4067 kind=Parameter
-typesite w242 module=m6 position=4084 kind=Parameter
-typesite w243 module=m6 position=1352 kind=Variable
-typesite w244 module=m6 position=1579 kind=Variable
-typesite w245 module=m6 position=1891 kind=Variable
-typesite w246 module=m6 position=2180 kind=Variable
-typesite w247 module=m6 position=2289 kind=Variable
-typesite w248 module=m6 position=2351 kind=Variable
-typesite w249 module=m6 position=2603 kind=PropertyRead
-typesite w250 module=m6 position=2930 kind=PropertyRead
-typesite w251 module=m6 position=3029 kind=Variable
-typesite w252 module=m6 position=3292 kind=PropertyRead
-typesite w253 module=m6 position=4146 kind=Variable
-typesite w254 module=m6 position=4167 kind=Variable
-typesite w255 module=m6 position=4191 kind=Variable
-typesite w256 module=m6 position=4213 kind=Variable
-typesite w257 module=m6 position=4236 kind=Variable
-typesite w258 module=m6 position=4260 kind=Variable
-typesite w259 module=m6 position=4283 kind=Variable
-typesite w260 module=m6 position=4304 kind=Variable
-typesite w261 module=m6 position=4326 kind=Variable
-typesite w262 module=m6 position=4347 kind=Variable
-typesite w263 module=m6 position=4373 kind=Variable
-typesite w264 module=m6 position=4394 kind=Variable
-typesite w265 module=m6 position=4418 kind=Variable
-typesite w266 module=m6 position=4440 kind=Variable
-typesite w267 module=m6 position=4462 kind=Variable
-typesite w268 module=m6 position=4490 kind=Variable
-typesite w269 module=m6 position=4519 kind=Variable
-typesite w270 module=m6 position=4547 kind=Variable
-typesite w271 module=m6 position=4582 kind=Variable
-typesite w272 module=m6 position=4620 kind=Variable
-typesite w273 module=m6 position=4650 kind=Variable
-typesite w274 module=m6 position=4680 kind=Variable
-typesite w275 module=m6 position=4715 kind=Variable
-typesite w276 module=m6 position=4773 kind=Variable
-typesite w277 module=m6 position=4833 kind=Variable
-typesite w278 module=m6 position=4891 kind=Variable
-typesite w279 module=m6 position=4992 kind=Variable
-typesite w280 module=m6 position=5077 kind=Variable
-typesite w281 module=m6 position=5286 kind=Variable
-typesite w282 module=m6 position=5350 kind=Variable
-typesite w283 module=m6 position=5422 kind=Variable
-typesite w284 module=m6 position=5491 kind=Variable
-typesite w285 module=m6 position=5514 kind=Variable
-typesite w286 module=m6 position=5538 kind=Variable
-typesite w287 module=m6 position=5561 kind=Variable
-typesite w288 module=m6 position=5609 kind=Variable
-typesite w289 module=m6 position=5677 kind=Variable
-typesite w290 module=m6 position=5694 kind=Variable
-typesite w291 module=m6 position=6266 kind=Variable
-typesite w292 module=m6 position=9955 kind=Variable
-typesite w293 module=m6 position=5264 kind=PropertyRead
-typesite w294 module=m6 position=5312 kind=CallResult
-typesite w295 module=m6 position=5386 kind=CallResult
-typesite w296 module=m6 position=6358 kind=Variable
-typesite w297 module=m6 position=7588 kind=Variable
-typesite w298 module=m6 position=8691 kind=Assertion
-typesite w299 module=m6 position=8715 kind=CallResult
-typesite w300 module=m6 position=9073 kind=Variable
-typesite w301 module=m6 position=8896 kind=PropertyRead
-typesite w302 module=m6 position=9091 kind=PropertyRead
-typesite w303 module=m6 position=9223 kind=CallResult
-typesite w304 module=m6 position=9440 kind=PropertyRead
-typesite w305 module=m6 position=10433 kind=Assertion
-typesite w306 module=m6 position=10405 kind=CallResult
+typesite w82 module=m5 position=22889 kind=Parameter
+typesite w83 module=m5 position=22901 kind=Parameter
+typesite w84 module=m5 position=22858 kind=Result
+typesite w85 module=m5 position=23731 kind=Parameter
+typesite w86 module=m5 position=23679 kind=Result
+typesite w87 module=m5 position=2235 kind=Variable
+typesite w88 module=m5 position=2889 kind=Variable
+typesite w89 module=m5 position=2911 kind=Variable
+typesite w90 module=m5 position=3007 kind=CallResult
+typesite w91 module=m5 position=3087 kind=Variable
+typesite w92 module=m5 position=3254 kind=CallResult
+typesite w93 module=m5 position=3545 kind=Variable
+typesite w94 module=m5 position=3910 kind=Variable
+typesite w95 module=m5 position=3706 kind=CallResult
+typesite w96 module=m5 position=4090 kind=Variable
+typesite w97 module=m5 position=4237 kind=CallResult
+typesite w98 module=m5 position=4533 kind=Variable
+typesite w99 module=m5 position=4555 kind=Variable
+typesite w100 module=m5 position=4652 kind=CallResult
+typesite w101 module=m5 position=4732 kind=Variable
+typesite w102 module=m5 position=4898 kind=CallResult
+typesite w103 module=m5 position=5189 kind=Variable
+typesite w104 module=m5 position=5555 kind=Variable
+typesite w105 module=m5 position=5351 kind=CallResult
+typesite w106 module=m5 position=5735 kind=Variable
+typesite w107 module=m5 position=5883 kind=CallResult
+typesite w108 module=m5 position=6138 kind=Variable
+typesite w109 module=m5 position=6186 kind=Variable
+typesite w110 module=m5 position=6220 kind=Variable
+typesite w111 module=m5 position=6686 kind=Variable
+typesite w112 module=m5 position=6754 kind=Variable
+typesite w113 module=m5 position=6810 kind=CallResult
+typesite w114 module=m5 position=7046 kind=Variable
+typesite w115 module=m5 position=7786 kind=Variable
+typesite w116 module=m5 position=7815 kind=Variable
+typesite w117 module=m5 position=7884 kind=Variable
+typesite w118 module=m5 position=8591 kind=Variable
+typesite w119 module=m5 position=8017 kind=Variable
+typesite w120 module=m5 position=8107 kind=Variable
+typesite w121 module=m5 position=8177 kind=Variable
+typesite w122 module=m5 position=8250 kind=CallResult
+typesite w123 module=m5 position=8530 kind=CallResult
+typesite w124 module=m5 position=8689 kind=Variable
+typesite w125 module=m5 position=8748 kind=Variable
+typesite w126 module=m5 position=8806 kind=Variable
+typesite w127 module=m5 position=8828 kind=Variable
+typesite w128 module=m5 position=9127 kind=Variable
+typesite w129 module=m5 position=8878 kind=Variable
+typesite w130 module=m5 position=8935 kind=Variable
+typesite w131 module=m5 position=8997 kind=CallResult
+typesite w132 module=m5 position=9190 kind=Variable
+typesite w133 module=m5 position=9253 kind=Variable
+typesite w134 module=m5 position=9606 kind=CallResult
+typesite w135 module=m5 position=9790 kind=Variable
+typesite w136 module=m5 position=9820 kind=Variable
+typesite w137 module=m5 position=9971 kind=Variable
+typesite w138 module=m5 position=10217 kind=Variable
+typesite w139 module=m5 position=10261 kind=Variable
+typesite w140 module=m5 position=10337 kind=Variable
+typesite w141 module=m5 position=10357 kind=Variable
+typesite w142 module=m5 position=10379 kind=Variable
+typesite w143 module=m5 position=9834 kind=CallResult
+typesite w144 module=m5 position=9998 kind=CallResult
+typesite w145 module=m5 position=10235 kind=PropertyRead
+typesite w146 module=m5 position=10424 kind=Variable
+typesite w147 module=m5 position=10446 kind=Variable
+typesite w148 module=m5 position=10591 kind=Variable
+typesite w149 module=m5 position=10657 kind=Variable
+typesite w150 module=m5 position=10723 kind=CallResult
+typesite w151 module=m5 position=11336 kind=CallResult
+typesite w152 module=m5 position=11446 kind=Variable
+typesite w153 module=m5 position=11839 kind=CallResult
+typesite w154 module=m5 position=11947 kind=Variable
+typesite w155 module=m5 position=12821 kind=Variable
+typesite w156 module=m5 position=13015 kind=Variable
+typesite w157 module=m5 position=13021 kind=CallResult
+typesite w158 module=m5 position=13280 kind=Variable
+typesite w159 module=m5 position=13312 kind=Variable
+typesite w160 module=m5 position=13339 kind=Variable
+typesite w161 module=m5 position=13361 kind=Variable
+typesite w162 module=m5 position=13378 kind=Variable
+typesite w163 module=m5 position=13403 kind=Variable
+typesite w164 module=m5 position=13443 kind=Variable
+typesite w165 module=m5 position=13489 kind=Variable
+typesite w166 module=m5 position=13510 kind=Variable
+typesite w167 module=m5 position=13559 kind=CallResult
+typesite w168 module=m5 position=13622 kind=CallResult
+typesite w169 module=m5 position=13715 kind=Variable
+typesite w170 module=m5 position=13876 kind=Variable
+typesite w171 module=m5 position=14831 kind=Variable
+typesite w172 module=m5 position=14885 kind=Variable
+typesite w173 module=m5 position=14902 kind=Variable
+typesite w174 module=m5 position=14933 kind=Variable
+typesite w175 module=m5 position=15026 kind=Element
+typesite w176 module=m5 position=15621 kind=Variable
+typesite w177 module=m5 position=15676 kind=Variable
+typesite w178 module=m5 position=15889 kind=Assertion
+typesite w179 module=m5 position=16259 kind=Variable
+typesite w180 module=m5 position=16325 kind=Variable
+typesite w181 module=m5 position=16626 kind=Variable
+typesite w182 module=m5 position=16643 kind=Variable
+typesite w183 module=m5 position=16660 kind=Variable
+typesite w184 module=m5 position=16686 kind=CallResult
+typesite w185 module=m5 position=16770 kind=Variable
+typesite w186 module=m5 position=16820 kind=Variable
+typesite w187 module=m5 position=16955 kind=Variable
+typesite w188 module=m5 position=17175 kind=CallResult
+typesite w189 module=m5 position=17775 kind=CallResult
+typesite w190 module=m5 position=17881 kind=PropertyRead
+typesite w191 module=m5 position=17937 kind=CallResult
+typesite w192 module=m5 position=17965 kind=CallResult
+typesite w193 module=m5 position=17999 kind=Variable
+typesite w194 module=m5 position=18053 kind=Variable
+typesite w195 module=m5 position=18388 kind=Variable
+typesite w196 module=m5 position=18396 kind=PropertyRead
+typesite w197 module=m5 position=18869 kind=CallResult
+typesite w198 module=m5 position=19054 kind=PropertyRead
+typesite w199 module=m5 position=19029 kind=CallResult
+typesite w200 module=m5 position=19369 kind=Variable
+typesite w201 module=m5 position=19561 kind=Variable
+typesite w202 module=m5 position=19550 kind=Assertion
+typesite w203 module=m5 position=19676 kind=PropertyRead
+typesite w204 module=m5 position=20258 kind=Variable
+typesite w205 module=m5 position=20419 kind=Variable
+typesite w206 module=m5 position=21398 kind=Variable
+typesite w207 module=m5 position=20295 kind=PropertyRead
+typesite w208 module=m5 position=20620 kind=Variable
+typesite w209 module=m5 position=20694 kind=CallResult
+typesite w210 module=m5 position=20779 kind=Variable
+typesite w211 module=m5 position=20844 kind=Variable
+typesite w212 module=m5 position=20945 kind=Variable
+typesite w213 module=m5 position=21006 kind=Variable
+typesite w214 module=m5 position=21487 kind=CallResult
+typesite w215 module=m5 position=21570 kind=Variable
+typesite w216 module=m5 position=21633 kind=Variable
+typesite w217 module=m5 position=21753 kind=Variable
+typesite w218 module=m5 position=21782 kind=Variable
+typesite w219 module=m5 position=21839 kind=Variable
+typesite w220 module=m5 position=22414 kind=PropertyRead
+typesite w221 module=m5 position=22434 kind=CallResult
+typesite w222 module=m5 position=22652 kind=PropertyRead
+typesite w223 module=m5 position=22672 kind=CallResult
+typesite w224 module=m5 position=22982 kind=Variable
+typesite w225 module=m5 position=22934 kind=CallResult
+typesite w226 module=m5 position=23088 kind=Variable
+typesite w227 module=m5 position=23779 kind=Variable
+typesite w228 module=m5 position=23808 kind=Variable
+typesite w229 module=m5 position=23816 kind=PropertyRead
+typesite w230 module=m5 position=23900 kind=CallResult
+typesite w231 module=m5 position=23983 kind=CallResult
+typesite w232 module=m6 position=1276 kind=Parameter
+typesite w233 module=m6 position=1294 kind=Parameter
+typesite w234 module=m6 position=1253 kind=Result
+typesite w235 module=m6 position=1513 kind=Parameter
+typesite w236 module=m6 position=1529 kind=Parameter
+typesite w237 module=m6 position=1825 kind=Parameter
+typesite w238 module=m6 position=1841 kind=Parameter
+typesite w239 module=m6 position=2101 kind=Parameter
+typesite w240 module=m6 position=2117 kind=Parameter
+typesite w241 module=m6 position=2132 kind=Parameter
+typesite w242 module=m6 position=2149 kind=Parameter
+typesite w243 module=m6 position=2081 kind=Result
+typesite w244 module=m6 position=3452 kind=Result
+typesite w245 module=m6 position=3587 kind=Parameter
+typesite w246 module=m6 position=3601 kind=Parameter
+typesite w247 module=m6 position=3620 kind=Parameter
+typesite w248 module=m6 position=3640 kind=Parameter
+typesite w249 module=m6 position=3567 kind=Result
+typesite w250 module=m6 position=3771 kind=Parameter
+typesite w251 module=m6 position=4003 kind=Parameter
+typesite w252 module=m6 position=4023 kind=Parameter
+typesite w253 module=m6 position=4040 kind=Parameter
+typesite w254 module=m6 position=4067 kind=Parameter
+typesite w255 module=m6 position=4084 kind=Parameter
+typesite w256 module=m6 position=1352 kind=Variable
+typesite w257 module=m6 position=1579 kind=Variable
+typesite w258 module=m6 position=1891 kind=Variable
+typesite w259 module=m6 position=2180 kind=Variable
+typesite w260 module=m6 position=2289 kind=Variable
+typesite w261 module=m6 position=2351 kind=Variable
+typesite w262 module=m6 position=2603 kind=PropertyRead
+typesite w263 module=m6 position=2930 kind=PropertyRead
+typesite w264 module=m6 position=3029 kind=Variable
+typesite w265 module=m6 position=3292 kind=PropertyRead
+typesite w266 module=m6 position=4146 kind=Variable
+typesite w267 module=m6 position=4167 kind=Variable
+typesite w268 module=m6 position=4191 kind=Variable
+typesite w269 module=m6 position=4213 kind=Variable
+typesite w270 module=m6 position=4236 kind=Variable
+typesite w271 module=m6 position=4260 kind=Variable
+typesite w272 module=m6 position=4283 kind=Variable
+typesite w273 module=m6 position=4304 kind=Variable
+typesite w274 module=m6 position=4326 kind=Variable
+typesite w275 module=m6 position=4347 kind=Variable
+typesite w276 module=m6 position=4373 kind=Variable
+typesite w277 module=m6 position=4394 kind=Variable
+typesite w278 module=m6 position=4418 kind=Variable
+typesite w279 module=m6 position=4440 kind=Variable
+typesite w280 module=m6 position=4462 kind=Variable
+typesite w281 module=m6 position=4490 kind=Variable
+typesite w282 module=m6 position=4519 kind=Variable
+typesite w283 module=m6 position=4547 kind=Variable
+typesite w284 module=m6 position=4582 kind=Variable
+typesite w285 module=m6 position=4620 kind=Variable
+typesite w286 module=m6 position=4650 kind=Variable
+typesite w287 module=m6 position=4680 kind=Variable
+typesite w288 module=m6 position=4715 kind=Variable
+typesite w289 module=m6 position=4773 kind=Variable
+typesite w290 module=m6 position=4833 kind=Variable
+typesite w291 module=m6 position=4891 kind=Variable
+typesite w292 module=m6 position=4992 kind=Variable
+typesite w293 module=m6 position=5077 kind=Variable
+typesite w294 module=m6 position=5286 kind=Variable
+typesite w295 module=m6 position=5350 kind=Variable
+typesite w296 module=m6 position=5422 kind=Variable
+typesite w297 module=m6 position=5491 kind=Variable
+typesite w298 module=m6 position=5514 kind=Variable
+typesite w299 module=m6 position=5538 kind=Variable
+typesite w300 module=m6 position=5561 kind=Variable
+typesite w301 module=m6 position=5609 kind=Variable
+typesite w302 module=m6 position=5677 kind=Variable
+typesite w303 module=m6 position=5694 kind=Variable
+typesite w304 module=m6 position=6266 kind=Variable
+typesite w305 module=m6 position=9955 kind=Variable
+typesite w306 module=m6 position=5264 kind=PropertyRead
+typesite w307 module=m6 position=5312 kind=CallResult
+typesite w308 module=m6 position=5386 kind=CallResult
+typesite w309 module=m6 position=6358 kind=Variable
+typesite w310 module=m6 position=7588 kind=Variable
+typesite w311 module=m6 position=8691 kind=Assertion
+typesite w312 module=m6 position=8715 kind=CallResult
+typesite w313 module=m6 position=9073 kind=Variable
+typesite w314 module=m6 position=8896 kind=PropertyRead
+typesite w315 module=m6 position=9091 kind=PropertyRead
+typesite w316 module=m6 position=9223 kind=CallResult
+typesite w317 module=m6 position=9440 kind=PropertyRead
+typesite w318 module=m6 position=10433 kind=Assertion
+typesite w319 module=m6 position=10405 kind=CallResult
 layout L0 kind=Instance name="Plain" module=m0 position=528 constructor=f2 fields=[{key="y" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
 layout L1 kind=Instance name="C" module=m0 position=420 constructor=f5 fields=[{key="x" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
 layout L2 kind=Instance name="D" module=m0 position=503 base=L1 constructor=f7 fields=[{key="z" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L1] flags=[HasHeritage] ownFieldCount=1
@@ -447,13 +460,14 @@ variable g26 name="mergeRunsAndPutBack" module=m5 declared={type=f66 flags=[IsFr
 variable g27 name="isWritableBehindFirstStore" module=m5 declared={type=f68 flags=[IsFromCompiler]} initialization=Function function=f68 flags=[IsImmutable]
 variable g28 name="trySortNumbersInPlace" module=m5 declared={type=f69 flags=[IsFromCompiler]} initialization=Function function=f69 flags=[IsImmutable]
 variable g29 name="sort" module=m5 declared={type=f67 flags=[IsFromCompiler]} initialization=Function function=f67 flags=[IsImmutable]
-variable g30 name="storeInArrayOfAnyKind" module=m6 declared={type=f74 flags=[IsFromCompiler]} initialization=Function function=f74 flags=[IsImmutable]
-variable g31 name="clampToLength" module=m6 declared={type=f72 flags=[IsFromCompiler]} initialization=Function function=f72 flags=[IsImmutable]
-variable g32 name="joinedText" module=m6 declared={type=f76 flags=[IsFromCompiler]} initialization=Function function=f76 flags=[IsImmutable]
-variable g33 name="storeInNewArray" module=m6 declared={type=f73 flags=[IsFromCompiler]} initialization=Function function=f73 flags=[IsImmutable]
-variable g34 name="appendList" module=m6 declared={type=f75 flags=[IsFromCompiler]} initialization=Function function=f75 flags=[IsImmutable]
-variable g35 name="finishReduce" module=m6 declared={type=f78 flags=[IsFromCompiler]} initialization=Function function=f78 flags=[IsImmutable]
-variable g36 name="finishJoin" module=m6 declared={type=f77 flags=[IsFromCompiler]} initialization=Function function=f77 flags=[IsImmutable]
+variable g30 name="canSortWhereItLies" module=m5 declared={type=f72 flags=[IsFromCompiler]} initialization=Function function=f72 flags=[IsImmutable]
+variable g31 name="storeInArrayOfAnyKind" module=m6 declared={type=f76 flags=[IsFromCompiler]} initialization=Function function=f76 flags=[IsImmutable]
+variable g32 name="clampToLength" module=m6 declared={type=f74 flags=[IsFromCompiler]} initialization=Function function=f74 flags=[IsImmutable]
+variable g33 name="joinedText" module=m6 declared={type=f78 flags=[IsFromCompiler]} initialization=Function function=f78 flags=[IsImmutable]
+variable g34 name="storeInNewArray" module=m6 declared={type=f75 flags=[IsFromCompiler]} initialization=Function function=f75 flags=[IsImmutable]
+variable g35 name="appendList" module=m6 declared={type=f77 flags=[IsFromCompiler]} initialization=Function function=f77 flags=[IsImmutable]
+variable g36 name="finishReduce" module=m6 declared={type=f80 flags=[IsFromCompiler]} initialization=Function function=f80 flags=[IsImmutable]
+variable g37 name="finishJoin" module=m6 declared={type=f79 flags=[IsFromCompiler]} initialization=Function function=f79 flags=[IsImmutable]
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     Jump -> next b1() @0
@@ -886,7 +900,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
   b50():
     Jump -> next b51() @2783
   b51() handler=b58():
-    v343 = IteratorOpen v220 elementCount=2 [isDestructuring] @2765
+    v343 = IteratorOpen v220 elementCount=2 [isDestructuring] @2776 constructs
     Jump -> next b52() @2765
   b52() handler=b57():
     v344 = IteratorResume v343 stepIndex=0 @2765
@@ -1390,7 +1404,7 @@ function f49 name="isContiguousArray" module=m5 position=2171 role=Library flags
   b1():
     v1 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @2242
     v2 = ArrayStorageKind v1 @2242
-    v3 = Convert v2 declared={type=number site=w82} @2242
+    v3 = Convert v2 declared={type=number site=w87} @2242
     v4 = Integer integer=3 @2286
     v5 = StrictEq v3, v4 @2277
     v6 = ToBoolean v5 @2277
@@ -1458,9 +1472,9 @@ function f52 name="gallopLeft" module=m5 position=2742 role=Library flags=[IsChe
     Jump -> next b1() @2742
   b1():
     v6 = Integer @2902
-    v7 = Convert v6 declared={type=number site=w83} @2902
+    v7 = Convert v6 declared={type=number site=w88} @2902
     v8 = Integer integer=1 @2920
-    v9 = Convert v8 declared={type=number site=w84} @2920
+    v9 = Convert v8 declared={type=number site=w89} @2920
     v10 = Add v2, v4 @2987
     v11 = Convert v1 declared={type=Array flags=[IsFromCompiler, IsClaim]} @2949
     v12 = Convert v10 declared={type=int flags=[IsFromCompiler, IsClaim]} @2949
@@ -1469,7 +1483,7 @@ function f52 name="gallopLeft" module=m5 position=2742 role=Library flags=[IsChe
     v15 = Undefined @3049
     v16 = Call v5, v15, v13, v0 [isNeverInlined] @3014
     v17 = Call v14, -, v16 calleeName="isLess" @3007
-    v18 = Convert v17 declared={type=boolean site=w85} @3007
+    v18 = Convert v17 declared={type=boolean site=w90} @3007
     v19 = ToBoolean v18 @3007
     Branch v19 -> taken b2(| 0), notTaken b17(| 0) @3007
   b2(v20):
@@ -1478,7 +1492,7 @@ function f52 name="gallopLeft" module=m5 position=2742 role=Library flags=[IsChe
     v21 = Sub v3, v4 @3100
     v22 = Integer @3117
     v23 = BitOr v21, v22 @3100
-    v24 = Convert v23 declared={type=number site=w86} @3099
+    v24 = Convert v23 declared={type=number site=w91} @3099
     Jump -> next b4(v7, v9) @3124
   b4(v25: number, v26: number):
     LoopHint @3124
@@ -1496,26 +1510,26 @@ function f52 name="gallopLeft" module=m5 position=2742 role=Library flags=[IsChe
     v37 = Undefined @3296
     v38 = Call v5, v37, v35, v0 [isNeverInlined] @3261
     v39 = Call v36, -, v38 calleeName="isLess" @3254
-    v40 = Convert v39 declared={type=boolean site=w87} @3254
+    v40 = Convert v39 declared={type=boolean site=w92} @3254
     v41 = ToBoolean v40 @3254
     Branch v41 -> taken b7(| 0), notTaken b13(| 0) @3254
   b7(v42):
     Jump -> next b8() @3254
   b8():
-    v43 = Convert v29 declared={type=number site=w83} @3334
+    v43 = Convert v29 declared={type=number site=w88} @3334
     v44 = Integer integer=2 @3380
     v45 = Mul v29, v44 @3371
     v46 = Integer integer=1 @3384
     v47 = Add v45, v46 @3371
     v48 = Integer @3389
     v49 = BitOr v47, v48 @3371
-    v50 = Convert v49 declared={type=number site=w84} @3361
+    v50 = Convert v49 declared={type=number site=w89} @3361
     v51 = Greater v50, v30 @3402
     Branch v51 -> taken b9(| 0, 1), notTaken b11(| 0, 1) @3402
   b9(v52, v53):
     Jump -> next b10() @3402
   b10():
-    v54 = Convert v53 declared={type=number site=w84} @3422
+    v54 = Convert v53 declared={type=number site=w89} @3422
     Jump -> next b12(v54) @3422
   b11(v55, v56):
     Jump -> next b12(v55) @3402
@@ -1531,11 +1545,11 @@ function f52 name="gallopLeft" module=m5 position=2742 role=Library flags=[IsChe
     v62 = Add v25, v4 @3466
     v63 = Integer @3487
     v64 = BitOr v62, v63 @3466
-    v65 = Convert v64 declared={type=number site=w83} @3452
+    v65 = Convert v64 declared={type=number site=w88} @3452
     v66 = Add v61, v4 @3504
     v67 = Integer @3521
     v68 = BitOr v66, v67 @3504
-    v69 = Convert v68 declared={type=number site=w84} @3494
+    v69 = Convert v68 declared={type=number site=w89} @3494
     Jump -> next b32(v65, v69) @3494
   b17(v70):
     Jump -> next b18() @3007
@@ -1544,7 +1558,7 @@ function f52 name="gallopLeft" module=m5 position=2742 role=Library flags=[IsChe
     v72 = Add v4, v71 @3558
     v73 = Integer @3570
     v74 = BitOr v72, v73 @3558
-    v75 = Convert v74 declared={type=number site=w88} @3557
+    v75 = Convert v74 declared={type=number site=w93} @3557
     Jump -> next b19(v7, v9) @3577
   b19(v76: number, v77: number):
     LoopHint @3577
@@ -1562,7 +1576,7 @@ function f52 name="gallopLeft" module=m5 position=2742 role=Library flags=[IsChe
     v88 = Undefined @3748
     v89 = Call v5, v88, v86, v0 [isNeverInlined] @3713
     v90 = Call v87, -, v89 calleeName="isLess" @3706
-    v91 = Convert v90 declared={type=boolean site=w90} @3706
+    v91 = Convert v90 declared={type=boolean site=w95} @3706
     v92 = ToBoolean v91 @3706
     Branch v92 -> taken b22(| 0), notTaken b24(| 0) @3706
   b22(v93):
@@ -1572,20 +1586,20 @@ function f52 name="gallopLeft" module=m5 position=2742 role=Library flags=[IsChe
   b24(v94):
     Jump -> next b25() @3706
   b25():
-    v95 = Convert v80 declared={type=number site=w83} @3786
+    v95 = Convert v80 declared={type=number site=w88} @3786
     v96 = Integer integer=2 @3832
     v97 = Mul v80, v96 @3823
     v98 = Integer integer=1 @3836
     v99 = Add v97, v98 @3823
     v100 = Integer @3841
     v101 = BitOr v99, v100 @3823
-    v102 = Convert v101 declared={type=number site=w84} @3813
+    v102 = Convert v101 declared={type=number site=w89} @3813
     v103 = Greater v102, v81 @3854
     Branch v103 -> taken b26(| 0, 1), notTaken b28(| 0, 1) @3854
   b26(v104, v105):
     Jump -> next b27() @3854
   b27():
-    v106 = Convert v105 declared={type=number site=w84} @3874
+    v106 = Convert v105 declared={type=number site=w89} @3874
     Jump -> next b29(v106) @3874
   b28(v107, v108):
     Jump -> next b29(v107) @3854
@@ -1594,22 +1608,22 @@ function f52 name="gallopLeft" module=m5 position=2742 role=Library flags=[IsChe
   b30(v110, v111):
     Jump -> next b31(v110) @3584
   b31(v112: number):
-    v113 = Convert v76 declared={type=number site=w89} @3921
+    v113 = Convert v76 declared={type=number site=w94} @3921
     v114 = Sub v4, v112 @3951
     v115 = Integer @3968
     v116 = BitOr v114, v115 @3951
-    v117 = Convert v116 declared={type=number site=w83} @3937
+    v117 = Convert v116 declared={type=number site=w88} @3937
     v118 = Sub v4, v113 @3985
     v119 = Integer @4004
     v120 = BitOr v118, v119 @3985
-    v121 = Convert v120 declared={type=number site=w84} @3975
+    v121 = Convert v120 declared={type=number site=w89} @3975
     Jump -> next b32(v117, v121) @3975
   b32(v122: number, v123: number):
     v124 = Integer integer=1 @4040
     v125 = Add v122, v124 @4027
     v126 = Integer @4045
     v127 = BitOr v125, v126 @4027
-    v128 = Convert v127 declared={type=number site=w83} @4013
+    v128 = Convert v127 declared={type=number site=w88} @4013
     Jump -> next b33(v128, v123) @4050
   b33(v129: number, v130: number):
     LoopHint @4050
@@ -1624,7 +1638,7 @@ function f52 name="gallopLeft" module=m5 position=2742 role=Library flags=[IsChe
     v138 = Add v133, v137 @4100
     v139 = Integer @4145
     v140 = BitOr v138, v139 @4100
-    v141 = Convert v140 declared={type=number site=w91} @4099
+    v141 = Convert v140 declared={type=number site=w96} @4099
     v142 = Convert v141 declared={type=i32 flags=[IsExpected]} @4220
     v143 = Add v2, v142 @4213
     v144 = Convert v1 declared={type=Array flags=[IsFromCompiler, IsClaim]} @4175
@@ -1634,7 +1648,7 @@ function f52 name="gallopLeft" module=m5 position=2742 role=Library flags=[IsChe
     v148 = Undefined @4279
     v149 = Call v5, v148, v146, v0 [isNeverInlined] @4244
     v150 = Call v147, -, v149 calleeName="isLess" @4237
-    v151 = Convert v150 declared={type=boolean site=w92} @4237
+    v151 = Convert v150 declared={type=boolean site=w97} @4237
     v152 = ToBoolean v151 @4237
     Branch v152 -> taken b36(| 0), notTaken b38(| 0) @4237
   b36(v153):
@@ -1644,12 +1658,12 @@ function f52 name="gallopLeft" module=m5 position=2742 role=Library flags=[IsChe
     v155 = Add v142, v154 @4318
     v156 = Integer @4332
     v157 = BitOr v155, v156 @4318
-    v158 = Convert v157 declared={type=number site=w83} @4304
+    v158 = Convert v157 declared={type=number site=w88} @4304
     Jump -> next b40(v158, v134) @4304
   b38(v159):
     Jump -> next b39() @4237
   b39():
-    v160 = Convert v142 declared={type=number site=w84} @4344
+    v160 = Convert v142 declared={type=number site=w89} @4344
     Jump -> next b40(v133, v160) @4344
   b40(v161: number, v162: number):
     Jump -> next b33(v161, v162) @4344
@@ -1664,9 +1678,9 @@ function f53 name="gallopRight" module=m5 position=4385 role=Library flags=[IsCh
     Jump -> next b1() @4385
   b1():
     v6 = Integer @4546
-    v7 = Convert v6 declared={type=number site=w93} @4546
+    v7 = Convert v6 declared={type=number site=w98} @4546
     v8 = Integer integer=1 @4564
-    v9 = Convert v8 declared={type=number site=w94} @4564
+    v9 = Convert v8 declared={type=number site=w99} @4564
     v10 = Add v2, v4 @4631
     v11 = Convert v1 declared={type=Array flags=[IsFromCompiler, IsClaim]} @4593
     v12 = Convert v10 declared={type=int flags=[IsFromCompiler, IsClaim]} @4593
@@ -1675,7 +1689,7 @@ function f53 name="gallopRight" module=m5 position=4385 role=Library flags=[IsCh
     v15 = Undefined @4694
     v16 = Call v5, v15, v0, v13 [isNeverInlined] @4659
     v17 = Call v14, -, v16 calleeName="isLess" @4652
-    v18 = Convert v17 declared={type=boolean site=w95} @4652
+    v18 = Convert v17 declared={type=boolean site=w100} @4652
     v19 = ToBoolean v18 @4652
     Branch v19 -> taken b2(| 0), notTaken b17(| 0) @4652
   b2(v20):
@@ -1685,7 +1699,7 @@ function f53 name="gallopRight" module=m5 position=4385 role=Library flags=[IsCh
     v22 = Add v4, v21 @5202
     v23 = Integer @5214
     v24 = BitOr v22, v23 @5202
-    v25 = Convert v24 declared={type=number site=w98} @5201
+    v25 = Convert v24 declared={type=number site=w103} @5201
     Jump -> next b4(v7, v9) @5221
   b4(v26: number, v27: number):
     LoopHint @5221
@@ -1703,26 +1717,26 @@ function f53 name="gallopRight" module=m5 position=4385 role=Library flags=[IsCh
     v38 = Undefined @5393
     v39 = Call v5, v38, v0, v36 [isNeverInlined] @5358
     v40 = Call v37, -, v39 calleeName="isLess" @5351
-    v41 = Convert v40 declared={type=boolean site=w100} @5351
+    v41 = Convert v40 declared={type=boolean site=w105} @5351
     v42 = ToBoolean v41 @5351
     Branch v42 -> taken b7(| 0), notTaken b13(| 0) @5351
   b7(v43):
     Jump -> next b8() @5351
   b8():
-    v44 = Convert v30 declared={type=number site=w93} @5431
+    v44 = Convert v30 declared={type=number site=w98} @5431
     v45 = Integer integer=2 @5477
     v46 = Mul v30, v45 @5468
     v47 = Integer integer=1 @5481
     v48 = Add v46, v47 @5468
     v49 = Integer @5486
     v50 = BitOr v48, v49 @5468
-    v51 = Convert v50 declared={type=number site=w94} @5458
+    v51 = Convert v50 declared={type=number site=w99} @5458
     v52 = Greater v51, v31 @5499
     Branch v52 -> taken b9(| 0, 1), notTaken b11(| 0, 1) @5499
   b9(v53, v54):
     Jump -> next b10() @5499
   b10():
-    v55 = Convert v54 declared={type=number site=w94} @5519
+    v55 = Convert v54 declared={type=number site=w99} @5519
     Jump -> next b12(v55) @5519
   b11(v56, v57):
     Jump -> next b12(v56) @5499
@@ -1735,15 +1749,15 @@ function f53 name="gallopRight" module=m5 position=4385 role=Library flags=[IsCh
   b15(v60, v61):
     Jump -> next b16(v60) @5228
   b16(v62: number):
-    v63 = Convert v26 declared={type=number site=w99} @5566
+    v63 = Convert v26 declared={type=number site=w104} @5566
     v64 = Sub v4, v62 @5596
     v65 = Integer @5613
     v66 = BitOr v64, v65 @5596
-    v67 = Convert v66 declared={type=number site=w93} @5582
+    v67 = Convert v66 declared={type=number site=w98} @5582
     v68 = Sub v4, v63 @5630
     v69 = Integer @5649
     v70 = BitOr v68, v69 @5630
-    v71 = Convert v70 declared={type=number site=w94} @5620
+    v71 = Convert v70 declared={type=number site=w99} @5620
     Jump -> next b32(v67, v71) @5620
   b17(v72):
     Jump -> next b18() @4652
@@ -1751,7 +1765,7 @@ function f53 name="gallopRight" module=m5 position=4385 role=Library flags=[IsCh
     v73 = Sub v3, v4 @4745
     v74 = Integer @4762
     v75 = BitOr v73, v74 @4745
-    v76 = Convert v75 declared={type=number site=w96} @4744
+    v76 = Convert v75 declared={type=number site=w101} @4744
     Jump -> next b19(v7, v9) @4769
   b19(v77: number, v78: number):
     LoopHint @4769
@@ -1769,7 +1783,7 @@ function f53 name="gallopRight" module=m5 position=4385 role=Library flags=[IsCh
     v89 = Undefined @4940
     v90 = Call v5, v89, v0, v87 [isNeverInlined] @4905
     v91 = Call v88, -, v90 calleeName="isLess" @4898
-    v92 = Convert v91 declared={type=boolean site=w97} @4898
+    v92 = Convert v91 declared={type=boolean site=w102} @4898
     v93 = ToBoolean v92 @4898
     Branch v93 -> taken b22(| 0), notTaken b24(| 0) @4898
   b22(v94):
@@ -1779,20 +1793,20 @@ function f53 name="gallopRight" module=m5 position=4385 role=Library flags=[IsCh
   b24(v95):
     Jump -> next b25() @4898
   b25():
-    v96 = Convert v81 declared={type=number site=w93} @4978
+    v96 = Convert v81 declared={type=number site=w98} @4978
     v97 = Integer integer=2 @5024
     v98 = Mul v81, v97 @5015
     v99 = Integer integer=1 @5028
     v100 = Add v98, v99 @5015
     v101 = Integer @5033
     v102 = BitOr v100, v101 @5015
-    v103 = Convert v102 declared={type=number site=w94} @5005
+    v103 = Convert v102 declared={type=number site=w99} @5005
     v104 = Greater v103, v82 @5046
     Branch v104 -> taken b26(| 0, 1), notTaken b28(| 0, 1) @5046
   b26(v105, v106):
     Jump -> next b27() @5046
   b27():
-    v107 = Convert v106 declared={type=number site=w94} @5066
+    v107 = Convert v106 declared={type=number site=w99} @5066
     Jump -> next b29(v107) @5066
   b28(v108, v109):
     Jump -> next b29(v108) @5046
@@ -1804,18 +1818,18 @@ function f53 name="gallopRight" module=m5 position=4385 role=Library flags=[IsCh
     v114 = Add v77, v4 @5110
     v115 = Integer @5131
     v116 = BitOr v114, v115 @5110
-    v117 = Convert v116 declared={type=number site=w93} @5096
+    v117 = Convert v116 declared={type=number site=w98} @5096
     v118 = Add v113, v4 @5148
     v119 = Integer @5165
     v120 = BitOr v118, v119 @5148
-    v121 = Convert v120 declared={type=number site=w94} @5138
+    v121 = Convert v120 declared={type=number site=w99} @5138
     Jump -> next b32(v117, v121) @5138
   b32(v122: number, v123: number):
     v124 = Integer integer=1 @5685
     v125 = Add v122, v124 @5672
     v126 = Integer @5690
     v127 = BitOr v125, v126 @5672
-    v128 = Convert v127 declared={type=number site=w93} @5658
+    v128 = Convert v127 declared={type=number site=w98} @5658
     Jump -> next b33(v128, v123) @5695
   b33(v129: number, v130: number):
     LoopHint @5695
@@ -1830,7 +1844,7 @@ function f53 name="gallopRight" module=m5 position=4385 role=Library flags=[IsCh
     v138 = Add v133, v137 @5745
     v139 = Integer @5790
     v140 = BitOr v138, v139 @5745
-    v141 = Convert v140 declared={type=number site=w101} @5744
+    v141 = Convert v140 declared={type=number site=w106} @5744
     v142 = Convert v141 declared={type=i32 flags=[IsExpected]} @5865
     v143 = Add v2, v142 @5858
     v144 = Convert v1 declared={type=Array flags=[IsFromCompiler, IsClaim]} @5820
@@ -1840,13 +1854,13 @@ function f53 name="gallopRight" module=m5 position=4385 role=Library flags=[IsCh
     v148 = Undefined @5925
     v149 = Call v5, v148, v0, v146 [isNeverInlined] @5890
     v150 = Call v147, -, v149 calleeName="isLess" @5883
-    v151 = Convert v150 declared={type=boolean site=w102} @5883
+    v151 = Convert v150 declared={type=boolean site=w107} @5883
     v152 = ToBoolean v151 @5883
     Branch v152 -> taken b36(| 0), notTaken b38(| 0) @5883
   b36(v153):
     Jump -> next b37() @5883
   b37():
-    v154 = Convert v142 declared={type=number site=w94} @5990
+    v154 = Convert v142 declared={type=number site=w99} @5990
     Jump -> next b40(v133, v154) @5990
   b38(v155):
     Jump -> next b39() @5883
@@ -1855,7 +1869,7 @@ function f53 name="gallopRight" module=m5 position=4385 role=Library flags=[IsCh
     v157 = Add v142, v156 @5964
     v158 = Integer @5978
     v159 = BitOr v157, v158 @5964
-    v160 = Convert v159 declared={type=number site=w93} @5950
+    v160 = Convert v159 declared={type=number site=w98} @5950
     Jump -> next b40(v160, v134) @5950
   b40(v161: number, v162: number):
     Jump -> next b33(v161, v162) @5990
@@ -1870,13 +1884,13 @@ function f54 name="computeRunPower" module=m5 position=6031 role=Library flags=[
     Jump -> next b1() @6031
   b1():
     v4 = Add v0, v1 @6157
-    v5 = Convert v4 declared={type=number site=w103} @6157
+    v5 = Convert v4 declared={type=number site=w108} @6157
     v6 = Add v1, v2 @6197
     v7 = Integer integer=1 @6211
     v8 = Add v6, v7 @6197
-    v9 = Convert v8 declared={type=number site=w104} @6197
+    v9 = Convert v8 declared={type=number site=w109} @6197
     v10 = Integer @6228
-    v11 = Convert v10 declared={type=number site=w105} @6228
+    v11 = Convert v10 declared={type=number site=w110} @6228
     Jump -> next b2(v5, v9, v11) @6233
   b2(v12: number, v13: number, v14: number):
     LoopHint @6233
@@ -1891,25 +1905,25 @@ function f54 name="computeRunPower" module=m5 position=6031 role=Library flags=[
     Jump -> next b5() @6299
   b5():
     v22 = Sub v20, v21 @6354
-    v23 = Convert v22 declared={type=number site=w103} @6334
+    v23 = Convert v22 declared={type=number site=w108} @6334
     v24 = Sub v13, v21 @6379
-    v25 = Convert v24 declared={type=number site=w104} @6367
+    v25 = Convert v24 declared={type=number site=w109} @6367
     Jump -> next b7(v23, v25) @6367
   b6(v26, v27):
     Jump -> next b7(v26, v13) @6299
   b7(v28: number, v29: number):
     v30 = Integer integer=2 @6416
     v31 = Mul v28, v30 @6379
-    v32 = Convert v31 declared={type=number site=w103} @6396
+    v32 = Convert v31 declared={type=number site=w108} @6396
     v33 = Integer integer=2 @6435
     v34 = Mul v29, v33 @6379
-    v35 = Convert v34 declared={type=number site=w104} @6423
+    v35 = Convert v34 declared={type=number site=w109} @6423
     v36 = Convert v14 declared={type=i32 flags=[IsExpected]} @6451
     v37 = Integer integer=1 @6459
     v38 = Add v36, v37 @6451
     v39 = Integer @6464
     v40 = BitOr v38, v39 @6451
-    v41 = Convert v40 declared={type=number site=w105} @6442
+    v41 = Convert v40 declared={type=number site=w110} @6442
     Jump -> next b2(v32, v35, v41) @6442
   b8():
     v42 = Convert v14 declared={type=i32 flags=[IsExpected]} @6480
@@ -1945,16 +1959,16 @@ function f55 name="extendValueRun" module=m5 position=6490 role=Library flags=[I
     v22 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @6696
     v23 = Convert v21 declared={type=int flags=[IsFromCompiler, IsClaim]} @6696
     v24 = GetOwnContiguousIndex v22, v23 @6696
-    v25 = Convert v24 declared={type=anything site=w106} illTypedCause=FromLooseType @6696
+    v25 = Convert v24 declared={type=anything site=w111} illTypedCause=FromLooseType @6696
     v26 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @6764
     v27 = Convert v10 declared={type=int flags=[IsFromCompiler, IsClaim]} @6764
     v28 = GetOwnContiguousIndex v26, v27 @6764
-    v29 = Convert v28 declared={type=anything site=w107} illTypedCause=FromLooseType @6764
+    v29 = Convert v28 declared={type=anything site=w112} illTypedCause=FromLooseType @6764
     v30 = GetModuleVariable variable=g8 @6810
     v31 = Undefined @6844
     v32 = Call v3, v31, v25, v29 @6817
     v33 = Call v30, -, v32 calleeName="isLess" @6810
-    v34 = Convert v33 declared={type=boolean site=w108} @6810
+    v34 = Convert v33 declared={type=boolean site=w113} @6810
     v35 = ToBoolean v34 @6810
     Branch v35 -> taken b5(| 0), notTaken b7(| 0) @6810
   b5(v36):
@@ -1993,7 +2007,7 @@ function f56 name="reverseValues" module=m5 position=6897 role=Library flags=[Is
     v9 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @7059
     v10 = Convert v7 declared={type=int flags=[IsFromCompiler, IsClaim]} @7059
     v11 = GetOwnContiguousIndex v9, v10 @7059
-    v12 = Convert v11 declared={type=anything site=w109} illTypedCause=FromLooseType @7059
+    v12 = Convert v11 declared={type=anything site=w114} illTypedCause=FromLooseType @7059
     v13 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @7135
     v14 = Convert v8 declared={type=int flags=[IsFromCompiler, IsClaim]} @7135
     v15 = GetOwnContiguousIndex v13, v14 @7135
@@ -2040,9 +2054,9 @@ function f57 name="findValueRun" module=m5 position=7633 role=Library flags=[IsC
     Jump -> next b5() @7748
   b5():
     v9 = Integer integer=8 @7804
-    v10 = Convert v9 declared={type=8 site=w110} @7804
+    v10 = Convert v9 declared={type=8 site=w115} @7804
     v11 = Integer integer=64 @7832
-    v12 = Convert v11 declared={type=64 site=w111} @7832
+    v12 = Convert v11 declared={type=64 site=w116} @7832
     v13 = Integer @7854
     v14 = BitOr v1, v13 @7846
     v15 = Convert v14 declared={type=number site=w34} @7838
@@ -2055,7 +2069,7 @@ function f57 name="findValueRun" module=m5 position=7633 role=Library flags=[IsC
     Jump -> next b7() @7981
   b7():
     v22 = Boolean @8029
-    v23 = Convert v22 declared={type=boolean site=w114} @8029
+    v23 = Convert v22 declared={type=boolean site=w119} @8029
     Jump -> next b8(v15, v23) @8040
   b8(v24: number, v25: boolean):
     LoopHint @8040
@@ -2075,16 +2089,16 @@ function f57 name="findValueRun" module=m5 position=7633 role=Library flags=[IsC
     v37 = Convert v8 declared={type=Array flags=[IsFromCompiler, IsClaim]} @8117
     v38 = Convert v36 declared={type=int flags=[IsFromCompiler, IsClaim]} @8117
     v39 = GetOwnContiguousIndex v37, v38 @8117
-    v40 = Convert v39 declared={type=anything site=w115} illTypedCause=FromLooseType @8117
+    v40 = Convert v39 declared={type=anything site=w120} illTypedCause=FromLooseType @8117
     v41 = Convert v8 declared={type=Array flags=[IsFromCompiler, IsClaim]} @8187
     v42 = Convert v24 declared={type=int flags=[IsFromCompiler, IsClaim]} @8187
     v43 = GetOwnContiguousIndex v41, v42 @8187
-    v44 = Convert v43 declared={type=anything site=w116} illTypedCause=FromLooseType @8187
+    v44 = Convert v43 declared={type=anything site=w121} illTypedCause=FromLooseType @8187
     v45 = GetModuleVariable variable=g8 @8250
     v46 = Undefined @8292
     v47 = Call v3, v46, v40, v44 [isNeverInlined] @8257
     v48 = Call v45, -, v47 calleeName="isLess" @8250
-    v49 = Convert v48 declared={type=boolean site=w117} @8250
+    v49 = Convert v48 declared={type=boolean site=w122} @8250
     v50 = StrictEq v24, v15 @8327
     Branch v50 -> taken b11(| 0, 1), notTaken b13(| 0, 1) @8327
   b11(v51, v52):
@@ -2107,7 +2121,7 @@ function f57 name="findValueRun" module=m5 position=7633 role=Library flags=[IsC
     v61 = Add v58, v60 @8079
     v62 = Integer @8090
     v63 = BitOr v61, v62 @8079
-    v64 = Convert v63 declared={type=number site=w112} @8072
+    v64 = Convert v63 declared={type=number site=w117} @8072
     Jump -> next b8(v64, v59) @8072
   b19(v65, v66):
     Jump -> next b20() @8381
@@ -2137,7 +2151,7 @@ function f57 name="findValueRun" module=m5 position=7633 role=Library flags=[IsC
   b28():
     v82 = GetModuleVariable variable=g10 @8530
     v83 = Call v82, -, v8, v70, v71, v3 calleeName="extendValueRun" @8530
-    ReturnCall v83 casts=[{declared={type=number site=w118}}, {declared={type=number site=w36}}] @8530
+    ReturnCall v83 casts=[{declared={type=number site=w123}}, {declared={type=number site=w36}}] @8530
   b29(v84):
     Jump -> next b30() @8479
   b30():
@@ -2162,12 +2176,12 @@ function f57 name="findValueRun" module=m5 position=7633 role=Library flags=[IsC
     v98 = BitOr v96, v97 @8649
     Jump -> next b37(v98) @8649
   b37(v99):
-    v100 = Convert v99 declared={type=number site=w113} @8599
+    v100 = Convert v99 declared={type=number site=w118} @8599
     v101 = Integer integer=1 @8700
     v102 = Add v89, v101 @8694
     v103 = Integer @8705
     v104 = BitOr v102, v103 @8694
-    v105 = Convert v104 declared={type=number site=w119} @8693
+    v105 = Convert v104 declared={type=number site=w124} @8693
     Jump -> next b38(v105) @8689
   b38(v106: number):
     LoopHint @8689
@@ -2181,9 +2195,9 @@ function f57 name="findValueRun" module=m5 position=7633 role=Library flags=[IsC
     v113 = Convert v8 declared={type=Array flags=[IsFromCompiler, IsClaim]} @8762
     v114 = Convert v112 declared={type=int flags=[IsFromCompiler, IsClaim]} @8762
     v115 = GetOwnContiguousIndex v113, v114 @8762
-    v116 = Convert v115 declared={type=anything site=w120} illTypedCause=FromLooseType @8762
-    v117 = Convert v88 declared={type=number site=w121} @8813
-    v118 = Convert v112 declared={type=number site=w122} @8836
+    v116 = Convert v115 declared={type=anything site=w125} illTypedCause=FromLooseType @8762
+    v117 = Convert v88 declared={type=number site=w126} @8813
+    v118 = Convert v112 declared={type=number site=w127} @8836
     Jump -> next b41(v117, v118) @8843
   b41(v119: number, v120: number):
     LoopHint @8843
@@ -2200,23 +2214,23 @@ function f57 name="findValueRun" module=m5 position=7633 role=Library flags=[IsC
     v130 = Add v124, v129 @8888
     v131 = Integer @8920
     v132 = BitOr v130, v131 @8888
-    v133 = Convert v132 declared={type=number site=w124} @8887
+    v133 = Convert v132 declared={type=number site=w129} @8887
     v134 = Convert v133 declared={type=i32 flags=[IsExpected]} @8978
     v135 = Convert v8 declared={type=Array flags=[IsFromCompiler, IsClaim]} @8946
     v136 = Convert v134 declared={type=int flags=[IsFromCompiler, IsClaim]} @8946
     v137 = GetOwnContiguousIndex v135, v136 @8946
-    v138 = Convert v137 declared={type=anything site=w125} illTypedCause=FromLooseType @8946
+    v138 = Convert v137 declared={type=anything site=w130} illTypedCause=FromLooseType @8946
     v139 = GetModuleVariable variable=g8 @8997
     v140 = Undefined @9031
     v141 = Call v3, v140, v116, v138 @9004
     v142 = Call v139, -, v141 calleeName="isLess" @8997
-    v143 = Convert v142 declared={type=boolean site=w126} @8997
+    v143 = Convert v142 declared={type=boolean site=w131} @8997
     v144 = ToBoolean v143 @8997
     Branch v144 -> taken b44(| 0), notTaken b46(| 0) @8997
   b44(v145):
     Jump -> next b45() @8997
   b45():
-    v146 = Convert v134 declared={type=number site=w122} @9061
+    v146 = Convert v134 declared={type=number site=w127} @9061
     Jump -> next b48(v124, v146) @9061
   b46(v147):
     Jump -> next b47() @8997
@@ -2225,14 +2239,14 @@ function f57 name="findValueRun" module=m5 position=7633 role=Library flags=[IsC
     v149 = Add v134, v148 @9096
     v150 = Integer @9110
     v151 = BitOr v149, v150 @9096
-    v152 = Convert v151 declared={type=number site=w121} @9088
+    v152 = Convert v151 declared={type=number site=w126} @9088
     Jump -> next b48(v152, v126) @9088
   b48(v153: number, v154: number):
     Jump -> next b41(v153, v154) @9088
   b49(v155, v156):
     Jump -> next b50() @8850
   b50():
-    v157 = Convert v112 declared={type=number site=w123} @9131
+    v157 = Convert v112 declared={type=number site=w128} @9131
     Jump -> next b51(v157) @9138
   b51(v158: number):
     LoopHint @9138
@@ -2249,13 +2263,13 @@ function f57 name="findValueRun" module=m5 position=7633 role=Library flags=[IsC
     v167 = Convert v8 declared={type=Array flags=[IsFromCompiler, IsClaim]} @9201
     v168 = Convert v166 declared={type=int flags=[IsFromCompiler, IsClaim]} @9201
     v169 = GetOwnContiguousIndex v167, v168 @9201
-    v170 = Convert v169 declared={type=anything site=w127} illTypedCause=FromLooseType @9201
+    v170 = Convert v169 declared={type=anything site=w132} illTypedCause=FromLooseType @9201
     v171 = Integer integer=2 @9300
     v172 = Sub v160, v171 @9296
     v173 = Convert v8 declared={type=Array flags=[IsFromCompiler, IsClaim]} @9264
     v174 = Convert v172 declared={type=int flags=[IsFromCompiler, IsClaim]} @9264
     v175 = GetOwnContiguousIndex v173, v174 @9264
-    v176 = Convert v175 declared={type=anything site=w128} illTypedCause=FromLooseType @9264
+    v176 = Convert v175 declared={type=anything site=w133} illTypedCause=FromLooseType @9264
     v177 = Convert v8 declared={type=Array flags=[IsFromCompiler, IsClaim]} @9310
     v178 = Convert v160 declared={type=int flags=[IsFromCompiler, IsClaim]} @9310
     PutOwnContiguousIndex v177, v178, v170 @9310
@@ -2272,7 +2286,7 @@ function f57 name="findValueRun" module=m5 position=7633 role=Library flags=[IsC
     v188 = Sub v160, v187 @9164
     v189 = Integer @9173
     v190 = BitOr v188, v189 @9164
-    v191 = Convert v190 declared={type=number site=w123} @9159
+    v191 = Convert v190 declared={type=number site=w128} @9159
     Jump -> next b51(v191) @9159
   b55(v192):
     Jump -> next b56() @9145
@@ -2306,7 +2320,7 @@ function f57 name="findValueRun" module=m5 position=7633 role=Library flags=[IsC
     v214 = Add v112, v213 @8724
     v215 = Integer @8733
     v216 = BitOr v214, v215 @8724
-    v217 = Convert v216 declared={type=number site=w119} @8719
+    v217 = Convert v216 declared={type=number site=w124} @8719
     Jump -> next b38(v217) @8719
   b62(v218, v219):
     Jump -> next b63() @8708
@@ -2329,14 +2343,14 @@ function f57 name="findValueRun" module=m5 position=7633 role=Library flags=[IsC
     v231 = Integer integer=1 @9638
     v232 = Sub v228, v231 @9630
     v233 = Call v230, -, v8, v232, v229, v3 calleeName="extendValueRun" @9606
-    ReturnCall v233 casts=[{declared={type=number site=w129}}, {declared={type=number site=w36}}] @9606
+    ReturnCall v233 casts=[{declared={type=number site=w134}}, {declared={type=number site=w36}}] @9606
 }
 function f58 name="mergeValueRuns" module=m5 position=9664 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 thisType={type=anything} parameters=[{type=undefined|null|Array site=w37 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array site=w38 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w39}, {type=number site=w40}, {type=number site=w41}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|Array, v1: undefined|null|Array, v2: number, v3: number, v4: number, v5: anything):
     Jump -> next b1() @9664
   b1():
     v6 = Integer integer=7 @9811
-    v7 = Convert v6 declared={type=7 site=w130} @9811
+    v7 = Convert v6 declared={type=7 site=w135} @9811
     v8 = GetModuleVariable variable=g11 @9834
     v9 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @9846
     v10 = Convert v3 declared={type=int flags=[IsFromCompiler, IsClaim]} @9846
@@ -2344,11 +2358,11 @@ function f58 name="mergeValueRuns" module=m5 position=9664 role=Library flags=[I
     v12 = Sub v3, v2 @9898
     v13 = Integer @9912
     v14 = Call v8, -, v11, v0, v2, v12, v13, v5 calleeName="gallopRight" @9834
-    v15 = Convert v14 declared={type=number site=w138} @9834
+    v15 = Convert v14 declared={type=number site=w143} @9834
     v16 = Add v2, v15 @9828
     v17 = Integer @9930
     v18 = BitOr v16, v17 @9828
-    v19 = Convert v18 declared={type=number site=w131} @9827
+    v19 = Convert v18 declared={type=number site=w136} @9827
     v20 = Convert v19 declared={type=i32 flags=[IsExpected]} @9939
     v21 = GreaterEq v20, v3 @9939
     Branch v21 -> taken b2(| 0, 1), notTaken b4(| 0, 1) @9939
@@ -2371,11 +2385,11 @@ function f58 name="mergeValueRuns" module=m5 position=9664 role=Library flags=[I
     v35 = Sub v34, v26 @10101
     v36 = Sub v4, v26 @10127
     v37 = Call v27, -, v32, v0, v26, v35, v36, v5 calleeName="gallopLeft" @9998
-    v38 = Convert v37 declared={type=number site=w139} @9998
+    v38 = Convert v37 declared={type=number site=w144} @9998
     v39 = Add v26, v38 @9983
     v40 = Integer @10176
     v41 = BitOr v39, v40 @9983
-    v42 = Convert v41 declared={type=number site=w132} @9982
+    v42 = Convert v41 declared={type=number site=w137} @9982
     v43 = LessEq v42, v26 @10185
     Branch v43 -> taken b6(| 0, 1), notTaken b8(| 0, 1) @10185
   b6(v44, v45):
@@ -2387,31 +2401,31 @@ function f58 name="mergeValueRuns" module=m5 position=9664 role=Library flags=[I
     Jump -> next b9() @10185
   b9():
     v49 = PropGet v1 key="length" @10235
-    v50 = Convert v49 declared={type=number site=w140} illTypedCause=Assertion @10235
+    v50 = Convert v49 declared={type=number site=w145} illTypedCause=Assertion @10235
     v51 = Integer integer=1 @10247
     v52 = Sub v50, v51 @10235
     v53 = Integer @10252
     v54 = BitOr v52, v53 @10235
-    v55 = Convert v54 declared={type=number site=w133} @10234
+    v55 = Convert v54 declared={type=number site=w138} @10234
     v56 = Convert v1 declared={type=Array flags=[IsFromCompiler, IsClaim]} @10273
     v57 = Convert v55 declared={type=int flags=[IsFromCompiler, IsClaim]} @10273
     v58 = GetOwnContiguousIndex v56, v57 @10273
     v59 = Integer @10326
     v60 = BitOr v58, v59 @10273
-    v61 = Convert v60 declared={type=number site=w134} @10273
+    v61 = Convert v60 declared={type=number site=w139} @10273
     v62 = Convert v25 declared={type=i32 flags=[IsExpected]} @10345
-    v63 = Convert v62 declared={type=number site=w135} @10345
-    v64 = Convert v48 declared={type=number site=w136} @10365
-    v65 = Convert v62 declared={type=number site=w137} @10388
+    v63 = Convert v62 declared={type=number site=w140} @10345
+    v64 = Convert v48 declared={type=number site=w141} @10365
+    v65 = Convert v62 declared={type=number site=w142} @10388
     Jump -> next b10(v62, v61, v64, v65) @10405
   b10(v66: number, v67: number, v68: number, v69: number):
     LoopHint @10405
     Jump -> next b11() @10405
   b11():
     v71 = Integer @10435
-    v72 = Convert v71 declared={type=number site=w141} @10435
+    v72 = Convert v71 declared={type=number site=w146} @10435
     v73 = Integer @10458
-    v74 = Convert v73 declared={type=number site=w142} @10458
+    v74 = Convert v73 declared={type=number site=w147} @10458
     Jump -> next b12(v66, v68, v69, v72, v74) @10465
   b12(v75: number, v76: number, v77: number, v78: number, v79: number):
     LoopHint @10465
@@ -2448,16 +2462,16 @@ function f58 name="mergeValueRuns" module=m5 position=9664 role=Library flags=[I
     v105 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @10606
     v106 = Convert v104 declared={type=int flags=[IsFromCompiler, IsClaim]} @10606
     v107 = GetOwnContiguousIndex v105, v106 @10606
-    v108 = Convert v107 declared={type=anything site=w143} illTypedCause=FromLooseType @10606
+    v108 = Convert v107 declared={type=anything site=w148} illTypedCause=FromLooseType @10606
     v109 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @10673
     v110 = Convert v92 declared={type=int flags=[IsFromCompiler, IsClaim]} @10673
     v111 = GetOwnContiguousIndex v109, v110 @10673
-    v112 = Convert v111 declared={type=anything site=w144} illTypedCause=FromLooseType @10673
+    v112 = Convert v111 declared={type=anything site=w149} illTypedCause=FromLooseType @10673
     v113 = GetModuleVariable variable=g8 @10723
     v114 = Undefined @10757
     v115 = Call v5, v114, v112, v108 @10730
     v116 = Call v113, -, v115 calleeName="isLess" @10723
-    v117 = Convert v116 declared={type=boolean site=w145} @10723
+    v117 = Convert v116 declared={type=boolean site=w150} @10723
     v118 = ToBoolean v117 @10723
     Branch v118 -> taken b24(| 0), notTaken b26(| 0) @10723
   b24(v119):
@@ -2472,14 +2486,14 @@ function f58 name="mergeValueRuns" module=m5 position=9664 role=Library flags=[I
     v126 = Add v92, v125 @10868
     v127 = Integer @10881
     v128 = BitOr v126, v127 @10868
-    v129 = Convert v128 declared={type=number site=w136} @10859
+    v129 = Convert v128 declared={type=number site=w141} @10859
     v130 = Integer integer=1 @10917
     v131 = Add v87, v130 @10905
     v132 = Integer @10922
     v133 = BitOr v131, v132 @10905
-    v134 = Convert v133 declared={type=number site=w142} @10892
+    v134 = Convert v133 declared={type=number site=w147} @10892
     v135 = Integer @10944
-    v136 = Convert v135 declared={type=number site=w141} @10933
+    v136 = Convert v135 declared={type=number site=w146} @10933
     Jump -> next b28(v120, v104, v129, v136, v134) @10933
   b26(v137):
     Jump -> next b27() @10723
@@ -2493,14 +2507,14 @@ function f58 name="mergeValueRuns" module=m5 position=9664 role=Library flags=[I
     v144 = Add v104, v143 @11033
     v145 = Integer @11045
     v146 = BitOr v144, v145 @11033
-    v147 = Convert v146 declared={type=number site=w131} @11025
+    v147 = Convert v146 declared={type=number site=w136} @11025
     v148 = Integer integer=1 @11079
     v149 = Add v83, v148 @11068
     v150 = Integer @11084
     v151 = BitOr v149, v150 @11068
-    v152 = Convert v151 declared={type=number site=w141} @11056
+    v152 = Convert v151 declared={type=number site=w146} @11056
     v153 = Integer @11107
-    v154 = Convert v153 declared={type=number site=w142} @11095
+    v154 = Convert v153 declared={type=number site=w147} @11095
     Jump -> next b28(v138, v147, v92, v152, v154) @11095
   b28(v155: number, v156: number, v157: number, v158: number, v159: number):
     v160 = Convert v155 declared={type=i32 flags=[IsExpected]} @11134
@@ -2508,7 +2522,7 @@ function f58 name="mergeValueRuns" module=m5 position=9664 role=Library flags=[I
     v162 = Add v160, v161 @11134
     v163 = Integer @11148
     v164 = BitOr v162, v163 @11134
-    v165 = Convert v164 declared={type=number site=w137} @11124
+    v165 = Convert v164 declared={type=number site=w142} @11124
     Jump -> next b12(v156, v157, v165, v158, v159) @11124
   b29(v166, v167):
     Jump -> next b31(v167, v83, v166) @10472
@@ -2520,7 +2534,7 @@ function f58 name="mergeValueRuns" module=m5 position=9664 role=Library flags=[I
     v175 = Add v173, v174 @11174
     v176 = Integer @11191
     v177 = BitOr v175, v176 @11174
-    v178 = Convert v177 declared={type=number site=w134} @11161
+    v178 = Convert v177 declared={type=number site=w139} @11161
     Jump -> next b32(v75, v178, v76, v77, v171, v172) @11198
   b32(v179: number, v180: number, v181: number, v182: number, v183: number, v184: number):
     LoopHint @11198
@@ -2536,7 +2550,7 @@ function f58 name="mergeValueRuns" module=m5 position=9664 role=Library flags=[I
     v192 = Sub v190, v191 @11241
     v193 = Integer @11258
     v194 = BitOr v192, v193 @11241
-    v195 = Convert v194 declared={type=number site=w134} @11228
+    v195 = Convert v194 declared={type=number site=w139} @11228
     Jump -> next b36(v195) @11228
   b35(v196):
     Jump -> next b36(v196) @11213
@@ -2566,9 +2580,9 @@ function f58 name="mergeValueRuns" module=m5 position=9664 role=Library flags=[I
     v218 = Sub v203, v217 @11400
     v219 = Integer @11415
     v220 = Call v213, -, v216, v0, v217, v218, v219, v5 calleeName="gallopRight" @11336
-    v221 = Convert v220 declared={type=number site=w146} @11336
+    v221 = Convert v220 declared={type=number site=w151} @11336
     v222 = Integer @11450
-    v223 = Convert v222 declared={type=number site=w147} @11450
+    v223 = Convert v222 declared={type=number site=w152} @11450
     Jump -> next b44(v217, v182, v223) @11446
   b44(v224: number, v225: number, v226: number):
     LoopHint @11446
@@ -2594,17 +2608,17 @@ function f58 name="mergeValueRuns" module=m5 position=9664 role=Library flags=[I
     v243 = Add v241, v242 @11472
     v244 = Integer @11481
     v245 = BitOr v243, v244 @11472
-    v246 = Convert v245 declared={type=number site=w147} @11467
+    v246 = Convert v245 declared={type=number site=w152} @11467
     v247 = Integer integer=1 @11503
     v248 = Add v232, v247 @11494
     v249 = Integer @11508
     v250 = BitOr v248, v249 @11494
-    v251 = Convert v250 declared={type=number site=w137} @11484
+    v251 = Convert v250 declared={type=number site=w142} @11484
     v252 = Integer integer=1 @11526
     v253 = Add v233, v252 @11519
     v254 = Integer @11531
     v255 = BitOr v253, v254 @11519
-    v256 = Convert v255 declared={type=number site=w131} @11511
+    v256 = Convert v255 declared={type=number site=w136} @11511
     Jump -> next b44(v256, v251, v246) @11511
   b48(v257, v258):
     Jump -> next b49() @11453
@@ -2621,12 +2635,12 @@ function f58 name="mergeValueRuns" module=m5 position=9664 role=Library flags=[I
     v268 = Add v259, v267 @11715
     v269 = Integer @11729
     v270 = BitOr v268, v269 @11715
-    v271 = Convert v270 declared={type=number site=w137} @11705
+    v271 = Convert v270 declared={type=number site=w142} @11705
     v272 = Integer integer=1 @11755
     v273 = Add v211, v272 @11747
     v274 = Integer @11760
     v275 = BitOr v273, v274 @11747
-    v276 = Convert v275 declared={type=number site=w136} @11738
+    v276 = Convert v275 declared={type=number site=w141} @11738
     v277 = Convert v224 declared={type=i32 flags=[IsExpected]} @11773
     v278 = GreaterEq v277, v203 @11773
     Branch v278 -> taken b50(| 0, 1), notTaken b51(| 0, 1) @11773
@@ -2652,9 +2666,9 @@ function f58 name="mergeValueRuns" module=m5 position=9664 role=Library flags=[I
     v297 = Sub v291, v290 @11902
     v298 = Integer @11916
     v299 = Call v292, -, v296, v0, v290, v297, v298, v5 calleeName="gallopLeft" @11839
-    v300 = Convert v299 declared={type=number site=w148} @11839
+    v300 = Convert v299 declared={type=number site=w153} @11839
     v301 = Integer @11951
-    v302 = Convert v301 declared={type=number site=w149} @11951
+    v302 = Convert v301 declared={type=number site=w154} @11951
     Jump -> next b57(v290, v271, v302) @11947
   b57(v303: number, v304: number, v305: number):
     LoopHint @11947
@@ -2679,17 +2693,17 @@ function f58 name="mergeValueRuns" module=m5 position=9664 role=Library flags=[I
     v321 = Add v319, v320 @11974
     v322 = Integer @11983
     v323 = BitOr v321, v322 @11974
-    v324 = Convert v323 declared={type=number site=w149} @11969
+    v324 = Convert v323 declared={type=number site=w154} @11969
     v325 = Integer integer=1 @12005
     v326 = Add v311, v325 @11996
     v327 = Integer @12010
     v328 = BitOr v326, v327 @11996
-    v329 = Convert v328 declared={type=number site=w137} @11986
+    v329 = Convert v328 declared={type=number site=w142} @11986
     v330 = Integer integer=1 @12030
     v331 = Add v303, v330 @12022
     v332 = Integer @12035
     v333 = BitOr v331, v332 @12022
-    v334 = Convert v333 declared={type=number site=w136} @12013
+    v334 = Convert v333 declared={type=number site=w141} @12013
     Jump -> next b57(v334, v329, v324) @12013
   b61(v335, v336):
     Jump -> next b62() @11954
@@ -2706,12 +2720,12 @@ function f58 name="mergeValueRuns" module=m5 position=9664 role=Library flags=[I
     v346 = Add v337, v345 @12219
     v347 = Integer @12233
     v348 = BitOr v346, v347 @12219
-    v349 = Convert v348 declared={type=number site=w137} @12209
+    v349 = Convert v348 declared={type=number site=w142} @12209
     v350 = Integer integer=1 @12257
     v351 = Add v293, v350 @12250
     v352 = Integer @12262
     v353 = BitOr v351, v352 @12250
-    v354 = Convert v353 declared={type=number site=w131} @12242
+    v354 = Convert v353 declared={type=number site=w136} @12242
     v355 = Convert v354 declared={type=i32 flags=[IsExpected]} @12275
     v356 = GreaterEq v355, v282 @12275
     Branch v356 -> taken b63(| 0, 1), notTaken b64(| 0, 1) @12275
@@ -2756,12 +2770,12 @@ function f58 name="mergeValueRuns" module=m5 position=9664 role=Library flags=[I
     v396 = Add v387, v395 @12534
     v397 = Integer @12546
     v398 = BitOr v396, v397 @12534
-    v399 = Convert v398 declared={type=number site=w131} @12526
+    v399 = Convert v398 declared={type=number site=w136} @12526
     v400 = Integer integer=1 @12568
     v401 = Add v386, v400 @12559
     v402 = Integer @12573
     v403 = BitOr v401, v402 @12559
-    v404 = Convert v403 declared={type=number site=w137} @12549
+    v404 = Convert v403 declared={type=number site=w142} @12549
     Jump -> next b69(v399, v404) @12549
   b73(v405, v406):
     Jump -> next b74() @12511
@@ -2788,12 +2802,12 @@ function f58 name="mergeValueRuns" module=m5 position=9664 role=Library flags=[I
     v422 = Add v411, v421 @12687
     v423 = Integer @12700
     v424 = BitOr v422, v423 @12687
-    v425 = Convert v424 declared={type=number site=w136} @12678
+    v425 = Convert v424 declared={type=number site=w141} @12678
     v426 = Integer integer=1 @12722
     v427 = Add v413, v426 @12713
     v428 = Integer @12727
     v429 = BitOr v427, v428 @12713
-    v430 = Convert v429 declared={type=number site=w137} @12703
+    v430 = Convert v429 declared={type=number site=w142} @12703
     Jump -> next b75(v425, v430) @12703
   b79(v431, v432):
     Jump -> next b80() @12664
@@ -2819,7 +2833,7 @@ function f58 name="mergeValueRuns" module=m5 position=9664 role=Library flags=[I
     v446 = Add v436, v445 @12847
     v447 = Integer @12856
     v448 = BitOr v446, v447 @12847
-    v449 = Convert v448 declared={type=number site=w150} @12842
+    v449 = Convert v448 declared={type=number site=w155} @12842
     Jump -> next b81(v449) @12842
   b85(v450, v451):
     Jump -> next b86() @12832
@@ -2850,7 +2864,7 @@ function f58 name="mergeValueRuns" module=m5 position=9664 role=Library flags=[I
     v467 = Add v465, v466 @12421
     v468 = Integer @12438
     v469 = BitOr v467, v468 @12421
-    v470 = Convert v469 declared={type=number site=w134} @12408
+    v470 = Convert v469 declared={type=number site=w139} @12408
     Jump -> next b96() @12408
   b96():
     Jump -> next b10(v359, v470, v453, v349) @12408
@@ -2862,10 +2876,10 @@ function f59 name="sortValues" module=m5 position=12929 role=Library flags=[IsCh
     v3 = GetModuleVariable variable=g13 @13021
     v4 = Integer @13043
     v5 = Call v3, -, v0, v4, v1, v2 calleeName="findValueRun" @13021
-    v6 = Convert v5 declared={type=number site=w152} @13021
+    v6 = Convert v5 declared={type=number site=w157} @13021
     v7 = Integer @13067
     v8 = BitOr v6, v7 @13021
-    v9 = Convert v8 declared={type=number site=w151} @13021
+    v9 = Convert v8 declared={type=number site=w156} @13021
     v10 = Convert v9 declared={type=i32 flags=[IsExpected]} @13078
     v11 = Integer integer=1 @13084
     v12 = Add v10, v11 @13078
@@ -2890,28 +2904,28 @@ function f60 name="mergeFurtherValueRuns" module=m5 position=13160 role=Library 
     Jump -> next b1() @13160
   b1():
     v4 = Integer integer=7 @13301
-    v5 = Convert v4 declared={type=7 site=w153} @13301
+    v5 = Convert v4 declared={type=7 site=w158} @13301
     v6 = Integer integer=72 @13329
-    v7 = Convert v6 declared={type=72 site=w154} @13329
-    v8 = Convert v0 declared={type=undefined|null|Array site=w155 flags=[OmitsNull, OmitsUndefined]} @13349
+    v7 = Convert v6 declared={type=72 site=w159} @13329
+    v8 = Convert v0 declared={type=undefined|null|Array site=w160 flags=[OmitsNull, OmitsUndefined]} @13349
     v9 = Integer @13369
-    v10 = Convert v9 declared={type=number site=w156} @13369
+    v10 = Convert v9 declared={type=number site=w161} @13369
     v11 = Integer @13394
-    v12 = Convert v11 declared={type=number site=w157} @13394
-    v13 = Convert v2 declared={type=number site=w158} @13417
+    v12 = Convert v11 declared={type=number site=w162} @13394
+    v13 = Convert v2 declared={type=number site=w163} @13417
     v14 = Integer integer=1 @13468
     v15 = Add v2, v14 @13452
     v16 = Integer @13473
     v17 = BitOr v15, v16 @13452
-    v18 = Convert v17 declared={type=number site=w159} @13451
+    v18 = Convert v17 declared={type=number site=w164} @13451
     Jump -> next b2(v8, v10, v12, v13, v18) @13443
   b2(v19: undefined|null|Array, v20: number, v21: number, v22: number, v23: number):
     LoopHint @13443
     Jump -> next b3() @13443
   b3():
-    v25 = Convert v23 declared={type=number site=w160} @13495
+    v25 = Convert v23 declared={type=number site=w165} @13495
     v26 = Integer integer=-1 @13518
-    v27 = Convert v26 declared={type=number site=w161} @13518
+    v27 = Convert v26 declared={type=number site=w166} @13518
     v28 = Less v23, v1 @13530
     Branch v28 -> taken b4(| 0, 1), notTaken b6(| 0, 1) @13530
   b4(v29, v30):
@@ -2919,10 +2933,10 @@ function f60 name="mergeFurtherValueRuns" module=m5 position=13160 role=Library 
   b5():
     v31 = GetModuleVariable variable=g13 @13559
     v32 = Call v31, -, v0, v29, v30, v3 calleeName="findValueRun" @13559
-    v33 = Convert v32 declared={type=number site=w162} @13559
+    v33 = Convert v32 declared={type=number site=w167} @13559
     v34 = GetModuleVariable variable=g15 @13622
     v35 = Call v34, -, v21, v29, v33, v30 calleeName="computeRunPower" @13622
-    v36 = Convert v35 declared={type=number site=w163} @13622
+    v36 = Convert v35 declared={type=number site=w168} @13622
     Jump -> next b7(v30, v36, v29, v33) @13614
   b6(v37, v38):
     Jump -> next b7(v38, v27, v37, v25) @13530
@@ -2946,7 +2960,7 @@ function f60 name="mergeFurtherValueRuns" module=m5 position=13160 role=Library 
     v56 = Convert v19 declared={type=Array flags=[IsFromCompiler, IsClaim]} @13736
     v57 = Convert v55 declared={type=int flags=[IsFromCompiler, IsClaim]} @13736
     v58 = GetOwnContiguousIndex v56, v57 @13736
-    v59 = Convert v58 declared={type=number site=w164} @13736
+    v59 = Convert v58 declared={type=number site=w169} @13736
     v60 = LessEq v59, v40 @13805
     Branch v60 -> taken b11(| 0, 1), notTaken b13(| 0, 1) @13805
   b11(v61, v62):
@@ -2960,7 +2974,7 @@ function f60 name="mergeFurtherValueRuns" module=m5 position=13160 role=Library 
     v66 = Sub v50, v65 @13848
     v67 = Integer @13861
     v68 = BitOr v66, v67 @13848
-    v69 = Convert v68 declared={type=number site=w156} @13839
+    v69 = Convert v68 declared={type=number site=w161} @13839
     v70 = Convert v69 declared={type=i32 flags=[IsExpected]} @13933
     v71 = Integer integer=2 @13941
     v72 = Mul v70, v71 @13925
@@ -2970,7 +2984,7 @@ function f60 name="mergeFurtherValueRuns" module=m5 position=13160 role=Library 
     v76 = GetOwnContiguousIndex v74, v75 @13890
     v77 = Integer @13946
     v78 = BitOr v76, v77 @13890
-    v79 = Convert v78 declared={type=number site=w165} @13890
+    v79 = Convert v78 declared={type=number site=w170} @13890
     v80 = GetModuleVariable variable=g16 @13955
     v81 = Call v80, -, v0, v19, v79, v44, v22, v3 calleeName="mergeValueRuns" @13955
     Jump -> next b8(v70, v79) @14035
@@ -2997,7 +3011,7 @@ function f60 name="mergeFurtherValueRuns" module=m5 position=13160 role=Library 
     v96 = Add v94, v95 @14253
     v97 = Convert v96 declared={type=int flags=[IsFromCompiler, IsClaim]} @14230
     v98 = NewContiguousArray v97 @14230
-    v99 = Convert v98 declared={type=undefined|null|Array site=w155 flags=[OmitsNull, OmitsUndefined]} @14225
+    v99 = Convert v98 declared={type=undefined|null|Array site=w160 flags=[OmitsNull, OmitsUndefined]} @14225
     v100 = Add v90, v7 @14315
     v101 = Convert v99 declared={type=Array flags=[IsFromCompiler, IsClaim]} @14288
     v102 = Convert v100 declared={type=int flags=[IsFromCompiler, IsClaim]} @14288
@@ -3028,14 +3042,14 @@ function f60 name="mergeFurtherValueRuns" module=m5 position=13160 role=Library 
     v126 = Add v108, v125 @14507
     v127 = Integer @14520
     v128 = BitOr v126, v127 @14507
-    v129 = Convert v128 declared={type=number site=w156} @14498
-    v130 = Convert v89 declared={type=number site=w157} @14527
-    v131 = Convert v42 declared={type=number site=w158} @14554
+    v129 = Convert v128 declared={type=number site=w161} @14498
+    v130 = Convert v89 declared={type=number site=w162} @14527
+    v131 = Convert v42 declared={type=number site=w163} @14554
     v132 = Integer integer=1 @14592
     v133 = Add v42, v132 @14586
     v134 = Integer @14597
     v135 = BitOr v133, v134 @14586
-    v136 = Convert v135 declared={type=number site=w159} @14577
+    v136 = Convert v135 declared={type=number site=w164} @14577
     Jump -> next b25() @14577
   b25():
     Jump -> next b2(v107, v129, v130, v131, v136) @14577
@@ -3048,13 +3062,13 @@ function f61 name="takeDefinedValuesOneByOne" module=m5 position=14750 role=Libr
     v3 = Add v1, v2 @14866
     v4 = Convert v3 declared={type=int flags=[IsFromCompiler, IsClaim]} @14843
     v5 = NewContiguousArray v4 @14843
-    v6 = Convert v5 declared={type=undefined|null|Array site=w166 flags=[OmitsNull, OmitsUndefined]} @14843
+    v6 = Convert v5 declared={type=undefined|null|Array site=w171 flags=[OmitsNull, OmitsUndefined]} @14843
     v7 = Integer @14893
-    v8 = Convert v7 declared={type=number site=w167} @14893
+    v8 = Convert v7 declared={type=number site=w172} @14893
     v9 = Integer @14919
-    v10 = Convert v9 declared={type=number site=w168} @14919
+    v10 = Convert v9 declared={type=number site=w173} @14919
     v11 = Integer @14941
-    v12 = Convert v11 declared={type=number site=w169} @14941
+    v12 = Convert v11 declared={type=number site=w174} @14941
     Jump -> next b2(v8, v10, v12) @14933
   b2(v13: number, v14: number, v15: number):
     LoopHint @14933
@@ -3072,14 +3086,14 @@ function f61 name="takeDefinedValuesOneByOne" module=m5 position=14750 role=Libr
     Jump -> next b6() @14981
   b6():
     v25 = ElemGet v0, v21 @15026
-    v26 = Convert v25 declared={type=anything site=w170} illTypedCause=ContainerWriterUnseen @15026
+    v26 = Convert v25 declared={type=anything site=w175} illTypedCause=ContainerWriterUnseen @15026
     v27 = TypeTest v26 testedType=undefined @15048
     Branch v27 -> taken b7(| 0), notTaken b9(| 0) @15048
   b7(v28):
     Jump -> next b8() @15048
   b8():
     v29 = Increment v14 @15048
-    v30 = Convert v29 declared={type=number site=w168} @15077
+    v30 = Convert v29 declared={type=number site=w173} @15077
     Jump -> next b13(v13, v30) @15101
   b9(v31):
     Jump -> next b10() @15048
@@ -3093,7 +3107,7 @@ function f61 name="takeDefinedValuesOneByOne" module=m5 position=14750 role=Libr
     v38 = Add v32, v37 @15175
     v39 = Integer @15188
     v40 = BitOr v38, v39 @15175
-    v41 = Convert v40 declared={type=number site=w167} @15166
+    v41 = Convert v40 declared={type=number site=w172} @15166
     Jump -> next b13(v41, v14) @15166
   b11(v42):
     Jump -> next b12() @14981
@@ -3101,7 +3115,7 @@ function f61 name="takeDefinedValuesOneByOne" module=m5 position=14750 role=Libr
     Jump -> next b13(v13, v14) @14998
   b13(v43: number, v44: number):
     v45 = Increment v21 @15175
-    v46 = Convert v45 declared={type=number site=w169} @14960
+    v46 = Convert v45 declared={type=number site=w174} @14960
     Jump -> next b2(v43, v44, v46) @14960
   b14(v47, v48):
     Jump -> next b15() @14944
@@ -3134,11 +3148,11 @@ function f62 name="putRestOfSortedValues" module=m5 position=15426 role=Library 
     v11 = Convert v2 declared={type=Array flags=[IsFromCompiler, IsClaim]} @15629
     v12 = Convert v9 declared={type=int flags=[IsFromCompiler, IsClaim]} @15629
     v13 = GetContiguousIndex v11, v12 @15629
-    v14 = Convert v13 declared={type=anything site=w171} illTypedCause=FromLooseType @15629
+    v14 = Convert v13 declared={type=anything site=w176} illTypedCause=FromLooseType @15629
     v15 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @15696
     v16 = Convert v9 declared={type=int flags=[IsFromCompiler, IsClaim]} @15696
     v17 = TryPutIndex v15, v16, v14 @15696
-    v18 = Convert v17 declared={type=boolean site=w172} @15696
+    v18 = Convert v17 declared={type=boolean site=w177} @15696
     v19 = ToBoolean v18 @15740
     Branch v19 -> taken b5(| 0), notTaken b6(| 0) @15740
   b5(v20):
@@ -3172,7 +3186,7 @@ function f62 name="putRestOfSortedValues" module=m5 position=15426 role=Library 
     Jump -> next b16() @15785
   b16():
     v36 = Undefined @15865
-    v37 = Convert v36 declared={type=anything site=w173} illTypedCause=FromLooseType @15865
+    v37 = Convert v36 declared={type=anything site=w178} illTypedCause=FromLooseType @15865
     ElemSet v0, v34, v37 @15850
     Jump -> next b17() @15850
   b17():
@@ -3214,7 +3228,7 @@ function f63 name="putSortedValues" module=m5 position=16052 role=Library flags=
     v6 = Convert v2 declared={type=Array flags=[IsFromCompiler, IsClaim]} @16280
     v7 = Convert v3 declared={type=int flags=[IsFromCompiler, IsClaim]} @16280
     v8 = TryPutElements v5, v6, v7 @16280
-    v9 = Convert v8 declared={type=boolean site=w174} @16280
+    v9 = Convert v8 declared={type=boolean site=w179} @16280
     v10 = ToBoolean v9 @16333
     Branch v10 -> taken b2(| 0), notTaken b4(| 0) @16333
   b2(v11):
@@ -3227,7 +3241,7 @@ function f63 name="putSortedValues" module=m5 position=16052 role=Library flags=
     v13 = Integer @16353
     Jump -> next b6(v13) @16353
   b6(v14):
-    v15 = Convert v14 declared={type=number site=w175} @16333
+    v15 = Convert v14 declared={type=number site=w180} @16333
     v16 = Less v15, v1 @16362
     Branch v16 -> taken b7(| 0, 1), notTaken b9(| 0, 1) @16362
   b7(v17, v18):
@@ -3247,14 +3261,14 @@ function f64 name="sortListOfAnyKind" module=m5 position=16533 role=Library flag
     Jump -> next b1() @16533
   b1():
     v3 = Undefined @16622
-    v4 = Convert v3 declared={type=undefined|null|Array site=w176 flags=[OmitsNull]} illTypedCause=FromLooseType @16622
+    v4 = Convert v3 declared={type=undefined|null|Array site=w181 flags=[OmitsNull]} illTypedCause=FromLooseType @16622
     v5 = Integer @16651
-    v6 = Convert v5 declared={type=number site=w177} @16651
+    v6 = Convert v5 declared={type=number site=w182} @16651
     v7 = Integer @16677
-    v8 = Convert v7 declared={type=number site=w178} @16677
+    v8 = Convert v7 declared={type=number site=w183} @16677
     v9 = GetModuleVariable variable=g18 @16686
     v10 = Call v9, -, v0 calleeName="isContiguousArray" @16686
-    v11 = Convert v10 declared={type=boolean site=w179} @16686
+    v11 = Convert v10 declared={type=boolean site=w184} @16686
     v12 = ToBoolean v11 @16686
     Branch v12 -> taken b2(| 0), notTaken b18(| 0) @16686
   b2(v13):
@@ -3262,9 +3276,9 @@ function f64 name="sortListOfAnyKind" module=m5 position=16533 role=Library flag
   b3():
     v14 = Convert v1 declared={type=int flags=[IsFromCompiler, IsClaim]} @16725
     v15 = NewContiguousArray v14 @16725
-    v16 = Convert v15 declared={type=undefined|null|Array site=w176 flags=[OmitsNull]} @16718
+    v16 = Convert v15 declared={type=undefined|null|Array site=w181 flags=[OmitsNull]} @16718
     v17 = Integer @16778
-    v18 = Convert v17 declared={type=number site=w180} @16778
+    v18 = Convert v17 declared={type=number site=w185} @16778
     Jump -> next b4(v6, v8, v18) @16770
   b4(v19: number, v20: number, v21: number):
     LoopHint @16770
@@ -3276,7 +3290,7 @@ function f64 name="sortListOfAnyKind" module=m5 position=16533 role=Library flag
     v26 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @16828
     v27 = Convert v24 declared={type=int flags=[IsFromCompiler, IsClaim]} @16828
     v28 = GetContiguousIndex v26, v27 @16828
-    v29 = Convert v28 declared={type=anything site=w181} illTypedCause=FromLooseType @16828
+    v29 = Convert v28 declared={type=anything site=w186} illTypedCause=FromLooseType @16828
     v30 = TypeTest v29 testedType=undefined @16876
     Branch v30 -> taken b7(| 0), notTaken b13(| 0) @16876
   b7(v31):
@@ -3285,14 +3299,14 @@ function f64 name="sortListOfAnyKind" module=m5 position=16533 role=Library flag
     v32 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @16970
     v33 = Convert v24 declared={type=int flags=[IsFromCompiler, IsClaim]} @16970
     v34 = HasContiguousIndex v32, v33 @16970
-    v35 = Convert v34 declared={type=boolean site=w182} @16970
+    v35 = Convert v34 declared={type=boolean site=w187} @16970
     v36 = ToBoolean v35 @17017
     Branch v36 -> taken b9(| 0), notTaken b11(| 0) @17017
   b9(v37):
     Jump -> next b10() @17017
   b10():
     v38 = Increment v20 @17017
-    v39 = Convert v38 declared={type=number site=w178} @17022
+    v39 = Convert v38 declared={type=number site=w183} @17022
     Jump -> next b12(v39) @17022
   b11(v40):
     Jump -> next b12(v20) @17017
@@ -3310,11 +3324,11 @@ function f64 name="sortListOfAnyKind" module=m5 position=16533 role=Library flag
     v49 = Add v43, v48 @17131
     v50 = Integer @17144
     v51 = BitOr v49, v50 @17131
-    v52 = Convert v51 declared={type=number site=w177} @17122
+    v52 = Convert v51 declared={type=number site=w182} @17122
     Jump -> next b15(v52, v20) @17122
   b15(v53: number, v54: number):
     v55 = Increment v24 @17131
-    v56 = Convert v55 declared={type=number site=w180} @16797
+    v56 = Convert v55 declared={type=number site=w185} @16797
     Jump -> next b4(v53, v54, v56) @16797
   b16(v57, v58):
     Jump -> next b17() @16781
@@ -3325,13 +3339,13 @@ function f64 name="sortListOfAnyKind" module=m5 position=16533 role=Library flag
   b19():
     v60 = GetModuleVariable variable=g19 @17175
     v61 = Call v60, -, v0, v1 calleeName="takeDefinedValuesOneByOne" @17175
-    v62 = Convert v61 declared={type=undefined|null|Array site=w183 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @17175
+    v62 = Convert v61 declared={type=undefined|null|Array site=w188 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @17175
     v63 = Convert v62 declared={type=Array flags=[IsFromCompiler, IsClaim]} @17232
     v64 = Convert v1 declared={type=int flags=[IsFromCompiler, IsClaim]} @17232
     v65 = GetContiguousIndex v63, v64 @17232
     v66 = Integer @17276
     v67 = BitOr v65, v66 @17232
-    v68 = Convert v67 declared={type=number site=w177} @17224
+    v68 = Convert v67 declared={type=number site=w182} @17224
     v69 = Integer integer=1 @17343
     v70 = Add v1, v69 @17334
     v71 = Convert v62 declared={type=Array flags=[IsFromCompiler, IsClaim]} @17300
@@ -3339,7 +3353,7 @@ function f64 name="sortListOfAnyKind" module=m5 position=16533 role=Library flag
     v73 = GetContiguousIndex v71, v72 @17300
     v74 = Integer @17348
     v75 = BitOr v73, v74 @17300
-    v76 = Convert v75 declared={type=number site=w178} @17283
+    v76 = Convert v75 declared={type=number site=w183} @17283
     Jump -> next b20(v62, v68, v1, v76) @17283
   b20(v77: undefined|null|Array, v78: number, v79: number, v80: number):
     v81 = GetModuleVariable variable=g20 @17357
@@ -3356,14 +3370,14 @@ function f65 name="takeValuesOrSort" module=m5 position=17687 role=Library flags
   b1():
     v2 = GetModuleVariable variable=g22 @17775
     v3 = Call v2, -, v1 calleeName="isCallable" @17775
-    v4 = Convert v3 declared={type=boolean site=w184} @17775
+    v4 = Convert v3 declared={type=boolean site=w189} @17775
     v5 = ToBoolean v4 @17775
     Branch v5 -> taken b2(| 0), notTaken b19(| 0) @17775
   b2(v6):
     Jump -> next b3() @17775
   b3():
     v7 = PropGet v0 key="length" @17881
-    v8 = Convert v7 declared={type=number site=w185} illTypedCause=Assertion @17881
+    v8 = Convert v7 declared={type=number site=w190} illTypedCause=Assertion @17881
     v9 = Integer integer=2 @17910
     v10 = Less v8, v9 @17901
     Branch v10 -> taken b4(| 0), notTaken b6(| 0) @17901
@@ -3378,7 +3392,7 @@ function f65 name="takeValuesOrSort" module=m5 position=17687 role=Library flags
   b7():
     v15 = GetModuleVariable variable=g18 @17937
     v16 = Call v15, -, v0 calleeName="isContiguousArray" @17937
-    v17 = Convert v16 declared={type=boolean site=w186} @17937
+    v17 = Convert v16 declared={type=boolean site=w191} @17937
     v18 = ToBoolean v17 @17937
     Branch v18 -> taken b8(| 0), notTaken b9(| 0) @17937
   b8(v19):
@@ -3388,7 +3402,7 @@ function f65 name="takeValuesOrSort" module=m5 position=17687 role=Library flags
   b10():
     v21 = GetModuleVariable variable=g23 @17965
     v22 = Call v21, -, v0 calleeName="isDoubleArray" @17965
-    v23 = Convert v22 declared={type=boolean site=w187} @17965
+    v23 = Convert v22 declared={type=boolean site=w192} @17965
     v24 = ToBoolean v23 @17965
     Branch v24 -> taken b11(| 0), notTaken b17(| 0) @17965
   b11(v25):
@@ -3396,12 +3410,12 @@ function f65 name="takeValuesOrSort" module=m5 position=17687 role=Library flags
   b12():
     v26 = Convert v14 declared={type=int flags=[IsFromCompiler, IsClaim]} @18011
     v27 = NewContiguousArray v26 @18011
-    v28 = Convert v27 declared={type=undefined|null|Array site=w188 flags=[OmitsNull, OmitsUndefined]} @18011
+    v28 = Convert v27 declared={type=undefined|null|Array site=w193 flags=[OmitsNull, OmitsUndefined]} @18011
     v29 = Convert v28 declared={type=Array flags=[IsFromCompiler, IsClaim]} @18073
     v30 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @18073
     v31 = Convert v14 declared={type=int flags=[IsFromCompiler, IsClaim]} @18073
     v32 = TryCopyFilledElements v29, v30, v31 @18073
-    v33 = Convert v32 declared={type=boolean site=w189} @18073
+    v33 = Convert v32 declared={type=boolean site=w194} @18073
     v34 = ToBoolean v33 @18126
     Branch v34 -> taken b13(| 0), notTaken b15(| 0) @18126
   b13(v35):
@@ -3445,10 +3459,10 @@ function f66 name="mergeRunsAndPutBack" module=m5 position=18227 role=Library fl
     Jump -> next b5() @18352
   b5():
     v8 = PropGet v7 key="length" @18396
-    v9 = Convert v8 declared={type=number site=w191} illTypedCause=Assertion @18396
+    v9 = Convert v8 declared={type=number site=w196} illTypedCause=Assertion @18396
     v10 = Integer @18410
     v11 = BitOr v9, v10 @18396
-    v12 = Convert v11 declared={type=number site=w190} @18396
+    v12 = Convert v11 declared={type=number site=w195} @18396
     v13 = Integer integer=1 @18437
     v14 = Add v2, v13 @18421
     v15 = Integer @18442
@@ -3476,16 +3490,16 @@ function f67 name="sort" module=m5 position=18791 kind=Method role=Library flags
   b1():
     v2 = GetModuleVariable variable=g25 @18869
     v3 = Call v2, -, v0, v1 calleeName="takeValuesOrSort" @18869
-    v4 = Convert v3 declared={type=undefined|null|Array site=w192 flags=[OmitsNull]} illTypedCause=FromLooseType @18869
+    v4 = Convert v3 declared={type=undefined|null|Array site=w197 flags=[OmitsNull]} illTypedCause=FromLooseType @18869
     v5 = GetModuleVariable variable=g26 @18994
     v6 = GetModuleVariable variable=g13 @19029
     v7 = Integer @19051
     v8 = PropGet v0 key="length" @19054
-    v9 = Convert v8 declared={type=number site=w193} illTypedCause=Assertion @19054
+    v9 = Convert v8 declared={type=number site=w198} illTypedCause=Assertion @19054
     v10 = Integer @19068
     v11 = BitOr v9, v10 @19054
     v12 = Call v6, -, v4, v7, v11, v1 calleeName="findValueRun" @19029
-    v13 = Convert v12 declared={type=number site=w194} @19029
+    v13 = Convert v12 declared={type=number site=w199} @19029
     v14 = Call v5, -, v0, v4, v13, v1 calleeName="mergeRunsAndPutBack" @18994
     v15 = Convert v0 declared={type=undefined|null|Array site=w69 flags=[OmitsNull, OmitsUndefined]} @19106
     Return v15 @19106
@@ -3498,7 +3512,7 @@ function f68 name="isWritableBehindFirstStore" module=m5 position=19255 role=Lib
     v5 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @19389
     v6 = Convert v4 declared={type=int flags=[IsFromCompiler, IsClaim]} @19389
     v7 = TryPutIndex v5, v6, v3 @19389
-    v8 = Convert v7 declared={type=boolean site=w195} @19389
+    v8 = Convert v7 declared={type=boolean site=w200} @19389
     v9 = ToBoolean v8 @19426
     Branch v9 -> taken b2(| 0), notTaken b4(| 0) @19426
   b2(v10):
@@ -3511,13 +3525,13 @@ function f68 name="isWritableBehindFirstStore" module=m5 position=19255 role=Lib
     Jump -> next b5() @19426
   b5():
     v14 = Integer @19519
-    v15 = Convert v3 declared={type=anything site=w197} illTypedCause=FromLooseType @19530
+    v15 = Convert v3 declared={type=anything site=w202} illTypedCause=FromLooseType @19530
     ElemSet v0, v14, v15 @19519
     v17 = Integer @19604
     v18 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @19584
     v19 = Convert v17 declared={type=int flags=[IsFromCompiler, IsClaim]} @19584
     v20 = TryPutIndex v18, v19, v3 @19584
-    v21 = Convert v20 declared={type=boolean site=w196} @19584
+    v21 = Convert v20 declared={type=boolean site=w201} @19584
     v22 = ToBoolean v21 @19624
     Branch v22 -> taken b6(| 0), notTaken b8(| 0) @19624
   b6(v23):
@@ -3536,7 +3550,7 @@ function f68 name="isWritableBehindFirstStore" module=m5 position=19255 role=Lib
     Jump -> next b11() @19624
   b11():
     v31 = PropGet v0 key="length" @19676
-    v32 = Convert v31 declared={type=number site=w198} illTypedCause=Assertion @19676
+    v32 = Convert v31 declared={type=number site=w203} illTypedCause=Assertion @19676
     v33 = StrictEq v32, v2 @19624
     Jump -> next b13(v33) @19624
   b12(v34):
@@ -3550,9 +3564,9 @@ function f69 name="trySortNumbersInPlace" module=m5 position=20170 role=Library 
     Jump -> next b1() @20170
   b1():
     v2 = Integer integer=64 @20275
-    v3 = Convert v2 declared={type=64 site=w199} @20275
+    v3 = Convert v2 declared={type=64 site=w204} @20275
     v4 = PropGet v0 key="length" @20295
-    v5 = Convert v4 declared={type=number site=w202} illTypedCause=Assertion @20295
+    v5 = Convert v4 declared={type=number site=w207} illTypedCause=Assertion @20295
     v6 = Greater v5, v3 @20373
     Branch v6 -> taken b2(| 0, 1), notTaken b4(| 0, 1) @20373
   b2(v7, v8):
@@ -3566,7 +3580,7 @@ function f69 name="trySortNumbersInPlace" module=m5 position=20170 role=Library 
   b5():
     v13 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @20426
     v14 = ArrayStorageKind v13 @20426
-    v15 = Convert v14 declared={type=number site=w200} @20426
+    v15 = Convert v14 declared={type=number site=w205} @20426
     v16 = Integer integer=2 @20467
     v17 = StrictEq v15, v16 @20458
     Branch v17 -> taken b6(| 0), notTaken b44(| 0) @20458
@@ -3577,7 +3591,7 @@ function f69 name="trySortNumbersInPlace" module=m5 position=20170 role=Library 
     v20 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @20636
     v21 = Convert v19 declared={type=int flags=[IsFromCompiler, IsClaim]} @20636
     v22 = GetOwnDoubleIndex v20, v21 @20636
-    v23 = Convert v22 declared={type=number site=w203} @20636
+    v23 = Convert v22 declared={type=number site=w208} @20636
     v24 = StrictEq v23, v23 @20674
     Branch v24 -> taken b8(| 0), notTaken b42(| 0) @20674
   b8(v25):
@@ -3585,14 +3599,14 @@ function f69 name="trySortNumbersInPlace" module=m5 position=20170 role=Library 
   b9():
     v26 = GetModuleVariable variable=g27 @20694
     v27 = Call v26, -, v0, v18, v11, v25 calleeName="isWritableBehindFirstStore" @20694
-    v28 = Convert v27 declared={type=boolean site=w204} @20694
+    v28 = Convert v27 declared={type=boolean site=w209} @20694
     v29 = ToBoolean v28 @20694
     Branch v29 -> taken b10(| 0), notTaken b41(| 0) @20694
   b10(v30):
     Jump -> next b11() @20694
   b11():
     v31 = Integer integer=1 @20787
-    v32 = Convert v31 declared={type=number site=w205} @20787
+    v32 = Convert v31 declared={type=number site=w210} @20787
     Jump -> next b12(v32) @20779
   b12(v33: number):
     LoopHint @20779
@@ -3606,13 +3620,13 @@ function f69 name="trySortNumbersInPlace" module=m5 position=20170 role=Library 
     v40 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @20860
     v41 = Convert v39 declared={type=int flags=[IsFromCompiler, IsClaim]} @20860
     v42 = GetOwnDoubleIndex v40, v41 @20860
-    v43 = Convert v42 declared={type=number site=w206} @20860
+    v43 = Convert v42 declared={type=number site=w211} @20860
     v44 = StrictEq v43, v43 @20904
     Branch v44 -> taken b15(| 0), notTaken b37(| 0) @20904
   b15(v45):
     Jump -> next b16() @20904
   b16():
-    v46 = Convert v39 declared={type=number site=w207} @20956
+    v46 = Convert v39 declared={type=number site=w212} @20956
     Jump -> next b17(v46) @20969
   b17(v47: number):
     LoopHint @20969
@@ -3631,7 +3645,7 @@ function f69 name="trySortNumbersInPlace" module=m5 position=20170 role=Library 
     v58 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @21023
     v59 = Convert v57 declared={type=int flags=[IsFromCompiler, IsClaim]} @21023
     v60 = GetOwnDoubleIndex v58, v59 @21023
-    v61 = Convert v60 declared={type=number site=w208} @21023
+    v61 = Convert v60 declared={type=number site=w213} @21023
     v62 = ToBoolean v1 @21084
     Branch v62 -> taken b20(| 0), notTaken b24(| 0) @21084
   b20(v63):
@@ -3660,7 +3674,7 @@ function f69 name="trySortNumbersInPlace" module=m5 position=20170 role=Library 
     v80 = Sub v53, v79 @21213
     v81 = Integer @21229
     v82 = BitOr v80, v81 @21213
-    v83 = Convert v82 declared={type=number site=w207} @21201
+    v83 = Convert v82 declared={type=number site=w212} @21201
     Jump -> next b17(v83) @21201
   b28(v84, v85):
     Jump -> next b29(v84) @21116
@@ -3692,7 +3706,7 @@ function f69 name="trySortNumbersInPlace" module=m5 position=20170 role=Library 
     v105 = Add v103, v104 @20814
     v106 = Integer @20827
     v107 = BitOr v105, v106 @20814
-    v108 = Convert v107 declared={type=number site=w205} @20805
+    v108 = Convert v107 declared={type=number site=w210} @20805
     Jump -> next b12(v108) @20805
   b37(v109):
     Jump -> next b38() @20904
@@ -3727,7 +3741,7 @@ function f69 name="trySortNumbersInPlace" module=m5 position=20170 role=Library 
     v125 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @21406
     v126 = Convert v124 declared={type=int flags=[IsFromCompiler, IsClaim]} @21406
     v127 = GetContiguousIndex v125, v126 @21406
-    v128 = Convert v127 declared={type=undefined|number site=w201} @21406
+    v128 = Convert v127 declared={type=undefined|number site=w206} @21406
     v129 = TypeTest v128 testedType=undefined @21463
     Branch v129 -> taken b48(| 0), notTaken b49(| 0) @21463
   b48(v130):
@@ -3738,14 +3752,14 @@ function f69 name="trySortNumbersInPlace" module=m5 position=20170 role=Library 
     v132 = GetModuleVariable variable=g27 @21487
     v133 = Convert v131 declared={type=number} illTypedCause=Assertion @21537
     v134 = Call v132, -, v0, v123, v11, v133 calleeName="isWritableBehindFirstStore" @21487
-    v135 = Convert v134 declared={type=boolean site=w209} @21487
+    v135 = Convert v134 declared={type=boolean site=w214} @21487
     v136 = ToBoolean v135 @21487
     Branch v136 -> taken b51(| 0), notTaken b82(| 0) @21487
   b51(v137):
     Jump -> next b52() @21487
   b52():
     v138 = Integer integer=1 @21578
-    v139 = Convert v138 declared={type=number site=w210} @21578
+    v139 = Convert v138 declared={type=number site=w215} @21578
     Jump -> next b53(v139) @21570
   b53(v140: number):
     LoopHint @21570
@@ -3759,7 +3773,7 @@ function f69 name="trySortNumbersInPlace" module=m5 position=20170 role=Library 
     v147 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @21643
     v148 = Convert v146 declared={type=int flags=[IsFromCompiler, IsClaim]} @21643
     v149 = GetContiguousIndex v147, v148 @21643
-    v150 = Convert v149 declared={type=undefined|number site=w211} @21643
+    v150 = Convert v149 declared={type=undefined|number site=w216} @21643
     v151 = TypeTest v150 testedType=undefined @21706
     Branch v151 -> taken b56(| 0), notTaken b58(| 0) @21706
   b56(v152):
@@ -3774,8 +3788,8 @@ function f69 name="trySortNumbersInPlace" module=m5 position=20170 role=Library 
     v156 = Convert v155 declared={type=number} illTypedCause=Assertion @21761
     v157 = Integer @21771
     v158 = BitOr v156, v157 @21761
-    v159 = Convert v158 declared={type=number site=w212} @21761
-    v160 = Convert v146 declared={type=number site=w213} @21793
+    v159 = Convert v158 declared={type=number site=w217} @21761
+    v160 = Convert v146 declared={type=number site=w218} @21793
     Jump -> next b60(v160) @21804
   b60(v161: number):
     LoopHint @21804
@@ -3796,7 +3810,7 @@ function f69 name="trySortNumbersInPlace" module=m5 position=20170 role=Library 
     v174 = GetOwnContiguousIndex v172, v173 @21848
     v175 = Integer @21908
     v176 = BitOr v174, v175 @21848
-    v177 = Convert v176 declared={type=number site=w214} @21848
+    v177 = Convert v176 declared={type=number site=w219} @21848
     v178 = ToBoolean v1 @21923
     Branch v178 -> taken b63(| 0), notTaken b67(| 0) @21923
   b63(v179):
@@ -3824,7 +3838,7 @@ function f69 name="trySortNumbersInPlace" module=m5 position=20170 role=Library 
     v195 = Sub v167, v194 @22052
     v196 = Integer @22068
     v197 = BitOr v195, v196 @22052
-    v198 = Convert v197 declared={type=number site=w213} @22040
+    v198 = Convert v197 declared={type=number site=w218} @22040
     Jump -> next b60(v198) @22040
   b71(v199, v200):
     Jump -> next b72(v199) @21955
@@ -3855,7 +3869,7 @@ function f69 name="trySortNumbersInPlace" module=m5 position=20170 role=Library 
     v219 = Add v217, v218 @21605
     v220 = Integer @21618
     v221 = BitOr v219, v220 @21605
-    v222 = Convert v221 declared={type=number site=w210} @21596
+    v222 = Convert v221 declared={type=number site=w215} @21596
     Jump -> next b53(v222) @21596
   b80(v223, v224):
     Jump -> next b81() @21581
@@ -3881,7 +3895,7 @@ function f70 name="sortByDifference" module=m5 position=22332 kind=Method role=L
     Jump -> next b1() @22332
   b1():
     v2 = PropGet v0 key="length" @22414
-    v3 = Convert v2 declared={type=number site=w215} illTypedCause=Assertion @22414
+    v3 = Convert v2 declared={type=number site=w220} illTypedCause=Assertion @22414
     v4 = Integer integer=2 @22429
     v5 = Less v3, v4 @22414
     Branch v5 -> taken b4(), notTaken b2() @22414
@@ -3889,7 +3903,7 @@ function f70 name="sortByDifference" module=m5 position=22332 kind=Method role=L
     v6 = GetModuleVariable variable=g28 @22434
     v7 = Boolean @22466
     v8 = Call v6, -, v0, v7 calleeName="trySortNumbersInPlace" @22434
-    v9 = Convert v8 declared={type=boolean site=w216} @22434
+    v9 = Convert v8 declared={type=boolean site=w221} @22434
     v10 = ToBoolean v9 @22434
     Branch v10 -> taken b3(| 0), notTaken b5(| 0) @22434
   b3(v11):
@@ -3909,7 +3923,7 @@ function f71 name="sortByReversedDifference" module=m5 position=22562 kind=Metho
     Jump -> next b1() @22562
   b1():
     v2 = PropGet v0 key="length" @22652
-    v3 = Convert v2 declared={type=number site=w217} illTypedCause=Assertion @22652
+    v3 = Convert v2 declared={type=number site=w222} illTypedCause=Assertion @22652
     v4 = Integer integer=2 @22667
     v5 = Less v3, v4 @22652
     Branch v5 -> taken b4(), notTaken b2() @22652
@@ -3917,7 +3931,7 @@ function f71 name="sortByReversedDifference" module=m5 position=22562 kind=Metho
     v6 = GetModuleVariable variable=g28 @22672
     v7 = Boolean boolean=true @22704
     v8 = Call v6, -, v0, v7 calleeName="trySortNumbersInPlace" @22672
-    v9 = Convert v8 declared={type=boolean site=w218} @22672
+    v9 = Convert v8 declared={type=boolean site=w223} @22672
     v10 = ToBoolean v9 @22672
     Branch v10 -> taken b3(| 0), notTaken b5(| 0) @22672
   b3(v11):
@@ -3932,7 +3946,135 @@ function f71 name="sortByReversedDifference" module=m5 position=22562 kind=Metho
     v15 = Call v14, v0, v1 @22734
     ReturnCall v15 casts=[{declared={type=undefined|null|Array site=w81 flags=[OmitsNull, OmitsUndefined]}}] @22734
 }
-function f72 name="clampToLength" module=m6 position=1253 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w219}, {type=number site=w220}] results=[{type=number site=w221}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f72 name="canSortWhereItLies" module=m5 position=22858 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array site=w82 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w83}] results=[{type=boolean site=w84}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|Array, v1: number):
+    Jump -> next b1() @22858
+  b1():
+    v2 = GetModuleVariable variable=g18 @22934
+    v3 = Call v2, -, v0 calleeName="isContiguousArray" @22934
+    v4 = Convert v3 declared={type=boolean site=w225} @22934
+    v5 = ToBoolean v4 @22934
+    Branch v5 -> taken b2(| 0), notTaken b18(| 0) @22934
+  b2(v6):
+    Jump -> next b3() @22934
+  b3():
+    v7 = Integer @23032
+    v8 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @22990
+    v9 = Convert v7 declared={type=int flags=[IsFromCompiler, IsClaim]} @22990
+    v10 = GetContiguousIndex v8, v9 @22990
+    v11 = Convert v10 declared={type=anything site=w224} illTypedCause=FromLooseType @22990
+    v12 = TypeTest v11 testedType=undefined @23042
+    Branch v12 -> taken b4(| 0), notTaken b6(| 0) @23042
+  b4(v13):
+    Jump -> next b5() @23042
+  b5():
+    v14 = Boolean @23070
+    v15 = Convert v14 declared={type=boolean site=w84} @23070
+    Return v15 @23070
+  b6(v16):
+    Jump -> next b7() @23042
+  b7():
+    v17 = Integer integer=1 @23096
+    v18 = Convert v17 declared={type=number site=w226} @23096
+    Jump -> next b8(v18) @23088
+  b8(v19: number):
+    LoopHint @23088
+    v21 = Convert v19 declared={type=i32 flags=[IsExpected]} @23099
+    v22 = Less v21, v1 @23099
+    Branch v22 -> taken b9(| 0, 1), notTaken b16(| 0, 1) @23099
+  b9(v23, v24):
+    Jump -> next b10() @23099
+  b10():
+    v25 = Convert v23 declared={type=i32 flags=[IsExpected]} @23191
+    v26 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @23149
+    v27 = Convert v25 declared={type=int flags=[IsFromCompiler, IsClaim]} @23149
+    v28 = GetContiguousIndex v26, v27 @23149
+    v29 = TypeTest v28 testedType=undefined @23149
+    Branch v29 -> taken b11(| 0), notTaken b13(| 0) @23149
+  b11(v30):
+    Jump -> next b12() @23149
+  b12():
+    v31 = Boolean @23220
+    v32 = Convert v31 declared={type=boolean site=w84} @23220
+    Return v32 @23220
+  b13(v33):
+    Jump -> next b14() @23149
+  b14():
+    Jump -> next b15() @23220
+  b15():
+    v34 = Integer integer=1 @23131
+    v35 = Add v25, v34 @23123
+    v36 = Integer @23136
+    v37 = BitOr v35, v36 @23123
+    v38 = Convert v37 declared={type=number site=w226} @23114
+    Jump -> next b8(v38) @23114
+  b16(v39, v40):
+    Jump -> next b17() @23099
+  b17():
+    v41 = Integer @23260
+    v42 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @23240
+    v43 = Convert v41 declared={type=int flags=[IsFromCompiler, IsClaim]} @23240
+    v44 = TryPutIndex v42, v43, v16 @23240
+    v45 = Convert v44 declared={type=boolean site=w84} @23240
+    Return v45 @23240
+  b18(v46):
+    Jump -> next b19() @22934
+  b19():
+    v47 = Boolean @22967
+    v48 = Convert v47 declared={type=boolean site=w84} @22967
+    Return v48 @22967
+}
+function f73 name="sortWhereNobodySeesTheComparator" module=m5 position=23679 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 enclosingRuntimeFunction=ArraySortSortWhereNobodySeesTheComparator thisType={type=anything} parameters=[{type=undefined|null|Array site=w85 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=undefined|null|Array site=w86 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|Array, v1: anything):
+    Jump -> next b1() @23679
+  b1():
+    v2 = Integer integer=8 @23797
+    v3 = Convert v2 declared={type=8 site=w227} @23797
+    v4 = PropGet v0 key="length" @23816
+    v5 = Convert v4 declared={type=number site=w229} illTypedCause=Assertion @23816
+    v6 = Integer @23831
+    v7 = BitOr v5, v6 @23816
+    v8 = Convert v7 declared={type=number site=w228} @23816
+    v9 = Integer integer=2 @23848
+    v10 = Less v8, v9 @23840
+    Branch v10 -> taken b2(| 0), notTaken b4(| 0) @23840
+  b2(v11):
+    Jump -> next b3() @23840
+  b3():
+    v12 = Convert v0 declared={type=undefined|null|Array site=w86 flags=[OmitsNull, OmitsUndefined]} @23858
+    Return v12 @23858
+  b4(v13):
+    Jump -> next b5() @23840
+  b5():
+    v14 = GreaterEq v13, v3 @23871
+    Branch v14 -> taken b6(| 0, 1), notTaken b7(| 0, 1) @23871
+  b6(v15, v16):
+    Jump -> next b12() @23871
+  b7(v17, v18):
+    Jump -> next b8() @23871
+  b8():
+    v19 = GetModuleVariable variable=g30 @23900
+    v20 = Call v19, -, v0, v17 calleeName="canSortWhereItLies" @23900
+    v21 = Convert v20 declared={type=boolean site=w230} @23900
+    v22 = ToBoolean v21 @23900
+    Branch v22 -> taken b9(| 0), notTaken b11(| 0) @23900
+  b9(v23):
+    Jump -> next b10() @23900
+  b10():
+    v24 = GetModuleVariable variable=g13 @23983
+    v25 = Integer @24006
+    v26 = Call v24, -, v0, v25, v17, v1 calleeName="findValueRun" @23983
+    v27 = Convert v26 declared={type=number site=w231} @23983
+    v28 = Convert v0 declared={type=undefined|null|Array site=w86 flags=[OmitsNull, OmitsUndefined]} @24038
+    Return v28 @24038
+  b11(v29):
+    Jump -> next b12() @23900
+  b12():
+    v30 = GetModuleVariable variable=g29 @23955
+    v31 = Call v30, v0, v1 @23944
+    ReturnCall v31 casts=[{declared={type=undefined|null|Array site=w86 flags=[OmitsNull, OmitsUndefined]}}] @23944
+}
+function f74 name="clampToLength" module=m6 position=1253 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w232}, {type=number site=w233}] results=[{type=number site=w234}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: number, v1: number):
     Jump -> next b1() @1253
   b1():
@@ -3943,7 +4085,7 @@ function f72 name="clampToLength" module=m6 position=1253 role=Library flags=[Is
     Jump -> next b3() @1326
   b3():
     v5 = Add v1, v4 @1362
-    v6 = Convert v5 declared={type=number site=w243} @1362
+    v6 = Convert v5 declared={type=number site=w256} @1362
     v7 = Integer @1402
     v8 = Less v6, v7 @1392
     Branch v8 -> taken b4(| 0), notTaken b6(| 0) @1392
@@ -3959,7 +4101,7 @@ function f72 name="clampToLength" module=m6 position=1253 role=Library flags=[Is
     v13 = URShift v11, v12 @1410
     Jump -> next b8(v13) @1410
   b8(v14):
-    v15 = Convert v14 declared={type=number site=w221} @1410
+    v15 = Convert v14 declared={type=number site=w234} @1410
     Return v15 @1410
   b9(v16):
     Jump -> next b10() @1326
@@ -3977,17 +4119,17 @@ function f72 name="clampToLength" module=m6 position=1253 role=Library flags=[Is
   b15(v22):
     v23 = Integer @1482
     v24 = URShift v22, v23 @1431
-    v25 = Convert v24 declared={type=number site=w221} @1431
+    v25 = Convert v24 declared={type=number site=w234} @1431
     Return v25 @1431
 }
-function f73 name="storeInNewArray" module=m6 position=1488 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w222 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w223}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f75 name="storeInNewArray" module=m6 position=1488 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w235 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w236}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|Array, v1: number, v2: anything):
     Jump -> next b1() @1488
   b1():
     v3 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @1599
     v4 = Convert v1 declared={type=int flags=[IsFromCompiler, IsClaim]} @1599
     v5 = TryPutByValDirect v3, v4, v2 @1599
-    v6 = Convert v5 declared={type=boolean site=w244} @1599
+    v6 = Convert v5 declared={type=boolean site=w257} @1599
     v7 = ToBoolean v6 @1648
     Branch v7 -> taken b2(| 0), notTaken b3(| 0) @1648
   b2(v8):
@@ -4001,14 +4143,14 @@ function f73 name="storeInNewArray" module=m6 position=1488 role=Library flags=[
     v11 = Undefined @1658
     Return v11 @1658
 }
-function f74 name="storeInArrayOfAnyKind" module=m6 position=1794 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w224 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w225}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f76 name="storeInArrayOfAnyKind" module=m6 position=1794 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w237 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w238}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|Array, v1: number, v2: anything):
     Jump -> next b1() @1794
   b1():
     v3 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @1911
     v4 = Convert v1 declared={type=int flags=[IsFromCompiler, IsClaim]} @1911
     v5 = TryPutIndex v3, v4, v2 @1911
-    v6 = Convert v5 declared={type=boolean site=w245} @1911
+    v6 = Convert v5 declared={type=boolean site=w258} @1911
     v7 = ToBoolean v6 @1954
     Branch v7 -> taken b2(| 0), notTaken b3(| 0) @1954
   b2(v8):
@@ -4022,13 +4164,13 @@ function f74 name="storeInArrayOfAnyKind" module=m6 position=1794 role=Library f
     v11 = Undefined @1964
     Return v11 @1964
 }
-function f75 name="appendList" module=m6 position=2081 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|Array site=w226 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w227}, {type=undefined|null|Array site=w228 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w229}] results=[{type=number site=w230}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f77 name="appendList" module=m6 position=2081 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|Array site=w239 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w240}, {type=undefined|null|Array site=w241 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w242}] results=[{type=number site=w243}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|Array, v1: number, v2: undefined|null|Array, v3: number):
     Jump -> next b1() @2081
   b1():
     v4 = Integer @2201
     v5 = URShift v1, v4 @2191
-    v6 = Convert v5 declared={type=number site=w246} @2191
+    v6 = Convert v5 declared={type=number site=w259} @2191
     v7 = HasJSType v2 @2296
     v8 = ToBoolean v7 @2296
     Branch v8 -> taken b2(| 0), notTaken b4(| 0) @2296
@@ -4044,9 +4186,9 @@ function f75 name="appendList" module=m6 position=2081 role=Library flags=[IsChe
     v13 = Integer integer=-1 @2341
     Jump -> next b6(v13) @2341
   b6(v14):
-    v15 = Convert v14 declared={type=number site=w247} @2296
+    v15 = Convert v14 declared={type=number site=w260} @2296
     v16 = Integer @2359
-    v17 = Convert v16 declared={type=number site=w248} @2359
+    v17 = Convert v16 declared={type=number site=w261} @2359
     v18 = Integer integer=3 @2518
     v19 = StrictEq v15, v18 @2509
     Branch v19 -> taken b7(| 0), notTaken b8(| 0) @2509
@@ -4063,7 +4205,7 @@ function f75 name="appendList" module=m6 position=2081 role=Library flags=[IsChe
   b11():
     v25 = Add v6, v3 @2584
     v26 = PropGet v0 key="length" @2603
-    v27 = Convert v26 declared={type=number site=w249} illTypedCause=Assertion @2603
+    v27 = Convert v26 declared={type=number site=w262} illTypedCause=Assertion @2603
     v28 = Greater v25, v27 @2584
     Branch v28 -> taken b12(), notTaken b13() @2584
   b12():
@@ -4092,7 +4234,7 @@ function f75 name="appendList" module=m6 position=2081 role=Library flags=[IsChe
   b17(v46):
     Jump -> next b18() @2681
   b18():
-    v47 = GetModuleVariable variable=g30 @2732
+    v47 = GetModuleVariable variable=g31 @2732
     v48 = Convert v2 declared={type=Array flags=[IsFromCompiler, IsClaim]} @2769
     v49 = Convert v41 declared={type=int flags=[IsFromCompiler, IsClaim]} @2769
     v50 = GetContiguousIndex v48, v49 @2769
@@ -4101,11 +4243,11 @@ function f75 name="appendList" module=m6 position=2081 role=Library flags=[IsChe
     v53 = Add v34, v52 @2831
     v54 = Integer @2849
     v55 = URShift v53, v54 @2831
-    v56 = Convert v55 declared={type=number site=w246} @2819
+    v56 = Convert v55 declared={type=number site=w259} @2819
     Jump -> next b19() @2819
   b19():
     v57 = Increment v41 @2831
-    v58 = Convert v57 declared={type=number site=w248} @2715
+    v58 = Convert v57 declared={type=number site=w261} @2715
     Jump -> next b14(v56, v58) @2715
   b20(v59):
     Jump -> next b22(v40, v41) @2681
@@ -4124,7 +4266,7 @@ function f75 name="appendList" module=m6 position=2081 role=Library flags=[IsChe
   b26():
     v68 = Add v6, v3 @2911
     v69 = PropGet v0 key="length" @2930
-    v70 = Convert v69 declared={type=number site=w250} illTypedCause=Assertion @2930
+    v70 = Convert v69 declared={type=number site=w263} illTypedCause=Assertion @2930
     v71 = Greater v68, v70 @2911
     Branch v71 -> taken b27(), notTaken b28() @2911
   b27():
@@ -4148,23 +4290,23 @@ function f75 name="appendList" module=m6 position=2081 role=Library flags=[IsChe
     v85 = Convert v2 declared={type=Array flags=[IsFromCompiler, IsClaim]} @3037
     v86 = Convert v84 declared={type=int flags=[IsFromCompiler, IsClaim]} @3037
     v87 = GetDoubleIndex v85, v86 @3037
-    v88 = Convert v87 declared={type=number site=w251} @3037
+    v88 = Convert v87 declared={type=number site=w264} @3037
     v89 = StrictEq v88, v88 @3077
     Branch v89 -> taken b32(| 0), notTaken b35(| 0) @3077
   b32(v90):
     Jump -> next b33() @3077
   b33():
-    v91 = GetModuleVariable variable=g30 @3107
+    v91 = GetModuleVariable variable=g31 @3107
     v92 = Call v91, -, v0, v77, v90 calleeName="storeInArrayOfAnyKind" @3107
     v93 = Integer integer=1 @3181
     v94 = Add v77, v93 @3170
     v95 = Integer @3188
     v96 = URShift v94, v95 @3170
-    v97 = Convert v96 declared={type=number site=w246} @3158
+    v97 = Convert v96 declared={type=number site=w259} @3158
     Jump -> next b34() @3158
   b34():
     v98 = Increment v84 @3170
-    v99 = Convert v98 declared={type=number site=w248} @3006
+    v99 = Convert v98 declared={type=number site=w261} @3006
     Jump -> next b29(v97, v99) @3006
   b35(v100):
     Jump -> next b36() @3077
@@ -4196,7 +4338,7 @@ function f75 name="appendList" module=m6 position=2081 role=Library flags=[IsChe
     Jump -> next b46() @3246
   b46():
     v123 = PropGet v0 key="length" @3292
-    v124 = Convert v123 declared={type=number site=w252} illTypedCause=Assertion @3292
+    v124 = Convert v123 declared={type=number site=w265} illTypedCause=Assertion @3292
     v125 = GreaterEq v112, v124 @3280
     Branch v125 -> taken b47(| 0), notTaken b49(| 0) @3280
   b47(v126):
@@ -4210,14 +4352,14 @@ function f75 name="appendList" module=m6 position=2081 role=Library flags=[IsChe
   b49(v131):
     Jump -> next b50(v131) @3280
   b50(v132: number):
-    v133 = GetModuleVariable variable=g30 @3338
+    v133 = GetModuleVariable variable=g31 @3338
     v134 = ElemGet v2, v119 @3375
     v135 = Call v133, -, v0, v132, v134 calleeName="storeInArrayOfAnyKind" @3338
     v136 = Integer integer=1 @3416
     v137 = Add v132, v136 @3405
     v138 = Integer @3423
     v139 = URShift v137, v138 @3405
-    v140 = Convert v139 declared={type=number site=w246} @3393
+    v140 = Convert v139 declared={type=number site=w259} @3393
     Jump -> next b53(v140) @3393
   b51(v141):
     Jump -> next b52() @3246
@@ -4225,15 +4367,15 @@ function f75 name="appendList" module=m6 position=2081 role=Library flags=[IsChe
     Jump -> next b53(v112) @3262
   b53(v142: number):
     v143 = Increment v119 @3405
-    v144 = Convert v143 declared={type=number site=w248} @3225
+    v144 = Convert v143 declared={type=number site=w261} @3225
     Jump -> next b42(v142, v144) @3225
   b54(v145, v146):
     Jump -> next b55() @3210
   b55():
-    v147 = Convert v112 declared={type=number site=w230} @3439
+    v147 = Convert v112 declared={type=number site=w243} @3439
     Return v147 @3439
 }
-function f76 name="joinedText" module=m6 position=3452 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=w231 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f78 name="joinedText" module=m6 position=3452 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=w244 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1() @3452
   b1():
@@ -4257,10 +4399,10 @@ function f76 name="joinedText" module=m6 position=3452 role=Library flags=[IsChe
     v8 = ToString v7 @3555
     Jump -> next b9(v8) @3555
   b9(v9):
-    v10 = Convert v9 declared={type=undefined|null|string site=w231 flags=[OmitsNull, OmitsUndefined]} @3555
+    v10 = Convert v9 declared={type=undefined|null|string site=w244 flags=[OmitsNull, OmitsUndefined]} @3555
     Return v10 @3555
 }
-function f77 name="finishJoin" module=m6 position=3567 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string site=w232 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w233 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w234}, {type=number site=w235}] results=[{type=undefined|null|string site=w236 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f79 name="finishJoin" module=m6 position=3567 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string site=w245 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w246 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w247}, {type=number site=w248}] results=[{type=undefined|null|string site=w249 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|string, v1: undefined|null|string, v2: number, v3: number):
     Jump -> next b1() @3567
   b1():
@@ -4275,19 +4417,19 @@ function f77 name="finishJoin" module=m6 position=3567 role=Library flags=[IsChe
     Jump -> next b4() @3674
   b4():
     v11 = Add v4, v1 @3720
-    v12 = Convert v11 declared={type=undefined|null|string site=w232 flags=[OmitsNull, OmitsUndefined]} @3712
+    v12 = Convert v11 declared={type=undefined|null|string site=w245 flags=[OmitsNull, OmitsUndefined]} @3712
     Jump -> next b5() @3712
   b5():
     v13 = Increment v5 @3720
-    v14 = Convert v13 declared={type=number site=w234} @3698
+    v14 = Convert v13 declared={type=number site=w247} @3698
     Jump -> next b2(v12, v14) @3698
   b6(v15):
     Jump -> next b7() @3674
   b7():
-    v16 = Convert v4 declared={type=undefined|null|string site=w236 flags=[OmitsNull, OmitsUndefined]} @3740
+    v16 = Convert v4 declared={type=undefined|null|string site=w249 flags=[OmitsNull, OmitsUndefined]} @3740
     Return v16 @3740
 }
-function f78 name="finishReduce" module=m6 position=3749 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w237}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f80 name="finishReduce" module=m6 position=3749 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w250}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: boolean, v1: anything):
     Jump -> next b1() @3749
   b1():
@@ -4306,63 +4448,63 @@ function f78 name="finishReduce" module=m6 position=3749 role=Library flags=[IsC
     v8 = Convert v7 declared={type=undefined|null|TypeError flags=[IsExpected, OmitsNull, OmitsUndefined]} @3858
     Throw v8 @3917
 }
-function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=ArrayTraversalTraverseArray thisType={type=anything} parameters=[{type=undefined|null|Array site=w238 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w239}, {type=undefined|number site=w240}, {type=number site=w241}, {type=undefined|null|Array site=w242 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f81 name="traverseArray" module=m6 position=3970 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=ArrayTraversalTraverseArray thisType={type=anything} parameters=[{type=undefined|null|Array site=w251 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w252}, {type=undefined|number site=w253}, {type=number site=w254}, {type=undefined|null|Array site=w255 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|Array, v1: number, v2: undefined|number, v3: number, v4: undefined|null|Array, v5: anything):
     Jump -> next b1() @3970
   b1():
     v6 = Integer integer=1 @4156
-    v7 = Convert v6 declared={type=1 site=w253} @4156
+    v7 = Convert v6 declared={type=1 site=w266} @4156
     v8 = Integer integer=2 @4180
-    v9 = Convert v8 declared={type=2 site=w254} @4180
+    v9 = Convert v8 declared={type=2 site=w267} @4180
     v10 = Integer @4202
-    v11 = Convert v10 declared={type=0 site=w255} @4202
+    v11 = Convert v10 declared={type=0 site=w268} @4202
     v12 = Integer integer=1 @4225
-    v13 = Convert v12 declared={type=1 site=w256} @4225
+    v13 = Convert v12 declared={type=1 site=w269} @4225
     v14 = Integer integer=2 @4249
-    v15 = Convert v14 declared={type=2 site=w257} @4249
+    v15 = Convert v14 declared={type=2 site=w270} @4249
     v16 = Integer integer=3 @4272
-    v17 = Convert v16 declared={type=3 site=w258} @4272
+    v17 = Convert v16 declared={type=3 site=w271} @4272
     v18 = Integer integer=4 @4293
-    v19 = Convert v18 declared={type=4 site=w259} @4293
+    v19 = Convert v18 declared={type=4 site=w272} @4293
     v20 = Integer integer=5 @4315
-    v21 = Convert v20 declared={type=5 site=w260} @4315
+    v21 = Convert v20 declared={type=5 site=w273} @4315
     v22 = Integer integer=6 @4336
-    v23 = Convert v22 declared={type=6 site=w261} @4336
+    v23 = Convert v22 declared={type=6 site=w274} @4336
     v24 = Integer integer=7 @4362
-    v25 = Convert v24 declared={type=7 site=w262} @4362
+    v25 = Convert v24 declared={type=7 site=w275} @4362
     v26 = Integer integer=8 @4383
-    v27 = Convert v26 declared={type=8 site=w263} @4383
+    v27 = Convert v26 declared={type=8 site=w276} @4383
     v28 = Integer integer=9 @4407
-    v29 = Convert v28 declared={type=9 site=w264} @4407
+    v29 = Convert v28 declared={type=9 site=w277} @4407
     v30 = Integer integer=15 @4428
-    v31 = Convert v30 declared={type=15 site=w265} @4428
+    v31 = Convert v30 declared={type=15 site=w278} @4428
     v32 = Integer integer=3 @4451
-    v33 = Convert v32 declared={type=3 site=w266} @4451
+    v33 = Convert v32 declared={type=3 site=w279} @4451
     v34 = Integer integer=4 @4479
-    v35 = Convert v34 declared={type=4 site=w267} @4479
+    v35 = Convert v34 declared={type=4 site=w280} @4479
     v36 = Integer integer=6 @4508
-    v37 = Convert v36 declared={type=6 site=w268} @4508
+    v37 = Convert v36 declared={type=6 site=w281} @4508
     v38 = Integer integer=8 @4536
-    v39 = Convert v38 declared={type=8 site=w269} @4536
+    v39 = Convert v38 declared={type=8 site=w282} @4536
     v40 = Integer integer=10 @4570
-    v41 = Convert v40 declared={type=10 site=w270} @4570
+    v41 = Convert v40 declared={type=10 site=w283} @4570
     v42 = Integer integer=11 @4608
-    v43 = Convert v42 declared={type=11 site=w271} @4608
+    v43 = Convert v42 declared={type=11 site=w284} @4608
     v44 = Integer integer=6 @4639
-    v45 = Convert v44 declared={type=6 site=w272} @4639
+    v45 = Convert v44 declared={type=6 site=w285} @4639
     v46 = Integer integer=3 @4668
-    v47 = Convert v46 declared={type=3 site=w273} @4668
+    v47 = Convert v46 declared={type=3 site=w286} @4668
     v48 = BitAnd v3, v31 @4690
-    v49 = Convert v48 declared={type=number site=w274} @4690
+    v49 = Convert v48 declared={type=number site=w287} @4690
     v50 = RShift v3, v35 @4728
     v51 = BitAnd v50, v33 @4728
-    v52 = Convert v51 declared={type=number site=w275} @4727
+    v52 = Convert v51 declared={type=number site=w288} @4727
     v53 = RShift v3, v37 @4787
     v54 = BitAnd v53, v33 @4787
-    v55 = Convert v54 declared={type=number site=w276} @4786
+    v55 = Convert v54 declared={type=number site=w289} @4786
     v56 = RShift v3, v39 @4846
     v57 = BitAnd v56, v33 @4846
-    v58 = Convert v57 declared={type=number site=w277} @4845
+    v58 = Convert v57 declared={type=number site=w290} @4845
     v59 = StrictEq v52, v9 @4901
     v60 = ToBoolean v59 @4901
     Branch v60 -> taken b2(| 0), notTaken b3(| 0) @4901
@@ -4384,7 +4526,7 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
     v68 = StrictEq v58, v9 @4901
     Jump -> next b9(v68) @4901
   b9(v69):
-    v70 = Convert v69 declared={type=boolean site=w278} @4901
+    v70 = Convert v69 declared={type=boolean site=w291} @4901
     v71 = ToBoolean v70 @5006
     v72 = LogicalNot v71 @5006
     v73 = ToBoolean v72 @5006
@@ -4407,13 +4549,13 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
   b16(v81):
     Jump -> next b17(v81) @5006
   b17(v82):
-    v83 = Convert v82 declared={type=boolean site=w279} @5006
+    v83 = Convert v82 declared={type=boolean site=w292} @5006
     v84 = RShift v3, v43 @5100
     v85 = Integer integer=1 @5136
     v86 = BitAnd v84, v85 @5100
     v87 = Integer integer=1 @5143
     v88 = StrictEq v86, v87 @5077
-    v89 = Convert v88 declared={type=boolean site=w280} @5098
+    v89 = Convert v88 declared={type=boolean site=w293} @5098
     v90 = Integer integer=6 @5168
     v91 = ElemGet v4, v90 @5168
     v92 = Integer integer=1 @5242
@@ -4422,7 +4564,7 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
     v95 = Integer integer=7 @5214
     v96 = ElemGet v4, v95 @5214
     v97 = PropGet v0 key="length" @5264
-    v98 = Convert v97 declared={type=number site=w293} illTypedCause=Assertion @5264
+    v98 = Convert v97 declared={type=number site=w306} illTypedCause=Assertion @5264
     v99 = Integer @5304
     v100 = StrictEq v1, v99 @5294
     Branch v100 -> taken b18(| 0), notTaken b20(| 0) @5294
@@ -4434,12 +4576,12 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
   b20(v103):
     Jump -> next b21() @5294
   b21():
-    v104 = GetModuleVariable variable=g31 @5312
+    v104 = GetModuleVariable variable=g32 @5312
     v105 = Call v104, -, v103, v98 calleeName="clampToLength" @5312
-    v106 = Convert v105 declared={type=number site=w294} @5312
+    v106 = Convert v105 declared={type=number site=w307} @5312
     Jump -> next b22(v106) @5312
   b22(v107):
-    v108 = Convert v107 declared={type=number site=w281} @5294
+    v108 = Convert v107 declared={type=number site=w294} @5294
     v109 = TypeTest v2 testedType=undefined @5357
     Branch v109 -> taken b23(| 0), notTaken b25(| 0) @5357
   b23(v110):
@@ -4449,13 +4591,13 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
   b25(v111):
     Jump -> next b26() @5357
   b26():
-    v112 = GetModuleVariable variable=g31 @5386
+    v112 = GetModuleVariable variable=g32 @5386
     v113 = Convert v111 declared={type=number} illTypedCause=Assertion @5400
     v114 = Call v112, -, v113, v98 calleeName="clampToLength" @5386
-    v115 = Convert v114 declared={type=number site=w295} @5386
+    v115 = Convert v114 declared={type=number site=w308} @5386
     Jump -> next b27(v115) @5386
   b27(v116):
-    v117 = Convert v116 declared={type=number site=w282} @5357
+    v117 = Convert v116 declared={type=number site=w295} @5357
     v118 = Integer @5440
     v119 = StrictEq v108, v118 @5430
     Branch v119 -> taken b28(| 0), notTaken b30(| 0) @5430
@@ -4479,25 +4621,25 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
     v128 = Integer @5481
     Jump -> next b36(v128, v127, v126) @5481
   b36(v129, v130: number, v131: number):
-    v132 = Convert v129 declared={type=number site=w283} @5430
+    v132 = Convert v129 declared={type=number site=w296} @5430
     v133 = Integer @5505
-    v134 = Convert v133 declared={type=number site=w284} @5505
+    v134 = Convert v133 declared={type=number site=w297} @5505
     v135 = Integer @5529
-    v136 = Convert v135 declared={type=number site=w285} @5529
+    v136 = Convert v135 declared={type=number site=w298} @5529
     v137 = Integer @5552
-    v138 = Convert v137 declared={type=number site=w286} @5552
+    v138 = Convert v137 declared={type=number site=w299} @5552
     v139 = Integer @5571
-    v140 = Convert v139 declared={type=number site=w287} @5571
+    v140 = Convert v139 declared={type=number site=w300} @5571
     v141 = RShift v3, v41 @5628
     v142 = Integer integer=1 @5661
     v143 = BitAnd v141, v142 @5628
     v144 = Integer integer=1 @5668
     v145 = StrictEq v143, v144 @5609
-    v146 = Convert v145 declared={type=boolean site=w288} @5626
+    v146 = Convert v145 declared={type=boolean site=w301} @5626
     v147 = String string="" @5684
-    v148 = Convert v147 declared={type=undefined|null|string site=w289 flags=[OmitsNull, OmitsUndefined]} @5684
+    v148 = Convert v147 declared={type=undefined|null|string site=w302 flags=[OmitsNull, OmitsUndefined]} @5684
     v149 = Undefined @5723
-    v150 = Convert v149 declared={type=undefined|null|Array site=w290 flags=[OmitsNull]} @5723
+    v150 = Convert v149 declared={type=undefined|null|Array site=w303 flags=[OmitsNull]} @5723
     v151 = Integer @5752
     v152 = Integer @5752
     v153 = StrictEq v49, v151 @5740
@@ -4514,7 +4656,7 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
   b41():
     v158 = Convert v132 declared={type=int flags=[IsFromCompiler, IsClaim]} @5780
     v159 = NewArrayLike v158, v0 @5780
-    v160 = Convert v159 declared={type=undefined|null|Array site=w290 flags=[OmitsNull]} @5774
+    v160 = Convert v159 declared={type=undefined|null|Array site=w303 flags=[OmitsNull]} @5774
     Jump -> next b53(v154, v160, v29, v157) @5774
   b42(v161):
     Jump -> next b43(v161, v70) @5740
@@ -4528,7 +4670,7 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
   b45():
     v168 = Convert v132 declared={type=int flags=[IsFromCompiler, IsClaim]} @5857
     v169 = NewArrayWithCapacity v168, v0 @5857
-    v170 = Convert v169 declared={type=undefined|null|Array site=w290 flags=[OmitsNull]} @5851
+    v170 = Convert v169 declared={type=undefined|null|Array site=w303 flags=[OmitsNull]} @5851
     Jump -> next b52(v167, v170, v29) @5851
   b46(v171):
     Jump -> next b47() @5829
@@ -4543,7 +4685,7 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
     v177 = URShift v175, v176 @6073
     v178 = Convert v177 declared={type=int flags=[IsFromCompiler, IsClaim]} @6041
     v179 = NewArrayWithCapacity v178, v0 @6041
-    v180 = Convert v179 declared={type=undefined|null|Array site=w290 flags=[OmitsNull]} @6035
+    v180 = Convert v179 declared={type=undefined|null|Array site=w303 flags=[OmitsNull]} @6035
     Jump -> next b51(v173, v180, v174) @6035
   b50(v181, v182):
     Jump -> next b51(v181, v150, v182) @6011
@@ -4552,7 +4694,7 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
   b52(v186: number, v187: undefined|null|Array, v188: 9):
     Jump -> next b53(v186, v187, v188, v163) @6035
   b53(v189: number, v190: undefined|null|Array, v191: 9, v192: boolean):
-    v193 = Convert v130 declared={type=number site=w291} @6277
+    v193 = Convert v130 declared={type=number site=w304} @6277
     Jump -> next b54(v134, v136, v138, v140, v5, v146, v148, v193) @6295
   b54(v194: number, v195: number, v196: number, v197: number, v198, v199: boolean, v200: undefined|null|string, v201: number):
     LoopHint @6295
@@ -4567,7 +4709,7 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
     Jump -> next b58() @6317
   b58():
     v215 = Sub v213, v130 @6366
-    v216 = Convert v215 declared={type=number site=w296} @6366
+    v216 = Convert v215 declared={type=number site=w309} @6366
     v217 = ElemHas v0, v213 @6408
     v218 = ToBoolean v217 @6396
     Branch v218 -> taken b59(| 0), notTaken b219(| 0) @6396
@@ -4604,12 +4746,12 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
   b67(v240):
     Jump -> next b68() @6790
   b68():
-    v241 = Convert v203 declared={type=number site=w296} @6871
+    v241 = Convert v203 declared={type=number site=w309} @6871
     v242 = Integer integer=1 @6923
     v243 = Add v241, v242 @6915
     v244 = Integer @6930
     v245 = URShift v243, v244 @6915
-    v246 = Convert v245 declared={type=number site=w284} @6900
+    v246 = Convert v245 declared={type=number site=w297} @6900
     Jump -> next b72(v241, v233, v246) @6900
   b69(v247):
     Jump -> next b70() @6790
@@ -4649,12 +4791,12 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
   b80(v277):
     Jump -> next b81() @7096
   b81():
-    v278 = Convert v204 declared={type=number site=w296} @7170
+    v278 = Convert v204 declared={type=number site=w309} @7170
     v279 = Integer integer=1 @7224
     v280 = Add v278, v279 @7216
     v281 = Integer @7231
     v282 = URShift v280, v281 @7216
-    v283 = Convert v282 declared={type=number site=w285} @7200
+    v283 = Convert v282 declared={type=number site=w298} @7200
     Jump -> next b85(v278, v270, v283) @7200
   b82(v284):
     Jump -> next b83() @7096
@@ -4694,12 +4836,12 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
   b93(v314):
     Jump -> next b94() @7395
   b94():
-    v315 = Convert v205 declared={type=number site=w296} @7469
+    v315 = Convert v205 declared={type=number site=w309} @7469
     v316 = Integer integer=1 @7521
     v317 = Add v315, v316 @7513
     v318 = Integer @7528
     v319 = URShift v317, v318 @7513
-    v320 = Convert v319 declared={type=number site=w286} @7498
+    v320 = Convert v319 declared={type=number site=w299} @7498
     Jump -> next b98(v315, v320) @7498
   b95(v321):
     Jump -> next b96() @7395
@@ -4720,7 +4862,7 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
     v333 = Convert v190 declared={type=Array flags=[IsFromCompiler, IsClaim]} @7608
     v334 = Convert v326 declared={type=int flags=[IsFromCompiler, IsClaim]} @7608
     v335 = TryPutByValDirect v333, v334, v327 @7608
-    v336 = Convert v335 declared={type=boolean site=w297} @7608
+    v336 = Convert v335 declared={type=boolean site=w310} @7608
     v337 = ToBoolean v336 @7661
     Branch v337 -> taken b102(| 0), notTaken b104(| 0) @7661
   b102(v338):
@@ -4735,7 +4877,7 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
     v342 = Add v213, v341 @7726
     v343 = Integer @7744
     v344 = URShift v342, v343 @7726
-    v345 = Convert v344 declared={type=number site=w291} @7714
+    v345 = Convert v344 declared={type=number site=w304} @7714
     Jump -> next b106() @7757
   b106():
     Jump -> next b54(v257, v294, v328, v206, v207, v208, v209, v345) @9935
@@ -4780,7 +4922,7 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
     Jump -> next b123(v327) @8073
   b123(v366):
     v367 = Boolean boolean=true @8105
-    v368 = Convert v367 declared={type=boolean site=w288} @8088
+    v368 = Convert v367 declared={type=boolean site=w301} @8088
     Jump -> next b207(v206, v366, v368, v209) @8088
   b124(v369, v370):
     Jump -> next b125() @7941
@@ -4876,22 +5018,22 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
   b161(v416, v417):
     Jump -> next b162() @8644
   b162():
-    v418 = Convert v5 declared={type=undefined|null|string site=w298 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @8680
+    v418 = Convert v5 declared={type=undefined|null|string site=w311 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @8680
     v419 = Add v413, v418 @8680
-    v420 = Convert v419 declared={type=undefined|null|string site=w289 flags=[OmitsNull, OmitsUndefined]} @8672
+    v420 = Convert v419 declared={type=undefined|null|string site=w302 flags=[OmitsNull, OmitsUndefined]} @8672
     Jump -> next b163() @8672
   b163():
     v421 = Increment v416 @8680
-    v422 = Convert v421 declared={type=number site=w287} @8661
+    v422 = Convert v421 declared={type=number site=w300} @8661
     Jump -> next b160(v422, v420) @8661
   b164(v423, v424):
     Jump -> next b165() @8644
   b165():
-    v425 = GetModuleVariable variable=g32 @8715
+    v425 = GetModuleVariable variable=g33 @8715
     v426 = Call v425, -, v327 calleeName="joinedText" @8715
-    v427 = Convert v426 declared={type=undefined|null|string site=w299 flags=[OmitsNull, OmitsUndefined]} @8715
+    v427 = Convert v426 declared={type=undefined|null|string site=w312 flags=[OmitsNull, OmitsUndefined]} @8715
     v428 = Add v413, v427 @8715
-    v429 = Convert v428 declared={type=undefined|null|string site=w289 flags=[OmitsNull, OmitsUndefined]} @8707
+    v429 = Convert v428 declared={type=undefined|null|string site=w302 flags=[OmitsNull, OmitsUndefined]} @8707
     Jump -> next b202(v423, v429) @8707
   b166(v430, v431):
     Jump -> next b167() @8606
@@ -4907,9 +5049,9 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
   b169():
     v438 = Convert v432 declared={type=undefined|null|Array} illTypedCause=Assertion @9091
     v439 = PropGet v438 key="length" @9091
-    v440 = Convert v439 declared={type=number site=w302} illTypedCause=Assertion @9091
+    v440 = Convert v439 declared={type=number site=w315} illTypedCause=Assertion @9091
     v441 = ToLength v440 @9081
-    v442 = Convert v441 declared={type=number site=w300} @9081
+    v442 = Convert v441 declared={type=number site=w313} @9081
     v443 = Integer @9128
     v444 = StrictEq v442, v443 @9118
     Branch v444 -> taken b170(| 0), notTaken b172(| 0) @9118
@@ -4934,7 +5076,7 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
   b178():
     v454 = Add v206, v452 @9422
     v455 = PropGet v190 key="length" @9440
-    v456 = Convert v455 declared={type=number site=w304} illTypedCause=Assertion @9440
+    v456 = Convert v455 declared={type=number site=w317} illTypedCause=Assertion @9440
     v457 = Greater v454, v456 @9422
     Branch v457 -> taken b179(), notTaken b180() @9422
   b179():
@@ -4958,7 +5100,7 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
   b183(v469):
     Jump -> next b184() @9516
   b184():
-    v470 = GetModuleVariable variable=g33 @9540
+    v470 = GetModuleVariable variable=g34 @9540
     v471 = Integer @9571
     v472 = ElemGet v438, v471 @9571
     v473 = Call v470, -, v190, v206, v472 calleeName="storeInNewArray" @9540
@@ -4966,7 +5108,7 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
     v475 = Add v206, v474 @9603
     v476 = Integer @9620
     v477 = URShift v475, v476 @9603
-    v478 = Convert v477 declared={type=number site=w287} @9592
+    v478 = Convert v477 declared={type=number site=w300} @9592
     Jump -> next b187(v465, v478) @9592
   b185(v479):
     Jump -> next b187(v465, v206) @9516
@@ -4986,7 +5128,7 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
   b190(v489):
     Jump -> next b191() @9658
   b191():
-    v490 = GetModuleVariable variable=g33 @9682
+    v490 = GetModuleVariable variable=g34 @9682
     v491 = Integer integer=1 @9713
     v492 = ElemGet v438, v491 @9713
     v493 = Call v490, -, v190, v482, v492 calleeName="storeInNewArray" @9682
@@ -4994,7 +5136,7 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
     v495 = Add v482, v494 @9745
     v496 = Integer @9762
     v497 = URShift v495, v496 @9745
-    v498 = Convert v497 declared={type=number site=w287} @9734
+    v498 = Convert v497 declared={type=number site=w300} @9734
     Jump -> next b194(v485, v498) @9734
   b192(v499):
     Jump -> next b194(v485, v482) @9658
@@ -5014,7 +5156,7 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
   b197(v509):
     Jump -> next b198() @9800
   b198():
-    v510 = GetModuleVariable variable=g33 @9824
+    v510 = GetModuleVariable variable=g34 @9824
     v511 = Integer integer=2 @9855
     v512 = ElemGet v438, v511 @9855
     v513 = Call v510, -, v190, v502, v512 calleeName="storeInNewArray" @9824
@@ -5022,7 +5164,7 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
     v515 = Add v502, v514 @9887
     v516 = Integer @9904
     v517 = URShift v515, v516 @9887
-    v518 = Convert v517 declared={type=number site=w287} @9876
+    v518 = Convert v517 declared={type=number site=w300} @9876
     Jump -> next b201(v518) @9876
   b199(v519):
     Jump -> next b201(v502) @9800
@@ -5051,15 +5193,15 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
   b211(v544):
     Jump -> next b212(v446) @9154
   b212(v545: number):
-    v546 = GetModuleVariable variable=g34 @9223
+    v546 = GetModuleVariable variable=g35 @9223
     v547 = Call v546, -, v190, v206, v438, v545 calleeName="appendList" @9223
-    v548 = Convert v547 declared={type=number site=w303} @9223
+    v548 = Convert v547 declared={type=number site=w316} @9223
     Jump -> next b233(v257, v294, v328, v548, v207, v208, v209) @9274
   b213(v549):
     Jump -> next b214() @8852
   b214():
     v550 = PropGet v190 key="length" @8896
-    v551 = Convert v550 declared={type=number site=w301} illTypedCause=Assertion @8896
+    v551 = Convert v550 declared={type=number site=w314} illTypedCause=Assertion @8896
     v552 = GreaterEq v206, v551 @8885
     Branch v552 -> taken b215(| 0), notTaken b217(| 0) @8885
   b215(v553):
@@ -5073,13 +5215,13 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
   b217(v558):
     Jump -> next b218(v558) @8885
   b218(v559: number):
-    v560 = GetModuleVariable variable=g33 @8949
+    v560 = GetModuleVariable variable=g34 @8949
     v561 = Call v560, -, v190, v559, v432 calleeName="storeInNewArray" @8949
     v562 = Integer integer=1 @9019
     v563 = Add v559, v562 @9009
     v564 = Integer @9026
     v565 = URShift v563, v564 @9009
-    v566 = Convert v565 declared={type=number site=w287} @8998
+    v566 = Convert v565 declared={type=number site=w300} @8998
     Jump -> next b233(v257, v294, v328, v566, v207, v208, v209) @9039
   b219(v567):
     Jump -> next b220() @6396
@@ -5118,7 +5260,7 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
     Jump -> next b233(v203, v204, v205, v206, v207, v208, v209) @6567
   b233(v584: number, v585: number, v586: number, v587: number, v588, v589: boolean, v590: undefined|null|string):
     v591 = Increment v213 @9887
-    v592 = Convert v591 declared={type=number site=w291} @6334
+    v592 = Convert v591 declared={type=number site=w304} @6334
     Jump -> next b56(v584, v585, v586, v587, v588, v589, v590, v592) @6334
   b234(v593, v594):
     Jump -> next b235() @6317
@@ -5147,7 +5289,7 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
   b245():
     Jump -> next b246(v203) @10048
   b246(v605):
-    v606 = Convert v605 declared={type=number site=w292} @9964
+    v606 = Convert v605 declared={type=number site=w305} @9964
     v607 = StrictEq v189, v191 @10067
     Branch v607 -> taken b247(| 0, 1), notTaken b249(| 0, 1) @10067
   b247(v608, v609):
@@ -5190,7 +5332,7 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
   b262(v627, v628):
     Jump -> next b263() @10298
   b263():
-    v629 = GetModuleVariable variable=g35 @10328
+    v629 = GetModuleVariable variable=g36 @10328
     v630 = Call v629, -, v208, v207 calleeName="finishReduce" @10328
     ReturnCall v630 @10328
   b264(v631, v632):
@@ -5201,8 +5343,8 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
   b266(v634, v635):
     Jump -> next b267() @10377
   b267():
-    v636 = GetModuleVariable variable=g36 @10405
-    v637 = Convert v5 declared={type=undefined|null|string site=w305 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @10422
+    v636 = GetModuleVariable variable=g37 @10405
+    v637 = Convert v5 declared={type=undefined|null|string site=w318 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @10422
     v638 = ToBoolean v192 @10450
     Branch v638 -> taken b268(| 0), notTaken b270(| 0) @10450
   b268(v639):
@@ -5217,7 +5359,7 @@ function f79 name="traverseArray" module=m6 position=3970 kind=Method role=Libra
     Jump -> next b272(v132) @10474
   b272(v643):
     v644 = Call v636, -, v209, v637, v206, v643 calleeName="finishJoin" @10405
-    ReturnCall v644 casts=[{declared={type=undefined|null|string site=w306 flags=[OmitsNull, OmitsUndefined]}}] @10405
+    ReturnCall v644 casts=[{declared={type=undefined|null|string site=w319 flags=[OmitsNull, OmitsUndefined]}}] @10405
   b273(v645, v646):
     Jump -> next b274() @10377
   b274():
@@ -5282,7 +5424,8 @@ runtimefunction id=MapIteratorPrototypeNext function=f45 visibility=Private
 runtimefunction id=ArraySortSort function=f67
 runtimefunction id=ArraySortSortByDifference function=f70 visibility=Private
 runtimefunction id=ArraySortSortByReversedDifference function=f71 visibility=Private
-runtimefunction id=ArrayTraversalTraverseArray function=f79 visibility=Private
+runtimefunction id=ArraySortSortWhereNobodySeesTheComparator function=f73 visibility=Private
+runtimefunction id=ArrayTraversalTraverseArray function=f81 visibility=Private
 # -- generated: count Plain record C kind D f9 f11 f14 f15
 # CHECK-LABEL: function {{*}}name="count"
 # CHECK: module=m0 position=1340 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -5334,7 +5477,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f79 visibility=Private
 # CHECK-NEXT: Return v15
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="record"
-# CHECK: module=m0 position=1412 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=string}, {type=undefined|null|number|string|symbol|bigint|L1|L2|L4 flags=[IsExpected]}, {type=null|int|object}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=1458 module=m0}] {
+# CHECK: module=m0 position=1412 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=string}, {type=undefined|null|number|string|symbol|bigint|L1|L2|L4 flags=[IsExpected]}, {type=null|int|object}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f88 callPosition=1544}, {callee=f1 callPosition=1458 module=m0}] {
 # CHECK-NEXT: b0(v0: string, v1: anything ~ undefined|null|number|string|symbol|bigint|L1|L2|L4, v2: null|int|object):
 # CHECK-NEXT: v3: builtin(Object) = Builtin builtin=Object
 # CHECK-NEXT: v4: null|object = CallBuiltin v3, v1 overload=ObjectGetPrototypeOf/1 builtinCallForm=AnyReceiver accessSite=83
@@ -5349,79 +5492,82 @@ runtimefunction id=ArrayTraversalTraverseArray function=f79 visibility=Private
 # CHECK-NEXT: v11: string = ToString v10
 # CHECK-NEXT: Jump -> next b3(v11)
 # CHECK-NEXT: b3(v12: string ~ "first"|"replacement"|"second"):
-# CHECK-NEXT: v13: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: v14: i32 = StringBuilderCheckpoint v13
-# CHECK-NEXT: v15: boolean = TypeTest v1 testedType=undefined
-# CHECK-NEXT: Branch v15 -> taken b4(), notTaken b5(| 0)
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v16: buildercursor = StringBuilderReserve v13 size=128
-# CHECK-NEXT: Jump -> next b13(v16)
-# CHECK-NEXT: b5(v17: null|boolean|number|string|symbol|bigint|object ~ null|number|string|symbol|bigint|L1|L2|L4):
-# CHECK-NEXT: v18: boolean = TypeTest v17 testedType=null
-# CHECK-NEXT: Branch v18 -> taken b6(), notTaken b7(| 0)
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v19: buildercursor = StringBuilderReserve v13 size=128
-# CHECK-NEXT: v20: buildercursor = JSONAppendToken v13, v19 jsonToken=Null
-# CHECK-NEXT: Jump -> next b13(v20)
-# CHECK-NEXT: b7(v21: boolean|number|string|symbol|bigint|object ~ number|string|symbol|bigint|L1|L2|L4):
-# CHECK-NEXT: v22: boolean = TypeTest v21 testedType=object
-# CHECK-NEXT: Branch v22 -> taken b8(| 0), notTaken b11()
-# CHECK-NEXT: b8(v23: object ~ L1|L2|L4):
-# CHECK-NEXT: v24: boolean = ShapeTest v23 layouts=[L4]
-# CHECK-NEXT: Branch v24 -> taken b9(), notTaken b11()
-# CHECK-NEXT: b9():
-# CHECK-NEXT: v25: int[0, 2] = CallDirect v23, v13 function=f86 calledBuiltin=JSONStringify
-# CHECK-NEXT: Switch v25 cases=[1] -> case b10(), otherwise b11()
+# CHECK-NEXT: v13: boolean = TypeTest v1 testedType=undefined
+# CHECK-NEXT: Branch v13 -> taken b4(), notTaken b5(| 0)
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: Jump -> next b17()
+# CHECK-NEXT: b5(v14: null|boolean|number|string|symbol|bigint|object ~ null|number|string|symbol|bigint|L1|L2|L4):
+# CHECK-NEXT: v15: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: v16: boolean = TypeTest v14 testedType=null
+# CHECK-NEXT: Branch v16 -> taken b6(), notTaken b7(| 0)
+# CHECK-NEXT: b6() frequency=Unlikely:
+# CHECK-NEXT: v17: buildercursor = StringBuilderReserve v15 size=128
+# CHECK-NEXT: v18: buildercursor = JSONAppendToken v15, v17 jsonToken=Null
+# CHECK-NEXT: StringBuilderCommit v15, v18
+# CHECK-NEXT: Jump -> next b14()
+# CHECK-NEXT: b7(v20: boolean|number|string|symbol|bigint|object ~ number|string|symbol|bigint|L1|L2|L4):
+# CHECK-NEXT: v21: boolean = TypeTest v20 testedType=object
+# CHECK-NEXT: Branch v21 -> taken b8(| 0), notTaken b15()
+# CHECK-NEXT: b8(v22: object ~ L1|L2|L4):
+# CHECK-NEXT: v23: boolean = ShapeTest v22 layouts=[L4]
+# CHECK-NEXT: Branch v23 -> taken b9(| 0), notTaken b15()
+# CHECK-NEXT: b9(v24: guard):
+# CHECK-NEXT: v25: boolean = JSONHasStackSpace
+# CHECK-NEXT: Branch v25 -> taken b10(), notTaken b15()
 # CHECK-NEXT: b10():
-# CHECK-NEXT: v26: buildercursor = StringBuilderReserve v13 size=128
-# CHECK-NEXT: Jump -> next b12(v26)
-# CHECK-NEXT: b11() frequency=Rare:
-# CHECK-NEXT: v27: buildercursor = StringBuilderReserve v13 size=128
-# CHECK-NEXT: Jump -> next b12(v27)
-# CHECK-NEXT: b12(v28: buildercursor):
-# CHECK-NEXT: Jump -> next b13(v28)
-# CHECK-NEXT: b13(v29: buildercursor):
-# CHECK-NEXT: StringBuilderCommit v13, v29
-# CHECK-NEXT: v31: i32 = StringBuilderCheckpoint v13
-# CHECK-NEXT: v32: boolean = StrictEq v14, v31
-# CHECK-NEXT: Branch v32 -> taken b14(), notTaken b16()
-# CHECK-NEXT: b14() frequency=Rare:
-# CHECK-NEXT: StringBuilderDiscard v13
-# CHECK-NEXT: v34: undefined = Undefined
-# CHECK-NEXT: v35: undefined|string = CallBuiltin -, v1, v34 overload=JSONStringify/0 accessSite=86
-# CHECK-NEXT: v36: undefined|string ~ string = Upcast v35 castType=undefined|string
-# CHECK-NEXT: v37: boolean ~ true = TypeTest v36 testedType=string
-# CHECK-NEXT: Branch v37 -> taken b17(| 0), notTaken b15()
-# CHECK-NEXT: b15() frequency=Unlikely:
-# CHECK-NEXT: v38: "undefined" = String string="undefined"
-# CHECK-NEXT: Jump -> next b18(v38)
-# CHECK-NEXT: b16():
-# CHECK-NEXT: v39: string = StringBuilderFinish v13
-# CHECK-NEXT: Jump -> next b17(v39)
-# CHECK-NEXT: b17(v40: string):
-# CHECK-NEXT: Jump -> next b18(v40)
-# CHECK-NEXT: b18(v41: string):
-# CHECK-NEXT: v42: ": " = String string=": "
-# CHECK-NEXT: v43: " " = String string=" "
-# CHECK-NEXT: v44: " " = String string=" "
-# CHECK-NEXT: v45: string = Strcat v0, v42, v6, v43, v12, v44, v41 [isLikelyKey]
-# CHECK-NEXT: v46: fact = Entered function=f1
-# CHECK-NEXT: v47: Map<string, int|whole, proven, pristine[Storage, Names]> = GetModuleVariable fact=v46 variable=g4
-# CHECK-NEXT: v48: undefined|int|whole = CallBuiltin v47, v45 overload=MapPrototypeGet/0 accessSite=79
-# CHECK-NEXT: v49: undefined|int|whole ~ int|whole = Upcast v48 castType=anything
-# CHECK-NEXT: v50: boolean ~ false = TypeTest v49 testedType=undefined|null
-# CHECK-NEXT: Branch v50 -> taken b19(), notTaken b20(| 0)
+# CHECK-NEXT: Jump -> next b11(v24)
+# CHECK-NEXT: b11(v26: guard):
+# CHECK-NEXT: v27: boolean = HasKeyOrder v22, v26 layout=L4 fields=[0]
+# CHECK-NEXT: Branch v27 -> taken b12(| 0), notTaken b15()
+# CHECK-NEXT: b12(v28: guard):
+# CHECK-NEXT: v29: boolean = HasNoExtraProperties v22, v26
+# CHECK-NEXT: Branch v29 -> taken b13(| 0), notTaken b15()
+# CHECK-NEXT: b13(v30: guard):
+# CHECK-NEXT: v31: guard = AllGuards v26, v28, v30
+# CHECK-NEXT: v32: "first"|"replacement"|"second" = GetSlot v22, v31 key="kind" receivers=[L4] level=Expected
+# CHECK-NEXT: v33: buildercursor = StringBuilderReserve v15 size=128
+# CHECK-NEXT: v34: buildercursor = JSONAppendKey v15, v33 string="kind" [opensObject]
+# CHECK-NEXT: v35: buildercursor = JSONAppendString v15, v34, v32
+# CHECK-NEXT: v36: buildercursor = JSONAppendToken v15, v35 jsonToken=CloseObject
+# CHECK-NEXT: StringBuilderCommit v15, v36
+# CHECK-NEXT: Jump -> next b14()
+# CHECK-NEXT: b14():
+# CHECK-NEXT: v38: string = StringBuilderFinish v15
+# CHECK-NEXT: Jump -> next b16(v38)
+# CHECK-NEXT: b15() frequency=Rare:
+# CHECK-NEXT: StringBuilderDiscard v15
+# CHECK-NEXT: v40: undefined = Undefined
+# CHECK-NEXT: v41: undefined|string = CallBuiltin -, v1, v40 overload=JSONStringify/0 accessSite=86
+# CHECK-NEXT: v42: undefined|string ~ string = Upcast v41 castType=undefined|string
+# CHECK-NEXT: v43: boolean ~ true = TypeTest v42 testedType=string
+# CHECK-NEXT: Branch v43 -> taken b16(| 0), notTaken b17()
+# CHECK-NEXT: b16(v44: string):
+# CHECK-NEXT: Jump -> next b18(v44)
+# CHECK-NEXT: b17() frequency=Unlikely:
+# CHECK-NEXT: v45: "undefined" = String string="undefined"
+# CHECK-NEXT: Jump -> next b18(v45)
+# CHECK-NEXT: b18(v46: string):
+# CHECK-NEXT: v47: ": " = String string=": "
+# CHECK-NEXT: v48: " " = String string=" "
+# CHECK-NEXT: v49: " " = String string=" "
+# CHECK-NEXT: v50: string = Strcat v0, v47, v6, v48, v12, v49, v46 [isLikelyKey]
+# CHECK-NEXT: v51: fact = Entered function=f1
+# CHECK-NEXT: v52: Map<string, int|whole, proven, pristine[Storage, Names]> = GetModuleVariable fact=v51 variable=g4
+# CHECK-NEXT: v53: undefined|int|whole = CallBuiltin v52, v50 overload=MapPrototypeGet/0 accessSite=79
+# CHECK-NEXT: v54: undefined|int|whole ~ int|whole = Upcast v53 castType=anything
+# CHECK-NEXT: v55: boolean ~ false = TypeTest v54 testedType=undefined|null
+# CHECK-NEXT: Branch v55 -> taken b19(), notTaken b20(| 0)
 # CHECK-NEXT: b19():
-# CHECK-NEXT: v51: 0 = Integer
-# CHECK-NEXT: Jump -> next b21(v51)
-# CHECK-NEXT: b20(v52: int|whole):
-# CHECK-NEXT: Jump -> next b21(v52)
-# CHECK-NEXT: b21(v53: int|whole):
-# CHECK-NEXT: v54: 1 = Integer integer=1
-# CHECK-NEXT: v55: int|whole = Add v53, v54
-# CHECK-NEXT: v56: Map<string, int|whole, proven, pristine[Storage, Names]> = CallBuiltin v47, v45, v55 overload=MapPrototypeSet/0 accessSite=80
-# CHECK-NEXT: v57: undefined = Undefined
-# CHECK-NEXT: Return v57
+# CHECK-NEXT: v56: 0 = Integer
+# CHECK-NEXT: Jump -> next b21(v56)
+# CHECK-NEXT: b20(v57: int|whole):
+# CHECK-NEXT: Jump -> next b21(v57)
+# CHECK-NEXT: b21(v58: int|whole):
+# CHECK-NEXT: v59: 1 = Integer integer=1
+# CHECK-NEXT: v60: int|whole = Add v58, v59
+# CHECK-NEXT: v61: Map<string, int|whole, proven, pristine[Storage, Names]> = CallBuiltin v52, v50, v60 overload=MapPrototypeSet/0 accessSite=80
+# CHECK-NEXT: v62: undefined = Undefined
+# CHECK-NEXT: Return v62
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="C"
 # CHECK: module=m0 position=446 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 inlineFrames=[{}, {callee=f14 callPosition=446 module=m0}] {
@@ -5481,7 +5627,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f79 visibility=Private
 # CHECK-LABEL: function f15 module=
 # CHECK: m0 position=503 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L2 flags=[IsFromCompiler, IsExpected]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="Plain"
-# CHECK: module=m0 position=528 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f2}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers constructEntrypoint=f88} inlineFrames=[{}, {callee=f2 callPosition=528 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=528 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f2}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers constructEntrypoint=f90} inlineFrames=[{}, {callee=f2 callPosition=528 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f2, v1: anything, v2: anything):
 # CHECK-NEXT: v3: undefined|int = AssumeType v2 provenType=undefined|int
 # CHECK-NEXT: v4: anything ~ L0 = Upcast v1 castType=anything @528 tail
@@ -5557,6 +5703,6 @@ runtimefunction id=ArrayTraversalTraverseArray function=f79 visibility=Private
 # CHECK-NEXT: PutSlotOrAdd v8, -, v6 key="z" receivers=[L2] level=Expected accessSite=97
 # CHECK-NEXT: Return v8
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: PropDefine v5, v6 key="z" accessSite=97
+# CHECK-NEXT: PropDefine v5, v6 key="z" accessSite=97 receivers=[L2, ..]
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }

@@ -42,3 +42,18 @@ export const makers = {
 export const withFunctions = (i: number): any => ({ n: i, plain: (x: number) => x + 1, capturing: () => i * 2, method() { return this.n; }, async later() { return i; }, *some() { yield i; } });
 export const readers = { plain: (o: any) => o.plain, capturing: (o: any) => o.capturing, method: (o: any) => o.method, later: (o: any) => o.later, some: (o: any) => o.some };
 export const callers = { plain: (o: any) => o.plain(1), capturing: (o: any) => o.capturing(), method: (o: any) => o.method(), later: (o: any) => o.later(), some: (o: any) => [...o.some()] };
+export const writeA = (o: any, v: any) => { o.a = v; };
+export const constantText = "a constant text";
+export const textNobodyReadsThere = "read first from the other side";
+export let changingText = "first";
+export function changeText(text: string) { changingText = text; }
+export function readChangingText() { return changingText; }
+export const emptyText = "";
+export const isInstance = (v: any, C: any) => v instanceof C;
+export const readS = (C: any) => C.s;
+export const readStaticText = (C: any) => C.text;
+export const classes = {
+  pair: (): any[] => { class C { static s = 3; static text = "static text"; static bump() { return ++C.s; } x = 1; } class D extends C { static own = 1; } return [C, D]; },
+  oldStyle: (): any => function F(this: any) { this.x = 1; },
+};
+export const withAccessor = (): any => class { kept: unknown = 0; get g() { return this.kept; } set g(v: unknown) { this.kept = v; } };

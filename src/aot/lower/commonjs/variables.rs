@@ -127,9 +127,10 @@ impl FileLowering<'_, '_, '_, '_> {
         let own_module = ModuleRef::File(self.file);
         let assigns_exports =
             |statement: StmtId| matches!(hir[statement].kind, StmtKind::ExportAssign(_));
-        // A mock puts its object where `module.exports` is read from.
+        // A mock puts its object where `module.exports` is read from, and so does the next load of a file that was taken out of `require.cache`.
         let mut replaces_exports = self.inputs.modules.keeps_module_object(own_module)
             || self.inputs.modules.may_be_mocked(own_module)
+            || self.inputs.modules.may_be_evicted(own_module)
             || hir.ids(hir.body).any(assigns_exports);
         let mut names_exports = false;
         for &(name, binding) in bound.ident_bindings() {

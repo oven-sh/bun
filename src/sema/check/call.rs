@@ -183,13 +183,7 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Yield { value, .. } => {
                 value.is_some() && self.is_context_sensitive(file, value)
             }
-            // There is no case for a `SpreadAssignment` or a `ShorthandPropertyAssignment`.
-            ExprKind::Object(props) => props.iter().any(|p| {
-                matches!(hir[p].kind, PropKind::Init | PropKind::Method)
-                    && hir[p].value.is_some()
-                    && self.is_context_sensitive(file, hir[p].value)
-            }),
-            ExprKind::Array(items) => hir.ids(items).any(|i| self.is_context_sensitive(file, i)),
+            ExprKind::Object(_) | ExprKind::Array(_) => self.is_context_sensitive_literal(file, e),
             ExprKind::Cond { branches, .. } => {
                 let Branches { yes, no } = hir.branches(branches);
                 self.is_context_sensitive(file, yes) || self.is_context_sensitive(file, no)
@@ -201,6 +195,37 @@ impl<'p, 's> Checker<'p, 's> {
             } => self.is_context_sensitive(file, left) || self.is_context_sensitive(file, right),
             _ => false,
         }
+    }
+
+    fn is_context_sensitive_literal(&self, file: FileId, e: ExprId) -> bool {
+        /// Results aren't cached for literals fewer levels inside the one that was asked about.
+        const MANY: u32 = 8;
+        let recent = &self.recent_context_sensitive_literals;
+        let depth = self.context_sensitivity_depth.get();
+        if depth >= MANY
+            && let Some(known) = recent.borrow().get(file.0 + 1, e.0)
+        {
+            return known != 0;
+        }
+        let hir = self.hir(file);
+        let times_cut_short = self.times_cut_short.get();
+        self.context_sensitivity_depth.set(depth + 1);
+        let answer = match hir[e].kind {
+            // There is no case for a `SpreadAssignment` or a `ShorthandPropertyAssignment`.
+            ExprKind::Object(props) => props.iter().any(|p| {
+                matches!(hir[p].kind, PropKind::Init | PropKind::Method)
+                    && hir[p].value.is_some()
+                    && self.is_context_sensitive(file, hir[p].value)
+            }),
+            ExprKind::Array(items) => hir.ids(items).any(|i| self.is_context_sensitive(file, i)),
+            _ => false,
+        };
+        self.context_sensitivity_depth.set(depth);
+        // An answer that was cut short by a low stack depends on the caller, so it isn't cached.
+        if depth >= MANY && self.times_cut_short.get() == times_cut_short {
+            recent.borrow_mut().put(file.0 + 1, e.0, u32::from(answer));
+        }
+        answer
     }
 
     /// `isContextSensitiveFunctionLikeDeclaration`

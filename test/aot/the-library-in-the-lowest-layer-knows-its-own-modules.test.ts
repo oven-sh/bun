@@ -13,7 +13,9 @@ test("the modules of the library read each other's exports as in an executable",
     "a.test.ts": `
       import { test } from "bun:test";
       import { Readable } from "node:stream";
-      test("a", async () => { for await (const chunk of Readable.from([1])) void chunk; });`,
+      test("a", async () => { for await (const chunk of Readable.from([1])) void chunk; });
+      // It may be the name of any module, so the layer holds them all.
+      test.skipIf(!process.env.NAME)("b", async () => { await import(process.env.NAME); });`,
   });
   const graph = join(String(dir), "graph");
   const map = join(String(dir), "map");

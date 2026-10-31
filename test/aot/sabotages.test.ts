@@ -43,6 +43,14 @@ const underCollections: Environment[] = [
 
 type Row = { folder: string; flags: string[]; programs: string[] };
 
+function movesOfTheRegisterAllocator(check: string): Row {
+  return {
+    folder: "objects",
+    flags: [check],
+    programs: ["spread-replaces-accessors.ts", "key-order-field-limit.js"],
+  };
+}
+
 /** The programs under ./parallel that must notice each sabotage. */
 const noticedBy: Record<string, Row | Row[]> = {
   StoresNeedNoBarrier: {
@@ -61,9 +69,26 @@ const noticedBy: Record<string, Row | Row[]> = {
     flags: [],
     programs: ["closure-given-member-called-in-two-loops.mjs"],
   },
+  // What the stack holds where the call reads it goes by what ran before: a crash, or another answer. The check says it at build time, every time.
+  LiveRangesSplitTwiceHaveNoColdUses: {
+    folder: "mistyped-values",
+    flags: ["--aot-check=spill-slots"],
+    programs: ["function-typed-boolean-read-from-record-by-inherited-name.ts", "function-typed-boolean-through-any.ts"],
+  },
+  // The register allocator leaves out one kind of the moves between registers and spill slots. Whoever reads the slot misses a store, whoever reads the register a load.
+  // The large functions are those of Bun's own library, which these programs bring.
+  StoresBehindClustersAreNotNeeded: movesOfTheRegisterAllocator("--aot-check=spill-slots"),
+  StoresAheadOfCallsAreNotNeeded: movesOfTheRegisterAllocator("--aot-check=spill-slots"),
+  StoresBehindSpilledDefinitionsAreNotNeeded: movesOfTheRegisterAllocator("--aot-check=spill-slots"),
+  LoadsAheadOfClustersAreNotNeeded: movesOfTheRegisterAllocator("--aot-check=allocated-registers"),
+  LoadsBehindCallsAreNotNeeded: movesOfTheRegisterAllocator("--aot-check=allocated-registers"),
 };
 /** What one kind of processor alone can show: for the others the phase that is broken finds nothing to do. */
-const shownOnOneArchitectureAlone: Record<string, NodeJS.Architecture> = {};
+const shownOnOneArchitectureAlone: Record<string, NodeJS.Architecture> = {
+  // How many registers outlive a call goes by the processor. With six registers allowed every processor shows it: the engine's test
+  // check-of-spill-slots-sees-operand-left-behind-by-second-split.
+  LiveRangesSplitTwiceHaveNoColdUses: "x64",
+};
 /** What no program can show, and the test of the engine that shows it (./engine-tests.test.ts runs those). */
 const noticedByTheEngineTestsAlone: Record<string, string> = {
   // Between the read of a word and two tests of its bits nothing that a program is compiled to writes that word.

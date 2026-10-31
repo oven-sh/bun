@@ -210,13 +210,12 @@ function f11 module=m3 kind=Module thisType={type=anything} results=[{type=anyth
 # CHECK-NEXT: b1() frequency=Rare:
 # CHECK-NEXT: v1: undefined = CallDirect function=f1
 # CHECK-NEXT: v2: anything = CallDirect function=f2
-# CHECK-NEXT: v3: undefined = CallDirect function=f13
 # CHECK-NEXT: FinishModuleEvaluation module=m3
+# CHECK-NEXT: v4: undefined = Undefined
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: b2():
 # CHECK-NEXT: v5: undefined = Undefined
 # CHECK-NEXT: Return v5
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v6: undefined = Undefined
-# CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="uses"
 # CHECK: module=m2 position=337 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f3}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers} {

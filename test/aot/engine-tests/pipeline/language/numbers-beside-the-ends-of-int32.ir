@@ -300,7 +300,7 @@ runtimefunction id=ArrayPrototypeAt function=f5
 runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private
 # -- generated: f0 letterAt isSmall half
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f3 callPosition=798 module=m0}, {callee=f2 callPosition=889 module=m0}, {callee=f1 callPosition=869 module=m0}, {callee=f8 callPosition=412 parent=1 isTailCall=true module=m0}, {callee=f7 callPosition=412 parent=1 isTailCall=true module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f3 callPosition=798 module=m0}, {callee=f2 callPosition=889 module=m0}, {callee=f1 callPosition=869 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "a" = String string="a"
 # CHECK-NEXT: v1: "b" = String string="b"
@@ -465,52 +465,53 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private
 # CHECK-NEXT: v104: undefined|int[-8589934588, 18014398509481982]|whole = ElemGet v12, v22 [keyIsIntegral]
 # CHECK-NEXT: v105: 1 = Integer integer=1
 # CHECK-NEXT: v106: int[1, 4294967295] = Add v22, v105
-# CHECK-NEXT: v107: undefined|int[-8589934588, 18014398509481982]|whole ~ int[-8589934588, 18014398509481982]|whole = Expect v104 expectedType=number
-# CHECK-NEXT: v108: number = CallDirect v107 function=f3 accessSite=5
-# CHECK-NEXT: v109: whole = Double number=-0
-# CHECK-NEXT: v110: boolean = CallBuiltin -, v108, v109 overload=ObjectIs/0 accessSite=7
-# CHECK-NEXT: Branch v110 -> taken b42(), notTaken b43()
+# CHECK-NEXT: v107: fact = Specified
+# CHECK-NEXT: v108: int[-8589934588, 18014398509481982]|whole = AssumeType v104, v107 provenType=int|whole
+# CHECK-NEXT: v109: number = CallDirect v108 function=f3 accessSite=5
+# CHECK-NEXT: v110: whole = Double number=-0
+# CHECK-NEXT: v111: boolean = CallBuiltin -, v109, v110 overload=ObjectIs/0 accessSite=7
+# CHECK-NEXT: Branch v111 -> taken b42(), notTaken b43()
 # CHECK-NEXT: b42() frequency=Rare:
-# CHECK-NEXT: v111: "-0" = String string="-0"
-# CHECK-NEXT: Jump -> next b44(v111)
+# CHECK-NEXT: v112: "-0" = String string="-0"
+# CHECK-NEXT: Jump -> next b44(v112)
 # CHECK-NEXT: b43() frequency=Rare:
-# CHECK-NEXT: Jump -> next b44(v108)
-# CHECK-NEXT: b44(v112: number|"-0") frequency=Rare:
-# CHECK-NEXT: v113: string = ToString v112
-# CHECK-NEXT: v114: "-"|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h" = CallDirect v108 function=f1 accessSite=8
-# CHECK-NEXT: v115: "int32"|"other" = CallDirect v108 function=f2 accessSite=9
-# CHECK-NEXT: v116: undefined|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h" = CallBuiltin v9, v108 overload=ArrayPrototypeAt/0 accessSite=11
-# CHECK-NEXT: v117: boolean = TypeTest v116 testedType=undefined|null
-# CHECK-NEXT: Branch v117 -> taken b45(), notTaken b46(| 0)
+# CHECK-NEXT: Jump -> next b44(v109)
+# CHECK-NEXT: b44(v113: number|"-0") frequency=Rare:
+# CHECK-NEXT: v114: string = ToString v113
+# CHECK-NEXT: v115: "-"|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h" = CallDirect v109 function=f1 accessSite=8
+# CHECK-NEXT: v116: "int32"|"other" = CallDirect v109 function=f2 accessSite=9
+# CHECK-NEXT: v117: undefined|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h" = CallBuiltin v9, v109 overload=ArrayPrototypeAt/0 accessSite=11
+# CHECK-NEXT: v118: boolean = TypeTest v117 testedType=undefined|null
+# CHECK-NEXT: Branch v118 -> taken b45(), notTaken b46(| 0)
 # CHECK-NEXT: b45() frequency=Rare:
-# CHECK-NEXT: v118: "-" = String string="-"
-# CHECK-NEXT: Jump -> next b47(v118)
-# CHECK-NEXT: b46(v119: "a"|"b"|"c"|"d"|"e"|"f"|"g"|"h") frequency=Rare:
+# CHECK-NEXT: v119: "-" = String string="-"
 # CHECK-NEXT: Jump -> next b47(v119)
-# CHECK-NEXT: b47(v120: "-"|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h") frequency=Rare:
-# CHECK-NEXT: v121: "abcdefgh" = String string="abcdefgh"
-# CHECK-NEXT: v122: string = CallBuiltin v121, v108 overload=StringPrototypeCharAt/0 accessSite=13
-# CHECK-NEXT: v123: boolean = ToBoolean v122
-# CHECK-NEXT: Branch v123 -> taken b48(), notTaken b49()
+# CHECK-NEXT: b46(v120: "a"|"b"|"c"|"d"|"e"|"f"|"g"|"h") frequency=Rare:
+# CHECK-NEXT: Jump -> next b47(v120)
+# CHECK-NEXT: b47(v121: "-"|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h") frequency=Rare:
+# CHECK-NEXT: v122: "abcdefgh" = String string="abcdefgh"
+# CHECK-NEXT: v123: string = CallBuiltin v122, v109 overload=StringPrototypeCharAt/0 accessSite=13
+# CHECK-NEXT: v124: boolean = ToBoolean v123
+# CHECK-NEXT: Branch v124 -> taken b48(), notTaken b49()
 # CHECK-NEXT: b48() frequency=Rare:
-# CHECK-NEXT: Jump -> next b50(v122)
+# CHECK-NEXT: Jump -> next b50(v123)
 # CHECK-NEXT: b49() frequency=Rare:
-# CHECK-NEXT: v124: "-" = String string="-"
-# CHECK-NEXT: Jump -> next b50(v124)
-# CHECK-NEXT: b50(v125: string) frequency=Rare:
-# CHECK-NEXT: v126: ": " = String string=": "
-# CHECK-NEXT: v127: " " = String string=" "
+# CHECK-NEXT: v125: "-" = String string="-"
+# CHECK-NEXT: Jump -> next b50(v125)
+# CHECK-NEXT: b50(v126: string) frequency=Rare:
+# CHECK-NEXT: v127: ": " = String string=": "
 # CHECK-NEXT: v128: " " = String string=" "
 # CHECK-NEXT: v129: " " = String string=" "
-# CHECK-NEXT: v130: string = Strcat v113, v126, v114, v127, v115, v128, v120, v129, v125
-# CHECK-NEXT: v131: int[0, 4294967295] = CallBuiltin v14, v130 overload=ArrayPrototypePush/0 accessSite=14
+# CHECK-NEXT: v130: " " = String string=" "
+# CHECK-NEXT: v131: string = Strcat v114, v127, v115, v128, v116, v129, v121, v130, v126
+# CHECK-NEXT: v132: int[0, 4294967295] = CallBuiltin v14, v131 overload=ArrayPrototypePush/0 accessSite=14
 # CHECK-NEXT: Jump -> next b1(v106)
 # CHECK-NEXT: b51():
-# CHECK-NEXT: v132: "\n" = String string="\n"
-# CHECK-NEXT: v133: string = CallBuiltin v14, v132 overload=ArrayPrototypeJoin/0 accessSite=3
-# CHECK-NEXT: v134: undefined = CallBuiltin -, v133 overload=ConsoleLog/0 accessSite=4
-# CHECK-NEXT: v135: undefined = Undefined
-# CHECK-NEXT: Return v135
+# CHECK-NEXT: v133: "\n" = String string="\n"
+# CHECK-NEXT: v134: string = CallBuiltin v14, v133 overload=ArrayPrototypeJoin/0 accessSite=3
+# CHECK-NEXT: v135: undefined = CallBuiltin -, v134 overload=ConsoleLog/0 accessSite=4
+# CHECK-NEXT: v136: undefined = Undefined
+# CHECK-NEXT: Return v136
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="letterAt"
 # CHECK: module=m0 position=190 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w3}] results=[{type="-"|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h" site=w4 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -544,30 +545,9 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="half"
-# CHECK: module=m0 position=412 role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w7 flags=[IsExpected]}] results=[{type=number site=w8}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f7 fallback=f8} {
-# CHECK-NEXT: b0(v0: anything ~ number):
-# CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=number
-# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v2: number):
-# CHECK-NEXT: v3: number = CallDirect v2 function=f7
-# CHECK-NEXT: ReturnCall v3 requirement=Allowed
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v4: number = CallDirect v0 function=f8
-# CHECK-NEXT: ReturnCall v4 requirement=Allowed
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="half"
-# CHECK: module=m0 position=412 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w7}] results=[{type=number site=w8}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{original=0}]} {
-# CHECK-NEXT: b0(v0: number):
-# CHECK-NEXT: v1: int|whole = AssumeType v0 provenType=undefined|int|whole
-# CHECK-NEXT: v2: 2 = Integer integer=2
-# CHECK-NEXT: v3: number = Div v1, v2
-# CHECK-NEXT: Return v3
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="half"
-# CHECK: module=m0 position=412 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w7 flags=[IsExpected]}] results=[{type=number site=w8}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{original=0}]} creator=Version{provenVersion=f7} {
-# CHECK-NEXT: b0(v0: anything) frequency=Unlikely:
-# CHECK-NEXT: v1: undefined|int|whole = AssumeType v0 provenType=undefined|int|whole
-# CHECK-NEXT: v2: 2 = Integer integer=2
-# CHECK-NEXT: v3: number = Div v1, v2 form=Numbers
-# CHECK-NEXT: Return v3
+# CHECK: module=m0 position=412 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int|whole site=w7}] results=[{type=number site=w8}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: int|whole):
+# CHECK-NEXT: v1: 2 = Integer integer=2
+# CHECK-NEXT: v2: number = Div v0, v1
+# CHECK-NEXT: Return v2
 # CHECK-NEXT: }

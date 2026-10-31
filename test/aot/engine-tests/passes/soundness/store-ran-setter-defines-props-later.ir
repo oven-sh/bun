@@ -255,7 +255,7 @@ function f21 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v30: anything ~ L3 = Upcast v29 castType=anything
 # CHECK-NEXT: v31: object = CallDirect v30 function=f2 accessSite=12
 # CHECK-NEXT: v32: true = Boolean boolean=true
-# CHECK-NEXT: v33: L10 = NewObject -, v32 layout=L10 fields=[0] allocationSite=8 allocationClass=10
+# CHECK-NEXT: v33: L10 = NewObject -, v32 layout=L10 fields=[0] allocationSite=8 allocationClass=9
 # CHECK-NEXT: v34: object = CallDirect v33 function=f2 accessSite=13
 # CHECK-NEXT: v35: object = CallBuiltin -, v31, v34 overload=ObjectSetPrototypeOf/0 accessSite=14
 # CHECK-NEXT: v36: 2 = Integer integer=2
@@ -273,7 +273,7 @@ function f21 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v48: anything ~ L4 = Upcast v47 castType=anything
 # CHECK-NEXT: v49: object = CallDirect v48 function=f2 accessSite=21
 # CHECK-NEXT: v50: 0 = Integer
-# CHECK-NEXT: v51: L12 = NewObject -, v50 layout=L12 fields=[4] allocationSite=11 allocationClass=11
+# CHECK-NEXT: v51: L12 = NewObject -, v50 layout=L12 fields=[4] allocationSite=11 allocationClass=10
 # CHECK-NEXT: v52: L12 = FinishObject v51
 # CHECK-NEXT: v53: object = CallBuiltin -, v49, v46, v52 overload=ObjectDefineProperty/0 accessSite=22
 # CHECK-NEXT: v54: 2 = Integer integer=2
@@ -300,7 +300,7 @@ function f21 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v75: object = AssumeType v74 provenType=object
 # CHECK-NEXT: v76: f16 = NewClosure function=f16 allocationSite=16
 # CHECK-NEXT: v77: f16 = NewClass v76, v73, v75 layout=L7
-# CHECK-NEXT: v78: L7 = NewObject layout=L7 allocationClass=7
+# CHECK-NEXT: v78: L7 = NewObject layout=L7 allocationClass=6
 # CHECK-NEXT: v79: 1 = Integer integer=1
 # CHECK-NEXT: PropSet v78, v79 key="x" accessSite=46 receivers=[L7]
 # CHECK-NEXT: v81: anything = PropGet v73 key="prototype" accessSite=30
@@ -320,7 +320,7 @@ function f21 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v93: undefined = Undefined
 # CHECK-NEXT: Return v93
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v94: L7 = NewObject layout=L7 allocationClass=7 [listsOnlyStoredValues]
+# CHECK-NEXT: v94: L7 = NewObject layout=L7 allocationClass=6 [listsOnlyStoredValues]
 # CHECK-NEXT: v95: anything = PropGet v94 key="x" accessSite=33 receivers=[L7]
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }
@@ -340,7 +340,7 @@ function f21 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f16 = AssumeType v0 provenType=f16
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L5
-# CHECK-NEXT: v3: object ~ L5|L6|L7 = NewObject v2 layout=L5 allocationSite=19 allocationClass=5
+# CHECK-NEXT: v3: object ~ L7 = NewObject v2 layout=L5 allocationSite=19 allocationClass=5
 # CHECK-NEXT: v4: L7 = AssumeType v3 provenType=L7
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
@@ -357,7 +357,7 @@ function f21 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Branch v9 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v10: object = GetConstructPrototype v4 layout=L5
-# CHECK-NEXT: v11: object ~ L5|L6|L7 = NewObject v10 layout=L5 allocationSite=19 allocationClass=5
+# CHECK-NEXT: v11: object ~ L7 = NewObject v10 layout=L5 allocationSite=19 allocationClass=5
 # CHECK-NEXT: v12: L7 = AssumeType v11 provenType=L7
 # CHECK-NEXT: Jump -> next b3(v12)
 # CHECK-NEXT: b2() frequency=Rare:

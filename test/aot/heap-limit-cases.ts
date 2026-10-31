@@ -12,6 +12,7 @@ const describe = unsupported ? describeAnywhere.skip : describeAnywhere.concurre
 // address space. Each Worker has a range of its own. These tests shrink the ranges to see what happens at their end.
 
 const smallHeap = { BUN_JSC_markedBlockCageSizeInMB: "64" };
+const saysWhatHoldsLongLists = { BUN_JSC_logHoldersOfListsThisLongWhenCageIsFull: "500000" };
 const limitOf64MB =
   "Each thread of a compiled executable can use 64 MB for JavaScript objects. Build with --aot-huge-heap to remove the limit. The executable then uses more memory and runs slower.";
 
@@ -1566,17 +1567,65 @@ for (const [what, fill] of fills.slice(0, 4)) {
 for (const [what, fill] of fills) console.log(what, (run(fills[0][1], Infinity, Infinity) as number) > 10_000, run(fill, 300_000, 1000));
 `,
         });
-        const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
+        const program = await build(String(folder));
+        const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
         const kinds = ["cells", "storage outside cells", "lists", "strings"];
-        expect({ stdout, stderr, exitCode }).toEqual({
-          stdout:
-            kinds.map(what => `${what} true true true true\n`).join("") +
-            [...kinds, "matches"].map(what => `${what} true no error\n`).join(""),
+        const expected =
+          kinds.map(what => `${what} true true true true\n`).join("") +
+          [...kinds, "matches"].map(what => `${what} true no error\n`).join("");
+        const holders =
+          stdout === expected
+            ? []
+            : (await run([program], String(folder), { ...smallHeap, ...saysWhatHoldsLongLists })).stderr
+                .split("\n")
+                .slice(0, 30);
+        expect({ stdout, stderr, exitCode, holders }).toEqual({
+          stdout: expected,
           stderr: "",
           exitCode: 0,
+          holders: [],
         });
       },
       240_000,
+    );
+
+    inPart(test)(
+      "an option says what holds a long list where the error stands",
+      async () => {
+        using folder = tempDir("aot-heap-limit", {
+          "program.ts": `const box: { inner: { list: unknown[] } } = { inner: { list: [] } };
+function fill(): number {
+  try {
+    for (let i = 0; ; i++) box.inner.list.push({ a: i, b: i, c: i });
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+    return box.inner.list.length;
+  }
+}
+console.log(fill() > 500_000);
+`,
+        });
+        const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), {
+          ...smallHeap,
+          ...saysWhatHoldsLongLists,
+        });
+        const holders = stderr.split("\n").filter(line => !/ of the stack | words copied /.test(line));
+        expect({ stdout, holders, exitCode }).toEqual({
+          stdout: "true\n",
+          holders: [
+            "AOT full heap | the collection at a poll freed too little | lists of 500000 elements and more that outlived it: 1",
+            expect.stringMatching(
+              /^AOT full heap \| a list of \d+ elements \| a second collection from the same place keeps it too$/,
+            ),
+            "AOT full heap |   a root refers to this Object: CodeBlocks",
+            "AOT full heap |   Object .inner > Object",
+            "AOT full heap |   Object .list > Array",
+            "",
+          ],
+          exitCode: 0,
+        });
+      },
+      120_000,
     );
 
     // A function fills a list until it catches the out-of-memory error, then returns. The list is collected, so the loop that runs next gets no error.

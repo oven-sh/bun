@@ -35,6 +35,16 @@ const moduleRoads: Record<string, string> = {
   "import(new URL(.., import.meta.url).href)": `(await import(new URL("./LEAF.cjs", import.meta.url).href)).default`,
   "import(import.meta.resolve(..))": `(await import(import.meta.resolve("./LEAF.cjs"))).default`,
   "import(import.meta.dir + ..)": `(await import(import.meta.dir + "/LEAF.cjs")).default`,
+  // An ES module makes itself the two names that a CommonJS file has.
+  "createRequire(__filename), a shim": `createRequire(__filename)("./LEAF.cjs")`,
+  "createRequire(fileURLToPath(import.meta.url))": `createRequire(fileURLToPath(import.meta.url))("./LEAF.cjs")`,
+  "createRequire(new URL(import.meta.url))": `createRequire(new URL(import.meta.url))("./LEAF.cjs")`,
+  "join(__dirname, ..), a shim": `made(join(__dirname, "LEAF.cjs"))`,
+  "path.resolve(__dirname, ..), a shim": `made(path.resolve(__dirname, "LEAF.cjs"))`,
+  "__dirname + .., a shim": `made(__dirname + "/LEAF.cjs")`,
+  "path.dirname(fileURLToPath(import.meta.url))": `made(join(path.dirname(fileURLToPath(import.meta.url)), "LEAF.cjs"))`,
+  "import(join(__dirname, ..)), a shim": `(await import(join(__dirname, "LEAF.cjs"))).default`,
+  "import(pathToFileURL(join(__dirname, ..)).href), a shim": `(await import(pathToFileURL(join(__dirname, "LEAF.cjs")).href)).default`,
 };
 
 const files: Record<string, string> = {
@@ -56,7 +66,8 @@ files["node_modules/roads/index.js"] = Object.entries(commonJsRoads)
   })
   .join("");
 files["node_modules/roads-esm/index.js"] =
-  `import { createRequire } from "node:module";\nconst made = createRequire(import.meta.url);\nconst roads = {};\n` +
+  `import { createRequire } from "node:module";\nimport { fileURLToPath, pathToFileURL } from "node:url";\nimport path, { dirname, join } from "node:path";\n` +
+  `const __filename = fileURLToPath(import.meta.url);\nconst __dirname = dirname(__filename);\nconst made = createRequire(import.meta.url);\nconst roads = {};\n` +
   Object.entries(moduleRoads)
     .map(([road, code], index) => {
       files[`node_modules/roads-esm/m${index}.cjs`] = leaf("m" + index);

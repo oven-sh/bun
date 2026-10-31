@@ -756,7 +756,7 @@ runtimefunction id=IteratorOperationsIteratorGenericClose function=f39 visibilit
 # CHECK-NEXT: v40: anything ~ object = Construct v5 calleeName="Waiting" accessSite=2 callees=[f4]
 # CHECK-NEXT: v41: undefined|null|L0 ~ L0 = Check v40 expectedType=undefined|null|L0 site=w18
 # CHECK-NEXT: v42: anything ~ object = Construct v11 calleeName="Row" accessSite=3 callees=[f5]
-# CHECK-NEXT: v69: object = AssumeType v42 provenType=object
+# CHECK-NEXT: v69: Array = AssumeType v42 provenType=Array
 # CHECK-NEXT: v43: L1 = Check v69 expectedType=undefined|null|L1 site=w19
 # CHECK-NEXT: v44: anything ~ object = Construct v16 calleeName="Table" accessSite=4 callees=[f6]
 # CHECK-NEXT: v45: undefined|null|L2 ~ L2 = Check v44 expectedType=undefined|null|L2 site=w20
@@ -766,11 +766,12 @@ runtimefunction id=IteratorOperationsIteratorGenericClose function=f39 visibilit
 # CHECK-NEXT: v49: anything ~ undefined|null|Promise<undefined|null|L0|L1|L2|L5|Promise|Uint8Array> = Upcast v48 castType=anything
 # CHECK-NEXT: v50: 1 = Integer integer=1
 # CHECK-NEXT: v51: anything ~ object = Construct v29, -, v50 calleeName="Bytes" accessSite=7 callees=[f8]
-# CHECK-NEXT: v70: object = AssumeType v51 provenType=object
+# CHECK-NEXT: v70: Uint8Array = AssumeType v51 provenType=Uint8Array
 # CHECK-NEXT: v52: Uint8Array = Check v70 expectedType=undefined|null|Uint8Array site=w21
-# CHECK-NEXT: v53: Array<anything, Contiguous> = NewArray v41, v43, v45, v49, v52, v30 contents=anything allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v71: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v53 provenType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v54: iteratorstate = IteratorOpen v71
+# CHECK-NEXT: v71: Uint8Array = AssumeType v52 provenType=Uint8Array
+# CHECK-NEXT: v53: Array<anything, Contiguous> = NewArray v41, v43, v45, v49, v71, v30 contents=anything allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v72: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v53 provenType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v54: iteratorstate = IteratorOpen v72
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b4():
 # CHECK-NEXT: LoopHint
@@ -835,14 +836,15 @@ runtimefunction id=IteratorOperationsIteratorGenericClose function=f39 visibilit
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Row"
-# CHECK: module=m0 position=232 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+# CHECK: module=m0 position=232 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=Array flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
 # CHECK-NEXT: b0(v0: function, v1: anything, v2: Array<undefined, proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v7: f5 = AssumeType v0 provenType=f5
 # CHECK-NEXT: v8: f5 = AssumeType v1 provenType=f5
 # CHECK-NEXT: v3: null|object = GetSuperBase v7
 # CHECK-NEXT: v9: builtin(Array) = AssumeType v3 provenType=builtin(Array)
 # CHECK-NEXT: v4: object ~ L1 = SuperConstructList v9, v8, v2 layout=L1 accessSite=14 callees=[builtin(Array)]
-# CHECK-NEXT: v5: L1 = Check v4 expectedType=L1
+# CHECK-NEXT: v10: Array ~ L1 = AssumeType v4 provenType=Array
+# CHECK-NEXT: v5: L1 = Check v10 expectedType=L1
 # CHECK-NEXT: v6: undefined = CallDirect v5 function=f10 accessSite=15
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
@@ -855,15 +857,17 @@ runtimefunction id=IteratorOperationsIteratorGenericClose function=f39 visibilit
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Bytes"
-# CHECK: module=m0 position=404 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined|int, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4 {
+# CHECK: module=m0 position=404 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined|int, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=Uint8Array flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4 {
 # CHECK-NEXT: b0(v0: function, v1: anything, v2: Array<undefined|int, proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v6: f8 = AssumeType v0 provenType=f8
 # CHECK-NEXT: v7: f8 = AssumeType v1 provenType=f8
 # CHECK-NEXT: v3: null|object = GetSuperBase v6
 # CHECK-NEXT: v8: builtin(Uint8Array) = AssumeType v3 provenType=builtin(Uint8Array)
 # CHECK-NEXT: v4: object ~ L4 = SuperConstructList v8, v7, v2 layout=L4 accessSite=17 callees=[builtin(Uint8Array)]
-# CHECK-NEXT: v5: Uint8Array = Check v4 expectedType=Uint8Array
-# CHECK-NEXT: Return v5
+# CHECK-NEXT: v9: Uint8Array = AssumeType v4 provenType=Uint8Array
+# CHECK-NEXT: v5: Uint8Array = Check v9 expectedType=Uint8Array
+# CHECK-NEXT: v10: Uint8Array = AssumeType v5 provenType=Uint8Array
+# CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function f9 module=
 # CHECK: m0 position=156 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler, IsExpected]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -878,9 +882,9 @@ runtimefunction id=IteratorOperationsIteratorGenericClose function=f39 visibilit
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function f10 module=
-# CHECK: m0 position=232 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1 flags=[IsFromCompiler, IsExpected]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything ~ L1):
-# CHECK-NEXT: v6: object ~ L1 = AssumeType v0 provenType=object
+# CHECK: m0 position=232 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=Array flags=[IsFromCompiler, IsExpected]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: anything ~ Array):
+# CHECK-NEXT: v6: Array = AssumeType v0 provenType=Array
 # CHECK-NEXT: v5: L1 = Check v6 expectedType=L1 cause=AddedByPass
 # CHECK-NEXT: v1: L1 = AssumeType v5 provenType=object [isWordOfFrontEnd]
 # CHECK-NEXT: v2: 8 = Integer integer=8

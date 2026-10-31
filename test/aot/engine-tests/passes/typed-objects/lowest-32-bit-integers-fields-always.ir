@@ -1889,12 +1889,12 @@ runtimefunction id=ArrayTraversalTraverseArray function=f11 visibility=Private
 # CHECK-NEXT: v131: undefined = CallBuiltin v130, v25, v75, v129, v128 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=26
 # CHECK-NEXT: Jump -> next b6(v74)
 # CHECK-NEXT: b35():
-# CHECK-NEXT: Jump -> next b53()
+# CHECK-NEXT: Jump -> next b54()
 # CHECK-NEXT: b36() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b50(v28)
+# CHECK-NEXT: Jump -> next b52(v28)
 # CHECK-NEXT: b37(v132: boolean|number|string|object) frequency=Unlikely:
 # CHECK-NEXT: v133: boolean = TypeTest v132 testedType=string
-# CHECK-NEXT: Branch v133 -> taken b38(| 0), notTaken b49(| 0)
+# CHECK-NEXT: Branch v133 -> taken b38(| 0), notTaken b51(| 0)
 # CHECK-NEXT: b38(v134: string) frequency=Unlikely:
 # CHECK-NEXT: v135: 0 = Integer
 # CHECK-NEXT: Jump -> next b39(v135)
@@ -1902,278 +1902,282 @@ runtimefunction id=ArrayTraversalTraverseArray function=f11 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v138: int[0, 2147483647] = GetStringLength v134
 # CHECK-NEXT: v139: boolean = Less v136, v138
-# CHECK-NEXT: Branch v139 -> taken b40(| 0), notTaken b48()
+# CHECK-NEXT: Branch v139 -> taken b40(| 0), notTaken b50()
 # CHECK-NEXT: b40(v140: int[0, 2147483646]):
 # CHECK-NEXT: v141: int[0, 65535] = GetStringCodeUnit v134, v140
 # CHECK-NEXT: v142: 55296 = Integer integer=55296
 # CHECK-NEXT: v143: boolean = Less v141, v142
 # CHECK-NEXT: Branch v143 -> taken b41(), notTaken b42()
 # CHECK-NEXT: b41():
-# CHECK-NEXT: Jump -> next b46()
+# CHECK-NEXT: Jump -> next b48()
 # CHECK-NEXT: b42() frequency=Unlikely:
 # CHECK-NEXT: v144: 64512 = Integer integer=64512
 # CHECK-NEXT: v145: int[0, 64512] = BitAnd v141, v144
 # CHECK-NEXT: v146: 55296 = Integer integer=55296
 # CHECK-NEXT: v147: boolean = StrictEq v145, v146
-# CHECK-NEXT: Branch v147 -> taken b43(), notTaken b45()
+# CHECK-NEXT: Branch v147 -> taken b43(), notTaken b47()
 # CHECK-NEXT: b43() frequency=Unlikely:
 # CHECK-NEXT: v148: undefined|int[0, 1114111] = CallBuiltin v134, v140 overload=StringPrototypeCodePointAt/0
-# CHECK-NEXT: v149: 65535 = Integer integer=65535
-# CHECK-NEXT: v150: boolean = Greater v148, v149
-# CHECK-NEXT: Branch v150 -> taken b44(), notTaken b46()
-# CHECK-NEXT: b44() frequency=Unlikely:
-# CHECK-NEXT: v151: 2 = Integer integer=2
-# CHECK-NEXT: v152: int[2, 2147483648] = Add v140, v151
-# CHECK-NEXT: Jump -> next b47(v152)
+# CHECK-NEXT: v149: boolean = TypeTest v148 testedType=int[0, 1114111]
+# CHECK-NEXT: Branch v149 -> taken b44(| 0), notTaken b45()
+# CHECK-NEXT: b44(v150: int[0, 1114111]) frequency=Unlikely:
+# CHECK-NEXT: v151: 65535 = Integer integer=65535
+# CHECK-NEXT: v152: boolean = Greater v150, v151
+# CHECK-NEXT: Branch v152 -> taken b46(), notTaken b48()
 # CHECK-NEXT: b45() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b46()
-# CHECK-NEXT: b46():
-# CHECK-NEXT: v153: 1 = Integer integer=1
-# CHECK-NEXT: v154: int[1, 2147483647] = Add v140, v153
-# CHECK-NEXT: Jump -> next b47(v154)
-# CHECK-NEXT: b47(v155: int[1, 2147483648]):
-# CHECK-NEXT: v156: string = Substring v134, v140, v155
-# CHECK-NEXT: v157: int[0, 2147483647] = GetStringLength v156
-# CHECK-NEXT: v158: 1 = Integer integer=1
-# CHECK-NEXT: v159: int[0, 1073741823] = RShift v157, v158
-# CHECK-NEXT: v160: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v161: 0 = Integer
-# CHECK-NEXT: v162: undefined = StringRange v157, v161, v159
-# CHECK-NEXT: v163: int[0, 2147483647] = ResultAt v162
-# CHECK-NEXT: v164: int[0, 2147483647] = ResultAt v162 index=1
-# CHECK-NEXT: v165: string = Substring v156, v163, v164
-# CHECK-NEXT: v166: undefined = StringRange v157, v159
-# CHECK-NEXT: v167: int[0, 2147483647] = ResultAt v166
-# CHECK-NEXT: v168: int[0, 2147483647] = ResultAt v166 index=1
-# CHECK-NEXT: v169: string = Substring v156, v167, v168
-# CHECK-NEXT: v170: anything ~ undefined|number = CallDirect v10, v165, v169 function=f13 @621:17 tail
-# CHECK-NEXT: v171: undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ undefined|int = AssumeType v170 provenType=undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: v172: anything = ElemGet v10, v156 accessSite=34 receivers=[L0, L1]
-# CHECK-NEXT: v173: undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v172 provenType=undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: v174: undefined = CallBuiltin v160, v25, v156, v171, v173 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=26
-# CHECK-NEXT: Jump -> next b39(v155)
+# CHECK-NEXT: v153: undefined = Undefined
+# CHECK-NEXT: v154: 65535 = Integer integer=65535
+# CHECK-NEXT: v155: boolean = Greater v153, v154
+# CHECK-NEXT: Branch v155 -> taken b46(), notTaken b48()
+# CHECK-NEXT: b46() frequency=Unlikely:
+# CHECK-NEXT: v156: 2 = Integer integer=2
+# CHECK-NEXT: v157: int[2, 2147483648] = Add v140, v156
+# CHECK-NEXT: Jump -> next b49(v157)
+# CHECK-NEXT: b47() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b48()
 # CHECK-NEXT: b48():
+# CHECK-NEXT: v158: 1 = Integer integer=1
+# CHECK-NEXT: v159: int[1, 2147483647] = Add v140, v158
+# CHECK-NEXT: Jump -> next b49(v159)
+# CHECK-NEXT: b49(v160: int[1, 2147483648]):
+# CHECK-NEXT: v161: string = Substring v134, v140, v160
+# CHECK-NEXT: v162: int[0, 2147483647] = GetStringLength v161
+# CHECK-NEXT: v163: 1 = Integer integer=1
+# CHECK-NEXT: v164: int[0, 1073741823] = RShift v162, v163
+# CHECK-NEXT: v165: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v166: 0 = Integer
+# CHECK-NEXT: v167: undefined = StringRange v162, v166, v164
+# CHECK-NEXT: v168: int[0, 2147483647] = ResultAt v167
+# CHECK-NEXT: v169: int[0, 2147483647] = ResultAt v167 index=1
+# CHECK-NEXT: v170: string = Substring v161, v168, v169
+# CHECK-NEXT: v171: undefined = StringRange v162, v164
+# CHECK-NEXT: v172: int[0, 2147483647] = ResultAt v171
+# CHECK-NEXT: v173: int[0, 2147483647] = ResultAt v171 index=1
+# CHECK-NEXT: v174: string = Substring v161, v172, v173
+# CHECK-NEXT: v175: anything ~ undefined|number = CallDirect v10, v170, v174 function=f13 @621:17 tail
+# CHECK-NEXT: v176: undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ undefined|int = AssumeType v175 provenType=undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
+# CHECK-NEXT: v177: anything = ElemGet v10, v161 accessSite=34 receivers=[L0, L1]
+# CHECK-NEXT: v178: undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v177 provenType=undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
+# CHECK-NEXT: v179: undefined = CallBuiltin v165, v25, v161, v176, v178 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=26
+# CHECK-NEXT: Jump -> next b39(v160)
+# CHECK-NEXT: b50():
+# CHECK-NEXT: Jump -> next b54()
+# CHECK-NEXT: b51(v180: boolean|number|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b52(v180)
+# CHECK-NEXT: b52(v181: boolean|number|object ~ Array<undefined|null|string>) frequency=Unlikely:
+# CHECK-NEXT: v182: undefined = CallDirect v181 function=f19 [isNeverInlined]
+# CHECK-NEXT: v183: object = ResultAt v182
+# CHECK-NEXT: v184: anything = ResultAt v182 index=1
 # CHECK-NEXT: Jump -> next b53()
-# CHECK-NEXT: b49(v175: boolean|number|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b50(v175)
-# CHECK-NEXT: b50(v176: boolean|number|object ~ Array<undefined|null|string>) frequency=Unlikely:
-# CHECK-NEXT: v177: undefined = CallDirect v176 function=f19 [isNeverInlined]
-# CHECK-NEXT: v178: object = ResultAt v177
-# CHECK-NEXT: v179: anything = ResultAt v177 index=1
-# CHECK-NEXT: Jump -> next b51()
-# CHECK-NEXT: b51() frequency=Unlikely:
+# CHECK-NEXT: b53() frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v181: anything = Call v179, v178
-# CHECK-NEXT: v182: object = RequireObject v181 runtimeError=IteratorResultNotObject
-# CHECK-NEXT: v183: anything = PropGet v182 key="done"
-# CHECK-NEXT: v184: boolean = ToBoolean v183
-# CHECK-NEXT: Branch v184 -> taken b52(), notTaken b61()
-# CHECK-NEXT: b52() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b53()
-# CHECK-NEXT: b53():
-# CHECK-NEXT: v185: undefined = Undefined
-# CHECK-NEXT: v186: 2 = Integer integer=2
-# CHECK-NEXT: v187: int[0, 2] = BitAnd v20, v186
-# CHECK-NEXT: v188: boolean = ToBoolean v187
-# CHECK-NEXT: Branch v188 -> taken b54(v21), notTaken b54(v185)
-# CHECK-NEXT: b54(v189: anything|unspecified):
-# CHECK-NEXT: v190: anything|unspecified ~ undefined|int[-2147483643, 2147483647] = Upcast v189 castType=anything
-# CHECK-NEXT: v191: undefined|int|unspecified|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ undefined|int[-2147483643, 2147483647] = AssumeType v190 provenType=undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: v192: fact = Specified
-# CHECK-NEXT: v193: undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ undefined|int[-2147483643, 2147483647] = AssumeType v191, v192 provenType=undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: v194: boolean ~ true = TypeTest v193 testedType=undefined|int
-# CHECK-NEXT: Branch v194 -> taken b55(| 0), notTaken b56(| 0)
-# CHECK-NEXT: b55(v195: undefined|int ~ undefined|int[-2147483643, 2147483647]):
-# CHECK-NEXT: v196: undefined = CallBuiltin -, v25, v195, v11 overload=ConsoleLog/0 accessSite=15
-# CHECK-NEXT: Jump -> next b57()
-# CHECK-NEXT: b56(v197: builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)) frequency=Rare:
-# CHECK-NEXT: v198: undefined = CallBuiltin -, v25, v197, v11 overload=ConsoleLog/1 accessSite=15
-# CHECK-NEXT: Jump -> next b57()
-# CHECK-NEXT: b57():
-# CHECK-NEXT: v199: 0 = Integer
-# CHECK-NEXT: v200: boolean = StrictEq v25, v199
-# CHECK-NEXT: Branch v200 -> taken b58(), notTaken b59(| 0)
+# CHECK-NEXT: v186: undefined = CallDirect v183, v184 function=f21 [isNeverInlined]
+# CHECK-NEXT: v187: boolean = ResultAt v186
+# CHECK-NEXT: v188: anything = ResultAt v186 index=1
+# CHECK-NEXT: Branch v187 -> taken b54(), notTaken b62()
+# CHECK-NEXT: b54():
+# CHECK-NEXT: v189: undefined = Undefined
+# CHECK-NEXT: v190: 2 = Integer integer=2
+# CHECK-NEXT: v191: int[0, 2] = BitAnd v20, v190
+# CHECK-NEXT: v192: boolean = ToBoolean v191
+# CHECK-NEXT: Branch v192 -> taken b55(v21), notTaken b55(v189)
+# CHECK-NEXT: b55(v193: anything|unspecified):
+# CHECK-NEXT: v194: anything|unspecified ~ undefined|int[-2147483643, 2147483647] = Upcast v193 castType=anything
+# CHECK-NEXT: v195: undefined|int|unspecified|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ undefined|int[-2147483643, 2147483647] = AssumeType v194 provenType=undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
+# CHECK-NEXT: v196: fact = Specified
+# CHECK-NEXT: v197: undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ undefined|int[-2147483643, 2147483647] = AssumeType v195, v196 provenType=undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
+# CHECK-NEXT: v198: boolean ~ true = TypeTest v197 testedType=undefined|int
+# CHECK-NEXT: Branch v198 -> taken b56(| 0), notTaken b57(| 0)
+# CHECK-NEXT: b56(v199: undefined|int ~ undefined|int[-2147483643, 2147483647]):
+# CHECK-NEXT: v200: undefined = CallBuiltin -, v25, v199, v11 overload=ConsoleLog/0 accessSite=15
+# CHECK-NEXT: Jump -> next b58()
+# CHECK-NEXT: b57(v201: builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)) frequency=Rare:
+# CHECK-NEXT: v202: undefined = CallBuiltin -, v25, v201, v11 overload=ConsoleLog/1 accessSite=15
+# CHECK-NEXT: Jump -> next b58()
 # CHECK-NEXT: b58():
-# CHECK-NEXT: v201: -2147483643 = Integer integer=-2147483643
-# CHECK-NEXT: Jump -> next b60(v201)
-# CHECK-NEXT: b59(v202: int[1, 2]):
-# CHECK-NEXT: v203: -2147483648 = Integer integer=-2147483648
-# CHECK-NEXT: v204: int[-2147483647, -2147483646] = Add v203, v202
-# CHECK-NEXT: Jump -> next b60(v204)
-# CHECK-NEXT: b60(v205: int[-2147483647, -2147483643] ~ -2147483643):
-# CHECK-NEXT: v206: int[1, 3] ~ 1 = Increment v25
-# CHECK-NEXT: v207: 2 = Integer integer=2
-# CHECK-NEXT: Jump -> next b1(v206, v207, v205)
-# CHECK-NEXT: b61() frequency=Unlikely:
-# CHECK-NEXT: v208: anything = PropGet v182 key="value"
-# CHECK-NEXT: Jump -> next b62()
+# CHECK-NEXT: v203: 0 = Integer
+# CHECK-NEXT: v204: boolean = StrictEq v25, v203
+# CHECK-NEXT: Branch v204 -> taken b59(), notTaken b60(| 0)
+# CHECK-NEXT: b59():
+# CHECK-NEXT: v205: -2147483643 = Integer integer=-2147483643
+# CHECK-NEXT: Jump -> next b61(v205)
+# CHECK-NEXT: b60(v206: int[1, 2]):
+# CHECK-NEXT: v207: -2147483648 = Integer integer=-2147483648
+# CHECK-NEXT: v208: int[-2147483647, -2147483646] = Add v207, v206
+# CHECK-NEXT: Jump -> next b61(v208)
+# CHECK-NEXT: b61(v209: int[-2147483647, -2147483643] ~ -2147483643):
+# CHECK-NEXT: v210: int[1, 3] ~ 1 = Increment v25
+# CHECK-NEXT: v211: 2 = Integer integer=2
+# CHECK-NEXT: Jump -> next b1(v210, v211, v209)
 # CHECK-NEXT: b62() frequency=Unlikely handler=b63():
-# CHECK-NEXT: v209: anything ~ undefined|null|string = Expect v208 expectedType=undefined|null|string
-# CHECK-NEXT: v210: boolean|number|string|symbol|bigint|object ~ string = RequireObjectCoercible v209 name="length"
-# CHECK-NEXT: v211: anything = PropGet v210 key="length" accessSite=17
-# CHECK-NEXT: v212: anything ~ number = Expect v211 expectedType=number
-# CHECK-NEXT: v213: 1 = Integer integer=1
-# CHECK-NEXT: v214: int[-1073741824, 1073741823] = RShift v212, v213
-# CHECK-NEXT: v215: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v216: anything = PropGet v210 key="slice" accessSite=20
-# CHECK-NEXT: v217: 0 = Integer
-# CHECK-NEXT: v218: anything = Call v216, v210, v217, v214 calleeKey="slice" calleeName="name.slice" accessSite=21 callees=[builtin(ArrayPrototypeSlice), builtin(StringPrototypeSlice), ..]
-# CHECK-NEXT: v219: string|object = AssumeType v218 provenType=string|object
-# CHECK-NEXT: v220: string|object ~ string = Expect v219 expectedType=undefined|null|string
-# CHECK-NEXT: v221: anything = PropGet v210 key="slice" accessSite=22
-# CHECK-NEXT: v222: anything = Call v221, v210, v214 calleeKey="slice" calleeName="name.slice" accessSite=23 callees=[builtin(ArrayPrototypeSlice), builtin(StringPrototypeSlice), ..]
-# CHECK-NEXT: v223: string|object = AssumeType v222 provenType=string|object
-# CHECK-NEXT: v224: string|object ~ string = Expect v223 expectedType=undefined|null|string
-# CHECK-NEXT: v225: anything ~ undefined|number = CallDirect v10, v220, v224 function=f1 accessSite=24
-# CHECK-NEXT: v226: undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ undefined|int = AssumeType v225 provenType=undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: v227: undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = CallDirect v10, v210 function=f2 accessSite=25
-# CHECK-NEXT: v228: undefined = CallBuiltin v215, v25, v210, v226, v227 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=26
-# CHECK-NEXT: Jump -> next b51()
+# CHECK-NEXT: v212: anything ~ undefined|null|string = Expect v188 expectedType=undefined|null|string
+# CHECK-NEXT: v213: boolean|number|string|symbol|bigint|object ~ string = RequireObjectCoercible v212 name="length"
+# CHECK-NEXT: v214: anything = PropGet v213 key="length" accessSite=17
+# CHECK-NEXT: v215: anything ~ number = Expect v214 expectedType=number
+# CHECK-NEXT: v216: 1 = Integer integer=1
+# CHECK-NEXT: v217: int[-1073741824, 1073741823] = RShift v215, v216
+# CHECK-NEXT: v218: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v219: anything = PropGet v213 key="slice" accessSite=20
+# CHECK-NEXT: v220: 0 = Integer
+# CHECK-NEXT: v221: anything = Call v219, v213, v220, v217 calleeKey="slice" calleeName="name.slice" accessSite=21 callees=[builtin(ArrayPrototypeSlice), builtin(StringPrototypeSlice), ..]
+# CHECK-NEXT: v222: string|object = AssumeType v221 provenType=string|object
+# CHECK-NEXT: v223: string|object ~ string = Expect v222 expectedType=undefined|null|string
+# CHECK-NEXT: v224: anything = PropGet v213 key="slice" accessSite=22
+# CHECK-NEXT: v225: anything = Call v224, v213, v217 calleeKey="slice" calleeName="name.slice" accessSite=23 callees=[builtin(ArrayPrototypeSlice), builtin(StringPrototypeSlice), ..]
+# CHECK-NEXT: v226: string|object = AssumeType v225 provenType=string|object
+# CHECK-NEXT: v227: string|object ~ string = Expect v226 expectedType=undefined|null|string
+# CHECK-NEXT: v228: anything ~ undefined|number = CallDirect v10, v223, v227 function=f1 accessSite=24
+# CHECK-NEXT: v229: undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ undefined|int = AssumeType v228 provenType=undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
+# CHECK-NEXT: v230: undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = CallDirect v10, v213 function=f2 accessSite=25
+# CHECK-NEXT: v231: undefined = CallBuiltin v218, v25, v213, v229, v230 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=26
+# CHECK-NEXT: Jump -> next b53()
 # CHECK-NEXT: b63() role=CleanupHandler frequency=Unlikely:
-# CHECK-NEXT: v229: exception = CatchException
-# CHECK-NEXT: v230: undefined = CallDirect v178 function=f20 [isNeverInlined]
-# CHECK-NEXT: Rethrow v229
+# CHECK-NEXT: v232: exception = CatchException
+# CHECK-NEXT: v233: undefined = CallDirect v183 function=f20 [isNeverInlined]
+# CHECK-NEXT: Rethrow v232
 # CHECK-NEXT: b64():
-# CHECK-NEXT: v231: 7 = Integer integer=7
-# CHECK-NEXT: PutSlot v10, -, v231 key="first" receivers=[L1] level=Proven accessSite=27
-# CHECK-NEXT: v233: -2147483648 = Integer integer=-2147483648
-# CHECK-NEXT: PutSlot v10, -, v233 key="zero" receivers=[L1] level=Proven accessSite=28
-# CHECK-NEXT: v235: boolean|number|string|object ~ Array<undefined|null|string> = RequireObjectCoercible v15 nullishAccess=Iterate
-# CHECK-NEXT: v236: boolean ~ true = TypeTest v235 testedType=Array<undefined|null|string>
-# CHECK-NEXT: Branch v236 -> taken b65(| 0), notTaken b79(| 0)
-# CHECK-NEXT: b65(v237: Array<undefined|null|string>):
-# CHECK-NEXT: v238: boolean = IsPristine v237 builtinClass=Array aspects=[Names]
-# CHECK-NEXT: Branch v238 -> taken b66(), notTaken b91(v237)
+# CHECK-NEXT: v234: 7 = Integer integer=7
+# CHECK-NEXT: PutSlot v10, -, v234 key="first" receivers=[L1] level=Proven accessSite=27
+# CHECK-NEXT: v236: -2147483648 = Integer integer=-2147483648
+# CHECK-NEXT: PutSlot v10, -, v236 key="zero" receivers=[L1] level=Proven accessSite=28
+# CHECK-NEXT: v238: boolean|number|string|object ~ Array<undefined|null|string> = RequireObjectCoercible v15 nullishAccess=Iterate
+# CHECK-NEXT: v239: boolean ~ true = TypeTest v238 testedType=Array<undefined|null|string>
+# CHECK-NEXT: Branch v239 -> taken b65(| 0), notTaken b79(| 0)
+# CHECK-NEXT: b65(v240: Array<undefined|null|string>):
+# CHECK-NEXT: v241: boolean = IsPristine v240 builtinClass=Array aspects=[Names]
+# CHECK-NEXT: Branch v241 -> taken b66(), notTaken b93(v240)
 # CHECK-NEXT: b66():
-# CHECK-NEXT: v239: 0 = Integer
-# CHECK-NEXT: Jump -> next b67(v239)
-# CHECK-NEXT: b67(v240: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: Jump -> next b68(v240)
-# CHECK-NEXT: b68(v241: int[0, 4294967295]):
+# CHECK-NEXT: v242: 0 = Integer
+# CHECK-NEXT: Jump -> next b67(v242)
+# CHECK-NEXT: b67(v243: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b68(v243)
+# CHECK-NEXT: b68(v244: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v243: int[0, 4294967295] = CallBuiltin v237 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v244: boolean = Less v241, v243
-# CHECK-NEXT: Branch v244 -> taken b69(| 0), notTaken b94()
-# CHECK-NEXT: b69(v245: int[0, 4294967294]):
-# CHECK-NEXT: v246: boolean = HasArrayStorage v237 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v246 -> taken b70(| 0), notTaken b74()
-# CHECK-NEXT: b70(v247: guard):
-# CHECK-NEXT: v248: boolean = IsElementPresent v237, v245, v247 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v248 -> taken b71(| 0), notTaken b74()
-# CHECK-NEXT: b71(v249: guard):
-# CHECK-NEXT: v250: guard = AllGuards v247, v249
-# CHECK-NEXT: v251: anything ~ undefined|null|string = GetArrayElement v237, v245, v250 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
-# CHECK-NEXT: v252: 1 = Integer integer=1
-# CHECK-NEXT: v253: int[1, 4294967295] = Add v245, v252
-# CHECK-NEXT: v254: boolean ~ true = TypeTest v251 testedType=undefined|null|string
-# CHECK-NEXT: Branch v254 -> taken b72(| 0), notTaken b73()
-# CHECK-NEXT: b72(v255: undefined|null|string):
-# CHECK-NEXT: v256: anything = ElemGet v10, v255 accessSite=34 receivers=[L0, L1]
-# CHECK-NEXT: v257: undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v256 provenType=undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: Jump -> next b78(v257, v253, v251)
+# CHECK-NEXT: v246: int[0, 4294967295] = CallBuiltin v240 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v247: boolean = Less v244, v246
+# CHECK-NEXT: Branch v247 -> taken b69(| 0), notTaken b95()
+# CHECK-NEXT: b69(v248: int[0, 4294967294]):
+# CHECK-NEXT: v249: boolean = HasArrayStorage v240 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v249 -> taken b70(| 0), notTaken b74()
+# CHECK-NEXT: b70(v250: guard):
+# CHECK-NEXT: v251: boolean = IsElementPresent v240, v248, v250 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v251 -> taken b71(| 0), notTaken b74()
+# CHECK-NEXT: b71(v252: guard):
+# CHECK-NEXT: v253: guard = AllGuards v250, v252
+# CHECK-NEXT: v254: anything ~ undefined|null|string = GetArrayElement v240, v248, v253 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+# CHECK-NEXT: v255: 1 = Integer integer=1
+# CHECK-NEXT: v256: int[1, 4294967295] = Add v248, v255
+# CHECK-NEXT: v257: boolean ~ true = TypeTest v254 testedType=undefined|null|string
+# CHECK-NEXT: Branch v257 -> taken b72(| 0), notTaken b73()
+# CHECK-NEXT: b72(v258: undefined|null|string):
+# CHECK-NEXT: v259: anything = ElemGet v10, v258 accessSite=34 receivers=[L0, L1]
+# CHECK-NEXT: v260: undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v259 provenType=undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
+# CHECK-NEXT: Jump -> next b78(v260, v256, v254)
 # CHECK-NEXT: b73() frequency=Unlikely:
-# CHECK-NEXT: v258: anything = ElemGet v10, v251 accessSite=34
-# CHECK-NEXT: Jump -> next b77(v253, v251, v258)
+# CHECK-NEXT: v261: anything = ElemGet v10, v254 accessSite=34
+# CHECK-NEXT: Jump -> next b77(v256, v254, v261)
 # CHECK-NEXT: b74() frequency=Rare:
-# CHECK-NEXT: v259: anything ~ undefined|null|string = ElemGet v237, v245 [keyIsIntegral]
-# CHECK-NEXT: v260: 1 = Integer integer=1
-# CHECK-NEXT: v261: int[1, 4294967295] = Add v245, v260
-# CHECK-NEXT: v262: boolean ~ true = TypeTest v259 testedType=undefined|null|string
-# CHECK-NEXT: Branch v262 -> taken b75(| 0), notTaken b76()
-# CHECK-NEXT: b75(v263: undefined|null|string) frequency=Rare:
-# CHECK-NEXT: v264: anything = ElemGet v10, v263 accessSite=34 receivers=[L0, L1]
-# CHECK-NEXT: v265: undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v264 provenType=undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: v266: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v267: undefined = CallBuiltin v266, v259, v265 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=32
-# CHECK-NEXT: Jump -> next b67(v261)
+# CHECK-NEXT: v262: anything ~ undefined|null|string = ElemGet v240, v248 [keyIsIntegral]
+# CHECK-NEXT: v263: 1 = Integer integer=1
+# CHECK-NEXT: v264: int[1, 4294967295] = Add v248, v263
+# CHECK-NEXT: v265: boolean ~ true = TypeTest v262 testedType=undefined|null|string
+# CHECK-NEXT: Branch v265 -> taken b75(| 0), notTaken b76()
+# CHECK-NEXT: b75(v266: undefined|null|string) frequency=Rare:
+# CHECK-NEXT: v267: anything = ElemGet v10, v266 accessSite=34 receivers=[L0, L1]
+# CHECK-NEXT: v268: undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v267 provenType=undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
+# CHECK-NEXT: v269: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v270: undefined = CallBuiltin v269, v262, v268 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=32
+# CHECK-NEXT: Jump -> next b67(v264)
 # CHECK-NEXT: b76() frequency=Rare:
-# CHECK-NEXT: v268: anything = ElemGet v10, v259 accessSite=34
-# CHECK-NEXT: Jump -> next b77(v261, v259, v268)
-# CHECK-NEXT: b77(v269: int[1, 4294967295], v270: anything ~ undefined|null|string, v271: anything) frequency=Unlikely:
-# CHECK-NEXT: v272: undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v271 provenType=undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: Jump -> next b78(v272, v269, v270)
-# CHECK-NEXT: b78(v273: undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf), v274: int[1, 4294967295], v275: anything ~ undefined|null|string):
-# CHECK-NEXT: v276: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v277: undefined = CallBuiltin v276, v275, v273 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=32
-# CHECK-NEXT: Jump -> next b68(v274)
-# CHECK-NEXT: b79(v278: boolean|number|string|object) frequency=Unlikely:
-# CHECK-NEXT: v279: boolean = TypeTest v278 testedType=string
-# CHECK-NEXT: Branch v279 -> taken b80(| 0), notTaken b90(| 0)
-# CHECK-NEXT: b80(v280: string) frequency=Unlikely:
-# CHECK-NEXT: v281: 0 = Integer
-# CHECK-NEXT: Jump -> next b81(v281)
-# CHECK-NEXT: b81(v282: int[0, 2147483648]):
+# CHECK-NEXT: v271: anything = ElemGet v10, v262 accessSite=34
+# CHECK-NEXT: Jump -> next b77(v264, v262, v271)
+# CHECK-NEXT: b77(v272: int[1, 4294967295], v273: anything ~ undefined|null|string, v274: anything) frequency=Unlikely:
+# CHECK-NEXT: v275: undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v274 provenType=undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
+# CHECK-NEXT: Jump -> next b78(v275, v272, v273)
+# CHECK-NEXT: b78(v276: undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf), v277: int[1, 4294967295], v278: anything ~ undefined|null|string):
+# CHECK-NEXT: v279: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v280: undefined = CallBuiltin v279, v278, v276 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=32
+# CHECK-NEXT: Jump -> next b68(v277)
+# CHECK-NEXT: b79(v281: boolean|number|string|object) frequency=Unlikely:
+# CHECK-NEXT: v282: boolean = TypeTest v281 testedType=string
+# CHECK-NEXT: Branch v282 -> taken b80(| 0), notTaken b92(| 0)
+# CHECK-NEXT: b80(v283: string) frequency=Unlikely:
+# CHECK-NEXT: v284: 0 = Integer
+# CHECK-NEXT: Jump -> next b81(v284)
+# CHECK-NEXT: b81(v285: int[0, 2147483648]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v284: int[0, 2147483647] = GetStringLength v280
-# CHECK-NEXT: v285: boolean = Less v282, v284
-# CHECK-NEXT: Branch v285 -> taken b82(| 0), notTaken b94()
-# CHECK-NEXT: b82(v286: int[0, 2147483646]):
-# CHECK-NEXT: v287: int[0, 65535] = GetStringCodeUnit v280, v286
-# CHECK-NEXT: v288: 55296 = Integer integer=55296
-# CHECK-NEXT: v289: boolean = Less v287, v288
-# CHECK-NEXT: Branch v289 -> taken b83(), notTaken b84()
+# CHECK-NEXT: v287: int[0, 2147483647] = GetStringLength v283
+# CHECK-NEXT: v288: boolean = Less v285, v287
+# CHECK-NEXT: Branch v288 -> taken b82(| 0), notTaken b95()
+# CHECK-NEXT: b82(v289: int[0, 2147483646]):
+# CHECK-NEXT: v290: int[0, 65535] = GetStringCodeUnit v283, v289
+# CHECK-NEXT: v291: 55296 = Integer integer=55296
+# CHECK-NEXT: v292: boolean = Less v290, v291
+# CHECK-NEXT: Branch v292 -> taken b83(), notTaken b84()
 # CHECK-NEXT: b83():
-# CHECK-NEXT: Jump -> next b88()
+# CHECK-NEXT: Jump -> next b90()
 # CHECK-NEXT: b84() frequency=Unlikely:
-# CHECK-NEXT: v290: 64512 = Integer integer=64512
-# CHECK-NEXT: v291: int[0, 64512] = BitAnd v287, v290
-# CHECK-NEXT: v292: 55296 = Integer integer=55296
-# CHECK-NEXT: v293: boolean = StrictEq v291, v292
-# CHECK-NEXT: Branch v293 -> taken b85(), notTaken b87()
+# CHECK-NEXT: v293: 64512 = Integer integer=64512
+# CHECK-NEXT: v294: int[0, 64512] = BitAnd v290, v293
+# CHECK-NEXT: v295: 55296 = Integer integer=55296
+# CHECK-NEXT: v296: boolean = StrictEq v294, v295
+# CHECK-NEXT: Branch v296 -> taken b85(), notTaken b89()
 # CHECK-NEXT: b85() frequency=Unlikely:
-# CHECK-NEXT: v294: undefined|int[0, 1114111] = CallBuiltin v280, v286 overload=StringPrototypeCodePointAt/0
-# CHECK-NEXT: v295: 65535 = Integer integer=65535
-# CHECK-NEXT: v296: boolean = Greater v294, v295
-# CHECK-NEXT: Branch v296 -> taken b86(), notTaken b88()
-# CHECK-NEXT: b86() frequency=Unlikely:
-# CHECK-NEXT: v297: 2 = Integer integer=2
-# CHECK-NEXT: v298: int[2, 2147483648] = Add v286, v297
-# CHECK-NEXT: Jump -> next b89(v298)
+# CHECK-NEXT: v297: undefined|int[0, 1114111] = CallBuiltin v283, v289 overload=StringPrototypeCodePointAt/0
+# CHECK-NEXT: v298: boolean = TypeTest v297 testedType=int[0, 1114111]
+# CHECK-NEXT: Branch v298 -> taken b86(| 0), notTaken b87()
+# CHECK-NEXT: b86(v299: int[0, 1114111]) frequency=Unlikely:
+# CHECK-NEXT: v300: 65535 = Integer integer=65535
+# CHECK-NEXT: v301: boolean = Greater v299, v300
+# CHECK-NEXT: Branch v301 -> taken b88(), notTaken b90()
 # CHECK-NEXT: b87() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b88()
-# CHECK-NEXT: b88():
-# CHECK-NEXT: v299: 1 = Integer integer=1
-# CHECK-NEXT: v300: int[1, 2147483647] = Add v286, v299
-# CHECK-NEXT: Jump -> next b89(v300)
-# CHECK-NEXT: b89(v301: int[1, 2147483648]):
-# CHECK-NEXT: v302: string = Substring v280, v286, v301
-# CHECK-NEXT: v303: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v304: anything = ElemGet v10, v302 accessSite=34 receivers=[L0, L1]
-# CHECK-NEXT: v305: undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v304 provenType=undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: v306: undefined = CallBuiltin v303, v302, v305 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=32
-# CHECK-NEXT: Jump -> next b81(v301)
-# CHECK-NEXT: b90(v307: boolean|number|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b91(v307)
-# CHECK-NEXT: b91(v308: boolean|number|object ~ Array<undefined|null|string>) frequency=Unlikely:
-# CHECK-NEXT: v309: undefined = CallDirect v308 function=f19 [isNeverInlined]
-# CHECK-NEXT: v310: object = ResultAt v309
-# CHECK-NEXT: v311: anything = ResultAt v309 index=1
-# CHECK-NEXT: Jump -> next b92()
-# CHECK-NEXT: b92() frequency=Unlikely:
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v313: anything = Call v311, v310
-# CHECK-NEXT: v314: object = RequireObject v313 runtimeError=IteratorResultNotObject
-# CHECK-NEXT: v315: anything = PropGet v314 key="done"
-# CHECK-NEXT: v316: boolean = ToBoolean v315
-# CHECK-NEXT: Branch v316 -> taken b93(), notTaken b95()
-# CHECK-NEXT: b93() frequency=Unlikely:
+# CHECK-NEXT: v302: undefined = Undefined
+# CHECK-NEXT: v303: 65535 = Integer integer=65535
+# CHECK-NEXT: v304: boolean = Greater v302, v303
+# CHECK-NEXT: Branch v304 -> taken b88(), notTaken b90()
+# CHECK-NEXT: b88() frequency=Unlikely:
+# CHECK-NEXT: v305: 2 = Integer integer=2
+# CHECK-NEXT: v306: int[2, 2147483648] = Add v289, v305
+# CHECK-NEXT: Jump -> next b91(v306)
+# CHECK-NEXT: b89() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b90()
+# CHECK-NEXT: b90():
+# CHECK-NEXT: v307: 1 = Integer integer=1
+# CHECK-NEXT: v308: int[1, 2147483647] = Add v289, v307
+# CHECK-NEXT: Jump -> next b91(v308)
+# CHECK-NEXT: b91(v309: int[1, 2147483648]):
+# CHECK-NEXT: v310: string = Substring v283, v289, v309
+# CHECK-NEXT: v311: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v312: anything = ElemGet v10, v310 accessSite=34 receivers=[L0, L1]
+# CHECK-NEXT: v313: undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v312 provenType=undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
+# CHECK-NEXT: v314: undefined = CallBuiltin v311, v310, v313 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=32
+# CHECK-NEXT: Jump -> next b81(v309)
+# CHECK-NEXT: b92(v315: boolean|number|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b93(v315)
+# CHECK-NEXT: b93(v316: boolean|number|object ~ Array<undefined|null|string>) frequency=Unlikely:
+# CHECK-NEXT: v317: undefined = CallDirect v316 function=f19 [isNeverInlined]
+# CHECK-NEXT: v318: object = ResultAt v317
+# CHECK-NEXT: v319: anything = ResultAt v317 index=1
 # CHECK-NEXT: Jump -> next b94()
-# CHECK-NEXT: b94():
-# CHECK-NEXT: v317: undefined = Undefined
-# CHECK-NEXT: Return v317
-# CHECK-NEXT: b95() frequency=Unlikely:
-# CHECK-NEXT: v318: anything = PropGet v314 key="value"
-# CHECK-NEXT: Jump -> next b96()
+# CHECK-NEXT: b94() frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v321: undefined = CallDirect v318, v319 function=f21 [isNeverInlined]
+# CHECK-NEXT: v322: boolean = ResultAt v321
+# CHECK-NEXT: v323: anything = ResultAt v321 index=1
+# CHECK-NEXT: Branch v322 -> taken b95(), notTaken b96()
+# CHECK-NEXT: b95():
+# CHECK-NEXT: v324: undefined = Undefined
+# CHECK-NEXT: Return v324
 # CHECK-NEXT: b96() frequency=Unlikely handler=b97():
-# CHECK-NEXT: v319: anything ~ undefined|null|string = Expect v318 expectedType=undefined|null|string
-# CHECK-NEXT: v320: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v321: undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = CallDirect v10, v319 function=f2 accessSite=31
-# CHECK-NEXT: v322: undefined = CallBuiltin v320, v319, v321 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=32
-# CHECK-NEXT: Jump -> next b92()
+# CHECK-NEXT: v325: anything ~ undefined|null|string = Expect v323 expectedType=undefined|null|string
+# CHECK-NEXT: v326: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v327: undefined|int|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = CallDirect v10, v325 function=f2 accessSite=31
+# CHECK-NEXT: v328: undefined = CallBuiltin v326, v325, v327 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=32
+# CHECK-NEXT: Jump -> next b94()
 # CHECK-NEXT: b97() role=CleanupHandler frequency=Unlikely:
-# CHECK-NEXT: v323: exception = CatchException
-# CHECK-NEXT: v324: undefined = CallDirect v310 function=f20 [isNeverInlined]
-# CHECK-NEXT: Rethrow v323
+# CHECK-NEXT: v329: exception = CatchException
+# CHECK-NEXT: v330: undefined = CallDirect v318 function=f20 [isNeverInlined]
+# CHECK-NEXT: Rethrow v329
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="readUnder"
 # CHECK: module=m0 position=621 role=EntryChecks flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=L1 site=w3 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w4 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w5 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|number site=w6 flags=[IsExpected]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f13 fallback=f15} {

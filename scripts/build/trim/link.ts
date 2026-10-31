@@ -421,8 +421,9 @@ function planSecondLink(session: LinkSession): SecondLinkPlan {
   let first = linker.link(firstRequest);
   stopwatch.lap("first link");
   const native = format.compiledObjects("first");
-  if (format.prepareCompiledObjects(native)) {
-    first = linker.link({ ...firstRequest, rewrite: preparedNativeInput, first: [...firstRequest.first, ...native] });
+  const prepared = format.prepareCompiledObjects(native, first);
+  if (prepared !== undefined) {
+    first = linker.link({ ...firstRequest, rewrite: preparedNativeInput, first: [...firstRequest.first, ...prepared] });
     stopwatch.lap("first link of the compiled objects");
   }
   const analysis = analyze(first, session);
@@ -431,7 +432,7 @@ function planSecondLink(session: LinkSession): SecondLinkPlan {
   const room = estimateRoom(first, analysis, order, session);
   stopwatch.lap("section order and table room");
 
-  const reused = format.relinksSameInputs ? undefined : native;
+  const reused = prepared ?? native;
   const namedNativeInput = (path: string) => {
     const prepared = preparedNativeInput(path);
     return prepared === undefined ? undefined : (copies.get(prepared) ?? prepared);
@@ -441,8 +442,8 @@ function planSecondLink(session: LinkSession): SecondLinkPlan {
     room,
     request: tableRoom => ({
       name: "second",
-      rewrite: reused === undefined ? preparedInput : namedNativeInput,
-      first: [...format.supportObjects(tableRoom), ...format.firstInputs, ...(reused ?? [])],
+      rewrite: namedNativeInput,
+      first: [...format.supportObjects(tableRoom), ...format.firstInputs, ...reused],
       ...format.secondLinkArguments(order),
     }),
   };

@@ -3176,9 +3176,9 @@ runtimefunction id=ArrayTraversalTraverseArray function=f22 visibility=Private
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="three"
-# CHECK: module=m0 position=3930 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 3] site=w8}] results=[{type=L26 site=w9 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f26}
+# CHECK: module=m0 position=3930 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 3] site=w8}] results=[{type=L26 site=w9 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f24}
 # CHECK-LABEL: function {{*}}name="throws"
-# CHECK: module=m0 position=4168 role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=w10 flags=[IsExpected]}] results=[{type=L9 site=w11 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f24 fallback=f25}
+# CHECK: module=m0 position=4168 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=w10}] results=[{type=L9 site=w11 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f25}
 # CHECK-LABEL: function {{*}}name="wire"
 # CHECK: module=m0 position=4524 flags=[IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|1 site=w12}, {type=undefined|"s" site=w13 flags=[OmitsNull]}, {type=undefined|"i" site=w14 flags=[OmitsNull]}, {type=undefined|boolean site=w15}] results=[{type=L1 site=w16 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: undefined|1, v1: undefined|"s", v2: undefined|"i", v3: undefined|boolean):
@@ -3214,7 +3214,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f22 visibility=Private
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="show"
-# CHECK: module=m0 position=267 kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=string site=w17 flags=[OmitsNull, OmitsUndefined]}, {type=L1|L2|L3|L4|L5|L7|L8|L9|L10|L11|L14|L16|L18|L21|L23|L24|L25|L26|Object site=w18 flags=[OmitsNull, OmitsUndefined]}] results=[{type=int[0, 4294967295] site=w19}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f5 callPosition=395 module=m0 calledBuiltin=ArrayPrototypeJoin}, {callee=f14 callPosition=383 module=m2}, {callee=f49 callPosition=395 parent=1 module=m3}, {callee=f49 callPosition=3970 parent=3 module=m3}, {callee=f22 callPosition=3970 parent=4 module=m3}, {callee=f22 callPosition=5210 parent=2 module=m3}, {callee=f20 callPosition=10405 parent=5 isTailCall=true module=m3}, {callee=f19 callPosition=8715 parent=5 module=m3}] {
+# CHECK: module=m0 position=267 kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=string site=w17 flags=[OmitsNull, OmitsUndefined]}, {type=L1|L2|L3|L4|L5|L7|L8|L9|L10|L11|L14|L16|L18|L21|L23|L24|L25|L26|Object site=w18 flags=[OmitsNull, OmitsUndefined]}] results=[{type=int[0, 4294967295] site=w19}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f5 callPosition=395 module=m0 calledBuiltin=ArrayPrototypeJoin}, {callee=f14 callPosition=383 module=m2}, {callee=f46 callPosition=395 parent=1 module=m3}, {callee=f46 callPosition=3970 parent=3 module=m3}, {callee=f22 callPosition=3970 parent=4 module=m3}, {callee=f22 callPosition=5210 parent=2 module=m3}, {callee=f20 callPosition=10405 parent=5 isTailCall=true module=m3}, {callee=f19 callPosition=8715 parent=5 module=m3}] {
 # CHECK-NEXT: b0(v0: string, v1: L1|L2|L3|L4|L5|L7|L8|L9|L10|L11|L14|L16|L18|L21|L23|L24|L25|L26|Object):
 # CHECK-NEXT: v2: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g0
 # CHECK-NEXT: v3: " | " = String string=" | "
@@ -3222,183 +3222,150 @@ runtimefunction id=ArrayTraversalTraverseArray function=f22 visibility=Private
 # CHECK-NEXT: v5: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: StringBuilderAppend v5, v4
 # CHECK-NEXT: v7: i32 = StringBuilderCheckpoint v5
-# CHECK-NEXT: v8: i32 = StringBuilderCheckpoint v5
-# CHECK-NEXT: v9: boolean = ShapeTest v1 layouts=[L8]
-# CHECK-NEXT: Branch v9 -> taken b1(), notTaken b3()
+# CHECK-NEXT: v8: boolean = ShapeTest v1 layouts=[L8]
+# CHECK-NEXT: Branch v8 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v10: int[0, 2] = CallDirect v1, v5 function=f37 calledBuiltin=JSONStringify
-# CHECK-NEXT: Switch v10 cases=[1] -> case b2(), otherwise b24()
+# CHECK-NEXT: v9: int[0, 2] = CallDirect v1, v5 function=f35 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v9 cases=[1] -> case b16(), otherwise b17()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v11: buildercursor = StringBuilderReserve v5 size=128
-# CHECK-NEXT: Jump -> next b25(v11)
+# CHECK-NEXT: v10: boolean = ShapeTest v1 layouts=[L14]
+# CHECK-NEXT: Branch v10 -> taken b3(), notTaken b4()
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v12: boolean = ShapeTest v1 layouts=[L14]
-# CHECK-NEXT: Branch v12 -> taken b4(), notTaken b6()
+# CHECK-NEXT: v11: int[0, 2] = CallDirect v1, v5 function=f40 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v11 cases=[1] -> case b16(), otherwise b17()
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v13: int[0, 2] = CallDirect v1, v5 function=f42 calledBuiltin=JSONStringify
-# CHECK-NEXT: Switch v13 cases=[1] -> case b5(), otherwise b24()
+# CHECK-NEXT: v12: boolean = ShapeTest v1 layouts=[L24]
+# CHECK-NEXT: Branch v12 -> taken b5(), notTaken b6()
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v14: buildercursor = StringBuilderReserve v5 size=128
-# CHECK-NEXT: Jump -> next b25(v14)
+# CHECK-NEXT: v13: int[0, 2] = CallDirect v1, v5 function=f41 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v13 cases=[1] -> case b16(), otherwise b17()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v15: boolean = ShapeTest v1 layouts=[L24]
-# CHECK-NEXT: Branch v15 -> taken b7(), notTaken b9()
+# CHECK-NEXT: v14: boolean = ShapeTest v1 layouts=[L10]
+# CHECK-NEXT: Branch v14 -> taken b7(), notTaken b8()
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v16: int[0, 2] = CallDirect v1, v5 function=f43 calledBuiltin=JSONStringify
-# CHECK-NEXT: Switch v16 cases=[1] -> case b8(), otherwise b24()
+# CHECK-NEXT: v15: int[0, 2] = CallDirect v1, v5 function=f37 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v15 cases=[1] -> case b16(), otherwise b17()
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v17: buildercursor = StringBuilderReserve v5 size=128
-# CHECK-NEXT: Jump -> next b25(v17)
+# CHECK-NEXT: v16: boolean = ShapeTest v1 layouts=[L4]
+# CHECK-NEXT: Branch v16 -> taken b9(), notTaken b10()
 # CHECK-NEXT: b9():
-# CHECK-NEXT: v18: boolean = ShapeTest v1 layouts=[L10]
-# CHECK-NEXT: Branch v18 -> taken b10(), notTaken b12()
+# CHECK-NEXT: v17: int[0, 2] = CallDirect v1, v5 function=f31 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v17 cases=[1] -> case b16(), otherwise b17()
 # CHECK-NEXT: b10():
-# CHECK-NEXT: v19: int[0, 2] = CallDirect v1, v5 function=f39 calledBuiltin=JSONStringify
-# CHECK-NEXT: Switch v19 cases=[1] -> case b11(), otherwise b24()
+# CHECK-NEXT: v18: boolean = ShapeTest v1 layouts=[L5]
+# CHECK-NEXT: Branch v18 -> taken b11(), notTaken b12()
 # CHECK-NEXT: b11():
-# CHECK-NEXT: v20: buildercursor = StringBuilderReserve v5 size=128
-# CHECK-NEXT: Jump -> next b25(v20)
+# CHECK-NEXT: v19: int[0, 2] = CallDirect v1, v5 function=f32 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v19 cases=[1] -> case b16(), otherwise b17()
 # CHECK-NEXT: b12():
-# CHECK-NEXT: v21: boolean = ShapeTest v1 layouts=[L4]
-# CHECK-NEXT: Branch v21 -> taken b13(), notTaken b15()
+# CHECK-NEXT: v20: boolean = ShapeTest v1 layouts=[L7]
+# CHECK-NEXT: Branch v20 -> taken b13(), notTaken b14()
 # CHECK-NEXT: b13():
-# CHECK-NEXT: v22: int[0, 2] = CallDirect v1, v5 function=f33 calledBuiltin=JSONStringify
-# CHECK-NEXT: Switch v22 cases=[1] -> case b14(), otherwise b24()
+# CHECK-NEXT: v21: int[0, 2] = CallDirect v1, v5 function=f34 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v21 cases=[1] -> case b16(), otherwise b17()
 # CHECK-NEXT: b14():
-# CHECK-NEXT: v23: buildercursor = StringBuilderReserve v5 size=128
-# CHECK-NEXT: Jump -> next b25(v23)
+# CHECK-NEXT: v22: boolean = ShapeTest v1 layouts=[L9]
+# CHECK-NEXT: Branch v22 -> taken b15(), notTaken b17()
 # CHECK-NEXT: b15():
-# CHECK-NEXT: v24: boolean = ShapeTest v1 layouts=[L5]
-# CHECK-NEXT: Branch v24 -> taken b16(), notTaken b18()
+# CHECK-NEXT: v23: int[0, 2] = CallDirect v1, v5 function=f36 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v23 cases=[1] -> case b16(), otherwise b17()
 # CHECK-NEXT: b16():
-# CHECK-NEXT: v25: int[0, 2] = CallDirect v1, v5 function=f34 calledBuiltin=JSONStringify
-# CHECK-NEXT: Switch v25 cases=[1] -> case b17(), otherwise b24()
-# CHECK-NEXT: b17():
-# CHECK-NEXT: v26: buildercursor = StringBuilderReserve v5 size=128
-# CHECK-NEXT: Jump -> next b25(v26)
-# CHECK-NEXT: b18():
-# CHECK-NEXT: v27: boolean = ShapeTest v1 layouts=[L7]
-# CHECK-NEXT: Branch v27 -> taken b19(), notTaken b21()
-# CHECK-NEXT: b19():
-# CHECK-NEXT: v28: int[0, 2] = CallDirect v1, v5 function=f36 calledBuiltin=JSONStringify
-# CHECK-NEXT: Switch v28 cases=[1] -> case b20(), otherwise b24()
-# CHECK-NEXT: b20():
-# CHECK-NEXT: v29: buildercursor = StringBuilderReserve v5 size=128
-# CHECK-NEXT: Jump -> next b25(v29)
-# CHECK-NEXT: b21():
-# CHECK-NEXT: v30: boolean = ShapeTest v1 layouts=[L9]
-# CHECK-NEXT: Branch v30 -> taken b22(), notTaken b24()
-# CHECK-NEXT: b22():
-# CHECK-NEXT: v31: int[0, 2] = CallDirect v1, v5 function=f38 calledBuiltin=JSONStringify
-# CHECK-NEXT: Switch v31 cases=[1] -> case b23(), otherwise b24()
-# CHECK-NEXT: b23():
-# CHECK-NEXT: v32: buildercursor = StringBuilderReserve v5 size=128
-# CHECK-NEXT: Jump -> next b25(v32)
-# CHECK-NEXT: b24() frequency=Rare:
-# CHECK-NEXT: v33: buildercursor = StringBuilderReserve v5 size=128
-# CHECK-NEXT: Jump -> next b25(v33)
-# CHECK-NEXT: b25(v34: buildercursor):
-# CHECK-NEXT: StringBuilderCommit v5, v34
-# CHECK-NEXT: v36: i32 = StringBuilderCheckpoint v5
-# CHECK-NEXT: v37: boolean = StrictEq v8, v36
-# CHECK-NEXT: Branch v37 -> taken b26(), notTaken b27()
-# CHECK-NEXT: b26() frequency=Rare:
+# CHECK-NEXT: v24: "" = String string=""
+# CHECK-NEXT: Jump -> next b18(v24)
+# CHECK-NEXT: b17() frequency=Rare:
 # CHECK-NEXT: StringBuilderRollBack v5, v7
-# CHECK-NEXT: v39: undefined = Undefined
-# CHECK-NEXT: v40: undefined|string = CallBuiltin -, v1, v39 overload=JSONStringify/0 accessSite=158
-# CHECK-NEXT: Jump -> next b28(v40)
-# CHECK-NEXT: b27():
-# CHECK-NEXT: v41: "" = String string=""
-# CHECK-NEXT: Jump -> next b28(v41)
-# CHECK-NEXT: b28(v42: undefined|string ~ ""):
-# CHECK-NEXT: v43: " | " = String string=" | "
-# CHECK-NEXT: StringBuilderAppend v5, v42, v43
-# CHECK-NEXT: v45: string = StringBuilderFinish v5
-# CHECK-NEXT: v46: Array<string|symbol> = CallBuiltin -, v1 overload=ReflectOwnKeys/0 accessSite=159
-# CHECK-NEXT: v47: Array<string|symbol, proven, pristine[Storage, Names, Dense]> = AssumeType v46 provenType=Array<string|symbol, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v48: "," = String string=","
-# CHECK-NEXT: v49: int[0, 4294967295] = CallBuiltin v47 overload=ArrayPrototypeLength/0 accessSite=187
-# CHECK-NEXT: v50: 0 = Integer
-# CHECK-NEXT: v51: 0 = Integer
-# CHECK-NEXT: v52: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: Jump -> next b29(v51, v50)
-# CHECK-NEXT: b29(v53: int[0, 4294967295] ~ 0, v54: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: Jump -> next b30(v53, v54)
-# CHECK-NEXT: b30(v55: int[0, 4294967295] ~ 0, v56: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: Jump -> next b31(v55, v56)
-# CHECK-NEXT: b31(v57: int[0, 4294967295], v58: int[0, 4294967295]):
+# CHECK-NEXT: v26: undefined = Undefined
+# CHECK-NEXT: v27: undefined|string = CallBuiltin -, v1, v26 overload=JSONStringify/0 accessSite=158
+# CHECK-NEXT: Jump -> next b18(v27)
+# CHECK-NEXT: b18(v28: undefined|string ~ ""):
+# CHECK-NEXT: v29: " | " = String string=" | "
+# CHECK-NEXT: StringBuilderAppend v5, v28, v29
+# CHECK-NEXT: v31: string = StringBuilderFinish v5
+# CHECK-NEXT: v32: Array<string|symbol> = CallBuiltin -, v1 overload=ReflectOwnKeys/0 accessSite=159
+# CHECK-NEXT: v33: Array<string|symbol, proven, pristine[Storage, Names, Dense]> = AssumeType v32 provenType=Array<string|symbol, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v34: "," = String string=","
+# CHECK-NEXT: v35: int[0, 4294967295] = CallBuiltin v33 overload=ArrayPrototypeLength/0 accessSite=187
+# CHECK-NEXT: v36: 0 = Integer
+# CHECK-NEXT: v37: 0 = Integer
+# CHECK-NEXT: v38: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: Jump -> next b19(v37, v36)
+# CHECK-NEXT: b19(v39: int[0, 4294967295] ~ 0, v40: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b20(v39, v40)
+# CHECK-NEXT: b20(v41: int[0, 4294967295] ~ 0, v42: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b21(v41, v42)
+# CHECK-NEXT: b21(v43: int[0, 4294967295], v44: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v60: boolean = Less v58, v49
-# CHECK-NEXT: Branch v60 -> taken b32(| 0), notTaken b48(v57)
-# CHECK-NEXT: b32(v61: int[0, 4294967294]):
-# CHECK-NEXT: v62: int[0, 4294967294] = Sub v61, v50
-# CHECK-NEXT: v63: boolean = HasArrayStorage v47 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v63 -> taken b33(| 0), notTaken b41()
-# CHECK-NEXT: b33(v64: guard):
-# CHECK-NEXT: v65: boolean = IsInBounds v47, v61 [isFromProgram]
-# CHECK-NEXT: Branch v65 -> taken b34(| 0), notTaken b39()
-# CHECK-NEXT: b34(v66: guard):
-# CHECK-NEXT: Jump -> next b35(v66)
-# CHECK-NEXT: b35(v67: guard):
-# CHECK-NEXT: v68: guard = AllGuards v64, v67
-# CHECK-NEXT: v69: string|symbol = GetArrayElement v47, v61, v68 arrayStorage=Contiguous level=Expected accessSite=191 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v70: string = CallBuiltin -, v69 overload=String/0 accessSite=194
-# CHECK-NEXT: Jump -> next b36(v57)
-# CHECK-NEXT: b36(v71: int[0, 4294967295]):
+# CHECK-NEXT: v46: boolean = Less v44, v35
+# CHECK-NEXT: Branch v46 -> taken b22(| 0), notTaken b38(v43)
+# CHECK-NEXT: b22(v47: int[0, 4294967294]):
+# CHECK-NEXT: v48: int[0, 4294967294] = Sub v47, v36
+# CHECK-NEXT: v49: boolean = HasArrayStorage v33 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v49 -> taken b23(| 0), notTaken b31()
+# CHECK-NEXT: b23(v50: guard):
+# CHECK-NEXT: v51: boolean = IsInBounds v33, v47 [isFromProgram]
+# CHECK-NEXT: Branch v51 -> taken b24(| 0), notTaken b29()
+# CHECK-NEXT: b24(v52: guard):
+# CHECK-NEXT: Jump -> next b25(v52)
+# CHECK-NEXT: b25(v53: guard):
+# CHECK-NEXT: v54: guard = AllGuards v50, v53
+# CHECK-NEXT: v55: string|symbol = GetArrayElement v33, v47, v54 arrayStorage=Contiguous level=Expected accessSite=191 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v56: string = CallBuiltin -, v55 overload=String/0 accessSite=194
+# CHECK-NEXT: Jump -> next b26(v43)
+# CHECK-NEXT: b26(v57: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v73: boolean = Less v71, v62
-# CHECK-NEXT: Branch v73 -> taken b37(| 0), notTaken b38()
-# CHECK-NEXT: b37(v74: int[0, 4294967293]):
-# CHECK-NEXT: StringBuilderAppend v52, v48
-# CHECK-NEXT: v76: int[1, 4294967294] = Increment v74
-# CHECK-NEXT: Jump -> next b36(v76)
-# CHECK-NEXT: b38():
-# CHECK-NEXT: StringBuilderAppend v52, v70
-# CHECK-NEXT: Jump -> next b40(v71)
-# CHECK-NEXT: b39() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b40(v57)
-# CHECK-NEXT: b40(v78: int[0, 4294967295]):
-# CHECK-NEXT: v79: int[1, 4294967295] = Increment v61
-# CHECK-NEXT: Jump -> next b31(v78, v79)
-# CHECK-NEXT: b41() frequency=Rare:
-# CHECK-NEXT: v80: boolean = ElemHas v47, v61 accessSite=190 [keyIsIntegral]
-# CHECK-NEXT: Branch v80 -> taken b42(), notTaken b47()
-# CHECK-NEXT: b42() frequency=Rare:
-# CHECK-NEXT: Jump -> next b43()
-# CHECK-NEXT: b43() frequency=Rare:
-# CHECK-NEXT: v81: undefined|string|symbol = ElemGet v47, v61 accessSite=191 [keyIsIntegral]
-# CHECK-NEXT: v82: string = CallBuiltin -, v81 overload=String/0 accessSite=194
-# CHECK-NEXT: Jump -> next b44(v57)
-# CHECK-NEXT: b44(v83: int[0, 4294967295]) frequency=Unlikely:
+# CHECK-NEXT: v59: boolean = Less v57, v48
+# CHECK-NEXT: Branch v59 -> taken b27(| 0), notTaken b28()
+# CHECK-NEXT: b27(v60: int[0, 4294967293]):
+# CHECK-NEXT: StringBuilderAppend v38, v34
+# CHECK-NEXT: v62: int[1, 4294967294] = Increment v60
+# CHECK-NEXT: Jump -> next b26(v62)
+# CHECK-NEXT: b28():
+# CHECK-NEXT: StringBuilderAppend v38, v56
+# CHECK-NEXT: Jump -> next b30(v57)
+# CHECK-NEXT: b29() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b30(v43)
+# CHECK-NEXT: b30(v64: int[0, 4294967295]):
+# CHECK-NEXT: v65: int[1, 4294967295] = Increment v47
+# CHECK-NEXT: Jump -> next b21(v64, v65)
+# CHECK-NEXT: b31() frequency=Rare:
+# CHECK-NEXT: v66: boolean = ElemHas v33, v47 accessSite=190 [keyIsIntegral]
+# CHECK-NEXT: Branch v66 -> taken b32(), notTaken b37()
+# CHECK-NEXT: b32() frequency=Rare:
+# CHECK-NEXT: Jump -> next b33()
+# CHECK-NEXT: b33() frequency=Rare:
+# CHECK-NEXT: v67: undefined|string|symbol = ElemGet v33, v47 accessSite=191 [keyIsIntegral]
+# CHECK-NEXT: v68: string = CallBuiltin -, v67 overload=String/0 accessSite=194
+# CHECK-NEXT: Jump -> next b34(v43)
+# CHECK-NEXT: b34(v69: int[0, 4294967295]) frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v85: boolean = Less v83, v62
-# CHECK-NEXT: Branch v85 -> taken b45(| 0), notTaken b46()
-# CHECK-NEXT: b45(v86: int[0, 4294967293]) frequency=Unlikely:
-# CHECK-NEXT: StringBuilderAppend v52, v48
-# CHECK-NEXT: v88: int[1, 4294967294] = Increment v86
-# CHECK-NEXT: Jump -> next b44(v88)
-# CHECK-NEXT: b46() frequency=Unlikely:
-# CHECK-NEXT: StringBuilderAppend v52, v82
-# CHECK-NEXT: v90: int[1, 4294967295] = Increment v61
-# CHECK-NEXT: Jump -> next b30(v83, v90)
-# CHECK-NEXT: b47() frequency=Rare:
-# CHECK-NEXT: v91: int[1, 4294967295] = Increment v61
-# CHECK-NEXT: Jump -> next b29(v57, v91)
-# CHECK-NEXT: b48(v92: int[0, 4294967295]):
+# CHECK-NEXT: v71: boolean = Less v69, v48
+# CHECK-NEXT: Branch v71 -> taken b35(| 0), notTaken b36()
+# CHECK-NEXT: b35(v72: int[0, 4294967293]) frequency=Unlikely:
+# CHECK-NEXT: StringBuilderAppend v38, v34
+# CHECK-NEXT: v74: int[1, 4294967294] = Increment v72
+# CHECK-NEXT: Jump -> next b34(v74)
+# CHECK-NEXT: b36() frequency=Unlikely:
+# CHECK-NEXT: StringBuilderAppend v38, v68
+# CHECK-NEXT: v76: int[1, 4294967295] = Increment v47
+# CHECK-NEXT: Jump -> next b20(v69, v76)
+# CHECK-NEXT: b37() frequency=Rare:
+# CHECK-NEXT: v77: int[1, 4294967295] = Increment v47
+# CHECK-NEXT: Jump -> next b19(v43, v77)
+# CHECK-NEXT: b38(v78: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v94: 1 = Integer integer=1
-# CHECK-NEXT: v95: int[-1, 4294967294] = Sub v49, v94
-# CHECK-NEXT: v96: boolean = Less v92, v95
-# CHECK-NEXT: Branch v96 -> taken b49(| 0), notTaken b50()
-# CHECK-NEXT: b49(v97: int[0, 4294967293]):
-# CHECK-NEXT: StringBuilderAppend v52, v48
-# CHECK-NEXT: v99: int[1, 4294967294] = Increment v97
-# CHECK-NEXT: Jump -> next b48(v99)
-# CHECK-NEXT: b50():
-# CHECK-NEXT: v100: string = StringBuilderFinish v52
-# CHECK-NEXT: v101: string = Add v45, v100
-# CHECK-NEXT: v102: int[0, 4294967295] = CallBuiltin v2, v101 overload=ArrayPrototypePush/0 accessSite=164 @307 tail
-# CHECK-NEXT: Return v102
+# CHECK-NEXT: v80: 1 = Integer integer=1
+# CHECK-NEXT: v81: int[-1, 4294967294] = Sub v35, v80
+# CHECK-NEXT: v82: boolean = Less v78, v81
+# CHECK-NEXT: Branch v82 -> taken b39(| 0), notTaken b40()
+# CHECK-NEXT: b39(v83: int[0, 4294967293]):
+# CHECK-NEXT: StringBuilderAppend v38, v34
+# CHECK-NEXT: v85: int[1, 4294967294] = Increment v83
+# CHECK-NEXT: Jump -> next b38(v85)
+# CHECK-NEXT: b40():
+# CHECK-NEXT: v86: string = StringBuilderFinish v38
+# CHECK-NEXT: v87: string = Add v31, v86
+# CHECK-NEXT: v88: int[0, 4294967295] = CallBuiltin v2, v87 overload=ArrayPrototypePush/0 accessSite=164 @307 tail
+# CHECK-NEXT: Return v88
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="tick"
 # CHECK: module=m0 position=432 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type="a"|"b"|"b of none"|"c"|"d" site=w20 flags=[OmitsNull, OmitsUndefined]}] results=[{type="a"|"b"|"b of none"|"c"|"d" site=w21 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -3448,10 +3415,6 @@ runtimefunction id=ArrayTraversalTraverseArray function=f22 visibility=Private
 # CHECK-NEXT: v1: Error = CallBuiltin -, v0 overload=Error/1 accessSite=168
 # CHECK-NEXT: Throw v1
 # CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="throws"
-# CHECK: module=m0 position=4168 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=w10}] results=[{type=L9 site=w11 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3 parameterMap=[{original=0}]} creator=ResultWrapper{worker=f27}
-# CHECK-LABEL: function {{*}}name="throws"
-# CHECK: module=m0 position=4168 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=w10 flags=[IsExpected]}] results=[{type=L9 site=w11 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{original=0}]} creator=Version{provenVersion=f24}
 # CHECK-LABEL: function {{*}}name="three"
 # CHECK: module=m0 position=3930 role=ResultWorker flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 3] site=w8}] results=[{type=i32}, {type=2|unspecified}, {type=3|unspecified}, {type=4|unspecified}, {type=5|unspecified}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{original=0}]} creator=ResultWorker{origin=f2} {
 # CHECK-NEXT: b0(v0: int[0, 3]):
@@ -3500,7 +3463,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f22 visibility=Private
 # CHECK-NEXT: Return v32
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="throws"
-# CHECK: module=m0 position=4168 role=ResultWorker flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=w10}] results=[{type=i32}, {type=int[-2147483643, 2147483647]}, {type=anything|unspecified}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f24 parameterMap=[{original=0}]} creator=ResultWorker{origin=f24} {
+# CHECK: module=m0 position=4168 role=ResultWorker flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=w10}] results=[{type=i32}, {type=int[-2147483643, 2147483647]}, {type=anything|unspecified}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{original=0}]} creator=ResultWorker{origin=f3} {
 # CHECK-NEXT: b0(v0: boolean):
 # CHECK-NEXT: Branch v0 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1() frequency=Rare:

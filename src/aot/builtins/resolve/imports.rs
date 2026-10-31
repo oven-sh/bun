@@ -191,6 +191,17 @@ impl Resolver<'_, '_> {
         ExprState::Unresolved
     }
 
+    /// `await import("bun:test")`: what `import * as` of the module stands for.
+    pub(super) fn compute_awaited_import_state(&self, promise: ExprId) -> ExprState {
+        let input = self.input;
+        let promise = input.hir.skip_type_assertions(promise);
+        let module = (input.targets).module_at(ImportSiteKind::ImportCall(promise));
+        match module.filter(|&module| !has_source(module)) {
+            Some(module) => ExprState::Builtin(imported_namespace_value(module)),
+            None => ExprState::Unresolved,
+        }
+    }
+
     fn find_prototype_asked_for(&self, expr: ExprId) -> Option<BuiltinId> {
         let hir = self.input.hir;
         let ExprKind::Call(call) = hir[expr].kind else {

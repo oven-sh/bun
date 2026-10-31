@@ -408,63 +408,59 @@ function f144 module=m1 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-LABEL: function {{*}}name="show"
 # CHECK: module=m0 position=673 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|string|L1}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f60] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f152 callPosition=4294967295}] {
 # CHECK-NEXT: b0(v0: undefined|string|L1):
-# CHECK-NEXT: v1: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: v2: i32 = StringBuilderCheckpoint v1
-# CHECK-NEXT: v3: buildercursor = StringBuilderReserve v1 size=128
-# CHECK-NEXT: StringBuilderCommit v1, v3
-# CHECK-NEXT: v5: i32 = StringBuilderCheckpoint v1
-# CHECK-NEXT: v6: boolean = StrictEq v2, v5
-# CHECK-NEXT: Branch v6 -> taken b1(), notTaken b2()
+# CHECK-NEXT: v1: boolean = TypeTest v0 testedType=undefined
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1() frequency=Rare:
-# CHECK-NEXT: StringBuilderDiscard v1
-# CHECK-NEXT: v8: undefined = Undefined
-# CHECK-NEXT: v9: undefined|string = CallBuiltin -, v0, v8 overload=JSONStringify/0 accessSite=4
-# CHECK-NEXT: v10: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: StringBuilderAppend v10, v9
-# CHECK-NEXT: Jump -> next b3(v10)
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v12: string = StringBuilderFinish v1
-# CHECK-NEXT: v13: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: StringBuilderAppend v13, v12
-# CHECK-NEXT: Jump -> next b3(v13)
-# CHECK-NEXT: b3(v15: stringbuilder):
-# CHECK-NEXT: v16: " keys " = String string=" keys "
-# CHECK-NEXT: StringBuilderAppend v15, v16
-# CHECK-NEXT: v18: object = ToObject v0 calledBuiltin=ObjectKeys
-# CHECK-NEXT: v19: Array<string> = CallBuiltin -, v18 overload=ObjectKeys/0 accessSite=5
-# CHECK-NEXT: v20: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v19 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v21: string = CallBuiltin v20 overload=ArrayPrototypeJoin/0 accessSite=7
-# CHECK-NEXT: v22: " B " = String string=" B "
-# CHECK-NEXT: StringBuilderAppend v15, v21, v22
-# CHECK-NEXT: v24: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: v25: object = GetClassPrototype v24 layout=L0
-# CHECK-NEXT: v26: boolean = HasInPrototypeChain v0, v25
-# CHECK-NEXT: v27: " c " = String string=" c "
-# CHECK-NEXT: StringBuilderAppend v15, v26, v27
-# CHECK-NEXT: v29: undefined|string|L1 ~ undefined|L1 = Upcast v0 castType=anything
-# CHECK-NEXT: v30: boolean = TypeTest v29 testedType=L1
-# CHECK-NEXT: Branch v30 -> taken b4(), notTaken b5(| 0)
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: v3: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v3, v2
+# CHECK-NEXT: Jump -> next b3(v3)
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v5: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderDiscard v5
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: v8: undefined|string = CallBuiltin -, v0, v7 overload=JSONStringify/0 accessSite=4
+# CHECK-NEXT: v9: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v9, v8
+# CHECK-NEXT: Jump -> next b3(v9)
+# CHECK-NEXT: b3(v11: stringbuilder):
+# CHECK-NEXT: v12: " keys " = String string=" keys "
+# CHECK-NEXT: StringBuilderAppend v11, v12
+# CHECK-NEXT: v14: object = ToObject v0 calledBuiltin=ObjectKeys
+# CHECK-NEXT: v15: Array<string> = CallBuiltin -, v14 overload=ObjectKeys/0 accessSite=5
+# CHECK-NEXT: v16: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v15 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v17: string = CallBuiltin v16 overload=ArrayPrototypeJoin/0 accessSite=7
+# CHECK-NEXT: v18: " B " = String string=" B "
+# CHECK-NEXT: StringBuilderAppend v11, v17, v18
+# CHECK-NEXT: v20: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: v21: object = GetClassPrototype v20 layout=L0
+# CHECK-NEXT: v22: boolean = HasInPrototypeChain v0, v21
+# CHECK-NEXT: v23: " c " = String string=" c "
+# CHECK-NEXT: StringBuilderAppend v11, v22, v23
+# CHECK-NEXT: v25: undefined|string|L1 ~ undefined|L1 = Upcast v0 castType=anything
+# CHECK-NEXT: v26: boolean = TypeTest v25 testedType=L1
+# CHECK-NEXT: Branch v26 -> taken b4(), notTaken b5(| 0)
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v31: false = Boolean
-# CHECK-NEXT: v32: " d " = String string=" d "
-# CHECK-NEXT: v33: false = Boolean
-# CHECK-NEXT: v34: " e " = String string=" e "
-# CHECK-NEXT: StringBuilderAppend v15, v31, v32, v33, v34
-# CHECK-NEXT: v36: false = Boolean
-# CHECK-NEXT: Jump -> next b6(v36)
-# CHECK-NEXT: b5(v37: undefined|string ~ undefined) frequency=Rare:
-# CHECK-NEXT: v38: boolean = PropHas v37 key="c" accessSite=8 receivers=[L1]
-# CHECK-NEXT: v39: " d " = String string=" d "
-# CHECK-NEXT: StringBuilderAppend v15, v38, v39
-# CHECK-NEXT: v41: boolean = PropHas v37 key="d" accessSite=9 receivers=[L1]
-# CHECK-NEXT: v42: " e " = String string=" e "
-# CHECK-NEXT: StringBuilderAppend v15, v41, v42
-# CHECK-NEXT: v44: boolean = PropHas v37 key="e" accessSite=10 receivers=[L1]
-# CHECK-NEXT: Jump -> next b6(v44)
-# CHECK-NEXT: b6(v45: boolean ~ false):
-# CHECK-NEXT: StringBuilderAppend v15, v45
-# CHECK-NEXT: v47: string = StringBuilderFinish v15
-# CHECK-NEXT: Return v47
+# CHECK-NEXT: v27: false = Boolean
+# CHECK-NEXT: v28: " d " = String string=" d "
+# CHECK-NEXT: v29: false = Boolean
+# CHECK-NEXT: v30: " e " = String string=" e "
+# CHECK-NEXT: StringBuilderAppend v11, v27, v28, v29, v30
+# CHECK-NEXT: v32: false = Boolean
+# CHECK-NEXT: Jump -> next b6(v32)
+# CHECK-NEXT: b5(v33: undefined|string ~ undefined) frequency=Rare:
+# CHECK-NEXT: v34: boolean = PropHas v33 key="c" accessSite=8 receivers=[L1]
+# CHECK-NEXT: v35: " d " = String string=" d "
+# CHECK-NEXT: StringBuilderAppend v11, v34, v35
+# CHECK-NEXT: v37: boolean = PropHas v33 key="d" accessSite=9 receivers=[L1]
+# CHECK-NEXT: v38: " e " = String string=" e "
+# CHECK-NEXT: StringBuilderAppend v11, v37, v38
+# CHECK-NEXT: v40: boolean = PropHas v33 key="e" accessSite=10 receivers=[L1]
+# CHECK-NEXT: Jump -> next b6(v40)
+# CHECK-NEXT: b6(v41: boolean ~ false):
+# CHECK-NEXT: StringBuilderAppend v11, v41
+# CHECK-NEXT: v43: string = StringBuilderFinish v11
+# CHECK-NEXT: Return v43
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="factory"
 # CHECK: module=m0 position=859 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L4 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f10 callPosition=4294967295 module=m0}] {

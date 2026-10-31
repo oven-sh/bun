@@ -108,6 +108,7 @@ export function recordsOfSource(source: string) {
       if (record.kind === "module")
         return withoutField(line, "positions")
           .replace(/ functionText="(?:[^"\\]|\\.)*"/, "")
+          .replace(/ typesCutFromFunctionText="(?:[^"\\]|\\.)*"/, "")
           .replace(" flags=[KeepsError]", "")
           .replaceAll("/$bunfs/root/", "")
           .replace(/\/\$bun\/text\/[^"/]*%2f/g, "/$bun/text/");

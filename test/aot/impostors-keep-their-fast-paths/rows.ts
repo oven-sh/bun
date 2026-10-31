@@ -148,8 +148,8 @@ export const projects: { folder: string; entry: string; withoutProjectFile?: boo
         sites: ["call unknown"],
         operations: ["GetArrayLength", "CallDirect", "IsPristine", "TypeTest"],
         compiled: 2226,
-        outside: 3074,
-        stubs: ["AppendElements", "CallEngineCallee", "CallWithArray.InTailPosition", "NewArrayWithLength.Contiguous"],
+        outside: 298,
+        stubs: ["CallEngineCallee", "CallWithArray.InTailPosition", "NewArrayOfElements.Contiguous"],
         calls: ["operationAOTAppendElements 1"],
       },
       {
@@ -159,8 +159,8 @@ export const projects: { folder: string; entry: string; withoutProjectFile?: boo
         sites: ["read proven"],
         operations: ["GetArrayLength", "CallInline", "CallDirect", "IsPristine", "TypeTest"],
         compiled: 504,
-        outside: 872,
-        stubs: ["AppendElements", "NewArrayWithLength.Contiguous"],
+        outside: 298,
+        stubs: ["NewArrayOfElements.Contiguous"],
         calls: ["operationAOTAppendElements 1"],
       },
       {
@@ -972,8 +972,8 @@ export const projects: { folder: string; entry: string; withoutProjectFile?: boo
         sites: ["call unknown"],
         operations: ["GetArrayLength", "CallDirect", "IsPristine", "TypeTest"],
         compiled: 2226,
-        outside: 3069,
-        stubs: ["AppendElements", "CallEngineCallee", "CallWithArray.InTailPosition", "NewArrayWithLength.Contiguous"],
+        outside: 298,
+        stubs: ["CallEngineCallee", "CallWithArray.InTailPosition", "NewArrayOfElements.Contiguous"],
         calls: ["operationAOTAppendElements 1"],
       },
       {
@@ -983,8 +983,8 @@ export const projects: { folder: string; entry: string; withoutProjectFile?: boo
         sites: ["read proven"],
         operations: ["GetArrayLength", "CallInline", "CallDirect", "IsPristine", "TypeTest"],
         compiled: 504,
-        outside: 879,
-        stubs: ["AppendElements", "NewArrayWithLength.Contiguous"],
+        outside: 298,
+        stubs: ["NewArrayOfElements.Contiguous"],
         calls: ["operationAOTAppendElements 1"],
       },
       {

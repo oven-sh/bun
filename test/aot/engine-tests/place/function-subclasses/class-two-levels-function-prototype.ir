@@ -188,7 +188,7 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f12]
 # -- generated: f0 Above f2 describe Middle
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f4 callPosition=596 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f6 callPosition=572 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f19 callPosition=258 isConstruction=true module=m0}, {callee=f1 callPosition=356 parent=1 isConstruction=true module=m0}, {callee=f1 callPosition=356 parent=1 isConstruction=true module=m0}, {callee=f4 callPosition=435 parent=2 isConstruction=true module=m0}, {callee=f1 callPosition=356 parent=1 isConstruction=true module=m0}, {callee=f4 callPosition=435 parent=2 isConstruction=true module=m0}, {callee=f1 callPosition=356 parent=1 isConstruction=true module=m0}, {callee=f4 callPosition=435 parent=2 isConstruction=true module=m0}, {callee=f4 callPosition=435 parent=2 isConstruction=true module=m0}, {callee=f1 callPosition=356 parent=6 isConstruction=true module=m0}, {callee=f1 callPosition=356 parent=8 isConstruction=true module=m0}, {callee=f1 callPosition=356 parent=10 isConstruction=true module=m0}] {
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f4 callPosition=596 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f6 callPosition=572 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f19 callPosition=258 isConstruction=true module=m0}, {callee=f1 callPosition=356 parent=1 isConstruction=true module=m0}, {callee=f4 callPosition=435 parent=2 isConstruction=true module=m0}, {callee=f1 callPosition=356 parent=1 isConstruction=true module=m0}, {callee=f4 callPosition=435 parent=2 isConstruction=true module=m0}, {callee=f1 callPosition=356 parent=1 isConstruction=true module=m0}, {callee=f4 callPosition=435 parent=2 isConstruction=true module=m0}, {callee=f1 callPosition=356 parent=5 isConstruction=true module=m0}, {callee=f1 callPosition=356 parent=7 isConstruction=true module=m0}, {callee=f1 callPosition=356 parent=9 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f1 = NewClosure function=f1 allocationSite=0
 # CHECK-NEXT: v1: anything = PropGet v0 key="prototype" accessSite=0
@@ -223,67 +223,64 @@ function f13 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: DefineMethod v27, v29 layout=L2 key="describe"
 # CHECK-NEXT: v31: f6 = FinishClass v27 layout=L2
 # CHECK-NEXT: v32: object = GetConstructPrototype v31 layout=L1
-# CHECK-NEXT: v33: object ~ L1|L2 = NewObject v32 layout=L1 allocationClass=1
-# CHECK-NEXT: v34: L0|L1|L2 ~ L1|L2 = AssumeType v33 provenType=L0|L1|L2
+# CHECK-NEXT: v33: object ~ L2 = NewObject v32 layout=L1 allocationClass=1
+# CHECK-NEXT: v34: L0|L1|L2 ~ L2 = AssumeType v33 provenType=L0|L1|L2
 # CHECK-NEXT: v35: anything = PropGet v34 key="size" accessSite=14 receivers=[L0, L1, L2]
-# CHECK-NEXT: v36: fact = Specified
-# CHECK-NEXT: v37: L0|L1|L2 ~ L1|L2 = AssumeType v33, v36 provenType=L0|L1|L2
+# CHECK-NEXT: v36: object ~ L2 = Upcast v33 castType=object
+# CHECK-NEXT: v37: L0|L1|L2 ~ L2 = AssumeType v36 provenType=L0|L1|L2
 # CHECK-NEXT: v38: L0|L1|L2 ~ L2 = Upcast v37 castType=object
-# CHECK-NEXT: v39: L0|L2 ~ L2 = AssumeType v38, v36 provenType=L0|L2
+# CHECK-NEXT: v39: L0|L2 ~ L2 = AssumeType v38 provenType=L0|L2
 # CHECK-NEXT: v40: anything = CallTable v39 function=f16 key="describe" receivers=[L0, L2] entrypoints=[f21, f28] accessSite=9 callees=[f2, f3, f5, f7]
 # CHECK-NEXT: v41: string = AssumeType v40 provenType=string
 # CHECK-NEXT: v42: object = GetConstructPrototype v23 layout=L1
-# CHECK-NEXT: v43: object ~ L1|L2 = NewObject v42 layout=L1 allocationClass=1
-# CHECK-NEXT: v44: L0|L1|L2 ~ L1|L2 = AssumeType v43 provenType=L0|L1|L2
+# CHECK-NEXT: v43: object ~ L1 = NewObject v42 layout=L1 allocationClass=1
+# CHECK-NEXT: v44: L0|L1|L2 ~ L1 = AssumeType v43 provenType=L0|L1|L2
 # CHECK-NEXT: v45: anything = PropGet v44 key="size" accessSite=14 receivers=[L0, L1, L2]
-# CHECK-NEXT: v46: fact = Specified
-# CHECK-NEXT: v47: L0|L1|L2 ~ L1|L2 = AssumeType v43, v46 provenType=L0|L1|L2
-# CHECK-NEXT: v48: L0|L1 ~ L1 = AssumeType v47, v46 provenType=L0|L1
-# CHECK-NEXT: v49: anything = CallTable v48 function=f16 key="describe" receivers=[L0, L1] entrypoints=[f21, f25] accessSite=12 callees=[f2, f3, f5]
-# CHECK-NEXT: v50: "first"|"second" = AssumeType v49 provenType="first"|"second"
-# CHECK-NEXT: v51: undefined = CallBuiltin -, v41, v50 overload=ConsoleLog/0 accessSite=13
-# CHECK-NEXT: v52: object = GetConstructPrototype v31 layout=L1
-# CHECK-NEXT: v53: object ~ L1|L2 = NewObject v52 layout=L1 allocationClass=1
-# CHECK-NEXT: v54: L0|L1|L2 ~ L1|L2 = AssumeType v53 provenType=L0|L1|L2
-# CHECK-NEXT: v55: anything = PropGet v54 key="size" accessSite=14 receivers=[L0, L1, L2]
-# CHECK-NEXT: v56: fact = Specified
-# CHECK-NEXT: v57: L0|L1|L2 ~ L1|L2 = AssumeType v53, v56 provenType=L0|L1|L2
-# CHECK-NEXT: v58: L0|L1|L2 ~ L2 = Upcast v57 castType=object
-# CHECK-NEXT: v59: L0|L2 ~ L2 = AssumeType v58, v56 provenType=L0|L2
-# CHECK-NEXT: v60: anything = CallTable v59 function=f16 key="describe" receivers=[L0, L2] entrypoints=[f21, f28] accessSite=9 callees=[f2, f3, f5, f7]
-# CHECK-NEXT: v61: string = AssumeType v60 provenType=string
-# CHECK-NEXT: v62: object = GetConstructPrototype v23 layout=L1
-# CHECK-NEXT: v63: object ~ L1|L2 = NewObject v62 layout=L1 allocationClass=1
-# CHECK-NEXT: v64: L0|L1|L2 ~ L1|L2 = AssumeType v63 provenType=L0|L1|L2
-# CHECK-NEXT: v65: anything = PropGet v64 key="size" accessSite=14 receivers=[L0, L1, L2]
-# CHECK-NEXT: v66: fact = Specified
-# CHECK-NEXT: v67: L0|L1|L2 ~ L1|L2 = AssumeType v63, v66 provenType=L0|L1|L2
-# CHECK-NEXT: v68: L0|L1 ~ L1 = AssumeType v67, v66 provenType=L0|L1
-# CHECK-NEXT: v69: anything = CallTable v68 function=f16 key="describe" receivers=[L0, L1] entrypoints=[f21, f25] accessSite=12 callees=[f2, f3, f5]
-# CHECK-NEXT: v70: "first"|"second" = AssumeType v69 provenType="first"|"second"
-# CHECK-NEXT: v71: undefined = CallBuiltin -, v61, v70 overload=ConsoleLog/0 accessSite=13
-# CHECK-NEXT: v72: object = GetConstructPrototype v31 layout=L1
-# CHECK-NEXT: v73: object ~ L1|L2 = NewObject v72 layout=L1 allocationClass=1
-# CHECK-NEXT: v74: L0|L1|L2 ~ L1|L2 = AssumeType v73 provenType=L0|L1|L2
-# CHECK-NEXT: v75: anything = PropGet v74 key="size" accessSite=14 receivers=[L0, L1, L2]
-# CHECK-NEXT: v76: fact = Specified
-# CHECK-NEXT: v77: L0|L1|L2 ~ L1|L2 = AssumeType v73, v76 provenType=L0|L1|L2
-# CHECK-NEXT: v78: L0|L1|L2 ~ L2 = Upcast v77 castType=object
-# CHECK-NEXT: v79: L0|L2 ~ L2 = AssumeType v78, v76 provenType=L0|L2
-# CHECK-NEXT: v80: anything = CallTable v79 function=f16 key="describe" receivers=[L0, L2] entrypoints=[f21, f28] accessSite=9 callees=[f2, f3, f5, f7]
-# CHECK-NEXT: v81: string = AssumeType v80 provenType=string
-# CHECK-NEXT: v82: object = GetConstructPrototype v23 layout=L1
-# CHECK-NEXT: v83: object ~ L1|L2 = NewObject v82 layout=L1 allocationClass=1
-# CHECK-NEXT: v84: L0|L1|L2 ~ L1|L2 = AssumeType v83 provenType=L0|L1|L2
-# CHECK-NEXT: v85: anything = PropGet v84 key="size" accessSite=14 receivers=[L0, L1, L2]
-# CHECK-NEXT: v86: fact = Specified
-# CHECK-NEXT: v87: L0|L1|L2 ~ L1|L2 = AssumeType v83, v86 provenType=L0|L1|L2
-# CHECK-NEXT: v88: L0|L1 ~ L1 = AssumeType v87, v86 provenType=L0|L1
-# CHECK-NEXT: v89: anything = CallTable v88 function=f16 key="describe" receivers=[L0, L1] entrypoints=[f21, f25] accessSite=12 callees=[f2, f3, f5]
-# CHECK-NEXT: v90: "first"|"second" = AssumeType v89 provenType="first"|"second"
-# CHECK-NEXT: v91: undefined = CallBuiltin -, v81, v90 overload=ConsoleLog/0 accessSite=13
-# CHECK-NEXT: v92: undefined = Undefined
-# CHECK-NEXT: Return v92
+# CHECK-NEXT: v46: L0|L1|L2 ~ L1 = AssumeType v43 provenType=L0|L1|L2
+# CHECK-NEXT: v47: L0|L1 ~ L1 = AssumeType v46 provenType=L0|L1
+# CHECK-NEXT: v48: anything = CallTable v47 function=f16 key="describe" receivers=[L0, L1] entrypoints=[f21, f25] accessSite=12 callees=[f2, f3, f5]
+# CHECK-NEXT: v49: "first"|"second" = AssumeType v48 provenType="first"|"second"
+# CHECK-NEXT: v50: undefined = CallBuiltin -, v41, v49 overload=ConsoleLog/0 accessSite=13
+# CHECK-NEXT: v51: object = GetConstructPrototype v31 layout=L1
+# CHECK-NEXT: v52: object ~ L2 = NewObject v51 layout=L1 allocationClass=1
+# CHECK-NEXT: v53: L0|L1|L2 ~ L2 = AssumeType v52 provenType=L0|L1|L2
+# CHECK-NEXT: v54: anything = PropGet v53 key="size" accessSite=14 receivers=[L0, L1, L2]
+# CHECK-NEXT: v55: object ~ L2 = Upcast v52 castType=object
+# CHECK-NEXT: v56: L0|L1|L2 ~ L2 = AssumeType v55 provenType=L0|L1|L2
+# CHECK-NEXT: v57: L0|L1|L2 ~ L2 = Upcast v56 castType=object
+# CHECK-NEXT: v58: L0|L2 ~ L2 = AssumeType v57 provenType=L0|L2
+# CHECK-NEXT: v59: anything = CallTable v58 function=f16 key="describe" receivers=[L0, L2] entrypoints=[f21, f28] accessSite=9 callees=[f2, f3, f5, f7]
+# CHECK-NEXT: v60: string = AssumeType v59 provenType=string
+# CHECK-NEXT: v61: object = GetConstructPrototype v23 layout=L1
+# CHECK-NEXT: v62: object ~ L1 = NewObject v61 layout=L1 allocationClass=1
+# CHECK-NEXT: v63: L0|L1|L2 ~ L1 = AssumeType v62 provenType=L0|L1|L2
+# CHECK-NEXT: v64: anything = PropGet v63 key="size" accessSite=14 receivers=[L0, L1, L2]
+# CHECK-NEXT: v65: L0|L1|L2 ~ L1 = AssumeType v62 provenType=L0|L1|L2
+# CHECK-NEXT: v66: L0|L1 ~ L1 = AssumeType v65 provenType=L0|L1
+# CHECK-NEXT: v67: anything = CallTable v66 function=f16 key="describe" receivers=[L0, L1] entrypoints=[f21, f25] accessSite=12 callees=[f2, f3, f5]
+# CHECK-NEXT: v68: "first"|"second" = AssumeType v67 provenType="first"|"second"
+# CHECK-NEXT: v69: undefined = CallBuiltin -, v60, v68 overload=ConsoleLog/0 accessSite=13
+# CHECK-NEXT: v70: object = GetConstructPrototype v31 layout=L1
+# CHECK-NEXT: v71: object ~ L2 = NewObject v70 layout=L1 allocationClass=1
+# CHECK-NEXT: v72: L0|L1|L2 ~ L2 = AssumeType v71 provenType=L0|L1|L2
+# CHECK-NEXT: v73: anything = PropGet v72 key="size" accessSite=14 receivers=[L0, L1, L2]
+# CHECK-NEXT: v74: object ~ L2 = Upcast v71 castType=object
+# CHECK-NEXT: v75: L0|L1|L2 ~ L2 = AssumeType v74 provenType=L0|L1|L2
+# CHECK-NEXT: v76: L0|L1|L2 ~ L2 = Upcast v75 castType=object
+# CHECK-NEXT: v77: L0|L2 ~ L2 = AssumeType v76 provenType=L0|L2
+# CHECK-NEXT: v78: anything = CallTable v77 function=f16 key="describe" receivers=[L0, L2] entrypoints=[f21, f28] accessSite=9 callees=[f2, f3, f5, f7]
+# CHECK-NEXT: v79: string = AssumeType v78 provenType=string
+# CHECK-NEXT: v80: object = GetConstructPrototype v23 layout=L1
+# CHECK-NEXT: v81: object ~ L1 = NewObject v80 layout=L1 allocationClass=1
+# CHECK-NEXT: v82: L0|L1|L2 ~ L1 = AssumeType v81 provenType=L0|L1|L2
+# CHECK-NEXT: v83: anything = PropGet v82 key="size" accessSite=14 receivers=[L0, L1, L2]
+# CHECK-NEXT: v84: L0|L1|L2 ~ L1 = AssumeType v81 provenType=L0|L1|L2
+# CHECK-NEXT: v85: L0|L1 ~ L1 = AssumeType v84 provenType=L0|L1
+# CHECK-NEXT: v86: anything = CallTable v85 function=f16 key="describe" receivers=[L0, L1] entrypoints=[f21, f25] accessSite=12 callees=[f2, f3, f5]
+# CHECK-NEXT: v87: "first"|"second" = AssumeType v86 provenType="first"|"second"
+# CHECK-NEXT: v88: undefined = CallBuiltin -, v79, v87 overload=ConsoleLog/0 accessSite=13
+# CHECK-NEXT: v89: undefined = Undefined
+# CHECK-NEXT: Return v89
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Above"
 # CHECK: module=m0 position=162 flags=[HasThis, HasExplicitName] thisType={type=L0|L1|L2} results=[{type=undefined}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] constructedClass=L0 {
@@ -429,24 +426,21 @@ function f13 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: module=m0 position=162 role=GenericEntrypoint flags=[HasThis, HasNewTarget] captures=[{type=f1}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1 parameter=2} creator=Entrypoint{target=f1 arguments=Registers takesNewTarget=true} inlineFrames=[{}, {callee=f1 callPosition=162 isConstruction=true module=m0}, {callee=f1 callPosition=162 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0(v0: f1, v1: anything, v2: anything):
 # CHECK-NEXT: v3: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}]
-# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b5()
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v4: L0 = NewObject layout=L0 allocationClass=0
-# CHECK-NEXT: v5: boolean = HasLayoutPrototype v4
-# CHECK-NEXT: Branch v5 -> taken b2(), notTaken b4()
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v6: boolean = AreMembersUnchanged conditions=[{layout=L0 key="size"}, {kind=PrototypeLinkUnchanged layout=L0}]
-# CHECK-NEXT: Branch v6 -> taken b3(), notTaken b4()
+# CHECK-NEXT: v5: boolean = AreMembersUnchanged conditions=[{layout=L0 key="size"}, {kind=PrototypeLinkUnchanged layout=L0}]
+# CHECK-NEXT: Branch v5 -> taken b3(), notTaken b4()
+# CHECK-NEXT: b2() frequency=Unlikely:
+# CHECK-NEXT: v6: object = GetConstructPrototype v0 layout=L0
+# CHECK-NEXT: v7: L0 = NewObject v6 layout=L0 allocationClass=0
+# CHECK-NEXT: v8: anything = PropGet v7 key="size" accessSite=14 receivers=[L0, L1, L2]
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: b3():
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: b4() frequency=Unlikely:
-# CHECK-NEXT: v7: anything = PropGet v4 key="size" accessSite=14 receivers=[L0, L1, L2]
+# CHECK-NEXT: v9: anything = PropGet v4 key="size" accessSite=14 receivers=[L0, L1, L2]
 # CHECK-NEXT: Return v4
-# CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: v8: object = GetConstructPrototype v0 layout=L0
-# CHECK-NEXT: v9: L0 = NewObject v8 layout=L0 allocationClass=0
-# CHECK-NEXT: v10: anything = PropGet v9 key="size" accessSite=14 receivers=[L0, L1, L2]
-# CHECK-NEXT: Return v9
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Above"
 # CHECK: module=m0 position=162 role=ConstructBody flags=[HasNewTarget, HasExplicitName, AllocatesOwnThis] thisType={type=anything} results=[{type=L0}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{}]} creator=Version{provenVersion=f1} constructedClass=L0

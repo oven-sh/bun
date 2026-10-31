@@ -175,6 +175,7 @@ mod tests {
         ModuleRef::External {
             importer: find_file(projects, importer),
             specifier: projects.application.loaded.files().atoms.intern(specifier),
+            type_attribute: None,
         }
     }
 

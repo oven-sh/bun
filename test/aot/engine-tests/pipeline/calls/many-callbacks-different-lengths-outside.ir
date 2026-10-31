@@ -3300,7 +3300,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f142 visibility=Private
 # CHECK-NEXT: v7: undefined = Undefined
 # CHECK-NEXT: v8: undefined|string = CallBuiltin -, v6, v7 overload=JSONStringify/0 accessSite=4
 # CHECK-NEXT: v9: undefined = CallBuiltin -, v8 overload=ConsoleLog/0 accessSite=5
-# CHECK-NEXT: v10: Array<Array<int, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect function=f2 accessSite=9
+# CHECK-NEXT: v10: Array<Array<int[1, 4], proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect function=f2 accessSite=9
 # CHECK-NEXT: v11: undefined = Undefined
 # CHECK-NEXT: v12: undefined|string = CallBuiltin -, v10, v11 overload=JSONStringify/0 accessSite=10
 # CHECK-NEXT: v13: undefined = CallBuiltin -, v12 overload=ConsoleLog/0 accessSite=11
@@ -3575,16 +3575,33 @@ runtimefunction id=ArrayTraversalTraverseArray function=f142 visibility=Private
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function f24 module=
-# CHECK: m0 position=1172 kind=Arrow length=3 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}, {type=number flags=[IsExpected]}, {type=undefined|Array<int[1, 4], proven, Int32, pristine[Storage, Names, Dense]>}] results=[{type=boolean}] functionTypes=[f77] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=1172 kind=Arrow length=3 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}, {type=number flags=[IsExpected]}, {type=undefined|Array<int[1, 4], proven, Int32, pristine[Storage, Names, Dense]>}] results=[{type=boolean}] functionTypes=[f77] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything ~ number, v1: anything ~ number, v2: undefined|Array<int[1, 4], proven, Int32, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v3: boolean = CallDirect v1, v2 function=f219
-# CHECK-NEXT: ReturnCall v3 requirement=Allowed
+# CHECK-NEXT: v3: Array<int[1, 4], proven, Int32, pristine[Storage, Names, Dense]> = RequireObjectCoercible v2 name="length"
+# CHECK-NEXT: v4: int[0, 4294967295] = CallBuiltin v3 overload=ArrayPrototypeLength/0 accessSite=139
+# CHECK-NEXT: v5: 1 = Integer integer=1
+# CHECK-NEXT: v6: int[-1, 4294967294] = Sub v4, v5
+# CHECK-NEXT: v7: boolean ~ true = TypeTest v1 testedType=number
+# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b2(| 0)
+# CHECK-NEXT: b1(v8: number):
+# CHECK-NEXT: v9: boolean = Less v8, v6
+# CHECK-NEXT: Return v9
+# CHECK-NEXT: b2(v10: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: v11: boolean = Less v10, v6
+# CHECK-NEXT: Return v11
 # CHECK-NEXT: }
 # CHECK-LABEL: function f25 module=
-# CHECK: m0 position=1231 flags=[HasThis] length=1 thisType={type=L0} parameters=[{type=number flags=[IsExpected]}] results=[{type=boolean}] functionTypes=[f78] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=1231 flags=[HasThis] length=1 thisType={type=L0} parameters=[{type=number flags=[IsExpected]}] results=[{type=boolean}] functionTypes=[f78] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L0, v1: anything ~ number):
-# CHECK-NEXT: v2: boolean = CallDirect v1 function=f220
-# CHECK-NEXT: ReturnCall v2 requirement=Allowed
+# CHECK-NEXT: v2: 10 = Integer integer=10
+# CHECK-NEXT: v3: boolean ~ true = TypeTest v1 testedType=number
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+# CHECK-NEXT: b1(v4: number):
+# CHECK-NEXT: v5: boolean = Less v4, v2
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: b2(v6: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: v7: boolean = Less v6, v2
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function f26 module=
 # CHECK: m0 position=1348 kind=Arrow role=ResultWrapper length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=Array<number>}] functionTypes=[f79] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f144} inlineFrames=[{}, {callee=f144 callPosition=1348 module=m0}] {

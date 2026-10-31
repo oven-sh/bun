@@ -3,10 +3,13 @@
 // its errors a `toString` that way), and one such line opened Object.prototype.toString for every String(x) of the whole run.
 // So a package's write on a prototype that it does not name opens nothing. Where it does hit Object.prototype, it either works as in plain Bun, because flow
 // saw it, or throws the TypeError that names the member, as in an executable. What it may never do is pass unseen.
-import { expect } from "bun:test";
+import { expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
 import { test } from "./supported";
+
+// supported.ts sets the limit for the first file of a process alone.
+setDefaultTimeout(120_000);
 
 const files = {
   "node_modules/planter/package.json": `{ "name": "planter", "version": "1.0.0", "type": "module", "main": "index.js" }`,
@@ -54,8 +57,9 @@ for (const [title, words] of Object.entries({
       expect.stringMatching(/^toString \[null,"\[object Object\]"\] \[null,"own"\] TypeError: .*toString/),
     ];
     for (const [at, line] of compiled.slice(1).entries()) {
-      // What the line before it did shows in this one too, so a line is judged by what it adds.
-      if (line !== plain[at + 1]) expect(line.replace("[1,", "[null,")).toEqual(refused[at]);
+      // What the line before it did shows in this one too, so a line is judged by what it adds: the first may be refused and the second work.
+      const added = (text: string) => (at ? text.replaceAll("[1,", "[null,") : text);
+      if (added(line) !== added(plain[at + 1])) expect(line.replace("[1,", "[null,")).toEqual(refused[at]);
     }
   });
 }

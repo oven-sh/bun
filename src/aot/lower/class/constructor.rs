@@ -52,13 +52,15 @@ impl FileLowering<'_, '_, '_, '_> {
         let plan = self.class_plan(class);
         let is_derived = is_derived_class(self.hir, class);
         let mut lowering = FunctionLowering::begin(self, function);
+        lowering.count_function(source);
         if is_derived {
             lowering.lower_parameters(source);
             if plan.injection_point == InjectionPoint::Start && has_injected_steps(&plan) {
                 lowering.emit_throw_runtime_error(RuntimeErrorKind::UninitializedThis, None);
             }
         } else {
-            let this = lowering.emit_allocation(class);
+            let position = lowering.file.position_of_making_this(function, class);
+            let this = lowering.emit_allocation(class, position);
             // JSC reports what the field initializers do at the parameter list of the constructor.
             lowering.set_position(lowering.file.hir[source].anchor);
             lowering.emit_this_binding_steps(class, &plan, this);
@@ -74,15 +76,30 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(crate) fn lower_implicit_constructor(&mut self, function: FunctionId, class: ClassId) {
         let plan = self.class_plan(class);
         let is_derived = is_derived_class(self.hir, class);
+        let position = self.function_header(function).position;
         let mut lowering = FunctionLowering::begin(self, function);
         let this = match is_derived {
             true => lowering.emit_implicit_super_call(class),
-            false => lowering.emit_allocation(class),
+            false => lowering.emit_allocation(class, position),
         };
         lowering.emit_this_binding_steps(class, &plan, this);
         lowering.emit_injected_steps(class, &plan, this);
         lowering.builder.return_value(Some(this));
         lowering.finish();
+    }
+
+    // JSC records no position for making `this`. Its lookup falls on the first position that the constructor records, and on the parameters where there is none.
+    fn position_of_making_this(&self, function: FunctionId, class: ClassId) -> u32 {
+        let header = self.function_header(function);
+        // JSC records no positions in a function that is written inside a built-in function.
+        let records_positions = header.enclosing_runtime_function.is_none();
+        self.transpiled
+            .as_ref()
+            .filter(|_| records_positions && !self.is_shown_without_source_map())
+            .and_then(|transpiled| {
+                transpiled.find_first_recorded_position(self.hir[class].text_start)
+            })
+            .unwrap_or(header.position)
     }
 }
 
@@ -263,10 +280,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    fn emit_allocation(&mut self, class: ClassId) -> ValueId {
+    fn emit_allocation(&mut self, class: ClassId, position: u32) -> ValueId {
         let layout = self.file.own_class_layout(class);
-        // JSC records no position for making `this`, so an error out of it is reported where the header says.
-        self.set_position(self.file.function_header(self.function).position);
+        self.set_position(position);
         let new_target = self.builder.new_target();
         let new_target = new_target.expect("a constructor takes new.target");
         let prototype = self.builder.get_construct_prototype(new_target, layout);

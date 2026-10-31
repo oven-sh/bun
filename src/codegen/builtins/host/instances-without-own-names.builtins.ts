@@ -42,6 +42,9 @@ export default b.declarations(
     "NativeZstd",
     "NetworkSink",
     "NodeJSFS",
+    // Its one instance is `performance`, whose own properties have a line in own-properties.txt.
+    "Performance",
+    "PerformanceTiming",
     "ReadableStream",
     "Request",
     "ResourceUsage",
@@ -57,6 +60,7 @@ export default b.declarations(
     "SecureContext",
     "ServerWebSocket",
     "SocketAddress",
+    "SubtleCrypto",
     "TCPSocket",
     "TextDecoder",
     "TextEncoder",

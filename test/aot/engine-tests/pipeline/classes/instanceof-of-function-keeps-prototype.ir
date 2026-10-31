@@ -597,38 +597,14 @@ runtimefunction id=ArrayTraversalTraverseArray function=f78 visibility=Private
 # CHECK-NEXT: b0(v0: f1, v1: anything, v2: anything, v3: anything):
 # CHECK-NEXT: v4: L0 = NewObject layout=L0 allocationClass=0
 # CHECK-NEXT: v5: int = AssumeType v3 provenType=int
-# CHECK-NEXT: v6: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: v7: boolean = AreMembersUnchanged conditions=[{kind=InstancePrototypeUnchanged layout=L0}]
-# CHECK-NEXT: Branch v7 -> taken b3(), notTaken b1()
-# CHECK-NEXT: b1() frequency=Unlikely:
-# CHECK-NEXT: v8: boolean = HasLayoutPrototype v4
-# CHECK-NEXT: Branch v8 -> taken b2(), notTaken b5()
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b3()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v9: boolean = TypeTest v5 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v9 -> taken b4(| 0), notTaken b6()
-# CHECK-NEXT: b4(v10: int[-2147483643, 2147483647]):
-# CHECK-NEXT: PutSlotOrAdd v4, v4, v10 key="x" receivers=[L0] level=Expected accessSite=37
+# CHECK-NEXT: v6: boolean = TypeTest v5 testedType=int[-2147483643, 2147483647]
+# CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v7: int[-2147483643, 2147483647]):
+# CHECK-NEXT: PutSlotOrAdd v4, v4, v7 key="x" receivers=[L0] level=Expected accessSite=37
 # CHECK-NEXT: Return v4
-# CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v12: boolean = InstanceOf v4, v6 writtenExpression="this instanceof V"
-# CHECK-NEXT: Branch v12 -> taken b6(), notTaken b7()
-# CHECK-NEXT: b6() frequency=Unlikely:
+# CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: PropSet v4, v5 key="x" accessSite=37 receivers=[L0]
 # CHECK-NEXT: Return v4
-# CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: v14: L0 = NewObject layout=L0 allocationClass=0
-# CHECK-NEXT: v15: boolean = InstanceOf v14, v6 writtenExpression="this instanceof V"
-# CHECK-NEXT: Branch v15 -> taken b8(), notTaken b9()
-# CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: PropSet v14, v5 key="x" accessSite=37 receivers=[L0]
-# CHECK-NEXT: Jump -> next b10(v14)
-# CHECK-NEXT: b9() frequency=Unlikely:
-# CHECK-NEXT: v17: L0 = CallDirect v5 function=f83 accessSite=38 [isConstruction]
-# CHECK-NEXT: Jump -> next b10(v17)
-# CHECK-NEXT: b10(v18: L0) frequency=Unlikely:
-# CHECK-NEXT: Return v18
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="V"
 # CHECK: module=m0 position=260 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f1}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers constructEntrypoint=f81} inlineFrames=[{}, {callee=f1 callPosition=260 isTailCall=true module=m0}, {callee=f83 callPosition=4294967295 parent=1 isConstruction=true module=m0}] {
@@ -669,63 +645,34 @@ runtimefunction id=ArrayTraversalTraverseArray function=f78 visibility=Private
 # CHECK-NEXT: Jump -> next b10()
 # CHECK-NEXT: b10():
 # CHECK-NEXT: v21: undefined = Undefined
-# CHECK-NEXT: Jump -> next b20(v21) @260 tail
+# CHECK-NEXT: Jump -> next b15(v21) @260 tail
 # CHECK-NEXT: b11():
 # CHECK-NEXT: v22: L0 = NewObject layout=L0 allocationClass=0
-# CHECK-NEXT: v23: boolean = AreMembersUnchanged conditions=[{kind=InstancePrototypeUnchanged layout=L0}]
-# CHECK-NEXT: Branch v23 -> taken b14(), notTaken b12()
-# CHECK-NEXT: b12() frequency=Unlikely:
-# CHECK-NEXT: v24: boolean = HasLayoutPrototype v22
-# CHECK-NEXT: Branch v24 -> taken b13(), notTaken b16()
+# CHECK-NEXT: v23: boolean = TypeTest v3 testedType=int[-2147483643, 2147483647]
+# CHECK-NEXT: Branch v23 -> taken b12(| 0), notTaken b13()
+# CHECK-NEXT: b12(v24: int[-2147483643, 2147483647]):
+# CHECK-NEXT: PutSlotOrAdd v22, v22, v24 key="x" receivers=[L0] level=Expected accessSite=37
+# CHECK-NEXT: Jump -> next b14()
 # CHECK-NEXT: b13() frequency=Unlikely:
+# CHECK-NEXT: PropSet v22, v3 key="x" accessSite=37 receivers=[L0]
 # CHECK-NEXT: Jump -> next b14()
 # CHECK-NEXT: b14():
-# CHECK-NEXT: v25: boolean = TypeTest v3 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v25 -> taken b15(| 0), notTaken b17()
-# CHECK-NEXT: b15(v26: int[-2147483643, 2147483647]):
-# CHECK-NEXT: PutSlotOrAdd v22, v22, v26 key="x" receivers=[L0] level=Expected accessSite=37
-# CHECK-NEXT: Jump -> next b19(v22)
-# CHECK-NEXT: b16() frequency=Rare:
-# CHECK-NEXT: v28: boolean = InstanceOf v22, v7 writtenExpression="this instanceof V"
-# CHECK-NEXT: Branch v28 -> taken b17(), notTaken b18()
-# CHECK-NEXT: b17() frequency=Unlikely:
-# CHECK-NEXT: PropSet v22, v3 key="x" accessSite=37 receivers=[L0]
-# CHECK-NEXT: Jump -> next b19(v22)
-# CHECK-NEXT: b18() frequency=Unlikely:
-# CHECK-NEXT: v30: L0 = CallDirect v3 function=f83 accessSite=38 [isConstruction]
-# CHECK-NEXT: Jump -> next b19(v30)
-# CHECK-NEXT: b19(v31: L0):
-# CHECK-NEXT: Jump -> next b20(v31) @260 tail
-# CHECK-NEXT: b20(v32: undefined|L0):
-# CHECK-NEXT: Return v32
+# CHECK-NEXT: Jump -> next b15(v22) @260 tail
+# CHECK-NEXT: b15(v27: undefined|L0):
+# CHECK-NEXT: Return v27
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="V"
 # CHECK: module=m0 position=260 role=ConstructBody flags=[HasExplicitName, AllocatesOwnThis] length=1 thisType={type=anything} parameters=[{type=int}] results=[{type=L0}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=1}]} creator=Version{provenVersion=f1} constructedClass=L0 {
 # CHECK-NEXT: b0(v0: int):
 # CHECK-NEXT: v1: L0 = NewObject layout=L0 allocationClass=0
-# CHECK-NEXT: v2: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: v3: boolean = AreMembersUnchanged conditions=[{kind=InstancePrototypeUnchanged layout=L0}]
-# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2()
-# CHECK-NEXT: b1():
-# CHECK-NEXT: v4: boolean = TypeTest v0 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v4 -> taken b3(| 0), notTaken b6()
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v5: boolean = HasLayoutPrototype v1
-# CHECK-NEXT: Branch v5 -> taken b4(), notTaken b5()
-# CHECK-NEXT: b3(v6: int[-2147483643, 2147483647]):
-# CHECK-NEXT: PutSlotOrAdd v1, v1, v6 key="x" receivers=[L0] level=Expected accessSite=37
+# CHECK-NEXT: v2: boolean = TypeTest v0 testedType=int[-2147483643, 2147483647]
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v3: int[-2147483643, 2147483647]):
+# CHECK-NEXT: PutSlotOrAdd v1, v1, v3 key="x" receivers=[L0] level=Expected accessSite=37
 # CHECK-NEXT: Return v1
-# CHECK-NEXT: b4() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b1()
-# CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v8: boolean = InstanceOf v1, v2 writtenExpression="this instanceof V"
-# CHECK-NEXT: Branch v8 -> taken b6(), notTaken b7()
-# CHECK-NEXT: b6() frequency=Unlikely:
+# CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: PropSet v1, v0 key="x" accessSite=37 receivers=[L0]
 # CHECK-NEXT: Return v1
-# CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: v10: L0 = CallDirect v0 function=f83 accessSite=38 [isConstruction]
-# CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="V"
 # CHECK: module=m0 position=260 role=BoundFunction length=1 captures=[{type=L0|L13 flags=[IsExpected]}, {type=f1}] thisType={type=anything} parameters=[{type=int}] results=[{type=undefined|L0}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=BoundFunction{target=f1 capturesTargetClosure=true}
@@ -792,35 +739,21 @@ runtimefunction id=ArrayTraversalTraverseArray function=f78 visibility=Private
 # CHECK-NEXT: Jump -> next b10()
 # CHECK-NEXT: b10():
 # CHECK-NEXT: v21: undefined = Undefined
-# CHECK-NEXT: Jump -> next b20(v21) @260:1 tail
+# CHECK-NEXT: Jump -> next b15(v21) @260:1 tail
 # CHECK-NEXT: b11():
 # CHECK-NEXT: v22: L0 = NewObject layout=L0 allocationClass=0
-# CHECK-NEXT: v23: boolean = AreMembersUnchanged conditions=[{kind=InstancePrototypeUnchanged layout=L0}]
-# CHECK-NEXT: Branch v23 -> taken b14(), notTaken b12()
-# CHECK-NEXT: b12() frequency=Unlikely:
-# CHECK-NEXT: v24: boolean = HasLayoutPrototype v22
-# CHECK-NEXT: Branch v24 -> taken b13(), notTaken b16()
+# CHECK-NEXT: v23: boolean = TypeTest v4 testedType=int[-2147483643, 2147483647]
+# CHECK-NEXT: Branch v23 -> taken b12(| 0), notTaken b13()
+# CHECK-NEXT: b12(v24: int[-2147483643, 2147483647]):
+# CHECK-NEXT: PutSlotOrAdd v22, v22, v24 key="x" receivers=[L0] level=Expected accessSite=37
+# CHECK-NEXT: Jump -> next b14()
 # CHECK-NEXT: b13() frequency=Unlikely:
+# CHECK-NEXT: PropSet v22, v4 key="x" accessSite=37 receivers=[L0]
 # CHECK-NEXT: Jump -> next b14()
 # CHECK-NEXT: b14():
-# CHECK-NEXT: v25: boolean = TypeTest v4 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v25 -> taken b15(| 0), notTaken b17()
-# CHECK-NEXT: b15(v26: int[-2147483643, 2147483647]):
-# CHECK-NEXT: PutSlotOrAdd v22, v22, v26 key="x" receivers=[L0] level=Expected accessSite=37
-# CHECK-NEXT: Jump -> next b19(v22)
-# CHECK-NEXT: b16() frequency=Rare:
-# CHECK-NEXT: v28: boolean = InstanceOf v22, v7 writtenExpression="this instanceof V"
-# CHECK-NEXT: Branch v28 -> taken b17(), notTaken b18()
-# CHECK-NEXT: b17() frequency=Unlikely:
-# CHECK-NEXT: PropSet v22, v4 key="x" accessSite=37 receivers=[L0]
-# CHECK-NEXT: Jump -> next b19(v22)
-# CHECK-NEXT: b18() frequency=Unlikely:
-# CHECK-NEXT: v30: L0 = CallDirect v4 function=f83 accessSite=38 [isConstruction]
-# CHECK-NEXT: Jump -> next b19(v30)
-# CHECK-NEXT: b19(v31: L0):
-# CHECK-NEXT: Jump -> next b20(v31) @260:1 tail
-# CHECK-NEXT: b20(v32: undefined|L0):
-# CHECK-NEXT: Return v32
+# CHECK-NEXT: Jump -> next b15(v22) @260:1 tail
+# CHECK-NEXT: b15(v27: undefined|L0):
+# CHECK-NEXT: Return v27
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="both"
 # CHECK: module=m0 position=391 flags=[HasExplicitName] length=1 thisType={type=anything} results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f14} inlineFrames=[{}, {callee=f31 callPosition=4294967295 module=m0}, {callee=f31 callPosition=4294967295 module=m0}, {callee=f31 callPosition=4294967295 module=m0}, {callee=f83 callPosition=4294967295 isConstruction=true module=m0}, {callee=f31 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f83 callPosition=4294967295 parent=6 isConstruction=true module=m0}] {

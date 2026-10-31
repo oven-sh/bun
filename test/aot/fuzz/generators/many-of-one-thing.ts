@@ -145,7 +145,7 @@ function show(value, depth = 0) {
 `;
 
 export function programOf(combinations: Combination[]) {
-  return `${head}${combinations.map(({ thing, count }, at) => `// ${at + 1}: ${count} ${thing.name}\n${thing.text(count, at + 1)}\nfor (const s of [3, 4, 1000003]) console.log("${at + 1}", show(${thing.isAsync ? "await " : ""}run${at + 1}(s)));`).join("\n")}\nconsole.log(touched);\n`;
+  return `${head}${combinations.map(({ thing, count }, at) => `// ${at + 1}: ${count} ${thing.name}\n${thing.text(count, at + 1)}\nfor (const s of [3, 4, 1000003, 2147483000, 2147483647]) console.log("${at + 1}", show(${thing.isAsync ? "await " : ""}run${at + 1}(s)));`).join("\n")}\nconsole.log(touched);\n`;
 }
 
 export function testPrograms() {

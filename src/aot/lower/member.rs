@@ -298,7 +298,6 @@ pub(in crate::lower) fn lower_member(
     };
     if matches!(member, MemberKey::PrivateName(_)) {
         let base = lowering.lower_member_base(access, object, exit);
-        lowering.set_position(hir[access].pos);
         return lowering.emit_private_get(base, access);
     }
     if matches!(hir[object].kind, ExprKind::Super) {

@@ -1519,9 +1519,15 @@ impl<'a> Resolver<'a> {
             if let Some(graph) = self.standalone_module_graph {
                 let specifier_is_embedded_path =
                     ::bun_options_types::standalone_path::is_bun_standalone_file_path(import_path);
-                let embedded = match self.resolve_embedded_module(source_dir, import_path, kind) {
-                    Some(file_name) => PackageLookup::Found(file_name),
-                    None => self.resolve_embedded_package(source_dir, import_path, kind),
+                let program = graph.compiled_program();
+                let is_left_outside =
+                    program.is_some_and(|program| program.leaves_outside(source_dir, import_path));
+                let embedded = match is_left_outside {
+                    true => PackageLookup::Unknown,
+                    false => match self.resolve_embedded_module(source_dir, import_path, kind) {
+                        Some(file_name) => PackageLookup::Found(file_name),
+                        None => self.resolve_embedded_package(source_dir, import_path, kind),
+                    },
                 };
                 if embedded == PackageLookup::Hidden {
                     self.extension_order = original_order;

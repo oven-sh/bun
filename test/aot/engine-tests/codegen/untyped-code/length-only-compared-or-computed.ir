@@ -388,7 +388,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f101 visibility=Private
 # CHECK-NEXT: BB#0: ; frequency = 1.000000
 # CHECK-NEXT: Int64 b@50 = Patchpoint(runsWithoutFrame, resultConstraints = SomeRegister, v1:PropGet)
 # CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
-# CHECK-NEXT: Int64 b@23 = Patchpoint(b@18:Register(%rax), b@50:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v1:PropGet)
+# CHECK-NEXT: Int64 b@23 = Patchpoint(b@18:Register(%rax), b@50:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState, CalleesInFrames}|Reads:Top, v1:PropGet)
 # CHECK-NEXT: Void b@16 = Jump(Terminal, v4:TypeTest)
 # CHECK-NEXT: Successors: #4
 # CHECK-NEXT: BB#4: ; frequency = 1.000000
@@ -434,7 +434,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f101 visibility=Private
 # CHECK-NEXT: BB#5: ; frequency = 0.007692
 # CHECK-NEXT: Predecessors: #9
 # CHECK-NEXT: Int64 b@51 = Const64(4652570258794610688, v3:Integer)
-# CHECK-NEXT: Int64 b@52 = Patchpoint(b@23:Register(%rsi), $4652570258794610688(b@51):Register(%rdx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v9:Greater)
+# CHECK-NEXT: Int64 b@52 = Patchpoint(b@23:Register(%rsi), $4652570258794610688(b@51):Register(%rdx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState, CalleesInFrames}|Reads:Top, v9:Greater)
 # CHECK-NEXT: Int32 b@53 = Trunc(b@52, v9:Greater)
 # CHECK-NEXT: Int32 b@54 = BitXor(b@53, $1(b@44), v10:LogicalNot)
 # CHECK-NEXT: Int64 b@55 = ZExt32(b@54)

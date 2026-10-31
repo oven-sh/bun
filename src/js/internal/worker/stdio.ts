@@ -103,12 +103,7 @@ function makePortWritable(port: MessagePort) {
   // batch is awaiting its ack, so unflushed data keeps the writer alive
   // (node's kWaitingStreams) but an idle stream never pins the loop.
   let pendingWriteCallback: $Node.ErrorCallback | null = null;
-  // The batch of the parked callback until it is posted. Posting allocates, so it can run out of memory.
-  let unposted: $Node.ChunkToWrite[] | null = null;
-  // write() parks its chunk in here, so that it allocates nothing before the chunk is parked.
-  const single: $Node.ChunkToWrite[] = [{ chunk: "", encoding: "utf8" }];
-
-  function complete() {
+  function onAck() {
     const cb = pendingWriteCallback;
     if (cb !== null) {
       pendingWriteCallback = null;
@@ -116,80 +111,49 @@ function makePortWritable(port: MessagePort) {
       cb();
     }
   }
-  function park(chunks: $Node.ChunkToWrite[], cb: $Node.ErrorCallback) {
-    // Only one write is in flight at a time, so the slots can't be occupied.
-    pendingWriteCallback = cb;
-    unposted = chunks;
-    port.ref();
-  }
-  function tryPost(): boolean {
-    const chunks = unposted!;
-    try {
-      const payload = new Array(chunks.length);
-      for (let i = 0; i < chunks.length; i++) {
-        const { chunk, encoding } = chunks[i];
-        payload[i] = typeof chunk === "string" ? Buffer.from(chunk, encoding as BufferEncoding) : chunk;
-      }
-      port.postMessage(payload);
-    } catch (error) {
-      if (isOutOfMemoryError(error)) return false;
-      pendingWriteCallback = null;
-      unposted = null;
-      port.unref();
-      throw error;
-    }
-    unposted = null;
-    single[0].chunk = "";
-    return true;
-  }
-  function post() {
-    // No event loop turns remain at exit: not to try again later, and not to deliver an ack.
-    const isExiting = process._exiting;
-    if (tryPost() || (isExiting && tryPost())) {
-      // Complete synchronously so exit-time writes are not lost (node does the same).
-      if (isExiting) complete();
-      return;
-    }
-    // The Writable waits for the parked callback and buffers what is written meanwhile, so no
-    // chunk is lost and the order holds. The reader's next message and the exit try again too.
-    try {
-      setTimeout(postAgain, 1);
-    } catch {}
-  }
-  function postAgain() {
-    if (unposted !== null) post();
-  }
-  function onAck() {
-    // An ack that finds a batch unposted is of an earlier batch.
-    if (unposted !== null) post();
-    else complete();
-  }
   port.addEventListener("message", onAck);
   port.unref();
   const stream = new Writable({
     decodeStrings: false,
-    write(chunk: string | Uint8Array, encoding: string, cb: $Node.ErrorCallback) {
-      const only = single[0];
-      only.chunk = chunk;
-      only.encoding = encoding;
-      park(single, cb);
-      post();
-    },
     writev(chunks: $Node.ChunkToWrite[], cb: $Node.ErrorCallback) {
-      park(chunks, cb);
-      post();
+      try {
+        const payload = new Array(chunks.length);
+        for (let i = 0; i < chunks.length; i++) {
+          const { chunk, encoding } = chunks[i];
+          payload[i] = typeof chunk === "string" ? Buffer.from(chunk, encoding as BufferEncoding) : chunk;
+        }
+        port.postMessage(payload);
+      } catch (error) {
+        if (!isOutOfMemoryError(error)) throw error;
+        cb(error as Error);
+        return;
+      }
+      if (process._exiting) {
+        // No event loop turns remain to deliver an ack; complete synchronously
+        // so exit-time writes are not lost (node does the same).
+        cb();
+      } else {
+        // Only one writev is in flight at a time, so the slot can't be occupied.
+        pendingWriteCallback = cb;
+        port.ref();
+      }
     },
     final(cb: $Node.ErrorCallback) {
       port.postMessage(null);
       cb();
     },
-    destroy(err: Error | null, cb: $Node.ErrorCallback) {
+    destroy(this: PortWritable, err: Error | null, cb: $Node.ErrorCallback) {
+      if (isOutOfMemoryError(err)) {
+        // The write has failed, the stream goes on, as process.stdout of the main thread does.
+        cb(err);
+        this._undestroy();
+        return;
+      }
       // Discharge an in-flight batch: the reader may never ack a destroyed
       // stream, so release the loop ref taken in writev and complete the
       // parked callback; drop the ack listener so a late ack can't fire
       // into the destroyed stream.
       const pending = pendingWriteCallback;
-      unposted = null;
       if (pending !== null) {
         pendingWriteCallback = null;
         port.unref();

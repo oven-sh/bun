@@ -160,6 +160,9 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
     auto* virtualModules = global->onLoadPlugins.virtualModules;
 
     virtualModules->set(moduleId, JSC::Strong<JSC::JSObject> { vm, uncheckedDowncast<JSC::JSObject>(functionValue) });
+#if ENABLE(AOT)
+    JSC::AOT::didChangePlugins(global);
+#endif
 
     auto* requireMap = global->requireMap();
     RETURN_IF_EXCEPTION(scope, {});
@@ -239,6 +242,9 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
     }
 
     plugin.append(vm, filter->regExp(), uncheckedDowncast<JSObject>(func), namespaceString);
+#if ENABLE(AOT)
+    JSC::AOT::didChangePlugins(defaultGlobalObject(globalObject));
+#endif
 
     return JSValue::encode(callframe->thisValue().toThis(globalObject, JSC::ECMAMode::strict()));
 }
@@ -655,6 +661,12 @@ static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, const L
             }
 #endif
         }
+#if ENABLE(AOT)
+        if (loaded.compiledModule) {
+            JSC::AOT::didMockModule(globalObject, *loaded.compiledModule);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+#endif
     }
 
     if (auto* moduleObject = loaded.commonJSModule) {
@@ -1283,6 +1295,9 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * global
     Zig::GlobalObject* global = static_cast<Zig::GlobalObject*>(globalObject);
     global->onLoadPlugins.clear();
     global->onResolvePlugins.clear();
+#if ENABLE(AOT)
+    JSC::AOT::didChangePlugins(global);
+#endif
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

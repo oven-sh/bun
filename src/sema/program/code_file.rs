@@ -499,6 +499,8 @@ fn import_meta_main(context: &CodeLoadContext<'_, '_, '_>, key: LoadKey<'_>) -> 
     }
     let (is_entry_point, count) = (context.is_entry_point(key), context.entry_points.len());
     match (is_entry_point, context.inputs.main_module, count) {
+        (_, MainModule::AnyFile, _) => None,
+        (false, ..) if context.is_main_module_beside_entry_points(key) => None,
         (false, ..) | (true, MainModule::Elsewhere, _) => Some(false),
         (true, MainModule::EntryPoint, 1) => Some(true),
         (true, MainModule::EntryPoint | MainModule::EntryPointOfProcessOrWorker, _) => None,

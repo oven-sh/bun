@@ -34,6 +34,8 @@ export const moduleGraphsCell = "ModuleGraph.graphs";
 export const framesOfModuleGraphsCell = "ModuleGraph.frames";
 export const asyncContextCell = "GlobalObject.asyncContext";
 export const cryptoObjectCell = "GlobalObject.crypto";
+export const performanceTimingCell = "Performance.timing";
+export const timelineHandlerCell = "Performance.onresourcetimingbufferfull";
 export const builtinModulesCell = "NodeModule.builtinModules";
 // The warnings that native code emits: the errors that it makes for them, and the errors that process.emitWarning was handed.
 export const madeWarningsCell = "Process.madeWarnings";

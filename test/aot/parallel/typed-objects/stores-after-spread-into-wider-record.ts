@@ -1,6 +1,6 @@
 // `{ ...record, more: value }` of a type with more fields than the record's: the keys come in the order of the source's, then the new ones; what the source has under a new name is replaced where it stands.
-// CALLS- widen CloneObjectAndExtend
-// CALLS- widenTwice CloneObjectAndExtend
+// CALLS- widen CopyObjectAndDefine
+// CALLS- widenTwice CopyObjectAndDefine
 type Shape = { name: string; next: Shape | undefined; sides: number; label?: string };
 type Wider = Shape & { weight: number };
 type Widest = Shape & { weight: number; owner: string; tags?: string[] };

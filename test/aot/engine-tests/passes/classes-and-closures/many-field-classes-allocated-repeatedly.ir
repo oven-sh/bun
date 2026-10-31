@@ -863,47 +863,35 @@ function f66 module=m4 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: module=m0 position=3171 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="a key nobody declared"|"bare"|"frozen"|"wider"|"with options" site=w4 flags=[OmitsNull, OmitsUndefined]}, {type=L0|L1 site=w5 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f70 callPosition=4294967295}, {callee=f19 callPosition=4294967295 module=m0}, {callee=f18 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0(v0: "a key nobody declared"|"bare"|"frozen"|"wider"|"with options", v1: L0|L1):
 # CHECK-NEXT: v2: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: v3: i32 = StringBuilderCheckpoint v2
-# CHECK-NEXT: v4: boolean = ShapeTest v1 layouts=[L0]
-# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b3()
-# CHECK-NEXT: b1() handler=b8():
-# CHECK-NEXT: v5: int[0, 2] = CallDirect v1, v2 function=f69 calledBuiltin=JSONStringify
-# CHECK-NEXT: Switch v5 cases=[1] -> case b2(), otherwise b3()
-# CHECK-NEXT: b2() handler=b8():
-# CHECK-NEXT: v6: buildercursor = StringBuilderReserve v2 size=128
-# CHECK-NEXT: Jump -> next b4(v6)
-# CHECK-NEXT: b3() frequency=Rare handler=b8():
-# CHECK-NEXT: v7: buildercursor = StringBuilderReserve v2 size=128
-# CHECK-NEXT: Jump -> next b4(v7)
-# CHECK-NEXT: b4(v8: buildercursor):
-# CHECK-NEXT: StringBuilderCommit v2, v8
-# CHECK-NEXT: v10: i32 = StringBuilderCheckpoint v2
-# CHECK-NEXT: v11: boolean = StrictEq v3, v10
-# CHECK-NEXT: Branch v11 -> taken b5(), notTaken b6()
-# CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: StringBuilderDiscard v2
-# CHECK-NEXT: v13: undefined = Undefined
-# CHECK-NEXT: v14: undefined|string = CallBuiltin -, v1, v13 overload=JSONStringify/0 accessSite=65
-# CHECK-NEXT: Jump -> next b7(v14)
-# CHECK-NEXT: b6() handler=b8():
-# CHECK-NEXT: v15: string = StringBuilderFinish v2
-# CHECK-NEXT: Jump -> next b7(v15)
-# CHECK-NEXT: b7(v16: undefined|string ~ string):
-# CHECK-NEXT: v17: boolean = GetSlot v1 key="finalized" receivers=[L0, L1] level=Proven accessSite=66
-# CHECK-NEXT: v18: undefined = Undefined
-# CHECK-NEXT: v19: undefined|"late" = GetSlot v1 key="late" receivers=[L0, L1] level=Proven accessSite=68
-# CHECK-NEXT: v20: "function" = String string="function"
-# CHECK-NEXT: v21: "http://localhost/hello" = String string="http://localhost/hello"
-# CHECK-NEXT: v22: f19 = GetSlot v1 key="answer" receivers=[L0, L1] level=Proven accessSite=72
-# CHECK-NEXT: v23: L0|L1 = GetCapture v22 function=f19
-# CHECK-NEXT: v24: undefined|string = GetSlot v23 key=#"#answer"@L0 receivers=[L0, L1] level=Proven accessSite=141
-# CHECK-NEXT: v25: undefined = CallBuiltin -, v0, v16, v17, v18, v19, v20, v21, v24 overload=ConsoleLog/0 accessSite=74
-# CHECK-NEXT: v26: undefined = Undefined
-# CHECK-NEXT: Return v26
-# CHECK-NEXT: b8() role=CleanupHandler frequency=Rare:
-# CHECK-NEXT: v27: exception = CatchException
+# CHECK-NEXT: v3: boolean = ShapeTest v1 layouts=[L0]
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b4()
+# CHECK-NEXT: b1() handler=b3():
+# CHECK-NEXT: v4: int[0, 2] = CallDirect v1, v2 function=f69 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v4 cases=[1] -> case b2(), otherwise b4()
+# CHECK-NEXT: b2() handler=b3():
+# CHECK-NEXT: v5: string = StringBuilderFinish v2
+# CHECK-NEXT: Jump -> next b5(v5)
+# CHECK-NEXT: b3() role=CleanupHandler frequency=Rare:
+# CHECK-NEXT: v6: exception = CatchException
 # CHECK-NEXT: JSONResetHolders v2
-# CHECK-NEXT: Rethrow v27
+# CHECK-NEXT: Rethrow v6
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: StringBuilderDiscard v2
+# CHECK-NEXT: v9: undefined = Undefined
+# CHECK-NEXT: v10: undefined|string = CallBuiltin -, v1, v9 overload=JSONStringify/0 accessSite=65
+# CHECK-NEXT: Jump -> next b5(v10)
+# CHECK-NEXT: b5(v11: undefined|string ~ string):
+# CHECK-NEXT: v12: boolean = GetSlot v1 key="finalized" receivers=[L0, L1] level=Proven accessSite=66
+# CHECK-NEXT: v13: undefined = Undefined
+# CHECK-NEXT: v14: undefined|"late" = GetSlot v1 key="late" receivers=[L0, L1] level=Proven accessSite=68
+# CHECK-NEXT: v15: "function" = String string="function"
+# CHECK-NEXT: v16: "http://localhost/hello" = String string="http://localhost/hello"
+# CHECK-NEXT: v17: f19 = GetSlot v1 key="answer" receivers=[L0, L1] level=Proven accessSite=72
+# CHECK-NEXT: v18: L0|L1 = GetCapture v17 function=f19
+# CHECK-NEXT: v19: undefined|string = GetSlot v18 key=#"#answer"@L0 receivers=[L0, L1] level=Proven accessSite=141
+# CHECK-NEXT: v20: undefined = CallBuiltin -, v0, v11, v12, v13, v14, v15, v16, v19 overload=ConsoleLog/0 accessSite=74
+# CHECK-NEXT: v21: undefined = Undefined
+# CHECK-NEXT: Return v21
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Context"
 # CHECK: module=m0 position=829 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L2 site=w6 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|L4 site=w7 flags=[OmitsNull]}] results=[{type=L0|L1 flags=[IsFromCompiler]}] functionTypes=[f24] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
@@ -956,16 +944,32 @@ function f66 module=m4 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: m0 position=2288 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L1):
 # CHECK-NEXT: v1: classtoken = GetModuleVariable variable=g3
+# CHECK-NEXT: v2: boolean = IsSlotFilled v0 key=#"#"@L1 receivers=[L1] level=Proven
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1() frequency=Unlikely:
 # CHECK-NEXT: PrivateDefine v0, v1, v1 layout=L1 accessSite=116 receivers=[L1]
-# CHECK-NEXT: v3: Array<int[0, 2999]> = NewArray contents=int[0, 2999] allocationSite=32
-# CHECK-NEXT: v4: Array<int[0, 2999], proven, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<int[0, 2999], proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: PutSlotOrAdd v0, -, v4 key="extra" receivers=[L1] level=Proven accessSite=117
-# CHECK-NEXT: v6: "s" = String string="s"
-# CHECK-NEXT: PrivateDefine v0, v1, v6 layout=L1 field=2 accessSite=118 receivers=[L1]
-# CHECK-NEXT: v8: f21 = NewClosure v0 function=f21 allocationSite=33
-# CHECK-NEXT: PutSlotOrAdd v0, -, v8 key="more" receivers=[L1] level=Proven accessSite=119
-# CHECK-NEXT: v10: undefined = Undefined
-# CHECK-NEXT: Return v10
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: PutSlotOrAdd v0, -, v1 key=#"#"@L1 receivers=[L1] level=Proven accessSite=116
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v5: Array<int[0, 2999]> = NewArray contents=int[0, 2999] allocationSite=32
+# CHECK-NEXT: v6: Array<int[0, 2999], proven, pristine[Storage, Names, Dense]> = AssumeType v5 provenType=Array<int[0, 2999], proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: PutSlotOrAdd v0, -, v6 key="extra" receivers=[L1] level=Proven accessSite=117
+# CHECK-NEXT: v8: "s" = String string="s"
+# CHECK-NEXT: v9: boolean = IsSlotFilled v0 key=#"#secret"@L1 receivers=[L1] level=Proven
+# CHECK-NEXT: Branch v9 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4() frequency=Unlikely:
+# CHECK-NEXT: PrivateDefine v0, v1, v8 layout=L1 field=2 accessSite=118 receivers=[L1]
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: PutSlotOrAdd v0, -, v8 key=#"#secret"@L1 receivers=[L1] level=Proven accessSite=118
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v12: f21 = NewClosure v0 function=f21 allocationSite=33
+# CHECK-NEXT: PutSlotOrAdd v0, -, v12 key="more" receivers=[L1] level=Proven accessSite=119
+# CHECK-NEXT: v14: undefined = Undefined
+# CHECK-NEXT: Return v14
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="header"
 # CHECK: module=m0 position=1342 kind=Arrow flags=[IsChecked] length=2 captures=[{type=L0|L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type="a" site=w76 flags=[OmitsNull, OmitsUndefined]}, {type="b" site=w77 flags=[OmitsNull]}] results=[{type=undefined}] functionTypes=[f28] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
@@ -1081,22 +1085,11 @@ function f66 module=m4 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function {{*}}name="Context"
 # CHECK: module=m0 position=829 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=L0|L1} parameters=[{type=L2 site=w6 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|L4 site=w7 flags=[OmitsNull]}] results=[{type=undefined}] functionTypes=[f24] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{}, {original=0}, {original=1}, {original=2}]} creator=Version{provenVersion=f2} constructedClass=L0
 # CHECK-LABEL: function {{*}}name="cached"
-# CHECK: module=m0 position=1040 kind=Getter role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f3}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers} inlineFrames=[{}, {callee=f3 callPosition=1040 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=1040 kind=Getter role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f3}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f3, v1: anything):
 # CHECK-NEXT: v2: L0|L1 = AssumeType v1 provenType=L0|L1
-# CHECK-NEXT: v3: undefined|string = GetSlot v2 key=#"#path"@L0 receivers=[L0, L1] level=Proven accessSite=84
-# CHECK-NEXT: v4: boolean = TypeTest v3 testedType=undefined|null
-# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2(| 0)
-# CHECK-NEXT: b1():
-# CHECK-NEXT: v5: "none" = String string="none"
-# CHECK-NEXT: Jump -> next b3(v5)
-# CHECK-NEXT: b2(v6: string):
-# CHECK-NEXT: Jump -> next b3(v6)
-# CHECK-NEXT: b3(v7: string):
-# CHECK-NEXT: v8: L5 = NewObject -, v7 layout=L5 fields=[0] allocationSite=17 allocationClass=5
-# CHECK-NEXT: v9: L5 = FinishObject v8
-# CHECK-NEXT: PutSlot v2, -, v9 key=#"#cached"@L0 receivers=[L0, L1] level=Proven accessSite=85
-# CHECK-NEXT: Return v9
+# CHECK-NEXT: v3: L5 = CallDirect v2 function=f3
+# CHECK-NEXT: ReturnCall v3 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="header"
 # CHECK: module=m0 position=1342 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=2 captures=[{type=f11}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f11} creator=Entrypoint{target=f11 arguments=Registers} {

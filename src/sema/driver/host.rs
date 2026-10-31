@@ -409,9 +409,17 @@ const MIN_MAPPED_LEN: usize = 8 * 1024;
 const MAX_MAPPED_FILES: usize = 32 * 1024;
 
 /// What `map_file` has mapped, by path. A build that loads its files a second time finds them here: a mapping stays until
-/// the process ends, so a second one of the same file would only take another entry of that table.
-static MAPPED_FILES: bun_threading::RwLock<Option<FxHashMap<Vec<u8>, &'static [u8]>>> =
+/// the process ends, so a second one of the same file would only take another entry of that table. Each with the stamp of
+/// the file when it was mapped: a file that somebody has written since is read anew, into memory of the process's own.
+static MAPPED_FILES: bun_threading::RwLock<Option<FxHashMap<Vec<u8>, (&'static [u8], FileStamp)>>> =
     bun_threading::RwLock::new(None);
+/// How often a later load found that a mapped file had been written.
+static MAPPED_FILES_WRITTEN_SINCE: AtomicUsize = AtomicUsize::new(0);
+
+/// A run writes there what it makes for itself, and may write it again.
+fn is_made_by_runs(path: &[u8]) -> bool {
+    contains(path, b"/node_modules/.cache/")
+}
 
 /// `start`: how the file begins. A file with a byte order mark is decoded, so its text is a copy anyway.
 fn map_file(file: &bun_sys::File, len: usize, start: &[u8]) -> Option<&'static [u8]> {
@@ -442,6 +450,27 @@ pub fn large_files_so_far() -> [usize; 4] {
     LARGE_FILES_SO_FAR
         .each_ref()
         .map(|it| it.load(Ordering::Relaxed))
+}
+
+/// For the same log.
+pub fn mapped_files_written_since() -> usize {
+    MAPPED_FILES_WRITTEN_SINCE.load(Ordering::Relaxed)
+}
+
+/// For the same log: the mapped files and their bytes, by what they are: the declarations of packages, the other files of
+/// packages, the declarations outside of packages, the rest.
+pub fn mapped_files_by_kind() -> [[usize; 2]; 4] {
+    const OF_PACKAGE: &[u8] = b"/node_modules/";
+    const DECLARATIONS: [&[u8]; 3] = [b".d.ts", b".d.mts", b".d.cts"];
+    let mut kinds = [[0; 2]; 4];
+    for (path, (text, _)) in MAPPED_FILES.read().iter().flatten() {
+        let is_of_package = contains(path, OF_PACKAGE);
+        let is_declaration = DECLARATIONS.iter().any(|ending| path.ends_with(ending));
+        let kind = &mut kinds[usize::from(!is_of_package) * 2 + usize::from(!is_declaration)];
+        kind[0] += 1;
+        kind[1] += text.len();
+    }
+    kinds
 }
 
 /// Returns the full contents of the file `name` in `directory`.
@@ -1494,11 +1523,16 @@ impl Host for Disk {
             before_read(path);
         }
         to_syscall_path(path)?;
-        if self.maps_large_files {
+        let mut maps_large_files = self.maps_large_files && !is_made_by_runs(path);
+        if maps_large_files {
             let mapped = MAPPED_FILES.read();
-            if let Some(&text) = mapped.as_ref().and_then(|mapped| mapped.get(path)) {
-                crate::did_read_source(text.len());
-                return Some(Cow::Borrowed(text));
+            if let Some(&(text, stamp)) = mapped.as_ref().and_then(|mapped| mapped.get(path)) {
+                if stamp_on_disk(path) == Some(stamp) {
+                    crate::did_read_source(text.len());
+                    return Some(Cow::Borrowed(text));
+                }
+                MAPPED_FILES_WRITTEN_SINCE.fetch_add(1, Ordering::Relaxed);
+                maps_large_files = false;
             }
         }
         let Split { parent, name } = split(path);
@@ -1526,11 +1560,11 @@ impl Host for Disk {
             let Reader { handle, buffer, .. } = &mut reader;
             handle
                 .as_ref()
-                .map(|directory| read_file(directory.fd(), name, buffer, self.maps_large_files))
+                .map(|directory| read_file(directory.fd(), name, buffer, maps_large_files))
         };
         let read = read.unwrap_or_else(|| {
             let path = to_native(without_trailing_slash(path));
-            read_file(Fd::cwd(), path, &mut reader.buffer, self.maps_large_files)
+            read_file(Fd::cwd(), path, &mut reader.buffer, maps_large_files)
         });
         self.return_reader(reader);
         read.map(|bytes| {
@@ -1538,9 +1572,14 @@ impl Host for Disk {
             match bytes {
                 FileBytes::Copied(bytes) => decoded(bytes, keeps_mark),
                 FileBytes::Mapped(bytes) => {
-                    let mut mapped = MAPPED_FILES.write();
-                    let mapped = mapped.get_or_insert_default();
-                    mapped.insert(path.to_vec(), bytes);
+                    // A file that was written between the mapping and this look is not found again by a later load.
+                    if let Some(stamp) = stamp_on_disk(path)
+                        && stamp.size == bytes.len() as u64
+                    {
+                        let mut mapped = MAPPED_FILES.write();
+                        let mapped = mapped.get_or_insert_default();
+                        mapped.insert(path.to_vec(), (bytes, stamp));
+                    }
                     Cow::Borrowed(bytes)
                 }
             }

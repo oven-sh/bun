@@ -251,32 +251,35 @@ function candidatesNamedBy({ accepted }: DumpedParameter): Candidate[] {
   return [...named, ...[minimum, maximum, minimum - 1, maximum + 1].map(literalCandidate)];
 }
 
+function instancesMadeFor(realm: Realm, className: string): Candidate[] {
+  // There is one, and everybody shares it: it is passed only where nothing else will do.
+  if (className === "Crypto") return [{ name: "crypto", kind: "Pristine", create: () => crypto }];
+  const made = candidatesForTheirClass.filter(({ instanceOf }) => instanceOf !== undefined && realm.table.isSameOrSubclass(instanceOf, className));
+  if (made.length > 0) return made;
+  const classConstructor = realm.valueOf(realm.table.classes.get(className)?.constructor ?? null);
+  if (typeof classConstructor !== "function") return [];
+  return [
+    {
+      name: `constructed:${className}`,
+      kind: "Pristine",
+      create(log, operand) {
+        try {
+          const value = Reflect.construct(classConstructor, []);
+          log.identify(value, { kind: "Operand", operand });
+          return value;
+        } catch (error) {
+          throw new Unavailable(`new ${className}() threw`, { cause: error });
+        }
+      },
+    },
+  ];
+}
+
 function constructedCandidates(realm: Realm, { accepted }: DumpedParameter): Candidate[] {
   return accepted.parts.flatMap((part): Candidate[] => {
     // There is one, and everybody shares it.
     if (part.part === "Builtin") return [{ name: `builtin:${part.builtin}`, kind: "Pristine", create: () => realm.valueOf(part.builtin) }];
-    if (part.part !== "Instance") return [];
-    // There is one, and everybody shares it: it is passed only where nothing else will do.
-    if (part.class === "Crypto") return [{ name: "crypto", kind: "Pristine", create: () => crypto }];
-    const made = candidatesForTheirClass.filter(({ instanceOf }) => instanceOf !== undefined && realm.table.isSameOrSubclass(instanceOf, part.class));
-    if (made.length > 0) return made;
-    const classConstructor = realm.valueOf(realm.table.classes.get(part.class)?.constructor ?? null);
-    if (typeof classConstructor !== "function") return [];
-    return [
-      {
-        name: `constructed:${part.class}`,
-        kind: "Pristine",
-        create(log, operand) {
-          try {
-            const value = Reflect.construct(classConstructor, []);
-            log.identify(value, { kind: "Operand", operand });
-            return value;
-          } catch (error) {
-            throw new Unavailable(`new ${part.class}() threw`, { cause: error });
-          }
-        },
-      },
-    ];
+    return part.part === "Instance" ? instancesMadeFor(realm, part.class) : [];
   });
 }
 
@@ -421,8 +424,11 @@ function receiversOf(realm: Realm, call: Call, overload: DumpedOverload): Receiv
   ];
   // A read of the name from any other value is not a use of the entry.
   if (entry.kind !== "DataProperty") return { base, others: named, isAnyOther: true };
-  const others = [...everyCandidate, ...named].filter(candidate => candidate !== base);
   const instanceClass = realm.table.dump.classes.find(({ prototype }) => prototype === entry.holder)?.token;
+  // Native code has no test for some classes, and then the type of the receiver does not name the class whose instances have the property.
+  const isNamed = overload.receiver.accepted.parts.some(part => part.part === "Instance" && part.class === instanceClass);
+  const made = instanceClass === undefined || isNamed ? [] : instancesMadeFor(realm, instanceClass);
+  const others = [...everyCandidate, ...named, ...made].filter(candidate => candidate !== base);
   const instances = others.filter(candidate => {
     const { value, isAvailable } = sampleOf(candidate);
     return isAvailable && instanceClass !== undefined && realm.classesOf(value).includes(instanceClass);

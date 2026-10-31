@@ -20,6 +20,9 @@ const forms: Record<string, string> = {
   "off the namespace object": `import * as runner from "bun:test";\nconst { test } = runner;\nrunner.mock.module("./lib.js", ${made("namespace")});\n${uses}`,
   "off jest under another name": `import { jest, test } from "bun:test";\nconst other = jest;\nother.mock("./lib.js", ${made("jest")});\n${uses}`,
   "off what Bun.jest answers": `import { test } from "bun:test";\nBun.jest(import.meta.path).mock.module("./lib.js", ${made("Bun.jest")});\n${uses}`,
+  "taken off what Bun.jest answers": `const { mock, test } = Bun.jest(import.meta.path);\nmock.module("./lib.js", ${made("taken off Bun.jest")});\n${uses}`,
+  "off what Bun.jest answers, kept whole": `const tools = Bun.jest(import.meta.path);\nconst { test } = tools;\ntools.mock.module("./lib.js", ${made("kept whole")});\n${uses}`,
+  "off the rest of what Bun.jest answers": `const { test, ...rest } = Bun.jest(import.meta.path);\nrest.mock.module("./lib.js", ${made("the rest")});\n${uses}`,
   "handed to a function": `import { mock, test } from "bun:test";\nfunction replaceWith(tool) { tool.module("./lib.js", ${made("handed")}); }\nreplaceWith(mock);\n${uses}`,
 };
 
@@ -57,3 +60,33 @@ test("a spy got from Bun.jest replaces an export of a compiled module", async ()
   expect(plain.stdout).toContain("spied real v");
   expect(await runTests("--aot")).toEqual(plain);
 });
+
+// A file that may mock any module costs its neighbors what the build knows of the modules of Bun: node:vm's runInContext() was refused.
+// `const { test, expect } = Bun.jest(path)` is how helpers get the runner, and it takes nothing that mocks.
+for (const [name, neighbor] of Object.entries({
+  "in a pattern": `const { expect, test } = Bun.jest(import.meta.path);\ntest("b", () => { expect(1).toBe(1); });`,
+  "by a member": `Bun.jest(import.meta.path).test("b", () => {});`,
+  // These do mock any module. What the neighbor imports from node:vm may be a mock then, and may as well be what node:vm exports.
+  "beside mock, which goes somewhere": `import { mock, test } from "bun:test";\nglobalThis.kept = mock;\ntest("b", () => {});`,
+  "beside jest, which goes somewhere": `import { jest, test } from "bun:test";\nglobalThis.kept = jest;\ntest("b", () => {});`,
+  "off the namespace object, which goes somewhere": `import * as tools from "bun:test";\nglobalThis.kept = tools;\ntools.test("b", () => {});`,
+})) {
+  test(`node:vm runs text beside a file that takes test ${name}`, async () => {
+    using dir = tempDir("test-and-expect-taken-off-bun-jest", {
+      "package.json": `{ "type": "module" }`,
+      "a.test.js": `
+        import { test } from "bun:test";
+        import { createContext, runInContext, runInNewContext } from "node:vm";
+        test("t", () => { console.log(runInContext("1 + 1", createContext({})), runInNewContext("2 + 2")); });`,
+      "b.test.js": neighbor,
+    });
+    const runTests = async (...flags: string[]) => {
+      const { stdout, exitCode } = await run([bunExe(), "test", "--isolate", ...flags], String(dir), bunEnv);
+      return { stdout, exitCode };
+    };
+    const plain = await runTests();
+    expect(plain.exitCode).toBe(0);
+    expect(plain.stdout).toContain("2 4");
+    expect(await runTests("--aot")).toEqual(plain);
+  });
+}

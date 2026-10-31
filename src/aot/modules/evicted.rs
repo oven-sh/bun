@@ -1,22 +1,25 @@
 //! Which files of a test run may load a second time. `delete require.cache[path]` makes the next `require()` or `import()` of the file load it again, from
-//! disk. Code that asks for such a file asks the run time which instance answers, and knows nothing of what it gets, so the fewer the better.
+//! disk, and so does `require.cache[path] = undefined`. Code that asks for such a file asks the run time which instance answers, and knows nothing of what it gets, so the fewer the better.
 
 use super::module_set::ModuleSet;
 use super::plan::ModuleRef;
 use super::requests::{ScannedSite, Scans};
 use super::{BindInput, ReplacedModules};
-use crate::builtins::KeyOfModuleCache;
+use crate::builtins::{KeyOfModuleCache, RuntimeModule, table};
+use crate::load::loader_aliases::resolve_loader_alias;
 use crate::load::sources::{SourceKind, parsed_source};
 use crate::options::ReplacedModule;
 use crate::statistics::logs_stages;
-use bun_core::strings::index_of_char;
+use bun_ast::Target;
+use bun_core::strings::{contains, index_of_char};
 use bun_paths::resolve_path::{dirname, join_abs_string_buf_checked, platform};
 use bun_paths::{is_absolute, path_buffer_pool};
+use bun_resolve_builtins::{Alias, Cfg};
 use bun_sema::atom::Atom;
-use bun_sema::bind::{Binding, BindingInitializer};
+use bun_sema::bind::{Binding, BindingInitializer, Bound, FnOwner, Parent};
 use bun_sema::fold::{Constant, FoldedValue};
-use bun_sema::hir::ExprId;
-use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
+use bun_sema::hir::{ExprId, ExprKind, StmtId, StmtKind};
+use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, is_made_require};
 use bun_sema::program::FileId;
 use bun_sema::util::{FxHashMap, FxHashSet};
 
@@ -73,11 +76,16 @@ pub(crate) fn find_file_of_key(
     hir: &bun_sema::hir::File<'_>,
     bound: &bun_sema::bind::Bound<'_>,
     analysis: &bun_sema::file_analysis::FileAnalysis<'_>,
-    key: ExprId,
+    key: KeyOfModuleCache,
 ) -> FileOfKey {
-    const NAMES_FOLLOWED: usize = 4;
+    let key = match key {
+        KeyOfModuleCache::Text(path) => return FileOfKey::Path(path),
+        KeyOfModuleCache::Computed(key) => key,
+    };
     let mut key = hir.skip_type_assertions(key);
-    for _ in 0..NAMES_FOLLOWED {
+    // `const a = b, b = a` leads round.
+    let mut followed = Vec::new();
+    loop {
         if let FoldedValue::Constant(Constant::String(path)) = analysis.decisions.constant(hir, key)
         {
             return FileOfKey::Path(path);
@@ -88,18 +96,70 @@ pub(crate) fn find_file_of_key(
             return FileOfKey::Site(site);
         }
         let Binding::Symbol(symbol) = bound.binding(key) else {
-            break;
+            return FileOfKey::Unknown;
         };
-        if !bound.is_evaluated_ident(key) || !bound.is_stable_binding(symbol) {
-            break;
+        if !bound.is_evaluated_ident(key)
+            || !bound.is_stable_binding(symbol)
+            || followed.contains(&symbol)
+        {
+            return FileOfKey::Unknown;
         }
+        followed.push(symbol);
         let BindingInitializer::Expression(initializer) = bound.binding_initializer(hir, symbol)
         else {
-            break;
+            return FileOfKey::Unknown;
         };
         key = hir.skip_type_assertions(initializer);
     }
-    FileOfKey::Unknown
+}
+
+/// `try { require("./a.cjs"); } catch {}`, `expect(() => require("./a.cjs")).toThrow()`, `test("a", () => { require("./a.cjs"); })`: the program goes on behind a body that throws.
+/// Whoever is handed a function may catch what it throws.
+pub(crate) fn stands_where_a_throw_is_caught(
+    hir: &bun_sema::hir::File<'_>,
+    bound: &Bound<'_>,
+    mut call: ExprId,
+) -> bool {
+    let statement_around = |parent: Parent| -> Option<StmtId> {
+        match parent {
+            Parent::Stmt(statement) => statement.some(),
+            Parent::VarInit(declaration) => bound.var_stmt[declaration.idx()].some(),
+            Parent::Case(case) => bound.case_stmt[case.idx()].some(),
+            _ => None,
+        }
+    };
+    loop {
+        let mut parent = bound.parent_of_expr(call);
+        while let Parent::Expr(outer) = parent {
+            parent = bound.parent_of_expr(outer);
+        }
+        while let Some(inner) = statement_around(parent) {
+            parent = bound.parent_of_stmt(inner);
+            let is_guarded = statement_around(parent).is_some_and(|outer| {
+                matches!(hir[outer].kind, StmtKind::Try { block, handler, .. } if block == inner && handler.is_some())
+            });
+            if is_guarded {
+                return true;
+            }
+        }
+        let Parent::FnBody(function) = parent else {
+            return false;
+        };
+        let FnOwner::Expr(function) = bound.fns[function.idx()].owner else {
+            return false;
+        };
+        let Parent::Expr(user) = bound.parent_of_expr(function) else {
+            return false;
+        };
+        let (ExprKind::Call(site) | ExprKind::New(site)) = hir[user].kind else {
+            return false;
+        };
+        if hir[site].callee != function {
+            return true;
+        }
+        // `(() => require("./a.cjs"))()`: what it throws goes on to what stands around the call.
+        call = user;
+    }
 }
 
 /// `import("./a.js?again")` loads the file once more, from disk. What stands in front of the `?` in each specifier that has one.
@@ -226,6 +286,16 @@ pub(super) fn find_evicted_modules(
     let by_path = ReplacedModules::of_every_file(input, modules);
     let out_of_sight = input.evicted_modules.iter();
     (evicted.modules).extend(out_of_sight.filter_map(|module| by_path.find(module)));
+    let is_thrower = |required: &ModuleRef| {
+        modules
+            .find_commonjs_file(*required)
+            .is_some_and(|thrower| {
+                !contains(input.files.module(thrower).file_name(), b"/node_modules/")
+            })
+    };
+    let out_of_sight = input.files_that_tests_load.where_throws_are_caught.iter();
+    let out_of_sight = out_of_sight.filter_map(|module| by_path.find(module));
+    evicted.modules.extend(out_of_sight.filter(is_thrower));
     for &file in &modules.compiled_files {
         if !matches!(
             input.sources.kind(file),
@@ -250,18 +320,28 @@ pub(super) fn find_evicted_modules(
             continue;
         };
         if builtins.loses_sight_of_module_cache() {
-            say_why_every_file(input, file, "hands require.cache on, or names Bun.plugin");
+            say_why_every_file(
+                input,
+                file,
+                "hands require.cache on, names Bun.plugin, or stores a loader into Module._extensions",
+            );
             evicted.is_every_module = true;
         }
         evicted.is_every_export_asked_for |= builtins.reaches_module_cache();
         let (hir, bound) = (input.files.hir(file), input.files.bound(file));
         let (analysis, scan) = (input.files.analysis(file), scans.of(file));
+        // A CommonJS file whose body throws is out of the table, and the next `require()` runs it again.
+        for (site, answer) in analysis.import_sites.iter().zip(&scan.sites) {
+            if let (ImportSiteKind::Require(call), &ScannedSite::Module(required)) =
+                (site.kind, answer)
+                && is_thrower(&required)
+                && stands_where_a_throw_is_caught(hir, bound, call)
+            {
+                evicted.modules.insert(required);
+            }
+        }
         for &key in builtins.keys_taken_out_of_module_cache() {
-            let named = match key {
-                KeyOfModuleCache::Text(path) => FileOfKey::Path(path),
-                KeyOfModuleCache::Computed(key) => find_file_of_key(hir, bound, analysis, key),
-            };
-            match named {
+            match find_file_of_key(hir, bound, analysis, key) {
                 FileOfKey::Path(path) => {
                     let path = ReplacedModule::File(input.files.atoms.bytes(path).to_vec());
                     evicted.modules.extend(by_path.find(&path));
@@ -278,7 +358,7 @@ pub(super) fn find_evicted_modules(
                         say_why_every_file(
                             input,
                             file,
-                            "deletes require.cache[require.resolve(name)] for a name that it does not spell",
+                            "takes require.cache[require.resolve(name)] out for a name that it does not spell",
                         );
                         evicted.is_every_module = true;
                     }
@@ -288,7 +368,7 @@ pub(super) fn find_evicted_modules(
                     say_why_every_file(
                         input,
                         file,
-                        "deletes a key of require.cache that it does not spell",
+                        "takes a key out of require.cache that it does not spell",
                     );
                     evicted.is_every_module = true;
                 }
@@ -336,4 +416,298 @@ pub(super) fn find_evicted_modules(
         .collect();
     evicted.named_by_copies.extend(forms);
     evicted
+}
+
+/// `require.cache["fs"] = { exports: fake }`: from then on `require("fs")` answers with what the entry exports, and `require("node:fs")` with the module.
+/// `overridableRequire` in CommonJS.ts looks in the table for a name in front of which the resolver puts `node:`. These are the modules for which a file spells such a key.
+/// A key that nobody reads opens none: a large program is sure to have one, and every `require` of a Node.js module in it would answer what nobody knows.
+#[derive(Default)]
+pub(super) struct LibraryModulesStoredInCache {
+    modules: FxHashSet<RuntimeModule>,
+    /// The others that a `require` of the program names without `node:`. It is compiled for the module, so the run time refuses an entry under such a name.
+    held_under_name_without_prefix: FxHashSet<RuntimeModule>,
+    /// `bun run` reads `require("fs")` as `require("node:fs")` in a CommonJS file that an import loads, and as it is written in one that `require` loads.
+    /// The first load counts, and the statements of a program are followed before any of its code runs.
+    commonjs_files_that_imports_load: FxHashSet<FileId>,
+    commonjs_files_tracking_first_load: FxHashSet<FileId>,
+}
+
+/// The key under which `require(name)` looks, and the module that it answers with where nothing stands there.
+/// A module of Bun's own (`bun:sqlite`, `ws`) is looked for under its one name. `require("bun")` is read as `Bun`.
+fn find_key_and_module_looked_up_in_cache(name: &[u8]) -> Option<(&[u8], RuntimeModule)> {
+    let alias = Alias::get(name, Target::Bun, Cfg::default())?;
+    let path = alias.path.as_bytes();
+    let key = if path.starts_with(b"node:") {
+        name
+    } else {
+        path
+    };
+    let module = table::module_by_specifier(path)?;
+    (!key.starts_with(b"node:") && module != RuntimeModule::Bun).then_some((key, module))
+}
+
+fn find_module_looked_up_in_cache(name: &[u8]) -> Option<RuntimeModule> {
+    find_key_and_module_looked_up_in_cache(name).map(|(_, module)| module)
+}
+
+fn find_module_stored_under(key: &[u8]) -> Option<RuntimeModule> {
+    let (looked_under, module) = find_key_and_module_looked_up_in_cache(key)?;
+    (looked_under == key).then_some(module)
+}
+
+impl LibraryModulesStoredInCache {
+    pub(super) fn may_stand_under(&self, name: &[u8]) -> bool {
+        !self.modules.is_empty()
+            && find_module_looked_up_in_cache(name)
+                .is_some_and(|module| self.modules.contains(&module))
+    }
+
+    pub(super) fn is_held_under_name_without_prefix(&self, module: RuntimeModule) -> bool {
+        self.held_under_name_without_prefix.contains(&module)
+    }
+
+    pub(super) fn is_commonjs_file_that_imports_load(&self, file: FileId) -> bool {
+        self.commonjs_files_that_imports_load.contains(&file)
+    }
+
+    pub(super) fn tracks_first_load(&self, file: FileId) -> bool {
+        self.commonjs_files_tracking_first_load.contains(&file)
+    }
+
+    pub(super) fn files_tracking_first_load(&self) -> impl Iterator<Item = FileId> + '_ {
+        self.commonjs_files_tracking_first_load.iter().copied()
+    }
+
+    /// Nobody knows what `require` answers for the module.
+    pub(super) fn contains(&self, module: ModuleRef) -> bool {
+        matches!(module, ModuleRef::Runtime(module) if self.modules.contains(&module))
+    }
+}
+
+fn find_commonjs_files_that_imports_load(
+    input: &BindInput<'_, '_>,
+    scans: &Scans,
+    modules: &ModuleSet,
+) -> FxHashSet<FileId> {
+    let [mut by_statement, mut by_call, mut required] = <[FxHashSet<FileId>; 3]>::default();
+    let by_path = ReplacedModules::of_every_file(input, modules);
+    let loaded = input.files_that_tests_load;
+    for (paths, files) in [
+        (&loaded.by_statements, &mut by_statement),
+        (&loaded.by_calls, &mut by_call),
+        (&loaded.by_require, &mut required),
+    ] {
+        let targets = paths.iter().filter_map(|path| by_path.find(path));
+        files.extend(targets.filter_map(|target| modules.find_commonjs_file(target)));
+    }
+    for &file in &modules.compiled_files {
+        // It names what the test files name, and does not say how they load it. The scan of the test files does.
+        if input.stand_in_for_files_from_disk == Some(file) {
+            continue;
+        }
+        let sites = input.files.analysis(file).import_sites.iter();
+        for (site, answer) in sites.zip(&scans.of(file).sites) {
+            let &ScannedSite::Module(target) = answer else {
+                continue;
+            };
+            let Some(target) = modules.find_commonjs_file(target) else {
+                continue;
+            };
+            match site.kind {
+                ImportSiteKind::Import(_)
+                | ImportSiteKind::ExportFrom(_)
+                | ImportSiteKind::ExportStar(_) => by_statement.insert(target),
+                ImportSiteKind::ImportCall(_) => by_call.insert(target),
+                ImportSiteKind::Require(_)
+                | ImportSiteKind::ImportMetaRequire(_)
+                | ImportSiteKind::ImportEquals(_) => required.insert(target),
+                _ => false,
+            };
+        }
+    }
+    by_statement.extend(by_call.difference(&required));
+    by_statement
+}
+
+fn find_commonjs_files_tracking_first_load(
+    input: &BindInput<'_, '_>,
+    modules: &ModuleSet,
+    stored: &LibraryModulesStoredInCache,
+) -> FxHashSet<FileId> {
+    let mut files = FxHashSet::default();
+    if stored.modules.is_empty() {
+        return files;
+    }
+    let may_find_entry = |written: Atom| {
+        let written = input.files.atoms.bytes(written);
+        let name = Alias::bun_prefixed_builtin(written).unwrap_or(written);
+        stored.may_stand_under(name)
+            && Alias::get(name, Target::Bun, Cfg::default()).is_some_and(|alias| alias.node_builtin)
+    };
+    for &file in &modules.compiled_files {
+        let is_of_program = matches!(
+            input.sources.kind(file),
+            SourceKind::Program | SourceKind::EvaluatedText
+        );
+        if !is_of_program || modules.find_commonjs_file(ModuleRef::File(file)).is_none() {
+            continue;
+        }
+        let analysis = input.files.analysis(file);
+        let is_require = |kind: ImportSiteKind| {
+            matches!(
+                kind,
+                ImportSiteKind::Require(_)
+                    | ImportSiteKind::ImportMetaRequire(_)
+                    | ImportSiteKind::ImportEquals(_)
+            )
+        };
+        let sites = analysis.import_sites.iter();
+        let is_written = sites.filter(|site| is_require(site.kind)).any(|site| {
+            (analysis.alternatives_of(&site.specifier).iter()).any(|alternative| {
+                matches!(*alternative, ImportSpecifier::Constant(written) if may_find_entry(written))
+            })
+        });
+        let named =
+            parsed_source(input.files, file).map_or(&[][..], |source| source.named_modules());
+        if is_written || named.iter().any(|named| may_find_entry(named.name)) {
+            files.insert(file);
+        }
+    }
+    files
+}
+
+// `createRequire(import.meta.url)("fs")`, and a name that holds `require`. `process.getBuiltinModule(flag ? "vm" : "v8")` looks in no table.
+fn is_argument_of_require(
+    hir: &bun_sema::hir::File<'_>,
+    bound: &Bound<'_>,
+    analysis: &bun_sema::file_analysis::FileAnalysis<'_>,
+    argument: ExprId,
+) -> bool {
+    let mut operand = argument;
+    while let Parent::Expr(parent) = bound.parent_of_expr(operand)
+        && hir.type_assertion_operand(parent) == Some(operand)
+    {
+        operand = parent;
+    }
+    let Parent::Expr(user) = bound.parent_of_expr(operand) else {
+        return false;
+    };
+    let ExprKind::Call(call) = hir[user].kind else {
+        return false;
+    };
+    let callee = hir[call].callee;
+    hir.ids(hir[call].args).next() == Some(operand)
+        && (is_made_require(hir, bound, callee)
+            || resolve_loader_alias(hir, bound, &analysis.decisions, callee).is_some())
+}
+
+fn find_modules_held_under_name_without_prefix(
+    input: &BindInput<'_, '_>,
+    scans: &Scans,
+    modules: &ModuleSet,
+    stored: &LibraryModulesStoredInCache,
+) -> FxHashSet<RuntimeModule> {
+    let mut held = FxHashSet::default();
+    let mut hold = |written: Atom, is_answer: &dyn Fn(RuntimeModule) -> bool| {
+        let written = input.files.atoms.bytes(written);
+        let name = Alias::bun_prefixed_builtin(written).unwrap_or(written);
+        if let Some(module) = find_module_looked_up_in_cache(name)
+            && is_answer(module)
+            && !stored.modules.contains(&module)
+        {
+            held.insert(module);
+        }
+    };
+    for &file in &modules.compiled_files {
+        let is_of_program = matches!(
+            input.sources.kind(file),
+            SourceKind::Program | SourceKind::EvaluatedText
+        );
+        if !is_of_program || stored.is_commonjs_file_that_imports_load(file) {
+            continue;
+        }
+        let (hir, bound) = (input.files.hir(file), input.files.bound(file));
+        let (analysis, scan) = (input.files.analysis(file), scans.of(file));
+        for (site, answer) in analysis.import_sites.iter().zip(&scan.sites) {
+            if !matches!(
+                site.kind,
+                ImportSiteKind::Require(_)
+                    | ImportSiteKind::ImportMetaRequire(_)
+                    | ImportSiteKind::ImportEquals(_)
+            ) {
+                continue;
+            }
+            // A program above others leaves Bun's own modules to the host.
+            let is_answer = |module: RuntimeModule| match *answer {
+                ScannedSite::Module(answer) => answer == ModuleRef::Runtime(module),
+                ScannedSite::Candidates(ref range) => {
+                    let range = range.start as usize..range.end as usize;
+                    scan.candidates[range].contains(&ModuleRef::Runtime(module))
+                }
+                ScannedSite::AllModules | ScannedSite::Unresolved | ScannedSite::Erased => false,
+            };
+            for alternative in analysis.alternatives_of(&site.specifier) {
+                if let ImportSpecifier::Constant(written) = *alternative {
+                    hold(written, &is_answer);
+                }
+            }
+        }
+        let named =
+            parsed_source(input.files, file).map_or(&[][..], |source| source.named_modules());
+        for named in named {
+            if is_argument_of_require(hir, bound, analysis, named.argument) {
+                hold(named.name, &|module| module == named.module);
+            }
+        }
+    }
+    held
+}
+
+pub(super) fn find_library_modules_stored_in_cache(
+    input: &BindInput<'_, '_>,
+    scans: &Scans,
+    modules: &ModuleSet,
+) -> LibraryModulesStoredInCache {
+    let mut stored = LibraryModulesStoredInCache::default();
+    // The scan of the test files writes each module of the library under its one name.
+    for module in input.evicted_modules {
+        if let ReplacedModule::File(name) = module
+            && name.starts_with(b"node:")
+        {
+            stored.modules.extend(table::module_by_specifier(name));
+        }
+    }
+    for &file in &modules.compiled_files {
+        if !matches!(
+            input.sources.kind(file),
+            SourceKind::Program | SourceKind::EvaluatedText
+        ) {
+            continue;
+        }
+        let Some(builtins) = parsed_source(input.files, file).map(|source| &source.builtins) else {
+            continue;
+        };
+        let (hir, bound) = (input.files.hir(file), input.files.bound(file));
+        let analysis = input.files.analysis(file);
+        let bytes_of = |name: Atom| input.files.atoms.bytes(name);
+        for &key in builtins.keys_stored_in_module_cache() {
+            let name = match find_file_of_key(hir, bound, analysis, key) {
+                FileOfKey::Path(name) => name,
+                // `require.resolve` answers the name of a Node.js module as it is asked.
+                FileOfKey::Site(site) => match analysis.import_sites[site].specifier {
+                    ImportSpecifier::Constant(name) => name,
+                    _ => continue,
+                },
+                FileOfKey::Unknown => continue,
+            };
+            (stored.modules).extend(find_module_stored_under(bytes_of(name)));
+        }
+    }
+    stored.commonjs_files_that_imports_load =
+        find_commonjs_files_that_imports_load(input, scans, modules);
+    stored.commonjs_files_tracking_first_load =
+        find_commonjs_files_tracking_first_load(input, modules, &stored);
+    stored.held_under_name_without_prefix =
+        find_modules_held_under_name_without_prefix(input, scans, modules, &stored);
+    stored
 }

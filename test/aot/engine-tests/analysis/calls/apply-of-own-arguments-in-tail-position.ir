@@ -990,7 +990,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f46 visibility=Private
 # -- generated: countDown noParameter
 # CHECK-LABEL: function {{*}}name="countDown"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 92, patchpoints: 15, rare instructions: 26, polls: 1
+# CHECK-NEXT: instructions: 92, patchpoints: 15, rare instructions: 30, polls: 1
 # CHECK-NEXT: end of function f67
 # CHECK-LABEL: function {{*}}name="noParameter"
 # CHECK: role=Source

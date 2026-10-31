@@ -1,3 +1,5 @@
+mod text_printed_in_place;
+
 use std::cell::RefCell;
 
 use bun_core::fmt::pow10_exp_1e4_to_1e9;
@@ -262,7 +264,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return Callee::without_key(function, None, None);
         }
         if !matches!(hir[inner].kind, ExprKind::Ident(_)) {
-            return Callee::without_key(self.lower_chain_base(callee, exit), None, None);
+            // `(await a.b)()`
+            let name = match hir[inner].kind {
+                ExprKind::Await(_) => self.file.find_callee_name(inner),
+                _ => None,
+            };
+            return Callee::without_key(self.lower_chain_base(callee, exit), None, name);
         }
         let name = self.file.find_callee_name(inner);
         if let Some(builtin) = find_locked_builtin(self.file, inner) {
@@ -1057,6 +1064,10 @@ impl FileLowering<'_, '_, '_, '_> {
                     _ => return self.append_written_path(printed, text),
                 }
             }
+            ExprKind::Await(awaited) if !self.is_literal_operand(awaited) => {
+                text.extend_from_slice(b"await ");
+                return self.append_written_path(awaited, text);
+            }
             _ => return self.append_written_path(printed, text),
         };
         text.extend_from_slice(literal);
@@ -1085,6 +1096,18 @@ impl FileLowering<'_, '_, '_, '_> {
             ExprKind::This => path.extend_from_slice(b"this"),
             ExprKind::Super => path.extend_from_slice(b"super"),
             ExprKind::ImportMeta => path.extend_from_slice(b"import.meta"),
+            // What is called or read from stands in brackets.
+            ExprKind::Await(mut awaited) => {
+                path.extend_from_slice(b"(await ");
+                while let ExprKind::Await(next) = hir.written_kind(self.skip_type_syntax(awaited)) {
+                    path.extend_from_slice(b"await ");
+                    awaited = next;
+                }
+                if self.is_literal_operand(awaited) || !self.append_written_path(awaited, path) {
+                    return false;
+                }
+                path.push(b')');
+            }
             ExprKind::Dot {
                 obj, name, chain, ..
             } => {
@@ -1125,7 +1148,9 @@ impl FileLowering<'_, '_, '_, '_> {
                         }
                         path.extend_from_slice(b"[\"");
                         path.extend_from_slice(self.queries.atom_bytes(key));
-                        path.extend_from_slice(b"\"]");
+                        path.push(b'"');
+                        self.append_name_of_enum_member(index, path);
+                        path.push(b']');
                     }
                     (Some(Constant::Number(key)), _) => {
                         if key.fract() != 0.0 || !(0.0..=f64::from(u32::MAX)).contains(&key) {
@@ -1134,7 +1159,15 @@ impl FileLowering<'_, '_, '_, '_> {
                         if chain == Chain::Start {
                             path.extend_from_slice(b"?.");
                         }
-                        path.extend_from_slice(format!("[{}]", key as u32).as_bytes());
+                        path.push(b'[');
+                        match pow10_exp_1e4_to_1e9(key as u64) {
+                            Some(exponent) => {
+                                path.extend_from_slice(&[b'1', b'e', b'0' + exponent])
+                            }
+                            None => path.extend_from_slice(format!("{}", key as u32).as_bytes()),
+                        }
+                        self.append_name_of_enum_member(index, path);
+                        path.push(b']');
                     }
                     _ => return false,
                 }
@@ -1171,7 +1204,22 @@ impl FileLowering<'_, '_, '_, '_> {
             Some(Constant::Null) => path.extend_from_slice(b"null"),
             _ => return false,
         }
+        self.append_name_of_enum_member(literal, path);
         true
+    }
+
+    // `Color.Green` is printed `1 /* Green */`.
+    fn append_name_of_enum_member(&self, literal: ExprId, text: &mut Vec<u8>) {
+        let printed = self.follow_replaced_names(literal);
+        if let Some(Rewrite::Literal {
+            enum_member: Some(name),
+            ..
+        }) = self.find_rewrite(printed)
+        {
+            text.extend_from_slice(b" /* ");
+            text.extend_from_slice(self.queries.atom_bytes(name));
+            text.extend_from_slice(b" */");
+        }
     }
 
     fn append_identifier(&self, identifier: ExprId, name: Atom, path: &mut Vec<u8>) {

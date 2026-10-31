@@ -1,21 +1,26 @@
 use bun_ast::Loader;
 use bun_core::fmt::hex_byte_lower;
 use bun_core::strings::{self, is_valid_utf8};
+use bun_options_types::aot_options::ParameterThatStartsWorkers;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, BindingInitializer, CommonJsVariable, Decl, Parent, SymbolId};
-use bun_sema::fold::{Constant, FoldedValue};
+use bun_sema::bind::{
+    Binding, BindingInitializer, CommonJsVariable, Decl, Parent, PatParent, SymbolId,
+};
+use bun_sema::fold::{Constant, FoldedValue, TreeNode, push_children};
 use bun_sema::hir::{
-    BinOp, Branches, CallId, ExportSpecId, ExprId, ExprKind, PatId, PatKind, PropKey, PropKind,
-    StmtKind,
+    BinOp, Branches, CallId, ExportSpecId, ExprId, ExprKind, File, FnBody, FnId, PatId, PatKind,
+    PropKey, PropKind, StmtKind,
 };
 use bun_sema::import_sites::{
-    ENCODERS, Encoder, ImportSiteKind, ImportSpecifier, find_values_of_parameter, is_exported,
+    ENCODERS, Encoder, ImportSiteKind, ImportSpecifier, find_place_of_parameter,
+    find_values_of_parameter, is_exported,
 };
 use bun_sema::messages::Category;
 use bun_sema::program::{CodeAnswer, FileId, Files};
-use bun_sema::util::SharedSort;
+use bun_sema::resolve::ExternalKind;
+use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::Locator;
 use bun_sema_driver::host::to_native;
 
@@ -28,12 +33,14 @@ use crate::load::module_paths::{
     compute_module_path, compute_relative_path, with_separators_of_host,
 };
 use crate::load::named_loads::find_import_of;
+use crate::load::runtime_modules::find_module_named;
 use crate::load::source_provider::SourceProvider;
 use crate::load::sources::parsed_source;
 use crate::load::{SourceKind, is_host_path, is_in_node_modules};
 use crate::module_keys::{is_name_of_text, is_url_with_text, name_of_text};
 use crate::options::{EntryText, PathOptions};
 use crate::statistics::{LimitId, LimitValues};
+use core::cell::RefCell;
 
 /// Code that the program starts a Worker with: a file that it embeds with the `file` loader, a file that it names by a path, or a text that it holds.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -67,6 +74,8 @@ impl WorkerFile {
     }
 }
 
+// Files that hand an export on to one another in a circle end the search.
+const MOST_REEXPORTS: usize = 8;
 const LOADERS_OF_CODE: [Loader; 4] = [Loader::Js, Loader::Jsx, Loader::Ts, Loader::Tsx];
 
 pub(crate) struct WorkerSearch<'a> {
@@ -83,6 +92,14 @@ pub(crate) struct WorkerSearch<'a> {
     pub find_files_named_in_part: &'a FindFilesNamedInPart<'a>,
     /// Where the build runs, in the format of the checker. `bun run` looks there for what a relative path names, and `resolve_entry_point` does too.
     pub working_directory: &'a [u8],
+    /// Whether a program below this one in the realm holds the code of the file at a `WorkerFile::source_path`.
+    pub is_held_below: &'a dyn Fn(&[u8]) -> bool,
+    /// What the programs below start Workers from when they are called. Ascending.
+    pub parameters_below: &'a [ParameterThatStartsWorkers],
+    /// The file that an import leads to, whichever program holds it: the file that imports, and what it writes. All in the format of the checker.
+    pub resolve_import: &'a dyn Fn(&[u8], &[u8]) -> Option<Vec<u8>>,
+    /// Programs are built above this one. They do not read its files, so they are told which of its functions start Workers from what they are passed.
+    pub is_built_upon: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -309,7 +326,31 @@ struct Walk<'a, 's> {
     /// A Worker may start from what was not followed to its end, so from a text that is not among `texts`.
     has_unseen_start: bool,
     constructs_node_workers: bool,
+    /// The parameters that a start was followed to and that files out of sight may pass a value for: the function by the name that its file gives it, and the place.
+    parameters: FxHashMap<(FileId, SymbolId), Vec<PlaceOfStart>>,
+    /// `find_module_below` of each import that was asked about.
+    modules_below: RefCell<FxHashMap<(FileId, usize), Option<Vec<u8>>>>,
 }
+
+/// What a callee or an export leads to.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Declaration {
+    /// The variable or the function, in the file of this program that declares it.
+    Here(FileId, SymbolId),
+    /// A program below exports it: the file that takes it from there, the import, and the name.
+    Below(FileId, usize, Atom),
+}
+
+/// As in `ParameterThatStartsWorkers`.
+#[derive(Copy, Clone, PartialEq, Eq)]
+struct PlaceOfStart {
+    index: u32,
+    has_options: bool,
+    is_evaluated: bool,
+}
+
+/// Whether an export of a program below is looked for: the file that imports it, the import, and the name. What is not looked for leads nowhere.
+type IsSoughtBelow<'a> = dyn Fn(FileId, usize, Atom) -> bool + 'a;
 
 pub(crate) struct CodeThatStartsWorkers {
     pub files: Vec<WorkerFile>,
@@ -318,6 +359,10 @@ pub(crate) struct CodeThatStartsWorkers {
     pub code: CodeOfWorkers,
     /// Some file calls `new` on the Worker of node:worker_threads.
     pub constructs_node_workers: bool,
+    /// The files that may start a Worker themselves, by name.
+    pub files_with_starts: Vec<Vec<u8>>,
+    /// Where `WorkerSearch::is_built_upon`: what the programs above are told, without `WorkerSearch::parameters_below`. Ascending.
+    pub parameters: Vec<ParameterThatStartsWorkers>,
 }
 
 // `import path from "./worker.js" with { type: "file" }; new Worker(path)`, `new Worker("./worker.js")` and `new Worker("data:text/javascript,..")`: the build has seen the code that the Worker runs, or finds it. What the constructor is given is followed back through variables, parameters and exports to the import, to the path or to the text. In the order of their paths.
@@ -362,14 +407,20 @@ pub(crate) fn find_code_that_starts_workers(
         names: Vec::new(),
         has_unseen_start: false,
         constructs_node_workers: false,
+        parameters: FxHashMap::default(),
+        modules_below: RefCell::default(),
     };
     let compiled = files.compiled_files();
     let (constructor, worker_threads) = (walk.constructor, walk.modules[0]);
+    let parameters_below = search.parameters_below;
     let may_start_workers = map_each(compiled.to_vec(), in_parallel, &|file| {
         may_start_workers(files, file, constructor, worker_threads)
+            || may_call_export_that_starts_workers(files, file, parameters_below)
     });
+    let mut files_with_starts = Vec::new();
     for (&file, _) in compiled.iter().zip(may_start_workers).filter(|it| it.1) {
         walk.visit_file(file);
+        files_with_starts.push(files.module(file).file_name().to_vec());
     }
     let code = match walk.has_unseen_start {
         true => CodeOfWorkers::Unseen,
@@ -384,19 +435,27 @@ pub(crate) fn find_code_that_starts_workers(
         })
         .collect();
     found.append(&mut walk.texts);
+    found.retain(|file| !(search.is_held_below)(&file.source_path));
     found.shared_sort_unstable();
     found.dedup();
+    (walk.names).retain(|name| !(search.is_held_below)(&name.source_path));
     walk.names.shared_sort_unstable();
     walk.names.dedup();
     // `..` stops at `/`, so files at two heights can get one name. The run cannot tell them apart.
     let same_name = |a: &EntryPointPaths, b: &EntryPointPaths| a.public_path == b.public_path;
     let told_apart = walk.names.chunk_by(same_name).filter(|it| it.len() == 1);
     walk.names = told_apart.flatten().cloned().collect();
+    let parameters = match search.is_built_upon {
+        true => walk.find_exports_of_parameters(),
+        false => Vec::new(),
+    };
     CodeThatStartsWorkers {
         files: found,
         names: walk.names,
         code,
         constructs_node_workers: walk.constructs_node_workers,
+        files_with_starts,
+        parameters,
     }
 }
 
@@ -408,11 +467,16 @@ fn find_module_answered(
     let answer = site.and_then(|site| files.compiled(file)?.code_answers.get(site));
     match answer {
         Some(&CodeAnswer::HostModule(module)) => RuntimeModule::from_registry_id(module.0),
+        // The first of the programs of a realm holds Bun's own modules. To the programs above it they are left to the loader, under the names that are written.
+        Some(&CodeAnswer::External {
+            specifier,
+            kind: ExternalKind::UncompiledCode,
+        }) => find_module_named(files.atoms.bytes(specifier)),
         _ => None,
     }
 }
 
-fn may_start_workers(
+pub(crate) fn may_start_workers(
     files: &Files<'_>,
     file: FileId,
     constructor: Option<BuiltinId>,
@@ -430,10 +494,36 @@ fn may_start_workers(
         })
 }
 
+/// By the name alone: which file an import leads to is asked of the few that are left.
+fn may_call_export_that_starts_workers(
+    files: &Files<'_>,
+    file: FileId,
+    parameters_below: &[ParameterThatStartsWorkers],
+) -> bool {
+    if parameters_below.is_empty() || parsed_source(files, file).is_none() {
+        return false;
+    }
+    let is_sought = |_: FileId, _: usize, name: Atom| {
+        let name = files.atoms.bytes(name);
+        parameters_below.iter().any(|it| it.export == name)
+    };
+    let hir = files.hir(file);
+    let mut known = FxHashMap::default();
+    (0..hir.exprs.len() as u32).map(ExprId).any(|expression| {
+        let ExprKind::Call(call) = hir[expression].kind else {
+            return false;
+        };
+        let callee = hir.skip_type_assertions(hir[call].callee);
+        let found = find_declaration_called(files, file, callee, &mut known, &is_sought);
+        matches!(found, Some(Declaration::Below(..)))
+    })
+}
+
 // Every code file that the program embeds with the `file` loader, sorted by path.
 pub(crate) fn find_embedded_code_files(
     files: &Files<'_>,
     loaders: &[(Vec<u8>, Loader)],
+    is_held_below: &dyn Fn(&[u8]) -> bool,
     in_parallel: InParallel<'_>,
 ) -> Vec<WorkerFile> {
     let compiled = files.compiled_files().to_vec();
@@ -441,6 +531,7 @@ pub(crate) fn find_embedded_code_files(
         describe_embedded_file(files, loaders, file)
     });
     let mut copies: Vec<WorkerFile> = described.into_iter().flatten().collect();
+    copies.retain(|copy| !is_held_below(&copy.source_path));
     copies.shared_sort_unstable();
     copies.dedup();
     copies
@@ -536,6 +627,180 @@ impl Walk<'_, '_> {
         }
         callees.shared_sort_unstable();
         self.has_unseen_start |= !self.names_constructors_only_as(file, &callees);
+        self.visit_calls_of_exports_below(file);
+    }
+
+    /// `spawn(new URL("./worker.ts", import.meta.url))`, where a program below says `export function spawn(entry) { return new Worker(entry); }`:
+    /// the call is a start like `new Worker(..)`. That program's build did not see this file, and this build does not read that one.
+    fn visit_calls_of_exports_below(&mut self, file: FileId) {
+        let files = self.files;
+        if self.search.parameters_below.is_empty() {
+            return;
+        }
+        let (hir, bound) = (files.hir(file), files.bound(file));
+        let decisions = &files.analysis(file).decisions;
+        let mut known = FxHashMap::default();
+        for expression in (0..hir.exprs.len() as u32).map(ExprId) {
+            let ExprKind::Call(call) = hir[expression].kind else {
+                continue;
+            };
+            let callee = hir.skip_type_assertions(hir[call].callee);
+            let is_sought = |importer: FileId, site: usize, name: Atom| {
+                !self.find_parameters_below(importer, site, name).is_empty()
+            };
+            let found = find_declaration_called(files, file, callee, &mut known, &is_sought);
+            let Some(Declaration::Below(importer, site, name)) = found else {
+                continue;
+            };
+            let is_evaluated = bound.parent_of_expr(expression) != Parent::None
+                && !decisions.is_dead_expr(expression);
+            if !is_evaluated {
+                continue;
+            }
+            for place in self.find_parameters_below(importer, site, name) {
+                let Some(argument) = find_argument(hir, call, place.index as usize) else {
+                    continue;
+                };
+                self.start = (file, expression);
+                self.has_options = place.has_options;
+                self.is_evaluated = place.is_evaluated;
+                self.follow(file, argument);
+                self.is_evaluated = false;
+            }
+        }
+    }
+
+    /// `WorkerFile::source_path` of the file in a program below that an import leads to.
+    fn find_module_below(&self, importer: FileId, site: usize) -> Option<Vec<u8>> {
+        let files = self.files;
+        if let Some(known) = self.modules_below.borrow().get(&(importer, site)) {
+            return known.clone();
+        }
+        let find = || {
+            let &CodeAnswer::External {
+                specifier,
+                kind: ExternalKind::UncompiledCode,
+            } = files.compiled(importer)?.code_answers.get(site)?
+            else {
+                return None;
+            };
+            let written_in = files.module(importer).file_name();
+            let path = (self.search.resolve_import)(written_in, files.atoms.bytes(specifier))?;
+            Some(source_path_of(&path))
+        };
+        let found = find();
+        let mut known = self.modules_below.borrow_mut();
+        known.insert((importer, site), found.clone());
+        found
+    }
+
+    /// The parameters of an export of a program below that start Workers.
+    fn find_parameters_below(
+        &self,
+        importer: FileId,
+        site: usize,
+        name: Atom,
+    ) -> Vec<PlaceOfStart> {
+        let below = self.search.parameters_below;
+        let name = self.files.atoms.bytes(name);
+        // Few exports start Workers, and to ask which file an import leads to costs a look at the disk.
+        if !below.iter().any(|it| it.export == name) {
+            return Vec::new();
+        }
+        let Some(module) = self.find_module_below(importer, site) else {
+            return Vec::new();
+        };
+        let of_export = below
+            .iter()
+            .filter(|it| it.module == module && it.export == name);
+        of_export
+            .map(|it| PlaceOfStart {
+                index: it.index,
+                has_options: it.has_options,
+                is_evaluated: it.is_evaluated,
+            })
+            .collect()
+    }
+
+    /// `parameters` under every name that a file of this program exports the function under.
+    fn find_exports_of_parameters(&self) -> Vec<ParameterThatStartsWorkers> {
+        let files = self.files;
+        if self.parameters.is_empty() && self.search.parameters_below.is_empty() {
+            return Vec::new();
+        }
+        let is_sought = |importer: FileId, site: usize, name: Atom| {
+            !self.find_parameters_below(importer, site, name).is_empty()
+        };
+        let places_of = |declaration: Declaration| match declaration {
+            Declaration::Here(file, name) => self
+                .parameters
+                .get(&(file, name))
+                .cloned()
+                .unwrap_or_default(),
+            // `export { spawn } from "./spawn"`, where a program below holds ./spawn.
+            Declaration::Below(importer, site, name) => {
+                self.find_parameters_below(importer, site, name)
+            }
+        };
+        let look_under = |exporter: FileId, name: Atom| {
+            let declaration =
+                find_declaration_exported_by(files, exporter, name, MOST_REEXPORTS, &is_sought);
+            let places = declaration.map(&places_of).unwrap_or_default();
+            places
+                .into_iter()
+                .map(move |place| ParameterThatStartsWorkers {
+                    module: source_path_of(files.module(exporter).file_name()),
+                    export: files.atoms.bytes(name).to_vec(),
+                    index: place.index,
+                    has_options: place.has_options,
+                    is_evaluated: place.is_evaluated,
+                })
+        };
+        let mut found: Vec<ParameterThatStartsWorkers> = Vec::new();
+        let declares: FxHashSet<FileId> = self.parameters.keys().map(|it| it.0).collect();
+        let exporters = || {
+            let compiled = files.compiled_files().iter().copied();
+            compiled.filter(|&file| parsed_source(files, file).is_some())
+        };
+        for exporter in exporters() {
+            let bound = files.bound(exporter);
+            for &(name, export) in bound.table(bound.symbol(bound.file_symbol).exports) {
+                // What a file declares itself leads no further.
+                let mut declarations = bound.symbol(export).decls.iter();
+                if declares.contains(&exporter)
+                    || declarations.any(|it| matches!(it, Decl::ExportSpec(_)))
+                {
+                    found.extend(look_under(exporter, name));
+                }
+            }
+        }
+        // `export * from "./spawn"` lists no name and hands each on as it is.
+        let below = self.search.parameters_below.iter();
+        let mut names: Vec<&[u8]> = below.map(|it| &it.export[..]).collect();
+        names.extend(found.iter().map(|it| &it.export[..]));
+        names.shared_sort_unstable();
+        names.dedup();
+        let names: Vec<Atom> = (names.into_iter())
+            .map(|name| files.atoms.intern(name))
+            .collect();
+        for exporter in exporters() {
+            let (hir, bound) = (files.hir(exporter), files.bound(exporter));
+            let hands_names_on = hir.ids(hir.body).any(|statement| {
+                matches!(hir[statement].kind, StmtKind::ExportStar { alias, type_only: false, .. } if !alias.is_some())
+            });
+            if !hands_names_on {
+                continue;
+            }
+            let listed = bound.table(bound.symbol(bound.file_symbol).exports);
+            for &name in &names {
+                if !listed.iter().any(|entry| entry.0 == name) {
+                    found.extend(look_under(exporter, name));
+                }
+            }
+        }
+        found.shared_sort_unstable();
+        found.dedup();
+        found
     }
 
     /// Whether nothing but `callees`, which are sorted, gets hold of a constructor of Workers in the file.
@@ -738,8 +1003,11 @@ impl Walk<'_, '_> {
                         self.has_unseen_start = true;
                         let arguments = hir.ids(hir[call].args);
                         self.pending.extend(arguments.map(|it| (file, it)));
+                        // `new Worker(workerUrl())`: the callee leads to a function, and that to what it answers with.
+                        self.pending.push((file, hir[call].callee));
                     }
                 }
+                ExprKind::Fn(function) => self.follow_results_of(file, function),
                 // A path and a URL are what they are awaited as.
                 ExprKind::Await(awaited) => self.pending.push((file, awaited)),
                 ExprKind::Cond { branches, .. } => {
@@ -1488,7 +1756,89 @@ impl Walk<'_, '_> {
         let (hir, decisions) = (files.hir(file), &files.analysis(file).decisions);
         match find_values_of_parameter(hir, bound, decisions, mention) {
             Some(values) => self.pending.extend(values.iter().map(|&it| (file, it))),
-            None => self.has_unseen_start = true,
+            None => {
+                self.has_unseen_start = true;
+                // `export function spawn(entry = workerUrl())`: whoever passes nothing gets the default.
+                if let &[Decl::Param(pattern)] = bound.symbol(symbol).decls
+                    && let PatParent::Param(parameter) = bound.pat_parent[pattern.idx()]
+                    && hir[parameter].default.is_some()
+                {
+                    self.pending.push((file, hir[parameter].default));
+                }
+                self.follow_arguments_of_calls(file, mention);
+            }
+        }
+    }
+
+    /// `export function spawn(entry) { return new Worker(entry); }`: what the calls of `spawn` pass, in whichever file they stand.
+    fn follow_arguments_of_calls(&mut self, file: FileId, mention: ExprId) {
+        let files = self.files;
+        let place = find_place_of_parameter(files.hir(file), files.bound(file), mention);
+        let Some((name, index)) = place else {
+            return;
+        };
+        // A package names the file of a Worker that most programs never start: as in `add_path`, whoever passes the name.
+        let starts_in = files.module(self.start.0).file_name();
+        if self.search.is_built_upon && !is_in_node_modules(starts_in) {
+            let place = PlaceOfStart {
+                index: index as u32,
+                has_options: self.has_options,
+                is_evaluated: self.is_evaluated,
+            };
+            let places = self.parameters.entry((file, name)).or_default();
+            if !places.contains(&place) {
+                places.push(place);
+            }
+        }
+        let mut declarations = FxHashMap::default();
+        for &caller in files.compiled_files() {
+            if parsed_source(files, caller).is_none() {
+                continue;
+            }
+            let hir = files.hir(caller);
+            let decisions = &files.analysis(caller).decisions;
+            for expression in (0..hir.exprs.len() as u32).map(ExprId) {
+                let ExprKind::Call(call) = hir[expression].kind else {
+                    continue;
+                };
+                let callee = hir.skip_type_assertions(hir[call].callee);
+                let called = find_declaration_called(
+                    files,
+                    caller,
+                    callee,
+                    &mut declarations,
+                    &|_, _, _| false,
+                );
+                if called != Some(Declaration::Here(file, name))
+                    || decisions.is_dead_expr(expression)
+                {
+                    continue;
+                }
+                if let Some(argument) = find_argument(hir, call, index) {
+                    self.pending.push((caller, argument));
+                }
+            }
+        }
+    }
+
+    /// What a call of the function answers with: each `return` of its own.
+    fn follow_results_of(&mut self, file: FileId, function: FnId) {
+        let hir = self.files.hir(file);
+        let statements = match hir[function].body {
+            FnBody::Expr(value) => return self.pending.push((file, value)),
+            FnBody::Block(statements) => statements,
+            FnBody::None => return,
+        };
+        let mut stack: Vec<TreeNode> = hir.ids(statements).map(TreeNode::Stmt).collect();
+        while let Some(node) = stack.pop() {
+            // A `return` inside an expression belongs to another function.
+            let TreeNode::Stmt(statement) = node else {
+                continue;
+            };
+            match hir[statement].kind {
+                StmtKind::Return(value) if value.is_some() => self.pending.push((file, value)),
+                _ => push_children(hir, node, &mut stack),
+            }
         }
     }
 
@@ -1501,6 +1851,7 @@ impl Walk<'_, '_> {
         self.variables_left -= 1;
         match self.find_initializer_of(file, symbol) {
             BindingInitializer::Expression(source) => self.pending.push((file, source)),
+            BindingInitializer::Function(function) => self.follow_results_of(file, function),
             BindingInitializer::PatternProperty { source, path }
                 if path[..] == [known::default] =>
             {
@@ -1520,6 +1871,34 @@ impl Walk<'_, '_> {
 
     fn follow_export(&mut self, importer: FileId, site: Option<usize>, name: Atom) {
         self.has_unseen_start |= !self.follow_declarations_of_export(importer, site, name);
+    }
+
+    /// `export * from "./url.js"` passes on what the file does not export itself. False: no such statement leads to the name.
+    fn follow_export_behind_stars(&mut self, exporter: FileId, name: Atom) -> bool {
+        let files = self.files;
+        let hir = files.hir(exporter);
+        if name == known::default {
+            return false;
+        }
+        let mut is_found = false;
+        for statement in hir.ids(hir.body) {
+            let StmtKind::ExportStar {
+                alias,
+                type_only: false,
+                ..
+            } = hir[statement].kind
+            else {
+                continue;
+            };
+            if alias.is_some() || self.variables_left == 0 {
+                continue;
+            }
+            self.variables_left -= 1;
+            let kind = ImportSiteKind::ExportStar(statement);
+            let site = files.analysis(exporter).import_site_index(kind);
+            is_found |= self.follow_declarations_of_export(exporter, site, name);
+        }
+        is_found
     }
 
     /// False: what the name is exported with is not all followed.
@@ -1549,7 +1928,7 @@ impl Walk<'_, '_> {
         let (hir, bound) = (files.hir(exporter), files.bound(exporter));
         let exports = bound.table(bound.symbol(bound.file_symbol).exports);
         let Some(&(_, export)) = exports.iter().find(|entry| entry.0 == name) else {
-            return false;
+            return self.follow_export_behind_stars(exporter, name);
         };
         let mut follows_all = true;
         for &declaration in bound.symbol(export).decls {
@@ -1573,7 +1952,9 @@ impl Walk<'_, '_> {
                         follows_all = false;
                     }
                 }
-                Decl::Var(_) => self.follow_symbol(exporter, bound.declared_symbol(declaration)),
+                Decl::Var(_) | Decl::Fn(_) => {
+                    self.follow_symbol(exporter, bound.declared_symbol(declaration));
+                }
                 Decl::ExportExpr(statement) => match hir[statement].kind {
                     StmtKind::ExportDefault(value) => self.pending.push((exporter, value)),
                     _ => follows_all = false,
@@ -1583,6 +1964,148 @@ impl Walk<'_, '_> {
         }
         follows_all
     }
+}
+
+/// What a call passes for the parameter at `index`. None behind a spread, which moves the places.
+fn find_argument(hir: &File<'_>, call: CallId, index: usize) -> Option<ExprId> {
+    let mut passed = hir.ids(hir[call].args).take(index + 1);
+    let is_spread = |it: ExprId| matches!(hir[it].kind, ExprKind::Spread(_));
+    match passed.clone().any(is_spread) {
+        true => None,
+        false => passed.nth(index),
+    }
+}
+
+/// The variable or the function that a callee names, in the file that declares it: `spawn(..)` and `spawning.spawn(..)`, imported or not.
+fn find_declaration_called(
+    files: &Files<'_>,
+    file: FileId,
+    callee: ExprId,
+    known: &mut FxHashMap<(FileId, SymbolId), Option<Declaration>>,
+    is_sought_below: &IsSoughtBelow<'_>,
+) -> Option<Declaration> {
+    let (hir, bound) = (files.hir(file), files.bound(file));
+    let site_of = |import| {
+        let kind = ImportSiteKind::Import(import);
+        files.analysis(file).import_site_index(kind)
+    };
+    let find = |import, name| {
+        find_declaration_of_export(
+            files,
+            file,
+            site_of(import),
+            name,
+            MOST_REEXPORTS,
+            is_sought_below,
+        )
+    };
+    match hir[callee].kind {
+        ExprKind::Ident(_) => {
+            let Binding::Symbol(symbol) = bound.binding(callee) else {
+                return None;
+            };
+            let Some((import, name)) = find_import_of(files, file, symbol) else {
+                return Some(Declaration::Here(file, symbol));
+            };
+            *known
+                .entry((file, symbol))
+                .or_insert_with(|| find(import, name))
+        }
+        ExprKind::Dot { obj, name, .. } => {
+            let Binding::Symbol(namespace) = bound.binding(hir.skip_type_assertions(obj)) else {
+                return None;
+            };
+            let mut declarations = bound.symbol(namespace).decls.iter();
+            let import = declarations.find_map(|&declaration| match declaration {
+                Decl::ImportNamespace(import) => Some(import),
+                _ => None,
+            })?;
+            find(import, name)
+        }
+        _ => None,
+    }
+}
+
+fn find_declaration_of_export(
+    files: &Files<'_>,
+    importer: FileId,
+    site: Option<usize>,
+    name: Atom,
+    reexports_left: usize,
+    is_sought_below: &IsSoughtBelow<'_>,
+) -> Option<Declaration> {
+    let site = site?;
+    match *files.compiled(importer)?.code_answers.get(site)? {
+        CodeAnswer::File(exporter) => {
+            find_declaration_exported_by(files, exporter, name, reexports_left, is_sought_below)
+        }
+        CodeAnswer::External {
+            kind: ExternalKind::UncompiledCode,
+            ..
+        } if is_sought_below(importer, site, name) => {
+            Some(Declaration::Below(importer, site, name))
+        }
+        _ => None,
+    }
+}
+
+fn find_declaration_exported_by(
+    files: &Files<'_>,
+    exporter: FileId,
+    name: Atom,
+    reexports_left: usize,
+    is_sought_below: &IsSoughtBelow<'_>,
+) -> Option<Declaration> {
+    let reexports_left = reexports_left.checked_sub(1)?;
+    files.compiled(exporter)?;
+    let (hir, bound) = (files.hir(exporter), files.bound(exporter));
+    let find_behind = |kind, name| {
+        let site = files.analysis(exporter).import_site_index(kind);
+        find_declaration_of_export(files, exporter, site, name, reexports_left, is_sought_below)
+    };
+    let exports = bound.table(bound.symbol(bound.file_symbol).exports);
+    let Some(&(_, export)) = exports.iter().find(|entry| entry.0 == name) else {
+        return hir
+            .ids(hir.body)
+            .find_map(|statement| match hir[statement].kind {
+                StmtKind::ExportStar {
+                    alias,
+                    type_only: false,
+                    ..
+                } if !alias.is_some() && name != known::default => {
+                    find_behind(ImportSiteKind::ExportStar(statement), name)
+                }
+                _ => None,
+            });
+    };
+    bound
+        .symbol(export)
+        .decls
+        .iter()
+        .find_map(|&declaration| match declaration {
+            Decl::ExportSpec(specifier) => {
+                let item = hir[specifier];
+                let statement = hir[item.export];
+                if item.type_only || statement.type_only {
+                    return None;
+                }
+                if statement.has_module_specifier {
+                    return find_behind(ImportSiteKind::ExportFrom(item.export), item.local);
+                }
+                let Binding::Symbol(local) = bound.exported_binding(specifier) else {
+                    return None;
+                };
+                match find_import_of(files, exporter, local) {
+                    Some((import, name)) => find_behind(ImportSiteKind::Import(import), name),
+                    None => Some(Declaration::Here(exporter, local)),
+                }
+            }
+            Decl::Var(_) | Decl::Fn(_) => Some(Declaration::Here(
+                exporter,
+                bound.declared_symbol(declaration),
+            )),
+            _ => None,
+        })
 }
 
 #[cfg(test)]

@@ -21,7 +21,7 @@ use core::time::Duration;
 use bun_aot_interface::engine::shared;
 use bun_core::CodeGenerationFromStrings;
 use bun_core::ffi::zeroed;
-use bun_options_types::aot_options::{AotOptions, ExplainSet, HeapSize, ReportDetail};
+use bun_options_types::aot_options::{AotOptions, ExplainSet, HeapSize, ImagesBelow, ReportDetail};
 use bun_removable_features::{Feature, FeatureSet};
 
 pub use self::records::{Position, Witness, builtin_of, feature_of, position_of, witness_of};
@@ -130,6 +130,16 @@ fn reports_of(options: &AotOptions) -> ReportSet {
     reports
 }
 
+// A list of records of the same form, one for each image. The engine reads it while it reads the options.
+fn fill_images_below(record: &mut CompileOptions, images: &[&'static [u8]]) {
+    let list: Vec<[u64; 2]> = (images.iter())
+        .map(|image| [image.as_ptr() as u64, image.len() as u64])
+        .collect();
+    let list: &'static [[u64; 2]] = Vec::leak(list);
+    record.target.images_below.address = list.as_ptr() as u64;
+    record.target.images_below.size = list.len() as u64;
+}
+
 fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
     let options = request.options;
     record.executable_identity = request.identity.0;
@@ -185,16 +195,16 @@ fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
     if options.obfuscates {
         record.output |= OutputOptions::OBFUSCATE;
     }
+    if options.holds_library_alone {
+        record.output |= OutputOptions::HOLDS_LIBRARY_ALONE;
+        if let Some(library) = options.reference_library_image {
+            record.target.reference_library_image.address = library.as_ptr() as u64;
+            record.target.reference_library_image.size = library.len() as u64;
+        }
+    }
     if options.shares_realms {
         record.output |= OutputOptions::SHARES_REALMS;
-        // A list of records of the same form, one for each image. The engine reads it while it reads the options.
-        let images = options.images_below.images.iter();
-        let list: Vec<[u64; 2]> = images
-            .map(|image| [image.as_ptr() as u64, image.len() as u64])
-            .collect();
-        let list: &'static [[u64; 2]] = Vec::leak(list);
-        record.target.images_below.address = list.as_ptr() as u64;
-        record.target.images_below.size = list.len() as u64;
+        fill_images_below(record, &options.images_below.images);
     }
     let mut removed = FeatureSet::from_features(&options.trim.remove_internal);
     for name in &options.trim.remove {
@@ -232,6 +242,13 @@ impl EngineOptions {
             record,
             fits_threads_to_program: request.options.thread_count.is_none(),
         })
+    }
+
+    /// `ImagesBelow::wait_for_all`: the last of them was not there when the options were made.
+    pub fn wait_for_images_below(&mut self, below: &ImagesBelow) {
+        if below.wait_for_all.is_some() {
+            fill_images_below(&mut self.record, &below.all());
+        }
     }
 
     pub fn check_only(&mut self) {

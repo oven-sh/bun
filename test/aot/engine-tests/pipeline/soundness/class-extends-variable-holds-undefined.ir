@@ -218,7 +218,7 @@ function f4 module=m0 position=442 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: b4() handler=b8(v10):
 # CHECK-NEXT: v11: Array<undefined> = NewArray contents=undefined
 # CHECK-NEXT: v12: Array<undefined, proven, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<undefined, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v13: object = CallDirect v10, v10, v12 function=f3 accessSite=10 [isConstruction]
+# CHECK-NEXT: v13: Int16Array = CallDirect v10, v10, v12 function=f3 accessSite=10 [isConstruction]
 # CHECK-NEXT: Jump -> next b7(v10)
 # CHECK-NEXT: b5() role=CatchHandler:
 # CHECK-NEXT: v14: anything = CatchValue
@@ -247,28 +247,29 @@ function f4 module=m0 position=442 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: Return v31
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="first"
-# CHECK: module=m0 position=442 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked] thisType={type=anything} parameters=[{type=Array<undefined, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f4 callPosition=442 module=m0}] {
+# CHECK: module=m0 position=442 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked] thisType={type=anything} parameters=[{type=Array<undefined, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=Int16Array flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f4 callPosition=442 module=m0}] {
 # CHECK-NEXT: b0(v0: function, v1: anything, v2: Array<undefined, proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v3: f2 = AssumeType v0 provenType=f2
 # CHECK-NEXT: v4: f3 = AssumeType v1 provenType=f3
 # CHECK-NEXT: v5: null|object = GetSuperBase v3
 # CHECK-NEXT: v6: builtin(Int16Array) = AssumeType v5 provenType=builtin(Int16Array)
 # CHECK-NEXT: v7: object ~ L0 = SuperConstructList v6, v4, v2 layout=L0 accessSite=21 callees=[builtin(Int16Array)]
-# CHECK-NEXT: v8: object ~ Int16Array = Expect v7 expectedType=Int16Array
+# CHECK-NEXT: v8: Int16Array = AssumeType v7 provenType=Int16Array
 # CHECK-NEXT: v9: string|symbol = GetModuleVariable variable=g1
 # CHECK-NEXT: v10: undefined = Undefined
 # CHECK-NEXT: ElemDefine v8, v9, v10 accessSite=24
 # CHECK-NEXT: Return v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Second"
-# CHECK: module=m0 position=664 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+# CHECK: module=m0 position=664 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=Int16Array flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
 # CHECK-NEXT: b0(v0: function, v1: anything, v2: Array<undefined, proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v3: f3 = AssumeType v0 provenType=f3
 # CHECK-NEXT: v4: f3 = AssumeType v1 provenType=f3
 # CHECK-NEXT: v5: null|object = GetSuperBase v3
 # CHECK-NEXT: v6: f2 = AssumeType v5 provenType=f2
 # CHECK-NEXT: v7: object ~ L1 = SuperConstructList v6, v4, v2 layout=L1 accessSite=23 callees=[f2]
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v8: Int16Array = AssumeType v7 provenType=Int16Array
+# CHECK-NEXT: Return v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="first"
 # CHECK: module=m0 position=442 kind=DerivedConstructor role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f2}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 takesNewTarget=true} {
@@ -276,7 +277,7 @@ function f4 module=m0 position=442 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: v2: anything = GetArgument
 # CHECK-NEXT: v3: Array = CreateRest firstArgument=1
 # CHECK-NEXT: v4: Array<undefined, proven, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<undefined, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v5: object = CallDirect v0, v2, v4 function=f2
+# CHECK-NEXT: v5: Int16Array = CallDirect v0, v2, v4 function=f2
 # CHECK-NEXT: ReturnCall v5 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Second"
@@ -285,6 +286,6 @@ function f4 module=m0 position=442 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: v2: anything = GetArgument
 # CHECK-NEXT: v3: Array = CreateRest firstArgument=1
 # CHECK-NEXT: v4: Array<undefined, proven, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<undefined, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v5: object = CallDirect v0, v2, v4 function=f3
+# CHECK-NEXT: v5: Int16Array = CallDirect v0, v2, v4 function=f3
 # CHECK-NEXT: ReturnCall v5 requirement=Allowed
 # CHECK-NEXT: }

@@ -63,6 +63,9 @@ linked_functions! {
     pub fn bun_aot_write_registry() -> Vec<u8>;
     pub fn bun_aot_unlinked_named_values<'a, 's>(files: &'a Files<'s>, atoms: &Interner<'s>) -> Box<dyn NamedValues + 'a>;
     pub fn bun_aot_find_what_tests_replace(files: &[Vec<u8>], threads: usize, resolve: &mut dyn FnMut(&[u8], &[u8], bool) -> Option<Vec<u8>>) -> ReplacedByTests;
+    pub fn bun_aot_everything_that_tests_replace() -> ReplacedByTests;
     pub fn bun_aot_library_modules_that_programs_load() -> Vec<&'static [u8]>;
     pub fn bun_aot_builtins_that_load_library_modules() -> Vec<String>;
+    pub fn bun_aot_library_modules_spelled_in(text: &[u8]) -> Option<Vec<&'static [u8]>>;
+    pub fn bun_aot_builtins_that_load_library_modules_spelled_in(text: &[u8]) -> Option<Vec<String>>;
 }

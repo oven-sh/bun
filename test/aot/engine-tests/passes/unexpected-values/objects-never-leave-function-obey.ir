@@ -549,23 +549,20 @@ runtimefunction id=ArrayTraversalTraverseArray function=f98 visibility=Private
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|string|Array):
 # CHECK-NEXT: v1: undefined|number|Array<undefined|number, proven, pristine[Storage, Names, Dense]> ~ undefined|Array<undefined|number, proven, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=undefined|number|Array<undefined|number, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v2: boolean = TypeTest v1 testedType=Array
-# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
-# CHECK-NEXT: b1():
-# CHECK-NEXT: v3: "[" = String string="["
-# CHECK-NEXT: v4: number|Array<undefined|number, proven, pristine[Storage, Names, Dense]> ~ Array<undefined|number, proven, pristine[Storage, Names, Dense]> = RequireObjectCoercible v1 name="map"
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v3: Array<undefined|number, proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v4: "[" = String string="["
 # CHECK-NEXT: v5: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: v6: fact = Specified
-# CHECK-NEXT: v7: Array<undefined|number, proven, pristine[Storage, Names, Dense]> = AssumeType v4, v6 provenType=Array<undefined|number, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v8: Array = CallBuiltin v7, v5 overload=ArrayPrototypeMap/0 accessSite=5
-# CHECK-NEXT: v9: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v8 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v10: ", " = String string=", "
-# CHECK-NEXT: v11: string = CallBuiltin v9, v10 overload=ArrayPrototypeJoin/0 accessSite=7
-# CHECK-NEXT: v12: "]" = String string="]"
-# CHECK-NEXT: v13: string = Strcat v3, v11, v12
-# CHECK-NEXT: Return v13
+# CHECK-NEXT: v6: Array = CallBuiltin v3, v5 overload=ArrayPrototypeMap/0 accessSite=5
+# CHECK-NEXT: v7: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v6 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v8: ", " = String string=", "
+# CHECK-NEXT: v9: string = CallBuiltin v7, v8 overload=ArrayPrototypeJoin/0 accessSite=7
+# CHECK-NEXT: v10: "]" = String string="]"
+# CHECK-NEXT: v11: string = Strcat v4, v9, v10
+# CHECK-NEXT: Return v11
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v14: string = CallBuiltin -, v1 overload=String/0 builtinCallForm=AnyReceiver accessSite=8 @0 tail
-# CHECK-NEXT: Return v14
+# CHECK-NEXT: v12: string = CallBuiltin -, v1 overload=String/0 builtinCallForm=AnyReceiver accessSite=8 @0 tail
+# CHECK-NEXT: Return v12
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="look"
 # CHECK: module=m0 position=2929 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}] {
@@ -668,16 +665,15 @@ runtimefunction id=ArrayTraversalTraverseArray function=f98 visibility=Private
 # CHECK-NEXT: b21(v80: string, v81: anything, v82: int[0, 4294967295], v83: boolean, v84: false|string):
 # CHECK-NEXT: v85: undefined|Array<undefined|number, proven, pristine[Storage, Names, Dense]> = AssumeType v81 provenType=undefined|Array<undefined|number, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v86: boolean = TypeTest v85 testedType=Array
-# CHECK-NEXT: Branch v86 -> taken b22(), notTaken b23()
-# CHECK-NEXT: b22() handler=b25(v80, v82, v83, v84):
-# CHECK-NEXT: v87: "[" = String string="["
-# CHECK-NEXT: v88: Array<undefined|number, proven, pristine[Storage, Names, Dense]> = RequireObjectCoercible v85 name="map"
-# CHECK-NEXT: v89: Array = CallBuiltin v88, v5 overload=ArrayPrototypeMap/0 accessSite=5
+# CHECK-NEXT: Branch v86 -> taken b22(| 0), notTaken b23()
+# CHECK-NEXT: b22(v87: Array<undefined|number, proven, pristine[Storage, Names, Dense]>) handler=b25(v80, v82, v83, v84):
+# CHECK-NEXT: v88: "[" = String string="["
+# CHECK-NEXT: v89: Array = CallBuiltin v87, v5 overload=ArrayPrototypeMap/0 accessSite=5
 # CHECK-NEXT: v90: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v89 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v91: ", " = String string=", "
 # CHECK-NEXT: v92: string = CallBuiltin v90, v91 overload=ArrayPrototypeJoin/0 accessSite=7
 # CHECK-NEXT: v93: "]" = String string="]"
-# CHECK-NEXT: v94: string = Strcat v87, v92, v93
+# CHECK-NEXT: v94: string = Strcat v88, v92, v93
 # CHECK-NEXT: Jump -> next b24(v94)
 # CHECK-NEXT: b23() handler=b25(v80, v82, v83, v84):
 # CHECK-NEXT: v95: string = CallBuiltin -, v85 overload=String/0 builtinCallForm=AnyReceiver accessSite=8 @0:1 tail

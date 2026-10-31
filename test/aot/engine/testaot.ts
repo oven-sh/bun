@@ -12,8 +12,9 @@ import { bunEnv, bunExe, isArm64, isCI, isMusl, isWindows } from "harness";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { countsInstructions } from "../analysis-scaling/measure-check";
-import { slot } from "../harness/commands";
+import { slot, slots } from "../harness/commands";
 import { unsupported } from "../harness/compiler";
+import { sharedSlot } from "../harness/shared-slots";
 
 const repository = join(import.meta.dir, "..", "..", "..");
 const besideBun = dirname(bunExe());
@@ -170,17 +171,19 @@ export function irTestsWithInstructionBounds() {
 }
 
 // `testaot native` runs one test at a time, and one test takes a hundred times as long as another. So a file has many small shares, and
-// as many of them run at once as there are processors: whoever is done takes the next.
+// as many of them run at once as there are processors: whoever is done takes the next. CI runs several of these files at once, and
+// a share keeps its processor busy, so the files count their shares together.
 const sharesOfAFile = 16;
 
 /** Every `parts`-th native test, from the `part`-th on. */
 export function nativeTests(part: number, parts: number) {
   if (whyNoNativeTests) return void skipOrFail(whyNoNativeTests);
+  const sharesUnderWay = join(dirname(testaot!), "native-tests-under-way");
   for (let slice = 0; slice < sharesOfAFile; slice++) {
     const share = `${(part - 1) * sharesOfAFile + slice + 1}/${parts * sharesOfAFile}`;
     test.concurrent(
       `native tests: --part=${share}`,
-      () => slot(() => expectEveryTestPasses(["native", `--part=${share}`])),
+      () => slot(() => sharedSlot(sharesUnderWay, slots, () => expectEveryTestPasses(["native", `--part=${share}`]))),
       600_000,
     );
   }

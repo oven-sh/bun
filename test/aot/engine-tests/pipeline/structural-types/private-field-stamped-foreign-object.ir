@@ -90,9 +90,9 @@ function f1 name="Returns" module=m0 position=98 kind=BaseConstructor flags=[Has
   b0(v0: anything, v1: undefined|null|object):
     Jump -> next b1() @98
   b1():
-    v2 = GetConstructPrototype v0 layout=L0 @69
-    v3 = NewObject v2 layout=L0 @69
-    v4 = Convert v3 declared={type=L0|L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @69
+    v2 = GetConstructPrototype v0 layout=L0 @123
+    v3 = NewObject v2 layout=L0 @123
+    v4 = Convert v3 declared={type=L0|L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @123
     v5 = TypeTest v1 testedType=object @123
     Branch v5 -> taken b2(| 0), notTaken b3(| 0) @123
   b2(v6):
@@ -106,11 +106,11 @@ function f2 name="Circle" module=m0 position=250 kind=BaseConstructor flags=[Has
   b0(v0: anything):
     Jump -> next b1() @250
   b1():
-    v1 = GetConstructPrototype v0 layout=L1 @244
-    v2 = NewObject v1 layout=L1 @244
-    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @244
-    v4 = CallDirect v3 function=f5 @244
-    Return v3 @244
+    v1 = GetConstructPrototype v0 layout=L1 @250
+    v2 = NewObject v1 layout=L1 @250
+    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @250
+    v4 = CallDirect v3 function=f5 @250
+    Return v3 @250
 }
 function f3 name="Stamp" module=m0 position=139 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
   b0(v0: function, v1: anything, v2: Array):
@@ -165,28 +165,21 @@ function f7 module=m0 role=Signature thisType={type=anything} results=[{type=any
 function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f7]
 # -- generated: f0 Returns Circle Stamp f6
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f4 callPosition=342 module=m0}, {callee=f3 callPosition=309 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f13 callPosition=291 isConstruction=true module=m0}, {callee=f5 callPosition=244 parent=3 module=m0}, {callee=f6 callPosition=139 parent=2 module=m0}, {callee=f1 callPosition=139 parent=2 isConstruction=true module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f4 callPosition=342 module=m0}, {callee=f3 callPosition=309 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f13 callPosition=291 isConstruction=true module=m0}, {callee=f5 callPosition=250 parent=3 module=m0}, {callee=f1 callPosition=139 parent=2 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: classtoken = NewClassToken layout=L2
 # CHECK-NEXT: PutModuleVariable v0 variable=g3
 # CHECK-NEXT: v2: L1 = NewObject layout=L1 allocationClass=1 [listsOnlyStoredValues]
-# CHECK-NEXT: v3: boolean = PrivateHas v2, v0 layout=L2 accessSite=12
-# CHECK-NEXT: Branch v3 -> taken b2(), notTaken b1()
-# CHECK-NEXT: b1():
-# CHECK-NEXT: PrivateDefine v2, v0, v0 layout=L2 accessSite=13
-# CHECK-NEXT: Jump -> next b2()
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v5: 1 = Integer integer=1
-# CHECK-NEXT: PrivateDefine v2, v0, v5 layout=L2 field=1 accessSite=14
-# CHECK-NEXT: v7: boolean = PrivateHas v2, v0 layout=L2 field=1 accessSite=10
-# CHECK-NEXT: v8: undefined = CallBuiltin -, v7 overload=ConsoleLog/0 accessSite=6
-# CHECK-NEXT: v9: undefined = Undefined
-# CHECK-NEXT: Return v9
+# CHECK-NEXT: v3: undefined = CallDirect v2 function=f6 accessSite=9
+# CHECK-NEXT: v4: boolean = IsSlotFilled v2 key=#"#mark"@L2 receivers=[L1] level=Proven accessSite=10
+# CHECK-NEXT: v5: undefined = CallBuiltin -, v4 overload=ConsoleLog/0 accessSite=6
+# CHECK-NEXT: v6: undefined = Undefined
+# CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Returns"
 # CHECK: module=m0 position=98 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L1 site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=L1|L2 flags=[IsFromCompiler]}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
 # CHECK-LABEL: function {{*}}name="Circle"
-# CHECK: module=m0 position=250 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L1 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 inlineFrames=[{}, {callee=f5 callPosition=244 module=m0}] {
+# CHECK: module=m0 position=250 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L1 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 inlineFrames=[{}, {callee=f5 callPosition=250 module=m0}] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f2 = AssumeType v0 provenType=f2
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L1
@@ -200,18 +193,33 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK: m0 position=139 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1|L2 flags=[IsFromCompiler, IsExpected]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything ~ L1|L2):
 # CHECK-NEXT: v1: L1|L2 = AssumeType v0 provenType=L1|L2
-# CHECK-NEXT: v2: L1|L2 ~ L2 = Expect v1 expectedType=L2
-# CHECK-NEXT: v3: classtoken = GetModuleVariable variable=g3
-# CHECK-NEXT: v4: boolean = PrivateHas v2, v3 layout=L2 accessSite=12
-# CHECK-NEXT: Branch v4 -> taken b2(), notTaken b1()
+# CHECK-NEXT: v2: classtoken = GetModuleVariable variable=g3
+# CHECK-NEXT: v3: boolean = IsSlotFilled v1 key=#"#"@L2 receivers=[L1, L2] level=Proven accessSite=12
+# CHECK-NEXT: Branch v3 -> taken b5(), notTaken b1()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: PrivateDefine v2, v3, v3 layout=L2 accessSite=13
-# CHECK-NEXT: Jump -> next b2()
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v6: 1 = Integer integer=1
-# CHECK-NEXT: PrivateDefine v2, v3, v6 layout=L2 field=1 accessSite=14
-# CHECK-NEXT: v8: undefined = Undefined
-# CHECK-NEXT: Return v8
+# CHECK-NEXT: v4: boolean = IsSlotFilled v1 key=#"#"@L2 receivers=[L1, L2] level=Proven
+# CHECK-NEXT: Branch v4 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2() frequency=Unlikely:
+# CHECK-NEXT: PrivateDefine v1, v2, v2 layout=L2 accessSite=13 receivers=[L1, L2, ..]
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: PutSlot v1, -, v2 key=#"#"@L2 receivers=[L1, L2] level=Proven accessSite=13
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v7: 1 = Integer integer=1
+# CHECK-NEXT: v8: boolean = IsSlotFilled v1 key=#"#mark"@L2 receivers=[L1, L2] level=Proven
+# CHECK-NEXT: Branch v8 -> taken b6(), notTaken b7()
+# CHECK-NEXT: b6() frequency=Unlikely:
+# CHECK-NEXT: PrivateDefine v1, v2, v7 layout=L2 field=1 accessSite=14 receivers=[L1, L2, ..]
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b7():
+# CHECK-NEXT: PutSlot v1, -, v7 key=#"#mark"@L2 receivers=[L1, L2] level=Proven accessSite=14
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v11: undefined = Undefined
+# CHECK-NEXT: Return v11
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Returns"
 # CHECK: module=m0 position=98 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] length=1 captures=[{type=f1}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers takesNewTarget=true} inlineFrames=[{}, {callee=f1 callPosition=98 isTailCall=true module=m0}] {

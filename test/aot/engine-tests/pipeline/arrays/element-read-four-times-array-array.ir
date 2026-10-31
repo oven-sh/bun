@@ -175,7 +175,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f2 visibility=Private
 # CHECK-NEXT: b1(v2: guard):
 # CHECK-NEXT: v3: cursor = JSONSourceStart v2
 # CHECK-NEXT: v4: cursor = JSONSkipWhitespace v3
-# CHECK-NEXT: v5: undefined = CallDirect v4 function=f8
+# CHECK-NEXT: v5: undefined = CallDirect v4 function=f9
 # CHECK-NEXT: v6: int[0, 2] = ResultAt v5
 # CHECK-NEXT: v7: undefined|null|string|Array = ResultAt v5 index=1
 # CHECK-NEXT: v8: cursor = ResultAt v5 index=2
@@ -199,7 +199,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f2 visibility=Private
 # CHECK-NEXT: Branch v16 -> taken b7(| 0), notTaken b14(| 0)
 # CHECK-NEXT: b7(v17: Array):
 # CHECK-NEXT: v18: boolean = IsPristine v17 builtinClass=Array aspects=[Names]
-# CHECK-NEXT: Branch v18 -> taken b8(), notTaken b26(v17)
+# CHECK-NEXT: Branch v18 -> taken b8(), notTaken b28(v17)
 # CHECK-NEXT: b8():
 # CHECK-NEXT: v19: 0 = Integer
 # CHECK-NEXT: Jump -> next b9(v19)
@@ -207,7 +207,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f2 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v22: int[0, 4294967295] = CallBuiltin v17 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v23: boolean = Less v20, v22
-# CHECK-NEXT: Branch v23 -> taken b10(| 0), notTaken b29()
+# CHECK-NEXT: Branch v23 -> taken b10(| 0), notTaken b30()
 # CHECK-NEXT: b10(v24: int[0, 4294967294]):
 # CHECK-NEXT: v25: boolean = IsPristine v17 builtinClass=Array aspects=[Storage]
 # CHECK-NEXT: Branch v25 -> taken b11(| 0), notTaken b12()
@@ -232,7 +232,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f2 visibility=Private
 # CHECK-NEXT: Jump -> next b9(v39)
 # CHECK-NEXT: b14(v42: null|boolean|number|string|object ~ null|string) frequency=Unlikely:
 # CHECK-NEXT: v43: boolean = TypeTest v42 testedType=string
-# CHECK-NEXT: Branch v43 -> taken b15(| 0), notTaken b25(| 0)
+# CHECK-NEXT: Branch v43 -> taken b15(| 0), notTaken b27(| 0)
 # CHECK-NEXT: b15(v44: string) frequency=Unlikely:
 # CHECK-NEXT: v45: 0 = Integer
 # CHECK-NEXT: Jump -> next b16(v45)
@@ -240,72 +240,74 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f2 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v48: int[0, 2147483647] = GetStringLength v44
 # CHECK-NEXT: v49: boolean = Less v46, v48
-# CHECK-NEXT: Branch v49 -> taken b17(| 0), notTaken b29()
+# CHECK-NEXT: Branch v49 -> taken b17(| 0), notTaken b30()
 # CHECK-NEXT: b17(v50: int[0, 2147483646]):
 # CHECK-NEXT: v51: int[0, 65535] = GetStringCodeUnit v44, v50
 # CHECK-NEXT: v52: 55296 = Integer integer=55296
 # CHECK-NEXT: v53: boolean = Less v51, v52
 # CHECK-NEXT: Branch v53 -> taken b18(), notTaken b19()
 # CHECK-NEXT: b18():
-# CHECK-NEXT: Jump -> next b23()
+# CHECK-NEXT: Jump -> next b25()
 # CHECK-NEXT: b19() frequency=Unlikely:
 # CHECK-NEXT: v54: 64512 = Integer integer=64512
 # CHECK-NEXT: v55: int[0, 64512] = BitAnd v51, v54
 # CHECK-NEXT: v56: 55296 = Integer integer=55296
 # CHECK-NEXT: v57: boolean = StrictEq v55, v56
-# CHECK-NEXT: Branch v57 -> taken b20(), notTaken b22()
+# CHECK-NEXT: Branch v57 -> taken b20(), notTaken b24()
 # CHECK-NEXT: b20() frequency=Unlikely:
 # CHECK-NEXT: v58: undefined|int[0, 1114111] = CallBuiltin v44, v50 overload=StringPrototypeCodePointAt/0
-# CHECK-NEXT: v59: 65535 = Integer integer=65535
-# CHECK-NEXT: v60: boolean = Greater v58, v59
-# CHECK-NEXT: Branch v60 -> taken b21(), notTaken b23()
-# CHECK-NEXT: b21() frequency=Unlikely:
-# CHECK-NEXT: v61: 2 = Integer integer=2
-# CHECK-NEXT: v62: int[2, 2147483648] = Add v50, v61
-# CHECK-NEXT: Jump -> next b24(v62)
+# CHECK-NEXT: v59: boolean = TypeTest v58 testedType=int[0, 1114111]
+# CHECK-NEXT: Branch v59 -> taken b21(| 0), notTaken b22()
+# CHECK-NEXT: b21(v60: int[0, 1114111]) frequency=Unlikely:
+# CHECK-NEXT: v61: 65535 = Integer integer=65535
+# CHECK-NEXT: v62: boolean = Greater v60, v61
+# CHECK-NEXT: Branch v62 -> taken b23(), notTaken b25()
 # CHECK-NEXT: b22() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b23()
-# CHECK-NEXT: b23():
-# CHECK-NEXT: v63: 1 = Integer integer=1
-# CHECK-NEXT: v64: int[1, 2147483647] = Add v50, v63
-# CHECK-NEXT: Jump -> next b24(v64)
-# CHECK-NEXT: b24(v65: int[1, 2147483648]):
-# CHECK-NEXT: v66: string = Substring v44, v50, v65
-# CHECK-NEXT: v67: boolean = CallDirect v66 function=f1 accessSite=4
-# CHECK-NEXT: v68: undefined = CallBuiltin -, v67 overload=ConsoleLog/0 accessSite=5
-# CHECK-NEXT: Jump -> next b16(v65)
-# CHECK-NEXT: b25(v69: null|boolean|number|object ~ null) frequency=Unlikely:
+# CHECK-NEXT: v63: undefined = Undefined
+# CHECK-NEXT: v64: 65535 = Integer integer=65535
+# CHECK-NEXT: v65: boolean = Greater v63, v64
+# CHECK-NEXT: Branch v65 -> taken b23(), notTaken b25()
+# CHECK-NEXT: b23() frequency=Unlikely:
+# CHECK-NEXT: v66: 2 = Integer integer=2
+# CHECK-NEXT: v67: int[2, 2147483648] = Add v50, v66
+# CHECK-NEXT: Jump -> next b26(v67)
+# CHECK-NEXT: b24() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b25()
+# CHECK-NEXT: b25():
+# CHECK-NEXT: v68: 1 = Integer integer=1
+# CHECK-NEXT: v69: int[1, 2147483647] = Add v50, v68
 # CHECK-NEXT: Jump -> next b26(v69)
-# CHECK-NEXT: b26(v70: null|boolean|number|object ~ Array) frequency=Unlikely:
-# CHECK-NEXT: v71: undefined = CallDirect v70 function=f6 [isNeverInlined]
-# CHECK-NEXT: v72: object = ResultAt v71
-# CHECK-NEXT: v73: anything = ResultAt v71 index=1
-# CHECK-NEXT: Jump -> next b27()
-# CHECK-NEXT: b27() frequency=Unlikely:
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v75: anything = Call v73, v72
-# CHECK-NEXT: v76: object = RequireObject v75 runtimeError=IteratorResultNotObject
-# CHECK-NEXT: v77: anything = PropGet v76 key="done"
-# CHECK-NEXT: v78: boolean = ToBoolean v77
-# CHECK-NEXT: Branch v78 -> taken b28(), notTaken b30()
-# CHECK-NEXT: b28() frequency=Unlikely:
+# CHECK-NEXT: b26(v70: int[1, 2147483648]):
+# CHECK-NEXT: v71: string = Substring v44, v50, v70
+# CHECK-NEXT: v72: boolean = CallDirect v71 function=f1 accessSite=4
+# CHECK-NEXT: v73: undefined = CallBuiltin -, v72 overload=ConsoleLog/0 accessSite=5
+# CHECK-NEXT: Jump -> next b16(v70)
+# CHECK-NEXT: b27(v74: null|boolean|number|object ~ null) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b28(v74)
+# CHECK-NEXT: b28(v75: null|boolean|number|object ~ Array) frequency=Unlikely:
+# CHECK-NEXT: v76: undefined = CallDirect v75 function=f6 [isNeverInlined]
+# CHECK-NEXT: v77: object = ResultAt v76
+# CHECK-NEXT: v78: anything = ResultAt v76 index=1
 # CHECK-NEXT: Jump -> next b29()
-# CHECK-NEXT: b29():
-# CHECK-NEXT: v79: undefined = Undefined
-# CHECK-NEXT: Return v79
-# CHECK-NEXT: b30() frequency=Unlikely:
-# CHECK-NEXT: v80: anything = PropGet v76 key="value"
-# CHECK-NEXT: Jump -> next b31()
+# CHECK-NEXT: b29() frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v80: undefined = CallDirect v77, v78 function=f8 [isNeverInlined]
+# CHECK-NEXT: v81: boolean = ResultAt v80
+# CHECK-NEXT: v82: anything = ResultAt v80 index=1
+# CHECK-NEXT: Branch v81 -> taken b30(), notTaken b31()
+# CHECK-NEXT: b30():
+# CHECK-NEXT: v83: undefined = Undefined
+# CHECK-NEXT: Return v83
 # CHECK-NEXT: b31() frequency=Unlikely handler=b32():
-# CHECK-NEXT: v81: fact = Specified
-# CHECK-NEXT: v82: undefined|null|boolean|number|string|object = AssumeType v80, v81 provenType=undefined|null|boolean|number|string|object
-# CHECK-NEXT: v83: boolean = CallDirect v82 function=f1 accessSite=4
-# CHECK-NEXT: v84: undefined = CallBuiltin -, v83 overload=ConsoleLog/0 accessSite=5
-# CHECK-NEXT: Jump -> next b27()
+# CHECK-NEXT: v84: fact = Specified
+# CHECK-NEXT: v85: undefined|null|boolean|number|string|object = AssumeType v82, v84 provenType=undefined|null|boolean|number|string|object
+# CHECK-NEXT: v86: boolean = CallDirect v85 function=f1 accessSite=4
+# CHECK-NEXT: v87: undefined = CallBuiltin -, v86 overload=ConsoleLog/0 accessSite=5
+# CHECK-NEXT: Jump -> next b29()
 # CHECK-NEXT: b32() role=CleanupHandler frequency=Unlikely:
-# CHECK-NEXT: v85: exception = CatchException
-# CHECK-NEXT: v86: undefined = CallDirect v72 function=f7 [isNeverInlined]
-# CHECK-NEXT: Rethrow v85
+# CHECK-NEXT: v88: exception = CatchException
+# CHECK-NEXT: v89: undefined = CallDirect v77 function=f7 [isNeverInlined]
+# CHECK-NEXT: Rethrow v88
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="isList"
 # CHECK: module=m0 position=174 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string|object}] results=[{type=boolean site=w0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

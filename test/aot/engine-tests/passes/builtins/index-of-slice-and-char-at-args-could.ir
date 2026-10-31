@@ -961,31 +961,31 @@ runtimefunction id=WrittenListsArrayFromLength function=f83
 # CHECK-LABEL: function f14 module=
 # CHECK: m0 position=2116 kind=Arrow length=2 captures=[{type=undefined|null|string flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|boolean|number|""|"2"|"x"|L1|L2|Array<3, proven, pristine[Storage, Names, Dense]>}, {type=number flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] functionTypes=[f41] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|string, v1: undefined|null|boolean|number|""|"2"|"x"|L1|L2|Array<3, proven, pristine[Storage, Names, Dense]>, v2: anything ~ number):
-# CHECK-NEXT: v3: anything ~ number = CallDirect v0, v2 function=f110
+# CHECK-NEXT: v3: anything ~ number = CallDirect v0, v2 function=f111
 # CHECK-NEXT: ReturnCall v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function f15 module=
 # CHECK: m0 position=2204 kind=Arrow length=2 captures=[{type=undefined|null|string flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|boolean|number|""|"2"|"x"|L1|L2|Array<3, proven, pristine[Storage, Names, Dense]>}, {type=number flags=[IsExpected]}] results=[{type=string}] functionTypes=[f43] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|string, v1: undefined|null|boolean|number|""|"2"|"x"|L1|L2|Array<3, proven, pristine[Storage, Names, Dense]>, v2: anything ~ number):
-# CHECK-NEXT: v3: string = CallDirect v0, v2 function=f111
+# CHECK-NEXT: v3: string = CallDirect v0, v2 function=f112
 # CHECK-NEXT: ReturnCall v3 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function f16 module=
 # CHECK: m0 position=2339 kind=Arrow length=2 captures=[{type=undefined|null|string flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|boolean|number|""|"2"|"x"|L1|L2|Array<3, proven, pristine[Storage, Names, Dense]>}, {type=number flags=[IsExpected]}] results=[{type=number}] functionTypes=[f44] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|string, v1: undefined|null|boolean|number|""|"2"|"x"|L1|L2|Array<3, proven, pristine[Storage, Names, Dense]>, v2: anything ~ number):
-# CHECK-NEXT: v3: number = CallDirect function=f112
+# CHECK-NEXT: v3: number = CallDirect function=f113
 # CHECK-NEXT: ReturnCall v3 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function f21 module=
 # CHECK: m0 position=3025 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|bigint|symbol("s")@m0:4|L1}, {type=number flags=[IsExpected]}] results=[{type=string}] functionTypes=[f54] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: undefined|bigint|symbol("s")@m0:4|L1, v1: anything ~ number):
-# CHECK-NEXT: v2: string = CallDirect v1 function=f113
+# CHECK-NEXT: v2: string = CallDirect v1 function=f114
 # CHECK-NEXT: ReturnCall v2 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function f25 module=
 # CHECK: m0 position=2228 kind=Arrow length=2 captures=[{type=undefined|null|string flags=[IsExpected]}, {type=number flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|boolean|number|""|"2"|"x"|L1|L2|Array<3, proven, pristine[Storage, Names, Dense]>}, {type=number flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] functionTypes=[f42] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|string, v1: anything ~ number, v2: undefined|null|boolean|number|""|"2"|"x"|L1|L2|Array<3, proven, pristine[Storage, Names, Dense]>, v3: anything ~ number):
-# CHECK-NEXT: v4: anything ~ number = CallDirect v0, v1, v3 function=f114
+# CHECK-NEXT: v4: anything ~ number = CallDirect v0, v1, v3 function=f115
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function f28 module=

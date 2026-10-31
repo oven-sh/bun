@@ -17,12 +17,13 @@ pub(crate) enum Kind {
     /// u32 scope_line}, u32 has_failure [, str name, str message, str body]
     TestDone,
     /// 9 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label,
-    /// files, unhandled; u64 elapsed_ns; u32 the megabytes by which the worker grew at most, with its largest child, 0 where nobody measures
+    /// files, unhandled; u64 elapsed_ns; 2 × u32, 0 where nobody measures: the megabytes by which the worker grew at most, and those of its largest child
+    /// then u32: 0, or one more than the `process.exitCode` that the file has left other than it found it
     FileDone,
     /// 3 × str: failures, skips, todos (verbatim repeat-buffer bytes)
     RepeatBufs,
     // coordinator → worker
-    /// u32 file_idx, str path
+    /// u32 file_idx, str path, u32: 0, or one more than the `process.exitCode` that the files before it have left
     Run,
     /// (empty)
     Shutdown,

@@ -17,7 +17,6 @@ const constructorsBelowFunctionPrototype = [
   "PerformanceObserver",
   "PerformanceObserverEntryList",
   "PerformanceServerTiming",
-  "PerformanceTiming",
   "ReadableStreamDefaultController",
   "ReadableStreamDefaultReader",
   "TextDecoderStream",
@@ -333,9 +332,14 @@ export default b.declarations(
   }),
 
   // What the module abort-controller exports is this constructor (objectModules in collect-modules.ts), on which it puts three more members when it is loaded: src/jsc/modules/AbortControllerModuleModule.h.
-  ["AbortController", "AbortSignal"].flatMap(name =>
-    b.extend(`AbortController.${name}`, { mutability: "ChangesOnItsOwn" }),
-  ),
+  Object.entries({
+    AbortController: "AbortController",
+    AbortSignal: "AbortSignal",
+    default: "AbortController",
+  }).flatMap(([name, held]) => [
+    ...b.static(`AbortController.${name}`, b.property(b.union(b.builtin(held), b.undefined))),
+    ...b.extend(`AbortController.${name}`, { mutability: "ChangesOnItsOwn" }),
+  ]),
   // JSAbortController.cpp. A controller has one signal, which native code makes with it.
   b.class("AbortController", {
     instanceCppClass: b.cppClass("JSAbortController"),
@@ -463,7 +467,7 @@ export default b.declarations(
         capability: "heap",
         uses: {
           this: [
-            b.createdIn(listOfStrings.fresh, b.nativeCell(builtinModulesCell)),
+            b.createdIn(listOfStrings.fresh.dense, b.nativeCell(builtinModulesCell)),
             b.returnedFrom(builtinModulesCell),
           ],
         },

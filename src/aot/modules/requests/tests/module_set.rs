@@ -108,6 +108,7 @@ fn two_kinds_join_to_uncompiled_code() {
             let module = ModuleRef::External {
                 importer,
                 specifier,
+                type_attribute: None,
             };
             assert_eq!(modules.interop(module), Interop::of_external(expected));
             let is_uncompiled_code = expected == ExternalKind::UncompiledCode;
@@ -126,6 +127,7 @@ fn kind_belongs_to_importer_and_specifier() {
         let external = |importer: &str, specifier: &str| ModuleRef::External {
             importer: program.file(importer),
             specifier: program.atom(specifier),
+            type_attribute: None,
         };
         assert!(modules.is_uncompiled_code(external("main.js", UNCOMPILED_MODULE)));
         assert!(modules.is_uncompiled_code(external("a.js", UNCOMPILED_MODULE)));

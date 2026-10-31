@@ -1,0 +1,1 @@
+import "./file.cjs";

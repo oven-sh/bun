@@ -82,9 +82,9 @@ export function util(options: Flagged): string {
     });
     const built = await bun(String(dir), "build", "./src/index.ts", "./src/sub/index.ts", "--outdir", "src", "--dts");
     expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    expect(readFileSync(join(String(dir), "src/sub/index.aot.ts"), "utf8")).toContain(
-      "function util(options: Options): string {",
-    );
+    const typed = readFileSync(join(String(dir), "src/sub/index.aot.ts"), "utf8");
+    expect(typed).toContain("function util(options: Options): string {");
+    expect(typed).toContain("function util2(options: Flagged): string {");
   });
 
   test.each([

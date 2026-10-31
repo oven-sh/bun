@@ -1207,7 +1207,12 @@ impl<'a> LinkerContext<'a> {
     }
 
     /// The directory of the file that carries `chunk`'s map, when the `sources` are not relative to `output_dir` as given.
-    fn source_map_base_dir(&self, chunk: &Chunk<'_>, chunks: &[Chunk<'_>]) -> Option<Box<[u8]>> {
+    fn source_map_base_dir(
+        &self,
+        chunk: &Chunk<'_>,
+        chunk_index: usize,
+        chunks: &[Chunk<'_>],
+    ) -> Option<Box<[u8]>> {
         let output_dir: &[u8] = &self.resolver().opts.output_dir;
         // An executable prints these entries as they are, and without an outdir no map file exists to be relative to.
         if self.options.compile_mode.is_executable() || output_dir.is_empty() {
@@ -1220,7 +1225,9 @@ impl<'a> LinkerContext<'a> {
             && self.options.source_maps == SourceMapOption::Inline
         {
             let entry_point_id = chunk.entry_point.entry_point_id();
-            if let Some(html) = chunks.iter().find(|html| {
+            // `compute_chunks` puts that HTML chunk directly after its JS chunk, so the search starts there.
+            let (before, after) = chunks.split_at(chunk_index + 1);
+            if let Some(html) = after.iter().chain(before).find(|html| {
                 matches!(html.content, crate::chunk::Content::Html)
                     && html.entry_point.entry_point_id() == entry_point_id
             }) {
@@ -1266,13 +1273,14 @@ impl<'a> LinkerContext<'a> {
     pub(crate) fn generate_source_map_for_chunk(
         &mut self,
         chunk: &Chunk<'_>,
+        chunk_index: usize,
         chunks: &[Chunk<'_>],
         results: &MultiArrayList<CompileResultForSourceMap<'_>>,
         can_have_shifts: bool,
     ) -> Result<SourceMapPieces, BunError> {
         let _trace = bun::perf::trace("Bundler.generateSourceMapForChunk");
 
-        let base_dir = self.source_map_base_dir(chunk, chunks);
+        let base_dir = self.source_map_base_dir(chunk, chunk_index, chunks);
         let chunk_abs_dir: &[u8] = match &base_dir {
             Some(dir) => dir,
             None => &self.resolver().opts.output_dir,

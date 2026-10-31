@@ -792,6 +792,7 @@ pub(crate) fn post_process_js_chunk(
         );
         chunk.output_source_map = c.generate_source_map_for_chunk(
             chunk,
+            chunk_index,
             &ctx.chunks,
             &compile_results_for_source_map,
             can_have_shifts,

@@ -356,7 +356,7 @@ main();`,
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       expect(await sourcesIn(join(String(dir), "out"))).toEqual({
         "app.map": ["proj/main.ts"],

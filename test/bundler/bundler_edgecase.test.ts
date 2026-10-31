@@ -1806,6 +1806,42 @@ describe("bundler", () => {
       });
     }
   }
+  // The monorepo form: `external` names a workspace sibling by its `paths` key. A sibling that
+  // `external` does not name is still followed.
+  itBundled("edgecase/ExternalNameOfTSConfigPathsKeyStaysExternal", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { ui } from "@acme/ui";
+        import { kept } from "@acme/kept";
+        console.log(ui, kept);
+      `,
+      "/packages/ui/src/index.ts": `export const ui = "bundled ui";`,
+      "/packages/kept/src/index.ts": `export const kept = "bundled kept";`,
+      "/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "paths": {
+              "@acme/ui": ["./packages/ui/src/index.ts"],
+              "@acme/kept": ["./packages/kept/src/index.ts"]
+            }
+          }
+        }
+      `,
+    },
+    packages: "external",
+    external: ["@acme/ui"],
+    target: "bun",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect({
+        imports: out.match(/from "@acme\/[^"]+"/g),
+        bundled: out.match(/bundled \w+/g),
+      }).toEqual({
+        imports: [`from "@acme/ui"`],
+        bundled: ["bundled kept"],
+      });
+    },
+  });
   // Today `external` applies to a macro import too (#40631 is about that): the macro is then
   // loaded by its specifier from the working directory. These two tests pin which specifier.
   describe("a macro import that `external` names", () => {

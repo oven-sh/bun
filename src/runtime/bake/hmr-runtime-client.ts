@@ -1,6 +1,6 @@
 // This file is the entrypoint to the hot-module-reloading runtime
 // In the browser, this uses a WebSocket to communicate with the bundler.
-import { editCssArray, editCssContent } from "./client/css-reloader";
+import { editCssArray, editCssContent, loadCssText } from "./client/css-reloader";
 import { DataViewReader } from "./client/data-view";
 import { inspect } from "./client/inspect";
 import { hasFatalError, onRuntimeError, onServerErrorPayload } from "./client/overlay";
@@ -84,6 +84,34 @@ const scriptTags: Map<string, PendingHmrQueue> =
   new Map<string, PendingHmrQueue>();
 (globalThis as any)[pendingScriptSymbol] = scriptTags;
 
+// A page load has its stylesheets before its modules run. A hot update that
+// lists a stylesheet without its text does the same: while `loadCssText`
+// requests the text, the modules and the `bun:afterUpdate` of every update
+// wait here, in the order the updates came.
+let cssLoads = 0;
+const heldUpdates: (() => void)[] = [];
+
+function onCssLoaded() {
+  if (--cssLoads > 0) return;
+  // One microtask each: an error in one update does not stop the next.
+  for (const run of heldUpdates.splice(0)) queueMicrotask(run);
+}
+
+function runModules(modules: any, map: SourceMapURL) {
+  replaceModules(modules, map).catch(e => {
+    console.error(e);
+    fullReload();
+  });
+}
+
+function holdModules(modules: any, map: SourceMapURL) {
+  heldUpdates.push(() => runModules(modules, map));
+}
+
+function emitAfterUpdate() {
+  emitEvent("bun:afterUpdate", null);
+}
+
 globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
   const queue = scriptTags.get(id);
   let entry = queue?.shift() ?? null;
@@ -104,10 +132,8 @@ globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
   };
   addMapping(url, map);
   script.remove();
-  replaceModules(modules, map).catch(e => {
-    console.error(e);
-    fullReload();
-  });
+  if (cssLoads > 0) holdModules(modules, map);
+  else runModules(modules, map);
 };
 
 let isFirstRun = true;
@@ -154,6 +180,7 @@ const handlers = {
     } while (true);
     // List 2
     let isServerSideRouteUpdate = false;
+    let cssWithoutText: string[] | undefined;
     do {
       const routeId = reader.i32();
       if (routeId === -1 || routeId == undefined) break;
@@ -165,7 +192,7 @@ const handlers = {
           for (let i = 0; i < cssCount; i++) {
             cssArray[i] = reader.stringWithLength(16);
           }
-          editCssArray(cssArray);
+          cssWithoutText = editCssArray(cssArray);
         }
 
         // Skip to the last route
@@ -201,6 +228,9 @@ const handlers = {
       // apply it, so Fast Refresh updates the page in place.
       if (!config.route) return;
     }
+    // Only now: a page that reloads needs no text, and a framework that
+    // reloads the route appends the link tags itself.
+    if (cssWithoutText && loadCssText(cssWithoutText, onCssLoaded)) cssLoads++;
     // JavaScript modules
     if (reader.hasMoreData()) {
       const sourceMapSize = reader.u32();
@@ -225,9 +255,11 @@ const handlers = {
       script.src = url;
       script.onerror = onHmrLoadError;
       document.head.appendChild(script);
+    } else if (cssLoads > 0) {
+      heldUpdates.push(emitAfterUpdate);
     } else {
       // Needed for testing.
-      emitEvent("bun:afterUpdate", null);
+      emitAfterUpdate();
     }
   },
   [MessageId.set_url_response](view) {

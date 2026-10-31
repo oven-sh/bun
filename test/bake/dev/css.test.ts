@@ -1,7 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { Client, Dev, devTest, emptyHtmlFile, imageFixtures, WAIT_MULTIPLIER } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
   files: {
@@ -808,6 +808,277 @@ devTest("css import before create project relative", {
     assert(backgroundImage);
     await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
     await dev.fetch("/").expect.toContain("HELLO");
+  },
+});
+
+/**
+ * Puts counters on the page:
+ * - `css.requests`: its requests for the text of a stylesheet.
+ * - `css.answered`: how many of them the server has answered.
+ * - `css.texts`: the text that each stylesheet got, in order.
+ * - `css.updates`: the hot updates with code that reached the HMR runtime.
+ * `css.until(condition)` waits in the page until a counter makes `condition` true.
+ * With `hold`, the answer to request `i` stays away from the runtime until `css.release[i]()`.
+ * `css.fail` is how many of the next answers are replaced with a 404.
+ */
+async function watchStylesheets(c: Client, { hold = false } = {}) {
+  await c.js`
+    const { fetch } = window;
+    const { replace } = CSSStyleSheet.prototype;
+    const hmr = Symbol.for("bun:hmr");
+    const takeUpdate = globalThis[hmr];
+    const waiting = [];
+    const changed = () => {
+      for (const check of waiting.splice(0)) check();
+    };
+    globalThis.css = {
+      requests: 0,
+      answered: 0,
+      texts: [],
+      updates: 0,
+      release: [],
+      fail: 0,
+      until: condition =>
+        new Promise((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error("The page did not reach: " + condition)), ${2000 * WAIT_MULTIPLIER});
+          const check = () => {
+            if (!condition()) return waiting.push(check);
+            clearTimeout(timer);
+            resolve();
+          };
+          check();
+        }),
+    };
+    window.fetch = async (url, init) => {
+      if (!String(url).includes("/_bun/asset/")) return fetch(url, init);
+      const held = new Promise(resolve => css.release.push(resolve));
+      css.requests++;
+      changed();
+      const response = css.fail-- > 0 ? new Response("", { status: 404 }) : await fetch(url, init);
+      const text = await response.text();
+      css.answered++;
+      changed();
+      if (${hold}) await held;
+      return new Response(text, { status: response.status });
+    };
+    CSSStyleSheet.prototype.replace = function (text) {
+      css.texts.push(text);
+      changed();
+      return replace.call(this, text);
+    };
+    globalThis[hmr] = (...args) => {
+      css.updates++;
+      changed();
+      return takeUpdate(...args);
+    };
+  `;
+}
+
+/**
+ * `dev.write` returns when every page has applied the update. A page that waits for the text of
+ * a stylesheet has not, so `dev.write` does not wait for `c` while `cb` runs.
+ */
+async function whileHeld(dev: Dev, c: Client, cb: () => Promise<void>) {
+  dev.connectedClients.delete(c);
+  try {
+    await cb();
+  } finally {
+    dev.connectedClients.add(c);
+  }
+}
+
+// A page that drops the imports of its stylesheets and loads again has the text of neither, and
+// the dev server does not bundle a stylesheet again when its import comes back.
+const pageWithoutItsStylesheets = {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"], body: "<h1>hello</h1>" }),
+    "index.ts": `import "./m.css"; import "./n.css"; console.log("1"); import.meta.hot.accept();`,
+    "m.css": `h1 { color: red; }`,
+    "n.css": `h1 { color: green; }`,
+    "other.ts": `export {};`,
+  },
+  async open(dev: Dev, options: { hold?: boolean } = {}) {
+    const c = await dev.client("/");
+    await c.expectMessage("1");
+    await dev.write("index.ts", `console.log("2"); import.meta.hot.accept();`);
+    await c.expectMessage("2");
+    await c.hardReload();
+    await c.expectMessage("2");
+    await c.style("h1").notFound();
+    await watchStylesheets(c, options);
+    return c;
+  },
+};
+
+devTest("a stylesheet that a hot update lists without its text is loaded before the update runs", {
+  files: {
+    "a.html": emptyHtmlFile({ scripts: ["a.ts"], body: "<h1>hello</h1>" }),
+    "b.html": emptyHtmlFile({ scripts: ["b.ts"] }),
+    "a.ts": `console.log("a 1"); import.meta.hot.accept();`,
+    "b.ts": `import "./m.ts"; console.log("b 1"); import.meta.hot.accept();`,
+    "m.ts": `import "./m.css"; console.log("m 1");`,
+    "m.css": `h1 { color: red; }`,
+  },
+  async test(dev) {
+    await using b = await dev.client("/b");
+    await b.expectMessage("m 1", "b 1");
+    await using a = await dev.client("/a");
+    await a.expectMessage("a 1");
+    // Tab a gets the module from this update, so that below it lacks only the stylesheet.
+    await dev.patch("m.ts", { find: "m 1", replace: "m 2" });
+    await b.expectMessage("m 2", "b 1");
+    await a.expectMessage();
+    await watchStylesheets(a);
+    await watchStylesheets(b);
+    // The graph holds m.ts and m.css, so this bundle prints neither. The update lists m.css for
+    // /a and has no text for it.
+    await dev.write(
+      "a.ts",
+      `import "./m.ts"; console.log("a 2 with " + document.adoptedStyleSheets.length + " stylesheet"); import.meta.hot.accept();`,
+    );
+    await a.expectMessage("m 2", "a 2 with 1 stylesheet");
+    await a.style("h1").color.expect.toBe("red");
+    expect(await a.js`css.requests`).toBe(1);
+    // Tab b has the stylesheet from its link tag.
+    expect(await b.js`[css.requests, document.adoptedStyleSheets.length]`).toEqual([0, 0]);
+  },
+});
+devTest("a stylesheet import that is restored after the page loaded without it is applied", {
+  files: pageWithoutItsStylesheets.files,
+  async test(dev) {
+    await using c = await pageWithoutItsStylesheets.open(dev);
+    await dev.write("index.ts", `import "./m.css"; console.log("3"); import.meta.hot.accept();`);
+    await c.expectMessage("3");
+    await c.style("h1").color.expect.toBe("red");
+    // The page has the text from now on.
+    await dev.write("index.ts", `console.log("4"); import.meta.hot.accept();`);
+    await c.expectMessage("4");
+    await c.style("h1").notFound();
+    await dev.write("index.ts", `import "./m.css"; console.log("5"); import.meta.hot.accept();`);
+    await c.expectMessage("5");
+    await c.style("h1").color.expect.toBe("red");
+    await dev.write("m.css", `h1 { color: blue; }`);
+    await c.style("h1").color.expect.toBe("#00f");
+    expect(await c.js`css.requests`).toBe(1);
+  },
+});
+devTest("a stylesheet that a page dropped stays off when the stylesheet is edited", {
+  files: {
+    "a.html": emptyHtmlFile({ scripts: ["a.ts"], body: "<h1>hello</h1>" }),
+    "b.html": emptyHtmlFile({ scripts: ["b.ts"], body: "<h1>hello</h1>" }),
+    "a.ts": `import "./m.css"; console.log("a 1"); import.meta.hot.accept();`,
+    "b.ts": `import "./m.css"; console.log("b 1"); import.meta.hot.accept();`,
+    "m.css": `h1 { color: red; }`,
+  },
+  async test(dev) {
+    await using b = await dev.client("/b");
+    await b.expectMessage("b 1");
+    await using a = await dev.client("/a");
+    await a.expectMessage("a 1");
+    await a.style("h1").color.expect.toBe("red");
+    await dev.write("a.ts", `console.log("a 2"); import.meta.hot.accept();`);
+    await a.expectMessage("a 2");
+    await a.style("h1").notFound();
+    // The text goes to every page.
+    await dev.write("m.css", `h1 { color: blue; }`);
+    await b.style("h1").color.expect.toBe("#00f");
+    await a.style("h1").notFound();
+    await dev.write("a.ts", `import "./m.css"; console.log("a 3"); import.meta.hot.accept();`);
+    await a.expectMessage("a 3");
+    await a.style("h1").color.expect.toBe("#00f");
+  },
+});
+devTest("a stylesheet that a page drops while it requests the text stays off", {
+  files: pageWithoutItsStylesheets.files,
+  async test(dev) {
+    await using c = await pageWithoutItsStylesheets.open(dev, { hold: true });
+    await whileHeld(dev, c, async () => {
+      await dev.write("index.ts", `import "./m.css"; console.log("3"); import.meta.hot.accept();`);
+      await c.js`await css.until(() => css.answered === 1)`;
+      await dev.write("index.ts", `console.log("4"); import.meta.hot.accept();`);
+      await c.js`await css.until(() => css.updates === 2)`;
+      await c.js`css.release[0]()`;
+      // Both updates waited for the text.
+      await c.expectMessage("3", "4");
+    });
+    expect(await c.js`css.texts`).toEqual([expect.stringContaining("color: red")]);
+    await c.style("h1").notFound();
+    await dev.write("index.ts", `import "./m.css"; console.log("5"); import.meta.hot.accept();`);
+    await c.expectMessage("5");
+    await c.style("h1").color.expect.toBe("red");
+    expect(await c.js`css.requests`).toBe(1);
+  },
+});
+devTest("a stylesheet that is edited while a page requests its text keeps the newer text", {
+  files: pageWithoutItsStylesheets.files,
+  async test(dev) {
+    await using c = await pageWithoutItsStylesheets.open(dev, { hold: true });
+    await whileHeld(dev, c, async () => {
+      await dev.write("index.ts", `import "./m.css"; console.log("3"); import.meta.hot.accept();`);
+      // The answer has the red text.
+      await c.js`await css.until(() => css.answered === 1)`;
+      await dev.write("m.css", `h1 { color: blue; }`);
+      await c.js`await css.until(() => css.texts.length === 1)`;
+      await c.js`css.release[0]()`;
+      await c.expectMessage("3");
+    });
+    expect(await c.js`css.texts`).toEqual([expect.stringContaining("color: #00f")]);
+    await c.style("h1").color.expect.toBe("#00f");
+  },
+});
+devTest("a page requests the text of a stylesheet again after a request failed", {
+  files: pageWithoutItsStylesheets.files,
+  async test(dev) {
+    await using c = await pageWithoutItsStylesheets.open(dev);
+    await c.js`css.fail = 1`;
+    await dev.write("index.ts", `import "./m.css"; console.log("3"); import.meta.hot.accept();`);
+    await c.expectMessage("3");
+    await c.style("h1").notFound();
+    // The next update that lists the stylesheets of the page.
+    await dev.write("index.ts", `import "./m.css"; import "./other.ts"; console.log("4"); import.meta.hot.accept();`);
+    await c.expectMessage("4");
+    await c.style("h1").color.expect.toBe("red");
+    expect(await c.js`css.requests`).toBe(2);
+  },
+});
+devTest("stylesheets that a page requests are applied in the order of a page load", {
+  files: pageWithoutItsStylesheets.files,
+  async test(dev) {
+    await using c = await pageWithoutItsStylesheets.open(dev, { hold: true });
+    await whileHeld(dev, c, async () => {
+      await dev.write("index.ts", `import "./m.css"; import "./n.css"; console.log("3"); import.meta.hot.accept();`);
+      await c.js`await css.until(() => css.answered === 2)`;
+      // The answer to the first request comes last.
+      await c.js`for (const i of [1, 0]) css.release[i]();`;
+      await c.expectMessage("3");
+    });
+    const html = await dev.fetch("/").text();
+    const linked = Array.from(html.matchAll(/\/_bun\/asset\/\w+\.css/g), match => dev.fetch(match[0]).text());
+    expect(await c.js`css.texts`).toEqual(await Promise.all(linked));
+  },
+});
+devTest("a page whose html has no </head> takes stylesheet updates", {
+  files: {
+    "index.html": `
+      <h1>hello</h1>
+      <script type="module" src="./index.ts"></script>
+    `,
+    "index.ts": `import "./m.css"; console.log("1"); import.meta.hot.accept();`,
+    "m.css": `h1 { color: red; }`,
+    "other.ts": `export {};`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("1");
+    // The dev server wrote the link tag into the body.
+    expect(await c.js`document.querySelector("link[rel=stylesheet]").parentNode.tagName`).toBe("BODY");
+    await watchStylesheets(c);
+    // This update lists the stylesheets of the page. The page has them all.
+    await dev.write("index.ts", `import "./m.css"; import "./other.ts"; console.log("2"); import.meta.hot.accept();`);
+    await c.expectMessage("2");
+    expect(await c.js`[css.requests, document.adoptedStyleSheets.length]`).toEqual([0, 0]);
+    await dev.write("m.css", `h1 { color: blue; }`);
+    await c.style("h1").color.expect.toBe("#00f");
   },
 });
 

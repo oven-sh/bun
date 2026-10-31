@@ -22,6 +22,41 @@ interface CSS {
   sheet: CSSStyleSheet | null;
   link: HTMLLinkElement | null;
   active: boolean;
+  /** True while `loadCssText` requests the text. */
+  loading: boolean;
+}
+
+/**
+ * The only writer of `disabled`. A stylesheet is on while its entry is active.
+ * A sheet that the runtime manages takes the place of the link tag's sheet.
+ */
+function apply(css: CSS) {
+  const { sheet, link } = css;
+  const linkSheet = link && link.sheet;
+  if (sheet) {
+    sheet.disabled = !css.active;
+    if (linkSheet) linkSheet.disabled = true;
+  } else if (linkSheet) {
+    linkSheet.disabled = !css.active;
+  }
+  // A link tag has no sheet until it has loaded, and it loads again after its
+  // `disabled` attribute is removed.
+  if (link && !linkSheet) link.addEventListener("load", onLinkLoad);
+}
+
+function onLinkLoad(this: HTMLLinkElement) {
+  const css = cssStore.get(registeredLinkTags.get(this)!);
+  if (css && css.link === this) apply(css);
+}
+
+/** True if a link tag in the document gives the stylesheet its text. */
+function hasLinkInUse({ link }: CSS) {
+  return link !== null && link.isConnected && !link.disabled;
+}
+
+/** True if the page applies the stylesheet and nothing gives it the text. */
+function lacksText(css: CSS) {
+  return css.active && !css.sheet && !css.loading && !hasLinkInUse(css);
 }
 
 function validateCssId(id: string) {
@@ -32,26 +67,15 @@ function validateCssId(id: string) {
 
 function deactivateCss(css: CSS) {
   if (css.active) {
-    const { sheet, link } = css;
     css.active = false;
-    if (sheet) {
-      sheet.disabled = true;
-    } else if (link) {
-      const linkSheet = link.sheet;
-      if (linkSheet) linkSheet.disabled = true;
-    }
+    apply(css);
   }
 }
 
 function activateCss(css: CSS) {
   if (!css.active) {
     css.active = true;
-    if (css.sheet) {
-      css.sheet.disabled = false;
-    } else if (css.link) {
-      const linkSheet = css.link.sheet;
-      if (linkSheet) linkSheet.disabled = false;
-    }
+    apply(css);
   }
 }
 
@@ -69,7 +93,9 @@ const headObserver = new MutationObserver(list => {
         const id = registeredLinkTags.get(node as HTMLLinkElement);
         if (id) {
           const existingSheet = cssStore.get(id);
-          if (existingSheet) {
+          // Another link tag of the stylesheet can be in the document: a
+          // framework appends its own before it removes the one from SSR.
+          if (existingSheet && existingSheet.link === node) {
             deactivateCss(existingSheet);
           }
           registeredLinkTags.delete(node as HTMLLinkElement);
@@ -93,12 +119,10 @@ const headObserver = new MutationObserver(list => {
         if (id) {
           const existing = cssStore.get(id);
           if (existing) {
-            const disabled = target.disabled;
-            if (disabled) {
-              deactivateCss(existing);
-            } else {
-              activateCss(existing);
-            }
+            // Not only when `active` changes: a link tag that was switched
+            // off and on again has a new sheet.
+            existing.active = !target.disabled;
+            apply(existing);
           }
         }
       }
@@ -113,24 +137,16 @@ function maybeAddCssLink(link: HTMLLinkElement) {
     if (!/^[a-f0-9]{16}$/.test(id)) {
       return;
     }
-    const existing = cssStore.get(id);
-    if (existing) {
-      const { sheet } = existing;
-      if (sheet) {
-        // The HMR runtime has a managed sheet already.
-        sheet.disabled = false;
-        const linkSheet = link.sheet;
-        if (linkSheet) linkSheet.disabled = true;
-      }
-      existing.link = link;
+    let css = cssStore.get(id);
+    if (css) {
+      css.link = link;
+      css.active = !link.disabled;
     } else {
-      cssStore.set(id, {
-        sheet: null,
-        link,
-        active: true,
-      });
+      css = { sheet: null, link, active: !link.disabled, loading: false };
+      cssStore.set(id, css);
     }
     registeredLinkTags.set(link, id);
+    apply(css);
   }
 }
 
@@ -141,24 +157,30 @@ headObserver.observe(document.head, {
   attributes: true,
   attributeFilter: ["disabled"],
 });
-document.querySelectorAll<HTMLLinkElement>("head>link[rel=stylesheet]").forEach(maybeAddCssLink);
+// Not only in <head>: the dev server writes the link tags into <body> when
+// the HTML file has no `</head>`.
+document.querySelectorAll<HTMLLinkElement>("link[rel=stylesheet][href]").forEach(maybeAddCssLink);
 
+/**
+ * Takes every stylesheet of the page. Returns those that the page has no text
+ * for, or `undefined` when it has the text of each. A hot update carries the
+ * text only of the stylesheets that it bundled: `editCssContent` takes that,
+ * and `loadCssText` requests the rest.
+ */
 export function editCssArray(array: string[]) {
   const removedCssKeys = new Set(cssStore.keys());
+  let withoutText: string[] | undefined;
   for (const css of array) {
     if (IS_BUN_DEVELOPMENT) validateCssId(css);
-    const existing = cssStore.get(css);
+    let entry = cssStore.get(css);
     removedCssKeys.delete(css);
-    if (existing) {
-      activateCss(existing);
+    if (entry) {
+      activateCss(entry);
     } else {
-      // This will be populated shortly by a call to `editCssContent`
-      cssStore.set(css, {
-        sheet: null,
-        link: null,
-        active: true,
-      });
+      entry = { sheet: null, link: null, active: true, loading: false };
+      cssStore.set(css, entry);
     }
+    if (lacksText(entry)) (withoutText ??= []).push(css);
   }
   for (const css of removedCssKeys) {
     const entry = cssStore.get(css);
@@ -166,22 +188,62 @@ export function editCssArray(array: string[]) {
       deactivateCss(entry);
     }
   }
+  return withoutText;
 }
 
+/**
+ * Requests the text of each of `ids` that still has none, from the URL that a
+ * page load links. Calls `done` once, when every request has ended and the
+ * text is in place. Returns false, and never calls `done`, when it requests
+ * nothing.
+ */
+export function loadCssText(ids: string[], done: () => void) {
+  const requested: string[] = [];
+  const requests: Promise<string | null>[] = [];
+  for (const id of ids) {
+    const css = cssStore.get(id)!;
+    // The update itself can have had the text.
+    if (!lacksText(css)) continue;
+    css.loading = true;
+    requested.push(id);
+    requests.push(
+      // `no-store`: the URL stays the same when the stylesheet changes.
+      fetch("/_bun/asset/" + id + ".css", { cache: "no-store" })
+        .then(response => (response.ok ? response.text() : null))
+        // The page unloads, or the server is gone and the socket reports that.
+        .catch(() => null),
+    );
+  }
+  if (requests.length === 0) return false;
+  Promise.all(requests)
+    .then(texts => {
+      for (const id of requested) cssStore.get(id)!.loading = false;
+      // In the order of the list, which is the order of the link tags of a page load.
+      const replaced: unknown[] = [];
+      for (let i = 0; i < texts.length; i++) {
+        const id = requested[i];
+        const css = cssStore.get(id)!;
+        const text = texts[i];
+        // A later update or a link tag can have brought the text in the meantime.
+        if (text !== null && !css.sheet && !hasLinkInUse(css)) replaced.push(editCssContent(id, text));
+      }
+      return Promise.allSettled(replaced);
+    })
+    .finally(done);
+  return true;
+}
+
+/** Returns what `CSSStyleSheet.replace` returned: a promise that settles when the text is in place. */
 export function editCssContent(id: string, newContent: string) {
   let entry = cssStore.get(id);
   if (!entry) return;
   let sheet = entry.sheet;
-  if (!entry.sheet) {
+  if (!sheet) {
     sheet = entry.sheet = new CSSStyleSheet();
-    sheet.replace(newContent);
+    const replaced = sheet.replace(newContent);
     document.adoptedStyleSheets.push(sheet);
-
-    // Disable the link tag if it exists
-    const linkSheet = entry.link?.sheet;
-    if (linkSheet) linkSheet.disabled = true;
-    return false;
+    apply(entry);
+    return replaced;
   }
-  sheet!.replace(newContent);
-  return !sheet!.disabled;
+  return sheet.replace(newContent);
 }

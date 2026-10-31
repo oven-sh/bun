@@ -1394,6 +1394,7 @@ __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobal
         auto key = keyType == CryptoKeyType::Public
             ? EVPKeyPointer::NewRawPublic(nid, buf)
             : EVPKeyPointer::NewRawPrivate(nid, buf);
+        JSC::ensureStillAliveHere(dataBuf);
 
         if (!key) {
             ERR::CRYPTO_INVALID_JWK(scope, globalObject);

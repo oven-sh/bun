@@ -1788,6 +1788,50 @@ function getFunctionBase(ctx: Context, value, constructor: string | null, tag: s
   return base;
 }
 
+// Sets next[i] to the next index with the name of i, or to `slots`. Returns first: first[name] - 1 is its first index.
+function chainEqualNames(name: Int32Array, count: number, next: Int32Array, slots: number): Int32Array {
+  const first = new Int32ArrayCtor(count);
+  for (let i = slots - 1; i >= 0; i--) {
+    const named = name[i] | 0;
+    const later = first[named];
+    next[i] = later === 0 ? slots : later - 1;
+    first[named] = i + 1;
+  }
+  return first;
+}
+
+// Names the 2 * size lines from each index by the names of their halves, into `doubled`. Returns the number of names.
+function nameDoubledBlocks(
+  name: Int32Array,
+  next: Int32Array,
+  first: Int32Array,
+  count: number,
+  size: number,
+  doubled: Int32Array,
+  slots: number,
+): number {
+  // The indexes with one first half are named together: pairedWith[second] === head if that pair has a name.
+  const pairedWith = new Int32ArrayCtor(count);
+  const nameOfPair = new Int32ArrayCtor(count);
+  let pairs = 0;
+  for (let half = 0; half < count; half++) {
+    const head = first[half];
+    for (let i = head - 1; i < slots; i = next[i] | 0) {
+      if (i + size * 2 > slots) {
+        doubled[i] = pairs++;
+        continue;
+      }
+      const second = name[i + size] | 0;
+      if (pairedWith[second] !== head) {
+        pairedWith[second] = head;
+        nameOfPair[second] = pairs++;
+      }
+      doubled[i] = nameOfPair[second];
+    }
+  }
+  return pairs;
+}
+
 // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/inspect.js#L1627-L1734
 function getDuplicateErrorFrameRanges(frames: string[]): number[] {
   // Same ranges as Node's text, which is quadratic. That text is duplicate-frames-fixture.cjs: the tests run both.
@@ -1855,7 +1899,6 @@ function getDuplicateErrorFrameRanges(frames: string[]): number[] {
 
   // limit[i] is the longest block Node tries at i: up to the copy where the gcd of the distances is 1 (L1660-L1683).
   const limit = new Int32ArrayCtor(length);
-  let maxLimit = 0;
   // Pairs [gcd, index] of one copy: the distances from it to its copies up to `index` have that gcd.
   const gcds: number[] = [];
   for (let id = 0; id < distinct; id++) {
@@ -1885,82 +1928,65 @@ function getDuplicateErrorFrameRanges(frames: string[]): number[] {
       $putByValDirect(gcds, kept++, reached);
       used = kept;
       if (last - i >= minimumDuplicateRange) {
-        const distance = (gcd === 1 ? reached : last) - i;
-        limit[i] = distance;
-        if (distance > maxLimit) {
-          maxLimit = distance;
-        }
+        limit[i] = (gcd === 1 ? reached : last) - i;
       }
     }
   }
 
   // names[k][i] names the 2 ** k lines from i: two indexes have the same name if and only if those lines are equal.
   const names: Int32Array[] = [ids];
-  // nexts[k][i] is the next index with the name of i, or `slots`.
-  const nexts: Int32Array[] = [];
+  // nexts[k][i] is the next index with the name of i, or `slots`. A level is built when an index first needs it.
+  const nexts: Int32Array[] = [new Int32ArrayCtor(slots)];
   let count = idPastEnd === distinct ? distinct + 1 : distinct;
-  for (let k = 0, size = 1; ; k++, size *= 2) {
-    const name = names[k];
-    const next = new Int32ArrayCtor(slots);
-    // firstOfName[name] - 1 is the first index with that name.
-    const firstOfName = new Int32ArrayCtor(count);
-    for (let i = slots - 1; i >= 0; i--) {
-      const named = name[i] | 0;
-      const later = firstOfName[named];
-      next[i] = later === 0 ? slots : later - 1;
-      firstOfName[named] = i + 1;
-    }
-    $putByValDirect(nexts, k, next);
-    // No longer block occurs twice within a distance that Node tries.
-    if (size * 2 > maxLimit || count === slots) {
-      break;
-    }
-    // Names 2 * size lines by the names of their halves: pairedWith[second] === head if this first half has that pair.
-    const doubled = new Int32ArrayCtor(slots);
-    const pairedWith = new Int32ArrayCtor(count);
-    const nameOfPair = new Int32ArrayCtor(count);
-    let pairs = 0;
-    for (let first = 0; first < count; first++) {
-      const head = firstOfName[first];
-      for (let i = head - 1; i < slots; i = next[i] | 0) {
-        if (i + size * 2 > slots) {
-          doubled[i] = pairs++;
-          continue;
-        }
-        const second = name[i + size] | 0;
-        if (pairedWith[second] !== head) {
-          pairedWith[second] = head;
-          nameOfPair[second] = pairs++;
-        }
-        doubled[i] = nameOfPair[second];
-      }
-    }
-    $putByValDirect(names, k + 1, doubled);
-    count = pairs;
-  }
-  const top = names.length - 1;
+  let first = chainEqualNames(ids, count, nexts[0], slots);
 
   for (let i = 0; i < length - minimumDuplicateRange; i++) {
-    const farthest = limit[i];
+    // A block repeats only if two of it fit in what is left, with the one line past the end.
+    const farthest = $min(limit[i], (slots - i) >> 1);
     let bestRange = 0;
     let bestHidden = 0;
+    // A repeating block at i matches this many lines. A longer length up to it hides less: a multiple, or no repeat.
+    let reach = 0;
     // A block of size <= range < 2 * size lines repeats at i only if its first `size` lines occur again at i + range.
-    for (let k = 0, size = 1; k <= top && size <= farthest; k++, size *= 2) {
+    for (let k = 0, size = 1; size <= farthest && reach < farthest; k++, size *= 2) {
+      if (size * 2 - 1 <= reach) {
+        continue;
+      }
+      // Where every name is different, no block of that size or more occurs twice.
+      while (nexts.length <= k && count !== slots) {
+        const top = nexts.length - 1;
+        const doubled = new Int32ArrayCtor(slots);
+        const chain = new Int32ArrayCtor(slots);
+        count = nameDoubledBlocks(names[top], nexts[top], first, count, 1 << top, doubled, slots);
+        first = chainEqualNames(doubled, count, chain, slots);
+        $putByValDirect(names, top + 1, doubled);
+        $putByValDirect(nexts, top + 1, chain);
+      }
+      if (nexts.length <= k) {
+        break;
+      }
+      const name = names[k];
       const next = nexts[k];
       const windowEnd = i + $min(farthest, size * 2 - 1);
       for (let j = next[i] | 0; j <= windowEnd; j = next[j] | 0) {
         const range = j - i;
-        if (range < size) {
+        if (range < size || range <= reach) {
           continue;
         }
         let equal = size;
-        for (let q = top; q >= 0; q--) {
-          const name = names[q];
+        while (j + equal + size <= slots && name[i + equal] === name[j + equal]) {
+          equal += size;
+        }
+        for (let q = k - 1; q >= 0; q--) {
           const step = 1 << q;
-          while (j + equal + step <= slots && name[i + equal] === name[j + equal]) {
+          if (j + equal + step <= slots && names[q][i + equal] === names[q][j + equal]) {
             equal += step;
           }
         }
+        if (equal < range) {
+          continue;
+        }
+        reach = equal;
         const hidden = equal - (equal % range);
         // No two lengths tie for the most hidden lines: Node tries their gcd too, and it hides more (L1709-L1724).
         if (hidden > bestHidden) {

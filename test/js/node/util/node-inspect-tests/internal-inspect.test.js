@@ -432,8 +432,8 @@ test("util.inspect hides the repeated frames of a stack that the program did not
 });
 
 // The functions of Node.js compare the lines once for every later copy of a line: on each of these stacks their time
-// grows with the square of the number of lines. No clock is read here. What util.inspect does for each line is counted
-// in test/aot/parallel/library-modules/util-inspect-of-a-long-stack-that-repeats.js.
+// grows with the square of the number of lines. No clock is read here. What util.inspect does for each line, and the
+// tables that it builds, are counted in test/aot/parallel/library-modules/util-inspect-of-a-long-stack-that-*.js.
 test("util.inspect hides the repeated frames of a stack of very many lines", () => {
   const lines = isDebug || isASAN ? 10_000 : 100_000;
   const stackOf = line => Array.from({ length: lines }, (_, i) => at(line(i)));
@@ -501,7 +501,7 @@ test.skipIf(!hidesFramesOfCause)(
   },
 );
 
-test("util.inspect hides repeated frames where the program has replaced methods of Array, Map and Set, Int32Array and Math.min", () => {
+test("util.inspect hides repeated frames where the program has replaced built-in functions and the length of typed arrays", () => {
   const error = errorWithFrames(framesOf("a b a b a b a b a b a b main"));
   const expected =
     "Error: m\n" +
@@ -525,6 +525,7 @@ test("util.inspect hides repeated frames where the program has replaced methods 
     [globalThis, "Int32Array"],
     [Math, "min"],
   ].map(([object, key]) => [object, key, object[key]]);
+  const typedArrayPrototype = Int32Array.prototype;
   let text;
   try {
     // No loop over an iterator here: the iterator of arrays is replaced too.
@@ -534,8 +535,16 @@ test("util.inspect hides repeated frames where the program has replaced methods 
         throw new Error(`util.inspect called the replaced ${String(key)}`);
       };
     }
+    // In front of the getter that every typed array inherits.
+    Object.defineProperty(typedArrayPrototype, "length", {
+      configurable: true,
+      get() {
+        throw new Error("util.inspect read the length of a typed array");
+      },
+    });
     text = util.inspect(error);
   } finally {
+    delete typedArrayPrototype.length;
     for (let i = 0; i < replaced.length; i++) replaced[i][0][replaced[i][1]] = replaced[i][2];
   }
   expect(text).toBe(expected);

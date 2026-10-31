@@ -800,6 +800,329 @@ describe("mock()", () => {
     await new Promise(resolve => setTimeout(resolve, 10));
     expect(fn()).toBe("1");
   });
+  test("withImplementation (async callback rejects)", async () => {
+    const fn = jest.fn(() => "1");
+    const error = new Error("from callback");
+    let callbackPromise;
+    const result = fn.withImplementation(
+      () => "2",
+      () =>
+        (callbackPromise = (async () => {
+          expect(fn()).toBe("2");
+          await undefined;
+          throw error;
+        })()),
+    );
+    // The caller gets a promise of its own: the restore reaction already handles the callback's promise.
+    expect(result).not.toBe(callbackPromise);
+    expect(await expectRejects(result)).toBe(error);
+    if (isBun) {
+      // Jest and Vitest keep the temporary implementation after a rejection.
+      expect(fn()).toBe("1");
+    }
+  });
+  test("withImplementation (async) throws what the constructor getter of the promise throws", () => {
+    const fn = jest.fn(() => "1");
+    const promise = Promise.resolve();
+    Object.defineProperty(promise, "constructor", {
+      get() {
+        throw new Error("constructor getter");
+      },
+    });
+    // The promise is taken as await takes it, and await reads its constructor.
+    expect(() =>
+      fn.withImplementation(
+        () => "2",
+        () => promise,
+      ),
+    ).toThrow("constructor getter");
+    if (isBun) {
+      // Jest and Vitest keep the temporary implementation.
+      expect(fn()).toBe("1");
+    }
+  });
+  if (isBun) {
+    // Jest fulfills with undefined, Vitest with the mock.
+    test("withImplementation (async) fulfills with the value of the callback", async () => {
+      const fn = jest.fn(() => "1");
+      expect(
+        await fn.withImplementation(
+          () => "2",
+          async () => fn() + "3",
+        ),
+      ).toBe("23");
+      expect(fn()).toBe("1");
+    });
+
+    // The result takes the value as the promise of a then() reaction does: a then() of the value is called.
+    test("withImplementation (async) resolves with a value that became a thenable after the promise settled", async () => {
+      const fn = jest.fn(() => "1");
+      const value = {};
+      const promise = Promise.resolve(value);
+      value.then = resolve => resolve("from then()");
+      expect(
+        await fn.withImplementation(
+          () => "2",
+          () => promise,
+        ),
+      ).toBe("from then()");
+      expect(fn()).toBe("1");
+    });
+
+    // Open (#23760): the JSC async stack walker stops at the result promise of a reaction. Fails until it goes on.
+    test.failing("withImplementation (async) keeps the async callers in the stack of a failing callback", async () => {
+      const fn = jest.fn(() => "1");
+      async function caller() {
+        await fn.withImplementation(
+          () => "2",
+          async () => {
+            await undefined;
+            throw new Error("from callback");
+          },
+        );
+      }
+      const error = await expectRejects(caller());
+      expect(error.stack).toContain("at async caller");
+    });
+
+    describe("withImplementation (async) with a Promise subclass", () => {
+      // The work starts in then(), as with Bun.$ and Bun.sql.
+      class Lazy extends Promise {
+        static get [Symbol.species]() {
+          return Promise;
+        }
+        then(onFulfilled, onRejected) {
+          this.start?.();
+          return super.then(onFulfilled, onRejected);
+        }
+      }
+      function lazy(start) {
+        let settle;
+        const promise = new Lazy((resolve, reject) => (settle = { resolve, reject }));
+        promise.start = () => start(settle);
+        return promise;
+      }
+
+      test("awaited: the result fulfills", async () => {
+        const fn = jest.fn(() => "1");
+        expect(
+          await fn.withImplementation(
+            () => "2",
+            () => lazy(({ resolve }) => resolve(fn())),
+          ),
+        ).toBe("2");
+        expect(fn()).toBe("1");
+      });
+
+      test("awaited: the result rejects", async () => {
+        const fn = jest.fn(() => "1");
+        const error = new Error("from then()");
+        const result = fn.withImplementation(
+          () => "2",
+          () => lazy(({ reject }) => reject(error)),
+        );
+        expect(await expectRejects(result)).toBe(error);
+        expect(fn()).toBe("1");
+      });
+
+      test("not awaited: the work starts and the implementation is restored", async () => {
+        const fn = jest.fn(() => "1");
+        let started = false;
+        fn.withImplementation(
+          () => "2",
+          () => lazy(({ resolve }) => resolve((started = true))),
+        );
+        await new Promise(resolve => setImmediate(resolve));
+        expect(started).toBe(true);
+        expect(fn()).toBe("1");
+      });
+
+      // As await does, the subclass is adopted in a promise job, after what the caller adds in the same tick.
+      test("a reaction on the callback's own promise runs before the restore", async () => {
+        const fn = jest.fn(() => "1");
+        const seen = [];
+        let own;
+        const result = fn.withImplementation(
+          () => "2",
+          () => (own = Lazy.resolve()),
+        );
+        own.then(() => seen.push(fn()));
+        await result;
+        expect(seen).toEqual(["2"]);
+        expect(fn()).toBe("1");
+      });
+    });
+
+    describe.concurrent("withImplementation (async) when nothing waits for the result", () => {
+      test("a failed expect() in the callback fails the test", async () => {
+        const { bunEnv, bunExe, tempDir } = require("harness");
+        using dir = tempDir("mock-with-implementation", {
+          "unawaited.test.js": `
+            import { expect, mock, spyOn, test } from "bun:test";
+
+            const failsAtOnce = fn => async () => {
+              expect(fn()).toBe("never");
+            };
+            const failsLater = fn => async () => {
+              await undefined;
+              expect(fn()).toBe("never");
+            };
+            const nextTurn = () => new Promise(resolve => setImmediate(resolve));
+
+            test("awaited and caught", async () => {
+              const fn = mock(() => "real");
+              await fn.withImplementation(() => "temporary", failsLater(fn)).catch(() => {});
+            });
+            test("mock, fails at once", () => {
+              const fn = mock(() => "real");
+              fn.withImplementation(() => "temporary", failsAtOnce(fn));
+            });
+            test("mock, fails later", async () => {
+              const fn = mock(() => "real");
+              fn.withImplementation(() => "temporary", failsLater(fn));
+              await nextTurn();
+            });
+            test("spyOn, fails at once", () => {
+              const fn = spyOn({ method: () => "real" }, "method");
+              fn.withImplementation(() => "temporary", failsAtOnce(fn));
+            });
+            test("spyOn, fails later", async () => {
+              const fn = spyOn({ method: () => "real" }, "method");
+              fn.withImplementation(() => "temporary", failsLater(fn));
+              await nextTurn();
+            });
+          `,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", "./unawaited.test.js"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        const failed = Array.from(stderr.matchAll(/^\(fail\) (.+?)(?: \[[^\]]*\])?$/gm), match => match[1]);
+        expect(failed).toEqual([
+          "mock, fails at once",
+          "mock, fails later",
+          "spyOn, fails at once",
+          "spyOn, fails later",
+        ]);
+        expect(stderr).toContain('Received: "temporary"');
+        expect(stderr).toContain(" 1 pass");
+        expect(stderr).toContain(" 4 fail");
+        expect(exitCode).toBe(1);
+      });
+
+      test("a rejection of the callback is reported once", async () => {
+        const { bunEnv, bunExe } = require("harness");
+        const src = `
+          const { mock, spyOn } = require("bun:test");
+          const reported = [];
+          process.on("unhandledRejection", reason => reported.push(reason.message));
+          const rejectsAtOnce = async () => {
+            throw new Error("at once");
+          };
+          const rejectsLater = async () => {
+            await undefined;
+            throw new Error("later");
+          };
+          class Lazy extends Promise {
+            static get [Symbol.species]() {
+              return Promise;
+            }
+            then(onFulfilled, onRejected) {
+              this.start?.();
+              return super.then(onFulfilled, onRejected);
+            }
+          }
+          const rejectsInThen = () => {
+            let reject;
+            const promise = new Lazy((_, r) => (reject = r));
+            promise.start = () => reject(new Error("in then()"));
+            return promise;
+          };
+          const result = {};
+          async function row(name, start) {
+            reported.length = 0;
+            await start();
+            await new Promise(resolve => setImmediate(resolve));
+            result[name] = reported.join();
+          }
+          const creators = { mock: () => mock(() => 1), spyOn: () => spyOn({ method: () => 1 }, "method") };
+          for (const [creator, create] of Object.entries(creators)) {
+            await row(creator + ", rejected at once", () => {
+              create().withImplementation(() => 2, rejectsAtOnce);
+            });
+            await row(creator + ", rejected later", () => {
+              create().withImplementation(() => 2, rejectsLater);
+            });
+            await row(creator + ", a Promise subclass, rejected at once", () => {
+              create().withImplementation(() => 2, () => Lazy.reject(new Error("subclass")));
+            });
+            await row(creator + ", a Promise subclass, rejected in then()", () => {
+              create().withImplementation(() => 2, rejectsInThen);
+            });
+            await row(creator + ", fulfilled", () => {
+              create().withImplementation(() => 2, async () => {});
+            });
+            await row(creator + ", awaited and caught", () =>
+              create().withImplementation(() => 2, rejectsLater).catch(() => {}),
+            );
+            await row(creator + ", only the callback's own promise caught", () => {
+              let own;
+              create().withImplementation(() => 2, () => (own = rejectsLater()));
+              return own.catch(() => {});
+            });
+          }
+
+          // Last, because the replacement stays. As with await, then() of a plain promise is not called.
+          let thenCalls = 0;
+          const seen = [];
+          await row("mock, rejected later, Promise.prototype.then replaced", () => {
+            const then = Promise.prototype.then;
+            Promise.prototype.then = function (onFulfilled, onRejected) {
+              thenCalls++;
+              return then.call(this, onFulfilled, onRejected);
+            };
+            const fn = mock(() => "real");
+            let own;
+            fn.withImplementation(() => "temporary", () => (own = rejectsLater()));
+            then.call(own, undefined, () => seen.push(fn()));
+          });
+          console.log(JSON.stringify({ ...result, thenCalls, seen }));
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", src],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual({
+          "mock, rejected at once": "at once",
+          "mock, rejected later": "later",
+          "mock, a Promise subclass, rejected at once": "subclass",
+          "mock, a Promise subclass, rejected in then()": "in then()",
+          "mock, fulfilled": "",
+          "mock, awaited and caught": "",
+          "mock, only the callback's own promise caught": "later",
+          "spyOn, rejected at once": "at once",
+          "spyOn, rejected later": "later",
+          "spyOn, a Promise subclass, rejected at once": "subclass",
+          "spyOn, a Promise subclass, rejected in then()": "in then()",
+          "spyOn, fulfilled": "",
+          "spyOn, awaited and caught": "",
+          "spyOn, only the callback's own promise caught": "later",
+          "mock, rejected later, Promise.prototype.then replaced": "later",
+          thenCalls: 0,
+          seen: ["real"],
+        });
+        expect(exitCode).toBe(0);
+      });
+    });
+  }
   test("lastCall works", () => {
     const fn = jest.fn(v => -v);
     expect(fn.mock.lastCall).toBeUndefined();

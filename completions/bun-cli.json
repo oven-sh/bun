@@ -3885,7 +3885,7 @@
       "examples": [
         "bun patch jquery",
         "bun patch --commit 'node_modules/jquery'",
-        "bun patch --patches-dir 'my-patches' 'node_modules/jquery'"
+        "bun patch --commit --patches-dir 'my-patches' 'node_modules/jquery'"
       ],
       "usage": "Usage: bun patch [flags or options] <package>@<version>",
       "documentationUrl": "https://bun.com/docs/install/patch.",

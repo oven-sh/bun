@@ -1235,6 +1235,33 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  describe("Bun.Transpiler and Bun.build options", () => {
+    typeTest("accept a value that is not set with exactOptionalPropertyTypes", {
+      options: { exactOptionalPropertyTypes: true },
+      files: {
+        "transpiler-options.ts": `
+          declare const flags: {
+            minify?: boolean;
+            whitespace?: boolean;
+            syntax?: boolean;
+            identifiers?: boolean;
+            macro?: boolean;
+            macros?: boolean;
+          };
+          new Bun.Transpiler({ minify: flags.minify, macro: flags.macro });
+          new Bun.Transpiler({
+            minify: { whitespace: flags.whitespace, syntax: flags.syntax, identifiers: flags.identifiers },
+          });
+          Bun.build({ entrypoints: ["./index.ts"], macros: flags.macros });
+        `,
+      },
+      emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
+      diagnostics: diagnostics => {
+        expect(diagnostics.filter(d => d.line?.startsWith("transpiler-options.ts"))).toEqual([]);
+      },
+    });
+  });
+
   describe("Bunland reaching for JSX", () => {
     typeTest("Bun.markdown.react() returns type compatible with React.ReactElement", {
       packages: ["@types/react", "@types/react-dom"],

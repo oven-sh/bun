@@ -236,6 +236,51 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  // `Bun.s3` is made on first read, by the global that reads it. A client of a
+  // finished file's global is inert: what its methods return never settles.
+  test("with --isolate, each file gets a Bun.s3 of its own global", async () => {
+    const s3Fixtures = {
+      "a-s3.test.ts": `
+        import { test, expect } from "bun:test";
+        test("mark this file's Bun.s3", () => {
+          (Bun.s3 as any).markedBy = "a-s3";
+          // The next read in this global is the same client.
+          expect({ markedBy: (Bun.s3 as any).markedBy, ownClient: Bun.s3 instanceof Bun.S3Client }).toEqual({
+            markedBy: "a-s3",
+            ownClient: true,
+          });
+        });
+      `,
+      "b-s3.test.ts": `
+        import { test, expect } from "bun:test";
+        test("Bun.s3 is a client of this file's global", () => {
+          expect({ markedBy: (Bun.s3 as any).markedBy, ownClient: Bun.s3 instanceof Bun.S3Client }).toEqual({
+            markedBy: undefined,
+            ownClient: true,
+          });
+        });
+      `,
+    };
+    const files = ["./a-s3.test.ts", "./b-s3.test.ts"];
+
+    using isolated = tempDir("isolate-s3", s3Fixtures);
+    const serial = await runTests(String(isolated), ["--isolate"], files);
+    expect(normalizeBunSnapshot(serial.stderr, isolated)).toContain("2 pass");
+    expect(serial.exitCode).toBe(0);
+
+    using parallel = tempDir("isolate-s3-parallel", s3Fixtures);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", ...files],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "60000" },
+      cwd: String(parallel),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr, parallel)).toContain("2 pass");
+    expect(exitCode).toBe(0);
+  });
+
   test("with --isolate, --preload re-runs in each file's fresh global", async () => {
     using dir = tempDir("isolate-preload", {
       "preload.ts": `

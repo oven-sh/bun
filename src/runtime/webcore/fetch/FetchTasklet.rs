@@ -209,6 +209,14 @@ pub(crate) enum HTTPRequestBody {
     ReadableStream(ReadableStreamStrong),
 }
 
+/// What the caller gave as the body. A stream whose bytes have all arrived is sent as `AnyBlob`.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum BodyArgument {
+    #[default]
+    Bytes,
+    Stream,
+}
+
 impl Default for HTTPRequestBody {
     fn default() -> Self {
         // `Blob` has no `const EMPTY`
@@ -248,7 +256,10 @@ impl HTTPRequestBody {
         }
     }
 
-    pub(crate) fn from_js(cx: &bun_jsc::JsThread<'_>, value: JSValue) -> JsResult<HTTPRequestBody> {
+    pub(crate) fn from_js(
+        cx: &bun_jsc::JsThread<'_>,
+        value: JSValue,
+    ) -> JsResult<(HTTPRequestBody, BodyArgument)> {
         let mut body_value = BodyValue::from_js(cx.global(), value)?;
         if matches!(body_value, BodyValue::Used)
             || (matches!(&body_value, BodyValue::Locked(l) if !l.action.is_none() || l.is_disturbed2(cx.global())))
@@ -261,6 +272,11 @@ impl HTTPRequestBody {
                 )
                 .throw());
         }
+        let argument = if matches!(body_value, BodyValue::Locked(_)) {
+            BodyArgument::Stream
+        } else {
+            BodyArgument::Bytes
+        };
         body_value.to_blob_if_in_memory();
         if let BodyValue::Locked(locked) = &mut body_value {
             if locked.readable.has() {
@@ -268,9 +284,10 @@ impl HTTPRequestBody {
                 // `l.readable` out by value (E0509). `mem::take` leaves a default
                 // readable; `Value::drop` on the residual `Locked` then runs
                 // `readable.deinit()` on that default — a no-op.
-                return Ok(HTTPRequestBody::ReadableStream(core::mem::take(
-                    &mut locked.readable,
-                )));
+                return Ok((
+                    HTTPRequestBody::ReadableStream(core::mem::take(&mut locked.readable)),
+                    argument,
+                ));
             }
         }
         if matches!(&body_value, BodyValue::Locked(_)) {
@@ -279,14 +296,18 @@ impl HTTPRequestBody {
                 if let BodyValue::Locked(l) = &mut body_value {
                     if l.readable.has() {
                         // See note above re: E0509 and `Value::drop`.
-                        return Ok(HTTPRequestBody::ReadableStream(core::mem::take(
-                            &mut l.readable,
-                        )));
+                        return Ok((
+                            HTTPRequestBody::ReadableStream(core::mem::take(&mut l.readable)),
+                            argument,
+                        ));
                     }
                 }
             }
         }
-        Ok(HTTPRequestBody::AnyBlob(body_value.use_as_any_blob()))
+        Ok((
+            HTTPRequestBody::AnyBlob(body_value.use_as_any_blob()),
+            argument,
+        ))
     }
 
     pub(crate) fn needs_to_read_file(&self) -> bool {

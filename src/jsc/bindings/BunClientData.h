@@ -238,11 +238,7 @@ public:
 
     ExtendedDOMClientIsoSubspaces& clientSubspaces() { return *m_clientSubspaces.get(); }
 
-    // Constructed eagerly so the concurrent GC marker
-    // (Zig::GlobalObject::visitChildrenImpl) never races the mutator on a
-    // lazy std::optional::emplace(). The ctor only calls
-    // LazyProperty::initLater ~90 times (stores a tagged function pointer),
-    // so there is no startup cost worth deferring.
+    // Constructed eagerly: the constructor only stores about 100 tagged function pointers. The "Bcs" marking constraint marks its cells.
     WebCore::HTTPHeaderIdentifiers& httpHeaderIdentifiers() { return m_httpHeaderIdentifiers; }
 
     // Public so Bun::commonStrings(vm) below is a static_cast and a member load.

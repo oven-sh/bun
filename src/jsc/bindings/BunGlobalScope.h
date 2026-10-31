@@ -20,6 +20,7 @@ protected:
     // `--expose-gc` is the process's, as in Node.js: every global object has `gc`.
     void addGCFunctionIfExposed(JSC::VM& vm)
     {
+        // Relaxed: `arguments::parse` stores it before any thread that makes a global object starts, and it guards no other memory.
         if (Bun__Node__ExposeGC.load(std::memory_order_relaxed)) [[unlikely]]
             addGCFunction(vm);
     }

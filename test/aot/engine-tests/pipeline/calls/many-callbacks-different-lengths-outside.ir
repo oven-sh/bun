@@ -1244,7 +1244,7 @@ function f122 module=m0 role=Signature thisType={type=anything} results=[{type=a
 function f123 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f124 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f125 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f126 name="reduce" module=m1 position=1398 kind=Method role=Library flags=[HasThis, HasArgumentCount, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=82 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f126 name="reduce" module=m1 position=1398 kind=Method role=Library flags=[HasThis, HasArgumentCount, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=81 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: int[0, 4294967295], v2: anything, v3: anything):
     Jump -> next b1()
   b1():
@@ -1379,7 +1379,7 @@ function f126 name="reduce" module=m1 position=1398 kind=Method role=Library fla
     v94 = ThrowNewError errorKind=TypeError message="Array.prototype.reduce callback must be a function"
     Unreachable
 }
-function f127 name="every" module=m1 position=3388 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=31 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean site=w0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f127 name="every" module=m1 position=3388 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=30 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean site=w0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     Jump -> next b1()
   b1():
@@ -1450,7 +1450,7 @@ function f127 name="every" module=m1 position=3388 kind=Method role=Library flag
     v43 = ThrowNewError errorKind=TypeError message="Array.prototype.every callback must be a function"
     Unreachable
 }
-function f128 name="filter" module=m1 position=4475 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=33 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f128 name="filter" module=m1 position=4475 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=32 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     Jump -> next b1()
   b1():
@@ -1527,7 +1527,7 @@ function f128 name="filter" module=m1 position=4475 kind=Method role=Library fla
     v54 = ThrowNewError errorKind=TypeError message="Array.prototype.filter callback must be a function"
     Unreachable
 }
-function f129 name="map" module=m1 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f129 name="map" module=m1 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     Jump -> next b1()
   b1():
@@ -1590,7 +1590,7 @@ function f129 name="map" module=m1 position=5210 kind=Method role=Library flags=
     v43 = ThrowNewError errorKind=TypeError message="Array.prototype.map callback must be a function"
     Unreachable
 }
-function f130 name="some" module=m1 position=5857 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=89 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f130 name="some" module=m1 position=5857 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=88 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     Jump -> next b1()
   b1():
@@ -1661,7 +1661,7 @@ function f130 name="some" module=m1 position=5857 kind=Method role=Library flags
     v43 = ThrowNewError errorKind=TypeError message="Array.prototype.some callback must be a function"
     Unreachable
 }
-function f131 name="find" module=m1 position=6413 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=35 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f131 name="find" module=m1 position=6413 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=34 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     Jump -> next b1()
   b1():
@@ -1718,7 +1718,7 @@ function f131 name="find" module=m1 position=6413 kind=Method role=Library flags
     v35 = ThrowNewError errorKind=TypeError message="Array.prototype.find callback must be a function"
     Unreachable
 }
-function f132 name="flatIntoArray" module=m1 position=8579 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=5 enclosingRuntimeFunction=40 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f132 name="flatIntoArray" module=m1 position=8579 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=5 enclosingRuntimeFunction=39 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything):
     Jump -> next b1()
   b1():
@@ -1809,7 +1809,7 @@ function f132 name="flatIntoArray" module=m1 position=8579 kind=Method role=Libr
     v65 = Convert v8 declared={type=undefined|null|number|string|symbol flags=[IsExpected]}
     Return v65
 }
-function f133 name="flatIntoArrayWithCallback" module=m1 position=9316 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=41 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f133 name="flatIntoArrayWithCallback" module=m1 position=9316 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=40 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
     Jump -> next b1()
   b1():
@@ -1891,7 +1891,7 @@ function f133 name="flatIntoArrayWithCallback" module=m1 position=9316 kind=Meth
   b20():
     Return v0
 }
-function f134 name="flatMap" module=m1 position=10078 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=42 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f134 name="flatMap" module=m1 position=10078 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=41 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     Jump -> next b1()
   b1():
@@ -2960,15 +2960,15 @@ function f141 name="traverseArray" module=m2 position=2337 kind=Method role=Libr
   b252(v555):
     Return v555
 }
-runtimefunction id=31 function=f127
-runtimefunction id=33 function=f128
-runtimefunction id=35 function=f131
-runtimefunction id=40 function=f132 visibility=Private
-runtimefunction id=41 function=f133 visibility=Private
-runtimefunction id=42 function=f134
-runtimefunction id=65 function=f129
-runtimefunction id=82 function=f126
-runtimefunction id=89 function=f130
+runtimefunction id=30 function=f127
+runtimefunction id=32 function=f128
+runtimefunction id=34 function=f131
+runtimefunction id=39 function=f132 visibility=Private
+runtimefunction id=40 function=f133 visibility=Private
+runtimefunction id=41 function=f134
+runtimefunction id=64 function=f129
+runtimefunction id=81 function=f126
+runtimefunction id=88 function=f130
 runtimefunction id=131091 function=f141 visibility=Private
 # -- generated: f0 flattened f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f21 f22 f23 f24 f25 f26 f27 f28 f29 f30 f31 f32 f33 f34 f35 f36 f37 f38 f39 f40 f41 f42 f43 f44 f45 f46 f47 f48 f49 f50 f51 f52 f53 f54 f55 f56 f57 f58
 # CHECK-LABEL: function f0 module=

@@ -1,5 +1,25 @@
 import { describe, expect } from "bun:test";
-import { itBundled } from "./expectBundled";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { BundlerTestBundleAPI, itBundled } from "./expectBundled";
+
+// api.readFile() normalizes CRLF to LF, so read the raw bytes instead.
+function readRawOutput(api: BundlerTestBundleAPI, name: string): string {
+  return readFileSync(path.join(api.outdir, name), "utf8");
+}
+
+// Asserts that the first generated line with a mapping in `name`.map is the
+// line of `name` that `console.log(` is on. Line breaks are counted the way a
+// JS parser (and a source map consumer) counts them: a CRLF is one line break.
+function expectFirstMappingOnConsoleLogLine(api: BundlerTestBundleAPI, name: string) {
+  const outputLines = readRawOutput(api, name).split(/\r\n|\r|\n/);
+  const consoleLogLine = outputLines.findIndex(line => line.startsWith("console.log("));
+  expect(consoleLogLine).toBeGreaterThan(0);
+
+  const { mappings } = JSON.parse(api.readFile(`/out/${name}.map`));
+  const firstMappedLine = mappings.split(";").findIndex((line: string) => line.length > 0);
+  expect(firstMappedLine).toBe(consoleLogLine);
+}
 
 describe("bundler", () => {
   itBundled("banner/CommentBanner", {
@@ -232,4 +252,31 @@ console.log("bun!");`,
       stdout: "bun!\n",
     },
   });
+
+  // `--banner "$(cat banner.txt)"` with a CRLF banner.txt gives a banner whose
+  // lines end in "\r\n" and whose last line ends in a bare "\r" (the shell strips
+  // the final "\n"). The "\n" the bundler appends completes that "\r\n", which is
+  // one line break in the output, and the source map has to be placed accordingly.
+  // The hashbang line itself is emitted without the "\r", like a source hashbang.
+  for (const [name, banner, expectedOutputPrefix] of [
+    ["LFBanner", "#!/usr/bin/env bun\n// banner", "#!/usr/bin/env bun\n// banner\n"],
+    ["HashbangEndingInCR", "#!/usr/bin/env bun\r", "#!/usr/bin/env bun\n"],
+    ["CRLFHashbangBanner", "#!/usr/bin/env bun\r\n// banner\r\n", "#!/usr/bin/env bun\n// banner\r\n"],
+    ["CRLFHashbangBannerEndingInCR", "#!/usr/bin/env bun\r\n// banner\r", "#!/usr/bin/env bun\n// banner\r\n"],
+    ["CRLFBannerEndingInCR", "// line one\r\n// line two\r", "// line one\r\n// line two\r\n"],
+  ] as const) {
+    itBundled(`banner/SourceMapWith${name}`, {
+      banner,
+      backend: "api",
+      outdir: "/out",
+      sourceMap: "external",
+      files: {
+        "/a.js": `console.log("Hello, world!");`,
+      },
+      onAfterBundle(api) {
+        expectFirstMappingOnConsoleLogLine(api, "a.js");
+        expect(readRawOutput(api, "a.js")).toStartWith(expectedOutputPrefix);
+      },
+    });
+  }
 });

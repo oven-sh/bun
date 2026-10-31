@@ -1538,6 +1538,10 @@ impl<'a> Resolver<'a> {
 
             break 'brk match source_dir_resolver.resolve_cwd(source_dir) {
                 Ok(dir) => dir,
+                // Without an importer directory tsconfig `paths` has no answer, and `packages = external` decides by the spelling.
+                Err(_) if self.is_external_package(import_path, kind) => {
+                    return self.implicitly_external(import_path, kind, original_order);
+                }
                 // On Windows, adding the drive to a rooted directory can overflow a path buffer.
                 Err(::bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => {
                     let _ = self.flush_debug_logs(FlushMode::Fail);

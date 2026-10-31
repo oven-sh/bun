@@ -2345,10 +2345,16 @@ impl VirtualMachine {
 
         ExitHandler::dispatch_on_exit(self);
 
-        // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.
+        // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here, and the
+        // passes a flush posts (sinks, the HTTP/2 drain, sinks its retirements wrote to; one
+        // more as slack), since no loop turn follows.
+        const EXIT_FLUSH_PASSES: u32 = 4;
         if !self.is_inside_deferred_task_queue.get() {
             self.is_inside_deferred_task_queue.set(true);
-            self.event_loop_mut().deferred_tasks.run();
+            let mut passes = 0;
+            while passes < EXIT_FLUSH_PASSES && self.event_loop_mut().deferred_tasks.run() {
+                passes += 1;
+            }
             self.is_inside_deferred_task_queue.set(false);
         }
 

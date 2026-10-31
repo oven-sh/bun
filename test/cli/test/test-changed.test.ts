@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir, tmpdirSync } from "harness";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 // Each case spawns a full `bun test` process; give the concurrent group
@@ -391,6 +391,44 @@ describe.concurrent("bun test --changed", () => {
     const { stderr, exitCode } = await runTestChanged(String(dir));
     const testNames = ["alias.test.ts", "relative.test.ts", "unrelated.test.ts"];
     expect(ranFiles(stderr, testNames)).toEqual(["alias.test.ts", "relative.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // git names a changed file by its real path. The module graph does too, also
+  // for a file that a tsconfig `paths` alias reaches through a link.
+  test("tsconfig paths alias through a link selects the importing test", async () => {
+    using dir = tempDir("test-changed-tsconfig-paths-symlink", {
+      "package.json": JSON.stringify({ name: "aliassymlink", type: "module" }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@lib/*": ["./link/*"] } } }),
+      "real/adder.ts": `export const add = (a: number, b: number) => a + b;\n`,
+      "tests/alias.test.ts": `import { test, expect } from "bun:test";\nimport { add } from "@lib/adder";\ntest("alias", () => expect(add(1, 2)).toBe(3));\n`,
+      "tests/unrelated.test.ts": `import { test, expect } from "bun:test";\ntest("unrelated", () => expect(1).toBe(1));\n`,
+    });
+    symlinkSync(join(String(dir), "real"), join(String(dir), "link"), "junction");
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "real", "adder.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, ["alias.test.ts", "unrelated.test.ts"])).toEqual(["alias.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The scan keeps every module that a barrel behind a tsconfig `paths` alias re-exports,
+  // also when the package.json says `"sideEffects": false`.
+  test("tsconfig paths alias to a barrel selects the test for a change behind another re-export", async () => {
+    using dir = tempDir("test-changed-tsconfig-paths-barrel", {
+      "package.json": JSON.stringify({ name: "aliasbarrel", type: "module", sideEffects: false }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@lib": ["./lib/index.ts"] } } }),
+      "lib/index.ts": `export { add } from "./add";\nexport { sub } from "./sub";\n`,
+      "lib/add.ts": `export const add = (a: number, b: number) => a + b;\n`,
+      "lib/sub.ts": `export const sub = (a: number, b: number) => a - b;\n`,
+      "tests/alias.test.ts": `import { test, expect } from "bun:test";\nimport { add } from "@lib";\ntest("alias", () => expect(add(1, 2)).toBe(3));\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "lib", "sub.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, ["alias.test.ts"])).toEqual(["alias.test.ts"]);
     expect(exitCode).toBe(0);
   });
 

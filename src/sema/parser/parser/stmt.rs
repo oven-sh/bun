@@ -1775,7 +1775,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     fn label_without_name(&mut self, start: Start) -> StmtId {
         self.pop_expr();
         self.next();
-        // For tsc only a statement of the file makes it a module, not an `import` or `export` that is this body.
+        // `isFileProbablyExternalModule` reads the statements of the file alone, so an `import` or `export` that is this
+        // body doesn't make the file a module. This undoes what `embedded_statement` sets for one.
         let was_module = self.f.has_module_syntax;
         let body = self.embedded_statement();
         self.f.has_module_syntax = was_module;

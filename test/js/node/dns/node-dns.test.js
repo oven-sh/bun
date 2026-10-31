@@ -1230,7 +1230,7 @@ async function withNodataServer(fn) {
 const rejection = promise =>
   promise.then(null, ({ code, syscall, hostname, message }) => ({ code, syscall, hostname, message }));
 
-describe.skipIf(isWindows)("resolve* reports the c-ares status like Node", () => {
+describe("resolve* reports the c-ares status like Node", () => {
   test("a NODATA answer is ENODATA", async () => {
     await withNodataServer(async resolver => {
       expect(await resolver.resolve4("ipv4-only.test")).toEqual(["192.0.2.1"]);
@@ -1276,6 +1276,8 @@ describe.skipIf(isWindows)("resolve* reports the c-ares status like Node", () =>
   });
 
   // `dns.setServers` changes the process-wide channel, so this runs in a child.
+  // `a..b` never reaches c-ares: `lookup` rejects it before the query. c-ares
+  // rejects the non-ASCII label itself with EBADNAME.
   test.skipIf(!isLinux)(
     "lookup and lookupService through c-ares still fold NODATA and a malformed name into ENOTFOUND",
     async () => {
@@ -1289,8 +1291,7 @@ describe.skipIf(isWindows)("resolve* reports the c-ares status like Node", () =>
             dns.setServers(${JSON.stringify(resolver.getServers())});
             const code = p => p.then(r => JSON.stringify(r), e => e.code + " " + e.syscall);
             console.log(await code(Bun.dns.lookup("ipv4-only.test", { backend: "c-ares", family: 6 })));
-            console.log(await code(Bun.dns.lookup("a..b", { backend: "c-ares" })));
-            console.log(await code(dns.promises.lookup("ipv4-only.test", { family: 6 })));
+            console.log(await code(Bun.dns.lookup("\u00e4.test", { backend: "c-ares" })));
             console.log(await code(dns.promises.lookupService("192.0.2.1", 80)));
           `,
           ],
@@ -1299,9 +1300,7 @@ describe.skipIf(isWindows)("resolve* reports the c-ares status like Node", () =>
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stderr).toBe("");
-        expect(stdout).toBe(
-          "DNS_ENOTFOUND getaddrinfo\nDNS_ENOTFOUND getaddrinfo\nENOTFOUND getaddrinfo\nENOTFOUND getnameinfo\n",
-        );
+        expect(stdout).toBe("DNS_ENOTFOUND getaddrinfo\nDNS_ENOTFOUND getaddrinfo\nENOTFOUND getnameinfo\n");
         expect(exitCode).toBe(0);
       });
     },

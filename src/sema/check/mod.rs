@@ -1662,6 +1662,7 @@ impl QueryFrame {
             incomplete_flow: false,
             is_stored_by_nested_visit: false,
             has_read_members_in_place: false,
+            is_checked_again_by_next_pass: false,
             may_substitute_constraints: false,
             is_quick_type: false,
             source_element: None,

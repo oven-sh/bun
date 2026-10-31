@@ -163,13 +163,13 @@ Bun.hash("some data here", 1234);
 // 15724820720172937558n
 ```
 
-Additional hashing algorithms are available as properties on `Bun.hash`. The API is the same for each; 32-bit hashes return a number and 64-bit hashes return a bigint.
+Additional hashing algorithms are available as properties on `Bun.hash`. The API is the same for each, except that `adler32` and `cityHash32` take no seed. 32-bit hashes return a number and 64-bit hashes return a bigint.
 
 ```ts
 Bun.hash.wyhash("data", 1234); // equivalent to Bun.hash()
 Bun.hash.crc32("data", 1234);
-Bun.hash.adler32("data", 1234);
-Bun.hash.cityHash32("data", 1234);
+Bun.hash.adler32("data");
+Bun.hash.cityHash32("data");
 Bun.hash.cityHash64("data", 1234);
 Bun.hash.xxHash32("data", 1234);
 Bun.hash.xxHash64("data", 1234);

@@ -125,7 +125,9 @@ function getFunctionName(frame: string): string {
     .replace(/(?: (?:const|volatile|&&?))+$/, "")
     .trim()
     .split(" ");
-  return words.at(-2)?.endsWith("operator") ? words.slice(-2).join(" ") : words.at(-1)!;
+  // `operator new`, and a conversion to a type of several words: `operator unsigned long`.
+  const operator = words.findIndex(word => /(?:^|::)operator$/.test(word));
+  return words.slice(operator < 0 ? -1 : operator).join(" ");
 }
 
 const isAllocator = (frame: string) =>
@@ -178,31 +180,44 @@ function getLeakRecords(stderr: string): Map<string, string> {
 
 // What reads a report is held against text that a symbolizer wrote. That needs no compiler, so these tests run on every Bun.
 
-// The two records of the report of a small program, built in a folder with a space in its name. One function allocated both.
-const recordsOfOneFunction = [
-  `Direct leak of 8 byte(s) in 1 object(s) allocated from:
-    #0 0x5571954a7751 in operator new(unsigned long) (/tmp/with space/leak+0x121751) (BuildId: 0fe0b42cb3e09f5636078826755e831351eb6737)
-    #1 0x5571954a8bcf in app::List::makePair() const /tmp/with space/leak.cpp:8:63
-    #2 0x5571954a8bb0 in main /tmp/with space/leak.cpp:14:17
-    #3 0x7f1699035ca7 in __libc_start_call_main csu/../sysdeps/nptl/libc_start_call_main.h:58:16
+// The records of the report of a small program, built in a folder with a space in its name. One function allocated the first
+// and the last of them.
+const recordsOfTwoFunctions = [
+  `Direct leak of 64 byte(s) in 1 object(s) allocated from:
+    #0 0x55cb5bcc04f8 in malloc (/tmp/with space/leak+0xde4f8) (BuildId: afca4ac47c124a34d173acca8497565626d6c484)
+    #1 0x55cb5bd04cd5 in app::List::makePair() const /tmp/with space/leak.cpp:7:9
+    #2 0x55cb5bd04c64 in main /tmp/with space/leak.cpp:17:10
+    #3 0x7fe37e235ca7 in __libc_start_call_main csu/../sysdeps/nptl/libc_start_call_main.h:58:16
 `,
-  `Indirect leak of 8 byte(s) in 1 object(s) allocated from:
-    #0 0x5571954644f8 in malloc (/tmp/with space/leak+0xde4f8) (BuildId: 0fe0b42cb3e09f5636078826755e831351eb6737)
-    #1 0x5571954a8bdc in app::List::makePair() const /tmp/with space/leak.cpp:8:93
-    #2 0x5571954a8bb0 in main /tmp/with space/leak.cpp:14:17
-    #3 0x7f1699035ca7 in __libc_start_call_main csu/../sysdeps/nptl/libc_start_call_main.h:58:16
+  `Direct leak of 32 byte(s) in 1 object(s) allocated from:
+    #0 0x55cb5bcc04f8 in malloc (/tmp/with space/leak+0xde4f8) (BuildId: afca4ac47c124a34d173acca8497565626d6c484)
+    #1 0x55cb5bd04d05 in app::List::makeLabel() const /tmp/with space/leak.cpp:10:56
+    #2 0x55cb5bd04c6d in main /tmp/with space/leak.cpp:18:10
+    #3 0x7fe37e235ca7 in __libc_start_call_main csu/../sysdeps/nptl/libc_start_call_main.h:58:16
+`,
+  `Direct leak of 16 byte(s) in 1 object(s) allocated from:
+    #0 0x55cb5bcc04f8 in malloc (/tmp/with space/leak+0xde4f8) (BuildId: afca4ac47c124a34d173acca8497565626d6c484)
+    #1 0x55cb5bd04cdf in app::List::makePair() const /tmp/with space/leak.cpp:8:9
+    #2 0x55cb5bd04c64 in main /tmp/with space/leak.cpp:17:10
+    #3 0x7fe37e235ca7 in __libc_start_call_main csu/../sysdeps/nptl/libc_start_call_main.h:58:16
 
-SUMMARY: AddressSanitizer: 16 byte(s) leaked in 2 allocation(s).
+SUMMARY: AddressSanitizer: 112 byte(s) leaked in 3 allocation(s).
 `,
 ];
 
 testAnywhere("the records of one function stay together", () => {
+  const [first, between, last] = recordsOfTwoFunctions;
   const report = `
 =================================================================
-==881==ERROR: LeakSanitizer: detected memory leaks
+==23888==ERROR: LeakSanitizer: detected memory leaks
 
-${recordsOfOneFunction.join("\n")}`;
-  expect(getLeakRecords(report)).toEqual(new Map([["app::List::makePair", recordsOfOneFunction.join("")]]));
+${recordsOfTwoFunctions.join("\n")}`;
+  expect(getLeakRecords(report)).toEqual(
+    new Map([
+      ["app::List::makePair", first + last],
+      ["app::List::makeLabel", between],
+    ]),
+  );
 });
 
 // Leak records as a symbolizer wrote them, cut down to the frames that decide the name. The first two are one record of a Bun
@@ -255,14 +270,14 @@ const writtenRecords: [what: string, allocatedBy: string, record: string][] = [
     #10 0x000007a838d9 in Zig::GlobalObject::setConsole(void*) (/tmp/lane-asan/cap/line/program+0x7a838d9) (BuildId: 39e2ae531a0ca5a60c21898cc251d33e44d419e4)
 `,
   ],
-  ["a file is in a folder with a space in its name", "app::List::makePair", recordsOfOneFunction[0]],
+  ["a file is in a folder with a space in its name", "app::List::makePair", recordsOfTwoFunctions[0]],
   [
     "an executable is in a folder with a space in its name",
     "app::List::makePair",
-    `Direct leak of 8 byte(s) in 1 object(s) allocated from:
-    #0 0x5565e71c5751 in operator new(unsigned long) (/tmp/with space/leak-stripped+0x121751) (BuildId: 0fe0b42cb3e09f5636078826755e831351eb6737)
-    #1 0x5565e71c6bcf in app::List::makePair() const (/tmp/with space/leak-stripped+0x122bcf) (BuildId: 0fe0b42cb3e09f5636078826755e831351eb6737)
-    #2 0x5565e71c6bb0 in main (/tmp/with space/leak-stripped+0x122bb0) (BuildId: 0fe0b42cb3e09f5636078826755e831351eb6737)
+    `Direct leak of 64 byte(s) in 1 object(s) allocated from:
+    #0 0x55894de5c4f8 in malloc (/tmp/with space/leak-stripped+0xde4f8) (BuildId: afca4ac47c124a34d173acca8497565626d6c484)
+    #1 0x55894dea0cd5 in app::List::makePair() const (/tmp/with space/leak-stripped+0x122cd5) (BuildId: afca4ac47c124a34d173acca8497565626d6c484)
+    #2 0x55894dea0c64 in main (/tmp/with space/leak-stripped+0x122c64) (BuildId: afca4ac47c124a34d173acca8497565626d6c484)
 `,
   ],
   [
@@ -298,6 +313,15 @@ const writtenRecords: [what: string, allocatedBy: string, record: string][] = [
     #0 0x55b8dc5954f8 in malloc (/tmp/quals/text+0xde4f8) (BuildId: b70713946b9f6a9f254a1a73de5b0ee8189e4a16)
     #1 0x55b8dc5d9d05 in app::Text::copy() const & /tmp/quals/text.cpp:5:80
     #2 0x55b8dc5d9c6e in main /tmp/quals/text.cpp:14:10
+`,
+  ],
+  [
+    "the function converts to a type of two words",
+    "app::Id::operator unsigned long",
+    `Direct leak of 24 byte(s) in 1 object(s) allocated from:
+    #0 0x55f0dd7f34f8 in malloc (/tmp/conv/id+0xde4f8) (BuildId: caab9c535e49b890b36b56634b306bec21bc68af)
+    #1 0x55f0dd837ce5 in app::Id::operator unsigned long() const /tmp/conv/id.cpp:5:103
+    #2 0x55f0dd837c60 in main /tmp/conv/id.cpp:11:39
 `,
   ],
   [

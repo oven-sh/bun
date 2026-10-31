@@ -80,10 +80,12 @@ static bool IsCertTrustedForServerAuth(PCCERT_CONTEXT cert) {
 }
 
 // Helper function to load raw certificates from a Windows certificate store.
-// Mirrors Node.js's GatherCertsForLocation.
+// Mirrors Node.js's GatherCertsForLocation. With server_auth_only, a
+// certificate is only loaded when its usage allows server authentication.
 static void GatherCertsForLocation(std::vector<RawCertificate>& raw_certs,
                                    DWORD location,
-                                   const wchar_t* store_name) {
+                                   const wchar_t* store_name,
+                                   bool server_auth_only) {
   if (!(location == CERT_SYSTEM_STORE_LOCAL_MACHINE ||
         location == CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY ||
         location == CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE ||
@@ -109,7 +111,7 @@ static void GatherCertsForLocation(std::vector<RawCertificate>& raw_certs,
 
   PCCERT_CONTEXT cert_context = NULL;
   while ((cert_context = CertEnumCertificatesInStore(cert_store, cert_context)) != NULL) {
-    if (!IsCertTrustedForServerAuth(cert_context)) {
+    if (server_auth_only && !IsCertTrustedForServerAuth(cert_context)) {
       continue;
     }
     RawCertificate raw_cert;
@@ -129,25 +131,37 @@ static void GatherCertsForLocation(std::vector<RawCertificate>& raw_certs,
 extern void us_load_system_certificates_windows_raw(
     std::vector<RawCertificate>& raw_certs) {
   // Grab the user-added roots.
-  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE, L"ROOT");
-  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY, L"ROOT");
-  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE, L"ROOT");
-  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_CURRENT_USER, L"ROOT");
-  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY, L"ROOT");
+  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE, L"ROOT", true);
+  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY, L"ROOT", true);
+  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE, L"ROOT", true);
+  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_CURRENT_USER, L"ROOT", true);
+  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY, L"ROOT", true);
 
   // Grab the intermediate certs.
-  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE, L"CA");
-  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY, L"CA");
-  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE, L"CA");
-  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_CURRENT_USER, L"CA");
-  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY, L"CA");
+  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE, L"CA", true);
+  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY, L"CA", true);
+  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE, L"CA", true);
+  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_CURRENT_USER, L"CA", true);
+  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY, L"CA", true);
 
   // Grab the user-added trusted server certs. Trusted end-entity certs are
   // only allowed for server auth in the "local machine" store, but not in the
   // "current user" store.
-  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE, L"TrustedPeople");
-  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY, L"TrustedPeople");
-  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE, L"TrustedPeople");
+  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE, L"TrustedPeople", true);
+  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY, L"TrustedPeople", true);
+  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE, L"TrustedPeople", true);
+}
+
+// The certificates Windows refuses: every one of the Disallowed stores, at any
+// position of a chain and whatever its key usage. Mirrors Chromium's
+// net/cert/internal/trust_store_win.cc, which reads the same five locations.
+extern void us_load_system_disallowed_certificates_windows_raw(
+    std::vector<RawCertificate>& raw_certs) {
+  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE, L"Disallowed", false);
+  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY, L"Disallowed", false);
+  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE, L"Disallowed", false);
+  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_CURRENT_USER, L"Disallowed", false);
+  GatherCertsForLocation(raw_certs, CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY, L"Disallowed", false);
 }
 
 #endif // _WIN32

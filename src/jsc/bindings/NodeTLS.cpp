@@ -362,4 +362,23 @@ JSC_DEFINE_HOST_FUNCTION(clearBlockedSPKIsForTesting, (JSC::JSGlobalObject * glo
     return JSValue::encode(jsUndefined());
 }
 
+// (der: ArrayBufferView) => void, where der is a DER certificate.
+JSC_DEFINE_HOST_FUNCTION(addDistrustedCertificateForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* der = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->argument(0));
+    if (!der) return ERR::INVALID_ARG_TYPE(scope, globalObject, "certificate must be a buffer"_s);
+    if (!us_add_distrusted_cert_for_testing(static_cast<const uint8_t*>(der->vector()), der->byteLength())) {
+        return ERR::INVALID_ARG_VALUE(scope, globalObject, "certificate"_s, callFrame->argument(0), "must be a DER certificate"_s);
+    }
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(clearDistrustedCertificatesForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    us_clear_distrusted_certs_for_testing();
+    return JSValue::encode(jsUndefined());
+}
+
 } // namespace Bun

@@ -377,6 +377,59 @@ describe.skipIf(isWindows)("default store and OpenSSL's default paths", () => {
   });
 });
 
+// Windows refuses a certificate of a Disallowed store at any position of a chain, whichever store or `ca` option
+// trusts it. With the system store in use, Bun reads the Disallowed stores and does the same. The current user's
+// store needs no elevation and no confirmation, unlike the user's Root store.
+describe.skipIf(!isWindows)("a certificate in the Windows Disallowed store", () => {
+  const keys = join(import.meta.dir, "../test/fixtures/keys");
+  const ca1 = readFileSync(join(keys, "ca1-cert.pem"), "utf8");
+  const thumbprint = new X509Certificate(ca1).fingerprint.replaceAll(":", "");
+
+  async function certutil(...args: string[]) {
+    await using proc = spawn({ cmd: ["certutil", "-user", ...args], stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout + stderr).not.toContain("FAILED");
+    expect(exitCode).toBe(0);
+  }
+
+  async function connectWith(env: Record<string, string | undefined>) {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const tls = require("tls"), fs = require("fs");
+         const ca = fs.readFileSync(${JSON.stringify(join(keys, "ca1-cert.pem"))});
+         const server = tls.createServer({ key: fs.readFileSync(${JSON.stringify(join(keys, "agent6-key.pem"))}), cert: fs.readFileSync(${JSON.stringify(join(keys, "agent6-cert.pem"))}) }, s => s.end());
+         server.listen(0, () => {
+           const socket = tls.connect({ port: server.address().port, host: "127.0.0.1", ca, checkServerIdentity: () => undefined }, () => {
+             console.log("authorized");
+             socket.destroy();
+             server.close();
+           });
+           socket.on("error", e => { console.log(e.code); server.close(); });
+         });`,
+      ],
+      env: { ...bunEnv, NODE_USE_SYSTEM_CA: undefined, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return stdout.trim();
+  }
+
+  test("is refused with the system store in use, and only then", async () => {
+    await certutil("-addstore", "Disallowed", join(keys, "ca1-cert.pem"));
+    try {
+      expect(await connectWith({ NODE_USE_SYSTEM_CA: "1" })).toBe("CERT_REVOKED");
+      expect(await connectWith({})).toBe("authorized");
+    } finally {
+      await certutil("-delstore", "Disallowed", thumbprint);
+    }
+  });
+});
+
 describe.concurrent("--use-openssl-ca", () => {
   const flag = "--use-openssl-ca";
   const ca1 = join(import.meta.dir, "../test/fixtures/keys/ca1-cert.pem");

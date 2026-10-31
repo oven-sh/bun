@@ -11,5 +11,7 @@ JSC_DECLARE_HOST_FUNCTION(parseCACertificates);
 JSC_DECLARE_HOST_FUNCTION(selectServerName);
 JSC_DECLARE_HOST_FUNCTION(addBlockedSPKIForTesting);
 JSC_DECLARE_HOST_FUNCTION(clearBlockedSPKIsForTesting);
+JSC_DECLARE_HOST_FUNCTION(addDistrustedCertificateForTesting);
+JSC_DECLARE_HOST_FUNCTION(clearDistrustedCertificatesForTesting);
 
 }

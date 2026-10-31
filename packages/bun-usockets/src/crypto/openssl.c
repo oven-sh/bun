@@ -1169,11 +1169,12 @@ enum {
   US_IDENTITY_UNCHECKED = 2,
 };
 
-/* A blocked public key (blocked_spkis.cpp) is reported the way X509_verify_cert reports its own errors: to the SSL's
- * verify callback, which says whether to go on. Without one, as in quic.c and node:quic, this returns 0 as it would. */
+/* A blocked public key or a certificate the OS distrusts (blocked_spkis.cpp) is reported the way X509_verify_cert
+ * reports its own errors: to the SSL's verify callback, which says whether to go on. Without one, as in quic.c and
+ * node:quic, this returns 0 as it would. */
 static int us_x509_verify_chain(X509_STORE_CTX *ctx) {
   int ok = X509_verify_cert(ctx);
-  int error = us_x509_store_ctx_blocked_key_error(ctx);
+  int error = us_x509_store_ctx_distrust_error(ctx);
   if (error == X509_V_OK) return ok;
   X509_STORE_CTX_set_error(ctx, error);
   SSL *ssl = X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());

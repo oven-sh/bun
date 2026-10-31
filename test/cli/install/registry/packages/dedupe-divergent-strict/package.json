@@ -1,0 +1,22 @@
+{
+  "_id": "dedupe-divergent-strict",
+  "name": "dedupe-divergent-strict",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "dedupe-divergent-strict",
+      "version": "1.0.0",
+      "peerDependencies": {
+        "no-deps": "^2.0.0"
+      },
+      "_id": "dedupe-divergent-strict@1.0.0",
+      "dist": {
+        "integrity": "sha512-PYa0vGShrjuWqDVgUOJYKdEqRvrVJ20nv6MAWYj0atW5EemekP6NATQAqQPhy5yIFzS3m+FznS7t2pXsl7bjlg==",
+        "shasum": "fafdc49ae12f0bacaf001b301dceeba4b9dc4e16",
+        "tarball": "http://localhost:4873/dedupe-divergent-strict/-/dedupe-divergent-strict-1.0.0.tgz"
+      }
+    }
+  }
+}

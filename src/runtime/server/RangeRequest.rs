@@ -4,10 +4,11 @@
 //! (serve full body) rather than 416, matching common static-server behavior.
 
 use bun_core::strings;
+use bun_http_types::ETag;
 use bun_uws::AnyRequest;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum Result {
+pub(crate) enum Result {
     /// No Range header (or unsupported form) — serve 200 with the full body.
     None,
     /// Serve 206 with `Content-Range: bytes start-end/total`. `end` is inclusive.
@@ -19,7 +20,7 @@ pub enum Result {
 /// Parsed Range header before the total size is known. Safe to store on a
 /// request context: it owns no slices into the uWS request buffer.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum Raw {
+pub(crate) enum Raw {
     None,
     /// bytes=-N
     Suffix(u64),
@@ -91,19 +92,19 @@ pub(crate) fn parse_raw(header: &[u8]) -> Raw {
     let end_s = strings::trim(&rest[dash + 1..], b" \t");
 
     if start_s.is_empty() {
-        let Some(n) = bun_core::fmt::parse_decimal::<u64>(end_s) else {
+        let Some(n) = parse_range_pos(end_s) else {
             return Raw::None;
         };
         return Raw::Suffix(n);
     }
 
-    let Some(start) = bun_core::fmt::parse_decimal::<u64>(start_s) else {
+    let Some(start) = parse_range_pos(start_s) else {
         return Raw::None;
     };
     let end: Option<u64> = if end_s.is_empty() {
         None
     } else {
-        match bun_core::fmt::parse_decimal::<u64>(end_s) {
+        match parse_range_pos(end_s) {
             Some(v) => Some(v),
             None => return Raw::None,
         }
@@ -111,17 +112,39 @@ pub(crate) fn parse_raw(header: &[u8]) -> Raw {
     Raw::Bounded { start, end }
 }
 
+/// RFC 9110 §14.1.2: `first-pos`, `last-pos` and `suffix-length` are
+/// `1*DIGIT`. `parse_unsigned` alone would still accept `_` separators.
+fn parse_range_pos(s: &[u8]) -> Option<u64> {
+    if s.is_empty() || !s.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    bun_core::fmt::parse_unsigned::<u64>(s, 10).ok()
+}
+
 pub(crate) fn parse(header: &[u8], total: u64) -> Result {
     parse_raw(header).resolve(total)
 }
 
+/// `None` too when the request's `If-Range` does not match `etag` / `last_modified_ms`.
 // `bun_uws::AnyRequest::header` borrows `&self` and returns `&[u8]` tied to
 // it, so take `&AnyRequest` here.
-pub(crate) fn from_request(req: &AnyRequest, total: u64) -> Result {
+pub(crate) fn from_request(
+    req: &AnyRequest,
+    total: u64,
+    etag: Option<&[u8]>,
+    last_modified_ms: Option<u64>,
+) -> Result {
     let Some(h) = req.header(b"range") else {
         return Result::None;
     };
-    parse(h, total)
+    let range = parse(h, total);
+    if range != Result::None
+        && let Some(if_range) = req.header(b"if-range")
+        && !if_range_matches(if_range, etag, last_modified_ms)
+    {
+        return Result::None;
+    }
+    range
 }
 
 pub(crate) fn raw_from_request(req: &AnyRequest) -> Raw {
@@ -129,6 +152,38 @@ pub(crate) fn raw_from_request(req: &AnyRequest) -> Raw {
         return Raw::None;
     };
     parse_raw(h)
+}
+
+/// Owned `If-Range` for a context that outlives the uWS request. `None` without a usable `Range`.
+pub(crate) fn if_range_from_request(req: &AnyRequest, range: Raw) -> Option<Box<[u8]>> {
+    if range == Raw::None {
+        return None;
+    }
+    req.header(b"if-range").map(Box::from)
+}
+
+/// RFC 9110 §13.1.5. `false` means: ignore `Range` and send the full 200 body.
+pub(crate) fn if_range_matches(
+    if_range: &[u8],
+    etag: Option<&[u8]>,
+    last_modified_ms: Option<u64>,
+) -> bool {
+    // An entity-tag has a DQUOTE in its first three bytes (`"` or `W/"`). An HTTP-date has none.
+    if strings::contains_char(&if_range[..if_range.len().min(3)], b'"') {
+        return ETag::if_range(etag, if_range);
+    }
+    let Some(last_modified_ms) = last_modified_ms else {
+        return false;
+    };
+    // `parse_http_date` is `Date.parse`, which reads a date with no zone (asctime) as local time.
+    if !if_range.ends_with(b"GMT") {
+        return false;
+    }
+    let Some(date_ms) = crate::jsc_hooks::parse_http_date(if_range) else {
+        return false;
+    };
+    // `Last-Modified` is second-granular on the wire.
+    last_modified_ms / 1000 == date_ms / 1000
 }
 
 /// Max bytes a `Content-Range: bytes ...` value can occupy: `"bytes "` (6) +

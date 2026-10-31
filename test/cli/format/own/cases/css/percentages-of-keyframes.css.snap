@@ -1,0 +1,39 @@
+------------------
+{ printWidth: 80 }
+------------------
+@keyframes a {
+  0.5% {
+    color: red;
+  }
+  0.1%,
+  10% {
+    color: blue;
+  }
+  from {
+    color: green;
+  }
+}
+.50 {
+  color: red;
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+@keyframes a {
+  0.5% {
+    color: red;
+  }
+  0.1%,
+  10% {
+    color: blue;
+  }
+  from {
+    color: green;
+  }
+}
+.50 {
+  color: red;
+}
+
+===================== End =====================

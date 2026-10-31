@@ -1,0 +1,23 @@
+------------------
+{ printWidth: 80 }
+------------------
+interface A</* prettier-ignore */ T, U> {}
+interface B<
+  // prettier-ignore
+  T,
+  U,
+> {}
+interface C</* prettier-ignore */ T, U> extends D<T, U> {}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+interface A</* prettier-ignore */ T, U> {}
+interface B<
+  // prettier-ignore
+  T,
+  U,
+> {}
+interface C</* prettier-ignore */ T, U> extends D<T, U> {}
+
+===================== End =====================

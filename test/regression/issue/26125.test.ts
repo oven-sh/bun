@@ -48,7 +48,7 @@ describe("GitHub issue #26125: mTLS client certificate switching", () => {
       socket => {
         const peerCert = socket.getPeerCertificate();
         const cn = peerCert?.subject?.CN || "unknown";
-        clientCNs.push(cn);
+        clientCNs.push(cn as string);
 
         // Wait for the request before responding, like a real HTTP server.
         // The client does not transmit the request until the custom

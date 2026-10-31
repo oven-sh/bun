@@ -7,7 +7,7 @@
 //!
 //! Contains feature flags and custom hook definitions that control compiler behavior.
 
-use std::collections::HashMap;
+use crate::collections::FxHashMap as HashMap;
 
 use crate::hir::Effect;
 use crate::hir::type_config::{TypeConfig, ValueKind};
@@ -78,6 +78,37 @@ pub struct EnvironmentConfig {
     pub enable_name_anonymous_functions: bool,
     pub validate_hooks_usage: bool,
     pub validate_ref_access_during_render: bool,
+    /// For `validate_ref_access_during_render`: a ref value that meets a value of another kind, at a
+    /// phi or in an object, stays the ref value that it was. It is then reported where `.current`
+    /// is read. Upstream forgets where that was, and reports it at each use.
+    pub joined_ref_values_keep_their_place: bool,
+    /// For `validate_ref_access_during_render`: a function expression knows which of the variables
+    /// that it captures are refs and values of refs. Upstream does not look at them.
+    pub captured_refs_are_known_in_functions: bool,
+    /// An effect on a variable is reported where it is. Upstream puts the first effect of a kind on a variable for
+    /// all the later ones, so that each write to a captured variable is reported at the first.
+    pub effects_keep_their_place: bool,
+    /// JSX that is a default, or in one, can be evaluated earlier if its operands can: the parser has made a call of
+    /// it. Upstream does not compile such a function.
+    pub jsx_can_be_reordered: bool,
+    /// What is passed to a method of a mutable array escapes by the array, also for `map`, `filter` and the like, whose
+    /// signatures say that they keep none of their arguments. To upstream nothing escapes so.
+    pub arguments_of_no_alias_methods_escape: bool,
+    /// `({ k: a, b } = o)` where a function captures `a` goes through temporaries, as `[a, b] = o` does. Upstream
+    /// assigns `b` at once and `a` not, and fails: "Expected consistent kind for destructuring". So do both for `{ a, b }`.
+    pub captured_targets_with_keys_force_temporaries: bool,
+    /// Code that is not reached and has a function in it is reported at the first such function. Upstream reports it at
+    /// its first instruction, which can be the declaration of a later function that the first one refers to.
+    pub unreachable_code_is_reported_at_its_function: bool,
+    /// A tag can make something new of the same template each time. So a tagged template is a source of reactivity, and
+    /// no scope that it is in is kept, unless the signature of the tag says that it is pure. To upstream it is a call.
+    pub tagged_templates_are_always_called: bool,
+    /// `React.useMemo` is React's if `React` is imported from React, under whatever name. To upstream it is if the name
+    /// is `React`, wherever that comes from.
+    pub react_is_known_by_its_module: bool,
+    /// For `validate_exhaustive_*_dependencies`: the dependencies that are inferred are in the order of their bytes.
+    /// Upstream's are in that of `localeCompare`: `a`, `A`, `b`.
+    pub dependencies_are_sorted_by_bytes: bool,
     pub validate_no_set_state_in_render: bool,
     pub enable_use_keyed_state: bool,
     pub validate_no_set_state_in_effects: bool,
@@ -116,7 +147,7 @@ pub struct EnvironmentConfig {
 impl Default for EnvironmentConfig {
     fn default() -> Self {
         Self {
-            custom_hooks: HashMap::new(),
+            custom_hooks: HashMap::default(),
             enable_reset_cache_on_source_file_changes: None,
             module_type_provider: None,
             enable_preserve_existing_memoization_guarantees: true,
@@ -127,6 +158,16 @@ impl Default for EnvironmentConfig {
             enable_name_anonymous_functions: false,
             validate_hooks_usage: true,
             validate_ref_access_during_render: true,
+            joined_ref_values_keep_their_place: false,
+            captured_refs_are_known_in_functions: true,
+            effects_keep_their_place: false,
+            jsx_can_be_reordered: true,
+            arguments_of_no_alias_methods_escape: true,
+            captured_targets_with_keys_force_temporaries: false,
+            unreachable_code_is_reported_at_its_function: false,
+            tagged_templates_are_always_called: false,
+            react_is_known_by_its_module: true,
+            dependencies_are_sorted_by_bytes: false,
             validate_no_set_state_in_render: true,
             enable_use_keyed_state: false,
             validate_no_set_state_in_effects: false,

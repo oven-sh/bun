@@ -93,6 +93,7 @@ static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceConstructor);
 // Attributes
 
 static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceConstructor);
+static JSC_DECLARE_CUSTOM_GETTER(jsPerformance_timeOrigin);
 static JSC_DECLARE_CUSTOM_GETTER(jsPerformance_timing);
 static JSC_DECLARE_CUSTOM_GETTER(jsPerformance_onresourcetimingbufferfull);
 static JSC_DECLARE_CUSTOM_SETTER(setJSPerformance_onresourcetimingbufferfull);
@@ -189,6 +190,7 @@ template<> void JSPerformanceDOMConstructor::initializeProperties(VM& vm, JSDOMG
 
 static const HashTableValue JSPerformancePrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceConstructor, 0 } },
+    { "timeOrigin"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformance_timeOrigin, 0 } },
     { "timing"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformance_timing, 0 } },
     { "onresourcetimingbufferfull"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformance_onresourcetimingbufferfull, setJSPerformance_onresourcetimingbufferfull } },
     { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformancePrototypeFunction_toJSON, 0 } },
@@ -249,12 +251,6 @@ void JSPerformance::finishCreation(VM& vm)
         functionPerformanceNow, ImplementationVisibility::Public, NoIntrinsic, callHostFunctionAsConstructor,
         &DOMJITSignatureForPerformanceNow);
     Bun::putDirectNamed(vm, this, "now"_s, now);
-
-    this->putDirect(
-        vm,
-        JSC::Identifier::fromString(vm, "timeOrigin"_s),
-        jsNumber(Bun__readOriginTimerStart(static_cast<Zig::GlobalObject*>(this->globalObject())->bunVM())),
-        PropertyAttribute::ReadOnly | 0);
 }
 
 JSObject* JSPerformance::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -282,6 +278,17 @@ JSC_DEFINE_CUSTOM_GETTER(jsPerformanceConstructor, (JSGlobalObject * lexicalGlob
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSPerformance::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
+}
+
+static inline JSValue jsPerformance_timeOriginGetter(JSGlobalObject& lexicalGlobalObject, JSPerformance& thisObject)
+{
+    UNUSED_PARAM(lexicalGlobalObject);
+    return jsNumber(thisObject.wrapped().timeOrigin());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsPerformance_timeOrigin, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    return IDLAttribute<JSPerformance>::get<jsPerformance_timeOriginGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
 
 static inline JSValue jsPerformance_timingGetter(JSGlobalObject& lexicalGlobalObject, JSPerformance& thisObject)
@@ -342,6 +349,7 @@ static inline EncodedJSValue jsPerformancePrototypeFunction_toJSONBody(JSGlobalO
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_toJSON, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(PerformanceTimeline, jsPerformancePrototypeFunction_toJSON);
     return IDLOperation<JSPerformance>::call<jsPerformancePrototypeFunction_toJSONBody>(*lexicalGlobalObject, *callFrame, "toJSON");
 }
 
@@ -357,6 +365,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_getEntriesBody(
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_getEntries, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(PerformanceTimeline, jsPerformancePrototypeFunction_getEntries);
     return IDLOperation<JSPerformance>::call<jsPerformancePrototypeFunction_getEntriesBody>(*lexicalGlobalObject, *callFrame, "getEntries");
 }
 
@@ -377,6 +386,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_getEntriesByTyp
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_getEntriesByType, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(PerformanceTimeline, jsPerformancePrototypeFunction_getEntriesByType);
     return IDLOperation<JSPerformance>::call<jsPerformancePrototypeFunction_getEntriesByTypeBody>(*lexicalGlobalObject, *callFrame, "getEntriesByType");
 }
 
@@ -400,6 +410,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_getEntriesByNam
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_getEntriesByName, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(PerformanceTimeline, jsPerformancePrototypeFunction_getEntriesByName);
     return IDLOperation<JSPerformance>::call<jsPerformancePrototypeFunction_getEntriesByNameBody>(*lexicalGlobalObject, *callFrame, "getEntriesByName");
 }
 
@@ -415,6 +426,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_clearResourceTi
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_clearResourceTimings, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(PerformanceTimeline, jsPerformancePrototypeFunction_clearResourceTimings);
     return IDLOperation<JSPerformance>::call<jsPerformancePrototypeFunction_clearResourceTimingsBody>(*lexicalGlobalObject, *callFrame, "clearResourceTimings");
 }
 
@@ -435,6 +447,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_setResourceTimi
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_setResourceTimingBufferSize, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(PerformanceTimeline, jsPerformancePrototypeFunction_setResourceTimingBufferSize);
     return IDLOperation<JSPerformance>::call<jsPerformancePrototypeFunction_setResourceTimingBufferSizeBody>(*lexicalGlobalObject, *callFrame, "setResourceTimingBufferSize");
 }
 
@@ -456,11 +469,14 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_markBody(JSC::J
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto markOptions = convert<IDLDictionary<PerformanceMarkOptions>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<PerformanceMark>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.mark(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(markName), WTF::move(markOptions)))));
+    auto result = impl.mark(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(markName), WTF::move(markOptions));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<PerformanceMark>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(result))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_mark, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(PerformanceMarks, jsPerformancePrototypeFunction_mark);
     return IDLOperation<JSPerformance>::call<jsPerformancePrototypeFunction_markBody>(*lexicalGlobalObject, *callFrame, "mark");
 }
 
@@ -481,6 +497,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_clearMarksBody(
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_clearMarks, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(PerformanceTimeline, jsPerformancePrototypeFunction_clearMarks);
     return IDLOperation<JSPerformance>::call<jsPerformancePrototypeFunction_clearMarksBody>(*lexicalGlobalObject, *callFrame, "clearMarks");
 }
 
@@ -502,11 +519,14 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_measureBody(JSC
     EnsureStillAliveScope argument2 = callFrame->argument(2);
     auto endMark = argument2.value().isUndefined() ? String() : convert<IDLDOMString>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<PerformanceMeasure>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.measure(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(measureName), WTF::move(startOrMeasureOptions), WTF::move(endMark)))));
+    auto result = impl.measure(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(measureName), WTF::move(startOrMeasureOptions), WTF::move(endMark));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<PerformanceMeasure>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(result))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_measure, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(PerformanceMarks, jsPerformancePrototypeFunction_measure);
     return IDLOperation<JSPerformance>::call<jsPerformancePrototypeFunction_measureBody>(*lexicalGlobalObject, *callFrame, "measure");
 }
 
@@ -527,6 +547,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_clearMeasuresBo
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_clearMeasures, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(PerformanceTimeline, jsPerformancePrototypeFunction_clearMeasures);
     return IDLOperation<JSPerformance>::call<jsPerformancePrototypeFunction_clearMeasuresBody>(*lexicalGlobalObject, *callFrame, "clearMeasures");
 }
 
@@ -570,13 +591,6 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Performance& impl)
 {
     return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-Performance* JSPerformance::toWrapped(JSC::VM&, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSPerformance>(value))
-        return &wrapper->wrapped();
-    return nullptr;
 }
 
 }

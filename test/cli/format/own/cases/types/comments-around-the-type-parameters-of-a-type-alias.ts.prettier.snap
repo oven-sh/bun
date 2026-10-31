@@ -1,0 +1,29 @@
+------------------
+{ printWidth: 80 }
+------------------
+type A/* a */ <T> = // b
+  T;
+type B/* c */ <T> = T;
+type C<T, U = T> =
+  // c
+  U;
+type D<T, U = T> =
+  /* a */ // b
+  U;
+type E<T, U = T> = /* c */ U;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+type A/* a */ <T> = // b
+  T;
+type B/* c */ <T> = T;
+type C<T, U = T> =
+  // c
+  U;
+type D<T, U = T> =
+  /* a */ // b
+  U;
+type E<T, U = T> = /* c */ U;
+
+===================== End =====================

@@ -497,8 +497,8 @@ describe("bundler", () => {
     target: "browser",
     bundleErrors: {
       "<bun>": [
-        `Cannot use Node.js builtin "fs" as an entry point`,
-        `Cannot use Node.js builtin "node:fs" as an entry point`,
+        `Cannot use "fs" as an entry point: it resolves to a builtin module`,
+        `Cannot use "node:fs" as an entry point: it resolves to a builtin module`,
       ],
     },
   });

@@ -8,3 +8,9 @@ pub enum Status {
     Connected,
     Failed,
 }
+
+impl Status {
+    pub fn is_closed(self) -> bool {
+        matches!(self, Status::Disconnected | Status::Failed)
+    }
+}

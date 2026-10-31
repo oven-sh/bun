@@ -1,16 +1,15 @@
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
-use core::ptr;
 
 use bun_core::ZStr;
 use bun_http_types::Method::Method;
 
 use crate::response::Response;
 use crate::socket_context::BunSocketContextOptions;
-use crate::web_socket::c::uws_ws;
+use crate::web_socket::c::{uws_app_ws_package_context, uws_ws};
 use crate::{
     AnyRequest, AnyResponse, ListenSocket as UwsListenSocket, Opcode, Request, SendStatus,
-    WebSocketBehavior, thunk, us_socket_t, uws_res,
+    WebSocketBehavior, WebSocketUpgradeContext, thunk, us_socket_t, uws_res,
 };
 use bun_ptr::ThisPtr;
 
@@ -54,9 +53,6 @@ pub struct App<const SSL: bool> {
     _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
-
-/// Legacy name alias.
-pub type NewApp<const SSL: bool> = App<SSL>;
 
 /// Stamps one `pub fn $name(&mut self, pattern, handler, user_data)` per HTTP
 /// verb. Bodies are byte-identical modulo the C symbol — see `uws_app_get` &co
@@ -148,6 +144,10 @@ impl<const SSL: bool> App<SSL> {
 
     pub fn set_max_http_header_size(&mut self, max_header_size: u64) {
         c::uws_app_set_max_http_header_size(Self::SSL_FLAG, self.as_raw(), max_header_size)
+    }
+
+    pub fn set_max_headers_count(&mut self, max_headers_count: u32) {
+        c::uws_app_set_max_headers_count(Self::SSL_FLAG, self.as_raw(), max_headers_count)
     }
 
     pub fn clear_routes(&mut self) {
@@ -273,37 +273,6 @@ impl<const SSL: bool> App<SSL> {
         thunk::zst::<H>()(this, AnyRequest::H1(req), resp)
     }
 
-    pub fn domain(&mut self, pattern: &ZStr) {
-        // SAFETY: pattern is NUL-terminated; self is a valid app.
-        unsafe {
-            c::uws_app_domain(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                pattern.as_ptr().cast(),
-            )
-        }
-    }
-
-    pub fn run(&mut self) {
-        c::uws_app_run(Self::SSL_FLAG, self.as_raw())
-    }
-
-    pub fn listen(
-        &mut self,
-        port: i32,
-        handler: extern "C" fn(*mut UwsListenSocket, *mut c_void),
-        user_data: *mut c_void,
-    ) {
-        // Callers supply the C-ABI shim directly (see the RouteHandler note above).
-        c::uws_app_listen(
-            Self::SSL_FLAG,
-            self.as_raw(),
-            port,
-            Some(handler),
-            user_data,
-        )
-    }
-
     pub fn on_client_error(
         &mut self,
         handler: extern "C" fn(*mut c_void, c_int, *mut us_socket_t, u8, *mut u8, c_int),
@@ -423,12 +392,15 @@ impl<const SSL: bool> App<SSL> {
         c::uws_filter(Self::SSL_FLAG, self.as_raw(), Some(handler), user_data)
     }
 
+    /// Calls with the same `context_key` share one uWS WebSocketContext. It keeps the first
+    /// call's callbacks and the last call's settings. The key is only compared, never dereferenced.
     pub fn ws(
         &mut self,
         pattern: &[u8],
         ctx: *mut c_void,
         id: usize,
         behavior_: WebSocketBehavior,
+        context_key: *const c_void,
     ) {
         let behavior = behavior_;
         // SAFETY: self is a valid app; pattern valid for the call; behavior is stack-local.
@@ -441,6 +413,23 @@ impl<const SSL: bool> App<SSL> {
                 pattern.len(),
                 id,
                 &raw const behavior,
+                context_key,
+            )
+        }
+    }
+
+    /// Returns the app's context for `ws` package sockets with these options, creating it on
+    /// first use. It lives as long as the app. Every call must pass the same callbacks.
+    pub fn ws_package_context(
+        &mut self,
+        behavior: &WebSocketBehavior,
+    ) -> *mut WebSocketUpgradeContext {
+        // SAFETY: self is a valid app; behavior is only read during the call.
+        unsafe {
+            uws_app_ws_package_context(
+                Self::SSL_FLAG,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
+                behavior,
             )
         }
     }
@@ -548,6 +537,11 @@ pub mod c {
             app: &mut uws_app_t,
             max_header_size: u64,
         );
+        pub(crate) safe fn uws_app_set_max_headers_count(
+            ssl: i32,
+            app: &mut uws_app_t,
+            max_headers_count: u32,
+        );
         pub(crate) fn uws_app_get(
             ssl: i32,
             app: *mut uws_app_t,
@@ -628,17 +622,6 @@ pub mod c {
             handler: uws_method_handler,
             user_data: *mut c_void,
         );
-        pub(crate) safe fn uws_app_run(ssl: i32, app: &mut uws_app_t);
-        pub(crate) fn uws_app_domain(ssl: i32, app: *mut uws_app_t, domain: *const c_char);
-        // safe: handle-only + value `port`; `handler`/`user_data` are stored
-        // opaquely — no preconditions on this call.
-        pub(crate) safe fn uws_app_listen(
-            ssl: i32,
-            app: &mut uws_app_t,
-            port: i32,
-            handler: uws_listen_handler,
-            user_data: *mut c_void,
-        );
         pub(crate) fn uws_app_listen_with_config(
             ssl: i32,
             app: *mut uws_app_t,
@@ -697,16 +680,5 @@ pub mod c {
         pub port: c_int,
         pub host: *const c_char,
         pub options: c_int,
-    }
-
-    impl uws_app_listen_config_t {
-        // Provide a required-port constructor instead of `Default` to avoid inventing port=0.
-        pub const fn new(port: c_int) -> Self {
-            Self {
-                port,
-                host: ptr::null(),
-                options: 0,
-            }
-        }
     }
 }

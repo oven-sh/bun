@@ -73,22 +73,10 @@ impl ErrorCategory {
             _ => ErrorSeverity::Error,
         }
     }
-
-    /// The severity to use in logged output, matching the TS compiler's
-    /// `getRuleForCategory()`. This may differ from the internal `severity()`
-    /// used for panicThreshold logic. In particular, `PreserveManualMemo` is
-    /// `Warning` internally (so it doesn't trigger panicThreshold throws) but
-    /// `Error` in logged output (matching TS behavior).
-    pub fn logged_severity(&self) -> ErrorSeverity {
-        match self {
-            ErrorCategory::PreserveManualMemo => ErrorSeverity::Error,
-            _ => self.severity(),
-        }
-    }
 }
 
 /// Suggestion operations for auto-fixes
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompilerSuggestionOperation {
     InsertBefore,
     InsertAfter,
@@ -114,12 +102,21 @@ pub struct SourceLocation {
     pub end: Position,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Position {
-    pub line: u32,
-    pub column: u32,
     /// Byte offset in the source file. Preserved for logger event serialization.
     pub index: Option<u32>,
+}
+
+/// With the line and the column of upstream's, which are not known here.
+impl std::fmt::Debug for Position {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Position")
+            .field("line", &0)
+            .field("column", &0)
+            .field("index", &self.index)
+            .finish()
+    }
 }
 
 /// Sentinel value for generated/synthetic source locations
@@ -168,10 +165,6 @@ impl CompilerDiagnostic {
 
     pub fn severity(&self) -> ErrorSeverity {
         self.category.severity()
-    }
-
-    pub fn logged_severity(&self) -> ErrorSeverity {
-        self.category.logged_severity()
     }
 
     pub fn with_detail(mut self, detail: CompilerDiagnosticDetail) -> Self {
@@ -247,10 +240,6 @@ impl CompilerErrorDetail {
     pub fn severity(&self) -> ErrorSeverity {
         self.category.severity()
     }
-
-    pub fn logged_severity(&self) -> ErrorSeverity {
-        self.category.logged_severity()
-    }
 }
 
 /// Aggregate compiler error - can contain multiple diagnostics.
@@ -279,13 +268,6 @@ impl CompilerErrorOrDiagnostic {
         match self {
             Self::Diagnostic(d) => d.severity(),
             Self::ErrorDetail(d) => d.severity(),
-        }
-    }
-
-    pub fn logged_severity(&self) -> ErrorSeverity {
-        match self {
-            Self::Diagnostic(d) => d.logged_severity(),
-            Self::ErrorDetail(d) => d.logged_severity(),
         }
     }
 
@@ -447,6 +429,16 @@ pub fn cold_diagnostic(
 #[inline(never)]
 pub fn cold_todo(reason: &'static str, loc: Option<SourceLocation>) -> CompilerError {
     cold_diagnostic(ErrorCategory::Todo, reason, None, loc)
+}
+
+/// Upstream's `CompilerError.invariant(holds, { reason })`. A panic would end the process.
+#[inline]
+pub fn invariant(holds: bool, reason: &'static str) -> Result<(), CompilerDiagnostic> {
+    if holds {
+        Ok(())
+    } else {
+        Err(cold_invariant(reason, None, None).into())
+    }
 }
 
 #[cold]

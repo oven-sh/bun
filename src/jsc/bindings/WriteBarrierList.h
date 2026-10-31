@@ -63,13 +63,6 @@ public:
         return m_list.isEmpty();
     }
 
-    template<typename MatchFunction>
-    bool removeFirstMatching(JSC::JSCell* owner, const MatchFunction& matches)
-    {
-        WTF::Locker locker { owner->cellLock() };
-        return m_list.removeFirstMatching(matches);
-    }
-
 private:
     WTF::Vector<JSC::WriteBarrier<T>> m_list;
 };

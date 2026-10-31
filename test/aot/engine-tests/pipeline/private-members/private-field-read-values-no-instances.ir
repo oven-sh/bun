@@ -1,0 +1,395 @@
+# -- source: private-field-read-values-no-instances.ts
+# // A static method with a typed parameter returns a private field of it. Through `any` it also gets an object from JSON.parse, a literal, null and undefined: each of those reads throws a TypeError, as in plain Bun.
+# class Safe {
+#   #code = 42;
+#   static codeOf(safe: Safe): number {
+#     return safe.#code;
+#   }
+# }
+#
+# const parsed: Safe = JSON.parse("{}");
+# const others: any[] = [new Safe(), parsed, {}, null, undefined];
+# console.log(Safe.codeOf(new Safe()));
+# for (const other of others) {
+#   try {
+#     console.log(Safe.codeOf(other));
+#   } catch (error) {
+#     console.log(error instanceof TypeError);
+#   }
+# }
+#
+# export {};
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="private-field-read-values-no-instances.ts" displayPath="private-field-read-values-no-instances.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+typesite w0 module=m0 position=316 kind=Variable
+typesite w1 module=m0 position=355 kind=Variable
+typesite w2 module=m0 position=230 kind=Field
+typesite w3 module=m0 position=258 kind=Parameter
+typesite w4 module=m0 position=244 kind=Result
+typesite w5 module=m0 position=372 kind=CallResult
+typesite w6 module=m0 position=438 kind=CallResult
+typesite w7 module=m0 position=426 kind=CallResult
+typesite w8 module=m0 position=506 kind=CallResult
+layout L0 kind=Instance name="Safe" module=m0 position=221 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"#code"@L0 declared={type=number site=w2} flags=[IsRequired, IsPrivate]}] ownFieldCount=2
+layout L1 module=m0 position=392
+data d0 root=Object{layout=L1} module=m0
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClassToken layout=L0
+    PutModuleVariable v0 variable=g1
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    PutModuleVariable v3 variable=g0
+    v5 = NewClosure function=f2
+    DefineMethod v3, v5 layout=L0 side=Static key="codeOf"
+    v7 = FinishClass v3 layout=L0
+    v8 = Convert v7 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v9 = Convert v7 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = Builtin builtin=JSON
+    v11 = PropGet v10 key="parse"
+    v12 = Convert v11 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v13 = String string="{}"
+    v14 = Call v12, v10, v13 calleeKey="parse" calleeName="JSON.parse"
+    v15 = Convert v14 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v16 = Convert v15 declared={type=undefined|null|L0 site=w0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v17 = Construct v9 calleeName="Safe"
+    v18 = Convert v17 declared={type=undefined|null|L0 site=w5 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    v19 = Data data=d0
+    v20 = Null
+    v21 = Undefined
+    v22 = NewArray v18, v16, v19, v20, v21 contents=anything
+    v23 = Convert v22 declared={type=undefined|null|Array site=w1 flags=[OmitsNull, OmitsUndefined]}
+    v24 = Builtin builtin=GlobalThis
+    v25 = PropGet v24 key="console" [isFreeName]
+    v26 = Convert v25 declared={type=builtin(Console) flags=[IsExpected]}
+    v27 = PropGet v26 key="log"
+    v28 = Convert v27 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v29 = PropGet v9 key="codeOf"
+    v30 = Construct v9 calleeName="Safe"
+    v31 = Convert v30 declared={type=undefined|null|L0 site=w6 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    v32 = Call v29, v9, v31 calleeKey="codeOf" calleeName="Safe.codeOf"
+    v33 = Convert v32 declared={type=number site=w7}
+    v34 = Call v28, v26, v33 calleeKey="log" calleeName="console.log"
+    v35 = IteratorOpen v23
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v37 = IteratorResume v35
+    v38 = ResultAt v37
+    v39 = ResultAt v37 index=1
+    Branch v38 -> taken b3(), notTaken b4()
+  b3():
+    v40 = Undefined
+    Return v40
+  b4():
+    Jump -> next b5()
+  b5() handler=b11():
+    Jump -> next b6()
+  b6() handler=b9():
+    v41 = Builtin builtin=GlobalThis
+    v42 = PropGet v41 key="console" [isFreeName]
+    v43 = Convert v42 declared={type=builtin(Console) flags=[IsExpected]}
+    v44 = PropGet v43 key="log"
+    v45 = Convert v44 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v46 = PropGet v9 key="codeOf"
+    v47 = Convert v39 declared={type=undefined|null|L0 flags=[IsExpected]}
+    Jump -> next b7()
+  b7() handler=b9():
+    v48 = Call v46, v9, v47 calleeKey="codeOf" calleeName="Safe.codeOf"
+    v49 = Convert v48 declared={type=number site=w8}
+    v50 = Call v45, v43, v49 calleeKey="log" calleeName="console.log"
+    Jump -> next b8()
+  b8() handler=b11():
+    Jump -> next b10()
+  b9() role=CatchHandler handler=b11():
+    v51 = CatchValue
+    v52 = Builtin builtin=GlobalThis
+    v53 = PropGet v52 key="console" [isFreeName]
+    v54 = Convert v53 declared={type=builtin(Console) flags=[IsExpected]}
+    v55 = PropGet v54 key="log"
+    v56 = Convert v55 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v57 = Builtin builtin=GlobalThis
+    v58 = PropGet v57 key="TypeError" [isFreeName]
+    v59 = Convert v58 declared={type=builtin(TypeError) flags=[IsExpected]}
+    v60 = InstanceOf v51, v59 writtenExpression="error instanceof TypeError"
+    v61 = Call v56, v54, v60 calleeKey="log" calleeName="console.log"
+    Jump -> next b10()
+  b10() handler=b11():
+    Jump -> next b2()
+  b11() role=IterationCleanup subject=v35:
+    v62 = CatchException
+    IteratorClose v35 completion=Throw
+    Rethrow v62
+}
+function f1 name="Safe" module=m0 position=221 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = CallDirect v3 function=f3
+    Return v3
+}
+function f2 name="codeOf" module=m0 position=244 kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g1
+    v2 = PrivateGet v0, v1 layout=L0 field=1
+    v3 = Convert v2 declared={type=number site=w4}
+    Return v3
+}
+function f3 module=m0 position=221 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = GetModuleVariable variable=g1
+    PrivateDefine v1, v2, v2 layout=L0
+    v4 = Integer integer=42
+    v5 = Convert v4 declared={type=number site=w2}
+    v6 = GetModuleVariable variable=g1
+    PrivateDefine v1, v6, v5 layout=L0 field=1
+    v8 = Undefined
+    Return v8
+}
+function f4 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = HasJSType v0 first=5 last=5
+    v2 = ToBoolean v1
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v3):
+    Jump -> next b3()
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v5 = StepArrayIterator v4
+    v6 = ResultAt v5 index=1
+    v7 = ResultAt v5
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]}
+    v9 = CreateIteratorResult v6, v8
+    Return v9
+  b4(v10):
+    Jump -> next b5()
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance"
+    Unreachable
+}
+runtimefunction id=68 function=f4
+# -- generated: f0 Safe codeOf f3 next
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f11 callPosition=4294967295 isConstruction=true module=m0}, {callee=f11 callPosition=4294967295 isConstruction=true module=m0}, {callee=f3 callPosition=4294967295 parent=4 module=m0}, {callee=f3 callPosition=4294967295 parent=3 module=m0}, {callee=f7 callPosition=244 parent=2 isTailCall=true module=m0}, {callee=f6 callPosition=244 parent=2 isTailCall=true module=m0}, {callee=f7 callPosition=244 parent=1 isTailCall=true module=m0}, {callee=f6 callPosition=244 parent=1 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: classtoken = NewClassToken layout=L0
+# CHECK-NEXT: PutModuleVariable v0 variable=g1
+# CHECK-NEXT: v2: "{}" = String string="{}"
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: v4: null|boolean|number|string|object = CallBuiltin -, v2, v3 overload=JSONParse/0 accessSite=1
+# CHECK-NEXT: v5: null|boolean|number|string|object ~ null|L0 = Upcast v4 castType=anything
+# CHECK-NEXT: v6: L1 = NewObject layout=L1 allocationSite=2 storage=Frame allocationClass=1
+# CHECK-NEXT: v7: 42 = Integer integer=42
+# CHECK-NEXT: v8: undefined = CallBuiltin -, v7 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b2():
+# CHECK-NEXT: v9: 42 = Integer integer=42
+# CHECK-NEXT: v10: undefined = CallBuiltin -, v9 overload=ConsoleLog/0 accessSite=13
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b2() role=CatchHandler:
+# CHECK-NEXT: v11: anything = CatchValue
+# CHECK-NEXT: v12: builtin(TypeErrorPrototype) = Builtin builtin=TypeErrorPrototype
+# CHECK-NEXT: v13: boolean = HasInPrototypeChain v11, v12
+# CHECK-NEXT: v14: undefined = CallBuiltin -, v13 overload=ConsoleLog/0 accessSite=17
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v15: boolean = TypeTest v5 testedType=L0
+# CHECK-NEXT: Branch v15 -> taken b4(| 0), notTaken b5()
+# CHECK-NEXT: b4(v16: L0):
+# CHECK-NEXT: v17: int = GetSlot v16 key=#"#code"@L0 receivers=[L0] level=Proven accessSite=19
+# CHECK-NEXT: Jump -> next b6(v17)
+# CHECK-NEXT: b5() frequency=Unlikely handler=b7():
+# CHECK-NEXT: v18: anything ~ int = PrivateGet v5, v0 layout=L0 field=1 accessSite=19
+# CHECK-NEXT: v19: int = AssumeType v18 provenType=int
+# CHECK-NEXT: Jump -> next b6(v19)
+# CHECK-NEXT: b6(v20: int) handler=b7():
+# CHECK-NEXT: v21: undefined = CallBuiltin -, v20 overload=ConsoleLog/0 accessSite=13
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b7() role=CatchHandler:
+# CHECK-NEXT: v22: anything = CatchValue
+# CHECK-NEXT: v23: builtin(TypeErrorPrototype) = Builtin builtin=TypeErrorPrototype
+# CHECK-NEXT: v24: boolean = HasInPrototypeChain v22, v23
+# CHECK-NEXT: v25: undefined = CallBuiltin -, v24 overload=ConsoleLog/0 accessSite=17
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b8() handler=b9():
+# CHECK-NEXT: v26: anything ~ int = PrivateGet v6, v0 layout=L0 field=1 accessSite=19
+# CHECK-NEXT: v27: int = AssumeType v26 provenType=int
+# CHECK-NEXT: v28: undefined = CallBuiltin -, v27 overload=ConsoleLog/0 accessSite=13
+# CHECK-NEXT: Jump -> next b10()
+# CHECK-NEXT: b9() role=CatchHandler:
+# CHECK-NEXT: v29: anything = CatchValue
+# CHECK-NEXT: v30: builtin(TypeErrorPrototype) = Builtin builtin=TypeErrorPrototype
+# CHECK-NEXT: v31: boolean = HasInPrototypeChain v29, v30
+# CHECK-NEXT: v32: undefined = CallBuiltin -, v31 overload=ConsoleLog/0 accessSite=17
+# CHECK-NEXT: Jump -> next b10()
+# CHECK-NEXT: b10() handler=b11():
+# CHECK-NEXT: v33: null = Null
+# CHECK-NEXT: v34: never = PrivateGet v33, v0 layout=L0 field=1 accessSite=19
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b11() role=CatchHandler:
+# CHECK-NEXT: v35: anything = CatchValue
+# CHECK-NEXT: v36: builtin(TypeErrorPrototype) = Builtin builtin=TypeErrorPrototype
+# CHECK-NEXT: v37: boolean = HasInPrototypeChain v35, v36
+# CHECK-NEXT: v38: undefined = CallBuiltin -, v37 overload=ConsoleLog/0 accessSite=17
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b12() handler=b13():
+# CHECK-NEXT: v39: undefined = Undefined
+# CHECK-NEXT: v40: never = PrivateGet v39, v0 layout=L0 field=1 accessSite=19
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b13() role=CatchHandler:
+# CHECK-NEXT: v41: anything = CatchValue
+# CHECK-NEXT: v42: builtin(TypeErrorPrototype) = Builtin builtin=TypeErrorPrototype
+# CHECK-NEXT: v43: boolean = HasInPrototypeChain v41, v42
+# CHECK-NEXT: v44: undefined = CallBuiltin -, v43 overload=ConsoleLog/0 accessSite=17
+# CHECK-NEXT: v45: undefined = Undefined
+# CHECK-NEXT: Return v45
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Safe"
+# CHECK: module=m0 position=221 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1: f1 = AssumeType v0 provenType=f1
+# CHECK-NEXT: v2: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}]
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v3: classtoken = GetModuleVariable variable=g1
+# CHECK-NEXT: v4: 42 = Integer integer=42
+# CHECK-NEXT: v5: L0 = NewObject -, v3, v4 layout=L0 fields=[0, 1] allocationSite=4 allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v6: object = GetConstructPrototype v1 layout=L0
+# CHECK-NEXT: v7: L0 = NewObject v6 layout=L0 allocationSite=4 allocationClass=0
+# CHECK-NEXT: v8: undefined = CallDirect v7 function=f3 accessSite=18
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="codeOf"
+# CHECK: module=m0 position=244 kind=Method role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w3 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=int site=w4}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f6 fallback=f7}
+# CHECK-LABEL: function f3 module=
+# CHECK: m0 position=221 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: v1: classtoken = GetModuleVariable variable=g1
+# CHECK-NEXT: PutSlot v0, -, v1 key=#"#"@L0 receivers=[L0] level=Proven accessSite=20
+# CHECK-NEXT: v3: 42 = Integer integer=42
+# CHECK-NEXT: PutSlot v0, -, v3 key=#"#code"@L0 receivers=[L0] level=Proven accessSite=21
+# CHECK-NEXT: v5: undefined = Undefined
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="next"
+# CHECK: module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=L(IteratorResult)}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+# CHECK-NEXT: b0(v0: anything ~ ArrayIterator):
+# CHECK-NEXT: v1: boolean = HasJSType v0 first=5 last=5
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b17()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v2: object ~ ArrayIterator = AssumeType v0 provenType=object [isWordOfFrontEnd]
+# CHECK-NEXT: v3: anything = GetInternalField v2
+# CHECK-NEXT: v4: -1 = Integer integer=-1
+# CHECK-NEXT: v5: boolean = StrictEq v3, v4
+# CHECK-NEXT: Branch v5 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v6: true = Boolean boolean=true
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: Jump -> next b16(v6, v7)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v8: anything = GetInternalField v2 index=1
+# CHECK-NEXT: v9: object ~ Array = AssumeType v8 provenType=object
+# CHECK-NEXT: v10: boolean ~ false = TypeTest v9 testedType=BigInt64Array|BigUint64Array|Float16Array|Float32Array|Float64Array|Int16Array|Int32Array|Int8Array|Uint16Array|Uint32Array|Uint8Array|Uint8ClampedArray
+# CHECK-NEXT: Branch v10 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: RequireAttachedTypedArray v9
+# CHECK-NEXT: v12: int[0, 17179869184] = GetTypedArrayLength v9
+# CHECK-NEXT: Jump -> next b9(v12)
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v13: boolean ~ true = TypeTest v9 testedType=Array
+# CHECK-NEXT: Branch v13 -> taken b6(| 0), notTaken b7()
+# CHECK-NEXT: b6(v14: Array):
+# CHECK-NEXT: v15: int[0, 4294967295] = CallBuiltin v14 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: Jump -> next b8(v15)
+# CHECK-NEXT: b7() frequency=Unlikely:
+# CHECK-NEXT: v16: anything = PropGet v9 key="length"
+# CHECK-NEXT: Jump -> next b8(v16)
+# CHECK-NEXT: b8(v17: anything ~ int[0, 4294967295]):
+# CHECK-NEXT: v18: int[0, 9007199254740991] ~ int[0, 4294967295] = ToLength v17
+# CHECK-NEXT: Jump -> next b9(v18)
+# CHECK-NEXT: b9(v19: int[0, 9007199254740991] ~ int[0, 17179869184]):
+# CHECK-NEXT: v20: boolean = Less v3, v19
+# CHECK-NEXT: Branch v20 -> taken b10(), notTaken b15()
+# CHECK-NEXT: b10():
+# CHECK-NEXT: v21: 1 = Integer integer=1
+# CHECK-NEXT: v22: number|string|bigint = Add v3, v21
+# CHECK-NEXT: v23: number|string|bigint = PutInternalField v2, v22
+# CHECK-NEXT: v24: anything = GetInternalField v2 index=2
+# CHECK-NEXT: v25: 0 = Integer
+# CHECK-NEXT: v26: boolean = StrictEq v24, v25
+# CHECK-NEXT: Branch v26 -> taken b11(), notTaken b12()
+# CHECK-NEXT: b11():
+# CHECK-NEXT: v27: false = Boolean
+# CHECK-NEXT: Jump -> next b16(v27, v3)
+# CHECK-NEXT: b12():
+# CHECK-NEXT: v28: anything = ElemGet v9, v3
+# CHECK-NEXT: v29: 2 = Integer integer=2
+# CHECK-NEXT: v30: boolean = StrictEq v24, v29
+# CHECK-NEXT: Branch v30 -> taken b13(), notTaken b14()
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v31: Array = NewArray v3, v28 contents=anything
+# CHECK-NEXT: v32: false = Boolean
+# CHECK-NEXT: Jump -> next b16(v32, v31)
+# CHECK-NEXT: b14():
+# CHECK-NEXT: v33: false = Boolean
+# CHECK-NEXT: Jump -> next b16(v33, v28)
+# CHECK-NEXT: b15():
+# CHECK-NEXT: v34: -1 = Integer integer=-1
+# CHECK-NEXT: v35: -1 = PutInternalField v2, v34
+# CHECK-NEXT: v36: true = Boolean boolean=true
+# CHECK-NEXT: v37: undefined = Undefined
+# CHECK-NEXT: Jump -> next b16(v36, v37)
+# CHECK-NEXT: b16(v38: boolean, v39: anything):
+# CHECK-NEXT: v40: L(IteratorResult) = NewObject -, v39, v38 layout=L(IteratorResult) fields=[0, 1]
+# CHECK-NEXT: Return v40
+# CHECK-NEXT: b17():
+# CHECK-NEXT: v41: never = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance"
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="codeOf"
+# CHECK: module=m0 position=244 kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0 site=w3}] results=[{type=int site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{original=0}]}
+# CHECK-LABEL: function {{*}}name="codeOf"
+# CHECK: module=m0 position=244 kind=Method role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w3 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=int site=w4}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{original=0}]} creator=Version{provenVersion=f6}
+# CHECK-LABEL: function {{*}}name="next"
+# CHECK: module=m1 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] enclosingRuntimeFunction=68 captures=[{type=f4}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f4, v1: anything):
+# CHECK-NEXT: v2: L(IteratorResult) = CallDirect v1 function=f4
+# CHECK-NEXT: ReturnCall v2 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Safe"
+# CHECK: module=m0 position=221 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] captures=[{type=f1}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers takesNewTarget=true} {
+# CHECK-NEXT: b0(v0: f1, v1: anything, v2: anything):
+# CHECK-NEXT: v3: L0 = CallDirect v2 function=f1
+# CHECK-NEXT: ReturnCall v3 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Safe"
+# CHECK: module=m0 position=221 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, IsChecked, HasExplicitName] thisType={type=L0} results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{}, {original=0}]} creator=Version{provenVersion=f1} constructedClass=L0
+# CHECK-LABEL: function {{*}}name="codeOf"
+# CHECK: module=m0 position=244 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f2}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f2, v1: anything, v2: anything) frequency=Rare:
+# CHECK-NEXT: v3: object = NewRuntimeError runtimeError=LeftOutOfExecutable
+# CHECK-NEXT: Throw v3
+# CHECK-NEXT: }

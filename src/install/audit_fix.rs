@@ -3,15 +3,18 @@ use core::mem::ManuallyDrop;
 use std::io::Write as _;
 
 use bstr::BStr;
+use bun_ast::Expr;
 use bun_collections::{DynamicBitSet, HashMap, index_sort};
+use bun_core::fmt::escape_control_chars;
 use bun_core::{Global, Output, UnwrapOrOom as _, pretty, prettyln, strings};
 use bun_semver::query::Group;
 use bun_semver::{self as Semver, SlicedString};
 
 use crate::dependency::Behavior;
 use crate::lockfile::Lockfile;
+use crate::lockfile::override_map::OverrideRule;
 use crate::lockfile::package::PackageColumns as _;
-use crate::npm::PackageManifest;
+use crate::npm::{FindResult, PackageManifest};
 use crate::package_manager::Options::{Do, Enable, LogLevel};
 use crate::package_manager_real::enqueue_dependency_with_main;
 use crate::package_manager_real::populate_manifest_cache::{self, Packages};
@@ -23,7 +26,7 @@ use crate::{
 
 mod json;
 mod package_json_edits;
-pub use package_json_edits::PackageJsonEdit;
+pub use package_json_edits::{EditSite, OverrideSelector, PackageJsonEdit};
 
 pub struct Advisory {
     pub package_name: Box<[u8]>,
@@ -52,11 +55,17 @@ pub struct PlannedEdge {
     pub parent: PackageID,
 }
 
+#[derive(PartialEq, Eq)]
 pub struct Blocker {
+    /// The dependent package or the project's package.json file. It's `package.json` when
+    /// `override_rule` is set.
     pub dependent: Box<[u8]>,
     pub range: Box<[u8]>,
     pub bundled: bool,
+    pub peer: bool,
     pub latest_fixes: bool,
+    /// `OverrideSelector::key` of the `overrides` rule that holds the version.
+    pub override_rule: Option<Box<[u8]>>,
 }
 
 pub struct BlockedFix {
@@ -135,9 +144,12 @@ impl AdvisoryIndex {
             .iter()
             .map(|&(start, len)| {
                 let input = &range_buf[start..start + len];
-                Semver::query::parse(input, SlicedString::init(&range_buf, input))
-                    .ok()
-                    .filter(|group| !group.is_empty())
+                Semver::query::parse_including_prerelease(
+                    input,
+                    SlicedString::init(&range_buf, input),
+                )
+                .ok()
+                .filter(|group| !group.is_empty())
             })
             .collect();
         let mut by_name: HashMap<PackageNameHash, Vec<usize>> = HashMap::new();
@@ -183,9 +195,12 @@ pub struct FixOutcome {
 struct Edge {
     dep_id: DependencyID,
     parent: PackageID,
+    /// The range after overrides and catalogs are applied. `None` unless that's an npm range.
     range: Option<dependency::Version>,
+    /// The override's value, or else the dependent's specifier. Shown when `range` is `None`.
     literal: Box<[u8]>,
     dependent: Box<[u8]>,
+    override_rule: Option<Box<[u8]>>,
     bundled: bool,
     peer: bool,
     latest_fixes: bool,
@@ -244,7 +259,8 @@ fn print_elapsed_line() {
 
 fn print_tokens(tokens: &[Box<[u8]>]) {
     for (i, token) in tokens.iter().enumerate() {
-        pretty!("{}{}", if i > 0 { ", " } else { "" }, BStr::new(token));
+        let token = escape_control_chars(token);
+        pretty!("{}{}", if i > 0 { ", " } else { "" }, token);
     }
 }
 
@@ -299,14 +315,14 @@ pub fn print_unaudited(groups: &[UnauditedRegistry]) {
             bun_core::warn!(
                 "{} did not answer the audit request; skipped {}",
                 bun_core::fmt::redacted_npm_url(&group.registry),
-                BStr::new(&packages)
+                escape_control_chars(&packages)
             );
         } else {
             bun_core::warn!(
                 "{} did not answer the audit request ({}); skipped {}",
                 bun_core::fmt::redacted_npm_url(&group.registry),
-                BStr::new(&group.reason),
-                BStr::new(&packages)
+                escape_control_chars(&group.reason),
+                escape_control_chars(&packages)
             );
         }
     }
@@ -416,9 +432,9 @@ fn print_manifest_unavailable(manager: &PackageManager, items: &[ManifestUnavail
     for item in items {
         bun_core::warn!(
             "{}@{} was not checked for updates: {}",
-            BStr::new(&item.name),
-            BStr::new(&item.from),
-            BStr::new(&item.detail)
+            escape_control_chars(&item.name),
+            escape_control_chars(&item.from),
+            escape_control_chars(&item.detail)
         );
     }
     if !log.msgs.is_empty() {
@@ -428,41 +444,41 @@ fn print_manifest_unavailable(manager: &PackageManager, items: &[ManifestUnavail
     Output::flush();
 }
 
+/// Returns the entry whose rewrite would move this dependency: an exact pin, or with `latest`, any
+/// npm range.
 fn pin_for(
     lockfile: &Lockfile,
-    dep_id: usize,
+    root_json: Option<&Expr>,
     dep: &Dependency,
     parent: PackageID,
+    rule: Option<OverrideRule<'_>>,
     latest: bool,
 ) -> Option<PackageJsonEdit> {
-    if parent == invalid_package_id || dep.behavior.is_bundled() || dep.behavior.is_workspace() {
+    if dep.behavior.is_bundled() || dep.behavior.is_workspace() {
         return None;
     }
     let buf = lockfile.buffers.string_bytes.as_slice();
-    let res = lockfile.packages.items_resolution();
-    let parent_res = &res[parent as usize];
-    if !matches!(
-        parent_res.tag,
-        ResolutionTag::Root | ResolutionTag::Workspace
-    ) {
-        return None;
-    }
-    let is_alias = dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().is_alias;
-    if !is_alias
-        && lockfile
-            .overrides
-            .get(lockfile, dep_id as DependencyID, dep.name_hash)
-            .is_some()
-    {
-        return None;
-    }
-    let key: Box<[u8]> = Box::from(dep.name.slice(buf));
-    match dep.version.tag {
+    // The name to edit under comes from what declares the version: the rule, else the dependency.
+    let holder = match rule {
+        Some(rule) => rule.dep(),
+        None => {
+            if parent == invalid_package_id
+                || !matches!(
+                    lockfile.packages.items_resolution()[parent as usize].tag,
+                    ResolutionTag::Root | ResolutionTag::Workspace
+                )
+            {
+                return None;
+            }
+            dep
+        }
+    };
+    let name = holder.name.slice(buf);
+    let version = &holder.version;
+    match version.tag {
         DependencyVersionTag::Catalog => {
-            let catalog_name = dep.version.catalog().slice(buf);
-            let entry = lockfile
-                .catalogs
-                .find(buf, catalog_name, dep.name.slice(buf))?;
+            let catalog_name = version.catalog().slice(buf);
+            let entry = lockfile.catalogs.find(buf, catalog_name, name)?;
             if entry.version.tag != DependencyVersionTag::Npm
                 || (!latest && entry.version.npm().version.get_exact_version().is_none())
             {
@@ -471,24 +487,45 @@ fn pin_for(
             Some(PackageJsonEdit {
                 owner: 0,
                 file: Box::from(&b"package.json"[..]),
-                catalog: Some(Box::from(catalog_name)),
-                key,
+                site: EditSite::Catalog(Box::from(catalog_name)),
+                key: Box::from(name),
                 old_literal: Box::from(entry.version.literal.slice(buf)),
                 new_literal: Box::default(),
             })
         }
         DependencyVersionTag::Npm => {
             if !latest {
-                dep.version.npm().version.get_exact_version()?;
+                version.npm().version.get_exact_version()?;
             }
-            Some(PackageJsonEdit {
-                owner: parent,
-                file: importer_file(lockfile, parent)?,
-                catalog: None,
-                key,
-                old_literal: Box::from(dep.version.literal.slice(buf)),
-                new_literal: Box::default(),
-            })
+            let literal = version.literal.slice(buf);
+            match rule {
+                Some(rule) => {
+                    let selector = OverrideSelector::from_rule(rule, buf);
+                    let written =
+                        package_json_edits::override_literal(root_json?, name, &selector)?;
+                    // They differ for a `$ref` in package.json, because bun.lock stores what it
+                    // resolved to.
+                    if *written != *strings::trim(literal, &strings::WHITESPACE_CHARS) {
+                        return None;
+                    }
+                    Some(PackageJsonEdit {
+                        owner: 0,
+                        file: Box::from(&b"package.json"[..]),
+                        site: EditSite::Override(selector),
+                        key: Box::from(name),
+                        old_literal: written,
+                        new_literal: Box::default(),
+                    })
+                }
+                None => Some(PackageJsonEdit {
+                    owner: parent,
+                    file: importer_file(lockfile, parent)?,
+                    site: EditSite::Dependencies,
+                    key: Box::from(name),
+                    old_literal: Box::from(literal),
+                    new_literal: Box::default(),
+                }),
+            }
         }
         _ => None,
     }
@@ -502,15 +539,12 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
 
     let mut instances: Vec<Instance> = Vec::new();
     let mut checked_names: HashMap<PackageNameHash, ()> = HashMap::new();
-    {
+    let instance_of: Vec<u32> = {
         let lockfile = &*manager.lockfile;
         let buf = lockfile.buffers.string_bytes.as_slice();
         let names = lockfile.packages.items_name();
         let name_hashes = lockfile.packages.items_name_hash();
         let res = lockfile.packages.items_resolution();
-        let dep_slices = lockfile.packages.items_dependencies();
-        let deps = lockfile.buffers.dependencies.as_slice();
-        let resolutions = lockfile.buffers.resolutions.as_slice();
 
         let mut instance_of: Vec<u32> = vec![u32::MAX; res.len()];
         for pkg_id in 0..res.len() {
@@ -544,49 +578,64 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                 edges: Vec::new(),
             });
         }
+        instance_of
+    };
 
-        if !instances.is_empty() {
-            let mut parent_of: Vec<PackageID> = vec![invalid_package_id; deps.len()];
-            for (pkg_id, slice) in dep_slices.iter().enumerate() {
-                let end = (slice.end() as usize).min(deps.len());
-                for slot in &mut parent_of[(slice.begin() as usize).min(end)..end] {
-                    *slot = pkg_id as PackageID;
-                }
+    if !instances.is_empty() {
+        let root_json: Option<Expr> = (!manager.lockfile.overrides.is_empty())
+            .then(|| package_json_edits::root_package_json(manager));
+        let lockfile = &*manager.lockfile;
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let deps = lockfile.buffers.dependencies.as_slice();
+        let mut parent_of: Vec<PackageID> = vec![invalid_package_id; deps.len()];
+        for (pkg_id, slice) in lockfile.packages.items_dependencies().iter().enumerate() {
+            let end = (slice.end() as usize).min(deps.len());
+            for slot in &mut parent_of[(slice.begin() as usize).min(end)..end] {
+                *slot = pkg_id as PackageID;
             }
+        }
 
-            for (dep_id, &target) in resolutions.iter().enumerate() {
-                if target == invalid_package_id {
-                    continue;
-                }
-                let Some(&instance) = instance_of.get(target as usize) else {
-                    continue;
-                };
-                if instance == u32::MAX || deps[dep_id].behavior.is_optional_peer() {
-                    continue;
-                }
-                let dep = &deps[dep_id];
-                let parent = parent_of[dep_id];
-                let mut pin = pin_for(lockfile, dep_id, dep, parent, true);
-                let latest_fixes = !latest && pin.is_some();
-                if latest_fixes {
-                    pin = pin_for(lockfile, dep_id, dep, parent, false);
-                }
-                instances[instance as usize].edges.push(Edge {
-                    dep_id: dep_id as DependencyID,
-                    parent,
-                    range: crate::dedupe::effective_npm_range(
-                        lockfile,
-                        dep_id as DependencyID,
-                        dep,
-                    ),
-                    literal: Box::from(dep.version.literal.slice(buf)),
-                    dependent: dependent_label(lockfile, parent),
-                    bundled: dep.behavior.is_bundled(),
-                    peer: dep.behavior.is_peer(),
-                    latest_fixes,
-                    pin,
-                });
+        for (dep_id, &target) in lockfile.buffers.resolutions.iter().enumerate() {
+            if target == invalid_package_id {
+                continue;
             }
+            let Some(&instance) = instance_of.get(target as usize) else {
+                continue;
+            };
+            if instance == u32::MAX || deps[dep_id].behavior.is_optional_peer() {
+                continue;
+            }
+            let dep = &deps[dep_id];
+            let parent = parent_of[dep_id];
+            // A bundled copy ships inside its dependent whatever an override says.
+            let rule = if dep.behavior.is_bundled() {
+                None
+            } else {
+                crate::dedupe::applied_override(lockfile, dep_id as DependencyID, dep)
+            };
+            let mut pin = pin_for(lockfile, root_json.as_ref(), dep, parent, rule, true);
+            let latest_fixes = !latest && pin.is_some();
+            if latest_fixes {
+                pin = pin_for(lockfile, root_json.as_ref(), dep, parent, rule, false);
+            }
+            instances[instance as usize].edges.push(Edge {
+                dep_id: dep_id as DependencyID,
+                parent,
+                range: crate::dedupe::effective_npm_range(lockfile, dep_id as DependencyID, dep),
+                literal: Box::from(
+                    rule.map_or(&dep.version, OverrideRule::version)
+                        .literal
+                        .slice(buf),
+                ),
+                dependent: dependent_label(lockfile, parent),
+                override_rule: rule.map(|rule| {
+                    OverrideSelector::from_rule(rule, buf).key(rule.dep().name.slice(buf))
+                }),
+                bundled: dep.behavior.is_bundled(),
+                peer: dep.behavior.is_peer() && !dep.behavior.is_bundled(),
+                latest_fixes,
+                pin,
+            });
         }
     }
 
@@ -690,7 +739,15 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
         }
         let upgrade_count = candidates.len();
         for (i, &v) in releases.iter().enumerate().rev() {
-            if v.order(inst.current, manifest_buf, buf) == Ordering::Less && is_safe(v) {
+            if v.order(inst.current, manifest_buf, buf) != Ordering::Less {
+                continue;
+            }
+            // The bulk response only has advisories for the release lines that are installed.
+            let cur = inst.current;
+            if v.major != cur.major || (v.major == 0 && v.minor != cur.minor) {
+                break;
+            }
+            if is_safe(v) {
                 candidates.push(Candidate {
                     version: v,
                     index: i,
@@ -791,10 +848,23 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             }
         }
 
+        // If the root package.json depends on this package, every peer dependency on it uses the
+        // root's copy, whatever range the peer declares (see `hoist_dependency`).
+        let root_target = inst
+            .edges
+            .iter()
+            .zip(&target)
+            .find_map(|(edge, t)| (edge.parent == 0 && !edge.peer).then_some(*t));
         let mut chosen: Vec<usize> = if inst.edges.is_empty() {
             vec![0]
         } else {
-            target.iter().flatten().map(|t| t.candidate).collect()
+            inst.edges
+                .iter()
+                .zip(&target)
+                // If the root's copy cannot be upgraded, upgrading a peer dependency has no effect.
+                .filter(|(edge, _)| !(edge.peer && matches!(root_target, Some(None))))
+                .filter_map(|(_, t)| t.map(|t| t.candidate))
+                .collect()
         };
         index_sort::sort_slice_unstable_by(&mut chosen, |a, b| a.cmp(b));
         chosen.dedup();
@@ -818,7 +888,8 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                             edits.push(edit);
                         }
                         // A rewritten peer row is deferred by the differ and rebinds to the old package unless the edge is pinned too.
-                        if edge.peer {
+                        // A range resolves to the vulnerable release again: `^1.0.1` takes 1.1.0.
+                        if edge.peer || candidate.downgrade {
                             edges.push(PlannedEdge {
                                 dep_id: edge.dep_id,
                                 parent: edge.parent,
@@ -845,22 +916,27 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                 edges,
                 downgrade: candidate.downgrade,
                 too_recent: age_limit.is_some_and(|limit| {
-                    PackageManifest::is_package_version_too_recent(
-                        &release_pkgs[candidate.index],
+                    manifest.is_version_blocked_by_age_filter(
+                        FindResult {
+                            version: candidate.version,
+                            package: &release_pkgs[candidate.index],
+                        },
                         limit,
+                        excludes,
                     )
                 }),
                 edits,
             });
         }
 
-        let blockers: Vec<Blocker> = inst
-            .edges
-            .iter()
-            .zip(&target)
-            .filter(|(_, t)| t.is_none())
-            .map(|(edge, _)| Blocker {
-                dependent: edge.dependent.clone(),
+        let mut blockers: Vec<Blocker> = Vec::new();
+        for (edge, _) in inst.edges.iter().zip(&target).filter(|(_, t)| t.is_none()) {
+            let blocker = Blocker {
+                dependent: if edge.override_rule.is_some() {
+                    Box::from(&b"package.json"[..])
+                } else {
+                    edge.dependent.clone()
+                },
                 range: if edge.bundled {
                     inst.from.clone()
                 } else {
@@ -870,15 +946,25 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                     }
                 },
                 bundled: edge.bundled,
+                peer: edge.peer && edge.override_rule.is_none() && !edge.latest_fixes,
                 latest_fixes: edge.latest_fixes,
-            })
-            .collect();
+                override_rule: edge.override_rule.clone(),
+            };
+            // Every edge a rule holds reports the same blocker.
+            if !blockers.contains(&blocker) {
+                blockers.push(blocker);
+            }
+        }
         if blockers.is_empty() {
             expected_gone.push((inst.name_hash, inst.from));
             continue;
         }
-        for &a in &inst.advisories {
-            advisory_still_present.set(a);
+        // If the root's copy is upgraded, the vulnerable version is removed even though these peer
+        // dependencies' ranges reject the new version.
+        if !(matches!(root_target, Some(Some(_))) && blockers.iter().all(|blocker| blocker.peer)) {
+            for &a in &inst.advisories {
+                advisory_still_present.set(a);
+            }
         }
         blocked.push(BlockedFix {
             name: inst.name,
@@ -940,17 +1026,28 @@ impl FixPlan {
                 }
                 prettyln!("");
                 for edit in &fix.edits {
-                    pretty!("    {}", BStr::new(&edit.file));
-                    match edit.catalog.as_deref() {
-                        None => {}
-                        Some(b"" | b"default") => pretty!(" (catalog)"),
-                        Some(catalog) => pretty!(" (catalog {})", BStr::new(catalog)),
+                    pretty!("    {}", escape_control_chars(&edit.file));
+                    match &edit.site {
+                        EditSite::Dependencies => {}
+                        EditSite::Catalog(catalog) => match &**catalog {
+                            b"" | b"default" => pretty!(" (catalog)"),
+                            catalog => pretty!(" (catalog {})", escape_control_chars(catalog)),
+                        },
+                        EditSite::Override(selector) if selector.is_bare() => {
+                            pretty!(" (overrides)");
+                        }
+                        EditSite::Override(selector) => {
+                            pretty!(
+                                " (overrides {})",
+                                escape_control_chars(&selector.key(&edit.key))
+                            );
+                        }
                     }
                     prettyln!(
                         ": <d>{} {}<r> {}",
-                        BStr::new(&edit.old_literal),
+                        escape_control_chars(&edit.old_literal),
                         glyphs.arrow,
-                        BStr::new(&edit.new_literal)
+                        escape_control_chars(&edit.new_literal)
                     );
                 }
             }
@@ -966,27 +1063,37 @@ impl FixPlan {
                     } else {
                         glyphs.up
                     },
-                    BStr::new(&item.name),
-                    BStr::new(&item.from),
+                    escape_control_chars(&item.name),
+                    escape_control_chars(&item.from),
                     glyphs.arrow,
-                    BStr::new(&item.needs)
+                    escape_control_chars(&item.needs)
                 );
                 if item.needs_is_downgrade {
                     pretty!(" <d>(downgrade)<r>");
                 }
                 prettyln!("");
                 for blocker in &item.blockers {
-                    prettyln!(
+                    pretty!(
                         "    {} {} {}@{}",
-                        BStr::new(&blocker.dependent),
+                        escape_control_chars(&blocker.dependent),
                         if blocker.bundled {
                             "bundles"
+                        } else if blocker.override_rule.is_some() {
+                            "overrides"
                         } else {
                             "depends on"
                         },
-                        BStr::new(&item.name),
-                        BStr::new(&blocker.range)
+                        escape_control_chars(&item.name),
+                        escape_control_chars(&blocker.range)
                     );
+                    match &blocker.override_rule {
+                        Some(rule) if **rule != *item.name => {
+                            pretty!(" ({})", escape_control_chars(rule));
+                        }
+                        None if blocker.peer => pretty!(" <d>(peer)<r>"),
+                        _ => {}
+                    }
+                    prettyln!("");
                 }
                 if item.blockers.iter().any(|blocker| blocker.latest_fixes) {
                     prettyln!("    <cyan>bun audit fix --latest<r>");
@@ -998,7 +1105,11 @@ impl FixPlan {
             prettyln!("no published version fixes:");
             let mut all_tokens: Vec<Box<[u8]>> = Vec::new();
             for item in &self.unfixable {
-                pretty!("  {}@{}  <d>", BStr::new(&item.name), BStr::new(&item.from));
+                pretty!(
+                    "  {}@{}  <d>",
+                    escape_control_chars(&item.name),
+                    escape_control_chars(&item.from)
+                );
                 print_tokens(&item.ignore_tokens);
                 prettyln!("<r>");
                 for token in &item.ignore_tokens {
@@ -1009,7 +1120,7 @@ impl FixPlan {
             }
             pretty!("    <cyan>bun audit fix");
             for token in &all_tokens {
-                pretty!(" --ignore {}", BStr::new(token));
+                pretty!(" --ignore {}", escape_control_chars(token));
             }
             prettyln!("<r>");
             prettyln!("");
@@ -1017,7 +1128,8 @@ impl FixPlan {
         if !self.unmatched.is_empty() {
             prettyln!("not matched to an installed version:");
             for item in &self.unmatched {
-                prettyln!("  {}@{}", BStr::new(&item.name), BStr::new(&item.range));
+                let name = escape_control_chars(&item.name);
+                prettyln!("  {}@{}", name, escape_control_chars(&item.range));
             }
             prettyln!("");
         }
@@ -1096,8 +1208,8 @@ impl FixPlan {
                 for item in &outcome.still_vulnerable {
                     pretty!(
                         "  {}@{}  <d>",
-                        BStr::new(&item.name),
-                        BStr::new(&item.version)
+                        escape_control_chars(&item.name),
+                        escape_control_chars(&item.version)
                     );
                     print_tokens(&item.advisories);
                     prettyln!("<r>");
@@ -1198,18 +1310,15 @@ pub fn prepare_install(manager: &mut PackageManager, plan: &FixPlan) -> crate::R
     package_json_edits::apply(manager, plan)?;
 
     if plan.fixes.iter().any(|fix| fix.too_recent) {
-        let mut names: Vec<&'static [u8]> = manager
-            .options
-            .minimum_release_age_excludes
-            .map_or_else(Vec::new, <[_]>::to_vec);
-        names.extend(
+        let excludes = crate::npm::MinimumReleaseAgeExcludes::with_packages(
+            manager.options.minimum_release_age_excludes,
             plan.fixes
                 .iter()
                 .filter(|fix| fix.too_recent)
                 .map(|fix| &*bun_core::heap::release(fix.name.clone())),
         );
         manager.options.minimum_release_age_excludes =
-            Some(&*bun_core::heap::release(names.into_boxed_slice()));
+            Some(&*bun_core::heap::release(Box::new(excludes)));
     }
 
     manager.audit_fix_pins = plan

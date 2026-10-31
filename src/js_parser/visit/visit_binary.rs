@@ -18,6 +18,10 @@ fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bo
     p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
     replacement_op: js_ast::op::Code,
 ) -> Option<Expr> {
+    if p.options.features.is_library {
+        return None;
+    }
+
     // Check if this is a typeof comparison with "undefined"
     let (typeof_expr, string_expr, flip_comparison) = 'exprs: {
         // Try left side as typeof, right side as string
@@ -171,6 +175,23 @@ impl BinaryExpressionVisitor {
             }
         }
         p.decorator_class_name = prev_decorator_class_name;
+
+        // `ns && …` never yields the namespace (it is truthy); `ns == null` /
+        // `ns !== undefined` only test it.
+        match e_.op {
+            Op::Code::BinLogicalAnd => p.ignore_namespace_local_test_use(&e_.left),
+            Op::Code::BinLooseEq
+            | Op::Code::BinLooseNe
+            | Op::Code::BinStrictEq
+            | Op::Code::BinStrictNe => {
+                if matches!(e_.right.data, ExprData::ENull(_) | ExprData::EUndefined(_)) {
+                    p.ignore_namespace_local_test_use(&e_.left);
+                } else if matches!(e_.left.data, ExprData::ENull(_) | ExprData::EUndefined(_)) {
+                    p.ignore_namespace_local_test_use(&e_.right);
+                }
+            }
+            _ => {}
+        }
 
         // Always put constants on the right for equality comparisons to help
         // reduce the number of cases we have to check during pattern matching. We

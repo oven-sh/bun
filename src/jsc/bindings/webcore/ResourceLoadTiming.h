@@ -34,12 +34,6 @@ public:
     MonotonicTime startTime() const { return m_startTime; }
     MonotonicTime endTime() const { return m_endTime; }
 
-    ResourceLoadTiming isolatedCopy() const
-    {
-        // All members are wrapping POD types.
-        return *this;
-    }
-
 private:
     MonotonicTime m_startTime;
     MonotonicTime m_endTime;

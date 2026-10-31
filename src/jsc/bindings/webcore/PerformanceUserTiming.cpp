@@ -63,12 +63,13 @@ size_t PerformanceUserTiming::memoryCost() const
     return size;
 }
 
-static void clearPerformanceEntries(PerformanceEntryMap& map, const String& name)
+static void clearPerformanceEntries(PerformanceEntryMap& map, const String& name, int64_t& counter)
 {
-    if (name.isNull())
+    if (name.isNull()) {
         map.clear();
-    else
-        map.remove(name);
+        counter = 0;
+    } else
+        counter -= static_cast<int64_t>(map.take(name).size());
 }
 
 static void addPerformanceEntry(PerformanceEntryMap& map, const String& name, PerformanceEntry& entry)
@@ -98,8 +99,7 @@ ExceptionOr<Ref<PerformanceMark>> PerformanceUserTiming::mark(JSC::JSGlobalObjec
 
 void PerformanceUserTiming::clearMarks(const String& markName)
 {
-    clearPerformanceEntries(m_marksMap, markName);
-    m_markCounter = 0;
+    clearPerformanceEntries(m_marksMap, markName, m_markCounter);
 }
 
 ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(const std::variant<String, double>& mark) const
@@ -116,7 +116,11 @@ ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(const String& 
     if (iterator != m_marksMap.end())
         return iterator->value.last()->startTime();
 
-    return Exception { SyntaxError, makeString("No mark named '"_s, mark, "' exists"_s) };
+    // `mark` comes from JS. Past `String::MaxLength`, `makeString` calls `CRASH()` and `tryMakeString` returns null.
+    auto message = tryMakeString("No mark named '"_s, mark, "' exists"_s);
+    if (!message) [[unlikely]]
+        return Exception { OutOfMemoryError };
+    return Exception { SyntaxError, WTF::move(message) };
 }
 
 ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(double mark) const
@@ -263,8 +267,7 @@ ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGloba
 
 void PerformanceUserTiming::clearMeasures(const String& measureName)
 {
-    clearPerformanceEntries(m_measuresMap, measureName);
-    m_measureCounter = 0;
+    clearPerformanceEntries(m_measuresMap, measureName, m_measureCounter);
 }
 
 static Vector<RefPtr<PerformanceEntry>> convertToEntrySequence(const PerformanceEntryMap& map, int64_t initialCapacity)

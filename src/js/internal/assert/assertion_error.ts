@@ -16,7 +16,7 @@ const ArrayPrototypePop = Array.prototype.pop;
 const ArrayPrototypeSlice = Array.prototype.slice;
 const StringPrototypeRepeat = String.prototype.repeat;
 const StringPrototypeSlice = String.prototype.slice;
-const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeSplit: (this: string, separator: string, limit?: number) => string[] = String.prototype.split;
 
 declare namespace Internal {
   function printSimpleMyersDiff(actual: string, expected: string): string;
@@ -143,7 +143,13 @@ function getStackedDiff(actual, expected) {
   return { message };
 }
 
-function getSimpleDiff(originalActual, actual: string, originalExpected, expected: string) {
+interface SimpleDiff {
+  message: string;
+  header?: string;
+  skipped?: boolean;
+}
+
+function getSimpleDiff(originalActual, actual: string, originalExpected, expected: string): SimpleDiff {
   let stringsLen = actual.length + expected.length;
   // Accounting for the quotes wrapping strings
   if (typeof originalActual === "string") {
@@ -249,10 +255,11 @@ function addEllipsis(string) {
 }
 
 class AssertionError extends Error {
-  generatedMessage;
-  actual;
-  expected;
-  operator;
+  declare diff: string;
+  generatedMessage: boolean;
+  actual: unknown;
+  expected: unknown;
+  operator!: string;
 
   constructor(options) {
     validateObject(options, "options");
@@ -398,7 +405,7 @@ class AssertionError extends Error {
       }
     }
     // Create error message including the error code in the name.
-    this.stack; // eslint-disable-line no-unused-expressions
+    this.stack; // oxlint-disable-line bun/no-unused-expressions
     // Reset the name.
     this.name = "AssertionError";
     this.diff = diff;

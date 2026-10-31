@@ -1,0 +1,119 @@
+# A function that ends in a call leaves the stack before its callee runs. Each row makes an error at the end of a chain of such functions, under a limit on the number of frames, and prints the names that the stack trace lists. Every row runs twice.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="stack-limits-tail-calls-remove-frames.mjs" displayPath="stack-limits-tail-calls-remove-frames.mjs" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=number elements=[Number{}, Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}, Number{value=10}]} module=m0
+variable g0 name="keepsResult" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="endsInKeeper" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="endsInConversion" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="calls" module=m0 declared={type=number|absent flags=[IsExpected]}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = Convert v0 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f5
+    v3 = Convert v2 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    PutModuleVariable v5 variable=g3
+    v7 = Data data=d0
+    v8 = Convert v7 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v9 = IteratorOpen v8
+    Jump -> next b1()
+  b1() handler=b3():
+    v10 = Integer
+    v11 = Convert v10 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v11)
+  b2(v12) handler=b3():
+    LoopHint
+    v14 = Call v1 calleeName="keepsAgain"
+    v15 = Builtin builtin=Symbol
+    v16 = Call v15 calleeName="Symbol" callNumber=20
+    v17 = Convert v16 declared={type=undefined|null|symbol flags=[IsExpected]}
+    v18 = Call v3, -, v17 calleeName="keepsConversion"
+    v19 = Increment v12
+    v20 = Convert v19 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v20)
+  b3() role=IterationCleanup subject=v9:
+    v21 = CatchException
+    Rethrow v21
+}
+function f1 name="keepsResult" module=m0 position=693 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Error flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="endsInKeeper" module=m0 position=790 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Error flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g3
+    v1 = CheckInitialized v0 name="calls"
+    v2 = Increment v1
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    PutModuleVariable v3 variable=g3
+    v5 = GetModuleVariable variable=g0
+    v6 = Call v5 calleeName="keepsResult"
+    ReturnCall v6 casts=[{declared={type=undefined|null|Error flags=[IsExpected]}}]
+}
+function f3 name="endsInConversion" module=m0 position=938 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 name="keepsAgain" module=m0 position=853 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Error flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = Call v0 calleeName="endsInKeeper"
+    v2 = Convert v1 declared={type=undefined|null|Error flags=[IsExpected]}
+    v3 = GetModuleVariable variable=g3
+    v4 = CheckInitialized v3 name="calls"
+    v5 = Increment v4
+    v6 = Convert v5 declared={type=number flags=[IsExpected]}
+    PutModuleVariable v6 variable=g3
+    Return v2
+}
+function f5 name="keepsConversion" module=m0 position=1021 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1()
+  b1() handler=b2():
+    v1 = GetModuleVariable variable=g2
+    v2 = Call v1, -, v0 calleeName="endsInConversion"
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    Return v3
+  b2() role=CatchHandler:
+    v4 = CatchValue
+    Return v4
+}
+# -- generated: f0 endsInKeeper
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f4 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 parent=2 module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 0 = Integer
+# CHECK-NEXT: PutModuleVariable v0 variable=g3
+# CHECK-NEXT: v2: f3 = GetModuleVariable variable=g2
+# CHECK-NEXT: v3: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v5: fact = Entered function=f4
+# CHECK-NEXT: v6: fact = Entered function=f2
+# CHECK-NEXT: v7: int|whole = GetModuleVariable fact=v6 variable=g3
+# CHECK-NEXT: v8: int|whole = Increment v7
+# CHECK-NEXT: PutModuleVariable v8 variable=g3
+# CHECK-NEXT: v10: anything ~ undefined|null|Error = Call v3 calleeName="keepsResult" accessSite=3 callees=[f1] @0:3 tail
+# CHECK-NEXT: v11: int|whole = GetModuleVariable fact=v5 variable=g3
+# CHECK-NEXT: v12: int|whole = Increment v11
+# CHECK-NEXT: PutModuleVariable v12 variable=g3
+# CHECK-NEXT: v14: symbol = CallBuiltin overload=Symbol/0 accessSite=1
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2() handler=b3():
+# CHECK-NEXT: v15: anything ~ number = Call v2, -, v14 calleeName="endsInConversion" accessSite=5 callees=[f3]
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b3() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="endsInKeeper"
+# CHECK: module=m0 position=790 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Error flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: int|whole = GetModuleVariable variable=g3
+# CHECK-NEXT: v1: int|whole = Increment v0
+# CHECK-NEXT: PutModuleVariable v1 variable=g3
+# CHECK-NEXT: v3: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: v4: anything ~ undefined|null|Error = Call v3 calleeName="keepsResult" accessSite=3 callees=[f1]
+# CHECK-NEXT: ReturnCall v4 casts=[{declared={type=undefined|null|Error flags=[IsExpected]} resolution=Nothing}]
+# CHECK-NEXT: }

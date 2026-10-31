@@ -9,8 +9,22 @@ const setImmediateGlobal = globalThis.setImmediate;
 const setTimeoutGlobal = globalThis.setTimeout;
 const setIntervalGlobal = globalThis.setInterval;
 
-function asyncIterator({ next: nextFunction, return: returnFunction }) {
-  const result = {};
+interface TimerOptions {
+  signal?: AbortSignal;
+  ref?: boolean;
+}
+
+interface TimerAsyncIteratorMethods {
+  next?: () => unknown;
+  return?: () => unknown;
+}
+
+interface TimerAsyncIterator extends TimerAsyncIteratorMethods {
+  [Symbol.asyncIterator]?(): this;
+}
+
+function asyncIterator({ next: nextFunction, return: returnFunction }: TimerAsyncIteratorMethods) {
+  const result: TimerAsyncIterator = {};
   if (typeof nextFunction === "function") {
     result.next = nextFunction;
   }
@@ -24,7 +38,7 @@ function asyncIterator({ next: nextFunction, return: returnFunction }) {
   return result;
 }
 
-function setTimeout(after = 1, value, options = {}) {
+function setTimeout(after = 1, value?, options: TimerOptions = {}) {
   const arguments_ = [].concat(value ?? []);
   try {
     // If after is a number, but an invalid one (too big, Infinity, NaN), we only want to emit a
@@ -55,7 +69,7 @@ function setTimeout(after = 1, value, options = {}) {
   if (signal?.aborted) {
     return Promise.$reject($makeAbortError(undefined, { cause: signal.reason }));
   }
-  let onCancel;
+  let onCancel: (() => void) | undefined;
   const returnValue = new Promise((resolve, reject) => {
     const timeout = setTimeoutGlobal(() => resolve(value), after, ...arguments_);
     if (!reference) {
@@ -70,11 +84,11 @@ function setTimeout(after = 1, value, options = {}) {
     }
   });
   return typeof onCancel !== "undefined"
-    ? returnValue.finally(() => signal.removeEventListener("abort", onCancel))
+    ? returnValue.finally(() => signal!.removeEventListener("abort", onCancel!))
     : returnValue;
 }
 
-function setImmediate(value, options = {}) {
+function setImmediate(value?, options: TimerOptions = {}) {
   try {
     validateObject(options, "options");
   } catch (error) {
@@ -94,9 +108,9 @@ function setImmediate(value, options = {}) {
   if (signal?.aborted) {
     return Promise.$reject($makeAbortError(undefined, { cause: signal.reason }));
   }
-  let onCancel;
+  let onCancel: (() => void) | undefined;
   const returnValue = new Promise((resolve, reject) => {
-    const immediate = setImmediateGlobal(() => resolve(value));
+    const immediate: NodeJS.Immediate = setImmediateGlobal(() => resolve(value));
     if (!reference) {
       immediate?.unref?.();
     }
@@ -109,11 +123,11 @@ function setImmediate(value, options = {}) {
     }
   });
   return typeof onCancel !== "undefined"
-    ? returnValue.finally(() => signal.removeEventListener("abort", onCancel))
+    ? returnValue.finally(() => signal!.removeEventListener("abort", onCancel!))
     : returnValue;
 }
 
-function setInterval(after = 1, value, options = {}) {
+function setInterval(after = 1, value?, options: TimerOptions = {}) {
   /* eslint-disable no-undefined, no-unreachable-loop, no-loop-func */
   try {
     // If after is a number, but an invalid one (too big, Infinity, NaN), we only want to emit a
@@ -165,11 +179,11 @@ function setInterval(after = 1, value, options = {}) {
     });
   }
 
-  let onCancel, interval;
+  let onCancel: (() => void) | undefined, interval: NodeJS.Timeout | undefined;
 
   try {
     let notYielded = 0;
-    let callback;
+    let callback: (() => void) | undefined;
     interval = setIntervalGlobal(() => {
       notYielded++;
       if (callback) {
@@ -193,7 +207,7 @@ function setInterval(after = 1, value, options = {}) {
 
     return asyncIterator({
       next: function () {
-        return new Promise((resolve, reject) => {
+        return new Promise<void>((resolve, reject) => {
           if (!signal?.aborted) {
             if (notYielded === 0) {
               callback = resolve;
@@ -217,7 +231,7 @@ function setInterval(after = 1, value, options = {}) {
       },
       return: function () {
         clearInterval(interval);
-        signal?.removeEventListener("abort", onCancel);
+        signal?.removeEventListener("abort", onCancel!);
         return Promise.$resolve({});
       },
     });
@@ -225,7 +239,7 @@ function setInterval(after = 1, value, options = {}) {
     return asyncIterator({
       next: function () {
         clearInterval(interval);
-        signal?.removeEventListener("abort", onCancel);
+        signal?.removeEventListener("abort", onCancel!);
       },
     });
   }

@@ -1,0 +1,10 @@
+`${a}${( // comment
+b)}`;
+
+`${(a
+// comment
+)}${b}`;
+
+`${a}x${((
+// comment
+b))}y${c}`;

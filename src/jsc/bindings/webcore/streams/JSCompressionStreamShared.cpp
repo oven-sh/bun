@@ -3,9 +3,9 @@
 #include "BunClientData.h"
 
 #include "ErrorCode.h"
+#include "GeneratedSink.h"
 #include "JSCompressionStream.h"
 #include "JSDecompressionStream.h"
-#include "JSSink.h"
 #include "JSStreamsRuntime.h"
 #include "JSTransformStream.h"
 #include "JSTransformStreamDefaultController.h"
@@ -15,7 +15,9 @@
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
+#include <cmath>
 #include <limits>
+#include <wtf/text/MakeString.h>
 
 namespace Bun {
 namespace WebStreams {
@@ -50,23 +52,66 @@ std::optional<CompressionFormat> parseCompressionFormat(JSGlobalObject* globalOb
 // node:zlib stream adapter (src/js/internal/streams/iter/transform.ts).
 static constexpr double kDefaultCodecHighWaterMark = 64 * 1024;
 
-size_t parseCodecHighWaterMark(JSGlobalObject* globalObject, JSValue strategy)
+CodecOptions parseCodecOptions(JSGlobalObject* globalObject, JSValue strategy, std::optional<CompressionFormat> levelFormat)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    CodecOptions result { static_cast<size_t>(kDefaultCodecHighWaterMark), std::nullopt };
     QueuingStrategyDict dict = convertQueuingStrategyDict(globalObject, strategy);
-    RETURN_IF_EXCEPTION(scope, 0);
+    RETURN_IF_EXCEPTION(scope, result);
     double highWaterMark = extractHighWaterMark(globalObject, dict, kDefaultCodecHighWaterMark);
-    RETURN_IF_EXCEPTION(scope, 0);
+    RETURN_IF_EXCEPTION(scope, result);
     // +Infinity (spec-legal) means "never split a chunk's output"; the coder floors at one byte.
-    if (highWaterMark >= static_cast<double>(std::numeric_limits<size_t>::max()))
-        return std::numeric_limits<size_t>::max();
-    return static_cast<size_t>(highWaterMark);
+    result.highWaterMark = highWaterMark >= static_cast<double>(std::numeric_limits<size_t>::max())
+        ? std::numeric_limits<size_t>::max()
+        : static_cast<size_t>(highWaterMark);
+
+    if (!levelFormat || !strategy.isObject())
+        return result;
+    JSValue levelValue = asObject(strategy)->get(globalObject, Identifier::fromString(vm, "level"_s));
+    RETURN_IF_EXCEPTION(scope, result);
+    if (levelValue.isUndefined())
+        return result;
+    double level = levelValue.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, result);
+
+    int32_t min = 0;
+    int32_t max = 0;
+    ASCIILiteral name;
+    switch (*levelFormat) {
+    case CompressionFormat::Deflate:
+    case CompressionFormat::DeflateRaw:
+    case CompressionFormat::Gzip:
+        // zlib compression levels.
+        min = 0;
+        max = 9;
+        name = *levelFormat == CompressionFormat::Gzip ? "gzip"_s : (*levelFormat == CompressionFormat::DeflateRaw ? "deflate-raw"_s : "deflate"_s);
+        break;
+    case CompressionFormat::Brotli:
+        // BROTLI_MIN_QUALITY .. BROTLI_MAX_QUALITY.
+        min = 0;
+        max = 11;
+        name = "brotli"_s;
+        break;
+    case CompressionFormat::Zstd:
+        // The range Bun.zstdCompressSync accepts.
+        min = 1;
+        max = 22;
+        name = "zstd"_s;
+        break;
+    }
+    // !(>= && <=) also rejects NaN.
+    if (!(level >= min && level <= max) || level != std::trunc(level)) {
+        throwRangeError(globalObject, scope, makeString("The compression level must be an integer between "_s, min, " and "_s, max, " for "_s, name));
+        return result;
+    }
+    result.level = static_cast<int32_t>(level);
+    return result;
 }
 
 // BufferSource → (ptr, len). `scratch` owns the bytes when `chunk` is a string
 // (Node-compat: node:zlib-backed CompressionStream accepts string chunks).
-static std::optional<std::span<const uint8_t>> bufferSourceBytes(JSGlobalObject* globalObject, JSValue chunk, WTF::CString& scratch)
+static std::optional<std::span<const uint8_t>> bufferSourceBytes(JSGlobalObject* globalObject, JSValue chunk, WTF::UTF8CString& scratch)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -138,7 +183,7 @@ struct CodecStepResult {
     bool sinkBackpressure { false };
 };
 
-// One step on this thread, delivered straight into the native JSSink when one is attached
+// One step on this thread, delivered straight into the native sink when one is attached
 // (no JSUint8Array), otherwise enqueued. `input` is only passed on a chunk's first step. A codec
 // error or failed delivery throws.
 static CodecStepResult runStepHere(JSGlobalObject* globalObject, JSTransformStream* stream, void* coder, const uint8_t* input, size_t inputLen, bool finish)
@@ -146,8 +191,8 @@ static CodecStepResult runStepHere(JSGlobalObject* globalObject, JSTransformStre
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CodecStepResult step;
-    if (void* sinkPtr = stream->m_nativeSinkPtr) {
-        JSValue wrote = JSValue::decode(CompressionStreamCoder__transformInto(coder, globalObject, input, inputLen, finish, stream->m_nativeSinkId, sinkPtr, &step.more));
+    if (auto* sinkController = stream->m_nativeSinkController.get()) {
+        JSValue wrote = JSValue::decode(CompressionStreamCoder__transformInto(coder, globalObject, input, inputLen, finish, sinkController->payload(), &step.more));
         RETURN_IF_EXCEPTION(scope, step);
         step.sinkBackpressure = nativeSinkWriteIsBackpressure(vm, wrote);
         return step;
@@ -174,7 +219,7 @@ enum class CodecOutcome : uint8_t {
 
 static bool consumerFull(JSTransformStream* stream, const CodecStepResult& step)
 {
-    return stream->m_nativeSinkPtr ? step.sinkBackpressure : stream->m_backpressure;
+    return stream->m_nativeSinkController ? step.sinkBackpressure : stream->m_backpressure;
 }
 
 // Steps on this thread until the chunk completes, fails (throws), or its consumer is full. `input`
@@ -193,7 +238,7 @@ static CodecOutcome stepChunkHere(JSGlobalObject* globalObject, JSTransformStrea
             return CodecOutcome::Pending;
         bool full = consumerFull(stream, step);
         if (!step.more)
-            return full && stream->m_nativeSinkPtr ? CodecOutcome::DoneSinkFull : CodecOutcome::Done;
+            return full && stream->m_nativeSinkController ? CodecOutcome::DoneSinkFull : CodecOutcome::Done;
         if (full)
             return CodecOutcome::Pending;
         input = nullptr;
@@ -287,8 +332,9 @@ static JSPromise* transformChunk(JSGlobalObject* globalObject, JSTransformStream
     }));
 }
 
-void nativeCodecContinue(JSGlobalObject* globalObject, JSTransformStream* stream)
+NEVER_INLINE void nativeCodecContinue(JSGlobalObject* globalObject, JSTransformStream* stream)
 {
+    BUN_REMOVABLE_DEFINITION(CompressionStreams, nativeCodecContinue);
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(stream->m_codecPromise);
@@ -311,7 +357,7 @@ void nativeCodecContinue(JSGlobalObject* globalObject, JSTransformStream* stream
         CodecOutcome outcome = stepChunkHere(globalObject, stream, coder, nullptr, 0, false);
         stream->m_nativeStateInUse = false;
         RETURN_IF_EXCEPTION(scope, );
-        settlePendingChunk(globalObject, stream, outcome); }, [&](JSValue thrown) {
+        RELEASE_AND_RETURN(scope, settlePendingChunk(globalObject, stream, outcome)); }, [&](JSValue thrown) {
         if (stream->m_codecPromise)
             settleCodecChunk(globalObject, stream, thrown); });
     RETURN_IF_EXCEPTION(scope, );
@@ -333,7 +379,7 @@ static JSPromise* compressionStreamTransformImpl(JSGlobalObject* globalObject, J
 {
     return promiseFromSteps(globalObject, [&] -> JSPromise* {
         auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
-        WTF::CString scratch;
+        WTF::UTF8CString scratch;
         std::optional<std::span<const uint8_t>> bytes = bufferSourceBytes(globalObject, chunk, scratch);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (!bytes) [[unlikely]]
@@ -342,23 +388,27 @@ static JSPromise* compressionStreamTransformImpl(JSGlobalObject* globalObject, J
     });
 }
 
-JSPromise* compressionStreamTransform(JSGlobalObject* globalObject, JSCompressionStream* stream, JSTransformStreamDefaultController*, JSValue chunk)
+NEVER_INLINE JSPromise* compressionStreamTransform(JSGlobalObject* globalObject, JSCompressionStream* stream, JSTransformStreamDefaultController*, JSValue chunk)
 {
+    BUN_REMOVABLE_DEFINITION(CompressionStreams, compressionStreamTransform);
     return compressionStreamTransformImpl(globalObject, stream, chunk);
 }
 
-JSPromise* compressionStreamFlush(JSGlobalObject* globalObject, JSCompressionStream* stream, JSTransformStreamDefaultController*)
+NEVER_INLINE JSPromise* compressionStreamFlush(JSGlobalObject* globalObject, JSCompressionStream* stream, JSTransformStreamDefaultController*)
 {
+    BUN_REMOVABLE_DEFINITION(CompressionStreams, compressionStreamFlush);
     return transformChunk(globalObject, stream, stream->m_coder, jsUndefined(), nullptr, 0, true);
 }
 
-JSPromise* decompressionStreamTransform(JSGlobalObject* globalObject, JSDecompressionStream* stream, JSTransformStreamDefaultController*, JSValue chunk)
+NEVER_INLINE JSPromise* decompressionStreamTransform(JSGlobalObject* globalObject, JSDecompressionStream* stream, JSTransformStreamDefaultController*, JSValue chunk)
 {
+    BUN_REMOVABLE_DEFINITION(CompressionStreams, decompressionStreamTransform);
     return compressionStreamTransformImpl(globalObject, stream, chunk);
 }
 
-JSPromise* decompressionStreamFlush(JSGlobalObject* globalObject, JSDecompressionStream* stream, JSTransformStreamDefaultController*)
+NEVER_INLINE JSPromise* decompressionStreamFlush(JSGlobalObject* globalObject, JSDecompressionStream* stream, JSTransformStreamDefaultController*)
 {
+    BUN_REMOVABLE_DEFINITION(CompressionStreams, decompressionStreamFlush);
     return transformChunk(globalObject, stream, stream->m_coder, jsUndefined(), nullptr, 0, true);
 }
 
@@ -370,8 +420,8 @@ static CodecStepResult deliverAsyncOutput(JSGlobalObject* globalObject, JSTransf
     auto scope = DECLARE_THROW_SCOPE(vm);
     CodecStepResult step;
     step.more = more;
-    if (void* sinkPtr = stream->m_nativeSinkPtr) {
-        JSValue wrote = JSValue::decode(Bun__NativeTransformSink__writeBytes(stream->m_nativeSinkId, sinkPtr, globalObject, out, outLen));
+    if (auto* sinkController = stream->m_nativeSinkController.get()) {
+        JSValue wrote = sinkController->writeBytes(globalObject, std::span { out, outLen });
         RETURN_IF_EXCEPTION(scope, step);
         step.sinkBackpressure = nativeSinkWriteIsBackpressure(vm, wrote);
         return step;
@@ -426,7 +476,7 @@ extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* global
     if (thrown)
         settleCodecChunk(globalObject, stream, thrown);
     else if (!step.more)
-        settlePendingChunk(globalObject, stream, consumerFull(stream, step) && stream->m_nativeSinkPtr ? CodecOutcome::DoneSinkFull : CodecOutcome::Done);
+        settlePendingChunk(globalObject, stream, consumerFull(stream, step) && stream->m_nativeSinkController ? CodecOutcome::DoneSinkFull : CodecOutcome::Done);
     else if (!consumerFull(stream, step)) {
         if (void* coder = coderOf(stream)) [[likely]]
             dispatchStepOffThread(globalObject, stream, coder, jsUndefined(), nullptr, 0, false);

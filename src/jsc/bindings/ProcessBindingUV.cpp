@@ -151,7 +151,7 @@ JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFra
         return JSValue::encode(jsString(vm, String("Unknown system error"_s)));
     }
 
-    auto err = arg0.toInt32(globalObject);
+    auto err = arg0.asInt32AsAnyInt();
     for (auto& entry : uvErrnoEntries) {
         if (err == entry.value)
             return JSValue::encode(JSC::jsString(vm, String(entry.name)));
@@ -164,14 +164,18 @@ JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFra
 JSC_DEFINE_HOST_FUNCTION(jsGetErrorMap, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto map = JSC::JSMap::create(vm, globalObject->mapStructure());
 
     for (auto& entry : uvErrnoEntries) {
         auto arr = JSC::constructEmptyArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), 2);
-        // RETURN_IF_EXCEPTION
+        RETURN_IF_EXCEPTION(scope, {});
         arr->putDirectIndex(globalObject, 0, JSC::jsString(vm, String(entry.name)));
+        RETURN_IF_EXCEPTION(scope, {});
         arr->putDirectIndex(globalObject, 1, JSC::jsString(vm, String(entry.description)));
+        RETURN_IF_EXCEPTION(scope, {});
         map->set(globalObject, JSC::jsNumber(entry.value), arr);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return JSValue::encode(map);
@@ -184,12 +188,12 @@ JSObject* create(VM& vm, JSGlobalObject* globalObject)
     // spreads it ({...process.binding("uv")} in internal/test/binding.ts).
     auto bindingObject = JSC::constructEmptyObject(globalObject);
     EnsureStillAliveScope ensureStillAlive(bindingObject);
-    bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, "errname"_s), JSC::JSFunction::create(vm, globalObject, 1, "errname"_s, jsErrname, ImplementationVisibility::Public));
+    Bun::putDirectNamed(vm, bindingObject, "errname"_s, JSC::JSFunction::create(vm, globalObject, 1, "errname"_s, jsErrname, ImplementationVisibility::Public));
 
     for (auto& entry : uvErrnoEntries)
         bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, makeString("UV_"_s, entry.name)), JSC::jsNumber(entry.value));
 
-    bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, "getErrorMap"_s), JSC::JSFunction::create(vm, globalObject, 0, "getErrorMap"_s, jsGetErrorMap, ImplementationVisibility::Public));
+    Bun::putDirectNamed(vm, bindingObject, "getErrorMap"_s, JSC::JSFunction::create(vm, globalObject, 0, "getErrorMap"_s, jsGetErrorMap, ImplementationVisibility::Public));
 
     return bindingObject;
 }

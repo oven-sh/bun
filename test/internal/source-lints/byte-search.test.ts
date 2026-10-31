@@ -28,6 +28,14 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //
 // A comparand held in a variable (`|&b| b == sep`) is invisible to this lint;
 // use the `strings::` form anyway.
+//
+// Highway is also the only SIMD in the Rust sources. `std::simd` and the
+// `core::arch` intrinsics are compiled for the baseline CPU, with no runtime
+// dispatch, and would be a second set of kernels to keep correct on every
+// target. clippy.toml bans `Simd`, `Mask` and their constructors, but a `u8x16`
+// made with `.into()` gets past it. Nothing gets past the feature gate, so that
+// is banned here. New kernels go in src/jsc/bindings/highway_strings.cpp, with a
+// wrapper in src/highway/lib.rs.
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 // Proc-macro crates and cargo build scripts run on the host at compile time and
@@ -112,6 +120,16 @@ const BANNED: { name: string; re: RegExp; hint: string }[] = [
     name: "<[u8]>::split(|b| b == byte)",
     re: new RegExp(String.raw`\.split\(\s*${PARAM}${BODY_EQ}`, "g"),
     hint: 'strings::split(s, b"x") / strings::split_any(s, b"xy")',
+  },
+  {
+    name: "portable SIMD",
+    re: /\bportable_simd\b|\b(?:std|core)::simd\b/g,
+    hint: "a highway kernel (bun_highway, bun_core::strings)",
+  },
+  {
+    name: "SIMD intrinsics",
+    re: /\b(?:std|core)::arch::(?:x86|x86_64|arm|aarch64)\b/g,
+    hint: "a highway kernel (bun_highway, bun_core::strings)",
   },
 ];
 

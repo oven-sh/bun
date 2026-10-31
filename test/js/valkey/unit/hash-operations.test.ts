@@ -280,7 +280,7 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
 
       // Create a hash with many fields
       const fieldCount = 20; // Reduced count for faster tests
-      const fieldArgs = [];
+      const fieldArgs: string[] = [];
       for (let i = 0; i < fieldCount; i++) {
         fieldArgs.push(`field:${i}`, `value:${i}`);
       }

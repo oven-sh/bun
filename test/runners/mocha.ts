@@ -2,7 +2,6 @@ import { describe, test, it } from "bun:test";
 import { beforeAll, beforeEach, afterAll, afterEach } from "bun:test";
 
 function set(name: string, value: unknown): void {
-  // @ts-expect-error
   globalThis[name] = value;
 }
 

@@ -23,7 +23,7 @@ import { tls as tlsCerts } from "../../../harness";
 // data frames are needed.
 const wss = tls.createServer({ cert: tlsCerts.cert, key: tlsCerts.key }, sock => {
   let buf = Buffer.alloc(0);
-  sock.on("data", chunk => {
+  sock.on("data", (chunk: Buffer) => {
     buf = Buffer.concat([buf, chunk]);
     const end = buf.indexOf("\r\n\r\n");
     if (end === -1) return;
@@ -61,7 +61,7 @@ const proxy = net.createServer(clientSocket => {
   clientSockets.push(clientSocket);
   let buf = Buffer.alloc(0);
   let serverSocket: net.Socket | null = null;
-  clientSocket.on("data", chunk => {
+  clientSocket.on("data", (chunk: Buffer) => {
     if (serverSocket) {
       serverSocket.write(chunk);
       return;

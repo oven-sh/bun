@@ -8,6 +8,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <malloc/malloc.h>
 #include <unistd.h>
 #include <wtf/text/MakeString.h>
 
@@ -82,7 +83,8 @@ HostBlockHandle makeHostBlock(WebViewHost& host)
             static_cast<Block*>(const_cast<void*>(p))->host.~Ref();
         }
     };
-    auto* b = static_cast<Block*>(malloc(sizeof(Block)));
+    // libBlocksRuntime releases the block with the system's free, so it comes from the system's zone.
+    auto* b = static_cast<Block*>(malloc_zone_malloc(malloc_default_zone(), sizeof(Block)));
     b->isa = _NSConcreteMallocBlock;
     b->flags = BLOCK_NEEDS_FREE | BLOCK_HAS_COPY_DISPOSE | (1 << 1); // refcount=1
     b->reserved = 0;
@@ -234,6 +236,10 @@ void WebViewHost::navigateIPC(const WTF::String& urlString)
     }
     auto nsurl = objc::NSURL::fromString(objc::NSString::fromWTF(urlString));
     if (!nsurl) {
+        // NavFailEvent first, like onNavigationFailed: the promise rejection
+        // alone can be silent (a constructor url is marked handled), so the
+        // callback is the signal.
+        hostWriter()->sendReplyStr(m_viewId, Reply::NavFailEvent, "invalid URL"_s);
         hostWriter()->sendReplyStr(m_viewId, Reply::NavFailed, "invalid URL"_s);
         return;
     }
@@ -704,6 +710,9 @@ void WebViewHost::onNavigationFinished()
 
 void WebViewHost::onNavigationFailed(const WTF::String& err)
 {
+    // The event fires the callback; NavFailed settles the navigate slot and
+    // is gated on m_navPending because the delegate also fails for
+    // navigations no IPC navigate owns (reload, back/forward, the page).
     hostWriter()->sendReplyStr(m_viewId, Reply::NavFailEvent, err);
     if (!std::exchange(m_navPending, false)) return;
     hostWriter()->sendReplyStr(m_viewId, Reply::NavFailed, err);

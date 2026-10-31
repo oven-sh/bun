@@ -29,16 +29,6 @@ impl Order {
     }
     // `deinit` only freed `groups` / `sequences` — handled by Drop on Vec; no impl Drop needed.
 
-    pub(crate) fn generate_order_sub(&mut self, current: &mut TestScheduleEntry) -> JsResult<()> {
-        match current {
-            TestScheduleEntry::Describe(describe) => self.generate_order_describe(describe)?,
-            TestScheduleEntry::TestCallback(test_callback) => {
-                self.generate_order_test(NonNull::from(&mut **test_callback))?
-            }
-        }
-        Ok(())
-    }
-
     pub(crate) fn generate_all_order(&mut self, entries: &[Box<ExecutionEntry>]) -> JsResult<AllOrderResult> {
         let start = self.groups.len();
         for entry_box in entries.iter() {
@@ -78,9 +68,42 @@ impl Order {
         Ok(AllOrderResult { start, end })
     }
 
-    pub(crate) fn generate_order_describe(&mut self, current: &mut DescribeScope) -> JsResult<()> {
+    /// Uses an explicit stack instead of recursion, because `describe()` can nest arbitrarily deep.
+    pub(crate) fn generate_order_describe(&mut self, root: &mut DescribeScope) -> JsResult<()> {
+        let mut open: Vec<OpenDescribe<'_>> = Vec::new();
+        if let Some(frame) = self.enter_describe(root)? {
+            open.push(frame);
+        }
+        while let Some(frame) = open.last_mut() {
+            let scope_only = frame.only;
+            let Some(entry) = frame.children.next() else {
+                let frame = open.pop().expect("non-empty");
+                self.exit_describe(&frame)?;
+                continue;
+            };
+            if scope_only == Only::Contains && entry.base().only == Only::No {
+                continue;
+            }
+            match entry {
+                TestScheduleEntry::Describe(describe) => {
+                    if let Some(child) = self.enter_describe(describe)? {
+                        open.push(child);
+                    }
+                }
+                TestScheduleEntry::TestCallback(test_callback) => {
+                    self.generate_order_test(test_callback)?
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn enter_describe<'a>(
+        &mut self,
+        current: &'a mut DescribeScope,
+    ) -> JsResult<Option<OpenDescribe<'a>>> {
         if current.failed {
-            return Ok(()); // do not schedule any tests in a failed describe scope
+            return Ok(None); // do not schedule any tests in a failed describe scope
         }
         let use_hooks = self.cfg.always_use_hooks || current.base.has_callback;
 
@@ -96,22 +119,22 @@ impl Order {
             shuffle_with_index(random, &mut current.entries);
         }
 
-        // gather children
-        // reshaped for borrowck — iterate by index since generate_order_sub borrows &mut self.
-        let scope_only = current.base.only;
-        for i in 0..current.entries.len() {
-            if scope_only == Only::Contains && current.entries[i].base().only == Only::No {
-                continue;
-            }
-            self.generate_order_sub(&mut current.entries[i])?;
-        }
+        Ok(Some(OpenDescribe {
+            children: current.entries.iter_mut(),
+            only: current.base.only,
+            use_hooks,
+            beforeall_order,
+            after_all: &current.after_all,
+        }))
+    }
 
+    fn exit_describe(&mut self, frame: &OpenDescribe<'_>) -> JsResult<()> {
         // update skip_to values for beforeAll to skip to the first afterAll
-        beforeall_order.set_failure_skip_to(self);
+        frame.beforeall_order.set_failure_skip_to(self);
 
         // gather afterAll
-        let afterall_order: AllOrderResult = if use_hooks {
-            self.generate_all_order(&current.after_all)?
+        let afterall_order: AllOrderResult = if frame.use_hooks {
+            self.generate_all_order(frame.after_all)?
         } else {
             AllOrderResult::EMPTY
         };
@@ -122,20 +145,14 @@ impl Order {
         Ok(())
     }
 
-    /// # Safety
-    /// `current` must point to a live, uniquely-owned `ExecutionEntry` (Box-owned in
-    /// `DescribeScope.entries`) with mutable provenance for the duration of this call. The
-    /// `base.parent` chain reachable from `*current` must consist of live `DescribeScope` nodes.
-    pub(crate) fn generate_order_test(&mut self, current: NonNull<ExecutionEntry>) -> JsResult<()> {
-        // Stacked Borrows: `current` is reborrowed as `&mut` inside `list.append` and the skip-past
-        // loop below, so we never hold a long-lived `&mut` to it across those calls — each access
-        // dereferences the pointer locally.
-        // SAFETY: caller-guaranteed live `ExecutionEntry` (see safety doc above); read-only field access.
-        debug_assert!(unsafe { current.as_ref().base.has_callback == current.as_ref().callback.is_some() });
-        // SAFETY: caller-guaranteed live `ExecutionEntry` (see above); read-only field access.
-        let use_each_hooks = unsafe { current.as_ref().base.has_callback };
-        // SAFETY: caller-guaranteed live `ExecutionEntry` (see above); read-only field access.
-        let first_parent: Option<*mut DescribeScope> = unsafe { current.as_ref().base.parent };
+    pub(crate) fn generate_order_test(&mut self, current: &mut ExecutionEntry) -> JsResult<()> {
+        debug_assert!(current.base.has_callback == current.callback.is_some());
+        let use_each_hooks = current.base.has_callback;
+        let first_parent: Option<*mut DescribeScope> = current.base.parent;
+        let (retry_count, repeat_count, concurrent) =
+            (current.retry_count, current.repeat_count, current.base.concurrent);
+        // `list.append` and the skip-past loop below reborrow the entry through this pointer.
+        let current = NonNull::from(current);
 
         let mut list = EntryList::default();
 
@@ -198,12 +215,6 @@ impl Order {
         }
 
         // add these as a single sequence
-        // SAFETY: `current` still valid; re-derive fields locally so no `&mut` outlives the
-        // competing reborrows performed by `list.append` / the skip-past loop above.
-        let (retry_count, repeat_count, concurrent) = unsafe {
-            let cur = current.as_ref();
-            (cur.retry_count, cur.repeat_count, cur.base.concurrent)
-        };
         let sequences_start = self.sequences.len();
         self.sequences.push(ExecutionSequence::init(
             list.first.and_then(NonNull::new),
@@ -240,6 +251,15 @@ impl Order {
             .push(ConcurrentGroup::init(sequences_start, sequences_end, failure_skip_to)); // otherwise, add a new concurrentgroup to order
         Ok(())
     }
+}
+
+/// Tracks a describe scope whose children `generate_order_describe` is still scheduling.
+struct OpenDescribe<'a> {
+    children: core::slice::IterMut<'a, TestScheduleEntry>,
+    only: Only,
+    use_hooks: bool,
+    beforeall_order: AllOrderResult,
+    after_all: &'a [Box<ExecutionEntry>],
 }
 
 pub(crate) struct AllOrderResult {
@@ -308,7 +328,6 @@ fn uint_less_than(r: &mut bun_core::rand::DefaultPrng, less_than: u64) -> u64 {
             l = m as u64;
         }
     }
-    let _ = x;
     (m >> 64) as u64
 }
 

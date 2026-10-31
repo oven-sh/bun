@@ -70,6 +70,31 @@ describe("tls.createSecureContext extra arguments test", () => {
       "The property 'options.privateKeyEngine' is invalid. Received undefined",
     );
   });
+
+  it.each([
+    ["tls.createSecureContext", tls.createSecureContext],
+    ["tls.createServer", tls.createServer],
+  ] as const)("%s refuses an engine key instead of building a context with no key", (_, create) => {
+    const engineKey = { privateKeyIdentifier: "key", privateKeyEngine: "engine" };
+    // Node v26.3.0 has ENGINE support and fails to load "engine" instead.
+    expect(() => create(engineKey)).toThrow(
+      process.versions.bun ? expect.objectContaining({ code: "ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED" }) : undefined,
+    );
+    const key = readFileSync(join(import.meta.dirname, "fixtures", "agent1-key.pem"));
+    expect(() => create({ ...engineKey, key })).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_VALUE",
+        message: "The property 'options.privateKeyIdentifier' is invalid. Received 'key'",
+      }),
+    );
+    // @ts-expect-error
+    expect(() => create({ privateKeyIdentifier: 0, privateKeyEngine: 0 })).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining('"options.privateKeyIdentifier"'),
+      }),
+    );
+  });
 });
 
 describe("tls.createSecureContext pfx argument", () => {

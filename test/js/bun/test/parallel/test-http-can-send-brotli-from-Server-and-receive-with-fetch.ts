@@ -1,6 +1,7 @@
 import { createTest } from "node-harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import * as stream from "node:stream";
 import * as zlib from "node:zlib";
 const { expect } = createTest(import.meta.path);
@@ -18,7 +19,7 @@ await using server = createServer((req, res) => {
 });
 server.listen(0);
 await once(server, "listening");
-const url = new URL(`http://127.0.0.1:${server.address().port}`);
+const url = new URL(`http://127.0.0.1:${(server.address() as AddressInfo).port}`);
 
 const res = await fetch(new URL("/hello", url));
 expect(await res.text()).toBe("Hello World");

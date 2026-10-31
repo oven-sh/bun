@@ -5,6 +5,7 @@ This guide explains how to upgrade the Node.js version that Bun reports for comp
 ## Overview
 
 Bun reports a Node.js version for compatibility with the Node.js ecosystem. This affects:
+
 - `process.version` output
 - Node-API (N-API) compatibility
 - Native addon ABI compatibility
@@ -12,27 +13,30 @@ Bun reports a Node.js version for compatibility with the Node.js ecosystem. This
 
 ## Files That Always Need Updates
 
-### 1. Bootstrap Scripts
-- `scripts/bootstrap.sh` - Update `NODEJS_VERSION=`
-- `scripts/bootstrap.ps1` - Update `$NODEJS_VERSION =`
+### 1. The CI image spec
 
-### 2. CMake Configuration
-- `cmake/Options.cmake`
-  - `NODEJS_VERSION` - The Node.js version string (e.g., "24.3.0")
+- `scripts/build/ci-images/spec.ts` - Update `pins.nodejs.version`. The build system's `NODEJS_VERSION` imports it, and the CI images that change are rebaked by the next build. The macOS test machines get it the next time `scripts/darwin-ci` bakes them.
+
+### 2. The ABI version
+
+- `scripts/build/deps/nodejs-headers.ts`
   - `NODEJS_ABI_VERSION` - The ABI version number (find using command below)
 
 ### 3. Version Strings
+
 - `src/jsc/bindings/BunProcess.cpp`
   - Update `Bun__versions_node` with the Node.js version
   - Update `Bun__versions_v8` with the V8 version (find using command below)
 
 ### 4. N-API Version
+
 - `src/runtime/napi/js_native_api_types.h`
   - Update `NAPI_VERSION` define (check Node.js release notes; see `src/runtime/napi/README.md` for the header resync procedure)
 
 ## Files That May Need Updates
 
 Only check these if the build fails or tests crash after updating version numbers:
+
 - V8 compatibility files in `src/jsc/bindings/v8/` (if V8 API changed)
 - Test files (if Node.js requires newer C++ standard)
 
@@ -57,6 +61,7 @@ curl -s https://raw.githubusercontent.com/nodejs/node/main/doc/abi_version_regis
 1. **Gather version info** using the commands above
 2. **Update the required files** listed in the sections above
 3. **Build and test**:
+
    ```bash
    bun bd
    bun bd -e "console.log(process.version)"
@@ -73,6 +78,7 @@ curl -s https://raw.githubusercontent.com/nodejs/node/main/doc/abi_version_regis
 ## If Build Fails or Tests Crash
 
 The V8 API rarely has breaking changes between minor Node.js versions. If you encounter issues:
+
 1. Check build errors for missing symbols or type mismatches
 2. Compare V8 headers between old and new Node.js versions
 3. Most issues can be resolved by implementing missing functions or adjusting structures
@@ -80,7 +86,7 @@ The V8 API rarely has breaking changes between minor Node.js versions. If you en
 ## Testing Checklist
 
 - [ ] `process.version` returns correct version
-- [ ] `process.versions.v8` returns correct V8 version  
+- [ ] `process.versions.v8` returns correct V8 version
 - [ ] `process.config.variables.node_module_version` returns correct ABI
 - [ ] V8 tests pass
 - [ ] N-API tests pass

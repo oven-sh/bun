@@ -1,0 +1,17 @@
+------------------
+{ printWidth: 80 }
+------------------
+/** @type {Foo} */ (
+  new Foo // prettier-ignore
+).bar;
+/** @type {Foo} */ (new Foo /* prettier-ignore */).bar;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+/** @type {Foo} */ (
+  new Foo // prettier-ignore
+).bar;
+/** @type {Foo} */ (new Foo /* prettier-ignore */).bar;
+
+===================== End =====================

@@ -6,7 +6,7 @@ use crate::shell::states::base::Base;
 use crate::shell::states::script::Script;
 use crate::shell::yield_::Yield;
 
-pub struct Subshell {
+pub(crate) struct Subshell {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Subshell>,
     pub(crate) io: IO,
@@ -51,7 +51,6 @@ impl Subshell {
     /// state for the duration of this call.
     // Caller (Interpreter::spawn_expr) holds the parent env as a raw pointer;
     // the safety contract is documented above and at the call site.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn init_dupe_shell_state(
         interp: &Interpreter,
         parent_shell: *mut ShellExecEnv,
@@ -86,12 +85,11 @@ impl Subshell {
                     let me = interp.as_subshell(this);
                     (me.base.shell, me.io.clone(), me.node)
                 };
-                let script_node: *const ast::Script = &raw const node.get().script;
                 interp.as_subshell_mut(this).state = SubshellState::Exec;
                 // `node.redirect` is always `None` here: the parser rejects
                 // subshells with redirections ("Subshells with redirections
                 // are currently not supported", shell_parser/parse.rs).
-                let script = Script::init(interp, shell, script_node, this, io);
+                let script = Script::init(interp, shell, &node.script, this, io);
                 Script::start(interp, script)
             }
             SubshellState::Exec => Yield::suspended(),

@@ -328,7 +328,7 @@ describe("WPT: single-byte-decoder", () => {
       const index = singleByteIndexes[indexName];
       const expected: number[] = [];
       for (let i = 0; i < 256; i++) expected.push(i < 0x80 ? i : (index[i - 0x80] ?? 0xfffd));
-      const decoded = new TextDecoder(encoding).decode(allBytes);
+      const decoded = new TextDecoder(encoding as Bun.Encoding).decode(allBytes);
       expect(Array.from(decoded, c => c.codePointAt(0))).toEqual(expected);
     });
   }
@@ -507,13 +507,13 @@ describe("WPT: textdecoder-labels", () => {
   for (const [canonical, labels] of Object.entries(encodingLabels)) {
     for (const label of labels) {
       test(`${JSON.stringify(label)} => ${canonical}`, () => {
-        expect(new TextDecoder(label).encoding).toBe(canonical);
+        expect(new TextDecoder(label as Bun.Encoding).encoding).toBe(canonical);
         // "Get an encoding" is ASCII case-insensitive and strips ASCII whitespace.
-        expect(new TextDecoder(label.toUpperCase()).encoding).toBe(canonical);
+        expect(new TextDecoder(label.toUpperCase() as Bun.Encoding).encoding).toBe(canonical);
         for (const ws of whitespace) {
-          expect(new TextDecoder(ws + label).encoding).toBe(canonical);
-          expect(new TextDecoder(label + ws).encoding).toBe(canonical);
-          expect(new TextDecoder(ws + label + ws).encoding).toBe(canonical);
+          expect(new TextDecoder((ws + label) as Bun.Encoding).encoding).toBe(canonical);
+          expect(new TextDecoder((label + ws) as Bun.Encoding).encoding).toBe(canonical);
+          expect(new TextDecoder((ws + label + ws) as Bun.Encoding).encoding).toBe(canonical);
         }
       });
     }
@@ -533,7 +533,7 @@ describe("WPT: api-replacement-encodings", () => {
     "replacement",
   ];
   test.each(replacementLabels)("new TextDecoder(%j) throws a RangeError", label => {
-    expect(() => new TextDecoder(label)).toThrow(RangeError);
+    expect(() => new TextDecoder(label as Bun.Encoding)).toThrow(RangeError);
   });
 });
 
@@ -571,6 +571,6 @@ describe("WPT: api-invalid-label", () => {
     "utf-8 and bogus",
   ];
   test.each(invalidLabels)("new TextDecoder(%j) throws a RangeError", label => {
-    expect(() => new TextDecoder(label)).toThrow(RangeError);
+    expect(() => new TextDecoder(label as Bun.Encoding)).toThrow(RangeError);
   });
 });

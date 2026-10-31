@@ -421,7 +421,7 @@ test.skipIf(isWindows)("Bun.udpSocket({ fd }) rejects a descriptor a live socket
   socket.bind({ fd: wrap.fd });
   await listening;
 
-  await expect(() => Bun.udpSocket({ fd: wrap.fd })).toThrowWithCodeAsync(Error, "EEXIST");
+  await expect(() => Bun.udpSocket({ fd: wrap.fd } as any)).toThrowWithCodeAsync(Error, "EEXIST");
 
   socket.close();
   wrap.close();
@@ -464,6 +464,36 @@ test.skipIf(isWindows)("connected send() failure reports Node's error shape", as
     message: "send EMSGSIZE",
     address: undefined,
     port: undefined,
+  });
+});
+
+// The default lookup is dns.lookup, which already answers such a name with
+// ENOTFOUND. A custom lookup can hand the raw string to the native connect,
+// which resolves it synchronously: the same check runs there too, and the
+// socket does not end up marked connected.
+test("connect() with a custom lookup that yields a name that cannot be a hostname reports getaddrinfo ENOTFOUND", async () => {
+  const hostname = "this is not a hostname";
+  const socket = createSocket({ type: "udp4", lookup: (address, _family, callback) => callback(null, address, 4) });
+  const { promise: bound, resolve: onBound } = Promise.withResolvers<void>();
+  socket.bind(0, "127.0.0.1", onBound);
+  await bound;
+
+  const err: any = await new Promise(resolve => socket.connect(1234, hostname, resolve as () => void));
+  let connected = true;
+  try {
+    socket.remoteAddress();
+  } catch {
+    connected = false;
+  }
+  socket.close();
+  const { name, code, syscall, hostname: errHostname, message } = err ?? {};
+  expect({ name, code, syscall, hostname: errHostname, message, connected }).toEqual({
+    name: "Error",
+    code: "ENOTFOUND",
+    syscall: "getaddrinfo",
+    hostname,
+    message: `getaddrinfo ENOTFOUND ${hostname}`,
+    connected: false,
   });
 });
 
@@ -748,11 +778,11 @@ test("handleDrain resumes after renewed backpressure and steps past a throwing e
     handle.sendQueue = [];
 
     const lengths = [10, 20, 30, 40];
-    const fired: { i: number; err: any; sent: number }[] = [];
+    const fired: { i: number; err: any; sent: number | undefined }[] = [];
     const done = lengths.map((n, i) => {
       const { promise, resolve } = Promise.withResolvers<void>();
       socket.send(Buffer.alloc(n), (err, sent) => {
-        fired.push({ i, err: err?.code ?? err, sent });
+        fired.push({ i, err: (err as NodeJS.ErrnoException | null)?.code ?? err, sent });
         resolve();
       });
       return promise;

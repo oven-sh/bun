@@ -24,7 +24,7 @@ test("Object.assign should copy child process stdio properties", () => {
   const child = spawn(process.execPath, ["-e", 'console.log("hello")']);
 
   // This is what tinyspawn does: Object.assign(promise, childProcess)
-  const merged = {};
+  const merged = {} as typeof child;
   Object.assign(merged, child);
 
   // The merged object should have the stdio properties

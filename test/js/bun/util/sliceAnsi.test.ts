@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 // Constants matching the upstream slice-ansi test suite
 const ESCAPE = "\u001B";
@@ -1598,6 +1599,129 @@ describe("Bun.sliceAnsi", () => {
       expect(Bun.sliceAnsi(utf16, 6, 11)).toBe("world");
       expect(Bun.sliceAnsi(utf16)).toBe(utf16);
       expect(Bun.sliceAnsi(utf16, 0, 5, "\u2026")).toBe("hell\u2026");
+    });
+  });
+
+  // ======================================================================
+  // Escape sequences that wait for the next visible character
+  // ======================================================================
+
+  // Inside the range, sliceAnsi keeps one 24-byte list entry for each escape sequence until the next visible
+  // character arrives, and the input decides how many. A 64 KiB synthetic allocation limit: 2730 entries.
+  describe("a list of waiting escape sequences that cannot grow", () => {
+    const outOfMemory = "RangeError: Out of memory";
+
+    test("throws a RangeError", async () => {
+      // `cases` is { name: [input, start, end] }. The child reports each result's length, or the error. It builds
+      // the inputs with repeat(), which does not depend on the limit the child runs under.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const sgr = "\\x1b[m";
+          const link = "\\x1b]8;;http://example.com\\x07";
+          const cases = {
+            sgrAtBound: ["a" + sgr.repeat(2730) + "b", 0, 2],
+            sgrPastBound: ["a" + sgr.repeat(2731) + "b", 0, 2],
+            wideSgrAtBound: ["あ" + sgr.repeat(2730) + "b", 0, 3],
+            wideSgrPastBound: ["あ" + sgr.repeat(2731) + "b", 0, 3],
+            // A lone C1 ST is the shortest sequence that waits.
+            c1AtBound: ["a" + "\\x9c".repeat(2730) + "b", 0, 2],
+            c1PastBound: ["a" + "\\x9c".repeat(2731) + "b", 0, 2],
+            // A hyperlink also takes an entry in the list of hyperlink codes.
+            linksAtBound: ["a" + link.repeat(2730) + "b", 0, 2],
+            linksPastBound: ["a" + link.repeat(2731) + "b", 0, 2],
+            // The sequences also wait when the input ends after them.
+            trailingPastBound: ["a" + sgr.repeat(2731), 0, 2],
+            // A visible character empties the list, so only one run of sequences counts.
+            runsUnderBound: [("a" + sgr.repeat(2000)).repeat(3), 0, 4],
+            // Sequences before the range update the style state and never wait.
+            beforeTheRange: ["a" + sgr.repeat(10000) + "bcd", 2, 4],
+          };
+          const results = {};
+          for (const [name, args] of Object.entries(cases)) {
+            try {
+              results[name] = Bun.sliceAnsi(...args).length;
+            } catch (e) {
+              results[name] = e.name + ": " + e.message;
+            }
+          }
+          console.log(JSON.stringify(results));`,
+        ],
+        env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+        stdout: {
+          sgrAtBound: 8192,
+          sgrPastBound: outOfMemory,
+          wideSgrAtBound: 8192,
+          wideSgrPastBound: outOfMemory,
+          c1AtBound: 2732,
+          c1PastBound: outOfMemory,
+          // The open hyperlink is closed at the end of the slice: 6 more characters.
+          linksAtBound: 65528,
+          linksPastBound: outOfMemory,
+          trailingPastBound: outOfMemory,
+          runsUnderBound: 18003,
+          beforeTheRange: 2,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  // The slice reopens the active styles and the hyperlink, closes them at the end and adds the ellipsis,
+  // so the result can be longer than the input.
+  test("throws a RangeError when the result exceeds the string length limit", async () => {
+    const outOfMemory = "RangeError: Out of memory";
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const red = "\\x1b[31m";
+        const ellipsis = "\\u2026" + "\\u200b".repeat(10); // width 1, 11 characters
+        const cases = {
+          sgrAtLimit: [red + Buffer.alloc(65527, "a").toString(), 1],
+          sgrPastLimit: [red + Buffer.alloc(65528, "a").toString(), 1],
+          wideSgrPastLimit: [red + "\\u3042".repeat(65528), 2],
+          ellipsisBothAtLimit: [Buffer.alloc(65518, "a").toString(), 1, 65517, ellipsis],
+          ellipsisBothPastLimit: [Buffer.alloc(65519, "a").toString(), 1, 65518, ellipsis],
+          linkAtLimit: ["\\x1b]8;;" + Buffer.alloc(65523, "u").toString() + "\\x07ab", 1],
+          linkPastLimit: ["\\x1b]8;;" + Buffer.alloc(65524, "u").toString() + "\\x07ab", 1],
+          shortSliceOfLongInput: [red + Buffer.alloc(70000, "a").toString(), 0, 4, ellipsis],
+        };
+        const results = {};
+        for (const [name, args] of Object.entries(cases)) {
+          try {
+            results[name] = Bun.sliceAnsi(...args).length;
+          } catch (e) {
+            results[name] = e.name + ": " + e.message;
+          }
+        }
+        console.log(JSON.stringify(results));`,
+      ],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      stdout: {
+        sgrAtLimit: 65536,
+        sgrPastLimit: outOfMemory,
+        wideSgrPastLimit: outOfMemory,
+        ellipsisBothAtLimit: 65536,
+        ellipsisBothPastLimit: outOfMemory,
+        linkAtLimit: 65536,
+        linkPastLimit: outOfMemory,
+        shortSliceOfLongInput: 5 + 3 + 11 + 5,
+      },
+      stderr: "",
+      exitCode: 0,
     });
   });
 });

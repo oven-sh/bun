@@ -1,0 +1,17 @@
+[package]
+name = "bun_lint_json"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+bun_lint.workspace = true
+bun_parsers.workspace = true
+bun_alloc.workspace = true
+bun_core.workspace = true
+rustc-hash = "2"
+
+[lints]
+workspace = true

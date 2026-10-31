@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include "BunClientData.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSObject.h>
 

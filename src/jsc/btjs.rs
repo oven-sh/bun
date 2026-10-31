@@ -208,7 +208,7 @@ fn print_source_at_address(
     }
     let module = match get_module_for_address(debug_info, address) {
         Ok(m) => m,
-        Err(Error::MissingDebugInfo) | Err(Error::InvalidDebugInfo) => {
+        Err(Error::MissingDebugInfo) => {
             return print_unknown_source(debug_info, out_stream, address, tty_config);
         }
         Err(e) => return Err(e),
@@ -216,7 +216,7 @@ fn print_source_at_address(
 
     let symbol_info: SymbolInfo = match get_symbol_at_address(module, address) {
         Ok(s) => s,
-        Err(Error::MissingDebugInfo) | Err(Error::InvalidDebugInfo) => {
+        Err(Error::MissingDebugInfo) => {
             return print_unknown_source(debug_info, out_stream, address, tty_config);
         }
         Err(e) => return Err(e),

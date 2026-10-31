@@ -31,11 +31,17 @@ Zig::SourceProvider* IsolatedModuleCache::lookup(JSC::VM& vm, const WTF::String&
 
 void IsolatedModuleCache::insert(JSC::VM& vm, const WTF::String& key, Zig::SourceProvider& provider)
 {
-    if (!isTagCacheable(static_cast<SyntheticModuleType>(provider.m_resolvedSource.tag)))
+    if (!isTagCacheable(static_cast<SyntheticModuleType>(provider.m_tag)))
         return;
     auto result = WebCore::clientData(vm)->isolationSourceProviderCache.add(key, RefPtr<JSC::SourceProvider>(&provider));
     ASSERT_WITH_MESSAGE(result.isNewEntry, "IsolatedModuleCache::insert for already-cached key — a lookup was bypassed");
     UNUSED_VARIABLE(result);
+}
+
+void IsolatedModuleCache::insertIfAbsent(JSC::VM& vm, const WTF::String& key, Zig::SourceProvider& provider)
+{
+    if (!lookup(vm, key))
+        insert(vm, key, provider);
 }
 
 void IsolatedModuleCache::evict(JSC::VM& vm, const WTF::String& key)

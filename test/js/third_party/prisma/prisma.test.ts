@@ -165,7 +165,7 @@ for (const type of ["sqlite", "postgres" /*"mssql", "mongodb"*/]) {
               // console.log(line);
               // await appendFile("rss.csv", line + "\n");
             }
-            const queries = [];
+            const queries: Promise<unknown>[] = [];
             for (let i = 0; i < batchSize; i++) {
               queries.push(prisma.$queryRaw`SELECT 1`);
             }
@@ -322,7 +322,7 @@ for (const type of ["sqlite", "postgres" /*"mssql", "mongodb"*/]) {
 
     bunIt("generates client successfully", async () => {
       try {
-        generate(type);
+        (generate as (type: string) => void)(type);
       } catch (err: any) {
         // already generated from previous test, ignore error
         if (err.message.indexOf("EPERM: operation not permitted, unlink") === -1) throw err;

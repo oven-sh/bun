@@ -8,9 +8,6 @@ use core::ptr;
 
 use bun_alloc::AllocError;
 
-// 4096 is the conservative minimum page size on every platform Bun ships on.
-const PAGE_SIZE_MIN: usize = 4096;
-
 /// Backing-storage abstraction; `DYNAMIC` is true for the `.Dynamic` variant.
 // Trait + assoc-consts encode the structurally different layouts per
 // variant.
@@ -214,36 +211,8 @@ impl<T: Copy, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             unsafe { ptr::copy(buf.add(head), buf, count) };
             self.head = 0;
         } else {
-            // Stable Rust cannot size a stack array by `size_of::<T>()`, so use
-            // a fixed byte scratch (page_size/2 bytes, no heap) and compute the
-            // element count at runtime.
-            //
-            // The scratch is a `[MaybeUninit<u8>; _]` (alignment 1). Reading or
-            // writing through it as `*mut T` would violate
-            // `ptr::copy_nonoverlapping`'s alignment precondition for any
-            // `align_of::<T>() > 1`, so the tmp↔buf transfers are done at byte
-            // granularity instead — `*mut u8` only requires 1-byte alignment,
-            // which both the scratch and `buf` (cast down from `*T`) satisfy.
-            let mut tmp_bytes = [MaybeUninit::<u8>::uninit(); PAGE_SIZE_MIN / 2];
-            let tmp_ptr: *mut u8 = tmp_bytes.as_mut_ptr().cast::<u8>();
-            let t_size = mem::size_of::<T>();
-            let tmp_len = (PAGE_SIZE_MIN / 2) / t_size;
-
-            while self.head != 0 {
-                let n = self.head.min(tmp_len);
-                let m = buf_len - n;
-                let buf = self.buf.as_mut_slice().as_mut_ptr();
-                // SAFETY: `tmp_bytes` is disjoint from `buf`. The tmp↔buf copies move
-                // `n * size_of::<T>()` raw bytes (no `T` typed access through
-                // the 1-aligned scratch). The buf→buf shift overlaps, so use
-                // `ptr::copy` (memmove); it operates on properly-aligned `*T`.
-                unsafe {
-                    ptr::copy_nonoverlapping(buf.cast::<u8>(), tmp_ptr, n * t_size);
-                    ptr::copy(buf.add(n), buf, m);
-                    ptr::copy_nonoverlapping(tmp_ptr, buf.add(m).cast::<u8>(), n * t_size);
-                }
-                self.head -= n;
-            }
+            self.buf.as_mut_slice().rotate_left(self.head);
+            self.head = 0;
         }
         // set unused area to undefined
         #[cfg(debug_assertions)]

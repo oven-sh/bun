@@ -1,4 +1,4 @@
-const TICKS = 30;
+const TICKS = Number(process.argv[2] ?? 30);
 
 let garbage: unknown[] = [];
 let ticks = 0;

@@ -1,9 +1,23 @@
 import { spawnSync } from "bun";
+import { install_test_helpers } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
-import { existsSync, symlinkSync } from "node:fs";
+import {
+  bunEnv,
+  bunExe,
+  isLinux,
+  isWindows,
+  makeTreeSync,
+  MAX_PATH_BYTES,
+  runBunInstall,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
+import { existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
+import { constants } from "os";
 import { join } from "path";
+
+const { parseLockfile } = install_test_helpers;
 
 const cwd_root = tempDirWithFiles("testworkspace", {
   packages: {
@@ -317,6 +331,52 @@ describe("bun", () => {
     });
   });
 
+  test.each([
+    ["prescript", ["dep0 prescript: Exited with code 7", "dep0 script: Skipped", "dep0 postscript: Skipped"]],
+    ["script", ["dep0 prescript: Exited with code 0", "dep0 script: Exited with code 7", "dep0 postscript: Skipped"]],
+  ])("a failing %s script skips the rest of its chain, and other packages still run", (failing, lines) => {
+    const scripts = { prescript: "echo ran-pre", script: "echo ran-main", postscript: "echo ran-post" };
+    using dir = tempDir("testworkspace", {
+      dep0: { "package.json": JSON.stringify({ name: "dep0", scripts: { ...scripts, [failing]: "exit 7" } }) },
+      dep1: {
+        "package.json": JSON.stringify({
+          name: "dep1",
+          dependencies: { dep0: "*" },
+          scripts: { script: "echo ran-dependent" },
+        }),
+      },
+    });
+    const { exitCode, stdout } = spawnSync({
+      cwd: String(dir),
+      cmd: [bunExe(), "run", "--filter", "*", "script"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const out = stdout.toString().split("\n");
+    expect(out.filter(line => line.startsWith("dep0 ") && !line.includes("ran-"))).toEqual(lines);
+    expect(out).toContain("dep1 script: ran-dependent");
+    expect(exitCode).toBe(7);
+  });
+
+  test("a failing script doesn't skip scripts in a different package with the same name", () => {
+    using dir = tempDir("testworkspace", {
+      a: { "package.json": JSON.stringify({ name: "same", scripts: { script: "exit 7" } }) },
+      b: { "package.json": JSON.stringify({ name: "same", scripts: { script: "echo ran-b" } }) },
+    });
+    const { exitCode, stdout } = spawnSync({
+      cwd: String(dir),
+      cmd: [bunExe(), "run", "--filter", "*", "script"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const out = stdout.toString().split("\n");
+    expect(out).toContain("same script: ran-b");
+    expect(out).not.toContain("same script: Skipped");
+    expect(exitCode).toBe(7);
+  });
+
   test("respect dependency order", () => {
     using dir = tempDir("testworkspace", {
       dep0: {
@@ -478,7 +538,22 @@ describe("bun", () => {
   });
 
   test("should error with missing script", () => {
-    runInCwdFailure(cwd_root, "*", "notpresent", /error: No workspace packages matched the filter "\*"/);
+    runInCwdFailure(cwd_root, "*", "notpresent", /error: Script "notpresent" not found in \d+ packages matching "\*"/);
+    runInCwdFailure(cwd_root, "pkga", "notpresent", /error: Script "notpresent" not found in package "pkga"/);
+  });
+  test("should error once when the filter matches no package", () => {
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: cwd_root,
+      cmd: [bunExe(), "run", "--filter", "nosuchpkg", "present"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout.toString()).toBeEmpty();
+    // Said once, as an error — not as a warning and then again as an error.
+    expect(stderr.toString().match(/No workspace packages matched/g)).toEqual(["No workspace packages matched"]);
+    expect(stderr.toString()).toContain(`error: No workspace packages matched the filter "nosuchpkg"`);
+    expect(exitCode).toBe(1);
   });
   test("warns about a filter that matched nothing while running the others", () => {
     const { exitCode, stdout, stderr } = spawnSync({
@@ -527,12 +602,36 @@ describe("bun", () => {
     expect(exitCode).toBe(23);
   });
 
+  // A signaled script exits with 128 + the signal, and the signal is labeled
+  // with the OS's name for its number. Signal 40 is a Linux real-time signal
+  // with no name; it used to make bun exit 1.
+  const signaled = [
+    { signal: constants.signals.SIGUSR1, label: "SIGUSR1" },
+    ...(isLinux ? [{ signal: 40, label: "UNKNOWN" }] : []),
+  ];
+  test.skipIf(isWindows).each(signaled)("exit code of a script killed by signal $signal", ({ signal, label }) => {
+    using dir = tempDir("testworkspace", {
+      dep0: {
+        "package.json": JSON.stringify({ name: "dep0", scripts: { script: `kill -${signal} $$` } }),
+      },
+    });
+    const { exitCode, stdout } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "*", "script"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout.toString()).toContain(`Signaled with code ${label}`);
+    expect(exitCode).toBe(128 + signal);
+  });
+
   function runElideLinesTest({
     elideLines,
     target_pattern,
     antipattern,
   }: {
-    elideLines: number;
+    elideLines?: number;
     target_pattern: RegExp[];
     antipattern?: RegExp[];
   }) {
@@ -566,7 +665,14 @@ describe("bun", () => {
       // code path.
       const { exitCode, stderr, stdout } = spawnSync({
         cwd: dir,
-        cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", String(elideLines), "script"],
+        cmd: [
+          bunExe(),
+          "run",
+          "--filter",
+          "./packages/dep0",
+          ...(elideLines === undefined ? [] : ["--elide-lines", String(elideLines)]),
+          "script",
+        ],
         env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
         stdout: "pipe",
         stderr: "pipe",
@@ -595,10 +701,10 @@ describe("bun", () => {
     });
   }
 
-  test("elides output by default when using --filter", () => {
+  test("does not elide output by default when using --filter", () => {
     runElideLinesTest({
-      elideLines: 10,
-      target_pattern: [/\[10 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
+      target_pattern: [/(?:log_line[\s\S]*?){20}/],
+      antipattern: [/lines elided/],
     });
   });
 
@@ -743,6 +849,12 @@ describe("bun", () => {
 });
 
 describe("selectors", () => {
+  // A Windows command line is too short for a path longer than the path buffer.
+  test.skipIf(isWindows)("rejects a path longer than the path buffer", () => {
+    const long = "./" + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/");
+    runInCwdFailure(graph_root, long, "present", /error: --filter "\.\/a.*" path is too long/);
+  });
+
   test("'foo...' runs foo and the workspaces it depends on", () => {
     runInCwdSuccess({
       cwd: graph_root,
@@ -982,6 +1094,104 @@ describe("selectors", () => {
   });
 });
 
+describe.concurrent("a '!' entry in \"workspaces\"", () => {
+  // Every script prints the directory of its package. `other/*` is outside every entry: the
+  // paths equal those of members but for the first segment, and `!packages` is not a glob for
+  // "any directory but packages".
+  function fixture(workspaces: string[] | { packages: string[] }) {
+    const pkg = (dir: string, name: string, dependencies?: Record<string, string>) => ({
+      "package.json": JSON.stringify({ name, dependencies, scripts: { present: `echo ran:${dir}` } }),
+    });
+    return tempDir("filter-negated-workspaces", {
+      packages: {
+        app: pkg("packages/app", "app", { lib: "workspace:*" }),
+        lib: pkg("packages/lib", "lib"),
+        legacy: {
+          ...pkg("packages/legacy", "legacy", { lib: "workspace:*" }),
+          nested: pkg("packages/legacy/nested", "legacy-nested"),
+        },
+      },
+      other: { legacy: pkg("other/legacy", "other-legacy"), lib: pkg("other/lib", "other-lib") },
+      "package.json": JSON.stringify({ name: "ws", workspaces }),
+    });
+  }
+
+  async function run(cwd: string, args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", ...args, "present"],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { ran: [...stdout.matchAll(/ran:(\S+)/g)].map(m => m[1]).sort(), stderr, exitCode };
+  }
+
+  const selections = [
+    { args: ["--filter", "*"], ran: ["packages/app", "packages/lib"] },
+    { args: ["--workspaces"], ran: ["packages/app", "packages/lib"] },
+    { args: ["--filter", "./packages/*"], ran: ["packages/app", "packages/lib"] },
+    { args: ["--filter", "{packages}"], ran: ["packages/app", "packages/lib"] },
+    { args: ["--filter", "...lib"], ran: ["packages/app", "packages/lib"] },
+    { args: ["--filter", "l*"], ran: ["packages/lib"] },
+    { args: ["--parallel", "--filter", "*"], ran: ["packages/app", "packages/lib"] },
+    { args: ["--sequential", "--workspaces"], ran: ["packages/app", "packages/lib"] },
+  ];
+  test.each(selections.map(row => [row.args.join(" "), row] as const))(
+    "bun run %s skips the excluded package",
+    async (_, { args, ran }) => {
+      using dir = fixture(["packages/*", "!packages/legacy"]);
+      expect(await run(String(dir), args)).toMatchObject({ ran, exitCode: 0 });
+    },
+  );
+
+  test("the excluded package is not selectable by name", async () => {
+    using dir = fixture(["packages/*", "!packages/legacy"]);
+    const result = await run(String(dir), ["--filter", "legacy"]);
+    expect(result.stderr).toContain('error: No workspace packages matched the filter "legacy"');
+    expect(result).toMatchObject({ ran: [], exitCode: 1 });
+  });
+
+  async function installedMembers(cwd: string): Promise<string[]> {
+    await runBunInstall(bunEnv, cwd);
+    return Object.values<string>(parseLockfile(cwd).workspace_paths).sort();
+  }
+
+  const appAndLib = ["packages/app", "packages/lib"];
+  const configs: { workspaces: string[] | { packages: string[] }; members: string[] }[] = [
+    { workspaces: { packages: ["packages/*", "!packages/legacy"] }, members: appAndLib },
+    { workspaces: ["packages/*", "!**/legacy"], members: appAndLib },
+    { workspaces: ["packages/*", "!packages/{app,legacy}"], members: ["packages/lib"] },
+    {
+      workspaces: ["packages/**", "!packages/legacy"],
+      members: ["packages/app", "packages/legacy/nested", "packages/lib"],
+    },
+    // every spelling of the directory
+    { workspaces: ["./packages/*", "!./packages/legacy"], members: appAndLib },
+    { workspaces: ["packages/*", "!./packages/legacy"], members: appAndLib },
+    { workspaces: ["packages/*", "!packages/legacy/"], members: appAndLib },
+    { workspaces: ["packages/*", "!././packages/legacy//"], members: appAndLib },
+    // wherever the entry is in the array
+    { workspaces: ["!packages/legacy", "packages/*"], members: appAndLib },
+    { workspaces: ["!./packages/legacy/", "packages/*"], members: appAndLib },
+    { workspaces: ["packages/*", "!packages/legacy", "packages/leg*"], members: appAndLib },
+    // `dir/**` removes `dir` and everything below it
+    { workspaces: ["packages/**", "!packages/legacy/**"], members: appAndLib },
+    { workspaces: ["packages/*", "!packages/leg*/**"], members: appAndLib },
+    // A path that's listed literally is kept.
+    { workspaces: ["packages/lib", "!packages/lib"], members: ["packages/lib"] },
+  ];
+  test.each(configs.map(row => [JSON.stringify(row.workspaces), row] as const))(
+    "bun run and bun install find the same members for %s",
+    async (_, { workspaces, members }) => {
+      using dir = fixture(workspaces);
+      expect(await run(String(dir), ["--workspaces"])).toMatchObject({ ran: members, exitCode: 0 });
+      expect(await installedMembers(String(dir))).toEqual(members);
+    },
+  );
+});
+
 // #20319: on Windows, `bun --filter` / `bun run --parallel` spawn each script
 // as `bun exec "<script>"` with CREATE_NO_WINDOW, so the user's Ctrl+C never
 // reaches the scripts and cleanup is entirely on the parent. libuv's global
@@ -1089,6 +1299,98 @@ describe.skipIf(!isWindows).each([
     },
     30000,
   );
+});
+
+// The script runner never passes the default .env* files into package.json
+// scripts (see "does not pass variables from .env files into scripts" in
+// env.test.ts): the script's own bun instance loads them, so a script such as
+// `NODE_ENV=production bun start` reads .env.production and not the
+// .env.development the runner would have picked (#9635). The environment the
+// runner did build is passed as envp, which on POSIX goes straight to `sh -c`.
+// On Windows `--filter` / `--parallel` go through a `bun exec` hop, which used
+// to auto-load the package directory's .env* files on top of envp, ignoring
+// the --no-env-file / --env-file given to the runner.
+describe.each([
+  { via: "--filter", argv: (script: string) => ["--filter", "app", script], cwd: (root: string) => root },
+  {
+    via: "run --parallel",
+    argv: (script: string) => ["--parallel", script],
+    cwd: (root: string) => join(root, "packages", "app"),
+  },
+])("$via: scripts only see the environment the runner built", ({ argv, cwd }) => {
+  function workspace() {
+    return tempDir("filter-env-files", {
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      "packages/app/package.json": JSON.stringify({
+        name: "app",
+        scripts: {
+          "show-env": "echo ENV_FILE_NAME=$ENV_FILE_NAME CUSTOM=$CUSTOM_VAR INHERITED=$INHERITED_VAR",
+          "show-env-prod": `NODE_ENV=production "${bunExe()}" show-env.js`,
+        },
+      }),
+      "packages/app/show-env.js": `
+        const { ENV_FILE_NAME = "", CUSTOM_VAR = "", INHERITED_VAR = "" } = process.env;
+        console.log("ENV_FILE_NAME=" + ENV_FILE_NAME + " CUSTOM=" + CUSTOM_VAR + " INHERITED=" + INHERITED_VAR);
+      `,
+      // Whichever NODE_ENV the test runner itself is under, one of these is in
+      // the default set, so auto-loading shows up as a non-empty ENV_FILE_NAME.
+      "packages/app/.env": "ENV_FILE_NAME=.env",
+      "packages/app/.env.development": "ENV_FILE_NAME=.env.development",
+      "packages/app/.env.production": "ENV_FILE_NAME=.env.production",
+      "packages/app/.env.test": "ENV_FILE_NAME=.env.test",
+      "packages/app/.env.custom": "CUSTOM_VAR=from-custom",
+    });
+  }
+
+  async function run(root: string, runnerFlags: string[], script = "show-env") {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", ...runnerFlags, ...argv(script)],
+      cwd: cwd(root),
+      env: { ...bunEnv, ENV_FILE_NAME: undefined, CUSTOM_VAR: undefined, INHERITED_VAR: "from-parent" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const line = stdout.match(/ENV_FILE_NAME=(\S*) CUSTOM=(\S*) INHERITED=(\S*)/);
+    if (!line) throw new Error(`script output missing.\nstdout: ${stdout}\nstderr: ${stderr}`);
+    return { envFile: line[1], custom: line[2], inherited: line[3], exitCode };
+  }
+
+  test.concurrent("the package directory's .env* files are not loaded", async () => {
+    using dir = workspace();
+    expect(await run(String(dir), [])).toEqual({ envFile: "", custom: "", inherited: "from-parent", exitCode: 0 });
+  });
+
+  test.concurrent("--no-env-file", async () => {
+    using dir = workspace();
+    expect(await run(String(dir), ["--no-env-file"])).toEqual({
+      envFile: "",
+      custom: "",
+      inherited: "from-parent",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("--env-file loads only the requested file", async () => {
+    using dir = workspace();
+    const envFile = join(String(dir), "packages", "app", ".env.custom");
+    expect(await run(String(dir), ["--env-file", envFile])).toEqual({
+      envFile: "",
+      custom: "from-custom",
+      inherited: "from-parent",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("a script that sets its own NODE_ENV gets the matching .env file (#9635)", async () => {
+    using dir = workspace();
+    expect(await run(String(dir), [], "show-env-prod")).toEqual({
+      envFile: ".env.production",
+      custom: "",
+      inherited: "from-parent",
+      exitCode: 0,
+    });
+  });
 });
 
 describe("output timing", () => {
@@ -1208,5 +1510,165 @@ describe("output timing", () => {
     });
     // Waiting out the grandchild's 30s sleep means the abort bypass regressed.
     expect(Date.now() - start).toBeLessThan(15000);
+  });
+});
+
+describe("auto-discovered bunfig.toml [run] section", () => {
+  // With `run.bun = true` bun puts a `node` shim on PATH, so `typeof Bun`
+  // tells which binary ran the script.
+  const typeofBun = `node -e "console.log('Bun is ' + typeof Bun)"`;
+
+  function workspace(prefix: string, bunfig: string) {
+    return tempDir(prefix, {
+      "bunfig.toml": bunfig,
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      packages: {
+        dep0: {
+          "index.js": Array(20).fill("console.log('log_line');").join("\n"),
+          "package.json": JSON.stringify({
+            name: "dep0",
+            scripts: { script: typeofBun, lines: `${bunExe()} run index.js` },
+          }),
+        },
+      },
+    });
+  }
+
+  function run(dir: string, args: string[], env: Record<string, string | undefined> = {}) {
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), ...args],
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return { exitCode, stdout: stdout.toString(), stderr: stderr.toString() };
+  }
+
+  test.each([
+    ["bun run --filter", ["run", "--filter", "dep0", "script"]],
+    ["bun --filter", ["--filter", "dep0", "script"]],
+    ["bun run --workspaces", ["run", "--workspaces", "script"]],
+  ])("%s applies [run] bun = true", (_, args) => {
+    using dir = workspace("filter-bunfig-run-bun", "[run]\nbun = true\n");
+    const r = run(String(dir), args);
+    expect(r.stdout).toContain("Bun is object");
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("--bun on the CLI wins over [run] bun = false", () => {
+    using dir = workspace("filter-bunfig-cli-bun", "[run]\nbun = false\n");
+    const r = run(String(dir), ["run", "--bun", "--filter", "dep0", "script"]);
+    expect(r.stdout).toContain("Bun is object");
+    expect(r.exitCode).toBe(0);
+  });
+
+  // Elision only happens on a terminal. On POSIX FORCE_COLOR=1 turns the
+  // terminal renderer on for a pipe; on Windows it stays off (see runElideLinesTest).
+  test.skipIf(isWindows)("[run] elide-lines enables elision for --filter", () => {
+    using dir = workspace("filter-bunfig-elide", "[run]\nelide-lines = 15\n");
+    const r = run(String(dir), ["run", "--filter", "dep0", "lines"], { FORCE_COLOR: "1", NO_COLOR: "0" });
+    expect(r.stdout).toMatch(/\[5 lines elided\]/);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("--elide-lines on the CLI wins over [run] elide-lines", () => {
+    using dir = workspace("filter-bunfig-cli-elide", "[run]\nelide-lines = 15\n");
+    const r = run(String(dir), ["run", "--elide-lines", "0", "--filter", "dep0", "lines"], {
+      FORCE_COLOR: "1",
+      NO_COLOR: "0",
+    });
+    expect(r.stdout).not.toMatch(/lines elided/);
+    expect(r.stdout).toMatch(/(?:log_line[\s\S]*?){20}/);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("a malformed bunfig.toml fails the run", () => {
+    using dir = workspace("filter-bunfig-malformed", '[run]\nbun = "yes"\n');
+    const r = run(String(dir), ["run", "--filter", "dep0", "script"]);
+    expect(r.stderr).toContain("Expected boolean");
+    expect(r.stdout).not.toContain("Bun is");
+    expect(r.exitCode).toBe(1);
+  });
+});
+
+test.concurrent.each([
+  ["ESC [ 2 K", "\x1b[2K", "\\x1b[2K"],
+  ["CR", "\r", "\\r"],
+  ["BEL", "\x07", "\\x07"],
+  ["U+009B", "\u009b2K", "\\u009b2K"],
+  ["OSC 52", "\x1b]52;c;aGk=\x07", "\\x1b]52;c;aGk=\\x07"],
+])("%s in the name of a package or a script is printed spelled out", async (_, raw, spelled) => {
+  using dir = tempDir("filter-names", {
+    "package.json": JSON.stringify({ name: "filter-names", workspaces: ["packages/*"] }),
+    "packages/a/package.json": JSON.stringify({ name: `a${raw}b`, scripts: { [`c${raw}d`]: "echo hi" } }),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "--filter", "*", `c${raw}d`],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe(`a${spelled}b c${spelled}d: hi\na${spelled}b c${spelled}d: Exited with code 0\n`);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// Windows paths can't be as long as MAX_PATH_BYTES.
+describe.concurrent.skipIf(isWindows)("workspace paths longer than the path buffer", () => {
+  const workspace = {
+    "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    "packages/ok/package.json": JSON.stringify({ name: "ok", scripts: { present: "echo ok-ran" } }),
+  };
+
+  // Returns a directory below `parent` whose absolute path is exactly `length` bytes.
+  function makeDirectoryOfLength(parent: string, length: number): string {
+    let dir = parent;
+    while (Buffer.byteLength(dir) < length) {
+      // Unless this is the last component, reserve room for "/" and one more byte.
+      const left = length - Buffer.byteLength(dir) - 1;
+      const name = Buffer.alloc(left <= 255 ? left : Math.min(255, left - 2), "d").toString();
+      dir = join(dir, name);
+      mkdirSync(dir);
+    }
+    expect(Buffer.byteLength(dir)).toBe(length);
+    return dir;
+  }
+
+  async function runFilter(cwd: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "*", "present"],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("reports a member whose package.json path is too long and still runs the other members", async () => {
+    using base = tempDir("filter-long-member", {});
+    const root = makeDirectoryOfLength(String(base), MAX_PATH_BYTES - 196);
+    makeTreeSync(root, workspace);
+    // The member directory's path fits in the buffer. Its package.json path is 13 bytes longer and doesn't.
+    const name = Buffer.alloc(MAX_PATH_BYTES - 6 - Buffer.byteLength(`${root}/packages/`), "x").toString();
+    mkdirSync(join(root, "packages", name));
+
+    const { stdout, stderr, exitCode } = await runFilter(root);
+    expect(stderr).toContain("ENAMETOOLONG");
+    expect(stdout).toContain("ok present: ok-ran");
+    expect(exitCode).toBe(0);
+  });
+
+  test("finds the workspace root above a cwd whose own package.json path is too long", async () => {
+    using root = tempDir("filter-long-cwd", workspace);
+    const cwd = makeDirectoryOfLength(String(root), MAX_PATH_BYTES - "/package.json".length);
+
+    const { stdout, exitCode } = await runFilter(cwd);
+    expect(stdout).toContain("ok present: ok-ran");
+    expect(exitCode).toBe(0);
   });
 });

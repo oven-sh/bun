@@ -8,7 +8,6 @@
 #define BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE(macro) \
     macro("bun:test"_s, BunTest) \
     macro("bun:jsc"_s, BunJSC) \
-    macro("bun:app"_s, BunApp) \
     macro("node:buffer"_s, NodeBuffer) \
     macro("node:constants"_s, NodeConstants) \
     macro("node:sqlite"_s, NodeSqlite) \

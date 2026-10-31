@@ -1,0 +1,31 @@
+[mordant]
+# Ratchet: per-(lint, file) counts of the findings that predate the job. A PR
+# fails only when it adds one. Regenerate after fixing some or bumping mordant:
+#   bun run rust:mordant:baseline
+baseline = "mordant-baseline.toml"
+generic-body-not-generic-enabled = true
+validator-resource-errors = ["bun_alloc::AllocError", "bun_sys::Error", "bun_errno::SystemErrno"]
+# JSC handles that must stay on the JS thread, though their fields are pointers.
+thread-affine-types = ["Strong"]
+# Functions in other crates that free what their pointer argument points to.
+# A check build cannot read their bodies, so they are named here.
+freed-while-borrowed-frees = ["heap::destroy"]
+# Like the line above, for releases that free only the last reference.
+freed-while-borrowed-releases = ["ThreadSafeRefCount::deref", "RefCount::deref"]
+# Bun's own lock types, for the lock order checks.
+lock-guard-types = ["GuardedLock", "threading::MutexGuard", "RwLockReadGuard", "RwLockWriteGuard", "StreamBufferGuard"]
+# The raw mutex locks and unlocks by hand, with no guard.
+lock-methods = ["threading::Mutex::lock"]
+unlock-methods = ["threading::Mutex::unlock"]
+# Lints this repo has decided not to act on. Everything else in the pack is
+# on; add a lint here only with a reason.
+disabled = [
+    # "list the variants instead of `_`": a per-site style call, ~500 today.
+    "wildcard_over_own_enum",
+    # Most names it flags are real, on the C++/JS side or in a sibling crate.
+    "stale_safety_comment",
+    # Variants only ever tested through `!=` / `_`; checked, none were bugs.
+    "unread_error_variant",
+    # "make the guard a type": style.
+    "runtime_typestate",
+]

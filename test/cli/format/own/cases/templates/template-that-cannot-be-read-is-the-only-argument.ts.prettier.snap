@@ -1,0 +1,61 @@
+------------------
+{ printWidth: 80 }
+------------------
+const a = await q(
+  gql`mutation {
+    a { ${b} }
+  }`,
+);
+const c = await q(
+  `mutation {
+    a { ${b} }
+  }`,
+);
+const d = await q(
+  foo`mutation {
+    a { ${b} }
+  }`,
+);
+const f = await q(
+  css`a {
+    ${b} {}
+  `,
+);
+const g = () =>
+  css`a {
+    ${b} {}
+  `;
+q(css``);
+q(gql``);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const a = await q(
+  gql`mutation {
+    a { ${b} }
+  }`,
+);
+const c = await q(
+  `mutation {
+    a { ${b} }
+  }`,
+);
+const d = await q(
+  foo`mutation {
+    a { ${b} }
+  }`,
+);
+const f = await q(
+  css`a {
+    ${b} {}
+  `,
+);
+const g = () =>
+  css`a {
+    ${b} {}
+  `;
+q(css``);
+q(gql``);
+
+===================== End =====================

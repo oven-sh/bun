@@ -1,0 +1,5 @@
+<template>
+  <script>
+    console.log('hello')<!-- a comment to a script only -->;
+  </script>
+</template>

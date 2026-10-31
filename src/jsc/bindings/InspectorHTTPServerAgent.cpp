@@ -16,11 +16,6 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorHTTPServerAgent);
 // Rust bindings implementation
 extern "C" {
 void Bun__HTTPServerAgent__setEnabled(Inspector::InspectorHTTPServerAgent* agent);
-
-// void Bun__HTTPServerAgentStartListening(Inspector::InspectorHTTPServerAgent* agent, int serverId);
-// void Bun__HTTPServerAgentStopListening(Inspector::InspectorHTTPServerAgent* agent, int serverId);
-// void Bun__HTTPServerAgentGetRequestBody(Inspector::InspectorHTTPServerAgent* agent, int requestId, int serverId);
-// void Bun__HTTPServerAgentGetResponseBody(Inspector::InspectorHTTPServerAgent* agent, int requestId, int serverId);
 }
 
 InspectorHTTPServerAgent::InspectorHTTPServerAgent(JSC::JSGlobalObject& globalObject)
@@ -44,7 +39,7 @@ void InspectorHTTPServerAgent::didCreateFrontendAndBackend()
 
 void InspectorHTTPServerAgent::willDestroyFrontendAndBackend(DisconnectReason)
 {
-    disable();
+    (void)disable();
 }
 
 Protocol::ErrorStringOr<void> InspectorHTTPServerAgent::enable()

@@ -1,0 +1,11 @@
+------------------
+{ printWidth: 80 }
+------------------
+export /* prettier-ignore */ *  as   a from "a";
+
+-------------------
+{ printWidth: 100 }
+-------------------
+export /* prettier-ignore */ *  as   a from "a";
+
+===================== End =====================

@@ -27,6 +27,8 @@ public:
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
+    static bool setPrototype(JSC::JSObject*, JSC::JSGlobalObject*, JSC::JSValue prototype, bool shouldThrowIfCantSet);
+
     JSC::Structure* encodeIntoObjectStructure() const { return m_encodeIntoObjectStructure.getInitializedOnMainThread(this); }
 
     /**

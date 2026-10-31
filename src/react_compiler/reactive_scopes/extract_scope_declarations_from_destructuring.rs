@@ -8,10 +8,11 @@
 //!
 //! Corresponds to `src/ReactiveScopes/ExtractScopeDeclarationsFromDestructuring.ts`.
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
+use crate::collections::IdBitSet;
 
 use crate::hir::{
-    DeclarationId, IdentifierId, IdentifierName, InstructionKind, InstructionValue, LValue, Place,
+    DeclarationId, IdentifierId, InstructionKind, InstructionValue, LValue, Place,
     ReactiveFunction, ReactiveInstruction, ReactiveScopeBlock, ReactiveStatement, ReactiveValue,
     environment::Environment, visitors,
 };
@@ -31,7 +32,7 @@ pub(crate) fn extract_scope_declarations_from_destructuring(
     func: &mut ReactiveFunction,
     env: &mut Environment,
 ) -> Result<(), crate::diagnostics::CompilerError> {
-    let mut declared: HashSet<DeclarationId> = HashSet::new();
+    let mut declared: IdBitSet<DeclarationId> = IdBitSet::new();
     for param in &func.params {
         let place = param.place();
         let identifier = &env.identifiers[place.identifier.0 as usize];
@@ -43,7 +44,7 @@ pub(crate) fn extract_scope_declarations_from_destructuring(
 }
 
 struct ExtractState {
-    declared: HashSet<DeclarationId>,
+    declared: IdBitSet<DeclarationId>,
 }
 
 struct Transform<'a> {
@@ -93,12 +94,12 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
         }) = &mut instruction.value
         {
             // Check if this is a mixed destructuring (some declared, some not)
-            let mut reassigned: HashSet<IdentifierId> = HashSet::new();
+            let mut reassigned: HashSet<IdentifierId> = HashSet::default();
             let mut has_declaration = false;
 
-            for place in visitors::each_pattern_operand(&lvalue.pattern) {
+            for place in visitors::pattern_operands(&lvalue.pattern) {
                 let identifier = &self.env.identifiers[place.identifier.0 as usize];
-                if state.declared.contains(&identifier.declaration_id) {
+                if state.declared.contains(identifier.declaration_id) {
                     reassigned.insert(place.identifier);
                 } else {
                     has_declaration = true;
@@ -121,16 +122,13 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
                     }
                     // Create a temporary place (matches TS clonePlaceToTemporary)
                     let temp_id = env.next_identifier_id();
-                    let decl_id = env.identifiers[temp_id.0 as usize].declaration_id;
                     // Copy type from original identifier to temporary
                     let original_type = env.identifiers[place.identifier.0 as usize].type_;
                     env.identifiers[temp_id.0 as usize].type_ = original_type;
                     // Set identifier loc to the place's source location
                     // (matches TS makeTemporaryIdentifier which receives place.loc)
                     env.identifiers[temp_id.0 as usize].loc = place.loc.clone();
-                    // Promote the temporary
-                    env.identifiers[temp_id.0 as usize].name =
-                        Some(IdentifierName::promoted(b't', decl_id.0));
+                    env.promote_temporary(temp_id);
                     let temporary = Place {
                         identifier: temp_id,
                         effect: place.effect,
@@ -209,7 +207,7 @@ fn update_declared_from_instruction(
             }
             InstructionValue::Destructure { lvalue, .. } => {
                 if lvalue.kind != InstructionKind::Reassign {
-                    for place in visitors::each_pattern_operand(&lvalue.pattern) {
+                    for place in visitors::pattern_operands(&lvalue.pattern) {
                         let identifier = &env.identifiers[place.identifier.0 as usize];
                         state.declared.insert(identifier.declaration_id);
                     }

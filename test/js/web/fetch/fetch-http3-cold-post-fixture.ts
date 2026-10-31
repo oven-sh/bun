@@ -37,7 +37,7 @@ process.stdin.on("data", () => {});
 process.stdin.on("end", () => process.exit(0));
 `;
 
-type Server = { port: number; proc: ReturnType<typeof Bun.spawn>; drained: Promise<string> };
+type Server = { port: number; proc: Bun.Subprocess<"pipe", "ignore", "pipe">; drained: Promise<string> };
 
 function spawnServer(servers: Server[]): Promise<Server> {
   const proc = Bun.spawn({
@@ -55,7 +55,7 @@ function spawnServer(servers: Server[]): Promise<Server> {
     for await (const chunk of proc.stderr) {
       buf += new TextDecoder().decode(chunk);
       const m = buf.match(/PORT=(\d+)/);
-      if (m) ready.resolve({ port: Number(m[1]), proc, drained });
+      if (m) ready.resolve({ port: Number(m[1]), proc, drained: drained! });
     }
     ready.reject(new Error("no PORT from server: " + buf));
     return buf;

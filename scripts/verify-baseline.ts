@@ -9,10 +9,10 @@
 //   bun scripts/verify-baseline.ts --binary ./bun --arch x64 --emulator /usr/bin/qemu-x86_64
 //   bun scripts/verify-baseline.ts --binary ./bun.exe --arch x64 --emulator ./sde.exe
 
-import { readdirSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-// @ts-ignore — utils.mjs has JSDoc types but no .d.ts
-import { markBuildkiteStepReported } from "./utils.mjs";
+import { markBuildkiteStepReported } from "./buildkite.ts";
 
 const { parseArgs } = require("node:util");
 
@@ -86,7 +86,7 @@ const config = isWindows
         cwd: undefined,
       };
 
-function isInstructionViolation(signalCode: NodeJS.Signals | null, output: string): boolean {
+function isInstructionViolation(signalCode: NodeJS.Signals | number | null, output: string): boolean {
   if (isWindows) return SDE_VIOLATION_PATTERN.test(output);
   // qemu-user re-raises the guest's fatal signal on the host, so the process is WIFSIGNALED:
   // `proc.exitCode` is null and only `proc.signalCode` carries the verdict.
@@ -107,6 +107,7 @@ interface RunTestOptions {
   cwd?: string;
   /** Tee output live to the console while still capturing it for analysis */
   live?: boolean;
+  executable?: string;
 }
 
 /** Read a stream, write each chunk to a writable, and return the full text. */
@@ -124,7 +125,7 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
 
   const start = performance.now();
   const live = options?.live ?? false;
-  const proc = Bun.spawn([...config.runnerCmd, binary, ...binaryArgs], {
+  const proc = Bun.spawn([...config.runnerCmd, options?.executable ?? binary, ...binaryArgs], {
     // config.cwd takes priority — SDE on Windows must run from its own directory for Pin DLL resolution
     cwd: config.cwd ?? options?.cwd,
     stdout: "pipe",
@@ -237,6 +238,19 @@ if (values["skip-emulation"]) {
   // Phase 1: SIMD code path verification
   const simdTestPath = join(repoRoot, "test", "js", "bun", "jsc-stress", "fixtures", "simd-baseline.test.ts");
   await runTest("SIMD baseline tests", ["test", simdTestPath], { live: true });
+
+  const aotDir = mkdtempSync(join(tmpdir(), "verify-baseline-aot-"));
+  const aotProgram = join(aotDir, "baseline-cpu.ts");
+  const aotExecutable = join(aotDir, isWindows ? "baseline-cpu.exe" : "baseline-cpu");
+  try {
+    copyFileSync(join(repoRoot, "test", "aot", "parallel", "language", "baseline-cpu.ts"), aotProgram);
+    if (
+      await runTest("Ahead-of-time compiler", ["build", "--compile", "--aot", aotProgram, "--outfile", aotExecutable])
+    )
+      await runTest("Ahead-of-time compiled program", [], { executable: aotExecutable });
+  } finally {
+    rmSync(aotDir, { recursive: true, force: true });
+  }
 }
 
 // Phase 2: JIT stress fixtures (only with --jit-stress, e.g. on WebKit changes)

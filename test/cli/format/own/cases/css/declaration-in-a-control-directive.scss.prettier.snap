@@ -1,0 +1,52 @@
+------------------
+{ printWidth: 80 }
+------------------
+@for $i from 1 through 9 {
+  .logo:nth-child(#{$i}) {
+    $_delay: $logo-delay + ($logo-delay-diff * $i);
+
+    animation: logoAnimation
+      $_duration
+      $_delay
+      cubic-bezier(0.05, 0.35, 0.2, 1)
+      forwards
+      infinite;
+  }
+}
+@if $a == 1 and $b == 2 {
+  $in-if: (
+    $k: (
+        $n: $v,
+      ),
+  );
+  a {
+    transition:
+      opacity $duration-of-the-transition ease-in-out $delay-of-the-transition,
+      color 1s;
+  }
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+@for $i from 1 through 9 {
+  .logo:nth-child(#{$i}) {
+    $_delay: $logo-delay + ($logo-delay-diff * $i);
+
+    animation: logoAnimation $_duration $_delay cubic-bezier(0.05, 0.35, 0.2, 1) forwards infinite;
+  }
+}
+@if $a == 1 and $b == 2 {
+  $in-if: (
+    $k: (
+        $n: $v,
+      ),
+  );
+  a {
+    transition:
+      opacity $duration-of-the-transition ease-in-out $delay-of-the-transition,
+      color 1s;
+  }
+}
+
+===================== End =====================

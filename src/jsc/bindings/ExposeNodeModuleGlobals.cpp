@@ -66,8 +66,7 @@ namespace ExposeNodeModuleGlobalGetters {
     JSC_DEFINE_CUSTOM_GETTER(id, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName)) \
     { \
         Zig::GlobalObject* thisObject = defaultGlobalObject(lexicalGlobalObject); \
-        JSC::VM& vm = thisObject->vm(); \
-        return JSC::JSValue::encode(thisObject->internalModuleRegistry()->requireId(thisObject, vm, field)); \
+        return JSC::JSValue::encode(Bun::DeclaredModuleLoad::requireForCommandLine(thisObject, field)); \
     }
 FOREACH_EXPOSED_BUILTIN_IMR(DECL_GETTER)
 #undef DECL_GETTER    
@@ -102,10 +101,69 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__preExecutionBootstrap(Zig::GlobalOb
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::InternalProcessPreExecution);
+    Bun::DeclaredModuleLoad::requireForCommandLine(globalObject, Bun::InternalModuleRegistry::InternalProcessPreExecution);
     if (auto* exception = scope.exception()) [[unlikely]] {
         CLEAR_IF_EXCEPTION(scope);
         Bun__reportError(globalObject, JSC::JSValue::encode(exception));
+    }
+}
+
+extern "C" JSC::EncodedJSValue Bun__Process__getExecArgv(JSC::JSGlobalObject*);
+
+// What `internal/process/pre_execution` does with `--stack-trace-limit`, word for word, for an executable that cannot load that module.
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__applyStackTraceLimitOption(Zig::GlobalObject* globalObject)
+{
+    using namespace JSC;
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto apply = [&] {
+        auto* execArgv = dynamicDowncast<JSArray>(JSValue::decode(Bun__Process__getExecArgv(globalObject)));
+        RETURN_IF_EXCEPTION(scope, );
+        if (!execArgv)
+            return;
+
+        constexpr ASCIILiteral optionWithValue = "--stack-trace-limit="_s;
+        WTF::String limitText;
+        unsigned length = execArgv->length();
+        auto wordAt = [&](unsigned index) -> WTF::String {
+            JSValue word = execArgv->getIndex(globalObject, index);
+            RETURN_IF_EXCEPTION(scope, { });
+            return word.toWTFString(globalObject);
+        };
+        for (unsigned index = 0; index < length; index++) {
+            WTF::String word = wordAt(index);
+            RETURN_IF_EXCEPTION(scope, );
+            if (word == "--trace-event-categories"_s || word == "--trace-event-file-pattern"_s) {
+                index++;
+                continue;
+            }
+            if (word == "--stack-trace-limit"_s) {
+                if (index + 1 < length) {
+                    limitText = wordAt(++index);
+                    RETURN_IF_EXCEPTION(scope, );
+                }
+                continue;
+            }
+            if (word.startsWith(optionWithValue))
+                limitText = word.substring(optionWithValue.length());
+        }
+        if (limitText.isNull())
+            return;
+
+        double limit = jsToNumber(limitText);
+        if (!std::isfinite(limit))
+            return;
+        JSValue errorConstructor = globalObject->get(globalObject, Identifier::fromString(vm, "Error"_s));
+        RETURN_IF_EXCEPTION(scope, );
+        if (auto* object = errorConstructor.getObject()) {
+            PutPropertySlot slot(object, true);
+            object->methodTable()->put(object, globalObject, vm.propertyNames->stackTraceLimit, jsNumber(limit), slot);
+        }
+    };
+    apply();
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        CLEAR_IF_EXCEPTION(scope);
+        Bun__reportError(globalObject, JSValue::encode(exception));
     }
 }
 
@@ -131,13 +189,13 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__REPL__setupGlobalRequire(
 
     auto* resolveFunction = JSBoundFunction::create(vm, globalObject,
         globalObject->requireResolveFunctionUnbound(), moduleObject,
-        ArgList(), 1, globalObject->commonStrings().resolveString(globalObject),
+        ArgList(), 1, Bun::commonStrings(vm).resolveString(),
         makeSource("resolve"_s, SourceOrigin(), SourceTaintedOrigin::Untainted));
     RETURN_IF_EXCEPTION(scope, );
 
     auto* requireFunction = JSBoundFunction::create(vm, globalObject,
         globalObject->requireFunctionUnbound(), moduleObject,
-        ArgList(), 1, globalObject->commonStrings().requireString(globalObject),
+        ArgList(), 1, Bun::commonStrings(vm).requireString(),
         makeSource("require"_s, SourceOrigin(), SourceTaintedOrigin::Untainted));
     RETURN_IF_EXCEPTION(scope, );
 

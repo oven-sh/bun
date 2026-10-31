@@ -16,7 +16,7 @@ test("node:test honours { todo: true }", { todo: true }, () => {
 });
 
 let nullOptionsRan = false;
-test("node:test treats null options as no options", null, () => {
+test("node:test treats null options as no options", null as any, () => {
   nullOptionsRan = true;
 });
 

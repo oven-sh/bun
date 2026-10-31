@@ -52,13 +52,13 @@ export default function compose(...streams) {
     }
   }
 
-  let ondrain;
-  let onfinish;
-  let onreadable;
-  let onclose;
-  let d;
+  let ondrain: $Node.ErrorCallback | null | undefined;
+  let onfinish: $Node.ErrorCallback | null | undefined;
+  let onreadable: (() => void) | null | undefined;
+  let onclose: $Node.ErrorCallback | null | undefined;
+  let d: $Node.Duplex;
 
-  function onfinished(err) {
+  function onfinished(err?: Error | null) {
     const cb = onclose;
     onclose = null;
 
@@ -91,7 +91,7 @@ export default function compose(...streams) {
   if (writable) {
     if (isNodeStream(head)) {
       d._write = function (chunk, encoding, callback) {
-        if (head.write(chunk, encoding)) {
+        if (head.write!(chunk, encoding)) {
           callback();
         } else {
           ondrain = callback;
@@ -99,7 +99,7 @@ export default function compose(...streams) {
       };
 
       d._final = function (callback) {
-        head.end();
+        head.end!();
         onfinish = callback;
       };
 
@@ -111,7 +111,7 @@ export default function compose(...streams) {
         }
       });
     } else if (isWebStream(head)) {
-      const writable = isTransformStream(head) ? head.writable : head;
+      const writable = (isTransformStream(head) ? head.writable : head) as WritableStream;
       const writer = writable.getWriter();
 
       d._write = async function (chunk, encoding, callback) {
@@ -120,7 +120,7 @@ export default function compose(...streams) {
           writer.write(chunk).catch(() => {});
           callback();
         } catch (err) {
-          callback(err);
+          callback(err as Error);
         }
       };
 
@@ -130,7 +130,7 @@ export default function compose(...streams) {
           writer.close().catch(() => {});
           onfinish = callback;
         } catch (err) {
-          callback(err);
+          callback(err as Error);
         }
       };
     }
@@ -162,9 +162,9 @@ export default function compose(...streams) {
 
       d._read = function () {
         while (true) {
-          const buf = tail.read();
+          const buf = tail.read!();
           if (buf === null) {
-            onreadable = d._read;
+            onreadable = d._read as () => void;
             return;
           }
 
@@ -174,7 +174,7 @@ export default function compose(...streams) {
         }
       };
     } else if (isWebStream(tail)) {
-      const readable = isTransformStream(tail) ? tail.readable : tail;
+      const readable = (isTransformStream(tail) ? tail.readable : tail) as ReadableStream;
       const reader = readable.getReader();
       d._read = async function () {
         while (true) {

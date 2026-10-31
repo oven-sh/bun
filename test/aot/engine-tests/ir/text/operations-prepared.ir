@@ -1,0 +1,841 @@
+# Every operation and terminator the engine creates that is legal from form Prepared on
+# FORM: Prepared
+# RUN: round-trip
+# CHECK: expectedresult x0 type=anything
+# CHECK-NEXT: layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=number}}]
+# CHECK-NEXT: layout L1 name="Size" fields=[{key="x" declared={type=anything}}]
+# CHECK-NEXT: layout L2 kind=Environment fields=[{key="c" declared={type=anything}}]
+# CHECK-NEXT: layout L3 kind=Instance name="C" module=m0
+# CHECK-NEXT: layout L4 kind=Instance name="D" module=m0 base=L3 flags=[HasHeritage]
+# CHECK-NEXT: layout L5 name="Handlers" fields=[{key="m" declared={type=function} flags=[IsRequired] flow={location={initialization=SetAtCreation deferral=CapturesObject deferredFunction=f13} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+# CHECK-NEXT: variable g0 name="ran" module=m0 declared={type=anything}
+# CHECK-NEXT: module m0 path="main.js" displayPath="main.js"
+# CHECK-NEXT: module m1 path="other.cjs" displayPath="other.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1
+# CHECK-NEXT: function f0 name="captures" module=m0 captures=[{type=number}, {type=string}] thisType={type=anything} results=[{type=undefined}]
+# CHECK-NEXT: b0(v0: number, v1: string):
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f1 module=m1 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f2 name="constantsAndCasts" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1:{{*}}= KeyConstant key=@@iterator
+# CHECK-NEXT: v2:{{*}}= KeyConstant key=Symbol.for("x")
+# CHECK-NEXT: v3:{{*}}= Unspecified valueType=number
+# CHECK-NEXT: v4:{{*}}= AssumeType v0 provenType=string
+# CHECK-NEXT: ReportMismatch v0 expectedType=number
+# CHECK-NEXT: v6:{{*}}= EmptyArgumentList valueType=Array
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+# CHECK-NEXT: function f3 name="shapeGuards" module=m0 thisType={type=anything} parameters=[{type=object}, {type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: object, v1: anything):
+# CHECK-NEXT: v2:{{*}}= ShapeTest v0 layouts=[L0, L1]
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b8()
+# CHECK-NEXT: b1(v3:{{*}}):
+# CHECK-NEXT: v4:{{*}}= IsSlotFilled v0, v3 key="x" receivers=[L0, L1] level=Proven accessSite=1
+# CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b8()
+# CHECK-NEXT: b2(v5:{{*}}):
+# CHECK-NEXT: v6:{{*}}= AllGuards v3, v5
+# CHECK-NEXT: v7:{{*}}= GetSlot v0, v6 key="x" receivers=[L0, L1] level=Proven accessSite=2
+# CHECK-NEXT: v8:{{*}}= GetSlotOrUndefined v0, v3 key="x" receivers=[L0, L1] level=Expected accessSite=3
+# CHECK-NEXT: v9:{{*}}= IsNotFrozen v0, v3
+# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b8()
+# CHECK-NEXT: b3(v10:{{*}}):
+# CHECK-NEXT: v11:{{*}}= AllGuards v3, v10
+# CHECK-NEXT: PutSlot v0, v11, v1 key="x" receivers=[L0, L1] level=Expected accessSite=4
+# CHECK-NEXT: PutSlotOrAdd v0, v11, v1 key="x" receivers=[L0, L1] level=Proven accessSite=5
+# CHECK-NEXT: v14:{{*}}= HasNoExtraProperties v0, v3
+# CHECK-NEXT: v15:{{*}}= HasLayoutPrototype v0, v3
+# CHECK-NEXT: v16:{{*}}= BelongsToInstance v0
+# CHECK-NEXT: v17:{{*}}= GetSlotOrUndefined v0, v3 key="x" receivers=[L0, L1] level=Proven
+# CHECK-NEXT: SwitchOnShape v0 layoutSets=[{{*}}[L0], [L1]] -> case b4(| 0), case b6(), otherwise b7()
+# CHECK-NEXT: b4(v18:{{*}}) frequency=Rare:
+# CHECK-NEXT: v19:{{*}}= HasKeyOrder v0, v18 layout=L0 fields=[1, 0]
+# CHECK-NEXT: v20:{{*}}= GetSlotOrUndefined v0, v18 key="y" receivers=[L0] level=Proven
+# CHECK-NEXT: v21:{{*}}= IsSlotFilled v0, v18 key="y" receivers=[L0] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v21 -> taken b5(| 0), notTaken b8()
+# CHECK-NEXT: b5(v22:{{*}}):
+# CHECK-NEXT: v23:{{*}}= AllGuards v18, v22
+# CHECK-NEXT: v24:{{*}}= GetSlot v0, v23 key="y" receivers=[L0] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Return v24
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v25:{{*}}= PropHasOwn v0 key="x" accessSite=6 receivers=[L1]
+# CHECK-NEXT: Return v25
+# CHECK-NEXT: b7():
+# CHECK-NEXT: SwitchOnShape v0 -> otherwise b8()
+# CHECK-NEXT: b8():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f4 name="otherGuards" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=Array}, {type=L5}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: Array, v2: L5):
+# CHECK-NEXT: v3:{{*}}= GetDeferredClosureSlot v2 key="m" receivers=[L5] level=Proven accessSite=1
+# CHECK-NEXT: v4:{{*}}= IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: v5:{{*}}= HasArrayStorage v1 arrayStorage=Int32
+# CHECK-NEXT: v6:{{*}}= IsNotThenable v0
+# CHECK-NEXT: v7:{{*}}= AreMembersUnchanged conditions=[{layout=L3 side=Static key="m"}, {kind=PrototypeLinkUnchanged layout=L4 side=Static}, {kind=ClassEvaluatedOnce layout=L3}, {kind=InstancePrototypeUnchanged layout=L3}]
+# CHECK-NEXT: v8:{{*}}= IsClosureOf v0 function=f0
+# CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v9:{{*}}):
+# CHECK-NEXT: v10:{{*}}= GetCapture v9 function=f0 index=1
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v11:{{*}}= AreFunctionNamesUnchanged
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f5 name="elements" module=m0 thisType={type=anything} parameters=[{type=Array}, {type=number}, {type=anything}, {type=Uint8Array}, {type=string}, {type=Array<anything, pristine[Storage, Names]>}, {type=int}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: Array, v1: number, v2: anything, v3: Uint8Array, v4: string, v5: Array<anything, pristine[Storage, Names]>, v6: int):
+# CHECK-NEXT: v7:{{*}}= IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: b1(v8:{{*}}):
+# CHECK-NEXT: v9:{{*}}= HasArrayStorage v0 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v10:{{*}}):
+# CHECK-NEXT: v11:{{*}}= AllGuards v8, v10
+# CHECK-NEXT: v12:{{*}}= GetArrayLength v0, v11
+# CHECK-NEXT: v13:{{*}}= GetArrayElement v0, v6, v11 arrayStorage=Contiguous level=Proven accessSite=1 [keyIsIntegral]
+# CHECK-NEXT: v14:{{*}}= HasArrayElement v0, v6, v11 arrayStorage=Contiguous level=Expected accessSite=3 [keyIsIntegral]
+# CHECK-NEXT: v15:{{*}}= NewArray contents=anything
+# CHECK-NEXT: AppendElements v15, v0, v11
+# CHECK-NEXT: PutArrayElement v0, v6, v2, v11 arrayStorage=Contiguous mode=Sloppy level=Expected accessSite=2 [keyIsIntegral]
+# CHECK-NEXT: Return v13
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v18:{{*}}= GetArrayLength v5
+# CHECK-NEXT: v19:{{*}}= GetArrayElement v5, v1
+# CHECK-NEXT: v20:{{*}}= HasArrayElement v5, v1
+# CHECK-NEXT: v21:{{*}}= NewArray contents=anything
+# CHECK-NEXT: AppendElements v21, v5
+# CHECK-NEXT: PutArrayElement v5, v1, v2
+# CHECK-NEXT: v24:{{*}}= GetTypedArrayLength v3 typedArrayType=2
+# CHECK-NEXT: v25:{{*}}= GetTypedArrayElement v3, v6 typedArrayType=2 level=Proven accessSite=3 [keyIsIntegral]
+# CHECK-NEXT: PutTypedArrayElement v3, v6, v2 typedArrayType=2 level=Proven accessSite=4 [keyIsIntegral]
+# CHECK-NEXT: RequireAttachedTypedArray v3
+# CHECK-NEXT: v28:{{*}}= GetStringLength v4
+# CHECK-NEXT: Return v28
+# CHECK-NEXT: }
+# CHECK-NEXT: function f6 name="environments" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1:{{*}}= NewObject -, v0 layout=L2 fields=[0] storage=FrameUntilMaterialized
+# CHECK-NEXT: MarkEnvironmentEscaped v1
+# CHECK-NEXT: v3:{{*}}= MaterializeEnvironment v1 layout=L2
+# CHECK-NEXT: ReleaseEnvironment v1
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f7 name="builtinCalls" module=m0 thisType={type=anything} parameters=[{type=Array}, {type=anything}, {type=number}, {type=int}, {type=string}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: Array, v1: anything, v2: number, v3: int, v4: string):
+# CHECK-NEXT: v5:{{*}}= CallBuiltin v0, v1 overload=ArrayPrototypePush/0 builtinCallForm=AnyReceiver expectedResult=x0 accessSite=1 allocationSite=2 [needsPristineReceiver]
+# CHECK-NEXT: v6:{{*}}= CallBuiltin -, v0 overload=MathMax/0 builtinCallForm=List
+# CHECK-NEXT: v7:{{*}}= CallBuiltin overload=DateNow/0
+# CHECK-NEXT: v8:{{*}}= CallBuiltin v4, v4 overload=StringPrototypeSplit/0 builtinCallForm=Prefix prefixLength=2
+# CHECK-NEXT: v9:{{*}}= CallBuiltin -, v0, v4 overload=ObjectGetOwnPropertyDescriptor/0 builtinCallForm=Fields
+# CHECK-NEXT: v10:{{*}}= DivideIntegers v3, v3 rounding=Ceil
+# CHECK-NEXT: v11:{{*}}= ToInt32 v2
+# CHECK-NEXT: v12:{{*}}= ToUint32 v2
+# CHECK-NEXT: v13:{{*}}= ToIntegerOrInfinity v2
+# CHECK-NEXT: v14:{{*}}= NewSetFromData data=d0 allocationSite=3
+# CHECK-NEXT: v15:{{*}}= NewMapFromData data=d1 allocationSite=4
+# CHECK-NEXT: v16:{{*}}= SharedRegExpLiteral pattern="a+" regExpFlags=[Global, Sticky]
+# CHECK-NEXT: v17:{{*}}= PromiseAllOfElements v1, v2 contents=number
+# CHECK-NEXT: v18:{{*}}= Substring v4, v3, v3
+# CHECK-NEXT: v19:{{*}}= FlattenString v4
+# CHECK-NEXT: v20:{{*}}= StringRange v3, v2, v2 method=Substr
+# CHECK-NEXT: v21:{{*}}= ResultAt v20
+# CHECK-NEXT: v22:{{*}}= StringRange v3, v2
+# CHECK-NEXT: v23:{{*}}= SubstringOrUndefined v4, v3, v3
+# CHECK-NEXT: v24:{{*}}= StringLastIndexOfLiteral v4, v3 literal="ab"
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+# CHECK-NEXT: function f8 name="iteration" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=object}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: object):
+# CHECK-NEXT: v2:{{*}}= DestructureIterable v0 count=2
+# CHECK-NEXT: v3:{{*}}= ResultAt v2 index=1
+# CHECK-NEXT: v4:{{*}}= CreateAsyncFromSyncIterator v1, v0
+# CHECK-NEXT: v5:{{*}}= ForInOpen v0
+# CHECK-NEXT: v6:{{*}}= Integer
+# CHECK-NEXT: v7:{{*}}= ForInStep v5, v0 position=v6
+# CHECK-NEXT: v8:{{*}}= ResultAt v7 index=1
+# CHECK-NEXT: v9:{{*}}= ResultAt v7 index=2
+# CHECK-NEXT: v10:{{*}}= IsEnumeratorCurrent v5, v0, v9
+# CHECK-NEXT: Branch v10 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v11:{{*}}):
+# CHECK-NEXT: v12:{{*}}= EnumeratorGetByVal v0, v8, v5, v9, v11
+# CHECK-NEXT: Return v12
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v13:{{*}}= ThrowNotIterable v0 [isSpread]
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }
+# CHECK-NEXT: function f9 name="stringBuilders" module=m0 thisType={type=anything} parameters=[{type=string}, {type=number}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: string, v1: number):
+# CHECK-NEXT: v2:{{*}}= StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v2, v0, v1
+# CHECK-NEXT: StringBuilderAppend v2
+# CHECK-NEXT: v5:{{*}}= StringBuilderLength v2
+# CHECK-NEXT: v6:{{*}}= StringBuilderCheckpoint v2
+# CHECK-NEXT: StringBuilderRollBack v2, v6
+# CHECK-NEXT: v8:{{*}}= StringBuilderToString v2
+# CHECK-NEXT: v9:{{*}}= StringBuilderFinish v2 [isLikelyKey]
+# CHECK-NEXT: v10:{{*}}= StringBuilderBegin
+# CHECK-NEXT: v11:{{*}}= StringBuilderAppendJSON v10, v0, v1, v0
+# CHECK-NEXT: StringBuilderCheckLength v10
+# CHECK-NEXT: StringBuilderDiscard v10
+# CHECK-NEXT: Return v9
+# CHECK-NEXT: }
+# CHECK-NEXT: function f10 name="parse" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=string}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: string):
+# CHECK-NEXT: v2:{{*}}= JSONDecodeBytes v0
+# CHECK-NEXT: v3:{{*}}= JSONSourceOpen v2
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b4()
+# CHECK-NEXT: b1(v4:{{*}}):
+# CHECK-NEXT: v5:{{*}}= JSONSourceStart v4
+# CHECK-NEXT: v6:{{*}}= JSONSkipWhitespace v5
+# CHECK-NEXT: v7:{{*}}= JSONGetByte v6
+# CHECK-NEXT: v8:{{*}}= JSONStartsWith v6 string="{\"x\":" [isLikely]
+# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v9:{{*}}):
+# CHECK-NEXT: v10:{{*}}= JSONAdvance v6, v9 string="{\"x\":"
+# CHECK-NEXT: v11:{{*}}= JSONSkipByte v10
+# CHECK-NEXT: v12:{{*}}= JSONParseString v11
+# CHECK-NEXT: v13:{{*}}= ResultAt v12 index=2
+# CHECK-NEXT: v14:{{*}}= JSONParseKey v13
+# CHECK-NEXT: v15:{{*}}= ResultAt v14 index=2
+# CHECK-NEXT: v16:{{*}}= JSONParseNumber v15
+# CHECK-NEXT: v17:{{*}}= ResultAt v16 index=2
+# CHECK-NEXT: v18:{{*}}= JSONParseInteger v17
+# CHECK-NEXT: v19:{{*}}= ResultAt v18 index=2
+# CHECK-NEXT: v20:{{*}}= JSONParseValue v19
+# CHECK-NEXT: v21:{{*}}= ResultAt v20 index=2
+# CHECK-NEXT: v22:{{*}}= JSONSkipWhitespace v21
+# CHECK-NEXT: v23:{{*}}= JSONSkipByte v22
+# CHECK-NEXT: v24:{{*}}= JSONFindMember v23 string="y"
+# CHECK-NEXT: v25:{{*}}= ResultAt v24 index=1
+# CHECK-NEXT: v26:{{*}}= JSONMemberRepeats v25 string="y"
+# CHECK-NEXT: v27:{{*}}= JSONKeyHasEscapes v25
+# CHECK-NEXT: v28:{{*}}= JSONHasStackSpace
+# CHECK-NEXT: v29:{{*}}= JSONObjectBegin layout=L0
+# CHECK-NEXT: v30:{{*}}= JSONObjectKey v29 layout=L0 field=1
+# CHECK-NEXT: v31:{{*}}= Undefined
+# CHECK-NEXT: v32:{{*}}= JSONParseExtraMembers v25, v31, v30 layout=L0
+# CHECK-NEXT: v33:{{*}}= ResultAt v32 index=1
+# CHECK-NEXT: v34:{{*}}= ResultAt v32 index=2
+# CHECK-NEXT: v35:{{*}}= ResultAt v32 index=3
+# CHECK-NEXT: v36:{{*}}= Double number=1
+# CHECK-NEXT: v37:{{*}}= NewObject -, v0, v36 layout=L0 fields=[0, 1]
+# CHECK-NEXT: v38:{{*}}= JSONObjectFinish v35, v37, v33 layout=L0
+# CHECK-NEXT: v39:{{*}}= JSONSourceClose v4, v34
+# CHECK-NEXT: Return v37
+# CHECK-NEXT: b3():
+# CHECK-NEXT: JSONSourceAbandon v4
+# CHECK-NEXT: Return
+# CHECK-NEXT: b4():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f11 name="expectRows" module=m0 thisType={type=anything} parameters=[{type=object}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: object):
+# CHECK-NEXT: ExpectRows v0 layout=L0
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f12 name="serialize" module=m0 thisType={type=anything} parameters=[{type=boolean}, {type=int}, {type=number}, {type=string}, {type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: boolean, v1: int, v2: number, v3: string, v4: anything):
+# CHECK-NEXT: v5:{{*}}= StringBuilderBegin
+# CHECK-NEXT: v6:{{*}}= StringBuilderReserve v5 size=256
+# CHECK-NEXT: v7:{{*}}= JSONAppendKey v5, v6 string="x" [opensObject, followsMember]
+# CHECK-NEXT: v8:{{*}}= JSONAppendToken v5, v7 jsonToken=CloseObjectOverComma
+# CHECK-NEXT: v9:{{*}}= JSONAppendBoolean v5, v8, v0
+# CHECK-NEXT: v10:{{*}}= JSONAppendInteger v5, v9, v1
+# CHECK-NEXT: v11:{{*}}= JSONAppendNumber v5, v10, v2
+# CHECK-NEXT: v12:{{*}}= JSONAppendDate v5, v11, v2
+# CHECK-NEXT: v13:{{*}}= JSONAppendString v5, v12, v3
+# CHECK-NEXT: v14:{{*}}= JSONAppendValue v5, v13, v4 jsonPosition=Property
+# CHECK-NEXT: v15:{{*}}= ResultAt v14 index=1
+# CHECK-NEXT: StringBuilderCommit v5, v15
+# CHECK-NEXT: v17:{{*}}= StringBuilderFinish v5
+# CHECK-NEXT: Return v17
+# CHECK-NEXT: }
+# CHECK-NEXT: function f13 name="target" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+# CHECK-NEXT: function f14 name="entrypoint" module=m0 role=GenericEntrypoint captures=[{type=function}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f13} creator=Entrypoint{target=f13}
+# CHECK-NEXT: b0(v0: function):
+# CHECK-NEXT: v1:{{*}}= GetArgument argumentIndex=1
+# CHECK-NEXT: v2:{{*}}= GetRestLength firstArgument=1
+# CHECK-NEXT: v3:{{*}}= CreateRest firstArgument=1 allocationSite=1
+# CHECK-NEXT: v4:{{*}}= GetMyArgumentByVal v1 firstArgument=1 [readsArgumentsObject]
+# CHECK-NEXT: v5:{{*}}= CallForwardVarargs v1, v1 firstArgument=1 accessSite=2 callees=[f13, ..]
+# CHECK-NEXT: v6:{{*}}= ConstructSuperForwardVarargs v1, v1 layout=L4 firstArgument=1 accessSite=3 callees=[f13]
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+# CHECK-NEXT: function f15 name="generatorRamp" module=m0 role=CoroutineRamp flags=[IsGenerator, TakesCallee] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f15 body=f16}
+# CHECK-NEXT: b0(v0: function):
+# CHECK-NEXT: v1:{{*}}= NewGenerator v0 function=f15 allocationSite=1
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-NEXT: function f16 name="generatorBody" module=m0 role=CoroutineBody thisType={type=anything} parameters=[{type=object}, {type=anything}] results=[{type=anything}] derivation={source=f15} creator=Coroutine{ramp=f15 body=f16}
+# CHECK-NEXT: b0(v0: object, v1: anything):
+# CHECK-NEXT: v2:{{*}}= NewClosure function=f13
+# CHECK-NEXT: TakeGeneratorPrototype v0, v2
+# CHECK-NEXT: v4:{{*}}= YieldBySavingFrame v0, v1
+# CHECK-NEXT: v5:{{*}}= ResultAt v4
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+# CHECK-NEXT: function f17 name="asyncGeneratorRamp" module=m0 role=CoroutineRamp flags=[IsAsync, IsGenerator, TakesCallee] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{kind=AsyncGenerator ramp=f17 body=f18 promiseType=Promise}
+# CHECK-NEXT: b0(v0: function):
+# CHECK-NEXT: v1:{{*}}= NewAsyncGenerator v0 function=f17 allocationSite=1
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-NEXT: function f18 name="asyncGeneratorBody" module=m0 role=CoroutineBody thisType={type=anything} parameters=[{type=object}, {type=anything}] results=[{type=anything}] derivation={source=f17} creator=Coroutine{kind=AsyncGenerator ramp=f17 body=f18 promiseType=Promise}
+# CHECK-NEXT: b0(v0: object, v1: anything):
+# CHECK-NEXT: v2:{{*}}= AsyncGeneratorYield v0, v1
+# CHECK-NEXT: v3:{{*}}= ResultAt v2
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+# CHECK-NEXT: function f19 name="asyncRamp" module=m0 role=CoroutineRamp flags=[IsAsync] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{kind=AsyncFunction ramp=f19 body=f20 entryWithoutPromise=f20 promiseType=Promise promiseParameter=1}
+# CHECK-NEXT: b0():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f20 name="asyncBody" module=m0 role=CoroutineBody thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] derivation={source=f19} creator=Coroutine{kind=AsyncFunction ramp=f19 body=f20 entryWithoutPromise=f20 promiseType=Promise promiseParameter=1}
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: v2:{{*}}= AwaitMayContinue
+# CHECK-NEXT: v3:{{*}}= AwaitBySavingFrame v0, v1 [takesExtraTurn]
+# CHECK-NEXT: v4:{{*}}= AwaitCallBySavingFrame v1, v0 function=f20 accessSite=1
+# CHECK-NEXT: v5:{{*}}= ReturnAsyncResult v1, v4
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+# CHECK-NEXT: function f21 name="asyncGeneratorSteps" module=m0 flags=[IsAsync] thisType={type=anything} parameters=[{type=AsyncGenerator}, {type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: AsyncGenerator, v1: anything):
+# CHECK-NEXT: v2:{{*}}= IsUnmodifiedAsyncGenerator v0
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v3:{{*}}):
+# CHECK-NEXT: v4:{{*}}= StepAsyncGenerator v0, v1, v1
+# CHECK-NEXT: v5:{{*}}= ResultAt v4
+# CHECK-NEXT: v6:{{*}}= ResultAt v4 index=1
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-NEXT: function f22 name="prototypeChain" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=object}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: object):
+# CHECK-NEXT: v2:{{*}}= HasInPrototypeChain v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-NEXT: function f23 name="insideLength" module=m0 thisType={type=anything} parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: i32):
+# CHECK-NEXT: v3:{{*}}= HasArrayStorage v0 arrayStorage=Int32 [isWritable]
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: b1(v4:{{*}}):
+# CHECK-NEXT: v5:{{*}}= IsInBounds v0, v1
+# CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v6:{{*}}):
+# CHECK-NEXT: v7:{{*}}= AllGuards v4, v6
+# CHECK-NEXT: PutArrayElement v0, v1, v2, v7 arrayStorage=Int32 level=Expected [isInBounds]
+# CHECK-NEXT: v9:{{*}}= GetArrayElement v0, v1, v7 arrayStorage=Int32 level=Expected [isInBounds]
+# CHECK-NEXT: Return v9
+# CHECK-NEXT: b3():
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-NEXT: function f24 name="presentElements" module=m0 thisType={type=anything} parameters=[{type=Array<number, pristine[Storage]>}, {type=number}, {type=int[0, 1000]}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: Array<number, pristine[Storage]>, v1: number, v2: int[0, 1000]):
+# CHECK-NEXT: v3:{{*}}= HasArrayStorage v0 arrayStorage=Double
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b5()
+# CHECK-NEXT: b1(v4:{{*}}):
+# CHECK-NEXT: v5:{{*}}= IsElementPresent v0, v1, v4 arrayStorage=Double
+# CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v6:{{*}}):
+# CHECK-NEXT: v7:{{*}}= AllGuards v4, v6
+# CHECK-NEXT: v8:{{*}}= GetArrayElement v0, v1, v7 arrayStorage=Double level=Expected [isPresent]
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v9:{{*}}= IsInBounds v0, v2
+# CHECK-NEXT: Branch v9 -> taken b4(| 0), notTaken b5()
+# CHECK-NEXT: b4(v10:{{*}}):
+# CHECK-NEXT: v11:{{*}}= AllGuards v4, v10
+# CHECK-NEXT: v12:{{*}}= GetArrayElement v0, v2, v11 arrayStorage=Double level=Expected [isInBounds, readsHoleAsNaN]
+# CHECK-NEXT: Return v12
+# CHECK-NEXT: b5():
+# CHECK-NEXT: ConvertToDoubleStorage v0
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f25 name="insideView" module=m0 thisType={type=anything} parameters=[{type=Uint8Array}, {type=int}, {type=number}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: Uint8Array, v1: int, v2: number):
+# CHECK-NEXT: v3:{{*}}= IsInsideView v0, v1 typedArrayType=2 [keyIsIntegral]
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v4:{{*}}):
+# CHECK-NEXT: v5:{{*}}= GetTypedArrayElement v0, v1, v4 typedArrayType=2 level=Proven [keyIsIntegral, isInsideView]
+# CHECK-NEXT: PutTypedArrayElement v0, v1, v2, v4 typedArrayType=2 level=Proven [keyIsIntegral, isInsideView]
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f26 name="copies" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=string}, {type=object}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: string, v2: object):
+# CHECK-NEXT: v3:{{*}}= CopyObject v0, v1 excludedKeys=["x", "y"]
+# CHECK-NEXT: v4:{{*}}= CopyObject v0
+# CHECK-NEXT: v5:{{*}}= NewObject layout=L0
+# CHECK-NEXT: v6:{{*}}= TryCopyFields v5, v2 layout=L0
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+# CHECK-NEXT: function f27 name="capacities" module=m0 thisType={type=anything} parameters=[{type=Array}, {type=int}, {type=string}, {type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: Array, v1: int, v2: string, v3: anything):
+# CHECK-NEXT: v4:{{*}}= HasSpareArrayCapacity v0
+# CHECK-NEXT: ReserveArrayCapacity v0, v1
+# CHECK-NEXT: v6:{{*}}= GetStringCodeUnit v2, v1
+# CHECK-NEXT: v7:{{*}}= NewArgumentList v3, v3
+# CHECK-NEXT: Return v6
+# CHECK-NEXT: }
+# CHECK-NEXT: function f28 name="globals" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1:{{*}}= GetGlobalBinding key="x" level=Proven accessSite=1 [seesScriptBindings]
+# CHECK-NEXT: v2:{{*}}= GetGlobalBinding key="x"
+# CHECK-NEXT: SetGlobalBinding v0 key="x" mode=Sloppy level=Expected accessSite=2 [seesScriptBindings]
+# CHECK-NEXT: SetGlobalBinding v0 key="x"
+# CHECK-NEXT: v5:{{*}}= IsBuiltinLocationUnchanged member=MathMax
+# CHECK-NEXT: v6:{{*}}= GetBuiltinValue builtin=ProcessPid overload=ProcessPid/0
+# CHECK-NEXT: InitializeBuiltin builtin=ProcessNextTick
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-NEXT: function f29 name="validation" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=function}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: function):
+# CHECK-NEXT: ValidateType v0 validatedType=number
+# CHECK-NEXT: ValidateCallee v0 validatedType=f13
+# CHECK-NEXT: ValidateLookup v0, v1 key="m"
+# CHECK-NEXT: ValidateFirstRun variable=g0
+# CHECK-NEXT: ValidateSameValue v0, v0
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f30 name="moduleEvaluation"
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0:{{*}}= BeginModuleEvaluation module=m0
+# CHECK-NEXT: Branch v0 -> taken b1(), notTaken b3()
+# CHECK-NEXT: b1() handler=b2():
+# CHECK-NEXT: FinishModuleEvaluation module=m0
+# CHECK-NEXT: Return
+# CHECK-NEXT: b2() role=CleanupHandler:
+# CHECK-NEXT: v2:{{*}}= CatchException
+# CHECK-NEXT: AbandonModuleEvaluation v2 module=m0
+# CHECK-NEXT: Rethrow v2
+# CHECK-NEXT: b3():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: data d0 root=Array{contents=anything}
+# CHECK-NEXT: data d1 root=Array{contents=anything}
+# CHECK-NEXT: round trip: same
+
+expectedresult x0 type=anything
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=number}}]
+layout L1 name="Size" fields=[{key="x" declared={type=anything}}]
+layout L2 kind=Environment fields=[{key="c" declared={type=anything}}]
+layout L3 kind=Instance name="C" module=m0
+layout L4 kind=Instance name="D" module=m0 base=L3 flags=[HasHeritage]
+layout L5 name="Handlers" fields=[{key="m" declared={type=function} flags=[IsRequired] flow={location={initialization=SetAtCreation deferral=CapturesObject deferredFunction=f13} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+variable g0 name="ran" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js"
+module m1 path="other.cjs" displayPath="other.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1
+function f0 name="captures" module=m0 captures=[{type=number}, {type=string}] thisType={type=anything} results=[{type=undefined}] {
+  b0(v0: number, v1: string):
+    Return
+}
+function f1 module=m1 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    Return
+}
+function f2 name="constantsAndCasts" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = KeyConstant key=@@iterator
+    v2 = KeyConstant key=Symbol.for("x")
+    v3 = Unspecified valueType=number
+    v4 = AssumeType v0 provenType=string
+    ReportMismatch v0 expectedType=number
+    v6 = EmptyArgumentList valueType=Array
+    Return v4
+}
+function f3 name="shapeGuards" module=m0 thisType={type=anything} parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: anything):
+    v2 = ShapeTest v0 layouts=[L0, L1]
+    Branch v2 -> taken b1(| 0), notTaken b8()
+  b1(v3):
+    v4 = IsSlotFilled v0, v3 key="x" receivers=[L0, L1] level=Proven accessSite=1
+    Branch v4 -> taken b2(| 0), notTaken b8()
+  b2(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetSlot v0, v6 key="x" receivers=[L0, L1] level=Proven accessSite=2
+    v8 = GetSlotOrUndefined v0, v3 key="x" receivers=[L0, L1] level=Expected accessSite=3
+    v9 = IsNotFrozen v0, v3
+    Branch v9 -> taken b3(| 0), notTaken b8()
+  b3(v10):
+    v11 = AllGuards v3, v10
+    PutSlot v0, v11, v1 key="x" receivers=[L0, L1] level=Expected accessSite=4
+    PutSlotOrAdd v0, v11, v1 key="x" receivers=[L0, L1] level=Proven accessSite=5
+    v14 = HasNoExtraProperties v0, v3
+    v15 = HasLayoutPrototype v0, v3
+    v16 = BelongsToInstance v0
+    v17 = GetSlotOrUndefined v0, v3 key="x" receivers=[L0, L1] level=Proven
+    SwitchOnShape v0 layoutSets=[[L0], [L1]] -> case b4(| 0), case b6(), otherwise b7()
+  b4(v18) frequency=Rare:
+    v19 = HasKeyOrder v0, v18 layout=L0 fields=[1, 0]
+    v20 = GetSlotOrUndefined v0, v18 key="y" receivers=[L0] level=Proven
+    v21 = IsSlotFilled v0, v18 key="y" receivers=[L0] level=Expected [holdsDeclaredType]
+    Branch v21 -> taken b5(| 0), notTaken b8()
+  b5(v22):
+    v23 = AllGuards v18, v22
+    v24 = GetSlot v0, v23 key="y" receivers=[L0] level=Expected [holdsDeclaredType]
+    Return v24
+  b6():
+    v25 = PropHasOwn v0 key="x" accessSite=6 receivers=[L1]
+    Return v25
+  b7():
+    SwitchOnShape v0 -> otherwise b8()
+  b8():
+    Return
+}
+function f4 name="otherGuards" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=Array}, {type=L5}] results=[{type=anything}] {
+  b0(v0: anything, v1: Array, v2: L5):
+    v3 = GetDeferredClosureSlot v2 key="m" receivers=[L5] level=Proven accessSite=1
+    v4 = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+    v5 = HasArrayStorage v1 arrayStorage=Int32
+    v6 = IsNotThenable v0
+    v7 = AreMembersUnchanged conditions=[{layout=L3 side=Static key="m"}, {kind=PrototypeLinkUnchanged layout=L4 side=Static}, {kind=ClassEvaluatedOnce layout=L3}, {kind=InstancePrototypeUnchanged layout=L3}]
+    v8 = IsClosureOf v0 function=f0
+    Branch v8 -> taken b1(| 0), notTaken b2()
+  b1(v9):
+    v10 = GetCapture v9 function=f0 index=1
+    Return v10
+  b2():
+    v11 = AreFunctionNamesUnchanged
+    Return
+}
+function f5 name="elements" module=m0 thisType={type=anything} parameters=[{type=Array}, {type=number}, {type=anything}, {type=Uint8Array}, {type=string}, {type=Array<anything, pristine[Storage, Names]>}, {type=int}] results=[{type=anything}] {
+  b0(v0: Array, v1: number, v2: anything, v3: Uint8Array, v4: string, v5: Array<anything, pristine[Storage, Names]>, v6: int):
+    v7 = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+    Branch v7 -> taken b1(| 0), notTaken b3()
+  b1(v8):
+    v9 = HasArrayStorage v0 arrayStorage=Contiguous
+    Branch v9 -> taken b2(| 0), notTaken b3()
+  b2(v10):
+    v11 = AllGuards v8, v10
+    v12 = GetArrayLength v0, v11
+    v13 = GetArrayElement v0, v6, v11 arrayStorage=Contiguous level=Proven accessSite=1 [keyIsIntegral]
+    v14 = HasArrayElement v0, v6, v11 arrayStorage=Contiguous level=Expected accessSite=3 [keyIsIntegral]
+    v15 = NewArray contents=anything
+    AppendElements v15, v0, v11
+    PutArrayElement v0, v6, v2, v11 arrayStorage=Contiguous mode=Sloppy level=Expected accessSite=2 [keyIsIntegral]
+    Return v13
+  b3():
+    v18 = GetArrayLength v5
+    v19 = GetArrayElement v5, v1
+    v20 = HasArrayElement v5, v1
+    v21 = NewArray contents=anything
+    AppendElements v21, v5
+    PutArrayElement v5, v1, v2
+    v24 = GetTypedArrayLength v3 typedArrayType=2
+    v25 = GetTypedArrayElement v3, v6 typedArrayType=2 level=Proven accessSite=3 [keyIsIntegral]
+    PutTypedArrayElement v3, v6, v2 typedArrayType=2 level=Proven accessSite=4 [keyIsIntegral]
+    RequireAttachedTypedArray v3
+    v28 = GetStringLength v4
+    Return v28
+}
+function f6 name="environments" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L2 fields=[0] storage=FrameUntilMaterialized
+    MarkEnvironmentEscaped v1
+    v3 = MaterializeEnvironment v1 layout=L2
+    ReleaseEnvironment v1
+    Return
+}
+function f7 name="builtinCalls" module=m0 thisType={type=anything} parameters=[{type=Array}, {type=anything}, {type=number}, {type=int}, {type=string}] results=[{type=anything}] {
+  b0(v0: Array, v1: anything, v2: number, v3: int, v4: string):
+    v5 = CallBuiltin v0, v1 overload=ArrayPrototypePush/0 builtinCallForm=AnyReceiver expectedResult=x0 accessSite=1 allocationSite=2 [needsPristineReceiver]
+    v6 = CallBuiltin -, v0 overload=MathMax/0 builtinCallForm=List
+    v7 = CallBuiltin overload=DateNow/0
+    v8 = CallBuiltin v4, v4 overload=StringPrototypeSplit/0 builtinCallForm=Prefix prefixLength=2
+    v9 = CallBuiltin -, v0, v4 overload=ObjectGetOwnPropertyDescriptor/0 builtinCallForm=Fields
+    v10 = DivideIntegers v3, v3 rounding=Ceil
+    v11 = ToInt32 v2
+    v12 = ToUint32 v2
+    v13 = ToIntegerOrInfinity v2
+    v14 = NewSetFromData data=d0 allocationSite=3
+    v15 = NewMapFromData data=d1 allocationSite=4
+    v16 = SharedRegExpLiteral pattern="a+" regExpFlags=[Global, Sticky]
+    v17 = PromiseAllOfElements v1, v2 contents=number
+    v18 = Substring v4, v3, v3
+    v19 = FlattenString v4
+    v20 = StringRange v3, v2, v2 method=Substr
+    v21 = ResultAt v20
+    v22 = StringRange v3, v2
+    v23 = SubstringOrUndefined v4, v3, v3
+    v24 = StringLastIndexOfLiteral v4, v3 literal="ab"
+    Return v5
+}
+function f8 name="iteration" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: anything, v1: object):
+    v2 = DestructureIterable v0 count=2
+    v3 = ResultAt v2 index=1
+    v4 = CreateAsyncFromSyncIterator v1, v0
+    v5 = ForInOpen v0
+    v6 = Integer
+    v7 = ForInStep v5, v0 position=v6
+    v8 = ResultAt v7 index=1
+    v9 = ResultAt v7 index=2
+    v10 = IsEnumeratorCurrent v5, v0, v9
+    Branch v10 -> taken b1(| 0), notTaken b2()
+  b1(v11):
+    v12 = EnumeratorGetByVal v0, v8, v5, v9, v11
+    Return v12
+  b2():
+    v13 = ThrowNotIterable v0 [isSpread]
+    Unreachable
+}
+function f9 name="stringBuilders" module=m0 thisType={type=anything} parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: string, v1: number):
+    v2 = StringBuilderBegin
+    StringBuilderAppend v2, v0, v1
+    StringBuilderAppend v2
+    v5 = StringBuilderLength v2
+    v6 = StringBuilderCheckpoint v2
+    StringBuilderRollBack v2, v6
+    v8 = StringBuilderToString v2
+    v9 = StringBuilderFinish v2 [isLikelyKey]
+    v10 = StringBuilderBegin
+    v11 = StringBuilderAppendJSON v10, v0, v1, v0
+    StringBuilderCheckLength v10
+    StringBuilderDiscard v10
+    Return v9
+}
+function f10 name="parse" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything, v1: string):
+    v2 = JSONDecodeBytes v0
+    v3 = JSONSourceOpen v2
+    Branch v3 -> taken b1(| 0), notTaken b4()
+  b1(v4):
+    v5 = JSONSourceStart v4
+    v6 = JSONSkipWhitespace v5
+    v7 = JSONGetByte v6
+    v8 = JSONStartsWith v6 string="{\"x\":" [isLikely]
+    Branch v8 -> taken b2(| 0), notTaken b3()
+  b2(v9):
+    v10 = JSONAdvance v6, v9 string="{\"x\":"
+    v11 = JSONSkipByte v10
+    v12 = JSONParseString v11
+    v13 = ResultAt v12 index=2
+    v14 = JSONParseKey v13
+    v15 = ResultAt v14 index=2
+    v16 = JSONParseNumber v15
+    v17 = ResultAt v16 index=2
+    v18 = JSONParseInteger v17
+    v19 = ResultAt v18 index=2
+    v20 = JSONParseValue v19
+    v21 = ResultAt v20 index=2
+    v22 = JSONSkipWhitespace v21
+    v23 = JSONSkipByte v22
+    v24 = JSONFindMember v23 string="y"
+    v25 = ResultAt v24 index=1
+    v26 = JSONMemberRepeats v25 string="y"
+    v27 = JSONKeyHasEscapes v25
+    v28 = JSONHasStackSpace
+    v29 = JSONObjectBegin layout=L0
+    v30 = JSONObjectKey v29 layout=L0 field=1
+    v31 = Undefined
+    v32 = JSONParseExtraMembers v25, v31, v30 layout=L0
+    v33 = ResultAt v32 index=1
+    v34 = ResultAt v32 index=2
+    v35 = ResultAt v32 index=3
+    v36 = Double number=1
+    v37 = NewObject -, v0, v36 layout=L0 fields=[0, 1]
+    v38 = JSONObjectFinish v35, v37, v33 layout=L0
+    v39 = JSONSourceClose v4, v34
+    Return v37
+  b3():
+    JSONSourceAbandon v4
+    Return
+  b4():
+    Return
+}
+function f11 name="expectRows" module=m0 thisType={type=anything} parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    ExpectRows v0 layout=L0
+    Return
+}
+function f12 name="serialize" module=m0 thisType={type=anything} parameters=[{type=boolean}, {type=int}, {type=number}, {type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: int, v2: number, v3: string, v4: anything):
+    v5 = StringBuilderBegin
+    v6 = StringBuilderReserve v5 size=256
+    v7 = JSONAppendKey v5, v6 string="x" [opensObject, followsMember]
+    v8 = JSONAppendToken v5, v7 jsonToken=CloseObjectOverComma
+    v9 = JSONAppendBoolean v5, v8, v0
+    v10 = JSONAppendInteger v5, v9, v1
+    v11 = JSONAppendNumber v5, v10, v2
+    v12 = JSONAppendDate v5, v11, v2
+    v13 = JSONAppendString v5, v12, v3
+    v14 = JSONAppendValue v5, v13, v4 jsonPosition=Property
+    v15 = ResultAt v14 index=1
+    StringBuilderCommit v5, v15
+    v17 = StringBuilderFinish v5
+    Return v17
+}
+function f13 name="target" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f14 name="entrypoint" module=m0 role=GenericEntrypoint captures=[{type=function}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f13} creator=Entrypoint{target=f13} {
+  b0(v0: function):
+    v1 = GetArgument argumentIndex=1
+    v2 = GetRestLength firstArgument=1
+    v3 = CreateRest firstArgument=1 allocationSite=1
+    v4 = GetMyArgumentByVal v1 firstArgument=1 [readsArgumentsObject]
+    v5 = CallForwardVarargs v1, v1 firstArgument=1 accessSite=2 callees=[f13, ..]
+    v6 = ConstructSuperForwardVarargs v1, v1 layout=L4 firstArgument=1 accessSite=3 callees=[f13]
+    Return v5
+}
+function f15 name="generatorRamp" module=m0 role=CoroutineRamp flags=[IsGenerator, TakesCallee] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f15 body=f16} {
+  b0(v0: function):
+    v1 = NewGenerator v0 function=f15 allocationSite=1
+    Return v1
+}
+function f16 name="generatorBody" module=m0 role=CoroutineBody thisType={type=anything} parameters=[{type=object}, {type=anything}] results=[{type=anything}] derivation={source=f15} creator=Coroutine{ramp=f15 body=f16} {
+  b0(v0: object, v1: anything):
+    v2 = NewClosure function=f13
+    TakeGeneratorPrototype v0, v2
+    v4 = YieldBySavingFrame v0, v1
+    v5 = ResultAt v4
+    Return v5
+}
+function f17 name="asyncGeneratorRamp" module=m0 role=CoroutineRamp flags=[IsAsync, IsGenerator, TakesCallee] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{kind=AsyncGenerator ramp=f17 body=f18 promiseType=Promise} {
+  b0(v0: function):
+    v1 = NewAsyncGenerator v0 function=f17 allocationSite=1
+    Return v1
+}
+function f18 name="asyncGeneratorBody" module=m0 role=CoroutineBody thisType={type=anything} parameters=[{type=object}, {type=anything}] results=[{type=anything}] derivation={source=f17} creator=Coroutine{kind=AsyncGenerator ramp=f17 body=f18 promiseType=Promise} {
+  b0(v0: object, v1: anything):
+    v2 = AsyncGeneratorYield v0, v1
+    v3 = ResultAt v2
+    Return v3
+}
+function f19 name="asyncRamp" module=m0 role=CoroutineRamp flags=[IsAsync] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{kind=AsyncFunction ramp=f19 body=f20 entryWithoutPromise=f20 promiseType=Promise promiseParameter=1} {
+  b0():
+    Return
+}
+function f20 name="asyncBody" module=m0 role=CoroutineBody thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] derivation={source=f19} creator=Coroutine{kind=AsyncFunction ramp=f19 body=f20 entryWithoutPromise=f20 promiseType=Promise promiseParameter=1} {
+  b0(v0: anything, v1: anything):
+    v2 = AwaitMayContinue
+    v3 = AwaitBySavingFrame v0, v1 [takesExtraTurn]
+    v4 = AwaitCallBySavingFrame v1, v0 function=f20 accessSite=1
+    v5 = ReturnAsyncResult v1, v4
+    Return v5
+}
+function f21 name="asyncGeneratorSteps" module=m0 flags=[IsAsync] thisType={type=anything} parameters=[{type=AsyncGenerator}, {type=anything}] results=[{type=anything}] {
+  b0(v0: AsyncGenerator, v1: anything):
+    v2 = IsUnmodifiedAsyncGenerator v0
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = StepAsyncGenerator v0, v1, v1
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Return v5
+  b2():
+    Return v1
+}
+function f22 name="prototypeChain" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: anything, v1: object):
+    v2 = HasInPrototypeChain v0, v1
+    Return v2
+}
+function f23 name="insideLength" module=m0 thisType={type=anything} parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: i32):
+    v3 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = IsInBounds v0, v1
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = AllGuards v4, v6
+    PutArrayElement v0, v1, v2, v7 arrayStorage=Int32 mode=Strict level=Expected [isInBounds]
+    v9 = GetArrayElement v0, v1, v7 arrayStorage=Int32 level=Expected [isInBounds]
+    Return v9
+  b3():
+    Return v2
+}
+function f24 name="presentElements" module=m0 thisType={type=anything} parameters=[{type=Array<number, pristine[Storage]>}, {type=number}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Storage]>, v1: number, v2: int[0, 1000]):
+    v3 = HasArrayStorage v0 arrayStorage=Double
+    Branch v3 -> taken b1(| 0), notTaken b5()
+  b1(v4):
+    v5 = IsElementPresent v0, v1, v4 arrayStorage=Double
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = AllGuards v4, v6
+    v8 = GetArrayElement v0, v1, v7 arrayStorage=Double level=Expected [isPresent]
+    Return v8
+  b3():
+    v9 = IsInBounds v0, v2
+    Branch v9 -> taken b4(| 0), notTaken b5()
+  b4(v10):
+    v11 = AllGuards v4, v10
+    v12 = GetArrayElement v0, v2, v11 arrayStorage=Double level=Expected [isInBounds, readsHoleAsNaN]
+    Return v12
+  b5():
+    ConvertToDoubleStorage v0
+    Return
+}
+function f25 name="insideView" module=m0 thisType={type=anything} parameters=[{type=Uint8Array}, {type=int}, {type=number}] results=[{type=anything}] {
+  b0(v0: Uint8Array, v1: int, v2: number):
+    v3 = IsInsideView v0, v1 typedArrayType=2 [keyIsIntegral]
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = GetTypedArrayElement v0, v1, v4 typedArrayType=2 level=Proven [keyIsIntegral, isInsideView]
+    PutTypedArrayElement v0, v1, v2, v4 typedArrayType=2 level=Proven [keyIsIntegral, isInsideView]
+    Return v5
+  b2():
+    Return
+}
+function f26 name="copies" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=string}, {type=object}] results=[{type=anything}] {
+  b0(v0: anything, v1: string, v2: object):
+    v3 = CopyObject v0, v1 excludedKeys=["x", "y"]
+    v4 = CopyObject v0
+    v5 = NewObject layout=L0
+    v6 = TryCopyFields v5, v2 layout=L0
+    Return v3
+}
+function f27 name="capacities" module=m0 thisType={type=anything} parameters=[{type=Array}, {type=int}, {type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array, v1: int, v2: string, v3: anything):
+    v4 = HasSpareArrayCapacity v0
+    ReserveArrayCapacity v0, v1
+    v6 = GetStringCodeUnit v2, v1
+    v7 = NewArgumentList v3, v3
+    Return v6
+}
+function f28 name="globals" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetGlobalBinding key="x" level=Proven accessSite=1 [seesScriptBindings]
+    v2 = GetGlobalBinding key="x"
+    SetGlobalBinding v0 key="x" mode=Sloppy level=Expected accessSite=2 [seesScriptBindings]
+    SetGlobalBinding v0 key="x"
+    v5 = IsBuiltinLocationUnchanged member=MathMax
+    v6 = GetBuiltinValue builtin=ProcessPid overload=ProcessPid/0
+    InitializeBuiltin builtin=ProcessNextTick
+    Return v1
+}
+function f29 name="validation" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    ValidateType v0 validatedType=number
+    ValidateCallee v0 validatedType=f13
+    ValidateLookup v0, v1 key="m"
+    ValidateFirstRun variable=g0
+    ValidateSameValue v0, v0
+    Return
+}
+function f30 name="moduleEvaluation" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = BeginModuleEvaluation module=m0
+    Branch v0 -> taken b1(), notTaken b3()
+  b1() handler=b2():
+    FinishModuleEvaluation module=m0
+    Return
+  b2() role=CleanupHandler:
+    v2 = CatchException
+    AbandonModuleEvaluation v2 module=m0
+    Rethrow v2
+  b3():
+    Return
+}
+data d0 root=Array{contents=anything}
+data d1 root=Array{contents=anything}

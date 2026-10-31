@@ -1,0 +1,28 @@
+# type P = { kind: "circle" | "square" };    function pick(given: any) { const kind: string | undefined = given; return kind === undefined ? { kind: "circle" } : { kind: "square" }; }    pick("x");
+# Nothing that arrives in `kind` is undefined, so the first arm never runs. Its code is compiled all the same, and with it the record of data: the field is typed by both records.
+# RUN: pipeline ApplyFlowResults
+# CHECK: layout L0 {{*}}key="kind" declared={type="circle"|"square"
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="P" module=m0 fields=[{key="kind" declared={type=undefined|null|"circle"|"square" flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = String string="x"
+    v2 = Call v0, -, v1
+    Return
+}
+function f1 name="pick" length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Convert v0 declared={type=undefined|null|string} illTypedCause=FromLooseType
+    v2 = TypeTest v1 testedType=undefined
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    v4 = Data data=d0
+    Return v4
+  b2(v5):
+    v6 = Data data=d1
+    Return v6
+}
+data d0 root=Object{layout=L0 members=[{key="kind" value=String{value="circle"}}]} module=m0
+data d1 root=Object{layout=L0 members=[{key="kind" value=String{value="square"}}]} module=m0

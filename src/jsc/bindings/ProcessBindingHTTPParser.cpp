@@ -13,10 +13,15 @@ static constexpr ASCIILiteral httpAllMethodNames[] = { HTTP_ALL_METHOD_MAP(METHO
 
 static JSValue methodNamesArray(VM& vm, JSObject* binding, std::span<const ASCIILiteral> names)
 {
+    // reifyAllStaticProperties calls PropertyCallback builders without checking for exceptions, so check here.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSGlobalObject* globalObject = binding->globalObject();
     JSArray* methods = constructEmptyArray(globalObject, nullptr, names.size());
-    for (unsigned i = 0; i < names.size(); ++i)
+    RETURN_IF_EXCEPTION(scope, {});
+    for (unsigned i = 0; i < names.size(); ++i) {
         methods->putDirectIndex(globalObject, i, jsString(vm, String(names[i])));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     return methods;
 }
 

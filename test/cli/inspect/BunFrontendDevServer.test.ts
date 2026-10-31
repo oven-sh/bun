@@ -73,7 +73,7 @@ class BunFrontendDevServerSession extends InspectorSession {
 }
 
 describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
-  let devServerProcess: Subprocess;
+  let devServerProcess: Subprocess<"ignore", "pipe", "pipe">;
   let serverUrl: URL;
   let session: BunFrontendDevServerSession;
   let tempdir: string;
@@ -881,7 +881,7 @@ function decodeGraphUpdate(buffer) {
 
   // Parse the files from the buffer
   function parseFiles(buffer, count, offset) {
-    const files = [];
+    const files: typeof clientFiles = [];
 
     for (let i = 0; i < count; i++) {
       const nameLength = readUint32(buffer, offset);
@@ -921,7 +921,7 @@ function decodeGraphUpdate(buffer) {
 
   // Parse the edges from the buffer
   function parseEdges(buffer, count, offset) {
-    const edges = [];
+    const edges: typeof clientEdges = [];
     for (let i = 0; i < count; i++) {
       const from = readUint32(buffer, offset);
       offset += 4;

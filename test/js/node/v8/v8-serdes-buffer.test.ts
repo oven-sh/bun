@@ -52,6 +52,17 @@ describe("v8 serialize/deserialize Buffer identity", () => {
     expect(v8.deserialize(legacy)).toEqual({ buf: new Uint8Array([7]) });
   });
 
+  test("rejects an envelope whose buffer list holds a non-Uint8Array view", () => {
+    // The envelope's buffer list gets Buffer.prototype applied to each entry.
+    // A crafted payload can put any typed array there; only Uint8Arrays may
+    // become Buffers.
+    const jsc = require("bun:jsc");
+    const f = new Float64Array([1.5]);
+    const payload = jsc.serialize([{ b: f }, [f]], { binaryType: "nodebuffer" });
+    const magic = Buffer.from([0xff, 0x42, 0x55, 0x4e, 0x01]);
+    expect(() => v8.deserialize(Buffer.concat([magic, payload]))).toThrow("failed to parse serialized buffer envelope");
+  });
+
   test("circular structures with Buffers", () => {
     const obj: any = { buf: Buffer.from("c") };
     obj.self = obj;

@@ -19,6 +19,12 @@ import my_toml from "./my_file" with { type: "toml" };
 const { default: my_toml } = await import("./my_file", { with: { type: "toml" } });
 ```
 
+<Note>
+  With TypeScript 7.1 or newer, `@types/bun` types these imports from the `type` attribute: a `type: "text"` import is a
+  `string`, a `type: "sqlite"` import is a `Database`. Older TypeScript versions type the import from the file extension
+  alone.
+</Note>
+
 ## Built-in loaders
 
 ### `js`
@@ -41,7 +47,7 @@ Same as the `js` loader, but JSX syntax is supported. By default, Bun down-conve
 
 **TypeScript loader.** Default for `.ts`, `.mts`, and `.cts`.
 
-Strips out all TypeScript syntax, then behaves identically to the `js` loader. Bun does not perform typechecking.
+Strips out all TypeScript syntax, then behaves identically to the `js` loader. The loader does not check types. Use [`bun check`](/runtime/check) to type check your project.
 
 ---
 

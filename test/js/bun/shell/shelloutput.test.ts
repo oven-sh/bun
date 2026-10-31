@@ -1,4 +1,4 @@
-import { $, ShellError, ShellPromise } from "bun";
+import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isPosix } from "harness";
 import { totalmem } from "os";
@@ -62,13 +62,13 @@ describe.skipIf(!isPosix || totalmem() < 16 * 1024 ** 3)("stdout at the Buffer l
   }, 120_000);
 });
 
-async function withErr(promise: ShellPromise): Promise<ShellError> {
-  let err: ShellError | undefined;
+async function withErr(promise: $.ShellPromise): Promise<$.ShellError> {
+  let err: $.ShellError | undefined;
   try {
     await promise;
   } catch (e) {
-    err = e as ShellError;
+    err = e as $.ShellError;
   }
   expect(err).toBeDefined();
-  return err as ShellError;
+  return err as $.ShellError;
 }

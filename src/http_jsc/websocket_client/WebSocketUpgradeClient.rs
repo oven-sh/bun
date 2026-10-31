@@ -22,14 +22,16 @@
 use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::ptr;
+use std::borrow::Cow;
 use std::io::Write as _;
 
 use bun_boringssl as boringssl;
 use bun_collections::StringSet;
+use bun_core::ZBox;
 use bun_core::fmt::HostFormatter;
 use bun_core::strings;
-use bun_core::{FeatureFlags, ZBox};
-use bun_core::{String as BunString, ZigStringSlice as Utf8Slice};
+use bun_core::{String as BunString, Utf8Bytes};
+use bun_http::header_has_token;
 use bun_http::{HeaderValueIterator, Headers};
 use bun_io::KeepAlive;
 use bun_jsc::{JSGlobalObject, VirtualMachineRef};
@@ -39,7 +41,7 @@ use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
 use super::websocket_proxy_tunnel::IntoUpgradeClientRef;
 use bun_uws::{self as uws, SocketHandler, SocketKind};
 
-use super::cpp_websocket::CppWebSocket;
+use super::cpp_websocket::{CppWebSocket, HandshakeVerdict, TlsHandshake, TlsPeer};
 use super::websocket_deflate as WebSocketDeflate;
 use super::websocket_proxy::WebSocketProxy;
 use super::websocket_proxy_tunnel::WebSocketProxyTunnel;
@@ -68,14 +70,20 @@ fn handshake_timeout_seconds() -> core::ffi::c_uint {
     )
 }
 
+/// Max raw size of a response head. `--max-http-header-size` only counts header names, values and
+/// the status text (like llhttp), so allow 1 KiB extra for separators and line endings.
+#[inline]
+fn max_response_head_len() -> usize {
+    bun_http::max_http_header_size().saturating_add(1024)
+}
+
+/// One slot per line is enough: picohttpparser never emits more than one header per line.
+fn header_slots(head: &[u8]) -> Vec<picohttp::Header> {
+    vec![picohttp::Header::ZERO; strings::count_char(head, b'\n')]
+}
+
 /// `uws.NewSocketHandler(ssl)`
 type Socket<const SSL: bool> = SocketHandler<SSL>;
-
-#[derive(Default, Clone, Copy)]
-pub(crate) struct DeflateNegotiationResult {
-    pub enabled: bool,
-    pub params: WebSocketDeflate::Params,
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum State {
@@ -88,14 +96,86 @@ enum State {
     Done,
 }
 
-enum HeadParse {
-    Done {
-        full: Vec<u8>,
-        status_code: u32,
-        head_len: usize,
-    },
-    Invalid,
-    NeedMore,
+/// Matches node:http's (and so `ws`'s) definition of an upgrade response: status 101, a non-empty
+/// `Upgrade` header, and `upgrade` listed in `Connection`. The result is passed to ws.ts.
+fn is_upgrade(response: &picohttp::Response) -> bool {
+    let (mut has_upgrade, mut connection_has_upgrade) = (false, false);
+    for header in response.headers.list {
+        if strings::eql_case_insensitive_ascii(header.name(), b"upgrade", true) {
+            has_upgrade |= !header.value().is_empty();
+        } else if strings::eql_case_insensitive_ascii(header.name(), b"connection", true) {
+            connection_has_upgrade |= header_has_token(header.value(), b"upgrade");
+        }
+    }
+    response.status_code == 101 && has_upgrade && connection_has_upgrade
+}
+
+/// Remaining body of a non-upgrade response, framed per RFC 9112 §6.3.
+#[derive(Clone, Copy)]
+enum ResponseBody {
+    Length(u64),
+    Chunked(picohttp::phr_chunked_decoder),
+    UntilClose,
+}
+
+impl ResponseBody {
+    fn from_response(response: &picohttp::Response) -> Self {
+        if matches!(response.status_code, 101 | 204 | 304) {
+            return Self::Length(0);
+        }
+        let mut transfer_encoding: Option<bun_http::Encoding> = None;
+        let mut content_length: Option<u64> = None;
+        for header in response.headers.list {
+            if strings::eql_case_insensitive_ascii(header.name(), b"transfer-encoding", true) {
+                let coding = transfer_encoding.get_or_insert(bun_http::Encoding::Identity);
+                if bun_http::fold_transfer_encoding(header.value(), coding).is_err() {
+                    return Self::UntilClose;
+                }
+            } else if strings::eql_case_insensitive_ascii(header.name(), b"content-length", true) {
+                content_length = bun_http_types::parse_content_length_strict(header.value());
+            }
+        }
+        match transfer_encoding {
+            Some(bun_http::Encoding::Chunked) => {
+                let mut decoder = picohttp::phr_chunked_decoder::default();
+                decoder.consume_trailer = 1;
+                Self::Chunked(decoder)
+            }
+            Some(_) => Self::UntilClose,
+            None => content_length.map_or(Self::UntilClose, Self::Length),
+        }
+    }
+
+    /// Strips `data` down to body bytes, in place. Returns true once the body has ended.
+    fn decode(&mut self, data: &mut Vec<u8>) -> bool {
+        match self {
+            Self::Length(remaining) => {
+                data.truncate(usize::try_from(*remaining).unwrap_or(usize::MAX));
+                *remaining -= data.len() as u64;
+                *remaining == 0
+            }
+            Self::Chunked(decoder) => {
+                let mut len = data.len();
+                // SAFETY: `data` holds `len` initialized bytes. Decoding is in place and never
+                // grows `len`.
+                let rc = unsafe {
+                    picohttp::phr_decode_chunked(&raw mut *decoder, data.as_mut_ptr(), &raw mut len)
+                };
+                data.truncate(len);
+                // -2: needs more data. -1: malformed, so stop here and leave the body incomplete.
+                if rc >= 0 {
+                    *self = Self::Length(0);
+                }
+                rc != -2
+            }
+            Self::UntilClose => false,
+        }
+    }
+
+    /// Whether the body counts as fully received if the peer closes the connection now.
+    fn is_complete(&self) -> bool {
+        matches!(self, Self::Length(0) | Self::UntilClose)
+    }
 }
 
 use boringssl::c::OwnedSslCtx;
@@ -112,17 +192,26 @@ pub struct HTTPClient<const SSL: bool> {
     socket_ref: Cell<Option<RefPtr<Self>>>,
     /// C++ `WebSocket::m_upgradeClient` and the ref held on its behalf;
     /// released together when C++ lets go (`cancel`, `didConnect*`,
-    /// `didAbruptClose`).
+    /// `didFail`).
     outgoing_websocket: JsCell<Option<(BackRef<CppWebSocket>, RefPtr<Self>)>>,
     /// Owned request bytes. Freed via `clear_input`.
     input_body_buf: JsCell<Vec<u8>>,
     // The unsent bytes are always a suffix of `input_body_buf`; stored here as
     // the suffix length so we don't hold a self-referential slice.
     to_send_len: Cell<usize>,
-    headers_buf: JsCell<[picohttp::Header; 128]>,
+    /// Unconsumed bytes received since the last request (CONNECT or upgrade) was sent.
     body: JsCell<Vec<u8>>,
-    /// Owned NUL-terminated hostname for SNI; empty when unset.
+    /// Bytes of interim 1xx responses skipped since the last final response.
+    interim_len: Cell<usize>,
+    /// Created by the `ws` module, which runs its own handshake timer, validates the 101 itself and
+    /// reads the body of a non-upgrade response.
+    ws_mode: bool,
+    /// `Some` while reading that body.
+    response_body: Cell<Option<ResponseBody>>,
+    /// Hostname used for SNI and certificate verification: `tls.serverName`, or the URL's host. Empty when unset.
     hostname: JsCell<ZBox>,
+    /// The context of the script that made the WebSocket. `checkServerIdentity` runs in it.
+    context: bun_jsc::ContextId,
     poll_ref: JsCell<KeepAlive>,
     state: Cell<State>,
     subprotocols: JsCell<StringSet>,
@@ -143,11 +232,10 @@ pub struct HTTPClient<const SSL: bool> {
     /// This is base64(SHA-1(Sec-WebSocket-Key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")).
     expected_accept: [u8; 28],
 
-    /// Whether the upgrade request offered `permessage-deflate`. When this is
-    /// false (opt-out via `perMessageDeflate: false`) and the server responds
-    /// with a `Sec-WebSocket-Extensions` header anyway, `processResponse`
-    /// fails the handshake per RFC 6455 §9.1 — matching upstream `ws`.
-    offered_permessage_deflate: bool,
+    /// False when opted out via `perMessageDeflate: false`. If the server sends
+    /// a `Sec-WebSocket-Extensions` header anyway, the handshake fails per
+    /// RFC 6455 §9.1.
+    offered_deflate: bool,
 }
 
 // Handler set referenced by the dispatch table (kind = `.ws_client_upgrade[_tls]`).
@@ -187,61 +275,69 @@ where
         proxy_header_values: &[BunString],
         // TLS options (full SSLConfig for complete TLS customization)
         ssl_config: Option<Box<SSLConfig>>,
+        // `proxy.tls`. With `has_proxy_tls`, the connection to the proxy uses only this config (`None`
+        // means the defaults) and the target uses only `ssl_config`. Otherwise both use `ssl_config`.
+        proxy_ssl_config: Option<&SSLConfig>,
+        has_proxy_tls: bool,
         // Whether the target URL is wss:// (separate from ssl template parameter)
         target_is_secure: bool,
         // Target URL authorization (Basic auth from ws://user:pass@host)
         target_authorization: Option<&BunString>,
         // Unix domain socket path for ws+unix:// / wss+unix:// (None for TCP)
         unix_socket_path: Option<&BunString>,
-        // Whether to advertise `permessage-deflate` in the upgrade request
-        // (ws.WebSocket's `perMessageDeflate` option; true by default).
-        offer_permessage_deflate: bool,
+        // `Sec-WebSocket-Extensions` request header value (a `permessage-deflate` offer), if any.
+        extensions: Option<&BunString>,
+        // Out param, only set when returning `None`: the errno name for `error.code`, if known.
+        connect_error_code: &mut BunString,
     ) -> Option<*mut Self> {
         let vm = global.bun_vm().as_mut();
 
         debug_assert!(vm.event_loop_handle.is_some());
 
-        // Decode all BunString inputs into UTF-8 slices. The underlying
-        // JavaScript strings may be Latin1 or UTF-16; `String.to_utf8()` either
-        // borrows the 8-bit ASCII backing (no allocation) or allocates a
-        // UTF-8 copy. All slices live until end of scope (Drop).
+        let server_name_of = |config: Option<&SSLConfig>| -> Option<Box<[u8]>> {
+            config
+                .and_then(SSLConfig::server_name_bytes)
+                .map(bun_http::strip_ipv6_brackets)
+                .filter(|name| !name.is_empty())
+                .map(Box::from)
+        };
+        let server_name = server_name_of(ssl_config.as_deref());
+        let proxy_server_name = server_name_of(proxy_ssl_config);
+
+        // These BunString inputs are always ASCII (URL parts, tokens, base64),
+        // so `String.to_utf8()` borrows the 8-bit backing without allocating.
+        // All slices live until end of scope (Drop).
 
         let host_slice = host.to_utf8();
         let pathname_slice = pathname.to_utf8();
         let client_protocol_slice = client_protocol.to_utf8();
 
-        let extra_headers = Headers8Bit::init(header_names, header_values);
+        let extra_headers = encode_headers(header_names, header_values);
 
-        let proxy_host_slice: Option<Utf8Slice> = proxy_host.map(|ph| ph.to_utf8());
-        let target_authorization_slice: Option<Utf8Slice> =
+        let proxy_host_slice: Option<Utf8Bytes> = proxy_host.map(|ph| ph.to_utf8());
+        let target_authorization_slice: Option<Utf8Bytes> =
             target_authorization.map(|ta| ta.to_utf8());
-        let unix_socket_path_slice: Option<Utf8Slice> = unix_socket_path.map(|usp| usp.to_utf8());
+        let unix_socket_path_slice: Option<Utf8Bytes> = unix_socket_path.map(|usp| usp.to_utf8());
+        let extensions_slice: Option<Cow<[u8]>> = extensions.map(isomorphic_encode);
 
         let using_proxy = proxy_host.is_some();
 
-        // Check if user provided a custom protocol for subprotocols validation
-        let mut protocol_for_subprotocols: &[u8] = client_protocol_slice.slice();
-        for (name, value) in extra_headers.iter() {
-            if strings::eql_case_insensitive_ascii(name, b"sec-websocket-protocol", true) {
-                protocol_for_subprotocols = value;
-                break;
-            }
-        }
+        // A user-supplied `Sec-WebSocket-Protocol` header overrides the `protocols` argument.
+        let protocols: &[u8] = extra_headers
+            .get(b"sec-websocket-protocol")
+            .unwrap_or(&client_protocol_slice);
 
-        let request_result = match build_request_body(
+        let request_result = build_request_body(
             vm,
             pathname_slice.slice(),
             target_is_secure,
             host_slice.slice(),
             port,
-            client_protocol_slice.slice(),
+            protocols,
             &extra_headers,
             target_authorization_slice.as_ref().map(|s| s.slice()),
-            offer_permessage_deflate,
-        ) {
-            Ok(r) => r,
-            Err(_) => return None,
-        };
+            extensions_slice.as_deref(),
+        );
         let body = request_result.body;
 
         // Build proxy state if using proxy.
@@ -250,31 +346,21 @@ where
         // Ownership of `body` moves into the proxy; the CONNECT
         // request becomes the initial input_body_buf instead.
         let (proxy_state, input_body_buf): (Option<WebSocketProxy>, Vec<u8>) = if using_proxy {
-            // Parse proxy authorization (temporary, freed after building CONNECT request)
-            let proxy_auth_decoded: Option<Utf8Slice> =
-                proxy_authorization.map(|auth| auth.to_utf8());
-            let proxy_auth_slice: Option<&[u8]> = proxy_auth_decoded.as_ref().map(|s| s.slice());
-
-            // Parse proxy headers (temporary, freed after building CONNECT request)
-            let proxy_extra_headers = Headers8Bit::init(proxy_header_names, proxy_header_values);
-
-            let proxy_hdrs: Option<Headers> = if !proxy_header_names.is_empty() {
-                Some(proxy_extra_headers.to_headers())
-            } else {
-                None
-            };
-
-            // Build CONNECT request (proxy_auth and proxy_hdrs are dropped after this).
-            // build_connect_request only returns AllocError; crash on OOM.
-            let connect_request = build_connect_request(
+            let proxy_auth: Option<Utf8Bytes> = proxy_authorization.map(|auth| auth.to_utf8());
+            let mut connect_request: Vec<u8> = Vec::new();
+            bun_http::write_connect_request(
+                &mut connect_request,
                 host_slice.slice(),
-                port,
-                proxy_auth_slice,
-                proxy_hdrs.as_ref(),
+                port.to_string().as_bytes(),
+                proxy_auth.as_ref().map(|s| s.slice()),
+                Some(&encode_headers(proxy_header_names, proxy_header_values)),
             );
 
             // Duplicate target_host (needed for SNI during TLS handshake).
-            let target_host_dup: Box<[u8]> = Box::from(host_slice.slice());
+            let target_host_dup: Box<[u8]> = match &server_name {
+                Some(name) => name.clone(),
+                None => Box::from(host_slice.slice()),
+            };
 
             let proxy = WebSocketProxy::init(
                 target_host_dup,
@@ -290,14 +376,14 @@ where
 
         let subprotocols = {
             let mut subprotocols = StringSet::new();
-            let mut it = HeaderValueIterator::init(protocol_for_subprotocols);
+            let mut it = HeaderValueIterator::init(protocols);
             while let Some(protocol) = it.next() {
                 let _ = subprotocols.insert(protocol); // OOM-only Result
             }
             subprotocols
         };
 
-        let display_host_: &[u8] = if using_proxy {
+        let display_host: &[u8] = if using_proxy {
             proxy_host_slice.as_ref().unwrap().slice()
         } else {
             host_slice.slice()
@@ -306,12 +392,6 @@ where
 
         let mut poll_ref = KeepAlive::init();
         poll_ref.r#ref(vm.loop_ctx());
-        let display_host: &[u8] =
-            if FeatureFlags::HARDCODE_LOCALHOST_TO_127_0_0_1 && display_host_ == b"localhost" {
-                b"127.0.0.1"
-            } else {
-                display_host_
-            };
 
         log!(
             "connect: ssl={}, has_ssl_config={}, using_proxy={}",
@@ -321,10 +401,11 @@ where
         );
 
         let loop_ = global.bun_vm().uws_loop();
+        let context = websocket.context();
         let group = global
             .bun_vm()
             .as_mut()
-            .rare_data()
+            .client_socket_groups_in(context)
             .ws_upgrade_group::<SSL>(loop_);
         let kind: SocketKind = if SSL {
             SocketKind::WsClientUpgradeTls
@@ -343,7 +424,13 @@ where
         let mut secure: Option<OwnedSslCtx> = None;
         let secure_ptr: Option<*mut uws::SslCtx> = if SSL {
             'brk: {
-                if let Some(config) = &ssl_config {
+                // Through a proxy this socket's peer is the proxy.
+                let socket_config = if has_proxy_tls {
+                    proxy_ssl_config
+                } else {
+                    ssl_config.as_deref()
+                };
+                if let Some(config) = socket_config {
                     if config.requires_custom_request_ctx {
                         let mut err = uws::create_bun_socket_error_t::none;
                         // Per-VM weak cache: every `new WebSocket(wss://, {tls:{ca}})`
@@ -381,104 +468,74 @@ where
             outgoing_websocket: JsCell::new(None),
             input_body_buf: JsCell::new(input_body_buf),
             to_send_len: Cell::new(0),
-            headers_buf: JsCell::new([picohttp::Header::ZERO; 128]),
             body: JsCell::new(Vec::new()),
+            interim_len: Cell::new(0),
+            ws_mode: websocket.is_ws_mode(),
+            response_body: Cell::new(None),
             hostname: JsCell::new(ZBox::default()),
+            context: context.id(),
             poll_ref: JsCell::new(poll_ref),
             state: Cell::new(State::Initializing),
             proxy: JsCell::new(proxy_state),
             ssl_config: JsCell::new(ssl_config),
             secure: JsCell::new(secure),
             expected_accept: request_result.expected_accept,
-            offered_permessage_deflate: offer_permessage_deflate,
+            offered_deflate: extensions_slice.is_some(),
             subprotocols: JsCell::new(subprotocols),
         });
         bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::TYPE_NAME, client.as_ptr());
         let this = client.this_ptr();
 
-        // Unix domain socket path (ws+unix:// / wss+unix://)
-        if let Some(usp) = &unix_socket_path_slice {
-            match Socket::<SSL>::connect_unix_group(
+        let sock = match &unix_socket_path_slice {
+            // ws+unix:// / wss+unix://. C++ never passes a proxy with these.
+            Some(path) => Socket::<SSL>::connect_unix_group(
                 group,
                 kind,
                 secure_ptr,
-                usp.slice(),
+                path.slice(),
                 client.as_ptr(),
                 false,
-            ) {
-                Ok(socket) => {
-                    this.tcp.set(socket);
-                    if this.state.get() == State::Failed {
-                        socket.take_ext_owner::<Self>();
-                        client.deref();
-                        return None;
-                    }
-                    bun_analytics::features::web_socket
-                        .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-
-                    if SSL {
-                        // SNI uses the URL host (defaulted to "localhost" in
-                        // C++ when absent), mirroring the TCP path below. A
-                        // user-supplied Host header does NOT affect SNI; use
-                        // `tls: { checkServerIdentity }` or put the hostname
-                        // in the URL (wss+unix://name/path) to verify against
-                        // a specific certificate name.
-                        if !host_slice.slice().is_empty() {
-                            this.hostname.set(ZBox::from_bytes(host_slice.slice()));
-                        }
-                    }
-
-                    socket.set_timeout(handshake_timeout_seconds());
-                    this.state.set(State::Reading);
-                    return Some(Self::connected(client, websocket));
-                }
-                Err(_) => {
-                    // Never installed as userdata on the Err path.
-                    client.deref();
-                }
-            }
+            ),
+            None => Socket::<SSL>::connect_group(
+                group,
+                kind,
+                secure_ptr,
+                display_host,
+                c_int::from(connect_port),
+                client.as_ptr(),
+                false,
+            ),
+        }
+        .inspect_err(|_| *connect_error_code = last_connect_error_code())
+        .ok()?;
+        this.tcp.set(sock);
+        // I don't think this case gets reached.
+        if this.state.get() == State::Failed {
+            sock.take_ext_owner::<Self>();
             return None;
         }
+        bun_analytics::features::web_socket.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
-        match Socket::<SSL>::connect_group(
-            group,
-            kind,
-            secure_ptr,
-            display_host,
-            c_int::from(connect_port),
-            client.as_ptr(),
-            false,
-        ) {
-            Ok(sock) => {
-                this.tcp.set(sock);
-                // I don't think this case gets reached.
-                if this.state.get() == State::Failed {
-                    sock.take_ext_owner::<Self>();
-                    client.deref();
-                    return None;
-                }
-                bun_analytics::features::web_socket
-                    .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-
-                if SSL {
-                    // SNI for the outer TLS socket must use the host we actually
-                    // dialed. For HTTPS proxy connections, that's the proxy host,
-                    // not the wss:// target.
-                    if !display_host_.is_empty() {
-                        this.hostname.set(ZBox::from_bytes(display_host_));
-                    }
-                }
-
-                sock.set_timeout(handshake_timeout_seconds());
-                this.state.set(State::Reading);
-                Some(Self::connected(client, websocket))
-            }
-            Err(_) => {
-                // Never installed as userdata on the Err path.
-                client.deref();
-                None
+        if SSL {
+            // A user-supplied Host header does NOT affect SNI.
+            // Through a proxy this socket's peer is the proxy; `server_name` names the target.
+            let peer_name = if using_proxy {
+                &proxy_server_name
+            } else {
+                &server_name
+            };
+            let sni: &[u8] = match peer_name {
+                Some(name) => name,
+                None => bun_http::strip_ipv6_brackets(display_host),
+            };
+            if !sni.is_empty() {
+                this.hostname.set(ZBox::from_bytes(sni));
             }
         }
+
+        sock.set_timeout(this.handshake_timeout());
+        this.state.set(State::Reading);
+        Some(Self::connected(client, websocket))
     }
 
     /// The socket now holds `client` as its userdata; record that ref and take
@@ -486,9 +543,19 @@ where
     fn connected(client: RefPtr<Self>, websocket: &CppWebSocket) -> *mut Self {
         let this = client.this_ptr();
         this.outgoing_websocket
-            .set(Some((BackRef::new(websocket), client.dupe_ref())));
+            .set(Some((BackRef::new(websocket), client.clone())));
         this.socket_ref.set(Some(client));
         this.as_ptr()
+    }
+
+    /// Disabled for `ws`, which implements `handshakeTimeout` with its own timer and has no
+    /// handshake timeout by default.
+    fn handshake_timeout(&self) -> core::ffi::c_uint {
+        if self.ws_mode {
+            0
+        } else {
+            handshake_timeout_seconds()
+        }
     }
 
     /// C++'s back-reference, while it still holds one.
@@ -499,16 +566,12 @@ where
     /// C++ let go of `m_upgradeClient`: forget the back-reference and release
     /// the ref held on its behalf. May free `self`.
     fn release_cpp_ref(&self) {
-        if let Some((_, cpp_ref)) = self.outgoing_websocket.replace(None) {
-            cpp_ref.deref();
-        }
+        self.outgoing_websocket.set(None);
     }
 
     /// Release the ref held for the socket's userdata pointer. May free `self`.
     fn release_socket_ref(&self) {
-        if let Some(r) = self.socket_ref.take() {
-            r.deref();
-        }
+        self.socket_ref.set(None);
     }
 
     /// Write the unsent suffix of `input_body_buf` via `write` (which returns
@@ -543,40 +606,29 @@ where
         // Bumps the intrusive refcount and derefs on Drop (after `tcp.close`
         // below), which may free `this` — no `&`/`&mut Self` is live at that
         // point.
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
 
         // The C++ end of the socket is no longer holding a reference to this, so we must clear it.
         this.release_cpp_ref();
 
         // Copy `tcp` out so no borrow of `*this` spans the close.
         let tcp = this.tcp.get();
-        // Clear the socket's ext slot before closing. `us_socket_close` on a
-        // SEMI_SOCKET (TCP connect still in flight — the common case when
-        // `ws.close()` is called synchronously after `new WebSocket()`) skips
-        // dispatch entirely, so we cannot rely on `handle_close` /
-        // `handle_connect_error` to release the socket-userdata ref taken in
-        // `connect()`. Take it back here and deref it ourselves; any callback
-        // that does fire sees `ext == None` and no-ops via the
-        // `RawPtrHandler` guard.
-        let had_socket_ref = tcp.take_ext_owner::<Self>();
-        tcp.close(uws::CloseCode::Failure);
-        if had_socket_ref {
-            this.tcp.set(Socket::<SSL>::detached());
-            this.release_socket_ref();
-        }
+        // `handle_close` / `handle_connect_error` releases the socket-userdata ref.
+        tcp.close(uws::CloseCode::Normal);
         // `_guard` drops here, balancing the ref above. May free `this`.
     }
 
-    /// Takes `ThisPtr<Self>` because `did_abrupt_close` may run JS that
-    /// re-enters via `cancel()`, and `tcp.close()` synchronously dispatches
-    /// `handle_close`.
-    pub(crate) fn fail(this: ThisPtr<Self>, code: ErrorCode) {
+    /// `system_code` becomes `error.code`; `detail` is appended to `error.message`.
+    ///
+    /// Takes `ThisPtr<Self>` because `did_fail` may run JS that re-enters via
+    /// `cancel()`, and `tcp.close()` synchronously dispatches `handle_close`.
+    fn fail(this: ThisPtr<Self>, code: ErrorCode, system_code: BunString, detail: BunString) {
         log!("onFail: {}", <&'static str>::from(code));
         bun_jsc::mark_binding!();
         // Copy `tcp` out before dispatch so nothing touches `*this` after the
         // FFI call (which may reenter and pop our tag).
         let tcp = this.tcp.get();
-        Self::dispatch_abrupt_close(this, code);
+        Self::report_failure(this, code, system_code, detail);
 
         // A failed upgrade (bad status line, mismatched subprotocol, invalid
         // headers, ...) is an application-level rejection of a healthy TCP
@@ -586,32 +638,71 @@ where
         tcp.close(uws::CloseCode::Normal);
     }
 
-    /// Takes `ThisPtr<Self>` because `did_abrupt_close` runs JS error
-    /// handlers and may re-enter via C++ `cancel()`, and the trailing `deref`
-    /// may free `this`.
-    fn dispatch_abrupt_close(this: ThisPtr<Self>, code: ErrorCode) {
-        if let Some((ws, cpp_ref)) = this.outgoing_websocket.replace(None) {
-            ws.did_abrupt_close(code);
-            cpp_ref.deref();
+    /// Notifies C++ at most once. If we're reading a non-upgrade response's body, that response was
+    /// already reported as the outcome, so this only ends the body instead of reporting a failure.
+    fn report_failure(
+        this: ThisPtr<Self>,
+        code: ErrorCode,
+        system_code: BunString,
+        detail: BunString,
+    ) {
+        if let Some((ws, _cpp_ref)) = this.outgoing_websocket.replace(None) {
+            match this.response_body.take() {
+                Some(body) => ws.did_end_response_body(
+                    // Our own timeout always aborts, since the peer never ended the body.
+                    code == ErrorCode::Timeout || !body.is_complete(),
+                    !system_code.is_empty(),
+                ),
+                None => ws.did_fail(code, 0, system_code, detail),
+            }
         }
     }
 
     /// Takes `ThisPtr<Self>` because the trailing `deref` releases the socket
     /// ref and on the normal path frees `this`; a `&mut self` argument would
     /// carry a Stacked Borrows protector that makes deallocating it UB.
-    pub fn handle_close(this: ThisPtr<Self>, _: Socket<SSL>, _: c_int, _: *mut c_void) {
+    pub fn handle_close(this: ThisPtr<Self>, _: Socket<SSL>, code: c_int, _: *mut c_void) {
         log!("onClose");
         bun_jsc::mark_binding!();
         this.clear_data();
         this.tcp.set(Socket::<SSL>::detached());
-        Self::dispatch_abrupt_close(this, ErrorCode::Ended);
+        // Values above the `CloseCode` range are the errno of a failed read. A FIN goes through
+        // `handle_end` instead.
+        let (system_code, detail) = match socket_errno_name(code).filter(|_| code > 2) {
+            Some(name) => (
+                BunString::static_(name),
+                BunString::create_format(format_args!("read {name}")),
+            ),
+            None => (BunString::EMPTY, BunString::EMPTY),
+        };
+        Self::report_failure(this, ErrorCode::Ended, system_code, detail);
         this.release_socket_ref();
     }
 
     /// See `fail`.
     pub(crate) fn terminate(this: ThisPtr<Self>, code: ErrorCode) {
-        Self::fail(this, code);
+        Self::fail(this, code, BunString::EMPTY, BunString::EMPTY);
         // We cannot access the pointer after fail is called.
+    }
+
+    /// `completed`: the TLS handshake succeeded but `accepts_tls_peer` rejected the peer.
+    pub(crate) fn fail_tls(
+        this: ThisPtr<Self>,
+        ssl_error: uws::us_bun_verify_error_t,
+        completed: bool,
+    ) {
+        let (code, reason) = if completed && ssl_error.error_no == 0 {
+            (
+                BunString::static_("ERR_TLS_CERT_ALTNAME_INVALID"),
+                BunString::static_("Hostname/IP does not match certificate's altnames"),
+            )
+        } else {
+            (
+                BunString::clone_utf8(ssl_error.code_bytes()),
+                BunString::clone_utf8(ssl_error.reason_bytes()),
+            )
+        };
+        Self::fail(this, ErrorCode::TlsHandshakeFailed, code, reason);
     }
 
     /// Takes `ThisPtr<Self>` because `fail` may free `this` / be re-entered.
@@ -628,48 +719,84 @@ where
         );
 
         let handshake_success = success == 1;
-        let reject_unauthorized = this
-            .cpp_websocket()
-            .is_some_and(|ws| ws.reject_unauthorized());
 
         if handshake_success {
-            // handshake completed but we may have ssl errors
-            if reject_unauthorized {
-                // only reject the connection if reject_unauthorized == true
-                if ssl_error.error_no != 0 {
-                    log!(
-                        "TLS handshake failed: ssl_error={}, has_custom_ctx={}",
-                        ssl_error.error_no,
-                        this.secure.get().is_some()
-                    );
-                    Self::fail(this, ErrorCode::TlsHandshakeFailed);
-                    return;
-                }
-                let Some(ssl) = socket.ssl_mut() else {
-                    // No SSL object to verify against — treat as handshake failure.
-                    Self::fail(this, ErrorCode::TlsHandshakeFailed);
-                    return;
-                };
-                let identity_ok = {
-                    let own_hostname = this.hostname.get();
-                    let sni: Vec<u8>;
-                    let hostname: &[u8] = if !own_hostname.is_empty() {
-                        own_hostname.as_bytes()
-                    } else {
-                        sni = ssl.servername().map(<[u8]>::to_vec).unwrap_or_default();
-                        &sni
-                    };
-                    !hostname.is_empty() && boringssl::check_server_identity(ssl, hostname)
-                };
-                if !identity_ok {
-                    Self::fail(this, ErrorCode::TlsHandshakeFailed);
-                }
+            let Some(ws) = this.cpp_websocket() else {
+                return;
+            };
+            // `tls.checkServerIdentity` may close the WebSocket, which frees `this`.
+            let _guard = RefPtr::from_this(this);
+            // That close clears `hostname`, so the name is moved out while the verdict borrows it.
+            let hostname = this.hostname.take();
+            let ssl = socket.ssl_mut();
+            let name = identity_name(hostname.as_bytes(), ssl.as_deref());
+            let handshake = TlsHandshake::First {
+                context: this.context,
+                peer: this.tls_peer(),
+            };
+            let accepted = ws.accepts_tls_peer(handshake, ssl, ssl_error.error_no == 0, &name);
+            if this.cpp_websocket().is_none() {
+                return;
+            }
+            this.hostname.set(hostname);
+            if !accepted {
+                log!(
+                    "TLS handshake failed: ssl_error={}, has_custom_ctx={}",
+                    ssl_error.error_no,
+                    this.secure.get().is_some()
+                );
+                Self::fail_tls(this, ssl_error, true);
             }
         } else {
             // if we are here is because server rejected us, and the error_no is the cause of this
             // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
-            Self::fail(this, ErrorCode::TlsHandshakeFailed);
+            Self::fail_tls(this, ssl_error, false);
         }
+    }
+
+    /// The name check inside the handshake. See `CppWebSocket::server_identity`.
+    pub fn server_identity(&self, ssl: &mut boringssl::c::SSL) -> boringssl::ServerIdentity {
+        let Some(ws) = self.cpp_websocket() else {
+            return boringssl::ServerIdentity::Unchecked;
+        };
+        let hostname = identity_name(self.hostname.get().as_bytes(), Some(ssl));
+        ws.server_identity(self.tls_peer(), ssl, &hostname)
+    }
+
+    /// Through a proxy this socket's peer is the proxy. The tunnel handshakes with the target.
+    fn tls_peer(&self) -> TlsPeer {
+        if self.proxy.get().is_some() {
+            TlsPeer::Proxy
+        } else {
+            TlsPeer::Target
+        }
+    }
+
+    /// `server_identity` for the tunnel, whose peer is the target.
+    pub(crate) fn tunnel_server_identity(
+        this: ThisPtr<Self>,
+        ssl: &mut boringssl::c::SSL,
+        hostname: &[u8],
+    ) -> boringssl::ServerIdentity {
+        this.cpp_websocket()
+            .map_or(boringssl::ServerIdentity::Unchecked, |ws| {
+                ws.server_identity(TlsPeer::Target, ssl, hostname)
+            })
+    }
+
+    /// `accepts_tls_peer` for the tunnel, whose peer is the target.
+    pub(crate) fn accepts_tunnel_peer(
+        this: ThisPtr<Self>,
+        ssl: Option<&mut boringssl::c::SSL>,
+        chain_verified: bool,
+        hostname: &[u8],
+    ) -> bool {
+        let handshake = TlsHandshake::First {
+            context: this.context,
+            peer: TlsPeer::Target,
+        };
+        this.cpp_websocket()
+            .is_some_and(|ws| ws.accepts_tls_peer(handshake, ssl, chain_verified, hostname))
     }
 
     /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.
@@ -679,7 +806,7 @@ where
         // `us_internal_socket_after_open` zeroes the socket timeout when the
         // SEMI_SOCKET opens, so the value `connect()` armed only covered the
         // TCP connect. Re-arm so an accept-but-never-answer peer times out.
-        socket.set_timeout(handshake_timeout_seconds());
+        socket.set_timeout(this.handshake_timeout());
 
         debug_assert!(!this.input_body_buf.get().is_empty());
         debug_assert!(this.to_send_len.get() == 0);
@@ -690,7 +817,7 @@ where
                 if let Some(ssl) = socket.ssl_mut() {
                     bun_http::configure_http_client_with_alpn(
                         ssl,
-                        if bun_core::ip_address::is_ip_address(hostname.as_bytes()) {
+                        if bun_core::ip_address::is_ip_host(hostname.as_bytes()) {
                             core::ptr::null()
                         } else {
                             hostname.as_ptr()
@@ -698,6 +825,12 @@ where
                         bun_http::AlpnOffer::H1,
                     );
                 }
+            }
+            if this
+                .cpp_websocket()
+                .is_some_and(|ws| ws.reject_unauthorized(this.tls_peer()))
+            {
+                socket.set_inline_reject();
             }
         }
 
@@ -715,45 +848,65 @@ where
         socket.get_native_handle() == self.tcp.get().get_native_handle()
     }
 
-    fn buffer_and_parse_head(&self, data: &[u8]) -> HeadParse {
-        let buffered = !self.body.get().is_empty();
-        if buffered {
-            self.body.with_mut(|b| b.extend_from_slice(data));
-        }
-
-        let parsed = {
-            let body: &[u8] = if buffered { self.body.get() } else { data };
-            self.headers_buf.with_mut(|headers_buf| {
-                picohttp::Response::parse(body, headers_buf).map(|response| HeadParse::Done {
-                    status_code: response.status_code,
-                    head_len: response.bytes_read,
-                    full: body.to_vec(),
-                })
-            })
+    /// Appends `data` to `body`. Once `body` starts with a complete response head, calls `on_head`
+    /// with the parsed response and the bytes after it. Skips interim 1xx responses, and fails the
+    /// connection if the head is malformed or too large. All interim responses together may be as
+    /// large as one head, or a server could keep the client parsing them forever. The result
+    /// depends only on the bytes received so far, not on how they were split across reads.
+    ///
+    /// `on_head` gets a copy and the head stays in `body`: a `handshake` listener can spin the event
+    /// loop, and the next read then appends after it.
+    fn with_response_head(
+        this: ThisPtr<Self>,
+        data: &[u8],
+        on_head: impl FnOnce(&picohttp::Response, &[u8]),
+    ) {
+        this.body.with_mut(|b| b.extend_from_slice(data));
+        let received = this.body.get().clone();
+        let mut unparsed: &[u8] = &received;
+        let cap = max_response_head_len();
+        let drop_interim = |unparsed: &[u8]| {
+            this.body
+                .with_mut(|b| drop(b.drain(..received.len() - unparsed.len())));
         };
-
-        match parsed {
-            Ok(done) => done,
-            Err(picohttp::ParseResponseError::MalformedHttpResponse) => HeadParse::Invalid,
-            Err(picohttp::ParseResponseError::ShortRead) => {
-                if !buffered {
-                    self.body.with_mut(|b| b.extend_from_slice(data));
+        loop {
+            let window = &unparsed[..unparsed.len().min(cap)];
+            let mut slots = header_slots(window);
+            let error = match picohttp::Response::parse(window, &mut slots) {
+                Ok(response) if matches!(response.status_code, 100 | 102..=199) => {
+                    unparsed = &unparsed[response.bytes_read..];
+                    this.interim_len
+                        .set(this.interim_len.get() + response.bytes_read);
+                    if this.interim_len.get() <= cap {
+                        continue;
+                    }
+                    ErrorCode::ResponseHeadersTooLarge
                 }
-                // ShortRead means no \r\n\r\n was found, so every byte in
-                // `body` is part of an incomplete header — cap that, not
-                // total bytes received (which may include pipelined
-                // WebSocket frames once the header does complete).
-                if self.body.get().len() > bun_http::max_http_header_size() {
-                    HeadParse::Invalid
-                } else {
-                    HeadParse::NeedMore
+                Ok(response) => {
+                    drop_interim(unparsed);
+                    this.interim_len.set(0);
+                    return on_head(&response, &unparsed[response.bytes_read..]);
                 }
-            }
+                Err(picohttp::ParseResponseError::MalformedHttpResponse) => {
+                    ErrorCode::InvalidResponse
+                }
+                // picohttpparser validates nothing until it has 9 bytes, so check the prefix here.
+                Err(picohttp::ParseResponseError::ShortRead)
+                    if !b"HTTP/1.".starts_with(&window[..window.len().min(7)]) =>
+                {
+                    ErrorCode::InvalidResponse
+                }
+                Err(picohttp::ParseResponseError::ShortRead) if unparsed.len() > cap => {
+                    ErrorCode::ResponseHeadersTooLarge
+                }
+                Err(picohttp::ParseResponseError::ShortRead) => return drop_interim(unparsed),
+            };
+            return Self::terminate(this, error);
         }
     }
 
     /// Takes `ThisPtr<Self>` because `socket.close()` synchronously dispatches
-    /// `handle_close`, and `terminate`/`process_response`/the trailing guard
+    /// `handle_close`, and `terminate`/`complete_upgrade`/the trailing guard
     /// drop may free `this`.
     pub fn handle_data(this: ThisPtr<Self>, socket: Socket<SSL>, data: &[u8]) {
         log!("onData");
@@ -777,11 +930,9 @@ where
         }
         // Bumps the intrusive refcount and derefs on Drop at every return path
         // below. No `&`/`&mut Self` is live when the guard drops.
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
 
         debug_assert!(this.is_same_socket(socket));
-
-        debug_assert!(!socket.is_shutdown());
 
         // Handle proxy handshake response
         if this.state.get() == State::ProxyHandshake {
@@ -798,102 +949,160 @@ where
             }
         }
 
-        let full = match this.buffer_and_parse_head(data) {
-            HeadParse::Done { full, .. } => full,
-            HeadParse::Invalid => {
-                Self::terminate(this, ErrorCode::InvalidResponse);
-                return;
-            }
-            HeadParse::NeedMore => return,
-        };
-        Self::process_websocket_upgrade_response(this, &full);
+        Self::handle_upgrade_response_data(this, data);
         // `_guard` drops here, balancing the ref above. May free `this`.
     }
 
-    /// Forward the handshake response to C++ as a `'handshake'` event.
-    fn dispatch_handshake(ws: BackRef<CppWebSocket>, response: &picohttp::Response, body: &[u8]) {
-        let raw_headers: Vec<super::cpp_websocket::RawHeader> = response
-            .headers
-            .list
-            .iter()
-            .map(|h| super::cpp_websocket::RawHeader {
-                name: h.name().into(),
-                value: h.value().into(),
-            })
-            .collect();
-        ws.did_receive_handshake_response(
-            u16::try_from(response.status_code).unwrap_or(0),
-            response.status,
-            &raw_headers,
-            body,
-        );
+    /// Caller holds a `RefPtr` guard.
+    fn handle_upgrade_response_data(this: ThisPtr<Self>, data: &[u8]) {
+        if this.response_body.get().is_some() {
+            return Self::handle_response_body(this, data);
+        }
+        Self::with_response_head(this, data, |response, rest| {
+            Self::process_websocket_upgrade_response(this, response, rest);
+        });
     }
 
-    /// Caller holds a `ref_guard` and owns `full` (must not borrow `self`).
-    fn process_websocket_upgrade_response(this: ThisPtr<Self>, full: &[u8]) {
-        let mut scratch = [picohttp::Header::ZERO; 128];
-        let Ok(response) = picohttp::Response::parse(full, &mut scratch) else {
-            return Self::terminate(this, ErrorCode::InvalidResponse);
+    /// Caller holds a `RefPtr` guard. `response` and `rest` must not borrow `self`.
+    fn process_websocket_upgrade_response(
+        this: ThisPtr<Self>,
+        response: &picohttp::Response,
+        rest: &[u8],
+    ) {
+        let Some(ws) = this.cpp_websocket() else {
+            return Self::terminate(this, ErrorCode::Cancel);
         };
-        let head_len = response.bytes_read;
+        let vm = bun_jsc::virtual_machine::VirtualMachine::get();
         let is_101 = response.status_code == 101;
-
-        // 101: one scope across 'upgrade'+'open' so microtasks drain after open.
-        let _scope = is_101
-            .then(|| bun_jsc::virtual_machine::VirtualMachine::get().enter_event_loop_scope());
-
-        if let Some(ws) = this.cpp_websocket() {
-            Self::dispatch_handshake(ws, &response, if is_101 { &[] } else { &full[head_len..] });
-            if this.cpp_websocket().is_none() {
-                return;
-            }
+        let should_read_body = this.ws_mode && !is_upgrade(response);
+        if should_read_body {
+            this.response_body
+                .set(Some(ResponseBody::from_response(response)));
+            this.body.set(rest.to_vec());
+            // Emit 'unexpected-response' and any body bytes that arrived with the head before
+            // draining microtasks, like node:http, whose parser finishes its current chunk.
+            let _scope = vm.enter_event_loop_scope();
+            ws.did_receive_handshake_response(response, false, &[]);
+            return Self::handle_response_body(this, &[]);
         }
-        Self::process_response(this, response, &full[head_len..]);
+        let verdict = {
+            // Don't drain microtasks between 'upgrade' and 'open'. `did_connect` drains them
+            // after 'open'.
+            let _scope = is_101.then(|| vm.enter_event_loop_scope_without_checkpoint());
+            let body: &[u8] = if is_101 { &[] } else { rest };
+            ws.did_receive_handshake_response(response, true, body)
+        };
+        if this.cpp_websocket().is_none() {
+            // The listener closed the WebSocket, so `did_connect` won't run. Drain microtasks
+            // here instead.
+            drop(vm.enter_event_loop_scope());
+            return;
+        }
+        let deflate_params = if this.ws_mode {
+            let HandshakeVerdict::Accepted { deflate } = verdict else {
+                // An 'upgrade' listener threw, so nothing validated the response. Like npm ws, stay
+                // CONNECTING until the user closes the WebSocket, and drop whatever else arrives.
+                this.response_body.set(Some(ResponseBody::UntilClose));
+                this.body.set(Vec::new());
+                drop(vm.enter_event_loop_scope());
+                return;
+            };
+            deflate
+        } else if !is_101 {
+            let status = BunString::create_format(format_args!("{}", response.status_code));
+            return Self::fail(
+                this,
+                ErrorCode::Expected101StatusCode,
+                BunString::EMPTY,
+                status,
+            );
+        } else {
+            match this.validate_upgrade(response) {
+                Ok(deflate) => deflate,
+                Err(code) => return Self::terminate(this, code),
+            }
+        };
+        Self::complete_upgrade(this, deflate_params, rest);
+    }
+
+    /// Caller holds a `RefPtr` guard.
+    fn handle_response_body(this: ThisPtr<Self>, data: &[u8]) {
+        let (Some(mut body), Some(ws)) = (this.response_body.get(), this.cpp_websocket()) else {
+            return;
+        };
+        let mut chunk = this.body.take();
+        chunk.extend_from_slice(data);
+        let ended = body.decode(&mut chunk);
+        this.response_body.set(Some(body));
+        // `ws` has no timeout for the body, so use ours as an idle timeout between chunks.
+        if !ws.is_paused() {
+            this.tcp.get().set_timeout(handshake_timeout_seconds());
+        }
+        if !chunk.is_empty() {
+            ws.did_receive_response_body(&chunk);
+        }
+        if ended {
+            Self::terminate(this, ErrorCode::Ended);
+        }
+    }
+
+    /// `pause()` / `resume()` while CONNECTING only apply to a non-upgrade response's body, never to
+    /// the handshake. Data that was already read is still delivered. While paused, the idle timeout
+    /// is off and the socket doesn't keep the process alive, like node:http.
+    ///
+    /// Takes `ThisPtr<Self>` because `resume_stream()` closes the socket if it can't re-register the
+    /// poll; see `cancel`.
+    pub(crate) fn set_paused(this: ThisPtr<Self>, paused: bool) {
+        if this.response_body.get().is_none() {
+            return;
+        }
+        let _guard = RefPtr::from_this(this);
+        let tcp = this.tcp.get();
+        if paused {
+            tcp.set_timeout(0);
+            this.poll_ref
+                .with_mut(|p| p.unref(VirtualMachineRef::get().loop_ctx()));
+            tcp.pause_stream();
+        } else {
+            tcp.set_timeout(handshake_timeout_seconds());
+            this.poll_ref
+                .with_mut(|p| p.r#ref(VirtualMachineRef::get().loop_ctx()));
+            tcp.resume_stream();
+        }
     }
 
     /// Takes `ThisPtr<Self>` because `terminate`/`handle_data` may free `this`.
     fn handle_proxy_response(this: ThisPtr<Self>, socket: Socket<SSL>, data: &[u8]) {
         log!("handleProxyResponse");
+        Self::with_response_head(this, data, |response, remain_buf| {
+            Self::process_proxy_response(this, socket, response, remain_buf);
+        });
+    }
 
-        const HTTP_200: &[u8] = b"HTTP/1.1 200 ";
-        const HTTP_200_ALT: &[u8] = b"HTTP/1.0 200 ";
-        if this.body.get().is_empty()
-            && data.len() > HTTP_200.len()
-            && !data.starts_with(HTTP_200)
-            && !data.starts_with(HTTP_200_ALT)
-        {
-            // Proxy connection failed
-            Self::terminate(this, ErrorCode::ProxyConnectFailed);
-            return;
-        }
-
-        let (full, status_code, head_len) = match this.buffer_and_parse_head(data) {
-            HeadParse::Done {
-                full,
-                status_code,
-                head_len,
-            } => (full, status_code, head_len),
-            HeadParse::Invalid => {
-                Self::terminate(this, ErrorCode::InvalidResponse);
-                return;
-            }
-            HeadParse::NeedMore => return,
-        };
-
-        // Proxy returned non-200 status
-        if status_code != 200 {
-            if status_code == 407 {
-                Self::terminate(this, ErrorCode::ProxyAuthenticationRequired);
+    /// `response` and `remain_buf` must not borrow `self`.
+    fn process_proxy_response(
+        this: ThisPtr<Self>,
+        socket: Socket<SSL>,
+        response: &picohttp::Response,
+        remain_buf: &[u8],
+    ) {
+        if !bun_http::is_successful_connect_status(response.status_code) {
+            let code = if response.status_code == 407 {
+                ErrorCode::ProxyAuthenticationRequired
             } else {
-                Self::terminate(this, ErrorCode::ProxyConnectFailed);
+                ErrorCode::ProxyConnectFailed
+            };
+            let mut status_line = response.status_code.to_string().into_bytes();
+            if !response.status.is_empty() {
+                status_line.push(b' ');
+                status_line.extend_from_slice(response.status);
             }
-            return;
+            let detail = BunString::clone_latin1(&status_line);
+            return Self::fail(this, code, BunString::EMPTY, detail);
         }
 
         // Proxy tunnel established
         log!("Proxy tunnel established");
-
-        let remain_buf: Vec<u8> = full[head_len..].to_vec();
 
         // Clear the body buffer for WebSocket handshake
         this.body.with_mut(|b| b.clear());
@@ -906,7 +1115,7 @@ where
 
         // For wss:// through proxy, we need to do TLS handshake inside the tunnel
         if target_https {
-            Self::start_proxy_tls_handshake(this, socket, &remain_buf);
+            Self::start_proxy_tls_handshake(this, socket, remain_buf);
             return;
         }
 
@@ -930,7 +1139,7 @@ where
 
         // If there's remaining data after the proxy response, process it
         if !remain_buf.is_empty() {
-            Self::handle_data(this, socket, &remain_buf);
+            Self::handle_data(this, socket, remain_buf);
         }
     }
 
@@ -943,7 +1152,7 @@ where
         // Get certificate verification setting
         let reject_unauthorized = this
             .cpp_websocket()
-            .is_none_or(|ws| ws.reject_unauthorized());
+            .is_none_or(|ws| ws.reject_unauthorized(TlsPeer::Target));
 
         // Create proxy tunnel with all parameters.
         // Safely unwrap proxy state - it must exist if we're called from handle_proxy_response.
@@ -953,7 +1162,6 @@ where
                 Self::upgrade_client_ref(this),
                 socket,
                 p.get_target_host(),
-                reject_unauthorized,
             )
         });
         let Some(tunnel) = tunnel else {
@@ -968,13 +1176,24 @@ where
                 let mut c = SSLConfig::default();
                 c.reject_unauthorized = 0; // We verify manually
                 c.request_cert = 1;
+                let vm = bun_jsc::virtual_machine::VirtualMachine::get();
+                if let Some(ciphers) = vm.tls_default_ciphers() {
+                    c.set_default_ciphers(ciphers);
+                }
                 c
             }
         };
 
         // Start TLS handshake
-        if WebSocketProxyTunnel::start(tunnel.this_ptr(), &ssl_options, initial_data).is_err() {
-            tunnel.deref();
+        if WebSocketProxyTunnel::start(
+            tunnel.this_ptr(),
+            &ssl_options,
+            reject_unauthorized,
+            initial_data,
+        )
+        .is_err()
+        {
+            drop(tunnel);
             Self::terminate(this, ErrorCode::ProxyTunnelFailed);
             return;
         }
@@ -990,7 +1209,7 @@ where
         });
         if let Some(tunnel) = unattached {
             // Nothing else holds the tunnel.
-            tunnel.deref();
+            drop(tunnel);
             Self::terminate(this, ErrorCode::ProxyTunnelFailed);
             return;
         }
@@ -1003,11 +1222,6 @@ where
     pub(crate) fn on_proxy_tls_handshake_complete(this: ThisPtr<Self>) {
         log!("onProxyTLSHandshakeComplete");
 
-        // TLS handshake done - free the CONNECT request buffer and send the
-        // WebSocket upgrade request through the tunnel.
-        this.state.set(State::Reading);
-        this.clear_input();
-
         // Take the WebSocket upgrade request from proxy state (transfers
         // ownership) along with the tunnel to send it through.
         let step = this.proxy.with_mut(|proxy| {
@@ -1019,10 +1233,14 @@ where
             Self::terminate(this, ErrorCode::ProxyTunnelFailed);
             return;
         };
+        // This is a TLS renegotiation. The request was already sent after the first handshake.
         if request_buf.is_empty() {
-            Self::terminate(this, ErrorCode::FailedToWrite);
             return;
         }
+        // TLS handshake done - free the CONNECT request buffer and send the
+        // WebSocket upgrade request through the tunnel.
+        this.state.set(State::Reading);
+        this.clear_input();
         // Store it in input_body_buf so handle_writable can retry on drain.
         this.to_send_len.set(request_buf.len());
         this.input_body_buf.set(request_buf);
@@ -1038,22 +1256,14 @@ where
 
     /// Called by WebSocketProxyTunnel with decrypted data from the TLS tunnel
     ///
-    /// Takes `ThisPtr<Self>` because `terminate`/`process_response`/the guard
+    /// Takes `ThisPtr<Self>` because `terminate`/`complete_upgrade`/the guard
     /// drop may free `this`; see `fail`.
     pub(crate) fn handle_decrypted_data(this: ThisPtr<Self>, data: &[u8]) {
         log!("handleDecryptedData: {} bytes", data.len());
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
 
         // Process as if it came directly from the socket.
-        let full = match this.buffer_and_parse_head(data) {
-            HeadParse::Done { full, .. } => full,
-            HeadParse::Invalid => {
-                Self::terminate(this, ErrorCode::InvalidResponse);
-                return;
-            }
-            HeadParse::NeedMore => return,
-        };
-        Self::process_websocket_upgrade_response(this, &full);
+        Self::handle_upgrade_response_data(this, data);
     }
 
     /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.
@@ -1062,27 +1272,19 @@ where
         Self::terminate(this, ErrorCode::Ended);
     }
 
-    /// Takes `ThisPtr<Self>` because `terminate`/`tcp.close()` may
-    /// synchronously dispatch `handle_close`, and the success path's double
-    /// `deref` may free `this`.
-    pub(crate) fn process_response(
-        this: ThisPtr<Self>,
-        response: picohttp::Response,
-        remain_buf: &[u8],
-    ) {
+    /// The global `WebSocket`'s checks on a 101 (RFC 6455 §4.1). Returns the negotiated
+    /// `permessage-deflate` params, if any. `ws` validates in JS instead: see `HandshakeVerdict`.
+    fn validate_upgrade(
+        &self,
+        response: &picohttp::Response,
+    ) -> Result<Option<WebSocketDeflate::Params>, ErrorCode> {
         let mut upgrade_header = picohttp::Header::ZERO;
         let mut connection_header_seen = false;
         let mut connection_has_upgrade = false;
         let mut websocket_accept_header = picohttp::Header::ZERO;
         let mut protocol_header_seen = false;
 
-        // var visited_version = false;
-        let mut deflate_result = DeflateNegotiationResult::default();
-
-        if response.status_code != 101 {
-            Self::terminate(this, ErrorCode::Expected101StatusCode);
-            return;
-        }
+        let mut deflate_params: Option<WebSocketDeflate::Params> = None;
 
         for header in response.headers.list {
             match header.name().len() {
@@ -1092,10 +1294,7 @@ where
                         b"Connection",
                     ) {
                         connection_header_seen = true;
-                        connection_has_upgrade |=
-                            HeaderValueIterator::init(header.value()).any(|t| {
-                                strings::eql_case_insensitive_ascii_check_length(t, b"upgrade")
-                            });
+                        connection_has_upgrade |= header_has_token(header.value(), b"upgrade");
                     }
                 }
                 len if len == b"Upgrade".len() => {
@@ -1114,8 +1313,7 @@ where
                         b"Sec-WebSocket-Version",
                     ) {
                         if !strings::eql_comptime(header.value(), b"13") {
-                            Self::terminate(this, ErrorCode::InvalidWebsocketVersion);
-                            return;
+                            return Err(ErrorCode::InvalidWebsocketVersion);
                         }
                     }
                 }
@@ -1155,23 +1353,18 @@ where
                             }
 
                             // Protocol must be in the list of allowed protocols.
-                            if !this.subprotocols.get().contains(protocol) {
+                            if !self.subprotocols.get().contains(protocol) {
                                 break 'brk false;
                             }
 
-                            if let Some(ws) = this.cpp_websocket() {
-                                let mut protocol_str = BunString::clone_latin1(protocol);
-                                ws.set_protocol(&mut protocol_str);
-                                // `BunString` is `Copy`; explicitly drop the
-                                // ref taken by `clone_latin1`.
-                                protocol_str.deref();
+                            if let Some(ws) = self.cpp_websocket() {
+                                ws.set_protocol(BunString::clone_latin1(protocol));
                             }
                             true
                         };
 
                         if !valid {
-                            Self::terminate(this, ErrorCode::MismatchClientProtocol);
-                            return;
+                            return Err(ErrorCode::MismatchClientProtocol);
                         }
                     }
                 }
@@ -1180,87 +1373,13 @@ where
                         header.name(),
                         b"Sec-WebSocket-Extensions",
                     ) {
-                        // Per RFC 6455 §9.1, the server MUST NOT respond with an
-                        // extension the client did not offer. Match upstream `ws`
-                        // (lib/websocket.js: "Server sent a Sec-WebSocket-Extensions
-                        // header but no extension was requested") and fail the
-                        // handshake instead of silently accepting it.
-                        if !this.offered_permessage_deflate {
-                            Self::terminate(this, ErrorCode::InvalidResponse);
-                            return;
+                        // RFC 6455 §9.1: only extensions we offered are allowed, each at most once.
+                        if !self.offered_deflate || deflate_params.is_some() {
+                            return Err(ErrorCode::UnsupportedExtension);
                         }
-                        // This is a simplified parser. A full parser would handle multiple extensions and quoted values.
-                        for ext_str in strings::split(header.value(), b",") {
-                            let mut ext_it = strings::split(strings::trim(ext_str, b" \t"), b";");
-                            let ext_name = strings::trim(ext_it.next().unwrap_or(b""), b" \t");
-                            if ext_name == b"permessage-deflate" {
-                                deflate_result.enabled = true;
-                                for param_str in ext_it {
-                                    let mut param_it =
-                                        strings::split(strings::trim(param_str, b" \t"), b"=");
-                                    let key = strings::trim(param_it.next().unwrap_or(b""), b" \t");
-                                    let value =
-                                        strings::trim(param_it.next().unwrap_or(b""), b" \t");
-
-                                    if key == b"server_no_context_takeover" {
-                                        deflate_result.params.server_no_context_takeover = 1;
-                                    } else if key == b"client_no_context_takeover" {
-                                        deflate_result.params.client_no_context_takeover = 1;
-                                    } else if key == b"server_max_window_bits" {
-                                        if !value.is_empty() {
-                                            // Remove quotes if present
-                                            let trimmed_value = if value.len() >= 2
-                                                && value[0] == b'"'
-                                                && value[value.len() - 1] == b'"'
-                                            {
-                                                &value[1..value.len() - 1]
-                                            } else {
-                                                value
-                                            };
-
-                                            if let Ok(bits) =
-                                                strings::parse_int::<u8>(trimmed_value, 10)
-                                            {
-                                                if bits >= WebSocketDeflate::Params::MIN_WINDOW_BITS
-                                                    && bits
-                                                        <= WebSocketDeflate::Params::MAX_WINDOW_BITS
-                                                {
-                                                    deflate_result.params.server_max_window_bits =
-                                                        bits;
-                                                }
-                                            }
-                                        }
-                                    } else if key == b"client_max_window_bits" {
-                                        if !value.is_empty() {
-                                            // Remove quotes if present
-                                            let trimmed_value = if value.len() >= 2
-                                                && value[0] == b'"'
-                                                && value[value.len() - 1] == b'"'
-                                            {
-                                                &value[1..value.len() - 1]
-                                            } else {
-                                                value
-                                            };
-
-                                            if let Ok(bits) =
-                                                strings::parse_int::<u8>(trimmed_value, 10)
-                                            {
-                                                if bits >= WebSocketDeflate::Params::MIN_WINDOW_BITS
-                                                    && bits
-                                                        <= WebSocketDeflate::Params::MAX_WINDOW_BITS
-                                                {
-                                                    deflate_result.params.client_max_window_bits =
-                                                        bits;
-                                                }
-                                            }
-                                        } else {
-                                            // client_max_window_bits without value means use default (15)
-                                            deflate_result.params.client_max_window_bits = 15;
-                                        }
-                                    }
-                                }
-                                break; // Found and parsed permessage-deflate, stop.
-                            }
+                        deflate_params = parse_deflate_response(header.value());
+                        if deflate_params.is_none() {
+                            return Err(ErrorCode::UnsupportedExtension);
                         }
                     }
                 }
@@ -1268,24 +1387,17 @@ where
             }
         }
 
-        // if (!visited_version) {
-        //     this.terminate(ErrorCode.invalid_websocket_version);
-        //     return;
-        // }
-
         if upgrade_header
             .name()
             .len()
             .min(upgrade_header.value().len())
             == 0
         {
-            Self::terminate(this, ErrorCode::MissingUpgradeHeader);
-            return;
+            return Err(ErrorCode::MissingUpgradeHeader);
         }
 
         if !connection_header_seen {
-            Self::terminate(this, ErrorCode::MissingConnectionHeader);
-            return;
+            return Err(ErrorCode::MissingConnectionHeader);
         }
 
         if websocket_accept_header
@@ -1294,33 +1406,42 @@ where
             .min(websocket_accept_header.value().len())
             == 0
         {
-            Self::terminate(this, ErrorCode::MissingWebsocketAcceptHeader);
-            return;
+            return Err(ErrorCode::MissingWebsocketAcceptHeader);
         }
 
-        if !protocol_header_seen && !this.subprotocols.get().is_empty() {
-            Self::terminate(this, ErrorCode::MissingClientProtocol);
-            return;
+        if !protocol_header_seen && !self.subprotocols.get().is_empty() {
+            return Err(ErrorCode::MissingClientProtocol);
         }
 
         if !connection_has_upgrade {
-            Self::terminate(this, ErrorCode::InvalidConnectionHeader);
-            return;
+            return Err(ErrorCode::InvalidConnectionHeader);
         }
 
         if !strings::eql_case_insensitive_ascii(upgrade_header.value(), b"websocket", true) {
-            Self::terminate(this, ErrorCode::InvalidUpgradeHeader);
-            return;
+            return Err(ErrorCode::InvalidUpgradeHeader);
         }
 
-        if websocket_accept_header.value() != &this.expected_accept[..] {
-            Self::terminate(this, ErrorCode::MismatchWebsocketAcceptHeader);
-            return;
+        if websocket_accept_header.value() != &self.expected_accept[..] {
+            return Err(ErrorCode::MismatchWebsocketAcceptHeader);
         }
 
+        Ok(deflate_params)
+    }
+
+    /// The 101 passed validation: hand the socket to the connected client. `remain_buf` holds the
+    /// bytes received after the response head.
+    ///
+    /// Takes `ThisPtr<Self>` because `terminate`/`tcp.close()` may
+    /// synchronously dispatch `handle_close`, and the success path's double
+    /// `deref` may free `this`.
+    fn complete_upgrade(
+        this: ThisPtr<Self>,
+        deflate_params: Option<WebSocketDeflate::Params>,
+        remain_buf: &[u8],
+    ) {
         // Ownership transfer: `overflow` is handed through C++
         // (`WebSocket__didConnect` → `Bun__WebSocketClient__init`/`_initWithTunnel`)
-        // as an opaque box to the connected client's `InitialDataHandler`.
+        // as an opaque box to the connected client.
         let overflow =
             || (!remain_buf.is_empty()).then(|| Box::new(super::InitialData(remain_buf.to_vec())));
 
@@ -1343,7 +1464,7 @@ where
                 // never call cancel() to drop it. The TCP socket's ref (released
                 // in handle_close) is what keeps this struct alive to forward
                 // socket data to the tunnel after we switch to .done.
-                let (ws, cpp_ref) = this.outgoing_websocket.replace(None).unwrap();
+                let (ws, _cpp_ref) = this.outgoing_websocket.replace(None).unwrap();
 
                 // Switch to forwarding before entering C++. did_connect_with_tunnel
                 // dispatches `open`, and an open handler that spins the event loop
@@ -1357,19 +1478,15 @@ where
                 // Same order as the non-tunnel arm below, which detaches the socket
                 // before did_connect.
                 this.state.set(State::Done);
+                // This struct stays alive for the whole connection and `Done` never reads `body`,
+                // so free it now.
+                this.body.set(Vec::new());
+                // The connected client holds its own.
+                this.poll_ref
+                    .with_mut(|p| p.unref(VirtualMachineRef::get().loop_ctx()));
 
                 // Create the WebSocket client with the tunnel
-                ws.did_connect_with_tunnel(
-                    tunnel,
-                    overflow(),
-                    if deflate_result.enabled {
-                        Some(&deflate_result.params)
-                    } else {
-                        None
-                    },
-                );
-
-                cpp_ref.deref();
+                ws.did_connect_with_tunnel(tunnel, overflow(), deflate_params.as_ref());
             } else if tcp.is_closed() {
                 Self::terminate(this, ErrorCode::Cancel);
             } else if !has_ws {
@@ -1386,6 +1503,8 @@ where
         let mut saved_secure = this.secure.replace(None); // prevent clear_data from freeing it
         // Any arm below that doesn't hand `saved_secure` to did_connect must
         // release the ref it took out of `self` (SSL_CTX_free at fn end).
+        // The connected client checks a TLS renegotiation against this name.
+        let verified_hostname = this.hostname.take();
         this.clear_data();
         bun_jsc::mark_binding!();
         let tcp = this.tcp.get();
@@ -1400,16 +1519,13 @@ where
             // Normal mode: pass socket directly to WebSocket client
             this.tcp.set(Socket::<SSL>::detached());
             if let uws::InternalSocket::Connected(native_socket) = socket.socket {
-                ws.did_connect(
+                ws.did_connect::<SSL>(
                     bun_opaque::opaque_deref_mut(native_socket),
                     overflow(),
-                    if deflate_result.enabled {
-                        Some(&deflate_result.params)
-                    } else {
-                        None
-                    },
+                    deflate_params.as_ref(),
                     // Ownership transferred to the connected client.
                     saved_secure.take(),
+                    verified_hostname.as_bytes(),
                 );
             } else {
                 Self::terminate(this, ErrorCode::FailedToConnect);
@@ -1417,7 +1533,7 @@ where
             // Two refs are released here (C++'s, then the TCP socket's — the
             // socket now belongs to the connected WebSocket). The second may
             // free `this`.
-            cpp_ref.deref();
+            drop(cpp_ref);
             this.release_socket_ref();
         } else if tcp.is_closed() {
             Self::terminate(this, ErrorCode::Cancel);
@@ -1445,7 +1561,7 @@ where
         // `on_writable`/`write` flush the tunnel and can reach `terminate` →
         // `handle_close`, dropping the socket's ref while this frame still
         // reads `*this`.
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
 
         // Forward to proxy tunnel if active
         let tunnel = this.proxy.get().as_ref().and_then(|p| p.get_tunnel());
@@ -1472,7 +1588,11 @@ where
     }
 
     /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.
-    pub fn handle_timeout(this: ThisPtr<Self>, _: Socket<SSL>) {
+    pub fn handle_timeout(this: ThisPtr<Self>, socket: Socket<SSL>) {
+        if this.state.get() == State::Done {
+            socket.close_now();
+            return;
+        }
         Self::terminate(this, ErrorCode::Timeout);
     }
 
@@ -1482,12 +1602,22 @@ where
     /// Takes `ThisPtr<Self>` because the trailing `deref` releases the socket
     /// ref and may free `this`; a `&mut self` argument would carry a Stacked
     /// Borrows protector that makes deallocating its referent UB.
-    pub fn handle_connect_error(this: ThisPtr<Self>, _: Socket<SSL>, _: c_int) {
+    pub fn handle_connect_error(this: ThisPtr<Self>, socket: Socket<SSL>, errno: c_int) {
         this.tcp.set(Socket::<SSL>::detached());
 
         // For the TCP socket.
         if this.state.get() == State::Reading {
-            Self::terminate(this, ErrorCode::FailedToConnect);
+            let code: &'static str = if socket.dns_error() != 0 {
+                "ENOTFOUND"
+            } else {
+                socket_errno_name(errno).unwrap_or("ECONNREFUSED")
+            };
+            Self::fail(
+                this,
+                ErrorCode::FailedToConnect,
+                BunString::static_(code),
+                BunString::EMPTY,
+            );
         } else {
             this.state.set(State::Failed);
         }
@@ -1544,127 +1674,47 @@ impl<const SSL: bool> Drop for HTTPClient<SSL> {
     }
 }
 
-/// Decodes an array of BunString header name/value pairs to UTF-8 up front.
-///
-/// The BunString values may be backed by 8-bit Latin1 or 16-bit UTF-16
-/// `WTFStringImpl`s. Calling `.slice()` on a ZigString wrapper that was built
-/// from a non-ASCII WTFStringImpl returns raw Latin1 or UTF-16 code units,
-/// which then corrupts the HTTP upgrade request and can cause heap corruption.
-///
-/// Using `bun_core::String::to_utf8()` either borrows the 8-bit ASCII backing
-/// (no allocation) or allocates a UTF-8 copy. The resulting slices are stored
-/// here so build_request_body / build_connect_request can index them by &[u8].
-///
-// Storing parallel `name_slices` / `value_slices` arrays borrowing into
-// `slices` would be self-referential; instead store only the `Utf8Slice` array (len =
-// 2*count, names at even indices, values at odd) and yield pairs via `iter()`.
-struct Headers8Bit<'a> {
-    slices: Vec<Utf8Slice>,
-    _marker: core::marker::PhantomData<&'a BunString>,
+/// On Windows, only WSA codes (>= 10000) are real socket errors, and WSAENOTCONN comes from
+/// uSockets' recv() probe, not from the actual failure. Both return `None`.
+fn socket_errno_name(errno: c_int) -> Option<&'static str> {
+    if errno == 0 || (cfg!(windows) && (errno < 10000 || errno == 10057)) {
+        return None;
+    }
+    bun_errno::SystemErrno::init(i64::from(errno)).map(Into::into)
 }
 
-impl<'a> Headers8Bit<'a> {
-    fn init(names_in: &'a [BunString], values_in: &'a [BunString]) -> Self {
-        debug_assert_eq!(names_in.len(), values_in.len());
-        let mut slices: Vec<Utf8Slice> = Vec::with_capacity(names_in.len() * 2);
-        for (name, value) in names_in.iter().zip(values_in) {
-            slices.push(name.to_utf8());
-            slices.push(value.to_utf8());
-        }
-
-        Self {
-            slices,
-            _marker: core::marker::PhantomData,
-        }
-    }
-
-    fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> + '_ {
-        self.slices
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|pair| (pair[0].slice(), pair[1].slice()))
-    }
-
-    /// Convert to `bun_http::Headers`.
-    fn to_headers(&self) -> Headers {
-        let mut headers = Headers::default();
-        for (name, value) in self.iter() {
-            headers.append(name, value);
-        }
-        headers
-    }
+/// Errno name after `socket(2)` / `connect(2)` failed synchronously.
+fn last_connect_error_code() -> BunString {
+    socket_errno_name(bun_core::ffi::errno()).map_or(BunString::EMPTY, BunString::static_)
 }
 
-/// Build HTTP CONNECT request for proxy tunneling.
-fn build_connect_request(
-    target_host: &[u8],
-    target_port: u16,
-    proxy_authorization: Option<&[u8]>,
-    proxy_headers: Option<&Headers>,
-) -> Vec<u8> {
-    let mut buf: Vec<u8> = Vec::new();
-
-    // CONNECT host:port HTTP/1.1\r\n
-    write!(
-        &mut buf,
-        "CONNECT {}:{} HTTP/1.1\r\n",
-        bstr::BStr::new(target_host),
-        target_port
-    )
-    .unwrap();
-
-    // Host: host:port\r\n
-    write!(
-        &mut buf,
-        "Host: {}:{}\r\n",
-        bstr::BStr::new(target_host),
-        target_port
-    )
-    .unwrap();
-
-    // Proxy-Connection: Keep-Alive\r\n
-    buf.extend_from_slice(b"Proxy-Connection: Keep-Alive\r\n");
-
-    // Proxy-Authorization if provided
-    if let Some(auth) = proxy_authorization {
-        write!(
-            &mut buf,
-            "Proxy-Authorization: {}\r\n",
-            bstr::BStr::new(auth)
-        )
-        .expect("infallible: in-memory write");
+/// Encodes a header name or value the way `fetch` does: one byte per code unit
+/// (<https://fetch.spec.whatwg.org/#concept-header-value>). C++ has already rejected
+/// anything above U+00FF.
+fn isomorphic_encode(s: &BunString) -> Cow<'_, [u8]> {
+    if !s.is_utf16() {
+        return Cow::Borrowed(s.latin1());
     }
+    s.utf16()
+        .iter()
+        .map(|&unit| u8::try_from(unit).unwrap_or(b'?'))
+        .collect()
+}
 
-    // Custom proxy headers
-    if let Some(hdrs) = proxy_headers {
-        use bun_http_types::ETag::HeaderEntryColumns;
-        let slice = hdrs.entries.slice();
-        let names = slice.items_name();
-        let values = slice.items_value();
-        debug_assert_eq!(names.len(), values.len());
-        for (idx, name_ptr) in names.iter().enumerate() {
-            // Skip Proxy-Authorization if user provided one (we already added it)
-            let name = hdrs.as_str(*name_ptr);
-            if proxy_authorization.is_some()
-                && strings::eql_case_insensitive_ascii(name, b"proxy-authorization", true)
-            {
-                continue;
-            }
-            write!(
-                &mut buf,
-                "{}: {}\r\n",
-                bstr::BStr::new(name),
-                bstr::BStr::new(hdrs.as_str(values[idx]))
-            )
-            .unwrap();
-        }
+fn encode_headers(names: &[BunString], values: &[BunString]) -> Headers {
+    debug_assert_eq!(names.len(), values.len());
+    let mut headers = Headers::default();
+    for (name, value) in names.iter().zip(values) {
+        headers.append(&isomorphic_encode(name), &isomorphic_encode(value));
     }
+    headers
+}
 
-    // End of headers
+fn write_header_line(buf: &mut Vec<u8>, name: &[u8], value: &[u8]) {
+    buf.extend_from_slice(name);
+    buf.extend_from_slice(b": ");
+    buf.extend_from_slice(value);
     buf.extend_from_slice(b"\r\n");
-
-    buf
 }
 
 struct BuildRequestResult {
@@ -1679,43 +1729,16 @@ fn build_request_body(
     is_https: bool,
     host: &[u8],
     port: u16,
-    client_protocol: &[u8],
-    extra_headers: &Headers8Bit<'_>,
+    protocols: &[u8],
+    extra_headers: &Headers,
     target_authorization: Option<&[u8]>,
-    // When false, don't advertise `permessage-deflate` (matches `ws` with
-    // `perMessageDeflate: false`). When true, send the default extension
-    // offer `permessage-deflate; client_max_window_bits`.
-    offer_permessage_deflate: bool,
-) -> Result<BuildRequestResult, bun_alloc::AllocError> {
-    // Check for user overrides
-    let mut user_host: Option<&[u8]> = None;
-    let mut user_key: Option<&[u8]> = None;
-    let mut user_protocol: Option<&[u8]> = None;
-    let mut user_authorization = false;
-
-    for (name_slice, value) in extra_headers.iter() {
-        if user_host.is_none() && strings::eql_case_insensitive_ascii(name_slice, b"host", true) {
-            user_host = Some(value);
-        } else if user_key.is_none()
-            && strings::eql_case_insensitive_ascii(name_slice, b"sec-websocket-key", true)
-        {
-            user_key = Some(value);
-        } else if user_protocol.is_none()
-            && strings::eql_case_insensitive_ascii(name_slice, b"sec-websocket-protocol", true)
-        {
-            user_protocol = Some(value);
-        } else if !user_authorization
-            && strings::eql_case_insensitive_ascii(name_slice, b"authorization", true)
-        {
-            user_authorization = true;
-        }
-    }
-
+    extensions: Option<&[u8]>,
+) -> BuildRequestResult {
     // Validate and use user key, or generate a new one
     use bun_base64::zig_base64::STANDARD as B64_STD;
     let mut encoded_buf = [0u8; 24];
     let key: &[u8] = 'blk: {
-        if let Some(k_slice) = user_key {
+        if let Some(k_slice) = extra_headers.get(b"sec-websocket-key") {
             let mut decoded_buf = [0u8; 24];
             if B64_STD.decoder.calc_size_for_slice(k_slice) == Ok(16)
                 && B64_STD.decoder.decode(&mut decoded_buf, k_slice).is_ok()
@@ -1733,40 +1756,49 @@ fn build_request_body(
     // base64(SHA-1(Sec-WebSocket-Key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
     let expected_accept = compute_accept_value(key);
 
-    let protocol = user_protocol.unwrap_or(client_protocol);
-
-    let host_fmt = HostFormatter {
-        is_https,
-        host,
-        port: Some(port),
-    };
-
-    let static_headers = [
-        picohttp::Header::new(b"Sec-WebSocket-Key", key),
-        picohttp::Header::new(b"Sec-WebSocket-Protocol", protocol),
-    ];
-
-    let headers_ = &static_headers[0..1 + (!protocol.is_empty()) as usize];
-    let pico_headers = picohttp::Headers { headers: headers_ };
-
-    // Build extra headers string, skipping the ones we handle
-    let mut extra_headers_buf: Vec<u8> = Vec::new();
+    // Append raw bytes. Formatting header bytes with `Display` would replace invalid UTF-8.
+    let mut body: Vec<u8> = Vec::new();
+    body.extend_from_slice(b"GET ");
+    body.extend_from_slice(pathname);
+    body.extend_from_slice(b" HTTP/1.1\r\n");
+    match extra_headers.get(b"host") {
+        Some(user_host) => write_header_line(&mut body, b"Host", user_host),
+        None => {
+            let host_fmt = HostFormatter {
+                is_https,
+                host,
+                port: Some(port),
+            };
+            write!(&mut body, "Host: {host_fmt}\r\n").expect("infallible: in-memory write");
+        }
+    }
+    body.extend_from_slice(
+        b"Connection: Upgrade\r\n\
+          Upgrade: websocket\r\n\
+          Sec-WebSocket-Version: 13\r\n",
+    );
+    if let Some(extensions) = extensions {
+        write_header_line(&mut body, b"Sec-WebSocket-Extensions", extensions);
+    }
+    write_header_line(&mut body, b"Sec-WebSocket-Key", key);
+    if !protocols.is_empty() {
+        write_header_line(&mut body, b"Sec-WebSocket-Protocol", protocols);
+    }
 
     // Add Authorization header from URL credentials if user didn't provide one
-    if !user_authorization {
-        if let Some(auth) = target_authorization {
-            write!(
-                &mut extra_headers_buf,
-                "Authorization: {}\r\n",
-                bstr::BStr::new(auth)
-            )
-            .expect("infallible: in-memory write");
+    if let Some(auth) = target_authorization {
+        if extra_headers.get(b"authorization").is_none() {
+            write_header_line(&mut body, b"Authorization", auth);
         }
     }
 
-    for (name_slice, value) in extra_headers.iter() {
+    use bun_http_types::ETag::HeaderEntryColumns;
+    let names = extra_headers.entries.items_name();
+    let values = extra_headers.entries.items_value();
+    for (name, value) in names.iter().zip(values) {
+        let name = extra_headers.as_str(*name);
         if strings::eql_any_case_insensitive_ascii(
-            name_slice,
+            name,
             &[
                 b"host",
                 b"connection",
@@ -1779,70 +1811,64 @@ fn build_request_body(
         ) {
             continue;
         }
-        write!(
-            &mut extra_headers_buf,
-            "{}: {}\r\n",
-            bstr::BStr::new(name_slice),
-            bstr::BStr::new(value)
-        )
-        .unwrap();
+        write_header_line(&mut body, name, extra_headers.as_str(*value));
     }
+    body.extend_from_slice(b"\r\n");
 
-    let extensions_line: &[u8] = if offer_permessage_deflate {
-        b"Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n"
-    } else {
-        b""
-    };
-
-    // Build request with user overrides
-    let mut body: Vec<u8> = Vec::new();
-    if let Some(h) = user_host {
-        write!(
-            &mut body,
-            "GET {} HTTP/1.1\r\n\
-             Host: {}\r\n\
-             Connection: Upgrade\r\n\
-             Upgrade: websocket\r\n\
-             Sec-WebSocket-Version: 13\r\n\
-             {}\
-             {}\
-             {}\
-             \r\n",
-            bstr::BStr::new(pathname),
-            bstr::BStr::new(h),
-            bstr::BStr::new(extensions_line),
-            pico_headers,
-            bstr::BStr::new(&extra_headers_buf),
-        )
-        .unwrap();
-        return Ok(BuildRequestResult {
-            body,
-            expected_accept,
-        });
-    }
-
-    write!(
-        &mut body,
-        "GET {} HTTP/1.1\r\n\
-         Host: {}\r\n\
-         Connection: Upgrade\r\n\
-         Upgrade: websocket\r\n\
-         Sec-WebSocket-Version: 13\r\n\
-         {}\
-         {}\
-         {}\
-         \r\n",
-        bstr::BStr::new(pathname),
-        host_fmt,
-        bstr::BStr::new(extensions_line),
-        pico_headers,
-        bstr::BStr::new(&extra_headers_buf),
-    )
-    .unwrap();
-    Ok(BuildRequestResult {
+    BuildRequestResult {
         body,
         expected_accept,
-    })
+    }
+}
+
+fn parse_window_bits(value: &[u8]) -> Option<u8> {
+    use WebSocketDeflate::Params;
+
+    let digits = value
+        .strip_prefix(b"\"")
+        .and_then(|v| v.strip_suffix(b"\""))
+        .unwrap_or(value);
+    let bits = match *digits {
+        [d @ b'0'..=b'9'] => d - b'0',
+        [b'1', d @ b'0'..=b'9'] => 10 + (d - b'0'),
+        _ => return None,
+    };
+    (Params::MIN_WINDOW_BITS..=Params::MAX_WINDOW_BITS)
+        .contains(&bits)
+        .then_some(bits)
+}
+
+/// Validates the server's response to the global `WebSocket`'s offer, which is always
+/// `permessage-deflate; client_max_window_bits` (`WebSocketOptions::extensions` in WebSocket.h), and
+/// returns the negotiated params (RFC 7692 §7.1). `None` for a different extension, an unknown or
+/// repeated parameter, or a missing or out-of-range value.
+fn parse_deflate_response(response: &[u8]) -> Option<WebSocketDeflate::Params> {
+    let mut parts = strings::split(response, b";").map(|part| strings::trim(part, b" \t"));
+    if parts.next()? != b"permessage-deflate" {
+        return None;
+    }
+    let mut params = WebSocketDeflate::Params::default();
+    let (mut server_bits, mut client_bits) = (None, None);
+    for part in parts {
+        let (key, bits) = match strings::split_once_char(part, b'=') {
+            Some((key, value)) => (key, Some(parse_window_bits(value)?)),
+            None => (part, None),
+        };
+        match (key, bits) {
+            (b"server_no_context_takeover", None) if params.server_no_context_takeover == 0 => {
+                params.server_no_context_takeover = 1;
+            }
+            (b"client_no_context_takeover", None) if params.client_no_context_takeover == 0 => {
+                params.client_no_context_takeover = 1;
+            }
+            (b"server_max_window_bits", Some(_)) if server_bits.is_none() => server_bits = bits,
+            (b"client_max_window_bits", Some(_)) if client_bits.is_none() => client_bits = bits,
+            _ => return None,
+        }
+    }
+    params.server_max_window_bits = server_bits.unwrap_or(params.server_max_window_bits);
+    params.client_max_window_bits = client_bits.unwrap_or(params.client_max_window_bits);
+    Some(params)
 }
 
 /// Compute the expected Sec-WebSocket-Accept value per RFC 6455 §4.2.2:
@@ -1858,6 +1884,21 @@ fn compute_accept_value(key: &[u8]) -> [u8; 28] {
     let mut result = [0u8; 28];
     let _ = bun_base64::encode(&mut result, &hash);
     result
+}
+
+/// Returns the name the certificate must match: `hostname` (`tls.serverName` or the URL's host), falling back to the SNI.
+fn identity_name<'a>(
+    hostname: &'a [u8],
+    ssl: Option<&boringssl::c::SSL>,
+) -> std::borrow::Cow<'a, [u8]> {
+    if !hostname.is_empty() {
+        hostname.into()
+    } else {
+        ssl.and_then(|ssl| ssl.servername())
+            .map(<[u8]>::to_vec)
+            .unwrap_or_default()
+            .into()
+    }
 }
 
 // LAYERING: `Bun__WebSocket__parseSSLConfig` / `Bun__WebSocket__freeSSLConfig`
@@ -1877,13 +1918,16 @@ fn compute_accept_value(key: &[u8]) -> [u8; 28] {
 // src/jsc/bindings/headers.h and the call sites in WebSocket.cpp):
 //   - non-null `const BunString*` params (host/path/protocols) → `&BunString`;
 //   - nullable `const BunString*` params (proxyHost/proxyAuthorization/
-//     targetAuthorization/unixSocketPath, passed as `nullptr` or `&local`)
+//     targetAuthorization/unixSocketPath/extensions, passed as `nullptr` or `&local`)
 //     → `Option<&BunString>` (guaranteed null-pointer niche);
 //   - `const BunString*` array + `size_t` count → `&[BunString]`
 //     (count may be 0 with a dangling/null begin());
 //   - `void* sslConfig` (ownership transferred, boxed by
 //     `Bun__WebSocket__parseSSLConfig`) → `Option<Box<SSLConfig>>`
-//     (null-pointer niche; Box matches the transferred ownership).
+//     (null-pointer niche; Box matches the transferred ownership);
+//   - `const void* proxySSLConfig` (borrowed for the call, C++ frees it) → `Option<&SSLConfig>`;
+//   - `BunString* connectErrorCode` (out param: the caller passes an empty
+//     string, written only when returning null) → `&mut BunString`.
 // Keep these signatures in sync with headers.h if either side changes.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -1904,10 +1948,13 @@ pub fn bun__websockethttpclient__connect(
     proxy_header_names: &[BunString],
     proxy_header_values: &[BunString],
     ssl_config: Option<Box<bun_http::ssl_config::SSLConfig>>,
+    proxy_ssl_config: Option<&bun_http::ssl_config::SSLConfig>,
+    has_proxy_tls: bool,
     target_is_secure: bool,
     target_authorization: Option<&BunString>,
     unix_socket_path: Option<&BunString>,
-    offer_permessage_deflate: bool,
+    extensions: Option<&BunString>,
+    connect_error_code: &mut BunString,
 ) -> *mut crate::websocket_client::websocket_upgrade_client::HttpUpgradeClient {
     HttpUpgradeClient::connect(
         global,
@@ -1924,10 +1971,13 @@ pub fn bun__websockethttpclient__connect(
         proxy_header_names,
         proxy_header_values,
         ssl_config,
+        proxy_ssl_config,
+        has_proxy_tls,
         target_is_secure,
         target_authorization,
         unix_socket_path,
-        offer_permessage_deflate,
+        extensions,
+        connect_error_code,
     )
     .unwrap_or(ptr::null_mut())
 }
@@ -1937,6 +1987,14 @@ pub fn bun__websockethttpclient__cancel(
     this: ThisPtr<crate::websocket_client::websocket_upgrade_client::HttpUpgradeClient>,
 ) {
     HttpUpgradeClient::cancel(this);
+}
+
+// HOST_EXPORT(Bun__WebSocketHTTPClient__setPaused, c)
+pub fn bun__websockethttpclient__set_paused(
+    this: ThisPtr<crate::websocket_client::websocket_upgrade_client::HttpUpgradeClient>,
+    paused: bool,
+) {
+    HttpUpgradeClient::set_paused(this, paused);
 }
 
 // HOST_EXPORT(Bun__WebSocketHTTPClient__memoryCost, c)
@@ -1963,10 +2021,13 @@ pub fn bun__websockethttpsclient__connect(
     proxy_header_names: &[BunString],
     proxy_header_values: &[BunString],
     ssl_config: Option<Box<bun_http::ssl_config::SSLConfig>>,
+    proxy_ssl_config: Option<&bun_http::ssl_config::SSLConfig>,
+    has_proxy_tls: bool,
     target_is_secure: bool,
     target_authorization: Option<&BunString>,
     unix_socket_path: Option<&BunString>,
-    offer_permessage_deflate: bool,
+    extensions: Option<&BunString>,
+    connect_error_code: &mut BunString,
 ) -> *mut crate::websocket_client::websocket_upgrade_client::HttpsUpgradeClient {
     HttpsUpgradeClient::connect(
         global,
@@ -1983,10 +2044,13 @@ pub fn bun__websockethttpsclient__connect(
         proxy_header_names,
         proxy_header_values,
         ssl_config,
+        proxy_ssl_config,
+        has_proxy_tls,
         target_is_secure,
         target_authorization,
         unix_socket_path,
-        offer_permessage_deflate,
+        extensions,
+        connect_error_code,
     )
     .unwrap_or(ptr::null_mut())
 }
@@ -1996,6 +2060,14 @@ pub fn bun__websockethttpsclient__cancel(
     this: ThisPtr<crate::websocket_client::websocket_upgrade_client::HttpsUpgradeClient>,
 ) {
     HttpsUpgradeClient::cancel(this);
+}
+
+// HOST_EXPORT(Bun__WebSocketHTTPSClient__setPaused, c)
+pub fn bun__websockethttpsclient__set_paused(
+    this: ThisPtr<crate::websocket_client::websocket_upgrade_client::HttpsUpgradeClient>,
+    paused: bool,
+) {
+    HttpsUpgradeClient::set_paused(this, paused);
 }
 
 // HOST_EXPORT(Bun__WebSocketHTTPSClient__memoryCost, c)

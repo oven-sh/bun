@@ -300,7 +300,7 @@ it("should return non-zero exit code for invalid syntax", async () => {
       env: bunEnv,
     });
     const err = (await stderr.text()).replaceAll("\\", "/");
-    expect(err.replaceAll(test_dir.replaceAll("\\", "/"), "<dir>").replaceAll(/\[(.*)\ms\]/g, "[xx ms]"))
+    expect(err.replaceAll(test_dir.replaceAll("\\", "/"), "<dir>").replaceAll(/\[[\d.]+m?s\]/g, "[xx ms]"))
       .toMatchInlineSnapshot(`
       "
       bad.test.js:

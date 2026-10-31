@@ -103,9 +103,6 @@ pub struct StaticHashMap<
     pub len: usize,
     /// Hash shift; always < 64, stored as u8.
     pub shift: u8,
-    // put_probe_count: usize,
-    // get_probe_count: usize,
-    // del_probe_count: usize,
     _ctx: PhantomData<Ctx>,
 }
 
@@ -231,7 +228,6 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
                 }
                 it = entry;
             }
-            // self.put_probe_count += 1;
             i += 1;
         }
     }
@@ -252,7 +248,6 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
                 }
                 return Some(entry.value);
             }
-            // self.get_probe_count += 1;
         }
         unreachable!()
     }
@@ -288,7 +283,6 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
                 }
                 break;
             }
-            // self.del_probe_count += 1;
             i += 1;
         }
 
@@ -301,7 +295,6 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
                 break;
             }
             self.storage_mut()[i] = next;
-            // self.del_probe_count += 1;
             i += 1;
         }
         self.storage_mut()[i] = Entry::empty();

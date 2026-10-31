@@ -42,7 +42,7 @@ Bun is "default-secure": it only runs lifecycle scripts for packages on an allow
 }
 ```
 
-After adding the package to `trustedDependencies`, install or re-install it. Bun reads the field and runs its lifecycle scripts.
+After adding the package to `trustedDependencies`, run `bun install`. Bun reads the field, runs its lifecycle scripts and records the name in the lockfile. `bun install --frozen-lockfile` and `bun ci` run them only for packages they install, not for one that is already in `node_modules`. For a dependency installed under another name (`"alias": "npm:node-sass@^6.0.1"`), list the name of the package, not the alias.
 
 A curated list of popular npm packages with lifecycle scripts is allowed by default. See [the full list](https://github.com/oven-sh/bun/blob/main/src/install/default-trusted-dependencies.txt).
 
@@ -64,6 +64,8 @@ Defining `trustedDependencies` in `package.json` **replaces** the default list r
 | `trustedDependencies: []`             | **No** packages, including none from the default list.     |
 
 Set `trustedDependencies: []` when you want to opt out of the default allow list entirely without passing `--ignore-scripts` on every install. If you define `trustedDependencies` with an explicit list, include any packages from the [default list](https://github.com/oven-sh/bun/blob/main/src/install/default-trusted-dependencies.txt) whose lifecycle scripts you still need (for example, `sharp` or `esbuild`). Bun no longer trusts those packages implicitly.
+
+The lockfile records the list, even if it's empty. In a checkout without the workspace that declares it (a Docker layer, for example), `bun install --frozen-lockfile` still ignores the default list, and only the packages that the lockfile records run their scripts.
 
 ---
 
@@ -87,3 +89,25 @@ Or in `.npmrc`:
 ```ini .npmrc icon="npm"
 ignore-scripts=true
 ```
+
+Or with npm's environment variable, for example in a CI job:
+
+```bash terminal icon="terminal"
+NPM_CONFIG_IGNORE_SCRIPTS=true bun install
+```
+
+Bun reads the value like `ignore-scripts=<value>` in `.npmrc`, and ignores an empty one. The variable only turns scripts off: `false` and `0` do not undo a config file. Bun does not read it from `.env` files.
+
+---
+
+## Environment variables
+
+Like npm, Bun sets these variables for each lifecycle script:
+
+| Variable                                                      | Value                                                   |
+| ------------------------------------------------------------- | ------------------------------------------------------- |
+| `npm_lifecycle_event`                                         | The name of the script, such as `postinstall`           |
+| `npm_lifecycle_script`                                        | The command of the script                               |
+| `npm_package_json`, `npm_package_name`, `npm_package_version` | From the `package.json` of the package the script is in |
+| `npm_package_config_<key>`                                    | The strings in `config` of that `package.json`          |
+| `npm_config_local_prefix`, `INIT_CWD`                         | The project directory, and where `bun install` ran      |

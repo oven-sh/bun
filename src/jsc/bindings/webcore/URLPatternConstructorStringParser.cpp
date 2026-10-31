@@ -303,6 +303,8 @@ void URLPatternConstructorStringParser::updateState(ScriptExecutionContext& cont
 
 void URLPatternConstructorStringParser::performParse(ScriptExecutionContext& context)
 {
+    Ref vm = context.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     while (m_tokenIndex < m_tokenList.size()) {
         m_tokenIncrement = 1;
 
@@ -346,6 +348,7 @@ void URLPatternConstructorStringParser::performParse(ScriptExecutionContext& con
         }
 
         updateState(context);
+        RETURN_IF_EXCEPTION(scope, );
         m_tokenIndex += m_tokenIncrement;
     }
     if (!m_result.hostname.isNull() && m_result.port.isNull())

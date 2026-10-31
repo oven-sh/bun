@@ -146,8 +146,8 @@ pub(crate) struct TestRunner<'a> {
     pub(crate) unhandled_errors_between_tests: u32,
     pub(crate) summary: Summary,
 
-    /// Set once any `node:test` registration API is called; gates `process.on('exit')` dispatch at the end of the run.
-    pub(crate) node_test_used: bool,
+    /// `VirtualMachine::test_isolation_generation` of the global in which a `node:test` registration API was last called; gates `process.on('exit')` dispatch.
+    pub(crate) node_test_used: Option<u32>,
 
     pub(crate) bun_test_root: bun_test::BunTestRoot,
 }
@@ -508,8 +508,9 @@ pub(crate) fn file_generation() -> u32 {
     // `bun_test_root` pointer `test_command.rs` keeps live across the file run.
     // SAFETY: same invariant as `runner()` — RUNNER is only read on the JS thread.
     Jest::runner_ptr().map_or(0, |p| unsafe {
-        if VirtualMachine::get().worker_ref().is_none() {
-            (*p.as_ptr()).node_test_used = true;
+        let vm = VirtualMachine::get();
+        if vm.worker_ref().is_none() {
+            (*p.as_ptr()).node_test_used = Some(vm.test_isolation_generation);
         }
         (*p.as_ptr()).bun_test_root.file_generation
     })

@@ -1732,16 +1732,20 @@ describe("bun test", () => {
 
   // jest and vitest never run a test file's process.on('exit') listeners; node's test harness asserts from them.
   describe.concurrent("process.on('exit') listeners", () => {
-    async function runFiles(files: Record<string, string>, ...args: string[]) {
+    async function runFilesWithEnv(env: Record<string, string>, files: Record<string, string>, ...args: string[]) {
       using dir = tempDir("bun-test-exit-listener", files);
       await using proc = Bun.spawn({
         cmd: [bunExe(), "test", ...args],
-        env: bunEnv,
+        env: { ...bunEnv, ...env },
         cwd: String(dir),
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout, stderr, exitCode };
+    }
+
+    function runFiles(files: Record<string, string>, ...args: string[]) {
+      return runFilesWithEnv({}, files, ...args);
     }
 
     function runFile(name: string, contents: string) {
@@ -1913,17 +1917,706 @@ describe("bun test", () => {
       expect(exitCode).toBe(0);
     });
 
-    // --parallel implies --isolate, and a file's listeners are torn down with its global before the worker exits.
-    test("--parallel workers exit cleanly after node:test files; listeners do not reach the run's exit code", async () => {
-      const { stderr, exitCode } = await runFiles(
+    const passes = `
+      import { test } from "node:test";
+      test("a passing test", () => {});
+    `;
+    const fails = `
+      import { test } from "node:test";
+      import assert from "node:assert";
+      test("a failing test", () => assert.strictEqual(1, 2));
+    `;
+    // node's common.mustCall(), in short.
+    const checksAtExit = (name: string) => `
+      import { test } from "node:test";
+      let calls = 0;
+      const mustBeCalledOnce = () => { calls++; };
+      process.on("exit", code => {
+        console.log("${name} checks at exit with code", code);
+        if (calls !== 1) process.exitCode = 1;
+      });
+      test("forgets to call it", () => { void mustBeCalledOnce; });
+    `;
+    // The first line of the stdout of `bun test` is its version.
+    const afterVersionLine = (stdout: string) => stdout.slice(stdout.indexOf("\n") + 1);
+    // The counts of the summary, and the exit code.
+    const outcome = ({ stderr, exitCode }: { stderr: string; exitCode: number }) => {
+      const count = (label: string) => Number(stderr.match(new RegExp(`^ *(\\d+) ${label}$`, "m"))?.[1] ?? 0);
+      return { pass: count("pass"), fail: count("fail"), errors: count("errors?"), exitCode };
+    };
+    const testFilesOf = (files: Record<string, string>) => Object.keys(files).filter(name => name.includes(".test."));
+
+    // --parallel implies --isolate: each file has its own global, and its listeners run when the file ends.
+    test("--parallel workers run the exit listeners of node:test files, and outlive a process.exit() in them", async () => {
+      const result = await runFilesWithEnv(
+        // A worker for each file.
+        { BUN_TEST_PARALLEL_SCALE_MS: "0" },
         { "a.test.ts": nodeTestFile(1), "b.test.ts": nodeTestFile(2) },
         "--parallel=2",
         "a.test.ts",
         "b.test.ts",
       );
-      expect(stderr).not.toContain("worker crashed");
-      expect(stderr).toContain("2 pass");
-      expect(exitCode).toBe(0);
+      expect(result.stderr).not.toContain("worker crashed");
+      expect(result.stderr).toContain("(fail) a.test.ts (exit code 1)");
+      expect(result.stderr).toContain("(fail) b.test.ts (exit code 1)");
+      expect(outcome(result)).toEqual({ pass: 2, fail: 2, errors: 0, exitCode: 1 });
+    });
+
+    const modes: [string, Record<string, string>][] = [
+      ["--isolate", {}],
+      // One worker takes every file, so each file but the last ends before a swap of the worker's global.
+      ["--parallel=2", { BUN_TEST_PARALLEL_SCALE_MS: "60000" }],
+    ];
+    describe.each(modes)("at the end of a file that has its own global, under %s", (flag, env) => {
+      // Worker output is relayed on the coordinator's stderr, so the tests read both streams for what a file prints.
+      async function run(files: Record<string, string>, ...args: string[]) {
+        const result = await runFilesWithEnv(env, files, flag, ...args, ...testFilesOf(files));
+        return { ...result, output: result.stdout + result.stderr };
+      }
+
+      test("a failed check at exit fails its file, whether the file is the first or the last", async () => {
+        const result = await run({ "a.test.ts": checksAtExit("a"), "b.test.ts": checksAtExit("b") });
+        expect(result.output).toContain("a checks at exit with code 0");
+        expect(result.output).toContain("b checks at exit with code 0");
+        expect(result.stderr).toContain("(fail) a.test.ts (exit code 1)");
+        expect(result.stderr).toContain("(fail) b.test.ts (exit code 1)");
+        expect(outcome(result)).toEqual({ pass: 2, fail: 2, errors: 0, exitCode: 1 });
+      });
+
+      test("process.exit() in an exit listener ends that file, and the run goes on", async () => {
+        const result = await run({
+          "a.test.ts": `
+            import { test } from "node:test";
+            process.on("exit", () => {
+              console.log("first listener");
+              process.exit(3);
+              console.log("after process.exit()");
+            });
+            process.on("exit", () => console.log("second listener"));
+            test("a passing test", () => {});
+          `,
+          "b.test.ts": passes,
+        });
+        expect(result.output).toContain("first listener");
+        expect(result.output).not.toContain("after process.exit()");
+        expect(result.output).not.toContain("second listener");
+        expect(result.stderr).not.toContain("worker crashed");
+        expect(result.stderr).toContain("(fail) a.test.ts (exit code 3)");
+        expect(outcome(result)).toEqual({ pass: 2, fail: 1, errors: 0, exitCode: 1 });
+      });
+
+      test("the promise jobs of an exit listener are part of the exit of its file", async () => {
+        const result = await run({
+          "a.test.ts": `
+            import { test } from "node:test";
+            process.on("exit", async () => {
+              await 0;
+              console.log("a: after the await");
+              process.exit(0);
+              console.log("a: after process.exit()");
+            });
+            test("a passing test", () => {});
+          `,
+          "b.test.ts": `
+            import { test } from "node:test";
+            process.on("exit", async () => {
+              await 0;
+              process.exitCode = 9;
+            });
+            test("a passing test", () => {});
+          `,
+        });
+        expect(result.output).toContain("a: after the await");
+        expect(result.output).not.toContain("a: after process.exit()");
+        expect(result.stderr).not.toContain("worker crashed");
+        expect(result.stderr).toContain("(fail) b.test.ts (exit code 9)");
+        expect(outcome(result)).toEqual({ pass: 2, fail: 1, errors: 0, exitCode: 1 });
+      });
+
+      test("nothing that an exit listener queued runs after its process.exit()", async () => {
+        const result = await run({
+          "a.test.ts": `
+            import { test } from "node:test";
+            process.on("exit", () => {
+              queueMicrotask(() => console.log("a: a job that process.exit() left queued"));
+              console.log("a: exits");
+              process.exit(0);
+            });
+            test("a passing test", () => {});
+          `,
+          "b.test.ts": fails,
+        });
+        expect(result.output).toContain("a: exits");
+        expect(result.output).not.toContain("left queued");
+        expect(outcome(result)).toEqual({ pass: 1, fail: 1, errors: 0, exitCode: 1 });
+      });
+
+      // The file has failed by itself, so the exit code that it also leaves is not one more failure.
+      test("an exit listener that throws or rejects is an error of its file", async () => {
+        const result = await run({
+          "a.test.ts": `
+            import { test } from "node:test";
+            process.on("exit", () => {
+              process.exitCode = 1;
+              throw new Error("a: thrown at exit");
+            });
+            test("a passing test", () => {});
+          `,
+          "b.test.ts": `
+            import { test } from "node:test";
+            process.exitCode = 5;
+            process.on("exit", () => {
+              throw new Error("b: thrown at exit");
+            });
+            test("a passing test", () => {});
+          `,
+          "c.test.ts": `
+            import { test } from "node:test";
+            process.on("exit", async () => {
+              await 0;
+              throw new Error("c: rejected at exit");
+            });
+            test("a passing test", () => {});
+          `,
+        });
+        expect(result.stderr).toContain("error: a: thrown at exit");
+        expect(result.stderr).toContain("error: b: thrown at exit");
+        expect(result.stderr).toContain("error: c: rejected at exit");
+        expect(result.stderr).not.toContain("(exit code");
+        expect(outcome(result)).toEqual({ pass: 3, fail: 0, errors: 3, exitCode: 1 });
+      });
+
+      test("a file that stores an exit code fails, with no exit listener", async () => {
+        const result = await run({
+          "a.test.ts": `
+            import { test } from "node:test";
+            process.exitCode = 5;
+            test("a passing test", () => {});
+          `,
+          "b.test.ts": passes,
+        });
+        expect(result.stderr).toContain("(fail) a.test.ts (exit code 5)");
+        expect(outcome(result)).toEqual({ pass: 2, fail: 1, errors: 0, exitCode: 1 });
+      });
+
+      test("a file that throws while it loads emits 'exit' with code 1", async () => {
+        const result = await run({
+          "a.test.ts": `
+            import { test } from "node:test";
+            process.on("exit", code => {
+              console.log("a: exits with code", code);
+              process.exit(0);
+            });
+            test("a passing test", () => {});
+            throw new Error("thrown while loading");
+          `,
+          "b.test.ts": passes,
+        });
+        expect(result.output).toContain("a: exits with code 1");
+        expect(result.stderr).toContain("error: thrown while loading");
+        expect(result.stderr).not.toContain("worker crashed");
+        expect(result.stderr).not.toContain("(exit code");
+        expect(outcome(result)).toEqual({ pass: 1, fail: 1, errors: 1, exitCode: 1 });
+      });
+
+      test("'exit' is emitted after the hooks of the file and of a --preload file", async () => {
+        const result = await run(
+          {
+            "preload.ts": `
+              import { afterAll } from "bun:test";
+              afterAll(async () => {
+                await new Promise(resolve => setImmediate(resolve));
+                globalThis.order?.push("preload afterAll");
+              });
+            `,
+            "a.test.ts": `
+              import { after, describe, test } from "node:test";
+              const order = (globalThis.order = []);
+              after(async () => {
+                await new Promise(resolve => setImmediate(resolve));
+                order.push("root after");
+              });
+              describe("suite", () => {
+                after(() => {
+                  order.push("nested after");
+                });
+                test("a passing test", () => {
+                  order.push("test");
+                });
+              });
+              process.on("exit", () => console.log("at exit: " + order.join(", ")));
+            `,
+            "b.test.ts": passes,
+          },
+          "--preload",
+          "./preload.ts",
+        );
+        expect(result.output).toContain("at exit: test, nested after, root after, preload afterAll\n");
+        expect(outcome(result)).toEqual({ pass: 2, fail: 0, errors: 0, exitCode: 0 });
+      });
+
+      test("the exit listener of a --preload file runs at the end of every such file", async () => {
+        const result = await run(
+          {
+            "preload.ts": `
+              import { basename } from "node:path";
+              process.on("exit", () => {
+                console.log("preload listener ran for", basename(Bun.main));
+                if (basename(Bun.main) === "a.test.ts") process.exitCode = 1;
+              });
+            `,
+            "a.test.ts": passes,
+            "b.test.ts": passes,
+          },
+          "--preload",
+          "./preload.ts",
+        );
+        expect(result.output.match(/^preload listener ran for .*$/gm)).toEqual([
+          "preload listener ran for a.test.ts",
+          "preload listener ran for b.test.ts",
+        ]);
+        expect(result.stderr).toContain("(fail) a.test.ts (exit code 1)");
+        expect(outcome(result)).toEqual({ pass: 2, fail: 1, errors: 0, exitCode: 1 });
+      });
+
+      // A run of `--rerun-each` loads the modules that the file imports only once.
+      test("--rerun-each emits 'exit' after the last run, also when only an earlier run registered the tests", async () => {
+        const result = await run(
+          {
+            "a.test.cjs": `
+              const { test } = require("node:test");
+              process.on("exit", () => {
+                process.exitCode = 1;
+              });
+              test("a passing test", () => {});
+            `,
+            "b.test.ts": `
+              import "./registers.ts";
+              globalThis.runs = (globalThis.runs ?? 0) + 1;
+              if (globalThis.runs === 1) {
+                process.on("exit", () => {
+                  console.log("b: exit emitted after run", globalThis.runs);
+                  process.exitCode = 1;
+                });
+              }
+            `,
+            "registers.ts": `
+              import { test } from "node:test";
+              test("a passing test", () => {});
+            `,
+          },
+          "--rerun-each=2",
+        );
+        expect(result.output.match(/^b: exit emitted after run .*$/gm)).toEqual(["b: exit emitted after run 2"]);
+        expect(result.stderr).toContain("(fail) a.test.cjs (exit code 1)");
+        expect(result.stderr).toContain("(fail) b.test.ts (exit code 1)");
+        expect(outcome(result)).toMatchObject({ fail: 2, errors: 0, exitCode: 1 });
+      });
+
+      test("a bun:test file that calls a node:test API is such a file, and one that only imports node:test is not", async () => {
+        const storesExitCode = (use: string) => `
+          import { test } from "bun:test";
+          import { mock } from "node:test";
+          ${use};
+          process.exitCode = 5;
+          test("a passing test", () => {});
+        `;
+        const result = await run({
+          "a.test.ts": storesExitCode("mock.fn()"),
+          "b.test.ts": storesExitCode("void mock"),
+        });
+        expect(result.stderr).toContain("(fail) a.test.ts (exit code 5)");
+        expect(result.stderr).not.toContain("(fail) b.test.ts");
+        expect(outcome(result)).toEqual({ pass: 2, fail: 1, errors: 0, exitCode: 1 });
+      });
+
+      // On Windows the channel to the coordinator keeps a worker's event loop alive, so that drain never ends there.
+      test.skipIf(isWindows && flag !== "--isolate")(
+        "with BUN_TEST_DRAIN_EVENT_LOOP, a bun:test file ends this way too",
+        async () => {
+          const files = { "a.test.ts": bunTestFile(1), "b.test.ts": bunTestFile(2) };
+          const result = await runFilesWithEnv(
+            { ...env, BUN_TEST_DRAIN_EVENT_LOOP: "1" },
+            files,
+            flag,
+            ...testFilesOf(files),
+          );
+          // Each listener runs once: the end of the run does not emit 'exit' again for the last file.
+          expect((result.stdout + result.stderr).match(/^exit listener \d ran$/gm)).toEqual([
+            "exit listener 1 ran",
+            "exit listener 2 ran",
+          ]);
+          expect(result.stderr).toContain("(fail) a.test.ts (exit code 1)");
+          expect(result.stderr).toContain("(fail) b.test.ts (exit code 1)");
+          expect(outcome(result)).toEqual({ pass: 2, fail: 2, errors: 0, exitCode: 1 });
+        },
+      );
+
+      test.each([
+        // The end of a run that has more than 20 passing tests repeats its failures.
+        { args: [], failLines: 2, passLines: 22 },
+        { args: ["--dots"], failLines: 1, passLines: 0 },
+        { args: ["--only-failures"], failLines: 1, passLines: 0 },
+      ])("the failure of the file is printed as a failed test is ($args)", async ({ args, failLines, passLines }) => {
+        const result = await run(
+          {
+            "a.test.ts": checksAtExit("a"),
+            "b.test.ts": `
+              import { test } from "node:test";
+              for (let i = 0; i < 21; i++) test("passing test " + i, () => {});
+            `,
+          },
+          ...args,
+        );
+        expect(result.stderr.match(/^\(fail\) a\.test\.ts \(exit code 1\)$/gm)).toHaveLength(failLines);
+        expect(result.stderr.match(/^\(pass\) /gm) ?? []).toHaveLength(passLines);
+        if (failLines === 2) expect(result.stderr).toContain("\n1 tests failed:\n(fail) a.test.ts (exit code 1)\n");
+        expect(outcome(result)).toEqual({ pass: 22, fail: 1, errors: 0, exitCode: 1 });
+      });
+
+      test("the JUnit report has a failed test case for the file", async () => {
+        using dir = tempDir("bun-test-exit-listener", { "a.test.ts": checksAtExit("a"), "b.test.ts": passes });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", flag, "--reporter=junit", "--reporter-outfile=junit.xml", "a.test.ts", "b.test.ts"],
+          env: { ...bunEnv, ...env },
+          cwd: String(dir),
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        const junit = await Bun.file(join(String(dir), "junit.xml")).text();
+        expect(stderr).toContain("1 fail");
+        expect(junit).toMatch(
+          /<testsuite name="a\.test\.ts" file="a\.test\.ts" tests="2" assertions="0" failures="1" /,
+        );
+        expect(junit).toContain('<testcase name="(exit code 1)" classname=""');
+        expect(junit).toContain('<failure type="Error" message="test file exited with code 1" />');
+        expect(junit).toMatch(
+          /<testsuite name="b\.test\.ts" file="b\.test\.ts" tests="1" assertions="0" failures="0" /,
+        );
+        expect(exitCode).toBe(1);
+      });
+    });
+
+    test("--parallel=1 runs the files in the main process, and a failed check at exit fails its file there too", async () => {
+      const result = await runFiles(
+        { "a.test.ts": checksAtExit("a"), "b.test.ts": passes },
+        "--parallel=1",
+        "a.test.ts",
+        "b.test.ts",
+      );
+      expect(afterVersionLine(result.stdout)).toBe("a checks at exit with code 0\n");
+      expect(result.stderr).toContain("(fail) a.test.ts (exit code 1)");
+      expect(outcome(result)).toEqual({ pass: 2, fail: 1, errors: 0, exitCode: 1 });
+    });
+
+    test("a lone node:test file under --isolate fails for its check at exit, before the summary", async () => {
+      const result = await runFiles({ "a.test.ts": checksAtExit("a") }, "--isolate", "a.test.ts");
+      expect(afterVersionLine(result.stdout)).toBe("a checks at exit with code 0\n");
+      expect(result.stderr).toContain("(fail) a.test.ts (exit code 1)");
+      expect(outcome(result)).toEqual({ pass: 1, fail: 1, errors: 0, exitCode: 1 });
+    });
+
+    const failsThenZeroes = (zeroes: string) => `
+      import { test } from "node:test";
+      import assert from "node:assert";
+      process.on("exit", code => {
+        console.log("exit listener got", code, process.exitCode);
+        ${zeroes};
+      });
+      test("a failing test", () => assert.strictEqual(1, 2));
+    `;
+    test.each([
+      ["--isolate", "first", "process.exitCode = 0"],
+      ["--isolate", "last", "process.exitCode = 0"],
+      ["--isolate", "last", "process.exit(0)"],
+      ["--isolate", "alone", "process.exit(0)"],
+      ["--parallel=1", "last", "process.exit(0)"],
+    ])(
+      "a file with a failed test stays failed, and fails once (%s, the file is %s, its exit listener does %s)",
+      async (flag, position, zeroes) => {
+        const filesByPosition: Record<string, Record<string, string>> = {
+          first: { "a.test.ts": failsThenZeroes(zeroes), "b.test.ts": passes },
+          last: { "a.test.ts": passes, "b.test.ts": failsThenZeroes(zeroes) },
+          alone: { "a.test.ts": failsThenZeroes(zeroes) },
+        };
+        const files = filesByPosition[position];
+        const result = await runFiles(files, flag, ...testFilesOf(files));
+        expect(afterVersionLine(result.stdout)).toBe("exit listener got 1 1\n");
+        expect(result.stderr).not.toContain("(exit code");
+        expect(outcome(result)).toEqual({ pass: position === "alone" ? 0 : 1, fail: 1, errors: 0, exitCode: 1 });
+      },
+    );
+
+    test("a node:test file neither gets nor changes the exit code that an earlier file left", async () => {
+      const result = await runFiles(
+        {
+          "a.test.ts": `
+            import { test } from "bun:test";
+            process.exitCode = 5;
+            test("a passing test", () => {});
+          `,
+          "b.test.ts": `
+            import { test } from "node:test";
+            process.on("exit", code => {
+              console.log("exit listener got", code, process.exitCode);
+              process.exitCode = 0;
+            });
+            test("a passing test", () => {});
+          `,
+        },
+        "--isolate",
+        "a.test.ts",
+        "b.test.ts",
+      );
+      expect(afterVersionLine(result.stdout)).toBe("exit listener got 0 undefined\n");
+      expect(outcome(result)).toEqual({ pass: 2, fail: 0, errors: 0, exitCode: 5 });
+    });
+
+    test("are not run for a bun:test file that follows a node:test file under --isolate", async () => {
+      const result = await runFiles(
+        { "a.test.ts": passes, "b.test.ts": bunTestFile(2) },
+        "--isolate",
+        "a.test.ts",
+        "b.test.ts",
+      );
+      expect(afterVersionLine(result.stdout)).toBe("");
+      expect(outcome(result)).toEqual({ pass: 2, fail: 0, errors: 0, exitCode: 0 });
+    });
+
+    test("are not run when --bail stops a bun:test file that follows a node:test file under --isolate", async () => {
+      const result = await runFiles(
+        {
+          "a.test.ts": passes,
+          "b.test.ts": `
+            import { test, expect } from "bun:test";
+            process.on("exit", () => {
+              console.log("exit listener ran");
+              process.exit(0);
+            });
+            test("a failing test", () => expect(1).toBe(2));
+          `,
+        },
+        "--isolate",
+        "--bail",
+        "a.test.ts",
+        "b.test.ts",
+      );
+      expect(afterVersionLine(result.stdout)).toBe("");
+      expect(result.stderr).toContain("Bailed out after 1 failure");
+      expect(result.exitCode).toBe(1);
+    });
+
+    test("--bail counts a file that fails at exit", async () => {
+      const { stderr, exitCode } = await runFiles(
+        { "a.test.ts": checksAtExit("a"), "b.test.ts": passes },
+        "--isolate",
+        "--bail",
+        "a.test.ts",
+        "b.test.ts",
+      );
+      expect(stderr).toContain("(fail) a.test.ts (exit code 1)");
+      expect(stderr).toContain("Bailed out after 1 failure");
+      expect(stderr).not.toContain("b.test.ts");
+      expect(exitCode).toBe(1);
+    });
+
+    // process.emit() takes the unwind of a process.exit() in one of its listeners, so the exit listener that called
+    // process.emit() goes on. The exit code of the file stays the one of the first process.exit().
+    test("the first process.exit() at the end of a file decides its exit code", async () => {
+      const result = await runFiles(
+        {
+          "a.test.ts": `
+            import { test } from "node:test";
+            process.on("inner", () => process.exit(4));
+            process.on("exit", () => {
+              process.emit("inner");
+              process.exit(5);
+              console.log("after the second process.exit()");
+            });
+            test("a passing test", () => {});
+          `,
+          "b.test.ts": passes,
+        },
+        "--isolate",
+        "a.test.ts",
+        "b.test.ts",
+      );
+      expect(afterVersionLine(result.stdout)).toBe("");
+      expect(result.stderr).toContain("(fail) a.test.ts (exit code 4)");
+      expect(outcome(result)).toEqual({ pass: 2, fail: 1, errors: 0, exitCode: 1 });
+    });
+
+    test("process.reallyExit() ends the file too, and a replaced one that returns lets the exit listener go on", async () => {
+      const result = await runFiles(
+        {
+          "a.test.ts": `
+            import { test } from "node:test";
+            process.on("exit", () => {
+              process.reallyExit(7);
+              console.log("a: after process.reallyExit()");
+            });
+            test("a passing test", () => {});
+          `,
+          "b.test.ts": `
+            import { test } from "node:test";
+            process.reallyExit = () => {};
+            process.on("exit", () => {
+              process.exit(2);
+              console.log("b: after process.exit()");
+            });
+            test("a passing test", () => {});
+          `,
+          "c.test.ts": passes,
+        },
+        "--isolate",
+        "a.test.ts",
+        "b.test.ts",
+        "c.test.ts",
+      );
+      expect(afterVersionLine(result.stdout)).toBe("b: after process.exit()\n");
+      expect(result.stderr).toContain("(fail) a.test.ts (exit code 7)");
+      expect(result.stderr).toContain("(fail) b.test.ts (exit code 2)");
+      expect(outcome(result)).toEqual({ pass: 3, fail: 2, errors: 0, exitCode: 1 });
+    });
+
+    // Unlike the process that `node --test` starts for a file.
+    test("a file ends when its tests are done: no wait for a pending timer, and no 'beforeExit'", async () => {
+      const result = await runFiles(
+        {
+          "a.test.ts": `
+            import { test } from "node:test";
+            let calls = 0;
+            setTimeout(() => calls++, 3_600_000);
+            process.on("beforeExit", () => console.log("a: beforeExit"));
+            process.on("exit", () => {
+              console.log("a: exits after", calls, "calls");
+              if (calls !== 1) process.exitCode = 1;
+            });
+            test("a passing test", () => {});
+          `,
+          "b.test.ts": passes,
+        },
+        "--isolate",
+        "a.test.ts",
+        "b.test.ts",
+      );
+      expect(afterVersionLine(result.stdout)).toBe("a: exits after 0 calls\n");
+      expect(result.stderr).toContain("(fail) a.test.ts (exit code 1)");
+      expect(outcome(result)).toEqual({ pass: 2, fail: 1, errors: 0, exitCode: 1 });
+    });
+
+    test("a --preload file that calls a node:test API makes every file one that does", async () => {
+      const result = await runFiles(
+        {
+          "preload.ts": `
+            import { before } from "node:test";
+            before(() => {});
+          `,
+          "a.test.ts": `
+            import { test } from "bun:test";
+            process.exitCode = 5;
+            test("a passing test", () => {});
+          `,
+          "b.test.ts": `
+            import { test } from "bun:test";
+            test("a passing test", () => {});
+          `,
+        },
+        "--isolate",
+        "--preload",
+        "./preload.ts",
+        "a.test.ts",
+        "b.test.ts",
+      );
+      expect(result.stderr).toContain("(fail) a.test.ts (exit code 5)");
+      expect(outcome(result)).toEqual({ pass: 2, fail: 1, errors: 0, exitCode: 1 });
+    });
+
+    // The last immediate of a batch decides whether the jobs of the batch run, and this one does not throw.
+    test("what a file left queued runs before its 'exit'", async () => {
+      const result = await runFiles(
+        {
+          "a.test.ts": `
+            import { after, test } from "node:test";
+            after(() => {
+              setImmediate(() => {
+                queueMicrotask(() => process.on("exit", code => console.log("a late listener ran with", code)));
+                throw new Error("thrown by an immediate");
+              });
+              setImmediate(() => {}).unref();
+            });
+            test("a passing test", () => {});
+          `,
+          "b.test.ts": passes,
+        },
+        "--isolate",
+        "a.test.ts",
+        "b.test.ts",
+      );
+      expect(afterVersionLine(result.stdout)).toBe("a late listener ran with 1\n");
+      expect(outcome(result)).toEqual({ pass: 2, fail: 0, errors: 1, exitCode: 1 });
+    });
+
+    // Until the global of a finished file is gone, its script still runs: here, the close handler of a socket.
+    test.each([
+      ["with no exit listener", ""],
+      ["after its exit listeners", `process.on("exit", () => console.log("a: exit"));`],
+    ])("the teardown of a finished file still has process.nextTick(), %s", async (_, listener) => {
+      const result = await runFiles(
+        {
+          "a.test.ts": `
+              import { test } from "node:test";
+              import net from "node:net";
+              ${listener}
+              test("leaves a connection open", async () => {
+                const accepted = Promise.withResolvers();
+                const server = net.createServer(socket => {
+                  socket.on("close", () => process.nextTick(() => console.log("a: a tick in the teardown")));
+                  accepted.resolve();
+                });
+                await new Promise(resolve => server.listen(0, resolve));
+                net.connect(server.address().port);
+                await accepted.promise;
+              });
+            `,
+          "b.test.ts": passes,
+        },
+        "--isolate",
+        "a.test.ts",
+        "b.test.ts",
+      );
+      expect(afterVersionLine(result.stdout)).toBe((listener ? "a: exit\n" : "") + "a: a tick in the teardown\n");
+      expect(outcome(result)).toEqual({ pass: 2, fail: 0, errors: 0, exitCode: 0 });
+    });
+
+    // spawnSync() ends its child at the deadline of the running test, and the last test of a file leaves its own.
+    test("an exit listener does not run under the deadline of the file's last test", async () => {
+      const result = await runFiles(
+        {
+          "a.test.ts": `
+            import { test } from "node:test";
+            import { spawnSync } from "node:child_process";
+            let lastTestStarted = 0;
+            process.on("exit", () => {
+              // Until that deadline has passed.
+              while (Date.now() <= lastTestStarted + 200) {}
+              const { status, signal } = spawnSync(process.execPath, ["-e", "setTimeout(() => {}, 100)"]);
+              console.log("the child of the exit listener ended with", status, signal);
+            });
+            test("a passing test", () => {
+              lastTestStarted = Date.now();
+            });
+          `,
+          "b.test.ts": passes,
+        },
+        "--isolate",
+        "--timeout=200",
+        "a.test.ts",
+        "b.test.ts",
+      );
+      expect(afterVersionLine(result.stdout)).toBe("the child of the exit listener ended with 0 null\n");
+      expect(outcome(result)).toEqual({ pass: 2, fail: 0, errors: 0, exitCode: 0 });
     });
   });
 });

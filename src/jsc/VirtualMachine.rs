@@ -504,6 +504,11 @@ unsafe extern "C" {
 
     safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: u8);
     safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
+    safe fn Process__exitTestFile(
+        global: &JSGlobalObject,
+        failed: bool,
+        exit_code_before_file: u8,
+    ) -> u8;
     safe fn Bun__closeAllSQLiteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__closeAllNodeSqliteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__WebView__closeAllForTermination();
@@ -2285,6 +2290,14 @@ impl VirtualMachine {
 
             break;
         }
+    }
+
+    /// Emits `'exit'` on the `process` of a finished test file that has its own global, with code 1 if it `failed`, and returns the exit code the file leaves.
+    #[must_use]
+    pub fn exit_test_file(&mut self, failed: bool, exit_code_before_file: u8) -> u8 {
+        // What the file left queued runs before its listeners, and not as one of their promise jobs.
+        let _ = self.event_loop_mut().drain_microtasks();
+        Process__exitTestFile(self.global(), failed, exit_code_before_file)
     }
 
     /// Writes each configured profile once. The sampling report is written first because

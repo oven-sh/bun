@@ -661,7 +661,7 @@ pub(crate) fn run_as_worker(
     // Mirror TestCommand::exec's exit path so BUN_DESTRUCT_VM_ON_EXIT teardown
     // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
     vm.exit_handler.exit_code = 0;
-    vm.exit_handler.skip_exit_listeners = test_command::skip_exit_listeners(wloop.reporter);
+    vm.exit_handler.skip_exit_listeners = test_command::skip_exit_listeners(wloop.reporter, vm);
     vm.exit_handler.requested = test_command::exit_is_requested();
     vm.run_with_api_lock_mut(|vm| {
         vm.on_exit();

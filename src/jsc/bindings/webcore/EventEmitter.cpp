@@ -272,6 +272,9 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
         auto* exception = exceptionPtr.get();
 
         if (exception) [[unlikely]] {
+            // Stopped, not failed: no listener runs after the VM's stop, or after process.exit() in the 'exit' of a test file, which leaves script allowed.
+            if (vm.isTerminationException(exception))
+                break;
             auto errorIdentifier = vm.propertyNames->error;
             auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
             if (!hasErrorListener || eventType == errorIdentifier) {

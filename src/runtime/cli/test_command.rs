@@ -932,8 +932,21 @@ fn should_drain_event_loop() -> bool {
 }
 
 /// jest and vitest never run a test file's `process.on('exit')` listeners; node's test harness asserts from them.
-pub(crate) fn skip_exit_listeners(reporter: &CommandLineReporter) -> bool {
-    !(reporter.jest.node_test_used || should_drain_event_loop())
+pub(crate) fn skip_exit_listeners(reporter: &CommandLineReporter, vm: &VirtualMachine) -> bool {
+    !(reporter.jest.node_test_used == Some(vm.test_isolation_generation)
+        || should_drain_event_loop())
+}
+
+/// Whether the global of a test file, and so its `process`, is the file's own and ends with it.
+fn file_owns_global(vm: &VirtualMachine) -> bool {
+    vm.test_isolation_enabled
+}
+
+/// What `TestCommand::emit_file_exit` compares against, read when the file starts.
+struct FileStart {
+    fail: u32,
+    unhandled_errors: u32,
+    exit_code: u8,
 }
 
 /// `ExitHandler::requested` at the end of a run, which does not wait for the event loop to run dry.
@@ -1403,6 +1416,72 @@ impl CommandLineReporter {
             .saturating_add(sequence.expect_call_count);
     }
 
+    /// Fails the active test file for the exit code it left, as one more failed test: every reporter and the `--parallel` coordinator count those.
+    fn fail_file_for_exit_code(
+        &mut self,
+        vm: &mut VirtualMachine,
+        file_path: &[u8],
+        exit_code: u8,
+    ) {
+        let mut name: Vec<u8> = Vec::new();
+        let _ = write!(&mut name, "(exit code {})", exit_code);
+
+        let colors = Output::enable_ansi_colors_stderr();
+        let mut line: Vec<u8> = Vec::new();
+        line.extend_from_slice(&fmt_status_text_line(
+            bun_test::Execution::Result::Fail,
+            colors,
+        ));
+        // The path as the header of the file prints it.
+        let title = resolve_path::relative(FileSystem::get().top_level_dir(), file_path);
+        let _ = bun_core::write_pretty!(
+            &mut line,
+            colors,
+            "<r><b> {}<r> <d>{}<r>\n",
+            bstr::BStr::new(title),
+            bstr::BStr::new(&name),
+        );
+
+        if self.reporters.dots && self.last_printed_dot.replace(false) {
+            pretty_error!("<r>\n");
+        }
+        self.jest.current_file.print_if_needed();
+
+        let report = self.jest.test_options.reporters.junit.then(|| {
+            let mut message: Vec<u8> = Vec::new();
+            let _ = write!(&mut message, "test file exited with code {}", exit_code);
+            TestCaseReport {
+                file: junit_file_name(file_path),
+                scopes: Vec::new(),
+                name: &name,
+                status: bun_test::Execution::Result::Fail,
+                assertions: 0,
+                elapsed_ns: 0,
+                line_number: 0,
+                failure: Some(TestFailure {
+                    message,
+                    ..Default::default()
+                }),
+            }
+        });
+        if let Some(idx) = self.worker_ipc_file_idx {
+            ParallelRunner::worker_emit_test_done(idx, &line, report.as_ref());
+        } else {
+            let _ = Output::error_writer().write_all(&line);
+            if let (Some(junit), Some(report)) = (self.reporters.junit.as_mut(), &report) {
+                junit.record_test_case(report).expect("oom");
+            }
+        }
+        if !self.reporters.dots && !self.reporters.only_failures {
+            self.failures_to_repeat_buf.extend_from_slice(&line);
+        }
+
+        self.summary().fail += 1;
+        if self.summary().fail == self.jest.bail {
+            self.bail_out(vm);
+        }
+    }
+
     pub(crate) fn print_summary(&mut self) {
         let summary_ = self.summary();
         let tests = summary_.fail + summary_.pass + summary_.skip + summary_.todo;
@@ -1432,7 +1511,7 @@ impl CommandLineReporter {
         self.write_timings_if_needed();
 
         vm.exit_handler.exit_code = 1;
-        vm.exit_handler.skip_exit_listeners = skip_exit_listeners(self);
+        vm.exit_handler.skip_exit_listeners = skip_exit_listeners(self, vm);
         vm.exit_handler.requested = true;
         vm.run_with_api_lock_mut(VirtualMachine::on_exit);
         // Exit listeners need the runner, so release the `bun:test` GC roots and clear `RUNNER`
@@ -1868,7 +1947,7 @@ impl TestCommand {
                 test_options: unsafe { bun_ptr::detach_lifetime_ref(&ctx.test_options) },
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),
-                node_test_used: false,
+                node_test_used: None,
             },
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),
@@ -2676,7 +2755,7 @@ impl TestCommand {
         {
             vm.exit_handler.exit_code = 1;
         }
-        vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter);
+        vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter, vm);
         vm.exit_handler.requested = exit_is_requested();
         // Must precede the GC-root release below: exit listeners are user JS and may touch still-live state.
         vm.run_with_api_lock_mut(VirtualMachine::on_exit);
@@ -2794,6 +2873,31 @@ impl TestCommand {
         });
     }
 
+    /// For a file that owns its global, while it is still active: emits `'exit'` on its `process`, and a non-zero exit code it leaves fails it.
+    fn emit_file_exit(
+        reporter: &mut CommandLineReporter,
+        vm: &mut VirtualMachine,
+        file_path: &[u8],
+        start: &FileStart,
+    ) {
+        if skip_exit_listeners(reporter, vm) {
+            return;
+        }
+        let has_failed = |jest: &TestRunner<'_>| {
+            jest.summary.fail != start.fail
+                || jest.unhandled_errors_between_tests != start.unhandled_errors
+        };
+        // The deadline of the file's last test is not the listeners' (`spawnSync` reads it).
+        reporter.jest.remove_active_timeout(vm);
+        let exit_code = vm.exit_test_file(has_failed(&reporter.jest), start.exit_code);
+        let _ = vm.global().handle_rejected_promises();
+        // A listener that threw counted its error through `BunTest.reporter`, and `reporter` is taken as unchanged by a call that is not given it.
+        let failed = jest::Jest::runner().is_some_and(|jest| has_failed(jest));
+        if exit_code != 0 && !failed {
+            reporter.fail_file_for_exit_code(vm, file_path, exit_code);
+        }
+    }
+
     pub(crate) fn run(
         reporter: &mut CommandLineReporter,
         vm: &mut VirtualMachine,
@@ -2856,6 +2960,12 @@ impl TestCommand {
         let mut repeat_index: u32 = 0;
         vm.on_unhandled_rejection_ctx = None;
         vm.on_unhandled_rejection = jest::on_unhandled_rejection::on_unhandled_rejection;
+
+        let file_start = file_owns_global(vm).then(|| FileStart {
+            fail: reporter.summary().fail,
+            unhandled_errors: reporter.jest.unhandled_errors_between_tests,
+            exit_code: vm.exit_handler.exit_code,
+        });
 
         while repeat_index < repeat_count {
             // Clear the module cache before re-running (except for the first run)
@@ -2938,6 +3048,9 @@ impl TestCommand {
                         reporter.bail_out(vm);
                     }
 
+                    if let Some(file_start) = &file_start {
+                        Self::emit_file_exit(reporter, vm, file_path, file_start);
+                    }
                     return Ok(());
                 }
                 _ => {}
@@ -2996,7 +3109,7 @@ impl TestCommand {
                 // Node parity: a node test file exits only when its loop drains.
                 // on_before_exit() drains and dispatches 'beforeExit' like `bun run`;
                 // it early-returns when unhandled_error_counter > 0, which is fine
-                // here since such a file already failed. Opt-in; one file per process.
+                // here since such a file already failed. Opt-in.
                 if should_drain_event_loop() {
                     vm.on_before_exit();
                 }
@@ -3004,6 +3117,12 @@ impl TestCommand {
             }
 
             let _ = vm.global().handle_rejected_promises();
+
+            if repeat_index + 1 == repeat_count
+                && let Some(file_start) = &file_start
+            {
+                Self::emit_file_exit(reporter, vm, file_path, file_start);
+            }
 
             if Output::is_github_action() && reporter.worker_ipc_file_idx.is_none() {
                 pretty_errorln!("<r>\n::endgroup::\n");

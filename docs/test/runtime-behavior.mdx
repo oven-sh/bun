@@ -254,6 +254,8 @@ import { test, it, describe, expect, beforeAll, beforeEach, afterAll, afterEach,
 - `0`: All tests passed, no unhandled errors
 - `1`: Test failures or unhandled errors occurred
 
+With `--isolate` or `--parallel`, a test file that calls a `node:test` API and leaves a non-zero exit code is a test failure. See [exit listeners of `node:test` files](/test/parallel#exit-listeners-of-node-test-files).
+
 ### Signal Handling
 
 The test runner handles common signals:

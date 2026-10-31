@@ -98,6 +98,18 @@ pub struct InternalStateFlags {
     pub(crate) body_compressed: bool,
     /// Held input or buffered decoder output remains for `HTTPClient::drain_response_body`.
     pub(crate) decompress_output_pending: bool,
+    /// A request write failed with ECONNRESET. The failed `send()` took that error from the
+    /// kernel, so the read side then ends with `recv() == 0` like a FIN.
+    pub(crate) write_took_error: bool,
+}
+
+/// How the read side of a connection ended.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReadEnd {
+    /// At the end of the peer's stream: its FIN, or its close_notify on TLS.
+    Fin,
+    /// With an error and no end of stream, such as a reset.
+    Error,
 }
 
 impl InternalStateFlags {
@@ -114,6 +126,7 @@ impl InternalStateFlags {
             receive_paused: false,
             body_compressed: false,
             decompress_output_pending: false,
+            write_took_error: false,
         }
     }
 }
@@ -249,8 +262,9 @@ impl<'a> InternalState<'a> {
 
     /// True when a socket close during `in_progress` completes the body rather
     /// than failing it: chunked decoder already in the trailers state, or a
-    /// close-delimited response (no Content-Length, no Transfer-Encoding).
-    pub(crate) fn is_body_complete_on_close(&self) -> bool {
+    /// close-delimited response (no Content-Length, no Transfer-Encoding) whose
+    /// connection reached the end of the peer's stream.
+    pub(crate) fn is_body_complete_on_close(&self, read_end: ReadEnd) -> bool {
         // Every byte arrived; only the decode is outstanding.
         if self.flags.decompress_output_pending && self.is_done() {
             return true;
@@ -258,7 +272,9 @@ impl<'a> InternalState<'a> {
         if self.is_chunked_encoding() {
             return bun_picohttp::phr_decode_chunked_is_in_trailers(&self.chunked_decoder) != 0;
         }
-        self.content_length.is_none() && self.response_stage == HTTPStage::Body
+        self.content_length.is_none()
+            && self.response_stage == HTTPStage::Body
+            && read_end == ReadEnd::Fin
     }
 
     /// Mark the body complete and drive `process_body_buffer` one last time

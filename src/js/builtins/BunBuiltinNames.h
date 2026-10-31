@@ -88,6 +88,7 @@ using namespace JSC;
     macro(fd) \
     macro(filename) \
     macro(flush) \
+    macro(forceUnref) \
     macro(format) \
     macro(globScan) \
     macro(globScanSync) \
@@ -224,6 +225,7 @@ using namespace JSC;
 #define BUN_MODULE_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
     macro(armedTimeout) \
     macro(exchange) \
+    macro(forceUnref) \
     macro(hasWaitingResponses) \
     macro(isOpen) \
     macro(isPrepared) \

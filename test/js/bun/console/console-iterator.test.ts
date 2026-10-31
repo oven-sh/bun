@@ -137,3 +137,34 @@ it.todoIf(isWindows)("a loop over the console does not ref a stdin that the prog
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "started\n", stderr: "", exitCode: 0 });
 });
+
+// The same for a loop after the first: it does not take the ref that the program gave up.
+it.todoIf(isWindows)("a second loop over the console does not ref a stdin that the program unref'd", async () => {
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.stdin.unref();
+       // Stdin keeps nothing alive, so a timer does until the first loop has its line.
+       const untilFirstLine = setInterval(() => {}, 60_000);
+       async function firstLine() { for await (const line of console) return line; }
+       console.log("line", await firstLine());
+       firstLine();
+       clearInterval(untilFirstLine);
+       console.log("started the second loop");`,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  proc.stdin.write("one\n");
+  proc.stdin.flush();
+  // No second line is written, and stdin stays open: the process ends by itself.
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "line one\nstarted the second loop\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});

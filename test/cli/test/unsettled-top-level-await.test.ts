@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { endChildren, spawn } from "../children";
 
 // Nothing is queued and nothing ref'd is left on the event loop while a test file loads: its top-level
@@ -46,6 +46,20 @@ for (const isolate of [[], ["--isolate"]]) {
     },
   );
 }
+
+// A worker of --parallel loads the file, and the coordinator prints what the worker reports.
+// On Windows the pipe between a worker and the coordinator keeps the loop of the worker alive. The wait of the worker
+// never sees an idle loop there, and the run hangs as it did before.
+test.concurrent.todoIf(isWindows)("fails the file in a worker of --parallel, and the next file runs", async () => {
+  const a = `await new Promise(() => {});\n${passing}`;
+  expect(await run({ "a.test.ts": a, "b.test.ts": passing }, ["--parallel=2", "./a.test.ts", "./b.test.ts"])).toEqual({
+    stdout: "",
+    located: ["error: Detected unsettled top-level await at file://<dir>/a.test.ts:1"],
+    summary: ["1 pass", "1 fail", "1 error"],
+    exitCode: 1,
+    signalCode: null,
+  });
+});
 
 // Unref'd work can settle the await of a file after the file failed. Here the file waits for a request to its server,
 // which is unref'd, and a later file sends that request. The file is over by then: the rest of it does not run under

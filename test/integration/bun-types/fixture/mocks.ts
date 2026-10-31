@@ -29,3 +29,5 @@ jest.fn<() => string>().mockResolvedValue("24");
 jest.fn().mockClear();
 jest.fn().mockReset();
 jest.fn().mockRejectedValueOnce(new Error());
+
+expectType(jest.setSystemTime()).is<typeof jest>();

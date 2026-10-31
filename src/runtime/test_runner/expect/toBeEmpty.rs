@@ -75,10 +75,7 @@ impl Expect {
                 );
             }
         } else if actual_length.is_nan() {
-            return Err(global.throw(format_args!(
-                "Received value has non-number length property: {}",
-                actual_length
-            )));
+            return Err(Expect::throw_nan_length(global, value));
         } else {
             pass = actual_length == 0.0;
         }

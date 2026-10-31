@@ -2627,6 +2627,67 @@ describe("expect()", () => {
       // WeakMap
       expect(new WeakMap([[globalThis, 1]])).toHaveLength(1);
     });
+
+    // The length of a Blob is its size. A file that does not exist, a directory and a pipe have none.
+    describe("toHaveLength() and toBeEmpty() on a Blob of unknown size", () => {
+      const { isWindows, tempDir } = require("harness");
+      const { join } = require("path");
+      const unknownSize = "Received value is a Blob whose size is not known: FileRef";
+
+      test.each(
+        /** @type {[string, (dir: string) => string][]} */ ([
+          ["a path that does not exist", dir => join(dir, "missing")],
+          ["a directory", dir => dir],
+          ...(isWindows
+            ? []
+            : [
+                [
+                  "a FIFO",
+                  dir => {
+                    const fifo = join(dir, "fifo");
+                    require("mkfifo").mkfifo(fifo);
+                    return fifo;
+                  },
+                ],
+              ]),
+        ]),
+      )("Bun.file() of %s", async (_kind, pathIn) => {
+        using dir = tempDir("expect-unknown-size", {});
+        const file = Bun.file(pathIn(String(dir)));
+
+        expect(() => expect(file).toHaveLength(0)).toThrow(unknownSize);
+        expect(() => expect(file).toHaveLength(100)).toThrow(unknownSize);
+        expect(() => expect(file).toHaveLength(Number.MAX_VALUE)).toThrow(unknownSize);
+        expect(() => expect(file).not.toHaveLength(0)).toThrow(unknownSize);
+        expect(() => expect(file).toBeEmpty()).toThrow(unknownSize);
+        expect(() => expect(file).not.toBeEmpty()).toThrow(unknownSize);
+        await expectFailure(() => expect(Promise.resolve(file)).resolves.not.toHaveLength(0)).toThrow(unknownSize);
+      });
+
+      test.each(
+        /** @type {[string, (dir: string) => string][]} */ ([
+          ["a path that does not exist", dir => join(dir, "missing")],
+          ["a directory", dir => dir],
+        ]),
+      )("a slice of the Bun.file() of %s", (_kind, pathIn) => {
+        using dir = tempDir("expect-unknown-size", {});
+        const slice = Bun.file(pathIn(String(dir))).slice(0, 10);
+
+        expect(() => expect(slice).toHaveLength(10)).toThrow(unknownSize);
+        expect(() => expect(slice).not.toHaveLength(10)).toThrow(unknownSize);
+        expect(() => expect(slice).toBeEmpty()).toThrow(unknownSize);
+        expect(() => expect(slice).not.toBeEmpty()).toThrow(unknownSize);
+      });
+
+      test("a length that is a number is not taken for an unknown size", () => {
+        expect({ length: Number.MAX_VALUE }).toHaveLength(Number.MAX_VALUE);
+        expect({ length: Number.MAX_VALUE }).not.toBeEmpty();
+        expect(() => expect({ length: NaN }).toHaveLength(0)).toThrow(
+          "Received value has non-number length property: NaN",
+        );
+        expect(() => expect({ length: NaN }).toBeEmpty()).toThrow("Received value has non-number length property: NaN");
+      });
+    });
   }
 
   test.each([

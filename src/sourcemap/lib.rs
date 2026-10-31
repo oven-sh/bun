@@ -1121,11 +1121,35 @@ pub fn append_source_map_chunk<'a>(
     Ok(())
 }
 
+/// A line is text and not a line comment only in a template literal or a block comment, which close on it or after it, or in a string that a backslash continues onto it.
+fn can_be_text<T: bun_core::strings::PathByte>(before: &[T], from_url: &[T]) -> bool {
+    let unit = T::from_u8;
+    let before = match before {
+        [rest @ .., last] if *last == unit(b'\r') => rest,
+        _ => before,
+    };
+    if before.last() == Some(&unit(b'\\')) {
+        return true;
+    }
+    let closers = [unit(b'`'), unit(b'*')];
+    let mut rest = from_url;
+    while let Some(at) = bun_core::strings::index_of_any_t(rest, &closers) {
+        if rest[at] == unit(b'`') || rest.get(at + 1) == Some(&unit(b'/')) {
+            return true;
+        }
+        rest = &rest[at + 1..];
+    }
+    false
+}
+
 /// Always returns UTF-8.
 fn find_source_mapping_url_u8(source: &[u8]) -> Option<bun_core::Utf8Bytes<'_>> {
     const NEEDLE: &[u8] = b"\n//# sourceMappingURL=";
     let found = bun_core::strings::last_index_of(source, NEEDLE)?;
     let start = found + NEEDLE.len();
+    if can_be_text(&source[..found], &source[start..]) {
+        return None;
+    }
     let end = bun_core::strings::index_of_char_pos(source, b'\n', start).unwrap_or(source.len());
     let url = bun_core::strings::trim_right(&source[start..end], b" \r");
     Some(bun_core::Utf8Bytes::Borrowed(url))
@@ -1135,6 +1159,9 @@ fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_core::Utf8Bytes<'st
     let needle: &[u16] = bun_core::w!("\n//# sourceMappingURL=");
     let found = bun_core::strings::last_index_of_utf16(source, needle)?;
     let start = found + needle.len();
+    if can_be_text(&source[..found], &source[start..]) {
+        return None;
+    }
     let end = bun_core::strings::index_of_scalar(&source[start..], u16::from(b'\n'))
         .map(|p| start + p)
         .unwrap_or(source.len());

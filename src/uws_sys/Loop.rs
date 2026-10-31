@@ -301,6 +301,11 @@ impl PosixLoop {
         c::us_loop_close_all_groups(self) != 0
     }
 
+    /// Testing only (`runSocketTimeoutSweepSoon`): the next iteration of this loop runs the socket timeout sweep.
+    pub fn sweep_soon(&self) {
+        c::us_internal_sweep_soon(self);
+    }
+
     pub fn should_enable_date_header_timer(&self) -> bool {
         self.internal_loop_data.should_enable_date_header_timer()
     }
@@ -467,6 +472,11 @@ impl WindowsLoop {
         c::us_loop_close_all_groups(self) != 0
     }
 
+    /// Testing only (`runSocketTimeoutSweepSoon`): the next iteration of this loop runs the socket timeout sweep.
+    pub fn sweep_soon(&self) {
+        c::us_internal_sweep_soon(self);
+    }
+
     pub fn update_date(&self) {
         // SAFETY: needs uWS's `LoopData` behind the loop. Every loop has it but spawnSync's, which
         // `create` makes without one and which does not leave `SpawnSyncEventLoop.rs`.
@@ -522,6 +532,7 @@ mod c {
             now_ns: u64,
         );
         pub(super) fn us_internal_free_closed_sockets(loop_: &Loop);
+        pub(super) safe fn us_internal_sweep_soon(loop_: &Loop);
         pub(super) safe fn us_loop_close_all_groups(loop_: &Loop) -> c_int;
         #[cfg(not(windows))]
         pub(super) safe fn uws_get_loop() -> *mut Loop;

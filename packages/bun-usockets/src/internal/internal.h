@@ -182,6 +182,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_enable_sweep_timer(struct us_loop_t *loop);
 void us_internal_disable_sweep_timer(struct us_loop_t *loop);
+/* Testing only: the next loop iteration runs the sweep, as if
+ * LIBUS_TIMEOUT_GRANULARITY seconds had passed. */
+void us_internal_sweep_soon(struct us_loop_t *loop);
 #ifndef LIBUS_USE_LIBUV
 /* CLOCK_MONOTONIC in ns. The clock every deadline on the loop is measured
  * against, so anything comparing against one must read it and not another. */

@@ -258,7 +258,7 @@ impl FileRoute {
         let route = RefPtr::from_this(this);
         if let Some(server) = route.server.get() {
             server.on_pending_request();
-            resp.timeout(server.config().idle_timeout);
+            resp.start_timeout();
         }
         let store = route.blob.store().unwrap().clone();
         let Some(path) = store.get_path() else {
@@ -322,7 +322,6 @@ impl FileRoute {
                     pollable,
                     offset,
                     length,
-                    idle_timeout: server.config().idle_timeout,
                     owner: StreamOwner::FileRoute(route),
                 });
             }

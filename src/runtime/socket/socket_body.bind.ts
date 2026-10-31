@@ -153,6 +153,8 @@ export const duplexUpgradeContextLiveCount = b.fn({
   returns: b.usize,
   rustPath: testing("duplex_upgrade_context_live_count"),
 });
+/** The next iteration of this thread's loop runs the 4 s socket timeout sweep. */
+export const runSocketTimeoutSweepSoon = b.fn({ rustPath: testing("run_socket_timeout_sweep_soon") });
 export const clearSocketFaults = b.fn({ ...js, rustPath: testing("clear_socket_faults") });
 /** `socket`, `close` and `shutdown` have no hook in bsd.c: a rule for one would never fire. */
 export const SocketFaultSyscall = b.enumeration([

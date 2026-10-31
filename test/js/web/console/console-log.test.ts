@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
-import { expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { beforeAll, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 it("should log to console correctly", async () => {
@@ -248,4 +248,137 @@ it("console.log with SharedArrayBuffer", () => {
   expect(Bun.inspect(new SharedArrayBuffer(0))).toBe("SharedArrayBuffer(0) []");
   expect(Bun.inspect(new ArrayBuffer(3))).toBe("ArrayBuffer(3) [ 0, 0, 0 ]");
   expect(Bun.inspect(new SharedArrayBuffer(3))).toBe("SharedArrayBuffer(3) [ 0, 0, 0 ]");
+});
+
+// https://github.com/oven-sh/bun/issues/7125
+describe("console.error with colors", () => {
+  const red = "\x1b[0m\x1b[31m";
+  const reset = "\x1b[0m";
+
+  const redLines = {
+    "a string, then an object": `console.error("This is an error message", { withExtra: true, properties: "yes" })`,
+    "a string, then an array": `console.error("errors: ", [1])`,
+    "a string after a number": `console.error("count:", 3, "items")`,
+    "an object first": `console.error({ a: 1 }, "after")`,
+    "%o": `console.error("a %o b", { x: 1 })`,
+    "%s of a RegExp": `console.error("a %s b", /re/g)`,
+    "nested values": `console.error("nested", { outer: [1, "two", null, undefined, true, 1n, Symbol("s")] }, new Map([["k", 1]]), new Set([1]))`,
+    "console.assert with data": `console.assert(false, "assert msg", { a: 1 })`,
+    "a Response": `console.error("bad response:", new Response("body", { status: 500 }), "tail")`,
+    "an inspector that calls options.stylize": `console.error("label", { [custom]: (depth, options) => options.stylize("styled", "number") }, "tail")`,
+    "a String object": `console.error(new String("boxed"))`,
+    "one string": `console.error("just a string")`,
+  };
+  // Each of these prints an error after a label. The value names the call that prints the same error alone.
+  const errorLines = {
+    [`console.error("request failed:", err, "tail")`]: `console.error(err)`,
+    [`console.error("x", { err })`]: `console.error(err)`,
+    [`console.error("a %o b", err)`]: `console.error(err)`,
+    [`console.error("build failed:", buildMessage, "tail")`]: `console.error(buildMessage)`,
+    [`console.error("resolve failed:", resolveMessage, "tail")`]: `console.error(resolveMessage)`,
+  };
+  const throwingInspector = `console.error("label", { [custom]() { throw new Error("inspector threw"); } }, "tail")`;
+  // Each of these never starts the red. The value is the console.log call that prints the same bytes.
+  const sameAsLog = {
+    "console.error({ a: 1 })": "console.log({ a: 1 })",
+    "console.error(42)": "console.log(42)",
+    [`console.warn("msg", { a: 1 })`]: `console.log("msg", { a: 1 })`,
+  };
+  const calls = [
+    ...new Set([
+      ...Object.values(redLines),
+      ...Object.entries(errorLines).flat(),
+      throwingInspector,
+      ...Object.entries(sameAsLog).flat(),
+    ]),
+  ];
+
+  let colored: Record<string, string>;
+  let plain: Record<string, string>;
+
+  beforeAll(async () => {
+    using dir = tempDir("console-error-color", {
+      "syntax-error.js": "const x = ;\n",
+      "fixture.js": `
+        const { writeSync } = require("node:fs");
+        const custom = Symbol.for("nodejs.util.inspect.custom");
+        function fail() {
+          return new Error("boom");
+        }
+        const err = fail();
+        let buildMessage, resolveMessage;
+        try { require("./syntax-error.js"); } catch (e) { buildMessage = e; }
+        try { require.resolve("./does-not-exist"); } catch (e) { resolveMessage = e; }
+        const calls = [${calls.map(call => `() => ${call}`).join(",\n")}];
+        for (const call of calls) {
+          try { call(); } catch {}
+          writeSync(1, "\\0");
+          writeSync(2, "\\0");
+        }
+      `,
+    });
+    // Every call writes to one stream only, so the two streams join into that call's output.
+    async function run(env: Record<string, string | undefined>) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.js"],
+        cwd: String(dir),
+        env: { ...bunEnv, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const out = stdout.replaceAll("\r\n", "\n").split("\0");
+      const err = stderr.replaceAll("\r\n", "\n").split("\0");
+      expect({ out: out.length, err: err.length, exitCode }).toEqual({
+        out: calls.length + 1,
+        err: calls.length + 1,
+        exitCode: 0,
+      });
+      return Object.fromEntries(calls.map((call, i) => [call, out[i] + err[i]]));
+    }
+    [colored, plain] = await Promise.all([run({ NO_COLOR: undefined, FORCE_COLOR: "1" }), run({})]);
+  });
+
+  /** The visible characters of `text` that a terminal does not draw in red. */
+  function notRed(text: string) {
+    let foreground = 0;
+    let found = "";
+    for (const [, codes, char] of text.matchAll(/\x1b\[([\d;]*)m|(\S)/g)) {
+      if (char !== undefined) {
+        if (foreground !== 31) found += char;
+        continue;
+      }
+      for (const code of codes.split(";").map(Number)) {
+        if (code === 0 || code === 39) foreground = 0;
+        else if ((code >= 30 && code <= 37) || (code >= 90 && code <= 97)) foreground = code;
+      }
+    }
+    return found;
+  }
+
+  it.each(Object.entries(redLines))("%s: the line is red from start to end", (_, call) => {
+    expect(Bun.stripANSI(colored[call])).toBe(plain[call]);
+    expect(notRed(colored[call])).toBe("");
+    expect(colored[call]).toStartWith(red);
+    expect(colored[call]).toEndWith(reset + "\n");
+  });
+
+  it.each(Object.entries(errorLines))("%s: the error keeps its own colors", (call, alone) => {
+    // console.error(err) writes the error, then the newline that ends the call.
+    const error = reset + colored[alone].slice(0, -1) + red;
+    expect(Bun.stripANSI(colored[call])).toBe(plain[call]);
+    expect(colored[call]).toContain(error);
+    expect(notRed(colored[call].replace(error, ""))).toBe("");
+    expect(colored[call]).toStartWith(red);
+    expect(colored[call]).toEndWith(reset + "\n");
+  });
+
+  it("an inspector that throws does not leave the terminal red", () => {
+    expect(colored[throwingInspector]).toMatch(/^\x1b\[0m\x1b\[31mlabel \x1b\[0m\n?$/);
+  });
+
+  it.each(Object.entries(sameAsLog))("%s prints the same bytes as %s", (call, log) => {
+    expect(colored[call]).toBe(colored[log]);
+    expect(colored[call]).not.toContain("\x1b[31m");
+  });
 });

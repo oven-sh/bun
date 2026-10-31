@@ -341,6 +341,26 @@ impl Drop for FlushOnDrop<'_> {
     }
 }
 
+/// The red of one `console.error` line. `Drop` closes it, also when an inspector throws.
+struct LevelSpan<'a> {
+    writer: &'a mut (dyn bun_io::Write + 'a),
+}
+
+impl<'a> LevelSpan<'a> {
+    #[inline]
+    fn open(writer: &'a mut (dyn bun_io::Write + 'a)) -> Self {
+        let _ = writer.write_all(pfmt!("<r><red>", true).as_bytes());
+        Self { writer }
+    }
+}
+
+impl Drop for LevelSpan<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        let _ = self.writer.write_all(pfmt!("<r>", true).as_bytes());
+    }
+}
+
 #[cold]
 fn throw_for_removed_table_printer(global: &JSGlobalObject) -> jsc::JsError {
     unsafe extern "C" {
@@ -1335,14 +1355,10 @@ pub fn format2(
         }
 
         if matches!(tag.tag, TagPayload::String) {
-            if options.enable_colors {
-                if level == MessageLevel::Error {
-                    let _ = writer.write_all(pfmt!("<r><red>", true).as_bytes());
-                }
+            if options.enable_colors && level == MessageLevel::Error {
+                format_string_in_level_span(&mut fmt, writer, tag, vals[0], global)?;
+            } else if options.enable_colors {
                 fmt.format::<true>(tag, writer, vals[0], global)?;
-                if level == MessageLevel::Error {
-                    let _ = writer.write_all(pfmt!("<r>", true).as_bytes());
-                }
             } else {
                 fmt.format::<false>(tag, writer, vals[0], global)?;
             }
@@ -1398,10 +1414,9 @@ pub fn format2(
     }
 
     let mut any = false;
-    if options.enable_colors {
-        if level == MessageLevel::Error {
-            let _ = writer.write_all(pfmt!("<r><red>", true).as_bytes());
-        }
+    if options.enable_colors && level == MessageLevel::Error {
+        format_values_in_level_span(&mut fmt, writer, this_value, global)?;
+    } else if options.enable_colors {
         loop {
             if any {
                 let _ = writer.write_all(b" ");
@@ -1420,9 +1435,6 @@ pub fn format2(
 
             this_value = fmt.remaining()[0];
             fmt.advance_remaining();
-        }
-        if level == MessageLevel::Error {
-            let _ = writer.write_all(pfmt!("<r>", true).as_bytes());
         }
     } else {
         loop {
@@ -1449,6 +1461,57 @@ pub fn format2(
         let _ = writer.write_all(b"\n");
     }
     Ok(())
+}
+
+/// One string of a `console.error` line, in red.
+#[cold]
+#[inline(never)]
+fn format_string_in_level_span<'a>(
+    fmt: &mut Formatter<'a>,
+    writer: &mut dyn bun_io::Write,
+    tag: formatter::TagResult,
+    value: JSValue,
+    global: &'a JSGlobalObject,
+) -> JsResult<()> {
+    let span = LevelSpan::open(writer);
+    fmt.level_span = true;
+    fmt.format::<false>(tag, &mut *span.writer, value, global)
+}
+
+/// The values of a `console.error` line, in red. They print with colors off, so that no printer ends the red.
+#[cold]
+#[inline(never)]
+fn format_values_in_level_span<'a>(
+    fmt: &mut Formatter<'a>,
+    writer: &mut dyn bun_io::Write,
+    first: JSValue,
+    global: &'a JSGlobalObject,
+) -> JsResult<()> {
+    let span = LevelSpan::open(writer);
+    let writer: &mut dyn bun_io::Write = &mut *span.writer;
+    fmt.level_span = true;
+
+    let mut this_value = first;
+    let mut any = false;
+    loop {
+        if any {
+            let _ = writer.write_all(b" ");
+        }
+        any = true;
+
+        let mut tag = formatter::Tag::get(this_value, global)?;
+        if matches!(tag.tag, TagPayload::String) && !fmt.remaining().is_empty() {
+            tag.tag = TagPayload::StringPossiblyFormatted;
+        }
+
+        fmt.format::<false>(tag, writer, this_value, global)?;
+        if fmt.remaining().is_empty() {
+            return Ok(());
+        }
+
+        this_value = fmt.remaining()[0];
+        fmt.advance_remaining();
+    }
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -1597,6 +1660,8 @@ pub mod formatter {
         /// printed as a string. Set true in the error printer so that
         /// `ShellError` prints a more readable message.
         pub(crate) format_buffer_as_text: bool,
+        /// The `console.error` red is open on the writer, so the printers run with colors off.
+        pub(crate) level_span: bool,
     }
 
     impl<'a> Formatter<'a> {
@@ -1625,6 +1690,7 @@ pub mod formatter {
                 can_throw_stack_overflow: false,
                 error_display_level: ErrorDisplayLevel::Full,
                 format_buffer_as_text: false,
+                level_span: false,
             }
         }
 
@@ -1661,7 +1727,35 @@ pub mod formatter {
                 can_throw_stack_overflow: self.can_throw_stack_overflow,
                 error_display_level: self.error_display_level,
                 format_buffer_as_text: self.format_buffer_as_text,
+                level_span: self.level_span,
             }
+        }
+
+        /// Runs `print` outside the `console.error` red, so that an error dump keeps its own colors.
+        #[inline]
+        pub fn print_in_own_colors<const C: bool>(
+            &mut self,
+            writer: &mut dyn bun_io::Write,
+            print: impl FnOnce(&mut Self, &mut dyn bun_io::Write, bool),
+        ) {
+            if C || !self.level_span {
+                return print(self, writer, C);
+            }
+            self.print_outside_level_span(writer, print);
+        }
+
+        #[cold]
+        #[inline(never)]
+        fn print_outside_level_span(
+            &mut self,
+            writer: &mut dyn bun_io::Write,
+            print: impl FnOnce(&mut Self, &mut dyn bun_io::Write, bool),
+        ) {
+            self.level_span = false;
+            let _ = writer.write_all(pfmt!("<r>", true).as_bytes());
+            print(self, writer, true);
+            let _ = writer.write_all(pfmt!("<r><red>", true).as_bytes());
+            self.level_span = true;
         }
 
         /// View the queued `%`-format arguments as a slice.
@@ -3857,10 +3951,20 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let mut adapter = DynWriteAdapter::new(&mut *writer_);
-            // SAFETY: per-thread VM.
-            let vm = VirtualMachine::get().as_mut();
-            vm.print_errorlike_object(value, None, None, self, adapter.interface(), C, false);
+            self.print_in_own_colors::<C>(writer_, |this, writer, colors| {
+                let mut adapter = DynWriteAdapter::new(writer);
+                // SAFETY: per-thread VM.
+                let vm = VirtualMachine::get().as_mut();
+                vm.print_errorlike_object(
+                    value,
+                    None,
+                    None,
+                    this,
+                    adapter.interface(),
+                    colors,
+                    false,
+                );
+            });
             Ok(())
         }
 

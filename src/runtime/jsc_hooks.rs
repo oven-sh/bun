@@ -2099,14 +2099,26 @@ fn console_print_runtime_object_inner<const C: bool>(
         );
         return Ok(true);
     }
+    fn print_msg<const C: bool>(
+        formatter: &mut bun_jsc::Formatter<'_>,
+        writer: &mut dyn bun_io::Write,
+        msg: &bun_ast::Msg,
+    ) {
+        formatter.print_in_own_colors::<C>(writer, |_, writer, colors| {
+            let mut w = AsFmt::new(writer);
+            let _ = if colors {
+                msg.write_format::<true>(&mut w)
+            } else {
+                msg.write_format::<false>(&mut w)
+            };
+        });
+    }
     if let Some(build_log) = value.as_class_ref::<bun_jsc::BuildMessage>() {
-        let mut w = AsFmt::new(writer_);
-        let _ = build_log.msg.write_format::<C>(&mut w);
+        print_msg::<C>(formatter, writer_, &build_log.msg);
         return Ok(true);
     }
     if let Some(resolve_log) = value.as_class_ref::<bun_jsc::ResolveMessage>() {
-        let mut w = AsFmt::new(writer_);
-        let _ = resolve_log.msg.write_format::<C>(&mut w);
+        print_msg::<C>(formatter, writer_, &resolve_log.msg);
         return Ok(true);
     }
     {

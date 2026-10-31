@@ -536,6 +536,130 @@ module.exports = debugMode => {
       console.log("bytes =", bytes.join(","));
     },
 
+    // The addon wraps its memory in stores, one slot of memory per store (see main.cpp). Each part runs in a function
+    // of its own, so that no frame refers to its buffers when a later collection is expected to free them.
+    test_v8_array_buffer_from_backing_store() {
+      const deleterCalls = slot => nativeModule.wrapped_memory_deleter_calls()[slot];
+      const deleters = (firstSlot, count) => {
+        const calls = nativeModule.wrapped_memory_deleter_calls().slice(firstSlot, firstSlot + count);
+        const ran = calls.filter(n => n > 0).length;
+        return `${ran} of ${count} ran, ${calls.filter(n => n > 1).length} more than once`;
+      };
+      const describe = buffer => `byteLength = ${buffer.byteLength}, detached = ${buffer.detached}`;
+
+      console.log("====== the addon drops its std::shared_ptr, JS holds 1 of 65 buffers");
+      (() => {
+        const buffer = nativeModule.wrapped_buffers_create(0, 65);
+        nativeModule.wrapped_memory_collect_garbage();
+        console.log("deleters of the 64 buffers that nothing refers to:", deleters(0, 64));
+        console.log("deleter calls for the buffer that JS holds =", deleterCalls(64));
+        const view = new Uint8Array(buffer);
+        view[3] = 77;
+        console.log("the addon reads what JS wrote =", nativeModule.wrapped_memory_get(64, 3));
+        nativeModule.wrapped_memory_set(64, 5, 200);
+        console.log("JS reads what the addon wrote =", view[5]);
+        console.log(
+          "GetBackingStore() has the addon's memory =",
+          nativeModule.wrapped_buffer_store_has_memory(buffer, 64),
+        );
+        console.log(describe(buffer));
+        nativeModule.detach_array_buffer(buffer);
+        console.log("deleter calls after Detach() =", deleterCalls(64));
+        console.log(describe(buffer), "view length =", view.length);
+        nativeModule.detach_array_buffer(buffer);
+        console.log("deleter calls after a second Detach() =", deleterCalls(64));
+      })();
+      nativeModule.wrapped_memory_collect_garbage();
+      console.log("deleters after JS dropped the detached buffer and a collection ran:", deleters(0, 65));
+
+      console.log("====== the addon keeps its std::shared_ptr past Detach()");
+      (() => {
+        const buffer = nativeModule.wrapped_buffer_create_keeping_store(65);
+        new Uint8Array(buffer)[0] = 42;
+        nativeModule.detach_array_buffer(buffer);
+        nativeModule.wrapped_memory_collect_garbage();
+        console.log(describe(buffer));
+        console.log("deleter calls after Detach() and a collection =", deleterCalls(65));
+        console.log("the store still has the addon's memory =", nativeModule.wrapped_kept_store_has_memory(65));
+        console.log("the addon reads what JS wrote =", nativeModule.wrapped_memory_get(65, 0));
+        nativeModule.wrapped_kept_store_release();
+        console.log("deleter calls after the addon released the store =", deleterCalls(65));
+      })();
+
+      console.log("====== two ArrayBuffers from one store");
+      (() => {
+        const [first, second] = nativeModule.wrapped_buffer_pair(66);
+        new Uint8Array(first)[0] = 11;
+        console.log("two objects =", first !== second);
+        console.log("the second reads what JS wrote to the first =", new Uint8Array(second)[0]);
+        nativeModule.detach_array_buffer(first);
+        console.log("deleter calls after Detach() of the first =", deleterCalls(66));
+        console.log("second:", describe(second), "first byte =", new Uint8Array(second)[0]);
+        nativeModule.detach_array_buffer(second);
+        console.log("deleter calls after Detach() of the second =", deleterCalls(66));
+      })();
+
+      console.log("====== JS keeps a view and not the buffer");
+      (() => {
+        const view = (() => new Uint8Array(nativeModule.wrapped_buffers_create(67, 1)))();
+        nativeModule.wrapped_memory_collect_garbage();
+        console.log("deleter calls while JS holds the view =", deleterCalls(67));
+        nativeModule.wrapped_memory_set(67, 2, 123);
+        console.log("the view reads what the addon wrote =", view[2]);
+        nativeModule.detach_array_buffer(view.buffer);
+        console.log("deleter calls after Detach() of the view's buffer =", deleterCalls(67));
+        console.log("view length =", view.length);
+      })();
+
+      console.log("====== a store over zero bytes of the addon's memory");
+      (() => {
+        const buffer = nativeModule.wrapped_buffers_create(68, 1, 0);
+        nativeModule.wrapped_memory_collect_garbage();
+        console.log(describe(buffer), "view length =", new Uint8Array(buffer).length);
+        console.log("deleter calls while JS holds the buffer =", deleterCalls(68));
+        nativeModule.detach_array_buffer(buffer);
+        console.log(describe(buffer));
+        console.log("deleter calls after Detach() =", deleterCalls(68));
+      })();
+
+      console.log("====== a store over no memory");
+      (() => {
+        const buffer = nativeModule.wrapped_buffer_create_without_memory(69);
+        console.log(describe(buffer), "view length =", new Uint8Array(buffer).length);
+        nativeModule.detach_array_buffer(buffer);
+        console.log(describe(buffer));
+      })();
+
+      console.log("====== once nothing refers to a buffer and a collection ran");
+      nativeModule.wrapped_memory_collect_garbage();
+      console.log("deleters of the 69 stores with memory:", deleters(0, 69));
+      console.log("deleter calls for the store over no memory =", deleterCalls(69));
+      console.log(
+        "deleter calls without the store's data and length =",
+        nativeModule.wrapped_memory_unexpected_deleter_calls(),
+      );
+    },
+
+    // Bun only: V8 calls the deleter without checking it.
+    test_v8_new_backing_store_null_deleter() {
+      nativeModule.wrapped_store_destroy_with_null_deleter(0);
+      console.log("the addon destroyed a store that no ArrayBuffer was made from");
+      (() => {
+        const buffer = nativeModule.wrapped_buffers_create_with_null_deleter(1, 9);
+        nativeModule.wrapped_memory_collect_garbage();
+        console.log("a collection ran while nothing refers to 8 of 9 buffers");
+        const view = new Uint8Array(buffer);
+        view[3] = 77;
+        console.log("the addon reads what JS wrote =", nativeModule.wrapped_memory_get(9, 3));
+        nativeModule.wrapped_memory_set(9, 5, 200);
+        console.log("JS reads what the addon wrote =", view[5]);
+        nativeModule.detach_array_buffer(buffer);
+        console.log(`byteLength = ${buffer.byteLength}, detached = ${buffer.detached}`);
+      })();
+      nativeModule.wrapped_memory_collect_garbage();
+      console.log("a collection ran after JS dropped the detached buffer");
+    },
+
     test_v8_return_value_from_inner_scope() {
       // The native functions invoke this after their inner handle scope closed,
       // while the callback is still on the stack, so the collection runs in the

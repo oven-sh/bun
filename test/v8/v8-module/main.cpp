@@ -6,6 +6,7 @@
 
 #include <v8-profiler.h>
 
+#include <atomic>
 #include <cinttypes>
 #include <cstdarg>
 #include <iomanip>
@@ -2122,6 +2123,267 @@ void detach_array_buffer_with_pending_exception(
   info[0].As<ArrayBuffer>()->Detach();
 }
 
+// ArrayBuffer::NewBackingStore, ArrayBuffer::New(Isolate *,
+// std::shared_ptr<BackingStore>) and ~BackingStore
+
+// Memory of the addon that a test wraps in a BackingStore, and how often the
+// deleter of that store has run. The deleter only counts, and in static
+// storage: an engine may call it from a GC thread or while the process exits.
+struct WrappedMemory {
+  uint8_t bytes[8];
+  size_t wrapped_length;
+  // Calls with `bytes` and `wrapped_length`, and calls with anything else.
+  std::atomic<int> deleter_calls;
+  std::atomic<int> unexpected_deleter_calls;
+};
+constexpr uint32_t wrapped_memory_slots = 80;
+static WrappedMemory wrapped_memory[wrapped_memory_slots];
+
+static WrappedMemory *wrapped_memory_at(uint32_t slot) {
+  if (slot >= wrapped_memory_slots) {
+    fprintf(stderr, "there is no wrapped_memory slot %u\n", slot);
+    abort();
+  }
+  return &wrapped_memory[slot];
+}
+
+static void count_wrapped_memory_deleter(void *data, size_t length,
+                                         void *deleter_data) {
+  auto *memory = static_cast<WrappedMemory *>(deleter_data);
+  if (data == memory->bytes && length == memory->wrapped_length) {
+    memory->deleter_calls++;
+  } else {
+    memory->unexpected_deleter_calls++;
+  }
+}
+
+// A store over the first `length` bytes of a slot.
+static std::unique_ptr<BackingStore> wrap_memory(
+    uint32_t slot, size_t length = sizeof(WrappedMemory::bytes),
+    BackingStore::DeleterCallback deleter = count_wrapped_memory_deleter) {
+  WrappedMemory *memory = wrapped_memory_at(slot);
+  if (length > sizeof(memory->bytes)) {
+    fprintf(stderr, "a wrapped_memory slot has no %zu bytes\n", length);
+    abort();
+  }
+  memory->wrapped_length = length;
+  return ArrayBuffer::NewBackingStore(memory->bytes, length, deleter, memory);
+}
+
+// Makes `count` ArrayBuffers, each over the memory of its own slot, and returns
+// the last one. Nothing refers to the others. As in uWebSockets.js, the addon's
+// std::shared_ptr to a store is gone as soon as ArrayBuffer::New returns.
+static Local<ArrayBuffer>
+create_wrapped_buffers(Isolate *isolate, uint32_t first_slot, uint32_t count,
+                       size_t length, BackingStore::DeleterCallback deleter) {
+  Local<ArrayBuffer> buffer;
+  for (uint32_t i = 0; i < count; i++) {
+    buffer = ArrayBuffer::New(
+        isolate, std::shared_ptr<BackingStore>(
+                     wrap_memory(first_slot + i, length, deleter).release()));
+  }
+  return buffer;
+}
+
+// The addon destroys stores that no ArrayBuffer was made from.
+void test_v8_new_backing_store(const FunctionCallbackInfo<Value> &info) {
+  {
+    WrappedMemory &unique_owned = wrapped_memory[0];
+    std::unique_ptr<BackingStore> store = wrap_memory(0);
+    LOG_EXPR(store->Data() == unique_owned.bytes);
+    LOG_EXPR(unique_owned.deleter_calls);
+    store.reset();
+    LOG_EXPR(unique_owned.deleter_calls);
+  }
+
+  // uWebSockets.js moves the store into a std::shared_ptr.
+  {
+    WrappedMemory &shared_owned = wrapped_memory[1];
+    std::shared_ptr<BackingStore> store(wrap_memory(1).release());
+    std::shared_ptr<BackingStore> copy = store;
+    LOG_EXPR(copy->Data() == shared_owned.bytes);
+    store.reset();
+    LOG_EXPR(shared_owned.deleter_calls);
+    copy.reset();
+    LOG_EXPR(shared_owned.deleter_calls);
+  }
+
+  // A store over zero bytes of the addon's memory hands that memory back too.
+  {
+    WrappedMemory &zero_length = wrapped_memory[2];
+    std::unique_ptr<BackingStore> store = wrap_memory(2, 0);
+    LOG_EXPR(store->Data() == zero_length.bytes);
+    store.reset();
+    LOG_EXPR(zero_length.deleter_calls);
+  }
+
+  // A store over no memory has nothing to hand back.
+  {
+    WrappedMemory &no_memory = wrapped_memory[3];
+    std::unique_ptr<BackingStore> store = ArrayBuffer::NewBackingStore(
+        nullptr, 0, count_wrapped_memory_deleter, &no_memory);
+    LOG_EXPR(store->Data() == nullptr);
+    store.reset();
+    LOG_EXPR(no_memory.deleter_calls + no_memory.unexpected_deleter_calls);
+  }
+
+  int unexpected_deleter_calls = 0;
+  for (WrappedMemory &memory : wrapped_memory) {
+    unexpected_deleter_calls += memory.unexpected_deleter_calls;
+  }
+  LOG_EXPR(unexpected_deleter_calls);
+
+  return ok(info);
+}
+
+// wrapped_buffers_create(firstSlot, count[, length]): see
+// create_wrapped_buffers.
+void wrapped_buffers_create(const FunctionCallbackInfo<Value> &info) {
+  uint32_t first_slot = static_cast<uint32_t>(info[0].As<Number>()->Value());
+  uint32_t count = static_cast<uint32_t>(info[1].As<Number>()->Value());
+  size_t length = info.Length() > 2
+                      ? static_cast<size_t>(info[2].As<Number>()->Value())
+                      : sizeof(WrappedMemory::bytes);
+  info.GetReturnValue().Set(
+      create_wrapped_buffers(info.GetIsolate(), first_slot, count, length,
+                             count_wrapped_memory_deleter));
+}
+
+// wrapped_buffer_create_without_memory(slot): an ArrayBuffer over a store that
+// has no memory. The slot only counts the deleter calls.
+void wrapped_buffer_create_without_memory(
+    const FunctionCallbackInfo<Value> &info) {
+  WrappedMemory *memory =
+      wrapped_memory_at(static_cast<uint32_t>(info[0].As<Number>()->Value()));
+  std::shared_ptr<BackingStore> store(
+      ArrayBuffer::NewBackingStore(nullptr, 0, count_wrapped_memory_deleter,
+                                   memory)
+          .release());
+  info.GetReturnValue().Set(ArrayBuffer::New(info.GetIsolate(), store));
+}
+
+static std::shared_ptr<BackingStore> kept_wrapped_store;
+
+// wrapped_buffer_create_keeping_store(slot): an ArrayBuffer over the memory of
+// the slot. The addon keeps its std::shared_ptr to the store.
+void wrapped_buffer_create_keeping_store(
+    const FunctionCallbackInfo<Value> &info) {
+  kept_wrapped_store =
+      wrap_memory(static_cast<uint32_t>(info[0].As<Number>()->Value()));
+  info.GetReturnValue().Set(
+      ArrayBuffer::New(info.GetIsolate(), kept_wrapped_store));
+}
+
+// wrapped_kept_store_has_memory(slot): whether BackingStore::Data() of the
+// store that the addon kept is the memory of the slot.
+void wrapped_kept_store_has_memory(const FunctionCallbackInfo<Value> &info) {
+  WrappedMemory *memory =
+      wrapped_memory_at(static_cast<uint32_t>(info[0].As<Number>()->Value()));
+  info.GetReturnValue().Set(Boolean::New(
+      info.GetIsolate(),
+      kept_wrapped_store && kept_wrapped_store->Data() == memory->bytes));
+}
+
+void wrapped_kept_store_release(const FunctionCallbackInfo<Value> &info) {
+  kept_wrapped_store.reset();
+}
+
+// wrapped_buffer_pair(slot): two ArrayBuffers made from one store over the
+// memory of the slot.
+void wrapped_buffer_pair(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  std::shared_ptr<BackingStore> store =
+      wrap_memory(static_cast<uint32_t>(info[0].As<Number>()->Value()));
+  Local<Value> buffers[] = {ArrayBuffer::New(isolate, store),
+                            ArrayBuffer::New(isolate, store)};
+  info.GetReturnValue().Set(Array::New(isolate, buffers, 2));
+}
+
+// wrapped_buffer_store_has_memory(buffer, slot): whether the store that
+// ArrayBuffer::GetBackingStore() returns has the memory of the slot.
+void wrapped_buffer_store_has_memory(const FunctionCallbackInfo<Value> &info) {
+  WrappedMemory *memory =
+      wrapped_memory_at(static_cast<uint32_t>(info[1].As<Number>()->Value()));
+  std::shared_ptr<BackingStore> store =
+      info[0].As<ArrayBuffer>()->GetBackingStore();
+  info.GetReturnValue().Set(
+      Boolean::New(info.GetIsolate(), store->Data() == memory->bytes));
+}
+
+// wrapped_memory_get(slot, index) and wrapped_memory_set(slot, index, value):
+// the addon reads and writes its memory, not through an ArrayBuffer.
+void wrapped_memory_get(const FunctionCallbackInfo<Value> &info) {
+  WrappedMemory *memory =
+      wrapped_memory_at(static_cast<uint32_t>(info[0].As<Number>()->Value()));
+  uint32_t index = static_cast<uint32_t>(info[1].As<Number>()->Value());
+  if (index >= sizeof(memory->bytes)) {
+    fprintf(stderr, "a wrapped_memory slot has no byte %u\n", index);
+    abort();
+  }
+  info.GetReturnValue().Set(
+      Number::New(info.GetIsolate(), memory->bytes[index]));
+}
+
+void wrapped_memory_set(const FunctionCallbackInfo<Value> &info) {
+  WrappedMemory *memory =
+      wrapped_memory_at(static_cast<uint32_t>(info[0].As<Number>()->Value()));
+  uint32_t index = static_cast<uint32_t>(info[1].As<Number>()->Value());
+  if (index >= sizeof(memory->bytes)) {
+    fprintf(stderr, "a wrapped_memory slot has no byte %u\n", index);
+    abort();
+  }
+  memory->bytes[index] = static_cast<uint8_t>(info[2].As<Number>()->Value());
+}
+
+// wrapped_memory_deleter_calls(): for every slot, how often the deleter of the
+// store over it has run with the data and the length of that store.
+void wrapped_memory_deleter_calls(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Value> calls[wrapped_memory_slots];
+  for (uint32_t slot = 0; slot < wrapped_memory_slots; slot++) {
+    calls[slot] =
+        Number::New(isolate, wrapped_memory[slot].deleter_calls.load());
+  }
+  info.GetReturnValue().Set(Array::New(isolate, calls, wrapped_memory_slots));
+}
+
+// wrapped_memory_unexpected_deleter_calls(): how often a deleter has run with
+// anything else.
+void wrapped_memory_unexpected_deleter_calls(
+    const FunctionCallbackInfo<Value> &info) {
+  int calls = 0;
+  for (WrappedMemory &memory : wrapped_memory) {
+    calls += memory.unexpected_deleter_calls;
+  }
+  info.GetReturnValue().Set(Number::New(info.GetIsolate(), calls));
+}
+
+// A full collection that is over when this returns, in V8 and in JSC.
+void wrapped_memory_collect_garbage(const FunctionCallbackInfo<Value> &info) {
+  info.GetIsolate()->LowMemoryNotification();
+}
+
+// wrapped_store_destroy_with_null_deleter(slot): the addon destroys a store
+// without a deleter over the memory of the slot.
+void wrapped_store_destroy_with_null_deleter(
+    const FunctionCallbackInfo<Value> &info) {
+  uint32_t slot = static_cast<uint32_t>(info[0].As<Number>()->Value());
+  std::unique_ptr<BackingStore> store =
+      wrap_memory(slot, sizeof(WrappedMemory::bytes), nullptr);
+  store.reset();
+}
+
+// wrapped_buffers_create_with_null_deleter(firstSlot, count): like
+// wrapped_buffers_create, but the stores have no deleter.
+void wrapped_buffers_create_with_null_deleter(
+    const FunctionCallbackInfo<Value> &info) {
+  uint32_t first_slot = static_cast<uint32_t>(info[0].As<Number>()->Value());
+  uint32_t count = static_cast<uint32_t>(info[1].As<Number>()->Value());
+  info.GetReturnValue().Set(
+      create_wrapped_buffers(info.GetIsolate(), first_slot, count,
+                             sizeof(WrappedMemory::bytes), nullptr));
+}
+
 void test_v8_function_call(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   Local<Context> context = isolate->GetCurrentContext();
@@ -3103,6 +3365,32 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "detach_array_buffer", detach_array_buffer);
   NODE_SET_METHOD(exports, "detach_array_buffer_with_pending_exception",
                   detach_array_buffer_with_pending_exception);
+  NODE_SET_METHOD(exports, "test_v8_new_backing_store",
+                  test_v8_new_backing_store);
+  NODE_SET_METHOD(exports, "wrapped_buffers_create", wrapped_buffers_create);
+  NODE_SET_METHOD(exports, "wrapped_buffer_create_without_memory",
+                  wrapped_buffer_create_without_memory);
+  NODE_SET_METHOD(exports, "wrapped_buffer_create_keeping_store",
+                  wrapped_buffer_create_keeping_store);
+  NODE_SET_METHOD(exports, "wrapped_kept_store_has_memory",
+                  wrapped_kept_store_has_memory);
+  NODE_SET_METHOD(exports, "wrapped_kept_store_release",
+                  wrapped_kept_store_release);
+  NODE_SET_METHOD(exports, "wrapped_buffer_pair", wrapped_buffer_pair);
+  NODE_SET_METHOD(exports, "wrapped_buffer_store_has_memory",
+                  wrapped_buffer_store_has_memory);
+  NODE_SET_METHOD(exports, "wrapped_memory_get", wrapped_memory_get);
+  NODE_SET_METHOD(exports, "wrapped_memory_set", wrapped_memory_set);
+  NODE_SET_METHOD(exports, "wrapped_memory_deleter_calls",
+                  wrapped_memory_deleter_calls);
+  NODE_SET_METHOD(exports, "wrapped_memory_unexpected_deleter_calls",
+                  wrapped_memory_unexpected_deleter_calls);
+  NODE_SET_METHOD(exports, "wrapped_memory_collect_garbage",
+                  wrapped_memory_collect_garbage);
+  NODE_SET_METHOD(exports, "wrapped_store_destroy_with_null_deleter",
+                  wrapped_store_destroy_with_null_deleter);
+  NODE_SET_METHOD(exports, "wrapped_buffers_create_with_null_deleter",
+                  wrapped_buffers_create_with_null_deleter);
   NODE_SET_METHOD(exports, "test_v8_function_call", test_v8_function_call);
   NODE_SET_METHOD(exports, "test_v8_function_new_instance",
                   test_v8_function_new_instance);

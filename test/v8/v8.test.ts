@@ -705,6 +705,102 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     });
   });
 
+  describe("ArrayBuffer::NewBackingStore", () => {
+    // These addon functions delete a BackingStore, which an addon built with `node-gyp --debug` cannot do on
+    // Windows (see "BackingStore" below).
+    const withDebugAddon = !isWindows;
+
+    it("calls the deleter once, when the addon destroys the store", async () => {
+      const output = await checkSameOutput("test_v8_new_backing_store", undefined, undefined, withDebugAddon);
+      // the addon prints through the C runtime, which ends lines with \r\n on Windows
+      expect(output.split(/\r?\n/)).toEqual([
+        "store->Data() == unique_owned.bytes = 1",
+        "unique_owned.deleter_calls = 0",
+        "unique_owned.deleter_calls = 1",
+        "copy->Data() == shared_owned.bytes = 1",
+        "shared_owned.deleter_calls = 0",
+        "shared_owned.deleter_calls = 1",
+        "store->Data() == zero_length.bytes = 1",
+        "zero_length.deleter_calls = 1",
+        "store->Data() == nullptr = 1",
+        "no_memory.deleter_calls + no_memory.unexpected_deleter_calls = 0",
+        "unexpected_deleter_calls = 0",
+      ]);
+    });
+
+    it("ArrayBuffer::New shares the store's memory and keeps the store until the buffer is detached or collected", async () => {
+      const output = await checkSameOutput(
+        "test_v8_array_buffer_from_backing_store",
+        undefined,
+        undefined,
+        withDebugAddon,
+      );
+      expect(output.split(/\r?\n/)).toEqual([
+        "====== the addon drops its std::shared_ptr, JS holds 1 of 65 buffers",
+        "deleters of the 64 buffers that nothing refers to: 64 of 64 ran, 0 more than once",
+        "deleter calls for the buffer that JS holds = 0",
+        "the addon reads what JS wrote = 77",
+        "JS reads what the addon wrote = 200",
+        "GetBackingStore() has the addon's memory = true",
+        "byteLength = 8, detached = false",
+        "deleter calls after Detach() = 1",
+        "byteLength = 0, detached = true view length = 0",
+        "deleter calls after a second Detach() = 1",
+        "deleters after JS dropped the detached buffer and a collection ran: 65 of 65 ran, 0 more than once",
+        "====== the addon keeps its std::shared_ptr past Detach()",
+        "byteLength = 0, detached = true",
+        "deleter calls after Detach() and a collection = 0",
+        "the store still has the addon's memory = true",
+        "the addon reads what JS wrote = 42",
+        "deleter calls after the addon released the store = 1",
+        "====== two ArrayBuffers from one store",
+        "two objects = true",
+        "the second reads what JS wrote to the first = 11",
+        "deleter calls after Detach() of the first = 0",
+        "second: byteLength = 8, detached = false first byte = 11",
+        "deleter calls after Detach() of the second = 1",
+        "====== JS keeps a view and not the buffer",
+        "deleter calls while JS holds the view = 0",
+        "the view reads what the addon wrote = 123",
+        "deleter calls after Detach() of the view's buffer = 1",
+        "view length = 0",
+        "====== a store over zero bytes of the addon's memory",
+        "byteLength = 0, detached = false view length = 0",
+        "deleter calls while JS holds the buffer = 0",
+        "byteLength = 0, detached = true",
+        "deleter calls after Detach() = 1",
+        "====== a store over no memory",
+        "byteLength = 0, detached = false view length = 0",
+        "byteLength = 0, detached = true",
+        "====== once nothing refers to a buffer and a collection ran",
+        "deleters of the 69 stores with memory: 69 of 69 ran, 0 more than once",
+        "deleter calls for the store over no memory = 0",
+        "deleter calls without the store's data and length = 0",
+      ]);
+    });
+
+    // V8 calls the deleter without checking it, so this cannot be compared against Node.
+    it("has nothing to call when the deleter is null", async () => {
+      const expected = [
+        "the addon destroyed a store that no ArrayBuffer was made from",
+        "a collection ran while nothing refers to 8 of 9 buffers",
+        "the addon reads what JS wrote = 77",
+        "JS reads what the addon wrote = 200",
+        "byteLength = 0, detached = true",
+        "a collection ran after JS dropped the detached buffer",
+      ].join("\n");
+      const buildModes = withDebugAddon ? [BuildMode.release, BuildMode.debug] : [BuildMode.release];
+      const outputs = await Promise.all(
+        buildModes.map(buildMode => runOn(Runtime.bun, buildMode, "test_v8_new_backing_store_null_deleter")),
+      );
+      for (const [i, output] of outputs.entries()) {
+        expect(output.replaceAll(/^\[\w+\].+$/gm, "").trim(), `addon built in ${BuildMode[buildModes[i]]} mode`).toBe(
+          expected,
+        );
+      }
+    });
+  });
+
   describe("BackingStore", () => {
     it("is deleted by the addon that owns it", async () => {
       // On Windows `node-gyp --debug` links the debug C runtime, whose operator delete only takes blocks from its

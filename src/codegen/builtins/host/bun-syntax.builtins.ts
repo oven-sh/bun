@@ -85,6 +85,7 @@ export default b.declarations(
   b.intrinsic("putByValDirect", "Call", { intrinsic: "PutByValDirect", privateKey: false }),
   operation("putInternalField", "PutInternalField"),
 
+  b.intrinsic("AggregateError", "Value", builtin("AggregateError")),
   b.intrinsic("Array", "Value", builtin("Array")),
   b.intrinsic("Buffer", "Value", builtin("Buffer")),
   b.intrinsic("isArray", "Call", builtin("Array.isArray")),

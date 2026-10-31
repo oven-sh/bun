@@ -479,6 +479,7 @@ interface Map<K, V> {
   readonly $size: Map<K, V>["size"];
 }
 
+declare var $AggregateError: AggregateErrorConstructor;
 declare var $Array: ArrayConstructor;
 declare var $Buffer: {
   byteLength: typeof Buffer.byteLength;

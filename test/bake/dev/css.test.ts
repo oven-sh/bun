@@ -1081,6 +1081,52 @@ devTest("a page whose html has no </head> takes stylesheet updates", {
     await c.style("h1").color.expect.toBe("#00f");
   },
 });
+devTest("a stylesheet follows the link tags that a framework removes and appends", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"], body: "<h1>hello</h1>" }),
+    "index.ts": `import "./m.css"; console.log("1"); import.meta.hot.accept();`,
+    "m.css": `h1 { color: red; }`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("1");
+    await c.js`
+      const { href } = document.querySelector("link[rel=stylesheet]");
+      // The HMR runtime learns of a change to <head> in a later task.
+      globalThis.seen = () => new Promise(resolve => setTimeout(resolve));
+      // Appends a link tag for the stylesheet of the page and waits until it has loaded.
+      globalThis.appendLink = () =>
+        new Promise((resolve, reject) => {
+          const link = document.createElement("link");
+          link.rel = "stylesheet";
+          link.onload = () => resolve(seen());
+          link.onerror = reject;
+          link.href = href;
+          document.head.insertBefore(link, null);
+        });
+    `;
+    await c.js`
+      document.querySelector("link[rel=stylesheet]").remove();
+      await seen();
+      await appendLink();
+    `;
+    await c.style("h1").color.expect.toBe("red");
+    await dev.write("index.ts", `console.log("2"); import.meta.hot.accept();`);
+    await c.expectMessage("2");
+    await c.style("h1").notFound();
+    await dev.write("index.ts", `import "./m.css"; console.log("3"); import.meta.hot.accept();`);
+    await c.expectMessage("3");
+    await c.style("h1").color.expect.toBe("red");
+    // A framework appends its own link tag before it removes the one that the server rendered.
+    await c.js`
+      const rendered = document.querySelector("link[rel=stylesheet]");
+      await appendLink();
+      rendered.remove();
+      await seen();
+    `;
+    await c.style("h1").color.expect.toBe("red");
+  },
+});
 
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);

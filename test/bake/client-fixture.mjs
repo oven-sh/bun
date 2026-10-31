@@ -12,6 +12,16 @@ process.on("unhandledRejection", reason => {
   process.exit(exitCodeMap.reloadFailed);
 });
 
+// happy-dom holds the callback of a MutationObserver only through a WeakRef, so
+// an observer stops at the next GC. A browser keeps it for as long as it observes.
+let mutationObserverCallbacks = [];
+globalThis.WeakRef = class extends WeakRef {
+  constructor(target) {
+    super(target);
+    if (typeof target === "function") mutationObserverCallbacks.push(target);
+  }
+};
+
 const args = process.argv.slice(2);
 let url = args.find(arg => !arg.startsWith("-"));
 if (!url) {
@@ -43,6 +53,7 @@ let internalAPIs;
 
 function reset() {
   windowGeneration++;
+  mutationObserverCallbacks = [];
   for (const ws of webSockets) {
     ws.onclose = () => {};
     ws.onerror = () => {};

@@ -94,6 +94,22 @@ test("node:dgram Symbol.asyncDispose closes the socket and resolves after 'close
   expect(() => socket.address()).toThrow(expect.objectContaining({ code: "ERR_SOCKET_DGRAM_NOT_RUNNING" }));
 });
 
+test("node:dgram setMulticastTTL accepts 0-255, setTTL accepts 1-255", async () => {
+  await using socket = dgram.createSocket("udp4");
+  const { promise, resolve } = Promise.withResolvers();
+  socket.bind(0, "127.0.0.1", resolve);
+  await promise;
+
+  expect(socket.setMulticastTTL(0)).toBe(0);
+  expect(socket.setMulticastTTL(255)).toBe(255);
+  expect(() => socket.setMulticastTTL(256)).toThrow(
+    expect.objectContaining({ code: "EINVAL", message: "setMulticastTTL EINVAL" }),
+  );
+
+  expect(socket.setTTL(1)).toBe(1);
+  expect(() => socket.setTTL(0)).toThrow(expect.objectContaining({ code: "EINVAL", message: "setTTL EINVAL" }));
+});
+
 describe.skipIf(!isIPv6())("node:dgram", () => {
   it("adds membership successfully (IPv6)", () => {
     const socket = makeSocket6();

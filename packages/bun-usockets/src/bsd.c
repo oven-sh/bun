@@ -515,8 +515,8 @@ int bsd_socket_set_source_specific_membership(LIBUS_SOCKET_DESCRIPTOR fd, const 
     return -1;
 }
 
-static int bsd_socket_ttl_any(LIBUS_SOCKET_DESCRIPTOR fd, int ttl, int ipv4, int ipv6) {
-    if (ttl < 1 || ttl > 255) {
+static int bsd_socket_ttl_any(LIBUS_SOCKET_DESCRIPTOR fd, int ttl, int min_ttl, int ipv4, int ipv6) {
+    if (ttl < min_ttl || ttl > 255) {
 #ifdef _WIN32
         WSASetLastError(WSAEINVAL);
 #endif
@@ -528,11 +528,14 @@ static int bsd_socket_ttl_any(LIBUS_SOCKET_DESCRIPTOR fd, int ttl, int ipv4, int
 }
 
 int bsd_socket_ttl_unicast(LIBUS_SOCKET_DESCRIPTOR fd, int ttl) {
-    return bsd_socket_ttl_any(fd, ttl, IP_TTL, IPV6_UNICAST_HOPS);
+    return bsd_socket_ttl_any(fd, ttl, 1, IP_TTL, IPV6_UNICAST_HOPS);
 }
 
 int bsd_socket_ttl_multicast(LIBUS_SOCKET_DESCRIPTOR fd, int ttl) {
-    return bsd_socket_ttl_any(fd, ttl, IP_MULTICAST_TTL, IPV6_MULTICAST_HOPS);
+    /* 0 keeps multicast on the local host. Node accepts 0-255 here:
+     * see https://github.com/libuv/libuv/blob/4cf8d9bf396e6370a7992fb59cb7901abc2aa05d/src/unix/udp.c#L1144
+     * libuv's Windows build also accepts -1 (src/win/udp.c#L1002); Bun keeps 0-255 on every platform. */
+    return bsd_socket_ttl_any(fd, ttl, 0, IP_MULTICAST_TTL, IPV6_MULTICAST_HOPS);
 }
 
 int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay) {

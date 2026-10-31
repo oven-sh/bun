@@ -1124,6 +1124,7 @@ describe("Bun.build", () => {
     expect(result.outputs).toHaveLength(1);
     const output = await result.outputs[0].text();
     expect(output.match(/console\.log\("mod"\)/g)).toHaveLength(1);
+    expect(new Bun.Transpiler().scanImports(output).map(i => i.path)).toEqual([]);
   });
 
   // The imports of that file are resolved from its real directory. A link that leaves the

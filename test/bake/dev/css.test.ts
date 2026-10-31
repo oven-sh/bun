@@ -1033,6 +1033,7 @@ devTest("script that does not build is not a stylesheet of a page that reaches i
     await dev.write("broken.ts", `console.log("v2"`, { errors: null });
     // This request bundles "first.html" together with the script that does not build.
     expect((await linkedStylesheets(dev, "/first")).status).toBe(500);
+    // The bundle of "second.html" does not hold the script, so this page loads. It must not link the script.
     expect((await linkedStylesheets(dev, "/second")).sheets).toEqual([]);
   },
 });
@@ -1176,8 +1177,11 @@ devTest("css file that an onLoad plugin turns into javascript is bundled as a mo
   },
   async test(dev) {
     expect(await linkedStylesheets(dev, "/")).toEqual({ status: 200, sheets: [".dep-v1"] });
+    const stylesheet = (await dev.fetch("/").text()).match(/<link[^>]*href="([^"]+)"/)![1];
     await dev.write("dep.css", `/* as javascript */`, { errors: null });
     expect(await linkedStylesheets(dev, "/")).toEqual({ status: 200, sheets: [] });
+    // The dev server no longer serves the stylesheet that the file had.
+    expect((await dev.fetch(stylesheet)).status).toBe(404);
     const script = (await dev.fetch("/").text()).match(/<script[^>]*src="([^"]+)"/)![1];
     expect(await dev.fetch(script).text()).toContain("globalThis.dep = 1;");
   },
@@ -1321,6 +1325,33 @@ devTest("css import before create project relative", {
     assert(backgroundImage);
     await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
     await dev.fetch("/").expect.toContain("HELLO");
+  },
+});
+devTest("css file saved with an @import that an onResolve plugin declines does not kill old styles", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./decline-plugin.ts"]
+    `,
+    "decline-plugin.ts": `
+      export default {
+        name: "decline-plugin",
+        setup(build) {
+          build.onResolve({ filter: /declined\\.css$/ }, () => undefined);
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ styles: ["styles.css"], body: `hello world` }),
+    "styles.css": `body { color: red; }`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style("body").color.expect.toBe("red");
+    // The plugin declines this import, and then the resolver does not find the file.
+    await dev.write("styles.css", `@import "./missing-declined.css";\nbody { color: blue; }`, { errors: null });
+    await c.style("body").color.expect.toBe("red");
+    await dev.write("styles.css", `body { color: green; }`);
+    await c.style("body").color.expect.toBe("green");
   },
 });
 

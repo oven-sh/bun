@@ -504,6 +504,26 @@ impl ChannelOwner for WorkerCommands {
     }
 }
 
+/// Windows: refs the loop for the wait between files, so that wait blocks. The channel's pipe is unref'd (`Channel::adopt`).
+#[cfg(windows)]
+#[must_use = "without it the wait polls in a busy loop"]
+struct CoordinatorWait<'a>(&'a VirtualMachine);
+
+#[cfg(windows)]
+impl<'a> CoordinatorWait<'a> {
+    fn begin(vm: &'a VirtualMachine) -> Self {
+        vm.uws_loop_mut().ref_();
+        Self(vm)
+    }
+}
+
+#[cfg(windows)]
+impl Drop for CoordinatorWait<'_> {
+    fn drop(&mut self) {
+        self.0.uws_loop_mut().unref();
+    }
+}
+
 // Hoisted from a local struct inside run_as_worker — Rust does not
 // support method-bearing local structs that need to be named in a generic call.
 struct WorkerLoop<'a> {
@@ -544,6 +564,9 @@ impl<'a> WorkerLoop<'a> {
         self.cmds.emit(frame::Kind::Ready, |_| {});
 
         loop {
+            // POSIX has no guard and polls in this wait: a block was slower in some suites, faster in others (#47437).
+            #[cfg(windows)]
+            let waiting = CoordinatorWait::begin(vm);
             while self.cmds.pending_idx.is_none() && !self.cmds.done {
                 vm.event_loop_ref().tick();
                 if self.cmds.pending_idx.is_some() || self.cmds.done {
@@ -551,6 +574,8 @@ impl<'a> WorkerLoop<'a> {
                 }
                 vm.event_loop_ref().auto_tick();
             }
+            #[cfg(windows)]
+            drop(waiting);
             let Some(idx) = self.cmds.pending_idx else {
                 break;
             };

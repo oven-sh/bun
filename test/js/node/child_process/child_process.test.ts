@@ -1660,6 +1660,43 @@ describe("spawn/execFile({signal}) does not leak abort listeners on spawn failur
     expect(leaked).toBe(0);
   });
 
+  it("records the failed spawn code on exitCode before error and close", async () => {
+    const child = spawn("/nonexistent-binary-xyz");
+    let errorCode: number | null = null;
+    const closed = new Promise<number>((resolve, reject) => {
+      child.once("error", (error: NodeJS.ErrnoException) => {
+        errorCode = child.exitCode;
+        try {
+          expect(error.code).toBe("ENOENT");
+          expect(errorCode).toBe(error.errno!);
+        } catch (error) {
+          reject(error);
+        }
+      });
+      child.once("close", resolve);
+    });
+    expect(child.exitCode).toBeNull();
+    const closeCode = await closed;
+
+    expect(closeCode).toBeLessThan(0);
+    expect(errorCode).toBe<number | null>(closeCode);
+    expect(child.exitCode).toBe(closeCode);
+  });
+
+  it("emits the failed spawn close code with a null signal", async () => {
+    const child = spawn("/nonexistent-binary-xyz");
+    let errno: number | undefined;
+    child.once("error", (error: NodeJS.ErrnoException) => {
+      errno = error.errno;
+    });
+    const closeArgs = await new Promise<unknown[]>(resolve => {
+      child.once("close", (...args) => resolve(args));
+    });
+
+    expect(errno).toBeLessThan(0);
+    expect(closeArgs).toEqual([errno, null]);
+  });
+
   it.concurrent("spawn with nonexistent cwd", async () => {
     const leaked = await failN(signal =>
       spawn(bunExe(), ["-e", "1"], { signal, cwd: "/nonexistent-dir-xyz", env: bunEnv }),

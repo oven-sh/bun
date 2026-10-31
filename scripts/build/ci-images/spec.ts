@@ -220,11 +220,14 @@ export const pins = {
       "x86_64-pc-windows-msvc",
     ],
   },
+  // The same release builds the Android prebuilt of oven-sh/WebKit (its Dockerfile.android, NDK_VERSION). Bun's
+  // objects and the prebuilt share libc++ types inline (std::expected across the parser seam), and libc++'s layout
+  // of those differs between NDK releases, so the two pins move together, with WEBKIT_VERSION in deps/webkit.ts.
   androidNdk: {
-    version: "r27c",
+    version: "r30",
     apiLevel: 28,
     // Google only publishes a SHA-1, in dl.google.com/android/repository/repository2-3.xml. This is of the file that has it.
-    sha256: "59c2f6dc96743b5daf5d1626684640b20a6bd2b1d85b13156b90333741bad5cc",
+    sha256: "753611f410d002cfcd3f3dc2ef49aad532089d3180b436c060a90bf0fcb64df2",
   },
   // download.freebsd.org has a release until its end of life, and then only archive.freebsd.org/old-releases does.
   freebsd: {
@@ -1181,7 +1184,7 @@ function androidNdk(): Tool {
         into: parent,
       }),
       move(`${parent}/android-ndk-${version}`, ndk),
-      comment("The NDK's own clang, lldb and non-Android runtimes: about 1.1 GB nothing uses."),
+      comment("The NDK's own clang, lldb, simpleperf, shader tools and sources: about 1 GB nothing uses."),
       remove(
         `${prebuilt}/bin`,
         `${prebuilt}/python3`,

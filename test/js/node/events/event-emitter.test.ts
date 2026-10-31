@@ -1227,7 +1227,7 @@ async function expectNoArrayForEachEmit(setup: string, emit: string) {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(exitCode).toBe(0);
+  expect(exitCode, stderr).toBe(0);
   if (Number(stdout) === 0 || Number(stdout) >= 1_000_000) return; // This Bun runs without the optimizing JIT.
   expect(stderr.match(/(Eden|Full)Collection/g)?.length ?? 0).toBeLessThan(6);
 }
@@ -1292,6 +1292,24 @@ test.concurrent.each([
     `i % 1000 === 999 ? emitter.emit("error", i) : emitter.emit("x", i)`,
   ],
   [
+    "one that is thrown in a thousand emits",
+    `emitter.on("error", listener); const unheard = new (require("node:events"))(); const failure = new Error("unheard");
+     const fail = () => { try { unheard.emit("error", failure); } catch {} };`,
+    `i % 1000 === 999 ? fail() : emitter.emit("error", i)`,
+  ],
+  [
+    "after 300 on an emitter with a listener of errorMonitor",
+    `emitter.on("error", listener); const watched = new (require("node:events"))(); watched.on("error", listener);
+     watched.on(require("node:events").errorMonitor, () => {}); for (let k = 0; k < 300; k++) watched.emit("error", k);`,
+    `emitter.emit("error", i)`,
+  ],
+  [
+    "after 300 with four arguments to two listeners",
+    `emitter.on("error", listener); const both = new (require("node:events"))(); both.on("error", listener); both.on("error", () => {});
+     for (let k = 0; k < 300; k++) both.emit("error", k, k, k, k);`,
+    `emitter.emit("error", i)`,
+  ],
+  [
     "300 before the loop, with an emit() that is not inlined",
     `emitter.on("error", listener); emitter.on("x", listener); require("bun:jsc").noInline(emitter.emit);
      for (let k = 0; k < 300; k++) emitter.emit("error", k);`,
@@ -1344,6 +1362,146 @@ describe.each([0, 1, 2, 5])('emit("error") with %d arguments', count => {
     expect(seen).toEqual([args]);
     expect({ code: thrown?.code, context: thrown?.context }).toEqual({ code: "ERR_UNHANDLED_ERROR", context: args[0] });
   });
+});
+
+// Who listens can change while emit("error") runs, and the receiver need not be an emitter.
+describe.each([0, 1, 2, 5])('emit("error") with %d arguments, of which the first is an Error', count => {
+  const args = Array.from({ length: count }, (_, i) => (i === 0 ? new Error("argument 0") : `argument ${i}`));
+
+  // Node reads the list of "error" after the listeners of errorMonitor ran.
+  test("calls a listener that one of errorMonitor added", () => {
+    const emitter = new EventEmitter();
+    const calls: unknown[] = [];
+    emitter.on(EventEmitter.errorMonitor, () => {
+      if (emitter.listenerCount("error") === 0) emitter.on("error", (...got: unknown[]) => calls.push(got));
+    });
+    expect(emitter.emit("error", ...args)).toBe(true);
+    expect(calls).toEqual([args]);
+  });
+
+  // once() takes its wrapper off first. It was the last listener, so `_events` is a new object, and emit() goes on with the old one.
+  test("does not see a listener added to a new `_events` by the only listener, one of errorMonitor", () => {
+    const emitter = new EventEmitter();
+    const calls: string[] = [];
+    emitter.once(EventEmitter.errorMonitor, () => {
+      emitter.on("error", () => calls.push("added"));
+    });
+    let thrown: any;
+    try {
+      emitter.emit("error", ...args);
+    } catch (error) {
+      thrown = error;
+    }
+    if (count === 0) expect(thrown?.code).toBe("ERR_UNHANDLED_ERROR");
+    else expect(thrown).toBe(args[0]);
+    expect(calls).toEqual([]);
+    expect(emitter.listenerCount("error")).toBe(1);
+  });
+
+  test("calls no listener that one of errorMonitor removed, and throws if none is left", () => {
+    const emitter = new EventEmitter();
+    const calls: string[] = [];
+    const removed = () => calls.push("removed");
+    emitter.on("error", removed);
+    emitter.on("error", () => calls.push("kept"));
+    emitter.on(EventEmitter.errorMonitor, () => {
+      calls.push("monitor");
+      emitter.off("error", removed);
+    });
+    expect(emitter.emit("error", ...args)).toBe(true);
+    expect(calls).toEqual(["monitor", "kept"]);
+
+    emitter.on(EventEmitter.errorMonitor, () => emitter.removeAllListeners("error"));
+    let thrown: any;
+    try {
+      emitter.emit("error", ...args);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(calls).toEqual(["monitor", "kept", "monitor"]);
+    if (count === 0) expect(thrown?.code).toBe("ERR_UNHANDLED_ERROR");
+    else expect(thrown).toBe(args[0]);
+  });
+
+  test("stops at a listener that throws", () => {
+    const emitter = new EventEmitter();
+    const calls: string[] = [];
+    const thrown = new RangeError("from the second");
+    emitter.on("error", () => calls.push("first"));
+    emitter.on("error", () => {
+      calls.push("second");
+      throw thrown;
+    });
+    emitter.on("error", () => calls.push("third"));
+    let caught: unknown;
+    try {
+      emitter.emit("error", ...args);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBe(thrown);
+    expect(calls).toEqual(["first", "second"]);
+  });
+
+  test("calls the list as it was when a listener removes the next one, adds one or removes all", () => {
+    const emitter = new EventEmitter();
+    const calls: string[] = [];
+    const second = () => calls.push("second");
+    emitter.on("error", () => {
+      calls.push("first");
+      emitter.off("error", second);
+      emitter.on("error", () => calls.push("added"));
+    });
+    emitter.on("error", second);
+    emitter.on("error", () => {
+      calls.push("third");
+      emitter.removeAllListeners();
+    });
+    emitter.on("error", () => calls.push("fourth"));
+    expect(emitter.emit("error", ...args)).toBe(true);
+    expect(calls).toEqual(["first", "second", "third", "fourth"]);
+    expect(emitter.listenerCount("error")).toBe(0);
+  });
+
+  test.each([undefined, null])("throws a TypeError where the receiver is %p", receiver => {
+    expect(() => EventEmitter.prototype.emit.call(receiver as any, "error", ...args)).toThrow(TypeError);
+  });
+
+  test.each([
+    ["a number", 5],
+    ["a plain object", {}],
+    ["an object that no constructor ran on", Object.create(EventEmitter.prototype)],
+  ])("throws what an emitter with no listener throws where the receiver is %s", (_, receiver) => {
+    let thrown: any;
+    try {
+      EventEmitter.prototype.emit.call(receiver as any, "error", ...args);
+    } catch (error) {
+      thrown = error;
+    }
+    if (count === 0)
+      expect({ code: thrown?.code, context: thrown?.context }).toEqual({
+        code: "ERR_UNHANDLED_ERROR",
+        context: undefined,
+      });
+    else expect(thrown).toBe(args[0]);
+  });
+});
+
+// The functions of node:events between a listener of "error" and the caller of emit(). Compiled ahead of time they are the same: test/aot/parallel/library-modules/frames-of-the-listeners-of-error.cjs.
+test('a stack trace in a listener of "error" has emit() above the listener', () => {
+  const emitter = new EventEmitter();
+  let stack = "";
+  emitter.on("error", function heard() {
+    stack = new Error().stack!;
+  });
+  (function caller() {
+    emitter.emit("error", new Error("reset"));
+  })();
+  const functions = stack
+    .split("\n")
+    .slice(1, 4)
+    .map(line => line.trim().split(" ")[1]);
+  expect(functions).toEqual(["heard", "emit", "caller"]);
 });
 
 // What a Proxy in the place of the emitter, and one in the place of `_events`, see of emit("error"): each read once, whoever listens.

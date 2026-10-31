@@ -9,6 +9,10 @@ describe("test.failing with a done callback", () => {
     done(undefined);
   });
 
+  test.failing("fails when done is called with a falsy value", done => {
+    done(false);
+  });
+
   test.failing("fails when all expectations are met and done is called without an error", done => {
     expect(1).toBe(1);
     done();

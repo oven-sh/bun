@@ -1661,6 +1661,8 @@ const fileGeneration: () => number = $bindgen("jest.bind.ts", "fileGeneration");
 // `done` binds the intended sequence so a late call after the bun:test watchdog
 // moved on cannot write onto the currently-running test.
 const markCurrentResult: (todo: boolean, done: Done) => void = $bindgen("jest.bind.ts", "nodeTestMarkResult");
+// `done(failure)` where every failure except undefined and null fails the entry. bun:test's done(value) fails only on a truthy value.
+const doneWithFailure: (failure: unknown, done: Done) => void = $bindgen("jest.bind.ts", "nodeTestDone");
 
 let rootNode: TestNode | undefined;
 let rootGeneration = -1;
@@ -2577,12 +2579,12 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
         } else if (node.todoFlag && !declaredTodo && (runChildReporterEnabled || !todoBefore)) {
           markCurrentResult(true, done);
         } else {
-          done(failure);
+          doneWithFailure(failure, done);
           return;
         }
         done(undefined);
       },
-      err => done(err),
+      err => doneWithFailure(err, done),
     );
   };
 }
@@ -2840,7 +2842,7 @@ function before(arg0: unknown, arg1: unknown) {
   beforeAll((done: (error?: unknown) => void) => {
     Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
       () => done(),
-      err => done(err ?? new Error("before hook failed")),
+      err => doneWithFailure(err ?? new Error("before hook failed"), done),
     );
   });
 }
@@ -2856,7 +2858,7 @@ function after(arg0: unknown, arg1: unknown) {
   afterAll((done: (error?: unknown) => void) => {
     Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
       () => done(),
-      err => done(err ?? new Error("after hook failed")),
+      err => doneWithFailure(err ?? new Error("after hook failed"), done),
     );
   });
 }

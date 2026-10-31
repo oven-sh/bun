@@ -36,4 +36,9 @@ impl DoneCallback {
         );
         call_fn.bind(global, value, &BunString::static_("done"), 1.0, &[])
     }
+
+    /// The `DoneCallback` behind a `done` that [`DoneCallback::bind`] returned.
+    pub(crate) fn from_bound(done: JSValue) -> Option<&'static DoneCallback> {
+        bun_jsc::cpp::Bun__JSBoundFunction__boundThis(done).as_class_ref::<DoneCallback>()
+    }
 }

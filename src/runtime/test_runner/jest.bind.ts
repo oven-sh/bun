@@ -7,6 +7,9 @@ export const nodeTestMarkResult = b.fn({ args: { todo: b.bool, done: b.any } });
 
 const js = { capability: "js", throws: true } as const;
 
+/** For `node:test`: `done(failure)` where every `failure` except undefined and null fails, so a thrown `0` fails too. */
+export const nodeTestDone = b.fn({ args: { failure: b.any, done: b.any }, ...js });
+
 /** `Bun.jest(path)` is what `import "bun:test"` gives the file at `path`. Outside of `bun test`, and in a preload, it takes anything. */
 export const jest = b.fn({ args: { path: b.string.utf8.otherAsNull }, returns: b.any, ...js });
 /** Also `jest.setTimeout`. */

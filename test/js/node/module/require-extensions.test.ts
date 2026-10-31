@@ -1,6 +1,6 @@
 import assert from "assert";
 import { describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, nodeExe, tempDir } from "harness";
 import path from "path";
 
 test("require.extensions shape makes sense", () => {
@@ -388,7 +388,7 @@ describe.concurrent("handler that calls the loader it replaced, for a module tha
           const compile = module._compile;
           module._compile = function (code) {
             module._compile = compile;
-            if (shape === "pirates-evict") delete require.cache[filename];
+            if (shape === "pirates-evict") delete require.cache[module.id];
             return module._compile(code, filename);
           };
         }
@@ -496,11 +496,12 @@ describe.concurrent("handler that calls the loader it replaced, for a module tha
   });
 });
 
-// Which handler a require() gets depends on the file name and on what the importer asked for. It does
-// not depend on which other extensions have a handler. One fresh process for each set of other handlers.
+// Which handler a require() gets depends on the file name, and on the loader that the importer or the
+// configuration asked for. It does not depend on which other extensions have a handler. One fresh process
+// for each set of handlers.
 //
-// A `?query` belongs to the module key, not to the file name. The handler gets the key, as Node's
-// handlers do when `Module._resolveFilename` returns a name with a `?`.
+// A `?query` belongs to the module key, not to the file name. The handler gets the file name, as
+// `process.dlopen` does for a native addon. `module.filename` is the key.
 describe.concurrent("the handler that a require() selects", () => {
   const jsx = `
       /** @jsxRuntime classic */
@@ -508,6 +509,8 @@ describe.concurrent("the handler that a require() selects", () => {
       const h = (tag, props, ...children) => ({ tag, children });`;
   const files = {
     "x.foo": `module.exports = "plain x.foo";`,
+    "ß.foo": `module.exports = "plain ß.foo";`,
+    "日本п.foo": `module.exports = "plain 日本п.foo";`,
     "p.js": `module.exports = "plain p.js";`,
     "p": `module.exports = "plain p";`,
     "j.js": `${jsx}
@@ -533,17 +536,18 @@ describe.concurrent("the handler that a require() selects", () => {
         calls.push(".js got " + path.basename(filename));
         return original(module, filename);
       }
-      if (others === "a wrapped .js" || others === "a restored .js") Module._extensions[".js"] = wrapper;
+      if (others.includes("a wrapped .js") || others === "a restored .js") Module._extensions[".js"] = wrapper;
       if (others === "a restored .js") Module._extensions[".js"] = original;
       if (others === ".css") Module._extensions[".css"] = handler(".css");
-      for (const key of [".foo", ".sh", ".spec.js", ".lit.md"]) Module._extensions[key] = handler(key);
-      for (const key of [".alias", ".data.js"]) Module._extensions[key] = Module._extensions[".json"];
-
-      const rows = {};
-      for (const [specifier, options] of [
+      Module._extensions[".foo"] = handler(".foo");
+      const requests = [
         ["./x.foo"],
         ["./x.foo?query"],
         ["./x?query"],
+        ["./x.foo?a?b"],
+        ["./x.foo?dir=a/b.js"],
+        ["./ß.foo?v=1"],
+        ["./日本п.foo?v=1"],
         ["./x.foo?raw"],
         ["./x.foo", { type: "text" }],
         ["./x.foo", { type: "bogus" }],
@@ -551,25 +555,36 @@ describe.concurrent("the handler that a require() selects", () => {
         ["./x.foo?raw", { type: "js" }],
         ["./p.js"],
         ["./p.js?query"],
+        ["./p.js?v=日本"],
+        ["./p.js?dir=a/b.foo"],
         ["./p.js?raw"],
         ["./p.js", { type: "text" }],
         ["./p.js", { type: "bogus" }],
+        ["./p.js", { type: "js" }],
         ["./j.js?query"],
+        ["./j.js?dir=a/b.ts"],
+        ["./y.bar"],
         ["./p?x.js"],
         ["./p?x.foo"],
         ["./y.bar?v=1.js"],
         ["./y.bar?v=1.foo"],
         ['data:text/javascript,module.exports = "data"; //a.spec.js'],
-        ["./s.sh"],
-        ["./a.spec.js"],
-        ["./n.lit.md"],
-        ["./d.alias"],
-        ["./d.alias?query"],
-        ["./d.data.js"],
-      ]) {
+      ];
+      if (others === "handlers on more keys") {
+        for (const key of [".sh", ".spec.js", ".lit.md"]) Module._extensions[key] = handler(key);
+        for (const key of [".alias", ".data.js"]) Module._extensions[key] = Module._extensions[".json"];
+        requests.push(["./s.sh"], ["./a.spec.js"], ["./n.lit.md"], ["./d.alias"], ["./d.alias?query"], ["./d.data.js"]);
+      }
+
+      const rows = {};
+      for (const [specifier, options] of requests) {
         calls = [];
-        const exports = options ? require(specifier, options) : require(specifier);
-        rows[options ? specifier + " with type " + options.type : specifier] = { exports, calls };
+        const row = options ? specifier + " with type " + options.type : specifier;
+        try {
+          rows[row] = { exports: options ? require(specifier, options) : require(specifier), calls };
+        } catch (error) {
+          rows[row] = { error: error.name, calls };
+        }
         for (const key of Object.keys(require.cache)) if (key !== __filename) delete require.cache[key];
       }
       console.log(JSON.stringify(rows));
@@ -577,42 +592,63 @@ describe.concurrent("the handler that a require() selects", () => {
   };
   const text = (file: keyof typeof files) => ({ default: files[file] });
 
-  test.each(["no other handler", "a wrapped .js", "a restored .js", ".css", "--loader .foo:text"])(
-    "with %s",
-    async others => {
-      using dir = tempDir("require-extensions-select", files);
-      const flags = others.startsWith("--") ? others.split(" ") : [];
-      const { stdout, stderr, exitCode } = await bunRun([
-        ...flags,
-        path.join(String(dir), "select-fixture.cjs"),
-        others,
-      ]);
-      // The wrapper is the handler of the .js files in one state.
-      const wrapped = (name: string) => (others === "a wrapped .js" ? [".js got " + name] : []);
-      expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual({
-        "./x.foo": { exports: ".foo handler", calls: [".foo got x.foo"] },
-        "./x.foo?query": { exports: ".foo handler", calls: [".foo got x.foo?query"] },
-        "./x?query": { exports: ".foo handler", calls: [".foo got x.foo?query"] },
-        // The importer chose the loader. A `type` that names no loader is not a choice.
-        "./x.foo?raw": { exports: text("x.foo"), calls: [] },
-        "./x.foo with type text": { exports: text("x.foo"), calls: [] },
-        "./x.foo with type bogus": { exports: ".foo handler", calls: [".foo got x.foo"] },
-        "./x.foo?raw with type bogus": { exports: text("x.foo"), calls: [] },
-        "./x.foo?raw with type js": { exports: "plain x.foo", calls: [] },
-        "./p.js": { exports: "plain p.js", calls: wrapped("p.js") },
-        "./p.js?query": { exports: "plain p.js", calls: wrapped("p.js?query") },
-        "./p.js?raw": { exports: text("p.js"), calls: [] },
-        "./p.js with type text": { exports: text("p.js"), calls: [] },
-        "./p.js with type bogus": { exports: "plain p.js", calls: wrapped("p.js") },
-        // The built-in handler that the wrapper calls reads the extension from the path too.
-        "./j.js?query": { exports: "jsx in j.js", calls: wrapped("j.js?query") },
-        // The text of a query and the payload of a data: URL are not a file name.
-        "./p?x.js": { exports: "plain p", calls: [] },
-        "./p?x.foo": { exports: "plain p", calls: [] },
-        "./y.bar?v=1.js": { exports: "plain y.bar", calls: [] },
-        "./y.bar?v=1.foo": { exports: "plain y.bar", calls: [] },
-        'data:text/javascript,module.exports = "data"; //a.spec.js': { exports: "data", calls: [] },
+  test.each([
+    "no other handler",
+    "a wrapped .js",
+    "a restored .js",
+    ".css",
+    "handlers on more keys",
+    "--loader .foo:text",
+    "--loader .foo:text and a wrapped .js",
+    "--loader .js:jsx and a wrapped .js",
+  ])("with %s", async others => {
+    using dir = tempDir("require-extensions-select", files);
+    const flags = others.startsWith("--") ? others.split(" ").slice(0, 2) : [];
+    const { stdout, stderr, exitCode } = await bunRun([...flags, path.join(String(dir), "select-fixture.cjs"), others]);
+    // The wrapper is the handler of the .js files.
+    const wrapped = (name: string) => (others.includes("a wrapped .js") ? [".js got " + name] : []);
+    // The configuration names the loader of an extension that has no loader by default. That is a choice too.
+    const foo = (file: keyof typeof files) =>
+      flags.includes(".foo:text")
+        ? { exports: text(file), calls: [] }
+        : { exports: ".foo handler", calls: [".foo got " + file] };
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "./x.foo": foo("x.foo"),
+      "./x.foo?query": foo("x.foo"),
+      "./x?query": foo("x.foo"),
+      // The query starts at the first "?". What follows is not a file name, with a separator or not.
+      "./x.foo?a?b": foo("x.foo"),
+      "./x.foo?dir=a/b.js": foo("x.foo"),
+      "./ß.foo?v=1": foo("ß.foo"),
+      "./日本п.foo?v=1": foo("日本п.foo"),
+      // The importer chose the loader. A `type` that names no loader is not a choice.
+      "./x.foo?raw": { exports: text("x.foo"), calls: [] },
+      "./x.foo with type text": { exports: text("x.foo"), calls: [] },
+      "./x.foo with type bogus": foo("x.foo"),
+      "./x.foo?raw with type bogus": { exports: text("x.foo"), calls: [] },
+      "./x.foo?raw with type js": { exports: "plain x.foo", calls: [] },
+      "./p.js": { exports: "plain p.js", calls: wrapped("p.js") },
+      "./p.js?query": { exports: "plain p.js", calls: wrapped("p.js") },
+      "./p.js?v=日本": { exports: "plain p.js", calls: wrapped("p.js") },
+      "./p.js?dir=a/b.foo": { exports: "plain p.js", calls: wrapped("p.js") },
+      "./p.js?raw": { exports: text("p.js"), calls: [] },
+      "./p.js with type text": { exports: text("p.js"), calls: [] },
+      "./p.js with type bogus": { exports: "plain p.js", calls: wrapped("p.js") },
+      // Node.js has no such option and calls the wrapper.
+      "./p.js with type js": { exports: "plain p.js", calls: [] },
+      // The built-in handler that the wrapper calls loads the key. It reads the extension from the path too.
+      "./j.js?query": { exports: "jsx in j.js", calls: wrapped("j.js") },
+      "./j.js?dir=a/b.ts": { exports: "jsx in j.js", calls: wrapped("j.js") },
+      // Node.js hands a file with no handler to the .js handler. Bun loads it without one.
+      "./y.bar": { exports: "plain y.bar", calls: [] },
+      // The text of a query and the payload of a data: URL are not a file name.
+      "./p?x.js": { exports: "plain p", calls: [] },
+      "./p?x.foo": { exports: "plain p", calls: [] },
+      "./y.bar?v=1.js": { exports: "plain y.bar", calls: [] },
+      "./y.bar?v=1.foo": { exports: "plain y.bar", calls: [] },
+      'data:text/javascript,module.exports = "data"; //a.spec.js': { exports: "data", calls: [] },
+      ...(others === "handlers on more keys" && {
         // An extension that names a loader, and keys with two dots.
         "./s.sh": { exports: ".sh handler", calls: [".sh got s.sh"] },
         "./a.spec.js": { exports: ".spec.js handler", calls: [".spec.js got a.spec.js"] },
@@ -621,10 +657,87 @@ describe.concurrent("the handler that a require() selects", () => {
         "./d.alias": { exports: { a: 1 }, calls: [] },
         "./d.alias?query": { exports: { a: 1 }, calls: [] },
         "./d.data.js": { exports: { a: 1 }, calls: [] },
-      });
-      expect(exitCode).toBe(0);
+      }),
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // These requests mean the same to Node.js. The fixture runs there unchanged.
+  const sameAsNode = {
+    files: {
+      "s.sh": `module.exports = "plain s.sh";`,
+      "b.base64": `module.exports = "plain b.base64";`,
+      "f.file": `module.exports = "plain f.file";`,
+      "x.foo": `module.exports = "plain x.foo";`,
+      "a.spec.js": `module.exports = "plain a.spec.js";`,
+      "n.lit.md": `module.exports = "plain n.lit.md";`,
+      ".hidden.foo": `module.exports = "plain .hidden.foo";`,
+      ".foo": `module.exports = "plain .foo";`,
+      "p.js": `module.exports = "plain p.js";`,
+      "node-fixture.cjs": `
+        const Module = require("module");
+        const path = require("path");
+        const [keys, shape, requests] = process.argv.slice(-3);
+        const calls = [];
+        const original = Module._extensions[".js"];
+        const answers = key => (module, filename) => {
+          calls.push(key + " got " + path.basename(filename));
+          module.exports = key + " handler";
+        };
+        const callsTheJsHandler = key => (module, filename) => {
+          calls.push(key + " got " + path.basename(filename));
+          return original(module, filename);
+        };
+        for (const key of keys.split(" ")) {
+          if (key === ".js" || shape === "calls the .js handler") Module._extensions[key] = callsTheJsHandler(key);
+          else Module._extensions[key] = shape === "is the .js handler" ? original : answers(key);
+        }
+        const loaded = requests.split(" ").map(request => require("./" + request));
+        console.log(JSON.stringify({ loaded, calls }));
+      `,
     },
-  );
+    cases: [
+      // A handler alone, on an extension that names a loader of Bun.
+      [".sh", "answers", "s.sh", [".sh handler"], [".sh got s.sh"]],
+      [".base64", "answers", "b.base64", [".base64 handler"], [".base64 got b.base64"]],
+      [".file", "answers", "f.file", [".file handler"], [".file got f.file"]],
+      [".base64", "is the .js handler", "b.base64", ["plain b.base64"], []],
+      [".file", "calls the .js handler", "f.file", ["plain f.file"], [".file got f.file"]],
+      // A made-up extension, keys with two dots, and names that begin with a dot.
+      [
+        ".foo .spec.js .lit.md",
+        "answers",
+        "x.foo a.spec.js n.lit.md .hidden.foo .foo",
+        [".foo handler", ".spec.js handler", ".lit.md handler", ".foo handler", "plain .foo"],
+        [".foo got x.foo", ".spec.js got a.spec.js", ".lit.md got n.lit.md", ".foo got .hidden.foo"],
+      ],
+      [
+        ".foo .spec.js .lit.md .js",
+        "answers",
+        "x.foo a.spec.js n.lit.md .hidden.foo p.js",
+        [".foo handler", ".spec.js handler", ".lit.md handler", ".foo handler", "plain p.js"],
+        [".foo got x.foo", ".spec.js got a.spec.js", ".lit.md got n.lit.md", ".foo got .hidden.foo", ".js got p.js"],
+      ],
+    ] as const,
+    async run(exe: string, dir: string, args: readonly string[]) {
+      await using proc = Bun.spawn({
+        cmd: [exe, path.join(dir, "node-fixture.cjs"), ...args],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    },
+  };
+
+  test.each(sameAsNode.cases)("%s %s, as in Node.js", async (keys, shape, requests, loaded, calls) => {
+    using dir = tempDir("require-extensions-select-node", sameAsNode.files);
+    const expected = { stdout: JSON.stringify({ loaded, calls }), stderr: "", exitCode: 0 };
+    expect(await sameAsNode.run(bunExe(), String(dir), [keys, shape, requests])).toEqual(expected);
+    const node = nodeExe();
+    if (node) expect(await sameAsNode.run(node, String(dir), [keys, shape, requests])).toEqual(expected);
+  });
 
   // The built-in .js handler under .ts: assigned, and then called from a wrapper.
   test("a query on a .ts file that the .js handler loads", async () => {
@@ -651,13 +764,268 @@ describe.concurrent("the handler that a require() selects", () => {
     });
   });
 
+  // handlebars, coffeescript and node-hook install handlers of this shape.
+  test.each([".foo", ".foo and .js"])(
+    "a handler on %s that reads the file itself loads a key with a query",
+    async keys => {
+      const names = `module.exports = [__filename, module.filename, module.id].map(name => require("path").basename(name));`;
+      using dir = tempDir("require-extensions-select-read", {
+        "x.foo": names,
+        "q.js": names,
+        "esm.js": `export default "an ES module";`,
+        "run.cjs": `
+          const Module = require("module");
+          const fs = require("fs");
+          const path = require("path");
+          const got = [];
+          const read = (module, filename) => {
+            got.push(path.basename(filename));
+            module._compile(fs.readFileSync(filename, "utf8"), filename);
+          };
+          for (const key of process.argv.at(-1).split(" and ")) Module._extensions[key] = read;
+          const loaded = [require("./x.foo?v=1"), require("./q.js?v=2")];
+          // module._compile takes the text of a CommonJS module. The query makes no difference to that.
+          const esm = ["./esm.js", "./esm.js?v=1"].map(id => {
+            try {
+              return require(id).default;
+            } catch (error) {
+              return error.name;
+            }
+          });
+          const cached = Object.keys(require.cache).map(key => path.basename(key)).sort();
+          console.log(JSON.stringify({ loaded, esm, got, cached }));
+        `,
+      });
+      // `__filename` is the name that the handler gives to module._compile.
+      const hooked = (file: string, query: string) => [file, file + query, file + query];
+      const js = keys === ".foo" ? ["q.js?v=2", "q.js?v=2", "q.js?v=2"] : hooked("q.js", "?v=2");
+      expect(await bunRun([path.join(String(dir), "run.cjs"), keys])).toEqual({
+        stdout: JSON.stringify({
+          loaded: [hooked("x.foo", "?v=1"), js],
+          esm: keys === ".foo" ? ["an ES module", "an ES module"] : ["SyntaxError", "SyntaxError"],
+          got: keys === ".foo" ? ["x.foo"] : ["x.foo", "q.js", "esm.js", "esm.js"],
+          cached:
+            keys === ".foo"
+              ? ["esm.js", "esm.js?v=1", "q.js?v=2", "run.cjs", "x.foo?v=1"]
+              : ["q.js?v=2", "run.cjs", "x.foo?v=1"],
+        }),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+  );
+
+  // A wrapper hands the file name back to the built-in handler. That handler then loads the key of the module.
+  test.each(["no wrapper", "a wrapper", "a wrapper that replaces module._compile"])(
+    "each query is its own module with %s of the .js handler",
+    async shape => {
+      using dir = tempDir("require-extensions-select-instances", {
+        "esm.js": `
+          globalThis.esmRuns = (globalThis.esmRuns ?? 0) + 1;
+          export const run = globalThis.esmRuns;
+          export const url = import.meta.url.split("/").pop();
+        `,
+        "cjs.js": `
+          globalThis.cjsRuns = (globalThis.cjsRuns ?? 0) + 1;
+          module.exports = { run: globalThis.cjsRuns, filename: require("path").basename(__filename) };
+        `,
+        // It removes itself from the cache under the name that it has.
+        "self.js": `
+          globalThis.selfRuns = (globalThis.selfRuns ?? 0) + 1;
+          delete require.cache[__filename];
+          module.exports = { run: globalThis.selfRuns, isTheKey: __filename === module.filename };
+        `,
+        "where.ts": `
+          interface Shape {
+            a: number;
+          }
+          module.exports = (shape: Shape) => new Error("line 5").stack!.split("\\n")[1].trim();
+        `,
+        "run.cjs": `
+          const Module = require("module");
+          const path = require("path");
+          const shape = process.argv.at(-1);
+          const got = [];
+          for (const key of shape === "no wrapper" ? [] : [".js", ".ts"]) {
+            const original = Module._extensions[key];
+            Module._extensions[key] = (module, filename) => {
+              got.push(path.basename(filename));
+              if (shape !== "a wrapper") {
+                const compile = module._compile;
+                module._compile = function (code, name) {
+                  module._compile = compile;
+                  got.push("compile " + path.basename(name));
+                  return module._compile(code, name);
+                };
+              }
+              return original(module, filename);
+            };
+          }
+          const esm = ["./esm.js?v=1", "./esm.js?v=2", "./esm.js?v=2?w", "./esm.js"].map(id => require(id)).map(({ run, url }) => ({ run, url }));
+          const cjs = ["./cjs.js?v=1", "./cjs.js?v=2", "./cjs.js?v=2?w", "./cjs.js"].map(id => require(id));
+          const self = [require("./self.js?v=1"), require("./self.js?v=1")];
+          const frame = require("./where.ts?v=1")({ a: 1 }).replace(/^at .*[\\\\/](where\\.ts[^:]*:\\d+):\\d+\\)?$/, "$1");
+          // A call that is not for the module that require() loads takes the name as it is.
+          const direct = new Module(path.join(__dirname, "esm.js?direct"));
+          direct.filename = direct.id;
+          direct.paths = [];
+          Module._extensions[".js"](direct, path.join(__dirname, "esm.js"));
+          console.log(JSON.stringify({ esm, cjs, self, frame, direct: { run: direct.exports.run, url: direct.exports.url }, got }));
+        `,
+      });
+      const compiles = shape === "a wrapper that replaces module._compile";
+      // module._compile gets the file name from the wrapper. That name is `__filename`.
+      const filename = (key: string) => (compiles ? "cjs.js" : key);
+      const names = (name: string, count: number) =>
+        Array.from({ length: count }, () => (compiles ? [name, "compile " + name] : [name])).flat();
+      expect(await bunRun([path.join(String(dir), "run.cjs"), shape])).toEqual({
+        stdout: JSON.stringify({
+          esm: [
+            { run: 1, url: "esm.js?v=1" },
+            { run: 2, url: "esm.js?v=2" },
+            { run: 3, url: "esm.js?v=2?w" },
+            { run: 4, url: "esm.js" },
+          ],
+          cjs: [
+            { run: 1, filename: filename("cjs.js?v=1") },
+            { run: 2, filename: filename("cjs.js?v=2") },
+            { run: 3, filename: filename("cjs.js?v=2?w") },
+            { run: 4, filename: filename("cjs.js") },
+          ],
+          // `delete require.cache[__filename]` removes the module only where `__filename` is the key.
+          self: compiles
+            ? [
+                { run: 1, isTheKey: false },
+                { run: 1, isTheKey: false },
+              ]
+            : [
+                { run: 1, isTheKey: true },
+                { run: 2, isTheKey: true },
+              ],
+          frame: "where.ts:5",
+          direct: { run: 4, url: "esm.js" },
+          got:
+            shape === "no wrapper"
+              ? []
+              : [
+                  ...["esm.js", "esm.js", "esm.js", "esm.js"],
+                  ...names("cjs.js", 4),
+                  ...names("self.js", compiles ? 1 : 2),
+                  ...names("where.ts", 1),
+                  "esm.js",
+                ],
+        }),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+  );
+
+  // A handler can hand another file to the built-in handler. That file has one ES module, whatever the query of the key.
+  test("the built-in handler loads the file that a handler names", async () => {
+    using dir = tempDir("require-extensions-select-other-file", {
+      "c.jsx": `module.exports = "c.jsx";`,
+      "c.js": `module.exports = "c.js";`,
+      "x.foo": `module.exports = "x.foo";`,
+      "target.js": `
+        globalThis.targetRuns = (globalThis.targetRuns ?? 0) + 1;
+        export const run = globalThis.targetRuns;
+        export const url = import.meta.url.split("/").pop();
+      `,
+      "run.cjs": `
+        const Module = require("module");
+        const path = require("path");
+        const original = Module._extensions[".js"];
+        // The name of the other file is a prefix of the key.
+        Module._extensions[".jsx"] = (module, filename) => original(module, filename.slice(0, -1));
+        Module._extensions[".foo"] = (module, filename) => original(module, path.join(path.dirname(filename), "target.js"));
+        const twin = ["./c.jsx", "./c.jsx?v=1"].map(id => require(id));
+        const target = ["./x.foo?v=1", "./x.foo?v=2", "./x.foo"].map(id => require(id)).map(({ run, url }) => ({ run, url }));
+        console.log(JSON.stringify({ twin, target }));
+      `,
+    });
+    const one = { run: 1, url: "target.js" };
+    expect(await bunRun(path.join(String(dir), "run.cjs"))).toEqual({
+      stdout: JSON.stringify({ twin: ["c.js", "c.js"], target: [one, one, one] }),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // tsx gives a key its query in Module._resolveFilename, and its handler reads the query from the file name.
+  // The handler gets no query here, so it hands the file to the handler that it replaced.
+  test.each(["a scoped handler", "a global and a scoped handler"])(
+    "a key that Module._resolveFilename gives a query, with %s",
+    async handlers => {
+      using dir = tempDir("require-extensions-select-resolve-filename", {
+        "entry.js": `module.exports = { entry: "plain entry", child: require("./child.js") };`,
+        "child.js": `
+          globalThis.childRuns = (globalThis.childRuns ?? 0) + 1;
+          module.exports = ["plain child", ...[__filename, module.filename].map(name => require("path").basename(name))];
+        `,
+        "run.cjs": `
+          const Module = require("module");
+          const fs = require("fs");
+          const path = require("path");
+          const calls = [];
+          const namespaceOf = name => new URLSearchParams(String(name).split("?")[1]).get("namespace") ?? undefined;
+          const resolveFilename = Module._resolveFilename;
+          Module._resolveFilename = function (request, parent, ...rest) {
+            const [id, query] = request.split("?");
+            const namespace = namespaceOf("?" + (query ?? "")) ?? namespaceOf(parent?.filename);
+            const resolved = resolveFilename.call(this, id, parent, ...rest);
+            return namespace && path.isAbsolute(resolved) ? resolved + "?namespace=" + namespace : resolved;
+          };
+          const transformer = (label, namespace, original) => (module, filename) => {
+            if (namespaceOf(filename) !== namespace) {
+              calls.push(label + " declines " + path.basename(filename));
+              return original(module, filename);
+            }
+            calls.push(label + " transforms " + path.basename(filename));
+            const file = filename.split("?")[0];
+            module._compile(fs.readFileSync(file, "utf8").replace("plain", "transformed by " + label), file);
+          };
+          if (process.argv.at(-1) === "a global and a scoped handler")
+            Module._extensions[".js"] = transformer("global", undefined, Module._extensions[".js"]);
+          const scoped = transformer("scoped", "1", Module._extensions[".js"]);
+          Module._extensions[".js"] = scoped;
+          const loaded = require("./entry.js?namespace=1");
+          const cached = Object.keys(require.cache).map(key => path.basename(key)).sort();
+          console.log(JSON.stringify({ loaded, calls, cached, childRuns: globalThis.childRuns }));
+        `,
+      });
+      const both = handlers === "a global and a scoped handler";
+      const by = both ? "transformed by global" : "plain";
+      const calls = (file: string) => ["scoped declines " + file, ...(both ? ["global transforms " + file] : [])];
+      expect(await bunRun([path.join(String(dir), "run.cjs"), handlers])).toEqual({
+        stdout: JSON.stringify({
+          loaded: {
+            entry: by + " entry",
+            child: [by + " child", both ? "child.js" : "child.js?namespace=1", "child.js?namespace=1"],
+          },
+          calls: [...calls("entry.js"), ...calls("child.js")],
+          cached: ["child.js?namespace=1", "entry.js?namespace=1", "run.cjs"],
+          childRuns: 1,
+        }),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+  );
+
   // The first handler answers by itself. The second one compiles the text of the file.
   const script = `
     const fs = require("fs");
     const path = require("path");
     const Module = require("module");
+    const calls = [];
     Module._extensions[".foo"] = (module, filename) => {
-      module.exports = "handler got " + path.basename(filename);
+      calls.push(path.basename(filename));
+      module.exports = "handler got " + path.basename(filename) + " for " + path.basename(module.id);
     };
     Module._extensions[".compiles"] = (module, filename) => module._compile(fs.readFileSync(filename, "utf8"), filename);
     const file = path.join(process.cwd(), "x.foo");
@@ -667,10 +1035,20 @@ describe.concurrent("the handler that a require() selects", () => {
     } catch (e) {
       compiled = e.name;
     }
-    console.log(JSON.stringify([require(file), require(file + "?query"), compiled]));
+    const loaded = [require(file), require(file + "?query"), compiled];
+    // A file that the executable holds is not a file for a handler, with a query or without one.
+    const embedded = path.join(path.dirname(Bun.main), "embedded.foo");
+    if (fs.existsSync(embedded))
+      for (const id of [embedded, embedded + "?query"]) {
+        try {
+          require(id);
+        } catch {}
+      }
+    console.log(JSON.stringify([...loaded, calls]));
   `;
   const onDisk = { "x.foo": files["x.foo"], "x.compiles": `module.exports = "compiled by the handler";` };
-  const handled = ["handler got x.foo", "handler got x.foo?query"];
+  const handled = ["handler got x.foo for x.foo", "handler got x.foo for x.foo?query"];
+  const calls = ["x.foo", "x.foo"];
 
   // The REPL has no main module.
   test("in bun repl", async () => {
@@ -684,16 +1062,20 @@ describe.concurrent("the handler that a require() selects", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual([...handled, "compiled by the handler"]);
+    expect(JSON.parse(stdout)).toEqual([...handled, "compiled by the handler", calls]);
     expect(exitCode).toBe(0);
   });
 
-  // Nor has a compiled executable. The files are on disk, and their paths are not known at build time.
+  // Nor has a compiled executable. The files are on disk, and the build does not know their paths.
   test("in a bun build --compile executable", async () => {
-    using dir = tempDir("require-extensions-select-compile", { ...onDisk, "app.cjs": script });
+    using dir = tempDir("require-extensions-select-compile", {
+      ...onDisk,
+      "embedded.foo": `module.exports = "embedded";`,
+      "app.cjs": script,
+    });
     const executable = path.join(String(dir), isWindows ? "app.exe" : "app");
     await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "app.cjs", "--outfile", executable],
+      cmd: [bunExe(), "build", "--compile", "app.cjs", "--asset", "embedded.foo", "--outfile", executable],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
@@ -720,14 +1102,15 @@ describe.concurrent("the handler that a require() selects", () => {
       run({ BUN_OPTIONS: "--disallow-code-generation-from-strings=strict" }),
     ]);
     expect(plain).toEqual({
-      stdout: JSON.stringify([...handled, "compiled by the handler"]),
+      stdout: JSON.stringify([...handled, "compiled by the handler", calls]),
       stderr: "",
       exitCode: 0,
     });
     expect(strict).toEqual({
-      stdout: JSON.stringify([...handled, "EvalError"]),
+      stdout: JSON.stringify([...handled, "EvalError", calls]),
       stderr: "",
       exitCode: 0,
     });
-  });
+    // A debug build copies itself into the executable, and that is more than a gigabyte.
+  }, 30_000);
 });

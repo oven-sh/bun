@@ -397,8 +397,8 @@ pub struct VirtualMachine {
     pub channel_ref_overridden: bool,
     pub channel_ref_should_ignore_one_disconnect_event_listener: bool,
 
-    /// A copy of the function-valued entries of `require.extensions`. A `require()` selects one of
-    /// them through `node_module_module::registered_extension_for_require` only.
+    /// The functions that `JSCommonJSExtensions` saw stored in `require.extensions`. A `require()`
+    /// selects one of them through `node_module_module::registered_extension_for_require` only.
     pub(crate) commonjs_custom_extensions:
         bun_collections::StringArrayHashMap<crate::node_module_module::CustomLoader>,
 

@@ -215,15 +215,17 @@ fn on_require_extension_modify_non_function(
     Ok(())
 }
 
-/// The `require.extensions` entry that loads the module `key` for a `require()`.
+/// The `require.extensions` entry that loads the module `key` for a `require()`, and the file name
+/// that selects it. A handler gets that file name.
 ///
-/// The extension is read from the path of the key: a `?query` belongs to the key, not to the file
-/// name. A `data:` URL has no file name and selects no entry.
-pub fn registered_extension_for_require<'a>(
+/// The file name is the path of the key: a `?query` belongs to the key. A `data:` URL has no file
+/// name and selects no entry.
+pub fn registered_extension_for_require<'a, 'k>(
     vm: &'a VirtualMachine,
-    key: &[u8],
-) -> Option<&'a CustomLoader> {
-    find_longest_registered_extension(vm, path_of_module_key(key)?)
+    key: &'k [u8],
+) -> Option<(&'k [u8], &'a CustomLoader)> {
+    let filename = path_of_module_key(key)?;
+    Some((filename, find_longest_registered_extension(vm, filename)?))
 }
 
 // https://github.com/nodejs/node/blob/40ef9d541ed79470977f90eb445c291b95ab75a0/lib/internal/modules/cjs/loader.js#L545
@@ -243,7 +245,7 @@ fn find_longest_registered_extension<'a>(
             return Some(value);
         }
     }
-    // Node ends with its `.js` handler. Here the loader of the file's extension takes that place.
+    // Node ends with its `.js` handler. Bun does not: a file with no entry loads without a handler.
     None
 }
 
@@ -279,7 +281,7 @@ extern "C" fn NodeModuleModule__builtinHandlerLoader(
     filename: &BunString,
 ) -> ApiLoader {
     let filename = filename.to_utf8();
-    let path = path_of_module_key(filename.slice()).unwrap_or(filename.slice());
+    let path = path_of_module_key(filename.slice()).unwrap_or_else(|| filename.slice());
     let ext = bun_paths::fs::PathName::find_extname(path);
     ApiLoader(builtin_handler_loader(global.bun_vm(), ext, handler).to_api() as u8)
 }

@@ -4035,6 +4035,26 @@ struct LoaderResult<'a> {
     package_json: Option<&'a bun_resolver::package_json::PackageJSON>,
 }
 
+/// Whether a file that has a `require.extensions` entry loads without it.
+///
+/// - `--loader` or bunfig `[loader]` names a loader for the extension, and Bun has none for that
+///   extension by default. The configuration wins.
+/// - A standalone executable holds the file. The executable answers for it, with or without a
+///   `?query` on the key.
+fn loads_without_handler(vm: &VirtualMachine, lr: &LoaderResult<'_>) -> bool {
+    if lr.loader.is_some() {
+        let ext = lr.path.name().ext;
+        if options::DEFAULT_LOADERS.get(ext).is_none()
+            && vm.transpiler.options.loaders.get(ext).is_some()
+        {
+            return true;
+        }
+    }
+    lr.virtual_source.is_none()
+        && bun_standalone_graph::Graph::get_ref()
+            .is_some_and(|graph| graph.find_ref(lr.path.text).is_some())
+}
+
 /// `options.getLoaderAndVirtualSource` — high-tier body.
 ///
 /// # Safety
@@ -4479,15 +4499,23 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
         && !lr.importer_chose_loader
     {
         use bun_jsc::node_module_module::{CustomLoader, registered_extension_for_require};
-        if let Some(entry) =
-            // SAFETY: per fn contract.
-            registered_extension_for_require(unsafe { &*jsc_vm }, _specifier.slice())
+        // SAFETY: per fn contract.
+        let vm = unsafe { &*jsc_vm };
+        let key = _specifier.slice();
+        if let Some((filename, entry)) = registered_extension_for_require(vm, key)
+            && !loads_without_handler(vm, &lr)
         {
             match entry {
                 CustomLoader::Loader(loader) => lr.loader = Some(*loader),
                 CustomLoader::Custom(strong) => {
                     *ret = ErrorableResolvedSource::ok(ResolvedSource {
                         cjs_custom_extension_index: strong.get(),
+                        // The `filename` of the handler, when it is not the key.
+                        source_url: if filename.len() == key.len() {
+                            bun_core::String::EMPTY
+                        } else {
+                            bun_core::String::clone_utf8(filename)
+                        },
                         tag: ResolvedSourceTag::CommonJsCustomExtension,
                         ..Default::default()
                     });

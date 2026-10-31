@@ -10,6 +10,8 @@ using namespace JSC;
 
 const JSC::ClassInfo JSCommonJSExtensions::s_info = { "CommonJSExtensions"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCommonJSExtensions) };
 
+thread_local const ExtensionHandlerCall* currentExtensionHandlerCall = nullptr;
+
 JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, BunLoaderType loaderType);
 extern "C" BunLoaderType NodeModuleModule__builtinHandlerLoader(JSC::JSGlobalObject*, BunLoaderType handler, const BunString* filename);
 
@@ -236,9 +238,16 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
         throwTypeError(globalObject, scope, "Module._extensions['.js'] must be called with a CommonJS module object"_s);
         return {};
     }
-    JSC::JSValue specifier = callFrame->argument(1);
-    WTF::String specifierWtfString = specifier.toWTFString(globalObject);
+    JSC::JSValue filenameValue = callFrame->argument(1);
+    WTF::String specifierWtfString = filenameValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    // A handler that `require()` calls for a key with a `?query` gets the file name. Given that name back, load the
+    // key: the query is part of the module, and of the ES module that the file can be.
+    JSC::JSValue specifier = filenameValue;
+    if (auto* call = currentExtensionHandlerCall; call && call->filename == specifierWtfString) [[unlikely]] {
+        specifier = call->keyValue;
+        specifierWtfString = call->key;
+    }
     BunString specifierBunString = Bun::toString(specifierWtfString);
     loaderType = NodeModuleModule__builtinHandlerLoader(globalObject, loaderType, &specifierBunString);
     if (loaderType != BunLoaderTypeJSON) {
@@ -257,7 +266,7 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
         vm,
         global,
         &specifierBunString,
-        specifier,
+        filenameValue,
         &empty,
         &empty,
         &res,

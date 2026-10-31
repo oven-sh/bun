@@ -570,11 +570,11 @@ runtimefunction id=ArrayTraversalTraverseArray function=f34 visibility=Private
 # CHECK-NEXT: Return v19
 # CHECK-NEXT: }
 # CHECK-LABEL: function f6 module=
-# CHECK: m0 position=572 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f10 callPosition=4294967295 parent=1 module=m0}, {callee=f9 callPosition=4294967295 parent=2 module=m0}] {
+# CHECK: m0 position=572 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f9 callPosition=4294967295 parent=2 module=m0}, {callee=f10 callPosition=4294967295 parent=1 module=m0}] {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|string|Array) handler=b1():
 # CHECK-NEXT: v1: fact = Entered function=f9
 # CHECK-NEXT: v2: undefined|int|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<"l"|"m", proven, pristine[Storage, Names]>|String ~ undefined|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|String = AssumeType v0, v1 provenType=undefined|int|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<"l"|"m", proven, pristine[Storage, Names]>|String
-# CHECK-NEXT: v3: string = CallDirect v2 function=f1 accessSite=47 @0:4 tail
+# CHECK-NEXT: v3: string = CallDirect v2 function=f1 accessSite=47 @0:3 tail
 # CHECK-NEXT: Jump -> next b2(v3)
 # CHECK-NEXT: b1() role=CatchHandler:
 # CHECK-NEXT: v4: anything = CatchValue
@@ -587,7 +587,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f34 visibility=Private
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b3() handler=b4():
 # CHECK-NEXT: v10: undefined|int|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<"l"|"m", proven, pristine[Storage, Names]>|String ~ undefined|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|String = AssumeType v0, v9 provenType=undefined|int|L1|Array<"ij"|"k", proven, Contiguous, pristine[Storage, Names, Dense]>|Set<"l"|"m", proven, pristine[Storage, Names]>|String
-# CHECK-NEXT: v11: number = CallDirect v10 function=f2 accessSite=48 @0:3 tail
+# CHECK-NEXT: v11: number = CallDirect v10 function=f2 accessSite=48 @0:4 tail
 # CHECK-NEXT: v12: string = CallBuiltin -, v11 overload=String/0 accessSite=41
 # CHECK-NEXT: Jump -> next b5(v12)
 # CHECK-NEXT: b4() role=CatchHandler:

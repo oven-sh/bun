@@ -493,7 +493,7 @@ runtimefunction id=WrapForValidIteratorPrototypeReturn function=f35
 runtimefunction id=GeneratorPrototypeThrow function=f31 visibility=Private
 # -- generated: f0 f2 f3 f4
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=745 module=m0}, {callee=f1 callPosition=685 module=m0}, {callee=f1 callPosition=617 module=m0}, {callee=f6 callPosition=429 parent=2 module=m0}, {callee=f5 callPosition=429 parent=3 module=m0}, {callee=f7 callPosition=429 parent=1 module=m0}, {callee=f2 callPosition=695 parent=4 isTailCall=true calleeIsPredicted=true module=m0}, {callee=f2 callPosition=648 parent=5 isTailCall=true calleeIsPredicted=true module=m0}, {callee=f2 callPosition=783 parent=6 isTailCall=true calleeIsPredicted=true module=m0}] {
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=745 module=m0}, {callee=f1 callPosition=685 module=m0}, {callee=f1 callPosition=617 module=m0}, {callee=f5 callPosition=429 parent=3 module=m0}, {callee=f6 callPosition=429 parent=2 module=m0}, {callee=f7 callPosition=429 parent=1 module=m0}, {callee=f2 callPosition=695 parent=5 isTailCall=true calleeIsPredicted=true module=m0}, {callee=f2 callPosition=648 parent=4 isTailCall=true calleeIsPredicted=true module=m0}, {callee=f2 callPosition=783 parent=6 isTailCall=true calleeIsPredicted=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f2 = NewClosure function=f2 allocationSite=1
 # CHECK-NEXT: v1: L0 = NewObject layout=L0 allocationSite=2 allocationClass=0
@@ -530,20 +530,20 @@ runtimefunction id=GeneratorPrototypeThrow function=f31 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v32: 6 = Integer integer=6
 # CHECK-NEXT: v33: boolean = Less v30, v32
-# CHECK-NEXT: Branch v33 -> taken b2(| 0), notTaken b25()
+# CHECK-NEXT: Branch v33 -> taken b2(| 0), notTaken b26()
 # CHECK-NEXT: b2(v34: int[0, 5]):
 # CHECK-NEXT: Switch v34 cases=[0, 1, 2, 3, 4] -> case b3(v9), case b3(v12), case b3(v18), case b3(v21), case b3(v26), otherwise b3(v28)
 # CHECK-NEXT: b3(v35: anything ~ undefined|null|function|f2|Proxy):
 # CHECK-NEXT: v36: 1 = Integer integer=1
 # CHECK-NEXT: v37: int[1, 6] = Add v34, v36
-# CHECK-NEXT: v38: boolean = IsClosureOf v35 function=f2 @648:5 tail
-# CHECK-NEXT: Branch v38 -> taken b4(), notTaken b5() @648:5 tail
+# CHECK-NEXT: v38: boolean = IsClosureOf v35 function=f2 @648:4 tail
+# CHECK-NEXT: Branch v38 -> taken b4(), notTaken b5() @648:4 tail
 # CHECK-NEXT: b4() handler=b9():
 # CHECK-NEXT: v39: "not a string" = String string="not a string"
 # CHECK-NEXT: v40: undefined = CallBuiltin -, v39 overload=ConsoleLog/0 accessSite=17
 # CHECK-NEXT: Jump -> next b10()
 # CHECK-NEXT: b5() frequency=Unlikely handler=b9():
-# CHECK-NEXT: v41: anything = Call v35 calleeName="callee" accessSite=23 @648:5 tail
+# CHECK-NEXT: v41: anything = Call v35 calleeName="callee" accessSite=23 @648:4 tail
 # CHECK-NEXT: v42: anything ~ undefined|null|string = Upcast v41 castType=anything
 # CHECK-NEXT: v43: boolean = TypeTest v42 testedType=string
 # CHECK-NEXT: Branch v43 -> taken b6(| 0), notTaken b7()
@@ -554,7 +554,7 @@ runtimefunction id=GeneratorPrototypeThrow function=f31 visibility=Private
 # CHECK-NEXT: Jump -> next b8(v45)
 # CHECK-NEXT: b8(v46: string) frequency=Unlikely handler=b9():
 # CHECK-NEXT: v47: undefined = CallBuiltin -, v46 overload=ConsoleLog/0 accessSite=17
-# CHECK-NEXT: Jump -> next b12() @695:4 tail
+# CHECK-NEXT: Jump -> next b12() @695:5 tail
 # CHECK-NEXT: b9() role=CatchHandler:
 # CHECK-NEXT: v48: anything = CatchValue
 # CHECK-NEXT: v49: anything = PropGet v48 key="name" accessSite=20
@@ -565,14 +565,14 @@ runtimefunction id=GeneratorPrototypeThrow function=f31 visibility=Private
 # CHECK-NEXT: v54: undefined = CallBuiltin -, v53 overload=ConsoleLog/0 accessSite=22
 # CHECK-NEXT: Jump -> next b10()
 # CHECK-NEXT: b10():
-# CHECK-NEXT: v55: boolean = IsClosureOf v35 function=f2 @695:4 tail
-# CHECK-NEXT: Branch v55 -> taken b11(), notTaken b12() @695:4 tail
-# CHECK-NEXT: b11() handler=b17():
+# CHECK-NEXT: v55: boolean = IsClosureOf v35 function=f2 @695:5 tail
+# CHECK-NEXT: Branch v55 -> taken b11(), notTaken b12() @695:5 tail
+# CHECK-NEXT: b11() handler=b18():
 # CHECK-NEXT: v56: "not a string" = String string="not a string"
 # CHECK-NEXT: v57: undefined = CallBuiltin -, v56 overload=ConsoleLog/0 accessSite=17
-# CHECK-NEXT: Jump -> next b18()
-# CHECK-NEXT: b12() frequency=Unlikely handler=b17():
-# CHECK-NEXT: v58: anything = Call v35 calleeName="callee" accessSite=24 @695:4 tail
+# CHECK-NEXT: Jump -> next b19()
+# CHECK-NEXT: b12() frequency=Unlikely handler=b18():
+# CHECK-NEXT: v58: anything = Call v35 calleeName="callee" accessSite=24 @695:5 tail
 # CHECK-NEXT: v59: anything ~ undefined|null|string = Upcast v58 castType=anything
 # CHECK-NEXT: v60: boolean = TypeTest v59 testedType=string
 # CHECK-NEXT: Branch v60 -> taken b13(| 0), notTaken b14()
@@ -581,16 +581,18 @@ runtimefunction id=GeneratorPrototypeThrow function=f31 visibility=Private
 # CHECK-NEXT: b14() frequency=Unlikely:
 # CHECK-NEXT: v62: "not a string" = String string="not a string"
 # CHECK-NEXT: Jump -> next b15(v62)
-# CHECK-NEXT: b15(v63: string) frequency=Unlikely handler=b17():
+# CHECK-NEXT: b15(v63: string) frequency=Unlikely handler=b18():
 # CHECK-NEXT: v64: undefined = CallBuiltin -, v63 overload=ConsoleLog/0 accessSite=17
 # CHECK-NEXT: Jump -> next b16()
-# CHECK-NEXT: b16() frequency=Unlikely handler=b23():
+# CHECK-NEXT: b16() frequency=Unlikely:
 # CHECK-NEXT: v65: L3 = NewObject -, v35 layout=L3 fields=[0] allocationSite=18 allocationClass=3
 # CHECK-NEXT: v66: L3 = FinishObject v65
+# CHECK-NEXT: Jump -> next b17()
+# CHECK-NEXT: b17() frequency=Unlikely handler=b24():
 # CHECK-NEXT: v67: anything = PropGet v66 key="member" accessSite=25 receivers=[L3]
 # CHECK-NEXT: v68: anything = Call v67, v66 calleeKey="member" calleeName="holder.member" accessSite=26 @783:6 tail
-# CHECK-NEXT: Jump -> next b19(v68)
-# CHECK-NEXT: b17() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b20(v68)
+# CHECK-NEXT: b18() role=CatchHandler:
 # CHECK-NEXT: v69: anything = CatchValue
 # CHECK-NEXT: v70: anything = PropGet v69 key="name" accessSite=20
 # CHECK-NEXT: v71: ": " = String string=": "
@@ -598,22 +600,22 @@ runtimefunction id=GeneratorPrototypeThrow function=f31 visibility=Private
 # CHECK-NEXT: v73: anything = PropGet v69 key="message" accessSite=21
 # CHECK-NEXT: v74: string = Add v72, v73
 # CHECK-NEXT: v75: undefined = CallBuiltin -, v74 overload=ConsoleLog/0 accessSite=22
-# CHECK-NEXT: Jump -> next b18()
-# CHECK-NEXT: b18():
+# CHECK-NEXT: Jump -> next b19()
+# CHECK-NEXT: b19():
 # CHECK-NEXT: v76: boolean = IsClosureOf v35 function=f2 @783:6 tail
-# CHECK-NEXT: Branch v76 -> taken b26(), notTaken b27() @783:6 tail
-# CHECK-NEXT: b19(v77: anything):
+# CHECK-NEXT: Branch v76 -> taken b27(), notTaken b28() @783:6 tail
+# CHECK-NEXT: b20(v77: anything):
 # CHECK-NEXT: v78: boolean ~ false = TypeTest v77 testedType=string
-# CHECK-NEXT: Branch v78 -> taken b20(| 0), notTaken b21()
-# CHECK-NEXT: b20(v79: string):
-# CHECK-NEXT: Jump -> next b22(v79)
-# CHECK-NEXT: b21():
+# CHECK-NEXT: Branch v78 -> taken b21(| 0), notTaken b22()
+# CHECK-NEXT: b21(v79: string):
+# CHECK-NEXT: Jump -> next b23(v79)
+# CHECK-NEXT: b22():
 # CHECK-NEXT: v80: "not a string" = String string="not a string"
-# CHECK-NEXT: Jump -> next b22(v80)
-# CHECK-NEXT: b22(v81: string ~ "not a string") handler=b23():
+# CHECK-NEXT: Jump -> next b23(v80)
+# CHECK-NEXT: b23(v81: string ~ "not a string") handler=b24():
 # CHECK-NEXT: v82: undefined = CallBuiltin -, v81 overload=ConsoleLog/0 accessSite=17
-# CHECK-NEXT: Jump -> next b24()
-# CHECK-NEXT: b23() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b25()
+# CHECK-NEXT: b24() role=CatchHandler:
 # CHECK-NEXT: v83: anything = CatchValue
 # CHECK-NEXT: v84: anything = PropGet v83 key="name" accessSite=20
 # CHECK-NEXT: v85: ": " = String string=": "
@@ -621,18 +623,18 @@ runtimefunction id=GeneratorPrototypeThrow function=f31 visibility=Private
 # CHECK-NEXT: v87: anything = PropGet v83 key="message" accessSite=21
 # CHECK-NEXT: v88: string = Add v86, v87
 # CHECK-NEXT: v89: undefined = CallBuiltin -, v88 overload=ConsoleLog/0 accessSite=22
-# CHECK-NEXT: Jump -> next b24()
-# CHECK-NEXT: b24():
-# CHECK-NEXT: Jump -> next b1(v37)
+# CHECK-NEXT: Jump -> next b25()
 # CHECK-NEXT: b25():
+# CHECK-NEXT: Jump -> next b1(v37)
+# CHECK-NEXT: b26():
 # CHECK-NEXT: v90: undefined = Undefined
 # CHECK-NEXT: Return v90
-# CHECK-NEXT: b26():
-# CHECK-NEXT: Jump -> next b21()
-# CHECK-NEXT: b27() frequency=Unlikely handler=b23():
+# CHECK-NEXT: b27():
+# CHECK-NEXT: Jump -> next b22()
+# CHECK-NEXT: b28() frequency=Unlikely handler=b24():
 # CHECK-NEXT: v91: L3 = NewObject -, v35 layout=L3 fields=[0] allocationSite=18 allocationClass=3
 # CHECK-NEXT: v92: anything = Call v35, v91 calleeKey="member" calleeName="holder.member" accessSite=26 @783:6 tail
-# CHECK-NEXT: Jump -> next b19(v92)
+# CHECK-NEXT: Jump -> next b20(v92)
 # CHECK-NEXT: }
 # CHECK-LABEL: function f2 module=
 # CHECK: m0 position=143 kind=Arrow thisType={type=anything} results=[{type=1}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {

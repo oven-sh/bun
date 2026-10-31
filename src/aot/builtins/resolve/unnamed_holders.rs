@@ -15,10 +15,10 @@ use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, Decl, FnOwner, Parent, PatParent, SymbolId};
 use bun_sema::fold::{TreeNode, push_children};
 use bun_sema::hir::{
-    BinOp, CallId, ClassId, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, MemberKey, MemberKind,
-    PropKey, PropKind, StmtKind,
+    BinOp, CallId, ClassId, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, ImportId, MemberKey,
+    MemberKind, PatKind, PropKey, PropKind, StmtKind, VarDeclId,
 };
-use bun_sema::util::FxHashMap;
+use bun_sema::util::{FxHashMap, FxHashSet};
 use std::rc::Rc;
 
 type Builtins = Rc<[BuiltinId]>;
@@ -36,6 +36,14 @@ pub(super) struct UnnamedHolders {
     constructed: FxHashMap<FnId, (Rc<[ExprId]>, bool)>,
     /// What is stored into a variable behind its declaration. Made when it is first asked for.
     stored: Option<Rc<FxHashMap<SymbolId, Vec<ExprId>>>>,
+}
+
+/// What the exports of a file hand out, and what has been looked at for it.
+#[derive(Default)]
+struct HandedOut {
+    builtins: Vec<BuiltinId>,
+    functions: FxHashSet<FnId>,
+    values: FxHashSet<ExprId>,
 }
 
 fn add(found: &mut Vec<BuiltinId>, more: impl IntoIterator<Item = BuiltinId>) {
@@ -56,6 +64,145 @@ fn find_member(holder: BuiltinId, name: Option<table::BuiltinName>) -> Option<Bu
 impl Resolver<'_, '_> {
     pub(super) fn find_builtins_reached_without_names(&self, object: ExprId) -> Vec<BuiltinId> {
         self.find_builtins_behind(object).to_vec()
+    }
+
+    /// The imports that the object of a write comes out of, each with the names on the way, from the write on:
+    /// `make().prototype`, `const made = await make(); made.proxy`, `tools.make()`, `wrap(imported)`, `withProxy(proxy => { proxy .. })`.
+    pub(super) fn find_imports_behind(&self, object: ExprId) -> Vec<(ImportId, Vec<Atom>)> {
+        let (mut found, mut seen) = (Vec::new(), FxHashSet::default());
+        self.push_imports_behind(object, &mut Vec::new(), &mut seen, &mut found);
+        found
+    }
+
+    fn push_imports_behind(
+        &self,
+        expr: ExprId,
+        path: &mut Vec<Atom>,
+        seen: &mut FxHashSet<ExprId>,
+        found: &mut Vec<(ImportId, Vec<Atom>)>,
+    ) {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let expr = hir.skip_type_assertions(expr);
+        if !seen.insert(expr) || self.find_builtin(expr).is_some() {
+            return;
+        }
+        match hir[expr].kind {
+            ExprKind::Ident(_) => {
+                let Binding::Symbol(symbol) = bound.binding(expr) else {
+                    return;
+                };
+                let import = match *bound.symbol(symbol).decls {
+                    [Decl::ImportSpec(spec)] => Some(hir[spec].import),
+                    [Decl::ImportDefault(import) | Decl::ImportNamespace(import)] => Some(import),
+                    _ => None,
+                };
+                if let Some(import) = import {
+                    return found.push((import, path.clone()));
+                }
+                for &value in self.spelled_values_of(expr).iter() {
+                    self.push_imports_behind(value, path, seen, found);
+                }
+                let whole = self.find_whole_that_name_is_part_of(expr);
+                let call = self.find_call_that_calls_back_with(expr);
+                for source in whole.into_iter().chain(call) {
+                    self.push_imports_behind(source, path, seen, found);
+                }
+            }
+            ExprKind::Call(call) | ExprKind::New(call) => {
+                self.push_imports_behind(hir[call].callee, path, seen, found);
+                for operand in hir.ids(hir[call].args) {
+                    self.push_imports_behind(operand, path, seen, found);
+                }
+            }
+            ExprKind::Await(promised) => self.push_imports_behind(promised, path, seen, found),
+            _ => {
+                let Some((object, key)) = hir.member_key(expr) else {
+                    return;
+                };
+                let named = matches!(key, MemberKey::Name(_));
+                if let MemberKey::Name(name) = key {
+                    path.push(name);
+                }
+                self.push_imports_behind(object, path, seen, found);
+                if named {
+                    path.pop();
+                }
+            }
+        }
+    }
+
+    /// `ResolvedBuiltins::builtins_handed_out`
+    pub(super) fn find_builtins_handed_out(&self) -> Vec<BuiltinId> {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let mut out = HandedOut::default();
+        // `export const proxy = new Proxy(Math, {})`, `const ofMath = () => proxy; export { ofMath }`
+        for declaration in (0..hir.var_decls.len() as u32).map(VarDeclId) {
+            let declaration = hir[declaration];
+            if matches!(hir[declaration.pat].kind, PatKind::Ident(_))
+                && declaration.init.is_some()
+                && let symbol = bound.declared_symbol(Decl::Var(declaration.pat))
+                && symbol.is_some()
+                && self.is_exported(symbol)
+            {
+                self.add_builtins_that_export_hands_out(declaration.init, &mut out);
+            }
+        }
+        // `export function ofMath() { return new Proxy(Math, {}); }`
+        for function in (0..hir.fns.len() as u32).map(FnId) {
+            if hir[function].kind == FnKind::Decl
+                && let symbol = bound.declared_symbol(Decl::Fn(function))
+                && symbol.is_some()
+                && (self.is_exported(symbol)
+                    || (bound.modifier_flags(hir, Decl::Fn(function))).contains(Flags::EXPORT))
+            {
+                self.add_builtins_that_function_hands_out(function, &mut out);
+            }
+        }
+        for statement in hir.stmts.iter() {
+            if let StmtKind::ExportDefault(value) = statement.kind {
+                self.add_builtins_that_export_hands_out(value, &mut out);
+            }
+        }
+        out.builtins
+    }
+
+    fn add_builtins_that_function_hands_out(&self, function: FnId, out: &mut HandedOut) {
+        if out.functions.insert(function) {
+            for &returned in self.values_returned_by(function).iter() {
+                self.add_builtins_that_export_hands_out(returned, out);
+            }
+        }
+    }
+
+    fn add_builtins_that_export_hands_out(&self, value: ExprId, out: &mut HandedOut) {
+        let hir = self.input.hir;
+        for &value in self.spelled_values_of(value).iter() {
+            // `tools = { ...tools, again: tools }`
+            if !out.values.insert(value) {
+                continue;
+            }
+            match hir[value].kind {
+                ExprKind::Array(elements) => {
+                    for element in hir.ids(elements) {
+                        self.add_builtins_that_export_hands_out(element, out);
+                    }
+                }
+                ExprKind::Object(properties) => {
+                    for property in properties.iter() {
+                        self.add_builtins_that_export_hands_out(hir[property].value, out);
+                    }
+                }
+                _ => {
+                    add(
+                        &mut out.builtins,
+                        self.find_builtins_behind(value).iter().copied(),
+                    );
+                    for function in self.find_functions_behind(value) {
+                        self.add_builtins_that_function_hands_out(function, out);
+                    }
+                }
+            }
+        }
     }
 
     /// `find_values_spelled_for`, walked once for a name.

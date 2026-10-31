@@ -2,7 +2,7 @@ use super::code_barrels::ImportRequests;
 use super::projects::Projects;
 use super::*;
 use crate::file_analysis::FileAnalysis;
-use crate::fold::FoldInputs;
+use crate::fold::{FoldInputs, StoredByMocks};
 use crate::hir_from_data::HostValue;
 use crate::import_sites::{ExportedRequire, JsxMode};
 use crate::module_format::DeclaredModuleType;
@@ -234,6 +234,7 @@ pub(super) struct Analyzed<'s, 'r> {
     pub(super) is_aot_source: bool,
     pub(super) import_meta_main: Option<bool>,
     pub(super) is_called_before_it_runs: bool,
+    pub(super) stored_by_mocks: StoredByMocks<'s>,
     pub(super) is_only_imported: bool,
 }
 

@@ -11,9 +11,16 @@ import {
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { BuildError } from "../error.ts";
-import { readArchiveIndex } from "./archive.ts";
+import { copyArchiveWithout, readArchiveIndex } from "./archive.ts";
 import { readAt } from "./binary-reader.ts";
-import { findLinkedMembers, namedBytesOfPe, readCoffGraph, sectionInFile } from "./coff-graph.ts";
+import { readWeakAliases } from "./bitcode-symbols.ts";
+import {
+  findLinkedMembers,
+  findNameMissingFromObjects,
+  namedBytesOfPe,
+  readCoffGraph,
+  sectionInFile,
+} from "./coff-graph.ts";
 import { nameSections } from "./coff-object-editor.ts";
 import { builtinModulesSection, CoffObject } from "./coff-objects.ts";
 import type { SectionGraph } from "./graph.ts";
@@ -30,14 +37,26 @@ export const unnamedSectionPrefix = "bun_unnamed_";
 const IMAGE_SYM_CLASS_EXTERNAL = 2;
 const bitcodeMagic = 0x4243c0de;
 
+const isArchive = (path: string) => /\.(lib|rlib|a)$/i.test(path) && existsSync(path);
+const isBitcodeAt = (fd: number, offset: number, size: number) =>
+  size >= 4 && readAt(fd, offset, 4).readUInt32BE(0) === bitcodeMagic;
+
+interface NamesOfCompiledObjects {
+  defined: Set<string>;
+  // A weak alias of the bitcode that they refer to and do not define → what it stands for.
+  aliases: Map<string, string>;
+}
+
 /**
- * A name that `objects`, compiled from bitcode, refer to and none of them defines, and that the index of an archive offers from a
- * member of bitcode. lld-link resolves a weak alias of a bitcode file (`??_E..`, the vector deleting destructor, for `??_G..`) from what
- * it read when it parsed the file: no copy prevails for LTO, and what is compiled only refers to the name. So does it where the copy
- * of a COMDAT that prevailed came from a native member of a later archive. A link of the objects in front of the archives finds such a
- * name undefined, takes the member of bitcode for it, and that collides with the object compiled from it.
+ * The names that `objects`, compiled from bitcode, refer to and none of them defines, as far as the bitcode defines them.
+ *
+ * lld-link makes a weak alias of a bitcode file (`??_E..`, the vector deleting destructor, for `??_G..`) an undefined name with a
+ * fallback when it parses the file. So no copy prevails for LTO, what is compiled only refers to the name, and the link resolves it
+ * from what it read at the parse. The other names are COMDATs of which a native copy prevailed, a string literal in a member of ICU.
+ * A link of the objects without the bitcode finds both kinds undefined. Where an archive still offers them from a member of
+ * bitcode it takes that member, which collides with the object compiled from it.
  */
-function findNameThatLoadsBitcode(objects: readonly string[], inputs: readonly string[]): string | undefined {
+function readNamesOfCompiledObjects(objects: readonly string[], inputs: readonly string[]): NamesOfCompiledObjects {
   const defined = new Set<string>();
   const wanted = new Set<string>();
   for (const path of objects) {
@@ -56,25 +75,45 @@ function findNameThatLoadsBitcode(objects: readonly string[], inputs: readonly s
       closeSync(fd);
     }
   }
-  for (const archive of inputs) {
-    if (!/\.(lib|rlib|a)$/i.test(archive) || !existsSync(archive)) continue;
-    const fd = openSync(archive, "r");
+  for (const name of defined) wanted.delete(name);
+  const aliases = new Map<string, string>();
+  if (wanted.size === 0) return { defined, aliases };
+  for (const input of inputs) {
+    if (!existsSync(input)) continue;
+    const fd = openSync(input, "r");
     try {
-      const isBitcodeAt = new Map<number, boolean>();
-      for (const [name, header] of readArchiveIndex(archive)) {
-        if (!wanted.has(name) || defined.has(name)) continue;
-        let isBitcode = isBitcodeAt.get(header);
-        if (isBitcode === undefined) {
-          isBitcode = readAt(fd, header + 60, 4).readUInt32BE(0) === bitcodeMagic;
-          isBitcodeAt.set(header, isBitcode);
+      if (!isArchive(input)) {
+        for (const [name, target] of readWeakAliases(fd, 0, statSync(input).size, input))
+          if (wanted.has(name)) aliases.set(name, target);
+        continue;
+      }
+      const aliasesOfMember = new Map<number, Map<string, string> | undefined>();
+      for (const [name, header] of readArchiveIndex(input)) {
+        if (!wanted.has(name)) continue;
+        if (!aliasesOfMember.has(header)) {
+          const size = Number(readAt(fd, header + 48, 10).toString("latin1"));
+          const isBitcode = isBitcodeAt(fd, header + 60, size);
+          aliasesOfMember.set(header, isBitcode ? new Map(readWeakAliases(fd, header + 60, size, input)) : undefined);
         }
-        if (isBitcode) return name;
+        const target = aliasesOfMember.get(header)?.get(name);
+        if (target !== undefined) aliases.set(name, target);
       }
     } finally {
       closeSync(fd);
     }
   }
-  return undefined;
+  return { defined, aliases };
+}
+
+function weakExternals(aliases: Map<string, string>): string {
+  const quoted = (name: string) => {
+    if (/["\\\n]/.test(name))
+      throw new BuildError(`a weak alias of the bitcode has a name that cannot be written in assembly: ${name}`);
+    return `"${name}"`;
+  };
+  return [...aliases]
+    .map(([name, target]) => `\t.weak\t${quoted(name)}\n${quoted(name)} = ${quoted(target)}\n`)
+    .join("");
 }
 
 const isMovable = (output: string) => output === ".text" || output === ".rdata" || output === builtinModulesSection;
@@ -141,10 +180,11 @@ export function coff(linker: Linker): LinkerFormat {
   const namedCopies = new Map<string, string>();
   let named: string[] = [];
   let relinksSameInputs = false;
+  const archivesWithoutBitcode = new Map<string, string | undefined>();
   let ordinal = 0;
   const nextPrefix = () => unnamedSectionPrefix + ordinal++;
   // A member that the first link took is linked as a file of its own, in front of its archive: what it defines is defined by then, so
-  // the archive's copy is not taken again. The same holds for what the first link compiled from a member that is bitcode.
+  // the archive's copy is not taken again. A member of bitcode is offered to no later link: withoutBitcode().
   const nameLinkedMembers = (first: Link) =>
     findLinkedMembers(first.map, linker.inputs).flatMap(([name, { archive, offset, size }], index) => {
       const copy = join(namedFolder, "members", String(index), basename(name.replaceAll("\\", "/")));
@@ -176,18 +216,36 @@ export function coff(linker: Linker): LinkerFormat {
       return copy;
     },
     prepareCompiledObjects(objects, first) {
-      const name = findNameThatLoadsBitcode(objects, linker.inputs);
-      if (name !== undefined) {
+      const names = readNamesOfCompiledObjects(objects, linker.inputs);
+      // lld-link names what it compiles from a member by the archive and the member's name. Of two members of one name it writes
+      // both to one file, the second over the first.
+      // The map lists an alias where its target lies.
+      const isInObjects = (name: string) => names.defined.has(name) || names.aliases.has(name);
+      const lost = findNameMissingFromObjects(
+        firstSymbolMap,
+        new Set(objects.map(path => basename(path))),
+        isInObjects,
+      );
+      if (lost !== undefined) {
         console.log(
-          `trim: the second link compiles the bitcode again: linked in front of the archives, what the first link compiled would take a member of bitcode for ${name}`,
+          `trim: the second link compiles the bitcode again: the first link defined ${lost.name} in ${lost.object}, and the file of that name does not: two members of bitcode of one archive have one name`,
         );
         relinksSameInputs = true;
         named = objects;
         return undefined;
       }
       for (const object of objects) nameSections(object, nextPrefix());
-      named = [...objects, ...nameLinkedMembers(first)];
+      const aliases = names.aliases.size > 0 ? [linker.assemble("aliases.s", weakExternals(names.aliases))] : [];
+      named = [...aliases, ...objects, ...nameLinkedMembers(first)];
       return named.length > 0 ? named : undefined;
+    },
+    withoutBitcode(path) {
+      if (!isArchive(path)) return path;
+      if (!archivesWithoutBitcode.has(path)) {
+        const copy = join(work, "native", String(archivesWithoutBitcode.size), basename(path));
+        archivesWithoutBitcode.set(path, copyArchiveWithout(path, copy, isBitcodeAt));
+      }
+      return archivesWithoutBitcode.get(path);
     },
     relinksSameInputs: () => relinksSameInputs,
     compiledObjects(link) {

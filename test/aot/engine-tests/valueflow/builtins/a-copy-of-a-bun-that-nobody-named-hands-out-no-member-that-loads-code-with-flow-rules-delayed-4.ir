@@ -1,0 +1,134 @@
+# x = { build() {}, ...Object.values(globalThis)[0] }; x.build()
+# A member of Bun whose call loads code is found on the Bun that the program names and on a copy of that one. Nobody names Bun here, so the call is no call of Bun.build,
+# and the executable refuses it with the error that says what was left out.
+# The answer went by the round: the read found Bun.build if it ran before a value nobody knows had come to the chain of x.
+# a-copy-of-a-bun-that-nobody-named-hands-out-no-member-that-loads-code.ir with another order of the rules: the answer is the same.
+# OPTIONS: testing=DelayFlowRules:4
+# RUN: valueflow-solve unseen
+# CHECK-NOT: BunBuild
+# CHECK: unseen-code no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="next" declared={type=anything}}]
+layout L1 fields=[{key="build" declared={type=anything}}]
+variable g0 name="source" module=m0 declared={type=anything}
+variable g1 name="holder0" module=m0 declared={type=anything}
+variable g2 name="holder1" module=m0 declared={type=anything}
+variable g3 name="holder2" module=m0 declared={type=anything}
+variable g4 name="holder3" module=m0 declared={type=anything}
+variable g5 name="holder4" module=m0 declared={type=anything}
+variable g6 name="holder5" module=m0 declared={type=anything}
+variable g7 name="holder6" module=m0 declared={type=anything}
+variable g8 name="holder7" module=m0 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectValues
+    v3 = Call v2, v1, v0
+    v4 = Integer
+    v5 = ElemGet v3, v4
+    PutModuleVariable v5 variable=g0
+    v7 = Undefined
+    v8 = Undefined
+    v9 = Undefined
+    v10 = NewClosure function=f2
+    v11 = NewObject layout=L0
+    PropDefine v11, v10 key="next"
+    v13 = FinishObject v11
+    PutModuleVariable v13 variable=g1
+    v15 = NewClosure function=f3
+    v16 = NewObject layout=L0
+    PropDefine v16, v15 key="next"
+    v18 = FinishObject v16
+    PutModuleVariable v18 variable=g2
+    v20 = NewClosure function=f4
+    v21 = NewObject layout=L0
+    PropDefine v21, v20 key="next"
+    v23 = FinishObject v21
+    PutModuleVariable v23 variable=g3
+    v25 = NewClosure function=f5
+    v26 = NewObject layout=L0
+    PropDefine v26, v25 key="next"
+    v28 = FinishObject v26
+    PutModuleVariable v28 variable=g4
+    v30 = NewClosure function=f6
+    v31 = NewObject layout=L0
+    PropDefine v31, v30 key="next"
+    v33 = FinishObject v31
+    PutModuleVariable v33 variable=g5
+    v35 = NewClosure function=f7
+    v36 = NewObject layout=L0
+    PropDefine v36, v35 key="next"
+    v38 = FinishObject v36
+    PutModuleVariable v38 variable=g6
+    v40 = NewClosure function=f8
+    v41 = NewObject layout=L0
+    PropDefine v41, v40 key="next"
+    v43 = FinishObject v41
+    PutModuleVariable v43 variable=g7
+    v45 = NewClosure function=f9
+    v46 = NewObject layout=L0
+    PropDefine v46, v45 key="next"
+    v48 = FinishObject v46
+    PutModuleVariable v48 variable=g8
+    v50 = GetModuleVariable variable=g0
+    v51 = NewClosure function=f1
+    v52 = NewObject layout=L1
+    PropDefine v52, v51 key="build"
+    CopyDataProperties v52, v50
+    v55 = FinishObject v52
+    v56 = PropGet v55 key="build"
+    v57 = Call v56, v55
+    Return v57
+}
+function f1 name="build" kind=Arrow results=[{type=anything}] {
+    v0 = Undefined
+    Return v0
+}
+function f2 name="next" kind=Arrow results=[{type=anything}] {
+    v0 = Undefined
+    Return v0
+}
+function f3 name="next" kind=Arrow results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g1
+    v1 = PropGet v0 key="next"
+    v2 = Call v1, v0
+    Return v2
+}
+function f4 name="next" kind=Arrow results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g2
+    v1 = PropGet v0 key="next"
+    v2 = Call v1, v0
+    Return v2
+}
+function f5 name="next" kind=Arrow results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g3
+    v1 = PropGet v0 key="next"
+    v2 = Call v1, v0
+    Return v2
+}
+function f6 name="next" kind=Arrow results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g4
+    v1 = PropGet v0 key="next"
+    v2 = Call v1, v0
+    Return v2
+}
+function f7 name="next" kind=Arrow results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g5
+    v1 = PropGet v0 key="next"
+    v2 = Call v1, v0
+    Return v2
+}
+function f8 name="next" kind=Arrow results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g6
+    v1 = PropGet v0 key="next"
+    v2 = Call v1, v0
+    Return v2
+}
+function f9 name="next" kind=Arrow results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g7
+    v1 = PropGet v0 key="next"
+    v2 = Call v1, v0
+    Return v2
+}

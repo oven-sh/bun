@@ -218,6 +218,37 @@ fn types_in_a_cycle_do_not_depend_on_which_is_asked_for_first() {
     }
 }
 
+/// None is exported, so what the callers pass counts as well, and what they pass is what they were passed.
+#[test]
+fn types_in_a_cycle_of_private_functions_do_not_depend_on_which_is_asked_for_first() {
+    let mut programs = Vec::new();
+    for kinds in [1, 2, 3, 4, 6, 8, 12, 16, 24, 48] {
+        programs.push(write_visitors(kinds));
+    }
+    for text in [
+        write_two_that_read_a_wide_tree_and_one_that_calls(),
+        write_two_that_read_many_members_and_one_that_calls(16),
+    ] {
+        programs.push(format!("{text}export const made = first(() => 1);\n"));
+    }
+    programs.push(write_functions_that_call_one_another_at_random(300));
+    for text in programs {
+        let text = text.replace("export function", "function");
+        // One walk reaches all of a cycle, or a part of it.
+        for max_inference_nodes in [4096, 100] {
+            let ask = |order| ask_for_parameters_and_count(&text, order, max_inference_nodes).0;
+            let as_written = ask(Order::AsWritten);
+            for order in [Order::LastFirst, Order::Scattered] {
+                assert_eq!(
+                    as_written,
+                    ask(order),
+                    "{max_inference_nodes} nodes:\n{text}"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn what_a_walk_found_before_its_budget_ended_does_not_depend_on_which_is_asked_for_first() {
     let mut programs = vec![(write_two_that_read_a_wide_tree_and_one_that_calls(), 4096)];

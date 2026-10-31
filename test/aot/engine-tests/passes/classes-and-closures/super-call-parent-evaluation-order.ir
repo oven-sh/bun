@@ -476,7 +476,7 @@ function f33 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v43
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="constructTwice"
-# CHECK: module=m0 position=2132 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string|function|f5|f6|f14|builtin(Array)|builtin(Date)|builtin(Map)|builtin(Object)|builtin(Set)|builtin(Uint8Array)|builtin(MathMax) flags=[IsExpected]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 parent=1 module=m0}, {callee=f1 callPosition=4294967295 parent=2 module=m0}, {callee=f16 callPosition=4294967295 parent=2 module=m0}, {callee=f11 callPosition=4294967295 parent=5 isConstruction=true module=m0}] {
+# CHECK: module=m0 position=2132 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string|function|f5|f6|f14|builtin(Array)|builtin(Date)|builtin(Map)|builtin(Object)|builtin(Set)|builtin(Uint8Array)|builtin(MathMax) flags=[IsExpected]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 parent=2 module=m0}, {callee=f16 callPosition=4294967295 parent=2 module=m0}, {callee=f1 callPosition=4294967295 parent=1 module=m0}, {callee=f11 callPosition=4294967295 parent=4 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|function, v1: anything ~ undefined|null|object, v2: anything ~ undefined|null|string|function|f5|f6|f14|builtin(Array)|builtin(Date)|builtin(Map)|builtin(Object)|builtin(Set)|builtin(Uint8Array)|builtin(MathMax)):
 # CHECK-NEXT: v3: undefined|"argument"|"argument of a mixin"|"array spread"|"iterable spread"|f11|f12|f13|f18 ~ undefined|f11|f12|f13|f18 = AssumeType v0 provenType=undefined|"argument"|"argument of a mixin"|"array spread"|"iterable spread"|f11|f12|f13|f18
 # CHECK-NEXT: v4: boolean = TypeTest v1 testedType=null|object
@@ -514,9 +514,9 @@ function f33 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b10(v21)
 # CHECK-NEXT: b10(v22: anything):
 # CHECK-NEXT: v23: string = ToString v22
+# CHECK-NEXT: v24: f17 = NewClosure v3, v2 function=f17 allocationSite=36 storage=Frame
 # CHECK-NEXT: Jump -> next b11()
 # CHECK-NEXT: b11() handler=b15():
-# CHECK-NEXT: v24: f17 = NewClosure v3, v2 function=f17 allocationSite=36 storage=Frame
 # CHECK-NEXT: v25: anything = Call v24 calleeName="run" accessSite=11 callees=[f16, f17]
 # CHECK-NEXT: v26: anything ~ undefined|null|object = Upcast v25 castType=anything
 # CHECK-NEXT: v27: boolean = TypeTest v26 testedType=BigInt64Array|BigUint64Array|DataView|Float16Array|Float32Array|Float64Array|Int16Array|Int32Array|Int8Array|Uint16Array|Uint32Array|Uint8Array|Uint8ClampedArray

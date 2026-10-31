@@ -1,7 +1,9 @@
+use super::Constant;
 use super::evaluate::Value;
 use super::folder::Folder;
 use super::inputs::DefineValue;
 use crate::bind::CommonJsVariable;
+use crate::check::aot::has_export_from;
 use crate::hir::{
     BinOp, ExprId, ExprKind, FnBody, IdList, PatKind, StmtId, StmtKind, UnOp, VarKind,
 };
@@ -28,13 +30,37 @@ impl<'s> Folder<'_, 's> {
         !self.folded_by_build_alone.contains(e.idx())
     }
 
+    /// `canBeConstValue`: `"a" + "b"` is kept in two pieces, and a BigInt is not among them.
+    pub(super) fn can_be_const_value(&self, init: ExprId) -> bool {
+        let Value::Known(value) = self.folded(init).value else {
+            return false;
+        };
+        let text = match self.evaluator.to_constant(value) {
+            Constant::Undefined | Constant::Null | Constant::Boolean(_) | Constant::Number(_) => {
+                return true;
+            }
+            Constant::BigInt(_) => return false,
+            Constant::String(text) => text,
+        };
+        match self.hir[self.hir.skip_type_assertions(init)].kind {
+            ExprKind::String(_)
+            | ExprKind::Ident(_)
+            | ExprKind::Dot { .. }
+            | ExprKind::Index { .. } => true,
+            ExprKind::Template { exprs } => exprs.is_empty() || self.atoms.bytes(text).is_ascii(),
+            _ => false,
+        }
+    }
+
     /// `bun run` puts the value of a constant in place of its reads only where nothing but declarations of constants
-    /// stands in front of it in its list of statements.
+    /// stands in front of it in its list of statements, and at the top of a file only where the file has no `export { a } from`.
     pub(super) fn is_in_constant_prefix(&self, init: ExprId) -> bool {
         let initializers = self.initializers_in_constant_prefixes.get_or_init(|| {
             let hir = self.hir;
             let mut initializers = Vec::new();
-            self.push_constant_prefix(hir.body, &mut initializers);
+            if !has_export_from(hir) {
+                self.push_constant_prefix(hir.body, &mut initializers);
+            }
             for function in hir.fns.iter() {
                 if let FnBody::Block(statements) = function.body {
                     self.push_constant_prefix(statements, &mut initializers);

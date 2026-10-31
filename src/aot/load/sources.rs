@@ -105,6 +105,8 @@ pub(crate) struct ParsedSource {
     pub library_modules_written_as_values: Vec<RuntimeModule>,
     pub loads_by_unknown_name: bool,
     pub unknown_names_at: Vec<u32>,
+    /// `named_loads::find_loads_of_files_missing_at_build`
+    pub files_missing_at_build_at: Vec<u32>,
     pub imports_given_unknown_names: Vec<SymbolId>,
     pub(super) named_modules: OnceLock<Vec<NamedModule>>,
     pub(super) gives_unknown_name_to_imported_loader: OnceLock<bool>,
@@ -135,6 +137,7 @@ impl ParsedSource {
             library_modules_written_as_values: Vec::new(),
             loads_by_unknown_name: false,
             unknown_names_at: Vec::new(),
+            files_missing_at_build_at: Vec::new(),
             imports_given_unknown_names: Vec::new(),
             named_modules: OnceLock::new(),
             gives_unknown_name_to_imported_loader: OnceLock::new(),

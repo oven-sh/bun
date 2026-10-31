@@ -709,12 +709,6 @@ impl<'s> Checker<'_, 's> {
         self.task.can_recheck_early()
     }
 
-    /// True if the checker has given up at a limit since the last call (`note_gave_up`). A task that is trusted isn't discarded
-    /// for that.
-    pub fn take_met_limit(&self) -> bool {
-        self.met_limit.replace(false)
-    }
-
     /// Returns hashes of the queries in the cycle that got this task discarded. Empty if that cycle is already committed.
     pub fn take_unresolved_cycle(&self) -> Vec<u64> {
         self.task.take_cycle_members()

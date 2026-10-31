@@ -551,9 +551,9 @@ runtimefunction id=ObjectsToLocaleString function=f32
 # CHECK-NEXT: v4: builtin(IntlNumberFormat) = Upcast v32 castType=anything
 # CHECK-NEXT: v33: builtin(IntlNumberFormat) = AssumeType v4 provenType=builtin(IntlNumberFormat)
 # CHECK-NEXT: v5: anything ~ object = Construct v33 calleeName="Intl.NumberFormat" accessSite=5 callees=[builtin(IntlNumberFormat)]
-# CHECK-NEXT: v34: IntlNumberFormat = AssumeType v5 provenType=IntlNumberFormat
-# CHECK-NEXT: v6: IntlNumberFormat = Check v34 expectedType=undefined|null|IntlNumberFormat site=w18
-# CHECK-NEXT: v35: IntlNumberFormat = AssumeType v6 provenType=IntlNumberFormat
+# CHECK-NEXT: v34: IntlNumberFormat<pristine[Storage, Names]> = AssumeType v5 provenType=IntlNumberFormat<pristine[Storage, Names]>
+# CHECK-NEXT: v6: IntlNumberFormat<pristine[Storage, Names]> = Check v34 expectedType=undefined|null|IntlNumberFormat site=w18
+# CHECK-NEXT: v35: IntlNumberFormat<pristine[Storage, Names]> = AssumeType v6 provenType=IntlNumberFormat<pristine[Storage, Names]>
 # CHECK-NEXT: v7: anything = PropGet v35 key="resolvedOptions" accessSite=6
 # CHECK-NEXT: v36: undefined|builtin(IntlNumberFormatPrototypeResolvedOptions) = AssumeType v7 provenType=undefined|builtin(IntlNumberFormatPrototypeResolvedOptions)
 # CHECK-NEXT: v8: anything = Call v36, v35 calleeKey="resolvedOptions" calleeName="resolvedOptions" accessSite=7 callees=[builtin(IntlNumberFormatPrototypeResolvedOptions)]

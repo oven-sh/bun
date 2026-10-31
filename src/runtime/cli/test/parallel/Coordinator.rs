@@ -74,6 +74,8 @@ pub(crate) struct Coordinator<'a> {
     pub(crate) room_beside_heavy_files: u32,
     /// In a run of one program.
     pub(crate) heavy_files_to_hand_out: u32,
+    pub(crate) max_worker_peak_rss_mb: u32,
+    pub(crate) max_exited_worker_rss_mb: u32,
     pub(crate) scale_up_after_ms: i64,
     pub(crate) bail: u32,
     pub(crate) dots: bool,
@@ -774,6 +776,7 @@ impl<'a> Coordinator<'a> {
                 let elapsed_ns = rd.u64();
                 let rd_growth = rd.u32();
                 let largest_child = rd.u32();
+                self.max_worker_peak_rss_mb = self.max_worker_peak_rss_mb.max(rd.u32());
                 let exit_code_left = rd.u32();
                 let first_loads = rd.str();
                 // Of the two views of the children, one sees the short-lived and one sees those that run at once.
@@ -871,7 +874,8 @@ impl<'a> Coordinator<'a> {
         w.dispatch(&mut self.frame, idx, file, self.exit_code_left_by_tests);
     }
 
-    pub(crate) fn on_worker_exit(&mut self, w: &mut Worker, status: SpawnStatus) {
+    pub(crate) fn on_worker_exit(&mut self, w: &mut Worker, status: SpawnStatus, peak_rss_mb: u32) {
+        self.max_exited_worker_rss_mb = self.max_exited_worker_rss_mb.max(peak_rss_mb);
         if let (Some(children), Some(process)) = (&mut self.children_of_workers, &w.process) {
             children.forget(process.pid as i64);
         }

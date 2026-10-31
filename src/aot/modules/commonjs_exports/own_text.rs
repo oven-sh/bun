@@ -851,16 +851,24 @@ impl Scan<'_, '_, '_> {
         }
     }
 
+    fn is_deleted(&self, access: ExprId) -> bool {
+        let text = self.text;
+        matches!(text.parent(access), (_, Parent::Expr(user))
+            if matches!(text.hir[user].kind, ExprKind::Unary { op: UnOp::Delete, .. }))
+    }
+
     // `module` of the file. A member that the table of built-ins knows hands out neither the object nor what it exports.
     fn add_mention_of_module(&mut self, module_object: ExprId) {
         let text = self.text;
         if self.is_compared_or_tested(module_object) {
             return;
         }
+        // `delete module.exports` takes the name off the object, where whoever reaches the object by another way looks for it: `Object.keys(require.main)`.
         if let (outermost, Parent::Expr(user)) = text.parent(module_object)
             && let Some((accessed, _)) = text.hir.member_key(user)
             && accessed == outermost
             && text.builtins.builtin_of_expression(user).is_some()
+            && !self.is_deleted(user)
         {
             return;
         }

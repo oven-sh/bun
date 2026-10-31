@@ -110,6 +110,7 @@ export function traverseArray(
   const thirdLinkShift = 8;
   const hasInitialValueShift = 10;
   const flattensShortListsShift = 11;
+  const runsLinksOnEveryElementShift = 12;
   const endCallbackIndex = 6;
   const shortListLength = 3;
 
@@ -120,6 +121,8 @@ export function traverseArray(
   const isDense = firstLink === linkFilter || secondLink === linkFilter || thirdLink === linkFilter;
   const visitsHoles = !isDense && (endKind === endFind || endKind === endFindIndex);
   const flattensShortLists = ((shape >> flattensShortListsShift) & 1) === 1;
+  // What a link does on an element behind the answer of `some`, `every`, `find` or `findIndex` would be missed: the links go on to the last element, the end is asked no more.
+  const runsLinksOnEveryElement = ((shape >> runsLinksOnEveryElementShift) & 1) === 1;
   const endCallback = operands[endCallbackIndex];
   const endThis = operands[endCallbackIndex + 1];
 
@@ -135,6 +138,9 @@ export function traverseArray(
   let accumulator = operand;
   let hasAccumulator = ((shape >> hasInitialValueShift) & 1) === 1;
   let text = "";
+  let isAnswered = false;
+  let found: unknown = undefined;
+  let foundIndex = -1;
   let out: unknown[] | undefined = undefined;
   if (endKind === endArray && !isDense) out = $newArrayLike<unknown>(count, array);
   else if (endKind === endArray) out = $newArrayWithCapacity<unknown>(count, array);
@@ -147,8 +153,15 @@ export function traverseArray(
     for (; position < last; position++) {
       let index = position - first;
       if (!(position in array)) {
-        if (visitsHoles && $call<unknown>(endCallback, endThis, undefined, index))
-          return endKind === endFind ? undefined : index;
+        if (
+          visitsHoles &&
+          !(runsLinksOnEveryElement && isAnswered) &&
+          $call<unknown>(endCallback, endThis, undefined, index)
+        ) {
+          if (!runsLinksOnEveryElement) return endKind === endFind ? undefined : index;
+          isAnswered = true;
+          foundIndex = index;
+        }
         continue;
       }
       let value: unknown = array[position];
@@ -172,6 +185,7 @@ export function traverseArray(
         passedThird = (index + 1) >>> 0;
       }
 
+      if (runsLinksOnEveryElement && isAnswered) continue;
       if (endKind === endArray) {
         const isStored: boolean = $tryPutByValDirect(out!, index, value);
         if (!isStored) {
@@ -185,13 +199,27 @@ export function traverseArray(
         accumulator = hasAccumulator ? $call<unknown>(endCallback, undefined, accumulator, value, index) : value;
         hasAccumulator = true;
       } else if (endKind === endSome) {
-        if ($call<unknown>(endCallback, endThis, value, index)) return true;
+        if ($call<unknown>(endCallback, endThis, value, index)) {
+          if (!runsLinksOnEveryElement) return true;
+          isAnswered = true;
+        }
       } else if (endKind === endEvery) {
-        if (!$call<unknown>(endCallback, endThis, value, index)) return false;
+        if (!$call<unknown>(endCallback, endThis, value, index)) {
+          if (!runsLinksOnEveryElement) return false;
+          isAnswered = true;
+        }
       } else if (endKind === endFind) {
-        if ($call<unknown>(endCallback, endThis, value, index)) return value;
+        if ($call<unknown>(endCallback, endThis, value, index)) {
+          if (!runsLinksOnEveryElement) return value;
+          isAnswered = true;
+          found = value;
+        }
       } else if (endKind === endFindIndex) {
-        if ($call<unknown>(endCallback, endThis, value, index)) return index;
+        if ($call<unknown>(endCallback, endThis, value, index)) {
+          if (!runsLinksOnEveryElement) return index;
+          isAnswered = true;
+          foundIndex = index;
+        }
       } else if (endKind === endJoin) {
         for (; reached < index; reached++) text += operand as string;
         text += joinedText(value);
@@ -234,5 +262,13 @@ export function traverseArray(
   if (endKind === endLength) return isDense ? passed : count;
   if (endKind === endReduce) return finishReduce(hasAccumulator, accumulator);
   if (endKind === endJoin) return finishJoin(text, operand as string, reached, isDense ? reached + 1 : count);
+  if (runsLinksOnEveryElement)
+    return endKind === endSome
+      ? isAnswered
+      : endKind === endEvery
+        ? !isAnswered
+        : endKind === endFindIndex
+          ? foundIndex
+          : found;
   return endKind === endSome ? false : endKind === endEvery ? true : endKind === endFindIndex ? -1 : undefined;
 }

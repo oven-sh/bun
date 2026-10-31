@@ -92,6 +92,10 @@ pub struct FoundInFile {
     pub holders_named_from_outside: Vec<u32>,
     /// The texts that it passes to what it imports from another file: the file as it writes it, and the text. `plant("polluted")`.
     pub texts_passed: Vec<(Vec<u8>, Vec<u8>)>,
+    /// `ResolvedBuiltins::builtins_handed_out`, by their numbers.
+    pub builtins_handed_out: Vec<u32>,
+    /// `ResolvedBuiltins::writes_on_imports`: the file as this one writes it, the path and the key.
+    pub writes_on_imports: Vec<(Vec<u8>, Vec<Vec<u8>>, Vec<u8>)>,
     /// `export { a as b } from "./c"`, `import { a } from "./c"; export { a as b }`: b, "./c", a.
     pub names_exported_again: Vec<(Vec<u8>, Vec<u8>, Vec<u8>)>,
     /// `export * from "./c"`
@@ -320,6 +324,15 @@ impl<'s> Look<'s> {
         }
         let holders = resolved.holders_named_from_outside().iter();
         (found.holders_named_from_outside).extend(holders.map(|&holder| holder as u32));
+        let holders = resolved.builtins_handed_out().iter();
+        (found.builtins_handed_out).extend(holders.map(|&holder| holder as u32));
+        for write in resolved.writes_on_imports() {
+            let file = hir[write.import].spec;
+            if file.is_some() && find_module_named(atoms.bytes(file)).is_none() {
+                let path = write.path.iter().map(|&name| bytes_of(name)).collect();
+                (found.writes_on_imports).push((bytes_of(file), path, bytes_of(write.key)));
+            }
+        }
         let import_of = |symbol: SymbolId| match *bound.symbol(symbol).decls {
             [Decl::ImportSpec(spec)] => Some(hir[spec].import),
             [Decl::ImportDefault(import) | Decl::ImportNamespace(import)] => Some(import),
@@ -1267,6 +1280,76 @@ mod tests {
             "#,
         );
         assert!(own.is_empty(), "{own:?}");
+    }
+
+    #[test]
+    fn tells_what_a_file_hands_out_and_where_it_writes_on_what_it_imports() {
+        let helper = look_at_file(
+            b"/project/helper.ts",
+            br#"
+            export const ofMath = () => new Proxy(Math, {});
+            export const proxy = new Proxy(JSON, {});
+            export function ofAtomics() { return { proxy: new Proxy(Atomics, {}) }; }
+            const kept = new Proxy(Reflect, {});
+            export { kept as other };
+            export default new Proxy(Intl, {});
+            export const tools = { ofSymbol() { return new Proxy(Symbol, {}); } };
+            const own = new Proxy(Date, {});
+            "#,
+        );
+        let mut handed_out = helper.builtins_handed_out;
+        handed_out.sort_unstable();
+        let mut expected = [
+            BuiltinId::Math,
+            BuiltinId::JSON,
+            BuiltinId::Atomics,
+            BuiltinId::Reflect,
+            BuiltinId::Intl,
+            BuiltinId::Symbol,
+        ]
+        .map(|it| it as u32);
+        expected.sort_unstable();
+        assert_eq!(handed_out, expected);
+        let found = look_at_file(
+            b"/project/a.test.ts",
+            br#"
+            import made, { ofMath, proxy, withProxy } from "./helper";
+            import * as tools from "./tools";
+            import * as fs from "node:fs";
+            ofMath().max = () => 1;
+            proxy.parse = () => 1;
+            tools.ofWeakRef().prototype.deref = () => 1;
+            const kept = await made;
+            delete kept.getCanonicalLocales;
+            withProxy(it => { it.load = () => 1; });
+            ofMath().nameOfTheProgram = 1;
+            fs.readFileSync = () => 1;
+            "#,
+        );
+        let text_of = |bytes: &Vec<u8>| String::from_utf8(bytes.clone()).expect("it is text");
+        let writes: Vec<(String, Vec<String>, String)> = (found.writes_on_imports.iter())
+            .map(|(file, path, key)| {
+                (
+                    text_of(file),
+                    path.iter().map(text_of).collect(),
+                    text_of(key),
+                )
+            })
+            .collect();
+        let write = |file: &str, path: &[&str], key: &str| {
+            let path = path.iter().map(|&name| name.to_owned()).collect();
+            (file.to_owned(), path, key.to_owned())
+        };
+        assert_eq!(
+            writes,
+            [
+                write("./helper", &[], "max"),
+                write("./helper", &[], "parse"),
+                write("./tools", &["prototype", "ofWeakRef"], "deref"),
+                write("./helper", &[], "getCanonicalLocales"),
+                write("./helper", &[], "load"),
+            ]
+        );
     }
 
     // Each helper returns two calls of the one below, so there are 2^60 ways from the first to the last, and two that return each other's calls beside them.

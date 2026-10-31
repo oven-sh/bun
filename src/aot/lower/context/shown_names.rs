@@ -151,6 +151,13 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    pub(crate) fn intern_variable_name(&mut self, symbol: SymbolId) -> StringId {
+        match self.short_function_name(Binding::Symbol(symbol)) {
+            Some(name) => name,
+            None => self.intern_atom(self.bound.symbol(symbol).name),
+        }
+    }
+
     /// No two bindings of the program give one name: a table with such names for keys holds.
     fn short_function_name(&mut self, binding: Binding) -> Option<StringId> {
         let names = self.shown_names.short_function_names.as_ref()?;

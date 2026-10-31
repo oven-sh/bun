@@ -457,10 +457,10 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f62
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="look"
-# CHECK: module=m0 position=1296 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=function|f11|f19|Arguments|RegExp<"a"[Global], pristine[Storage]>}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f9 parameterMap=[{original=1}]} inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f36 callPosition=4294967295 parent=1 module=m0}, {callee=f32 callPosition=4294967295 parent=2 module=m0}, {callee=f7 callPosition=4294967295 parent=3 isTailCall=true module=m0}, {callee=f3 callPosition=4294967295 parent=4 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=1296 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=function|f11|f19|Arguments|RegExp<"a"[Global], pristine[Storage]>}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f9 parameterMap=[{original=1}]} inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f32 callPosition=4294967295 parent=2 module=m0}, {callee=f36 callPosition=4294967295 parent=1 module=m0}, {callee=f7 callPosition=4294967295 parent=4 isTailCall=true module=m0}, {callee=f3 callPosition=4294967295 parent=3 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v1: function|f11|f19|Arguments|RegExp<"a"[Global], pristine[Storage]>):
 # CHECK-NEXT: v3: 1 = Integer integer=1
-# CHECK-NEXT: v4: fact = Entered function=f3 @0:4 tail
+# CHECK-NEXT: v4: fact = Entered function=f3 @0:3 tail
 # CHECK-NEXT: v5: function|f11|f19|Arguments|Array<int, proven, pristine[Storage, Names]>|RegExp<"a"[Global], pristine[Storage]> = AssumeType v1, v4 provenType=function|f11|f19|Arguments|Array<int, proven, pristine[Storage, Names]>|RegExp<"a"[Global], pristine[Storage]>
 # CHECK-NEXT: v6: boolean = TypeTest v5 testedType=Array
 # CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2(| 0)

@@ -14,12 +14,12 @@ pub use bun_sema::check::explain::MessageChain;
 pub use bun_sema::messages::Category;
 pub use compile::{
     BuildDiagnostic, CheckedProgram, CompileRequest, Demotion, DemotionCause, EntryPointFailure,
-    EntryPoints, LoadFailure, LoadedProgram, Locator, PassCount, Passes, RoleDecision, TextLocator,
-    check_and_lower, check_and_lower_noting_commits, decide_roles, drop_thread_caches,
-    find_configuration_of_each_entry_point, keep_verified_roles, load_program,
-    load_program_of_loaded_files, load_program_with_parsed_files, log_message, resolve_entry_point,
-    resolve_import_to_file, resolve_names_known_in_part, run_on_one_thread_while,
-    run_on_region_thread, run_on_threads_while, wake_idle_region_threads,
+    EntryPoints, FileFinder, FileFinderTables, LoadFailure, LoadedProgram, Locator, PassCount,
+    Passes, RoleDecision, TextLocator, check_and_lower, check_and_lower_noting_commits,
+    decide_roles, drop_thread_caches, find_configuration_of_each_entry_point, keep_verified_roles,
+    load_program, load_program_of_loaded_files, load_program_with_parsed_files, log_message,
+    resolve_names_known_in_part, run_on_one_thread_while, run_on_region_thread,
+    run_on_threads_while, wake_idle_region_threads,
 };
 
 use bstr::ByteSlice;
@@ -1404,8 +1404,6 @@ pub struct Report {
     pub diagnostics: Vec<Diagnostic>,
     /// Files whose errors may be incomplete.
     pub incomplete: Vec<Incomplete>,
-    /// `FileWork::is_one_part_of_files`: the files that are left to the caller, in no order.
-    pub left_for_last_round: Vec<FileId>,
     /// `Host::take_unreadable`: the source files that couldn't be read. Each was checked as an empty file.
     pub unreadable: Vec<Vec<u8>>,
     pub rejected_programs: Vec<RejectedProgram>,
@@ -4847,8 +4845,6 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
     let rounds: Guarded<Vec<RoundReport>> = Guarded::new(Vec::new());
     // The files of the discarded tasks.
     let lost: Guarded<Vec<usize>> = Guarded::new(Vec::new());
-    let left_for_last_round: Guarded<Vec<FileId>> = Guarded::new(Vec::new());
-    let has_met_limit_in_last_round = AtomicBool::new(false);
     // Which files are final, and the length of the final prefix in program order. The task that checks the next file
     // enters a cycle where `tsc --singleThreaded` does. See `Checker::set_first_in_order`.
     let final_files = Guarded::new((vec![false; to_check.len()], 0usize));
@@ -5164,9 +5160,6 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                     checker.set_requested((work.requested)(file));
                 }
                 let checked = checker.check_file(file);
-                if is_last_round && checker.take_met_limit() {
-                    has_met_limit_in_last_round.store(true, Ordering::Relaxed);
-                }
                 if request.plan_options.discards_first_visits
                     && !is_last_round
                     && visits.lock()[index].rechecks == 0
@@ -5252,9 +5245,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 }
                 give_back_free_memory(to_check.len().saturating_sub(done));
                 if program.files.modules[file.idx()].is_leaf
-                    && file_work.is_none_or(|work| {
-                        (work.frees_tree)(file) && !is_last_round && !work.is_one_part_of_files
-                    })
+                    && file_work.is_none_or(|work| (work.frees_tree)(file) && !is_last_round)
                 {
                     trees_to_free.push(file);
                 }
@@ -5497,18 +5488,12 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
             checker.begin_task(first_round + ROUND, tasks[at][0] as u32);
             checker.see_commits(true);
             checker.set_first_in_order(true, true);
-            // A task keeps what it has derived from an answer at a limit, so the files behind that one are left with it.
-            let mut is_left = false;
             for &index in tasks[at] {
                 let file = to_check[index];
                 checker.set_requested((work.requested)(file));
                 checker.check_file(file);
                 after_file(&mut checker, file);
-                is_left |= work.is_one_part_of_files && checker.take_met_limit();
-                match is_left {
-                    true => left_for_last_round.lock().push(file),
-                    false => (work.after_commit)(file),
-                }
+                (work.after_commit)(file);
                 checker.take_ran_out_of_stack();
             }
             checker.end_task_after_commits();
@@ -5522,11 +5507,8 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 began.elapsed().as_millis(),
             );
         }
-        let is_freed = |file: &FileId| {
-            program.files.modules[file.idx()].is_leaf
-                && (work.frees_tree)(*file)
-                && !work.is_one_part_of_files
-        };
+        let is_freed =
+            |file: &FileId| program.files.modules[file.idx()].is_leaf && (work.frees_tree)(*file);
         free_trees(
             files
                 .iter()
@@ -5542,17 +5524,8 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         if !again.is_empty() {
             again.shared_sort_unstable();
             run_tasks(1, &again, expected, true);
-            match file_work {
-                // What the round has committed holds an answer from a limit, and each of its files may have read that.
-                Some(work)
-                    if work.is_one_part_of_files
-                        && has_met_limit_in_last_round.load(Ordering::Relaxed) =>
-                {
-                    let left = again.iter().map(|&index| to_check[index]);
-                    left_for_last_round.lock().extend(left);
-                }
-                Some(work) => work_after_last_round(work, &again, expected),
-                None => {}
+            if let Some(work) = file_work {
+                work_after_last_round(work, &again, expected);
             }
         }
     };
@@ -5716,7 +5689,6 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         report.rounds = std::mem::take(&mut *rounds.lock());
     }
     report.incomplete = std::mem::take(&mut *incomplete.lock());
-    report.left_for_last_round = std::mem::take(&mut *left_for_last_round.lock());
     report.incomplete.shared_sort();
     report.incomplete.dedup();
     let unreadable = host.take_unreadable();

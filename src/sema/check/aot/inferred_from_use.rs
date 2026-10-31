@@ -18,7 +18,7 @@ use crate::util::FxHashMap;
 use smallvec::SmallVec;
 use std::rc::Rc;
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub(super) enum Subject {
     Binding(SymbolId),
     Pattern(PatId),
@@ -48,6 +48,16 @@ pub(super) enum UsageState {
 
 #[derive(Copy, Clone)]
 pub(super) enum TypeState {
+    /// The search for cycles has come to it and does not know yet what it leads back to. `index`: in the order of the search.
+    Searched {
+        index: u32,
+    },
+    /// It has not been computed, and is in no cycle.
+    Alone,
+    /// It has not been computed. `cycle`: in `TypesInProgress::cycles`.
+    Member {
+        cycle: u32,
+    },
     /// `assumed`: what it answers with when it is run into. `None`: nothing, and whoever asked leads back to it.
     InProgress {
         depth: u32,
@@ -63,6 +73,26 @@ pub(super) enum TypeState {
     Known(TypeId),
     /// It was computed, and rested on an answer of the checker that may be another next time.
     NotKept,
+}
+
+type Subjects = SmallVec<[Subject; 4]>;
+
+struct SubjectSearched {
+    subject: Subject,
+    index: u32,
+    /// The least index of an open subject that it leads to, its own at first.
+    lowest_index: u32,
+    asks_for: Subjects,
+    next: usize,
+}
+
+impl TypeState {
+    fn was_computed(self) -> bool {
+        !matches!(
+            self,
+            TypeState::Searched { .. } | TypeState::Alone | TypeState::Member { .. }
+        )
+    }
 }
 
 #[derive(Default)]
@@ -122,6 +152,8 @@ pub(super) struct TypesInProgress {
     is_computing_again: bool,
     subjects_not_kept: u64,
     next_usage_index: usize,
+    /// The subjects of each cycle, the least first. `None`: they have been asked for.
+    cycles: Vec<Option<Box<[Subject]>>>,
 }
 
 impl TypesInProgress {
@@ -336,6 +368,8 @@ struct Walk {
     /// innermost is walked again, with what it had found of where it leads: what it asked for before answers at once,
     /// and what it asked for last has the stack to itself. When it is done, the one that asked for it is walked again.
     set_aside: Vec<SubjectInProgress>,
+    /// `Some`: no number is asked whether it is an integer. Each is listed here and taken for one.
+    numbers_listed: Option<Subjects>,
 }
 
 struct SubjectInProgress {
@@ -371,6 +405,7 @@ impl Walk {
             subjects_on_stack: 0,
             is_freeing_stack: false,
             set_aside: Vec::new(),
+            numbers_listed: None,
         }
     }
 
@@ -999,6 +1034,7 @@ struct CallWithReceiver {
 }
 
 type TypeParts = SmallVec<[TypeId; 4]>;
+type ReturnedExpressions = SmallVec<[(ExprId, TypeId); 4]>;
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     fn are_positions_only_expected(&self, of: FileId) -> bool {
@@ -1115,12 +1151,16 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     pub(super) fn infer_expression_type(&mut self, expression: ExprId, checked: TypeId) -> TypeId {
-        if self.c.is_any(checked) {
-            return self.inferred_type_or(Subject::Expression(expression), checked);
-        }
-        match self.find_number_subject(expression, checked) {
+        match self.find_subject_of_expression(expression, checked) {
             Some(subject) => self.inferred_type_or(subject, checked),
             None => checked,
+        }
+    }
+
+    fn find_subject_of_expression(&self, expression: ExprId, checked: TypeId) -> Option<Subject> {
+        match self.c.is_any(checked) {
+            true => Some(Subject::Expression(expression)),
+            false => self.find_number_subject(expression, checked),
         }
     }
 
@@ -1262,6 +1302,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     /// - A cycle has two rounds. In the first a subject in progress says nothing, and the subject that the cycle was
     ///   entered by is kept. In the second the others are computed again, and one in progress says what the first round
     ///   found. Then all of them are kept: a cycle is computed twice, not once for each of its subjects.
+    /// - Whichever subject of a cycle is asked for first, the cycle is entered by the least of them: see `take_cycle_of`.
     fn inferred_type(&mut self, subject: Subject) -> TypeId {
         if self.memo.types_in_progress.subjects.depth != 0 {
             return self.inferred_type_within_allowance(subject);
@@ -1296,7 +1337,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             let mut walks: SmallVec<[usize; 4]> = SmallVec::new();
             walks.push(0);
             while let Some(next) = self.memo.types_in_progress.out_of_reach.pop() {
-                if !self.memo.inferred_types.contains_key(&next) {
+                let state = self.memo.inferred_types.get(&next);
+                if !state.is_some_and(|state| state.was_computed()) {
                     walks.push(self.memo.types_in_progress.in_cycles.len());
                     self.inferred_type_with_new_allowance(next);
                 }
@@ -1381,23 +1423,35 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 return found;
             }
             Some(TypeState::Assumed(found)) => Some(found),
-            Some(TypeState::NotKept) | None => None,
+            Some(
+                TypeState::NotKept
+                | TypeState::Searched { .. }
+                | TypeState::Alone
+                | TypeState::Member { .. },
+            )
+            | None => None,
         };
+        let was_computed = state.is_some_and(TypeState::was_computed);
         if in_progress.remaining_types == 0 {
             if let Some(found) = assumed {
                 return found;
             }
-            match state {
-                None => {
+            match was_computed {
+                false => {
                     if !in_progress.is_computing_again {
                         in_progress.subjects.revisit(0);
                     }
                     in_progress.out_of_reach.push(subject);
                 }
-                Some(_) => in_progress.subjects_not_kept += 1,
+                true => in_progress.subjects_not_kept += 1,
             }
             return TypeId::ANY;
         }
+        let may_be_in_cycle = !was_computed && !matches!(state, Some(TypeState::Alone));
+        if may_be_in_cycle && self.infer_types_of_cycle_around(subject) {
+            return self.inferred_type_within_allowance(subject);
+        }
+        let in_progress = &mut self.memo.types_in_progress;
         in_progress.remaining_types -= 1;
         self.statistics.types_inferred += 1;
         let first_in_cycle = in_progress.in_cycles.len();
@@ -1438,6 +1492,176 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         inferred
     }
 
+    /// `false`: it is in no cycle, or in one that has been entered.
+    #[inline(never)]
+    fn infer_types_of_cycle_around(&mut self, subject: Subject) -> bool {
+        let Some(cycle) = self.take_cycle_of(subject) else {
+            return false;
+        };
+        for &member in &cycle {
+            self.inferred_type_within_allowance(member);
+        }
+        true
+    }
+
+    /// The cycle that nothing has been asked of yet and that the subject is in. What a subject of a cycle turns out as
+    /// hangs on where the cycle is entered, so which subjects are in one is found before any of them is computed, from
+    /// what each may ask for whatever the answers are.
+    fn take_cycle_of(&mut self, subject: Subject) -> Option<Box<[Subject]>> {
+        if matches!(subject, Subject::Pattern(_) | Subject::This(_)) {
+            return None;
+        }
+        let mut state = self.memo.inferred_types.get(&subject);
+        if state.is_none() {
+            self.find_cycles_from(subject);
+            state = self.memo.inferred_types.get(&subject);
+        }
+        match state {
+            Some(&TypeState::Member { cycle }) => {
+                self.memo.types_in_progress.cycles[cycle as usize].take()
+            }
+            _ => None,
+        }
+    }
+
+    /// Whatever was found earlier leads to nothing that is found now, or that would have been found then.
+    fn find_cycles_from(&mut self, start: Subject) {
+        let mut path: SmallVec<[SubjectSearched; 4]> = SmallVec::new();
+        let mut open: SmallVec<[Subject; 8]> = SmallVec::new();
+        let mut next = Some(start);
+        let mut count = 0;
+        loop {
+            if let Some(subject) = next.take() {
+                let asks_for = self.find_subjects_asked_for(subject);
+                let types = &mut self.memo.inferred_types;
+                let leads_on = asks_for.iter().any(|asked_for| match types.get(asked_for) {
+                    Some(TypeState::Searched { .. }) | None => *asked_for != subject,
+                    Some(_) => false,
+                });
+                if leads_on {
+                    let index = count;
+                    count += 1;
+                    types.insert(subject, TypeState::Searched { index });
+                    open.push(subject);
+                    path.push(SubjectSearched {
+                        subject,
+                        index,
+                        lowest_index: index,
+                        asks_for,
+                        next: 0,
+                    });
+                } else {
+                    types.insert(subject, TypeState::Alone);
+                }
+            }
+            let Some(searched) = path.last_mut() else {
+                return;
+            };
+            if let Some(&asked_for) = searched.asks_for.get(searched.next) {
+                searched.next += 1;
+                match self.memo.inferred_types.get(&asked_for) {
+                    Some(&TypeState::Searched { index }) => {
+                        searched.lowest_index = searched.lowest_index.min(index);
+                    }
+                    Some(_) => {}
+                    None => next = Some(asked_for),
+                }
+                continue;
+            }
+            let (subject, index, lowest_index) =
+                (searched.subject, searched.index, searched.lowest_index);
+            path.pop();
+            if let Some(asked_for_it) = path.last_mut() {
+                asked_for_it.lowest_index = asked_for_it.lowest_index.min(lowest_index);
+            }
+            if lowest_index != index {
+                continue;
+            }
+            if open.last() == Some(&subject) {
+                open.pop();
+                self.memo.inferred_types.insert(subject, TypeState::Alone);
+                continue;
+            }
+            let first = open.iter().rposition(|&other| other == subject);
+            let mut members: Vec<Subject> = open.drain(first.unwrap_or(0)..).collect();
+            members.sort_unstable();
+            let cycles = &mut self.memo.types_in_progress.cycles;
+            let cycle = cycles.len() as u32;
+            for &member in &members {
+                let state = TypeState::Member { cycle };
+                self.memo.inferred_types.insert(member, state);
+            }
+            cycles.push(Some(members.into_boxed_slice()));
+        }
+    }
+
+    /// The subjects that the type of this one may be made from, whatever their types are.
+    fn find_subjects_asked_for(&mut self, subject: Subject) -> Subjects {
+        let mut asked_for = Subjects::new();
+        match subject {
+            Subject::Binding(symbol) => {
+                self.add_subjects_a_binding_asks_for(symbol, &mut asked_for);
+            }
+            Subject::Expression(expression) => {
+                if let Some(referenced) = self.find_referenced_subject(expression) {
+                    if !matches!(referenced, Subject::This(_)) {
+                        asked_for.push(referenced);
+                    }
+                    return asked_for;
+                }
+                let receiver = self.find_untyped_receiver(expression);
+                asked_for.extend(receiver.map(Subject::Expression));
+                let receiver = self.find_untyped_receiver_of_method_call(expression);
+                asked_for.extend(receiver.map(Subject::Expression));
+                asked_for.extend(self.find_result_subject_of_call(expression));
+            }
+            Subject::Result(function) => {
+                for (returned, checked) in self.find_returned_expressions(function) {
+                    asked_for.extend(self.find_subject_of_expression(returned, checked));
+                }
+            }
+            Subject::Number(symbol) => {
+                let mut walk = Walk::new(self.inputs.max_inference_nodes);
+                walk.numbers_listed = Some(asked_for);
+                self.holds_integers(&mut walk, symbol);
+                return walk.numbers_listed.unwrap_or_default();
+            }
+            Subject::Pattern(_) | Subject::This(_) => {}
+        }
+        asked_for
+    }
+
+    fn add_subjects_a_binding_asks_for(&mut self, symbol: SymbolId, asked_for: &mut Subjects) {
+        let &[Decl::Param(name)] = self.bound().symbol(symbol).decls else {
+            if let Some(initializer) = self.find_initializer_of_constant(symbol) {
+                let receiver = self.find_untyped_receiver_of_method_call(initializer);
+                asked_for.extend(receiver.map(Subject::Expression));
+            }
+            return;
+        };
+        let declared = self.find_declared_parameter_type(name);
+        if !self.c.is_any(declared) {
+            return;
+        }
+        let mut walk = Walk::new(self.inputs.max_inference_nodes);
+        if let Some(usage) = self.usage_of(&mut walk, Subject::Binding(symbol))
+            && usage.members.is_empty()
+            && !usage.is_incomplete()
+        {
+            let used_as = self.type_of_usage(&usage);
+            if !self.c.is_any(used_as) {
+                return;
+            }
+        }
+        for argument in self.find_arguments_given(name).unwrap_or_default() {
+            if let Some(argument) = argument.some()
+                && let Ok(checked) = self.expression_type(argument)
+            {
+                asked_for.extend(self.find_subject_of_expression(argument, checked));
+            }
+        }
+    }
+
     fn compute_binding_type(&mut self, symbol: SymbolId) -> TypeId {
         let &[Decl::Param(name)] = self.bound().symbol(symbol).decls else {
             // Uses only guess: what a constant is made from knows.
@@ -1472,17 +1696,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     /// `const kept = list.filter(..)`. It asks nothing of the uses of the initializer, which are the uses of the constant.
     fn find_type_a_constant_is_made_with(&mut self, symbol: SymbolId) -> Option<TypeId> {
-        let (hir, bound) = (self.hir(), self.bound());
-        let &[Decl::Var(name)] = bound.symbol(symbol).decls else {
-            return None;
-        };
-        let PatParent::Var(variable) = bound.pat_parent[name.idx()] else {
-            return None;
-        };
-        if hir[variable].kind != VarKind::Const {
-            return None;
-        }
-        let made = self.find_result_of_inferred_method(hir[variable].init.some()?)?;
+        let initializer = self.find_initializer_of_constant(symbol)?;
+        let made = self.find_result_of_inferred_method(initializer)?;
         // A list of anything says less than the uses of its elements may.
         match self.c.array_element(made) {
             Some(element) if self.c.is_any(element) => None,
@@ -1490,32 +1705,49 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    fn compute_type_from_arguments(&mut self, name: PatId) -> TypeId {
+    fn find_initializer_of_constant(&self, symbol: SymbolId) -> Option<ExprId> {
+        let (hir, bound) = (self.hir(), self.bound());
+        let &[Decl::Var(name)] = bound.symbol(symbol).decls else {
+            return None;
+        };
+        let PatParent::Var(variable) = bound.pat_parent[name.idx()] else {
+            return None;
+        };
+        match hir[variable].kind {
+            VarKind::Const => hir[variable].init.some(),
+            _ => None,
+        }
+    }
+
+    /// What each call passes for the parameter, `ExprId::NONE` where it passes nothing. `None`: not every call is known.
+    fn find_arguments_given(&mut self, name: PatId) -> Option<SmallVec<[ExprId; 4]>> {
         let (hir, bound) = (self.hir(), self.bound());
         let PatParent::Param(parameter) = bound.pat_parent[name.idx()] else {
-            return TypeId::ANY;
+            return None;
         };
         let function = bound.param_fn[parameter.idx()];
         if function == FnId::NONE || hir[parameter].flags.contains(Flags::REST) {
-            return TypeId::ANY;
+            return None;
         }
-        let Some(index) = hir[function].params.position_of(parameter.idx()) else {
-            return TypeId::ANY;
-        };
-        let Some(callee) = find_name_of_function(hir, bound, function) else {
-            return TypeId::ANY;
-        };
+        let index = hir[function].params.position_of(parameter.idx())?;
+        let callee = find_name_of_function(hir, bound, function)?;
         let references = references_to(self.reference_index().to_bindings, callee);
         if references.len() > MAX_CALLS_READ || self.is_exported(callee) {
-            return TypeId::ANY;
+            return None;
         }
+        let first_spreads = &mut self.memo.first_spread_arguments;
+        let arguments = references.iter().map(|&(_, reference)| {
+            find_argument_of_call(hir, bound, first_spreads, reference, index)
+        });
+        arguments.collect()
+    }
+
+    fn compute_type_from_arguments(&mut self, name: PatId) -> TypeId {
+        let Some(arguments) = self.find_arguments_given(name) else {
+            return TypeId::ANY;
+        };
         let mut parts = TypeParts::new();
-        for &(_, reference) in references {
-            let first_spreads = &mut self.memo.first_spread_arguments;
-            let argument = find_argument_of_call(hir, bound, first_spreads, reference, index);
-            let Some(argument) = argument else {
-                return TypeId::ANY;
-            };
+        for argument in arguments {
             let given = match argument.some() {
                 Some(argument) => self.predicted_expression_type(argument),
                 None => Ok(TypeId::UNDEFINED),
@@ -1546,25 +1778,36 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn compute_result_type(&mut self, function: FnId) -> TypeId {
-        let (hir, bound) = (self.hir(), self.bound());
         let mut result = Usage::default();
+        for (returned, checked) in self.find_returned_expressions(function) {
+            let expected = self.infer_expression_type(returned, checked);
+            let expected = self.c.widened(expected);
+            self.add_arm(&mut result, expected);
+        }
+        self.type_of_usage(&result)
+    }
+
+    /// Each with its checked type.
+    fn find_returned_expressions(&mut self, function: FnId) -> ReturnedExpressions {
+        let (hir, bound) = (self.hir(), self.bound());
+        let mut found = ReturnedExpressions::new();
         match hir[function].body {
             FnBody::None => {}
-            FnBody::Expr(returned) => self.add_returned_type(returned, &mut result),
+            FnBody::Expr(returned) => self.add_returned_expressions(returned, &mut found),
             FnBody::Block(_) => {
                 for statement in bound.ids(bound.fns[function.idx()].returns) {
                     if let StmtKind::Return(returned) = hir[statement].kind
                         && returned.is_some()
                     {
-                        self.add_returned_type(returned, &mut result);
+                        self.add_returned_expressions(returned, &mut found);
                     }
                 }
             }
         }
-        self.type_of_usage(&result)
+        found
     }
 
-    fn add_returned_type(&mut self, returned: ExprId, result: &mut Usage) {
+    fn add_returned_expressions(&mut self, returned: ExprId, found: &mut ReturnedExpressions) {
         if self.c.is_stack_low() {
             return;
         }
@@ -1574,33 +1817,31 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let alternatives = find_alternatives(self.hir(), returned);
         if self.c.is_any(checked) && !alternatives.is_empty() {
             for alternative in alternatives {
-                self.add_returned_type(alternative, result);
+                self.add_returned_expressions(alternative, found);
             }
             return;
         }
-        let expected = self.infer_expression_type(returned, checked);
-        let expected = self.c.widened(expected);
-        self.add_arm(result, expected);
+        found.push((returned, checked));
     }
 
     fn compute_number_type(&mut self, symbol: SymbolId) -> TypeId {
-        let Some(int32) = self.c.p.aot_symbols().int32_alias() else {
-            return TypeId::ANY;
-        };
+        let mut walk = Walk::new(self.inputs.max_inference_nodes);
+        match self.c.p.aot_symbols().int32_alias() {
+            Some(int32) if self.holds_integers(&mut walk, symbol) => self.c.declared_type(int32),
+            Some(_) | None => TypeId::ANY,
+        }
+    }
+
+    fn holds_integers(&mut self, walk: &mut Walk, symbol: SymbolId) -> bool {
         let (hir, bound) = (self.hir(), self.bound());
         let references = self.reference_index().to_bindings;
         let answers = &mut self.memo.sums_used_as_int32;
         let has_int32_use = references_to(references, symbol)
             .iter()
             .any(|&(_, reference)| is_used_as_int32(hir, bound, reference, answers));
-        let mut walk = Walk::new(self.inputs.max_inference_nodes);
-        let holds_integers = has_int32_use
-            && self.starts_as_integer(&mut walk, symbol)
-            && self.gets_only_integers(&mut walk, symbol);
-        match holds_integers {
-            true => self.c.declared_type(int32),
-            false => TypeId::ANY,
-        }
+        has_int32_use
+            && self.starts_as_integer(walk, symbol)
+            && self.gets_only_integers(walk, symbol)
     }
 
     fn starts_as_integer(&mut self, walk: &mut Walk, symbol: SymbolId) -> bool {
@@ -1677,7 +1918,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return true;
         }
         if let Some(subject) = self.find_number_subject(expression, checked) {
-            return self.is_expected_int32(subject);
+            return match &mut walk.numbers_listed {
+                Some(listed) => {
+                    listed.push(subject);
+                    true
+                }
+                None => self.is_expected_int32(subject),
+            };
         }
         let hir = self.hir();
         if let Some((object, MemberKey::Name(name))) = hir.member_key(expression) {
@@ -1742,12 +1989,23 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.compute_type_from_uses(Subject::Expression(expression))
     }
 
-    fn find_type_in_inferred_receiver(&mut self, access: ExprId) -> Option<TypeId> {
-        let (object, key) = self.hir().member_key(access)?;
+    fn find_untyped_receiver(&mut self, access: ExprId) -> Option<ExprId> {
+        let (object, _) = self.hir().member_key(access)?;
         let checked = self.expression_type(object).ok()?;
-        if !self.c.is_any(checked) {
-            return None;
+        self.c.is_any(checked).then_some(object)
+    }
+
+    fn find_untyped_receiver_of_method_call(&mut self, call: ExprId) -> Option<ExprId> {
+        let hir = self.hir();
+        match hir[call].kind {
+            ExprKind::Call(site) => self.find_untyped_receiver(hir[site].callee),
+            _ => None,
         }
+    }
+
+    fn find_type_in_inferred_receiver(&mut self, access: ExprId) -> Option<TypeId> {
+        let (_, key) = self.hir().member_key(access)?;
+        let object = self.find_untyped_receiver(access)?;
         let receiver = self.inferred_type(Subject::Expression(object));
         if self.c.is_any(receiver) {
             return None;

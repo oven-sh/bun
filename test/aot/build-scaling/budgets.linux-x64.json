@@ -26,6 +26,22 @@
     "millionInstructions": 1346,
     "megabytes": 95
   },
+  "stores under the name that the file of a Worker is read from": {
+    "millionInstructions": 31672,
+    "megabytes": 309
+  },
+  "functions that hand on the file of a Worker": {
+    "millionInstructions": 12243,
+    "megabytes": 181
+  },
+  "functions in a list that hand on the file of a Worker": {
+    "millionInstructions": 17888,
+    "megabytes": 223
+  },
+  "files that store under the names that the files of Workers are read from": {
+    "millionInstructions": 24412,
+    "megabytes": 171
+  },
   "functions that call what nobody knows": {
     "millionInstructions": 7530,
     "millionInstructionsWithMusl": 16401,

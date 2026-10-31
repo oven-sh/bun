@@ -655,7 +655,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC:
         return JSValue::encode(parent);
     }
 
-    auto* parentOfCompiledModule = Bun::parentOfCompiledModule(thisObject);
+    auto* parentOfCompiledModule = thisObject->m_isParentStored ? nullptr : Bun::parentOfCompiledModule(thisObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (parentOfCompiledModule) {
         thisObject->m_parent = JSC::Weak<JSCommonJSModule>(parentOfCompiledModule);
@@ -848,12 +848,16 @@ JSC_DEFINE_CUSTOM_SETTER(setterParent,
         return false;
 
     JSValue decodedValue = JSValue::decode(value);
+    thisObject->m_isParentStored = true;
 
     if (auto* parent = dynamicDowncast<JSCommonJSModule>(decodedValue)) {
         thisObject->m_parent = parent;
         thisObject->m_overriddenParent.clear();
     } else {
         thisObject->m_parent = {};
+        bool keepsFormerParentAlive = thisObject->m_overriddenParent && dynamicDowncast<JSCommonJSModule>(thisObject->m_overriddenParent.get());
+        if (keepsFormerParentAlive)
+            thisObject->m_overriddenParent.clear();
     }
 
     return true;

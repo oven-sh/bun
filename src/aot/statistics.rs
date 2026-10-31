@@ -316,8 +316,21 @@ fn process_info() -> (Duration, usize, usize) {
     (
         Duration::from_millis((user + system) as u64),
         resident,
-        peak,
+        own_peak().unwrap_or(peak),
     )
+}
+
+/// mimalloc asks getrusage(), where on Linux a spawned process starts from the peak of its parent.
+fn own_peak() -> Option<usize> {
+    #[cfg(target_os = "linux")]
+    if let Ok(status) = bun_sys::File::read_from(bun_sys::Fd::cwd(), b"/proc/self/status") {
+        let mut lines = bun_core::strings::split(&status, b"\n");
+        let line = lines.find(|line| line.starts_with(b"VmHWM:"))?;
+        let digits: Vec<u8> = (line.iter().copied()).filter(u8::is_ascii_digit).collect();
+        let kilobytes = bun_core::fmt::parse_int::<usize>(&digits, 10).ok()?;
+        return Some(kilobytes * 1024);
+    }
+    None
 }
 
 pub fn logs_stages() -> bool {

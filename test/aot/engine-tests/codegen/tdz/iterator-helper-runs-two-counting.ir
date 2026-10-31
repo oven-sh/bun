@@ -138,77 +138,77 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Predecessors: #0, #5
 # CHECK-NEXT: Void b@38 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, iterationsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries}|Reads:Top, v7:LoopHint)
 # CHECK-NEXT: Int64 b@39 = Load(b@25, offset = 8, ControlDependent|Reads:EnvironmentFields.0, v10:GetEnvironmentField)
-# CHECK-NEXT: Int64 b@44 = Const64(-2147483648, v12:TypeTest)
-# CHECK-NEXT: Int64 b@45 = BitAnd(b@39, $-2147483648(b@44), v12:TypeTest)
-# CHECK-NEXT: Void b@47 = Branch(b@45, Terminal, v12:TypeTest)
-# CHECK-NEXT: Successors: Then:Rare:#8, Else:#7
+# CHECK-NEXT: Int64 b@44 = Const64(2147483647, v12:TypeTest)
+# CHECK-NEXT: Int32 b@45 = LessEqual(b@39, $2147483647(b@44), v12:TypeTest)
+# CHECK-NEXT: Void b@46 = Branch(b@45, Terminal, v12:TypeTest)
+# CHECK-NEXT: Successors: Then:#7, Else:Rare:#8
 # CHECK-NEXT: BB#7: ; frequency = 9.990234
 # CHECK-NEXT: Predecessors: #2
-# CHECK-NEXT: Int64 b@48 = Add(b@39, $1(b@27), v14:Increment)
-# CHECK-NEXT: Void b@49 = Store(b@48, b@25, offset = 8, ControlDependent|Writes:EnvironmentFields.0, v15:PutEnvironmentField)
-# CHECK-NEXT: Void b@50 = Jump(Terminal)
+# CHECK-NEXT: Int64 b@47 = Add(b@39, $1(b@27), v14:Increment)
+# CHECK-NEXT: Void b@48 = Store(b@47, b@25, offset = 8, ControlDependent|Writes:EnvironmentFields.0, v15:PutEnvironmentField)
+# CHECK-NEXT: Void b@49 = Jump(Terminal)
 # CHECK-NEXT: Successors: #3
 # CHECK-NEXT: BB#3: ; frequency = 10.000000
-# CHECK-NEXT: Predecessors: #7, #8
-# CHECK-NEXT: Int64 b@56 = Load(b@32, offset = 8, ControlDependent|Reads:EnvironmentFields.0, v21:GetEnvironmentField)
-# CHECK-NEXT: Int64 b@61 = BitAnd(b@56, $-2147483648(b@44), v23:TypeTest)
-# CHECK-NEXT: Void b@63 = Branch(b@61, Terminal, v23:TypeTest)
-# CHECK-NEXT: Successors: Then:Rare:#10, Else:#9
+# CHECK-NEXT: Predecessors: #8, #7
+# CHECK-NEXT: Int64 b@55 = Load(b@32, offset = 8, ControlDependent|Reads:EnvironmentFields.0, v21:GetEnvironmentField)
+# CHECK-NEXT: Int32 b@60 = LessEqual(b@55, $2147483647(b@44), v23:TypeTest)
+# CHECK-NEXT: Void b@61 = Branch(b@60, Terminal, v23:TypeTest)
+# CHECK-NEXT: Successors: Then:#9, Else:Rare:#10
 # CHECK-NEXT: BB#9: ; frequency = 9.990234
 # CHECK-NEXT: Predecessors: #3
-# CHECK-NEXT: Int64 b@64 = Add(b@56, $1(b@27), v25:Increment)
-# CHECK-NEXT: Void b@65 = Store(b@64, b@32, offset = 8, ControlDependent|Writes:EnvironmentFields.0, v26:PutEnvironmentField)
-# CHECK-NEXT: Void b@66 = Jump(Terminal)
+# CHECK-NEXT: Int64 b@62 = Add(b@55, $1(b@27), v25:Increment)
+# CHECK-NEXT: Void b@63 = Store(b@62, b@32, offset = 8, ControlDependent|Writes:EnvironmentFields.0, v26:PutEnvironmentField)
+# CHECK-NEXT: Void b@64 = Jump(Terminal)
 # CHECK-NEXT: Successors: #4
 # CHECK-NEXT: BB#4: ; frequency = 10.000000
-# CHECK-NEXT: Predecessors: #9, #10
-# CHECK-NEXT: Int64 b@72 = Load(b@25, offset = 8, ControlDependent|Reads:EnvironmentFields.0, v32:GetEnvironmentField)
-# CHECK-NEXT: Int64 b@77 = BitAnd(b@72, $-2147483648(b@44), v34:TypeTest)
-# CHECK-NEXT: Void b@79 = Branch(b@77, Terminal, v34:TypeTest)
-# CHECK-NEXT: Successors: Then:Rare:#12, Else:#11
+# CHECK-NEXT: Predecessors: #10, #9
+# CHECK-NEXT: Int64 b@70 = Load(b@25, offset = 8, ControlDependent|Reads:EnvironmentFields.0, v32:GetEnvironmentField)
+# CHECK-NEXT: Int32 b@75 = LessEqual(b@70, $2147483647(b@44), v34:TypeTest)
+# CHECK-NEXT: Void b@76 = Branch(b@75, Terminal, v34:TypeTest)
+# CHECK-NEXT: Successors: Then:#11, Else:Rare:#12
 # CHECK-NEXT: BB#11: ; frequency = 9.990234
 # CHECK-NEXT: Predecessors: #4
-# CHECK-NEXT: Int64 b@80 = Add(b@72, $1(b@27), v36:Increment)
-# CHECK-NEXT: Void b@81 = Store(b@80, b@25, offset = 8, ControlDependent|Writes:EnvironmentFields.0, v37:PutEnvironmentField)
-# CHECK-NEXT: Void b@82 = Jump(Terminal)
+# CHECK-NEXT: Int64 b@77 = Add(b@70, $1(b@27), v36:Increment)
+# CHECK-NEXT: Void b@78 = Store(b@77, b@25, offset = 8, ControlDependent|Writes:EnvironmentFields.0, v37:PutEnvironmentField)
+# CHECK-NEXT: Void b@79 = Jump(Terminal)
 # CHECK-NEXT: Successors: #5
 # CHECK-NEXT: BB#5: ; frequency = 10.000000
-# CHECK-NEXT: Predecessors: #11, #12
-# CHECK-NEXT: Double b@88 = Load(b@10, offset = -1114096, ControlDependent|Reads:ModuleVariables.49, v42:GetModuleVariable)
+# CHECK-NEXT: Predecessors: #12, #11
+# CHECK-NEXT: Double b@85 = Load(b@10, offset = -1114096, ControlDependent|Reads:ModuleVariables.49, v42:GetModuleVariable)
 # CHECK-NEXT: Double b@17 = Load(b@10, offset = -56, ReadsImmutable, v44:Increment)
-# CHECK-NEXT: Double b@90 = Add(b@88, b@17, v44:Increment)
-# CHECK-NEXT: Void b@91 = Store(b@90, b@10, offset = -1114096, ControlDependent|Writes:ModuleVariables.49, v45:PutModuleVariable)
+# CHECK-NEXT: Double b@87 = Add(b@85, b@17, v44:Increment)
+# CHECK-NEXT: Void b@88 = Store(b@87, b@10, offset = -1114096, ControlDependent|Writes:ModuleVariables.49, v45:PutModuleVariable)
 # CHECK-NEXT: Double b@16 = Load(b@10, offset = -104, ReadsImmutable, v47:GreaterEq)
-# CHECK-NEXT: Int32 b@94 = GreaterEqual(b@88, b@16, v47:GreaterEq)
-# CHECK-NEXT: Void b@95 = Branch(b@94, Terminal, v47:GreaterEq)
+# CHECK-NEXT: Int32 b@91 = GreaterEqual(b@85, b@16, v47:GreaterEq)
+# CHECK-NEXT: Void b@92 = Branch(b@91, Terminal, v47:GreaterEq)
 # CHECK-NEXT: Successors: Then:#6, Else:#2
 # CHECK-NEXT: BB#6: ; frequency = 1.000000
 # CHECK-NEXT: Predecessors: #5
-# CHECK-NEXT: Int64 b@96 = Const64(10, v48:Undefined)
-# CHECK-NEXT: Void b@97 = Return($10(b@96), Terminal)
+# CHECK-NEXT: Int64 b@93 = Const64(10, v48:Undefined)
+# CHECK-NEXT: Void b@94 = Return($10(b@93), Terminal)
 # CHECK-NEXT: BB#12: ; frequency = 0.009766
 # CHECK-NEXT: Predecessors: #4
-# CHECK-NEXT: Int64 b@83 = Add(b@72, $1(b@27), v39:Increment)
-# CHECK-NEXT: Double b@84 = IToD(b@83, v39:Increment)
-# CHECK-NEXT: Int64 b@85 = Patchpoint(b@84:SomeRegister, runsWithoutFrame, resultConstraints = SomeRegister, pureFunction = 0x500000000(children), v41:PutEnvironmentField)
-# CHECK-NEXT: Void b@86 = Store(b@85, b@25, offset = 8, ControlDependent|Writes:EnvironmentFields.0, v41:PutEnvironmentField)
-# CHECK-NEXT: Void b@87 = Jump(Terminal)
+# CHECK-NEXT: Int64 b@80 = Add(b@70, $1(b@27), v39:Increment)
+# CHECK-NEXT: Double b@81 = IToD(b@80, v39:Increment)
+# CHECK-NEXT: Int64 b@82 = Patchpoint(b@81:SomeRegister, runsWithoutFrame, resultConstraints = SomeRegister, pureFunction = 0x500000000(children), v41:PutEnvironmentField)
+# CHECK-NEXT: Void b@83 = Store(b@82, b@25, offset = 8, ControlDependent|Writes:EnvironmentFields.0, v41:PutEnvironmentField)
+# CHECK-NEXT: Void b@84 = Jump(Terminal)
 # CHECK-NEXT: Successors: #5
 # CHECK-NEXT: BB#10: ; frequency = 0.009766
 # CHECK-NEXT: Predecessors: #3
-# CHECK-NEXT: Int64 b@67 = Add(b@56, $1(b@27), v28:Increment)
-# CHECK-NEXT: Double b@68 = IToD(b@67, v28:Increment)
-# CHECK-NEXT: Int64 b@69 = Patchpoint(b@68:SomeRegister, runsWithoutFrame, resultConstraints = SomeRegister, pureFunction = 0x500000000(children), v30:PutEnvironmentField)
-# CHECK-NEXT: Void b@70 = Store(b@69, b@32, offset = 8, ControlDependent|Writes:EnvironmentFields.0, v30:PutEnvironmentField)
-# CHECK-NEXT: Void b@71 = Jump(Terminal)
+# CHECK-NEXT: Int64 b@65 = Add(b@55, $1(b@27), v28:Increment)
+# CHECK-NEXT: Double b@66 = IToD(b@65, v28:Increment)
+# CHECK-NEXT: Int64 b@67 = Patchpoint(b@66:SomeRegister, runsWithoutFrame, resultConstraints = SomeRegister, pureFunction = 0x500000000(children), v30:PutEnvironmentField)
+# CHECK-NEXT: Void b@68 = Store(b@67, b@32, offset = 8, ControlDependent|Writes:EnvironmentFields.0, v30:PutEnvironmentField)
+# CHECK-NEXT: Void b@69 = Jump(Terminal)
 # CHECK-NEXT: Successors: #4
 # CHECK-NEXT: BB#8: ; frequency = 0.009766
 # CHECK-NEXT: Predecessors: #2
-# CHECK-NEXT: Int64 b@51 = Add(b@39, $1(b@27), v17:Increment)
-# CHECK-NEXT: Double b@52 = IToD(b@51, v17:Increment)
-# CHECK-NEXT: Int64 b@53 = Patchpoint(b@52:SomeRegister, runsWithoutFrame, resultConstraints = SomeRegister, pureFunction = 0x500000000(children), v19:PutEnvironmentField)
-# CHECK-NEXT: Void b@54 = Store(b@53, b@25, offset = 8, ControlDependent|Writes:EnvironmentFields.0, v19:PutEnvironmentField)
-# CHECK-NEXT: Void b@55 = Jump(Terminal)
+# CHECK-NEXT: Int64 b@50 = Add(b@39, $1(b@27), v17:Increment)
+# CHECK-NEXT: Double b@51 = IToD(b@50, v17:Increment)
+# CHECK-NEXT: Int64 b@52 = Patchpoint(b@51:SomeRegister, runsWithoutFrame, resultConstraints = SomeRegister, pureFunction = 0x500000000(children), v19:PutEnvironmentField)
+# CHECK-NEXT: Void b@53 = Store(b@52, b@25, offset = 8, ControlDependent|Writes:EnvironmentFields.0, v19:PutEnvironmentField)
+# CHECK-NEXT: Void b@54 = Jump(Terminal)
 # CHECK-NEXT: Successors: #3
 # CHECK-NEXT: Known properties:
 # CHECK-NEXT: b@10: dereferenceableBytes = 393216

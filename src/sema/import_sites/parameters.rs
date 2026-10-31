@@ -18,11 +18,40 @@ pub fn is_exported(hir: &File<'_>, bound: &Bound<'_>, symbol: SymbolId) -> bool 
         || entity_names.any(|it| bound.entity_root_binding(it) == binding)
 }
 
-fn find_name_of(hir: &File<'_>, bound: &Bound<'_>, function: FnId) -> Option<SymbolId> {
+type FindWritten<'a> = &'a dyn Fn(Atom) -> Vec<ExprId>;
+
+/// `BoundIn::finds_itself`, which walks the file.
+fn finds_itself(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    function: FnId,
+    find_written: FindWritten<'_>,
+) -> bool {
+    if hir[function].kind == FnKind::Arrow {
+        return false;
+    }
+    let ways = FunctionFlags::USES_ARGUMENTS | FunctionFlags::HAS_DIRECT_EVAL;
+    if bound.function_flags(function).intersects(ways) {
+        return true;
+    }
+    if hir[function].name == Atom::NONE {
+        return false;
+    }
+    let own_name = Binding::Symbol(bound.declared_symbol(Decl::Fn(function)));
+    let mut written = find_written(hir[function].name).into_iter();
+    written.any(|ident| bound.is_evaluated_ident(ident) && bound.binding(ident) == own_name)
+}
+
+fn find_name_of(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    function: FnId,
+    find_written: FindWritten<'_>,
+) -> Option<SymbolId> {
     match (hir[function].kind, bound.fns[function.idx()].owner) {
         (FnKind::Decl, _) => Some(bound.declared_symbol(Decl::Fn(function))),
         (FnKind::Expr | FnKind::Arrow, FnOwner::Expr(expression))
-            if !bound.finds_itself(hir, function) =>
+            if !finds_itself(hir, bound, function, find_written) =>
         {
             let Parent::VarInit(declaration) = bound.parent_of_expr(expression) else {
                 return None;
@@ -41,30 +70,13 @@ fn find_name_of(hir: &File<'_>, bound: &Bound<'_>, function: FnId) -> Option<Sym
     }
 }
 
-/// `export function spawn(entry) { .. }`: the name that its file gives the function, and the place of the parameter that `mention` names.
-/// Other files may call it, and it may be handed on: what the calls under that name pass is not all that the parameter gets.
-pub fn find_place_of_parameter(
+fn find_only_name_of(
     hir: &File<'_>,
     bound: &Bound<'_>,
-    mention: ExprId,
-) -> Option<(SymbolId, usize)> {
-    let Binding::Symbol(parameter) = bound.binding(mention) else {
-        return None;
-    };
-    let &[Decl::Param(pattern)] = bound.symbol(parameter).decls else {
-        return None;
-    };
-    let PatParent::Param(id) = bound.pat_parent[pattern.idx()] else {
-        return None;
-    };
-    let function = bound.param_fn[id.idx()];
-    let index = hir[function].params.iter().position(|it| it == id)?;
-    let name = find_name_of(hir, bound, function).filter(|name| name.is_some())?;
-    (!hir[id].flags.contains(Flags::REST)).then_some((name, index))
-}
-
-fn find_only_name_of(hir: &File<'_>, bound: &Bound<'_>, function: FnId) -> Option<SymbolId> {
-    let name = find_name_of(hir, bound, function)?;
+    function: FnId,
+    find_written: FindWritten<'_>,
+) -> Option<SymbolId> {
+    let name = find_name_of(hir, bound, function, find_written)?;
     let mut hoisted = bound.runtime.annex_b_functions().iter();
     // `arguments.callee` and evaluated text hand the function on without its name.
     let other_ways = FunctionFlags::USES_ARGUMENTS | FunctionFlags::HAS_DIRECT_EVAL;
@@ -92,12 +104,12 @@ pub fn find_values_of_parameter(
 }
 
 /// `find_written` answers with the places where a name is written.
-pub(super) fn find_values_passed_for(
+pub fn find_values_passed_for(
     hir: &File<'_>,
     bound: &Bound<'_>,
     decisions: &Decisions<'_>,
     mention: ExprId,
-    find_written: &dyn Fn(Atom) -> Vec<ExprId>,
+    find_written: FindWritten<'_>,
 ) -> Option<SmallVec<[ExprId; 4]>> {
     let Binding::Symbol(parameter) = bound.binding(mention) else {
         return None;
@@ -119,7 +131,7 @@ pub(super) fn find_values_passed_for(
             .dynamic_lookup_scope(NodeData::Expr(mention))
             .is_none()
         && !hir[id].flags.contains(Flags::REST);
-    let name = find_only_name_of(hir, bound, function).filter(|_| is_settled)?;
+    let name = find_only_name_of(hir, bound, function, find_written).filter(|_| is_settled)?;
     let text = bound.symbol(name).name;
     let mut values: SmallVec<[ExprId; 4]> = SmallVec::new();
     if hir[id].default.is_some() {

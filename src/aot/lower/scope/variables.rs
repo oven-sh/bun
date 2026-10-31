@@ -72,7 +72,7 @@ impl FileLowering<'_, '_, '_, '_> {
     fn create_symbol_variable(&mut self, symbol: SymbolId) -> Variable {
         let bound = self.bound;
         let binding = BindingRef::Symbol(symbol);
-        let name = self.intern_atom(bound.symbol(symbol).name);
+        let name = self.intern_variable_name(symbol);
         let declared = self.location_position(binding);
         let (initialization, function) = match self.scopes.initial_function(symbol) {
             Some(source) => {

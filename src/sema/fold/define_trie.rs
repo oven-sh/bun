@@ -1,5 +1,6 @@
 use super::inputs::{
-    DefinePath, DefineRoot, DefineValue, FoldInputs, FoldOptions, LinkForm, PathState, TrieNode,
+    DefinePath, DefineRoot, DefineValue, FoldInputs, FoldOptions, LinkForm, PathState,
+    StoredByMocks, TrieNode,
 };
 use super::{Constant, slice_in};
 use crate::atom::Atom;
@@ -41,12 +42,20 @@ impl<'s> FoldInputs<'s> {
             minifies_syntax: options.minifies_syntax,
             max_string_bytes: options.max_string_bytes,
             is_called_before_it_runs: false,
+            stored_by_mocks: StoredByMocks::Nothing,
         }
     }
 
     pub fn for_file_called_before_it_runs(self) -> FoldInputs<'s> {
         FoldInputs {
             is_called_before_it_runs: true,
+            ..self
+        }
+    }
+
+    pub fn for_file_stored_by_mocks(self, stored_by_mocks: StoredByMocks<'s>) -> FoldInputs<'s> {
+        FoldInputs {
+            stored_by_mocks,
             ..self
         }
     }

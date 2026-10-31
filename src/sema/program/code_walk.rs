@@ -13,6 +13,7 @@ use super::code_imports::files_of;
 use super::code_load::{CodeEntry, CodeTarget, LoadKey, ParsedCodeFile};
 use super::code_types::predicted_type_files;
 use super::*;
+use crate::fold::StoredByMocks;
 use crate::import_sites::{ImportSiteKind, ImportSpecifier};
 use crate::resolve::{
     CodeRead, DeclaredSideEffects, EnclosingPackage, FinishedFile, HostPayload, ParsedFile,
@@ -36,6 +37,7 @@ struct WalkedFile<'s, 'r> {
     parsed: Option<Box<ParsedCodeFile<'s, 'r>>>,
     targets: Vec<u32>,
     is_called_before_it_runs: bool,
+    stored_by_mocks: StoredByMocks<'s>,
     loaded_by: LoadedBy,
     imported_requires: Vec<ImportedRequire>,
     imported_constants: Vec<ImportedConstant>,
@@ -280,11 +282,17 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         }
         let index = state.files.len() as u32;
         let known = context.find_loaded_before(target.key);
+        let mocks_any_file =
+            context.inputs.code.mocks_any_file || state.names_looked_up.mocks_any_file();
         state.files.push(WalkedFile {
             target,
             parsed: None,
             targets: Vec::new(),
             is_called_before_it_runs: known.is_some_and(|it| it.compiled.is_called_before_it_runs),
+            stored_by_mocks: match mocks_any_file {
+                true => StoredByMocks::EveryExport,
+                false => known.map_or(StoredByMocks::Nothing, |it| it.compiled.stored_by_mocks),
+            },
             loaded_by: LoadedBy::as_loaded_before(
                 known.is_some_and(|it| it.compiled.is_only_imported),
             ),
@@ -543,6 +551,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             file: FileToRevisit<'s, 'r>,
             target: CodeTarget<'r>,
             is_called_early: bool,
+            stored_by_mocks: StoredByMocks<'s>,
             constants: Vec<ImportedConstant>,
         }
         enum Outcome<'s, 'r> {
@@ -569,6 +578,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             Guarded::new(Some(Task {
                 target: walked.target,
                 is_called_early: walked.is_called_before_it_runs,
+                stored_by_mocks: walked.stored_by_mocks,
                 constants,
                 file,
             }))
@@ -595,6 +605,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                     task.target,
                     *loaded,
                     task.is_called_early,
+                    task.stored_by_mocks,
                     &task.constants,
                 );
                 match folded {
@@ -729,6 +740,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 }
                 let file = &state.files[index as usize];
                 let (target, is_called_early) = (file.target, file.is_called_before_it_runs);
+                let stored_by_mocks = file.stored_by_mocks;
                 let is_only_imported = file.loaded_by.is_import_alone();
                 let requires = file.imported_requires.clone();
                 let constants = file.imported_constants.clone();
@@ -736,6 +748,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 let arena = *arena.get_or_insert_with(|| context.session.arena());
                 let inputs = LoadInputs {
                     is_called_before_it_runs: is_called_early,
+                    stored_by_mocks,
                     is_only_imported,
                     imported_requires: &requires,
                     imported_constants: &constants,

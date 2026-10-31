@@ -225,9 +225,9 @@ function f14 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v18: "integers " = String string="integers "
 # CHECK-NEXT: v19: " and " = String string=" and "
 # CHECK-NEXT: v20: string = Strcat v18, v10, v19, v15
+# CHECK-NEXT: v21: f4 = NewClosure v16, v17 function=f4 allocationSite=7 storage=Frame
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b4() handler=b7():
-# CHECK-NEXT: v21: f4 = NewClosure v16, v17 function=f4 allocationSite=7 storage=Frame
 # CHECK-NEXT: v22: anything ~ undefined|null|string = Call v21 calleeName="run" accessSite=6 callees=[f4, f5, f7]
 # CHECK-NEXT: v23: boolean ~ true = TypeTest v22 testedType=undefined|null|boolean|number|string|symbol|bigint
 # CHECK-NEXT: Branch v23 -> taken b5(| 0), notTaken b6(| 0)
@@ -254,9 +254,9 @@ function f14 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v40: "integers " = String string="integers "
 # CHECK-NEXT: v41: " and " = String string=" and "
 # CHECK-NEXT: v42: string = Strcat v40, v10, v41, v37
+# CHECK-NEXT: v43: f4 = NewClosure v38, v39 function=f4 allocationSite=7 storage=Frame
 # CHECK-NEXT: Jump -> next b9()
 # CHECK-NEXT: b9() handler=b12():
-# CHECK-NEXT: v43: f4 = NewClosure v38, v39 function=f4 allocationSite=7 storage=Frame
 # CHECK-NEXT: v44: anything ~ undefined|null|string = Call v43 calleeName="run" accessSite=6 callees=[f4, f5, f7]
 # CHECK-NEXT: v45: boolean ~ true = TypeTest v44 testedType=undefined|null|boolean|number|string|symbol|bigint
 # CHECK-NEXT: Branch v45 -> taken b10(| 0), notTaken b11(| 0)
@@ -283,9 +283,9 @@ function f14 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v62: "integers " = String string="integers "
 # CHECK-NEXT: v63: " and " = String string=" and "
 # CHECK-NEXT: v64: string = Strcat v62, v10, v63, v59
+# CHECK-NEXT: v65: f4 = NewClosure v60, v61 function=f4 allocationSite=7 storage=Frame
 # CHECK-NEXT: Jump -> next b14()
 # CHECK-NEXT: b14() handler=b17():
-# CHECK-NEXT: v65: f4 = NewClosure v60, v61 function=f4 allocationSite=7 storage=Frame
 # CHECK-NEXT: v66: anything ~ undefined|null|string = Call v65 calleeName="run" accessSite=6 callees=[f4, f5, f7]
 # CHECK-NEXT: v67: boolean ~ true = TypeTest v66 testedType=undefined|null|boolean|number|string|symbol|bigint
 # CHECK-NEXT: Branch v67 -> taken b15(| 0), notTaken b16(| 0)
@@ -312,9 +312,9 @@ function f14 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v84: "integers " = String string="integers "
 # CHECK-NEXT: v85: " and " = String string=" and "
 # CHECK-NEXT: v86: string = Strcat v84, v10, v85, v81
+# CHECK-NEXT: v87: f4 = NewClosure v82, v83 function=f4 allocationSite=7 storage=Frame
 # CHECK-NEXT: Jump -> next b19()
 # CHECK-NEXT: b19() handler=b22():
-# CHECK-NEXT: v87: f4 = NewClosure v82, v83 function=f4 allocationSite=7 storage=Frame
 # CHECK-NEXT: v88: anything ~ undefined|null|string = Call v87 calleeName="run" accessSite=6 callees=[f4, f5, f7]
 # CHECK-NEXT: v89: boolean ~ true = TypeTest v88 testedType=undefined|null|boolean|number|string|symbol|bigint
 # CHECK-NEXT: Branch v89 -> taken b20(| 0), notTaken b21(| 0)

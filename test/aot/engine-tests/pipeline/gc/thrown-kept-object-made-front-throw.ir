@@ -475,26 +475,28 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f8 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v9: 300 = Integer integer=300
 # CHECK-NEXT: v10: boolean = Less v7, v9
-# CHECK-NEXT: Branch v10 -> taken b2(| 0), notTaken b13()
-# CHECK-NEXT: b2(v11: int[0, 299]) handler=b3():
+# CHECK-NEXT: Branch v10 -> taken b2(| 0), notTaken b14()
+# CHECK-NEXT: b2(v11: int[0, 299]):
 # CHECK-NEXT: v12: L2 = NewObject layout=L2 allocationSite=6 allocationClass=1
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3() handler=b4():
 # CHECK-NEXT: v13: null = Null
 # CHECK-NEXT: v14: anything ~ number = CallDirect v12 function=f6 accessSite=25
-# CHECK-NEXT: Jump -> next b4(v13)
-# CHECK-NEXT: b3() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b5(v13)
+# CHECK-NEXT: b4() role=CatchHandler:
 # CHECK-NEXT: v15: anything = CatchValue
-# CHECK-NEXT: Jump -> next b4(v15)
-# CHECK-NEXT: b4(v16: anything) handler=b5():
+# CHECK-NEXT: Jump -> next b5(v15)
+# CHECK-NEXT: b5(v16: anything) handler=b6():
 # CHECK-NEXT: v17: never = Call v11 calleeName="value" accessSite=27 callees=[]
 # CHECK-NEXT: Unreachable
-# CHECK-NEXT: b5() role=CatchHandler:
+# CHECK-NEXT: b6() role=CatchHandler:
 # CHECK-NEXT: v18: anything = CatchValue
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b6() handler=b7():
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b7() handler=b8():
 # CHECK-NEXT: v19: null = Null
 # CHECK-NEXT: v20: never = PropGet v19 key="length" accessSite=29 receivers=[]
 # CHECK-NEXT: Unreachable
-# CHECK-NEXT: b7() role=CatchHandler:
+# CHECK-NEXT: b8() role=CatchHandler:
 # CHECK-NEXT: v21: anything = CatchValue
 # CHECK-NEXT: v22: L1 = NewObject -, v21 layout=L1 fields=[0] allocationSite=10 allocationClass=0
 # CHECK-NEXT: v23: L1 = NewObject -, v16 layout=L1 fields=[0] allocationSite=8 allocationClass=0
@@ -507,18 +509,18 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f8 visibility=Private
 # CHECK-NEXT: v30: int[0, 9] = Mod v11, v29
 # CHECK-NEXT: v31: 9 = Integer integer=9
 # CHECK-NEXT: v32: boolean = StrictEq v30, v31
-# CHECK-NEXT: Branch v32 -> taken b8(), notTaken b12(v28)
-# CHECK-NEXT: b8():
+# CHECK-NEXT: Branch v32 -> taken b9(), notTaken b13(v28)
+# CHECK-NEXT: b9():
 # CHECK-NEXT: v33: anything = GetModuleVariable variable=g4
 # CHECK-NEXT: v34: anything = Call v33 calleeName="edenGC" accessSite=6
 # CHECK-NEXT: v35: 0 = Integer
-# CHECK-NEXT: Jump -> next b9(v28, v35)
-# CHECK-NEXT: b9(v36: number, v37: int[0, 200]):
+# CHECK-NEXT: Jump -> next b10(v28, v35)
+# CHECK-NEXT: b10(v36: number, v37: int[0, 200]):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v39: 200 = Integer integer=200
 # CHECK-NEXT: v40: boolean = Less v37, v39
-# CHECK-NEXT: Branch v40 -> taken b10(| 0), notTaken b11()
-# CHECK-NEXT: b10(v41: int[0, 199]):
+# CHECK-NEXT: Branch v40 -> taken b11(| 0), notTaken b12()
+# CHECK-NEXT: b11(v41: int[0, 199]):
 # CHECK-NEXT: v42: "filler " = String string="filler "
 # CHECK-NEXT: v43: string = Add v42, v41
 # CHECK-NEXT: v44: Error = CallBuiltin -, v43 overload=Error/1 accessSite=8
@@ -528,24 +530,24 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f8 visibility=Private
 # CHECK-NEXT: v48: int[0, 2147483647] = GetStringLength v47
 # CHECK-NEXT: v49: number = Add v36, v48
 # CHECK-NEXT: v50: int[1, 200] = Increment v41
-# CHECK-NEXT: Jump -> next b9(v49, v50)
-# CHECK-NEXT: b11():
-# CHECK-NEXT: Jump -> next b12(v36)
-# CHECK-NEXT: b12(v51: number):
+# CHECK-NEXT: Jump -> next b10(v49, v50)
+# CHECK-NEXT: b12():
+# CHECK-NEXT: Jump -> next b13(v36)
+# CHECK-NEXT: b13(v51: number):
 # CHECK-NEXT: v52: int[1, 300] = Increment v11
 # CHECK-NEXT: Jump -> next b1(v51, v52)
-# CHECK-NEXT: b13():
+# CHECK-NEXT: b14():
 # CHECK-NEXT: v53: 0 = Integer
 # CHECK-NEXT: v54: 0 = Integer
-# CHECK-NEXT: Jump -> next b14(v53, v54)
-# CHECK-NEXT: b14(v55: int|whole ~ 0, v56: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: Jump -> next b15(v55, v56)
-# CHECK-NEXT: b15(v57: int|whole, v58: int[0, 4294967295]):
+# CHECK-NEXT: Jump -> next b15(v53, v54)
+# CHECK-NEXT: b15(v55: int|whole ~ 0, v56: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b16(v55, v56)
+# CHECK-NEXT: b16(v57: int|whole, v58: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v60: int[0, 4294967295] = CallBuiltin v3 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v61: boolean = Less v58, v60
-# CHECK-NEXT: Branch v61 -> taken b16(| 0), notTaken b31()
-# CHECK-NEXT: b16(v62: int[0, 4294967294]):
+# CHECK-NEXT: Branch v61 -> taken b17(| 0), notTaken b32()
+# CHECK-NEXT: b17(v62: int[0, 4294967294]):
 # CHECK-NEXT: v63: undefined|L1 = GetArrayElement v3, v62 arrayStorage=Contiguous level=Proven [keyIsIntegral]
 # CHECK-NEXT: v64: 1 = Integer integer=1
 # CHECK-NEXT: v65: int[1, 4294967295] = Add v62, v64
@@ -554,63 +556,63 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f8 visibility=Private
 # CHECK-NEXT: v68: anything ~ undefined|null|number|string|symbol|bigint|object = Upcast v67 castType=anything
 # CHECK-NEXT: v69: anything = PropGet v68 key="message" accessSite=16 [asksOnlyTables]
 # CHECK-NEXT: v70: boolean = DidReadAbove v69
-# CHECK-NEXT: Branch v70 -> taken b17(), notTaken b24()
-# CHECK-NEXT: b17():
+# CHECK-NEXT: Branch v70 -> taken b18(), notTaken b25()
+# CHECK-NEXT: b18():
 # CHECK-NEXT: v71: string = CallBuiltin -, v69 overload=String/0 builtinCallForm=AnyReceiver accessSite=17
 # CHECK-NEXT: v72: int[0, 2147483647] = GetStringLength v71
 # CHECK-NEXT: v73: 0 = Integer
 # CHECK-NEXT: v74: boolean = Greater v72, v73
-# CHECK-NEXT: Branch v74 -> taken b18(), notTaken b19()
-# CHECK-NEXT: b18():
-# CHECK-NEXT: v75: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next b20(v75)
+# CHECK-NEXT: Branch v74 -> taken b19(), notTaken b20()
 # CHECK-NEXT: b19():
+# CHECK-NEXT: v75: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b21(v75)
+# CHECK-NEXT: b20():
 # CHECK-NEXT: v76: 1000 = Integer integer=1000
-# CHECK-NEXT: Jump -> next b20(v76)
-# CHECK-NEXT: b20(v77: int[1, 1000]):
+# CHECK-NEXT: Jump -> next b21(v76)
+# CHECK-NEXT: b21(v77: int[1, 1000]):
 # CHECK-NEXT: v78: anything = GetSlot v66 key="error" receivers=[L1] level=Proven accessSite=19
 # CHECK-NEXT: v79: builtin(TypeErrorPrototype) = Builtin builtin=TypeErrorPrototype
 # CHECK-NEXT: v80: boolean = HasInPrototypeChain v78, v79
-# CHECK-NEXT: Branch v80 -> taken b21(), notTaken b22()
-# CHECK-NEXT: b21():
-# CHECK-NEXT: v81: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next b23(v81)
+# CHECK-NEXT: Branch v80 -> taken b22(), notTaken b23()
 # CHECK-NEXT: b22():
+# CHECK-NEXT: v81: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b24(v81)
+# CHECK-NEXT: b23():
 # CHECK-NEXT: v82: 1000000 = Integer integer=1000000
-# CHECK-NEXT: Jump -> next b23(v82)
-# CHECK-NEXT: b23(v83: int[1, 1000000]):
+# CHECK-NEXT: Jump -> next b24(v82)
+# CHECK-NEXT: b24(v83: int[1, 1000000]):
 # CHECK-NEXT: v84: int[2, 1001000] = Add v77, v83
 # CHECK-NEXT: v85: int|whole = Add v57, v84
-# CHECK-NEXT: Jump -> next b15(v85, v65)
-# CHECK-NEXT: b24() frequency=Rare:
+# CHECK-NEXT: Jump -> next b16(v85, v65)
+# CHECK-NEXT: b25() frequency=Rare:
 # CHECK-NEXT: v86: anything = PropGet v68 key="message" accessSite=16
 # CHECK-NEXT: v87: string = CallBuiltin -, v86 overload=String/0 builtinCallForm=AnyReceiver accessSite=17
 # CHECK-NEXT: v88: int[0, 2147483647] = GetStringLength v87
 # CHECK-NEXT: v89: 0 = Integer
 # CHECK-NEXT: v90: boolean = Greater v88, v89
-# CHECK-NEXT: Branch v90 -> taken b25(), notTaken b26()
-# CHECK-NEXT: b25() frequency=Unlikely:
-# CHECK-NEXT: v91: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next b27(v91)
+# CHECK-NEXT: Branch v90 -> taken b26(), notTaken b27()
 # CHECK-NEXT: b26() frequency=Unlikely:
+# CHECK-NEXT: v91: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b28(v91)
+# CHECK-NEXT: b27() frequency=Unlikely:
 # CHECK-NEXT: v92: 1000 = Integer integer=1000
-# CHECK-NEXT: Jump -> next b27(v92)
-# CHECK-NEXT: b27(v93: int[1, 1000]) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b28(v92)
+# CHECK-NEXT: b28(v93: int[1, 1000]) frequency=Unlikely:
 # CHECK-NEXT: v94: anything = GetSlot v66 key="error" receivers=[L1] level=Proven accessSite=19
 # CHECK-NEXT: v95: builtin(TypeErrorPrototype) = Builtin builtin=TypeErrorPrototype
 # CHECK-NEXT: v96: boolean = HasInPrototypeChain v94, v95
-# CHECK-NEXT: Branch v96 -> taken b28(), notTaken b29()
-# CHECK-NEXT: b28() frequency=Unlikely:
-# CHECK-NEXT: v97: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next b30(v97)
+# CHECK-NEXT: Branch v96 -> taken b29(), notTaken b30()
 # CHECK-NEXT: b29() frequency=Unlikely:
+# CHECK-NEXT: v97: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b31(v97)
+# CHECK-NEXT: b30() frequency=Unlikely:
 # CHECK-NEXT: v98: 1000000 = Integer integer=1000000
-# CHECK-NEXT: Jump -> next b30(v98)
-# CHECK-NEXT: b30(v99: int[1, 1000000]) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b31(v98)
+# CHECK-NEXT: b31(v99: int[1, 1000000]) frequency=Unlikely:
 # CHECK-NEXT: v100: int[2, 1001000] = Add v93, v99
 # CHECK-NEXT: v101: int|whole = Add v57, v100
-# CHECK-NEXT: Jump -> next b14(v101, v65)
-# CHECK-NEXT: b31():
+# CHECK-NEXT: Jump -> next b15(v101, v65)
+# CHECK-NEXT: b32():
 # CHECK-NEXT: v102: int[0, 4294967295] = CallBuiltin v3 overload=ArrayPrototypeLength/0 accessSite=13
 # CHECK-NEXT: v103: undefined = CallBuiltin -, v102, v6, v57 overload=ConsoleLog/0 accessSite=14
 # CHECK-NEXT: v104: undefined = Undefined

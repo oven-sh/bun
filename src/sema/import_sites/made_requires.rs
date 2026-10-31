@@ -197,7 +197,7 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
     }
 }
 
-pub(super) fn may_be_modified(
+pub(crate) fn may_be_modified(
     hir: &File<'_>,
     bound: &Bound<'_>,
     variable: CommonJsVariable,

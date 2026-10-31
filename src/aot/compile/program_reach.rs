@@ -1527,6 +1527,10 @@ impl<'a, 's> FileScan<'a, 's> {
                 None => self.add_interest(position, Interest::LoadByUnknownName),
             }
         }
+        // What the load answers with says nothing of what the text on disk imports.
+        for &position in source.map_or(&[][..], |source| &source.files_missing_at_build_at) {
+            self.add_interest(position, Interest::LoadByUnknownName);
+        }
         if source.is_none_or(|source| source.builtins.loads_unknown_modules())
             || gives_unknown_name_to_imported_loader(files, self.file)
         {
@@ -2976,7 +2980,9 @@ impl<'a, 's> Walk<'a, 's> {
     fn loads_by_unknown_name_outside_units(&self, file: FileId) -> bool {
         self.files[file.idx()].is_none()
             && parsed_source(self.input.files, file).is_none_or(|source| {
-                source.loads_by_unknown_name || !source.unknown_names_at.is_empty()
+                source.loads_by_unknown_name
+                    || !source.unknown_names_at.is_empty()
+                    || !source.files_missing_at_build_at.is_empty()
             })
     }
 

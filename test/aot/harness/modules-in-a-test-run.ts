@@ -747,6 +747,41 @@ const projects: Record<string, Record<string, string>> = {
       });`,
     "wants-absent.mjs": `import { z } from "./local/hands-on-a-package.cjs"; console.log(z);`,
   },
+  "a require() that has answered before answers anew behind an eviction and a mock": {
+    "data.json": `{ "value": 1 }`,
+    "other.json": `{ "value": 5 }`,
+    "esm.mjs": `export const name = "esm"; export let count = 0; export const bump = () => ++count;`,
+    "plain.cjs": `exports.runs = globalThis.runsOfPlain = (globalThis.runsOfPlain ?? 0) + 1;`,
+    "evicted.test.ts": `${head}
+      test("behind an eviction", () => {
+        const first = require("./data.json");
+        for (let turn = 0; turn < 3; turn++) console.log("a data file again:", first === require("./data.json"), require("./data.json").value);
+        const esm = require("./esm.mjs");
+        esm.bump();
+        console.log("an ES module again:", esm === require("./esm.mjs"), require("./esm.mjs").count);
+        const plain = require("./plain.cjs");
+        console.log("a CommonJS file again:", plain === require("./plain.cjs"), require("./plain.cjs").runs);
+        delete require.cache[require.resolve("./data.json")];
+        const fresh = require("./data.json");
+        console.log("a data file behind an eviction:", fresh === first, fresh.value, fresh === require("./data.json"));
+        delete require.cache[require.resolve("./esm.mjs")];
+        console.log("an ES module behind an eviction:", esm === require("./esm.mjs"), require("./esm.mjs").count);
+        delete require.cache[require.resolve("./plain.cjs")];
+        console.log("a CommonJS file behind an eviction:", plain === require("./plain.cjs"), require("./plain.cjs").runs);
+      });`,
+    "mocked.test.ts": `${head}
+      test("behind a mock", async () => {
+        const other = require("./other.json");
+        console.log("before the mock:", other === require("./other.json"), other.value);
+        mock.module("./other.json", () => ({ default: { value: "mocked" } }));
+        console.log("behind a mock:", JSON.stringify(require("./other.json")), other === require("./other.json"));
+        console.log("by import():", JSON.stringify((await import("./other.json")).default));
+        mock.module("./other.json", () => ({ default: { value: "mocked again" } }));
+        console.log("behind a second mock:", JSON.stringify(require("./other.json")));
+        mock.restore();
+        console.log("behind restore:", JSON.stringify(require("./other.json")));
+      });`,
+  },
   "a loader that a test stores into require.extensions": {
     "files/own.custom": `module.exports = "own.custom as JavaScript";`,
     "files/late.custom": `module.exports = "late.custom as JavaScript";`,

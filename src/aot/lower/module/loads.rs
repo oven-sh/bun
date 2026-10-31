@@ -62,6 +62,7 @@ enum CalleeKnowledge {
 }
 
 // One way to the answer is emitted, and the block of the other way is open.
+#[derive(Copy, Clone)]
 struct OtherWay {
     answer: LocalVariable,
     done: BlockId,

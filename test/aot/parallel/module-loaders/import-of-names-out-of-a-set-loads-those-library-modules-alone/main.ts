@@ -7,7 +7,7 @@
 // STATISTIC: EnvironmentsPromotedToVariables >= 1
 // STATISTIC: UnreadVariableStoresRemoved >= 1
 // STATISTIC: ClosuresDeferredInVariables >= 1
-// STATISTIC: ImageFunctionsEmitted <= 3500
+// STATISTIC: ImageFunctionsAndJumpsInTheirPlace <= 4389
 // STATISTIC: FlowEdgesLogged <= 300000
 import { createRequire } from "node:module";
 import { name as pluginName } from "./app/plugin.ts";

@@ -54,6 +54,7 @@ inline void hostDidCreateRealm(JSGlobalObject*) {}
 inline void hostDidCreateStructure(JSGlobalObject*, Structure*) {}
 inline void hostDidCreateNodeModule(JSGlobalObject*, JSObject*) {}
 inline void hostDidCreateObjectOfGlobal(JSGlobalObject*, UniquedStringImpl*, JSObject*) {}
+inline void hostDidFillObjectWithFoldedMembers(JSGlobalObject*, JSObject*, ASCIILiteral, std::span<const ASCIILiteral>) {}
 inline void hostDidReplaceProperty(JSGlobalObject*, UniquedStringImpl*) {}
 inline void hostDidLoadBuiltinModule(JSGlobalObject*, uint32_t, JSValue) {}
 

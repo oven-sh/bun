@@ -345,7 +345,7 @@ function f55 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f56 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f32]
 # -- generated: f0 has guarded countPlusOne NoHooks DogHooks OnlyUndefined f29
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f4 callPosition=4294967295 module=m0}, {callee=f4 callPosition=4294967295 module=m0}, {callee=f14 callPosition=4294967295 isConstruction=true module=m0}, {callee=f13 callPosition=4294967295 isConstruction=true module=m0}, {callee=f12 callPosition=4294967295 isConstruction=true module=m0}, {callee=f68 callPosition=4294967295 isConstruction=true module=m0}, {callee=f66 callPosition=4294967295 isConstruction=true module=m0}, {callee=f64 callPosition=4294967295 isConstruction=true module=m0}, {callee=f30 callPosition=4294967295 parent=6 module=m0}, {callee=f17 callPosition=4294967295 parent=1 module=m0}, {callee=f16 callPosition=4294967295 parent=2 module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f4 callPosition=4294967295 module=m0}, {callee=f4 callPosition=4294967295 module=m0}, {callee=f14 callPosition=4294967295 isConstruction=true module=m0}, {callee=f13 callPosition=4294967295 isConstruction=true module=m0}, {callee=f12 callPosition=4294967295 isConstruction=true module=m0}, {callee=f68 callPosition=4294967295 isConstruction=true module=m0}, {callee=f66 callPosition=4294967295 isConstruction=true module=m0}, {callee=f64 callPosition=4294967295 isConstruction=true module=m0}, {callee=f30 callPosition=4294967295 parent=6 module=m0}, {callee=f16 callPosition=4294967295 parent=2 module=m0}, {callee=f17 callPosition=4294967295 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f6 = NewClosure function=f6 allocationSite=1
 # CHECK-NEXT: v1: f6 = NewClass v0 layout=L1
@@ -389,7 +389,7 @@ function f56 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v39: L2 = Upcast v24 castType="none"|L2
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1() handler=b2():
-# CHECK-NEXT: v40: string = CallDirect v39 function=f1 accessSite=33 @0:11 tail
+# CHECK-NEXT: v40: string = CallDirect v39 function=f1 accessSite=33 @0:10 tail
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b2() role=CatchHandler:
 # CHECK-NEXT: v41: anything = CatchValue
@@ -402,7 +402,7 @@ function f56 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v48: anything = PropGet v47 key="name" accessSite=27
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b3() handler=b4():
-# CHECK-NEXT: v49: int|whole = CallDirect v39 function=f3 accessSite=34 @0:10 tail
+# CHECK-NEXT: v49: int|whole = CallDirect v39 function=f3 accessSite=34 @0:11 tail
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b4() role=CatchHandler:
 # CHECK-NEXT: v50: anything = CatchValue

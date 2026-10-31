@@ -44,6 +44,7 @@ pub use builtin_types::{
     BuiltinValuePath, BuiltinValuePathList, Denotation,
 };
 pub use const_inlining::ConstLocalPrefixes;
+pub(crate) use const_inlining::has_export_from;
 pub use diagnostic_class::DiagnosticClass;
 pub use diagnostic_effect::{Effect, FileOrigin, effect_of};
 pub use diagnostic_subject::{DiagnosticSubject, containers_completed_by_bun_types};

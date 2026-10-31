@@ -206,6 +206,81 @@ export const shapes: Shape[] = [
       ),
     }),
   },
+  // `new Worker(holder.path)` is followed to what is stored under `path`, whichever object has it. Each store that holds a read of `path` led to one more
+  // walk over all the stores: the load of a large application's tests took minutes on one thread.
+  {
+    name: "stores under the name that the file of a Worker is read from",
+    counted: "stores",
+    size: 8000,
+    entry: "main.js",
+    write: size => ({
+      "w.js": `postMessage("up");\n`,
+      "main.js":
+        lines(size, index => `function f${index}(given) { return { path: given.path }; }`) +
+        `function spawn(holder) { return new Worker(holder.path); }\n` +
+        `const given = { path: new URL("./w.js", import.meta.url).href };\n` +
+        `console.log(typeof spawn, [${upTo(size, index => `f${index}`).join(", ")}].filter(f => f(given).path === given.path).length);\n`,
+    }),
+  },
+  // `function spawn(file) { return new Worker(file); }` is followed to what each caller passes, and from a caller's parameter to what its callers pass.
+  // Each parameter on the way cost a walk over every expression of the file.
+  {
+    name: "functions that hand on the file of a Worker",
+    counted: "functions",
+    size: 4000,
+    entry: "main.js",
+    write: size => ({
+      "w.js": `postMessage("up");\n`,
+      "main.js":
+        `function spawn(file) { return new Worker(file); }\n` +
+        lines(size, index => `function f${index}(file) { return spawn(file); }`) +
+        `const file = new URL("./w.js", import.meta.url).href;\n` +
+        `if (process.argv.length > 9) {\n${lines(size, index => `  f${index}(file);`)}}\n` +
+        `console.log(typeof spawn);\n`,
+    }),
+  },
+  // The same functions, each also held in a list: who calls such a function is sought by every way that leads to it, beginning at the mentions of its name.
+  // Finding those cost a walk over every expression of the file for each function.
+  {
+    name: "functions in a list that hand on the file of a Worker",
+    counted: "functions",
+    size: 4000,
+    entry: "main.js",
+    write: size => ({
+      "w.js": `postMessage("up");\n`,
+      "main.js":
+        `function spawn(file) { return new Worker(file); }\n` +
+        lines(size, index => `function f${index}(file) { return spawn(file); }`) +
+        `const file = new URL("./w.js", import.meta.url).href;\n` +
+        `const all = [${upTo(size, index => `f${index}`).join(", ")}];\n` +
+        `if (process.argv.length > 9) {\n${lines(size, index => `  f${index}(file);`)}}\n` +
+        `console.log(typeof spawn, all.length);\n`,
+    }),
+  },
+  // A package reads the file of its Worker out of an options object. Other packages, which never get to that one, store under the same name, and what they
+  // store is read from more such names. Each start led through every such store of the program: starts x stores.
+  {
+    name: "files that store under the names that the files of Workers are read from",
+    counted: "files",
+    size: 1200,
+    entry: "main.js",
+    write: size => {
+      const files: Record<string, string> = { "w.js": `postMessage("up");\n` };
+      const named = upTo(size, index => (index % 4 === 0 ? `start${index}` : `make${index}`));
+      for (let index = 0; index < size; index++) {
+        files[`p/p${index}.js`] =
+          index % 4 === 0
+            ? `export const start${index} = options => new Worker(options.filename);\n`
+            : `export const make${index} = given => [\n${lines(10, () => `  { filename: given.name, name: given.description, description: given.args, args: given.options, options: given.filename },`)}];\n`;
+      }
+      files["main.js"] =
+        lines(size, index => `import { ${named[index]} } from "./p/p${index}.js";`) +
+        `const all = [${named.join(", ")}];\n` +
+        `if (process.argv.length > 9) all[0]({ filename: new URL("./w.js", import.meta.url).href });\n` +
+        `console.log(all.length);\n`;
+      return files;
+    },
+  },
   {
     name: "functions that call what nobody knows",
     counted: "calls",

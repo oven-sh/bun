@@ -335,3 +335,43 @@ runsAsPlain(
           say((list[0].notify = replaced) === replaced, Atomics.notify());
           for (const proxy of [URL].map(each => wrap(each))) say((proxy.parse = replaced) === replaced, URL.parse());`,
 );
+
+runsAsPlain(
+  "another file names the object: in a function, in a constant, in what it exports by default",
+  "true replaced true replaced true replaced",
+  `import byDefault, { ofWeakRef, proxyOfWeakMap } from "./helper.js";`,
+  `say(
+            (ofWeakRef().prototype.deref = replaced) === replaced,
+            WeakRef.prototype.deref(),
+            (proxyOfWeakMap.prototype.getOrInsert = replaced) === replaced,
+            new WeakMap().getOrInsert(),
+            (byDefault.proxy.prototype.transfer = replaced) === replaced,
+            new ArrayBuffer(1).transfer(),
+          );`,
+  {
+    "helper.js": `export const ofWeakRef = () => new Proxy(WeakRef, {});
+      export const proxyOfWeakMap = new Proxy(WeakMap, {});
+      export default { proxy: new Proxy(ArrayBuffer, {}) };`,
+  },
+);
+
+runsAsPlain(
+  "another file names the object, and a third exports it again",
+  "true replaced true replaced",
+  `import * as helpers from "./helpers/index.js";`,
+  `const kept = helpers.ofFinalizationRegistry();
+          say(
+            (kept.prototype.unregister = replaced) === replaced,
+            FinalizationRegistry.prototype.unregister(),
+            helpers.withProxy(proxy => (proxy.fromEntries = replaced)) === replaced,
+            Object.fromEntries(),
+          );`,
+  {
+    "helpers/index.js": `export * from "./one.js";
+      export { withProxy } from "./other.js";`,
+    "helpers/one.js": `export function ofFinalizationRegistry() {
+        return new Proxy(FinalizationRegistry, {});
+      }`,
+    "helpers/other.js": `export const withProxy = use => use(new Proxy(Object, {}));`,
+  },
+);

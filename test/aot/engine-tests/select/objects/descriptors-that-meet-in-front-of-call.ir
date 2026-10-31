@@ -509,9 +509,9 @@ runtimefunction id=ArrayTraversalTraverseArray function=f63 visibility=Private
 # CHECK-NEXT: PutModuleVariable v1 variable=g4
 # CHECK-NEXT: v3: L0 @Cell = NewObject layout=L0 allocationSite=5 allocation=1 allocationClass=0
 # CHECK-NEXT: PutModuleVariable v3 variable=g5
+# CHECK-NEXT: v5: f13 @Cell = NewClosure function=f13 allocationSite=6 storage=Frame closureForm=Slim
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1() handler=b2():
-# CHECK-NEXT: v5: f13 @Cell = NewClosure function=f13 allocationSite=6 storage=Frame closureForm=Slim
 # CHECK-NEXT: v6: undefined|null|object @JSValue = Call v5 calleeName="run" accessSite=27 callees=[f13, f14, f15, f16]
 # CHECK-NEXT: v7: L0|L2 @JSValue = AssumeType v6 provenType="stored"|L0|L2
 # CHECK-NEXT: Jump -> next b3(v7)

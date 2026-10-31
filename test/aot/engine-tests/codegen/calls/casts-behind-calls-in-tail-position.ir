@@ -414,7 +414,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f42
 # CHECK-NEXT: Void b@46 = Return(b@17, Terminal)
 # CHECK-NEXT: BB#4: ; frequency = 0.000244
 # CHECK-NEXT: Predecessors: #2
-# CHECK-NEXT: Int64 b@83 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000011, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v7:CallBuiltin)
+# CHECK-NEXT: Int64 b@83 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000013, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v7:CallBuiltin)
 # CHECK-NEXT: Int64 b@85 = Patchpoint(b@83:Register(%r8), b@19:Register(%rax), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v7:CallBuiltin)
 # CHECK-NEXT: Void b@86 = Jump(Terminal)
 # CHECK-NEXT: Successors: #8

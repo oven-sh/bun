@@ -10,12 +10,15 @@ use bun_sema::import_sites::{
     ImportSiteKind, ImportSpecifier, find_values_of_parameter, is_exported,
 };
 use bun_sema::program::{CodeAnswer, FileId, Files};
-use bun_sema::resolve::FinishedFile;
+use bun_sema::resolve::{
+    CodeFailure, CodeResolution, ComputedResolution, ExternalKind, FinishedFile, SiteResolution,
+};
 use bun_sema::util::{FxHashMap, SharedSort};
 use smallvec::{SmallVec, smallvec};
 
 use crate::builtins::{BuiltinId, ResolvedBuiltins, RuntimeModule};
 use crate::ir::parallel::InParallel;
+use crate::load::is_in_node_modules;
 use crate::load::loader_aliases::{
     LoaderAlias, resolve_exported_loader_alias, resolve_loader_alias,
 };
@@ -224,10 +227,75 @@ pub(crate) fn loads_by_unknown_name(application: &Files<'_>) -> bool {
 
 pub(crate) fn loads_by_unknown_path(application: &Files<'_>) -> bool {
     let names_unknown_path = |&file: &FileId| {
-        parsed_source(application, file).is_some_and(|source| !source.unknown_names_at.is_empty())
+        parsed_source(application, file).is_some_and(|source| {
+            !source.unknown_names_at.is_empty() || !source.files_missing_at_build_at.is_empty()
+        })
     };
     loads_by_unknown_name(application)
         || application.compiled_files().iter().any(names_unknown_path)
+}
+
+/// A path where the program may lay a file before it loads it. What a package looks for and does without, `require("./build/Release/addon.node")`, is none.
+pub(crate) fn is_path_that_program_may_write(importer: &[u8], specifier: &[u8]) -> bool {
+    (specifier.starts_with(b"./") || specifier.starts_with(b"../") || specifier.starts_with(b"/"))
+        && !is_in_node_modules(importer)
+}
+
+/// `writeFileSync(path, text); await import(path)`: where a load spells a path at which the build finds no file. The loader of the run time reads the file
+/// when the call runs, and nobody has read what its text imports. `is_there`: a file lies at the absolute path, or another program holds it.
+/// `is_data`: a file of that name has no code, `./made.json`.
+pub(crate) fn find_loads_of_files_missing_at_build(
+    request: &FinishedFile<'_, '_>,
+    is_there: &dyn Fn(&[u8]) -> bool,
+    is_data: &dyn Fn(&[u8]) -> bool,
+) -> Vec<u32> {
+    let (analysis, atoms) = (request.analysis, request.atoms);
+    let may_be_written = |specifier: &ImportSpecifier| {
+        matches!(*specifier, ImportSpecifier::Constant(text)
+            if is_path_that_program_may_write(request.path, atoms.bytes(text))
+                && !is_data(atoms.bytes(text)))
+    };
+    let mut found = Vec::new();
+    for (site, resolution) in analysis.import_sites.iter().zip(request.resolutions) {
+        let (ImportSiteKind::ImportCall(call)
+        | ImportSiteKind::Require(call)
+        | ImportSiteKind::ImportMetaRequire(call)) = site.kind
+        else {
+            continue;
+        };
+        if site.specifier_node.is_none() || analysis.decisions.is_dead_expr(call) {
+            continue;
+        }
+        let is_missing = match *resolution {
+            // A query asks for a copy of a file that is there.
+            SiteResolution::Constant(CodeResolution::External {
+                specifier,
+                kind: ExternalKind::UncompiledCode,
+            }) => {
+                bun_paths::is_absolute(specifier)
+                    && !bun_core::strings::contains_char(specifier, b'?')
+                    && !is_data(specifier)
+                    && !is_there(specifier)
+            }
+            SiteResolution::Constant(CodeResolution::NotFound(CodeFailure::ModuleNotFound)) => {
+                may_be_written(&site.specifier)
+            }
+            // `for (const name of ["a", "b"]) await import(`./plugin-${name}.mjs`)`: a value that found no file is resolved when the call runs.
+            SiteResolution::Computed(ComputedResolution::Candidates { spellings, .. }) => {
+                let is_spelled = |specifier: &ImportSpecifier| {
+                    matches!(*specifier, ImportSpecifier::Constant(text)
+                        if spellings.binary_search_by(|it| it.text.cmp(atoms.bytes(text))).is_ok())
+                };
+                let mut alternatives = analysis.alternatives_of(&site.specifier).iter();
+                alternatives.any(|it| may_be_written(it) && !is_spelled(it))
+            }
+            SiteResolution::Constant(_) | SiteResolution::Computed(_) => false,
+        };
+        if is_missing {
+            found.push(request.hir[site.specifier_node].pos);
+        }
+    }
+    found
 }
 
 // A loader that is given a parameter is given what the calls pass for it. One that is given a name the build does not know may be given any text that the program writes as a value, in whichever file. In the order of the registry.

@@ -178,33 +178,104 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     expect(summary.removed).toContain(Extra);
   });
 
-  // As `??_E..`, the vector deleting destructor, is an alias of `??_G..` in every C++ class with a virtual destructor.
-  testLink(
-    "links where a member of bitcode refers to a weak alias, which what is compiled from it does not define",
-    async () => {
-      using dir = tempDir("trim-coff-freestanding", {
-        ...smallSources,
-        "aliased.c": `
+  describe("links what it compiled from bitcode without the bitcode", () => {
+    const aliasedSources = {
+      ...smallSources,
+      // As `??_E..`, the vector deleting destructor, is an alias of `??_G..` in every C++ class with a virtual destructor.
+      "aliased.c": `
         __attribute__((noinline)) int aliased_target(int value) { return value + 1; }
         extern __typeof(aliased_target) aliased_name __attribute__((weak, alias("aliased_target")));
+        extern __typeof(aliased_target) alias_nobody_names __attribute__((weak, alias("aliased_target")));
         __attribute__((noinline)) int beside_the_alias(int value) { return value * 3; }
         int (*const volatile aliased_table[])(int) = { aliased_name, beside_the_alias };`,
-        "main.c": mainReturning("extern int (*const volatile aliased_table[])(int);", "aliased_table[argc & 1](argc)"),
-      });
-      const objects = ["feature_code", "entry", "table", "embedder", "main", "aliased"];
+      "main.c": mainReturning("extern int (*const volatile aliased_table[])(int);", "aliased_table[argc & 1](argc)"),
+    };
+    const aliasedObjects = ["feature_code", "entry", "table", "embedder", "main", "aliased"];
+    const asBitcode = (names: string[]) => Object.fromEntries(names.map(name => [name, thinLtoFlags]));
+    const compilesAgain = "the second link compiles the bitcode again";
+
+    test.each([
+      ["a member of an archive", { "shelf.lib": aliasedObjects }],
+      ["a file of its own", {}],
+    ])("where %s refers to a weak alias, which what is compiled from it does not define", async (_, archives) => {
+      if (freestandingSkipReasons[machine] !== undefined) return;
+      using dir = tempDir("trim-coff-freestanding", aliasedSources);
+      const folder = String(dir);
       const { addressOf, featuresOf, summary } = await linked(
-        String(dir),
-        optionsWith({
-          objects,
-          archives: { "shelf.lib": objects },
-          compileFlags: Object.fromEntries(objects.map(name => [name, thinLtoFlags])),
-        }),
+        folder,
+        optionsWith({ objects: aliasedObjects, archives, compileFlags: asBitcode(aliasedObjects) }),
       );
       expect(addressOf("beside_the_alias")).toBeGreaterThan(0);
       expect(["entered", "main", "aliased_target"].map(featuresOf)).toEqual([[Extra], undefined, undefined]);
       expect(summary.removed).toContain(Extra);
-    },
-  );
+      // Only the alias that something refers to: the target of another may be gone.
+      expect(readFileSync(join(folder, "work", "aliases.s"), "latin1")).toBe(
+        '\t.weak\t"aliased_name"\n"aliased_name" = "aliased_target"\n',
+      );
+    });
+
+    testLink("where the copy of a COMDAT that prevailed came from a native member of a later archive", async () => {
+      const shared = `__declspec(selectany) extern const volatile int shared_words[4] = { 2, 3, 5, 7 };`;
+      using dir = tempDir("trim-coff-freestanding", {
+        ...smallSources,
+        "native_step.c": `${shared} int bitcode_step(int); int native_step(int x) { return shared_words[x & 3] + bitcode_step(x); }`,
+        "bitcode_step.c": `${shared} __attribute__((noinline)) int bitcode_step(int x) { return shared_words[(x + 1) & 3]; }`,
+        "main.c": mainReturning("int native_step(int);", "native_step(argc)"),
+      });
+      const folder = String(dir);
+      const { addressOf, summary } = await linked(
+        folder,
+        optionsWith({
+          objects: [...defaultObjects, "native_step", "bitcode_step"],
+          archives: { "bitcode.lib": ["bitcode_step"], "native.lib": ["native_step"] },
+          compileFlags: asBitcode(["bitcode_step"]),
+        }),
+      );
+      expect(["shared_words", "bitcode_step"].map(addressOf)).toEqual([expect.any(Number), expect.any(Number)]);
+      expect(summary.removed).toContain(Extra);
+      expect(existsSync(join(folder, "work", "aliases.s"))).toBe(false);
+    });
+
+    // Their names are too long for the header of a member, so the copy of the archive has to keep the table of long names readable.
+    testLink("keeps the members of an archive that are no bitcode", async () => {
+      const [bitcode, native] = ["a_member_of_bitcode_with_a_long_name", "a_native_member_with_a_long_name"];
+      using dir = tempDir("trim-coff-freestanding", {
+        ...smallSources,
+        [`${bitcode}.c`]: `int from_native(int); __attribute__((noinline)) int from_bitcode(int x) { return from_native(x) + 1; }`,
+        [`${native}.c`]: `int from_native(int x) { return x * 7; }`,
+        "main.c": mainReturning("int from_bitcode(int);", "from_bitcode(argc)"),
+      });
+      const { addressOf } = await linked(
+        String(dir),
+        optionsWith({
+          objects: [...defaultObjects, bitcode, native],
+          archives: { "mixed.lib": [bitcode, native] },
+          compileFlags: asBitcode([bitcode]),
+        }),
+      );
+      expect(["from_bitcode", "from_native"].map(addressOf)).toEqual([expect.any(Number), expect.any(Number)]);
+    });
+
+    // lld-link writes what it compiled from both to one file name, the second over the first.
+    testLink("but compiles it again where two members of bitcode of one archive have one name", async () => {
+      using dir = tempDir("trim-coff-freestanding", {
+        ...smallSources,
+        "a/same.c": `__attribute__((noinline)) int from_a(int x) { return x + 1; }`,
+        "b/same.c": `__attribute__((noinline)) int from_b(int x) { return x + 2; }`,
+        "main.c": mainReturning("int from_a(int); int from_b(int);", "from_a(argc) + from_b(argc)"),
+      });
+      const result = await wrapped(
+        String(dir),
+        optionsWith({
+          objects: [...defaultObjects, "a/same", "b/same"],
+          archives: { "shelf.lib": ["a/same", "b/same"] },
+          compileFlags: asBitcode(["a/same", "b/same"]),
+        }),
+      );
+      expect({ stderr: result.stderr, exitCode: result.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      expect(result.stdout).toContain(compilesAgain);
+    });
+  });
 
   testLink("writes the four review files, the table and the state", async () => {
     using dir = tempDir("trim-coff-freestanding", sources);

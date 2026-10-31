@@ -171,34 +171,36 @@ function f17 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 # -- generated: f0 note C nul f9 stat dflt row
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f10 callPosition=4294967295 parent=1 module=m0}, {callee=f8 callPosition=4294967295 parent=3 module=m0}] {
-# CHECK-NEXT: b0() frequency=Rare handler=b1():
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f8 callPosition=4294967295 parent=3 module=m0}, {callee=f10 callPosition=4294967295 parent=1 module=m0}] {
+# CHECK-NEXT: b0() frequency=Rare:
 # CHECK-NEXT: v0: classtoken = NewClassToken layout=L0
 # CHECK-NEXT: PutModuleVariable v0 variable=g4
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() frequency=Rare handler=b2():
 # CHECK-NEXT: v2: absent = GetModuleVariable variable=g2
 # CHECK-NEXT: v3: never = CheckInitialized v2 name="src"
 # CHECK-NEXT: Unreachable
-# CHECK-NEXT: b1() role=CatchHandler:
+# CHECK-NEXT: b2() role=CatchHandler:
 # CHECK-NEXT: v4: anything = CatchValue
 # CHECK-NEXT: v5: "threw " = String string="threw "
 # CHECK-NEXT: v6: anything = PropGet v4 key="name" accessSite=5
 # CHECK-NEXT: v7: string = Add v5, v6
-# CHECK-NEXT: Jump -> next b2()
-# CHECK-NEXT: b2() handler=b3():
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3() handler=b4():
 # CHECK-NEXT: v8: anything = CallDirect function=f9 accessSite=3
 # CHECK-NEXT: v9: string = CallBuiltin -, v8 overload=String/0 builtinCallForm=AnyReceiver accessSite=4
-# CHECK-NEXT: Jump -> next b4()
-# CHECK-NEXT: b3() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b4() role=CatchHandler:
 # CHECK-NEXT: v10: anything = CatchValue
 # CHECK-NEXT: v11: "threw " = String string="threw "
 # CHECK-NEXT: v12: anything = PropGet v10 key="name" accessSite=5
 # CHECK-NEXT: v13: string = Add v11, v12
-# CHECK-NEXT: Jump -> next b4()
-# CHECK-NEXT: b4() frequency=Rare handler=b5():
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b5() frequency=Rare handler=b6():
 # CHECK-NEXT: v14: absent = GetModuleVariable variable=g2
 # CHECK-NEXT: v15: never = CheckInitialized v14 name="src"
 # CHECK-NEXT: Unreachable
-# CHECK-NEXT: b5() role=CatchHandler:
+# CHECK-NEXT: b6() role=CatchHandler:
 # CHECK-NEXT: v16: anything = CatchValue
 # CHECK-NEXT: v17: "threw " = String string="threw "
 # CHECK-NEXT: v18: anything = PropGet v16 key="name" accessSite=5

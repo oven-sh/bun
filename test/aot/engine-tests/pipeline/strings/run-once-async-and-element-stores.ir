@@ -4368,18 +4368,20 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f29
 # CHECK-NEXT: v10: int[2, 48] = Mul v7, v9
 # CHECK-NEXT: v11: int[2, 71] = Add v6, v10
 # CHECK-NEXT: v12: string = Add v8, v11
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
 # CHECK-NEXT: v13: Promise = NewPromise
 # CHECK-NEXT: ResolvePromise v13, v12
 # CHECK-NEXT: v15: Promise<string, proven, pristine[Storage, Names]> = AssumeType v13 provenType=Promise<string, proven, pristine[Storage, Names]>
-# CHECK-NEXT: Jump -> next b1(v15) @234 tail
-# CHECK-NEXT: b1(v16: Promise<string, proven, pristine[Storage, Names]>):
-# CHECK-NEXT: Return v16
+# CHECK-NEXT: Jump -> next b3(v15) @234 tail
 # CHECK-NEXT: b2() role=CatchHandler frequency=Rare:
-# CHECK-NEXT: v17: anything = CatchValue
-# CHECK-NEXT: v18: Promise = NewPromise
-# CHECK-NEXT: RejectPromise v18, v17
-# CHECK-NEXT: v20: Promise<string, proven, pristine[Storage, Names]> = AssumeType v18 provenType=Promise<string, proven, pristine[Storage, Names]>
-# CHECK-NEXT: Jump -> next b1(v20) @234 tail
+# CHECK-NEXT: v16: anything = CatchValue
+# CHECK-NEXT: v17: Promise = NewPromise
+# CHECK-NEXT: RejectPromise v17, v16
+# CHECK-NEXT: v19: Promise<string, proven, pristine[Storage, Names]> = AssumeType v17 provenType=Promise<string, proven, pristine[Storage, Names]>
+# CHECK-NEXT: Jump -> next b3(v19) @234 tail
+# CHECK-NEXT: b3(v20: Promise<string, proven, pristine[Storage, Names]>):
+# CHECK-NEXT: Return v20
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="pd"
 # CHECK: module=m0 position=340 role=GenericEntrypoint flags=[HasThis, IsChecked] length=2 captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} inlineFrames=[{}, {callee=f4 callPosition=340 isTailCall=true module=m0}, {callee=f101 callPosition=340 parent=1 module=m0}] {

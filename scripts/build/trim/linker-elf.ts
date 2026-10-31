@@ -99,6 +99,7 @@ export function elf(linker: Linker): LinkerFormat {
       for (const object of objects) splitInPlace(object);
       return objects.length > 0 ? objects : undefined;
     },
+    withoutBitcode: path => path,
     relinksSameInputs: () => false,
     compiledObjects(link) {
       const objects = listCompiledObjects(link);

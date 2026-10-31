@@ -16,6 +16,7 @@ use bun_core::{self, Output};
 #[cfg(windows)]
 use bun_jsc as jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_spawn::RusageFields as _;
 
 use super::channel::{Channel, ChannelOwner};
 use super::coordinator::Coordinator;
@@ -385,10 +386,11 @@ impl Worker {
         Ok(())
     }
 
-    pub(crate) fn on_process_exit(&mut self, _: &Process, status: Status, _: &Rusage) {
+    pub(crate) fn on_process_exit(&mut self, _: &Process, status: Status, rusage: &Rusage) {
         self.alive = false;
+        let peak_rss_mb = (rusage.maxrss() / (1024.0 * 1024.0)) as u32;
         // SAFETY: coord backref valid for worker lifetime; mutation — see `coord` field doc (provenance caveats).
-        unsafe { (*self.coord.cast_mut()).on_worker_exit(self, status) };
+        unsafe { (*self.coord.cast_mut()).on_worker_exit(self, status, peak_rss_mb) };
     }
 
     pub(crate) fn dispatch(

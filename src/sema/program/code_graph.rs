@@ -1,5 +1,6 @@
 use super::*;
 use crate::file_analysis::FileAnalysis;
+use crate::fold::StoredByMocks;
 use crate::import_sites::JsxMode;
 use crate::module_format::DeclaredModuleType;
 use crate::resolve::{
@@ -79,6 +80,7 @@ pub struct CompiledModule<'s> {
     /// What the file was folded with.
     pub(super) import_meta_main: Option<bool>,
     pub(super) is_called_before_it_runs: bool,
+    pub(super) stored_by_mocks: StoredByMocks<'s>,
     pub(super) is_only_imported: bool,
 }
 

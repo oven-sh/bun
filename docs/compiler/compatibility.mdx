@@ -28,6 +28,7 @@ Compiled code calls `push` directly. It doesn't check first whether something re
 - You can add a new member to most of them: `Array.prototype.last`, `Math.tau`, `BigInt.prototype.toJSON`.
 - You can't add anything to `Object.prototype`, `Function.prototype`, `Promise.prototype` or `RegExp.prototype`.
 - The prototypes of `Request`, `Response`, `Headers`, `Blob`, `URL` and `URLSearchParams` are read-only. Write a subclass: `class Upper extends Response {}`.
+- What a program reads to find out which runtime it is on is read-only: `process.isBun`, `process.versions`, `process.release`, `process.versions.node`, `process.versions.bun` and `process.release.name`. The build replaces those reads with their values, so a branch for another runtime is not compiled. Under `bun test --aot` a test can still store to `process.versions.node` and `process.versions.bun`.
 
 What tests usually mock still works: `Date.now`, `Math.random`, `JSON.parse`, `JSON.stringify`, `fetch`, the timers, and everything on `console`. Under [`bun test --aot`](/compiler/debugging#run-your-tests-compiled) a test can replace most other methods too. So does `Object.freeze(Object.prototype)`, and a polyfill that checks first, like `Array.prototype.at ??= at`.
 

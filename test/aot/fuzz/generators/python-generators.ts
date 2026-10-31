@@ -117,6 +117,8 @@ export const generators: [name: string, extension: "ts" | "js", options?: Option
   ["resource-management", "ts"],
   ["untyped-boundary", "ts"],
   ["untyped-boundary-misfits", "ts"],
+  ["small-functions-over-whole-number-locals", "js", as("js")],
+  ["small-functions-over-whole-number-locals", "ts", as("ts")],
 ];
 
 export const python = Bun.which("python3");

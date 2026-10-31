@@ -411,7 +411,10 @@ function planSecondLink(session: LinkSession): SecondLinkPlan {
   const { linker, format, stopwatch } = session;
   const bitcodeInputs = new Set(linker.inputs.filter(isBitcode));
   const preparedInput = (path: string) => (format.firstInputs.includes(path) ? undefined : format.prepareInput(path));
-  const preparedNativeInput = (path: string) => (bitcodeInputs.has(path) ? undefined : preparedInput(path));
+  const preparedNativeInput = (path: string) => {
+    const prepared = bitcodeInputs.has(path) ? undefined : preparedInput(path);
+    return prepared === undefined ? undefined : format.withoutBitcode(prepared);
+  };
   const firstRequest: LinkRequest = {
     name: "first",
     rewrite: preparedInput,

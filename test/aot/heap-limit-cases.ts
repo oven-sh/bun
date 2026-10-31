@@ -1095,6 +1095,77 @@ console.log(answers.join("\\n"));
       240_000,
     );
 
+    inPart(test)(
+      "an allocation in front of a try, or behind one, that fails passes the catch by",
+      async () => {
+        const allocations = {
+          closure: "() => i",
+          record: "{ a: i, b: i, c: i, d: i }",
+          list: "[i, i, i, i]",
+          bound: "simple.bind(null)",
+        };
+        const names = Object.keys(allocations).flatMap(name => ["front_" + name, "behind_" + name]);
+        using folder = tempDir("aot-heap-limit", {
+          "program.ts": `const slots: unknown[] = new Array(3_000_000).fill(null);
+const flags: boolean[] = [false, false, false, false, false, false, false, false];
+function simple(): string {
+  return "x";
+}
+function check(n: number): void {
+  if (flags[n & 7]) throw new Error("flag");
+}
+${Object.entries(allocations)
+  .map(
+    ([name, expression]) => `function front_${name}(): string {
+  for (let i = 0; i < slots.length; i++) {
+    const made = ${expression};
+    try {
+      check(i);
+      slots[i] = made;
+    } catch {
+      return "inside";
+    }
+  }
+  return "never";
+}
+function behind_${name}(): string {
+  for (let i = 0; i < slots.length; i++) {
+    try {
+      check(i);
+    } catch {
+      return "inside";
+    }
+    slots[i] = ${expression};
+  }
+  return "never";
+}
+`,
+  )
+  .join("")}const answers: string[] = [];
+for (const fill of [${names.join(", ")}]) {
+  let answer = "";
+  try {
+    answer = fill();
+  } catch (error) {
+    answer = error instanceof RangeError ? "outside" : String(error);
+  }
+  slots.fill(null);
+  Bun.gc(true);
+  answers.push(fill.name + " " + answer);
+}
+console.log(answers.join("\\n"));
+`,
+        });
+        const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: names.map(name => `${name} outside\n`).join(""),
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+      240_000,
+    );
+
     // Where functions are entered, the error comes at the next entry that tests the stack, in a try or not.
     inPart(test)(
       "a program that fills the range in functions that call themselves catches a RangeError and goes on",

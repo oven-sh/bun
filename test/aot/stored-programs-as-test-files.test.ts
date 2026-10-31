@@ -37,7 +37,15 @@ const programs = [
   "commonjs/index-of-on-list-of-children-gets-child",
   "commonjs/module-object-that-nothing-follows",
   "commonjs/push-stored-on-module-children",
+  "modules/module-parent-is-stored-into-in-a-required-commonjs-file",
   "variable-writers/exports-of-cjs-stored-from-other-files",
+  // A shared file rebinds `module`, deletes `module.exports` or stores into `module.parent`, and the test file looks.
+  "commonjs/a-required-file-stores-the-main-module-into-its-module",
+  "commonjs/keys-of-a-child-that-deleted-its-module-exports",
+  "commonjs/a-store-into-module-parent-of-a-required-file",
+  "commonjs/a-store-into-module-parent-in-front-of-the-first-read",
+  "commonjs/a-module-object-and-then-a-text-stored-into-module-parent",
+  "commonjs/the-parent-of-a-child-is-stored-by-the-file-that-required-it",
 ];
 
 const stored = join(import.meta.dir, "parallel");

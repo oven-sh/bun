@@ -185,40 +185,40 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f2 visibility=Private
 # CHECK-NEXT: end of loop #7
 # CHECK-NEXT: loop #44, instructions: 0, patchpoints: 0, rare instructions: 21, entered rarely
 # CHECK-NEXT: BB#44: ; frequency = 0.000001
-# CHECK-NEXT: Predecessors: #43, #52
+# CHECK-NEXT: Predecessors: #43, #51
 # CHECK-NEXT: Patch &Patchpoint0
 # CHECK-NEXT: Branch64 GreaterThanOrEqual, %rax, %rcx
 # CHECK-NEXT: Successors: #13, Rare:#45
 # CHECK-NEXT: BB#45: ; frequency = 0.000001
 # CHECK-NEXT: Predecessors: #44
-# CHECK-NEXT: BranchTest64 Zero, %rax, $-2147483648
-# CHECK-NEXT: Successors: Rare:#47, Rare:#46
-# CHECK-NEXT: BB#47: ; frequency = 0.000001
+# CHECK-NEXT: Branch64 GreaterThan, %rax, $2147483647
+# CHECK-NEXT: Successors: Rare:#55, Rare:#46
+# CHECK-NEXT: BB#46: ; frequency = 0.000001
 # CHECK-NEXT: Predecessors: #45
 # CHECK-NEXT: Move %rax, %rdx
 # CHECK-NEXT: And32 $15, %rdx
 # CHECK-NEXT: Move 8(%r9), %rsi
 # CHECK-NEXT: Branch32 AboveOrEqual, %rdx, -8(%rsi)
-# CHECK-NEXT: Successors: Rare:#55, Rare:#48
-# CHECK-NEXT: BB#48: ; frequency = 0.000001
-# CHECK-NEXT: Predecessors: #47
+# CHECK-NEXT: Successors: Rare:#54, Rare:#47
+# CHECK-NEXT: BB#47: ; frequency = 0.000001
+# CHECK-NEXT: Predecessors: #46
 # CHECK-NEXT: Move (%rsi,%rdx,8), %rdx
 # CHECK-NEXT: Patch &Patchpoint0, %r9
 # CHECK-NEXT: BranchTest8 Zero, 4(%rdx), $10
-# CHECK-NEXT: Successors: Rare:#50, Rare:#49
-# CHECK-NEXT: BB#50: ; frequency = 0.000001
-# CHECK-NEXT: Predecessors: #48
+# CHECK-NEXT: Successors: Rare:#49, Rare:#48
+# CHECK-NEXT: BB#49: ; frequency = 0.000001
+# CHECK-NEXT: Predecessors: #47
 # CHECK-NEXT: Move 8(%rdx), %rsi
 # CHECK-NEXT: Move32 -8(%rsi), %r10
 # CHECK-NEXT: BranchTest32 Zero, %r10, $-1
-# CHECK-NEXT: Successors: Rare:#54, Rare:#51
-# CHECK-NEXT: BB#51: ; frequency = 0.000001
-# CHECK-NEXT: Predecessors: #50
+# CHECK-NEXT: Successors: Rare:#53, Rare:#50
+# CHECK-NEXT: BB#50: ; frequency = 0.000001
+# CHECK-NEXT: Predecessors: #49
 # CHECK-NEXT: Move32 (%rsi), %r11
 # CHECK-NEXT: Branch32 BelowOrEqual, %r10, $1
-# CHECK-NEXT: Successors: Rare:#53, Rare:#52
-# CHECK-NEXT: BB#52: ; frequency = 0.000001
-# CHECK-NEXT: Predecessors: #51
+# CHECK-NEXT: Successors: Rare:#52, Rare:#51
+# CHECK-NEXT: BB#51: ; frequency = 0.000001
+# CHECK-NEXT: Predecessors: #50
 # CHECK-NEXT: ConvertInt32ToDouble %r11, %xmm2
 # CHECK-NEXT: ConvertInt32ToDouble 8(%rsi), %xmm3
 # CHECK-NEXT: AddDouble %xmm0, %xmm2, %xmm0

@@ -62,6 +62,8 @@ export interface LinkerFormat extends OutputPolicy {
   // `objects` were compiled from bitcode by `first`. Returns what is linked in place of the bitcode before the graph is read, and
   // again by the second link; undefined: nothing changed, the graph of `first` is read.
   prepareCompiledObjects(objects: string[], first: Link): string[] | undefined;
+  // What stands for an input, which is no bitcode itself, in a link that takes compiled objects in place of the bitcode. undefined: nothing.
+  withoutBitcode(path: string): string | undefined;
   // Asked behind prepareCompiledObjects(). true: the second link takes the inputs of the first, bitcode and all, and compiles it again.
   relinksSameInputs(): boolean;
   compiledObjects(link: "first" | "second"): string[];

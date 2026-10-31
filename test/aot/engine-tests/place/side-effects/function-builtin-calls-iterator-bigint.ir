@@ -298,28 +298,27 @@ runtimefunction id=ObjectsFromEntries function=f5
 # CHECK-NEXT: v24: int[0, 9007199254740992] ~ int[0, 2147483647] = GetEnvironmentField v0 layout=L0
 # CHECK-NEXT: v25: undefined = CallBuiltin -, v23, v24 overload=ConsoleLog/0 accessSite=6
 # CHECK-NEXT: v26: boolean = HasNoFieldOutsideSlot v22
+# CHECK-NEXT: v27: f2 = NewClosure v0 function=f2 allocationSite=2
 # CHECK-NEXT: Branch v26 -> taken b4(| 0), notTaken b5()
-# CHECK-NEXT: b4(v27: guard) handler=b7():
-# CHECK-NEXT: v28: f2 = NewClosure v0 function=f2 allocationSite=2
-# CHECK-NEXT: PutSlotOrAdd v22, v27, v28 key=@@iterator receivers=[L1] level=Expected accessSite=7
+# CHECK-NEXT: b4(v28: guard) handler=b7():
+# CHECK-NEXT: PutSlotOrAdd v22, v28, v27 key=@@iterator receivers=[L1] level=Expected accessSite=7
 # CHECK-NEXT: LoopHint [throwsOwedError]
 # CHECK-NEXT: v31: Object = CallDirect v22 function=f4 accessSite=8
 # CHECK-NEXT: Jump -> next b8()
 # CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: v32: f2 = NewClosure v0 function=f2 allocationSite=2
-# CHECK-NEXT: PropSet v22, v32 key=@@iterator accessSite=7 receivers=[L1]
+# CHECK-NEXT: PropSet v22, v27 key=@@iterator accessSite=7 receivers=[L1]
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b6() frequency=Unlikely handler=b7():
-# CHECK-NEXT: v34: Object = CallDirect v22 function=f4 accessSite=8
+# CHECK-NEXT: v33: Object = CallDirect v22 function=f4 accessSite=8
 # CHECK-NEXT: Jump -> next b8()
 # CHECK-NEXT: b7() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b8()
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v35: "ran" = String string="ran"
-# CHECK-NEXT: v36: int[0, 9007199254740992] ~ int[0, 2147483647] = GetEnvironmentField v0 layout=L0
-# CHECK-NEXT: v37: undefined = CallBuiltin -, v35, v36 overload=ConsoleLog/0 accessSite=11
-# CHECK-NEXT: v38: undefined = Undefined
-# CHECK-NEXT: Return v38
+# CHECK-NEXT: v34: "ran" = String string="ran"
+# CHECK-NEXT: v35: int[0, 9007199254740992] ~ int[0, 2147483647] = GetEnvironmentField v0 layout=L0
+# CHECK-NEXT: v36: undefined = CallBuiltin -, v34, v35 overload=ConsoleLog/0 accessSite=11
+# CHECK-NEXT: v37: undefined = Undefined
+# CHECK-NEXT: Return v37
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Held"
 # CHECK: module=m0 position=201 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=L1 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {

@@ -15,9 +15,9 @@ use super::{BindInput, ModuleRef};
 use crate::builtins::{RuntimeModule, table};
 use crate::diagnostics::{Span, range_of_node};
 use crate::ir::for_each_mut;
-use crate::load::named_loads::{NamedModule, modules_named_in};
+use crate::load::Sources;
+use crate::load::named_loads::{NamedModule, is_path_that_program_may_write, modules_named_in};
 use crate::load::sources::parsed_source;
-use crate::load::{Sources, is_in_node_modules};
 use crate::options::ReplacedModule;
 use crate::statistics::ComputedImport;
 use bun_core::strings;
@@ -541,7 +541,6 @@ impl FileScanner<'_, '_> {
 
     // `writeFileSync(join(import.meta.dirname, "made.mjs"), text); await import(join(import.meta.dirname, "made.mjs"))`: the build knows the path, and the file is not
     // there yet. The loader of the run time is asked when the call runs, and fails as in plain Bun where the file is still missing.
-    // What a package looks for and does without, `require("./build/Release/addon.node")`, stays as it is.
     fn may_be_written_by_program(&self, site: &ImportSite, specifier: Atom) -> bool {
         let specifier = self.files.atoms.bytes(specifier);
         let loads = matches!(
@@ -552,10 +551,7 @@ impl FileScanner<'_, '_> {
         );
         self.loads_code_from_disk
             && loads
-            && (specifier.starts_with(b"./")
-                || specifier.starts_with(b"../")
-                || specifier.starts_with(b"/"))
-            && !is_in_node_modules(self.sources.public_path(self.file))
+            && is_path_that_program_may_write(self.sources.public_path(self.file), specifier)
     }
 
     fn has_scheme_of_its_own(&self, specifier: Atom) -> bool {

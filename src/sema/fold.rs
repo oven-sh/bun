@@ -23,6 +23,7 @@ pub(crate) use evaluate::is_exact_power;
 use evaluate::{Evaluator, Value};
 pub use inputs::{
     Define, DefinePath, DefineRoot, DefineValue, FoldInputs, FoldOptions, RuntimeValueKind,
+    StoredByMocks,
 };
 pub use removed_by_bun_run::is_removed_where_never_run;
 pub(crate) use string_affixes::{

@@ -11,7 +11,7 @@ export type Cost = {
   instructions: number;
   collections: number;
   peakMegabytes: number;
-  peakMegabytesOfAQuarter: number;
+  peakMegabytesOfShortRun: number;
   printed: string;
 };
 export type Row = { name: string; failure?: string; typed?: Cost; untyped?: Cost; jit?: Cost };
@@ -54,6 +54,22 @@ export function timesThatEvenOutLumps(count: (part: number) => number) {
   return Math.max(1, Math.ceil((100 * lump) / (4 * (count(16) - count(4)))));
 }
 export const partsThatShowLumps = [1, 2, 3, 4, 6, 8, 12, 16];
+
+/**
+ * The two runs of a reading. A run of `turns` against a run of a quarter of them measures the turns in between only if both run the same code. Compiled code asks in front of a counted loop
+ * whether it has over 2 ** 20 turns (`Limits::maxTurnsWithoutPoll` in b3/B3Limits.h of the engine). If so, all of its turns run in a copy of the loop that lets the collector stop it. With the short run
+ * in the loop and the long run in the copy, a copy that takes 11 instructions a turn for the loop's 8 reads 12, which no run of any length takes. So both runs lie on one side, within the turns
+ * that were planned, and the short one is about half of the long one at most.
+ * The question is about the turns that are left: a loop whose first turn stands in front of it takes 2 ** 20 + 1 turns without the copy. So a run that is to take the copy has 4,096 turns more.
+ */
+export const mostTurnsOfLoopWithoutCopy = 2 ** 20;
+export const fewestTurnsThatTakeTheCopy = mostTurnsOfLoopWithoutCopy + 4096;
+export function runsOfReading(turns: number) {
+  const quarter = turns >> 2;
+  if (turns <= mostTurnsOfLoopWithoutCopy || quarter >= fewestTurnsThatTakeTheCopy) return { short: quarter, long: turns };
+  if (turns <= 2 * mostTurnsOfLoopWithoutCopy) return { short: quarter, long: mostTurnsOfLoopWithoutCopy };
+  return { short: fewestTurnsThatTakeTheCopy, long: turns };
+}
 
 /** How many turns each of the hundred short calls of ./idioms/host.ts takes. Only the JIT needs them: ten million instructions a call. ./README.md, "How many turns a number needs". */
 export function turnsOfCallThatWarmsUp({
@@ -193,14 +209,17 @@ export function idiomsAgainstTheJit(
   }
 
   async function cost(cmd: string[], plan: Turns, extra: Record<string, string> = {}): Promise<Cost> {
-    const short = await counted(cmd, { ...plan, turns: plan.turns >> 2 }, extra);
-    const long = await counted(cmd, plan, extra);
-    const logged = collections ? await counted(cmd, plan, { ...extra, BUN_JSC_logGC: "1" }) : { collections: 0 };
+    const runs = runsOfReading(plan.turns);
+    const short = await counted(cmd, { ...plan, turns: runs.short }, extra);
+    const long = await counted(cmd, { ...plan, turns: runs.long }, extra);
+    const logged = collections
+      ? await counted(cmd, { ...plan, turns: runs.long }, { ...extra, BUN_JSC_logGC: "1" })
+      : { collections: 0 };
     return {
-      instructions: Math.max(0.5, (long.instructions - short.instructions) / (plan.turns - (plan.turns >> 2))),
+      instructions: Math.max(0.5, (long.instructions - short.instructions) / (runs.long - runs.short)),
       collections: logged.collections,
       peakMegabytes: long.peakMegabytes,
-      peakMegabytesOfAQuarter: short.peakMegabytes,
+      peakMegabytesOfShortRun: short.peakMegabytes,
       printed: long.printed,
     };
   }

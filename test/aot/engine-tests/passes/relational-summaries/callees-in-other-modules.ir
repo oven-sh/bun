@@ -1124,13 +1124,15 @@ runtimefunction id=ArrayTraversalTraverseArray function=f172 visibility=Private
 # CHECK: m5 kind=Module role=CoroutineRamp flags=[IsAsync, IsChecked] thisType={type=anything} results=[{type=Promise}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{kind=AsyncFunction ramp=f22 body=f177 promiseType=Promise worker=f177} {
 # CHECK-NEXT: b0() handler=b1():
 # CHECK-NEXT: v0: undefined = CallDirect function=f177
-# CHECK-NEXT: v1: Promise = NewPromise
-# CHECK-NEXT: ResolvePromise v1, v0
-# CHECK-NEXT: Return v1
+# CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: b1() role=CatchHandler frequency=Rare:
-# CHECK-NEXT: v3: anything = CatchValue
+# CHECK-NEXT: v1: anything = CatchValue
+# CHECK-NEXT: v2: Promise = NewPromise
+# CHECK-NEXT: RejectPromise v2, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: b2():
 # CHECK-NEXT: v4: Promise = NewPromise
-# CHECK-NEXT: RejectPromise v4, v3
+# CHECK-NEXT: ResolvePromise v4, v0
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="round"

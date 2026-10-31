@@ -6,7 +6,7 @@ use bun_sema::atom::known;
 use bun_sema::bind::Parent;
 use bun_sema::fold::FoldedValue;
 use bun_sema::hir::{BinOp, ExprId, ExprKind, IdList, StmtId, StmtKind, UnOp, is_parenthesized};
-use bun_sema::module_format::main_module_operand;
+use bun_sema::module_format::settled_main_module_operand;
 use smallvec::{SmallVec, smallvec};
 
 pub(in crate::lower) use self::concatenation::PrintedOperand;
@@ -95,7 +95,8 @@ pub(in crate::lower) fn lower_binary(
     };
     match classify_operator(op) {
         OperatorClass::Equality { .. } => {
-            if main_module_operand(lowering.file.hir, lowering.file.bound, expression).is_some() {
+            let (hir, bound) = (lowering.file.hir, lowering.file.bound);
+            if settled_main_module_operand(hir, bound, expression).is_some() {
                 return lowering.lower_main_module_comparison(expression, op);
             }
             if let Some(test) = lowering.try_lower_test_value(expression) {

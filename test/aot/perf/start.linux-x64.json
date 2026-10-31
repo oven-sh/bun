@@ -13,7 +13,7 @@
     "systemCalls": 254
   },
   "data-file-required-a-thousand-times-among-200-modules": {
-    "thousandInstructions": 2962,
+    "thousandInstructions": 2814,
     "pageFaults": 818,
     "systemCalls": 235
   },

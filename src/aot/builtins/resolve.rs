@@ -19,6 +19,7 @@ mod walked_texts;
 pub use self::imports::find_module_export;
 pub use self::module_cache::KeyOfModuleCache;
 pub use self::module_values::commonjs_variable_builtin;
+pub use self::replaced_members::find_member_written_behind;
 pub use self::resolver::FileFacts;
 use super::names::BuiltinNames;
 use super::runtime_uses::RuntimeUses;
@@ -139,6 +140,15 @@ pub struct ObjectSpelled {
     pub is_builtin: bool,
 }
 
+/// `import { make } from "./helper"; make().prototype.get = f`
+#[derive(Clone, Debug)]
+pub struct WriteOnImport {
+    pub import: hir::ImportId,
+    /// The names between what is imported and the write, from the write on: `prototype`.
+    pub path: Vec<Atom>,
+    pub key: Atom,
+}
+
 pub struct ImportTargets {
     targets: Vec<(ImportSiteKind, Option<RuntimeModule>)>,
 }
@@ -237,6 +247,8 @@ pub struct ResolvedBuiltins {
     replaced_members: Box<[BuiltinId]>,
     names_added: Box<[(BuiltinId, Atom)]>,
     holders_named_from_outside: Box<[BuiltinId]>,
+    builtins_handed_out: Box<[BuiltinId]>,
+    writes_on_imports: Box<[WriteOnImport]>,
     mentioned: Box<[BuiltinId]>,
     #[cfg(test)]
     exposed: Box<[BuiltinId]>,
@@ -364,6 +376,16 @@ impl ResolvedBuiltins {
     /// The objects that take no new names and that the file writes under a key which nothing in it spells: `export function plant(name) { Object.prototype[name] = 1; }`.
     pub fn holders_named_from_outside(&self) -> &[BuiltinId] {
         &self.holders_named_from_outside
+    }
+
+    /// The built-in objects that what the file exports stands for, holds or answers: `export const ofMath = () => new Proxy(Math, {})`.
+    pub fn builtins_handed_out(&self) -> &[BuiltinId] {
+        &self.builtins_handed_out
+    }
+
+    /// Where the file writes, under the name of a member of some built-in object, on what comes out of an import.
+    pub fn writes_on_imports(&self) -> &[WriteOnImport] {
+        &self.writes_on_imports
     }
 
     pub fn mentioned(&self) -> &[BuiltinId] {

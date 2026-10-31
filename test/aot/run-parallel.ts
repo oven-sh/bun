@@ -42,6 +42,8 @@
 //                                      `// Todo: Not every time: <why>`: it is skipped either way
 //   // Prints what the compiler saves: <what>   its output counts cells, promises or the like. Under --more-flags it is built and run, and what it prints is not compared
 //   // STATISTIC: <name> (= | >= | <=) <n>   what the build must have counted
+//                                      ImageFunctionsAndJumpsInTheirPlace: ImageFunctionsEmitted and JumpOnlyFunctionsRemoved added up. A Bun with assertions generates checks
+//                                      into a function that is one jump in a release, so it emits hundreds that a release removes: the sum hardly differs
 //   // COUNT: <name> (= | >= | <=) <n>       what the executable must have counted when it ends: no clock, and the same on every machine.
 //                                      A name as BUN_JSC_aotCountsPath writes it (operation:operationAOTGetById, counter:CompiledStructuresMade), or all of a kind:
 //                                      operations (calls into the run time), arrivals (accesses that look a name up), branches (two-way branches of compiled code
@@ -727,8 +729,15 @@ const asText = ({ exitCode, stdout, stderr }: ReturnType<typeof compared>) =>
     path => "/$bunfs/root" + path.slice(12).replaceAll("\\", "/"),
   );
 
-const countedByBuild = (buildOutput: string) =>
-  new Map(Array.from(buildOutput.matchAll(/^(\w+) (\d+)$/gm), ([, name, value]) => [name, Number(value)] as const));
+function countedByBuild(buildOutput: string) {
+  const counted = new Map(
+    Array.from(buildOutput.matchAll(/^(\w+) (\d+)$/gm), ([, name, value]) => [name, Number(value)] as const),
+  );
+  const emitted = counted.get("ImageFunctionsEmitted");
+  if (emitted !== undefined)
+    counted.set("ImageFunctionsAndJumpsInTheirPlace", emitted + (counted.get("JumpOnlyFunctionsRemoved") ?? 0));
+  return counted;
+}
 
 /** What the file that BUN_JSC_aotCountsPath names holds: each line under its name, and the lines of a kind together. */
 function countedByRun(text: string) {

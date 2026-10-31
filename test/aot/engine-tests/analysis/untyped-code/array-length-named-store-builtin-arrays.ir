@@ -154,11 +154,7 @@ function f39 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f40 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 # -- generated: setLength f15 f19
 # CHECK-LABEL: function {{*}}name="setLength"
-# CHECK: module=m0 position=444 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=null|boolean|number|string|object}, {type=int[0, 2]}] results=[{type=null|boolean|number|string|object}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: null|boolean|number|string|object, v1: int[0, 2]):
-# CHECK-NEXT: PropSet v0, v1 key="length" accessSite=21
-# CHECK-NEXT: Return v0
-# CHECK-NEXT: }
+# CHECK: module=m0 position=444 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=null|boolean|number|string|object}, {type=int[0, 2]}] results=[{type=null|boolean|number|string|object}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f15 name=
 # CHECK: "a concat" module=m0 position=1304 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=Array<"written", proven, pristine[Storage, Names]>}] functionTypes=[f34] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f48} {
 # CHECK-NEXT: b0():

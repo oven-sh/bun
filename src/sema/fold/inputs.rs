@@ -1,5 +1,6 @@
 use super::Constant;
 use crate::atom::Atom;
+use crate::bind::SymbolId;
 use crate::hir_from_data::DataValue;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -48,6 +49,17 @@ pub struct FoldOptions<'s> {
     pub max_string_bytes: usize,
 }
 
+/// The variables of a file that a test stores into from outside. `mock.module(path, factory)` lays what the factory returns over the exports of a module
+/// that has run, and `spyOn(namespace, name)` a function over one of them. The code of the file reads what they stored, out of a `const` too.
+#[derive(Copy, Clone, PartialEq, Eq, Default, Debug)]
+pub enum StoredByMocks<'s> {
+    #[default]
+    Nothing,
+    /// Ascending.
+    Variables(&'s [SymbolId]),
+    EveryExport,
+}
+
 #[derive(Copy, Clone, Debug)]
 pub(super) struct TrieNode<'s> {
     pub(super) edges: &'s [(Atom, u32)],
@@ -66,6 +78,7 @@ pub struct FoldInputs<'s> {
     pub(super) minifies_syntax: bool,
     pub(super) max_string_bytes: usize,
     pub(super) is_called_before_it_runs: bool,
+    pub(super) stored_by_mocks: StoredByMocks<'s>,
 }
 
 const _: fn() = || {

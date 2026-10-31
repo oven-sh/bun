@@ -44,7 +44,6 @@ fn run_pass<'s>(
             frees_tree: &|_| options.frees_trees,
             first_round: options.first_round,
             left_out_bodies: None,
-            is_one_part_of_files: false,
         },
     )
 }

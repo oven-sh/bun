@@ -363,3 +363,19 @@ const asked = line.split(",");
 function turn(i: number): number {
   return ages.get(asked[i & 15]!) ?? 99;
 }
+//// set-written-in-a-function-asked-about-each-letter
+const letters = ["t", "h", "e", "q", "u", "i", "c", "k", "b", "r", "o", "w", "n", "f", "o", "x", "j", "u", "m", "p", "s", "o", "v", "e", "r", "a", "l", "a", "z", "y", "d", "g"];
+function turn(i: number): number {
+  const vowels = new Set(["a", "e", "i", "o", "u"]);
+  let count = i & 1;
+  for (let k = 0; k < letters.length; k++) if (vowels.has(letters[k]!)) count++;
+  return count;
+}
+//// map-written-in-a-function-asked-about-each-word
+const words = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "two", "four", "six", "eight", "ten", "one", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "two", "four", "six", "eight", "ten", "one"];
+function turn(i: number): number {
+  const values = new Map([["one", 1], ["two", 2], ["three", 3], ["four", 4], ["five", 5]]);
+  let sum = i & 1;
+  for (let k = 0; k < words.length; k++) sum += values.get(words[k]!) ?? 0;
+  return sum;
+}

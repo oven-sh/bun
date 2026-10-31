@@ -11,8 +11,8 @@ use bun_sys::{Fd, File};
 use bun_threading::Guarded;
 use std::sync::OnceLock;
 
-use crate::builtins::BuiltinId;
 use crate::builtins::table::{self, Mutability};
+use crate::builtins::{BuiltinId, find_member_written_behind};
 use crate::load::is_in_node_modules;
 use crate::load::replaced_builtins::{
     FoundInFile, is_relative, look_at_files, look_at_files_of_run,
@@ -61,6 +61,10 @@ pub(crate) struct FoundInTests {
     spy_under_names_from_outside: Vec<Vec<u8>>,
     /// A file as the scan was told to read it, and `FoundInFile::holders_named_from_outside` of it.
     holders_named_from_outside: Vec<(Vec<u8>, Vec<u32>)>,
+    /// A file as the scan was told to read it, `FoundInFile::builtins_handed_out` of it, and the files whose exports it exports again, in the same spelling.
+    builtins_handed_out: Vec<(Vec<u8>, Vec<u32>, Vec<Vec<u8>>)>,
+    /// `FoundInFile::writes_on_imports`, the file in the same spelling.
+    writes_on_imports: Vec<(Vec<u8>, Vec<Vec<u8>>, Vec<u8>)>,
     /// A file in the same spelling, and a text that another file passes to what it imports from it.
     texts_passed: Vec<(Vec<u8>, Vec<u8>)>,
     library_modules_named: Vec<Vec<u8>>,
@@ -254,6 +258,8 @@ pub(crate) fn scan_files_of_tests(
     };
     let mut texts_passed_under_other_names: Guarded<Vec<(WrittenModule, Vec<u8>)>> =
         Guarded::new(Vec::new());
+    let mut writes_under_other_names: Guarded<Vec<(WrittenModule, Vec<Vec<u8>>, Vec<u8>)>> =
+        Guarded::new(Vec::new());
     let mut known_by_folder_alone: FxHashSet<Vec<u8>> = FxHashSet::default();
     for step in 0..=STEPS_FROM_TEST_FILES {
         let mut named: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
@@ -284,6 +290,11 @@ pub(crate) fn scan_files_of_tests(
                 importer: path.clone(),
                 specifier,
             };
+            let exported_again = file.names_exported_again.iter().map(|it| &it.1);
+            let exported_again: Vec<Vec<u8>> = exported_again
+                .chain(&file.modules_exported_again)
+                .cloned()
+                .collect();
             {
                 let mut found = found.lock();
                 found.members.extend(file.members);
@@ -372,6 +383,32 @@ pub(crate) fn scan_files_of_tests(
                 return;
             }
             let mut buffer = path_buffer_pool::get();
+            let mut join = |name: &[u8]| {
+                let joined = join_abs_string_buf_checked::<platform::Auto>(
+                    directory,
+                    &mut buffer[..],
+                    &[name],
+                );
+                joined.filter(|_| is_relative(name)).map(<[u8]>::to_vec)
+            };
+            let exported_again: Vec<Vec<u8>> = exported_again
+                .iter()
+                .filter_map(|name| join(name))
+                .collect();
+            if !file.builtins_handed_out.is_empty() || !exported_again.is_empty() {
+                let handed_out = (asked_for.to_vec(), file.builtins_handed_out, exported_again);
+                found.lock().builtins_handed_out.push(handed_out);
+            }
+            for (name, names, key) in file.writes_on_imports {
+                match join(&name) {
+                    Some(joined) => found.lock().writes_on_imports.push((joined, names, key)),
+                    None if !is_relative(&name) && is_beside_test_files(&path) => {
+                        let write = (written(name), names, key);
+                        writes_under_other_names.lock().push(write);
+                    }
+                    None => {}
+                }
+            }
             for (name, text) in file.texts_passed {
                 if !is_relative(&name) {
                     if is_beside_test_files(&path) {
@@ -431,6 +468,12 @@ pub(crate) fn scan_files_of_tests(
             found.texts_passed.extend(file.map(|file| (file, text)));
         }
     }
+    if !found.builtins_handed_out.is_empty() {
+        for (module, path, key) in core::mem::take(writes_under_other_names.get_mut()) {
+            let file = find_file_under_other_name(module);
+            (found.writes_on_imports).extend(file.map(|file| (file, path, key)));
+        }
+    }
     // A build that sees the files follows them into the library by itself.
     if reads_library == ReadsLibrary::Yes {
         let library = look_at_library(&caches, threads);
@@ -439,6 +482,37 @@ pub(crate) fn scan_files_of_tests(
     }
     found.library_modules_named = Vec::new();
     drop_thread_caches(&caches);
+    // `export const ofMath = () => new Proxy(Math, {})` in one file, `ofMath().max = f` in another.
+    let handed_out = core::mem::take(&mut found.builtins_handed_out);
+    let mut handed_out_by_file: FxHashMap<&[u8], Vec<usize>> = FxHashMap::default();
+    for (index, file) in handed_out.iter().enumerate() {
+        let files = handed_out_by_file.entry(without_extension(&file.0));
+        files.or_default().push(index);
+    }
+    for (file, path, key) in core::mem::take(&mut found.writes_on_imports) {
+        let mut files = handed_out_by_file
+            .get(without_extension(&file))
+            .cloned()
+            .unwrap_or_default();
+        let mut next = 0;
+        while let Some(&index) = files.get(next) {
+            next += 1;
+            let (_, holders, exported_again) = &handed_out[index];
+            for holder in holders.iter().filter_map(|&it| BuiltinId::from_wire(it)) {
+                let path = path.iter().map(Vec::as_slice);
+                let member = find_member_written_behind(holder, path, &key);
+                found.members.extend(member.map(|member| member as u32));
+            }
+            for again in exported_again {
+                let more = handed_out_by_file.get(without_extension(again));
+                for &index in more.map_or(&[][..], Vec::as_slice) {
+                    if !files.contains(&index) {
+                        files.push(index);
+                    }
+                }
+            }
+        }
+    }
     // `export function plant(name) { Object.prototype[name] = 1; }` in one file, `plant("polluted")` in another: every text that goes to the file may be the name.
     for (file, holders) in core::mem::take(&mut found.holders_named_from_outside) {
         let texts = (found.texts_passed.iter())
@@ -649,6 +723,71 @@ pub(crate) fn find_what_tests_replace(
 mod tests {
     use super::*;
     use crate::builtins::BuiltinId;
+
+    #[test]
+    fn puts_together_what_one_file_hands_out_and_another_writes_on_it() {
+        bun_sema_driver::run_regions_inline_on_this_thread();
+        let folder =
+            std::env::temp_dir().join(format!("bun-aot-handed-out-{}", std::process::id()));
+        let root = folder.clone().into_os_string().into_encoded_bytes();
+        let files = [
+            (
+                "test/one.test.ts",
+                r#"import { ofMath, ofWeakRef, proxy } from "./helpers";
+                import { ofAtomics } from "@/test/helpers/named";
+                import { own } from "./helpers/own.js";
+                ofMath().max = () => 1;
+                ofMath().parse = () => 1;
+                proxy.stringify = () => 1;
+                ofWeakRef().prototype.deref = () => 1;
+                ofAtomics().proxy.load = () => 1;
+                own().min = () => 1;"#,
+            ),
+            (
+                "test/helpers/index.ts",
+                r#"export * from "./proxies"; export { ofWeakRef } from "./more";"#,
+            ),
+            (
+                "test/helpers/proxies.ts",
+                r#"export const ofMath = () => new Proxy(Math, {}); export const proxy = new Proxy(JSON, {});"#,
+            ),
+            (
+                "test/helpers/more.ts",
+                r#"export function ofWeakRef() { return new Proxy(WeakRef, {}); }"#,
+            ),
+            (
+                "test/helpers/named.ts",
+                r#"export const ofAtomics = () => ({ proxy: new Proxy(Atomics, {}) });"#,
+            ),
+            ("test/helpers/own.ts", r#"export const own = () => ({});"#),
+        ];
+        for (name, text) in files {
+            let path = folder.join(name);
+            std::fs::create_dir_all(path.parent().expect("it lies in a folder"))
+                .expect("the folder is made");
+            std::fs::write(&path, text).expect("the file is written");
+        }
+        let file = [&root[..], b"/test/one.test.ts"].concat();
+        let replaced = find_what_tests_replace(&[file], 1, &mut |importer, specifier, _| {
+            let folder = dirname::<platform::Auto>(importer);
+            match specifier.strip_prefix(b"@/") {
+                Some(rest) => Some([&root[..], b"/", rest, b".ts"].concat()),
+                None => Some([folder, b"/", specifier].concat()),
+            }
+        });
+        std::fs::remove_dir_all(&folder).expect("the folder is removed");
+        // The files that a barrel exports again are one to whoever imports from it: `ofMath().parse` meets JSON.
+        for member in [
+            BuiltinId::MathMax,
+            BuiltinId::JSONParse,
+            BuiltinId::JSONStringify,
+            BuiltinId::WeakRefPrototypeDeref,
+            BuiltinId::AtomicsLoad,
+        ] {
+            assert!(replaced.builtins.contains(&(member as u32)), "{member:?}");
+        }
+        assert!(!replaced.builtins.contains(&(BuiltinId::MathMin as u32)));
+    }
 
     #[test]
     fn finds_helpers_under_names_of_the_tsconfig_in_folders_and_behind_parameters() {

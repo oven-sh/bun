@@ -101,6 +101,52 @@ test("end", () => {});
 `,
 };
 
+// The file is required, calls import() of the module that imports it, and throws: it goes out of require.cache, and in a test run out of the program. The import() still waits
+// then. The loader evaluates the graph once for all such calls and keeps the failure, which a later require() finds there.
+// The test goes on when every import() has settled: the loader reads files on other threads.
+const filesWithImportThatWaits: Record<string, string> = {
+  "package.json": `{}`,
+  "waits/file.cjs": thrower(
+    "waits",
+    `import("./module.mjs").then(() => settle("waits: module.mjs loaded"), error => settle("waits: module.mjs rejected " + error.message));`,
+  ),
+  "waits/module.mjs": importer("waits"),
+  "a.test.mjs": `import { test } from "bun:test";
+globalThis.runs = {};
+globalThis.say = (...words) => console.log(...words);
+let settled = 0;
+globalThis.settle = words => {
+  settled++;
+  say(words);
+};
+const allSettled = async () => {
+  while (settled < runs.waits) await new Promise(resolve => setTimeout(resolve, 1));
+};
+for (const round of [1, 2, 3]) {
+  try {
+    say("waits: required", round, require("./waits/file.cjs"));
+  } catch (error) {
+    say("waits: require threw", round, error.message);
+  }
+}
+await allSettled();
+for (const [how, load] of [
+  ["require()", () => require("./waits/file.cjs")],
+  ["import()", () => import("./waits/file.cjs")],
+  ["import() of the module", () => import("./waits/module.mjs")],
+]) {
+  try {
+    await load();
+    say("waits: later,", how, "loaded");
+  } catch (error) {
+    say("waits: later,", how, "threw", error.message);
+  }
+  await allSettled();
+}
+test("end", () => {});
+`,
+};
+
 async function runTests(directory: string, words: string | undefined, ...flags: string[]) {
   const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--isolate", ...flags], directory, env);
@@ -178,6 +224,31 @@ for (const [way, words] of [
         `${name}: required 2 {"value":3} [object Object]`,
         `${name}: imported default,value`,
       ]),
+      exitCode: 0,
+    });
+    expect(await runTests(String(dir), words, "--aot")).toEqual(plain);
+  }, 180_000);
+
+  test(`an import() that waits when its graph loses a file is answered by the loader, ${way}`, async () => {
+    using dir = tempDir("aot-an-import-that-waits-when-its-graph-loses-a-file", filesWithImportThatWaits);
+    const plain = await runTests(String(dir), undefined);
+    expect(plain).toEqual({
+      stdout: [
+        "waits: the file runs 1",
+        "waits: require threw 1 waits throws 1",
+        "waits: the file runs 2",
+        "waits: require threw 2 waits throws 2",
+        "waits: the file runs 3",
+        "waits: require threw 3 waits throws 3",
+        "waits: the file runs 4",
+        "waits: module.mjs rejected waits throws 4",
+        "waits: module.mjs rejected waits throws 4",
+        "waits: module.mjs rejected waits throws 4",
+        "waits: module.mjs rejected waits throws 4",
+        "waits: later, require() threw waits throws 4",
+        "waits: later, import() threw waits throws 4",
+        "waits: later, import() of the module threw waits throws 4",
+      ],
       exitCode: 0,
     });
     expect(await runTests(String(dir), words, "--aot")).toEqual(plain);

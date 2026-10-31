@@ -6,7 +6,7 @@
 
 use super::imports::has_source;
 use super::resolver::{ExprState, Resolver};
-use super::{ObjectSpelled, ReplacedMembersSought};
+use super::{ObjectSpelled, ReplacedMembersSought, WriteOnImport};
 use crate::builtins::table::{
     self, BuiltinFlags, BuiltinId, BuiltinName, MemberLookup, Mutability, RuntimeModule, Scope,
 };
@@ -50,17 +50,37 @@ struct Found {
     handed_on: Vec<BuiltinId>,
 }
 
+fn find_locked_member_of(holder: BuiltinId, name: BuiltinName) -> Option<BuiltinId> {
+    let MemberLookup::Found(member) = table::member(holder, name) else {
+        return None;
+    };
+    let entry = table::entry(member);
+    let is_own = entry.holder.map(table::canonical_id) == Some(holder);
+    // A member that is constant unless written counts too: an image that does not hold the file with the write would lock it at its start.
+    // `module.exports = f` writes an object of the file's own.
+    (is_own && entry.mutability != Mutability::ChangesOnItsOwn && entry.scope == Scope::Realm)
+        .then_some(member)
+}
+
+/// One file hands out what stands for `holder`, another writes `key` behind `path`, which begins at the write: `WriteOnImport`.
+/// A name of the path that the object does not have is the program's own, on the way to the object: `tools.make().proxy`.
+pub fn find_member_written_behind<'a>(
+    holder: BuiltinId,
+    path: impl DoubleEndedIterator<Item = &'a [u8]>,
+    key: &[u8],
+) -> Option<BuiltinId> {
+    let mut holder = holder;
+    for name in path.rev().filter_map(table::find_name) {
+        if let MemberLookup::Found(member) = table::member(holder, name) {
+            holder = table::canonical_id(member);
+        }
+    }
+    find_locked_member_of(holder, table::find_name(key)?)
+}
+
 impl Resolver<'_, '_> {
     fn find_locked_member(&self, holder: BuiltinId, name: BuiltinName) -> Option<BuiltinId> {
-        let MemberLookup::Found(member) = table::member(holder, name) else {
-            return None;
-        };
-        let entry = table::entry(member);
-        let is_own = entry.holder.map(table::canonical_id) == Some(holder);
-        // A member that is constant unless written counts too: an image that does not hold the file with the write would lock it at its start.
-        // `module.exports = f` writes an object of the file's own.
-        (is_own && entry.mutability != Mutability::ChangesOnItsOwn && entry.scope == Scope::Realm)
-            .then_some(member)
+        find_locked_member_of(holder, name)
     }
 
     // `Set = Fake`
@@ -374,6 +394,7 @@ impl Resolver<'_, '_> {
         let mut objects_spelled = Vec::new();
         let mut keys_partly_read = Vec::new();
         let mut named_from_outside = Vec::new();
+        let mut writes_on_imports = Vec::new();
         for expr in evaluated {
             if sought == ReplacedMembersSought::WrittenOrNamed {
                 self.find_members_named_by(expr, &mut found);
@@ -447,6 +468,25 @@ impl Resolver<'_, '_> {
                 true => self.find_builtins_reached_without_names(write.object),
                 false => Vec::new(),
             };
+            // What another file hands out: who reads all the files puts the two together.
+            if holders.is_empty() && sought == ReplacedMembersSought::WrittenOrNamed {
+                let keys = written.iter();
+                let keys: Vec<Atom> = keys
+                    .copied()
+                    .filter(|&name| self.input.names.get(name).is_some())
+                    .collect();
+                let imports = match keys.is_empty() {
+                    true => Vec::new(),
+                    false => self.find_imports_behind(write.object),
+                };
+                for (import, path) in imports {
+                    writes_on_imports.extend(keys.iter().map(|&key| WriteOnImport {
+                        import,
+                        path: path.clone(),
+                        key,
+                    }));
+                }
+            }
             for &holder in holders.iter().chain(&unnamed) {
                 // Nobody can read the name: `for (const name of Object.keys(Math)) spyOn(Math, name)`, `function setGlobal(name, value) { globalThis[name] = value; }`.
                 // Of the global object only what is tested where it is used anyway, fetch and the timers: Map and Array are too much to give up for it.
@@ -493,5 +533,7 @@ impl Resolver<'_, '_> {
         self.output.replaced_members = found.members;
         self.output.names_added = found.names;
         self.output.holders_named_from_outside = named_from_outside;
+        self.output.writes_on_imports = writes_on_imports;
+        self.output.builtins_handed_out = self.find_builtins_handed_out();
     }
 }

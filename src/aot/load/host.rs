@@ -45,7 +45,9 @@ use crate::load::loaders::{
     to_host_loader_of_attribute,
 };
 use crate::load::macros;
-use crate::load::named_loads::find_library_modules_named_in_choices;
+use crate::load::named_loads::{
+    find_library_modules_named_in_choices, find_loads_of_files_missing_at_build,
+};
 use crate::load::plugin_modules::{DeferredReads, ModuleText, PluginModules, PluginResolution};
 use crate::load::react_compiler::{self, ReactCompiler};
 use crate::load::runtime_declarations;
@@ -1165,6 +1167,17 @@ impl CodeHost for LoadHost<'_> {
         }
         source.loads_by_unknown_name = named.loads_by_unknown_name;
         source.unknown_names_at = named.unknown_names_at;
+        // Without the option the run time refuses code that is not in the program.
+        if self.input.options.aot.loads_code_from_disk {
+            let is_there = |path: &[u8]| {
+                self.is_in_other_program(path) || self.is_left_to_loader(path) || self.is_file(path)
+            };
+            source.files_missing_at_build_at = find_loads_of_files_missing_at_build(
+                request,
+                &|written| is_there(written) || is_there(&from_native(written)),
+                &|written| parses_text_as_data(self.default_loader(written)),
+            );
+        }
         source.imports_given_unknown_names = named.imports_given_unknown_names;
         answers
     }

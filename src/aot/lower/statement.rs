@@ -1,4 +1,5 @@
 mod declarations;
+mod inlined_constants;
 mod loops;
 mod substitution;
 

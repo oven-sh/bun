@@ -127,6 +127,10 @@ up, but a number taken from few turns is another number for one benchmark in sev
 being built, no collection has run. So the pins are taken with as many turns as make 800 million instructions. Two processes that do the same differ by 8,000 instructions (35,000 in one
 pair of a hundred), which is why 1,000 turns of a short benchmark say nothing.
 
+Both runs have to run the same code. Compiled code takes a counted loop of over `2 ** 20` turns through a copy of it, all of its turns, so a run of 4 million turns against a run of 1 million
+compares two loops: where the loop takes 8 instructions a turn and the copy 11, it reads 12, which no run of any length takes. A plan of over `2 ** 20` and up to `2 ** 22` turns therefore ends its
+long run at `2 ** 20` turns, or begins its short run 4,096 turns above that: the first turns of a loop may stand in front of it (`runsOfReading()` in `measure-idioms.ts`).
+
 Every run begins with a hundred short calls (`idioms/host.ts`). They are there for the JIT: ten million instructions a call, a billion a run, more than the 200 and the 800 million of the two
 runs that are compared. Where nothing runs under the JIT (`jit: false`: the pins of `everyday/`) each of those calls takes one turn (`turnsOfCallThatWarmsUp()` in `measure-idioms.ts`). What a
 program fills in its first turns, caches and tables, it fills in the first quarter of the long call, which no reading counts.

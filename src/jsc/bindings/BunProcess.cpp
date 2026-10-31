@@ -266,15 +266,11 @@ static inline String unicodeVersionString()
 }
 
 // `bun build --compile --aot` folds reads of process.versions.node, process.versions.bun and process.release.name, so a compiled program must not change the three.
-static unsigned attributesOfFoldedMember(VM& vm)
+// They are locked as the built-in objects are: a store, a definition and a deletion throw, in sloppy code too, and the message names the member.
+static void lockFoldedMembers(VM& vm, JSGlobalObject* globalObject, JSObject* object, ASCIILiteral holder, std::initializer_list<ASCIILiteral> names)
 {
-    return vm.hasCompiledCode() ? PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete : 0;
-}
-
-// A program that runs in place, as a test does, reads these two as plain Bun does.
-static unsigned attributesOfVersionOfRuntime(VM& vm)
-{
-    return Bun::compiledModulesRunInPlaceOfFiles() ? 0 : attributesOfFoldedMember(vm);
+    if (vm.hasCompiledCode())
+        JSC::AOT::hostDidFillObjectWithFoldedMembers(globalObject, object, holder, std::span<const ASCIILiteral>(names.begin(), names.size()));
 }
 
 static JSValue constructVersions(VM& vm, JSObject* processObject)
@@ -284,8 +280,8 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
     JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 24);
     RETURN_IF_EXCEPTION(scope, {});
 
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "node"_s), JSC::jsOwnedString(vm, makeAtomString(ASCIILiteral::fromLiteralUnsafe(REPORTED_NODEJS_VERSION))), attributesOfVersionOfRuntime(vm));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "bun"_s), JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(Bun__version)).substring(1)), attributesOfVersionOfRuntime(vm));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "node"_s), JSC::jsOwnedString(vm, makeAtomString(ASCIILiteral::fromLiteralUnsafe(REPORTED_NODEJS_VERSION))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "bun"_s), JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(Bun__version)).substring(1)), 0);
 
     struct VersionEntry {
         const char* name;
@@ -340,6 +336,9 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
 #undef STRINGIFY
 #undef STRINGIFY_IMPL
 
+    // A program that runs in place, as a test does, reads these two as plain Bun does.
+    if (!Bun::compiledModulesRunInPlaceOfFiles())
+        lockFoldedMembers(vm, globalObject, object, "process.versions"_s, { "node"_s, "bun"_s });
     return object;
 }
 
@@ -349,11 +348,12 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* release = JSC::constructEmptyObject(globalObject);
 
-    release->putDirect(vm, vm.propertyNames->name, jsOwnedString(vm, String("node"_s)), attributesOfFoldedMember(vm)); // maybe this should be 'bun' eventually
+    release->putDirect(vm, vm.propertyNames->name, jsOwnedString(vm, String("node"_s)), 0); // maybe this should be 'bun' eventually
     putDirectNamed(vm, release, "sourceUrl"_s, jsOwnedString(vm, String::fromLatin1(Bun__githubURL)));
     putDirectNamed(vm, release, "headersUrl"_s, jsOwnedString(vm, String("https://nodejs.org/download/release/v" REPORTED_NODEJS_VERSION "/node-v" REPORTED_NODEJS_VERSION "-headers.tar.gz"_s)));
 
     RETURN_IF_EXCEPTION(scope, {});
+    lockFoldedMembers(vm, globalObject, release, "process.release"_s, { "name"_s });
     return release;
 }
 

@@ -9,6 +9,7 @@ use crate::builtins::table::{self, Mutability};
 use crate::builtins::{BuiltinNames, RuntimeUses};
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{Diagnostic, Diagnostics, InternalError, LoadMessages, ProgramView};
+use crate::ir::parallel::InParallel;
 use crate::link::run_beside;
 use crate::load::fold_inputs::{
     ProgramFacts, create_application_fold_inputs, create_runtime_fold_inputs,
@@ -46,14 +47,14 @@ use bun_sema::session::{Session, SessionSlot};
 use bun_sema::util::{FxHashSet, SharedSort};
 use bun_sema_driver::host::Disk;
 use bun_sema_driver::{
-    ChosenThreads, CompileRequest, EntryPoints, LoadFailure, LoadedProgram,
-    find_configuration_of_each_entry_point, fit_threads_to_sources, load_program_with_parsed_files,
-    resolve_entry_point, resolve_import_to_file, resolve_names_known_in_part,
+    ChosenThreads, CompileRequest, EntryPoints, FileFinder, FileFinderTables, LoadFailure,
+    LoadedProgram, find_configuration_of_each_entry_point, fit_threads_to_sources,
+    load_program_with_parsed_files, resolve_names_known_in_part,
 };
 use bun_threading::Guarded;
 use core::sync::atomic::Ordering;
 use std::borrow::Cow;
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::mem::take;
 use std::sync::Arc;
 #[cfg(any(test, feature = "test_support"))]
@@ -642,40 +643,50 @@ impl<'a> Build<'a> {
             ..request.code.clone()
         };
         let limits = self.limits.clone();
-        let search = WorkerSearch {
-            limits: &limits,
-            loaders: &options.load.loaders,
-            paths: &options.paths,
-            runs_in_place: options.aot.runs_in_place,
-            provider: self.provider,
-            resolve_entry_point: &|written| resolve_entry_point(host, request.code, written),
-            resolve_bare_name: &|name| resolve_entry_point(host, &code_from_root, name),
-            find_files_named_in_part: &|from, names| {
-                let directory = match from {
-                    SearchedFrom::FolderOf(file) => host.directory_of(file),
-                    SearchedFrom::RootDirectory => {
-                        Cow::Borrowed(&code_from_root.working_directory[..])
-                    }
-                    SearchedFrom::WorkingDirectory => {
-                        Cow::Borrowed(&request.code.working_directory[..])
-                    }
-                };
-                resolve_names_known_in_part(host, request.code, &directory, names)
-            },
-            working_directory: &request.code.working_directory,
-            is_held_below: &is_held_below,
-            parameters_below: &options.aot.replaced_by_tests.parameters_that_start_workers,
-            resolve_import: &|importer, written| {
-                resolve_import_to_file(host, request.code, importer, written)
-            },
-            is_built_upon: options.aot.shares_realms && !options.aot.is_part_of_test_files,
+        let parameters_below = &options.aot.replaced_by_tests.parameters_that_start_workers;
+        let provider = self.provider;
+        // One resolver for each search, made at its first question. Not one for all: between two searches the host is told to leave other files alone.
+        let find_code = |files: &Files<'_>, in_parallel: InParallel<'_>| {
+            let tables = [FileFinderTables::default(), FileFinderTables::default()];
+            let finders = [OnceCell::new(), OnceCell::new()];
+            let from_here =
+                || finders[0].get_or_init(|| FileFinder::new(&tables[0], host, request.code));
+            let from_root =
+                || finders[1].get_or_init(|| FileFinder::new(&tables[1], host, &code_from_root));
+            let search = WorkerSearch {
+                limits: &limits,
+                loaders: &options.load.loaders,
+                paths: &options.paths,
+                runs_in_place: options.aot.runs_in_place,
+                provider,
+                resolve_entry_point: &|written| from_here().find_entry_point(written),
+                resolve_bare_name: &|name| from_root().find_entry_point(name),
+                find_files_named_in_part: &|from, names| {
+                    let directory = match from {
+                        SearchedFrom::FolderOf(file) => host.directory_of(file),
+                        SearchedFrom::RootDirectory => {
+                            Cow::Borrowed(&code_from_root.working_directory[..])
+                        }
+                        SearchedFrom::WorkingDirectory => {
+                            Cow::Borrowed(&request.code.working_directory[..])
+                        }
+                    };
+                    resolve_names_known_in_part(host, request.code, &directory, names)
+                },
+                working_directory: &request.code.working_directory,
+                is_held_below: &is_held_below,
+                parameters_below,
+                resolve_import: &|importer, written| from_here().find_import(importer, written),
+                is_built_upon: options.aot.shares_realms && !options.aot.is_part_of_test_files,
+            };
+            find_code_that_starts_workers(files, &search, in_parallel)
         };
         let mut files_with_starts: FxHashSet<Vec<u8>> = FxHashSet::default();
         // A file that names no constructor starts a Worker too, where it calls a function of a program below that does.
         if !options.aot.checks_only
-            && (mentions_worker_constructor(files) || !search.parameters_below.is_empty())
+            && (mentions_worker_constructor(files) || !parameters_below.is_empty())
         {
-            let found = find_code_that_starts_workers(files, &search, &self.parallel_runner());
+            let found = find_code(files, &self.parallel_runner());
             files_with_starts.extend(found.files_with_starts);
             self.replaced_builtins.parameters_that_start_workers = found.parameters;
             self.started_workers.files = found.files;
@@ -742,8 +753,7 @@ impl<'a> Build<'a> {
                         break;
                     };
                     let files = further.files();
-                    let found =
-                        find_code_that_starts_workers(files, &search, &self.parallel_runner());
+                    let found = find_code(files, &self.parallel_runner());
                     files_with_starts.extend(found.files_with_starts);
                     let started = StartedWorkers {
                         files: found.files,

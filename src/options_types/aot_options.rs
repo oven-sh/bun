@@ -180,13 +180,27 @@ pub struct AotOptions {
     pub option_words: Vec<Box<[u8]>>,
 }
 
+/// How whoever hands a value over gets at the place for it.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum PlaceIsReachedBy {
+    /// `module` exports the function or the class under the name `export`. What `module.exports = ..` sets goes by `default`.
+    Export,
+    /// A property of the name `export` holds the function, whichever object has it: `pool.start(entry)`. There is no `module`.
+    Member,
+    /// `new Worker(this.options.filename)`: the value is read out of a property of the name `export`, whichever object has it.
+    /// Whoever stores there hands it over. There is no `module` and no `index`.
+    Property,
+}
+
 /// `export function spawn(entry) { return new Worker(entry); }`: whoever calls `spawn` starts a Worker from what it passes.
+/// `export class Pool { constructor(entry) { this.worker = new Worker(entry); } }`: so does whoever says `new Pool(..)`.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct ParameterThatStartsWorkers {
     /// The path of a file that exports the function: the one that declares it, or one that exports it again.
     pub module: Vec<u8>,
     /// The name that `module` exports it under.
     pub export: Vec<u8>,
+    pub reached_by: PlaceIsReachedBy,
     /// The place of the parameter among the parameters.
     pub index: u32,
     /// The Worker may also get an options object.
@@ -293,7 +307,11 @@ impl ReplacedByTests {
             push_text(&mut bytes, &parameter.module);
             push_text(&mut bytes, &parameter.export);
             push_number(&mut bytes, parameter.index as usize);
-            bytes.push(u8::from(parameter.has_options) | u8::from(parameter.is_evaluated) << 1);
+            bytes.push(
+                u8::from(parameter.has_options)
+                    | u8::from(parameter.is_evaluated) << 1
+                    | (parameter.reached_by as u8) << 2,
+            );
         }
         bytes
     }
@@ -350,6 +368,12 @@ impl ReplacedByTests {
                 Some(ParameterThatStartsWorkers {
                     module,
                     export,
+                    reached_by: match answers >> 2 {
+                        0 => PlaceIsReachedBy::Export,
+                        1 => PlaceIsReachedBy::Member,
+                        2 => PlaceIsReachedBy::Property,
+                        _ => return None,
+                    },
                     index,
                     has_options: answers & 1 != 0,
                     is_evaluated: answers & 2 != 0,
@@ -427,6 +451,7 @@ mod tests {
                 ParameterThatStartsWorkers {
                     module: b"/project/e.ts".to_vec(),
                     export: b"spawn".to_vec(),
+                    reached_by: PlaceIsReachedBy::Export,
                     index: 2,
                     has_options: true,
                     is_evaluated: false,
@@ -434,9 +459,26 @@ mod tests {
                 ParameterThatStartsWorkers {
                     module: b"/project/f.ts".to_vec(),
                     export: b"default".to_vec(),
+                    reached_by: PlaceIsReachedBy::Export,
                     index: 0,
                     has_options: false,
                     is_evaluated: true,
+                },
+                ParameterThatStartsWorkers {
+                    module: Vec::new(),
+                    export: b"start".to_vec(),
+                    reached_by: PlaceIsReachedBy::Member,
+                    index: 1,
+                    has_options: false,
+                    is_evaluated: false,
+                },
+                ParameterThatStartsWorkers {
+                    module: Vec::new(),
+                    export: b"filename".to_vec(),
+                    reached_by: PlaceIsReachedBy::Property,
+                    index: 0,
+                    has_options: true,
+                    is_evaluated: false,
                 },
             ],
             builtins: vec![7, 70_000],

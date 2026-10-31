@@ -314,10 +314,12 @@ impl FileBinder<'_, '_> {
                 )
         });
         let test_runner = ScannedSite::Module(ModuleRef::Runtime(RuntimeModule::BunTest));
-        let Some(builtins) = parsed_source(self.context.files, self.file).map(|it| &it.builtins)
-        else {
+        let Some(source) = parsed_source(self.context.files, self.file) else {
             return;
         };
+        // A file that the program writes and loads imports any file of the program.
+        self.imports.loads_by_unknown_path |= !source.files_missing_at_build_at.is_empty();
+        let builtins = &source.builtins;
         let (bound, bindings) = (self.bound, &self.imports.bindings);
         self.imports.spies_on_unknown_objects = find_spies_on_unknown_objects(
             hir,

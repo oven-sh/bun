@@ -1,5 +1,5 @@
 use super::effects::requested_diagnostics;
-use super::queue::{LOWERING_ROUNDS, ROUNDS_OF_A_RUN, run_queue};
+use super::queue::{LOWERING_ROUNDS, run_queue};
 use super::{CheckedProgram, CompileRequest, FileWork, LoadedProgram, RoleDecision};
 use crate::{Diagnostic, equal_diagnostics};
 use bun_sema::check::{Checker, Requested};
@@ -96,7 +96,6 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
         frees_tree: &|_| !loaded.is_read_again,
         first_round: LOWERING_ROUNDS,
         left_out_bodies: request.left_out_bodies,
-        is_one_part_of_files: false,
     };
     let pass_count = match passes.count {
         PassCount::Exactly(count) => count,
@@ -109,28 +108,8 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
         }
     };
     let parts = cut_into_passes(files, to_check, pass_count);
-    let has_several_passes = parts.len() > 1;
-    let logs =
-        has_several_passes && bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true);
+    let logs = parts.len() > 1 && bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true);
     let mut report: Option<crate::Report> = None;
-    let add = |report: &mut Option<crate::Report>, next: crate::Report| {
-        let Some(report) = report else {
-            *report = Some(next);
-            return;
-        };
-        for diagnostic in next.diagnostics {
-            let is_known = diagnostic.file.is_none()
-                && (report.diagnostics.iter()).any(|it| equal_diagnostics(it, &diagnostic));
-            if !is_known {
-                report.diagnostics.push(diagnostic);
-            }
-        }
-        report.incomplete.extend(next.incomplete);
-        #[cfg(test)]
-        report.rounds.extend(next.rounds);
-    };
-    let mut of_all_passes: Vec<FileId> = Vec::new();
-    let mut left_for_last_round: Vec<FileId> = Vec::new();
     for part in parts {
         let began = std::time::Instant::now();
         if report.is_some() {
@@ -140,15 +119,7 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
         }
         let renewed = began.elapsed();
         let file_count = part.len();
-        if has_several_passes {
-            of_all_passes.extend_from_slice(&part);
-        }
-        let of_pass = FileWork {
-            is_one_part_of_files: has_several_passes,
-            ..work
-        };
-        let mut next = run_queue(loaded, host, request, part, &of_pass);
-        left_for_last_round.append(&mut next.left_for_last_round);
+        let next = run_queue(loaded, host, request, part, &work);
         if logs {
             bun_core::print_errorln!(
                 "AOT pass of the checker | {} files | a new checker {} ms | the pass {} ms",
@@ -157,71 +128,22 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
                 (began.elapsed() - renewed).as_millis(),
             );
         }
-        add(&mut report, next);
-    }
-    // What a checker answers at one of its limits depends on what it was asked before: a type that takes 100 steps from nothing
-    // takes 10 where another file has asked for one of 90. With one pass the files that meet a limit come last, when the checker
-    // has answered for all the others. So they do here: a new checker is asked again what the lowering of all the other files
-    // asks, which costs what one pass costs. Looking at those files would not do: most of what lowering asks about, no check of
-    // a file needs. A file that was lost at a limit and then met none in the last round of its pass is not among these: its
-    // answers come from no limit, so every checker gives them.
-    if !left_for_last_round.is_empty() {
-        let began = std::time::Instant::now();
-        // SAFETY: as above.
-        unsafe { loaded.renew_checker(&|count, each| host.parallel(count, each)) };
-        (passes.before_next)();
-        let rank = |&file: &FileId| files.rank_of_file(file);
-        left_for_last_round.shared_sort_by_key(rank);
-        let is_left = |file: &FileId| {
-            left_for_last_round
-                .binary_search_by_key(&rank(file), rank)
-                .is_ok()
-        };
-        of_all_passes.retain(|file| !is_left(file));
-        // The last round of their pass has reported on them. What stands is what is found now.
-        if let Some(report) = &mut report {
-            (report.diagnostics)
-                .retain(|diagnostic| !diagnostic.file.is_some_and(|file| is_left(&file)));
-        }
-        let (looked_at, left) = (of_all_passes.len(), left_for_last_round.len());
-        // What comes of it is what the file's own pass made of it. It is noted as that was, which changes nothing, and dropped.
-        let lowered_again: Vec<Guarded<Option<T>>> =
-            files_to_lower.iter().map(|_| Guarded::new(None)).collect();
-        let asks_again = FileWork {
-            after_file: Some(&|checker, file| {
-                if let Some(slot) = slots[file.idx()] {
-                    *lowered_again[slot as usize].lock() = lower(checker, file);
+        report = Some(match report {
+            None => next,
+            Some(mut report) => {
+                for diagnostic in next.diagnostics {
+                    let is_known = diagnostic.file.is_none()
+                        && (report.diagnostics.iter()).any(|it| equal_diagnostics(it, &diagnostic));
+                    if !is_known {
+                        report.diagnostics.push(diagnostic);
+                    }
                 }
-            }),
-            after_commit: &|file| {
-                if let Some(slot) = slots[file.idx()]
-                    && let Some(product) = lowered_again[slot as usize].lock().take()
-                {
-                    note_commit(file, &product);
-                }
-            },
-            frees_tree: &|_| false,
-            first_round: LOWERING_ROUNDS + ROUNDS_OF_A_RUN,
-            ..work
-        };
-        // Its errors are those of the pass that lowered the files.
-        run_queue(loaded, host, request, of_all_passes, &asks_again);
-        let looked = began.elapsed();
-        let of_last_round = FileWork {
-            first_round: LOWERING_ROUNDS + 2 * ROUNDS_OF_A_RUN,
-            ..work
-        };
-        let next = run_queue(loaded, host, request, left_for_last_round, &of_last_round);
-        if logs {
-            bun_core::print_errorln!(
-                "AOT pass of the checker | {} files that met a limit with all of their pass behind them | the other {} files asked about again {} ms | the pass {} ms",
-                left,
-                looked_at,
-                looked.as_millis(),
-                (began.elapsed() - looked).as_millis(),
-            );
-        }
-        add(&mut report, next);
+                report.incomplete.extend(next.incomplete);
+                #[cfg(test)]
+                report.rounds.extend(next.rounds);
+                report
+            }
+        });
     }
     let report = report.expect("there is a first pass");
     files.watch_no_more();
@@ -244,8 +166,6 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
     diagnostics.retain(|diagnostic| !is_reported_with_roles(roles, diagnostic));
     diagnostics.retain(|diagnostic| !diagnostic.file.is_some_and(is_left_out));
     incomplete.retain(|file| !roles.incomplete.contains(file));
-    incomplete.shared_sort();
-    incomplete.dedup();
     CheckedProgram {
         lowered,
         diagnostics: loaded.program_origins().apply_effects(diagnostics),

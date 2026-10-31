@@ -760,8 +760,8 @@
     "untyped": 1439.5
   },
   "everyday-code-out-of-run-time-text/names-stored-on-an-object-of-a-constructor-of-the-program": {
-    "typed": 641.6,
-    "untyped": 641.4
+    "typed": 508.1,
+    "untyped": 508.1
   },
   "everyday-code-out-of-run-time-text/the-names-of-a-parsed-object-walked-as-a-schema-compiler-writes-it": {
     "typed": 924,
@@ -1500,8 +1500,8 @@
     "untyped": 53
   },
   "everyday-data-and-control/uint8-array-fill-by-index": {
-    "typed": 562,
-    "untyped": 562
+    "typed": 244,
+    "untyped": 245
   },
   "everyday-data-and-control/uint8-array-made": {
     "typed": 88.7,
@@ -5026,5 +5026,13 @@
   "everyday-collections/map-get-by-names-split-out-of-one-line-twice": {
     "typed": 72.7,
     "untyped": 72.7
+  },
+  "everyday-collections/set-written-in-a-function-asked-about-each-letter": {
+    "typed": 2447.6,
+    "untyped": 2479.7
+  },
+  "everyday-collections/map-written-in-a-function-asked-about-each-word": {
+    "typed": 2971.1,
+    "untyped": 2971.0
   }
 }

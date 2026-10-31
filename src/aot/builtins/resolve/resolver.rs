@@ -2,7 +2,7 @@ use super::aliases::declared_names;
 use super::unnamed_holders::UnnamedHolders;
 use super::{
     BuiltinPath, CommonJsBuiltins, EvaluatedText, KeyOfModuleCache, ModuleObjectMention,
-    ObjectSpelled, ResolveInput, Resolved, ResolvedBuiltins, SourceDialect,
+    ObjectSpelled, ResolveInput, Resolved, ResolvedBuiltins, SourceDialect, WriteOnImport,
 };
 use crate::builtins::runtime_uses::{
     MentionedUses, Mentions, RuntimeUses, reaches_module_cache, reaches_unknown_module_loader,
@@ -273,6 +273,8 @@ pub(super) struct ResolverOutput {
     pub(super) replaced_members: Vec<BuiltinId>,
     pub(super) names_added: Vec<(BuiltinId, Atom)>,
     pub(super) holders_named_from_outside: Vec<BuiltinId>,
+    pub(super) builtins_handed_out: Vec<BuiltinId>,
+    pub(super) writes_on_imports: Vec<WriteOnImport>,
     pub(super) keys_spelled_on_other_objects: Vec<(ExprId, Atom)>,
     pub(super) objects_spelled_for_calls: Vec<ObjectSpelled>,
     pub(super) keys_partly_read: Vec<ExprId>,
@@ -801,6 +803,8 @@ impl<'a, 's> Resolver<'a, 's> {
             replaced_members: sorted_unique(output.replaced_members),
             names_added: output.names_added.into_boxed_slice(),
             holders_named_from_outside: output.holders_named_from_outside.into_boxed_slice(),
+            builtins_handed_out: output.builtins_handed_out.into_boxed_slice(),
+            writes_on_imports: output.writes_on_imports.into_boxed_slice(),
             mentioned,
             #[cfg(test)]
             exposed,

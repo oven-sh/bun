@@ -70,17 +70,11 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn find_truthiness(&self, expression: ExprId) -> Option<bool> {
-        match self.find_constant(expression)? {
-            Constant::Undefined | Constant::Null => Some(false),
-            Constant::Boolean(value) => Some(value),
-            Constant::Number(value) => Some(value != 0.0 && !value.is_nan()),
-            Constant::String(text) => Some(!self.queries.atom_bytes(text).is_empty()),
-            Constant::BigInt(_) => None,
-        }
+        self.is_truthy(self.find_constant(expression)?)
     }
 
     // `[a][0]` and `{ a }.a`: the `a`.
-    fn find_only_member(&self, object: ExprId, key: MemberKey) -> Option<ExprId> {
+    pub(super) fn find_only_member(&self, object: ExprId, key: MemberKey) -> Option<ExprId> {
         let hir = self.hir;
         match hir[self.skip_type_syntax(object)].kind {
             ExprKind::Array(elements) if elements.len() == 1 => {
@@ -346,40 +340,6 @@ impl FileLowering<'_, '_, '_, '_> {
         match self.find_printed_in_place(name)? {
             Printed::Initializer(initializer) => Some(initializer),
             Printed::Function(_) => None,
-        }
-    }
-
-    pub(in crate::lower) fn find_inlined_constant(&mut self, name: ExprId) -> Option<Constant> {
-        let (hir, bound) = (self.hir, self.bound);
-        if self.transpiled.as_ref()?.has_identifier_at(hir[name].pos) {
-            return None;
-        }
-        let Binding::Symbol(symbol) = bound.binding(name) else {
-            return None;
-        };
-        let [Decl::Var(pattern)] = *bound.symbol(symbol).decls else {
-            return None;
-        };
-        let PatParent::Var(declaration) = bound.pat_parent[pattern.idx()] else {
-            return None;
-        };
-        let statement = bound.var_stmt[declaration.idx()];
-        let declaration = &hir[declaration];
-        let is_inlined = declaration.kind == VarKind::Const
-            && declaration.loc.end <= hir[name].pos
-            && self.const_local_prefixes.contains(hir, bound, statement);
-        if !is_inlined {
-            return None;
-        }
-        let initializer = declaration.init.some()?;
-        if let Decision::Constant(constant) = self.decisions().decision(initializer) {
-            return Some(constant);
-        }
-        match self.decisions().constant(hir, initializer) {
-            FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => {
-                Some(constant)
-            }
-            FoldedValue::Unknown => None,
         }
     }
 

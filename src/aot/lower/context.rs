@@ -10,8 +10,8 @@ use bun_sema::check::aot::{
     BuiltinTypeSymbols, ConstLocalPrefixes, FunctionRef, NamedValues, Queries, QueryInputs,
 };
 use bun_sema::erasure::{TypeRanges, find_type_ranges};
-use bun_sema::fold::Decisions;
-use bun_sema::hir::{self, ExprId, ExprKind, NodeData};
+use bun_sema::fold::{Constant, Decisions};
+use bun_sema::hir::{self, ExprId, ExprKind, NodeData, VarDeclId};
 use bun_sema::import_sites::ResolvedForm;
 use bun_sema::program::{CompiledModule, FileId, FileRole};
 use bun_sema::resolve::TranspileSettings;
@@ -175,6 +175,8 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     runs_as_written: bool,
     pub(in crate::lower) transpiled: Option<TranspiledFile>,
     pub(in crate::lower) const_local_prefixes: ConstLocalPrefixes,
+    pub(in crate::lower) inlined_constants: FxHashMap<VarDeclId, Option<Constant>>,
+    pub(in crate::lower) enum_member_reads: FxHashMap<ExprId, Constant>,
     /// The position of each plain function that has a header, and `FileLowering::position_of_making_this_in`.
     pub(in crate::lower) where_this_is_made: Vec<(u32, u32)>,
     pub(in crate::lower) printed_operators: PrintedOperators,
@@ -352,6 +354,8 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             runs_as_written,
             transpiled,
             const_local_prefixes: ConstLocalPrefixes::default(),
+            inlined_constants: FxHashMap::default(),
+            enum_member_reads: FxHashMap::default(),
             where_this_is_made: Vec::new(),
             printed_operators: PrintedOperators::default(),
             counted_places,

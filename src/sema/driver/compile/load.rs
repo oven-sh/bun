@@ -236,42 +236,76 @@ fn configuration_diagnostics<'e>(
         .collect()
 }
 
-/// The file that a load takes for an entry point which is written so. `None`: it takes none.
-pub fn resolve_entry_point(
-    host: &dyn CodeHost,
-    code: &CodeOptions,
-    specifier: &[u8],
-) -> Option<Vec<u8>> {
-    resolve_entry_points(host, code, &[specifier.to_vec()])
-        .ok()?
-        .pop()
+/// What a `FileFinder` keeps its answers in.
+pub struct FileFinderTables {
+    session: Session,
+    options: Options,
 }
 
-/// The file that an import leads to which `importer` writes so, whichever program holds the file. `None`: it leads to no file.
-pub fn resolve_import_to_file(
-    host: &dyn CodeHost,
-    code: &CodeOptions,
-    importer: &[u8],
-    specifier: &[u8],
-) -> Option<Vec<u8>> {
-    let session = Session::new();
-    let options = Options::default();
-    let resolver = Resolver::for_compile(&session, host, &options, code);
-    // As for a macro: the file itself is looked for. A host leaves an import of another form to the loader as it is written.
-    let resolution = resolver.resolve_code(&CodeRequest {
-        specifier,
-        importer,
-        directory: &host.directory_of(importer),
-        kind: CodeImportKind::Import,
-        form: CodeImportForm::Macro,
-    });
-    match resolution {
-        CodeResolution::File(file) if file.host_module.is_none() => Some(file.path.to_vec()),
-        CodeResolution::External {
-            specifier: path,
-            kind: ExternalKind::UncompiledCode,
-        } => Some(path.to_vec()),
-        _ => None,
+impl Default for FileFinderTables {
+    fn default() -> FileFinderTables {
+        FileFinderTables {
+            session: Session::new(),
+            options: Options::default(),
+        }
+    }
+}
+
+/// Says which files texts lead to, from one resolver. To make a resolver and to let it go costs more than a question to it.
+/// It remembers its answers, so it lives no longer than the host answers alike.
+pub struct FileFinder<'a> {
+    resolver: Resolver<'a>,
+    host: &'a dyn CodeHost,
+    code: &'a CodeOptions,
+}
+
+impl<'a> FileFinder<'a> {
+    pub fn new(
+        tables: &'a FileFinderTables,
+        host: &'a dyn CodeHost,
+        code: &'a CodeOptions,
+    ) -> FileFinder<'a> {
+        let resolver = Resolver::for_compile(&tables.session, host, &tables.options, code);
+        FileFinder {
+            resolver,
+            host,
+            code,
+        }
+    }
+
+    /// The file that a load takes for an entry point which is written so. `None`: it takes none.
+    pub fn find_entry_point(&self, specifier: &[u8]) -> Option<Vec<u8>> {
+        let resolution = self.resolver.resolve_code(&CodeRequest {
+            specifier,
+            importer: b"",
+            directory: &self.code.working_directory,
+            kind: CodeImportKind::EntryPoint,
+            form: CodeImportForm::Static,
+        });
+        match resolution {
+            CodeResolution::File(file) if file.host_module.is_none() => Some(file.path.to_vec()),
+            _ => None,
+        }
+    }
+
+    /// The file that an import leads to which `importer` writes so, whichever program holds the file. `None`: it leads to no file.
+    pub fn find_import(&self, importer: &[u8], specifier: &[u8]) -> Option<Vec<u8>> {
+        // As for a macro: the file itself is looked for. A host leaves an import of another form to the loader as it is written.
+        let resolution = self.resolver.resolve_code(&CodeRequest {
+            specifier,
+            importer,
+            directory: &self.host.directory_of(importer),
+            kind: CodeImportKind::Import,
+            form: CodeImportForm::Macro,
+        });
+        match resolution {
+            CodeResolution::File(file) if file.host_module.is_none() => Some(file.path.to_vec()),
+            CodeResolution::External {
+                specifier: path,
+                kind: ExternalKind::UncompiledCode,
+            } => Some(path.to_vec()),
+            _ => None,
+        }
     }
 }
 

@@ -221,6 +221,8 @@ pub(crate) fn run_as_coordinator(
         room_for_heavy_files,
         room_beside_heavy_files,
         heavy_files_to_hand_out,
+        max_worker_peak_rss_mb: 0,
+        max_exited_worker_rss_mb: 0,
         scale_up_after_ms: if let Some(d) = ctx.test_options.parallel_delay_ms {
             i64::from(d)
         } else if let Some(s) = env.get(b"BUN_TEST_PARALLEL_SCALE_MS") {
@@ -287,6 +289,10 @@ pub(crate) fn run_as_coordinator(
     unsafe { (*vm.event_loop()).ensure_waker() };
     vm.run_with_api_lock(|| coord.drive());
     coord.end_group();
+    crate::cli::run_compiled::log_largest_worker(
+        coord.max_worker_peak_rss_mb,
+        coord.max_exited_worker_rss_mb,
+    );
     crate::cli::run_compiled::log_account_of_process(format_args!("coordinator | files {n}"));
 
     aggregate::replay_test_records(&mut coord);
@@ -712,7 +718,8 @@ impl<'a> WorkerLoop<'a> {
                 Global::mimalloc_cleanup(false);
             }
             self.reporter.jest.default_timeout_override = u32::MAX;
-            let (growth, largest_child) = resident_at_start.map_or((0, 0), growth_since);
+            let (growth, largest_child, peak_rss) =
+                resident_at_start.map_or((0, 0, 0), growth_since);
 
             let elapsed_ns = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
                 .ns()
@@ -743,6 +750,7 @@ impl<'a> WorkerLoop<'a> {
                 wf.u64(elapsed_ns);
                 wf.u32(growth);
                 wf.u32(largest_child);
+                wf.u32(peak_rss);
                 wf.u32(match vm.exit_handler.exit_code {
                     code if code == exit_code_before => 0,
                     code => u32::from(code) + 1,
@@ -780,13 +788,17 @@ fn note_first_loads_of_earlier_process(vm: &VirtualMachine, list: &[u8]) {
     }
 }
 
-/// A line of /proc/self/status, in kilobytes.
+/// Lines of /proc/self/status, in kilobytes.
 #[cfg(target_os = "linux")]
-fn read_kilobytes(name: &[u8]) -> Option<u64> {
+fn read_kilobytes<const N: usize>(names: [&[u8]; N]) -> Option<[u64; N]> {
     let status = bun_sys::File::read_from(bun_sys::Fd::cwd(), b"/proc/self/status").ok()?;
-    let line = bun_core::strings::split(&status, b"\n").find(|line| line.starts_with(name))?;
-    let digits: Vec<u8> = (line.iter().copied()).filter(u8::is_ascii_digit).collect();
-    bun_core::fmt::parse_int::<u64>(&digits, 10).ok()
+    let mut values = [0; N];
+    for (value, name) in values.iter_mut().zip(names) {
+        let line = bun_core::strings::split(&status, b"\n").find(|line| line.starts_with(name))?;
+        let digits: Vec<u8> = (line.iter().copied()).filter(u8::is_ascii_digit).collect();
+        *value = bun_core::fmt::parse_int::<u64>(&digits, 10).ok()?;
+    }
+    Some(values)
 }
 
 /// Sets the highest resident size that the kernel remembers back to the present one, and answers that. A compiled run asks; only
@@ -794,23 +806,25 @@ fn read_kilobytes(name: &[u8]) -> Option<u64> {
 fn start_measuring_growth() -> Option<u64> {
     #[cfg(target_os = "linux")]
     if crate::cli::run_compiled::runs_compiled_code() {
+        let [peak, resident] = read_kilobytes([b"VmHWM:", b"VmRSS:"])?;
         let flags = bun_sys::O::WRONLY | bun_sys::O::CLOEXEC;
         let marks =
             bun_sys::File::openat(bun_sys::Fd::cwd(), b"/proc/self/clear_refs", flags, 0).ok()?;
         let written = marks.write_all(b"5");
         let _ = marks.close();
         written.ok()?;
+        crate::cli::run_compiled::record_peak_rss_kb(peak);
         bun_spawn::LARGEST_REAPED_CHILD.store(0, core::sync::atomic::Ordering::Relaxed);
-        return read_kilobytes(b"VmRSS:");
+        return Some(resident);
     }
     None
 }
 
-/// In megabytes, and the largest child that has ended. A build inside a test takes gigabytes for a few seconds and gives them back,
-/// so the highest size counts.
-fn growth_since(resident_at_start: u64) -> (u32, u32) {
+/// In megabytes, the largest child that has ended, and the peak RSS of this process so far. A build inside a test takes gigabytes
+/// for a few seconds and gives them back, so the highest size counts.
+fn growth_since(resident_at_start: u64) -> (u32, u32, u32) {
     #[cfg(target_os = "linux")]
-    if let Some(highest) = read_kilobytes(b"VmHWM:") {
+    if let Some([highest]) = read_kilobytes([b"VmHWM:"]) {
         // A build that a test starts as a process of its own takes as much as one inside the worker. When a child starts its
         // program, the kernel sets the child's highest size to that of the process it came from, so a child says something about
         // itself only above the worker's.
@@ -820,10 +834,11 @@ fn growth_since(resident_at_start: u64) -> (u32, u32) {
         return (
             megabytes(highest.saturating_sub(resident_at_start)),
             megabytes(child),
+            megabytes(crate::cli::run_compiled::record_peak_rss_kb(highest)),
         );
     }
     let _ = resident_at_start;
-    (0, 0)
+    (0, 0, 0)
 }
 
 /// Worker side: read framed commands from the IPC channel via the event loop,

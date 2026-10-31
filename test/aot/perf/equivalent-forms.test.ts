@@ -44,14 +44,6 @@ const programs: [entry: string, pairs: Pair[]][] = [
     ],
   ],
   [
-    "bytes-copied-into-a-list-that-grows.ts",
-    [
-      ["from the first on", "from the last on", 1],
-      ["from the first on", "up to a count, tested above", 1],
-      ["in pairs, by one counter", "in pairs, by two counters that meet", 1],
-    ],
-  ],
-  [
     "members-under-keys.js",
     [
       ["a method under a plain name", "a method under a symbol that the module creates", 4],

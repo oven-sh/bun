@@ -73,6 +73,15 @@ impl ConstLocalPrefixes {
         }
         *self.statements.entry(statement).or_insert(false)
     }
+
+    pub fn statements_in_scope_of<'a>(
+        hir: &'a File<'_>,
+        bound: &Bound<'_>,
+        statement: StmtId,
+    ) -> impl Iterator<Item = StmtId> + 'a {
+        let lists = scope_statement_lists(hir, bound, statement);
+        lists.into_iter().flat_map(move |list| hir.ids(list))
+    }
 }
 
 fn is_in_const_values_at(
@@ -232,7 +241,7 @@ fn ends_const_local_prefix(hir: &File<'_>, bound: &Bound<'_>, statement: StmtId)
     }
 }
 
-fn has_export_from(hir: &File<'_>) -> bool {
+pub(crate) fn has_export_from(hir: &File<'_>) -> bool {
     hir.ids(hir.body).any(|statement| {
         matches!(hir[statement].kind, StmtKind::ExportNamed(export)
             if hir[export].has_module_specifier && !hir.is_type_only_export(export))

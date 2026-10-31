@@ -468,6 +468,31 @@ fn log_cost_of_build() {
     }
 }
 
+/// Resetting the kernel's peak RSS loses it, so record it here first. Returns the peak so far.
+#[cfg(unix)]
+pub(crate) fn record_peak_rss_kb(kilobytes: u64) -> u64 {
+    use core::sync::atomic::AtomicU64;
+    static PEAK_BEFORE_RESETS: AtomicU64 = AtomicU64::new(0);
+    PEAK_BEFORE_RESETS
+        .fetch_max(kilobytes, Ordering::Relaxed)
+        .max(kilobytes)
+}
+
+/// `exited_mb` is what the kernel reports of exited workers. It folds in the processes that a worker waited for, and a spawned
+/// process starts from the peak of its parent, so it says something about a worker only above the peak of this process.
+pub(crate) fn log_largest_worker(reported_mb: u32, exited_mb: u32) {
+    if env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true) {
+        let is_inherited = exited_mb as usize <= Bun__AOT__peakResidentMegabytesOfProcess();
+        let peak_mb = reported_mb.max(if is_inherited { 0 } else { exited_mb });
+        if peak_mb > 0 {
+            bun_core::print_errorln!(
+                "AOT test run | largest worker or child of a worker | peak {} MB",
+                peak_mb
+            );
+        }
+    }
+}
+
 /// With `BUN_JSC_logAOTPhaseTimes`: what a process of a test run has taken by its end, in one line, so that the lines of a run add
 /// up to all of its processor time. Called on the main thread: what the process took less what that thread took is the other
 /// threads'. "Waited for" is what its children took, and theirs, as far as each was waited for: for the coordinator that is every
@@ -492,7 +517,7 @@ pub(crate) fn log_account_of_process(who: core::fmt::Arguments<'_>) {
         unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &raw mut main_thread) };
         let ms = |time: libc::timeval| time.tv_sec as i64 * 1000 + time.tv_usec as i64 / 1000;
         bun_core::print_errorln!(
-            "AOT account | {} | wall {} ms | user {} ms | system {} ms | main thread {} ms | waited for: user {} ms | system {} ms | minor faults {} | major faults {} | switches of its own will {} | against it {}",
+            "AOT account | {} | wall {} ms | user {} ms | system {} ms | main thread {} ms | waited for: user {} ms | system {} ms | minor faults {} | major faults {} | switches of its own will {} | against it {} | peak {} MB",
             who,
             (bun_core::time::nano_timestamp() - bun_core::start_time()) / 1_000_000,
             ms(own.ru_utime),
@@ -504,6 +529,7 @@ pub(crate) fn log_account_of_process(who: core::fmt::Arguments<'_>) {
             own.ru_majflt,
             own.ru_nvcsw,
             own.ru_nivcsw,
+            (Bun__AOT__peakResidentMegabytesOfProcess() as u64).max(record_peak_rss_kb(0) / 1024),
         );
         Output::flush();
     }
@@ -1920,7 +1946,6 @@ pub(crate) fn is_checked() -> bool {
 unsafe extern "C" {
     safe fn Bun__AOT__listRefusedChanges();
     safe fn Bun__AOT__takesImagesAboveOthers() -> bool;
-    #[cfg(unix)]
     safe fn Bun__AOT__peakResidentMegabytesOfProcess() -> usize;
 }
 

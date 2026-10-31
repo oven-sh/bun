@@ -7,6 +7,7 @@ import {
   bunExe,
   disableAggressiveGCScope,
   expectRssDeltaBelow,
+  isAndroid,
   isFreeBSD,
   isIPv6,
   isLinux,
@@ -948,9 +949,9 @@ describe.skipIf(isWindows)("a connected socket with datagrams queued ahead of an
 
   const datagrams = ["data 1", "data 2", "data 3"];
   const error = "error ECONNREFUSED";
-  // Linux reports a pending error before the queued datagrams. macOS hands out
-  // the datagrams first, then the error, and clears it.
-  const events = isLinux ? [error, ...datagrams] : [...datagrams, error];
+  // A Linux kernel reports a pending error before the queued datagrams. macOS
+  // hands out the datagrams first, then the error, and clears it.
+  const events = isLinux || isAndroid ? [error, ...datagrams] : [...datagrams, error];
 
   // FreeBSD's kernel does what macOS does, but the batch there is libc's
   // recvmmsg, which returns the count and drops that error: the socket gets

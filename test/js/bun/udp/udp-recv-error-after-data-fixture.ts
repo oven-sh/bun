@@ -9,12 +9,14 @@ const connect = { hostname: "127.0.0.1", port: peer.port };
 
 const events: string[] = [];
 const { promise: settled, resolve } = Promise.withResolvers<void>();
+// Android reports its own platform name, and its kernel is Linux.
+const linuxKernel = process.platform === "linux" || process.platform === "android";
 function push(event: string) {
   events.push(event);
-  // Linux reports a pending error before the queued datagrams. The BSDs hand
-  // out the datagrams first, so there the error is the last event: settling on
-  // it turns lost datagrams into a short list instead of a timeout.
-  if (events.includes("error ECONNREFUSED") && (process.platform !== "linux" || events.length === 4)) resolve();
+  // A Linux kernel reports a pending error before the queued datagrams. The
+  // BSDs hand out the datagrams first, so there the error is the last event:
+  // settling on it turns lost datagrams into a short list instead of a timeout.
+  if (events.includes("error ECONNREFUSED") && (!linuxKernel || events.length === 4)) resolve();
 }
 
 const socket = await udpSocket({

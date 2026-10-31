@@ -66,6 +66,11 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             }
         }
 
+        // The attempt that reads these tokens next logs no lexer error.
+        if p.lexer.logged_error_since(&old_lexer) {
+            return Err(crate::Error::SyntaxError);
+        }
+
         // Restore the lexer
         p.lexer.restore(&old_lexer);
         Ok(is_ts_arrow_fn)

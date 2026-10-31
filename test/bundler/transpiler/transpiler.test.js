@@ -994,6 +994,218 @@ describe("Bun.Transpiler", () => {
       });
     });
 
+    describe("the word `out` after `<`", () => {
+      // The printed code, or the message of every error and warning when there is one.
+      const run = (code, loader) => {
+        try {
+          return transpiler.transformSync(code, loader);
+        } catch (e) {
+          return (e instanceof AggregateError ? e.errors : [e]).map(e => e.message);
+        }
+      };
+      const check = (loader, expected) => {
+        expect(Object.fromEntries(Object.keys(expected).map(code => [code, run(code, loader)]))).toEqual(expected);
+      };
+      const outModifier = ['The modifier "out" is not valid here'];
+      const inModifier = ['The modifier "in" is not valid here'];
+
+      it.each(["ts", "tsx"])("a left shift by a variable named out is a shift (%s)", loader => {
+        // "<<" starts an attempt at type arguments. The attempt fails, and what
+        // it logged about "<out" must not stay.
+        check(loader, {
+          "c << out": "c << out;\n",
+          "x = c << out as number": "x = c << out;\n",
+          "x = c << out in d": "x = c << out in d;\n",
+          "x = c << out instanceof d": "x = c << out instanceof d;\n",
+          "x = c << out satisfies number": "x = c << out;\n",
+          "x = c << out\nfoo()": "x = c << out;\nfoo();\n",
+          "x = a << out, b": "x = a << out, b;\n",
+          "x = a << out ? 1 : 2": "x = a << out ? 1 : 2;\n",
+          "x = c << out < d": "x = c << out < d;\n",
+          "x = c << out > d": "x = c << out > d;\n",
+          "x = c << out >> d": "x = c << out >> d;\n",
+          "x = a << out.b": "x = a << out.b;\n",
+          "x = a << out[0]": "x = a << out[0];\n",
+          "x = a << out()": "x = a << out();\n",
+          "for (let i = 0; i << out; i++) {}": "for (let i = 0;i << out; i++) {}\n",
+          // The type parameter list closes before the attempt fails.
+          "x = a << out in b > c": "x = a << out in b > c;\n",
+          // More than one attempt reads the same tokens.
+          "x = a << out << out": "x = a << out << out;\n",
+          "x = a < b << out as c": "x = a < b << out;\n",
+          "x = new a < b << out as c": "x = new a < b << out;\n",
+          "switch (x) { case (a): b << out as c; }": "switch (x) {\n  case a:\n    b << out;\n}\n",
+          // The attempt that fails is at an arrow function return type.
+          "x = a ? (b) : c << out as d": "x = a ? b : c << out;\n",
+        });
+      });
+
+      it("`<out>` before an expression is a type assertion or a type parameter list", () => {
+        check("ts", {
+          "x = <out>y": "x = y;\n",
+          "x = <out>(y)": "x = y;\n",
+          "x = <out>(y) => y": "x = (y) => y;\n",
+          "x = async <out>(y)": "x = async(y);\n",
+          "x = async <out>(y) => y": "x = async (y) => y;\n",
+          // "out extends" is a modifier for the attempt at type parameters. The
+          // attempt fails, and the text is a conditional type.
+          "x = <out extends string ? 1 : 2>y": "x = y;\n",
+          "x = async <out extends string ? 1 : 2>(y)": "x = async(y);\n",
+        });
+        check("tsx", {
+          "x = async <out>(y)": "x = async(y);\n",
+          "x = <out,>(y) => y": "x = (y) => y;\n",
+          "x = async <out,>(y) => y": "x = async (y) => y;\n",
+          "x = async <out extends string ? 1 : 2>(y)": "x = async(y);\n",
+          // A JSX element named "out" on the right of "<" closes a type parameter
+          // list inside an attempt at type arguments that fails later.
+          "x = a < <out T></out>":
+            'x = a < jsxDEV_7x81h0kn("out", {\n  T: true\n}, undefined, false, undefined, this);\n',
+        });
+      });
+
+      it.each(["ts", "tsx"])("out is the name of a type parameter when no word follows it on its line (%s)", loader => {
+        check(loader, {
+          "function f<out>(v: out) {}": "function f(v) {}\n",
+          "function f<out, T>(v: out) {}": "function f(v) {}\n",
+          "function f<T, out>(v: out) {}": "function f(v) {}\n",
+          "function f<out = number>(v: out) {}": "function f(v) {}\n",
+          "function f<const out>(v: out) {}": "function f(v) {}\n",
+          "function f<out\n>(v: out) {}": "function f(v) {}\n",
+          "x = function <out>(v: out) {}": "x = function(v) {};\n",
+          "class C { m<out>(v: out) {} }": "class C {\n  m(v) {}\n}\n",
+          "x = { m<out>(v: out) {} }": "x = { m(v) {} };\n",
+          "let x: <out>(v: out) => out": "let x;\n",
+          "let x: new <out>(v: out) => out": "let x;\n",
+          "let x: { y<out>(): any }": "let x;\n",
+          "declare function f<out>(v: out): out": "",
+          "new Foo<<out>() => void>()": "new Foo;\n",
+          "foo<<out>() => void>()": "foo();\n",
+        });
+      });
+
+      it.each(["ts", "tsx"])("a misplaced modifier is still one error (%s)", loader => {
+        check(loader, {
+          "function f<out T>(v: T) {}": outModifier,
+          "function f<out extends number>(v: out) {}": outModifier,
+          "function f<out in T>() {}": outModifier,
+          "function f<out const T>() {}": outModifier,
+          "function f<out out>() {}": outModifier,
+          "function f<in out>() {}": inModifier,
+          "function f<in T>(v: T) {}": inModifier,
+          // The attempt is kept, so what it logged stays.
+          "foo<<out T>() => void>()": outModifier,
+          "foo<<in T>() => void>()": inModifier,
+          "x = (a): <in T>() => void => 1": inModifier,
+          "let x: ((a: <in T>() => void) => void)": inModifier,
+          "x = a ? (b): <out T>() => void => c : d": outModifier,
+          "foo<[const: number]>()": ['Unexpected "const"'],
+        });
+        // The name is "out", and the word on the next line does not belong to the list.
+        expect(run("function f<out\nT>() {}", loader)[0]).toBe('Expected ">" but found "T"');
+      });
+
+      it.each(["ts", "tsx"])("a failed attempt leaves the errors to the parse that follows it (%s)", loader => {
+        check(loader, {
+          "x = a << in": ["Unexpected in"],
+          "x = a << out T > (b)": ['Expected ";" but found "T"', "Unexpected >"],
+          "x = a < [const: b] > c": ["Unexpected const"],
+          "function f<out": ['Expected ">" but found end of file'],
+          // An attempt that is kept inside one that fails.
+          "x = a < ((b: <in T>() => void) => void) > c": [...inModifier, "Unexpected )"],
+          // An error from before the attempt stays.
+          "function f<in T>() {}\nx = c << out as number": inModifier,
+          "function f<in T>() {}\nx = a < [const: b] > c": [...inModifier, "Unexpected const"],
+        });
+        // The attempt that fails is at type parameters before "(".
+        expect(run("x = <in T>y", "ts")).toEqual(["Unexpected in"]);
+      });
+
+      it("a rewind of the lexer takes back the warning of the line it reads again", () => {
+        // Each "-->" line is read by a lookahead or by an attempt that fails,
+        // and then a second time. Bun.Transpiler throws warnings too.
+        const warning = ['Treating "-->" as the start of a legacy HTML single-line comment'];
+        check("ts", {
+          "x = a < b\n--> c\n": warning,
+          "x = <T\n--> c\n>y": warning,
+          "function f<out\n--> c\n>(v: out) {}": warning,
+          "for (async\n--> c\nin {});": warning,
+          'import type from\n--> c\n"./x";': warning,
+          'x = a < b > import\n--> c\n("y")': warning,
+        });
+        check("js", { "for (async\n--> c\nin {});": warning });
+        check("tsx", {
+          "var x = <\n--> c\nT,>(a: T) => a;": warning,
+          // The attempt at type arguments reads "--> t" as a comment. It is the text of the element.
+          "x = a < <b>\n--> t</b>":
+            'x = a < jsxDEV_7x81h0kn("b", {\n  children: "--> t"\n}, undefined, false, undefined, this);\n',
+        });
+        // The lookahead for a TSX arrow function logs the error of the escaped
+        // name. The attempt that reads the name next does not, so the error stays.
+        check("tsx", {
+          "x = async <\\u{30}a,>(y) => y": ['Invalid identifier: "0a"'],
+          "x = <\\u{30}a,>(y) => y": ['Invalid identifier: "0a"'],
+        });
+      });
+
+      it("every Bun.Transpiler API takes a left shift by out", async () => {
+        const code = "import a from 'mod';\nexport const r = a << out;\n";
+        const imports = [{ kind: "import-statement", path: "mod" }];
+        const printed = 'import a from "mod";\nexport const r = a << out;\n';
+        expect({
+          scanImports: transpiler.scanImports(code, "ts"),
+          scan: transpiler.scan(code, "ts"),
+          transformSync: transpiler.transformSync(code, "ts"),
+          transform: await transpiler.transform(code, "ts"),
+        }).toEqual({
+          scanImports: imports,
+          scan: { exports: ["r"], imports },
+          transformSync: printed,
+          transform: printed,
+        });
+      });
+
+      it("bun runs the shift, and bun build warns once about a legacy comment", async () => {
+        using dir = tempDir("ts-shift-by-out", {
+          "shift.ts": `
+            const c: number = 3, out: number = 2, buf = [2];
+            function id<out>(v: out): out { return v; }
+            console.log(c << out, 1 << out, (c << out) | 1, c << out + 1, buf[0] << out, id(c << out as number));
+            const r = c << out
+            console.log(r)
+          `,
+          // The attempt at type arguments after "<" reads the "-->" line, fails,
+          // and the line is read a second time.
+          "legacy-comment.ts": "var a = 1, b = 2, x;\nx = a < b\n--> legacy comment\nconsole.log(x);\n",
+        });
+        const [shift, evaluated, built] = await Promise.all(
+          [
+            ["shift.ts"],
+            // "bun -e" reads plain JavaScript with the TSX loader.
+            ["-e", "var c = 3, out = 2; console.log(c << out)"],
+            ["build", "--no-bundle", "legacy-comment.ts"],
+          ].map(async args => {
+            await using proc = Bun.spawn({
+              cmd: [bunExe(), ...args],
+              env: { ...bunEnv, NO_COLOR: "1" },
+              cwd: String(dir),
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            return { stdout, stderr, exitCode };
+          }),
+        );
+        expect(shift).toEqual({ stdout: "12 4 13 24 8 12\n12\n", stderr: "", exitCode: 0 });
+        expect(evaluated).toEqual({ stdout: "12\n", stderr: "", exitCode: 0 });
+        expect({
+          stdout: built.stdout,
+          warnings: built.stderr.split('Treating "-->" as the start of a legacy HTML single-line comment').length - 1,
+          exitCode: built.exitCode,
+        }).toEqual({ stdout: "var a = 1, b = 2, x;\nx = a < b;\nconsole.log(x);\n", warnings: 1, exitCode: 0 });
+      });
+    });
+
     it.todo("instantiation expressions", async () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;

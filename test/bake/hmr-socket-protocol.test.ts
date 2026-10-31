@@ -21,7 +21,18 @@
 //     `assert!(self.root == v)`, or a different timer dropped on a canary build.
 import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isMacOS, isWindows, tempDir, waitUntil } from "harness";
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  openSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
+import { join } from "node:path";
 
 const indexHtml = /* html */ `<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
@@ -496,3 +507,371 @@ test.concurrent.skipIf(!isDebug && !Bun.version_with_sha.includes("-canary"))(
     expect(await res.text(), dev.stderr()).toBe("fallback");
   },
 );
+
+// For a test that lets a hold end at its deadline: a slow build does its few steps before that in this time.
+const shortHoldMs = 1200;
+// For a hold that is open when an uncaught error happens under --hot. No timer runs after the error, so the run
+// loop ends the hold. On Windows the timers still run, and the hold ends at its deadline.
+const holdAcrossErrorMs = isWindows ? shortHoldMs : 30_000;
+/** Starts `server.ts` under `bun --hot`. `waitMs` is the deadline of a hold. */
+function spawnHotServer(dir: string, waitMs: number) {
+  return Bun.spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "server.ts"],
+    env: { ...bunEnv, BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_WAIT_MS: String(waitMs) },
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+}
+/**
+ * Loads the page, so that the dev server watches its files, and records the frames of the HMR socket.
+ * `onFrame` gets each frame too.
+ */
+async function openPage(
+  proc: Subprocess<"ignore", "pipe", "pipe">,
+  onFrame: (id: string, body: Uint8Array) => void = () => {},
+) {
+  const dev = watchDevServer(proc);
+  const port = await dev.port;
+  const origin = `http://127.0.0.1:${port}`;
+  const html = await (await fetch(origin + "/")).text();
+  for (const [, src] of html.matchAll(/src="([^"]+)"/g)) await (await fetch(new URL(src, origin))).text();
+
+  // r0: a testing batch started. r1: the batch saw files. r2: the batch was empty. r3, r4: a bundle finished.
+  // r5: the dev server holds a file event. r6: the hold ended. u: a hot update. e: the errors of a bundle.
+  const frames: string[] = [];
+  // A dev server that exits, or a socket that it closes, fails every wait at once.
+  let failure: Error | undefined;
+  proc.exited.then(code => (failure ??= new Error(`The dev server exited with code ${code}`)));
+  const hmr = await connectHmr(
+    port,
+    (id, body) => {
+      frames.push(id === "r" ? id + body[0] : id);
+      onFrame(id, body);
+    },
+    error => (failure ??= error),
+  );
+  const context = () => `. Frames: ${frames.join(" ")}\n${dev.stderr()}`;
+  const until = (what: string, done: () => boolean) =>
+    waitUntil(
+      what,
+      () => {
+        if (failure) throw new Error(`${failure.message} while the test waited for ${what}${context()}`);
+        return done();
+      },
+      { timeout: 30_000, context },
+    );
+  // The reply to SetUrl comes after the dev server has handled the Subscribe frame before it.
+  hmr.ws.send("sher");
+  hmr.ws.send("n/");
+  await until("the subscription", () => frames.includes("n"));
+  return { hmr, origin, frames, until, stderr: dev.stderr };
+}
+/** Every watcher reports a delete. kqueue does not report a truncation. */
+function emptyOrDelete(path: string) {
+  if (isMacOS) unlinkSync(path);
+  else closeSync(openSync(path, "w"));
+}
+const hotServer = (sharedImport: string) => /* ts */ `
+  import html from "./index.html";
+  ${sharedImport}
+  const server = Bun.serve({
+    port: 0,
+    development: { hmr: true, console: false },
+    routes: {
+      "/": html,
+      // Leaves a rejection that nothing handles.
+      "/boom": () => {
+        Promise.reject(new Error("boom"));
+        return new Response("sent");
+      },
+    },
+  });
+  console.log("PORT=" + server.port);
+`;
+
+// The dev server holds the file event of a file that a save emptied, and a timer is one of the
+// things that end the hold. `bun --hot` runs no timers after an uncaught error, so it ends every hold then.
+test.concurrent(
+  "a save in place reaches the page of a dev server under --hot, also after an uncaught error",
+  async () => {
+    using dir = tempDir("hmr-hold-under-hot", {
+      "index.html": indexHtml,
+      "entry.ts": `import { text } from "./text.ts";\nconsole.log(text);\nimport.meta.hot.accept();`,
+      "text.ts": `export const text = "t0";`,
+      "server.ts": hotServer(""),
+    });
+    // Longer than this test keeps the file empty.
+    await using proc = spawnHotServer(String(dir), 30_000);
+    // The text of each hot update.
+    const updates: string[] = [];
+    const dev = await openPage(proc, (id, body) => {
+      if (id === "u")
+        updates.push(
+          Buffer.from(body)
+            .toString("latin1")
+            .match(/"(t\d)"/)?.[1] ?? "empty",
+        );
+    });
+    using hmr = dev.hmr;
+    const held = () => dev.frames.filter(frame => frame === "r5").length;
+
+    /** Empties text.ts, writes `text` once the dev server has reacted, and returns the hot updates of the save. */
+    const saveInPlace = async (text: string) => {
+      const before = { held: held(), updates: updates.length };
+      const fd = openSync(join(String(dir), "text.ts"), "w");
+      try {
+        // The dev server holds the file event, or it bundles the empty file. On kqueue it does
+        // neither: a truncation is no file event there.
+        const deadline = Date.now() + (isMacOS ? 250 : 30_000);
+        while (held() === before.held && updates.length === before.updates && Date.now() < deadline) await Bun.sleep(1);
+        writeSync(fd, `export const text = "${text}";`);
+      } finally {
+        closeSync(fd);
+      }
+      await dev.until(`the update with ${text}`, () => updates.includes(text));
+      return updates.slice(before.updates);
+    };
+
+    expect(await saveInPlace("t1")).toEqual(["t1"]);
+
+    await (await fetch(dev.origin + "/boom")).text();
+    await dev.until("the uncaught error", () => dev.stderr().includes("boom"));
+    // Except on Windows, no timer can end a hold now, so no hold lasts. The text still reaches the page.
+    expect((await saveInPlace("t2")).at(-1)).toBe("t2");
+  },
+);
+
+test.concurrent("a hold that is open when an uncaught error happens under --hot ends", async () => {
+  using dir = tempDir("hmr-hold-open-at-error", {
+    "index.html": indexHtml,
+    // Only the page has module.ts, so its file event reloads nothing under --hot.
+    "entry.ts": `import "./module.ts";`,
+    "module.ts": `console.log("m0");\nimport.meta.hot.accept();`,
+    "server.ts": hotServer(""),
+  });
+  await using proc = spawnHotServer(String(dir), holdAcrossErrorMs);
+  const dev = await openPage(proc);
+  using hmr = dev.hmr;
+
+  emptyOrDelete(join(String(dir), "module.ts"));
+  await dev.until("the hold", () => dev.frames.includes("r5"));
+  expect(dev.frames).not.toContain("r6");
+
+  await (await fetch(dev.origin + "/boom")).text();
+  // No file event follows.
+  await dev.until("the end of the hold", () => dev.frames.includes("r6"));
+  await dev.until("the page to learn of the save", () => dev.frames.includes("u") || dev.frames.includes("e"));
+  expect(dev.stderr()).toContain("boom");
+});
+
+test.concurrent("a save that empties a module of the server and of the page under --hot reaches the page", async () => {
+  using dir = tempDir("hmr-hold-shared-module", {
+    "index.html": indexHtml,
+    "entry.ts": `import { shared } from "./module.ts";\nconsole.log(shared);\nimport.meta.hot.accept();`,
+    "module.ts": `export const shared = "s0";`,
+    // The save fails the reload of the server: the export is gone.
+    "server.ts": hotServer(`import { shared } from "./module.ts";\n  console.log(shared);`),
+  });
+  await using proc = spawnHotServer(String(dir), holdAcrossErrorMs);
+  const dev = await openPage(proc);
+  using hmr = dev.hmr;
+
+  emptyOrDelete(join(String(dir), "module.ts"));
+  // No file event follows, and the failed reload is an uncaught error.
+  await dev.until("the page to learn of the save", () => dev.frames.includes("u") || dev.frames.includes("e"));
+});
+
+test.concurrent("a hold that ends while a testing batch is open puts its files in the batch", async () => {
+  using dir = tempDir("hmr-hold-into-batch", {
+    "index.html": indexHtml,
+    "entry.ts": `import "./module.ts";`,
+    "module.ts": `console.log("m0");\nimport.meta.hot.accept();`,
+    "server.ts": serverTs,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    env: { ...bunEnv, BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_WAIT_MS: String(shortHoldMs) },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const dev = await openPage(proc);
+  using hmr = dev.hmr;
+  const { frames, until } = dev;
+
+  emptyOrDelete(join(String(dir), "module.ts"));
+  await until("the hold", () => frames.includes("r5"));
+  hmr.ws.send("H");
+  await until("the batch", () => frames.includes("r0"));
+  // The hold ends at its deadline. Its files wait for the end of the batch, as a file event does.
+  await until("the files of the hold in the batch", () => frames.includes("r6") && frames.includes("r1"));
+  expect(frames.filter(frame => frame === "r3" || frame === "r4")).toEqual([]);
+
+  hmr.ws.send("H");
+  await until("the bundle of the batch", () => frames.includes("r3") || frames.includes("r4"));
+});
+
+// During a testing batch a file event starts no look at the held files. So the `stat` of that file event is the
+// only one that sees the text of a file that a second save empties again.
+test.concurrent.skipIf(isMacOS)(
+  // kqueue does not report a truncation.
+  "a held file that gets its text and loses it again during a testing batch has a new deadline",
+  async () => {
+    using dir = tempDir("hmr-hold-text-in-batch", {
+      "index.html": indexHtml,
+      "entry.ts": `import "./module.ts";\nimport "./empty.ts";`,
+      "module.ts": `console.log("m0");\nimport.meta.hot.accept();`,
+      "empty.ts": `console.log("e0");\nimport.meta.hot.accept();`,
+      "two.html": /* html */ `<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body><script type="module" src="./two.ts"></script></body></html>`,
+      "two.ts": `console.log("two");`,
+      "server.ts": /* ts */ `
+        import one from "./index.html";
+        import two from "./two.html";
+        const server = Bun.serve({
+          port: 0,
+          development: { hmr: true, console: false },
+          routes: { "/": one, "/two": two },
+          fetch() { return new Response("fallback"); },
+        });
+        console.log("PORT=" + server.port);
+      `,
+    });
+    // Two holds end at their deadline here. The steps of the second one take a third of this time.
+    const holdMs = 800;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.ts"],
+      env: { ...bunEnv, BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_WAIT_MS: String(holdMs) },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const dev = await openPage(proc);
+    using hmr = dev.hmr;
+    const { frames, until } = dev;
+    const count = (frame: string) => frames.filter(each => each === frame).length;
+
+    // A hold leaves empty.ts empty. While the dev server knows of such a file, it looks at the files of a file event during a batch too.
+    closeSync(openSync(join(String(dir), "empty.ts"), "w"));
+    await until("the end of the first hold", () => frames.includes("r6"));
+    await until("the bundle of the empty file", () => frames.includes("r3") || frames.includes("r4"));
+
+    const module = join(String(dir), "module.ts");
+    closeSync(openSync(module, "w"));
+    await until("the second hold", () => count("r5") === 2);
+    const heldAt = performance.now();
+    hmr.ws.send("H");
+    await until("the batch", () => frames.includes("r0"));
+    let seen = count("r1");
+    appendFileSync(module, `console.log("m1");\nimport.meta.hot.accept();`);
+    await until("the file event of the text", () => count("r1") > seen);
+    seen = count("r1");
+    closeSync(openSync(module, "w"));
+    await until("the file event of the second save", () => count("r1") > seen);
+
+    // Late in the time that module.ts has from its first save.
+    await Bun.sleep(Math.max(0, heldAt + 0.3 * holdMs - performance.now()));
+    expect(count("r6"), "the second hold ended before the request").toBe(1);
+    // The first request for a page starts a bundle, and the dev server looks at the held files when a bundle ends.
+    const requested = performance.now();
+    expect((await fetch(dev.origin + "/two")).status).toBe(200);
+    await until("the end of the second hold", () => count("r6") === 2);
+    // module.ts holds the reload for one wait from the look that finds its text gone, not from its first save.
+    expect(performance.now() - requested).toBeGreaterThanOrEqual(holdMs);
+  },
+);
+
+test.concurrent("a file event that waited behind a bundle does not take a hold out of a testing batch", async () => {
+  // The first request for `/two` parks a bundle in the plugin until this server answers.
+  const bundleEntered = Promise.withResolvers<void>();
+  const bundleRelease = Promise.withResolvers<void>();
+  await using gate = Bun.serve({
+    port: 0,
+    async fetch() {
+      bundleEntered.resolve();
+      await bundleRelease.promise;
+      return new Response("go");
+    },
+  });
+  using dir = tempDir("hmr-hold-batch-waiting-event", {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "plugin.ts": holdPlugin,
+    "index.html": indexHtml,
+    "entry.ts": `import "./module.ts";\nimport "./other.ts";`,
+    "module.ts": `console.log("m0");\nimport.meta.hot.accept();`,
+    "other.ts": `console.log("o0");\nimport.meta.hot.accept();`,
+    "two.html": /* html */ `<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body><script type="module" src="./two.ts"></script></body></html>`,
+    "two.ts": `import "./hold.block";\nconsole.log("two");`,
+    "hold.block": "",
+    "server.ts": /* ts */ `
+      import one from "./index.html";
+      import two from "./two.html";
+      const server = Bun.serve({
+        port: 0,
+        development: { hmr: true, console: false },
+        routes: { "/": one, "/two": two },
+        fetch() { return new Response("fallback"); },
+      });
+      console.log("PORT=" + server.port);
+    `,
+  });
+  // A trace inside the project would report its own writes.
+  using traceDir = tempDir("hmr-hold-batch-waiting-event-trace", {});
+  const trace = join(String(traceDir), "watcher-trace");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    env: {
+      ...bunEnv,
+      HMR_TEST_BUNDLE_GATE: String(gate.url),
+      BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_WAIT_MS: String(shortHoldMs),
+      BUN_WATCHER_TRACE: trace,
+    },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const dev = await openPage(proc);
+  using hmr = dev.hmr;
+  const { frames, until } = dev;
+
+  // The hold is open before the bundle starts, and its deadline passes while the bundle runs.
+  emptyOrDelete(join(String(dir), "module.ts"));
+  await until("the hold", () => frames.includes("r5"));
+  const heldAt = performance.now();
+  const twoFetch = fetch(dev.origin + "/two");
+  twoFetch.catch(() => {});
+  bundleEntered.promise.catch(() => {});
+  proc.exited.then(() =>
+    bundleEntered.reject(new Error(`The dev server exited before the bundle reached the plugin\n${dev.stderr()}`)),
+  );
+  await bundleEntered.promise;
+  // The batch opens when the bundle ends.
+  hmr.ws.send("H");
+  writeFileSync(join(String(dir), "other.ts"), `console.log("o1");\nimport.meta.hot.accept();`);
+  await until(
+    "the watcher to report other.ts",
+    () => existsSync(trace) && readFileSync(trace, "latin1").includes("other.ts"),
+  );
+  // The hold began before the test saw its frame, so its deadline has passed after this.
+  await Bun.sleep(Math.max(0, heldAt + shortHoldMs + 100 - performance.now()));
+  expect(frames).not.toContain("r6");
+
+  // The file event that waited is bundled at once, as without a hold. The hold ends after that, in the batch.
+  bundleRelease.resolve();
+  await until(
+    "the files of the hold in the batch",
+    () => frames.includes("r0") && frames.includes("r6") && frames.includes("r1"),
+  );
+  const before = frames.length;
+  hmr.ws.send("H");
+  await until("the end of the batch", () =>
+    frames.slice(before).some(frame => frame === "r2" || frame === "r3" || frame === "r4"),
+  );
+  // Not an empty batch.
+  expect(frames.slice(before)).not.toContain("r2");
+  expect((await twoFetch).status).toBe(200);
+});

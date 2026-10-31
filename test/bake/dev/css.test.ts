@@ -1,6 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
+import { writeFileSync } from "node:fs";
 import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
@@ -43,6 +44,86 @@ devTest("css file with syntax error does not kill old styles", {
     await c.style("body").backgroundColor.expect.toBe("#00f");
     await dev.write("styles.css", ` `, { dedent: false });
     await c.style("body").notFound();
+  },
+});
+devTest("a save that empties an imported stylesheet before it writes it does not remove the styles", {
+  // Longer than the save keeps the file empty, so the speed of the machine does not decide the result.
+  env: { BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_WAIT_MS: "30000" },
+  files: {
+    "styles.css": `
+      @import "./colors.css";
+    `,
+    "colors.css": `
+      body {
+        color: red;
+      }
+    `,
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      body: `hello world`,
+    }),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style("body").color.expect.toBe("red");
+    await dev.saveInPlace("colors.css", "body {\n  color: green;\n}\n");
+    await c.style("body").color.expect.toBe("green");
+  },
+});
+devTest("a save in place that fixes a parse error in an imported stylesheet does not remove the styles", {
+  // kqueue does not report a truncation, so nothing is held there.
+  skip: ["darwin"],
+  env: { BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_WAIT_MS: "30000" },
+  files: {
+    "styles.css": `
+      @import "./colors.css";
+    `,
+    "colors.css": `
+      body {
+        color: red;
+      }
+    `,
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      body: `hello world`,
+    }),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style("body").color.expect.toBe("red");
+    await dev.write("colors.css", "body {\n  color", { dedent: false, errors: null });
+    const held = dev.eventsHeld;
+    await dev.saveInPlace("colors.css", "body {\n  color: green;\n}\n");
+    expect(dev.eventsHeld).toBeGreaterThan(held);
+    await c.style("body").color.expect.toBe("green");
+  },
+});
+devTest("a stylesheet save beside an empty @import that nobody saved is not held", {
+  files: {
+    "styles.css": `
+      @import "./colors.css";
+      @import "./empty.css";
+    `,
+    "colors.css": `
+      body {
+        color: red;
+      }
+    `,
+    "empty.css": "",
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      body: `hello world`,
+    }),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style("body").color.expect.toBe("red");
+    // `dev.write` saves in a testing batch, and a testing batch is never held.
+    const updated = c.nextAck("applying the stylesheet");
+    writeFileSync(dev.join("colors.css"), "body {\n  color: green;\n}\n");
+    await updated;
+    await c.style("body").color.expect.toBe("green");
+    expect(dev.eventsHeld).toBe(0);
   },
 });
 devTest("css file with initial syntax error gets recovered", {

@@ -1,7 +1,20 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
-import { renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { devTest, emptyHtmlFile } from "../bake-harness";
+import { isASAN, isDebug, isWindows, waitUntil } from "harness";
+import {
+  appendFileSync,
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
+import { Dev, devTest, emptyHtmlFile, minimalFramework, pathOutsideProjects, WAIT_MULTIPLIER } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
   files: {
@@ -574,6 +587,1170 @@ devTest("hmr forwards every merged inotify sub-path from a directory batch", {
       }
       await c.expectMessage(`atomic ${round}`);
     }
+  },
+});
+devTest("a hot-reload event that invalidates nothing is processed once", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      console.log("hello");
+    `,
+  },
+  async test(dev) {
+    // Bundling the route puts the project directory on the watch list. Wait
+    // for the build's own synchronization message so it is not recorded below.
+    const built = dev.waitForHotReload(false);
+    await dev.fetch("/");
+    await built;
+
+    // mkdir is a single notification from every platform's watcher, so the
+    // dev server receives exactly one hot-reload event for it. Nothing imports
+    // the directory, so the event invalidates nothing and is reported with one
+    // SeenFiles. The first event of a batch used to be processed (and
+    // reported) twice.
+    const messages = await dev.watchSynchronizationMessagesFor(() => mkdirSync(dev.join("unrelated")));
+    expect(messages).toEqual(["SeenFiles"]);
+  },
+});
+// A save empties or renames the file before it writes the text, and inotify and
+// `ReadDirectoryChangesW` report that at once. The dev server holds the file event until the
+// file has its text. kqueue does not report a truncation, so nothing is held there.
+const holdFor = (ms: number) => ({ BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_WAIT_MS: String(ms) });
+// Longer than a test keeps a file half-saved and than a wait of the harness, so the speed of the machine does not decide the result.
+const holdLong = holdFor(30_000 * WAIT_MULTIPLIER);
+const setsText = (id: string, value: string) =>
+  `document.getElementById("${id}").textContent = "${value}";\nimport.meta.hot.accept();\n`;
+/** The first step of a save in place. */
+const emptyFile = (path: string) => closeSync(openSync(path, "w"));
+const until = (what: string, done: () => boolean) => waitUntil(what, done, { timeout: 10_000 * WAIT_MULTIPLIER });
+const counterApp = (label: string) => `
+  import { useState } from "react";
+  export default function App() {
+    const [count, setCount] = useState(0);
+    return <button onClick={() => setCount(count + 1)}>{"${label} " + count}</button>;
+  }
+`;
+devTest("a save that empties the file before it writes it keeps Fast Refresh state", {
+  fixture: "react-spa-simple",
+  env: holdLong,
+  async test(dev) {
+    // Nothing is bundled or watched before the first request.
+    writeFileSync(dev.join("App.tsx"), counterApp("count"));
+    await using c = await dev.client();
+    await c.click("button");
+    await c.click("button");
+    await c.expectElemText("button", "count 2");
+
+    await dev.saveInPlace("App.tsx", counterApp("clicks"));
+    // A full reload would reset the count to 0.
+    await c.expectElemText("button", "clicks 2");
+    // The HMR client stores this message right before it reloads the page.
+    expect(await c.js`return sessionStorage.getItem("bun:hmr:message")`).toBeNull();
+  },
+});
+devTest("a save that one Bun.write makes keeps Fast Refresh state", {
+  fixture: "react-spa-simple",
+  env: holdLong,
+  async test(dev) {
+    writeFileSync(dev.join("App.tsx"), counterApp("count"));
+    await using c = await dev.client();
+    await c.click("button");
+    await c.click("button");
+    await c.expectElemText("button", "count 2");
+
+    await c.drainAcks();
+    // On Windows `Bun.write` empties the file when it opens it, and writes the text from a later task.
+    const written = Bun.write(dev.join("App.tsx"), counterApp("clicks"));
+    const applied = c.nextAck("applying the text of Bun.write");
+    await Promise.all([written, applied]);
+    await c.expectElemText("button", "clicks 2");
+    expect(await c.js`return sessionStorage.getItem("bun:hmr:message")`).toBeNull();
+  },
+});
+devTest("a save that renames the file away before it writes the new one keeps the module's hot boundary", {
+  // Only a file event ends this hold in time. inotify and `ReadDirectoryChangesW` report the write to
+  // the new file. kqueue reports a write to the directory when the backup is removed.
+  env: holdLong,
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `<p id="a"></p>`,
+    }),
+    "index.ts": `
+      import "./a";
+    `,
+    "a.ts": `
+      document.getElementById("a").textContent = "a1";
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectElemText("#a", "a1");
+    await dev.saveInPlace("a.ts", `document.getElementById("a").textContent = "a2";\nimport.meta.hot.accept();\n`, {
+      emptyWith: "rename",
+    });
+    await c.expectElemText("#a", "a2");
+    // The HMR client stores this message right before it reloads the page.
+    expect(await c.js`return sessionStorage.getItem("bun:hmr:message")`).toBeNull();
+  },
+});
+devTest("a file that is deleted is reported when its hold ends", {
+  skip: [
+    "win32", // unlinkSync is having weird behavior
+  ],
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { value } from "./other";
+      console.log(value);
+    `,
+    "other.ts": `
+      export const value = 123;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(123);
+    // A save that renames the file away looks the same. No file follows here, so the hold ends at its deadline.
+    const held = dev.heldEvents();
+    const built = c.nextAck("the bundle without the file");
+    unlinkSync(dev.join("other.ts"));
+    await held;
+    await built;
+    await c.expectErrorOverlay(['index.ts:1:23: error: Could not resolve: "./other"']);
+  },
+});
+devTest("a deleted file that is made again in two steps is held again", {
+  skip: [
+    "win32", // unlinkSync is having weird behavior
+    "darwin", // kqueue does not name the new file
+  ],
+  env: holdFor(200),
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `<p id="a"></p>`,
+    }),
+    "index.ts": `
+      import "./a";
+    `,
+    "a.ts": setsText("a", "a1"),
+  },
+  async test(dev) {
+    // The page loads again when the error of the missing file goes away.
+    await using c = await dev.client("/", { allowUnlimitedReloads: true });
+    await c.expectElemText("#a", "a1");
+
+    const file = dev.join("a.ts");
+    let ended = dev.endedHolds();
+    const failed = c.nextAck("the bundle without the file");
+    unlinkSync(file);
+    // No file follows, so this hold ends at its deadline.
+    await ended;
+    await failed;
+    await c.expectErrorOverlay(['index.ts:1:8: error: Could not resolve: "./a"']);
+
+    // The file was missing, not saved empty: the file event that finds it empty is held.
+    const held = dev.heldEvents();
+    emptyFile(file);
+    await held;
+    ended = dev.endedHolds();
+    appendFileSync(file, setsText("a", "a2"));
+    await ended;
+    let acks = c.acksReceived;
+    while ((await c.js<string | null>`return document.getElementById("a")?.textContent ?? null`) !== "a2") {
+      while (c.acksReceived === acks) await c.nextAck("applying the text");
+      acks = c.acksReceived;
+    }
+  },
+});
+devTest("files saved while the dev server holds the update of another file join that update", {
+  skip: ["darwin"],
+  env: holdLong,
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `<p id="a"></p><p id="b"></p><p id="c"></p>`,
+    }),
+    "index.ts": `
+      import "./a";
+      import "./b";
+      import "./c";
+    `,
+    "a.ts": `
+      document.getElementById("a").textContent = "a1";
+      import.meta.hot.accept();
+    `,
+    "b.ts": `
+      document.getElementById("b").textContent = "b1";
+      import.meta.hot.accept();
+    `,
+    "c.ts": `
+      document.getElementById("c").textContent = "c1";
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectElemText("#c", "c1");
+
+    const update = (name: string) => `\ndocument.getElementById("${name}").textContent = "${name}2";\n`;
+    await dev.saveInPlace("a.ts", "import.meta.hot.accept();" + update("a"), {
+      emptyWith: "ftruncate",
+      whileEmpty: async () => {
+        // Each of these saves is a file event of its own.
+        for (const name of ["b", "c"]) {
+          const held = dev.heldEvents();
+          appendFileSync(dev.join(name + ".ts"), update(name));
+          await held;
+        }
+      },
+    });
+
+    await c.expectElemText("#a", "a2");
+    await c.expectElemText("#b", "b2");
+    await c.expectElemText("#c", "c2");
+    // The HMR client stores this message right before it reloads the page.
+    expect(await c.js`return sessionStorage.getItem("bun:hmr:message")`).toBeNull();
+  },
+});
+devTest("a file that imports a half-saved file and is saved during its hold joins that update", {
+  skip: ["darwin"],
+  env: holdLong,
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import "./b";
+    `,
+    "a.ts": `
+      export const a1 = "a1";
+      import.meta.hot.accept();
+    `,
+    "b.ts": `
+      import { a1 } from "./a";
+      console.log("b1 has " + a1);
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("b1 has a1");
+
+    // A save all: a.ts is emptied, b.ts is written with an import of the export that a.ts gets, a.ts gets its text.
+    await dev.saveInPlace("a.ts", `export const a2 = "a2";\nimport.meta.hot.accept();\n`, {
+      whileEmpty: async () => {
+        const acks = c.acksReceived;
+        const held = dev.heldEvents();
+        writeFileSync(
+          dev.join("b.ts"),
+          `import { a2 } from "./a";\nconsole.log("b2 has " + a2);\nimport.meta.hot.accept();\n`,
+        );
+        await held;
+        // A bundle of b.ts alone would read a.ts while it is empty, and it would reach the page
+        // within this time. Nothing tells the test that none started.
+        const deadline = Date.now() + 100 * WAIT_MULTIPLIER;
+        while (c.acksReceived === acks && Date.now() < deadline) await Bun.sleep(1);
+        expect(c.acksReceived).toBe(acks);
+      },
+    });
+    // b.ts ran once, with the text of a.ts.
+    await c.expectMessage("b2 has a2");
+    // The HMR client stores this message right before it reloads the page.
+    expect(await c.js`return sessionStorage.getItem("bun:hmr:message")`).toBeNull();
+  },
+});
+const twoFiles = {
+  "index.html": emptyHtmlFile({
+    scripts: ["index.ts"],
+    body: `<p id="a"></p><p id="b"></p>`,
+  }),
+  "index.ts": `
+    import "./a";
+    import "./b";
+  `,
+  "a.ts": setsText("a", "a1"),
+  "b.ts": setsText("b", "b1"),
+};
+// The editor empties a.ts and then b.ts. Each order of the two writes leaves one of the files empty for longer.
+for (const [first, last] of [
+  ["b", "a"],
+  ["a", "b"],
+]) {
+  devTest(`two files that one save all empties are held until both have their text (${last}.ts last)`, {
+    skip: ["darwin"],
+    env: holdLong,
+    files: twoFiles,
+    async test(dev) {
+      await using c = await dev.client("/");
+      await c.expectElemText("#b", "b1");
+
+      for (const name of ["a", "b"]) {
+        const held = dev.heldEvents();
+        emptyFile(dev.join(name + ".ts"));
+        await held;
+      }
+      // Each write closes its file: `ReadDirectoryChangesW` reports a write when the file is closed.
+      const held = dev.heldEvents();
+      appendFileSync(dev.join(first + ".ts"), setsText(first, first + "2"));
+      await held;
+      // Without the other file to wait for, the hold would end 5 ms after that event. Nothing tells the test that it did not.
+      await Bun.sleep(100);
+      expect(dev.holdsEnded).toBe(0);
+      const ended = dev.endedHolds();
+      appendFileSync(dev.join(last + ".ts"), setsText(last, last + "2"));
+      await ended;
+      await c.expectElemText("#a", "a2");
+      await c.expectElemText("#b", "b2");
+      // The HMR client stores this message right before it reloads the page.
+      expect(await c.js`return sessionStorage.getItem("bun:hmr:message")`).toBeNull();
+    },
+  });
+}
+devTest("a file that a later file event finds half-saved has a deadline of its own", {
+  skip: ["darwin"],
+  env: holdFor(400),
+  files: twoFiles,
+  async test(dev) {
+    // The files stay empty, so the page gets empty modules when a hold ends.
+    await using c = await dev.client("/", { allowUnlimitedReloads: true });
+    await c.expectElemText("#b", "b1");
+
+    let held = dev.heldEvents();
+    emptyFile(dev.join("a.ts"));
+    await held;
+    // b.ts is emptied late in the time that a.ts has.
+    await Bun.sleep(250);
+    held = dev.heldEvents();
+    const emptiedB = performance.now();
+    emptyFile(dev.join("b.ts"));
+    await held;
+    // The dev server reports the end of a hold before it reports what the next hold takes.
+    const ended = dev.holdsEnded;
+    await until("the end of the hold of b.ts", () => dev.holdsEnded > ended);
+    // b.ts holds the reload for one wait from its own file event, not from the file event of a.ts.
+    expect(performance.now() - emptiedB).toBeGreaterThanOrEqual(400);
+  },
+});
+// A debug or ASAN build takes longer to handle a file event, and three of them must come inside one wait here.
+const secondSaveWait = isDebug || isASAN ? 1200 : 400;
+for (const textOfFirstSave of ["seen", "not seen"] as const) {
+  devTest(`a held file that a second save empties has a new deadline (text of the first save ${textOfFirstSave})`, {
+    skip: ["darwin"],
+    env: holdFor(secondSaveWait),
+    files: twoFiles,
+    async test(dev) {
+      // The files stay empty, so the page gets empty modules when the hold ends.
+      await using c = await dev.client("/", { allowUnlimitedReloads: true });
+      await c.expectElemText("#b", "b1");
+
+      // b.ts keeps the hold open after a.ts has its text.
+      for (const name of ["a", "b"]) {
+        const held = dev.heldEvents();
+        emptyFile(dev.join(name + ".ts"));
+        await held;
+      }
+      const emptiedB = performance.now();
+      if (textOfFirstSave === "seen") {
+        const held = dev.heldEvents();
+        appendFileSync(dev.join("a.ts"), setsText("a", "a2"));
+        await held;
+      }
+      // The second save of a.ts comes early in the time that b.ts has, so the dev server takes its file event in that time.
+      await Bun.sleep(Math.max(0, emptiedB + 0.2 * secondSaveWait - performance.now()));
+      expect(dev.holdsEnded, "the hold ended before the second save").toBe(0);
+      const held = dev.heldEvents();
+      // A dev server that is busy looks at the file only after the second save has emptied it again.
+      if (textOfFirstSave === "not seen") appendFileSync(dev.join("a.ts"), setsText("a", "a2"));
+      const emptiedA = performance.now();
+      emptyFile(dev.join("a.ts"));
+      await held;
+      await until("the end of the hold", () => dev.holdsEnded > 0);
+      // a.ts holds the reload for one wait from its second save, not from its first.
+      expect(performance.now() - emptiedA).toBeGreaterThanOrEqual(secondSaveWait);
+    },
+  });
+}
+// After a rename, a watcher does not always name the file until a bundle reads it again. Then only a look finds that a second save took it away.
+devTest("a held file that a second save renames away has a new deadline", {
+  // The text holds the reload until the deadline of the file, so the second save comes while the hold is open.
+  env: { ...holdFor(secondSaveWait), BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_SETTLE_MS: String(secondSaveWait) },
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `<p id="a"></p>`,
+    }),
+    "index.ts": `
+      import "./a";
+    `,
+    "a.ts": setsText("a", "a1"),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectElemText("#a", "a1");
+    const a = dev.join("a.ts");
+    // The dev server reports each file event that it takes during a hold: 5 if the hold takes files of it, 1 if it names no file of the page.
+    let taken = 0;
+    dev.on("watch_synchronization", (kind: number) => {
+      if (kind === 1 || kind === 5) taken++;
+    });
+
+    const held = dev.heldEvents();
+    renameSync(a, a + "~");
+    await held;
+    const renamed = performance.now();
+    const takenBefore = taken;
+    writeFileSync(a, setsText("a", "a2"));
+    unlinkSync(a + "~");
+    // A file event after the write: its look sees the text.
+    await until("the dev server to take a file event of the first save", () => taken > takenBefore);
+    // The second save comes early in the time that a.ts has, so the dev server looks at the file in that time.
+    await Bun.sleep(Math.max(0, renamed + 0.2 * secondSaveWait - performance.now()));
+    expect(dev.holdsEnded, "the hold ended before the second save").toBe(0);
+    const heldBefore = dev.eventsHeld;
+    const renamedAgain = performance.now();
+    // Another name: on Windows the name of the first backup can stay for as long as the dev server has that file open.
+    renameSync(a, a + "~2");
+    await until("the end of the hold", () => dev.holdsEnded > 0);
+    // a.ts holds the reload for one wait from the look that finds it gone, not from its first save.
+    expect(performance.now() - renamedAgain).toBeGreaterThanOrEqual(secondSaveWait);
+    // No file event named a.ts after the second rename: the hold would have taken it.
+    expect(dev.eventsHeld).toBe(heldBefore);
+    await c.expectErrorOverlay(['index.ts:1:8: error: Could not resolve: "./a"']);
+  },
+});
+// A debug build takes longer to handle a file event, and each event of a chain must come well inside one wait.
+const chainWait = isDebug ? 720 : 240;
+const chains = [0, 1, 2].map(attempt => Array.from({ length: 45 }, (_, i) => `f${attempt}_${i}`));
+devTest("a hold ends ten waits after it starts, while files still join it", {
+  skip: ["darwin"],
+  env: holdFor(chainWait),
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": chains
+      .flat()
+      .map(name => `import "./${name}";`)
+      .join("\n"),
+    ...Object.fromEntries(
+      chains.flat().map(name => [`${name}.ts`, `console.log("${name}");\nimport.meta.hot.accept();\n`]),
+    ),
+  },
+  async test(dev) {
+    // The page gets the files that are still empty when the hold ends.
+    await using c = await dev.client("/", { allowUnlimitedReloads: true });
+    await c.expectMessage(...chains.flat());
+
+    for (const chain of chains) {
+      const ended = dev.holdsEnded;
+      let started = 0;
+      let emptied = 0;
+      let stalled = false;
+      for (const name of chain) {
+        if (dev.holdsEnded > ended) break;
+        const joined = dev.eventsHeld;
+        const now = performance.now();
+        if (emptied++ === 0) started = now;
+        emptyFile(dev.join(name + ".ts"));
+        await until(`the dev server to hold ${name}.ts`, () => dev.eventsHeld > joined || dev.holdsEnded > ended);
+        stalled ||= performance.now() - now > chainWait / 4;
+        // Each file is emptied well before the deadline of the file before it, so one file or another has time left.
+        await Bun.sleep(chainWait / 4);
+        stalled ||= performance.now() - now > chainWait * 0.6;
+      }
+      await until("the end of the hold", () => dev.holdsEnded > ended);
+      const lasted = performance.now() - started;
+      // A machine that stalls lets a deadline pass, and then the hold ends early.
+      if (stalled) continue;
+      // The chain is longer than ten waits. The hold ended before the end of the chain, and not sooner than ten waits.
+      expect(emptied).toBeLessThan(chain.length);
+      expect(lasted).toBeGreaterThanOrEqual(10 * chainWait);
+      return;
+    }
+    throw new Error("The machine stalled in each of the three chains of saves");
+  },
+});
+devTest("a save that empties the file for a moment keeps the module's hot boundary", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `<p id="a"></p>`,
+    }),
+    "index.ts": `
+      import "./a";
+    `,
+    "a.ts": `
+      document.getElementById("a").textContent = "0";
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    // A save that a stalled machine stretches past the hold reloads the page, and that save does not count.
+    await using c = await dev.client("/", { allowUnlimitedReloads: true });
+    await c.expectElemText("#a", "0");
+    let reloads = 0;
+    c.on("reload", () => reloads++);
+
+    let saves = 0;
+    let savesHeldUntilTheWrite = 0;
+    const acksAtStart = c.acksReceived;
+    for (let i = 1; i <= 10; i++) {
+      const reloadsBefore = reloads;
+      const heldBefore = dev.eventsHeld;
+      let acks = c.acksReceived;
+      const fd = openSync(dev.join("a.ts"), "w");
+      const emptied = performance.now();
+      // No turn of the event loop: the file is empty for about as long as a slow editor keeps it so.
+      Bun.sleepSync(20);
+      writeSync(fd, `document.getElementById("a").textContent = "${i}";\nimport.meta.hot.accept();\n`);
+      const emptyFor = performance.now() - emptied;
+      closeSync(fd);
+
+      // The page acks each update and each load.
+      let text: string | null;
+      do {
+        while (c.acksReceived === acks) await c.nextAck("applying a save");
+        acks = c.acksReceived;
+        text = await c.js<string | null>`return document.getElementById("a")?.textContent ?? null`;
+      } while (text !== String(i));
+      // The hold is 100 ms by default. A page that got the empty module loads again for the text.
+      if (emptyFor < 50) {
+        expect(reloads - reloadsBefore).toBe(0);
+        saves++;
+        // The dev server held the file event of the truncation, and then the file event of the write.
+        if (dev.eventsHeld - heldBefore >= 2) savesHeldUntilTheWrite++;
+      }
+    }
+    expect(saves).toBeGreaterThanOrEqual(5);
+    // A save that is held until the file event of its write is one update. On a machine that stalls, the dev
+    // server can see the text at the first file event, or the hold can end at its deadline. Such a save is
+    // some updates and a page load at the most.
+    const updates = c.acksReceived - acksAtStart;
+    // `ReadDirectoryChangesW` can report one write more than once, after the update has started.
+    if (!isWindows) expect(updates).toBeLessThanOrEqual(savesHeldUntilTheWrite + 4 * (10 - savesHeldUntilTheWrite));
+  },
+});
+devTest("a file that is saved empty replaces its module at the deadline, and is not held while it stays empty", {
+  // kqueue does not report a truncation, so a save that ends empty starts no update there.
+  skip: ["darwin"],
+  env: holdFor(200),
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import * as dep from "./dep";
+      console.log("value" in dep ? "dep has a value" : "dep has no value");
+      import.meta.hot.accept();
+    `,
+    "dep.ts": `
+      export const value = 1;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("dep has a value");
+
+    // No text follows, so the hold ends at its deadline.
+    let held = dev.heldEvents();
+    writeFileSync(dev.join("dep.ts"), "");
+    await held;
+    await c.expectMessage("dep has no value");
+    expect(dev.holdsEnded).toBe(1);
+
+    // The hold left the file empty: it is empty on purpose.
+    const heldSoFar = dev.eventsHeld;
+    writeFileSync(dev.join("dep.ts"), "");
+    await c.expectMessage("dep has no value");
+    expect(dev.eventsHeld).toBe(heldSoFar);
+
+    // Once a file event has seen text in the file again, a save that empties it is held again.
+    await dev.write("dep.ts", "export const value = 2;");
+    await c.expectMessage("dep has a value");
+    held = dev.heldEvents();
+    writeFileSync(dev.join("dep.ts"), "");
+    await held;
+    await c.expectMessage("dep has no value");
+  },
+});
+devTest("a save is not held for an empty file that no page uses", {
+  // 50 ms: the watcher waits this long for a second read, so the two saves of a round are often one file event on Linux.
+  env: { BUN_INOTIFY_COALESCE_INTERVAL: "50000000" },
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `<p id="a"></p>`,
+    }),
+    "index.ts": `
+      import "./a";
+    `,
+    "a.ts": `
+      document.getElementById("a").textContent = "0";
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectElemText("#a", "0");
+    for (let round = 1; round <= 10; round++) {
+      // On Linux the watcher names this file too, in the event of its directory.
+      writeFileSync(dev.join("unused.ts"), "");
+      writeFileSync(
+        dev.join("a.ts"),
+        `document.getElementById("a").textContent = "${round}";\nimport.meta.hot.accept();\n`,
+      );
+      await c.expectElemText("#a", String(round));
+    }
+    expect(dev.eventsHeld).toBe(0);
+  },
+});
+devTest("a file that stat fails on, but that is not missing, is not held", {
+  skip: [
+    "win32", // a symlink to a file needs a privilege there
+  ],
+  env: holdLong,
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `<p id="a"></p>`,
+    }),
+    "index.ts": `
+      import "./a";
+    `,
+    "a.ts": setsText("a", "a1"),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectElemText("#a", "a1");
+
+    // `stat` fails with ELOOP on a symlink to itself. The rename puts it there in one step, so the file is never missing.
+    const file = dev.join("a.ts");
+    symlinkSync("a.ts", file + ".loop");
+    const failed = c.nextAck("the bundle that cannot read the file");
+    renameSync(file + ".loop", file);
+    // A hold would keep this bundle back for longer than this wait.
+    await failed;
+    expect(await c.readErrorOverlay()).toEqual([`a.ts: error: ELOOP reading file: "${file}"`]);
+    expect(dev.eventsHeld).toBe(0);
+  },
+});
+devTest("a held file that stat then fails on stops to hold the reload", {
+  skip: [
+    "win32", // a symlink to a file needs a privilege there
+  ],
+  env: holdLong,
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `<p id="a"></p>`,
+    }),
+    "index.ts": `
+      import "./a";
+    `,
+    "a.ts": setsText("a", "a1"),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectElemText("#a", "a1");
+
+    const file = dev.join("a.ts");
+    const held = dev.heldEvents();
+    unlinkSync(file);
+    await held;
+    // The file is not missing any more, and `stat` fails on it with ELOOP.
+    const ended = dev.endedHolds();
+    const failed = c.nextAck("the bundle that cannot read the file");
+    symlinkSync("a.ts", file);
+    await Promise.all([ended, failed]);
+    expect(await c.readErrorOverlay()).toEqual([`a.ts: error: ELOOP reading file: "${file}"`]);
+  },
+});
+devTest("with the hold off, the dev server bundles a file while a save keeps it empty", {
+  skip: ["darwin"],
+  env: holdFor(0),
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `<p id="a"></p>`,
+    }),
+    "index.ts": `
+      import "./a";
+    `,
+    "a.ts": `
+      document.getElementById("a").textContent = "a1";
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { allowUnlimitedReloads: true });
+    await c.expectElemText("#a", "a1");
+    const fd = openSync(dev.join("a.ts"), "w");
+    try {
+      await c.nextAck("applying the update of the empty file");
+      expect(dev.eventsHeld).toBe(0);
+      writeSync(fd, `document.getElementById("a").textContent = "a2";\nimport.meta.hot.accept();\n`);
+    } finally {
+      closeSync(fd);
+    }
+    // The page lost its hot boundary to the empty module, so it loads again for the text.
+    let acks = c.acksReceived;
+    while ((await c.js<string | null>`return document.getElementById("a")?.textContent ?? null`) !== "a2") {
+      while (c.acksReceived === acks) await c.nextAck("applying the text");
+      acks = c.acksReceived;
+    }
+  },
+});
+devTest("a file that an onLoad plugin reads is not loaded while a save keeps it empty", {
+  env: holdLong,
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `<p id="a"></p>`,
+    }),
+    "index.ts": `
+      import "./a";
+    `,
+    "a.ts": `
+      document.getElementById("a").textContent = "a1";
+      import.meta.hot.accept();
+    `,
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      export default {
+        name: "reads a.ts",
+        setup(build) {
+          build.onLoad({ filter: /[\\\\/]a\\.ts$/ }, async args => ({
+            contents: await Bun.file(args.path).text(),
+            loader: "ts",
+          }));
+        },
+      };
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectElemText("#a", "a1");
+    await dev.saveInPlace("a.ts", `document.getElementById("a").textContent = "a2";\nimport.meta.hot.accept();\n`);
+    await c.expectElemText("#a", "a2");
+    // The HMR client stores this message right before it reloads the page.
+    expect(await c.js`return sessionStorage.getItem("bun:hmr:message")`).toBeNull();
+  },
+});
+devTest("an empty file that an onLoad plugin turns into code is held at its first save only", {
+  skip: ["darwin"],
+  env: holdFor(200),
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./text-plugin.ts"]
+    `,
+    "text-plugin.ts": `
+      import { readFileSync } from "node:fs";
+
+      export default {
+        name: "text",
+        setup(build) {
+          build.onLoad({ filter: /\\.txt$/ }, args => ({
+            contents: "export default " + JSON.stringify(readFileSync(args.path, "utf8")) + ";",
+            loader: "js",
+          }));
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import text from "./note.txt";
+      console.log("note: [" + text + "]");
+      import.meta.hot.accept();
+    `,
+    "note.txt": "",
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("note: []");
+
+    // The bundle has the code of the plugin for this file, so the dev server learns at the end of a hold that the file is empty.
+    const ended = dev.endedHolds();
+    writeFileSync(dev.join("note.txt"), "");
+    await ended;
+    await c.expectMessage("note: []");
+    for (let i = 0; i < 2; i++) {
+      writeFileSync(dev.join("note.txt"), "");
+      await c.expectMessage("note: []");
+    }
+    expect(dev.holdsEnded).toBe(1);
+  },
+});
+devTest("a save that the writer makes with several writes reaches the page as one update", {
+  skip: ["darwin"],
+  // The dev server takes the text once no file event has seen the size change for 5 ms. One second here,
+  // so that a slow machine still makes each write in the time of the write before it.
+  env: { ...holdLong, BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_SETTLE_MS: "1000" },
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `<p id="a"></p>`,
+    }),
+    "index.ts": `
+      import "./a";
+    `,
+    "a.ts": `
+      import.meta.hot.accept();
+      globalThis.runs = (globalThis.runs ?? 0) + 1;
+      document.getElementById("a").textContent = "0";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectElemText("#a", "0");
+
+    const parts = ["import.meta.hot.accept();\nglobalThis.runs = (globalThis.runs ?? 0) + 1;\n"];
+    for (let n = 1; n <= 5; n++) parts.push(`document.getElementById("a").textContent = "${n}";\n`);
+    const file = dev.join("a.ts");
+    let held = dev.heldEvents();
+    emptyFile(file);
+    await held;
+    for (const part of parts) {
+      held = dev.heldEvents();
+      // Each write closes the file: `ReadDirectoryChangesW` reports a write when the file is closed.
+      appendFileSync(file, part);
+      // A file event joins a hold only while the hold is open.
+      await held;
+    }
+    await until("the end of the hold", () => dev.holdsEnded > 0);
+    await c.expectElemText("#a", "5");
+    // The module ran once when the page loaded, and once for the save.
+    expect(await c.js<number>`return globalThis.runs`).toBe(2);
+  },
+});
+devTest("a file that its writer still appends to does not hold the reload past its deadline", {
+  skip: ["darwin"],
+  env: holdFor(300),
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `<p id="a"></p>`,
+    }),
+    "index.ts": `
+      import "./a";
+    `,
+    "a.ts": setsText("a", "a1"),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectElemText("#a", "a1");
+
+    const file = dev.join("a.ts");
+    const held = dev.heldEvents();
+    emptyFile(file);
+    await held;
+    appendFileSync(file, setsText("a", "a2"));
+    // The size of the file changes for longer than the hold can last.
+    for (let i = 0; i < 1000 && dev.holdsEnded === 0; i++) {
+      appendFileSync(file, "//\n");
+      await Bun.sleep(1);
+    }
+    expect(dev.holdsEnded).toBe(1);
+    await c.expectElemText("#a", "a2");
+  },
+});
+// Beside the project: `ReadDirectoryChangesW` reports each file in the tree of the project, and a third file event behind a bundle replaces the second (#42739).
+const gate = (dev: Dev, name: "on" | "on2" = "on") => `${dev.rootDir}.${name}`;
+// Keeps a bundle that loads slow.ts open for as long as its gate file exists, and one that loads slow2.ts for the second gate file.
+const slowBundle = {
+  "bunfig.toml": `
+    [serve.static]
+    plugins = ["./hold-plugin.ts"]
+  `,
+  "hold-plugin.ts": `
+    import { existsSync, readFileSync } from "node:fs";
+
+    export default {
+      name: "hold",
+      setup(build) {
+        build.onLoad({ filter: /slow2?\\.ts$/ }, async args => {
+          const on = import.meta.dir + (args.path.endsWith("slow2.ts") ? ".on2" : ".on");
+          if (existsSync(on)) {
+            console.log("hold-plugin: the bundle is open");
+            while (existsSync(on)) await Bun.sleep(5);
+          }
+          return { contents: readFileSync(args.path, "utf8"), loader: "ts" };
+        });
+      },
+    };
+  `,
+  // With two html files, index.html is the page at /index.
+  "index.html": emptyHtmlFile({
+    scripts: ["index.ts"],
+    body: `<p id="a"></p>`,
+  }),
+  "index.ts": `
+    import "./a";
+  `,
+  "a.ts": `
+    document.getElementById("a").textContent = "a1";
+    import.meta.hot.accept();
+  `,
+  "other.html": emptyHtmlFile({
+    scripts: ["slow.ts"],
+  }),
+  "slow.ts": `
+    console.log("slow");
+  `,
+  "third.html": emptyHtmlFile({
+    scripts: ["third.ts"],
+  }),
+  "third.ts": `
+    console.log("third");
+  `,
+};
+/** The script of a page. The first request for a page starts a bundle. */
+function loadPage(dev: Dev, route: string) {
+  const script = (async () => {
+    const html = await (await fetch(new URL(route, dev.baseUrl))).text();
+    const src = html.match(/<script[^>]+src="([^"]+)"[^>]*data-bun-dev-server-script/)![1];
+    return await (await fetch(new URL(src, dev.baseUrl))).text();
+  })();
+  // A test awaits a request that waits behind a bundle some steps later. If the test fails before that, the closed connection must not fail the next test.
+  script.catch(() => {});
+  return script;
+}
+// The plugin keeps the bundle of /other open.
+async function startSlowBundle(dev: Dev) {
+  writeFileSync(gate(dev), "");
+  const open = dev.output.waitForLine(/hold-plugin: the bundle is open/);
+  const page = loadPage(dev, "/other");
+  await Promise.race([
+    open,
+    page.then(() => {
+      throw new Error("The bundle of /other ended, and the plugin did not keep it open");
+    }),
+  ]);
+  // In an object: an async function that returns a promise waits for it.
+  return { page };
+}
+// A trace inside the project would report its own writes.
+const emptiedBehindBundleTrace = pathOutsideProjects("hot-emptied-behind-a-bundle.watcher-trace");
+devTest("a file that a save empties while another bundle runs is held when that bundle ends", {
+  skip: ["darwin"],
+  env: { ...holdLong, BUN_WATCHER_TRACE: emptiedBehindBundleTrace },
+  files: slowBundle,
+  async test(dev) {
+    await using c = await dev.client("/index");
+    await c.expectElemText("#a", "a1");
+    const other = await startSlowBundle(dev);
+
+    const traced = statSync(emptiedBehindBundleTrace).size;
+    const fd = openSync(dev.join("a.ts"), "w");
+    try {
+      // The watcher writes its trace when it hands a batch to the dev server. The bundle is open, so the dev server keeps the event for the next bundle.
+      await until("the watcher to report a.ts", () =>
+        readFileSync(emptiedBehindBundleTrace, "latin1").slice(traced).includes("a.ts"),
+      );
+      const held = dev.heldEvents();
+      unlinkSync(gate(dev));
+      expect(await other.page).toContain("slow");
+      // The bundle has ended and a.ts is still empty: the event that waited starts a hold, not a bundle.
+      await held;
+      writeSync(fd, setsText("a", "a2"));
+    } finally {
+      closeSync(fd);
+    }
+    await c.expectElemText("#a", "a2");
+    // The HMR client stores this message right before it reloads the page.
+    expect(await c.js`return sessionStorage.getItem("bun:hmr:message")`).toBeNull();
+  },
+});
+const queuedRequestTrace = pathOutsideProjects("hot-request-beside-a-held-event.watcher-trace");
+devTest("a page request that waited behind a bundle is answered while the file event beside it is held", {
+  skip: ["darwin"],
+  env: { ...holdLong, BUN_WATCHER_TRACE: queuedRequestTrace },
+  files: slowBundle,
+  async test(dev) {
+    await using c = await dev.client("/index");
+    await c.expectElemText("#a", "a1");
+    const other = await startSlowBundle(dev);
+
+    const traced = statSync(queuedRequestTrace).size;
+    const fd = openSync(dev.join("a.ts"), "w");
+    try {
+      await until("the watcher to report a.ts", () =>
+        readFileSync(queuedRequestTrace, "latin1").slice(traced).includes("a.ts"),
+      );
+      // The first request for /third waits behind the open bundle too.
+      const third = loadPage(dev, "/third");
+      // /index is loaded, so the dev server answers it at once, after it has read the request for /third.
+      await (await fetch(new URL("/index", dev.baseUrl))).text();
+      const held = dev.heldEvents();
+      unlinkSync(gate(dev));
+      expect(await other.page).toContain("slow");
+      await held;
+      // The text is not written yet. A request that waited for the hold would not be answered here.
+      const thirdScript = await third;
+      expect(thirdScript).toContain("third");
+      expect(thirdScript).not.toContain("a.ts");
+      expect(dev.holdsEnded).toBe(0);
+      writeSync(fd, setsText("a", "a2"));
+    } finally {
+      closeSync(fd);
+    }
+    await c.expectElemText("#a", "a2");
+    // The HMR client stores this message right before it reloads the page.
+    expect(await c.js`return sessionStorage.getItem("bun:hmr:message")`).toBeNull();
+  },
+});
+// The wait of the tests whose bundle runs for about the ten waits of a cap.
+const behindBundleWait = 100;
+const longBundleTrace = pathOutsideProjects("hot-emptied-behind-a-long-bundle.watcher-trace");
+devTest("a file event that waited behind a long bundle gets its full time in the hold", {
+  skip: ["darwin"],
+  env: { ...holdFor(behindBundleWait), BUN_WATCHER_TRACE: longBundleTrace },
+  files: slowBundle,
+  async test(dev) {
+    // The file stays empty, so the page gets the empty module when the hold ends.
+    await using c = await dev.client("/index", { allowUnlimitedReloads: true });
+    await c.expectElemText("#a", "a1");
+    const other = await startSlowBundle(dev);
+
+    const traced = statSync(longBundleTrace).size;
+    emptyFile(dev.join("a.ts"));
+    await until("the watcher to report a.ts", () =>
+      readFileSync(longBundleTrace, "latin1").slice(traced).includes("a.ts"),
+    );
+    // The file event is older than the longest hold when the bundle ends.
+    await Bun.sleep(10 * behindBundleWait + 100);
+    const released = performance.now();
+    unlinkSync(gate(dev));
+    expect(await other.page).toContain("slow");
+    await until("the end of the hold", () => dev.holdsEnded > 0);
+    // The hold starts when the dev server takes the file event, and a.ts has one wait from then.
+    expect(performance.now() - released).toBeGreaterThanOrEqual(behindBundleWait);
+  },
+});
+const atCapTrace = pathOutsideProjects("hot-emptied-behind-a-bundle-at-the-cap.watcher-trace");
+devTest("a file event that waited behind a bundle gets its full time in a hold that is at its cap", {
+  skip: ["darwin"],
+  env: { ...holdFor(behindBundleWait), BUN_WATCHER_TRACE: atCapTrace },
+  files: {
+    ...slowBundle,
+    "index.ts": `
+      import "./a";
+      import "./b";
+    `,
+    "b.ts": `
+      import.meta.hot.accept();
+    `,
+    "other2.html": emptyHtmlFile({
+      scripts: ["slow2.ts"],
+    }),
+    "slow2.ts": `
+      console.log("slow2");
+    `,
+  },
+  async test(dev) {
+    // The files stay empty, so the page gets empty modules when the hold ends.
+    await using c = await dev.client("/index", { allowUnlimitedReloads: true });
+    await c.expectElemText("#a", "a1");
+
+    // The request for /other2 waits behind the bundle of /other. Its bundle starts in the step that starts the
+    // hold of a.ts, so that bundle keeps the hold open from the start.
+    const other = await startSlowBundle(dev);
+    writeFileSync(gate(dev, "on2"), "");
+    const other2 = loadPage(dev, "/other2");
+    // /index is loaded, so the dev server answers it at once, after it has read the request for /other2.
+    await (await fetch(new URL("/index", dev.baseUrl))).text();
+    let traced = statSync(atCapTrace).size;
+    emptyFile(dev.join("a.ts"));
+    await until("the watcher to report a.ts", () => readFileSync(atCapTrace, "latin1").slice(traced).includes("a.ts"));
+    const held = dev.heldEvents();
+    unlinkSync(gate(dev));
+    await held;
+    const heldAt = performance.now();
+
+    traced = statSync(atCapTrace).size;
+    emptyFile(dev.join("b.ts"));
+    await until("the watcher to report b.ts", () => readFileSync(atCapTrace, "latin1").slice(traced).includes("b.ts"));
+    // The bundle of /other2 ends half a wait before the cap of the hold, which is ten waits after its start, or later.
+    await Bun.sleep(Math.max(0, heldAt + 9.5 * behindBundleWait - performance.now()));
+    expect(dev.holdsEnded).toBe(0);
+    const released = performance.now();
+    unlinkSync(gate(dev, "on2"));
+    // The script of /other waited for the bundle of /other2 too.
+    expect(await other.page).toContain("slow");
+    expect(await other2).toContain("slow2");
+    await until("the end of the hold", () => dev.holdsEnded > 0);
+    // b.ts joins the hold when the dev server takes its file event, and has one wait from then.
+    expect(performance.now() - released).toBeGreaterThanOrEqual(behindBundleWait);
+  },
+});
+devTest("a hold whose deadline passes while another bundle runs ends when that bundle ends", {
+  skip: ["darwin"],
+  env: holdFor(300),
+  files: slowBundle,
+  async test(dev) {
+    await using c = await dev.client("/index");
+    await c.expectElemText("#a", "a1");
+
+    const held = dev.heldEvents();
+    const fd = openSync(dev.join("a.ts"), "w");
+    try {
+      await held;
+      const other = await startSlowBundle(dev);
+      // The deadline is a time: nothing else tells the test that it has passed.
+      await Bun.sleep(400);
+      expect(dev.holdsEnded).toBe(0);
+      // No file event follows. The hold ends because the other bundle ends.
+      const ended = dev.endedHolds();
+      unlinkSync(gate(dev));
+      expect(await other.page).toContain("slow");
+      await ended;
+    } finally {
+      closeSync(fd);
+    }
+  },
+});
+devTest("a server module is not bundled while a save keeps it empty", {
+  skip: ["darwin"],
+  framework: minimalFramework,
+  env: holdLong,
+  files: {
+    "db.ts": `export const abc = "123";`,
+    "routes/index.ts": `
+      import { abc } from '../db';
+      export default function (req, meta) {
+        return new Response('Hello, ' + abc + '!');
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("Hello, 123!");
+    // No page is open. The dev server prints this line at the end of a bundle that a file event started.
+    const reloaded = dev.output.waitForLine(/Reloaded in/);
+    const held = dev.heldEvents().then(
+      () => "held",
+      () => "neither",
+    );
+    const fd = openSync(dev.join("db.ts"), "w");
+    try {
+      expect(await Promise.race([reloaded.then(() => "bundled"), held])).toBe("held");
+      writeSync(fd, `export const abc = "456";`);
+    } finally {
+      closeSync(fd);
+    }
+    await reloaded;
+    await dev.fetch("/").equals("Hello, 456!");
   },
 });
 devTest("hot update frames are not delivered to application websocket topics", {

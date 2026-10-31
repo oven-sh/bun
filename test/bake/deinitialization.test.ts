@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isMacOS, isWindows, tempDir } from "harness";
 import path from "node:path";
 
 test("dev server deinitializes itself", () => {
@@ -50,6 +50,86 @@ test("dev server is deinitialized before its arena when listen fails", async () 
   expect(stdout).toBe('{"code":"EADDRINUSE","deinits":1}\n');
   expect(exitCode).toBe(0);
 });
+
+// The dev server holds the file event of a file that a save emptied, and a timer ends that hold.
+// kqueue does not report a truncation, so nothing is held there.
+test.skipIf(isMacOS)(
+  "a dev server that is stopped while it holds a file event removes the timer of the hold",
+  async () => {
+    using dir = tempDir("dev-server-stop-during-hold", {
+      "index.html": `<!DOCTYPE html><html><body><script type="module" src="./entry.ts"></script></body></html>`,
+      "entry.ts": `console.log("v0!");`,
+      "stop-during-hold-fixture.ts": `
+      import { getDevServerDeinitCount } from "bun:internal-for-testing";
+      import { fullGC } from "bun:jsc";
+      import { writeFileSync } from "node:fs";
+      import html from "./index.html";
+
+      let server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+      const origin = server.url.origin;
+      const text = url => fetch(new URL(url, origin), { keepalive: false }).then(response => response.text());
+      // The dev server watches entry.ts once a page has it.
+      const script = (await text("/")).match(/\\/_bun\\/client\\/[^"]+\\.js/)[0];
+      if (!(await text(script)).includes("v0!")) throw new Error("entry.ts is not in the page");
+
+      // The dev server tells the sockets of the test harness when it holds a file event.
+      const hmr = new WebSocket(origin.replace("http", "ws") + "/_bun/hmr");
+      hmr.binaryType = "arraybuffer";
+      const opened = Promise.withResolvers();
+      const held = Promise.withResolvers();
+      hmr.onopen = opened.resolve;
+      hmr.onerror = hmr.onclose = () => {
+        opened.reject(new Error("the HMR socket closed"));
+        held.reject(new Error("the HMR socket closed before the dev server held a file event"));
+      };
+      hmr.onmessage = event => {
+        const frame = new Uint8Array(event.data);
+        if (frame[0] === "V".charCodeAt(0)) hmr.send("sr");
+        if (frame[0] === "r".charCodeAt(0) && frame[1] === 5) held.resolve();
+      };
+      await opened.promise;
+
+      const before = getDevServerDeinitCount();
+      let saves = 0;
+      const emptied = setInterval(() => {
+        if (++saves > 500) held.reject(new Error("the dev server held no file event"));
+        writeFileSync("entry.ts", "");
+      }, 10);
+      try {
+        await held.promise;
+      } finally {
+        clearInterval(emptied);
+      }
+      hmr.onerror = hmr.onclose = null;
+      hmr.close();
+
+      server.stop(true);
+      server = null;
+      for (let i = 0; i < 500 && getDevServerDeinitCount() === before; i++) {
+        Bun.gc(true);
+        fullGC();
+        await new Promise(resolve => setTimeout(resolve, 1));
+      }
+      if (getDevServerDeinitCount() === before) throw new Error("the dev server was not deinitialized");
+      // Stay alive until the hold would have ended.
+      await new Promise(resolve => setTimeout(resolve, 300));
+      console.log(JSON.stringify({ deinits: getDevServerDeinitCount() - before }));
+    `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "stop-during-hold-fixture.ts"],
+      env: { ...bunEnv, BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_WAIT_MS: "200" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout).toBe('{"deinits":1}\n');
+    expect(exitCode).toBe(0);
+  },
+);
 
 // Every dev server registers its server runtime under the key "bake://server-runtime.js",
 // so the source map table points to the most recently started server.

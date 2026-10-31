@@ -478,15 +478,19 @@ describe("crypto.KeyObjects", () => {
       expect(jwt).toEqual(info.jwk);
     });
 
-    test(`${keyType} createPrivateKey from jwk needs the x that belongs to d`, () => {
+    test(`${keyType} keys from a private jwk need the x that belongs to d`, () => {
       const x = Buffer.from(info.jwk.x, "base64url");
-      const withX = (x: string) => createPrivateKey({ key: { ...info.jwk, x }, format: "jwk" });
-      expect(withX(x.toString("base64")).type).toBe("private");
+      const withX = (x: string) => ({ key: { ...info.jwk, x }, format: "jwk" }) as const;
+      expect(createPrivateKey(withX(x.toString("base64"))).export({ format: "jwk" })).toEqual(info.jwk);
+      const { d, ...publicJwk } = info.jwk;
+      expect(createPublicKey(withX(x.toString("base64"))).export({ format: "jwk" })).toEqual(publicJwk);
       x[0] ^= 1;
       for (const wrong of [x.toString("base64url"), x.subarray(1).toString("base64url")]) {
-        expect(() => withX(wrong)).toThrow(
-          expect.objectContaining({ code: "ERR_CRYPTO_INVALID_JWK", message: "Invalid JWK OKP key" }),
-        );
+        for (const create of [createPrivateKey, createPublicKey]) {
+          expect(() => create(withX(wrong))).toThrow(
+            expect.objectContaining({ code: "ERR_CRYPTO_INVALID_JWK", message: "Invalid JWK OKP key" }),
+          );
+        }
       }
     });
 

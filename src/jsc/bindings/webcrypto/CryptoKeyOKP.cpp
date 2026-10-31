@@ -28,10 +28,11 @@
 
 #if ENABLE(WEB_CRYPTO)
 
+#include "BufferEncodingType.h"
 #include "CryptoAlgorithmRegistry.h"
 #include "JsonWebKey.h"
+#include "headers-handwritten.h"
 #include <wtf/CryptographicUtilities.h>
-#include <wtf/text/Base64.h>
 
 namespace WebCore {
 
@@ -164,27 +165,32 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importJwk(CryptoAlgorithmIdentifier identifie
     if (keyData.x.isNull())
         return nullptr;
 
-    // Node's decoder takes either base64 alphabet.
+    // Node decodes these the way Buffer.from(encoded, "base64") does.
     auto decode = [](const String& encoded) {
-        auto decoded = base64URLDecode(encoded);
-        return decoded ? decoded : base64Decode(encoded);
+        constexpr auto base64 = static_cast<uint8_t>(BufferEncodingType::base64);
+        Vector<uint8_t> decoded(encoded.length());
+        auto out = decoded.mutableSpan();
+        decoded.shrink(encoded.is8Bit()
+                ? Bun__encoding__writeLatin1(encoded.span8().data(), encoded.length(), out.data(), out.size(), base64)
+                : Bun__encoding__writeUTF16(encoded.span16().data(), encoded.length(), out.data(), out.size(), base64));
+        return decoded;
     };
 
     auto x = decode(keyData.x);
-    if (!x)
+    if (keyData.d.isNull())
+        return create(identifier, namedCurve, CryptoKeyType::Public, WTF::move(x), extractable, usages);
+
+    auto key = create(identifier, namedCurve, CryptoKeyType::Private, decode(keyData.d), extractable, usages);
+    if (!key)
         return nullptr;
-
-    if (!keyData.d.isNull()) {
-        auto d = decode(keyData.d);
-        if (!d || d->size() < externalKeySizeInBytesFromNamedCurve(namedCurve))
-            return nullptr;
-        // RFC 8037 section 2: "x" is required, and it is the public key of "d".
-        if (*x != (namedCurve == NamedCurve::Ed25519 ? ed25519PublicFromPrivate(*d) : x25519PublicFromPrivate(*d)))
-            return nullptr;
-        return create(identifier, namedCurve, CryptoKeyType::Private, WTF::move(*d), extractable, usages);
-    }
-
-    return create(identifier, namedCurve, CryptoKeyType::Public, WTF::move(*x), extractable, usages);
+    // RFC 8037 section 2: "x" is required, and it is the public key of "d", which an Ed25519 key keeps after the seed.
+    auto& privateKey = key->platformKey();
+    bool belongs = namedCurve == NamedCurve::Ed25519
+        ? equalSpans(x.span(), privateKey.span().subspan(key->exportKeySizeInBytes()))
+        : x == x25519PublicFromPrivate(privateKey);
+    if (!belongs)
+        return nullptr;
+    return key;
 }
 
 ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportRaw() const

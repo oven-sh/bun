@@ -3139,6 +3139,22 @@ impl<'a> Resolver<'a> {
         if !node_path.is_empty() {
             let delim = if cfg!(windows) { b';' } else { b':' };
             for path in node_path.split(|&b| b == delim).filter(|s| !s.is_empty()) {
+                // A subpath that did not fit the buffer is empty.
+                if let Some(esm) = esm_.as_ref()
+                    && !esm.subpath.is_empty()
+                    && let Some(status) = self.load_node_path_package_exports(
+                        path,
+                        import_path,
+                        esm.subpath,
+                        kind,
+                        out,
+                    )
+                {
+                    if let Some(d) = self.debug_logs.as_mut() {
+                        d.decrease_indent();
+                    }
+                    return status;
+                }
                 let Some(abs_path) = self
                     .fs_ref()
                     .abs_buf_checked(&[path, import_path], bufs!(node_modules_check))
@@ -3918,6 +3934,95 @@ impl<'a> Resolver<'a> {
 
         // NOTE: the non-root path is genuinely unimplemented; this is not a stub.
         unreachable!("TODO: implement enqueueDependencyToResolve for non-root packages")
+    }
+
+    /// The file that "exports" of a package in `node_path`, a `NODE_PATH` entry, has for `subpath`, which is `import_path` without the name of the package. `None` without one: the caller goes on to `load_as_file_or_directory`.
+    #[cold]
+    #[inline(never)]
+    fn load_node_path_package_exports(
+        &mut self,
+        node_path: &[u8],
+        import_path: &[u8],
+        subpath: &[u8],
+        kind: ast::ImportKind,
+        out: &mut MatchResult,
+    ) -> Option<MatchStatus> {
+        use crate::package_json::EntryData;
+
+        // As in Node, the folder has the whole text in front of the subpath as its name: `npkg@1.2.3`, not `npkg`.
+        let name = import_path.get(..(import_path.len() + 1).checked_sub(subpath.len())?)?;
+        let abs_package_path = self
+            .fs_ref()
+            .abs_buf_checked(&[node_path, name], bufs!(esm_absolute_package_path))?;
+        // `dir_info_cached` opens a file of this name on every call, because it does not remember ENOTDIR.
+        let is_listed_file = bun_paths::dirname(abs_package_path)
+            .and_then(|parent| self.dir_info_cached(parent).ok().flatten())
+            .and_then(|parent| {
+                parent.get_entry(self.generation, bun_paths::basename(abs_package_path))
+            })
+            .is_some_and(|found| {
+                found.entry().kind(self.rfs_ref(), self.store_fd) != Fs::file_system::EntryKind::Dir
+            });
+        if is_listed_file {
+            return None;
+        }
+        let package = self.dir_info_cached(abs_package_path).ok().flatten()?;
+        let package_json = package.package_json()?;
+        // Node loads "main" when "exports" is `false` or a number.
+        let exports_map = package_json.exports.as_ref().filter(|exports| {
+            matches!(
+                exports.root.data,
+                EntryData::String(_) | EntryData::Array(_) | EntryData::Map(_)
+            )
+        })?;
+        if let Some(debug) = self.debug_logs.as_mut() {
+            debug.add_note_fmt(format_args!(
+                "Reading \"exports\" of the package in the NODE_PATH directory \"{}\"",
+                bstr::BStr::new(abs_package_path)
+            ));
+        }
+
+        let prev_extension_order = self.extension_order;
+        // A `NODE_PATH` entry need not be in node_modules.
+        self.extension_order = self
+            .opts
+            .extension_order
+            .kind(kind, package.is_inside_node_modules());
+        // The node_modules lookup also reads `pkg/key.js` as the key "./key".
+        let without_js = (bun_paths::extension(subpath) == b".js" && subpath.len() > 3)
+            .then(|| &subpath[..subpath.len() - 3]);
+        let mut is_found = false;
+        for key in core::iter::once(subpath).chain(without_js) {
+            let esm_resolution = ESModule {
+                conditions: match kind {
+                    ast::ImportKind::Require | ast::ImportKind::RequireResolve => {
+                        &self.opts.conditions.require
+                    }
+                    ast::ImportKind::At | ast::ImportKind::AtConditional => {
+                        &self.opts.conditions.style
+                    }
+                    _ => &self.opts.conditions.import,
+                },
+                debug_logs: self.debug_logs.as_mut(),
+                stack_check: StackCheck::init(),
+            }
+            .resolve(b"/", key, &exports_map.root);
+            is_found = self
+                .handle_esm_resolution(
+                    esm_resolution,
+                    abs_package_path,
+                    kind,
+                    package_json,
+                    subpath,
+                    out,
+                )
+                .is_success();
+            if is_found {
+                break;
+            }
+        }
+        self.extension_order = prev_extension_order;
+        is_found.then_some(MatchStatus::Success)
     }
 
     fn handle_esm_resolution(

@@ -287,6 +287,28 @@ This means:
 - Smaller bundle sizes
 - Tree shaking of unused properties (named imports)
 
+### Date and time values in bundles
+
+Bun compiles each TOML date/time value to a call on the `Temporal` global. The call runs when the bundle loads, for every `target`:
+
+```toml config.toml
+name = "my-app"
+released = 2026-08-15
+```
+
+```js Output
+var config_default = {
+  name: "my-app",
+  released: /* @__PURE__ */ Temporal.PlainDate.from("2026-08-15"),
+};
+```
+
+A runtime without `Temporal` throws `ReferenceError: Temporal is not defined` when it loads the bundle. Bun has `Temporal`. Node.js 24 and earlier do not. To run the bundle on a runtime without `Temporal`, do one of the following:
+
+- Import only the keys you use (`import { name } from "./config.toml"`). Bun tree-shakes the unused keys, including the date/time values.
+- Quote the value in the TOML file (`released = "2026-08-15"`) so Bun emits a string.
+- Import a module that defines `globalThis.Temporal`, such as a Temporal polyfill, before the TOML file. Bun keeps the import order, so the polyfill runs before the date/time calls.
+
 ### Dynamic Imports
 
 You can also dynamically import TOML files:

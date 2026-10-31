@@ -197,6 +197,21 @@ impl MkdirpTarget for WriteFile {
 
 crate::webcore::blob::impl_file_closer!(WriteFile);
 
+/// The JS thread frees a memfd itself: a free on a pool thread makes its next memfd copy slower.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn is_memfd(store: &blob::Store) -> bool {
+    use crate::allocators::linux_mem_fd_allocator::LinuxMemFdAllocator;
+    match &store.data {
+        blob::store::Data::Bytes(bytes) => LinuxMemFdAllocator::from(bytes.allocator()).is_some(),
+        _ => false,
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "android")))]
+fn is_memfd(_: &blob::Store) -> bool {
+    false
+}
+
 impl WriteFile {
     #[cfg(not(windows))]
     pub(crate) const IO_TAG: io::Tag = io::Tag::WriteFile;
@@ -409,6 +424,14 @@ impl WriteFile {
         }
         if !close_after_io {
             if let Some(io_task) = self.io_task.take() {
+                // Free a copy that only this job holds now, not when the JS thread reaches `then`.
+                let source = &self.bytes_blob;
+                if source
+                    .store()
+                    .is_some_and(|store| store.has_one_ref() && !is_memfd(store))
+                {
+                    source.detach();
+                }
                 io_task.finish();
             }
         }

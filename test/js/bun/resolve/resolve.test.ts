@@ -430,7 +430,7 @@ describe("NODE_PATH test", () => {
     expect(stdout.toString().trim()).toBe("NODE_PATH from lib works");
   });
 
-  it("reads the exports of a package that it finds through NODE_PATH", async () => {
+  it.concurrent("reads the exports of a package that it finds through NODE_PATH", async () => {
     // Longer than the 512 bytes that the resolver keeps of a subpath.
     const longSubpath = ["a", "b", "c"].map(letter => Buffer.alloc(200, letter).toString()).join("/") + "/x.js";
     const withMain = (manifest: object) => JSON.stringify({ main: "./legacy.js", ...manifest });
@@ -587,7 +587,7 @@ describe("NODE_PATH test", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("finds the same file for a package in a NODE_PATH entry as for the package in node_modules", async () => {
+  it.concurrent("finds the same file for a package in a NODE_PATH entry as for one in node_modules", async () => {
     const manifest = JSON.stringify({
       main: "./legacy.js",
       exports: {
@@ -673,7 +673,7 @@ describe("NODE_PATH test", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("loads a package that a NODE_PATH entry exports without a request to the registry", async () => {
+  it.concurrent("loads a package that a NODE_PATH entry exports without a request to the registry", async () => {
     const requests: string[] = [];
     using registry = Bun.serve({
       port: 0,

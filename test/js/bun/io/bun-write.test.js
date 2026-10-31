@@ -1795,7 +1795,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
 // that copy when the pool thread is done with the write. If it waited for the JS
 // thread to complete the write, a caller that does not await would hold every copy.
 // WriteFileWindows sees its completions only on the JS thread, so it cannot do this.
-// Each case measures the peak memory of a child, so these do not run with the concurrent tests above.
+// The memory cases run together. The memfd case before them is not concurrent, so they start after the tests above.
 describe.skipIf(isWindows)("the write job's copy of the source", () => {
   const size = 1024 * 1024;
   const count = 200;
@@ -1832,7 +1832,43 @@ describe.skipIf(isWindows)("the write job's copy of the source", () => {
     expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 128 : 96);
   }
 
-  it.each([
+  // A copy of 8 MB or more of a typed array is a memfd, which /proc/self/maps names ("memfd-num-0").
+  // The JS thread frees that one: a free on a pool thread makes the next memfd copy slower.
+  // This case passes on main too. It guards the memfd condition in WriteFile::on_finish.
+  it.skipIf(!isLinux)("stays until the JS thread completes the write when it is a memfd", async () => {
+    using dir = tempDir("bun-write-copy-memfd", { "out.bin": "" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        prelude +
+          `
+        const source = new Uint8Array(8 * size).fill(0x61);
+        const mappedCopies = () => [...new Set(fs.readFileSync("/proc/self/maps", "utf8").match(/memfd-num-\\d+/g))];
+        const promise = Bun.write("out.bin", source);
+        // The JS thread stays in this block, so it cannot complete the write.
+        const fd = fs.openSync("out.bin", "r");
+        const last = Buffer.alloc(1);
+        waitFor("the write", () => fs.readSync(fd, last, 0, 1, 8 * size - 1) === 1 && last[0] === 0x61 && noJobRuns());
+        fs.closeSync(fd);
+        const copies = mappedCopies();
+        console.log(JSON.stringify({ copies, wrote: await promise }));
+      `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim() && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: { copies: ["memfd-num-0"], wrote: 8 * size },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent.each([
     ["a typed array", `new Uint8Array(size).fill(0x61)`],
     ["a string", `Buffer.alloc(size, "a").toString("latin1")`],
     ["an array of typed arrays", `[new Uint8Array(size / 2).fill(0x61), new Uint8Array(size / 2).fill(0x61)]`],
@@ -1862,7 +1898,7 @@ describe.skipIf(isWindows)("the write job's copy of the source", () => {
 
   // With one CPU for every thread, a pool thread runs a job while the JS thread is still inside Bun.write.
   // The job must be the only owner of its copy by then.
-  it.skipIf(!isLinux)("of a write that fails is freed", async () => {
+  it.concurrent.skipIf(!isLinux)("of a write that fails is freed", async () => {
     await expectCopiesFreed(
       `
       const { dlopen, ptr } = require("bun:ffi");
@@ -1870,7 +1906,7 @@ describe.skipIf(isWindows)("the write job's copy of the source", () => {
         sched_setaffinity: { args: ["i32", "usize", "ptr"], returns: "i32" },
       });
       const cpu = Number(/Cpus_allowed_list:\\s*(\\d+)/.exec(fs.readFileSync("/proc/self/status", "utf8"))[1]);
-      const mask = new Uint8Array(128);
+      const mask = new Uint8Array(((cpu >> 6) + 1) * 8);
       mask[cpu >> 3] = 1 << (cpu & 7);
       for (const tid of fs.readdirSync("/proc/self/task")) {
         libc.symbols.sched_setaffinity(Number(tid), mask.length, ptr(mask));
@@ -1901,7 +1937,7 @@ describe.skipIf(isWindows)("the write job's copy of the source", () => {
   });
 
   // A write to a full pipe waits on the IO thread and finishes through a second pass on the pool.
-  it.skipIf(!isLinux)("of a write that waited for a pipe is freed", async () => {
+  it.concurrent.skipIf(!isLinux)("of a write that waited for a pipe is freed", async () => {
     using dir = tempDir("bun-write-copy-freed-fifo", {});
     const fifo = join(String(dir), "fifo");
     expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
@@ -1951,41 +1987,5 @@ describe.skipIf(isWindows)("the write job's copy of the source", () => {
     `,
       { isPipe: true, wrote: size * count },
     );
-  });
-
-  // A copy of 8 MB or more of a typed array is a memfd, which /proc/self/maps names ("memfd-num-0").
-  // The JS thread frees that one: a free on a pool thread makes the next memfd copy slower.
-  // This case passes on main too. It guards the memfd condition in WriteFile::on_finish.
-  it.skipIf(!isLinux)("stays until the JS thread completes the write when it is a memfd", async () => {
-    using dir = tempDir("bun-write-copy-memfd", { "out.bin": "" });
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        prelude +
-          `
-        const source = new Uint8Array(8 * size).fill(0x61);
-        const mappedCopies = () => [...new Set(fs.readFileSync("/proc/self/maps", "utf8").match(/memfd-num-\\d+/g))];
-        const promise = Bun.write("out.bin", source);
-        // The JS thread stays in this block, so it cannot complete the write.
-        const fd = fs.openSync("out.bin", "r");
-        const last = Buffer.alloc(1);
-        waitFor("the write", () => fs.readSync(fd, last, 0, 1, 8 * size - 1) === 1 && last[0] === 0x61 && noJobRuns());
-        fs.closeSync(fd);
-        const copies = mappedCopies();
-        console.log(JSON.stringify({ copies, wrote: await promise }));
-      `,
-      ],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim() && JSON.parse(stdout), stderr, exitCode }).toEqual({
-      stdout: { copies: ["memfd-num-0"], wrote: 8 * size },
-      stderr: "",
-      exitCode: 0,
-    });
   });
 });

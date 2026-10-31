@@ -421,10 +421,21 @@ describe.concurrent("--macos-info-plist", () => {
     await build(crossCompile("template", "--macos-info-plist=Info.plist", "--outfile=expected/out"), cwd);
     await build(crossCompile("first", "--macos-info-plist=Info.plist", "--outfile=second/out"), cwd);
 
-    expect(readInfoPlist(readFileSync(join(cwd, "first")))).toBe(infoPlist.replace("1.2.3", "1.2.3.4.5.6"));
-    expect(readInfoPlist(readFileSync(join(cwd, "second/out")))).toBe(infoPlist);
+    const [first, expected, second] = ["first", "expected/out", "second/out"].map(path =>
+      readFileSync(join(cwd, path)),
+    );
+    const longer = infoPlist.replace("1.2.3", "1.2.3.4.5.6");
+    expect(readInfoPlist(first)).toBe(longer);
+    expect(readInfoPlist(second)).toBe(infoPlist);
+    expect(parseAndVerifySignature(second).mismatches).toEqual([]);
+
+    // Nothing of the longer file is left in front of the shorter one, and that is all that tells the two apart.
     // The name of the file is in the payload, so both are called `out`.
-    expect(readFileSync(join(cwd, "second/out")).equals(readFileSync(join(cwd, "expected/out")))).toBe(true);
+    const [leftFrom, leftTo] = [0x4000 - longer.length, 0x4000 - infoPlist.length];
+    expect(second.subarray(leftFrom, leftTo)).toEqual(Buffer.alloc(leftTo - leftFrom));
+    const signatureAt = parseAndVerifySignature(second).dataoff;
+    expect(second.subarray(0, leftFrom).equals(expected.subarray(0, leftFrom))).toBe(true);
+    expect(second.subarray(leftTo, signatureAt).equals(expected.subarray(leftTo, signatureAt))).toBe(true);
   });
 
   test("replaces an Info.plist that the executable was linked with", async () => {
@@ -452,7 +463,8 @@ describe.concurrent("--macos-info-plist", () => {
     using dir = tempDir("compile-macho-info-plist-api", {
       "entry.ts": bundles.tiny,
       "Info.plist": infoPlist,
-      "Large.plist": Buffer.alloc(0x4000, "x"),
+      "Large.plist": Buffer.alloc(templateRoom + 1, "x"),
+      "Empty.plist": "",
       "index.html": "<p>hi</p>",
       "template": machoTemplate(),
       "elsewhere": {},
@@ -478,13 +490,15 @@ describe.concurrent("--macos-info-plist", () => {
         for (const options of [
           { entrypoints, compile: { ...darwin, outfile: "never", macos: 1 } },
           { entrypoints, compile: { ...darwin, outfile: "never", macos: missing } },
+          { entrypoints, compile: { ...darwin, outfile: "never", macos: { infoPlist: "Empty.plist" } } },
           { entrypoints, compile: { ...darwin, outfile: "never", macos: { infoPlist: "Large.plist" } } },
           { entrypoints: ["index.html"], target: "browser", compile: { ...darwin, macos } },
         ]) {
           try {
             await Bun.build(options);
           } catch (error) {
-            console.log(error.errors?.[0].message ?? error.message);
+            // What follows the code is worded by the system.
+            console.log((error.errors?.[0].message ?? error.message).replace(/ENOENT.*/, "ENOENT"));
           }
         }
       `,
@@ -495,8 +509,9 @@ describe.concurrent("--macos-info-plist", () => {
     expect(built).toEqual({
       stdout: [
         "macos must be an object",
-        "macos.infoPlist must be a valid path to an Info.plist file",
-        `failed to embed the Info.plist: it is 16384 bytes, and this executable has room for ${templateRoom} bytes behind its load commands`,
+        'the Info.plist "Missing.plist" cannot be read: ENOENT',
+        'the Info.plist "Empty.plist" is empty',
+        `failed to embed the Info.plist: ${templateRoom + 1} bytes do not fit in the ${templateRoom} bytes of padding behind the load commands`,
         "Cannot use compile.macos.infoPlist with target 'browser' for standalone HTML",
         "",
       ].join("\n"),
@@ -511,38 +526,62 @@ describe.concurrent("--macos-info-plist", () => {
     expect(native).toEqual({ stdout: "hi\n", stderr: "", exitCode: 0 });
   });
 
-  test("fails when the file does not fit behind the load commands", async () => {
-    using dir = tempDir("compile-macho-info-plist-large", {
+  test("takes a file that fills the room behind the load commands, and not a byte more", async () => {
+    using dir = tempDir("compile-macho-info-plist-room", {
       "entry.ts": bundles.tiny,
-      "Info.plist": Buffer.alloc(0x4000, "x"),
-      "Empty.plist": "",
-      "Huge.plist": Buffer.alloc((1 << 20) + 1, "x"),
+      "Fits.plist": Buffer.alloc(templateRoom, "x"),
+      "Large.plist": Buffer.alloc(templateRoom + 1, "x"),
       "template": machoTemplate(),
     });
     const cwd = String(dir);
-    const large = await run(crossCompile("template", "--macos-info-plist=Info.plist", "--outfile=out"), cwd);
-    expect(large.stderr).toContain(
-      `failed to embed the Info.plist: it is 16384 bytes, and this executable has room for ${templateRoom} bytes behind its load commands`,
+
+    await build(crossCompile("template", "--macos-info-plist=Fits.plist", "--outfile=fits"), cwd);
+    const fits = readFileSync(join(cwd, "fits"));
+    expect(readInfoPlist(fits)).toBe(Buffer.alloc(templateRoom, "x").toString());
+    expect(parseAndVerifySignature(fits).mismatches).toEqual([]);
+
+    const { stderr, exitCode } = await run(
+      crossCompile("template", "--macos-info-plist=Large.plist", "--outfile=large"),
+      cwd,
     );
-    expect(large.exitCode).toBe(1);
+    expect({ stderr, exitCode }).toEqual({
+      stderr: `failed to embed the Info.plist: ${templateRoom + 1} bytes do not fit in the ${templateRoom} bytes of padding behind the load commands\n`,
+      exitCode: 1,
+    });
+    expect(await Bun.file(join(cwd, "large")).exists()).toBe(false);
+  });
 
-    const huge = await run(crossCompile("template", "--macos-info-plist=Huge.plist", "--outfile=out"), cwd);
-    expect(huge.stderr).toContain('the Info.plist "Huge.plist" is 1048577 bytes, which is too large to embed');
-    expect(huge.exitCode).toBe(1);
+  test("refuses a file that it cannot embed before it builds anything", async () => {
+    const mostRead = 1 << 20;
+    using dir = tempDir("compile-macho-info-plist-refused", {
+      "entry.ts": bundles.tiny,
+      "Empty.plist": "",
+      "MostRead.plist": Buffer.alloc(mostRead, "x"),
+      "Huge.plist": Buffer.alloc(mostRead + 1, "x"),
+      "Folder.plist": {},
+      "template": machoTemplate(),
+    });
+    const cwd = String(dir);
+    const refuse = (path: string) => run(crossCompile("template", `--macos-info-plist=${path}`, "--outfile=out"), cwd);
+    const refused = (problem: string) => ({ stdout: "", stderr: `error: the Info.plist ${problem}\n`, exitCode: 1 });
 
-    const empty = await run(crossCompile("template", "--macos-info-plist=Empty.plist", "--outfile=out"), cwd);
-    expect(empty.stderr).toContain('the Info.plist "Empty.plist" is empty');
-    expect(empty.exitCode).toBe(1);
+    expect(await refuse("Empty.plist")).toEqual(refused('"Empty.plist" is empty'));
+    expect(await refuse("Huge.plist")).toEqual(
+      refused(`"Huge.plist" is ${mostRead + 1} bytes, which is too large to embed`),
+    );
+    expect(await refuse("Folder.plist")).toEqual(refused('"Folder.plist" is not a regular file'));
+    if (!isWindows) expect(await refuse("/dev/zero")).toEqual(refused('"/dev/zero" is not a regular file'));
 
-    const missing = await run(crossCompile("template", "--macos-info-plist=Missing.plist", "--outfile=out"), cwd);
-    expect(missing.stderr).toContain('error: --macos-info-plist: "Missing.plist" is not a file');
-    expect(missing.exitCode).toBe(1);
+    const missing = await refuse("Missing.plist");
+    expect(missing.stderr).toStartWith('error: the Info.plist "Missing.plist" cannot be read: ENOENT');
+    expect({ ...missing, stderr: "" }).toEqual({ stdout: "", stderr: "", exitCode: 1 });
 
-    if (!isWindows) {
-      const device = await run(crossCompile("template", "--macos-info-plist=/dev/zero", "--outfile=out"), cwd);
-      expect(device.stderr).toContain('the Info.plist "/dev/zero" is not a regular file');
-      expect(device.exitCode).toBe(1);
-    }
+    // The largest file that is read gets as far as the executable, which says how much fits.
+    const mostReadResult = await refuse("MostRead.plist");
+    expect({ stderr: mostReadResult.stderr, exitCode: mostReadResult.exitCode }).toEqual({
+      stderr: `failed to embed the Info.plist: ${mostRead} bytes do not fit in the ${templateRoom} bytes of padding behind the load commands\n`,
+      exitCode: 1,
+    });
 
     expect(await Bun.file(join(cwd, "out")).exists()).toBe(false);
   });
@@ -554,28 +593,16 @@ describe.concurrent("--macos-info-plist", () => {
       "Info.plist": infoPlist,
     });
     const cwd = String(dir);
+    const buildWith = (...args: string[]) => run([bunExe(), "build", "--macos-info-plist=Info.plist", ...args], cwd);
+    const refused = (why: string) => ({ stdout: "", stderr: `error: ${why}\n`, exitCode: 1 });
+    const needsMacOS = refused("--macos-info-plist requires a macOS compile target");
 
-    const otherTarget = await run(
-      [bunExe(), "build", "--compile", "--target=bun-linux-x64", "--macos-info-plist=Info.plist", "entry.ts"],
-      cwd,
+    expect(await buildWith("entry.ts")).toEqual(refused("--macos-info-plist requires --compile"));
+    expect(await buildWith("--compile", "--target=bun-linux-x64", "entry.ts")).toEqual(needsMacOS);
+    // Without a target for the executable, it is the host.
+    expect(await buildWith("--compile", "--target=browser", "index.html")).toEqual(
+      isMacOS ? refused("cannot use --compile --target browser with --macos-info-plist") : needsMacOS,
     );
-    expect(otherTarget.stderr).toContain("error: --macos-info-plist requires a macOS compile target");
-    expect(otherTarget.exitCode).toBe(1);
-
-    const bundled = await run([bunExe(), "build", "--macos-info-plist=Info.plist", "entry.ts"], cwd);
-    expect(bundled.stderr).toContain("error: --macos-info-plist requires --compile");
-    expect(bundled.exitCode).toBe(1);
-
-    const html = await run(
-      [bunExe(), "build", "--compile", "--target=browser", "--macos-info-plist=Info.plist", "index.html"],
-      cwd,
-    );
-    expect(html.stderr).toContain(
-      isMacOS
-        ? "error: cannot use --compile --target browser with --macos-info-plist"
-        : "error: --macos-info-plist requires a macOS compile target",
-    );
-    expect(html.exitCode).toBe(1);
   });
 
   test.skipIf(!isMacOS)("CoreFoundation reads the Info.plist of a natively compiled executable", async () => {

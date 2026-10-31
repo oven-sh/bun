@@ -239,7 +239,7 @@ impl JSBundleCompletionTask {
                 root_dir: destination.root_dir.fd,
                 env: &mut self.env,
                 windows: &destination.windows,
-                info_plist_path: opt_slice(&compile.macos_info_plist.list),
+                info_plist: opt_slice(&compile.macos_info_plist.list),
                 exec_argv: &compile.exec_argv.list,
                 flags: destination.flags,
                 runtime_options: RuntimeOptions {

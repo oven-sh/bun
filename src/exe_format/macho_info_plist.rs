@@ -1,4 +1,4 @@
-//! The `__TEXT,__info_plist` section: where CoreFoundation, `codesign` and TCC read the Info.plist of an executable
+//! The `__TEXT,__info_plist` section: where CoreFoundation and `codesign` read the Info.plist of an executable
 //! that is not in a bundle. `__TEXT` cannot grow, so the section lies in the padding behind the load commands.
 
 use core::ops::Range;
@@ -14,9 +14,12 @@ use crate::macho_types::{
 };
 use crate::{read_struct, write_struct};
 
-const TEXT: &[u8] = b"__TEXT";
 const SEGMENT_NAME: [u8; 16] = *b"__TEXT\0\0\0\0\0\0\0\0\0\0";
 const SECTION_NAME: [u8; 16] = *b"__info_plist\0\0\0\0";
+
+fn is_text(segment: &segment_command_64) -> bool {
+    segment.seg_name() == bun_core::slice_to_nul(&SEGMENT_NAME)
+}
 
 pub(crate) fn is_info_plist(section: &section_64) -> bool {
     section.sectname == SECTION_NAME
@@ -34,7 +37,7 @@ pub(crate) fn find(macho: &[u8]) -> Option<Range<usize>> {
             let sections = command.data.get(SEGMENT_COMMAND_SIZE..)?;
             Some((command.cast::<segment_command_64>()?, sections))
         })
-        .find(|(segment, _)| segment.seg_name() == TEXT)?;
+        .find(|(segment, _)| is_text(segment))?;
     let (sections, _) = sections.as_chunks::<SECTION_SIZE>();
     let section = (sections.iter().take(text.nsects as usize))
         .map(|bytes| read_struct::<section_64>(bytes))
@@ -53,7 +56,7 @@ pub fn write(macho: &mut [u8], plist: &[u8]) -> Result<(), MachoError> {
         .filter_map(|(kind, range)| matches!(kind, CommandKind::Segment).then_some(range.start));
     let (command_at, text) = segment_commands
         .zip(&parsed.segments)
-        .find(|(_, segment)| segment.command.seg_name() == TEXT)
+        .find(|(_, segment)| is_text(&segment.command))
         .filter(|(_, segment)| segment.command.fileoff == 0)
         .ok_or(MachoError::InvalidObject)?;
 
@@ -116,7 +119,6 @@ pub fn write(macho: &mut [u8], plist: &[u8]) -> Result<(), MachoError> {
         reserved3: 0,
     };
     write_struct(&mut macho[section_at..], &section);
-    macho[commands_end..offset].fill(0);
     macho[offset..room_end].copy_from_slice(plist);
     Ok(())
 }
@@ -153,7 +155,7 @@ mod tests {
     use crate::image::Architecture;
     use crate::macho::MachoFile;
     use crate::macho_ranges::tests::toy_macho;
-    use crate::macho_types::{CodeDirectory, N_SECT, N_TYPE, linkedit_data_command, nlist_64};
+    use crate::macho_types::{CodeDirectory, linkedit_data_command};
 
     const ARCHITECTURES: [Architecture; 2] = [Architecture::X86_64, Architecture::Aarch64];
     const PLIST: &[u8] =
@@ -166,9 +168,12 @@ mod tests {
         sections.collect()
     }
 
+    fn symbol_table(macho: &[u8]) -> Range<usize> {
+        find_symbols(macho, &parse(macho).unwrap()).unwrap()
+    }
+
     fn read_symbols(macho: &[u8]) -> Vec<nlist_64> {
-        let symbols = find_symbols(macho, &parse(macho).unwrap()).unwrap();
-        let (symbols, _) = macho[symbols].as_chunks::<{ size_of::<nlist_64>() }>();
+        let (symbols, _) = macho[symbol_table(macho)].as_chunks::<SYMBOL_SIZE>();
         symbols.iter().map(|bytes| read_struct(bytes)).collect()
     }
 
@@ -202,13 +207,10 @@ mod tests {
 
             assert_eq!(find(&macho), Some(contents_at - PLIST.len()..contents_at));
             assert_eq!(&macho[find(&macho).unwrap()], PLIST);
-            assert!(
-                macho[contents_at..find_symbols(&macho, &parse(&macho).unwrap()).unwrap().start]
-                    == original[contents_at
-                        ..find_symbols(&original, &parse(&original).unwrap())
-                            .unwrap()
-                            .start]
-            );
+            let symbols = symbol_table(&original);
+            assert_eq!(symbol_table(&macho), symbols);
+            assert!(macho[contents_at..symbols.start] == original[contents_at..symbols.start]);
+            assert!(macho[symbols.end..] == original[symbols.end..]);
 
             let (old_sections, sections) = (read_sections(&original), read_sections(&macho));
             assert_eq!(sections.len(), old_sections.len() + 1);
@@ -259,7 +261,7 @@ mod tests {
     fn debugging_symbols_stay_in_their_sections() {
         const N_FUN: u8 = 0x24;
         let mut original = toy_macho(Architecture::Aarch64);
-        let symbols = find_symbols(&original, &parse(&original).unwrap()).unwrap();
+        let symbols = symbol_table(&original);
         let (entries, _) = original[symbols].as_chunks_mut::<SYMBOL_SIZE>();
         for (bytes, n_type) in entries.iter_mut().zip([N_FUN, N_OSO]) {
             let mut symbol: nlist_64 = read_struct(bytes);

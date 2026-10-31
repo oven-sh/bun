@@ -251,7 +251,7 @@ pub struct BundlerOptions {
     /// `--trim` of a build that is not compiled ahead of time. With `aot` the request is `AotOptions::trim`, and this one is the default.
     pub trim: crate::trim::TrimRequest,
     pub windows: bundle_enums::WindowsOptions,
-    /// `--macos-info-plist`: the path of the file.
+    /// `--macos-info-plist`: the contents of the file.
     pub macos_info_plist: Option<Box<[u8]>>,
     pub allow_unresolved: Option<Vec<Box<[u8]>>>,
 }

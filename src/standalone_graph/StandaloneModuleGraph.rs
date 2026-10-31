@@ -3193,7 +3193,8 @@ pub fn target_builtins(
     }
 }
 
-fn read_info_plist(path: &[u8]) -> Result<Vec<u8>, CompileError> {
+/// What `ExecutableAdditions::info_plist` takes, from the path that the user gave.
+pub fn read_info_plist(path: &[u8]) -> Result<Vec<u8>, CompileError> {
     /// `macho_info_plist::write` says what fits. This only keeps a file that cannot fit out of memory.
     const MAX_SIZE: i64 = 1 << 20;
     let fail = |problem: core::fmt::Arguments<'_>| {
@@ -3237,13 +3238,6 @@ pub fn to_executable(
 ) -> crate::Result<CompileResult> {
     #[cfg(windows)]
     let _ = root_dir;
-    let info_plist = match additions.info_plist_path {
-        Some(path) if target.os == CompileTargetOs::Mac => match read_info_plist(path) {
-            Ok(plist) => Some(plist),
-            Err(e) => return Ok(CompileResult::Err(e)),
-        },
-        _ => None,
-    };
     let GraphBytes { mut bytes, image } = match to_bytes(
         target,
         module_prefix,
@@ -3286,7 +3280,7 @@ pub fn to_executable(
     } else {
         b"."
     };
-    let mut injection = additions.for_injection(image, info_plist);
+    let mut injection = additions.for_injection(image);
     let Some(injected) = inject(
         &mut bytes,
         &self_exe,

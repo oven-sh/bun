@@ -29,7 +29,7 @@ pub struct ExecutableRequest<'a> {
     pub windows: &'a WindowsOptions,
     pub executable_path: Option<&'a [u8]>,
     pub trim: Option<&'a bun_trim::TrimPlan>,
-    pub info_plist_path: Option<&'a [u8]>,
+    pub info_plist: Option<&'a [u8]>,
 }
 
 #[derive(Default)]
@@ -52,8 +52,8 @@ pub struct ExecutableOutcome {
 pub struct ExecutableAdditions<'a> {
     pub compiled_program: Option<&'a CompiledProgramInput<'a>>,
     pub trim: Option<&'a bun_trim::TrimPlan>,
-    /// An executable for macOS gets what the file holds. Other targets do not read it.
-    pub info_plist_path: Option<&'a [u8]>,
+    /// The contents of the file. The target is macOS.
+    pub info_plist: Option<&'a [u8]>,
     /// Filled once the copy of the executable is written. Meaningful if the result is `Success`.
     pub details: ExecutableDetails,
 }
@@ -72,17 +72,13 @@ pub(crate) struct InjectionAdditions<'a> {
     build_id: Option<[u8; bun_exe_format::build_id::SIZE]>,
     trim: Option<&'a bun_trim::TrimPlan>,
     trim_summary: Option<bun_trim::TrimSummary>,
-    info_plist: Option<Vec<u8>>,
+    info_plist: Option<&'a [u8]>,
     /// Why `inject` returned `None`, where it has not printed that itself.
     pub(crate) failure: Option<CompileError>,
 }
 
 impl<'a> ExecutableAdditions<'a> {
-    pub(crate) fn for_injection(
-        &self,
-        image: Option<ImageRange>,
-        info_plist: Option<Vec<u8>>,
-    ) -> InjectionAdditions<'a> {
+    pub(crate) fn for_injection(&self, image: Option<ImageRange>) -> InjectionAdditions<'a> {
         let symbols = self
             .compiled_program
             .filter(|program| !program.symbols.is_empty())
@@ -99,7 +95,7 @@ impl<'a> ExecutableAdditions<'a> {
             build_id: None,
             trim: self.trim,
             trim_summary: None,
-            info_plist,
+            info_plist: self.info_plist,
             failure: None,
         }
     }
@@ -126,7 +122,7 @@ impl InjectionAdditions<'_> {
     ) -> bool {
         self.write_build_id(template);
         // Before the trimming, which takes the rest of the room behind the load commands.
-        if let Some(plist) = &self.info_plist
+        if let Some(plist) = self.info_plist
             && let Err(error) = bun_exe_format::macho_info_plist::write(template, plist)
         {
             self.failure = Some(CompileError::fmt(format_args!(
@@ -234,7 +230,7 @@ pub fn write_executable(request: &mut ExecutableRequest<'_>) -> crate::Result<Ex
     let mut additions = ExecutableAdditions {
         compiled_program: graph.compiled_program.as_ref(),
         trim: request.trim,
-        info_plist_path: request.info_plist_path,
+        info_plist: request.info_plist,
         details: ExecutableDetails::default(),
     };
     let result = to_executable(

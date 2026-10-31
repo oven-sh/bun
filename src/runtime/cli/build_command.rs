@@ -1013,7 +1013,7 @@ impl BuildCommand {
                 let mut additions =
                     bun_standalone_module_graph::executable_request::ExecutableAdditions {
                         trim: trim_plan.as_ref(),
-                        info_plist_path: ctx.bundler_options.macos_info_plist.as_deref(),
+                        info_plist: ctx.bundler_options.macos_info_plist.as_deref(),
                         ..Default::default()
                     };
 

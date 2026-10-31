@@ -583,7 +583,7 @@ impl JSBundleCompletionTask {
         };
         let mut additions = ExecutableAdditions {
             trim: trim_plan.as_ref(),
-            info_plist_path: opt_slice(&compile_options.macos_info_plist.list),
+            info_plist: opt_slice(&compile_options.macos_info_plist.list),
             ..Default::default()
         };
 

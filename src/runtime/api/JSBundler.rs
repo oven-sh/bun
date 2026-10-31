@@ -254,6 +254,7 @@ pub(crate) mod js_bundler {
         pub(crate) windows_version: OwnedString,
         pub(crate) windows_description: OwnedString,
         pub(crate) windows_copyright: OwnedString,
+        /// `compile.macos.infoPlist`: the contents of the file.
         pub(crate) macos_info_plist: OwnedString,
         pub(crate) outfile: OwnedString,
         pub(crate) assets: Vec<Box<[u8]>>,
@@ -343,12 +344,6 @@ pub(crate) mod js_bundler {
         Err(global_this.throw_invalid_arguments(format_args!(
             "{option}: this executable doesn't include the type checker"
         )))
-    }
-
-    pub(crate) fn is_file(path: &[u8]) -> bool {
-        let path = bun_core::ZBox::from_bytes(path);
-        bun_sys::exists_at_type(bun_sys::Fd::cwd(), path.as_zstr())
-            .is_ok_and(|kind| kind == bun_sys::ExistsAtType::File)
     }
 
     fn check_compile_keys(global_this: &JSGlobalObject, compile: JSValue) -> JsResult<()> {
@@ -660,7 +655,11 @@ pub(crate) mod js_bundler {
                 object.get_own(global_this, &BunString::static_("executablePath"))?
             {
                 let slice = executable_path.to_utf8(global_this)?;
-                if !is_file(slice.slice()) {
+                let path_z = bun_core::ZBox::from_bytes(slice.slice());
+                if bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
+                    .unwrap_or(bun_sys::ExistsAtType::Directory)
+                    != bun_sys::ExistsAtType::File
+                {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "executablePath must be a valid path to a Bun executable"
                     )));
@@ -685,7 +684,11 @@ pub(crate) mod js_bundler {
                     windows.get_own(global_this, &BunString::static_("icon"))?
                 {
                     let slice = windows_icon_path.to_utf8(global_this)?;
-                    if !is_file(slice.slice()) {
+                    let path_z = bun_core::ZBox::from_bytes(slice.slice());
+                    if bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
+                        .unwrap_or(bun_sys::ExistsAtType::Directory)
+                        != bun_sys::ExistsAtType::File
+                    {
                         return Err(global_this.throw_invalid_arguments(format_args!(
                             "windows.icon must be a valid path to an ico file"
                         )));
@@ -736,26 +739,20 @@ pub(crate) mod js_bundler {
                         .throw_invalid_arguments(format_args!("macos must be an object")));
                 }
 
-                if let Some(info_plist) = macos.get_own_truthy(global_this, "infoPlist")? {
-                    let slice = info_plist.to_utf8(global_this)?;
-                    // A script that builds for several targets need not have the file for the others.
-                    if this.compile_target.os == bun_core::env::OperatingSystem::Mac
-                        && !is_file(slice.slice())
-                    {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "macos.infoPlist must be a valid path to an Info.plist file"
-                        )));
+                // A script that builds for several targets need not have the file for the others.
+                if let Some(info_plist) = macos.get_own_truthy(global_this, "infoPlist")?
+                    && this.compile_target.os == bun_core::env::OperatingSystem::Mac
+                {
+                    let path = info_plist.to_utf8(global_this)?;
+                    match StandaloneModuleGraph::read_info_plist(path.slice()) {
+                        Ok(plist) => this.macos_info_plist.append_slice_exact(&plist)?,
+                        Err(error) => {
+                            return Err(global_this.throw_invalid_arguments(format_args!(
+                                "{}",
+                                bstr::BStr::new(error.slice())
+                            )));
+                        }
                     }
-
-                    // The build reads the file later, when the program may have changed its working directory.
-                    let mut cwd = bun_paths::path_buffer_pool::get();
-                    let path = match bun_sys::getcwd(&mut cwd) {
-                        Ok(len) => bun_paths::resolve_path::join_abs_string::<
-                            bun_paths::platform::Auto,
-                        >(&cwd[..len], &[slice.slice()]),
-                        Err(_) => slice.slice(),
-                    };
-                    this.macos_info_plist.append_slice_exact(path)?;
                 }
             }
 
@@ -2439,7 +2436,6 @@ pub(crate) use js_bundler::BunPluginTarget;
 /// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
 pub(crate) use js_bundler::Plugin;
 pub(crate) use js_bundler::PluginJscExt;
-pub(crate) use js_bundler::is_file;
 
 /// Wraps a `webcore::Blob` plus
 /// `loader/path/hash/output_kind`. `.sourcemap` lives on the JS wrapper

@@ -449,6 +449,25 @@ fn info_plist_needs_room_for_its_section() {
 }
 
 #[test]
+fn info_plist_needs_a_free_ordinal() {
+    let with_free_ordinals = |count: usize| {
+        create_toy(ToyOptions {
+            filler_section_count: (MAX_SECTIONS - TOY_SECTION_COUNT - count) as u64,
+            ..LINKED_TOY
+        })
+    };
+    let mut last = with_free_ordinals(1);
+    macho_info_plist::write(&mut last, b"x").unwrap();
+    assert_eq!(count_sections(&last), MAX_SECTIONS);
+
+    let original = with_free_ordinals(0);
+    let mut full = original.clone();
+    let written = macho_info_plist::write(&mut full, b"x");
+    assert_eq!(written, Err(MachoError::InvalidObject));
+    assert!(full == original);
+}
+
+#[test]
 fn room_stays_for_signature_command() {
     let unsigned = create_toy(ToyOptions {
         architecture: Architecture::X86_64,
@@ -475,6 +494,12 @@ fn room_stays_for_signature_command() {
     let room = free_room(&unsigned) - SECTION_SIZE - size_of::<linkedit_data_command>();
     macho_info_plist::write(&mut full, &vec![b'x'; room]).unwrap();
     assert_eq!(free_room(&full), size_of::<linkedit_data_command>());
+    let error = MachoError::InfoPlistTooLarge {
+        size: room + 1,
+        room,
+    };
+    let written = macho_info_plist::write(&mut unsigned.clone(), &vec![b'x'; room + 1]);
+    assert_eq!(written, Err(error));
     assert_no_cuts(&full, NoCutReason::HeaderRoomExhausted);
 }
 

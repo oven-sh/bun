@@ -59,9 +59,7 @@ pub enum MachoError {
     ExecutableTooLarge,
     #[error("cannot move the file offsets of unknown Mach-O load command {0:#x}")]
     UnknownLoadCommand(u32),
-    #[error(
-        "it is {size} bytes, and this executable has room for {room} bytes behind its load commands"
-    )]
+    #[error("{size} bytes do not fit in the {room} bytes of padding behind the load commands")]
     InfoPlistTooLarge { size: usize, room: usize },
 }
 bun_core::oom_from_alloc!(MachoError);
@@ -711,7 +709,6 @@ pub(crate) struct MachoSigner {
     sig_off: usize,
     linkedit_seg: macho::segment_command_64,
     text_seg: macho::segment_command_64,
-    info_plist: Option<core::ops::Range<usize>>,
 }
 
 impl MachoSigner {
@@ -772,13 +769,11 @@ impl MachoSigner {
         }
 
         let _ = (sig_sz, cs_cmd_off);
-        let info_plist = macho_info_plist::find(obj);
         Ok(Box::new(MachoSigner {
             data,
             sig_off,
             linkedit_seg,
             text_seg,
-            info_plist,
         }))
     }
 
@@ -826,7 +821,7 @@ impl MachoSigner {
         let code_dir_header_size = size_of::<CodeDirectory>();
         let id_offset = code_dir_header_size;
         // Special slots count down from the first page hash, and the Info.plist has slot -1.
-        let info_plist_hash = self.info_plist.clone().map(|range| {
+        let info_plist_hash = macho_info_plist::find(&self.data).map(|range| {
             let mut hash = [0u8; HASH_SIZE];
             bun_sha_hmac::sha::SHA256::hash(&self.data[range], &mut hash);
             hash

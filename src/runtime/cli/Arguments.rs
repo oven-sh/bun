@@ -2765,14 +2765,13 @@ fn parse_build_command_options(
             Output::err_generic("--macos-info-plist requires a macOS compile target", ());
             Global::crash();
         }
-        if !crate::api::js_bundler::is_file(path) {
-            Output::err_generic(
-                "--macos-info-plist: {} is not a file",
-                format_args!("{}", bun_core::fmt::quote(path)),
-            );
-            Global::crash();
+        match bun_standalone_graph::StandaloneModuleGraph::read_info_plist(path) {
+            Ok(plist) => ctx.bundler_options.macos_info_plist = Some(plist.into()),
+            Err(error) => {
+                Output::err_generic("{}", format_args!("{}", BStr::new(error.slice())));
+                Global::crash();
+            }
         }
-        ctx.bundler_options.macos_info_plist = Some(path.into());
     }
 
     if args.flag(b"--windows-hide-console") {

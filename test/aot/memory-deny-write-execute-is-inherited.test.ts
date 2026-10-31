@@ -1,9 +1,9 @@
 import { dlopen, FFIType } from "bun:ffi";
-import { expect } from "bun:test";
+import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, libcPathForDlopen, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { built, spawned } from "./harness/commands";
+import { built, slot, spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
 const libc = JSON.stringify(isLinux ? libcPathForDlopen() : "");
@@ -59,8 +59,9 @@ if (Bun.isMainThread) {
   };
 }
 `,
+  // It writes with `console.write`: with `process.stdout` a build holds five times as many functions of Bun's library.
   "starts-another-executable": `const { stdout, exitCode } = Bun.spawnSync({ cmd: process.argv.slice(2), stdout: "pipe", stderr: "inherit" });
-process.stdout.write(stdout);
+console.write(stdout);
 process.exitCode = exitCode;
 `,
 };
@@ -71,6 +72,21 @@ const sharedNames = readdirSync(shared)
   .map(name => name.slice(0, -3))
   .filter(name => name !== "asks-for-executable-memory")
   .sort();
+
+// What each program prints. A program that is added to the shared folder gets a line here.
+const printed: Record<string, string> = {
+  "hello": "hello\n",
+  "a-worker": "112\n",
+  "callbacks-from-foreign-functions": "1,3,5,9\n",
+  "classes-maps-and-promises": 'TypeError\n707108.284 42 {"a":[1,2,{"b":"c"}]} 42\n',
+  "code-made-at-run-time": "60900000000 44999850000\n",
+  "foreign-functions": "5\n",
+  "hot-runtime-regexp": "(a+b|c)*d[0-9]{2,}x? 400000 4666660\n",
+  "many-runtime-regexps": "8000 a+b+c 1,22,333\n",
+  "regions-for-generated-code": "0\n",
+  "server-and-client": "hello /199 true 3\n",
+  "webassembly": "-1474936480\n",
+};
 
 function whyItCannotBeShown() {
   const getMDWE = 66;
@@ -112,55 +128,77 @@ const restricted = {
   signal: null,
 };
 
+/** Started free and started by the launcher, the executable of `name` prints what the program prints. */
+async function printsTheSameBothWays(directory: string, name: string) {
+  const executable = await build(directory, name);
+  const [whenFree, whenInherited] = await Promise.all([
+    free([executable], directory),
+    inherited([executable], directory),
+  ]);
+  const expected = { stdout: printed[name], stderr: "", exitCode: 0, signal: null };
+  expect(whenFree).toEqual(expected);
+  expect(whenInherited).toEqual(expected);
+}
+
+// The first two tests start `state`. One folder serves both, and `state` is built once: for the test that asks first.
+let folder: ReturnType<typeof tempDir> | undefined;
+let stateIsBuilt: Promise<string> | undefined;
+afterAll(() => folder?.[Symbol.dispose]());
+function folderOfState() {
+  folder ??= tempDir("aot-mdwe-inherited", {
+    "launcher.ts": launcher,
+    "state.ts": state,
+    "starts-another-executable.ts": own["starts-another-executable"],
+    "twice.c": "int twice(int x) { return 2 * x; }\n",
+  });
+  return String(folder);
+}
+const builtState = () => (stateIsBuilt ??= build(folderOfState(), "state"));
+
+// Bun starts the clock of a concurrent test before the test has a slot. So the limit also covers the wait for one.
+const queueTimeout = 600_000;
+
 describe.skipIf(!!obstacle)("an executable that is started with memory-deny-write-execute already on", () => {
-  test("leaves the request as the launcher made it", async () => {
-    using dir = tempDir("aot-mdwe-inherited", {
-      "launcher.ts": launcher,
-      "state.ts": state,
-      "twice.c": "int twice(int x) { return 2 * x; }\n",
-    });
-    const directory = String(dir);
-    expect(await inherited([await build(directory, "state"), join(directory, "twice.c")], directory)).toEqual(
-      restricted,
-    );
-  }, 120_000);
-
-  test("hands it on to an executable that it starts", async () => {
-    using dir = tempDir("aot-mdwe-inherited", {
-      "launcher.ts": launcher,
-      "state.ts": state,
-      "starts-another-executable.ts": own["starts-another-executable"],
-      "twice.c": "int twice(int x) { return 2 * x; }\n",
-    });
-    const directory = String(dir);
-    const [parent, child] = [await build(directory, "starts-another-executable"), await build(directory, "state")];
-    expect(await inherited([parent, child, join(directory, "twice.c")], directory)).toEqual(restricted);
-  }, 120_000);
-
-  test.each(["hello", "a-worker"])(
-    "%s",
-    async name => {
-      using dir = tempDir("aot-mdwe-inherited", { "launcher.ts": launcher, [name + ".ts"]: own[name] });
-      const directory = String(dir);
-      const executable = await build(directory, name);
-      const expected = await free([executable], directory);
-      expect(expected).toEqual({ stdout: expect.stringMatching(/./), stderr: "", exitCode: 0, signal: null });
-      expect(await inherited([executable], directory)).toEqual(expected);
-    },
-    120_000,
+  test.concurrent(
+    "leaves the request as the launcher made it",
+    () =>
+      slot(async () => {
+        const directory = folderOfState();
+        expect(await inherited([await builtState(), join(directory, "twice.c")], directory)).toEqual(restricted);
+      }),
+    queueTimeout,
   );
 
-  test.each(sharedNames)(
+  test.concurrent(
+    "hands it on to an executable that it starts",
+    () =>
+      slot(async () => {
+        const directory = folderOfState();
+        const [parent, child] = await Promise.all([build(directory, "starts-another-executable"), builtState()]);
+        expect(await inherited([parent, child, join(directory, "twice.c")], directory)).toEqual(restricted);
+      }),
+    queueTimeout,
+  );
+
+  test.concurrent.each(["hello", "a-worker"])(
     "%s",
-    async name => {
-      using dir = tempDir("aot-mdwe-inherited", { "launcher.ts": launcher, "tsconfig.json": tsconfigWithTypesOfBun });
-      const directory = String(dir);
-      await Bun.write(join(directory, name + ".ts"), Bun.file(join(shared, name + ".ts")));
-      const executable = await build(directory, name);
-      const expected = await free([executable], directory);
-      expect(expected).toEqual({ stdout: expect.stringMatching(/./), stderr: "", exitCode: 0, signal: null });
-      expect(await inherited([executable], directory)).toEqual(expected);
-    },
-    120_000,
+    name =>
+      slot(async () => {
+        using dir = tempDir("aot-mdwe-inherited", { "launcher.ts": launcher, [name + ".ts"]: own[name] });
+        await printsTheSameBothWays(String(dir), name);
+      }),
+    queueTimeout,
+  );
+
+  test.concurrent.each(sharedNames)(
+    "%s",
+    name =>
+      slot(async () => {
+        using dir = tempDir("aot-mdwe-inherited", { "launcher.ts": launcher, "tsconfig.json": tsconfigWithTypesOfBun });
+        const directory = String(dir);
+        await Bun.write(join(directory, name + ".ts"), Bun.file(join(shared, name + ".ts")));
+        await printsTheSameBothWays(directory, name);
+      }),
+    queueTimeout,
   );
 });

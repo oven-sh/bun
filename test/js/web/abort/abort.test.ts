@@ -103,7 +103,6 @@ describe("AbortSignal", () => {
   function fmt(value: any) {
     const res = {};
     for (const key in value) {
-      if (key === "column" || key === "line" || key === "sourceURL") continue;
       res[key] = value[key];
     }
     return res;

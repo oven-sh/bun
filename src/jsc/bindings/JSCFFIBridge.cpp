@@ -192,3 +192,12 @@ extern "C" uint64_t Bun__FFI__jsValueToSlotSlow(JSC::JSGlobalObject* globalObjec
 }
 
 #endif // defined(BUN_DISABLE_FFI)
+
+extern "C" void Bun__FFI__throwIfDisabled(JSC::JSGlobalObject* globalObject)
+{
+#if defined(BUN_DISABLE_FFI)
+    throwBuiltWithoutFFI(globalObject);
+#else
+    UNUSED_PARAM(globalObject);
+#endif
+}

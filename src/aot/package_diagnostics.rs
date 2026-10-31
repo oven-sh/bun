@@ -38,9 +38,14 @@ pub(crate) fn report_package_errors(
     let files = view.files();
     let mut groups: BTreeMap<GroupKey<'_>, Group> = BTreeMap::new();
     let mut remaining = Vec::with_capacity(checked.len());
-    for reported in checked {
+    let mut tested_files: Vec<FileId> = Vec::new();
+    for mut reported in checked {
         if withdraws_trust_in_runtime_file(view, &reported) {
             continue;
+        }
+        if let Some(file) = tested_file_without_trust(view, &reported) {
+            tested_files.push(file);
+            reported.effect = Effect::Warns;
         }
         let Some(key) = group_key(files, &reported) else {
             remaining.push(reported);
@@ -55,6 +60,13 @@ pub(crate) fn report_package_errors(
                 });
             }
         }
+    }
+    tested_files.sort_unstable();
+    tested_files.dedup();
+    if !tested_files.is_empty() {
+        let count = tested_files.len().to_string();
+        let code = Code::TestedFilesCompiledWithoutTypes;
+        diagnostics.add(None, Diagnostic::new(code, None, &[count.as_bytes()]));
     }
     let counts = count_package_files(files, roles, &groups);
     let has_withdrawn_trust = !groups.is_empty();
@@ -80,6 +92,15 @@ fn withdraws_trust_in_runtime_file(view: ProgramView<'_, '_>, reported: &BuildDi
     let is_runtime_file = |file| view.origin(file) == FileOrigin::Runtime;
     let file = reported.diagnostic.file;
     reported.effect == Effect::WithdrawsTrust && file.is_some_and(is_runtime_file)
+}
+
+fn tested_file_without_trust(
+    view: ProgramView<'_, '_>,
+    reported: &BuildDiagnostic,
+) -> Option<FileId> {
+    let file = reported.diagnostic.file?;
+    let is_tested = view.origin(file) == FileOrigin::TestedSource;
+    (is_tested && reported.effect == Effect::WithdrawsTrust).then_some(file)
 }
 
 fn group_key<'s>(files: &Files<'s>, reported: &BuildDiagnostic) -> Option<GroupKey<'s>> {

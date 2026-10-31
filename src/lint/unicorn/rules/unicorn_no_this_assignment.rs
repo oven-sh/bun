@@ -4,7 +4,7 @@ use bun_lint::rule::Plugin;
 /// Disallow assigning `this` to a variable.
 pub struct NoThisAssignment;
 
-const NO_THIS_ASSIGNMENT: Message = Message::new("", "Do not assign `this` to `{{ident_name}}`");
+const NO_THIS_ASSIGNMENT: &Message = &Message::new("", "Do not assign `this` to `{{ident_name}}`");
 
 impl Rule for NoThisAssignment {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-this-assignment", Kind::Suggestion);

@@ -9,8 +9,8 @@ pub struct PreferFunctionComponent {
     allow_jsx_utility_class: bool,
 }
 
-const PREFER_FUNCTION_COMPONENT: Message =
-    Message::new("", "Class component should be written as a function component.");
+const PREFER_FUNCTION_COMPONENT: &Message =
+    &Message::new("", "Class component should be written as a function component.");
 
 pub struct State<'a> {
     /// `None` if `allowJsxUtilityClass` is set, because it isn't needed then.

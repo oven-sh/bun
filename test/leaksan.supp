@@ -69,7 +69,7 @@ leak:functionRunProfiler
 leak:JSC::JSModuleLoader::evaluateNonVirtual
 # Under --aot it serves the default export of an entry point, which plain Bun does from the evaluation of its entry
 # wrapper (the line above). NewServer::init makes a pool of request contexts once a thread, which a Worker's end does not free.
-leak:Zig::startServerFromNamespace
+leak:Bun::startServerFromNamespace
 leak:patch.patch.PatchFile.apply
 leak:jsc.ModuleLoader.RuntimeTranspilerStore.TranspilerJob.runFromJSThread
 leak:runtime.webcore.blob.Store.initS3WithReferencedCredentials

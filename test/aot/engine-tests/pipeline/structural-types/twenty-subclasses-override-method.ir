@@ -1133,7 +1133,7 @@ function f111 module=m0 role=Signature thisType={type=anything} results=[{type=a
 function f112 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f94]
 function f113 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f94]
 function f114 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f94]
-function f115 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f115 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     v1 = HasJSType v0 first=5 last=5
     v2 = ToBoolean v1
@@ -1149,7 +1149,7 @@ function f115 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsC
   b2(v10):
     Unreachable
 }
-runtimefunction id=69 function=f115
+runtimefunction id=ArrayIteratorPrototypeNext function=f115
 # -- generated: soundOf chorus Animal twice f47
 # CHECK-LABEL: function {{*}}name="soundOf"
 # CHECK: module=m0 position=2319 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20 site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -1161,7 +1161,7 @@ runtimefunction id=69 function=f115
 # CHECK-NEXT: v4: f48 = GetSlot v1, v3 key="sound" receivers=[L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13, L14, L15, L16, L17, L18, L19, L20] level=Expected accessSite=44
 # CHECK-NEXT: Jump -> next b3(v4)
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v5: anything = SuperGet v1, v1 key="sound"
+# CHECK-NEXT: v5: anything = SuperGet v1, v1 key="sound" accessSite=44
 # CHECK-NEXT: v6: undefined|f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f46|f47|f48 = AssumeType v5 provenType=undefined|f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f46|f47|f48
 # CHECK-NEXT: Jump -> next b3(v6)
 # CHECK-NEXT: b3(v7: undefined|f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f46|f47|f48 ~ f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f48):
@@ -1192,49 +1192,50 @@ runtimefunction id=69 function=f115
 # CHECK-NEXT: v15: f48 = GetSlot v10, v14 key="sound" receivers=[L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13, L14, L15, L16, L17, L18, L19, L20] level=Expected accessSite=46
 # CHECK-NEXT: Jump -> next b10(v15, v12, v10)
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v16: anything = SuperGet v10, v10 key="sound"
+# CHECK-NEXT: v16: anything = SuperGet v10, v10 key="sound" accessSite=46
 # CHECK-NEXT: v17: undefined|f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f46|f47|f48 = AssumeType v16 provenType=undefined|f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f46|f47|f48
 # CHECK-NEXT: Jump -> next b10(v17, v12, v10)
 # CHECK-NEXT: b6() frequency=Rare:
 # CHECK-NEXT: v18: undefined|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20 = GetArrayElement v0, v7 arrayStorage=Contiguous level=Proven [keyIsIntegral]
 # CHECK-NEXT: v19: 1 = Integer integer=1
 # CHECK-NEXT: v20: int[1, 4294967295] = Add v7, v19
-# CHECK-NEXT: v21: L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20 = RequireObjectCoercible v18 name="sound"
-# CHECK-NEXT: v22: boolean = IsSlotFilled v21 key="sound" receivers=[L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13, L14, L15, L16, L17, L18, L19, L20] level=Expected
-# CHECK-NEXT: Branch v22 -> taken b7(| 0), notTaken b8()
-# CHECK-NEXT: b7(v23: guard) frequency=Rare:
-# CHECK-NEXT: v24: f48 = GetSlot v21, v23 key="sound" receivers=[L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13, L14, L15, L16, L17, L18, L19, L20] level=Expected accessSite=46
-# CHECK-NEXT: Jump -> next b9(v24)
+# CHECK-NEXT: v21: fact = Specified
+# CHECK-NEXT: v22: L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20 = AssumeType v18, v21 provenType=L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20
+# CHECK-NEXT: v23: boolean = IsSlotFilled v22 key="sound" receivers=[L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13, L14, L15, L16, L17, L18, L19, L20] level=Expected
+# CHECK-NEXT: Branch v23 -> taken b7(| 0), notTaken b8()
+# CHECK-NEXT: b7(v24: guard) frequency=Rare:
+# CHECK-NEXT: v25: f48 = GetSlot v22, v24 key="sound" receivers=[L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13, L14, L15, L16, L17, L18, L19, L20] level=Expected accessSite=46
+# CHECK-NEXT: Jump -> next b9(v25)
 # CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v25: anything = SuperGet v21, v21 key="sound"
-# CHECK-NEXT: v26: anything ~ f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f48 = Upcast v25 castType=anything
-# CHECK-NEXT: v27: boolean ~ true = TypeTest v26 testedType=f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f48
-# CHECK-NEXT: Branch v27 -> taken b9(| 0), notTaken b11()
-# CHECK-NEXT: b9(v28: f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f48) frequency=Rare:
-# CHECK-NEXT: Jump -> next b10(v28, v20, v21)
-# CHECK-NEXT: b10(v29: undefined|f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f46|f47|f48 ~ f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f48, v30: int[1, 4294967295], v31: L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20):
-# CHECK-NEXT: v32: anything = Call v29, v31 calleeKey="sound" calleeName="a.sound" accessSite=47 callees=[f7, f9, f11, f13, f15, f17, f19, f21, f23, f25, f27, f29, f31, f33, f35, f37, f39, f41, f43, f45, f46, f47, f48]
-# CHECK-NEXT: Jump -> next b12(v30, v32)
+# CHECK-NEXT: v26: anything = SuperGet v22, v22 key="sound" accessSite=46
+# CHECK-NEXT: v27: anything ~ f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f48 = Upcast v26 castType=anything
+# CHECK-NEXT: v28: boolean ~ true = TypeTest v27 testedType=f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f48
+# CHECK-NEXT: Branch v28 -> taken b9(| 0), notTaken b11()
+# CHECK-NEXT: b9(v29: f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f48) frequency=Rare:
+# CHECK-NEXT: Jump -> next b10(v29, v20, v22)
+# CHECK-NEXT: b10(v30: undefined|f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f46|f47|f48 ~ f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f48, v31: int[1, 4294967295], v32: L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20):
+# CHECK-NEXT: v33: anything = Call v30, v32 calleeKey="sound" calleeName="a.sound" accessSite=47 callees=[f7, f9, f11, f13, f15, f17, f19, f21, f23, f25, f27, f29, f31, f33, f35, f37, f39, f41, f43, f45, f46, f47, f48]
+# CHECK-NEXT: Jump -> next b12(v31, v33)
 # CHECK-NEXT: b11() frequency=Rare:
-# CHECK-NEXT: v33: fact = Specified
-# CHECK-NEXT: v34: undefined|f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f46|f47|f48 ~ f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f48 = AssumeType v26, v33 provenType=undefined|f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f46|f47|f48
-# CHECK-NEXT: v35: anything = Call v34, v21 calleeKey="sound" calleeName="a.sound" accessSite=47 callees=[f7, f9, f11, f13, f15, f17, f19, f21, f23, f25, f27, f29, f31, f33, f35, f37, f39, f41, f43, f45, f46, f47, f48]
-# CHECK-NEXT: Jump -> next b12(v20, v35)
-# CHECK-NEXT: b12(v36: int[1, 4294967295], v37: anything):
-# CHECK-NEXT: v38: string = AssumeType v37 provenType=string
-# CHECK-NEXT: v39: " " = String string=" "
-# CHECK-NEXT: StringBuilderAppend v2, v38, v39
-# CHECK-NEXT: Jump -> next b1(v36)
+# CHECK-NEXT: v34: fact = Specified
+# CHECK-NEXT: v35: undefined|f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f46|f47|f48 ~ f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f48 = AssumeType v27, v34 provenType=undefined|f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f46|f47|f48
+# CHECK-NEXT: v36: anything = Call v35, v22 calleeKey="sound" calleeName="a.sound" accessSite=47 callees=[f7, f9, f11, f13, f15, f17, f19, f21, f23, f25, f27, f29, f31, f33, f35, f37, f39, f41, f43, f45, f46, f47, f48]
+# CHECK-NEXT: Jump -> next b12(v20, v36)
+# CHECK-NEXT: b12(v37: int[1, 4294967295], v38: anything):
+# CHECK-NEXT: v39: string = AssumeType v38 provenType=string
+# CHECK-NEXT: v40: " " = String string=" "
+# CHECK-NEXT: StringBuilderAppend v2, v39, v40
+# CHECK-NEXT: Jump -> next b1(v37)
 # CHECK-NEXT: b13():
-# CHECK-NEXT: v41: string = StringBuilderFinish v2
-# CHECK-NEXT: Return v41
+# CHECK-NEXT: v42: string = StringBuilderFinish v2
+# CHECK-NEXT: Return v42
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Animal"
 # CHECK: module=m0 position=79 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20 flags=[IsFromCompiler]}] functionTypes=[f94] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f49 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f6|f8|f10|f12|f14|f16|f18|f20|f22|f24|f26|f28|f30|f32|f34|f36|f38|f40|f42|f44 = AssumeType v0 provenType=f6|f8|f10|f12|f14|f16|f18|f20|f22|f24|f26|f28|f30|f32|f34|f36|f38|f40|f42|f44
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L0
-# CHECK-NEXT: v3: object ~ L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20 = NewObject v2 layout=L0 allocationSite=47 allocationClass=0
+# CHECK-NEXT: v3: object ~ L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20 = NewObject v2 layout=L0 allocationSite=47 allocationClass=0
 # CHECK-NEXT: v4: L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20 = AssumeType v3 provenType=L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20
 # CHECK-NEXT: v5: 1 = Integer integer=1
 # CHECK-NEXT: PutSlot v4, -, v5 key="weight" receivers=[L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13, L14, L15, L16, L17, L18, L19, L20] level=Proven accessSite=127
@@ -1249,7 +1250,7 @@ runtimefunction id=69 function=f115
 # CHECK-NEXT: v3: f48 = GetSlot v0, v2 key="sound" receivers=[L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13, L14, L15, L16, L17, L18, L19, L20] level=Expected accessSite=62
 # CHECK-NEXT: Jump -> next b3(v3)
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v4: anything = SuperGet v0, v0 key="sound"
+# CHECK-NEXT: v4: anything = SuperGet v0, v0 key="sound" accessSite=62
 # CHECK-NEXT: v5: undefined|f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f46|f47|f48 = AssumeType v4 provenType=undefined|f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f46|f47|f48
 # CHECK-NEXT: Jump -> next b3(v5)
 # CHECK-NEXT: b3(v6: undefined|f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f46|f47|f48 ~ f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f48):
@@ -1261,7 +1262,7 @@ runtimefunction id=69 function=f115
 # CHECK-NEXT: v11: f48 = GetSlot v0, v10 key="sound" receivers=[L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13, L14, L15, L16, L17, L18, L19, L20] level=Expected accessSite=64
 # CHECK-NEXT: Jump -> next b6(v11)
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v12: anything = SuperGet v0, v0 key="sound"
+# CHECK-NEXT: v12: anything = SuperGet v0, v0 key="sound" accessSite=64
 # CHECK-NEXT: v13: undefined|f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f46|f47|f48 = AssumeType v12 provenType=undefined|f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f46|f47|f48
 # CHECK-NEXT: Jump -> next b6(v13)
 # CHECK-NEXT: b6(v14: undefined|f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f46|f47|f48 ~ f7|f9|f11|f13|f15|f17|f19|f21|f23|f25|f27|f29|f31|f33|f35|f37|f39|f41|f43|f45|f48):

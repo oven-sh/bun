@@ -12,7 +12,7 @@ function row(label, f) {
   } catch (error) {
     said = "threw " + error.constructor.name + " in the program";
   }
-  if (typeof said === "string" && said.startsWith("threw ")) said = said.replace(/:.*/, "");
+  if (typeof said === "string" && said.startsWith("threw ")) said = said.replace(/:.*/s, "");
   console.log(String(++at).padStart(3) + " HIDDEN " + label + ": " + JSON.stringify(said) + " | after: " + JSON.stringify(look()) + " | before: " + before);
 }
 class Point {

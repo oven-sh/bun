@@ -1,7 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow } from "harness";
 
 import crypto from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { PassThrough, Readable } from "node:stream";
 import util from "node:util";
 import vm from "node:vm";
@@ -795,11 +797,19 @@ describe("DiffieHellman", () => {
     expect(Object.getPrototypeOf(alice)).toBe(MyDH.prototype);
     expect(alice).toBeInstanceOf(crypto.DiffieHellman);
 
-    expect(alice.verifyError).toBe(bob.verifyError);
+    expect(alice.verifyError).toBe(crypto.createDiffieHellman(bob.getPrime(), bob.getGenerator()).verifyError);
     alice.generateKeys();
     bob.generateKeys();
     expect(alice.publicKeyHex()).toBe(alice.getPublicKey("hex"));
     expect(alice.computeSecret(bob.getPublicKey())).toEqual(bob.computeSecret(alice.getPublicKey()));
+  });
+
+  it("getDiffieHellman does not check the built-in groups", () => {
+    expect(
+      ["modp5", "modp14", "modp15", "modp16", "modp17", "modp18"].map(
+        name => crypto.getDiffieHellman(name).verifyError,
+      ),
+    ).toEqual([0, 0, 0, 0, 0, 0]);
   });
 });
 
@@ -1107,11 +1117,7 @@ it("verifyError should not be on the prototype of DiffieHellman and DiffieHellma
   const dhg = crypto.createDiffieHellmanGroup("modp5");
   expect("verifyError" in crypto.DiffieHellmanGroup.prototype).toBeFalse();
   expect("verifyError" in dhg).toBeTrue();
-
-  // boringssl seems to set DH_NOT_SUITABLE_GENERATOR for both
-  // DH_GENERATOR_2 and DH_GENERATOR_5 if not using
-  // DH_generate_parameters_ex
-  expect(dhg.verifyError).toBe(8);
+  expect(dhg.verifyError).toBe(0);
 });
 it("cipher.setAAD should not throw if encoding or plaintextLength is undefined #18700", () => {
   const key = crypto.randomBytes(32);
@@ -1220,6 +1226,46 @@ it("a 2 GiB buffer argument throws ERR_OUT_OF_RANGE", async () => {
     });
   }
   expect(exitCode).toBe(0);
+});
+
+it.concurrent("generatePrime({ safe: true }) refuses the sizes without a reachable safe prime", async () => {
+  // The search did not end for 4 and 5 bits, so this runs in a process the test can give up on.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { generatePrime, generatePrimeSync } = require("node:crypto");
+      const options = { safe: true, bigint: true };
+      const sizes = [2, 3, 4, 5, 6];
+      const sync = sizes.map(size => {
+        try {
+          return Number(generatePrimeSync(size, options));
+        } catch (e) {
+          return e.code;
+        }
+      });
+      Promise.all(
+        sizes.map(
+          size =>
+            new Promise(resolve => generatePrime(size, options, (err, prime) => resolve(err ? err.code : Number(prime)))),
+        ),
+      ).then(async => console.log(JSON.stringify({ sync, async })));
+    `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const refused = "ERR_OSSL_BN_BITS_TOO_SMALL";
+  const expected = [refused, 7, refused, refused, 59];
+  expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: JSON.stringify({ sync: expected, async: expected }),
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
 });
 
 it("generatePrime(Sync) should return an ArrayBuffer", async () => {
@@ -1483,5 +1529,61 @@ describe("Certificate spkac argument validation", () => {
   it("Certificate.verifySpkac still returns false for a well-typed but invalid spkac", () => {
     expect(crypto.Certificate.verifySpkac(Buffer.from("not a spkac"))).toBe(false);
     expect(new crypto.Certificate().verifySpkac("not a spkac", "utf8")).toBe(false);
+  });
+
+  it("an empty spkac gives an empty string, from verifySpkac too", () => {
+    expect([
+      crypto.Certificate.verifySpkac(Buffer.alloc(0)),
+      crypto.Certificate.verifySpkac(""),
+      crypto.Certificate.exportPublicKey(""),
+      crypto.Certificate.exportChallenge(""),
+    ]).toEqual(["", "", "", ""]);
+  });
+
+  it("Certificate.exportPublicKey and exportChallenge return Buffers", () => {
+    const spkac = readFileSync(join(import.meta.dir, "..", "test", "fixtures", "keys", "rsa_spkac.spkac"));
+    const publicKey = crypto.Certificate.exportPublicKey(spkac);
+    expect(publicKey).toBeInstanceOf(Buffer);
+    expect(crypto.createPublicKey(publicKey).asymmetricKeyType).toBe("rsa");
+    expect(crypto.Certificate.exportChallenge(spkac)).toEqual(Buffer.from("this-is-a-challenge"));
+  });
+
+  it.concurrent("Certificate.exportChallenge frees the challenge", async () => {
+    // 12.5 MiB of challenges go through the measured part.
+    await expectRssDeltaBelow(
+      [
+        "-e",
+        `
+        const crypto = require("node:crypto");
+        const der = (tag, ...parts) => {
+          const body = Buffer.concat(parts);
+          const length =
+            body.length < 128 ? [body.length] : [0x83, body.length >> 16, (body.length >> 8) & 255, body.length & 255];
+          return Buffer.concat([Buffer.from([tag, ...length]), body]);
+        };
+        const spki = crypto
+          .generateKeyPairSync("ec", { namedCurve: "P-256" })
+          .publicKey.export({ type: "spki", format: "der" });
+        const ecdsaWithSha256 = Buffer.from("06082a8648ce3d040302", "hex");
+        const spkac = der(
+          0x30,
+          der(0x30, spki, der(0x16, Buffer.alloc(256 * 1024, "a"))),
+          der(0x30, ecdsaWithSha256),
+          der(0x03, Buffer.alloc(9)),
+        ).toString("base64");
+        const run = count => {
+          for (let i = 0; i < count; i++) {
+            if (crypto.Certificate.exportChallenge(spkac).length !== 256 * 1024) throw new Error("not parsed");
+            if (i % 10 === 9) Bun.gc(true);
+          }
+        };
+        run(10);
+        const before = process.memoryUsage.rss();
+        run(50);
+        console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+      `,
+      ],
+      { release: 6, debug: 8 },
+    );
   });
 });

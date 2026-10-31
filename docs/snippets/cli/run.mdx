@@ -81,6 +81,11 @@ bun run <file or script>
   Compile the program like <code>bun compile</code>, run it, and log every value that doesn't match its declared type
 </ParamField>
 
+<ParamField path="--aot-allow-code-from-disk" type="boolean">
+  With <code>--aot</code>: let <code>import()</code> and <code>require()</code> load code from disk that wasn't
+  compiled. The build takes longer
+</ParamField>
+
 <ParamField path="--expose-gc" type="boolean">
   Expose <code>gc()</code> on the global object. Has no effect on <code>Bun.gc()</code>
 </ParamField>

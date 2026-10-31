@@ -303,6 +303,10 @@ void discardBackEndOptionsOfEnvironment();
 }
 
 extern "C" [[noreturn]] void Bun__outOfMemory();
+#if OS(LINUX)
+// Declared in mimalloc's internal headers, and compiled as C++ here. mimalloc reads vm.overcommit_memory when it starts.
+bool _mi_os_has_overcommit(void);
+#endif
 extern "C" void* Bun__getVM();
 extern "C" void WebWorker__endForExhaustedHeap(void* bunVM);
 
@@ -374,6 +378,9 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::machExceptionHandlerSandboxPolicy = JSC::Options::SandboxPolicy::Allow;
 #endif
         JSC::MarkedBlockCage::setExhaustionHandler(Bun__outOfMemory);
+#if OS(LINUX)
+        JSC::MarkedBlockCage::setCommitsOnDemand(!_mi_os_has_overcommit());
+#endif
         JSC::MarkedBlockCage::setLastReserveHandler([](JSC::VM&) { WebWorker__endForExhaustedHeap(Bun__getVM()); });
         JSC::initialize([&] {
 #if defined(BUN_DISABLE_WEBASSEMBLY)
@@ -641,6 +648,13 @@ extern "C" size_t Bun__reported_memory_size;
 // executionContextId: maxInt32 for macros
 // executionContextId: >-1 for workers
 extern "C" bool Bun__hasStandaloneModuleGraph();
+
+NEVER_INLINE Zig::GlobalObject* defaultGlobalObjectSlow(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    if (auto* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject))
+        return globalObject;
+    return defaultGlobalObject();
+}
 
 Zig::GlobalObject* defaultGlobalObject(JSC::VM& vm)
 {
@@ -975,6 +989,12 @@ static JSC::JSModuleLoader* moduleLoaderOfRequirer(JSC::JSGlobalObject* globalOb
     return globalObject->moduleLoader();
 }
 
+// The files of a compiled program are modules of the realm. A Bun.ModuleGraph has modules of its own, and its require.cache shows those alone.
+static bool seesCompiledModules(JSC::JSGlobalObject* globalObject, JSValue requirer)
+{
+    return Bun::hasCompiledModules() && moduleLoaderOfRequirer(globalObject, requirer) == globalObject->moduleLoader();
+}
+
 // A key that is not an atom already names no module, and does not become one.
 static JSC::AbstractModuleRecord* evaluatedModuleRecord(JSC::JSGlobalObject* globalObject, JSValue keyValue, JSValue requirer)
 {
@@ -998,6 +1018,13 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmNamespaceForCjs, (JSC::JSGlobalObject * glob
     RETURN_IF_EXCEPTION(scope, {});
     if (!record)
         return JSValue::encode(jsUndefined());
+    if (Bun::isRecordOfCompiledModule(record)) [[unlikely]] {
+        WTF::String key = asString(callFrame->argument(0))->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue compiled = Bun::loadCompiledModuleNamespace(defaultGlobalObject(globalObject), key);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(compiled ? compiled : jsUndefined());
+    }
     auto* ns = record->getModuleNamespace(globalObject, false);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(ns);
@@ -1009,6 +1036,11 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryHasEvaluated, (JSC::JSGlobalObject *
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* record = evaluatedModuleRecord(globalObject, callFrame->argument(0), callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
+    if (!record && callFrame->argument(0).isString() && seesCompiledModules(globalObject, callFrame->argument(1))) {
+        WTF::String key = asString(callFrame->argument(0))->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(jsBoolean(Bun::isEvaluatedCompiledFile(defaultGlobalObject(globalObject), key)));
+    }
     return JSValue::encode(jsBoolean(!!record));
 }
 
@@ -1037,7 +1069,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRequireCacheWillSet, (JSC::JSGlobalObject * glo
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue keyValue = callFrame->argument(0);
-    if (!Bun::hasCompiledModules() || !keyValue.isString() || moduleLoaderOfRequirer(globalObject, callFrame->argument(2)) != globalObject->moduleLoader())
+    if (!keyValue.isString() || !seesCompiledModules(globalObject, callFrame->argument(2)))
         return JSValue::encode(jsUndefined());
     WTF::String key = asString(keyValue)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1046,9 +1078,44 @@ JSC_DEFINE_HOST_FUNCTION(functionRequireCacheWillSet, (JSC::JSGlobalObject * glo
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionRequireCacheDidDelete, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    JSValue keyValue = callFrame->argument(0);
+    if (!keyValue.isString() || !seesCompiledModules(globalObject, callFrame->argument(1)))
+        return JSValue::encode(jsUndefined());
+    WTF::String key = asString(keyValue)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    Bun::didDeleteRequireCacheEntry(uncheckedDowncast<Zig::GlobalObject>(globalObject), key);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
+// Without an argument: whether the cache lists modules of the compiled program at all.
+// With a third: whether a require() has put the built-in module there. No entry is made.
+JSC_DEFINE_HOST_FUNCTION(functionRequireCacheCompiledEntry, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    if (!callFrame->argumentCount())
+        return JSValue::encode(jsBoolean(Bun::hasCompiledModules()));
+    JSValue keyValue = callFrame->uncheckedArgument(0);
+    if (!keyValue.isString() || !seesCompiledModules(globalObject, callFrame->argument(1)))
+        return JSValue::encode(jsUndefined());
+    WTF::String key = asString(keyValue)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (callFrame->argument(2).isTrue())
+        return JSValue::encode(jsBoolean(Bun::isLibraryModuleInRequireCache(defaultGlobalObject(globalObject), key)));
+    JSValue entry = Bun::compiledRequireCacheEntry(defaultGlobalObject(globalObject), key);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(entry ? entry : jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionIsHiddenFromRequireCache, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     if (!Bun::hasCompiledModules()) [[likely]]
+        return JSValue::encode(jsBoolean(false));
+    // A file can come back from the disk there: the cache shows it, as plain's does.
+    if (Bun::requireCacheListsCompiledFiles(defaultGlobalObject(globalObject)))
         return JSValue::encode(jsBoolean(false));
     if (!callFrame->argumentCount())
         return JSValue::encode(jsBoolean(true));
@@ -1058,7 +1125,7 @@ JSC_DEFINE_HOST_FUNCTION(functionIsHiddenFromRequireCache, (JSC::JSGlobalObject 
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     WTF::String key = asString(keyValue)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsBoolean(Bun::isCompiledModule(key)));
+    return JSValue::encode(jsBoolean(Bun::isHiddenFromRequireCache(key)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -1066,10 +1133,20 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::MarkedArgumentBuffer keys;
+    HashSet<String> seen;
+    auto add = [&](const String& key) {
+        if (seen.add(key).isNewEntry)
+            keys.append(jsString(vm, key));
+    };
     if (auto* loader = moduleLoaderOfRequirer(globalObject, callFrame->argument(0))) {
         Bun::forEachModuleRegistrySpecifier(loader, [&](UniquedStringImpl* specifier, JSC::ModuleRegistryEntry* entry) {
             if (isModuleEvaluated(entry->record()))
-                keys.append(jsString(vm, String { specifier }));
+                add(String { specifier });
+        });
+    }
+    if (seesCompiledModules(globalObject, callFrame->argument(0))) {
+        Bun::forEachEvaluatedCompiledFile(defaultGlobalObject(globalObject), [&](const String& path) {
+            add(path);
         });
     }
     if (keys.hasOverflowed()) [[unlikely]] {
@@ -1105,6 +1182,9 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     if (auto* entry = loader->registryEntry(key)) {
         entryExistedBefore = true;
         if (isModuleEvaluated(entry->record()) || isModuleEvaluatingSync(entry->record())) {
+            // A mock answers for a module of native code that compiled code has imported: the entry is the image's, and so is its namespace object.
+            if (Bun::isRecordOfCompiledModule(entry->record())) [[unlikely]]
+                RELEASE_AND_RETURN(scope, JSValue::encode(entry->record()->moduleNamespaceObject(globalObject)));
             auto* ns = entry->record()->getModuleNamespace(globalObject, false);
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(ns);
@@ -1180,6 +1260,8 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
         }
     }
 
+    if (Bun::isRecordOfCompiledModule(record)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, JSValue::encode(record->moduleNamespaceObject(globalObject)));
     auto* ns = record->getModuleNamespace(globalObject, false);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(ns);
@@ -1222,10 +1304,14 @@ JSGlobalObject* GlobalObject::deriveShadowRealmGlobalObject(JSGlobalObject* glob
     // concurrent marker from walking the new global while finishCreation/init
     // is still populating it.
     JSC::DeferGC deferGC(vm);
+    const JSC::GlobalObjectMethodTable* methodTable = &Zig::GlobalObject::globalObjectMethodTable();
+    if (vm.hasCompiledCode() && Bun::compiledProgramRunsInSeveralRealmsAtOnce()) [[unlikely]]
+        methodTable = globalObject->globalObjectMethodTable();
     Zig::GlobalObject* shadow = Zig::GlobalObject::create(
         vm,
         Zig::GlobalObject::createStructure(vm),
-        ScriptExecutionContext::generateIdentifier());
+        ScriptExecutionContext::generateIdentifier(),
+        methodTable);
     shadow->setConsole(shadow);
 
     return shadow;
@@ -1629,6 +1715,14 @@ JSC_DEFINE_HOST_FUNCTION(functionSetSelf,
     //   < 123
     //   > Object.getOwnPropertyDescriptor(globalThis, "self")
     //   < {value: 123, writable: true, enumerable: true, configurable: true}
+    // A compiled program whose build saw nothing that replaces `self` has locked the name, and putDirect() of a locked name does nothing and says nothing.
+    // The definition does the same to a name that is not locked, and throws what `globalThis.self = 123` throws for one that is.
+    if (Bun::hasCompiledModules()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        globalObject->methodTable()->defineOwnProperty(globalObject, globalObject, WebCore::builtinNames(vm).selfPublicName(), JSC::PropertyDescriptor(value, 0), true);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(value);
+    }
     globalObject->putDirect(vm, WebCore::builtinNames(vm).selfPublicName(), value, 0);
     return JSValue::encode(value);
 }
@@ -2652,7 +2746,10 @@ void GlobalObject::finishCreation(VM& vm)
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSS3FileStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              BUN_BEGIN_REMOVABLE_ENTRY_POINT(S3Client, Abort, void)
-             init.set(Bun::createJSS3FileStructure(init.vm, init.owner));
+             auto* structure = Bun::createJSS3FileStructure(init.vm, init.owner);
+             init.set(structure);
+             if (init.vm.hasCompiledCode()) [[unlikely]]
+                 JSC::AOT::hostDidCreateStructure(init.owner, structure);
              BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_S3ErrorStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
@@ -2881,7 +2978,11 @@ void GlobalObject::finishCreation(VM& vm)
              init.set(obj);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_bunObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
-             init.set(Bun::createBunObject(init.vm, init.owner));
+             JSObject* bunObject = Bun::createBunObject(init.vm, init.owner);
+             init.set(bunObject);
+             // As for `process` below: require("bun") comes to the object without the name.
+             if (init.vm.hasCompiledCode()) [[unlikely]]
+                 JSC::AOT::hostDidCreateObjectOfGlobal(init.owner, JSC::Identifier::fromString(init.vm, "Bun"_s).impl(), bunObject);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSBunRequestParamsPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              init.set(Bun::createJSBunRequestParamsPrototype(init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
@@ -3049,6 +3150,8 @@ void GlobalObject::finishCreation(VM& vm)
                 *globalObject, Bun::Process::createStructure(init.vm, init.owner, WebCore::JSEventEmitter::prototype(init.vm, *globalObject)));
 
             init.set(process);
+            // The global object adds its `process` at the first read of the name. A program may come to the object without it: import process from "node:process".
+            JSC::AOT::hostDidCreateObjectOfGlobal(init.owner, JSC::Identifier::fromString(init.vm, "process"_s).impl(), process);
         });
 
     m_streamsRuntime.initialize(this);
@@ -3090,6 +3193,11 @@ void GlobalObject::finishCreation(VM& vm)
 #endif
 
     ASSERT(classInfo());
+}
+
+void GlobalObject::didCreateDOMConstructor(JSC::JSObject* constructor)
+{
+    JSC::AOT::hostDidCreateConstructor(this, constructor);
 }
 
 void GlobalObject::didCreateDOMStructure(JSC::Structure* structure)
@@ -3374,6 +3482,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         { BuiltinName::k_esmRegistryHasEvaluated, 2, functionEsmRegistryHasEvaluated },
         { BuiltinName::k_requireCacheWillSet, 3, functionRequireCacheWillSet },
         { BuiltinName::k_isHiddenFromRequireCache, 1, functionIsHiddenFromRequireCache },
+        { BuiltinName::k_requireCacheDidDelete, 2, functionRequireCacheDidDelete },
+        { BuiltinName::k_requireCacheCompiledEntry, 2, functionRequireCacheCompiledEntry },
         { BuiltinName::k_esmLoadSync, 2, functionEsmLoadSync },
         { BuiltinName::k_makeErrorWithCode, 2, jsFunctionMakeErrorWithCode },
         { BuiltinName::k_toClass, 1, jsFunctionToClass },
@@ -4092,6 +4202,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         Bun::willRequire(globalObject, moduleNameValue, JSC::AOT::LoadByName::Import);
         if (scope.exception()) [[unlikely]]
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+        JSC::AOT::AskerOfModule asker(globalObject, sourceOriginStringHolder);
         JSC::JSPromise* imported = Bun::importCompiledModule(globalObject, key.string(), parameters.get(), referrerAsyncOrder);
         if (scope.exception()) [[unlikely]]
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
@@ -4125,7 +4236,7 @@ static JSC::JSPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject
 }
 
 JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
-    JSModuleLoader* loader, JSValue key, const WTF::String&,
+    JSModuleLoader* loader, JSValue key, const WTF::String& referrer,
     RefPtr<JSC::ScriptFetchParameters> parameters, RefPtr<JSC::ScriptFetcher>)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -4146,7 +4257,8 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     if (Bun::hasCompiledModules() && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
         // The loader keeps parameters of the type alone for an import() without attributes, and fetches with them where a require() takes over a load in flight.
         bool hasImportAttributes = parameters && (parameters->type() != ScriptFetchParameters::Type::JavaScript || !parameters->attributes().isEmpty());
-        JSC::JSPromise* compiled = Bun::compiledModuleSource(static_cast<Zig::GlobalObject*>(globalObject), moduleKey, hasImportAttributes);
+        JSC::AOT::AskerOfModule asker(globalObject, referrer);
+        JSC::JSPromise* compiled = Bun::compiledModuleSource(static_cast<Zig::GlobalObject*>(globalObject), moduleKey, hasImportAttributes ? parameters.get() : nullptr);
         if (scope.exception()) [[unlikely]] {
             JSPromise* rejected = JSPromise::create(vm, globalObject->promiseStructure());
             rejected->markAsHandled();

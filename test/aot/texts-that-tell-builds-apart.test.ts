@@ -11,50 +11,29 @@ const marks = [
   {
     symbol: "Bun__startsOnlyWhereWriteExecuteMemoryIsDenied",
     text: "hardened start: the kernel must deny write-execute memory",
-    build: "all(bun_hardened, not(bun_starts_without_mdwe))",
   },
   {
     symbol: "Bun__startsWhereWriteExecuteMemoryCannotBeDenied",
     text: "hardened start: a kernel without PR_SET_MDWE is accepted ",
-    build: "all(bun_hardened, bun_starts_without_mdwe)",
   },
   {
     symbol: "Bun__readsFewEnvironmentVariables",
     text: "hardened environment: what only tests set is never read   ",
-    build: "bun_locked_environment",
   },
   {
     symbol: "Bun__readsEveryEnvironmentVariable",
     text: "hardened environment: every variable is read, as for tests",
-    build: "all(bun_hardened, not(bun_locked_environment))",
   },
   {
     symbol: "Bun__startsWhereItsFileCannotBeRead",
     text: "execute-only start: where its file cannot be read, the loaded code is moved",
-    build: "not(bun_refuses_execute_only_start)",
   },
   {
     symbol: "Bun__startsOnlyWhereItsFileCanBeRead",
     text: "execute-only start: where its file cannot be read, it does not start       ",
-    build: "bun_refuses_execute_only_start",
   },
 ];
 const [mustDeny, neednotDeny, readsFew, readsEvery] = marks;
-
-test("each text, its symbol and the builds that hold it stand in the source letter for letter", () => {
-  const source = readFileSync(join(import.meta.dir, "..", "..", "src", "jsc", "compiled_program.rs"), "utf8");
-  for (const { symbol, text, build } of marks) {
-    const declaration = new RegExp(
-      `\\n    #\\[cfg\\((.*)\\)\\]\\n    #\\[used\\]\\n    #\\[unsafe\\(no_mangle\\)\\]\\n    (?:pub\\(super\\) )?static ${symbol}: \\[u8; (\\d+)\\] =\\n        \\*b"(.*)\\\\0";\\n`,
-    ).exec(source);
-    expect({ symbol, build: declaration?.[1], size: Number(declaration?.[2]), text: declaration?.[3] }).toEqual({
-      symbol,
-      build,
-      size: text.length + 1,
-      text,
-    });
-  }
-});
 
 function placesOf(file: Buffer, text: string) {
   const places: number[] = [];

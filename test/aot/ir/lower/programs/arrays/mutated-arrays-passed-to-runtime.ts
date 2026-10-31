@@ -162,7 +162,7 @@ rmSync(file, { force: true });
 // CHECK-NEXT: Throw v26
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|[[L_1]] site=[[w_3]]}] thisType={type=anything} results=[{type=undefined|null|[[L_1]] site=[[w_23]]}] functionTypes={{*}}[[f_24]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|[[L_1]] site=[[w_3]] variableName="tail"}] thisType={type=anything} results=[{type=undefined|null|[[L_1]] site=[[w_23]]}] functionTypes={{*}}[[f_24]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

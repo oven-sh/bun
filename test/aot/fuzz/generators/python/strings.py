@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""strings.py <seed>: random strict TypeScript programs about strings: slice | substring | substr | at | charAt | charCodeAt | codePointAt | indexOf | lastIndexOf | includes | startsWith | endsWith |
-padStart | padEnd | repeat | split | concat with positions that are negative, fractions, NaN, -0, infinite, past the end, in the wrong order, left out; on 8-bit and 16-bit text, ropes, parts of parts, the empty string, one character, long text;
-and numbers turned into text: integers an analysis can show, doubles that hold integers, -0, the ends of int32 | uint32 | 2^53, exponents, fractions, by `"" + n`, String(n), template strings, toString(radix), toFixed, join; comparisons and equality of what comes out."""
+"""strings.py <seed>: Random strict TypeScript programs about strings: slice, substring, substr, at, charAt, charCodeAt,
+codePointAt, indexOf, includes, startsWith, endsWith, padStart, padEnd, repeat, split, concat, replace, trim, case
+conversion ..
+"""
 import random, sys, os
 
 HEAD = r'''const G: any = globalThis;

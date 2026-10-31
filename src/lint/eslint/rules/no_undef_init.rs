@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Disallow initializing variables to `undefined`.
 pub struct NoUndefInit;
 
-const UNNECESSARY_UNDEFINED_INIT: Message = Message::new(
+const UNNECESSARY_UNDEFINED_INIT: &Message = &Message::new(
     "unnecessaryUndefinedInit",
     "It's not necessary to initialize '{{name}}' to undefined.",
 );

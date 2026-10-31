@@ -435,7 +435,7 @@ const programs: [string, string[], string[]][] = [
   ],
   [
     "performance-measure-and-its-listeners",
-    ["Performance.prototype.measure", "performance.now", "Performance.prototype.timeOrigin"],
+    ["Performance.prototype.measure", "Performance.prototype.now", "Performance.prototype.timeOrigin"],
     [
       'performance.mark("start");',
       'const measure = performance.measure("span", "start");',

@@ -65,8 +65,7 @@ public:
 protected:
     JSPerformance(JSC::Structure*, JSDOMGlobalObject&, Ref<Performance>&&);
 
-    void finishCreation(JSC::VM&);
-    // DECLARE_DEFAULT_FINISH_CREATION;
+    DECLARE_DEFAULT_FINISH_CREATION;
 };
 
 class JSPerformanceOwner final : public JSC::WeakHandleOwner {

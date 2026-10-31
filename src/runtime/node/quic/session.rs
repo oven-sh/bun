@@ -1865,36 +1865,38 @@ impl QuicSession {
     pub(crate) fn get_local_address(&self, cx: &mut JsScope<'_>) -> JSValue {
         self.local_addr.get().to_js_socket_address(cx.global())
     }
+    /// `None` without `options.code`, as Node: https://github.com/nodejs/node/blob/v26.3.0/src/quic/session.cc#L926
     fn parse_close_options(
-        &self,
         global: &JSGlobalObject,
         options: JSValue,
-    ) -> JsResult<(bool, u64, Vec<u8>)> {
-        let mut app = false;
-        let mut code = 0u64;
-        let mut reason = Vec::new();
-        if options.is_object() {
-            app = options
-                .get(global, "type")?
-                .map(|v| {
-                    bun_core::String::from_js(v, global)
-                        .map(|s| s.to_owned_slice() == b"application")
-                })
-                .transpose()?
-                .unwrap_or(false);
-            code = super::endpoint::read_u64_option(global, options, "code")?.unwrap_or(0);
-            reason = options
-                .get(global, "reason")?
-                .filter(|v| v.is_string())
-                .map(|v| bun_core::String::from_js(v, global).map(|s| s.to_owned_slice()))
-                .transpose()?
-                .unwrap_or_default();
-            self.self_close.with_mut(|s| {
-                *s = Some((app, code, reason.clone()));
-            });
+    ) -> JsResult<Option<(bool, u64, Vec<u8>)>> {
+        if !options.is_object() {
+            return Ok(None);
         }
+        let Some(code) = super::endpoint::read_u64_option(global, options, "code")? else {
+            return Ok(None);
+        };
+        let app = options
+            .get(global, "type")?
+            .map(|v| {
+                bun_core::String::from_js(v, global).map(|s| s.to_owned_slice() == b"application")
+            })
+            .transpose()?
+            .unwrap_or(false);
+        let mut reason = options
+            .get(global, "reason")?
+            .filter(|v| v.is_string())
+            .map(|v| bun_core::String::from_js(v, global).map(|s| s.to_owned_slice()))
+            .transpose()?
+            .unwrap_or_default();
         reason.push(0);
-        Ok((app, code, reason))
+        Ok(Some((app, code, reason)))
+    }
+
+    /// The close that `report_close` reports when the peer sent none.
+    fn record_self_close(&self, app: bool, code: u64, reason: &[u8]) {
+        let reason = reason.strip_suffix(&[0]).unwrap_or(reason).to_vec();
+        self.self_close.with_mut(|s| *s = Some((app, code, reason)));
     }
 
     fn apply_graceful_close(&self, app: bool, code: u64, reason: Vec<u8>) {
@@ -1936,19 +1938,18 @@ impl QuicSession {
     }
 
     fn apply_close(&self, app: bool, code: u64, reason: &[u8]) {
-        let Some(c) = self.conn() else { return };
         if app || code != 0 || reason.len() > 1 {
-            let creason = core::ffi::CStr::from_bytes_until_nul(reason).unwrap_or(c"close");
-            c.abort_error(app, code.min(u32::MAX as u64) as core::ffi::c_uint, creason);
-        } else {
+            self.apply_abort(app, code, reason);
+        } else if let Some(c) = self.conn() {
             c.close();
         }
     }
 
-    fn close_with_options(&self, global: &JSGlobalObject, options: JSValue) -> JsResult<()> {
-        let (app, code, reason) = self.parse_close_options(global, options)?;
-        self.apply_close(app, code, &reason);
-        Ok(())
+    /// Sends the CONNECTION_CLOSE on the next tick and drops what is queued.
+    fn apply_abort(&self, app: bool, code: u64, reason: &[u8]) {
+        let Some(c) = self.conn() else { return };
+        let creason = core::ffi::CStr::from_bytes_until_nul(reason).unwrap_or(c"close");
+        c.abort_error(app, code.min(u32::MAX as u64) as core::ffi::c_uint, creason);
     }
 
     /// True if lsquic has opened a stream. Like Node, pending streams don't delay a graceful close.
@@ -1993,7 +1994,9 @@ impl QuicSession {
             // Parse before the latch: a throw here must leave the session
             // untouched, not marked gracefully-closing with no close sent.
             // All three branches below want the same values.
-            let (app, code, reason) = self.parse_close_options(global, options.to_js())?;
+            let (app, code, reason) = Self::parse_close_options(global, options.to_js())?
+                .unwrap_or_else(|| (false, 0, vec![0]));
+            self.record_self_close(app, code, &reason);
             self.with_state(|s| s.graceful_close = 1);
             if self.conn.get().is_null() {
                 if self.is_server.get() && !self.close_reported.get() {
@@ -2024,30 +2027,31 @@ impl QuicSession {
         let mut parse_error = None;
         if !self.close_reported.get() && !self.conn.get().is_null() {
             let options = options.to_js();
-            if options.is_object() {
+            match Self::parse_close_options(global, options) {
                 // Node's Destroy with close options. JS has already latched
                 // `inner.destroying` and finished its half before reaching
                 // here, so teardown() MUST run; a parse failure is taken off
                 // the VM (teardown reaches JS) and re-thrown once it has. No
                 // close was applied then, so the engines are not driven.
-                match self.close_with_options(global, options) {
-                    Ok(()) => {
+                Err(err) => parse_error = Some(global.take_exception(err)),
+                Ok(Some((app, code, reason))) => {
+                    self.record_self_close(app, code, &reason);
+                    self.apply_abort(app, code, &reason);
+                    if let Some(endpoint) = self.endpoint_ref() {
+                        endpoint.drive_engines_once();
+                    }
+                }
+                Ok(None) => {
+                    // Node's server acks the packet that triggered the destroying callback.
+                    if self.conn().is_some_and(|c| c.ack_now()) {
                         if let Some(endpoint) = self.endpoint_ref() {
                             endpoint.drive_engines_once();
                         }
                     }
-                    Err(err) => parse_error = Some(global.take_exception(err)),
-                }
-            } else if let Some(c) = self.conn() {
-                // Node's server acks the packet that triggered the destroying
-                // callback.
-                c.ack_now();
-                if let Some(endpoint) = self.endpoint_ref() {
-                    endpoint.drive_engines_once();
-                }
-                if let Some(c) = self.conn() {
-                    // Node parity: Session::Destroy without close options.
-                    c.abort_silent();
+                    if let Some(c) = self.conn() {
+                        // Node parity: Session::Destroy without close options.
+                        c.abort_silent();
+                    }
                 }
             }
             self.schedule_process();

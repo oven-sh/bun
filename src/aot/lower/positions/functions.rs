@@ -77,6 +77,16 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         let layout = self.class_layout(class);
         let instance = self.fragment.types.intern(Type::layout(layout));
+        if self.queries.instances_carry_layout(class) == Ok(false) {
+            return match is_receiver_known {
+                true => DeclaredType::new(
+                    Mapped::expected(instance),
+                    None,
+                    PositionFlags::IS_FROM_COMPILER,
+                ),
+                false => expect_type(instance),
+            };
+        }
         match member {
             Some(member) if !is_receiver_known => {
                 let is_written_here = class.file == self.file && member.func.is_some();

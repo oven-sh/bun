@@ -2042,7 +2042,7 @@ setTimeout(() => process.exit(0), 50);
 // CHECK-NEXT: v4 = Absent
 // CHECK-NEXT: v5 = GetSuperBase v0
 // CHECK-NEXT: v6 = SuperConstruct v5, v1, v2 layout=[[L_3]]
-// CHECK-NEXT: v7 = Convert v6 declared={type=[[L_3]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v7 = Convert v6 declared={type=[[L_3]] flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: v8 = TypeTest v4 testedType=absent
 // CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b14(| 0)
 // CHECK-NEXT: b2(v9):

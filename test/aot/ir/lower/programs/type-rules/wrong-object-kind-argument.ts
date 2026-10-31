@@ -104,7 +104,7 @@ console.log(String(list(own)), String(list(new Heir())), typeof callback(x => x 
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_16]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_16]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_16]] flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="second"

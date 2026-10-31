@@ -1,5 +1,5 @@
 import type { BaseQueryHandle, Query } from "./query";
-import type { DatabaseAdapter, OnConnected } from "./shared";
+import type { DatabaseAdapter, OnConnected, PooledConnection } from "./shared";
 
 type BunSQLite = $BunModules["bun:sqlite"];
 type Database = InstanceType<BunSQLite["Database"]>;
@@ -124,7 +124,7 @@ interface SQLiteConnectionInfo {
   onclose?: (err: Error | null) => void;
 }
 
-class SQLiteAdapter extends SQLDialect implements DatabaseAdapter<Database, Database, SQLiteQueryHandle> {
+class SQLiteAdapter extends SQLDialect implements DatabaseAdapter<PooledConnection, Database, SQLiteQueryHandle> {
   public readonly connectionInfo: Bun.SQL.__internal.DefinedSQLiteOptions;
   public db: Database | null = null;
   public storedError: Error | null = null;
@@ -135,7 +135,7 @@ class SQLiteAdapter extends SQLDialect implements DatabaseAdapter<Database, Data
   readonly namedParameters = true;
   /// A begin() has the database, and the ones that came after it wait in order. Plain queries do not wait: they join.
   private inBegin: boolean = false;
-  private waitingBegins: OnConnected<Database>[] = [];
+  private waitingBegins: OnConnected<PooledConnection>[] = [];
   private closeHandlers: Set<(err: Error) => void> = new Set();
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedSQLiteOptions) {
@@ -181,7 +181,7 @@ class SQLiteAdapter extends SQLDialect implements DatabaseAdapter<Database, Data
     return new SQLiteError(message, { code: "ERR_SQLITE_" + code, errno: 0 });
   }
 
-  connect(onConnected: OnConnected<Database>, reserved?: boolean) {
+  connect(onConnected: OnConnected<PooledConnection>, reserved?: boolean) {
     if (this.closed) {
       return onConnected(this.connectionClosedError(), null);
     }
@@ -201,7 +201,7 @@ class SQLiteAdapter extends SQLDialect implements DatabaseAdapter<Database, Data
     }
   }
 
-  cancelConnect(onConnected: OnConnected<Database>): boolean {
+  cancelConnect(onConnected: OnConnected<PooledConnection>): boolean {
     const index = this.waitingBegins.indexOf(onConnected);
     if (index === -1) {
       return false;

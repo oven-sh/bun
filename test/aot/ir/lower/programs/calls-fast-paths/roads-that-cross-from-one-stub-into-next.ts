@@ -102,12 +102,12 @@ console.log(said.join("\n"));
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_9]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_9]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_9]] flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: v6 = CallDirect v5 function=[[f_10]]
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_9]] site=[[w_11]]} parameters=[{type=undefined|null|string site=[[w_12]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|number site=[[w_13]]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_9]] flags=[IsExpected]} parameters=[{type=undefined|null|string site=[[w_11]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|number site=[[w_12]]}] functionTypes={{*}}[[f_13]]] {
 // CHECK-NEXT: b0(v0: [[L_9]], v1: undefined|null|string):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -119,10 +119,10 @@ console.log(said.join("\n"));
 // CHECK-NEXT: v7 = GetSuperBase v6 homeKind=ClassPrototype
 // CHECK-NEXT: v8 = SuperGet v7, v0 key="get"
 // CHECK-NEXT: v9 = Call v8, v0, v1 calleeName="super.get"
-// CHECK-NEXT: ReturnCall v9 casts=[{declared={type=undefined|number site=[[w_16]]}}, {declared={type=undefined|number site=[[w_13]]}}]
+// CHECK-NEXT: ReturnCall v9 casts=[{declared={type=undefined|number site=[[w_16]]}}, {declared={type=undefined|number site=[[w_12]]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_17]] site=[[w_18]]} parameters=[{type=anything}] results=[{type=undefined|number site=[[w_19]]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_17]] flags=[IsExpected]} parameters=[{type=anything}] results=[{type=undefined|number site=[[w_18]]}] functionTypes={{*}}[[f_19]]] {
 // CHECK-NEXT: b0(v0: [[L_17]], v1: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -134,5 +134,5 @@ console.log(said.join("\n"));
 // CHECK-NEXT: v7 = GetSuperBase v6 homeKind=ClassPrototype
 // CHECK-NEXT: v8 = SuperGet v7, v0 key="get"
 // CHECK-NEXT: v9 = Call v8, v0, v1 calleeName="super.get"
-// CHECK-NEXT: ReturnCall v9 casts=[{declared={type=undefined|number site=[[w_22]]}}, {declared={type=undefined|number site=[[w_19]]}}]
+// CHECK-NEXT: ReturnCall v9 casts=[{declared={type=undefined|number site=[[w_22]]}}, {declared={type=undefined|number site=[[w_18]]}}]
 // CHECK-NEXT: }

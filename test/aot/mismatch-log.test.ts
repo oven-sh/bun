@@ -343,6 +343,72 @@ test.concurrent(
 );
 
 test.concurrent(
+  "a class below a built-in is tested at no position, and logs nothing",
+  async () => {
+    using dir = project(`class Query<T> extends Promise<T> {
+  status = 0;
+  #handle: number | null = 7;
+  run(): number { this.status |= 1; return this.status + (this.#handle ?? 0); }
+}
+class Rows<T> extends Array<T> {
+  count: number | null = null;
+  constructor(values: T[]) { super(); for (let i = 0; i < values.length; i++) this[i] = values[i]!; this.count = values.length; }
+}
+class Failure extends Error { code = "E_FAIL"; }
+function runQuery(query: Query<number>): number { return query.run() + query.status; }
+function countRows(rows: Rows<number>): number { return (rows.count ?? 0) + rows.length + rows[0]!; }
+function describe(failure: Failure): string { return failure.code + ":" + failure.message; }
+const makeRows = (): Rows<number> => new Rows([5, 6]);
+const query = new Query<number>(resolve => resolve(1));
+console.log(runQuery(query), countRows(makeRows()), describe(new Failure("boom")), await query, Array.isArray(makeRows()));
+`);
+    await build(String(dir), "--aot-log-type-mismatches");
+    const expected = "9 9 E_FAIL:boom 1 true\n";
+    expect(await spawned([bunExe(), "run", "app.ts"], String(dir))).toEqual({
+      stdout: expected,
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(await run(String(dir))).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+  },
+  120_000,
+);
+
+test.concurrent(
+  "Bun's SQL modules log nothing for a query, its rows and its error",
+  async () => {
+    using dir = project(`import { SQL } from "bun";
+const sql = new SQL("sqlite://:memory:");
+await sql\`CREATE TABLE visits (id INTEGER PRIMARY KEY, n INTEGER)\`;
+for (let i = 1; i <= 3; i++) await sql\`INSERT INTO visits (n) VALUES (\${i})\`;
+const rows = await sql\`SELECT n FROM visits ORDER BY id\`;
+console.log(rows.length, rows.map(row => row.n).join(","), rows.count, (await sql\`SELECT 1 AS one\`.values())[0][0]);
+console.log(await sql\`SELECT boom FROM nowhere\`.then(() => "rows", (error: Error) => error.name + ": " + error.message));
+await sql.close();
+`);
+    await build(String(dir), "--aot-log-type-mismatches");
+    const expected = "3 1,2,3 3 1\nSQLiteError: no such table: nowhere\n";
+    expect(await spawned([bunExe(), "run", "app.ts"], String(dir))).toEqual({
+      stdout: expected,
+      stderr: "",
+      exitCode: 0,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir));
+    // The query, its rows, the connection and the error class log nothing. The narrowing of the `unknown` that bun:sqlite throws is another matter: its three sites.
+    const unknownError = { kind: "unknown", function: "toSQLiteError", got: "built-in Error" };
+    expect(
+      lines(stderr).map(({ kind, function: name, expected, got }) => ({ kind, function: name, expected, got })),
+    ).toEqual([
+      { ...unknownError, expected: "object" },
+      { ...unknownError, expected: "object" },
+      { ...unknownError, expected: "SQLiteError" },
+    ]);
+    expect({ stdout, exitCode }).toEqual({ stdout: expected, exitCode: 0 });
+  },
+  120_000,
+);
+
+test.concurrent(
   "the default build goes on as well, and writes nothing",
   async () => {
     using dir = project(visits);

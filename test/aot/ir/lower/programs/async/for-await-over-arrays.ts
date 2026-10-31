@@ -147,11 +147,11 @@ main();
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_6]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_6]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_6]] flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, IsChecked, IsNamedByComputedKey] thisType={type=[[L_6]] site=[[w_7]]} results=[{type=undefined|null|[[L_8]]|Generator flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, IsChecked, IsNamedByComputedKey] thisType={type=[[L_6]] flags=[IsExpected]} results=[{type=undefined|null|[[L_7]]|Generator flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: [[L_6]], v1: function):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -160,7 +160,7 @@ main();
 // CHECK-NEXT: v4 = String string="Listing is asked for its iterator"
 // CHECK-NEXT: v5 = Call v3, -, v4 calleeName="note"
 // CHECK-NEXT: v6 = PropGet v0 key="length"
-// CHECK-NEXT: v7 = Convert v6 declared={type=number site=[[w_9]]}
+// CHECK-NEXT: v7 = Convert v6 declared={type=number site=[[w_8]]} illTypedCause=Assertion
 // CHECK-NEXT: Jump -> next b2(v7)
 // CHECK-NEXT: b2(v8: number):
 // CHECK-NEXT: LoopHint

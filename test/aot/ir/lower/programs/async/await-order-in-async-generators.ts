@@ -188,26 +188,26 @@ export {};
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_4]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_4]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_4]] flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="then"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=2 thisType={type=[[L_4]] site=[[w_5]]} parameters=[{type=undefined|null|[[f_6]] site=[[w_7]]}, {type=undefined|null|[[f_8]] site=[[w_9]]}] results=[{type=undefined|null|Promise<undefined|null|[[L_10]]|[[L_11]]> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: [[L_4]], v1: undefined|null|[[f_6]], v2: undefined|null|[[f_8]]):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=2 thisType={type=[[L_4]] flags=[IsExpected]} parameters=[{type=undefined|null|[[f_5]] site=[[w_6]]}, {type=undefined|null|[[f_7]] site=[[w_8]]}] results=[{type=undefined|null|Promise<undefined|null|[[L_9]]|[[L_10]]> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
+// CHECK-NEXT: b0(v0: [[L_4]], v1: undefined|null|[[f_5]], v2: undefined|null|[[f_7]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_12]]
+// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_11]]
 // CHECK-NEXT: v4 = CheckInitialized v3 name="say"
 // CHECK-NEXT: v5 = String string="Derived.then"
 // CHECK-NEXT: v6 = Call v4, -, v5 calleeName="say"
-// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_13]]
+// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_12]]
 // CHECK-NEXT: v8 = GetSuperBase v7 homeKind=ClassPrototype
 // CHECK-NEXT: v9 = SuperGet v8, v0 key="then"
 // CHECK-NEXT: v10 = Call v9, v0, v1, v2 calleeName="super.then"
-// CHECK-NEXT: ReturnCall v10 casts=[{declared={type=undefined|null|Promise<undefined|null|[[L_10]]|[[L_11]]> flags=[IsExpected, OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Promise<undefined|null|[[L_10]]|[[L_11]]> flags=[IsExpected, OmitsNull, OmitsUndefined]}}]
+// CHECK-NEXT: ReturnCall v10 casts=[{declared={type=undefined|null|Promise<undefined|null|[[L_9]]|[[L_10]]> flags=[IsExpected, OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Promise<undefined|null|[[L_9]]|[[L_10]]> flags=[IsExpected, OmitsNull, OmitsUndefined]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="rejected"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_14]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_13]]] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -226,23 +226,23 @@ export {};
 // CHECK-NEXT: ReturnCall v11 casts=[{declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="thenable"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|[[L_15]] site=[[w_16]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_17]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|[[L_14]] site=[[w_15]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_16]]] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = NewClosure function=[[f_18]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[f_19]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v2 = NewObject -, v1 layout=[[L_15]] fields=[0]
+// CHECK-NEXT: v0 = NewClosure function=[[f_17]]
+// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[f_18]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v2 = NewObject -, v1 layout=[[L_14]] fields=[0]
 // CHECK-NEXT: v3 = FinishObject v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_15]] site=[[w_16]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_14]] site=[[w_15]] flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="then"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_20]] site=[[w_21]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] functionTypes={{*}}[[f_19]]] {
-// CHECK-NEXT: b0(v0: undefined|null|[[f_20]]):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_19]] site=[[w_20]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] functionTypes={{*}}[[f_18]]] {
+// CHECK-NEXT: b0(v0: undefined|null|[[f_19]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_12]]
+// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_11]]
 // CHECK-NEXT: v2 = CheckInitialized v1 name="say"
 // CHECK-NEXT: v3 = String string="thenable.then"
 // CHECK-NEXT: v4 = Call v2, -, v3 calleeName="say"

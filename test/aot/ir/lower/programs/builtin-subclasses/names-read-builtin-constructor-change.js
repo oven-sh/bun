@@ -125,7 +125,7 @@ console.log(out.join("\n"));
 // CHECK-NEXT: v3 = Absent
 // CHECK-NEXT: v4 = GetSuperBase v0
 // CHECK-NEXT: v5 = SuperConstruct v4, v1, v2 layout=[[L_7]]
-// CHECK-NEXT: v6 = Convert v5 declared={type=[[L_7]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v6 = Convert v5 declared={type=[[L_7]] flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: v7 = TypeTest v3 testedType=absent
 // CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b12(| 0)
 // CHECK-NEXT: b2(v8):
@@ -171,7 +171,7 @@ console.log(out.join("\n"));
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_9]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_9]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_9]] flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.hasInstance]"

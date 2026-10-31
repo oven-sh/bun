@@ -260,7 +260,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         PositionTypes { written, checked }
     }
 
-    fn class_instance_type(&mut self, class: Sym) -> CheckedType {
+    pub(super) fn class_instance_type(&mut self, class: Sym) -> CheckedType {
         self.ask(|queries| {
             let ty = queries.c.declared_type(class);
             queries.resolved(ty)

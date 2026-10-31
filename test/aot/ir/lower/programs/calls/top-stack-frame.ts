@@ -202,7 +202,7 @@ console.log(calls);
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = String string="worse"
 // CHECK-NEXT: v5 = SuperConstruct v3, v1, v4 layout=[[L_11]]
-// CHECK-NEXT: v6 = Convert v5 declared={type=[[L_11]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v6 = Convert v5 declared={type=[[L_11]] flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: v7 = TypeTest v2 testedType=absent
 // CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b10(| 0)
 // CHECK-NEXT: b2(v8):

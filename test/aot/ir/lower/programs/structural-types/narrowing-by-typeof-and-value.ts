@@ -229,16 +229,16 @@ attempt("honest again", () => [use(() => 1), use(new Dog()), legs(new Dog()), si
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_13]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_13]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_13]] flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="first"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_13]] site=[[w_14]]} results=[{type=undefined|null|string site=[[w_15]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_13]] flags=[IsExpected]} results=[{type=undefined|null|string site=[[w_14]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: [[L_13]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = Integer
 // CHECK-NEXT: v2 = ElemGet v0, v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|string site=[[w_16]] flags=[OmitsNull]} illTypedCause=FromLooseType
+// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|string site=[[w_15]] flags=[OmitsNull]} illTypedCause=FromLooseType
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }

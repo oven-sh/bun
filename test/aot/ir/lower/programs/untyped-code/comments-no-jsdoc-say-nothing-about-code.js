@@ -187,7 +187,7 @@ console.log([documented(1), brokenType, generic(2), withThis(), Kind.B, new Docu
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_3]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_3]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_3]] flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: v6 = CallDirect v5 function=[[f_4]]
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }

@@ -215,11 +215,11 @@ awaited().then(value => { say("a promise with a then of its own", value); consol
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_21]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_21]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_21]] flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="push"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasRestParameter, HasThis, IsChecked, HasExplicitName] captures=[{type=function flags=[IsFromCompiler]}] thisType={type=[[L_21]] site=[[w_22]]} parameters=[{type=Array<number> site=[[w_23]] flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=number site=[[w_24]]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasRestParameter, HasThis, IsChecked, HasExplicitName] captures=[{type=function flags=[IsFromCompiler]}] thisType={type=[[L_21]] flags=[IsExpected]} parameters=[{type=Array<number> site=[[w_22]] flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=number site=[[w_23]]}] {
 // CHECK-NEXT: b0(v0: function, v1: [[L_21]], v2: Array<number>):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -227,10 +227,10 @@ awaited().then(value => { say("a promise with a then of its own", value); consol
 // CHECK-NEXT: v4 = SuperGet v3, v1 key="push"
 // CHECK-NEXT: v5 = NewArray contents=anything
 // CHECK-NEXT: v6 = PropGet v2 key="map"
-// CHECK-NEXT: v7 = NewClosure function=[[f_25]]
+// CHECK-NEXT: v7 = NewClosure function=[[f_24]]
 // CHECK-NEXT: v8 = Call v6, v2, v7 calleeKey="map" calleeName="values.map"
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|Array<number> site=[[w_26]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|Array<number> site=[[w_25]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
 // CHECK-NEXT: AppendSpread v5, v9
 // CHECK-NEXT: v11 = CallList v4, v1, v5 calleeName="super.push"
-// CHECK-NEXT: ReturnCall v11 casts=[{declared={type=number site=[[w_27]]}}, {declared={type=number site=[[w_24]]}}]
+// CHECK-NEXT: ReturnCall v11 casts=[{declared={type=number site=[[w_26]]}}, {declared={type=number site=[[w_23]]}}]
 // CHECK-NEXT: }

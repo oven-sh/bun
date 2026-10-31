@@ -85,7 +85,7 @@ say(Reflect.construct(Counting, [[["s", 1]]], Plain) instanceof Plain, Reflect.c
 // CHECK-NEXT: v4 = Absent
 // CHECK-NEXT: v5 = GetSuperBase v0
 // CHECK-NEXT: v6 = SuperConstruct v5, v1, v2 layout=[[L_3]]
-// CHECK-NEXT: v7 = Convert v6 declared={type=[[L_3]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v7 = Convert v6 declared={type=[[L_3]] flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: v8 = TypeTest v4 testedType=absent
 // CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b16(| 0)
 // CHECK-NEXT: b2(v9):
@@ -107,7 +107,7 @@ say(Reflect.construct(Counting, [[["s", 1]]], Plain) instanceof Plain, Reflect.c
 // CHECK-NEXT: Jump -> next b8(v16)
 // CHECK-NEXT: b7(v20):
 // CHECK-NEXT: Jump -> next b8(v7)
-// CHECK-NEXT: b8(v21: absent|[[L_3]]):
+// CHECK-NEXT: b8(v21):
 // CHECK-NEXT: v22 = GetModuleVariable variable=[[g_5]]
 // CHECK-NEXT: v23 = CheckInitialized v22 name="Counting"
 // CHECK-NEXT: v24 = PropGet v23 key="made"
@@ -157,7 +157,7 @@ say(Reflect.construct(Counting, [[["s", 1]]], Plain) instanceof Plain, Reflect.c
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_8]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_8]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_8]] flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: v6 = CallDirect v5 function=[[f_9]]
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }

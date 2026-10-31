@@ -21,7 +21,7 @@
 //
 // A program may begin with comment lines that say how it is built and run:
 //   // Flags: --aot-validate           more flags for the build. A word that begins with ./ or ../ is a path from the folder of the program
-//                                      With --aot-log-type-mismatches what the executable logs about the files of the program counts as printed: plain Bun logs nothing
+//                                      With --aot-log-type-mismatches what the executable logs counts as printed, Bun's own modules included: plain Bun logs nothing
 //   // Entry points: ./child.cjs       further entry points, for what the program loads under a computed name. The program is built alone and starts
 //   // Alone: <why>                    what it prints depends on what else the executable holds: it is built alone
 //   // Env: TZ=America/New_York        the environment of both runs, one variable a line
@@ -813,10 +813,7 @@ async function run(programs: Program[]): Promise<void> {
         // The executable ran compiled code and did not fall back to the source it holds.
         if (!compiled.output.stderr.includes("[aot] module: "))
           return fail(program, "run", "it did not run compiled code", compiled.output, plain?.output);
-        compiled.output.stderr = compiled.output.stderr.replace(
-          /^\[aot\] (?!type-mismatch \S+ \S+ (?!internal:|bun:|node:)).*\r?\n/gm,
-          "",
-        );
+        compiled.output.stderr = compiled.output.stderr.replace(/^\[aot\] (?!type-mismatch ).*\r?\n/gm, "");
         const unmet = counts ? unmetBounds(counted, program.counts, "executable") : [];
         if (unmet.length) return fail(program, "count", unmet.join("; "), compiled.output, plain?.output);
         const ofEach = await Promise.all(codeBytes.map(({ promise }) => promise));

@@ -248,7 +248,7 @@ A `delete`, `Object.defineProperty`, `Object.setPrototypeOf` or `Object.freeze` 
 
 ### builtin-base
 
-The class extends a built-in such as `Array` or `Error`. The built-in constructor allocates the instances, so their fields can't sit at fixed offsets. That's fine for error classes. For a class with many instances, hold the built-in object in a field instead.
+The class extends a built-in such as `Array` or `Error`. The built-in constructor allocates the instances, so their fields can't sit at fixed offsets: no check tests a value for the class, and its fields are read by name. That's fine for error classes. For a class with many instances, hold the built-in object in a field instead.
 
 ### untyped-base
 

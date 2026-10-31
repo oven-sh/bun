@@ -1,6 +1,5 @@
-import type { PooledConnection as ServerConnection } from "internal/sql/pool";
 import type { BaseQueryHandle } from "internal/sql/query";
-import type { DatabaseAdapter, TransactionCommands } from "internal/sql/shared";
+import type { DatabaseAdapter, PooledConnection, TransactionCommands } from "internal/sql/shared";
 
 type Query = import("internal/sql/query").Query<any, any>;
 type Adapter = DatabaseAdapter<any, any, any>;
@@ -9,13 +8,6 @@ type QueryHandle = BaseQueryHandle<any>;
 type QueryHandler = (query: Query, handle: QueryHandle) => void;
 type TransactionCallback = (sql: Bun.SQL) => unknown;
 type CloseOptions = { timeout?: number };
-
-/// SQLite's is the Database itself.
-interface PooledConnection {
-  bindQuery?: ServerConnection["bindQuery"];
-  flush?: ServerConnection["flush"];
-  close(): void;
-}
 
 const {
   Query,

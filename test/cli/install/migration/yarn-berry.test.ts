@@ -123,14 +123,10 @@ describe("yarn berry migration", () => {
     expect(bunLock).not.toContain("trustedDependencies");
     // yarn's `checksum` is not the tarball's hash; integrity comes from the registry manifest
     expect(bunLock).toContain(
-      `"no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="`,
+      `"no-deps@1.0.0", "", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="`,
     );
-    expect(bunLock).toContain(
-      `"peer-deps-fixed@1.0.0", "http://localhost:1234/peer-deps-fixed/-/peer-deps-fixed-1.0.0.tgz", { "peerDependencies": { "no-deps": "^1.0.0" } }`,
-    );
-    expect(bunLock).toContain(
-      `"what-bin@1.0.0", "http://localhost:1234/what-bin/-/what-bin-1.0.0.tgz", { "bin": { "what-bin": "what-bin.js" } }`,
-    );
+    expect(bunLock).toContain(`"peer-deps-fixed@1.0.0", "", { "peerDependencies": { "no-deps": "^1.0.0" } }`);
+    expect(bunLock).toContain(`"what-bin@1.0.0", "", { "bin": { "what-bin": "what-bin.js" } }`);
     // what-bin is in dependencies (^1.5.0) and optionalDependencies (^1.0.0): the optional entry wins, as in bun
     expect(bunLock).not.toContain(`"what-bin": "^1.5.0"`);
     expect(bunLock).toContain(`"what-bin": "^1.0.0"`);
@@ -350,12 +346,8 @@ describe("yarn berry migration", () => {
       "optional-native@1.0.0",
     ]);
     // `conditions` become os/cpu/libc, so the optional natives for other platforms are skipped
-    expect(bunLock).toContain(
-      `"native-foo-x64@1.0.0", "http://localhost:1234/native-foo-x64/-/native-foo-x64-1.0.0.tgz", { "os": "none", "cpu": "x64" }`,
-    );
-    expect(bunLock).toContain(
-      `"native-libc-musl@1.0.0", "http://localhost:1234/native-libc-musl/-/native-libc-musl-1.0.0.tgz", { "libc": "musl" }`,
-    );
+    expect(bunLock).toContain(`"native-foo-x64@1.0.0", "", { "os": "none", "cpu": "x64" }`);
+    expect(bunLock).toContain(`"native-libc-musl@1.0.0", "", { "libc": "musl" }`);
     expect(await Bun.file(join(dir, "node_modules", "no-deps", "patched.txt")).text()).toBe("hello world\n");
     expect(
       await Bun.file(join(dir, "node_modules", "one-dep", "node_modules", "no-deps", "patched-too.txt")).text(),
@@ -1183,7 +1175,7 @@ describe("yarn berry migration", () => {
   });
 
   test.concurrent(
-    "__archiveUrl under the configured registry keeps its URL and gets the manifest's integrity",
+    "__archiveUrl under the configured registry is accepted and gets the manifest's integrity",
     async () => {
       const { packageDir: dir } = await testRegistry.createTestDir({
         bunfigOpts: { linker: "hoisted" },
@@ -1209,7 +1201,7 @@ describe("yarn berry migration", () => {
       expect(stderr).not.toContain("error:");
       expect(exitCode).toBe(0);
       expect(await bunLockOf(dir)).toContain(
-        `["a-dep@1.0.2", "http://localhost:1234/a-dep/-/a-dep-1.0.2.tgz", {}, "sha512-786lp/Wqdz6jY9NOPFnU2OZAl/7wW/CWCHNn4I+0Or9NtA0F9I1TXtisuy8hMFw/6u6CYXwlzdwySiOdpJ94oQ=="]`,
+        `["a-dep@1.0.2", "", {}, "sha512-786lp/Wqdz6jY9NOPFnU2OZAl/7wW/CWCHNn4I+0Or9NtA0F9I1TXtisuy8hMFw/6u6CYXwlzdwySiOdpJ94oQ=="]`,
       );
       await expectFrozenInstall(dir);
     },
@@ -1291,12 +1283,8 @@ describe("yarn berry migration", () => {
       "one-fixed-dep@1.0.0",
       "one-range-dep@1.0.0",
     ]);
-    expect(bunLock).toContain(
-      `"one-fixed-dep@1.0.0", "http://localhost:1234/one-fixed-dep/-/one-fixed-dep-1.0.0.tgz", { "dependencies": { "no-deps": "1.0" } }`,
-    );
-    expect(bunLock).toContain(
-      `"one-range-dep@1.0.0", "http://localhost:1234/one-range-dep/-/one-range-dep-1.0.0.tgz", { "dependencies": { "no-deps": "1" } }`,
-    );
+    expect(bunLock).toContain(`"one-fixed-dep@1.0.0", "", { "dependencies": { "no-deps": "1.0" } }`);
+    expect(bunLock).toContain(`"one-range-dep@1.0.0", "", { "dependencies": { "no-deps": "1" } }`);
     expect(bunLock).toContain(`"one-fixed-dep/no-deps": ["no-deps@1.0.1", `);
     expect(bunLock).toContain(`"one-range-dep/no-deps": ["no-deps@1.1.0", `);
   });
@@ -1975,7 +1963,7 @@ catalogs:
     const { stderr, exitCode } = await runWithEnv(dir, { BERRY_TEST_REGISTRY: registry }, "pm", "migrate");
     expect(stderr).toContain("migrated lockfile from yarn.lock");
     const bunLock = await bunLockOf(dir);
-    expect(bunLock).toContain(`"no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-`);
+    expect(bunLock).toContain(`"no-deps@1.0.0", "", {}, "sha512-`);
     expect(bunLock).not.toContain("hunter2secret");
     expect(exitCode).toBe(0);
   });
@@ -2322,7 +2310,7 @@ catalogs:
       expect(bunLock).toContain(`"a-dep": "^1.0.1 || ^2.0.0",`);
       expect(bunLock).toContain(`"devDependencies": {\n        "a-dep": "~1.0.2",\n      },`);
       expect(bunLock).toContain(
-        `"one-range-dep@1.0.0", "http://localhost:1234/one-range-dep/-/one-range-dep-1.0.0.tgz", { "dependencies": { "no-deps": "^1.0.0 ", "one-fixed-dep": "1.0.0" }, "peerDependencies": { "a-dep": "*" }, "optionalPeers": ["a-dep"] }`,
+        `"one-range-dep@1.0.0", "", { "dependencies": { "no-deps": "^1.0.0 ", "one-fixed-dep": "1.0.0" }, "peerDependencies": { "a-dep": "*" }, "optionalPeers": ["a-dep"] }`,
       );
       // bun.lock records which dependencies an extension added, and the extensions are written where Bun reads them.
       expect(bunLock).toContain(
@@ -2562,9 +2550,7 @@ catalogs:
     const bunLock = await bunLockOf(dir);
     // 7.9.0 is newer; no-deps is not installed for the optional peer
     expect(lockedVersions(bunLock)).toEqual(["@babel/parser@7.23.0", "@babel/types@7.8.3", "peer-deps-fixed@1.0.0"]);
-    expect(bunLock).toContain(
-      `"@babel/parser@7.23.0", "http://localhost:1234/@babel/parser/-/parser-7.23.0.tgz", { "dependencies": { "@babel/types": "^7.8.3" } }`,
-    );
+    expect(bunLock).toContain(`"@babel/parser@7.23.0", "", { "dependencies": { "@babel/types": "^7.8.3" } }`);
     expect(bunLock).toContain(`{ "peerDependencies": { "no-deps": "^1.0.0" }, "optionalPeers": ["no-deps"] }`);
     expect(exitCode).toBe(0);
     await expectFrozenInstall(dir);
@@ -2747,9 +2733,7 @@ catalogs:
     expect(stderr).not.toContain("error:");
     const bunLock = await bunLockOf(dir);
     // the catalog's range, not `catalog:`: a package of the registry has no catalog
-    expect(bunLock).toContain(
-      `"no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", { "dependencies": { "a-dep": "^1.0.1" } }`,
-    );
+    expect(bunLock).toContain(`"no-deps@1.0.0", "", { "dependencies": { "a-dep": "^1.0.1" } }`);
     expect(lockedVersions(bunLock)).toEqual(["a-dep@1.0.3", "no-deps@1.0.0"]);
     expect(exitCode).toBe(0);
     await expectFrozenInstall(dir);

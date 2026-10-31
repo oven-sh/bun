@@ -729,18 +729,24 @@ test.concurrent("default trusted dependencies require the canonical registry tar
   expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
   expect(await exited).toBe(0);
 
-  // Tamper with the lockfile: keep the default-trusted name `electron` but
-  // point its tarball URL at a different package on the same registry. The
-  // install must still succeed, but the package must no longer inherit the
-  // default lifecycle-script grant because the URL is not the canonical
-  // registry tarball for `electron@1.0.0`.
+  // The canonical registry tarball URL is written as "" in bun.lock. Tamper
+  // with the lockfile: keep the default-trusted name `electron` but point its
+  // tarball URL at a different package on the same registry. The install must
+  // still succeed, but the package must no longer inherit the default
+  // lifecycle-script grant because the URL is not the canonical registry
+  // tarball for `electron@1.0.0`.
   const lockfilePath = join(packageDir, "bun.lock");
   const lockfile = await file(lockfilePath).text();
-  expect(lockfile).toContain("/electron/-/electron-1.0.0.tgz");
+  const canonicalEntry = `"electron": ["electron@1.0.0", ""`;
+  expect(lockfile).toContain(canonicalEntry);
+  expect(lockfile).not.toContain("/electron/-/electron-1.0.0.tgz");
   await writeFile(
     lockfilePath,
     lockfile
-      .replace("/electron/-/electron-1.0.0.tgz", "/all-lifecycle-scripts/-/all-lifecycle-scripts-1.0.0.tgz")
+      .replace(
+        canonicalEntry,
+        `"electron": ["electron@1.0.0", "http://localhost:${verdaccio.port}/all-lifecycle-scripts/-/all-lifecycle-scripts-1.0.0.tgz"`,
+      )
       .replace(/"sha512-[^"]+"/, '""'),
   );
 
@@ -785,11 +791,12 @@ test.concurrent("default trusted dependencies require the canonical registry tar
       });
     },
   });
-  const canonicalUrl = `http://localhost:${verdaccio.port}/electron/-/electron-1.0.0.tgz`;
-  expect(lockfile).toContain(canonicalUrl);
   await writeFile(
     lockfilePath,
-    lockfile.replace(canonicalUrl, `http://localhost:${proxy.port}/electron/-/electron-1.0.0.tgz`),
+    lockfile.replace(
+      canonicalEntry,
+      `"electron": ["electron@1.0.0", "http://localhost:${proxy.port}/electron/-/electron-1.0.0.tgz"`,
+    ),
   );
 
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
@@ -886,10 +893,12 @@ electron@1.0.0:
     expect(out).not.toContain("Blocked");
     expect(await exists(join(ctx.packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
     // The migrated entry is an npm package whose tarball URL is the canonical
-    // one for the configured registry, with yarn's fragment dropped.
+    // one for the configured registry, with yarn's fragment dropped. bun.lock
+    // writes the canonical registry tarball URL as "".
     expect(lockfile).toContain(
-      `"electron": ["electron@1.0.0", "${canonicalUrl}", { "hasInstallScript": true }, "${electronIntegrity}"]`,
+      `"electron": ["electron@1.0.0", "", { "hasInstallScript": true }, "${electronIntegrity}"]`,
     );
+    expect(lockfile).not.toContain("electron-1.0.0.tgz");
   });
 
   test.concurrent("scripts stay blocked when the yarn.lock points the name at another tarball", async () => {

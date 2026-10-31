@@ -472,9 +472,10 @@ snapshots:
 
       const fromBun = await runWithEnv(packageDir, { PNPM_TEST_REGISTRY: withPassword }, "pm", "migrate");
       expect(fromBun.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
-      expect(await bunLockOf(packageDir)).toContain(
-        `"no-deps@1.0.1", "http://localhost:${verdaccio.port}/no-deps/-/no-deps-1.0.1.tgz", {}, "${NO_DEPS_1_0_1_INTEGRITY}"`,
-      );
+      const fromBunLock = await bunLockOf(packageDir);
+      expect(fromBunLock).toContain(`"no-deps@1.0.1", "", {}, "${NO_DEPS_1_0_1_INTEGRITY}"`);
+      expect(fromBunLock).not.toContain("builder");
+      expect(fromBunLock).not.toContain("hunter2secret");
       expect(fromBun.exitCode).toBe(0);
 
       // and one that pnpm-workspace.yaml names
@@ -530,9 +531,10 @@ snapshots:
       expect(await Bun.file(besideBunfig).text()).toContain(`url = "$PNPM_TEST_REGISTRY"`);
       const beside = await runWithEnv(besideDir, { PNPM_TEST_REGISTRY: withPassword }, "pm", "migrate");
       expect(beside.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
-      expect(await bunLockOf(besideDir)).toContain(
-        `"no-deps@1.0.1", "http://localhost:${verdaccio.port}/no-deps/-/no-deps-1.0.1.tgz", {}, "${NO_DEPS_1_0_1_INTEGRITY}"`,
-      );
+      const besideLock = await bunLockOf(besideDir);
+      expect(besideLock).toContain(`"no-deps@1.0.1", "", {}, "${NO_DEPS_1_0_1_INTEGRITY}"`);
+      expect(besideLock).not.toContain("builder");
+      expect(besideLock).not.toContain("hunter2secret");
       expect(beside.exitCode).toBe(0);
     });
 
@@ -576,10 +578,10 @@ snapshots:
         expect(requests.filter(r => !r.authorized)).toEqual([]);
         expect(requests.map(r => r.path)).toContain("/no-deps/-/no-deps-1.0.1.tgz");
         expect(nodeModulesPackages(String(dir))).toMatchInlineSnapshot(`"node_modules/no-deps/no-deps@1.0.1"`);
-        // the whole URL, so that a username left in it fails too
-        expect(await bunLockOf(String(dir))).toContain(
-          `"no-deps@1.0.1", "http://localhost:${server.port}/no-deps/-/no-deps-1.0.1.tgz", {}, "${NO_DEPS_1_0_1_INTEGRITY}"`,
-        );
+        // the whole entry, so that a username left in it fails too
+        const lock = await bunLockOf(String(dir));
+        expect(lock).toContain(`"no-deps@1.0.1", "", {}, "${NO_DEPS_1_0_1_INTEGRITY}"`);
+        expect(lock).not.toContain(userinfo.split(":")[0]);
         expect(exitCode).toBe(0);
       },
     );
@@ -816,8 +818,7 @@ snapshots:
       expect(exitCode).toBe(0);
 
       const bunLock = await bunLockOf(packageDir);
-      expect(bunLock).toContain(`"no-deps@1.0.1"`);
-      expect(bunLock).not.toContain(`["no-deps@1.0.1", ""`);
+      expect(bunLock).toContain(`["no-deps@1.0.1", "", {}, "${NO_DEPS_1_0_1_INTEGRITY}"]`);
       expect(bunLock).not.toContain("registry.npmjs.org");
       expect(bunLock).not.toContain("npmjs:");
 
@@ -1851,7 +1852,6 @@ snapshots:
 
     // pnpm11/__fixtures__/with-peer: the packages entry declares `ajv: ^6.9.1`, the snapshot resolves 6.10.2
     test("declared ranges win over the snapshot's resolved versions; peers pnpm left out are still emitted", async () => {
-      const registry = verdaccio.registryUrl();
       const { packageDir } = await verdaccio.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: {
@@ -1931,13 +1931,13 @@ snapshots:
 
       const bunLock = await bunLockOf(packageDir);
       expect(bunLock).toContain(
-        `["peer-deps-fixed@1.0.0", "${registry}peer-deps-fixed/-/peer-deps-fixed-1.0.0.tgz", { "peerDependencies": { "no-deps": "^1.0.0" } }, "${PEER_DEPS_FIXED_1_0_0_INTEGRITY}"]`,
+        `["peer-deps-fixed@1.0.0", "", { "peerDependencies": { "no-deps": "^1.0.0" } }, "${PEER_DEPS_FIXED_1_0_0_INTEGRITY}"]`,
       );
       expect(bunLock).toContain(
-        `["one-optional-peer-dep@1.0.2", "${registry}one-optional-peer-dep/-/one-optional-peer-dep-1.0.2.tgz", { "peerDependencies": { "no-deps": "^1.0.0" }, "optionalPeers": ["no-deps"] }, "${ONE_OPTIONAL_PEER_DEP_1_0_2_INTEGRITY}"]`,
+        `["one-optional-peer-dep@1.0.2", "", { "peerDependencies": { "no-deps": "^1.0.0" }, "optionalPeers": ["no-deps"] }, "${ONE_OPTIONAL_PEER_DEP_1_0_2_INTEGRITY}"]`,
       );
       expect(bunLock).toContain(
-        `["peer-deps-too@1.0.0", "${registry}peer-deps-too/-/peer-deps-too-1.0.0.tgz", { "peerDependencies": { "no-deps": "*" } }, "${PEER_DEPS_TOO_1_0_0_INTEGRITY}"]`,
+        `["peer-deps-too@1.0.0", "", { "peerDependencies": { "no-deps": "*" } }, "${PEER_DEPS_TOO_1_0_0_INTEGRITY}"]`,
       );
       expect(bunLock).not.toContain(`"no-deps": "1.0.1"`);
 
@@ -3597,7 +3597,6 @@ snapshots:
 
     // guards for the keep-tarball path above (pnpm/pnpm#5920 / #4361): off-registry urls are rebuilt
     test("recorded on a foreign host is rebuilt from the configured registry", async () => {
-      const registry = verdaccio.registryUrl();
       const { packageDir } = await verdaccio.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: {
@@ -3612,9 +3611,7 @@ snapshots:
       expect(exitCode).toBe(0);
 
       const bunLock = await bunLockOf(packageDir);
-      expect(bunLock).toContain(
-        `["no-deps@1.0.1", "${registry}no-deps/-/no-deps-1.0.1.tgz", {}, "${NO_DEPS_1_0_1_INTEGRITY}"]`,
-      );
+      expect(bunLock).toContain(`["no-deps@1.0.1", "", {}, "${NO_DEPS_1_0_1_INTEGRITY}"]`);
       expect(bunLock).not.toContain("evil.example.com");
     });
 
@@ -3635,7 +3632,7 @@ snapshots:
       expect(exitCode).toBe(0);
 
       const bunLock = await bunLockOf(packageDir);
-      expect(bunLock).toContain(`"${registry}no-deps/-/no-deps-1.0.1.tgz"`);
+      expect(bunLock).toContain(`["no-deps@1.0.1", "", {}, "${NO_DEPS_1_0_1_INTEGRITY}"]`);
       expect(bunLock).not.toContain("evil.example.com");
     });
   });

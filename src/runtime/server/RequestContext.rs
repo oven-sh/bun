@@ -4672,6 +4672,7 @@ bitflags::bitflags! {
         const REQUEST_BODY_BUFFER_ALL     = 1 << 17;
     }
 }
+bun_core::assert_distinct_flag_bits!(FlagsBits);
 
 #[repr(transparent)]
 #[derive(Default)]

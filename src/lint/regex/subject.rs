@@ -96,7 +96,7 @@ impl<'t> Subject<'t> {
         if self.is_ascii {
             return offset;
         }
-        wtf8::code_point_start(self.bytes, offset)
+        strings::wtf8_codepoint_start(self.bytes, offset)
     }
 
     /// The index in [`Subject::text`] of the unit that starts at or after the byte offset `offset`.

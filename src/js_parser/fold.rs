@@ -441,7 +441,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
 
                             // rewrite `module.exports` to `exports`
-                            p.module_exports_rewrite_count += 1;
+                            p.module_exports_rewrites.note(p.part_generation);
                             return Some(Expr {
                                 data: js_ast::ExprData::ESpecial(E::Special::ModuleExports),
                                 loc: name_loc,

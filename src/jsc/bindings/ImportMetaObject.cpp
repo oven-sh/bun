@@ -92,12 +92,20 @@ ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JS
 
 ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier)
 {
+    if (specifier.startsWith("file://"_s))
+        return create(globalObject, specifier);
+
     auto index = specifier.find('?');
     URL url;
     if (index != notFound) {
         StringView view = specifier;
         url = URL::fileURLWithFileSystemPath(view.substring(0, index));
-        url.setQuery(view.substring(index + 1));
+        // A fragment with no query rides behind the '?' in a module key: "/x.mjs?#a" is "file:///x.mjs#a".
+        auto suffix = view.substring(index + 1);
+        if (suffix.startsWith('#'))
+            url.setFragmentIdentifier(suffix.substring(1));
+        else
+            url.setQuery(suffix);
     } else {
         url = URL::fileURLWithFileSystemPath(specifier);
     }
@@ -213,12 +221,35 @@ static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC:
         JSC::AOT::willAnswerWithModule(globalObject, *module);
         return;
     }
-    size_t query = resolved.find('?');
-    StringView path = query == notFound ? StringView(resolved) : StringView(resolved).left(static_cast<unsigned>(query));
+    String path = resolved.startsWith("file://"_s) ? URL(resolved).fileSystemPath() : resolved.left(moduleKeyPathLength(resolved));
     if (!path.endsWith(".node"_s))
         return;
     if (JSValue error = Bun::errorIfCodeOutsideImageIsRefused(globalObject, Bun::ErrorCode::MODULE_NOT_FOUND, resolved))
         JSC::throwException(globalObject, scope, error);
+}
+
+static JSValue resolvedCommonJSModuleKey(Zig::GlobalObject* globalObject, JSValue originalValue, JSValue resolvedValue, JSC::ThrowScope& scope)
+{
+    auto original = originalValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto resolved = resolvedValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (original.startsWith("file://"_s)) {
+        auto url = WTF::URL(original);
+        if (!url.isValid() || url.isEmpty() || url.fileSystemPath().find('?') == WTF::notFound)
+            return resolvedValue;
+        return jsString(globalObject->vm(), Bun::resolvedModuleKeyFromFileURL(url, resolved));
+    }
+
+    // Relative children can resolve inside a directory containing a literal '?'.
+    // Remove only the suffix supplied by this specifier before encoding the path.
+    auto suffix = original.substring(moduleKeyPathLength(original));
+    if (!suffix.isEmpty() && !resolved.endsWith(suffix))
+        return resolvedValue;
+    auto path = resolved.left(resolved.length() - suffix.length());
+    if (!isAbsolutePath(path) || path.find('?') == WTF::notFound)
+        return resolvedValue;
+    return jsString(globalObject->vm(), makeString(URL::fileURLWithFileSystemPath(path).string(), suffix));
 }
 
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
@@ -349,6 +380,12 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     goto cleanup;
                 }
 
+                {
+                    auto resolvedKey = resolvedCommonJSModuleKey(globalObject, moduleName, JSC::JSValue::decode(result), scope);
+                    if (scope.exception()) [[unlikely]]
+                        goto cleanup;
+                    result = JSC::JSValue::encode(resolvedKey);
+                }
                 if (!isRequireDotResolve) {
                     throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result));
                     if (scope.exception()) [[unlikely]]
@@ -382,9 +419,14 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
         return {};
     }
 
-    if (!isESM && !isRequireDotResolve) {
-        throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result));
+    if (!isESM) {
+        auto resolvedKey = resolvedCommonJSModuleKey(globalObject, moduleName, JSC::JSValue::decode(result), scope);
         RETURN_IF_EXCEPTION(scope, {});
+        result = JSC::JSValue::encode(resolvedKey);
+        if (!isRequireDotResolve) {
+            throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result));
+            RETURN_IF_EXCEPTION(scope, {});
+        }
     }
 
     scope.release();

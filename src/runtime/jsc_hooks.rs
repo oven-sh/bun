@@ -807,69 +807,65 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // SAFETY: `preload` points at a live boxed slice for this iteration
         // (heap-stable `Box<[u8]>` payload; nothing below mutates `vm.preload`).
         let preload_slice: &[u8] = unsafe { &*preload };
-        // Strip "file://".
-        let normalized: &[u8] = preload_slice
-            .strip_prefix(b"file://".as_slice())
-            .unwrap_or(preload_slice);
+        // File URLs retain their path escapes and suffix identity in the module loader.
+        // Builtin specifiers are also resolved there.
+        let module_name =
+            if preload_slice.starts_with(b"file:") || preload_slice.starts_with(b"node:") {
+                bun_core::StringView::from_bytes(preload_slice)
+            } else {
+                // ── resolve ─────────────────────────────────────────────────────
+                // SAFETY: per fn contract; `top_level_dir` is the `'static` fs
+                // singleton field.
+                let mut result = match unsafe {
+                    (*vm).transpiler.resolver.resolve_and_auto_install(
+                        &*top_level_dir,
+                        preload_slice,
+                        ImportKind::Stmt,
+                        global_cache,
+                    )
+                } {
+                    ResolveResultUnion::Success(r) => r,
+                    ResolveResultUnion::Failure(e) => {
+                        // SAFETY: `vm.log` was set to a fresh leaked `Box<Log>` by
+                        // `VirtualMachine::init`.
+                        if let Some(log) = unsafe { &*vm }.log {
+                            // SAFETY: `log` is the unique per-VM `Box<Log>`.
+                            let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "{} resolving preload {}",
+                                    e.name(),
+                                    bun_core::fmt::format_json_string_latin1(preload_slice),
+                                ),
+                            );
+                        }
+                        return Err(e.into());
+                    }
+                    ResolveResultUnion::Pending(_) | ResolveResultUnion::NotFound => {
+                        // SAFETY: see above.
+                        if let Some(log) = unsafe { &*vm }.log {
+                            // SAFETY: `log` is the unique per-VM `Box<Log>`.
+                            let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "preload not found {}",
+                                    bun_core::fmt::format_json_string_latin1(preload_slice),
+                                ),
+                            );
+                        }
+                        return Err(bun_jsc::CrateError::ModuleNotFound);
+                    }
+                };
 
-        // node: builtin specifiers bypass the file resolver — JSModuleLoader
-        // resolves them internally, so `bun --import node:*` works like Node's.
-        let module_name = if normalized.starts_with(b"node:") {
-            bun_core::StringView::from_bytes(normalized)
-        } else {
-            // ── resolve ─────────────────────────────────────────────────────
-            // SAFETY: per fn contract; `top_level_dir` is the `'static` fs
-            // singleton field.
-            let mut result = match unsafe {
-                (*vm).transpiler.resolver.resolve_and_auto_install(
-                    &*top_level_dir,
-                    normalized,
-                    ImportKind::Stmt,
-                    global_cache,
-                )
-            } {
-                ResolveResultUnion::Success(r) => r,
-                ResolveResultUnion::Failure(e) => {
-                    // SAFETY: `vm.log` was set to a fresh leaked `Box<Log>` by
-                    // `VirtualMachine::init`.
-                    if let Some(log) = unsafe { &*vm }.log {
-                        // SAFETY: `log` is the unique per-VM `Box<Log>`.
-                        let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "{} resolving preload {}",
-                                e.name(),
-                                bun_core::fmt::format_json_string_latin1(preload_slice),
-                            ),
-                        );
-                    }
-                    return Err(e.into());
-                }
-                ResolveResultUnion::Pending(_) | ResolveResultUnion::NotFound => {
-                    // SAFETY: see above.
-                    if let Some(log) = unsafe { &*vm }.log {
-                        // SAFETY: `log` is the unique per-VM `Box<Log>`.
-                        let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "preload not found {}",
-                                bun_core::fmt::format_json_string_latin1(preload_slice),
-                            ),
-                        );
-                    }
-                    return Err(bun_jsc::CrateError::ModuleNotFound);
-                }
+                // ── import ──────────────────────────────────────────────────────
+                let path_text = result
+                    .path()
+                    .expect("resolver Success result has a primary path")
+                    .text;
+                bun_core::StringView::from_bytes(path_text)
             };
-
-            // ── import ──────────────────────────────────────────────────────
-            let path_text = result
-                .path()
-                .expect("resolver Success result has a primary path")
-                .text;
-            bun_core::StringView::from_bytes(path_text)
-        };
         // Note: use `import_ptr` (not `import`) so the `*mut` we store in
         // `pending_internal_promise` keeps the FFI's mutable provenance instead
         // of being laundered through `&JSInternalPromise -> *const -> *mut`
@@ -3950,6 +3946,7 @@ pub(crate) fn loader_for_path(
 unsafe fn normalize_specifier_for_loader<'a>(
     jsc_vm: *mut VirtualMachine,
     slice_: &'a [u8],
+    preserve_path_delimiters: bool,
 ) -> (&'a [u8], &'a [u8], &'a [u8]) {
     let mut slice = slice_;
     if slice.is_empty() {
@@ -3972,7 +3969,9 @@ unsafe fn normalize_specifier_for_loader<'a>(
     }
     let specifier = slice;
     let mut query: &[u8] = b"";
-    if let Some(i) = bun_core::strings::index_of_char_usize(slice, b'?') {
+    if !preserve_path_delimiters
+        && let Some(i) = bun_core::strings::index_of_char_usize(slice, b'?')
+    {
         let i = i as usize;
         query = &slice[i..];
         slice = &slice[..i];
@@ -4005,10 +4004,13 @@ unsafe fn get_loader_and_virtual_source<'a>(
     virtual_source_to_use: &'a mut Option<bun_ast::Source<'a>>,
     blob_to_deinit: &'a mut Option<crate::webcore::Blob>,
     type_attribute_str: Option<&[u8]>,
+    preserve_path_delimiters: bool,
 ) -> crate::Result<LoaderResult<'a>> {
     let (normalized_file_path_from_specifier, specifier, query) =
         // SAFETY: per fn contract.
-        unsafe { normalize_specifier_for_loader(jsc_vm, specifier_str) };
+        unsafe {
+            normalize_specifier_for_loader(jsc_vm, specifier_str, preserve_path_delimiters)
+        };
     let mut path = Fs::Path::init(normalized_file_path_from_specifier);
 
     // SAFETY: per fn contract — `transpiler.options` is a value field of the VM.
@@ -4305,6 +4307,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     allow_promise: bool,
     is_commonjs_require: bool,
     force_loader: u8,
+    preserve_path_delimiters: bool,
     // The `JSModuleLoader` that is fetching when it is not the global object's (a
     // `Bun.ModuleGraph`'s), else empty: handed back to `Bun__onFulfillAsyncModule`.
     module_loader: JSValue,
@@ -4342,6 +4345,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
                     allow_promise,
                     is_commonjs_require,
                     force_loader,
+                    preserve_path_delimiters,
                     module_loader
                 )
             },
@@ -4355,6 +4359,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
             allow_promise,
             is_commonjs_require,
             force_loader,
+            preserve_path_delimiters,
             module_loader
         )
     }
@@ -4372,6 +4377,7 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
     allow_promise: bool,
     is_commonjs_require: bool,
     force_loader: u8,
+    preserve_path_delimiters: bool,
     module_loader: JSValue,
 ) -> *mut c_void {
     use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
@@ -4405,6 +4411,7 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
             &mut virtual_source_to_use,
             &mut blob_to_deinit,
             type_attribute_str,
+            preserve_path_delimiters,
         )
     } {
         Ok(lr) => lr,
@@ -4519,6 +4526,8 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
             )
         };
         if !had_blob
+            // Async completion only has the filesystem specifier, not the encoded module key.
+            && !preserve_path_delimiters
             && allow_promise
             && (has_loaded || is_in_preload)
             && concurrent_loader.is_java_script_like()

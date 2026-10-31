@@ -3136,9 +3136,18 @@ impl<'a> Resolver<'a> {
             .env_loader()
             .and_then(|env| env.get(b"NODE_PATH"))
             .unwrap_or(b"");
-        if !node_path.is_empty() {
+        // BACKREF: the JS thread replaces the list in `Module._initPaths()` and between test files, never during a resolve.
+        let listed = bun_ptr::RawSlice::new(if kind.is_common_js() {
+            &*self.opts.extra_cjs_global_folders
+        } else {
+            &[]
+        });
+        if !node_path.is_empty() || !listed.is_empty() {
             let delim = if cfg!(windows) { b';' } else { b':' };
-            for path in node_path.split(|&b| b == delim).filter(|s| !s.is_empty()) {
+            let node_path = node_path
+                .split(|&b| b == delim)
+                .filter(|s| !s.is_empty() && !listed.iter().any(|folder| **folder == **s));
+            for path in listed.iter().map(|folder| &**folder).chain(node_path) {
                 let Some(abs_path) = self
                     .fs_ref()
                     .abs_buf_checked(&[path, import_path], bufs!(node_modules_check))

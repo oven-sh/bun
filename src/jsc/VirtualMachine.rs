@@ -6520,6 +6520,8 @@ impl VirtualMachine {
         self.entry_point_result.evaluated_as_cjs = false;
         self.set_pending_internal_promise(None);
         self.has_patched_run_main = false;
+        // The outgoing file's `Module._initPaths()` directories.
+        self.transpiler.resolver.opts.extra_cjs_global_folders = Box::default();
         self.set_main(None);
         self.main_resolved_path = bun_core::String::EMPTY;
         self.unhandled_error_counter = 0;

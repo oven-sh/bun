@@ -1013,6 +1013,7 @@ pub(crate) fn resolver_bundle_options_subset(
         },
         external: src.external.clone(),
         extra_cjs_extensions: src.extra_cjs_extensions.clone(),
+        extra_cjs_global_folders: Box::default(),
         framework: src.framework.map(|f| {
             // Bundler-local `bake_types::BuiltInModule` and
             // `bun_options_types::BuiltInModule` are nominally distinct (the

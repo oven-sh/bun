@@ -113,6 +113,17 @@ pub(crate) fn stat(path: &[u8]) -> i32 {
     }
 }
 
+/// `Module._initPaths()`: the `NODE_PATH` entries that CommonJS searches from now on.
+pub(crate) fn set_global_folders(
+    heap: &crate::bindgen::JsHeap<'_>,
+    folders: Vec<bun_core::Utf8Bytes<'static>>,
+) {
+    // SAFETY: only the VM is taken from it.
+    let vm = unsafe { heap.global() }.bun_vm().as_mut();
+    vm.transpiler.resolver.opts.extra_cjs_global_folders =
+        folders.iter().map(|folder| Box::from(&**folder)).collect();
+}
+
 pub enum CustomLoader {
     Loader(Loader),
     Custom(Strong),

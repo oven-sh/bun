@@ -761,6 +761,13 @@ impl TranspilerJob {
         if self.has_plugins {
             transpiler.options.no_macros = true;
         }
+        // SAFETY: the JS thread owns this list and replaces it while jobs run, so the copy gives up its alias. Nothing is freed.
+        unsafe {
+            ptr::write(
+                &raw mut transpiler.resolver.opts.extra_cjs_global_folders,
+                Box::default(),
+            );
+        }
         // Note: `parse_maybe` re-creates the macro context per-iteration
         // when `macro_context.is_none()`. It boxes a
         // higher-tier `MacroContext` via `__bun_macro_context_init`; that Box

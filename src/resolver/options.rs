@@ -177,6 +177,8 @@ pub struct BundleOptions {
     pub conditions: Conditions,
     pub external: ExternalModules,
     pub extra_cjs_extensions: Box<[Box<[u8]>]>,
+    /// The `NODE_PATH` entries of the last `Module._initPaths()` call: CommonJS searches them before the start `NODE_PATH`.
+    pub extra_cjs_global_folders: Box<[Box<[u8]>]>,
     pub framework: Option<Framework>,
     pub global_cache: bun_options_types::global_cache::GlobalCache,
     // The bundler

@@ -1495,17 +1495,8 @@ DataPointer DHPointer::computeSecret(const BignumPointer& peer) const
     auto dp = DataPointer::Alloc(size());
     if (!dp) return {};
 
-    int size = DH_compute_key(static_cast<uint8_t*>(dp.get()), peer.get(), dh_.get());
-    if (size < 0) return {};
-
-    // The size of the computed key can be smaller than the size of the DH key.
-    // We want to make sure that the key is correctly padded.
-    if (static_cast<size_t>(size) < dp.size()) {
-        const size_t padding = dp.size() - size;
-        uint8_t* data = static_cast<uint8_t*>(dp.get());
-        memmove(data + padding, data, size);
-        memset(data, 0, padding);
-    }
+    // Not upstream, which calls DH_compute_key and puts back the leading zeros that it strips.
+    if (DH_compute_key_padded(static_cast<uint8_t*>(dp.get()), peer.get(), dh_.get()) < 0) return {};
 
     return dp;
 }

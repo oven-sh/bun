@@ -2544,7 +2544,7 @@ impl<'a> LinkerContext<'a> {
                         let path_hash = ::bun_base64::wyhash_url_safe(
                             &scratch,
                             // use path relative to cwd for determinism
-                            format_args!("{}", bstr::BStr::new(&source.path.pretty)),
+                            &[source.path.pretty],
                             false,
                         );
 

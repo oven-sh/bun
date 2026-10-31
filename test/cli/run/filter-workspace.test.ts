@@ -1513,6 +1513,96 @@ describe("output timing", () => {
   });
 });
 
+// The runner relays a script's output. It must not decode it: output in Latin-1, Shift-JIS or GBK
+// is not valid UTF-8, and each byte of it would become U+FFFD.
+describe.concurrent("a script's output that is not UTF-8 is relayed without a changed byte", () => {
+  // One read of the runner returns at most 256 KiB, so a line of this length always takes several
+  // reads, and a later read completes it.
+  const longLine = 600_000;
+  const files = {
+    "package.json": JSON.stringify({ name: "filter-bytes", workspaces: ["packages/*"] }),
+    "packages/app/package.json": JSON.stringify({
+      name: "app",
+      scripts: Object.fromEntries(["out", "err", "long", "tail"].map(kind => [kind, `"${bunExe()}" write.js ${kind}`])),
+    }),
+    "packages/app/write.js": /* js */ `
+      const bytes = text => Buffer.from(text, "latin1");
+      const [stream, ...parts] = {
+        out: [Bun.stdout, bytes("a\\xffb\\n")],
+        err: [Bun.stderr, bytes("c\\xfed\\n")],
+        long: [Bun.stdout, bytes("e\\xff"), Buffer.alloc(${longLine}, "x"), bytes("f\\n")],
+        tail: [Bun.stdout, bytes("g\\xfdh")],
+      }[process.argv[2]];
+      await Bun.write(stream, Buffer.concat(parts));
+    `,
+  };
+
+  // One byte of output is one character of the string, so a failure shows the bytes.
+  async function run(dir: string, args: string[], env: Record<string, string | undefined> = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: dir,
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+    return { stdout: Buffer.from(stdout).toString("latin1"), stderr, exitCode };
+  }
+
+  test.each([
+    ["bun run --filter", ["run", "--filter", "*"]],
+    ["bun --filter", ["--filter", "*"]],
+    ["bun run --workspaces", ["run", "--workspaces"]],
+  ])("%s", async (_, args) => {
+    using dir = tempDir("filter-bytes", files);
+    expect(await run(String(dir), [...args, "out"])).toEqual({
+      stdout: "app out: a\xffb\napp out: Exited with code 0\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.each([
+    ["stderr", "err", "c\xfed\n"],
+    ["a last line without a line break", "tail", "g\xfdh\n"],
+  ])("%s", async (_, script, line) => {
+    using dir = tempDir("filter-bytes", files);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["run", "--filter", "*", script]);
+    expect(stdout).toEndWith(`${line}app ${script}: Exited with code 0\n`);
+    // U+FFFD in UTF-8, read as Latin-1.
+    expect(stdout).not.toContain("\xef\xbf\xbd");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a line that takes several reads", async () => {
+    using dir = tempDir("filter-bytes", files);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["run", "--filter", "*", "long"]);
+    const expected = `app long: e\xff${Buffer.alloc(longLine, "x").toString()}f\napp long: Exited with code 0\n`;
+    // A failure prints the two ends of the output, not 600,000 characters.
+    const ends = (text: string) => ({
+      length: text.length,
+      head: text.slice(0, 16),
+      tail: text.slice(-40),
+      same: text === expected,
+    });
+    expect({ ...ends(stdout), stderr, exitCode }).toEqual({ ...ends(expected), stderr: "", exitCode: 0 });
+  });
+
+  // FORCE_COLOR=1 selects the renderer. Whichever one writes into a pipe, it has to keep the bytes.
+  test("with FORCE_COLOR=1 and a pipe", async () => {
+    using dir = tempDir("filter-bytes", files);
+    const { stdout, exitCode } = await run(String(dir), ["run", "--filter", "*", "out"], {
+      NO_COLOR: undefined,
+      FORCE_COLOR: "1",
+    });
+    expect(stdout).toContain("a\xffb\n");
+    expect(stdout).not.toContain("\xef\xbf\xbd");
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("auto-discovered bunfig.toml [run] section", () => {
   // With `run.bun = true` bun puts a `node` shim on PATH, so `typeof Bun`
   // tells which binary ran the script.

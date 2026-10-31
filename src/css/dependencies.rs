@@ -47,15 +47,7 @@ impl ImportDependency {
         rule: &crate::css_rules::import::ImportRule,
         filename: &[u8],
     ) -> ImportDependency {
-        let placeholder = crate::css_modules::hash(
-            bump,
-            format_args!(
-                "{}_{}",
-                bstr::BStr::new(filename),
-                bstr::BStr::new(rule.url)
-            ),
-            false,
-        );
+        let placeholder = crate::css_modules::hash(bump, &[filename, b"_", rule.url], false);
 
         ImportDependency {
             placeholder: std::ptr::from_ref::<[u8]>(placeholder),
@@ -78,11 +70,7 @@ impl UrlDependency {
         import_records: &[bun_ast::ImportRecord],
     ) -> UrlDependency {
         let theurl: &[u8] = import_records[url.import_record_idx as usize].path.pretty;
-        let placeholder = crate::css_modules::hash(
-            bump,
-            format_args!("{}_{}", bstr::BStr::new(filename), bstr::BStr::new(theurl)),
-            false,
-        );
+        let placeholder = crate::css_modules::hash(bump, &[filename, b"_", theurl], false);
         UrlDependency {
             placeholder: std::ptr::from_ref::<[u8]>(placeholder),
         }

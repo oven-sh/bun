@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { ESBUILD, itBundled } from "./expectBundled";
 
@@ -451,4 +451,44 @@ describe("bundler", () => {
       expect(exitCode).toBe(0);
     });
   }
+});
+
+// On Linux a file name is bytes, not text. With a source map the build writes two files, and both
+// take their name from --outfile. `sh` puts the byte into the argument: a JavaScript string cannot
+// hold a lone 0xFF byte.
+test.skipIf(!isLinux)("naming/OutfileThatIsNotUTF8", async () => {
+  using dir = tempDir("naming-outfile-bytes", {
+    "a.js": `console.log("a");`,
+    "b.js": `console.log("b");`,
+    "ff.bin": Buffer.from([0xff]),
+    "fe.bin": Buffer.from([0xfe]),
+  });
+  for (const [entry, byte] of [
+    ["a.js", "ff.bin"],
+    ["b.js", "fe.bin"],
+  ]) {
+    await using proc = Bun.spawn({
+      cmd: [
+        "sh",
+        "-c",
+        `exec "$0" build "./$1" --outfile="out-$(cat "$2").js" --sourcemap=linked`,
+        bunExe(),
+        entry,
+        byte,
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  }
+
+  // One byte of a name is one character of the string. Two builds, two files each.
+  const written = readdirSync(String(dir), { encoding: "buffer" })
+    .map(name => name.toString("latin1"))
+    .filter(name => name.startsWith("out-"))
+    .sort();
+  expect(written).toEqual(["out-\xfe.js", "out-\xfe.js.map", "out-\xff.js", "out-\xff.js.map"]);
 });

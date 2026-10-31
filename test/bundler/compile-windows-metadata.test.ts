@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { promises as fs } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { promises as fs, readdirSync } from "fs";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 // PE optional-header Subsystem values
@@ -815,4 +815,31 @@ test.concurrent("bun build --compile truncates the PE output when Authenticode s
 
   const { stored, expected } = peChecksum(out);
   expect(stored).toBe(expected);
+});
+
+// A Windows target gets ".exe" added to --outfile. On Linux the name is bytes, not text, and the
+// suffix has to be added to those bytes. `sh` puts the byte into the argument: a JavaScript string
+// cannot hold a lone 0xFF byte.
+test.skipIf(!isLinux).concurrent("bun build --compile adds .exe to an --outfile that is not UTF-8", async () => {
+  using dir = tempDir("pe-outfile-bytes", { "entry.js": `console.log("hi");`, "ff.bin": Buffer.from([0xff]) });
+  await Bun.write(join(String(dir), "template.exe"), minimalPE64Template());
+  await using proc = Bun.spawn({
+    cmd: [
+      "sh",
+      "-c",
+      `exec "$0" build --compile --target=bun-windows-x64 --compile-executable-path ./template.exe ./entry.js --outfile "app-$(cat ff.bin)"`,
+      bunExe(),
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  await expectBuildOk(proc);
+
+  // One byte of a name is one character of the string.
+  const written = readdirSync(String(dir), { encoding: "buffer" })
+    .map(name => name.toString("latin1"))
+    .filter(name => name.startsWith("app-"));
+  expect(written).toEqual(["app-\xff.exe"]);
 });

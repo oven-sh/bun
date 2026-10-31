@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { chmodSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // Two directories each holding an executable of the same name. `which tool`
@@ -54,6 +54,44 @@ test.concurrent("which searches $PATH for bare names and the shell cwd for ./ na
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
+
+// On Linux a file name is bytes, not text. A script runs the path that `which` prints, so every byte
+// of it has to come out as it is. The bytes reach the shell through `$(cat file)`: a JavaScript
+// string cannot hold a lone 0xFF byte.
+test.skipIf(!isLinux).concurrent.each(["captured", "streamed"] as const)(
+  "which prints a path that is not UTF-8 byte for byte (%s stdout)",
+  async arm => {
+    using dir = tempDir("which-bytes", {});
+    const binDir = Buffer.concat([Buffer.from(join(String(dir), "bin-")), Buffer.from([0xff])]);
+    mkdirSync(binDir);
+    writeFileSync(Buffer.concat([binDir, Buffer.from("/tool")]), "", { mode: 0o755 });
+    writeFileSync(join(String(dir), "path.bin"), binDir);
+
+    const script = "export PATH=$(cat path.bin); which tool";
+    // One byte of output is one character of the string, so a failure shows the bytes.
+    let stdout: string, exitCode: number;
+    if (arm === "captured") {
+      const result = await $`${{ raw: script }}`.cwd(String(dir)).quiet().nothrow();
+      stdout = result.stdout.toString("latin1");
+      exitCode = result.exitCode;
+    } else {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "exec", script],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, stderr, code] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      stdout = Buffer.from(out).toString("latin1");
+      exitCode = code;
+    }
+
+    expect(stdout).toBe(`${binDir.toString("latin1")}/tool\n`);
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.skipIf(isWindows)("which with an absolute path at the platform path length limit reports not found", async () => {
   const fixture = /* ts */ `

@@ -316,10 +316,8 @@ pub(crate) fn post_process_js_chunk(
     // bytecode-compiled module that contains TLA gets evaluated on the sync path
     // and the suspended generator is dropped — the entry promise resolves
     // immediately and the process exits before the awaited value lands.
-    //
-    // An unwrapped file that imports an async `__esm` wrapper prints
-    // `await init_x()` at the top level without any `await` keyword of its
-    // own, so the async flag counts as well.
+    // A printed `await init_x()` has no `await` keyword in the source, so the
+    // async flag counts too.
     if let Some(mi) = module_info.as_deref_mut() {
         let tla_keywords = c.parse_graph().ast.items_top_level_await_keyword();
         let wraps = c.graph.meta.items_flags();

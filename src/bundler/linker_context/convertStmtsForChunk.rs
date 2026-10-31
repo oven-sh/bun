@@ -287,11 +287,8 @@ pub(crate) fn convert_stmts_for_chunk(
                                     },
                                     stmt.loc,
                                 );
-                                // An async init returns a promise, so await it. The
-                                // statement stays in source order. The `await` is
-                                // only valid when this file's own wrapper is async:
-                                // a `__commonJS` wrapper never is, and in an import
-                                // cycle the two async flags can disagree.
+                                // Await an async init only where this file's own
+                                // wrapper is async (never in `__commonJS`).
                                 let value = if flag.is_async_or_has_async_dependency
                                     && wrap != WrapKind::Cjs
                                     && c.graph.meta.items_flags()[source_index as usize]

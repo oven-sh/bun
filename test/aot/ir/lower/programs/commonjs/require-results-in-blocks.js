@@ -86,7 +86,7 @@ exports.m = "b.m";
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="f"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] captures=[{type=undefined|null|[[L_5]] flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|[[L_5]] flags=[IsExpected]}] functionTypes={{*}}[[f_6]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] captures=[{type=undefined|null|[[L_5]] flags=[IsExpected] variableName="m"}] thisType={type=anything} results=[{type=undefined|null|[[L_5]] flags=[IsExpected]}] functionTypes={{*}}[[f_6]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_5]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

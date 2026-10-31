@@ -1,4 +1,5 @@
-// One point of the table in ./generators/object-mutations.ts: a kind of object, a change of it or of a prototype above it, the key, when and where the change runs, how the object is looked at before and after.
+// One point of the table in ./generators/object-mutations.ts: a kind of object, a mutation of it or of a prototype, the
+// key, when and where the mutation runs, and how the object is inspected before and after.
 import { nameOf, pickCombination, textOf } from "./generators/object-mutations";
 import type { Random } from "./random";
 

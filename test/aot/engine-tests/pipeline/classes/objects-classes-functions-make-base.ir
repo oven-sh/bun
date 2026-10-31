@@ -507,12 +507,12 @@ function f27 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f28 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f29 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f28]
 function f30 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f28]
-function f31 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f31 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     v1 = HasJSType v0 first=5 last=5
     Unreachable
 }
-runtimefunction id=68 function=f31
+runtimefunction id=ArrayIteratorPrototypeNext function=f31
 # -- generated: withFirst withSecond withThird Base Other BelowFirst BelowSecond BelowThird BelowBoth f14 f18
 # CHECK-LABEL: function {{*}}name="withFirst"
 # CHECK: module=m0 position=750 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=f5|f14}] results=[{type=f13}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -551,16 +551,16 @@ runtimefunction id=68 function=f31
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: undefined|f5|f7|f9|f10|f11|f12|f13|f16 = AssumeType v0 provenType=undefined|f5|f7|f9|f10|f11|f12|f13|f16
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L0
-# CHECK-NEXT: v3: object ~ L0|L3|L4|L5|L6|L7|L9|L10|L11 = NewObject v2 layout=L0 allocationSite=29 allocationClass=0
-# CHECK-NEXT: v4: object ~ L0|L3|L5|L7|L9|L10|L11 = Expect v3 expectedType=L0|L3|L5|L7|L9|L10|L11
+# CHECK-NEXT: v3: object ~ L0|L3|L5|L6|L7 = NewObject v2 layout=L0 allocationSite=29 allocationClass=0
+# CHECK-NEXT: v4: object ~ L0|L3|L5|L7 = Expect v3 expectedType=anything|absent
 # CHECK-NEXT: v5: 1 = Integer integer=1
-# CHECK-NEXT: v6: boolean ~ true = TypeTest v4 testedType=L0|L3|L5|L7|L9|L10|L11
+# CHECK-NEXT: v6: boolean ~ true = TypeTest v4 testedType=L0|L3|L5|L7
 # CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v7: L0|L3|L5|L7|L9|L10|L11):
-# CHECK-NEXT: PutSlotOrAdd v7, -, v5 key="base" receivers=[L0, L3, L5, L7, L9, L10, L11] level=Expected accessSite=58
+# CHECK-NEXT: b1(v7: L0|L3|L5|L7):
+# CHECK-NEXT: PutSlotOrAdd v7, -, v5 key="base" receivers=[L0, L3, L5, L7] level=Expected accessSite=58
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: PropSet v4, v5 key="base" accessSite=58
+# CHECK-NEXT: PropSet v4, v5 key="base" accessSite=58 receivers=[L0, ..]
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Other"
@@ -584,70 +584,62 @@ runtimefunction id=68 function=f31
 # CHECK-NEXT: b0(v0: function, v1: anything):
 # CHECK-NEXT: v2: undefined|f5|f7|f9|f10|f11|f12 = AssumeType v1 provenType=undefined|f5|f7|f9|f10|f11|f12
 # CHECK-NEXT: v3: object = GetConstructPrototype v2 layout=L0
-# CHECK-NEXT: v4: object ~ L0|L3|L4|L5|L6|L7|L9|L10|L11 = NewObject v3 layout=L0 allocationSite=29 allocationClass=0
-# CHECK-NEXT: v5: object ~ L0|L3|L5|L7|L9|L10|L11 = Expect v4 expectedType=L0|L3|L5|L7|L9|L10|L11
+# CHECK-NEXT: v4: object ~ L0|L3|L5|L6|L7 = NewObject v3 layout=L0 allocationSite=29 allocationClass=0
+# CHECK-NEXT: v5: object ~ L0|L3|L5|L7 = Expect v4 expectedType=anything|absent
 # CHECK-NEXT: v6: 1 = Integer integer=1
-# CHECK-NEXT: v7: boolean ~ true = TypeTest v5 testedType=L0|L3|L5|L7|L9|L10|L11
+# CHECK-NEXT: v7: boolean ~ true = TypeTest v5 testedType=L0|L3|L5|L7
 # CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v8: L0|L3|L5|L7|L9|L10|L11):
-# CHECK-NEXT: PutSlotOrAdd v8, -, v6 key="base" receivers=[L0, L3, L5, L7, L9, L10, L11] level=Expected accessSite=58
+# CHECK-NEXT: b1(v8: L0|L3|L5|L7):
+# CHECK-NEXT: PutSlotOrAdd v8, -, v6 key="base" receivers=[L0, L3, L5, L7] level=Expected accessSite=58
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: PropSet v5, v6 key="base" accessSite=58
+# CHECK-NEXT: PropSet v5, v6 key="base" accessSite=58 receivers=[L0, ..]
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v11: object ~ L3|L9 = Upcast v5 castType=object
+# CHECK-NEXT: v11: object ~ L3 = Upcast v5 castType=object
 # CHECK-NEXT: v12: 2 = Integer integer=2
-# CHECK-NEXT: v13: boolean ~ true = TypeTest v11 testedType=L3|L9
+# CHECK-NEXT: v13: boolean ~ true = TypeTest v11 testedType=L3
 # CHECK-NEXT: Branch v13 -> taken b4(| 0), notTaken b5()
-# CHECK-NEXT: b4(v14: L3|L9):
-# CHECK-NEXT: PutSlotOrAdd v14, -, v12 key="first" receivers=[L3, L9] level=Expected accessSite=86
+# CHECK-NEXT: b4(v14: L3):
+# CHECK-NEXT: PutSlotOrAdd v14, -, v12 key="first" receivers=[L3] level=Expected accessSite=86
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b5() frequency=Unlikely:
 # CHECK-NEXT: PropSet v11, v12 key="first" accessSite=86
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v17: object ~ L3 = Upcast v11 castType=object
-# CHECK-NEXT: Return v17
+# CHECK-NEXT: Return v11
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="BelowSecond"
 # CHECK: module=m0 position=1320 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f26] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L5 inlineFrames=[{}, {callee=f35 callPosition=4294967295 isConstruction=true module=m0}, {callee=f5 callPosition=4294967295 parent=1 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0(v0: function, v1: anything):
 # CHECK-NEXT: v2: undefined|f5|f7|f9|f10|f11|f12 = AssumeType v1 provenType=undefined|f5|f7|f9|f10|f11|f12
 # CHECK-NEXT: v3: object = GetConstructPrototype v2 layout=L0
-# CHECK-NEXT: v4: object ~ L0|L3|L4|L5|L6|L7|L9|L10|L11 = NewObject v3 layout=L0 allocationSite=29 allocationClass=0
-# CHECK-NEXT: v5: object ~ L0|L3|L5|L7|L9|L10|L11 = Expect v4 expectedType=L0|L3|L5|L7|L9|L10|L11
+# CHECK-NEXT: v4: object ~ L0|L3|L5|L6|L7 = NewObject v3 layout=L0 allocationSite=29 allocationClass=0
+# CHECK-NEXT: v5: object ~ L0|L3|L5|L7 = Expect v4 expectedType=anything|absent
 # CHECK-NEXT: v6: 1 = Integer integer=1
-# CHECK-NEXT: v7: boolean ~ true = TypeTest v5 testedType=L0|L3|L5|L7|L9|L10|L11
-# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v8: L0|L3|L5|L7|L9|L10|L11):
-# CHECK-NEXT: PutSlotOrAdd v8, -, v6 key="base" receivers=[L0, L3, L5, L7, L9, L10, L11] level=Expected accessSite=58
-# CHECK-NEXT: Jump -> next b3()
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: PropSet v5, v6 key="base" accessSite=58
-# CHECK-NEXT: Jump -> next b3()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v11: object ~ L5|L10 = Upcast v5 castType=object
-# CHECK-NEXT: v12: 3 = Integer integer=3
-# CHECK-NEXT: v13: boolean ~ true = TypeTest v11 testedType=L5|L10
-# CHECK-NEXT: Branch v13 -> taken b4(| 0), notTaken b5()
-# CHECK-NEXT: b4(v14: L5|L10):
-# CHECK-NEXT: PutSlotOrAdd v14, -, v12 key="second" receivers=[L5, L10] level=Expected accessSite=88
-# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: v7: boolean ~ true = TypeTest v5 testedType=L0|L3|L5|L7
+# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b4()
+# CHECK-NEXT: b1(v8: L0|L3|L5|L7):
+# CHECK-NEXT: PutSlotOrAdd v8, -, v6 key="base" receivers=[L0, L3, L5, L7] level=Expected accessSite=58
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v10: object ~ L5 = Upcast v5 castType=object
+# CHECK-NEXT: v11: 3 = Integer integer=3
+# CHECK-NEXT: v12: boolean ~ true = TypeTest v10 testedType=L5
+# CHECK-NEXT: Branch v12 -> taken b3(| 0), notTaken b5()
+# CHECK-NEXT: b3(v13: L5):
+# CHECK-NEXT: PutSlotOrAdd v13, -, v11 key="second" receivers=[L5] level=Expected accessSite=88
+# CHECK-NEXT: v15: 6 = Integer integer=6
+# CHECK-NEXT: PutSlotOrAdd v13, -, v15 key="belowSecond" receivers=[L5] level=Expected accessSite=71
+# CHECK-NEXT: Return v13
+# CHECK-NEXT: b4() frequency=Unlikely:
+# CHECK-NEXT: PropSet v5, v6 key="base" accessSite=58 receivers=[L0, ..]
+# CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: PropSet v11, v12 key="second" accessSite=88
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v17: object ~ L5 = Upcast v11 castType=object
-# CHECK-NEXT: v18: 6 = Integer integer=6
-# CHECK-NEXT: v19: boolean ~ true = TypeTest v17 testedType=L5
-# CHECK-NEXT: Branch v19 -> taken b7(| 0), notTaken b8()
-# CHECK-NEXT: b7(v20: L5):
-# CHECK-NEXT: PutSlotOrAdd v20, -, v18 key="belowSecond" receivers=[L5] level=Expected accessSite=71
-# CHECK-NEXT: Return v20
-# CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: PropSet v17, v18 key="belowSecond" accessSite=71
-# CHECK-NEXT: Return v17
+# CHECK-NEXT: PropSet v10, v11 key="second" accessSite=88
+# CHECK-NEXT: v19: 6 = Integer integer=6
+# CHECK-NEXT: PropSet v10, v19 key="belowSecond" accessSite=71
+# CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="BelowThird"
 # CHECK: module=m0 position=1376 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f29] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L7 {
@@ -674,47 +666,29 @@ runtimefunction id=68 function=f31
 # CHECK-NEXT: PutSlotOrAdd v10, -, v8 key="belowBoth" receivers=[L8] level=Expected accessSite=83
 # CHECK-NEXT: Return v10
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: PropDefine v7, v8 key="belowBoth" accessSite=83
+# CHECK-NEXT: PropDefine v7, v8 key="belowBoth" accessSite=83 receivers=[L8, ..]
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function f14 module=
-# CHECK: m0 position=954 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4 inlineFrames=[{}, {callee=f16 callPosition=4294967295 isConstruction=true module=m0}, {callee=f19 callPosition=4294967295 parent=1 module=m0}, {callee=f5 callPosition=4294967295 parent=1 isConstruction=true module=m0}] {
+# CHECK: m0 position=954 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4 {
 # CHECK-NEXT: b0(v0: function, v1: anything):
-# CHECK-NEXT: v2: f13 = AssumeType v1 provenType=f13
-# CHECK-NEXT: v3: object = GetConstructPrototype v2 layout=L0
-# CHECK-NEXT: v4: object ~ L0|L3|L4|L5|L6|L7|L9|L10|L11 = NewObject v3 layout=L0 allocationSite=29 allocationClass=0
-# CHECK-NEXT: v5: object ~ L0|L3|L5|L7|L9|L10|L11 = Expect v4 expectedType=L0|L3|L5|L7|L9|L10|L11
-# CHECK-NEXT: v6: 1 = Integer integer=1
-# CHECK-NEXT: v7: boolean ~ true = TypeTest v5 testedType=L0|L3|L5|L7|L9|L10|L11
-# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v8: L0|L3|L5|L7|L9|L10|L11):
-# CHECK-NEXT: PutSlotOrAdd v8, -, v6 key="base" receivers=[L0, L3, L5, L7, L9, L10, L11] level=Expected accessSite=58
-# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: v2: f14 = AssumeType v0 provenType=f14
+# CHECK-NEXT: v3: f13 = AssumeType v1 provenType=f13
+# CHECK-NEXT: v4: null|object = GetSuperBase v2
+# CHECK-NEXT: v5: f16 = AssumeType v4 provenType=f16
+# CHECK-NEXT: v6: Array<undefined> = NewArray contents=undefined
+# CHECK-NEXT: v7: Array<undefined, proven, pristine[Storage, Names, Dense]> = AssumeType v6 provenType=Array<undefined, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v8: object = CallDirect v5, v3, v7 function=f16 accessSite=77 [isConstruction]
+# CHECK-NEXT: v9: object ~ L4|L5|L10 = Upcast v8 castType=object
+# CHECK-NEXT: v10: 3 = Integer integer=3
+# CHECK-NEXT: v11: boolean = TypeTest v9 testedType=L5
+# CHECK-NEXT: Branch v11 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v12: L5):
+# CHECK-NEXT: PutSlotOrAdd v12, -, v10 key="second" receivers=[L5] level=Expected accessSite=78
+# CHECK-NEXT: Return v12
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: PropSet v5, v6 key="base" accessSite=58
-# CHECK-NEXT: Jump -> next b3()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v11: object ~ L7|L11 = Upcast v5 castType=object
-# CHECK-NEXT: v12: 4 = Integer integer=4
-# CHECK-NEXT: v13: boolean ~ true = TypeTest v11 testedType=L6|L7|L8|L11|L12
-# CHECK-NEXT: Branch v13 -> taken b4(| 0), notTaken b5()
-# CHECK-NEXT: b4(v14: L6|L7|L8|L11|L12 ~ L7|L11):
-# CHECK-NEXT: PutSlotOrAdd v14, -, v12 key="third" receivers=[L6, L7, L8, L11, L12] level=Expected accessSite=84
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: PropDefine v11, v12 key="third" accessSite=84
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v17: object ~ L4|L5|L10 = Expect v11 expectedType=L4|L5|L10
-# CHECK-NEXT: v18: 3 = Integer integer=3
-# CHECK-NEXT: v19: boolean = TypeTest v17 testedType=L5|L10
-# CHECK-NEXT: Branch v19 -> taken b7(| 0), notTaken b8()
-# CHECK-NEXT: b7(v20: L5|L10):
-# CHECK-NEXT: PutSlotOrAdd v20, -, v18 key="second" receivers=[L5, L10] level=Expected accessSite=78
-# CHECK-NEXT: Return v20
-# CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: PropSet v17, v18 key="second" accessSite=78
-# CHECK-NEXT: Return v17
+# CHECK-NEXT: PropSet v9, v10 key="second" accessSite=78
+# CHECK-NEXT: Return v9
 # CHECK-NEXT: }
 # CHECK-LABEL: function f18 module=
 # CHECK: m0 position=1928 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L8 flags=[IsFromCompiler, IsExpected]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
@@ -733,7 +707,7 @@ runtimefunction id=68 function=f31
 # CHECK-NEXT: ReturnCall v3 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Base"
-# CHECK: module=m0 position=503 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] thisType={type=L0|L3|L4|L5|L6|L7|L9|L10|L11} results=[{type=undefined}] functionTypes=[f20] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f5 parameterMap=[{}, {original=0}]} creator=Version{provenVersion=f5} constructedClass=L0
+# CHECK: module=m0 position=503 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] thisType={type=L0|L2|L3|L5|L6|L7|L9|L10|L11} results=[{type=undefined}] functionTypes=[f20] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f5 parameterMap=[{}, {original=0}]} creator=Version{provenVersion=f5} constructedClass=L0
 # CHECK-LABEL: function {{*}}name="Other"
 # CHECK: module=m0 position=651 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] captures=[{type=f7}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f7} creator=Entrypoint{target=f7 arguments=Registers takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f7, v1: anything, v2: anything):
@@ -787,7 +761,7 @@ runtimefunction id=68 function=f31
 # CHECK-NEXT: PutSlotOrAdd v10, -, v8 key="belowBoth" receivers=[L8] level=Expected accessSite=83
 # CHECK-NEXT: Return v10
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: PropDefine v7, v8 key="belowBoth" accessSite=83
+# CHECK-NEXT: PropDefine v7, v8 key="belowBoth" accessSite=83 receivers=[L8, ..]
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="BelowBoth"

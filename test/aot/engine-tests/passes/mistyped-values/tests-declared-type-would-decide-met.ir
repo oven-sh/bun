@@ -248,120 +248,37 @@ function f34 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f35 callPosition=4294967295 module=m1}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: f3 = NewClosure function=f3 allocationSite=0
-# CHECK-NEXT: v1: f4 = NewClosure function=f4 allocationSite=1
-# CHECK-NEXT: v2: f5 = NewClosure function=f5 allocationSite=2
-# CHECK-NEXT: v3: f6 = NewClosure function=f6 allocationSite=3
-# CHECK-NEXT: v4: f7 = NewClosure function=f7 allocationSite=4
-# CHECK-NEXT: v5: f8 = NewClosure function=f8 allocationSite=5
-# CHECK-NEXT: v6: f9 = NewClosure function=f9 allocationSite=6
-# CHECK-NEXT: v7: f10 = NewClosure function=f10 allocationSite=7
-# CHECK-NEXT: v8: f11 = NewClosure function=f11 allocationSite=8
-# CHECK-NEXT: v9: f12 = NewClosure function=f12 allocationSite=9
-# CHECK-NEXT: v10: f13 = NewClosure function=f13 allocationSite=10
-# CHECK-NEXT: v11: f14 = NewClosure function=f14 allocationSite=11
-# CHECK-NEXT: v12: f16 = NewClosure function=f16 allocationSite=13
-# CHECK-NEXT: v13: f16 = NewClass v12 layout=L0
-# CHECK-NEXT: v14: f16 = FinishClass v13 layout=L0
-# CHECK-NEXT: v15: f17 = GetModuleVariable variable=g2
-# CHECK-NEXT: v16: f17 = FinishClass v15 layout=L1
-# CHECK-NEXT: v17: "byTypeof" = String string="byTypeof"
-# CHECK-NEXT: v18: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, Contiguous> = NewArray v17, v0 contents=string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14 allocationSite=15 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v19: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v18 provenType=Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v20: "byTypeofNumber" = String string="byTypeofNumber"
-# CHECK-NEXT: v21: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, Contiguous> = NewArray v20, v1 contents=string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14 allocationSite=16 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v22: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v21 provenType=Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v23: "byInstance" = String string="byInstance"
-# CHECK-NEXT: v24: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, Contiguous> = NewArray v23, v2 contents=string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14 allocationSite=17 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v25: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v24 provenType=Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v26: "byNull" = String string="byNull"
-# CHECK-NEXT: v27: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, Contiguous> = NewArray v26, v3 contents=string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14 allocationSite=18 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v28: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v27 provenType=Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v29: "byTruth" = String string="byTruth"
-# CHECK-NEXT: v30: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, Contiguous> = NewArray v29, v4 contents=string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14 allocationSite=19 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v31: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v30 provenType=Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v32: "byTruthOfNumber" = String string="byTruthOfNumber"
-# CHECK-NEXT: v33: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, Contiguous> = NewArray v32, v5 contents=string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14 allocationSite=20 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v34: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v33 provenType=Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v35: "byOptional" = String string="byOptional"
-# CHECK-NEXT: v36: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, Contiguous> = NewArray v35, v6 contents=string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14 allocationSite=21 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v37: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v36 provenType=Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v38: "byDefault" = String string="byDefault"
-# CHECK-NEXT: v39: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, Contiguous> = NewArray v38, v7 contents=string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14 allocationSite=22 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v40: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v39 provenType=Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v41: "byArray" = String string="byArray"
-# CHECK-NEXT: v42: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, Contiguous> = NewArray v41, v8 contents=string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14 allocationSite=23 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v43: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v42 provenType=Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v44: "byEquality" = String string="byEquality"
-# CHECK-NEXT: v45: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, Contiguous> = NewArray v44, v9 contents=string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14 allocationSite=24 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v46: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v45 provenType=Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v47: "byIn" = String string="byIn"
-# CHECK-NEXT: v48: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, Contiguous> = NewArray v47, v10 contents=string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14 allocationSite=25 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v49: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v48 provenType=Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v50: "bySwitch" = String string="bySwitch"
-# CHECK-NEXT: v51: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, Contiguous> = NewArray v50, v11 contents=string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14 allocationSite=26 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v52: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v51 provenType=Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v53: anything ~ object = Construct v14 calleeName="Point" accessSite=0 callees=[f16]
-# CHECK-NEXT: v54: anything ~ object = Construct v16 calleeName="Other" accessSite=1 callees=[f17]
-# CHECK-NEXT: v55: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v55)
-# CHECK-NEXT: b1(v56: int[0, 12]):
+# CHECK-NEXT: v0: f16 = NewClosure function=f16 allocationSite=13
+# CHECK-NEXT: v1: f16 = NewClass v0 layout=L0
+# CHECK-NEXT: v2: f16 = FinishClass v1 layout=L0
+# CHECK-NEXT: v3: f17 = GetModuleVariable variable=g2
+# CHECK-NEXT: v4: f17 = FinishClass v3 layout=L1
+# CHECK-NEXT: v5: anything ~ object = Construct v2 calleeName="Point" accessSite=0 callees=[f16]
+# CHECK-NEXT: v6: anything ~ object = Construct v4 calleeName="Other" accessSite=1 callees=[f17]
+# CHECK-NEXT: v7: 0 = Integer
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v8: anything ~ object = Construct v4 calleeName="Other" accessSite=2 callees=[f17]
+# CHECK-NEXT: v9: anything ~ object = Construct v2 calleeName="Point" accessSite=3 callees=[f16]
+# CHECK-NEXT: v10: 0 = Integer
+# CHECK-NEXT: v11: f15 = NewClosure function=f15 allocationSite=12 storage=Frame
+# CHECK-NEXT: Jump -> next b2(v10)
+# CHECK-NEXT: b2(v12: int|whole):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v58: 12 = Integer integer=12
-# CHECK-NEXT: v59: boolean = Less v56, v58
-# CHECK-NEXT: Branch v59 -> taken b2(| 0), notTaken b7()
-# CHECK-NEXT: b2(v60: int[0, 11]):
-# CHECK-NEXT: Switch v60 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] -> case b3(v19), case b3(v22), case b3(v25), case b3(v28), case b3(v31), case b3(v34), case b3(v37), case b3(v40), case b3(v43), case b3(v46), case b3(v49), otherwise b3(v52)
-# CHECK-NEXT: b3(v61: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v62: 1 = Integer integer=1
-# CHECK-NEXT: v63: int[1, 12] = Add v60, v62
-# CHECK-NEXT: v64: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14, proven, Contiguous, pristine[Storage, Names, Dense]> = RequireObjectCoercible v61 nullishAccess=Iterate
-# CHECK-NEXT: v65: 0 = Integer
-# CHECK-NEXT: v66: int[0, 4294967295] = CallBuiltin v64 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v67: boolean = Less v65, v66
-# CHECK-NEXT: Branch v67 -> taken b4(), notTaken b5()
+# CHECK-NEXT: v14: anything = Call v11, -, v12 calleeName="make" accessSite=4 callees=[f15]
+# CHECK-NEXT: v15: anything = Call v11, -, v12 calleeName="make" accessSite=5 callees=[f15]
+# CHECK-NEXT: v16: anything ~ undefined|null|L0 = Upcast v15 castType=anything
+# CHECK-NEXT: v17: boolean = TypeTest v16 testedType=L0
+# CHECK-NEXT: Branch v17 -> taken b3(), notTaken b5()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b4():
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b5():
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b6():
-# CHECK-NEXT: Jump -> next b1(v63)
-# CHECK-NEXT: b7():
-# CHECK-NEXT: v68: anything ~ object = Construct v16 calleeName="Other" accessSite=2 callees=[f17]
-# CHECK-NEXT: v69: anything ~ object = Construct v14 calleeName="Point" accessSite=3 callees=[f16]
-# CHECK-NEXT: v70: 0 = Integer
-# CHECK-NEXT: v71: f15 = NewClosure function=f15 allocationSite=12 storage=Frame
-# CHECK-NEXT: Jump -> next b8(v70)
-# CHECK-NEXT: b8(v72: int|whole):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v74: anything = Call v71, -, v72 calleeName="make" accessSite=4 callees=[f15]
-# CHECK-NEXT: v75: anything = Call v71, -, v72 calleeName="make" accessSite=5 callees=[f15]
-# CHECK-NEXT: v76: anything ~ undefined|null|L0 = Upcast v75 castType=anything
-# CHECK-NEXT: v77: boolean = TypeTest v76 testedType=L0
-# CHECK-NEXT: Branch v77 -> taken b9(), notTaken b10()
-# CHECK-NEXT: b9():
-# CHECK-NEXT: Jump -> next b11()
-# CHECK-NEXT: b10() frequency=Rare:
-# CHECK-NEXT: v78: boolean = InstanceOf v76, v14 writtenExpression="p instanceof Point"
-# CHECK-NEXT: Jump -> next b11()
-# CHECK-NEXT: b11():
-# CHECK-NEXT: v79: anything = Call v71, -, v72 calleeName="make" accessSite=6 callees=[f15]
-# CHECK-NEXT: v80: int|whole = Increment v72
-# CHECK-NEXT: Jump -> next b8(v80)
+# CHECK-NEXT: v18: anything = Call v11, -, v12 calleeName="make" accessSite=6 callees=[f15]
+# CHECK-NEXT: v19: int|whole = Increment v12
+# CHECK-NEXT: Jump -> next b2(v19)
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: v20: boolean = InstanceOf v16, v2 writtenExpression="p instanceof Point"
+# CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="byInstance"
-# CHECK: module=m0 position=1075 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w8 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=string site=w9 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|L0):
-# CHECK-NEXT: v1: undefined|null|boolean|number|string|bigint|@@iterator|L2|f1|Array<"a", proven, Contiguous, pristine[Storage, Names, Dense]> ~ undefined|null = AssumeType v0 provenType=undefined|null|boolean|number|string|bigint|@@iterator|L2|f1|Array<"a", proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v2: f17 = GetModuleVariable variable=g2
-# CHECK-NEXT: v3: object = GetClassPrototype v2 layout=L1
-# CHECK-NEXT: v4: boolean = HasInPrototypeChain v1, v3
-# CHECK-NEXT: v5: "Other" = String string="Other"
-# CHECK-NEXT: Return v5
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="byInstance"
-# CHECK: module=m0 position=1075 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f5}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f5} creator=Entrypoint{target=f5 arguments=Registers} {
-# CHECK-NEXT: b0(v0: f5, v1: anything, v2: anything) frequency=Rare:
-# CHECK-NEXT: v3: object = NewRuntimeError runtimeError=LeftOutOfExecutable
-# CHECK-NEXT: Throw v3
-# CHECK-NEXT: }
+# CHECK: module=m0 position=1075 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w8 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type="Other" site=w9 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]

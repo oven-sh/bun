@@ -1,4 +1,4 @@
-// Seed 1482 of fuzz/values-that-end-before-a-suspension-beside-values-that-cross-it.ts: a collection runs while the function waits, between the last read of a value that crossed an earlier await and the allocation of an object that is dropped before a loop of collections and waits.
+// Seed 1482 of fuzz/liveness-around-suspension.ts: a collection runs while the function waits, between the last read of a value that crossed an earlier await and the allocation of an object that is dropped before a loop of collections and waits.
 const lines = [];
 function show(value) {
   if (typeof value === "function") return "function>" + show(value());

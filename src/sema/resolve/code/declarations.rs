@@ -28,7 +28,7 @@ impl<'h> Resolver<'h> {
             let relative = stem.strip_prefix(manifest.directory)?;
             let relative = [b".", relative].concat();
             let mut folders = find_declaration_folders(manifest.exports.as_ref()?);
-            folders.sort_by_key(|folder| std::cmp::Reverse(folder.code.len()));
+            folders.shared_sort_by_key(|folder| std::cmp::Reverse(folder.code.len()));
             folders.iter().find_map(|folder| {
                 let rest = relative.strip_prefix(folder.code)?;
                 let declared = &[folder.declarations, rest].concat()[1..];

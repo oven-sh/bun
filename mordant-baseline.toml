@@ -43,6 +43,9 @@
 [bun_format]
 "field_valid_only_when:src/format/css/postcss.rs" = 1
 
+[bun_glob]
+"unused_pub:src/glob/lib.rs" = 1
+
 [bun_http]
 "bound_checked_only_in_debug:src/http/websocket.rs" = 1
 "freed_while_borrowed:src/http/AsyncHTTP.rs" = 1

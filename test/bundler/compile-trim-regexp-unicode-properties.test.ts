@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { unsupported } from "../aot/harness/commands";
 import { run } from "../aot/harness/run";
 import { withoutDebugInformation } from "../aot/harness/without-debug-information";
-import { canTrim, featureNamed, textOf, withoutFeatures } from "./compile-trim-features";
+import { canTrim, featureNamed, saysFeatureWasRemoved, textOf, withoutFeatures } from "./compile-trim-features";
 
 const files = {
   "no-property.ts": `
@@ -13,6 +13,7 @@ const files = {
     console.log(/a|b/.test(text), /(?<year>\\d{4})-(?<month>\\d\\d)/.exec(text)!.groups!.year, /\\w+$/u.exec(text)![0]);
   `,
   "property.ts": `console.log(/^\\p{Lu}/u.test("Élan"));`,
+  "pattern-from-argv.ts": `console.log(new RegExp(Bun.argv[2], "u").test("Élan"));`,
 };
 
 describe.skipIf(!canTrim || !!unsupported)("--compile --aot --trim and Unicode property escapes", () => {
@@ -87,6 +88,24 @@ describe.skipIf(!canTrim || !!unsupported)("--compile --aot --trim and Unicode p
       stdout: "true\n",
       stderr: "",
       exitCode: 0,
+    });
+  });
+
+  test("a pattern from a string retains the tables; with them forced out, the executable says so", async () => {
+    using dir = tempDir("compile-trim-regexp-unicode-properties", files);
+    const folder = String(dir);
+    const printsTrue = { stdout: "true\n", stderr: "", exitCode: 0 };
+    await build(folder, "pattern-from-argv.ts", "by-use");
+    await build(folder, "pattern-from-argv.ts", "by-name", properties);
+    expect(await run([join(folder, "by-use", "program"), "^\\p{Lu}"], folder)).toEqual(printsTrue);
+    expect(await run([join(folder, "by-name", "program"), "^É"], folder)).toEqual(printsTrue);
+    // The parser calls removed code. macOS reports that as SIGBUS, not SIGSEGV.
+    const failed = await run([join(folder, "by-name", "program"), "^\\p{Lu}"], folder);
+    expect({ ...failed, saysSo: saysFeatureWasRemoved(failed.stderr, properties[0]) }).toEqual({
+      stdout: "",
+      stderr: failed.stderr,
+      exitCode: 70,
+      saysSo: true,
     });
   });
 });

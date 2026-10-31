@@ -99,6 +99,7 @@ pub(super) struct ModuleEntries {
     pub knows_all_names: bool,
     pub is_half: bool,
     pub is_replaced_late: bool,
+    pub exports_ordinary_object: bool,
     /// What `__esModule` says to an ES importer, as far as the text of the module says it.
     pub marker: Option<bool>,
     pub names: Vec<NameEntry>,
@@ -254,6 +255,7 @@ fn create_entries(text: &OwnText) -> ModuleEntries {
         knows_all_names: text.knows_all_names(),
         is_half: text.is_half,
         is_replaced_late: text.is_replaced_late,
+        exports_ordinary_object: text.exports_ordinary_object,
         marker: match text.is_marker_ignored_by_imports {
             true => Some(false),
             false => text.marker,
@@ -341,8 +343,10 @@ impl CommonJsExports {
         }
         exports.modules = modules;
         for table in &mut exports.files {
-            table.accesses.sort_unstable_by_key(|access| access.node);
-            table.erased.sort_unstable();
+            table
+                .accesses
+                .shared_sort_unstable_by_key(|access| access.node);
+            table.erased.shared_sort_unstable();
             table.exported_bindings.sort_unstable();
             table.exported_bindings.dedup();
         }
@@ -598,7 +602,9 @@ impl CommonJsExports {
             .chain(owners)
             .collect();
         // Whether the module has a name by the time the copy is taken: a variable cannot say that it is absent, the object can.
-        for &(imported, _) in &tables.absent_commonjs_names {
+        let absent_names = tables.absent_commonjs_names.iter();
+        let absent_names = absent_names.map(|&(imported, _)| imported);
+        for imported in absent_names.chain(tables.dropped_commonjs_names.iter().copied()) {
             let exporter = ModuleRef::File(imported.exporter);
             let owner = self.owner_of(exporter, imported.name);
             modules.push(owner.map_or(exporter, |owner| owner.0));

@@ -10,7 +10,7 @@ use super::{EdgeKind, MapChild, TypeEdge};
 use crate::builtins::id::BuiltinClass;
 use crate::builtins::table::{class_data, contents_index};
 use crate::builtins::{builtin_class_of, type_name_of};
-use crate::ir::generated::{MAX_TRACKED_INTEGER, NameClass};
+use crate::ir::generated::{LimitId, MAX_TRACKED_INTEGER, NameClass};
 use crate::ir::{LayoutId, Mapped, Primitives, Type, TypeFlags, TypeId, TypeTable, classify_name};
 use crate::lower::{CheckerTypeId, FileLowering};
 
@@ -101,7 +101,10 @@ impl FileLowering<'_, '_, '_, '_> {
                 match (layout, self.requires_field(ty)) {
                     (Some(_), true) => {
                         let mapped = self.add_accepted_builtin_classes(ty, mapped);
-                        self.add_accepted_class_constructors(ty, mapped)
+                        match shape.trust.is_trusted() {
+                            true => self.add_accepted_class_constructors(ty, mapped),
+                            false => mapped,
+                        }
                     }
                     (Some(_), false) => Mapped::expected(mapped.ty),
                     (None, _) => mapped,
@@ -365,9 +368,15 @@ impl FileLowering<'_, '_, '_, '_> {
         } = tables;
         let fact = KeptFact::IsMappedAlikeInEveryFile;
         let unstable_answers = self.queries.count_unstable_answers();
+        let limit = self.inputs.limits.get(LimitId::MaxTypeNodes);
         visited.insert(root);
         pending.push(root);
         while let Some(ty) = pending.pop() {
+            // `type Endless<T> = [Endless<[T]>]`: each part is a type that looking at it makes. explore() maps such a type as far as the limit goes from where
+            // it starts, and that is another place in another file.
+            if visited.len() as u64 > limit || self.types.exhausted.contains(&ty) {
+                return false;
+            }
             match self.find_known_fact(ty, fact) {
                 Some(true) => continue,
                 Some(false) => return false,

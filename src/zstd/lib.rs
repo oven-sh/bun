@@ -148,8 +148,9 @@ fn compress_append_with(
 /// The contexts that [`compress_append`] and [`decompress_alloc`] make in every call, kept from one call to the next.
 /// Making one costs more than a few kilobytes of data do.
 pub struct Contexts {
-    compression: FrameCompressor,
-    decompression: DCtx,
+    // Not in place: thread-local variables hold these, and every thread pays for their size.
+    compression: Box<FrameCompressor>,
+    decompression: Box<DCtx>,
 }
 
 impl Default for Contexts {
@@ -161,8 +162,8 @@ impl Default for Contexts {
 impl Contexts {
     pub fn new() -> Self {
         Self {
-            compression: FrameCompressor::new(),
-            decompression: DCtx::new(),
+            compression: Box::new(FrameCompressor::new()),
+            decompression: Box::new(DCtx::new()),
         }
     }
 
@@ -171,7 +172,7 @@ impl Contexts {
         compress_append_with(&mut self.compression, out, src, level)
     }
 
-    /// Decompresses one frame, which fills `dest`.
+    /// Decompresses `src`, whole frames that fill `dest`.
     pub fn decompress_into(&mut self, dest: &mut [u8], src: &[u8]) -> Result<(), ZstdError> {
         let size = (self.decompression.decompress(dest, src))
             .map_err(|code| ZstdError::for_decompression(code, ZstdError::DecompressionFailed))?;

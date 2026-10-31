@@ -359,6 +359,19 @@ module.exports = debugMode => {
       const large = new Uint8Array(2000);
       console.log(nativeModule.detach_array_buffer(large.buffer));
       console.log("Uint8Array: length =", large.length, "[0] =", large[0]);
+
+      console.log("====== ArrayBuffer(8) while an exception is pending");
+      const pending = new ArrayBuffer(8);
+      const pendingBytes = new Uint8Array(pending);
+      try {
+        nativeModule.detach_array_buffer_with_pending_exception(pending);
+        console.log("did not throw");
+      } catch (e) {
+        console.log("caught", e.message);
+      }
+      console.log("byteLength =", pending.byteLength, "detached =", pending.detached);
+      console.log("Uint8Array: length =", pendingBytes.length);
+      console.log(nativeModule.describe_array_buffer(pending));
     },
 
     // Bun only. V8 aborts the process when an addon detaches a buffer that is not detachable, and

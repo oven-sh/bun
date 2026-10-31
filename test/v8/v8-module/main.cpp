@@ -1937,6 +1937,15 @@ void detach_array_buffer(const FunctionCallbackInfo<Value> &info) {
   return_description(info, description);
 }
 
+// uWebSockets.js detaches the buffer it lent to a JS handler as soon as the
+// handler returns, also when the handler threw and the exception is pending.
+void detach_array_buffer_with_pending_exception(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  isolate->ThrowError(String::NewFromUtf8(isolate, "pending").ToLocalChecked());
+  info[0].As<ArrayBuffer>()->Detach();
+}
+
 void test_v8_function_call(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   Local<Context> context = isolate->GetCurrentContext();
@@ -2764,6 +2773,8 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "describe_array_buffer_view_bytes",
                   describe_array_buffer_view_bytes);
   NODE_SET_METHOD(exports, "detach_array_buffer", detach_array_buffer);
+  NODE_SET_METHOD(exports, "detach_array_buffer_with_pending_exception",
+                  detach_array_buffer_with_pending_exception);
   NODE_SET_METHOD(exports, "test_v8_function_call", test_v8_function_call);
   NODE_SET_METHOD(exports, "test_v8_function_new_instance",
                   test_v8_function_new_instance);

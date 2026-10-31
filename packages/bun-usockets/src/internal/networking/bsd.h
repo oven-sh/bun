@@ -237,7 +237,8 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t p
 
 /* Creates an UDP socket bound to the hostname and port */
 LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int options, int *err);
-int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int port);
+/* connect(2) to an AF_INET or AF_INET6 address. Returns 0, or -1 with the error in errno / WSAGetLastError(). */
+int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_storage *addr);
 int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, struct sockaddr_storage *local_addr, int options);

@@ -1332,3 +1332,58 @@ it("--hot does not emit beforeExit to the listeners of a failed run", async () =
   expect(await stdout("still running")).toBe(true);
   expect(await runner.exited).toBe(0);
 });
+
+// The watcher thread drops the folder of each write. A lookup that failed on the old listing must still be tried again.
+it.each(["--hot", "--watch"])(
+  "%s finds each module that the program writes and looks up at once",
+  async flag => {
+    using dir = tempDir("hot-look-up-own-write", {
+      "main.js": `import fs from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
+
+const require = createRequire(import.meta.url);
+const here = import.meta.dir;
+const missed = [];
+const write = name => fs.writeFileSync(path.join(here, name), "export const v = 1;\\n");
+
+// As a program does it. A run that the watcher started again does not write the file a second time.
+if (!fs.existsSync(path.join(here, "first.js"))) write("./first.js");
+await import("./first.js").catch(() => missed.push("./first.js"));
+
+// More folders to look in, which do not exist, keep one lookup at work for longer: the watcher
+// thread then drops the folder while that lookup runs.
+const paths = [here, ...Array.from({ length: 192 }, (_, i) => path.join(here, "nowhere", String(i)))];
+for (let i = 0; i < 200; i++) {
+  const name = "./gen" + i + ".js";
+  write(name);
+  try {
+    // A lookup that finds another file is a miss too.
+    if (fs.realpathSync(require.resolve(name, { paths })) !== fs.realpathSync(path.join(here, name))) missed.push(name);
+  } catch {
+    missed.push(name);
+  }
+}
+console.log(JSON.stringify(missed));
+process.exit(0);
+`,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), flag, "--no-clear-screen", "main.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The watcher can handle the write of "first.js" after the import watches that file, and then
+    // the program starts again, once. Each run that comes to its end prints what it missed.
+    expect({ stdout: [...new Set(stdout.trim().split("\n"))], stderr, exitCode }).toEqual({
+      stdout: ["[]"],
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  longTimeout,
+);

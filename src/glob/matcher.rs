@@ -1308,6 +1308,37 @@ fn match_groups(
     }
 }
 
+/// Returns false only if `glob`, one segment of a pattern, matches no name that starts with `.` under [`Dots::Hide`].
+pub(crate) fn may_match_hidden(glob: &[u8]) -> bool {
+    // Only a `.` in the pattern takes that dot, and a group or a class has to come before it.
+    let choice = strings::index_of_any(glob, b"{([");
+    glob.starts_with(b"\\.") || choice.is_some_and(|at| strings::contains_char(&glob[at..], b'.'))
+}
+
+/// Returns true only if `glob`, one segment of a pattern, has no wildcard, so its text and its `{a,b}` spell every match out.
+pub(crate) fn has_no_wildcard(glob: &[u8]) -> bool {
+    if glob.first() == Some(&b'!') {
+        return false;
+    }
+    let mut has_escape_or_bracket = false;
+    let mut at = 0;
+    while let Some(&byte) = glob.get(at) {
+        at += match byte {
+            b'*' | b'?' => return false,
+            // Closed or not: what an unclosed one does to the groups around it is not read here.
+            b'@' | b'+' | b'!' if glob.get(at + 1) == Some(&b'(') => return false,
+            b'[' if class_end(glob, at).is_some() => return false,
+            b'\\' | b'[' => {
+                has_escape_or_bracket = true;
+                1 + usize::from(byte == b'\\')
+            }
+            _ => 1,
+        };
+    }
+    // In invalid UTF-8 the matcher can take a `\` or a `[` for the end of a character, and what follows is then a wildcard.
+    !has_escape_or_bracket || strings::is_valid_utf8(glob)
+}
+
 /// Returns true if `path` has a `.` or `..` segment or, with [`Dots::Hide`], a segment that starts with `.`.
 #[inline]
 pub(crate) fn has_closed_segment<const WINDOWS: bool>(path: &[u8], dots: Dots) -> bool {

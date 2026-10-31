@@ -142,7 +142,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_aotBuiltinEntries, (JSC::JSGlobalObject * gl
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* result = constructEmptyObject(globalObject);
-    result->putDirect(vm, Identifier::fromString(vm, "hash"_s), jsEmptyString(vm));
+    Bun::putDirectNamed(vm, result, "hash"_s, jsEmptyString(vm));
     for (auto name : { "entries"_s, "classes"_s, "layouts"_s }) {
         JSArray* entries = constructEmptyArray(globalObject, nullptr);
         RETURN_IF_EXCEPTION(scope, {});

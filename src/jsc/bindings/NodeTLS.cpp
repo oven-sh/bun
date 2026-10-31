@@ -289,7 +289,9 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
     }
     if (parseError) {
         // Reuse the shared ERR_OSSL_<LIB>_<REASON> decoration path
-        // (library/function/reason/code + opensslErrorStack), same as node:crypto.
+        // (library/function/reason/code), same as node:crypto. Node's
+        // LoadCertsFromBIO pops its errors, so there is no opensslErrorStack.
+        ERR_clear_error();
         throwCryptoError(globalObject, scope, parseError);
         return {};
     }

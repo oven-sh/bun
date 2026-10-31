@@ -931,6 +931,7 @@ impl TLSSocket {
             return Ok(JSValue::UNDEFINED);
         };
 
+        boringssl::ERR_clear_error();
         // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr/label_slice/context are valid for the lengths passed (context is null with use_context=0).
         let result = unsafe {
             ffi::SSL_export_keying_material(

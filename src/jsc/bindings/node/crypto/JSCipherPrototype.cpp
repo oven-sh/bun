@@ -56,7 +56,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
     JSArrayBufferView* dataView = getArrayBufferOrView(lexicalGlobalObject, scope, dataValue, "data"_s, encodingValue);
     RETURN_IF_EXCEPTION(scope, {});
 
-    ClearErrorOnReturn clearError;
+    ClearErrorOnReturn clearErrorOnReturn;
 
     if (dataView->byteLength() > INT_MAX) {
         return ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "data is too big"_s, 0, INT_MAX, jsNumber(dataView->byteLength()));
@@ -129,7 +129,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherFinal, (JSC::JSGlobalObject * lexicalGlobalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    ClearErrorOnReturn clearError;
+    ClearErrorOnReturn clearErrorOnReturn;
 
     JSCipher* cipher = dynamicDowncast<JSCipher>(callFrame->thisValue());
     if (!cipher) {

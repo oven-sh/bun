@@ -270,7 +270,6 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
     }
 
     uint32_t len = hash->m_mdLen;
-    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
     // EVP_DigestFinal_ex cleanses the context (SHA-3 then spins in EVP_DigestUpdate), so free it here and serve later calls from m_digest.
     if (!hash->m_digest && len > 0) {

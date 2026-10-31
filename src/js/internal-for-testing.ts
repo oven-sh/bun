@@ -25,7 +25,7 @@ export const addBlockedSPKIForTesting: (hash: ArrayBufferView) => void = $newCpp
 export const clearBlockedSPKIsForTesting: () => void = $newCppFunction("NodeTLS.cpp", "clearBlockedSPKIsForTesting", 0);
 
 // This thread's BoringSSL error queue. An API that returns with entries on it makes the next unrelated failure that
-// reads the queue report them. `put` adds BN_R_BITS_TOO_SMALL; `take` empties it and returns what it held, oldest first.
+// reads the queue report them. `put` adds BN_R_BITS_TOO_SMALL; `take` empties it and returns its entries, oldest first.
 export const putBoringSSLErrorForTesting: () => void = $newCppFunction("NodeTLS.cpp", "putBoringSSLErrorForTesting", 0);
 export const takeBoringSSLErrorQueueForTesting: () => string[] = $newCppFunction(
   "NodeTLS.cpp",

@@ -231,7 +231,6 @@ JSC::JSValue KeyObject::exportJwkEcKey(JSC::JSGlobalObject* lexicalGlobalObject,
     int degree_bits = EC_GROUP_get_degree(group);
     int degree_bytes = (degree_bits / CHAR_BIT) + (7 + (degree_bits % CHAR_BIT)) / 8;
 
-    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     auto x = ncrypto::BignumPointer::New();
     auto y = ncrypto::BignumPointer::New();
 
@@ -561,7 +560,6 @@ JSC::JSValue KeyObject::exportPublic(JSC::JSGlobalObject* lexicalGlobalObject, J
         return exportRaw(lexicalGlobalObject, scope, config.format, config.ec_point_form);
     }
 
-    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     const ncrypto::EVPKeyPointer& pkey = m_data->asymmetricKey;
     auto res = pkey.writePublicKey(config);
     if (!res) {
@@ -594,7 +592,6 @@ JSValue KeyObject::exportPrivate(JSGlobalObject* lexicalGlobalObject, ThrowScope
         return exportRaw(lexicalGlobalObject, scope, config.format, config.ec_point_form);
     }
 
-    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     const ncrypto::EVPKeyPointer& pkey = m_data->asymmetricKey;
     auto res = pkey.writePrivateKey(config);
     if (!res) {
@@ -608,6 +605,7 @@ JSValue KeyObject::exportPrivate(JSGlobalObject* lexicalGlobalObject, ThrowScope
 JSValue KeyObject::exportAsymmetric(JSGlobalObject* globalObject, ThrowScope& scope, JSValue optionsValue, CryptoKeyType exportType)
 {
     VM& vm = globalObject->vm();
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
     ASSERT(type() != CryptoKeyType::Secret);
 

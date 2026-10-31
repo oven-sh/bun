@@ -1594,96 +1594,157 @@ describe("the BoringSSL error queue", () => {
   const [key, iv] = [Buffer.alloc(16, 1), Buffer.alloc(16, 2)];
   const rsaPublicKey = crypto.generateKeyPairSync("rsa", { modulusLength: 1024 }).publicKey;
   const rsa = { name: "RSA-OAEP", hash: "SHA-256" };
+  // BoringSSL refuses a BIGNUM of more than BN_MAX_WORDS (INT_MAX / 256) words, 8 bytes short of 64 MiB.
   const tooLongForBignum = Buffer.alloc(64 * 1024 * 1024 + 64, 0xff);
-  const failures = {
-    "scryptSync with invalid parameters": () => crypto.scryptSync("password", "salt", 1, { N: 3 }),
-    "Certificate.verifySpkac": () => crypto.Certificate.verifySpkac(Buffer.from("garbage")),
-    "Certificate.exportPublicKey": () => crypto.Certificate.exportPublicKey(Buffer.from("garbage")),
-    "Certificate.exportChallenge": () => crypto.Certificate.exportChallenge(Buffer.from("garbage")),
-    "tls.createSecureContext with a bad cert": () => tls.createSecureContext({ cert: "garbage" }),
-    "tls.createSecureContext with a bad ca": () => tls.createSecureContext({ ca: "garbage" }),
-    "tls.createSecureContext with a bad crl": () => tls.createSecureContext({ crl: "garbage" }),
-    "tls.createSecureContext with a bad ecdhCurve": () => tls.createSecureContext({ ecdhCurve: "garbage" }),
-    "createECDH with a curve BoringSSL lacks": () => crypto.createECDH("secp256k1"),
-    "ecdh.getPublicKey in a format BoringSSL lacks": () => {
-      const ecdh = crypto.createECDH("prime256v1");
-      ecdh.generateKeys();
-      ecdh.getPublicKey(null, "hybrid");
-    },
-    "ecdh.setPrivateKey with an oversized key": () => crypto.createECDH("prime256v1").setPrivateKey(tooLongForBignum),
-    "dh.computeSecret with an oversized key": () => crypto.getDiffieHellman("modp5").computeSecret(tooLongForBignum),
-    "generateKeyPair with an oversized prime": () =>
-      util.promisify(crypto.generateKeyPair)("dh", { prime: tooLongForBignum }),
-    "generateKeyPairSync of a tiny RSA key": () => crypto.generateKeyPairSync("rsa", { modulusLength: 64 }),
-    "getCipherInfo with an impossible key length": () => crypto.getCipherInfo("aes-128-gcm", { keyLength: 5 }),
-    "decipher.final with bad padding": () => {
-      const decipher = crypto.createDecipheriv("aes-128-cbc", key, iv);
-      decipher.update(Buffer.alloc(32, 3));
-      decipher.final();
-    },
-    "createPrivateKey of a malformed key": () =>
-      crypto.createPrivateKey("-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----"),
-    "subtle.importKey of a malformed spki": () =>
-      crypto.subtle.importKey("spki", Buffer.alloc(16), rsa, true, ["encrypt"]),
-    "subtle.importKey of a point off the curve": () =>
-      crypto.subtle.importKey("raw", Buffer.alloc(65, 4), { name: "ECDSA", namedCurve: "P-256" }, true, ["verify"]),
-    "subtle.generateKey of a tiny RSA key": () =>
-      crypto.subtle.generateKey({ ...rsa, modulusLength: 8, publicExponent: new Uint8Array([1, 0, 1]) }, true, [
-        "encrypt",
-      ]),
-  };
+  const modp5 = () => crypto.createDiffieHellman(crypto.getDiffieHellman("modp5").getPrime());
 
-  // The others throw or reject.
-  const failsByReturning = {
-    "Certificate.verifySpkac": false,
-    "Certificate.exportPublicKey": "",
-    "Certificate.exportChallenge": "",
-    "getCipherInfo with an impossible key length": undefined,
-  };
-
-  it.each(Object.keys(failures))("is empty after %s", async name => {
+  it.each([
+    [
+      "scryptSync with invalid parameters",
+      () => crypto.scryptSync("password", "salt", 1, { N: 3 }),
+      { code: "ERR_CRYPTO_INVALID_SCRYPT_PARAMS" },
+    ],
+    [
+      "scrypt with invalid parameters",
+      () => util.promisify(crypto.scrypt)("password", "salt", 1, { N: 3 }),
+      { code: "ERR_CRYPTO_INVALID_SCRYPT_PARAMS" },
+    ],
+    [
+      "tls.createSecureContext with a bad cert",
+      () => tls.createSecureContext({ cert: "garbage" }),
+      { code: "ERR_OSSL_PEM_NO_START_LINE" },
+    ],
+    [
+      "tls.createSecureContext with a bad crl",
+      () => tls.createSecureContext({ crl: "garbage" }),
+      { code: "ERR_CRYPTO_OPERATION_FAILED" },
+    ],
+    [
+      "createECDH with a curve BoringSSL lacks",
+      () => crypto.createECDH("secp256k1"),
+      { code: "ERR_CRYPTO_OPERATION_FAILED" },
+    ],
+    [
+      "ecdh.getPublicKey in a format BoringSSL lacks",
+      () => {
+        const ecdh = crypto.createECDH("prime256v1");
+        ecdh.generateKeys();
+        ecdh.getPublicKey(null, "hybrid");
+      },
+      { code: "ERR_CRYPTO_OPERATION_FAILED" },
+    ],
+    [
+      "ecdh.setPrivateKey with an oversized key",
+      () => crypto.createECDH("prime256v1").setPrivateKey(tooLongForBignum),
+      { code: "ERR_CRYPTO_OPERATION_FAILED" },
+    ],
+    [
+      "dh.computeSecret with an oversized key",
+      () => modp5().computeSecret(tooLongForBignum),
+      { code: "ERR_INVALID_ARG_VALUE" },
+    ],
+    [
+      "dh.setPublicKey with an oversized key",
+      () => modp5().setPublicKey(tooLongForBignum),
+      { code: "ERR_INVALID_ARG_VALUE" },
+    ],
+    [
+      "dh.setPrivateKey with an oversized key",
+      () => modp5().setPrivateKey(tooLongForBignum),
+      { code: "ERR_INVALID_ARG_VALUE" },
+    ],
+    [
+      "generateKeyPair with an oversized prime",
+      () => util.promisify(crypto.generateKeyPair)("dh", { prime: tooLongForBignum }),
+      { code: "ERR_OUT_OF_RANGE" },
+    ],
+    [
+      "getCipherInfo with an impossible key length",
+      () => crypto.getCipherInfo("aes-128-gcm", { keyLength: 5 }),
+      { returns: undefined },
+    ],
+    [
+      "subtle.importKey of a malformed spki",
+      () => crypto.subtle.importKey("spki", Buffer.alloc(16), rsa, true, ["encrypt"]),
+      { name: "DataError" },
+    ],
+    [
+      "subtle.unwrapKey of a malformed spki",
+      async () => {
+        const aes = await crypto.subtle.importKey("raw", key, "AES-CBC", false, ["encrypt", "unwrapKey"]);
+        const wrapped = await crypto.subtle.encrypt({ name: "AES-CBC", iv }, aes, Buffer.alloc(16));
+        return crypto.subtle.unwrapKey("spki", wrapped, aes, { name: "AES-CBC", iv }, rsa, true, ["encrypt"]);
+      },
+      { name: "DataError" },
+    ],
+    [
+      "subtle.generateKey of a tiny RSA key",
+      () =>
+        crypto.subtle.generateKey({ ...rsa, modulusLength: 8, publicExponent: new Uint8Array([1, 0, 1]) }, true, [
+          "encrypt",
+        ]),
+      { name: "OperationError" },
+    ],
+  ])("is empty after %s", async (_, fail, expected) => {
     takeBoringSSLErrorQueueForTesting();
-    if (name in failsByReturning) expect(failures[name]()).toBe(failsByReturning[name]);
-    else await expect((async () => failures[name]())()).rejects.toThrow();
+    if ("returns" in expected) expect(fail()).toBe(expected.returns);
+    else await expect((async () => fail())()).rejects.toMatchObject(expected);
     expect(takeBoringSSLErrorQueueForTesting()).toEqual([]);
   });
 
-  const readers = {
-    "decipher.final": failures["decipher.final with bad padding"],
-    "createHash": () => crypto.createHash("no-such-digest"),
-    "createDiffieHellman": () => crypto.createDiffieHellman(1),
-    "generateKeyPairSync": failures["generateKeyPairSync of a tiny RSA key"],
-    "generateKeyPair": () => util.promisify(crypto.generateKeyPair)("rsa", { modulusLength: 64 }),
-    "publicEncrypt": () => crypto.publicEncrypt(rsaPublicKey, Buffer.alloc(4096)),
-    "an HMAC Bun.CryptoHasher": () => new Bun.CryptoHasher("sha256", "key").update("data").digest("hex"),
-    "an HMAC Bun.CryptoHasher of an unsupported algorithm": () => new Bun.CryptoHasher("shake128", "key"),
+  const outcome = async fail => {
+    try {
+      return await fail();
+    } catch (e) {
+      return { code: e.code, message: e.message, opensslErrorStack: e.opensslErrorStack };
+    }
   };
+  const tinyRsaKeyPair = () => util.promisify(crypto.generateKeyPair)("rsa", { modulusLength: 64 });
 
-  it.each(Object.keys(readers))("does not lend %s an earlier failure", async name => {
-    const outcome = async () => {
-      try {
-        return await readers[name]();
-      } catch (e) {
-        return { code: e.code, message: e.message, opensslErrorStack: e.opensslErrorStack };
-      }
-    };
+  it.each([
+    [
+      "decipher.final",
+      () => {
+        const decipher = crypto.createDecipheriv("aes-128-cbc", key, iv);
+        decipher.update(Buffer.alloc(32, 3));
+        decipher.final();
+      },
+    ],
+    ["createHash", () => crypto.createHash("no-such-digest")],
+    ["createDiffieHellman", () => crypto.createDiffieHellman(1)],
+    ["generateKeyPairSync", () => crypto.generateKeyPairSync("rsa", { modulusLength: 64 })],
+    ["generateKeyPair", tinyRsaKeyPair],
+    ["publicEncrypt", () => crypto.publicEncrypt(rsaPublicKey, Buffer.alloc(4096))],
+    ["an HMAC Bun.CryptoHasher", () => new Bun.CryptoHasher("sha256", "key").update("data").digest("hex")],
+    ["an HMAC Bun.CryptoHasher of an unsupported algorithm", () => new Bun.CryptoHasher("shake128", "key")],
+  ])("does not lend %s an earlier failure", async (_, fail) => {
     takeBoringSSLErrorQueueForTesting();
-    const expected = await outcome();
+    const expected = await outcome(fail);
     putBoringSSLErrorForTesting();
-    expect(await outcome()).toEqual(expected);
+    expect(await outcome(fail)).toEqual(expected);
   });
 
-  it("is empty on the work pool's threads after a WebCrypto operation fails", async () => {
+  it("does not lend a job's callback a failure from while the job ran", async () => {
+    takeBoringSSLErrorQueueForTesting();
+    const expected = await outcome(tinyRsaKeyPair);
+    expect(
+      await outcome(() => {
+        const pending = tinyRsaKeyPair();
+        putBoringSSLErrorForTesting();
+        return pending;
+      }),
+    ).toEqual(expected);
+  });
+
+  it("does not lend a job an earlier failure on its work pool thread", async () => {
     const codes = async () =>
       new Set(
         await Promise.all(
           Array.from({ length: 32 }, () =>
-            util
-              .promisify(crypto.generateKeyPair)("rsa", { modulusLength: 64 })
-              .then(
-                () => "generated",
-                e => e.code,
-              ),
+            tinyRsaKeyPair().then(
+              () => "generated",
+              e => e.code,
+            ),
           ),
         ),
       );
@@ -1708,5 +1769,23 @@ describe("the BoringSSL error queue", () => {
         ],
       }),
     );
+  });
+
+  it("gives its oldest entry's code to an error that has none of its own", async () => {
+    const garbage = { key: Buffer.alloc(10, 0xab), format: "der", type: "spki" };
+    expect(await outcome(() => crypto.createPublicKey(garbage))).toEqual({
+      code: "ERR_OSSL_EVP_DECODE_ERROR",
+      message: "Failed to read asymmetric key",
+      opensslErrorStack: ["error:06000066:public key routines:OPENSSL_internal:DECODE_ERROR"],
+    });
+  });
+
+  it("is not reported by tls.setDefaultCACertificates", async () => {
+    const malformed = "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----";
+    expect(await outcome(() => tls.setDefaultCACertificates([malformed]))).toEqual({
+      code: "ERR_OSSL_PEM_ASN.1_ENCODING_ROUTINES",
+      message: "error:0900000c:PEM routines:OPENSSL_internal:ASN.1 encoding routines",
+      opensslErrorStack: undefined,
+    });
   });
 });

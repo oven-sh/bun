@@ -315,6 +315,10 @@ JSValue createCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, 
     errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "message"_s), jsString(vm, errorMessage), messageSlot);
     RETURN_IF_EXCEPTION(scope, {});
 
+    // Without a code from the caller, the oldest entry describes the error, like Node's CryptoErrorStore::ToException.
+    if (err == 0)
+        err = ERR_peek_error();
+
     // Captures (and drains) the queue on construction.
     ncrypto::CryptoErrorList errorStack;
 

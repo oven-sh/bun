@@ -4919,10 +4919,12 @@ node:zlib.Deflate.prototype, 2 above bytesRead, stored to
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:zlib.Deflate.prototype, 2 above reset()
-  throws TypeError: undefined is not an object <- every object, a number, a string, undefined
+  throws Error ERR_INTERNAL_ASSERTION: zlib binding closed <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:zlib.Deflate.prototype, 2 above reset("a", 1)
-  throws TypeError: undefined is not an object <- every object, a number, a string, undefined
+  throws Error ERR_INTERNAL_ASSERTION: zlib binding closed <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:zlib.Deflate.prototype, 2 above _flush()
   throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string

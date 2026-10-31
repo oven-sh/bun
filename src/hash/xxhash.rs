@@ -32,8 +32,9 @@ impl XxHash64 {
 /// Streaming XxHash64 — used by the bundler's `ContentHasher`
 /// (length-prefixed chunk hashing across many `update()` calls before a single
 /// `digest()`), plus the dev-server source-map hash and the resolver stat hash.
-/// Wraps `bun_highway::XxHash64State` so the workspace has exactly one xxhash
-/// implementation; output is bit-identical to the xxHash reference.
+/// Wraps `bun_highway::XxHash64State`; output is bit-identical to the xxHash
+/// reference. The one other XXH64 in the workspace is `bun_zstd`'s, for frame
+/// checksums: that crate is safe Rust with no foreign code under it.
 pub struct XxHash64Streaming(bun_highway::XxHash64State);
 
 impl XxHash64Streaming {

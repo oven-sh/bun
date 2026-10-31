@@ -1751,7 +1751,7 @@ export function findRepoRoot(): string {
 
 /**
  * Parse `--local-deps=name=path[,name=path...]` into name → absolute path.
- * Names are checked against `allDeps` later (bun.ts) where the dep list is
+ * Names are checked against the dep lists later (bun.ts) where they are
  * in scope; here we only validate shape and resolve paths.
  */
 function parseLocalDeps(spec: string | undefined, cwd: string): Record<string, string> {

@@ -1903,7 +1903,7 @@ export interface JSCProgram {
   cxxflags: string[];
   ldflags: string[];
   libs?: string[];
-  /** Dependencies of bun that it is linked with, beside WebKit and mimalloc. */
+  /** Of `programDeps`: what it is linked with, beside WebKit and mimalloc. */
   deps?: Array<"zstd">;
   /**
    * Headers to precompile for the program's sources, with its flags, each on top of the one before. A source takes
@@ -1998,7 +1998,7 @@ export function jscPrograms(cfg: Config): JSCProgram[] {
   // The data of the ICU of a prebuilt WebKit is a zstd frame an item (icu/compress-data.ts). jsc.cpp has the hook that
   // reads it, as shell/CMakeLists.txt builds it with BUN_ICU_ZSTD_SOURCE_DIR.
   if (linuxIcuRoot(cfg) !== undefined) {
-    jscShell.cxxflags = [...jscShell.cxxflags, "-DBUN_ICU_ZSTD=1", `-I${join(cfg.vendorDir, "zstd", "lib")}`];
+    jscShell.cxxflags = [...jscShell.cxxflags, "-DBUN_ICU_ZSTD=1", `-I${wk.q(join(depSourceDir(cfg, "zstd"), "lib"))}`];
     jscShell.deps = ["zstd"];
   }
   return [

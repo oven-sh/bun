@@ -8,6 +8,7 @@ import { isWindows, tempDir } from "harness";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
+import { validateBunConfig } from "../../scripts/build/bun.ts";
 import { cxx } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import {
@@ -20,10 +21,12 @@ import {
   webkitTestAotPath,
   type WebKitAotFile,
 } from "../../scripts/build/deps/webkit.ts";
+import { zstd } from "../../scripts/build/deps/zstd.ts";
 import { BuildError } from "../../scripts/build/error.ts";
 import { Ninja, readManifest } from "../../scripts/build/ninja.ts";
 import { getProfile } from "../../scripts/build/profiles.ts";
 import { registerAllRules } from "../../scripts/build/rules.ts";
+import { quote } from "../../scripts/build/shell.ts";
 import {
   depSource,
   resolveDep,
@@ -733,6 +736,32 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
       for (const source of program.sources) cxx(n, cfg, source, { flags: program.cxxflags });
     }
   });
+
+  test("--local-deps=zstd=<path> is for the jsc that reads the ICU of a prebuilt WebKit, as only that needs zstd", () => {
+    using local = checkOut({}, checkout);
+    const path = resolve("/else where", "zstd");
+    const { buildDir, localDeps } = local.cfg;
+    const cfg = linux({ localDeps: `WebKit=${localDeps.WebKit},zstd=${path}`, buildDir });
+    const flagsOfJsc = () => jscPrograms(cfg).find(program => program.name === "jsc")!.cxxflags;
+    const headersOf = (sourceDir: string) => `-I${quote(join(sourceDir, "lib"), isWindows)}`;
+    const saved = process.env.BUN_ICU_ROOT;
+    try {
+      process.env.BUN_ICU_ROOT = join("/somewhere", "icu");
+      validateBunConfig(cfg);
+      expect(depSource(cfg, zstd)).toMatchObject({ kind: "local", path });
+      expect(flagsOfJsc()).toContain(headersOf(path));
+      expect(flagsOfJsc()).not.toContain(headersOf(join(cfg.vendorDir, "zstd")));
+      expect(() => validateBunConfig(linux({ localDeps: `zstd=${path}`, buildDir }))).toThrow(
+        /--local-deps: zstd is disabled/,
+      );
+      delete process.env.BUN_ICU_ROOT;
+      expect(() => validateBunConfig(cfg)).toThrow(/--local-deps: zstd is disabled/);
+      expect(flagsOfJsc()).not.toContain(headersOf(path));
+    } finally {
+      if (saved === undefined) delete process.env.BUN_ICU_ROOT;
+      else process.env.BUN_ICU_ROOT = saved;
+    }
+  });
 });
 
 describe("DirectBuild groups and steps", () => {
@@ -746,10 +775,10 @@ describe("DirectBuild groups and steps", () => {
     });
     const root = String(dir);
     const buildDir = join(root, "build");
-    const cfg = linux({ buildDir, asan: false, localDeps: `zstd=${join(root, "src")}` });
-    const out = join(buildDir, "deps", "zstd");
+    const cfg = linux({ buildDir, asan: false, localDeps: `zlib=${join(root, "src")}` });
+    const out = join(buildDir, "deps", "zlib");
     const dep: Dependency = {
-      name: "zstd",
+      name: "zlib",
       source: () => ({ kind: "github-archive", repo: "x/y", commit: "0" }),
       build: () => ({
         kind: "direct",
@@ -789,9 +818,9 @@ describe("DirectBuild groups and steps", () => {
     const rel = (p: string) => relative(buildDir, p);
 
     // The tool's object is not bun's; the generated header is order-only for consumers.
-    expect(resolved.objects.map(rel)).toEqual(["obj/vendor/zstd/a.cpp.o", "obj/vendor/zstd/b.c.o"]);
+    expect(resolved.objects.map(rel)).toEqual(["obj/vendor/zlib/a.cpp.o", "obj/vendor/zlib/b.c.o"]);
     expect(resolved.libs).toEqual(["/outside/libicu.a"]);
-    expect(resolved.generatedHeaders.map(rel)).toEqual(["deps/zstd/gen.h"]);
+    expect(resolved.generatedHeaders.map(rel)).toEqual(["deps/zlib/gen.h"]);
     expect(resolved.outputs).toEqual([]);
 
     const lines = n
@@ -805,17 +834,17 @@ describe("DirectBuild groups and steps", () => {
       for (let i = at + 1; lines[i]?.startsWith("  "); i++) vars.push(lines[i]!.trim());
       return { line: lines[at]!.replace(/ \| \S+(?=: )/, ""), vars: vars.join("\n") };
     };
-    expect(edge("deps/zstd/gen.h").line).toBe("build deps/zstd/gen.h: dep_gen deps/zstd/bin/tool");
-    expect(edge("deps/zstd/gen.h").vars).toContain(`opts = --cwd=${out} --env=K=V --stdout=${join(out, "gen.h")}`);
-    expect(edge("deps/zstd/gen.h").vars).toContain("cmd = ruby gen.rb");
-    expect(edge("deps/zstd/bin/tool").line).toStartWith("build deps/zstd/bin/tool: link obj/vendor/zstd/tool.cpp.o |");
-    expect(edge("deps/zstd/.lib-ready").line).toBe("build deps/zstd/.lib-ready: phony deps/zstd/gen.h");
-    expect(edge("pch/prefix.h.hxx.pch").line).toEndWith("|| pch/.dir deps/zstd/.lib-ready");
-    expect(edge("obj/vendor/zstd/a.cpp.o").line).toContain(": cxx_pch ");
-    expect(edge("obj/vendor/zstd/a.cpp.o").line).toEndWith("|| obj/.dir deps/zstd/.lib-ready");
-    expect(edge("obj/vendor/zstd/a.cpp.o").vars).toContain("-DLIB -std=c++23");
-    expect(edge("obj/vendor/zstd/b.c.o").vars).toStartWith("cflags = -x c++ ");
-    expect(edge("lib").line).toBe("build lib: phony obj/vendor/zstd/a.cpp.o obj/vendor/zstd/b.c.o");
+    expect(edge("deps/zlib/gen.h").line).toBe("build deps/zlib/gen.h: dep_gen deps/zlib/bin/tool");
+    expect(edge("deps/zlib/gen.h").vars).toContain(`opts = --cwd=${out} --env=K=V --stdout=${join(out, "gen.h")}`);
+    expect(edge("deps/zlib/gen.h").vars).toContain("cmd = ruby gen.rb");
+    expect(edge("deps/zlib/bin/tool").line).toStartWith("build deps/zlib/bin/tool: link obj/vendor/zlib/tool.cpp.o |");
+    expect(edge("deps/zlib/.lib-ready").line).toBe("build deps/zlib/.lib-ready: phony deps/zlib/gen.h");
+    expect(edge("pch/prefix.h.hxx.pch").line).toEndWith("|| pch/.dir deps/zlib/.lib-ready");
+    expect(edge("obj/vendor/zlib/a.cpp.o").line).toContain(": cxx_pch ");
+    expect(edge("obj/vendor/zlib/a.cpp.o").line).toEndWith("|| obj/.dir deps/zlib/.lib-ready");
+    expect(edge("obj/vendor/zlib/a.cpp.o").vars).toContain("-DLIB -std=c++23");
+    expect(edge("obj/vendor/zlib/b.c.o").vars).toStartWith("cflags = -x c++ ");
+    expect(edge("lib").line).toBe("build lib: phony obj/vendor/zlib/a.cpp.o obj/vendor/zlib/b.c.o");
   });
 });
 
@@ -843,13 +872,13 @@ describe("Provides.files", () => {
   test("are only for a prebuilt source", () => {
     using g = graph();
     const dep: Dependency = {
-      name: "zstd",
+      name: "zlib",
       source: () => ({ kind: "github-archive", repo: "x/y", commit: "0" }),
       build: () => ({ kind: "direct", sources: [] }),
       provides: () => ({ libs: [], includes: [], files: ["COPYING"] }),
     };
     expect(() => resolveDep(g.n, g.cfg, dep, new Map<DepName, ResolvedDep>())).toThrow(
-      "zstd: Provides.files is for a prebuilt source",
+      "zlib: Provides.files is for a prebuilt source",
     );
   });
 });

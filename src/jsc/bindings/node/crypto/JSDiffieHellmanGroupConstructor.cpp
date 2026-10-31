@@ -47,7 +47,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellmanGroup, (JSC::JSGlobalObject * glo
     RETURN_IF_EXCEPTION(scope, {});
 
     // The built-in groups are not checked:
-    // https://github.com/nodejs/node/blob/d44625a4b80c672215b469906ce583ce7eeeebaf/deps/ncrypto/ncrypto.cc#L2337
+    // https://github.com/nodejs/node/blob/v26.12.1/deps/ncrypto/ncrypto.cc#L2314
     return JSC::JSValue::encode(JSDiffieHellmanGroup::create(vm, structure, globalObject, WTF::move(dh), static_cast<int>(ncrypto::DHPointer::CheckResult::NONE)));
 }
 

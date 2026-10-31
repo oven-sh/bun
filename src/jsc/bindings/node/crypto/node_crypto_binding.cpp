@@ -118,6 +118,11 @@ JSC_DEFINE_HOST_FUNCTION(jsCertVerifySpkac, (JSC::JSGlobalObject * lexicalGlobal
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
 
+    // Not `false`: https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_spkac.cc#L26
+    if (buffer.empty()) {
+        return JSValue::encode(jsEmptyString(vm));
+    }
+
     ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     bool result = ncrypto::VerifySpkac(reinterpret_cast<const char*>(buffer.data()), buffer.size());
     return JSValue::encode(JSC::jsBoolean(result));
@@ -169,7 +174,8 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportChallenge, (JSC::JSGlobalObject * lexicalGl
     }
 
     ncrypto::ClearErrorOnReturn clearErrorOnReturn;
-    auto challenge = ncrypto::ExportChallenge(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+    auto exported = ncrypto::ExportChallenge(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+    ncrypto::DataPointer challenge(exported.data, exported.len);
     if (!challenge) {
         return JSValue::encode(jsEmptyString(vm));
     }

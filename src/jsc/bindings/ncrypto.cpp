@@ -403,9 +403,12 @@ bool BignumPointer::generate(const PrimeConfig& params,
             &innerCb);
     }
 
-    // BN_generate_prime_ex() sets the top two bits, which the 4 and 5 bit safe primes (11 and 23) do not have.
-    if (params.safe && !params.add && params.bits < 6 && params.bits != 3)
+    // BoringSSL searches forever where OpenSSL refuses: candidates have the top two bits set, the safe primes 11 and 23 do not.
+    // https://github.com/nodejs/node/blob/v26.12.1/deps/openssl/openssl/crypto/bn/bn_prime.c#L137-L145
+    if (params.safe && !params.add && params.bits < 6 && params.bits != 3) {
+        OPENSSL_PUT_ERROR(BN, BN_R_BITS_TOO_SMALL);
         return false;
+    }
 
     if (BN_generate_prime_ex(get(),
             params.bits,
@@ -525,7 +528,7 @@ BIOPointer ExportPublicKey(const char* input, size_t length)
     return bio;
 }
 
-DataPointer ExportChallenge(const char* input, size_t length)
+Buffer<char> ExportChallenge(const char* input, size_t length)
 {
 #ifdef OPENSSL_IS_BORINGSSL
     // OpenSSL uses EVP_DecodeBlock, which explicitly removes trailing characters,
@@ -541,7 +544,10 @@ DataPointer ExportChallenge(const char* input, size_t length)
     unsigned char* buf = nullptr;
     int buf_size = ASN1_STRING_to_UTF8(&buf, sp->spkac->challenge);
     if (buf_size >= 0) {
-        return DataPointer(buf, static_cast<size_t>(buf_size));
+        return {
+            .data = reinterpret_cast<char*>(buf),
+            .len = static_cast<size_t>(buf_size),
+        };
     }
 
     return {};
@@ -1483,7 +1489,17 @@ DataPointer DHPointer::computeSecret(const BignumPointer& peer) const
     auto dp = DataPointer::Alloc(size());
     if (!dp) return {};
 
-    if (DH_compute_key_padded(static_cast<uint8_t*>(dp.get()), peer.get(), dh_.get()) < 0) return {};
+    int size = DH_compute_key(static_cast<uint8_t*>(dp.get()), peer.get(), dh_.get());
+    if (size < 0) return {};
+
+    // The size of the computed key can be smaller than the size of the DH key.
+    // We want to make sure that the key is correctly padded.
+    if (static_cast<size_t>(size) < dp.size()) {
+        const size_t padding = dp.size() - size;
+        uint8_t* data = static_cast<uint8_t*>(dp.get());
+        memmove(data + padding, data, size);
+        memset(data, 0, padding);
+    }
 
     return dp;
 }
@@ -2737,19 +2753,6 @@ bool CipherCtxPointer::update(const Buffer<const unsigned char>& in,
         return EVP_CipherUpdate(ctx_.get(), out, out_len, in.data, in.len) == 1;
     }
     return EVP_CipherFinal_ex(ctx_.get(), out, out_len) == 1;
-}
-
-std::span<const unsigned char> CipherCtxPointer::heldBackBlock() const
-{
-    if (!ctx_ || !ctx_->final_used) return {};
-    return std::span { ctx_->final }.first(EVP_CIPHER_CTX_block_size(ctx_.get()));
-}
-
-void CipherCtxPointer::setHeldBackBlock(std::span<const unsigned char> block)
-{
-    if (!ctx_ || block.size() > sizeof(ctx_->final)) return;
-    std::ranges::copy(block, ctx_->final);
-    ctx_->final_used = !block.empty();
 }
 
 bool CipherCtxPointer::getAeadTag(size_t len, unsigned char* out)

@@ -1228,21 +1228,29 @@ it("a 2 GiB buffer argument throws ERR_OUT_OF_RANGE", async () => {
   expect(exitCode).toBe(0);
 });
 
-it.concurrent("generatePrimeSync({ safe: true }) fails for the sizes BoringSSL cannot reach", async () => {
+it.concurrent("generatePrime({ safe: true }) refuses the sizes without a reachable safe prime", async () => {
   // The search did not end for 4 and 5 bits, so this runs in a process the test can give up on.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
-      const { generatePrimeSync } = require("node:crypto");
-      console.log(JSON.stringify([3, 4, 5, 6].map(size => {
+      const { generatePrime, generatePrimeSync } = require("node:crypto");
+      const options = { safe: true, bigint: true };
+      const sizes = [2, 3, 4, 5, 6];
+      const sync = sizes.map(size => {
         try {
-          return Number(generatePrimeSync(size, { safe: true, bigint: true }));
+          return Number(generatePrimeSync(size, options));
         } catch (e) {
           return e.code;
         }
-      })));
+      });
+      Promise.all(
+        sizes.map(
+          size =>
+            new Promise(resolve => generatePrime(size, options, (err, prime) => resolve(err ? err.code : Number(prime)))),
+        ),
+      ).then(async => console.log(JSON.stringify({ sync, async })));
     `,
     ],
     env: bunEnv,
@@ -1250,9 +1258,14 @@ it.concurrent("generatePrimeSync({ safe: true }) fails for the sizes BoringSSL c
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual([7, "ERR_CRYPTO_OPERATION_FAILED", "ERR_CRYPTO_OPERATION_FAILED", 59]);
-  expect(exitCode).toBe(0);
+  const refused = "ERR_OSSL_BN_BITS_TOO_SMALL";
+  const expected = [refused, 7, refused, refused, 59];
+  expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: JSON.stringify({ sync: expected, async: expected }),
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
 });
 
 it("generatePrime(Sync) should return an ArrayBuffer", async () => {
@@ -1516,6 +1529,14 @@ describe("Certificate spkac argument validation", () => {
   it("Certificate.verifySpkac still returns false for a well-typed but invalid spkac", () => {
     expect(crypto.Certificate.verifySpkac(Buffer.from("not a spkac"))).toBe(false);
     expect(new crypto.Certificate().verifySpkac("not a spkac", "utf8")).toBe(false);
+  });
+
+  it("an empty spkac gives an empty string, from verifySpkac too", () => {
+    expect([
+      crypto.Certificate.verifySpkac(Buffer.alloc(0)),
+      crypto.Certificate.exportPublicKey(""),
+      crypto.Certificate.exportChallenge(""),
+    ]).toEqual(["", "", ""]);
   });
 
   it("Certificate.exportPublicKey and exportChallenge return Buffers", () => {

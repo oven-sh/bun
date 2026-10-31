@@ -73,9 +73,9 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
         return JSValue::encode(jsUndefined());
     }
 
-    if (cipher->m_kind == CipherKind::Decipher && cipher->isAuthenticatedMode() && !cipher->maybePassAuthTagToOpenSSL()) {
-        throwCryptoError(lexicalGlobalObject, scope, popError.peekError(), "Trying to add data in unsupported state");
-        return {};
+    if (cipher->m_kind == CipherKind::Decipher && cipher->isAuthenticatedMode()) {
+        bool passed = cipher->maybePassAuthTagToOpenSSL();
+        ASSERT_UNUSED(passed, passed);
     }
 
     const int32_t blockSize = cipher->m_ctx.getBlockSize();
@@ -95,7 +95,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
         return {};
     }
 
-    RefPtr<ArrayBuffer> outBuf = JSC::ArrayBuffer::tryCreateUninitialized(cipher->m_heldBackBlock.size() + bufLen, 1);
+    RefPtr<ArrayBuffer> outBuf = JSC::ArrayBuffer::tryCreateUninitialized(cipher->heldBackBlock().size() + bufLen, 1);
     if (!outBuf) {
         throwOutOfMemoryError(lexicalGlobalObject, scope);
         return {};
@@ -150,7 +150,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherFinal, (JSC::JSGlobalObject * lexicalGlobalObje
     };
 
     int32_t outLen = cipher->m_ctx.getBlockSize();
-    RefPtr<ArrayBuffer> outBuf = ArrayBuffer::tryCreateUninitialized(cipher->m_heldBackBlock.size() + outLen, 1);
+    RefPtr<ArrayBuffer> outBuf = ArrayBuffer::tryCreateUninitialized(cipher->heldBackBlock().size() + outLen, 1);
     if (!outBuf) {
         throwOutOfMemoryError(lexicalGlobalObject, scope);
         return {};
@@ -210,14 +210,6 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAutoPadding, (JSC::JSGlobalObject * globalOb
     MarkPopErrorOnReturn popError;
     if (!cipher->m_ctx.setPadding(padding)) {
         return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "Invalid state for operation setAutoPadding"_s);
-    }
-
-    if (!padding) {
-        cipher->m_heldBackBlock.append(cipher->m_ctx.heldBackBlock());
-        cipher->m_ctx.setHeldBackBlock({});
-    } else if (!cipher->m_heldBackBlock.isEmpty()) {
-        cipher->m_ctx.setHeldBackBlock(cipher->m_heldBackBlock.span());
-        cipher->m_heldBackBlock.clear();
     }
 
     return JSValue::encode(jsUndefined());

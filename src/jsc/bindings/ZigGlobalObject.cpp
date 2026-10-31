@@ -2564,6 +2564,9 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_JSModuleGraphClassStructure), [](LazyClassStructure::Initializer& init) {
              Bun::initJSModuleGraphClassStructure(init);
          } },
+        { OBJECT_OFFSETOF(GlobalObject, m_commonJSModuleClassStructure), [](LazyClassStructure::Initializer& init) {
+             Bun::initCommonJSModuleClassStructure(init);
+         } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSStringDecoderClassStructure), [](LazyClassStructure::Initializer& init) {
              BUN_BEGIN_REMOVABLE_ENTRY_POINT(StringDecoder, Abort, void)
              auto* prototype = JSStringDecoderPrototype::create(
@@ -2666,9 +2669,6 @@ void GlobalObject::finishCreation(VM& vm)
              BUN_BEGIN_REMOVABLE_ENTRY_POINT(S3Client, Abort, void)
              init.set(Bun::createS3ErrorStructure(init.vm, init.owner));
              BUN_END_REMOVABLE_ENTRY_POINT
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_commonJSModuleObjectStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
-             init.set(Bun::createCommonJSModuleStructure(static_cast<Zig::GlobalObject*>(init.owner)));
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSSocketAddressDTOStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(Bun::JSSocketAddressDTO::createStructure(init.vm, init.owner));

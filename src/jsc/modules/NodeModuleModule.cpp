@@ -43,9 +43,6 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveFileName);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveLookupPaths);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionWrap);
 
-JSC_DECLARE_CUSTOM_GETTER(getterRequireFunction);
-JSC_DECLARE_CUSTOM_SETTER(setterRequireFunction);
-
 // This is a list of builtin module names that do not have the node prefix. It
 // also includes Bun's builtin modules, as well as Bun's thirdparty overrides.
 // The reason for overstuffing this list is so that uses that use these as the
@@ -151,19 +148,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
     // We are cutting a huge corner by not doing all that work.
     // This code is only to support babel.
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* idString = JSC::jsString(vm, WTF::String("."_s));
 
     JSString* dirname = jsEmptyString(vm);
 
-    // TODO: handle when JSGlobalObject !== Zig::GlobalObject, such as in node:vm
-    Structure* structure = static_cast<Zig::GlobalObject*>(globalObject)
-                               ->CommonJSModuleObjectStructure();
+    Structure* structure = structureForNewTarget(globalObject, callFrame->newTarget(), &Zig::GlobalObject::m_commonJSModuleClassStructure);
+    RETURN_IF_EXCEPTION(scope, {});
 
-    // TODO: handle ShadowRealm, node:vm, new.target, subclasses
     JSValue idValue = callFrame->argument(0);
     JSValue parentValue = callFrame->argument(1);
 
-    auto scope = DECLARE_THROW_SCOPE(vm);
     if (idValue.isString()) {
         idString = idValue.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
@@ -794,18 +789,7 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleWrapper,
 
 static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
 {
-    auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    auto prototype = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
-
-    prototype->putDirectCustomAccessor(
-        vm, WebCore::clientData(vm)->builtinNames().requirePublicName(),
-        JSC::CustomGetterSetter::create(vm, getterRequireFunction,
-            setterRequireFunction),
-        0);
-
-    Bun::putDirectNamed(vm, prototype, "_compile"_s, globalObject->modulePrototypeUnderscoreCompileFunction());
-
-    return prototype;
+    return defaultGlobalObject(moduleObject->globalObject())->commonJSModulePrototype();
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -1152,17 +1136,18 @@ extern "C" JSC::EncodedJSValue Bun__createNodeModuleSourceMapOriginObject(
     return JSValue::encode(object);
 }
 
+void initCommonJSModuleClassStructure(JSC::LazyClassStructure::Initializer& init)
+{
+    auto* globalObject = defaultGlobalObject(init.global);
+    init.setStructure(createCommonJSModuleStructure(globalObject));
+    JSObject* moduleConstructor = JSModuleConstructor::create(init.vm, globalObject);
+    init.setConstructor(moduleConstructor);
+    JSC::AOT::hostDidCreateNodeModule(init.global, moduleConstructor);
+}
+
 void addNodeModuleConstructorProperties(JSC::VM& vm,
     Zig::GlobalObject* globalObject)
 {
-    globalObject->m_nodeModuleConstructor.initLater(
-        [](const Zig::GlobalObject::Initializer<JSObject>& init) {
-            JSObject* moduleConstructor = JSModuleConstructor::create(
-                init.vm, static_cast<Zig::GlobalObject*>(init.owner));
-            init.set(moduleConstructor);
-            JSC::AOT::hostDidCreateNodeModule(init.owner, moduleConstructor);
-        });
-
     globalObject->m_nodeModuleSourceMapEntryStructure.initLater(
         [](const Zig::GlobalObject::Initializer<Structure>& init) {
             init.set(createNodeModuleSourceMapEntryStructure(init.vm, init.owner));
@@ -1243,7 +1228,7 @@ JSC::JSObject* generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGloba
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
-    auto* constructor = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
+    auto* constructor = globalObject->nodeModuleConstructor();
 
     // The exports are the static table's enumerable entries, not the constructor's own properties (`length`,
     // `name`, `prototype`, whatever user code assigned onto Module).

@@ -20,6 +20,10 @@ namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled);
 JSC::JSValue createStreamIterEnabledFlag(Zig::GlobalObject*);
 void addNodeModuleConstructorProperties(JSC::VM &vm, Zig::GlobalObject *globalObject);
+// The structure of CommonJS module objects, their prototype (`Module.prototype`) and the `Module` constructor.
+void initCommonJSModuleClassStructure(JSC::LazyClassStructure::Initializer&);
+JSC_DECLARE_CUSTOM_GETTER(getterRequireFunction);
+JSC_DECLARE_CUSTOM_SETTER(setterRequireFunction);
 
 extern "C" JSC::EncodedJSValue Resolver__nodeModulePathsJSValue(const BunString* specifier, JSC::JSGlobalObject*, bool use_dirname);
 extern "C" bool ModuleLoader__isBuiltin(const char* data, size_t len);

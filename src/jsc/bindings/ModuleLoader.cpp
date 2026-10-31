@@ -571,7 +571,7 @@ BuiltinModule fetchBuiltinModuleWithoutResolution(
         }
         // require("module"), require("node:module")
         case SyntheticModuleType::NodeModule: {
-            return { Kind::Exports, globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject) };
+            return { Kind::Exports, globalObject->nodeModuleConstructor() };
         }
         // require("process"), require("node:process")
         case SyntheticModuleType::NodeProcess: {
@@ -619,7 +619,7 @@ JSValue resolveAndFetchBuiltinModule(
         }
         // require("module"), require("node:module")
         case SyntheticModuleType::NodeModule: {
-            return globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
+            return globalObject->nodeModuleConstructor();
         }
         // require("process"), require("node:process")
         case SyntheticModuleType::NodeProcess: {

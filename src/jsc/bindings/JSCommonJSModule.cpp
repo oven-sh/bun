@@ -671,13 +671,16 @@ JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC:
     return JSValue::encode(jsUndefined());
 }
 
+// A write through an accessor of Module.prototype whose receiver is no module object.
+static bool putOnNonModuleReceiver(JSC::JSGlobalObject*, JSValue receiver, JSC::PropertyName, JSValue value);
+
 JSC_DEFINE_CUSTOM_SETTER(setterPath,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName propertyName))
 {
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
-        return false;
+        return putOnNonModuleReceiver(globalObject, JSValue::decode(thisValue), propertyName, JSValue::decode(value));
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSString* string = JSValue::decode(value).toString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
@@ -717,7 +720,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterChildren,
 {
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
-        return false;
+        return putOnNonModuleReceiver(globalObject, JSValue::decode(thisValue), propertyName, JSValue::decode(value));
     {
         WTF::Locker locker { thisObject->cellLock() };
         thisObject->m_children.clear();
@@ -800,7 +803,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterPaths,
 {
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
-        return false;
+        return putOnNonModuleReceiver(globalObject, JSValue::decode(thisValue), propertyName, JSValue::decode(value));
 
     thisObject->m_paths.set(globalObject->vm(), thisObject, JSValue::decode(value));
     return true;
@@ -812,7 +815,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterFilename,
 {
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
-        return false;
+        return putOnNonModuleReceiver(globalObject, JSValue::decode(thisValue), propertyName, JSValue::decode(value));
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSString* string = JSValue::decode(value).toString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
@@ -826,7 +829,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterId,
 {
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
-        return false;
+        return putOnNonModuleReceiver(globalObject, JSValue::decode(thisValue), propertyName, JSValue::decode(value));
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSString* string = JSValue::decode(value).toString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
@@ -839,7 +842,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterParent,
 {
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
-        return false;
+        return putOnNonModuleReceiver(globalObject, JSValue::decode(thisValue), propertyName, JSValue::decode(value));
 
     JSValue decodedValue = JSValue::decode(value);
 
@@ -858,36 +861,15 @@ JSC_DEFINE_CUSTOM_SETTER(setterLoaded,
 {
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
-        return false;
+        return putOnNonModuleReceiver(globalObject, JSValue::decode(thisValue), propertyName, JSValue::decode(value));
 
     thisObject->hasEvaluated = JSValue::decode(value).toBoolean(globalObject);
 
     return true;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(getterUnderscoreCompile, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
-{
-    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
-    if (!thisObject) [[unlikely]] {
-        return JSValue::encode(jsUndefined());
-    }
-    if (thisObject->m_overriddenCompile) {
-        return JSValue::encode(thisObject->m_overriddenCompile.get());
-    }
-    return JSValue::encode(defaultGlobalObject(globalObject)->modulePrototypeUnderscoreCompileFunction());
-}
-
-JSC_DEFINE_CUSTOM_SETTER(setterUnderscoreCompile,
-    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue value, JSC::PropertyName propertyName))
-{
-    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
-    if (!thisObject)
-        return false;
-    JSValue decodedValue = JSValue::decode(value);
-    thisObject->m_overriddenCompile.set(globalObject->vm(), thisObject, decodedValue);
-    return true;
-}
+JSC_DECLARE_CUSTOM_GETTER(getterUnderscoreCompile);
+JSC_DECLARE_CUSTOM_SETTER(setterUnderscoreCompile);
 
 JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
@@ -997,10 +979,58 @@ public:
         Base::finishCreation(vm);
         ASSERT(inherits(info()));
         Bun::reifyStaticPropertyTable(vm, info(), JSCommonJSModulePrototypeTableValues, *this);
+        // A custom value: its setter runs only for a write to Module.prototype itself. A write to an inheriting object makes an own property.
+        putDirectCustomAccessor(vm, WebCore::clientData(vm)->builtinNames().requirePublicName(), JSC::CustomGetterSetter::create(vm, getterRequireFunction, setterRequireFunction), 0);
     }
 };
 
 const JSC::ClassInfo JSCommonJSModulePrototype::s_info = { "Module"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCommonJSModulePrototype) };
+
+// An object made from Module.prototype gets an own property. Module.prototype keeps the accessor that every module object reads through.
+static bool putOnNonModuleReceiver(JSC::JSGlobalObject* globalObject, JSValue receiver, JSC::PropertyName propertyName, JSValue value)
+{
+    JSObject* object = receiver.getObject();
+    if (!object || object->inherits<JSCommonJSModulePrototype>())
+        return false;
+    return object->createDataProperty(globalObject, propertyName, value, false);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(getterUnderscoreCompile, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    JSValue receiver = JSValue::decode(thisValue);
+    if (auto* thisObject = dynamicDowncast<JSCommonJSModule>(receiver)) {
+        if (thisObject->m_overriddenCompile)
+            return JSValue::encode(thisObject->m_overriddenCompile.get());
+        return JSValue::encode(zigGlobalObject->modulePrototypeUnderscoreCompileFunction());
+    }
+    // What was written to Module.prototype reads back from it and from objects made from it, never from a module object.
+    auto& vm = JSC::getVM(globalObject);
+    JSObject* prototype = dynamicDowncast<JSCommonJSModulePrototype>(receiver);
+    if (!prototype)
+        prototype = zigGlobalObject->commonJSModulePrototype();
+    if (JSValue written = prototype->getDirect(vm, WebCore::builtinNames(vm).modulePrototypeCompilePrivateName()))
+        return JSValue::encode(written);
+    return JSValue::encode(zigGlobalObject->modulePrototypeUnderscoreCompileFunction());
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setterUnderscoreCompile,
+    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
+        JSC::EncodedJSValue value, JSC::PropertyName propertyName))
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSValue receiver = JSValue::decode(thisValue);
+    JSValue decodedValue = JSValue::decode(value);
+    if (auto* thisObject = dynamicDowncast<JSCommonJSModule>(receiver)) {
+        thisObject->m_overriddenCompile.set(vm, thisObject, decodedValue);
+        return true;
+    }
+    if (auto* prototype = dynamicDowncast<JSCommonJSModulePrototype>(receiver)) {
+        prototype->putDirect(vm, WebCore::builtinNames(vm).modulePrototypeCompilePrivateName(), decodedValue, 0);
+        return true;
+    }
+    return putOnNonModuleReceiver(globalObject, receiver, propertyName, decodedValue);
+}
 
 void JSCommonJSModule::finishCreation(JSC::VM& vm, const JSC::SourceCode& sourceCode)
 {

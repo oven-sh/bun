@@ -317,13 +317,14 @@ declare function $removeAbortAlgorithmFromSignal(signal: AbortSignal, algorithmI
 declare function $redirect(): TODO;
 declare function $relative(): TODO;
 declare function $require(): TODO;
-/** Loads `id` into `mod`. Returns -1 when the module is ESM and must be loaded from the ESM registry. */
+/** Puts `mod` into `requireMap` and loads `id` into it. Returns -1 when the module is ESM and must be loaded from the ESM registry. */
 declare function $requireCommonJS(
   id: string,
   mod: JSCommonJSModule,
   parentFilename: unknown,
   userArgumentCount: number,
   userOptions: unknown,
+  requireMap: RequireMap,
 ): JSCommonJSModule | -1;
 declare function $requireESM(path: string, requirer?: JSCommonJSModule): any;
 declare function $requireNativeModule(id: string): any;

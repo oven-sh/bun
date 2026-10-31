@@ -108,13 +108,15 @@ JSC::JSObject* appendNativeModuleExports(Zig::GlobalObject*, uint32_t registryID
 
 JSC::JSObject* createAsyncModuleRequiredError(JSC::JSGlobalObject*, const WTF::String& specifier);
 
+// `reachedFile`: the module is a file, or a compiled module that the engine cannot run again. A termination that node:vm withdraws leaves its require map entry.
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* moduleObject,
     JSValue specifierValue,
     String specifier,
     BunString* referrer,
-    BunString* typeAttribute);
+    BunString* typeAttribute,
+    bool& reachedFile);
 
 template<bool isExtension>
 JSValue fetchCommonJSModuleNonBuiltin(

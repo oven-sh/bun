@@ -121,6 +121,11 @@ using namespace Bun;
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(SerializedScriptValue);
 
+#if !CHECK_REF_COUNTED_LIFECYCLE
+// Every message allocates one. 160 bytes is a size class of mimalloc, and 161 to 192 bytes share the next one.
+static_assert(sizeof(SerializedScriptValue) <= 160, "a record holds one fast path payload at a time: put the payload members in one union before you add a member");
+#endif
+
 static constexpr unsigned maximumFilterRecursion = 40000;
 static constexpr uint64_t autoLengthMarker = UINT64_MAX;
 
@@ -4361,6 +4366,15 @@ SerializedScriptValue::SerializedScriptValue(WTF::FixedVector<DenseArrayElement>
     m_memoryCost = computeMemoryCost();
 }
 
+SerializedScriptValue::SerializedScriptValue(JSC::JSValue primitive)
+    : m_fastPath(FastPath::Primitive)
+    , m_fastPathPrimitive(JSValue::encode(cloneOfNonCell(primitive)))
+{
+    // The values that CloneSerializer::dumpImmediate() accepts.
+    ASSERT(primitive.isNumber() || primitive.isBoolean() || primitive.isUndefinedOrNull());
+    m_memoryCost = computeMemoryCost();
+}
+
 Ref<SerializedScriptValue> SerializedScriptValue::createDenseArrayFastPath(
     WTF::FixedVector<DenseArrayElement>&& elements)
 {
@@ -4444,6 +4458,7 @@ size_t SerializedScriptValue::computeMemoryCost() const
                 elem);
         }
         break;
+    case FastPath::Primitive:
     case FastPath::None:
         break;
     }
@@ -4650,36 +4665,38 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         && messagePorts.isEmpty();
 
     if (canUseFastPath) {
+        // Without [[unlikely]], clang counts the property walk of the object fast path below as a cold call site and stops inlining it.
+        if (!value.isCell()) [[unlikely]]
+            return SerializedScriptValue::createPrimitiveFastPath(value);
+
         bool canUseStringFastPath = false;
         bool canUseObjectFastPath = false;
         bool canUseArrayFastPath = false;
         JSObject* object = nullptr;
         JSArray* array = nullptr;
         Structure* structure = nullptr;
-        if (value.isCell()) {
-            auto* cell = value.asCell();
-            if (cell->isString()) {
-                canUseStringFastPath = true;
-            } else if (cell->isObject()) {
-                object = cell->getObject();
-                structure = object->structure();
+        auto* cell = value.asCell();
+        if (cell->isString()) {
+            canUseStringFastPath = true;
+        } else if (cell->isObject()) {
+            object = cell->getObject();
+            structure = object->structure();
 
-                if (auto* jsArray = dynamicDowncast<JSArray>(object)) {
-                    canUseArrayFastPath = true;
-                    array = jsArray;
-                } else if (isObjectFastPathCandidate(structure)) {
-                    canUseObjectFastPath = true;
-                }
-#if ENABLE(AOT)
-                else if (isCompiledObject(object)) {
-                    WTF::Vector<SimpleInMemoryPropertyTableEntry> fields;
-                    bool hasOnlySimpleFields = collectCompiledObjectFields(lexicalGlobalObject, object, fields);
-                    RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
-                    if (hasOnlySimpleFields)
-                        return SerializedScriptValue::createObjectFastPath(WTF::FixedVector<SimpleInMemoryPropertyTableEntry>(WTF::move(fields)));
-                }
-#endif
+            if (auto* jsArray = dynamicDowncast<JSArray>(object)) {
+                canUseArrayFastPath = true;
+                array = jsArray;
+            } else if (isObjectFastPathCandidate(structure)) {
+                canUseObjectFastPath = true;
             }
+#if ENABLE(AOT)
+            else if (isCompiledObject(object)) {
+                WTF::Vector<SimpleInMemoryPropertyTableEntry> fields;
+                bool hasOnlySimpleFields = collectCompiledObjectFields(lexicalGlobalObject, object, fields);
+                RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+                if (hasOnlySimpleFields)
+                    return SerializedScriptValue::createObjectFastPath(WTF::FixedVector<SimpleInMemoryPropertyTableEntry>(WTF::move(fields)));
+            }
+#endif
         }
 
         if (canUseStringFastPath) {
@@ -5026,6 +5043,11 @@ Ref<SerializedScriptValue> SerializedScriptValue::createDoubleArrayFastPath(Vect
     return adoptRef(*new SerializedScriptValue(WTF::move(data), length, FastPath::DoubleArray));
 }
 
+Ref<SerializedScriptValue> SerializedScriptValue::createPrimitiveFastPath(JSC::JSValue value)
+{
+    return adoptRef(*new SerializedScriptValue(value));
+}
+
 Ref<JSC::ArrayBuffer> SerializedScriptValue::toArrayBuffer()
 {
     if (this->m_data.size() == 0) {
@@ -5315,6 +5337,10 @@ NEVER_INLINE JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalG
             *didFail = false;
         return resultArray;
     }
+    case FastPath::Primitive:
+        if (didFail)
+            *didFail = false;
+        return JSValue::decode(m_fastPathPrimitive);
     case FastPath::None: {
         break;
     }

@@ -35,6 +35,10 @@ import { bench, run } from "../runner.mjs";
 
 bench("structuredClone(nested array)", () => structuredClone(testArray));
 bench("structuredClone(123)", () => structuredClone(123));
+bench("structuredClone(1.5)", () => structuredClone(1.5));
+bench("structuredClone(true)", () => structuredClone(true));
+bench("structuredClone(null)", () => structuredClone(null));
+bench("structuredClone(undefined)", () => structuredClone(undefined));
 bench("structuredClone({a: 123})", () => structuredClone({ a: 123 }));
 
 // Array fast path targets

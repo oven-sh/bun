@@ -2900,6 +2900,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         bun_core::MutableString {
                             list: core::mem::take(&mut entry.sourcemap).into_vec(),
                         },
+                        entry.metadata.source_mapping_url,
                     );
                     // Rebuild the cached ESM record for the
                     // isolation source-provider cache (same shape as

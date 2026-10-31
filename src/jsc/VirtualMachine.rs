@@ -6968,6 +6968,10 @@ impl VirtualMachine {
             maybe_lookup.map(|lookup| {
                 let mapping = lookup.mapping;
                 let loaded = lookup.loaded;
+                let is_own_map = lookup
+                    .source_map
+                    .as_deref()
+                    .is_some_and(|map| map.has_resolved_source_names);
                 let display_url = if !already_remapped {
                     lookup.display_source_url_if_needed(top_source_url.slice())
                 } else {
@@ -6991,11 +6995,11 @@ impl VirtualMachine {
                 } else {
                     None
                 };
-                (mapping, display_url, external_code, loaded)
+                (mapping, display_url, external_code, loaded, is_own_map)
             })
         };
 
-        if let Some((mapping, display_url, external_code, mut loaded)) = resolved {
+        if let Some((mapping, display_url, external_code, mut loaded, is_own_map)) = resolved {
             let mut loaded_url: Option<bun_core::StringOrView<'a>> = None;
             if let Some(src) = display_url {
                 let before = core::mem::replace(&mut frames[top].source_url, src.into());
@@ -7050,7 +7054,11 @@ impl VirtualMachine {
 
             if enable_source_code_preview.get() && code.is_empty() {
                 exception.collect_source_lines(error_instance, global);
-                loaded = None;
+                // These lines are of what runs, and a position from a text's own source map is in another text.
+                loaded = is_own_map.then_some(bun_sourcemap::LineColumnOffset {
+                    lines: frames[top].position.line,
+                    columns: frames[top].position.column,
+                });
             }
 
             // Direct copy; both sides are `bun_core::Ordinal`.

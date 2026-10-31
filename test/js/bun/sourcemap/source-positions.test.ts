@@ -1418,4 +1418,603 @@ describe.concurrent("a loaded file with its own source map", () => {
       exitCode: 0,
     });
   });
+
+  // Text that JavaScriptCore compiles as it is given. Bun's transpiler does not print it, so only the text's own
+  // `sourceMappingURL` comment is between what runs and the original.
+  describe("text that runs as it was given", () => {
+    // What each program below starts with: a text of three lines with the error on the second, and the source map
+    // of such a text as a `data:` URL, where line 1 of the text is line `from` of `source`. `before` is how many
+    // lines of what runs are in front of the text.
+    const prelude = `
+      ${lineMappings}
+      const mapJSON = (source, from, before = 0, more = {}) =>
+        JSON.stringify({
+          version: 3,
+          sources: [source],
+          names: [],
+          mappings: ";".repeat(before) + lineMappings([from, from + 1, from + 2]),
+          ...more,
+        });
+      const mapURL = (...map) => "data:application/json;base64," + Buffer.from(mapJSON(...map)).toString("base64");
+      const thrower = name => "(function " + name + '() {\\n  throw new Error("' + name + '");\\n})\\n';
+      const top = f => {
+        try {
+          f();
+        } catch (e) {
+          return e.stack.split("\\n")[1].trim();
+        }
+      };
+    `;
+    // Where the error of `thrower(name)` is in the text, as JavaScriptCore counts the column, and in a source that
+    // line `from` of is line 1 of the text.
+    const inText = (name: string, url: string, linesBefore = 0) => `at ${name} (${url}:${2 + linesBefore}:18)`;
+    const inSource = (name: string, source: string, from: number) => `at ${name} (${source}:${from + 1}:1)`;
+
+    // Node.js learns of the source map when V8 asks it whether the text may be compiled, which is for `eval()` and
+    // the `Function` constructors. Here the comment is read when a stack is read. In node v26.3.0 the text is
+    // mapped whenever source maps are on: it does not read `generatedCode`.
+    test("Error.stack is in the original for eval() and the Function constructors while generatedCode is on", async () => {
+      using dir = tempDir("generated-code-source-map", {
+        "main.mjs": `
+          import { setSourceMapsSupport } from "node:module";
+          ${prelude}
+          const AsyncFunction = (async () => {}).constructor;
+          const GeneratorFunction = function* () {}.constructor;
+          // What makes the function that a text is, and the lines that it puts in front of the text.
+          const compilers = {
+            "eval()": [text => eval(text), 0],
+            "indirect eval": [text => (0, eval)(text), 0],
+            "new Function()": [text => new Function("return " + text)(), 2],
+            "Function()": [text => Function("return " + text)(), 2],
+            "new AsyncFunction()": [text => new AsyncFunction("return " + text)(), 2],
+            "new GeneratorFunction()": [text => new GeneratorFunction("return " + text)().next().value, 2],
+          };
+          const made = {};
+          let from = 0;
+          for (const [label, [compile, before]] of Object.entries(compilers)) {
+            const name = "f" + (from += 10);
+            made[label] = await compile(
+              thrower(name) +
+                "//# sourceURL=generated/" + name + ".js\\n" +
+                "//# sourceMappingURL=" + mapURL("src/" + name + ".ts", from, before) + "\\n",
+            );
+          }
+          const read = () => Object.fromEntries(Object.entries(made).map(([label, f]) => [label, top(f)]));
+          const out = { "at first": read() };
+          setSourceMapsSupport(true, { generatedCode: true });
+          out["setSourceMapsSupport(true, { generatedCode: true })"] = read();
+          setSourceMapsSupport(true);
+          out["setSourceMapsSupport(true)"] = read();
+          setSourceMapsSupport(false, { generatedCode: true });
+          out["setSourceMapsSupport(false, { generatedCode: true })"] = read();
+          process.setSourceMapsEnabled(true);
+          out["process.setSourceMapsEnabled(true)"] = read();
+          process.setSourceMapsEnabled(false);
+          out["process.setSourceMapsEnabled(false)"] = read();
+          console.log(JSON.stringify(out));
+        `,
+      });
+      const kinds: [string, number][] = [
+        ["eval()", 0],
+        ["indirect eval", 0],
+        ["new Function()", 2],
+        ["Function()", 2],
+        ["new AsyncFunction()", 2],
+        ["new GeneratorFunction()", 2],
+      ];
+      const frames = (frame: (name: string, from: number, linesBefore: number) => string) =>
+        Object.fromEntries(
+          kinds.map(([label, linesBefore], i) => [label, frame(`f${(i + 1) * 10}`, (i + 1) * 10, linesBefore)]),
+        );
+      const generated = frames((name, _, linesBefore) => inText(name, `generated/${name}.js`, linesBefore));
+      // A relative source is beside the text, and a relative name of the text is in the working directory.
+      const original = frames((name, from) => inSource(name, `<dir>/generated/src/${name}.ts`, from));
+      const answers = (atFirst: Record<string, string>) => ({
+        stdout: {
+          "at first": atFirst,
+          "setSourceMapsSupport(true, { generatedCode: true })": original,
+          "setSourceMapsSupport(true)": generated,
+          "setSourceMapsSupport(false, { generatedCode: true })": generated,
+          "process.setSourceMapsEnabled(true)": original,
+          "process.setSourceMapsEnabled(false)": generated,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+      const [withTheFlag, without] = await Promise.all([
+        run(String(dir), ["--enable-source-maps", "main.mjs"]),
+        run(String(dir), ["main.mjs"]),
+      ]);
+      expect([printed(withTheFlag), printed(without)]).toEqual([answers(original), answers(generated)]);
+    });
+
+    // node v26.3.0 resolves a source against the name of the text, which is a URL as it is, and otherwise a path
+    // in the working directory. The map is read by the same rules as the map of a module.
+    test("the name of the text decides what a relative source is beside", async () => {
+      // [the sourceURL comment, sources, sourceRoot, the name in the frame]
+      const named: [string, string, string | undefined, string][] = [
+        ["generated/a.js", "src/a.ts", undefined, "<dir>/generated/src/a.ts"],
+        ["plain", "src/b.ts", undefined, "<dir>/src/b.ts"],
+        ["<url>/in-url/c.js", "../c.ts", undefined, "<dir>/c.ts"],
+        ["http://example.com/app/d.js", "src/d.ts", undefined, "http://example.com/app/src/d.ts"],
+        ["webpack://app/e.js", "./src/e.ts", undefined, "webpack://app/src/e.ts"],
+        ["generated/f.js", "webpack://app/src/f.ts", undefined, "webpack://app/src/f.ts"],
+        ["generated/g.js", "g.ts", "root/", "<dir>/generated/root/g.ts"],
+        // A path from the root has a drive on Windows.
+        ...((isWindows
+          ? []
+          : [
+              ["<cwd>/in-path/h.js", "src/h.ts", undefined, "<dir>/in-path/src/h.ts"],
+              ["generated/i.js", "/abs/src/../i.ts", undefined, "/abs/i.ts"],
+            ]) as [string, string, string | undefined, string][]),
+      ];
+      using dir = tempDir("generated-code-source-map-names", {
+        "main.cjs": `
+          const { pathToFileURL } = require("node:url");
+          ${prelude}
+          process.setSourceMapsEnabled(true);
+          const out = [];
+          for (const [url, source, sourceRoot] of ${JSON.stringify(named)}) {
+            const name = url.replace("<url>", pathToFileURL(process.cwd()).href).replace("<cwd>", process.cwd());
+            out.push(
+              top(
+                eval(
+                  thrower("named") +
+                    "//# sourceURL=" + name + "\\n" +
+                    "//# sourceMappingURL=" + mapURL(source, 40, 0, { sourceRoot }) + "\\n",
+                ),
+              ),
+            );
+          }
+          console.log(JSON.stringify(out));
+        `,
+      });
+      expect(printed(await run(String(dir), ["main.cjs"]))).toEqual({
+        stdout: named.map(([, , , name]) => inSource("named", name, 40)),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // Each of these stays where it is without the switch. Node.js also reads a file that generated code names.
+    // Here a lookup can run while the heap is collected, and reads no file.
+    test("only a data: URL of text that names itself is the source map of generated code", async () => {
+      using dir = tempDir("generated-code-source-map-not", {
+        "loaded.js": `exports.loaded = true;\n`,
+        "generated/beside.js.map": `{ "version": 3, "sources": ["beside.ts"], "names": [], "mappings": "${lineMappings([50, 51, 52])}" }`,
+        "main.cjs": `
+          const { setSourceMapsSupport } = require("node:module");
+          const path = require("node:path");
+          ${prelude}
+          require("./loaded.js");
+          const texts = {
+            "a source map": "//# sourceURL=generated/mapped.js\\n//# sourceMappingURL=" + mapURL("mapped.ts", 50) + "\\n",
+            "no sourceURL comment": "//# sourceMappingURL=" + mapURL("unnamed.ts", 50) + "\\n",
+            "no sourceMappingURL comment": "//# sourceURL=generated/no-map.js\\n",
+            "a file beside the name": "//# sourceURL=generated/beside.js\\n//# sourceMappingURL=beside.js.map\\n",
+            "a file at a path": "//# sourceURL=generated/at-path.js\\n//# sourceMappingURL=" + path.resolve("generated/beside.js.map") + "\\n",
+            "a data: URL of no source map": "//# sourceURL=generated/not-a-map.js\\n//# sourceMappingURL=data:application/json;base64,e30=\\n",
+            "a data: URL that is not JSON": "//# sourceURL=generated/not-json.js\\n//# sourceMappingURL=data:application/json;base64,!!!!\\n",
+            "a data: URL of another media type": "//# sourceURL=generated/text.js\\n//# sourceMappingURL=" + mapURL("text.ts", 50).replace("application/json", "text/plain") + "\\n",
+            "the name of a module that is loaded": "//# sourceURL=" + path.resolve("loaded.js") + "\\n//# sourceMappingURL=" + mapURL("not-loaded.ts", 50) + "\\n",
+            "a name in node_modules": "//# sourceURL=node_modules/dep/generated.js\\n//# sourceMappingURL=" + mapURL("dep.ts", 50) + "\\n",
+            "the name of a builtin module": "//# sourceURL=node:generated\\n//# sourceMappingURL=" + mapURL("builtin.ts", 50) + "\\n",
+          };
+          const made = Object.fromEntries(Object.entries(texts).map(([label, comments]) => [label, eval(thrower("f") + comments)]));
+          const read = () => Object.fromEntries(Object.entries(made).map(([label, f]) => [label, top(f)]));
+          const out = { "no switch": read() };
+          setSourceMapsSupport(true, { generatedCode: true });
+          out["generatedCode"] = read();
+          setSourceMapsSupport(true, { generatedCode: true, nodeModules: true });
+          out["generatedCode and nodeModules"] = read();
+          console.log(JSON.stringify(out));
+        `,
+      });
+      const { stdout, stderr, exitCode } = printed(await run(String(dir), ["main.cjs"]));
+      const unmapped = stdout["no switch"];
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: {
+          "no switch": { ...unmapped, "a source map": inText("f", "generated/mapped.js") },
+          "generatedCode": { ...unmapped, "a source map": inSource("f", "<dir>/generated/mapped.ts", 50) },
+          "generatedCode and nodeModules": {
+            ...unmapped,
+            "a source map": inSource("f", "<dir>/generated/mapped.ts", 50),
+            "a name in node_modules": inSource("f", "<dir>/node_modules/dep/dep.ts", 50),
+          },
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // As in node v26.3.0, which does not look at what node:vm compiles. Node.js also maps an eval() in another
+    // context: here a frame of another global object is never mapped.
+    test("what node:vm compiles keeps its place, and an eval() in it does not", async () => {
+      using dir = tempDir("generated-code-source-map-vm", {
+        "main.cjs": `
+          const vm = require("node:vm");
+          ${prelude}
+          const text = name => thrower(name) + "//# sourceURL=generated/" + name + ".js\\n//# sourceMappingURL=" + mapURL(name + ".ts", 60) + "\\n";
+          globalThis.evaluated = text("evaluated");
+          const made = {
+            "new vm.Script().runInThisContext()": new vm.Script(text("script")).runInThisContext(),
+            "vm.runInThisContext()": vm.runInThisContext(text("inThisContext"), { filename: "vm.js" }),
+            "vm.runInNewContext()": vm.runInNewContext(text("inNewContext")),
+            "vm.compileFunction()": vm.compileFunction("return " + text("compiled"))(),
+            "eval() in vm.runInThisContext()": vm.runInThisContext("eval(evaluated)"),
+            "eval() in vm.runInNewContext()": vm.runInNewContext("eval(evaluated)", { evaluated: text("evaluatedInNewContext") }),
+          };
+          console.log(JSON.stringify(Object.fromEntries(Object.entries(made).map(([label, f]) => [label, top(f)]))));
+        `,
+      });
+      const [withTheFlag, without] = await Promise.all([
+        run(String(dir), ["--enable-source-maps", "main.cjs"]),
+        run(String(dir), ["main.cjs"]),
+      ]);
+      const unmapped = printed(without).stdout;
+      expect([printed(withTheFlag), unmapped["eval() in vm.runInThisContext()"]]).toEqual([
+        {
+          stdout: {
+            ...unmapped,
+            "eval() in vm.runInThisContext()": inSource("evaluated", "<dir>/generated/evaluated.ts", 60),
+          },
+          stderr: "",
+          exitCode: 0,
+        },
+        inText("evaluated", "generated/evaluated.js"),
+      ]);
+    });
+
+    // In node v26.3.0 a CallSite of generated code is in the text too, and the default function maps it. Its
+    // `findSourceMap()` has the source map of generated code from when the text is compiled. Here nothing runs then.
+    test("a CallSite is in the text, and the default Error.prepareStackTrace is in the original", async () => {
+      using dir = tempDir("generated-code-source-map-readers", {
+        "main.cjs": `
+          const { findSourceMap } = require("node:module");
+          const path = require("node:path");
+          ${prelude}
+          process.setSourceMapsEnabled(true);
+          const comments = name => "//# sourceURL=generated/" + name + ".js\\n//# sourceMappingURL=" + mapURL(name + ".ts", 70) + "\\n";
+          const original = Error.prepareStackTrace;
+          // Each reader gets a text that no other reader has come to.
+          const out = { "Error.stack": top(eval(thrower("read") + comments("read"))) };
+
+          const capture = new Function("holder", "Error.captureStackTrace(holder);\\n" + comments("captured"));
+          const holder = {};
+          capture(holder);
+          out["Error.captureStackTrace()"] = holder.stack.split("\\n")[1].trim();
+
+          const collected = eval(thrower("collected") + comments("collected"));
+          let sites;
+          Error.prepareStackTrace = (error, callSites) => {
+            sites = callSites;
+            const site = callSites[0];
+            out["CallSite"] = {
+              getFileName: site.getFileName(),
+              getScriptNameOrSourceURL: site.getScriptNameOrSourceURL(),
+              getLineNumber: site.getLineNumber(),
+              getColumnNumber: site.getColumnNumber(),
+              toString: String(site),
+            };
+            out["error.stack in prepareStackTrace"] = error.stack.split("\\n")[1].trim();
+            return "prepared";
+          };
+          let error;
+          try {
+            collected();
+          } catch (e) {
+            error = e;
+          }
+          out["the result of prepareStackTrace"] = error.stack;
+          Error.prepareStackTrace = original;
+          out["the default function with the call sites"] = original(error, sites).split("\\n")[1].trim();
+
+          const delegated = eval(thrower("delegated") + comments("delegated"));
+          Error.prepareStackTrace = (error, callSites) => original(error, callSites);
+          out["a callback that delegates"] = top(delegated);
+          Error.prepareStackTrace = original;
+
+          out["findSourceMap()"] = findSourceMap(path.resolve("generated/read.js")) ?? null;
+          console.log(JSON.stringify(out));
+        `,
+      });
+      const mapped = (name: string) => inSource(name, `<dir>/generated/${name}.ts`, 70);
+      expect(printed(await run(String(dir), ["main.cjs"]))).toEqual({
+        stdout: {
+          "Error.stack": mapped("read"),
+          // The body of `new Function()` starts on line 3 of what runs.
+          "Error.captureStackTrace()": "at anonymous (<dir>/generated/captured.ts:72:1)",
+          "CallSite": {
+            getFileName: "generated/collected.js",
+            getScriptNameOrSourceURL: "generated/collected.js",
+            getLineNumber: 2,
+            getColumnNumber: 9,
+            toString: "collected (generated/collected.js:2:9)",
+          },
+          "error.stack in prepareStackTrace": "at collected (generated/collected.js:2:9)",
+          "the result of prepareStackTrace": "prepared",
+          "the default function with the call sites": mapped("collected"),
+          "a callback that delegates": mapped("delegated"),
+          "findSourceMap()": null,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    describe("an error that nothing catches, thrown by text that eval() was given", () => {
+      const source = [
+        "// line 1",
+        "// line 2",
+        "function thrown() {",
+        `  throw new Error("not caught");`,
+        "}",
+        "",
+      ].join("\n");
+      // The text calls the function that it is. Line 1 of the text is line 3 of `source`.
+      const program = (map: string) => `
+        ${prelude}
+        eval(thrower("thrown") + "();\\n//# sourceURL=generated/thrown.js\\n//# sourceMappingURL=" + ${map} + "\\n");
+      `;
+      const printedError = async (files: Record<string, string>) => {
+        using dir = tempDir("generated-code-source-map-uncaught", files);
+        const { stdout, stderr, exitCode } = await run(String(dir), ["--enable-source-maps", "main.cjs"]);
+        const lines = stderr.split("\n");
+        // The preview, the message and the frame of `thrown`.
+        return { stdout, stderr: lines.slice(0, lines.indexOf("error: thrown") + 2), exitCode };
+      };
+      const atOriginal = [
+        ...preview(source, "4:1").split("\n"),
+        "error: thrown",
+        "      at thrown (<dir>/generated/src/thrown.ts:4:1)",
+      ];
+
+      test("is previewed from the sourcesContent of the map", async () => {
+        expect(
+          await printedError({
+            "main.cjs": program(`mapURL("src/thrown.ts", 3, 0, { sourcesContent: [${JSON.stringify(source)}] })`),
+          }),
+        ).toEqual({ stdout: "", stderr: atOriginal, exitCode: 1 });
+      });
+
+      test("is previewed from the original file", async () => {
+        expect(
+          await printedError({
+            "main.cjs": program(`mapURL("src/thrown.ts", 3)`),
+            "generated/src/thrown.ts": source,
+          }),
+        ).toEqual({ stdout: "", stderr: atOriginal, exitCode: 1 });
+      });
+
+      // Node prints the line of the text too. A file with the name of the text is not what ran.
+      test("is previewed from the text when nothing has the original text", async () => {
+        const { stdout, stderr, exitCode } = await printedError({
+          "main.cjs": program(`mapURL("src/thrown.ts", 3)`),
+          "generated/thrown.js": "// This file has the name of the text, and another text.\n".repeat(4),
+        });
+        expect({ stdout, stderr: stderr.slice(-4), exitCode }).toEqual({
+          stdout: "",
+          stderr: [
+            `2 |   throw new Error("thrown");`,
+            " ".repeat("2 | ".length + `  throw `.length) + "^",
+            "error: thrown",
+            "      at thrown (<dir>/generated/src/thrown.ts:4:1)",
+          ],
+          exitCode: 1,
+        });
+      });
+    });
+
+    // Node.js keeps one source map for a name, the one of the text that was compiled last. Here a frame is mapped
+    // by the source map of its own text, which is looked for when the stack is read.
+    test("a text is mapped by its own source map, whenever its stack is read", async () => {
+      using dir = tempDir("generated-code-source-map-own", {
+        "main.cjs": `
+          const { setSourceMapsSupport } = require("node:module");
+          ${prelude}
+          const text = (name, from, url = name) => thrower(name) + "//# sourceURL=generated/" + url + ".js\\n//# sourceMappingURL=" + mapURL(name + ".ts", from) + "\\n";
+          const out = {};
+
+          const beforeTheSwitch = eval(text("beforeTheSwitch", 80));
+          setSourceMapsSupport(true, { generatedCode: true });
+          out["compiled before the switch"] = top(beforeTheSwitch);
+
+          const first = eval(text("first", 100, "twice"));
+          out["the first of two texts with one name"] = top(first);
+          const second = eval(text("second", 200, "twice"));
+          out["the second"] = top(second);
+          out["the first again"] = top(first);
+
+          const again = [0, 1].map(() => (0, eval)(text("again", 300)));
+          out["a text that is compiled two times"] = again.map(top);
+
+          // More texts than the table keeps the source maps of.
+          const many = Array.from({ length: 200 }, (_, i) => eval(text("many" + i, 1000 + i * 10)));
+          const frames = many.map(top);
+          out["200 texts"] = [frames[0], frames[199], frames.length];
+          out["the first of them again"] = top(many[0]);
+          console.log(JSON.stringify(out));
+        `,
+      });
+      const at = (name: string, from: number) => inSource(name, `<dir>/generated/${name}.ts`, from);
+      expect(printed(await run(String(dir), ["main.cjs"]))).toEqual({
+        stdout: {
+          "compiled before the switch": at("beforeTheSwitch", 80),
+          "the first of two texts with one name": at("first", 100),
+          "the second": at("second", 200),
+          "the first again": at("first", 100),
+          "a text that is compiled two times": [at("again", 300), at("again", 300)],
+          "200 texts": [at("many0", 1000), at("many199", 2990), 200],
+          "the first of them again": at("many0", 1000),
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The frames of such an error are formatted while the heap is collected, when their functions are garbage.
+    test("a stack that a collection formats is in the original", async () => {
+      using dir = tempDir("generated-code-source-map-gc", {
+        "main.cjs": `
+          ${prelude}
+          process.setSourceMapsEnabled(true);
+          const twins = new WeakMap();
+          // The finally blocks keep every return out of tail position.
+          const capture = i => {
+            const name = "collected" + i;
+            const make = eval(
+              "(function " + name + '() { try {\\n  return [new Error("' + name + '"), new Error("twin")];\\n} finally {} })\\n' +
+                "//# sourceURL=generated/" + name + ".js\\n//# sourceMappingURL=" + mapURL(name + ".ts", 90) + "\\n",
+            );
+            const [error, twin] = (() => { try { return make(); } finally {} })();
+            twins.set(error, twin);
+            return error;
+          };
+          // A twin is made in the same frames. If its stack is a string, nothing asks Error.prepareStackTrace for it.
+          const formattedByACollection = error => {
+            let asked = false;
+            const original = Error.prepareStackTrace;
+            Error.prepareStackTrace = () => ((asked = true), "");
+            void twins.get(error).stack;
+            Error.prepareStackTrace = original;
+            return !asked;
+          };
+          const errors = Array.from({ length: 8 }, (_, i) => capture(i));
+          setImmediate(() => {
+            Bun.gc(true);
+            const formatted = errors.map((error, i) => [i, error]).filter(([, error]) => formattedByACollection(error));
+            console.log(JSON.stringify({
+              "formatted by the collection": formatted.length > 0,
+              "frames": formatted.map(([i, error]) => [i, error.stack.split("\\n")[1].trim()]),
+            }));
+          });
+        `,
+      });
+      const { stdout, stderr, exitCode } = printed(await run(String(dir), ["main.cjs"]));
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: {
+          "formatted by the collection": true,
+          "frames": stdout.frames.map(([i]: [number]) => [
+            i,
+            inSource(`collected${i}`, `<dir>/generated/collected${i}.ts`, 90),
+          ]),
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // Node.js reads the source map of what `_compile` is given as it reads the one of a module: when the text is
+    // compiled, for the file name that `_compile` is given, and whether generatedCode is on or not.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L1806-L1811
+    test("Module.prototype._compile reads the source map of its text as the one of a module", async () => {
+      // One line, where `throw` is at column 28 and `exports.after` at column 69. In the map they start line 5
+      // and line 9 of the source. What runs has the CommonJS wrapper in front of the line.
+      const oneLine = `exports.f = function f() { throw new Error("on the first line"); }; exports.after = 1;`;
+      const oneLineMappings = "AAAA,2BAIA,yCAIA";
+      using dir = tempDir("compiled-text-source-map", {
+        "loaded.js": `exports.loaded = true;\n`,
+        "hooked.custom": `what a handler of Module._extensions makes JavaScript of\n`,
+        "maps/beside.js.map": `{ "version": 3, "sources": ["beside.ts"], "names": [], "mappings": "${lineMappings([110, 111, 112])}" }`,
+        "main.cjs": `
+          const Module = require("node:module");
+          const path = require("node:path");
+          ${prelude}
+          const compile = (file, text) => {
+            const filename = path.isAbsolute(file) || file.startsWith("relative") ? file : path.resolve(file);
+            const module = new Module(filename);
+            module.filename = filename;
+            module.paths = [];
+            module._compile(text, filename);
+            return module.exports;
+          };
+          const compiled = (file, name, comments) => compile(file, "module.exports = " + thrower(name) + comments);
+          const out = {};
+          require("./loaded.js");
+
+          const beforeTheSwitch = compiled("before.js", "beforeTheSwitch", "//# sourceMappingURL=" + mapURL("before.ts", 100) + "\\n");
+          Module.setSourceMapsSupport(true);
+          out["compiled before the switch"] = top(beforeTheSwitch);
+          out["a data: URL"] = top(compiled("inline.js", "inline", "//# sourceMappingURL=" + mapURL("src/inline.ts", 100) + "\\n"));
+          out["a file beside the file name"] = top(compiled("beside.js", "beside", "//# sourceMappingURL=maps/beside.js.map\\n"));
+          out["a sourceURL comment"] = top(
+            compiled("named-file.js", "named", "//# sourceURL=elsewhere/named.js\\n//# sourceMappingURL=" + mapURL("named.ts", 120) + "\\n"),
+          );
+          out["on the first line"] = top(
+            compile("one-line.js", ${JSON.stringify(oneLine)} + "\\n//# sourceMappingURL=data:application/json;base64," +
+              Buffer.from(JSON.stringify({ version: 3, sources: ["one-line.ts"], names: [], mappings: ${JSON.stringify(oneLineMappings)} })).toString("base64") + "\\n").f,
+          );
+          Module._extensions[".custom"] = (module, filename) =>
+            module._compile("module.exports = " + thrower("hooked") + "//# sourceMappingURL=" + mapURL("hooked.original", 130) + "\\n", filename);
+          out["a handler of Module._extensions"] = top(require("./hooked.custom"));
+          out["no sourceMappingURL comment"] = top(compiled("no-map.js", "noMap", ""));
+          out["a file name that is no absolute path"] = top(compiled("relative.js", "relative", "//# sourceMappingURL=" + mapURL("relative.ts", 100) + "\\n"));
+          out["the file name of a module that is loaded"] = top(compiled("loaded.js", "asLoaded", "//# sourceMappingURL=" + mapURL("as-loaded.ts", 100) + "\\n"));
+          const inNodeModules = compiled("node_modules/dep/index.js", "dep", "//# sourceMappingURL=" + mapURL("dep.ts", 100) + "\\n");
+          out["a file name in node_modules"] = top(inNodeModules);
+          Module.setSourceMapsSupport(true, { nodeModules: true });
+          out["compiled before nodeModules was set"] = top(inNodeModules);
+          out["a file name in node_modules, with nodeModules"] = top(
+            compiled("node_modules/dep/other.js", "dep", "//# sourceMappingURL=" + mapURL("other.ts", 100) + "\\n"),
+          );
+          const here = require("node:url").pathToFileURL(process.cwd()).href;
+          const found = name =>
+            Module.findSourceMap(path.resolve(name))?.payload.sources.map(source => source.replace(here, "<url>"));
+          out["findSourceMap()"] = {
+            "the file name": found("inline.js"),
+            "the file name of text with a sourceURL comment": found("named-file.js"),
+            "a file name with no source map": found("no-map.js") ?? null,
+          };
+          Module.setSourceMapsSupport(false);
+          out["after the switch is off"] = top(compiled("inline.js", "inline", "//# sourceMappingURL=" + mapURL("src/inline.ts", 100) + "\\n"));
+          console.log(JSON.stringify(out));
+        `,
+      });
+      const [withTheSwitch, asLoadedWithout] = await Promise.all([
+        run(String(dir), ["main.cjs"]),
+        run(String(dir), [
+          "-e",
+          `
+            const Module = require("node:module");
+            require("./loaded.js");
+            const module = new Module(require.resolve("./loaded.js"));
+            module.filename = require.resolve("./loaded.js");
+            module._compile('module.exports = (function asLoaded() {\\n  throw new Error("asLoaded");\\n})\\n', module.filename);
+            try {
+              module.exports();
+            } catch (e) {
+              console.log(JSON.stringify(e.stack.split("\\n")[1].trim()));
+            }
+          `,
+        ]),
+      ]);
+      expect(printed(withTheSwitch)).toEqual({
+        stdout: {
+          "compiled before the switch": inText("beforeTheSwitch", "<dir>/before.js"),
+          "a data: URL": inSource("inline", "<dir>/src/inline.ts", 100),
+          // A relative source is beside the map.
+          "a file beside the file name": inSource("beside", "<dir>/maps/beside.ts", 110),
+          // The frame has the name of the comment, and the source is beside the file name.
+          "a sourceURL comment": inSource("named", "<dir>/named.ts", 120),
+          "on the first line": "at f (<dir>/one-line.ts:5:1)",
+          "a handler of Module._extensions": inSource("hooked", "<dir>/hooked.original", 130),
+          "no sourceMappingURL comment": inText("noMap", "<dir>/no-map.js"),
+          "a file name that is no absolute path": inText("relative", "relative.js"),
+          // The table has the module under that name, and the position of a frame is mapped once.
+          "the file name of a module that is loaded": printed(asLoadedWithout).stdout,
+          "a file name in node_modules": inText("dep", "<dir>/node_modules/dep/index.js"),
+          "compiled before nodeModules was set": inText("dep", "<dir>/node_modules/dep/index.js"),
+          "a file name in node_modules, with nodeModules": inSource("dep", "<dir>/node_modules/dep/other.ts", 100),
+          "findSourceMap()": {
+            "the file name": ["<url>/src/inline.ts"],
+            "the file name of text with a sourceURL comment": ["<url>/named.ts"],
+            "a file name with no source map": null,
+          },
+          "after the switch is off": inText("inline", "<dir>/inline.js"),
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
 });

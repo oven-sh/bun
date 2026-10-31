@@ -292,6 +292,37 @@ pub fn remove_source_provider_source_map(
         .remove_source_provider(opaque_source_provider, slice.slice());
 }
 
+/// May run on the heap collector thread, like `Bun__remapStackFramePositions`.
+// HOST_EXPORT(Bun__VM__noteGeneratedSourceMap, c)
+pub fn note_generated_source_map(
+    vm: &mut VirtualMachine,
+    source_url: &BunString,
+    source_mapping_url: &BunString,
+    source: usize,
+) {
+    vm.source_mappings.note_generated_source_map(
+        source_url.to_utf8().slice(),
+        source_mapping_url,
+        source,
+    );
+}
+
+// HOST_EXPORT(Bun__VM__putSourceMapOfCompiledText, c)
+pub fn put_source_map_of_compiled_text(
+    vm: &mut VirtualMachine,
+    source_url: &BunString,
+    path: &BunString,
+    source_mapping_url: &BunString,
+    first_line_column: i32,
+) {
+    vm.source_mappings.put_source_map_of_compiled_text(
+        source_url.to_utf8().slice(),
+        path.to_utf8().slice(),
+        source_mapping_url.to_utf8().slice(),
+        first_line_column,
+    );
+}
+
 pub(crate) fn set_synthetic_allocation_limit_for_testing(limit: f64) -> usize {
     let limit: usize = usize::try_from((limit as i64).max(1024 * 1024)).expect("int cast");
     let prev = crate::virtual_machine::SYNTHETIC_ALLOCATION_LIMIT

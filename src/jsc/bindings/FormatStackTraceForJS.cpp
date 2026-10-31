@@ -329,6 +329,7 @@ WTF::String formatStackTrace(
     sourceURLs.grow(framesCount);
     originalLineColumns.grow(framesCount);
     bool anyRemap = false;
+    Zig::GeneratedCodeSourceMaps generatedCodeSourceMaps(getBunVM());
 #if ENABLE(AOT)
     JSC::AOT::Typed::ModuleID previousCompiledModule;
     size_t previousCompiledFrame = 0;
@@ -383,6 +384,7 @@ WTF::String formatStackTrace(
                 remappedFrame.position.column_zero_based = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].column).zeroBasedInt();
                 remappedFrame.source_url = Bun::toStringRef(sourceURLs[i]);
                 anyRemap = true;
+                generatedCodeSourceMaps.note(frame);
             }
         }
     }
@@ -534,6 +536,8 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     sourceURLs.grow(n);
     didRemap.grow(n);
     bool anyRemap = false;
+    // The callback can give its call sites to the default Error.prepareStackTrace, which asks for original positions.
+    Zig::GeneratedCodeSourceMaps generatedCodeSourceMaps(globalObject->bunVM());
 
     for (int i = 0; i < n; i++) {
         ZigStackFrame& frame = remappedFrames[i];
@@ -574,6 +578,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
                 frame.source_url = Bun::toStringRef(sourceURLs[i]);
                 didRemap[i] = true;
                 anyRemap = true;
+                generatedCodeSourceMaps.note(stackFrame);
             }
         }
     }

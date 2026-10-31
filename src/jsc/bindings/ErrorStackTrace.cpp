@@ -441,6 +441,39 @@ bool JSCStackFrame::calculateSourcePositions()
     return true;
 }
 
+GeneratedCodeSourceMaps::GeneratedCodeSourceMaps(void* bunVM)
+{
+    BunSourceMapsSupport support = Bun__VM__sourceMapsSupport(bunVM);
+    m_bunVM = support.enabled && support.generatedCode ? bunVM : nullptr;
+}
+
+void GeneratedCodeSourceMaps::note(const JSC::StackFrame& frame) const
+{
+    if (!m_bunVM) [[likely]]
+        return;
+
+    JSC::CodeBlock* codeBlock = frame.codeBlock();
+    if (!codeBlock)
+        return;
+    JSC::SourceProvider* provider = codeBlock->source().provider();
+    if (!provider)
+        return;
+    const String& sourceMappingURL = provider->sourceMappingURLDirective();
+    const String& sourceURL = provider->sourceURLDirective();
+    if (sourceMappingURL.isEmpty() || sourceURL.isEmpty())
+        return;
+
+    // A function that the Function constructor made is its own top-level executable. node:vm and
+    // Module.prototype._compile make a program, and a module is a module.
+    JSC::ScriptExecutable* topLevelExecutable = codeBlock->ownerExecutable()->topLevelExecutable();
+    if (!topLevelExecutable->isEvalExecutable() && !topLevelExecutable->isFunctionExecutable())
+        return;
+
+    BunString url = Bun::toString(sourceURL);
+    BunString mapURL = Bun::toString(sourceMappingURL);
+    Bun__VM__noteGeneratedSourceMap(m_bunVM, &url, &mapURL, provider->asID());
+}
+
 String sourceURL(const JSC::SourceOrigin& origin)
 {
     if (origin.isNull()) {

@@ -222,6 +222,22 @@ inline bool hasOriginalSourcePosition(const JSC::StackFrame& frame)
     return false;
 }
 
+// Text that eval() or the Function constructor was given can name a source map for itself. JavaScriptCore runs
+// nothing when it compiles such text, so a reader that wants original positions passes each frame to note(), which
+// tells the VM's table of source maps what the text of the frame names. The position is then looked up under the
+// source URL of the frame. As in Node.js, this is not for what node:vm compiles.
+class GeneratedCodeSourceMaps {
+public:
+    // Asks the switch here, and not for each frame.
+    explicit GeneratedCodeSourceMaps(void* bunVM);
+
+    void note(const JSC::StackFrame&) const;
+
+private:
+    // Null unless module.getSourceMapsSupport() has both enabled and generatedCode.
+    void* m_bunVM;
+};
+
 String sourceURL(const JSC::SourceOrigin& origin);
 String sourceURL(JSC::SourceProvider* sourceProvider);
 String sourceURL(const JSC::SourceCode& sourceCode);

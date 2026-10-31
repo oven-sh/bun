@@ -424,6 +424,12 @@ typedef struct BunSourceMapsSupport {
 } BunSourceMapsSupport;
 extern "C" BunSourceMapsSupport Bun__VM__sourceMapsSupport(void* bunVM);
 extern "C" void Bun__VM__setSourceMapsSupport(void* bunVM, BunSourceMapsSupport);
+// Text that eval() or the Function constructor was given names itself `sourceURL` and names `sourceMappingURL` as its
+// source map. `sourceID` is the ID of its source provider. This can be called on the heap collector thread.
+extern "C" void Bun__VM__noteGeneratedSourceMap(void* bunVM, const BunString* sourceURL, const BunString* sourceMappingURL, uintptr_t sourceID);
+// Module.prototype._compile was given `path` and text that names `sourceMappingURL` as its source map. Frames of the
+// text name `sourceURL`, and its first line runs behind `firstLineColumn` columns of wrapper.
+extern "C" void Bun__VM__putSourceMapOfCompiledText(void* bunVM, const BunString* sourceURL, const BunString* path, const BunString* sourceMappingURL, int32_t firstLineColumn);
 
 // Used in process.version
 extern "C" const char* Bun__version;

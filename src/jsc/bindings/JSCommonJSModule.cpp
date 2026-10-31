@@ -87,6 +87,7 @@
 #include "BunCompiledModules.h"
 
 #include "ErrorCode.h"
+#include "ErrorStackTrace.h"
 #include "GeneratedJest.h"
 #include "WebCoreJSBuiltins.h"
 #if ENABLE(AOT)
@@ -203,7 +204,30 @@ private:
     const unsigned m_overlayShape;
 };
 
-static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
+// Whether the text of a module is what Module.prototype._compile was given, which Bun's transpiler did not print.
+enum class CommonJSText : bool {
+    Transpiled,
+    GivenToCompile,
+};
+
+// The table of source maps has the source map of a module when Bun transpiles the module. It learns here of the
+// source map that text for Module.prototype._compile names: JavaScriptCore has parsed the text, and has not run it.
+static void putSourceMapOfCompiledText(Zig::GlobalObject* globalObject, JSC::SourceProvider& provider)
+{
+    const String& sourceMappingURL = provider.sourceMappingURLDirective();
+    if (sourceMappingURL.isEmpty() || !Bun__VM__sourceMapsSupport(globalObject->bunVM()).enabled)
+        return;
+
+    String sourceURLOfFrames = Zig::sourceURL(&provider);
+    BunString url = Bun::toString(sourceURLOfFrames);
+    BunString path = Bun::toString(provider.sourceURL());
+    BunString mapURL = Bun::toString(sourceMappingURL);
+    // Node.js compiles the text with no wrapper in front of it, unless Module.wrapper was given one.
+    int32_t firstLineColumn = globalObject->hasOverriddenModuleWrapper ? 0 : static_cast<int32_t>(commonJSDefaultWrapperStart.length());
+    Bun__VM__putSourceMapOfCompiledText(globalObject->bunVM(), &url, &path, &mapURL, firstLineColumn);
+}
+
+static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename, CommonJSText text = CommonJSText::Transpiled)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     SourceCode code = WTF::move(moduleObject->sourceCode);
@@ -296,6 +320,9 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         return false;
     }
     ASSERT(fnValue);
+
+    if (text == CommonJSText::GivenToCompile)
+        putSourceMapOfCompiledText(globalObject, *code.provider());
 
     // A graph's module: the wrapper closes over the graph's overlay instead of the global scope.
     // Only a wrapper that closed over the global scope and has not been linked yet can be moved:
@@ -937,7 +964,8 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
         uncheckedDowncast<Zig::GlobalObject>(globalObject),
         moduleObject,
         jsString(vm, dirnameString),
-        jsString(vm, filenameString));
+        jsString(vm, filenameString),
+        CommonJSText::GivenToCompile);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     return JSValue::encode(jsUndefined());

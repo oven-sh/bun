@@ -443,6 +443,7 @@ static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& 
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (flags == PopulateStackTraceFlags::OnlyPosition) {
+        Zig::GeneratedCodeSourceMaps generatedCodeSourceMaps(Bun::vm(vm));
         uint8_t frame_i = 0;
         size_t stack_frame_i = 0;
         const size_t total_frame_count = frames.size();
@@ -460,6 +461,7 @@ static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& 
             frame.jsc_stack_frame_index = static_cast<int32_t>(stack_frame_i);
             populateStackFrame(vm, trace, frames[stack_frame_i], frame, frame_i == 0, &trace.referenced_source_provider, flags);
             RETURN_IF_EXCEPTION(scope, );
+            generatedCodeSourceMaps.note(frames[stack_frame_i]);
             stack_frame_i++;
             frame_i++;
         }

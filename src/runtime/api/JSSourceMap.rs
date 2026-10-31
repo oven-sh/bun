@@ -2,14 +2,13 @@
 
 use std::sync::Arc;
 
-use bun_core::{self as bstring, EncodedSlice, strings};
+use bun_core::{self as bstring, EncodedSlice};
 use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsStructure, JsWrapper};
 use bun_jsc::saved_source_map::{self, ChainedSourceMap};
 use bun_jsc::{
     CompiledJsonParser, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsError, JsResult,
     StringJsc as _, bun_string_jsc,
 };
-use bun_paths::resolve_path::{self, platform};
 use bun_sourcemap::{Mapping, Ordinal, ParsedSourceMap, mapping};
 
 use crate::generated_bindgen::sourcemap::js_SourceMap as js;
@@ -61,25 +60,16 @@ fn module_path(name: &bstring::String) -> Option<Vec<u8>> {
         return None;
     }
 
-    // `/^\w+:\/\//` is a URL to Node.js, and only a `file:` one is a module.
-    if let Some(scheme_len) = strings::index_of(name_bytes, b"://")
-        && scheme_len > 0
-        && name_bytes[..scheme_len]
-            .iter()
-            .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
-    {
-        if &name_bytes[..scheme_len] != b"file" {
+    // Only a `file:` URL is a module.
+    if let Some(scheme) = saved_source_map::url_scheme(name_bytes) {
+        if scheme != b"file" {
             return None;
         }
         let path = bun_url::path_from_file_url(name);
         return (!path.is_dead()).then(|| path.to_owned_slice());
     }
 
-    let cwd = bun_core::working_directory_in_executable()
-        .unwrap_or_else(|| bun_paths::fs::FileSystem::instance().top_level_dir());
-    // `name` can have any length, so a buffer of the pool may be too short.
-    let mut buf = vec![0u8; cwd.len() + name_bytes.len() + 2];
-    Some(resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut buf, &[name_bytes]).to_vec())
+    Some(saved_source_map::resolved_path(name_bytes))
 }
 
 impl JSSourceMap {

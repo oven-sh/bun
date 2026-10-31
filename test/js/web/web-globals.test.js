@@ -1,6 +1,15 @@
 import { spawn } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isLinux,
+  isMacOS,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  withoutAggressiveGC,
+} from "harness";
 
 test("exists", () => {
   expect(typeof URL !== "undefined").toBe(true);
@@ -583,4 +592,127 @@ test("dispatchEvent skips a listener that is a WebAssembly GC object", () => {
   target.addEventListener("a", () => calls++);
   target.dispatchEvent(new Event("a"));
   expect(calls).toBe(1);
+});
+
+// JavaScriptCore keeps the last thrown exception until native code enters JavaScript again. So each
+// script throws an unrelated error after the last entry and before the listener's error is reported.
+describe.concurrent("an EventTarget reports a listener's error, not an older error that was caught", () => {
+  async function run(lines) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", lines.join("\n")], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr: normalizeBunSnapshot(stderr), exitCode };
+  }
+  const onUncaughtException = body => `process.on("uncaughtException", error => { ${body} });`;
+
+  const handleEventNotCallable = [
+    `try { throw new Error("caught before, unrelated"); } catch {}`,
+    `const target = new EventTarget();`,
+    `target.addEventListener("a", { handleEvent: 123 });`,
+    `target.dispatchEvent(new Event("a"));`,
+  ];
+  // The error is not caught. It propagates through the finally block to the event loop.
+  const handleEventNotCallableInFinally = [
+    `const target = new EventTarget();`,
+    `target.addEventListener("a", { handleEvent: 123 });`,
+    `setImmediate(() => { try { throw new Error("still propagating"); } finally { target.dispatchEvent(new Event("a")); } });`,
+  ];
+  // Native code dispatches the message in a later turn of the event loop.
+  const handleEventNotCallableInLaterTurn = [
+    `const { port1, port2 } = new MessageChannel();`,
+    `setImmediate(() => {`,
+    `  port2.addEventListener("message", { handleEvent: 123 });`,
+    `  port2.start();`,
+    `  port1.postMessage("");`,
+    `  try { JSON.parse("{"); } catch {}`,
+    `});`,
+  ];
+  // The thenable rejects inside dispatchEvent, so the tick that reports the reason is queued right
+  // after the tick that throws and catches.
+  const thenableRejectsWith = reason => [
+    `const reason = ${reason};`,
+    `const target = new EventTarget();`,
+    `target.addEventListener("a", () => ({ then: (resolve, reject) => reject(reason) }));`,
+    `process.nextTick(() => { try { throw new Error("caught in a tick, unrelated"); } catch {} });`,
+    `target.dispatchEvent(new Event("a"));`,
+  ];
+  // The pending tick makes the second async function catch its rejection before the tick that
+  // reports the first one's.
+  const asyncAttributeHandlerThrows = [
+    `const controller = new AbortController();`,
+    `controller.signal.onabort = async () => { throw new Error("thrown by onabort"); };`,
+    `controller.abort();`,
+    `(async () => { try { await Promise.reject(new Error("handled elsewhere, unrelated")); } catch {} })();`,
+    `process.nextTick(() => {});`,
+  ];
+
+  test.each([
+    [
+      "handleEvent is not callable",
+      [onUncaughtException(`console.log(String(error));`), ...handleEventNotCallable],
+      "TypeError: 'handleEvent' property of event listener should be callable\n",
+    ],
+    [
+      "handleEvent is not callable, while another error still propagates",
+      [onUncaughtException(`console.log(String(error));`), ...handleEventNotCallableInFinally],
+      "TypeError: 'handleEvent' property of event listener should be callable\nError: still propagating\n",
+    ],
+    [
+      "handleEvent is not callable, dispatched in a later turn",
+      [onUncaughtException(`console.log(String(error)); port1.close();`), ...handleEventNotCallableInLaterTurn],
+      "TypeError: 'handleEvent' property of event listener should be callable\n",
+    ],
+    [
+      "the listener's thenable rejects with an Error",
+      [
+        onUncaughtException(`console.log(error === reason, String(error));`),
+        ...thenableRejectsWith(`new Error("rejected by the listener")`),
+      ],
+      "true Error: rejected by the listener\n",
+    ],
+    [
+      "the listener's thenable rejects with a number",
+      [onUncaughtException(`console.log(typeof error, error);`), ...thenableRejectsWith(`42`)],
+      "number 42\n",
+    ],
+    [
+      "an async on<event> handler throws",
+      [onUncaughtException(`console.log(String(error));`), ...asyncAttributeHandlerThrows],
+      "Error: thrown by onabort\n",
+    ],
+  ])("uncaughtException receives it: %s", async (_, lines, stdout) => {
+    expect(await run(lines)).toEqual({ stdout, stderr: "", exitCode: 0 });
+  });
+
+  test.each([
+    [
+      "handleEvent is not callable",
+      handleEventNotCallable,
+      [
+        `1 | try { throw new Error("caught before, unrelated"); } catch {}`,
+        `2 | const target = new EventTarget();`,
+        `3 | target.addEventListener("a", { handleEvent: 123 });`,
+        `4 | target.dispatchEvent(new Event("a"));`,
+        `           ^`,
+        `TypeError: 'handleEvent' property of event listener should be callable`,
+        `      at <cwd>/[eval]:4:8`,
+      ],
+    ],
+    [
+      "the listener's thenable rejects with an Error",
+      thenableRejectsWith(`new Error("rejected by the listener")`),
+      [
+        `1 | const reason = new Error("rejected by the listener");`,
+        `                       ^`,
+        `error: rejected by the listener`,
+        `      at <cwd>/[eval]:1:20`,
+      ],
+    ],
+    ["the listener's thenable rejects with a number", thenableRejectsWith(`42`), [`error: 42`]],
+  ])("the default report prints it: %s", async (_, lines, report) => {
+    expect(await run(lines)).toEqual({
+      stdout: "",
+      stderr: [...report, "", "Bun v<bun-version>"].join("\n"),
+      exitCode: 1,
+    });
+  });
 });

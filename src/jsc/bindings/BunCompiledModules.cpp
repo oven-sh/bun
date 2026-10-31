@@ -1052,7 +1052,8 @@ String firstCompiledModuleMatching(JSGlobalObject* globalObject, RegExp* filter)
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     String found;
     AOT::forEachModule([&](AOT::ModuleID module) {
-        String path = AOT::modulePath(module);
+        // `import("./a.custom")` beside `require("./a.custom")`: the image has the file in two forms, one of them under the path, a question mark and the name of the form. The plugin is asked for the file.
+        String path = AOT::pathOfFileOfModule(module);
         auto matchResult = filter->match(globalObject, path, 0);
         RETURN_IF_EXCEPTION(scope, IterationStatus::Done);
         if (!matchResult)

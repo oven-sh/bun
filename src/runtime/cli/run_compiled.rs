@@ -249,6 +249,16 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
         }
         parameters_that_start_workers.sort_unstable();
         parameters_that_start_workers.dedup();
+        // A spy of a package below may meet what a test file hands on.
+        let spies_on_unknown_objects = outcome.replaced_builtins.spies_on_unknown_objects
+            || told.is_some_and(|told| told.spies_on_unknown_objects);
+        let mut names_spied_on_unknown_objects =
+            (outcome.replaced_builtins.names_spied_on_unknown_objects).clone();
+        if let Some(told) = told {
+            names_spied_on_unknown_objects.extend_from_slice(&told.names_spied_on_unknown_objects);
+        }
+        names_spied_on_unknown_objects.sort_unstable();
+        names_spied_on_unknown_objects.dedup();
         let replaced = ReplacedByTests {
             builtins: outcome.replaced_builtins.builtins.clone(),
             names_added_to_builtins: outcome.replaced_builtins.names_added_to_builtins.clone(),
@@ -257,6 +267,14 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
                 || told.is_some_and(|told| told.stores_loader_functions),
             evicts_any_module: outcome.replaced_builtins.evicts_any_module
                 || told.is_some_and(|told| told.evicts_any_module),
+            any_module: outcome.replaced_builtins.any_module
+                || told.is_some_and(|told| told.any_module),
+            spies_on_unknown_objects,
+            names_spied_on_unknown_objects,
+            spy_may_meet_module_that_no_file_spells: told.is_some_and(|told| {
+                told.spy_may_meet_module_that_no_file_spells
+                    || (spies_on_unknown_objects && told.hands_on_any_module)
+            }),
             ..told.cloned().unwrap_or_default()
         };
         let after_graph = check_result.get_or_insert_default();

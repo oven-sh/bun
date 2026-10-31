@@ -10,6 +10,7 @@ use crate::builtins::{
 };
 use crate::known_helpers::KnownHelpers;
 use crate::link::run_beside;
+use crate::load::replaced_modules::find_what_packages_do_with_test_runner;
 use crate::load::{PerProject, ProjectId};
 use crate::modules::{
     self, BindInput, BoundModules, DeferredData, DeferredExports, ModuleGraph, Shape,
@@ -301,6 +302,14 @@ impl Build<'_> {
                 graph.set_asks_loader_functions(asks_loader_functions);
                 self.replaced_builtins.stores_loader_functions |= asks_loader_functions;
                 self.replaced_builtins.evicts_any_module |= graph.may_evict_every_module();
+                if self.options.load.runs_tests {
+                    let in_packages = find_what_packages_do_with_test_runner(view.files());
+                    let told_above = &mut self.replaced_builtins;
+                    told_above.any_module |= in_packages.mocks_any_module;
+                    told_above.spies_on_unknown_objects |= in_packages.spies_on_unknown_objects;
+                    (told_above.names_spied_on_unknown_objects)
+                        .extend(in_packages.names_spied_on_unknown_objects);
+                }
                 if !reached.found_by_name.is_empty() {
                     self.started_workers.root_folders_spelled = find_root_folders_spelled(
                         view.files(),

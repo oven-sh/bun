@@ -397,9 +397,6 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             true => {
                 let decisions = &compiled.analysis.decisions;
                 let atoms = &queries.files().atoms;
-                let printed_without_name = transpiled.as_ref().map_or(&[][..], |transpiled| {
-                    transpiled.declarations_printed_without_name()
-                });
                 let find_operand_printed_alone =
                     |expression: ExprId| match transpiled.as_ref()?.find_rewrite(expression)? {
                         Rewrite::Operand(operand) => Some(operand),
@@ -410,7 +407,6 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
                     bound,
                     decisions,
                     atoms,
-                    printed_without_name,
                     &find_operand_printed_alone,
                 );
                 find_type_ranges_beside(hir, replaced)

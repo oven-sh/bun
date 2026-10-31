@@ -335,6 +335,7 @@ const aotTestsThatAskTheSystem = [
   "aot/compile-exec-argv",
   "aot/channel-of-process-by-use",
   "aot/built-in-functions-by-use",
+  "aot/every-built-in-object-is-an-instance-of-what-plain-bun-says",
   "aot/title-a-process-starts-with",
   "aot/ways-to-start-an-executable",
   "aot/process-platform-run-and-compile",
@@ -368,6 +369,7 @@ const aotTestsThatAskTheSystem = [
   "aot/the-folder-of-a-program-has-a-short-name",
   "aot/diagnostics-end-in-lf",
   "aot/absolute-path-missing-at-build",
+  "aot/a-file-that-is-saved-while-the-layers-of-a-test-run-are-built",
   "aot/parallel/modules/all-kinds-path-starts-folder-executable",
   // Native code: addons, sockets, the engine's own tests.
   "aot/native-addons",

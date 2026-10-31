@@ -20,6 +20,7 @@ use crate::load::loaders::{loader_named_by_path, script_kind_of};
 use crate::load::named_loads::{
     leave_named_library_modules_to_loader, resolve_loads_through_imported_loaders,
 };
+use crate::load::replaced_modules::packages_mock_modules_that_they_do_not_spell;
 use crate::load::runtime_host::RuntimeHost;
 use crate::load::runtime_modules::RuntimeModules;
 use crate::load::runtime_roots::{
@@ -961,7 +962,11 @@ impl<'a> Build<'a> {
         let files = application.files();
         // Every file was resolved as if they were locked.
         self.replaced_builtins_spelled = find_replaced_builtins_spelled(options, files);
-        if !self.replaced_builtins_spelled.is_empty() {
+        // Every file was bound as if no mock could reach it.
+        self.packages_mock_any_module = is_test_run(options)
+            && !options.load.mocks_any_module
+            && packages_mock_modules_that_they_do_not_spell(files);
+        if !self.replaced_builtins_spelled.is_empty() || self.packages_mock_any_module {
             return Err(Stage::Load);
         }
         let view = |first: Option<FileId>| {

@@ -93,6 +93,8 @@ pub enum ModuleObjectOwner {
     EntryPoint,
     /// A file that `parent` or an element of `children` leads to, or a binding that something has stored a module object into.
     Related,
+    /// `require.cache[path]` in a test run, where the cache lists the compiled files: any of them.
+    ListedInCache,
 }
 
 /// A member of a module object whose value the record of the module has.

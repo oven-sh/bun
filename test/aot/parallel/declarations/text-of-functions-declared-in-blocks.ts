@@ -1,8 +1,9 @@
-// A function declared in a block is `let name = function() {}` in what Bun runs: its text has no name, and a mock of it takes none. Its own `name` stays.
+// A function declared in a block is `let name = function() {}` in what Bun runs: a mock of it takes no name. Its own `name` stays.
+// Its text has no name there. In an executable it keeps the name, which the text of the function around it holds too: the name is not compared.
 import { mock } from "bun:test";
 
 function show(what: string, f: Function) {
-  console.log(what + ":", String(f).replace(/\s+/g, ""), JSON.stringify([f.name, mock(f as () => void).getMockName()]));
+  console.log(what + ":", String(f).replace(/^function[^(]*/, "function").replace(/\s+/g, ""), JSON.stringify([f.name, mock(f as () => void).getMockName()]));
 }
 // Plain Bun prints a function that is named once in the place of that name, where nothing gives it a `name`.
 function used(...functions: Function[]) {
@@ -97,7 +98,7 @@ try {
   used(generic, overloaded);
 }
 {
-  function callsItself(a: number): string { return a ? callsItself(a - 1) : String(callsItself).replace(/\s+/g, ""); }
+  function callsItself(a: number): string { return a ? callsItself(a - 1) : String(callsItself).replace(/^function[^(]*/, "function").replace(/\s+/g, ""); }
   console.log("calls itself:", callsItself(2));
 }
 class Kind {

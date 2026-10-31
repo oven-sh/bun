@@ -3,7 +3,7 @@ use bun_sema::bind::{Bound, Parent};
 use bun_sema::erasure::ReplacedText;
 use bun_sema::fold::{Constant, Decision, Decisions};
 use bun_sema::hir::{
-    BinOp, Branches, ExprId, ExprKind, File, FnId, PropKind, StmtKind, UnOp, end_of_expr,
+    BinOp, Branches, ExprId, ExprKind, File, PropKind, StmtKind, UnOp, end_of_expr,
     start_inside_parentheses, start_of,
 };
 use bun_sema::hir_from_data::DataValue;
@@ -11,13 +11,11 @@ use rustc_hash::FxHashSet;
 
 /// What `bun build` prints differently from the source because its parser knows a value: branches that never run, and names that a define replaces.
 /// This build knows more, such as the constants of other files. What only it removes stays in the text, as it stays in a bundle.
-/// Also the names of `printed_without_name`, the declarations that the parser makes anonymous functions in variables.
 pub(super) fn find_text_replaced_by_bundling<'s>(
     hir: &File<'s>,
     bound: &Bound<'s>,
     decisions: &Decisions<'s>,
     atoms: &Interner<'s>,
-    printed_without_name: &[FnId],
     find_operand_printed_alone: &dyn Fn(ExprId) -> Option<ExprId>,
 ) -> Vec<ReplacedText> {
     let mut finder = Finder {
@@ -30,11 +28,6 @@ pub(super) fn find_text_replaced_by_bundling<'s>(
     };
     finder.add_branches_of_statements();
     finder.add_expressions();
-    // `function f<T>(a) {}` stays `function(a) {}`.
-    for &function in printed_without_name {
-        let end_of_keyword = hir[function].text_start + b"function".len() as u32;
-        finder.leave_out(end_of_keyword, hir[function].anchor);
-    }
     finder.replaced
 }
 

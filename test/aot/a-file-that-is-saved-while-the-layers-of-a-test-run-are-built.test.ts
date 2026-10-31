@@ -5,7 +5,7 @@
 // Nothing tells a test when a builder has read a file. So the file gets shorter all the time, by more than a page at each step. What the test files import
 // stands at its top and each cut is behind the end of a function: whatever a process of the run reads, and whenever, is a program that passes.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { truncateSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "./supported";
@@ -53,7 +53,13 @@ test("a file gets shorter and shorter while the layers of a test run are built",
     await Promise.race([ended, Bun.sleep(10 + (steps - step) * 2)]);
     if (hasEnded) break;
     length -= parts[step].length;
-    truncateSync(path, length);
+    try {
+      truncateSync(path, length);
+    } catch (error) {
+      // Windows refuses the cut while something holds the file without sharing writing, a virus scanner for one. The next step cuts further.
+      if (!isWindows || !["EBUSY", "EPERM", "EACCES"].includes((error as NodeJS.ErrnoException).code!)) throw error;
+      continue;
+    }
     cuts++;
   }
   const exitCode = await proc.exited;

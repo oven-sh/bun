@@ -90,6 +90,8 @@ for (const machine of machines) {
 
 describe.concurrent.each(machines)("a trimmable link with lld-link and no library, for %s", machine => {
   const testLink = test.skipIf(freestandingSkipReasons[machine] !== undefined);
+  // A link of thousands of functions. Beside twenty others on a machine with few processors it gets a twentieth of them, and a minute is not enough.
+  const testLargeLink = test.serial.skipIf(freestandingSkipReasons[machine] !== undefined);
   const optionsWith = (more: LinkOptions = {}): LinkOptions => ({ machine, isFreestanding: true, ...more });
   const sources = freestandingSources();
   // Where the size of the feature's code decides nothing.
@@ -103,7 +105,7 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     int main(int argc, char **argv) { return argc > 5 ? GUARDED(Extra, entered, argc) & 63 : ${result}; }
   `;
 
-  testLink("removes a feature and cuts its pages out of the PE file", async () => {
+  testLargeLink("removes a feature and cuts its pages out of the PE file", async () => {
     using dir = tempDir("trim-coff-freestanding", freestandingSources(4000));
     const folder = String(dir);
     const { executable, trimmedExecutable, addressOf, featuresOf, summary, soundness } = await linked(
@@ -360,7 +362,7 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     },
   );
 
-  testLink("repoints the debug directory of a file whose sections were split", async () => {
+  testLargeLink("repoints the debug directory of a file whose sections were split", async () => {
     using dir = tempDir("trim-coff-freestanding", freestandingSources(4000));
     const folder = String(dir);
     const { soundness } = await linked(folder, optionsWith({ linkFlags: ["/debug", "/pdb:program.pdb"] }));

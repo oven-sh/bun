@@ -517,7 +517,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let owner = match mention.owner {
             ModuleObjectOwner::OwnFile if file.body_form() == BodyForm::Plain => file.file,
             ModuleObjectOwner::EntryPoint => main?,
-            ModuleObjectOwner::OwnFile | ModuleObjectOwner::Related => return None,
+            ModuleObjectOwner::OwnFile
+            | ModuleObjectOwner::Related
+            | ModuleObjectOwner::ListedInCache => return None,
         };
         if modules.keeps_module_object(ModuleRef::File(owner)) {
             return None;

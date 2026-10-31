@@ -229,7 +229,7 @@ pub struct ReplacedByTests {
     pub exports: Vec<(Vec<u8>, Vec<u8>)>,
     /// Any export of them: `mock.module("./a", factory)`, and a module whose object goes where nobody follows it.
     pub modules: Vec<Vec<u8>>,
-    /// Such a module that no file spells.
+    /// Such a module that no file spells. It goes the other way too, as `stores_loader_functions` does: an installed package of test helpers may hold the call.
     pub any_module: bool,
     /// Their objects go where nobody follows them: `use(namespace)`, `export * as namespace`. A spy that takes an object from somewhere may get one.
     pub handed_on_modules: Vec<Vec<u8>>,

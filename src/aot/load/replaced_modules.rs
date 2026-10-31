@@ -10,8 +10,12 @@ use bun_sema::hir::{
     ExportSpecId, ExprId, ExprKind, File, Flags, MemberKey, PatId, PatKind, PropKey, StmtKind, UnOp,
 };
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, is_module_call_of_plugin};
+use bun_sema::program::Files;
 
 use crate::builtins::{BuiltinId, ResolvedBuiltins, RuntimeModule};
+use crate::load::is_in_node_modules;
+use crate::load::runtime_modules::find_module_named;
+use crate::load::sources::parsed_source;
 use crate::modules::evicted::{
     FileOfKey, find_file_of_key, find_files_named_with_query, find_paths_changed_on_disk,
     stands_where_a_throw_is_caught,
@@ -123,12 +127,14 @@ pub(crate) struct SpiesOnUnknownObjects {
 }
 
 /// `const { spyOn } = await import("bun:test")`, `(await import("bun:test")).spyOn(..)`: the names say what is taken, as in an import statement, and each
-/// stands for what it names from then on.
+/// stands for what it names from then on. So too `const { test } = require("bun:test")` and `require("bun:test").test(..)`, where nothing is awaited.
+/// `is_followed_from_require`: a `mock` that comes out of a require() makes no site of `mock.module(..)`, so whoever asks about mocks does not let it pass.
 fn takes_names_alone<'s>(
     hir: &File<'s>,
     bound: &Bound<'s>,
     builtins: &ResolvedBuiltins,
-    call: ExprId,
+    site: ImportSiteKind,
+    is_followed_from_require: &dyn Fn(BuiltinId) -> bool,
 ) -> bool {
     let outermost_of = |operand: ExprId| {
         let mut outermost = operand;
@@ -139,14 +145,25 @@ fn takes_names_alone<'s>(
         }
         outermost
     };
-    let Parent::Expr(awaited) = bound.parent_of_expr(outermost_of(call)) else {
-        return false;
+    let answer = match site {
+        ImportSiteKind::ImportCall(call) => {
+            let Parent::Expr(awaited) = bound.parent_of_expr(outermost_of(call)) else {
+                return false;
+            };
+            if !matches!(hir[awaited].kind, ExprKind::Await(_)) {
+                return false;
+            }
+            outermost_of(awaited)
+        }
+        ImportSiteKind::Require(call) | ImportSiteKind::ImportMetaRequire(call) => {
+            outermost_of(call)
+        }
+        _ => return false,
     };
-    if !matches!(hir[awaited].kind, ExprKind::Await(_)) {
-        return false;
-    }
-    let awaited = outermost_of(awaited);
-    match bound.parent_of_expr(awaited) {
+    let is_followed = |builtin: BuiltinId| {
+        matches!(site, ImportSiteKind::ImportCall(_)) || is_followed_from_require(builtin)
+    };
+    match bound.parent_of_expr(answer) {
         Parent::VarInit(declaration) => match hir[hir[declaration].pat].kind {
             PatKind::Object(properties) => properties.iter().map(|it| hir[it]).all(|it| {
                 let name = bound.declared_symbol(Decl::Var(it.value));
@@ -154,13 +171,13 @@ fn takes_names_alone<'s>(
                     && it.default.is_none()
                     && matches!(it.key, PropKey::Name(_))
                     && name.is_some()
-                    && builtins.of_symbol(name).is_some()
+                    && (builtins.of_symbol(name)).is_some_and(|path| is_followed(path.id))
             }),
             _ => false,
         },
         Parent::Expr(user) => {
-            matches!(hir.member_key(user), Some((object, MemberKey::Name(_))) if object == awaited)
-                && builtins.builtin_of_expression(user).is_some()
+            matches!(hir.member_key(user), Some((object, MemberKey::Name(_))) if object == answer)
+                && (builtins.builtin_of_expression(user)).is_some_and(is_followed)
         }
         _ => false,
     }
@@ -191,7 +208,10 @@ pub(crate) fn find_spies_on_unknown_objects<'s>(
         // Whoever gets the object of `bun:test`, or imports from this file what it exports from there, has `spyOn` under a name that stands for nothing.
         match site.kind {
             ImportSiteKind::Import(import) if hir[import].namespace.is_none() => {}
-            ImportSiteKind::ImportCall(call) if takes_names_alone(hir, bound, builtins, call) => {}
+            ImportSiteKind::ImportCall(_)
+            | ImportSiteKind::Require(_)
+            | ImportSiteKind::ImportMetaRequire(_)
+                if takes_names_alone(hir, bound, builtins, site.kind, &|it| !leads_to_spy(it)) => {}
             ImportSiteKind::MockModule(_)
             | ImportSiteKind::RequireResolve(_)
             | ImportSiteKind::ImportMetaResolve(_) => {}
@@ -325,7 +345,12 @@ fn mocks_modules_out_of_sight<'s>(
         loads_test_runner = true;
         match site.kind {
             ImportSiteKind::Import(import) if hir[import].namespace.is_none() => {}
-            ImportSiteKind::ImportCall(call) if takes_names_alone(hir, bound, builtins, call) => {}
+            ImportSiteKind::ImportCall(_)
+            | ImportSiteKind::Require(_)
+            | ImportSiteKind::ImportMetaRequire(_)
+                if takes_names_alone(hir, bound, builtins, site.kind, &|it| {
+                    member_that_mocks_modules(it).is_none()
+                }) => {}
             ImportSiteKind::MockModule(_)
             | ImportSiteKind::RequireResolve(_)
             | ImportSiteKind::ImportMetaResolve(_) => {}
@@ -420,6 +445,57 @@ pub(super) fn find_replaced_modules<'s>(
     };
     look.run();
     look.found
+}
+
+/// A package of test helpers: `exports.mockModule = (path, factory) => mock.module(path, factory)`. The look through the test files follows what they name beside them
+/// and reads no installed package, so the build that holds the package finds it out. Few packages take anything from the test runner, and only those are looked at.
+pub(crate) fn packages_mock_modules_that_they_do_not_spell(files: &Files<'_>) -> bool {
+    find_what_packages_do_with_test_runner(files).mocks_any_module
+}
+
+/// What the installed packages of a program do with what they take from the test runner, where they do not spell on what.
+#[derive(Default)]
+pub(crate) struct TestRunnerInPackages {
+    pub mocks_any_module: bool,
+    /// `exports.spyAll = object => Object.keys(object).map(name => spyOn(object, name))`: an object that it is handed, under a name that it is handed or makes.
+    /// Nobody has read who calls it with what, so any name.
+    pub spies_on_unknown_objects: bool,
+    /// `exports.silence = object => spyOn(object, "log")`
+    pub names_spied_on_unknown_objects: Vec<Vec<u8>>,
+}
+
+pub(crate) fn find_what_packages_do_with_test_runner(files: &Files<'_>) -> TestRunnerInPackages {
+    let atoms = &files.atoms;
+    let module_of = |specifier: ImportSpecifier| match specifier {
+        ImportSpecifier::Constant(text) => match atoms.bytes(text) {
+            b"@jest/globals" | b"vitest" => Some(RuntimeModule::BunTest),
+            text => find_module_named(text),
+        },
+        ImportSpecifier::Pattern { .. } | ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => {
+            None
+        }
+    };
+    let mut all = TestRunnerInPackages::default();
+    for &file in files.compiled_files() {
+        let analysis = files.analysis(file);
+        let mut sites = analysis.import_sites.iter();
+        let takes_from_test_runner = is_in_node_modules(files.module(file).file_name())
+            && sites.any(|site| module_of(site.specifier) == Some(RuntimeModule::BunTest));
+        let Some(source) = parsed_source(files, file).filter(|_| takes_from_test_runner) else {
+            continue;
+        };
+        let (hir, bound) = (files.hir(file), files.bound(file));
+        let found =
+            find_replaced_modules(hir, bound, analysis, &source.builtins, &module_of, atoms);
+        let spies = found.spies_on_unknown_objects;
+        all.mocks_any_module |= found.any;
+        all.spies_on_unknown_objects |= spies.is_any_name || spies.takes_names_from_outside;
+        let names = spies.names.iter().map(|&name| atoms.bytes(name).to_vec());
+        all.names_spied_on_unknown_objects.extend(names);
+    }
+    all.names_spied_on_unknown_objects.sort_unstable();
+    all.names_spied_on_unknown_objects.dedup();
+    all
 }
 
 impl Look<'_, '_> {

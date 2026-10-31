@@ -450,6 +450,8 @@ public:
     // The factory's promise is pending and will patch the already-loaded module when it settles.
     bool hasPendingPatch { false };
     bool hasCalledModuleMock = false;
+    // The mock waited for the first load by compiled code, and a require() behind it had left a module object in require.cache by then.
+    bool keepsModuleObject { false };
 
     static JSModuleMock* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* callback, JSC::JSString* specifier);
     static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
@@ -675,6 +677,13 @@ static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, const L
     }
 }
 
+// Under `bun test` a mock that is made while nothing is loaded stores nothing: what require() answers behind it stays in the module object.
+static void keepModuleObjectLeftBehindMock(const JSModuleMock* mock, LoadedModule& loaded)
+{
+    if (mock->keepsModuleObject)
+        loaded.commonJSModule = nullptr;
+}
+
 static void patchLoadedModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, LoadedModule& loaded, JSC::JSPromise*& pendingFactory)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -703,6 +712,7 @@ static void patchLoadedModule(Zig::GlobalObject* globalObject, JSModuleMock* moc
     // The factory may have require()d the module itself: `() => ({ ...require("./m"), extra })`.
     findLoadedCommonJSModule(globalObject, mock->specifier.get(), loaded);
     RETURN_IF_EXCEPTION(scope, );
+    keepModuleObjectLeftBehindMock(mock, loaded);
 
     if (pendingFactory)
         return;
@@ -917,6 +927,8 @@ void runCompiledMock(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID module)
     LoadedModule loaded = findLoadedModule(globalObject, mock->specifier.get());
     RETURN_IF_EXCEPTION(scope, );
     loaded.compiledModule = module;
+    // Nothing was loaded when the mock was made. Since then the host has answered a require(): of a name that the build does not know, or from code outside the image.
+    mock->keepsModuleObject = !!loaded.commonJSModule;
     JSC::JSPromise* pendingFactory = nullptr;
     patchLoadedModule(globalObject, mock, loaded, pendingFactory);
     if (scope.exception()) [[unlikely]] {
@@ -1166,8 +1178,10 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionMockModuleFactoryResolve, (JSC::JSGlobalObjec
         Zig::throwFactoryMustReturnObject(globalObject, scope);
     } else {
         Zig::LoadedModule loaded = Zig::findLoadedModule(globalObject, mock->specifier.get());
-        if (!scope.exception()) [[likely]]
+        if (!scope.exception()) [[likely]] {
+            Zig::keepModuleObjectLeftBehindMock(mock, loaded);
             Zig::overrideLoadedModuleExports(globalObject, loaded, exportsValue.getObject());
+        }
     }
     if (scope.exception()) [[unlikely]] {
         Zig::unregisterModuleMock(globalObject, mock, specifier);

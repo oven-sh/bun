@@ -239,6 +239,8 @@ pub struct BuildFailed {
     pub has_early_errors: bool,
     /// No failure: the files of a test run replace these members of built-in objects, and were loaded as if they were locked. See `compile`.
     pub replaced_builtins: Vec<u32>,
+    /// No failure: `replaced_modules::packages_mock_modules_that_they_do_not_spell`, and the files were loaded as if no mock could reach them.
+    pub mocks_any_module: bool,
     /// No failure yet: every error of a test run stands in one of these files, which are no test files and fail where a test loads them. See `compile`.
     pub left_to_loader: Vec<Vec<u8>>,
     /// `None`: the build ended before it had followed what its files load. A file that the loader cannot read either loads nothing.
@@ -294,6 +296,8 @@ pub(crate) struct Build<'a> {
     pub(crate) is_one_program: bool,
     /// `BuildFailed::replaced_builtins`.
     pub(crate) replaced_builtins_spelled: Vec<u32>,
+    /// `BuildFailed::mocks_any_module`.
+    pub(crate) packages_mock_any_module: bool,
     /// Of a build of one program: `KnownWorkerFiles::splits` and `KnownWorkerFiles::left_out`.
     pub(crate) known_worker_files: Option<(bool, Vec<Vec<u8>>)>,
     /// `KnownWorkerFiles::of_the_one_program`, where the load can tell: it then ends ahead of all other stages.
@@ -1089,11 +1093,12 @@ fn find_load_options_to_compile_again_with(
 ) -> Option<LoadOptions> {
     let mut load = options.load.clone();
     match compiled {
-        Err(failure) if !failure.replaced_builtins.is_empty() => {
+        Err(failure) if !failure.replaced_builtins.is_empty() || failure.mocks_any_module => {
             load.replaced_builtins
                 .extend_from_slice(&failure.replaced_builtins);
             load.replaced_builtins.shared_sort_unstable();
             load.replaced_builtins.dedup();
+            load.mocks_any_module |= failure.mocks_any_module;
         }
         // First: the types that the build brings are not to blame for a file that cannot be read.
         Err(failure)
@@ -1862,6 +1867,9 @@ fn add_program(first: &mut Compilation, program: Compilation) {
     (all.parameters_that_start_workers).extend(further.parameters_that_start_workers);
     all.stores_loader_functions |= further.stores_loader_functions;
     all.evicts_any_module |= further.evicts_any_module;
+    all.any_module |= further.any_module;
+    all.spies_on_unknown_objects |= further.spies_on_unknown_objects;
+    (all.names_spied_on_unknown_objects).extend(further.names_spied_on_unknown_objects);
 }
 
 fn compile_written_entry_points(
@@ -2151,8 +2159,10 @@ fn compile_programs<'a>(
             let (is_one_program, brought_bun_types) =
                 (build.is_one_program, build.brings_bun_types);
             let replaced_builtins = core::mem::take(&mut build.replaced_builtins_spelled);
+            let mocks_any_module = build.packages_mock_any_module;
             let mut failure = build.finish::<()>(Err(stage), log).unwrap_err();
             failure.replaced_builtins = replaced_builtins;
+            failure.mocks_any_module = mocks_any_module;
             failure.is_one_program = is_one_program;
             failure.brought_bun_types = brought_bun_types;
             return Err(failure);
@@ -2372,6 +2382,7 @@ fn compile_programs<'a>(
             errors_with_bun_types,
             has_early_errors: false,
             replaced_builtins: Vec::new(),
+            mocks_any_module: false,
             left_to_loader: Vec::new(),
             loads_below_files_left_to_loader: None,
         }),
@@ -2446,6 +2457,7 @@ fn fail(
         brought_bun_types: false,
         errors_with_bun_types,
         replaced_builtins: Vec::new(),
+        mocks_any_module: false,
         left_to_loader: Vec::new(),
         loads_below_files_left_to_loader: None,
     }
@@ -2495,6 +2507,7 @@ impl<'a> Build<'a> {
             is_preloading: false,
             is_one_program: false,
             replaced_builtins_spelled: Vec::new(),
+            packages_mock_any_module: false,
             known_worker_files: None,
             files_of_the_one_program: Vec::new(),
             takes_in_worker_files: None,

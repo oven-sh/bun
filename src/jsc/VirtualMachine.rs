@@ -5478,9 +5478,25 @@ impl VirtualMachine {
                 import_kind,
                 global_cache,
             ) {
-                ResultUnion::Success(r) => break r,
+                // From the root only what the executable holds is looked for: a module of it, or the file on disk that an entry point was
+                // built from. The resolver goes on to the folder on disk that stands for the root, which is the working directory as a
+                // rule: the importer does not lie there, so a package below it is not the importer's, and what the "exports" of the
+                // importer's own package have turned away would be found as a file.
+                ResultUnion::Success(r)
+                    if source_before_root.is_none()
+                        || r.flags
+                            .contains(bun_resolver::ResultFlags::IS_STANDALONE_MODULE)
+                        || r.path_const().is_some_and(|path| {
+                            bun_options_types::standalone_path::is_bun_standalone_file_path(
+                                path.text,
+                            ) || crate::compiled_program::find_entry_point_by_source_path(path.text)
+                                .is_some()
+                        }) =>
+                {
+                    break r;
+                }
                 ResultUnion::Failure(e) => return Err(e.into()),
-                ResultUnion::Pending(_) | ResultUnion::NotFound => {
+                ResultUnion::Success(_) | ResultUnion::Pending(_) | ResultUnion::NotFound => {
                     if core::mem::take(&mut may_retry_from_root)
                         && let Some(root) = self
                             .standalone_module_graph

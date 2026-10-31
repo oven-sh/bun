@@ -13,7 +13,7 @@ use bun_sema::hir::{
     VarDeclId, VarKind,
 };
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
-use bun_sema::module_format::{ThisPositions, evaluates_own_this};
+use bun_sema::module_format::{ModuleFormat, ThisPositions, evaluates_own_this};
 use bun_sema::program::{CodeAnswer, FileId, Files, Sym};
 use bun_sema::resolve::{DeclaredSideEffects, join};
 use bun_sema::util::SharedSort;
@@ -1945,6 +1945,8 @@ struct Walk<'a, 's> {
     out_of_sight: FxHashSet<ModuleRef>,
     // One that `children` or `parent` has led to, or that a binding holds, goes there too.
     lets_related_object_out_of_sight: bool,
+    // Reached code takes an entry out of `require.cache`, which lists every file of a test run.
+    takes_entries_out_of_cache: bool,
     // `process` goes where nothing follows it, under an entry point that has a module object.
     lets_process_out_of_sight: bool,
     stores_loader_functions: bool,
@@ -2100,6 +2102,7 @@ impl<'a, 's> Walk<'a, 's> {
             follows_parents: false,
             out_of_sight: FxHashSet::default(),
             lets_related_object_out_of_sight: false,
+            takes_entries_out_of_cache: false,
             lets_process_out_of_sight: false,
             stores_loader_functions: input.stores_loader_functions,
             files_asking_loader_functions: Vec::new(),
@@ -2968,6 +2971,7 @@ impl<'a, 's> Walk<'a, 's> {
             }
             // Whatever led to the object has been counted.
             ModuleObjectOwner::Related => {}
+            ModuleObjectOwner::ListedInCache => self.takes_entries_out_of_cache = true,
         }
     }
 
@@ -3201,6 +3205,14 @@ impl<'a, 's> Walk<'a, 's> {
                 // before the file was found. Once for all the files found since, not once a file.
                 self.requirers = None;
                 (self.newly_handed_out).clone_from(&self.modules_with_objects);
+            } else if take(&mut self.takes_entries_out_of_cache) {
+                // A CommonJS file without a module object to hand out is shown neither as a child nor as a parent.
+                for &file in self.input.files.compiled_files() {
+                    let format = self.input.files.analysis(file).module_format;
+                    if format == ModuleFormat::CommonJs {
+                        self.let_module_object_out_of_sight(ModuleRef::File(file));
+                    }
+                }
             } else {
                 break;
             }

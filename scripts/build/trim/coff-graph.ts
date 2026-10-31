@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fstatSync, openSync, readFileSync, readdirSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { readArchive, type ArchiveMember } from "./archive.ts";
 import { readAt } from "./binary-reader.ts";
@@ -209,15 +209,38 @@ function findArchiveMembers(link: CoffLink, symbols: MapSymbol[]): Map<string, A
         .toLowerCase(),
     ),
   );
-  const neededLibraries = new Set<string>();
+  const neededLibraries = new Map<string, string>();
   for (const symbol of symbols) {
     const colon = symbol.object.indexOf(":");
     if (colon > 1 && !stems.has(symbol.object.slice(0, colon).toLowerCase()))
-      neededLibraries.add(symbol.object.slice(0, colon).toLowerCase() + ".lib");
+      neededLibraries.set(symbol.object.slice(0, colon).toLowerCase() + ".lib", symbol.object.slice(0, colon) + ".lib");
   }
   for (const folder of link.libraryFolders) {
-    if (!existsSync(folder)) continue;
-    for (const file of readdirSync(folder)) {
+    if (neededLibraries.size === 0) break;
+    // LLD can open a named archive even when listing its directory is forbidden.
+    for (const [name, spelling] of neededLibraries) {
+      const archive = join(folder, spelling);
+      try {
+        statSync(archive);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "ENOENT" || code === "ENOTDIR") continue;
+        throw error;
+      }
+      archives.add(archive);
+      neededLibraries.delete(name);
+    }
+    if (neededLibraries.size === 0) break;
+    // Preserve case-insensitive basename matching on case-sensitive hosts.
+    let files: string[];
+    try {
+      files = readdirSync(folder);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") continue;
+      throw error;
+    }
+    for (const file of files) {
       if (neededLibraries.delete(file.toLowerCase())) archives.add(join(folder, file));
     }
   }

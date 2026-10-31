@@ -73,6 +73,7 @@ class DOMWrapperWorld;
 #include "HTTPHeaderIdentifiers.h"
 #include "BunCommonStrings.h"
 #include "Bindgen/SchemaStrings.h"
+#include "BunCPUProfiler.h"
 #include "DOMURLBaseCache.h"
 #include "NodeHTTPRequestHeaderValues.h"
 #include "NodeVMOptionNames.h"
@@ -248,6 +249,7 @@ public:
     // Public so Bun::commonStrings(vm) below is a static_cast and a member load.
     Bun::CommonStrings commonStrings;
     Bun::Bindgen::SchemaStrings schemaStrings;
+    Bun::CPUProfilerState cpuProfilerState;
 
     WebCore::DOMURLBaseCache& urlBaseCache() { return m_urlBaseCache; }
     Bun::NodeHTTPRequestHeaderValues& nodeHTTPRequestHeaderValues() { return m_nodeHTTPRequestHeaderValues; }

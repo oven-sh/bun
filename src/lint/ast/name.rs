@@ -28,9 +28,8 @@ impl<'a> Name<'a> {
     }
 
     /// The slow path: the name doesn't appear verbatim in the source, or the atoms aren't the file's own.
-    #[cold]
     #[inline(never)]
-    extern "rust-cold" fn bytes_slow(self) -> &'a [u8] {
+    fn bytes_slow(self) -> &'a [u8] {
         match KNOWN_TEXTS.get(self.atom.0 as usize) {
             Some(known) => known,
             None if self.atom.is_some() => self.file.atoms.bytes(self.atom),

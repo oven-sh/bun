@@ -252,7 +252,7 @@ impl<'a> File<'a> {
 
     #[cold]
     #[inline(never)]
-    extern "rust-cold" fn compute_scope_tree(&'a self) -> &'a ScopeTree {
+    fn compute_scope_tree(&'a self) -> &'a ScopeTree {
         self.semantic().scopes.get_or_init(|| ScopeTree::new(self))
     }
 
@@ -267,7 +267,7 @@ impl<'a> File<'a> {
 
     #[cold]
     #[inline(never)]
-    extern "rust-cold" fn compute_variables(&'a self) -> &'a Variables {
+    fn compute_variables(&'a self) -> &'a Variables {
         self.semantic()
             .variables
             .get_or_init(|| Variables::new(self, self.scope_tree()))
@@ -284,7 +284,7 @@ impl<'a> File<'a> {
 
     #[cold]
     #[inline(never)]
-    extern "rust-cold" fn compute_references(&'a self) -> &'a References {
+    fn compute_references(&'a self) -> &'a References {
         let compute = || References::new(self, self.scope_tree(), self.variables());
         self.semantic().references.get_or_init(compute)
     }

@@ -665,13 +665,28 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       );
     });
   });
+
+  describe("BackingStore", () => {
+    it("is deleted by the addon that owns it", async () => {
+      // On Windows `node-gyp --debug` links the debug C runtime, whose operator delete only takes blocks from its
+      // own operator new, so an addon built that way cannot delete a BackingStore under node either.
+      const output = await checkSameOutput("test_v8_backing_store_deleted_by_addon", undefined, undefined, !isWindows);
+      expect(output.split(/\r?\n/)).toEqual([
+        "made.stores = 480",
+        "deleted.stores = 480",
+        "made.bytes = 6000",
+        "deleted.bytes = 6000",
+        "frames = 5520",
+      ]);
+    });
+  });
 });
 
-async function checkSameOutput(testName: string, args?: string, thisValue?: any) {
+async function checkSameOutput(testName: string, args?: string, thisValue?: any, withDebugAddon = true) {
   const [nodeResultResolution, bunReleaseResultResolution, bunDebugResultResolution] = await Promise.allSettled([
     runOn(Runtime.node, BuildMode.release, testName, args, thisValue),
     runOn(Runtime.bun, BuildMode.release, testName, args, thisValue),
-    runOn(Runtime.bun, BuildMode.debug, testName, args, thisValue),
+    runOn(Runtime.bun, withDebugAddon ? BuildMode.debug : BuildMode.release, testName, args, thisValue),
   ]);
   const errors = [nodeResultResolution, bunReleaseResultResolution, bunDebugResultResolution]
     .filter(r => r.status === "rejected")

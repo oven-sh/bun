@@ -2557,6 +2557,111 @@ void perform_get_own_property_names(const FunctionCallbackInfo<Value> &info) {
   info.GetReturnValue().Set(names);
 }
 
+#if defined(_MSC_VER)
+#define V8TESTS_NOINLINE __declspec(noinline)
+#else
+#define V8TESTS_NOINLINE __attribute__((noinline))
+#endif
+
+struct BackingStoreTally {
+  int stores;
+  size_t bytes;
+};
+
+static void tally_deleted_backing_store(void *data, size_t length,
+                                        void *deleter_data) {
+  BackingStoreTally *deleted = static_cast<BackingStoreTally *>(deleter_data);
+  deleted->stores++;
+  deleted->bytes += length;
+}
+
+// free() reads a size in front of the block, and what another allocator keeps
+// there does not always make it trap. AddressSanitizer keeps an id of the
+// allocating call stack there, so every depth makes the store under a
+// different one. The write to `frames` after the call keeps each level a real
+// frame.
+V8TESTS_NOINLINE static std::unique_ptr<BackingStore>
+new_backing_store_at_depth(int depth, void *data, size_t length,
+                           BackingStoreTally *deleted, int *frames) {
+  if (depth == 0) {
+    return ArrayBuffer::NewBackingStore(data, length,
+                                        tally_deleted_backing_store, deleted);
+  }
+  std::unique_ptr<BackingStore> store =
+      new_backing_store_at_depth(depth - 1, data, length, deleted, frames);
+  ++*frames;
+  return store;
+}
+
+// `delete` on a BackingStore runs the runtime's ~BackingStore() and then frees
+// the object with this addon's operator delete, because V8 defines
+// BackingStore::operator delete inline. The process dies here if the runtime
+// took the object from an allocator that this addon's operator delete does not
+// free to.
+void test_v8_backing_store_deleted_by_addon(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  static char memory[24];
+  static BackingStoreTally made;
+  static BackingStoreTally deleted;
+  int frames = 0;
+
+  for (int round = 0; round < 4; round++) {
+    for (int depth = 0; depth < static_cast<int>(sizeof(memory)); depth++) {
+      HandleScope scope(isolate);
+      // the deleters add up the lengths, which differ from depth to depth
+      size_t length = depth + 1;
+      auto new_store = [&]() {
+        made.stores++;
+        made.bytes += length;
+        return new_backing_store_at_depth(depth, memory, length, &deleted,
+                                          &frames);
+      };
+
+      std::unique_ptr<BackingStore> unique = new_store();
+      if (unique->Data() != memory) {
+        return fail(info, "BackingStore::Data() is not the wrapped memory");
+      }
+      unique.reset();
+
+      // What uWebSockets.js does: the `delete` is in the control block of a
+      // shared_ptr that the addon made.
+      std::shared_ptr<BackingStore> shared(new_store().release());
+      std::shared_ptr<BackingStore> second_owner = shared;
+      shared.reset();
+      second_owner.reset();
+
+      // The addon drops its reference while an ArrayBuffer uses the store, and
+      // the runtime drops the last one.
+      std::shared_ptr<BackingStore> for_buffer(new_store().release());
+      Local<ArrayBuffer> buffer = ArrayBuffer::New(isolate, for_buffer);
+      for_buffer.reset();
+      buffer->Detach();
+
+      // The ArrayBuffer is the only owner of a store that came in a unique_ptr.
+      Local<ArrayBuffer> only_owner = ArrayBuffer::New(isolate, new_store());
+      only_owner->Detach();
+
+      // The addon drops the last reference, after an ArrayBuffer has used the
+      // store.
+      std::shared_ptr<BackingStore> kept(new_store().release());
+      ArrayBuffer::New(isolate, kept)->Detach();
+      if (kept->Data() != memory) {
+        return fail(info, "BackingStore::Data() is not the wrapped memory "
+                          "after its ArrayBuffer was detached");
+      }
+      kept.reset();
+    }
+  }
+
+  LOG_EXPR(made.stores);
+  LOG_EXPR(deleted.stores);
+  LOG_EXPR(made.bytes);
+  LOG_EXPR(deleted.bytes);
+  LOG_EXPR(frames);
+  return ok(info);
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -2686,6 +2791,8 @@ void initialize(Local<Object> exports, Local<Value> module,
                   create_function_with_c_function);
   NODE_SET_METHOD(exports, "perform_get_own_property_names",
                   perform_get_own_property_names);
+  NODE_SET_METHOD(exports, "test_v8_backing_store_deleted_by_addon",
+                  test_v8_backing_store_deleted_by_addon);
 
   // without this, node hits a UAF deleting the Global
   // (Context::GetIsolate was removed in V8 14.6; the module initializer runs

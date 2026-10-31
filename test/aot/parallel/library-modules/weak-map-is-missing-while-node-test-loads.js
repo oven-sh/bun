@@ -12,9 +12,11 @@ for (const round of [1, 2]) {
   }
 }
 globalThis.WeakMap = RealWeakMap;
+// A body that does not throw leaves nothing to ask.
+if (thrown.length !== 2) throw new Error("node:test loads without WeakMap");
 const test = require("node:test");
 const counted = test.mock.fn(() => 1);
 counted();
 counted();
 console.log(3, typeof test.test, typeof test.describe, counted.mock.callCount());
-console.log(thrown.length, thrown[0] === thrown[1], require("node:test") === test);
+console.log(4, thrown[0] === thrown[1], require("node:test") === test);

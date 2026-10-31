@@ -256,9 +256,16 @@ describe("a module of the library whose body threw is required again", () => {
         if (typeof plain === "string") return void failures.push(`without ${taken}, in plain Bun: ${plain}`);
         answers.forEach(([name, first, ...later], index) => {
           const [, firstInPlainBun, ...laterInPlainBun] = plain.answers![index];
-          if (first === firstInPlainBun && !Bun.deepEquals(later, laterInPlainBun))
+          // A module that began otherwise there keeps no error either: where plain Bun has it loaded in the end, so has the executable.
+          const isLoadedInPlainBun =
+            laterInPlainBun[1] === "exports" || (firstInPlainBun === "exports" && laterInPlainBun[1] === "the same");
+          const goesOnTheSame =
+            first === firstInPlainBun
+              ? Bun.deepEquals(later, laterInPlainBun)
+              : !first.startsWith("threw") || !isLoadedInPlainBun || later[1] === "exports";
+          if (!goesOnTheSame)
             failures.push(
-              `without ${taken}: ${name} answered ${first}, ${later.join(", ")}, and in plain Bun ${first}, ${laterInPlainBun.join(", ")}`,
+              `without ${taken}: ${name} answered ${first}, ${later.join(", ")}, and in plain Bun ${firstInPlainBun}, ${laterInPlainBun.join(", ")}`,
             );
         });
       }),

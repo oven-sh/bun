@@ -12,13 +12,17 @@ for (const round of [1, 2]) {
   }
 }
 globalThis.Error = RealError;
+// A body that does not throw leaves nothing to ask.
+if (thrown.length !== 2) throw new RealError("bun:sqlite loads without Error");
 const { Database, Statement, SQLiteError } = require("bun:sqlite");
 const database = new Database(":memory:");
 const statement = database.query("select 1 as x");
 console.log(3, statement.get().x, statement instanceof Statement, Object.getPrototypeOf(SQLiteError) === RealError);
+let refused;
 try {
   database.query("select from");
 } catch (error) {
-  console.log(4, error instanceof SQLiteError, error.name);
+  refused = error;
 }
-console.log(thrown.length, thrown[0] === thrown[1], require("bun:sqlite").Database === Database);
+console.log(4, refused instanceof SQLiteError, refused?.name);
+console.log(5, thrown[0] === thrown[1], require("bun:sqlite").Database === Database);

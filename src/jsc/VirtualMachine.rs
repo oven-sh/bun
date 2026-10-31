@@ -5469,7 +5469,11 @@ impl VirtualMachine {
                         retry_on_not_found = true;
                         continue;
                     }
-                    if !retry_on_not_found {
+                    // With `paths`, the resolver retried against those directories itself.
+                    if !retry_on_not_found
+                        || (self.transpiler.resolver.custom_dir_paths.is_some()
+                            && !bun_paths::is_absolute(normalized_specifier))
+                    {
                         return Err(crate::CrateError::ModuleNotFound);
                     }
                     retry_on_not_found = false;

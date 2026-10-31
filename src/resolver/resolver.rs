@@ -324,6 +324,26 @@ static ResolverDev: bun_core::output::ScopedLogger =
 // resolve without a per-site lifetime annotation.
 type Path = crate::fs::Path<'static>;
 
+/// Which `custom_dir_paths` lookup missed, so the redo probes what it read.
+#[derive(Clone, Copy)]
+enum CustomDirPathsMiss {
+    Relative,
+    Package,
+}
+
+/// What `Resolver::bust_stale_node_modules` saw at one level of the ancestor walk.
+enum NodeModulesProbe {
+    Walked,
+    Found,
+    Stale(bool),
+}
+
+fn is_regular_file(path: &bun_core::ZStr) -> bool {
+    bun_sys::stat(path).is_ok_and(|st| {
+        bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode) == bun_sys::EntryKind::File
+    })
+}
+
 /// A temporary threadlocal buffer with a lifetime more than the current
 /// function call.
 ///
@@ -2067,32 +2087,44 @@ impl<'a> Resolver<'a> {
         let check_package = is_package_path_;
 
         if check_relative {
-            if let Some(custom_paths) = self.custom_dir_paths {
+            let result = if let Some(custom_paths) = self.custom_dir_paths {
                 // @branchHint(.unlikely)
                 bun_core::hint::cold();
-                for custom_path in custom_paths {
-                    let custom_utf8 = custom_path.to_utf8();
-                    match self.check_relative_path(
-                        custom_utf8.slice(),
-                        import_path,
-                        kind,
-                        global_cache,
-                    ) {
-                        ResultUnion::Success(res) => return ResultUnion::Success(res),
-                        ResultUnion::Pending(p) => return ResultUnion::Pending(p),
-                        ResultUnion::Failure(p) => return ResultUnion::Failure(p),
-                        ResultUnion::NotFound => {}
+                debug_assert!(!check_package); // always from JavaScript
+                let mut may_redo = true;
+                'paths: loop {
+                    for custom_path in custom_paths {
+                        let custom_utf8 = custom_path.to_utf8();
+                        let result = self.check_relative_path(
+                            custom_utf8.slice(),
+                            import_path,
+                            kind,
+                            global_cache,
+                        );
+                        if !matches!(result, ResultUnion::NotFound) {
+                            break 'paths result;
+                        }
+                    }
+                    if !core::mem::take(&mut may_redo)
+                        || !self.bust_stale_custom_dir_paths(
+                            custom_paths,
+                            import_path,
+                            kind,
+                            CustomDirPathsMiss::Relative,
+                        )
+                    {
+                        // bail out now since there isn't anywhere else to check
+                        return ResultUnion::NotFound;
                     }
                 }
-                debug_assert!(!check_package); // always from JavaScript
-                return ResultUnion::NotFound; // bail out now since there isn't anywhere else to check
             } else {
-                match self.check_relative_path(source_dir, import_path, kind, global_cache) {
-                    ResultUnion::Success(res) => return ResultUnion::Success(res),
-                    ResultUnion::Pending(p) => return ResultUnion::Pending(p),
-                    ResultUnion::Failure(p) => return ResultUnion::Failure(p),
-                    ResultUnion::NotFound => {}
-                }
+                self.check_relative_path(source_dir, import_path, kind, global_cache)
+            };
+            match result {
+                ResultUnion::Success(res) => return ResultUnion::Success(res),
+                ResultUnion::Pending(p) => return ResultUnion::Pending(p),
+                ResultUnion::Failure(p) => return ResultUnion::Failure(p),
+                ResultUnion::NotFound => {}
             }
         }
 
@@ -2209,29 +2241,43 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            if let Some(custom_paths) = self.custom_dir_paths {
+            let result = if let Some(custom_paths) = self.custom_dir_paths {
                 bun_core::hint::cold();
-                for custom_path in custom_paths {
-                    let custom_utf8 = custom_path.to_utf8();
-                    match self.check_package_path(
-                        custom_utf8.slice(),
-                        import_path,
-                        kind,
-                        global_cache,
-                    ) {
-                        ResultUnion::Success(res) => return ResultUnion::Success(res),
-                        ResultUnion::Pending(p) => return ResultUnion::Pending(p),
-                        ResultUnion::Failure(p) => return ResultUnion::Failure(p),
-                        ResultUnion::NotFound => {}
+                let mut may_redo = true;
+                'paths: loop {
+                    for custom_path in custom_paths {
+                        let custom_utf8 = custom_path.to_utf8();
+                        let mut normalized = bun_paths::path_buffer_pool::get();
+                        // Keyed like every other directory: `a/../b` and `b` share one record.
+                        let entry = if bun_paths::is_absolute(custom_utf8.slice()) {
+                            self.fs_ref()
+                                .abs_buf_checked(&[custom_utf8.slice()], &mut normalized[..])
+                                .unwrap_or_else(|| custom_utf8.slice())
+                        } else {
+                            custom_utf8.slice()
+                        };
+                        let result =
+                            self.check_package_path(entry, import_path, kind, global_cache);
+                        if !matches!(result, ResultUnion::NotFound) {
+                            break 'paths result;
+                        }
+                    }
+                    if !core::mem::take(&mut may_redo)
+                        || !self.bust_stale_custom_dir_paths(
+                            custom_paths,
+                            import_path,
+                            kind,
+                            CustomDirPathsMiss::Package,
+                        )
+                    {
+                        break ResultUnion::NotFound;
                     }
                 }
             } else {
-                match self.check_package_path(source_dir, import_path, kind, global_cache) {
-                    ResultUnion::Success(res) => return ResultUnion::Success(res),
-                    ResultUnion::Pending(p) => return ResultUnion::Pending(p),
-                    ResultUnion::Failure(p) => return ResultUnion::Failure(p),
-                    ResultUnion::NotFound => {}
-                }
+                self.check_package_path(source_dir, import_path, kind, global_cache)
+            };
+            if !matches!(result, ResultUnion::NotFound) {
+                return result;
             }
         }
 
@@ -2710,6 +2756,308 @@ impl<'a> Resolver<'a> {
         let a = self.bust_dir_cache(dir);
         let b = self.bust_dir_cache(path);
         a || b
+    }
+
+    /// Every `paths` entry missed. Evicts the caches that disagree with disk. True if any did.
+    fn bust_stale_custom_dir_paths(
+        &mut self,
+        custom_paths: &[bun_core::String],
+        import_path: &[u8],
+        kind: ast::ImportKind,
+        miss: CustomDirPathsMiss,
+    ) -> bool {
+        let mut busted = false;
+        for custom_path in custom_paths {
+            let custom_utf8 = custom_path.to_utf8();
+            busted |= match miss {
+                CustomDirPathsMiss::Relative => {
+                    self.bust_stale_relative_candidate(custom_utf8.slice(), import_path, kind)
+                }
+                CustomDirPathsMiss::Package => {
+                    self.bust_stale_package_candidate(custom_utf8.slice(), import_path)
+                }
+            };
+        }
+        busted
+    }
+
+    /// A regular file `dir/<head><tail>` on disk, with `unless_listed` one the cached listing lacks.
+    fn file_in_dir(
+        &self,
+        dir: &[u8],
+        names: &mut dyn Iterator<Item = (&[u8], &[u8])>,
+        unless_listed: bool,
+    ) -> bool {
+        let dir = strings::without_trailing_slash_windows_path(dir);
+        let listing = if unless_listed {
+            // SAFETY: `rfs_ptr()` points at the process-global RealFS singleton.
+            let rfs = unsafe { &mut *self.rfs_ptr() };
+            let _lock = rfs.entries_mutex.lock_guard();
+            rfs.entries.get(dir).map(|e| bun_ptr::BackRef::new(&*e))
+        } else {
+            None
+        };
+        let mut scratch = bun_paths::path_buffer_pool::get();
+        let mut start = dir.len();
+        if start + 1 >= scratch.len() {
+            return false;
+        }
+        scratch[..start].copy_from_slice(dir);
+        if !dir.last().is_some_and(|&c| ResolvePath::is_sep_any(c)) {
+            scratch[start] = SEP;
+            start += 1;
+        }
+        for (head, tail) in names {
+            let end = start + head.len() + tail.len();
+            if end >= scratch.len() {
+                continue;
+            }
+            scratch[start..start + head.len()].copy_from_slice(head);
+            scratch[start + head.len()..end].copy_from_slice(tail);
+            if listing
+                .as_ref()
+                .is_some_and(|listing| listing.get().lookup(&scratch[start..end]).0.is_some())
+            {
+                continue;
+            }
+            scratch[end] = 0;
+            if is_regular_file(bun_core::ZStr::from_buf(&scratch[..], end)) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Evicts the directory of a relative candidate when a file the lookup looks for is on disk.
+    fn bust_stale_relative_candidate(
+        &mut self,
+        entry: &[u8],
+        import_path: &[u8],
+        kind: ast::ImportKind,
+    ) -> bool {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let Some(joined) = self
+            .fs_ref()
+            .abs_buf_checked(&[entry, import_path], &mut buf[..])
+        else {
+            return false;
+        };
+        // The same extension order and `.js` to `.ts` rewrite as `load_as_file`.
+        let in_node_modules = strings::path_contains_node_modules_folder(joined);
+        let names_directory = Self::import_path_names_directory(import_path);
+        let joined = strings::without_trailing_slash_windows_path(joined);
+        let dir = bun_paths::dirname_platform(joined, bun_paths::Platform::AUTO);
+        let base = bun_paths::basename(joined);
+        let order = if in_node_modules {
+            self.opts.extension_order.kind(kind, true)
+        } else {
+            self.extension_order
+        };
+        let extensions = self.opts.ext_order_slice(order);
+        let extra_extensions = &self.opts.extra_cjs_extensions[..];
+        let all_extensions = || extensions.iter().chain(extra_extensions).map(|ext| &**ext);
+        let rewrites = strings::last_index_of_char(base, b'.').map(|dot| {
+            let exts = rewritten_file_extensions(&base[dot..], || {
+                in_node_modules && !self.opts.conditions.import.contains_key(b"aot")
+            });
+            (&base[..dot], exts)
+        });
+        let mut files = core::iter::once((base, &b""[..]))
+            .chain(
+                all_extensions()
+                    .filter(|_| !names_directory)
+                    .map(|ext| (base, ext)),
+            )
+            .chain(
+                rewrites
+                    .into_iter()
+                    .flat_map(|(stem, exts)| exts.iter().map(move |ext| (stem, *ext))),
+            );
+        let mut directory_files = core::iter::once((&b"package.json"[..], &b""[..]))
+            .chain(all_extensions().map(|ext| (&b"index"[..], ext)));
+        if !self.file_in_dir(dir, &mut files, false)
+            && !self.file_in_dir(joined, &mut directory_files, true)
+        {
+            return false;
+        }
+        self.bust_dir_cache_and_parent(joined) | self.bust_missing_ancestors(dir)
+    }
+
+    /// Evicts each ancestor of `dir` the cache marks missing, up to the first one it holds.
+    fn bust_missing_ancestors(&mut self, dir: &[u8]) -> bool {
+        let mut busted = false;
+        let mut level = dir;
+        loop {
+            let parent = strings::without_trailing_slash_windows_path(bun_paths::dirname_platform(
+                level,
+                bun_paths::Platform::AUTO,
+            ));
+            if parent.len() >= level.len() || self.dir_cache_mut().get(parent).is_some() {
+                return busted;
+            }
+            busted |= self.bust_dir_cache(parent);
+            level = parent;
+        }
+    }
+
+    /// Probes `<dir>/node_modules/<name>` for the entry and each ancestor, as `load_node_modules` walks.
+    fn bust_stale_package_candidate(&mut self, entry: &[u8], import_path: &[u8]) -> bool {
+        let Some(name) = crate::package_json::Package::parse_name(import_path) else {
+            return false;
+        };
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let Some(entry) = self.fs_ref().abs_buf_checked(&[entry], &mut buf[..]) else {
+            return false;
+        };
+        let entry = strings::without_trailing_slash_windows_path(entry);
+        let chain_busted = self.bust_stale_entry_chain(entry);
+        let mut dir = entry;
+        loop {
+            match self.bust_stale_node_modules(dir, name) {
+                NodeModulesProbe::Walked => {}
+                NodeModulesProbe::Found => return chain_busted,
+                NodeModulesProbe::Stale(mut busted) => {
+                    // The entry's cached parent chain still names the old record of `dir`.
+                    busted |= self.bust_levels_below(entry, dir);
+                    return chain_busted | busted | self.bust_missing_ancestors(dir);
+                }
+            }
+            let parent = strings::without_trailing_slash_windows_path(bun_paths::dirname_platform(
+                dir,
+                bun_paths::Platform::AUTO,
+            ));
+            if parent.len() >= dir.len() {
+                return chain_busted;
+            }
+            dir = parent;
+        }
+    }
+
+    /// Evicts `entry` and each level above it that is below `ancestor`.
+    fn bust_levels_below(&mut self, entry: &[u8], ancestor: &[u8]) -> bool {
+        let mut busted = false;
+        let mut level = entry;
+        while level.len() > ancestor.len() {
+            busted |= self.bust_dir_cache(level);
+            level = strings::without_trailing_slash_windows_path(bun_paths::dirname_platform(
+                level,
+                bun_paths::Platform::AUTO,
+            ));
+        }
+        busted
+    }
+
+    /// Evicts `entry` and the levels below the first ancestor whose current record its cached chain does not name.
+    fn bust_stale_entry_chain(&mut self, entry: &[u8]) -> bool {
+        let (start, stale_below) = {
+            let _unlock = self.mutex.lock_guard();
+            // A missing entry makes the lookup start at its nearest ancestor with a record.
+            let mut start = entry;
+            let mut chain = loop {
+                if let Some(record) = self.dir_cache_mut().get(start) {
+                    break DirInfoRef::from_slot(record);
+                }
+                let parent = strings::without_trailing_slash_windows_path(
+                    bun_paths::dirname_platform(start, bun_paths::Platform::AUTO),
+                );
+                if parent.len() >= start.len() {
+                    return false;
+                }
+                start = parent;
+            };
+            let mut level = start;
+            loop {
+                let parent = strings::without_trailing_slash_windows_path(
+                    bun_paths::dirname_platform(level, bun_paths::Platform::AUTO),
+                );
+                if parent.len() >= level.len() {
+                    return false;
+                }
+                let Some(current) = self
+                    .dir_cache_mut()
+                    .get(parent)
+                    .map(|record| core::ptr::from_mut(record).cast_const())
+                else {
+                    return false;
+                };
+                match chain.get_parent() {
+                    Some(next) if core::ptr::eq(core::ptr::from_ref(&*next), current) => {
+                        chain = next;
+                    }
+                    _ => break (start, parent.len()),
+                }
+                level = parent;
+            }
+        };
+        // A bust of that ancestor put its new record in another slot. Rebuild the chain.
+        let mut busted = false;
+        let mut level = start;
+        while level.len() > stale_below {
+            busted |= self.bust_dir_cache(level);
+            level = strings::without_trailing_slash_windows_path(bun_paths::dirname_platform(
+                level,
+                bun_paths::Platform::AUTO,
+            ));
+        }
+        busted
+    }
+
+    /// Evicts `dir` and the package levels when `dir/node_modules/<name>` is on disk but not cached.
+    fn bust_stale_node_modules(&mut self, dir: &[u8], name: &[u8]) -> NodeModulesProbe {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let Some(package_dir) = self
+            .fs_ref()
+            .abs_buf_checked(&[dir, b"node_modules", name], &mut buf[..])
+        else {
+            return NodeModulesProbe::Walked;
+        };
+        let package_dir = strings::without_trailing_slash_windows_path(package_dir);
+        let sep = usize::from(!dir.last().is_some_and(|&c| ResolvePath::is_sep_any(c)));
+        let node_modules_len = dir.len() + sep + b"node_modules".len();
+        // A `..` in the name would leave node_modules.
+        if package_dir.len() <= node_modules_len + 1
+            || !package_dir.starts_with(dir)
+            || !package_dir[dir.len() + sep..node_modules_len].eq_ignore_ascii_case(b"node_modules")
+            || !ResolvePath::is_sep_any(package_dir[node_modules_len])
+        {
+            return NodeModulesProbe::Walked;
+        }
+        let (has_node_modules, package_is_cached, stops_here) = {
+            let _unlock = self.mutex.lock_guard();
+            let has_node_modules = self
+                .dir_cache_mut()
+                .get(dir)
+                .is_some_and(|info| info.has_node_modules());
+            let package = self.dir_cache_mut().get(package_dir);
+            // The walk stops at a copy with `exports` that lacks the subpath.
+            let stops_here = package.as_ref().is_some_and(|info| {
+                info.package_json()
+                    .is_some_and(|json| json.exports.is_some())
+            });
+            (has_node_modules, package.is_some(), stops_here)
+        };
+        if has_node_modules && package_is_cached {
+            return if stops_here {
+                NodeModulesProbe::Found
+            } else {
+                NodeModulesProbe::Walked
+            };
+        }
+        if !bun_sys::exists(package_dir) {
+            return NodeModulesProbe::Walked;
+        }
+        let mut busted = self.bust_dir_cache(dir);
+        busted |= self.bust_dir_cache(&package_dir[..node_modules_len]);
+        // Each level below node_modules (`@scope`, then the package) can be cached as missing.
+        let mut level = package_dir;
+        while level.len() > node_modules_len {
+            busted |= self.bust_dir_cache(level);
+            level = strings::without_trailing_slash_windows_path(bun_paths::dirname_platform(
+                level,
+                bun_paths::Platform::AUTO,
+            ));
+        }
+        NodeModulesProbe::Stale(busted)
     }
 
     pub(crate) fn load_node_modules(

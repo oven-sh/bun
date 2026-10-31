@@ -59,26 +59,34 @@ test("uses previous state", () => {
 Tests in files matching the glob pattern automatically run concurrently:
 
 ```ts title="tests/integration/concurrent-api.test.ts" icon="/icons/typescript.svg"
-import { test, expect } from "bun:test";
+import { test, expect, afterAll } from "bun:test";
+
+// A local server stands in for the API under test.
+// `port: 0` makes the operating system pick a free port.
+const server = Bun.serve({
+  port: 0,
+  fetch: () => Response.json({ ok: true }),
+});
+afterAll(() => server.stop());
 
 // These tests automatically run concurrently due to filename matching the glob pattern.
 // Using test() is equivalent to test.concurrent() when the file matches concurrentTestGlob.
 // Each test is independent and can run in parallel.
 
 test("fetch user data", async () => {
-  const response = await fetch("/api/user/1");
+  const response = await fetch(new URL("/api/user/1", server.url));
   expect(response.ok).toBe(true);
 });
 
 // can also use test.concurrent() for explicitly marking it as concurrent
 test.concurrent("fetch posts", async () => {
-  const response = await fetch("/api/posts");
+  const response = await fetch(new URL("/api/posts", server.url));
   expect(response.ok).toBe(true);
 });
 
 // can also use test.serial() for explicitly marking it as sequential
 test.serial("fetch comments", async () => {
-  const response = await fetch("/api/comments");
+  const response = await fetch(new URL("/api/comments", server.url));
   expect(response.ok).toBe(true);
 });
 ```

@@ -4,6 +4,7 @@
 //
 //   bun serve-http2-fixture.ts --big-file <path> [--tls] [--no-http1] [--http3] [--idle-timeout <s>]
 import { serve } from "bun";
+import { sweepSocketTimers } from "bun:internal-for-testing";
 import { tls as tlsCert } from "harness";
 import { parseArgs } from "node:util";
 
@@ -22,6 +23,18 @@ const bigFile = args["big-file"]!;
 const big = Buffer.alloc(5 * 1024 * 1024, "abcdefghijklmnop");
 let lateRead: PromiseWithResolvers<void> | undefined;
 const stopCalled = Promise.withResolvers<void>();
+// A handler with ?until=<name> waits for /release?gate=<name>.
+const gates = new Map<string, PromiseWithResolvers<void>>();
+function gate(name: string) {
+  let gate = gates.get(name);
+  if (!gate) gates.set(name, (gate = Promise.withResolvers<void>()));
+  return gate;
+}
+// One socket timeout sweep, as if 4 seconds had passed. Never from inside a socket's own dispatch.
+async function sweep() {
+  await new Promise(setImmediate);
+  sweepSocketTimers(1);
+}
 
 const makeRoutes = () => ({
   "/api/:id": (req: Bun.BunRequest<"/api/:id">) =>
@@ -232,13 +245,11 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
         }),
       );
     case "/slow-read": {
-      // Consumes the body with a pause after every chunk; ?ms= sets the pause.
-      const ms = Number(url.searchParams.get("ms") ?? "0");
-      let n = 0;
-      for await (const c of req.body!) {
-        n += c.length;
-        if (ms) await Bun.sleep(ms);
-      }
+      // Starts to read the body, then leaves it unread until the gate opens.
+      const reader = req.body!.getReader();
+      let n = (await reader.read()).value!.length;
+      await gate(url.searchParams.get("until")!).promise;
+      for (let chunk; !(chunk = await reader.read()).done; ) n += chunk.value.length;
       return new Response(String(n));
     }
     case "/ip":
@@ -260,7 +271,8 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
       lateRead = undefined;
       return new Response("released");
     case "/slow": {
-      await Bun.sleep(Number(url.searchParams.get("ms") ?? "50"));
+      const until = url.searchParams.get("until");
+      await (until ? gate(until).promise : Bun.sleep(Number(url.searchParams.get("ms") ?? "50")));
       return new Response("slow");
     }
     case "/abort": {
@@ -301,17 +313,23 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
         console.error("KEEPALIVE-ABORTED");
         resolve();
       });
-      setTimeout(resolve, Number(url.searchParams.get("ms")));
+      gate(url.searchParams.get("until")!).promise.then(resolve);
       await promise;
       return new Response(req.signal.aborted ? "aborted" : "kept");
     }
-    // server.timeout(req, s), then sleep ms before answering.
+    // server.timeout(req, s), then wait for the gate before answering.
     case "/t": {
       const s = url.searchParams.get("s")!;
       server.timeout(req, Number(s));
-      await Bun.sleep(Number(url.searchParams.get("ms")));
+      await gate(url.searchParams.get("until")!).promise;
       return new Response("t" + s);
     }
+    case "/release":
+      gate(url.searchParams.get("gate")!).resolve();
+      return new Response("released");
+    case "/sweep":
+      await sweep();
+      return new Response("swept");
   }
   return new Response("not found: " + url.pathname, { status: 404 });
 }

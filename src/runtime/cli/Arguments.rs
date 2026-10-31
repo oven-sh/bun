@@ -339,6 +339,9 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--trace-exit"),
     parse_param!("--expose-internals"),
     parse_param!("--stack-trace-limit <STR>"),
+    // node:net reads these two from `process.execArgv`.
+    parse_param!("--network-family-autoselection-attempt-timeout <STR>"),
+    parse_param!("--tls-keylog <STR>"),
     // For bun's own use and tests: no help text.
     parse_param!("--debug-aot"),
     parse_param!("--aot-huge-heap"),
@@ -516,6 +519,11 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
         (Long(b"tls-min-v1.3"), Nothing),
         (Long(b"tls-max-v1.2"), Nothing),
         (Long(b"tls-max-v1.3"), Nothing),
+        (
+            Long(b"network-family-autoselection-attempt-timeout"),
+            Nothing,
+        ),
+        (Long(b"tls-keylog"), Nothing),
         (
             Long(b"redis-preconnect"),
             RuntimeRequirement::Feature(Feature::Valkey),
@@ -1069,16 +1077,6 @@ fn replace_pid_placeholder(name: &'static [u8]) -> &'static [u8] {
     out.leak()
 }
 
-use crate::generated_bindgen::node_tls_binding::CAStore;
-
-pub(crate) fn get_ca_store() -> CAStore {
-    match Global::ca_store() {
-        Global::CAStore::Bundled => CAStore::Bundled,
-        Global::CAStore::System => CAStore::System,
-        Global::CAStore::OpenSSL => CAStore::Openssl,
-    }
-}
-
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 // their private helpers moved to `bun_bunfig::arguments` so `bun_install` can
 // call them without a tier-6 dependency. Re-export here so existing
@@ -1604,6 +1602,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
         if let Some(order) = args.option(b"--dns-result-order") {
             ctx.runtime_options.dns_result_order = order.into();
+            // `run_command` rejects an invalid value.
+            if let Some(order) = bun_dns::Order::from_string(order) {
+                bun_dns::Order::set_for_connect(order);
+            }
         }
 
         let has_cron_title = args.option(b"--cron-title");

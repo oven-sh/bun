@@ -10,7 +10,8 @@ pub(super) struct TlsConfig {
     pub servername: Option<Vec<u8>>,
     pub certs_pem: Vec<Vec<u8>>,
     pub keys_pem: Vec<Vec<u8>>,
-    pub ca_pem: Vec<Vec<u8>>,
+    /// `None` is the default CA store.
+    pub ca_pem: Option<Vec<Vec<u8>>>,
     pub crl_pem: Vec<Vec<u8>>,
     pub verify_peer_strict: bool,
     pub verify_hostname: bool,
@@ -89,13 +90,25 @@ impl TlsConfig {
         tls: JSValue,
         is_server: bool,
     ) -> JsResult<Self> {
+        let mut given = bun_http::ssl_config::Builder::default();
+        if tls.is_object()
+            && let Some(v) = tls.get(global, "ca")?
+        {
+            let ca_pem = collect_pem(global, v)?;
+            if !ca_pem.is_empty() {
+                given.ca = Some(ca_pem.iter().map(|pem| bun_core::dupe_z(pem)).collect());
+            }
+        }
+        let trust = global.bun_vm().tls_config(given, is_server);
         let mut config = TlsConfig {
             is_server,
             alpn: Vec::new(),
             servername: None,
             certs_pem: Vec::new(),
             keys_pem: Vec::new(),
-            ca_pem: Vec::new(),
+            ca_pem: trust
+                .ca_bytes()
+                .map(|certs| certs.map(<[u8]>::to_vec).collect()),
             crl_pem: Vec::new(),
             verify_peer_strict: false,
             verify_hostname: false,
@@ -128,9 +141,6 @@ impl TlsConfig {
         }
         if let Some(v) = tls.get(global, "keys")? {
             config.keys_pem = collect_pem(global, v)?;
-        }
-        if let Some(v) = tls.get(global, "ca")? {
-            config.ca_pem = collect_pem(global, v)?;
         }
         if let Some(v) = tls.get(global, "crl")? {
             config.crl_pem = collect_pem(global, v)?;
@@ -452,8 +462,17 @@ impl TlsContext {
                     return Err("invalid TLS groups list");
                 }
             }
-            if config.ca_pem.is_empty() {
-                ssl::SSL_CTX_set_default_verify_paths(ctx);
+            if config.ca_pem.is_none() {
+                // `load_crl_store` writes to the context's store, and every context shares the default one.
+                let store = if config.crl_pem.is_empty() {
+                    us_get_shared_default_ca_store()
+                } else {
+                    us_get_default_ca_store()
+                };
+                if store.is_null() {
+                    return Err("failed to load the default CA store");
+                }
+                ssl::SSL_CTX_set_cert_store(ctx, store);
             }
 
             // Node pairs `certs[i]` with `keys[i]`.
@@ -471,7 +490,7 @@ impl TlsContext {
                     load_private_key(ctx, key)?;
                 }
             }
-            for pem in &config.ca_pem {
+            for pem in config.ca_pem.iter().flatten() {
                 load_ca_store(ctx, pem)?;
             }
             for pem in &config.crl_pem {
@@ -578,6 +597,10 @@ unsafe extern "C" {
     fn us_ssl_ctx_set_verify_signature_algorithms(ctx: *mut ssl::SSL_CTX) -> c_int;
     /// openssl.c: the blocked public keys every other TLS context of Bun rejects in a peer's chain.
     fn us_ssl_ctx_reject_blocked_keys(ctx: *mut ssl::SSL_CTX);
+    /// root_certs.cpp: the CA store every other TLS context of Bun verifies against without a `ca`. The caller owns a reference.
+    fn us_get_shared_default_ca_store() -> *mut ssl::X509_STORE;
+    /// root_certs.cpp: a new store with the same contents. The caller owns it.
+    fn us_get_default_ca_store() -> *mut ssl::X509_STORE;
 }
 
 /// node's `X509_V_ERR_UNSPECIFIED`, reported when a peer sent no certificate

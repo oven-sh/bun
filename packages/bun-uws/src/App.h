@@ -58,59 +58,20 @@ namespace uWS {
 
 namespace uWS {
 
-    /* This one matches us_socket_context_options_t but has default values */
-    struct SocketContextOptions {
-        const char *key_file_name = nullptr;
-        const char *cert_file_name = nullptr;
-        const char *passphrase = nullptr;
-        const char *dh_params_file_name = nullptr;
-        const char *ca_file_name = nullptr;
-        const char *ssl_ciphers = nullptr;
-        int ssl_prefer_low_memory_usage = 0;
-
-        const char **key = nullptr;
-        unsigned int key_count = 0;
-        const char **cert = nullptr;
-        unsigned int cert_count = 0;
-        const char **ca = nullptr;
-        unsigned int ca_count = 0;
-        unsigned int secure_options = 0;
-        int ssl_min_version = 0;
-        int ssl_max_version = 0;
-        int reject_unauthorized = 0;
-        int request_cert = 0;
-        unsigned int client_renegotiation_limit = 3;
-        unsigned int client_renegotiation_window = 600;
-        int session_timeout = 0;
-        const char **crl = nullptr;
-        unsigned int crl_count = 0;
-        int allow_partial_trust_chain = 0;
-        const char *sigalgs = nullptr;
-        const char *ecdh_curve = nullptr;
-
-        /* Conversion operator used internally */
-        operator struct us_bun_socket_context_options_t() const {
-            struct us_bun_socket_context_options_t socket_context_options;
-            memcpy(&socket_context_options, this, sizeof(SocketContextOptions));
-            return socket_context_options;
-        }
-    };
-
-    static_assert(sizeof(struct us_bun_socket_context_options_t) == sizeof(SocketContextOptions), "Mismatching uSockets/uWebSockets ABI");
-
 template <bool SSL>
 struct TemplatedApp {
 private:
     /* The app always owns at least one http context, but creates websocket contexts on demand */
     HttpContext<SSL> *httpContext;
-    /* Shared SSL_CTX for every accepted socket. nullptr for plain HTTP. Built
-     * once in the constructor; the listener up_ref's it; SSL_CTX_free in dtor. */
+    /* Shared SSL_CTX for every accepted socket. nullptr for plain HTTP. up_ref'd
+     * in the constructor; the listener up_ref's it; SSL_CTX_free in dtor. */
     struct ssl_ctx_st *sslCtx = nullptr;
     /* SNI: the tree hangs off the listen socket, but addServerName() is allowed
      * before listen(). Queue them and replay onto each us_listen_socket_t. */
     struct PendingServerName {
         std::string hostname;
         struct ssl_ctx_st *ctx;
+        bool ownClientAuth;
     };
     std::vector<PendingServerName> pendingServerNames;
     /* No raw us_listen_socket_t* cache here. src/runtime/server/mod.rs's non-abrupt stop calls
@@ -137,51 +98,18 @@ public:
     TopicTree<TopicTreeMessage, TopicTreeBigMessage> *topicTree = nullptr;
 
 
-    /* Server name */
-    TemplatedApp &&addServerName(const std::string &hostname_pattern, SocketContextOptions options = {}, bool *success = nullptr, bool applyClientCertPolicy = false) {
-
-        /* Do nothing if not even on SSL */
-        if constexpr (SSL) {
-            enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
-            struct ssl_ctx_st *domainCtx = us_ssl_ctx_from_options(options, &err);
-            if (!domainCtx) {
-                if (success) *success = false;
-                return std::move(*this);
-            }
-            /* A per-serverName entry carries its own client-certificate
-             * policy; the default entry's own hostname keeps the app-level
-             * one. */
-            if (applyClientCertPolicy) {
-                us_ssl_ctx_set_sni_policy(domainCtx, options.request_cert, options.reject_unauthorized);
-            }
-            if (httpContext->getSocketContextData()->http2Context) {
-                us_ssl_ctx_enable_http2_alpn(domainCtx, httpContext->getSocketContextData()->allowHttp1);
-            }
-            forEachListenSocket([&](us_listen_socket_t *ls) {
-                us_listen_socket_add_server_name(ls, hostname_pattern.c_str(), domainCtx);
-            });
-            /* Queue for any listeners not yet created. We hold one SSL_CTX ref;
-             * each listen socket took its own via SSL_CTX_up_ref. */
-            pendingServerNames.push_back({hostname_pattern, domainCtx});
-            if (success) *success = true;
-        }
+    /* Server name. See us_listen_socket_add_server_name for ownClientAuth. */
+    TemplatedApp &&addServerName(const std::string &hostname_pattern, struct ssl_ctx_st *domainCtx, bool ownClientAuth) {
+        static_assert(SSL);
+        forEachListenSocket([&](us_listen_socket_t *ls) {
+            us_listen_socket_add_server_name(ls, hostname_pattern.c_str(), domainCtx, ownClientAuth);
+        });
+        /* Queue for any listeners not yet created. We hold one SSL_CTX ref;
+         * each listen socket took its own via SSL_CTX_up_ref. */
+        us_internal_ssl_ctx_up_ref(domainCtx);
+        pendingServerNames.push_back({hostname_pattern, domainCtx, ownClientAuth});
 
         return std::move(*this);
-    }
-
-    TemplatedApp &&missingServerName(MoveOnlyFunction<void(const char *hostname)> &&handler) {
-        if (!constructorFailed()) {
-            httpContext->getSocketContextData()->missingServerNameHandler = std::move(handler);
-            forEachListenSocket([&](us_listen_socket_t *ls) {
-                us_listen_socket_on_server_name(ls, &onMissingServerName);
-            });
-        }
-        return std::move(*this);
-    }
-
-    /* Returns the SSL_CTX* of this app, or nullptr. */
-    void *getNativeHandle() {
-        return sslCtx;
     }
 
     /* Attaches a "filter" function to track socket connections/disconnections */
@@ -245,16 +173,14 @@ public:
 
     ~TemplatedApp() {
         /* Let's just put everything here */
-        if (httpContext) {
-            if (Http2Context *h2 = httpContext->getSocketContextData()->http2Context) {
-                h2->detach(httpContext->getSocketContextData());
-            }
-            httpContext->free();
+        if (Http2Context *h2 = httpContext->getSocketContextData()->http2Context) {
+            h2->detach(httpContext->getSocketContextData());
+        }
+        httpContext->free();
 
-            /* Free all our webSocketContexts in a type less way */
-            for (auto &webSocketContextDeleter : webSocketContextDeleters) {
-                webSocketContextDeleter();
-            }
+        /* Free all our webSocketContexts in a type less way */
+        for (auto &webSocketContextDeleter : webSocketContextDeleters) {
+            webSocketContextDeleter();
         }
 
         if constexpr (SSL) {
@@ -287,43 +213,14 @@ public:
     TemplatedApp(TemplatedApp &&other) = delete;
 
 private:
-    static struct ssl_ctx_st *onMissingServerName(struct us_listen_socket_t *ls, const char *hostname, int *abort_handshake, struct us_socket_t *socket) {
-        /* Bun.serve's missingServerName handler registers a context or lets the
-         * default serve the request - it never aborts or suspends the handshake. */
-        (void) abort_handshake;
-        (void) socket;
-        if (!ls) return nullptr;
-        auto *httpContext = (HttpContext<SSL> *) us_socket_group_ext(us_listen_socket_group(ls));
-        httpContext->getSocketContextData()->missingServerNameHandler(hostname);
-        /* The handler is expected to have registered the name via
-         * addServerName(); hand the newly-registered context back so the
-         * in-flight handshake uses it (the resolver no longer re-checks the
-         * SNI tree after this callback returns). The handler may also have
-         * closed the listener, freeing the tree. */
-        return us_listen_socket_find_server_name_ctx(ls, hostname);
-    }
-
-    TemplatedApp(SocketContextOptions options) {
-        if constexpr (SSL) {
-            enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
-            sslCtx = us_ssl_ctx_from_options(options, &err);
-            if (!sslCtx) { httpContext = nullptr; return; }
-        }
-        httpContext = HttpContext<SSL>::create(Loop::get(), options.request_cert, options.reject_unauthorized);
+    /* `ctx` is what every accepted socket starts from, nullptr exactly when !SSL. */
+    TemplatedApp(struct ssl_ctx_st *ctx) : httpContext(HttpContext<SSL>::create(Loop::get())), sslCtx(ctx) {
+        us_internal_ssl_ctx_up_ref(ctx);
     }
 public:
 
-    static TemplatedApp<SSL>* create(SocketContextOptions options = {}) {
-        auto *app = new TemplatedApp<SSL>(options);
-        if (app->constructorFailed()) {
-            delete app;
-            return nullptr;
-        }
-        return app;
-    }
-
-    bool constructorFailed() {
-        return !httpContext;
+    static TemplatedApp<SSL>* create(struct ssl_ctx_st *ctx) {
+        return new TemplatedApp<SSL>(ctx);
     }
 
     template <typename UserData>
@@ -341,8 +238,6 @@ public:
         bool resetIdleTimeoutOnSend = false;
         /* A good default, esp. for newcomers */
         bool sendPingsAutomatically = true;
-        /* Maximum socket lifetime in minutes before forced closure (defaults to disabled) */
-        unsigned short maxLifetime = 0;
         /* See WebSocketContextData */
         bool wsPackage = false;
         bool autoPong = true;
@@ -356,11 +251,27 @@ public:
         MoveOnlyFunction<void(WebSocket<SSL, true, UserData> *, int, std::string_view)> close = nullptr;
     };
 
-    /* Closes all sockets including listen sockets. */
-    TemplatedApp &&close() {
+    /* Closes all sockets including listen sockets. `thread_ends`: see us_socket_group_close_all_ex. */
+    TemplatedApp &&close(int thread_ends) {
+        /* A close handler can tick the loop (waitForPromise). That tick must not free the sockets closed here, which the walks below still read. */
+        us_loop_t *loop = httpContext->getSocketGroup()->loop;
+        loop->data.tick_depth++;
+        if constexpr (SSL) {
+            /* The group's close sends a close_notify ahead of the reset. Not over a response that isn't finished or isn't sent. */
+            std::vector<us_socket_t *> sockets;
+            for (us_socket_t *s = thread_ends ? nullptr : httpContext->getSocketGroup()->head_sockets; s; s = s->next) {
+                sockets.push_back(s);
+            }
+            for (us_socket_t *s : sockets) {
+                auto *data = (HttpResponseData<SSL> *) ((AsyncSocket<SSL> *) s)->getAsyncSocketData();
+                if (!us_socket_is_closed(s) && ((data->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || !((AsyncSocket<SSL> *) s)->hasFullyDrained())) {
+                    us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
+                }
+            }
+        }
         /* close_all() walks head_listen_sockets first, so listeners are closed
          * here without us holding raw pointers to them across loop ticks. */
-        us_socket_group_close_all(httpContext->getSocketGroup());
+        us_socket_group_close_all_ex(httpContext->getSocketGroup(), 1, thread_ends);
         for (us_socket_group_t *g : webSocketGroups) {
             /* Snapshot the list first: end() runs the close handler, which can close other sockets in the group */
             std::vector<us_socket_t *> sockets;
@@ -372,11 +283,12 @@ public:
                     ((WebSocket<SSL, true, int> *) s)->end(1001, "Server closed");
                 }
             }
-            us_socket_group_close_all(g);
+            us_socket_group_close_all_ex(g, 1, thread_ends);
         }
         if (Http2Context *h2 = httpContext->getSocketContextData()->http2Context) {
-            h2->closeAll();
+            h2->closeAll(thread_ends);
         }
+        loop->data.tick_depth--;
 
         return std::move(*this);
     }
@@ -387,12 +299,9 @@ public:
     void attachHttp2(Http2Context *ctx, bool allowHttp1) {
         ctx->attach(httpContext->getSocketContextData(), allowHttp1);
         if constexpr (SSL) {
-            us_ssl_ctx_enable_http2_alpn(sslCtx, allowHttp1);
-            /* Bun attaches before addServerName(), which enables ALPN itself;
-             * this covers embedders that add names first. */
-            for (auto &p : pendingServerNames) {
-                us_ssl_ctx_enable_http2_alpn(p.ctx, allowHttp1);
-            }
+            forEachListenSocket([&](us_listen_socket_t *ls) {
+                offerHttp2(ls);
+            });
         }
     }
 
@@ -543,7 +452,6 @@ private:
         webSocketContext->getExt()->closeOnBackpressureLimit = behavior.closeOnBackpressureLimit;
         webSocketContext->getExt()->resetIdleTimeoutOnSend = behavior.resetIdleTimeoutOnSend;
         webSocketContext->getExt()->sendPingsAutomatically = behavior.sendPingsAutomatically;
-        webSocketContext->getExt()->maxLifetime = behavior.maxLifetime;
         webSocketContext->getExt()->compression = behavior.compression;
         webSocketContext->getExt()->wsPackage = behavior.wsPackage;
         webSocketContext->getExt()->autoPong = behavior.autoPong;
@@ -575,7 +483,6 @@ public:
         behavior.resetIdleTimeoutOnSend = false;
         behavior.maxBackpressure = 0;
         behavior.closeOnBackpressureLimit = false;
-        behavior.maxLifetime = 0;
 
         auto *webSocketContext = createWebSocketContext<UserData>(nullptr, behavior);
         applyWebSocketSettings<UserData>(webSocketContext, behavior);
@@ -597,11 +504,6 @@ public:
 
         /* Maximum idleTimeout is 16 minutes */
         if (behavior.idleTimeout > 240 * 4) {
-            std::terminate();
-        }
-
-        /* Maximum maxLifetime is 4 hours */
-        if (behavior.maxLifetime > 240) {
             std::terminate();
         }
 
@@ -659,80 +561,58 @@ public:
     }
 
     TemplatedApp &&get(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
-        if (httpContext) {
-            httpContext->onHttp("GET", pattern, std::move(handler));
-        }
+        httpContext->onHttp("GET", pattern, std::move(handler));
         return std::move(*this);
     }
 
     TemplatedApp &&post(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
-        if (httpContext) {
-            httpContext->onHttp("POST", pattern, std::move(handler));
-        }
+        httpContext->onHttp("POST", pattern, std::move(handler));
         return std::move(*this);
     }
 
     TemplatedApp &&options(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
-        if (httpContext) {
-            httpContext->onHttp("OPTIONS", pattern, std::move(handler));
-        }
+        httpContext->onHttp("OPTIONS", pattern, std::move(handler));
         return std::move(*this);
     }
 
     TemplatedApp &&del(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
-        if (httpContext) {
-            httpContext->onHttp("DELETE", pattern, std::move(handler));
-        }
+        httpContext->onHttp("DELETE", pattern, std::move(handler));
         return std::move(*this);
     }
 
     TemplatedApp &&patch(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
-        if (httpContext) {
-            httpContext->onHttp("PATCH", pattern, std::move(handler));
-        }
+        httpContext->onHttp("PATCH", pattern, std::move(handler));
         return std::move(*this);
     }
 
     TemplatedApp &&put(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
-        if (httpContext) {
-            httpContext->onHttp("PUT", pattern, std::move(handler));
-        }
+        httpContext->onHttp("PUT", pattern, std::move(handler));
         return std::move(*this);
     }
 
     void clearRoutes() {
-        if (httpContext) {
-            httpContext->getSocketContextData()->clearRoutes();
-        }
+        httpContext->getSocketContextData()->clearRoutes();
     }
 
 
     TemplatedApp &&head(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
-        if (httpContext) {
-            httpContext->onHttp("HEAD", pattern, std::move(handler));
-        }
+        httpContext->onHttp("HEAD", pattern, std::move(handler));
         return std::move(*this);
     }
 
     TemplatedApp &&connect(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
-        if (httpContext) {
-            httpContext->onHttp("CONNECT", pattern, std::move(handler));
-        }
+        httpContext->onHttp("CONNECT", pattern, std::move(handler));
         return std::move(*this);
     }
 
     TemplatedApp &&trace(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
-        if (httpContext) {
-            httpContext->onHttp("TRACE", pattern, std::move(handler));
-        }
+        httpContext->onHttp("TRACE", pattern, std::move(handler));
         return std::move(*this);
     }
 
     /* This one catches any method */
     TemplatedApp &&any(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
-        if (httpContext) {
-            httpContext->onHttp("*", pattern, std::move(handler));
-        }
+        httpContext->onHttp("*", pattern, std::move(handler));
         return std::move(*this);
     }
 
@@ -744,13 +624,19 @@ private:
         if (!ls) return nullptr;
         if constexpr (SSL) {
             for (auto &p : pendingServerNames) {
-                us_listen_socket_add_server_name(ls, p.hostname.c_str(), p.ctx);
+                us_listen_socket_add_server_name(ls, p.hostname.c_str(), p.ctx, p.ownClientAuth);
             }
-            if (httpContext->getSocketContextData()->missingServerNameHandler) {
-                us_listen_socket_on_server_name(ls, &onMissingServerName);
-            }
+            offerHttp2(ls);
         }
         return ls;
+    }
+
+    /* With an HTTP/2 context attached, TLS connections prefer "h2", then "http/1.1" if HTTP/1 is allowed. */
+    void offerHttp2(us_listen_socket_t *ls) {
+        auto *data = httpContext->getSocketContextData();
+        if (data->http2Context) {
+            us_listen_socket_set_alpn(ls, (const unsigned char *) "\x02h2\x08http/1.1", data->allowHttp1 ? 12 : 3, !data->allowHttp1);
+        }
     }
 
     struct ssl_ctx_st *sslCtxOrNull() { return SSL ? sslCtx : nullptr; }
@@ -806,11 +692,6 @@ public:
         httpContext->enableNodeHttpCompat();
     }
 
-    TemplatedApp &&run() {
-        uWS::run();
-        return std::move(*this);
-    }
-
     TemplatedApp &&setUsingCustomExpectHandler(bool value) {
         httpContext->getSocketContextData()->flags.usingCustomExpectHandler = value;
         return std::move(*this);
@@ -834,6 +715,11 @@ public:
 
     TemplatedApp &&setMaxHeadersCount(uint32_t maxHeadersCount) {
         httpContext->getSocketContextData()->maxHeadersCount = maxHeadersCount;
+        return std::move(*this);
+    }
+
+    TemplatedApp &&setHandshakeTimeout(unsigned int seconds) {
+        httpContext->getSocketContextData()->handshakeTimeout = seconds;
         return std::move(*this);
     }
 

@@ -90,7 +90,6 @@ declare module "bun" {
     interface NodeHTTPServeOptions<WebSocketData> extends HostnamePortServeOptions<WebSocketData> {
       unix?: string;
       onNodeHTTPRequest(
-        bunServer: Server<WebSocketData>,
         url: string,
         method: string,
         dispatchBits: number,
@@ -1372,6 +1371,8 @@ declare namespace $Node {
   /** The native `SecureContext`, an SSL_CTX: src/runtime/api/bun/SecureContext.bind.ts, SecureContext.rs. */
   interface NativeSecureContext {
     addCACert(pem: string | ArrayBufferView): void;
+    getTicketKeys(): ArrayBuffer | ArrayBufferView;
+    setTicketKeys(keys: ArrayBuffer | SharedArrayBuffer | ArrayBufferView): void;
   }
   interface NativeSecureContextConstructor {
     new (options?: object): NativeSecureContext;
@@ -2455,9 +2456,6 @@ declare namespace $Node {
     readonly remoteAddress: SocketAddressInfo | null;
     readonly localAddress: SocketAddressInfo | null;
     readonly secureEstablished: boolean;
-    readonly servername: string | null;
-    readonly authorizationError: string | null;
-    readonly peerCertVerified: boolean;
     readonly hasQueuedTunnelReads: boolean;
     readonly closedWithUnsentData: boolean | undefined;
     readonly closeError: (Error & { errno: number; code: string }) | undefined;

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_outgoing.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 17a5f190f17251c9b4bea8ce90880918a91fffc6329dddc4d5ee859370eb9709.
+// Written against that file with the SHA-256 a59b41084909b78696f47c083d6e3a51460db0b2c550437f25245eb5f588ac1b.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_outgoing"
@@ -128,6 +128,7 @@ const kCorked: typeof http.kCorked = http.kCorked;
 const kChunkedBuffer: typeof http.kChunkedBuffer = http.kChunkedBuffer;
 const kChunkedLength: typeof http.kChunkedLength = http.kChunkedLength;
 const kBytesWritten: typeof http.kBytesWritten = http.kBytesWritten;
+const kEndCallbacks = Symbol("kEndCallbacks");
 const kLenientValidation: typeof http.kLenientValidation = http.kLenientValidation;
 
 const nop = () => {};
@@ -2057,9 +2058,19 @@ OutgoingMessage.prototype.addTrailers = function addTrailers(
   }
 };
 
-function onFinish(outmsg: $Node.OutgoingMessage) {
-  if (outmsg?.socket?._hadError) return;
-  outmsg.emit("finish");
+function queueEndCallback(msg: $Node.OutgoingMessage, callback: () => void) {
+  msg.once("finish", callback);
+  (msg[kEndCallbacks] ??= []).push(callback);
+}
+
+// When the last write fails there's no 'finish', and end() callbacks get the error like a Writable's.
+function onFinish(outmsg, err?) {
+  const callbacks = outmsg[kEndCallbacks];
+  if (callbacks) outmsg[kEndCallbacks] = undefined;
+  if (!err && !outmsg.socket?._hadError) return void outmsg.emit("finish");
+  if (!callbacks) return;
+  err ??= outmsg[kErrored] ?? outmsg[kSocket]?.errored ?? $ERR_STREAM_DESTROYED("end");
+  for (let i = 0; i < callbacks.length; i++) callbacks[i](err);
 }
 
 OutgoingMessage.prototype.end = function end(
@@ -2091,7 +2102,7 @@ OutgoingMessage.prototype.end = function end(
   } else if (this.finished) {
     if (typeof callback === "function") {
       if (!this.writableFinished) {
-        this.on("finish", callback);
+        queueEndCallback(this, callback);
       } else {
         callback($ERR_STREAM_ALREADY_FINISHED("end"));
       }
@@ -2106,7 +2117,7 @@ OutgoingMessage.prototype.end = function end(
     this._implicitHeader();
   }
 
-  if (typeof callback === "function") this.once("finish", callback);
+  if (typeof callback === "function") queueEndCallback(this, callback);
 
   let contentLength;
   if (strictContentLength(this) && this[kBytesWritten] !== (contentLength = this._contentLength)) {

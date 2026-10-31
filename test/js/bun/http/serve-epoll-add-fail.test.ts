@@ -304,11 +304,11 @@ test.concurrent.skipIf(!isLinux || !cc)(
     expect({ stderr, line }).toEqual({ stderr: expect.any(String), line: expect.stringContaining("{") });
     const result = JSON.parse(line);
     // Synchronous NULL from us_socket_group_connect → do_connect() Err →
-    // handle_connect_error remaps the errno and rejects with syscall "connect".
+    // handle_connect_error rejects with the errno and syscall "connect".
     expect(result).toEqual({
       settled: "rejected",
-      code: "ECONNREFUSED",
-      errno: -111,
+      code: "ENOSPC",
+      errno: -28,
       syscall: "connect",
       message: expect.any(String),
     });

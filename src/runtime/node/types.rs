@@ -535,11 +535,15 @@ impl StringOrBuffer<'static> {
         encoding_value: JSValue,
         string_objects: StringObjects,
     ) -> JsResult<Option<Self>> {
-        let encoding: Encoding = 'brk: {
-            if !encoding_value.is_cell() {
-                break 'brk Encoding::Utf8;
-            }
-            break 'brk Encoding::from_js(encoding_value, global)?.unwrap_or(Encoding::Utf8);
+        // Bytes have no encoding, and node:net names one ("buffer") with every chunk. Anything but a string is still coerced.
+        let names_no_encoding = !encoding_value.is_cell()
+            || (encoding_value.is_string()
+                && value.is_cell()
+                && value.js_type().is_array_buffer_like());
+        let encoding = if names_no_encoding {
+            Encoding::Utf8
+        } else {
+            Encoding::from_js(encoding_value, global)?.unwrap_or(Encoding::Utf8)
         };
         Self::from_js_with_encoding_maybe_async(
             global,

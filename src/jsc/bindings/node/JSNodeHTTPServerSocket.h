@@ -54,7 +54,6 @@ public:
     unsigned is_ssl : 1 = 0;
     unsigned ended : 1 = 0;
     unsigned upgraded : 1 = 0;
-    unsigned peer_cert_verified : 1 = 0;
     /* The JS Duplex of a tunnel is full: readStop() to readStart(). */
     unsigned tunnelReadsStopped : 1 = 0;
     /* queuedTunnelBytes reached one recv buffer, until JS has those bytes. */
@@ -70,7 +69,6 @@ public:
     std::optional<bool> closedWithUnsentData;
     /* Tunnel bytes that onData() queued for JS in tasks that have not run yet. */
     size_t queuedTunnelBytes = 0;
-    const char* peerCertVerifyErrorCode = nullptr;
     JSC::Strong<JSNodeHTTPServerSocket> strongThis = {};
 
     static JSNodeHTTPServerSocket* create(JSC::VM& vm, JSC::Structure* structure, us_socket_t* socket, bool is_ssl, JSNodeHTTPResponse* response);
@@ -87,17 +85,6 @@ public:
     void close();
     bool isClosed() const;
     bool isAuthorized() const;
-
-    /* SNI hostname the client sent in its ClientHello; null when the socket is
-     * not TLS or the client sent no SNI. The pointer is owned by the SSL
-     * object — consume it before returning to the event loop. */
-    const char* sniServername() const;
-
-    /* X.509 verification error code for the peer certificate (e.g.
-     * "DEPTH_ZERO_SELF_SIGNED_CERT"), latched from the TLS handshake; null when
-     * verification succeeded or the socket is not TLS. */
-    const char* peerCertificateVerificationError();
-    bool isPeerCertificateVerified();
 
     /* node:http server compat: whether the request currently being received on
      * this connection has exceeded server.headersTimeout / server.requestTimeout
@@ -201,7 +188,6 @@ public:
 
     void detach();
     void reset();
-    void syncPeerCertificateVerification();
     void onClose(int readError, bool peerEnded);
     /* A WebSocket adopted the connection. `adopted` is its socket: the adoption can move it. */
     void onUpgraded(us_socket_t* adopted);

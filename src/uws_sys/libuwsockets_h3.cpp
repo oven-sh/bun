@@ -43,10 +43,7 @@ uws_h3_app_t* uws_h3_create_app(struct us_bun_socket_context_options_t options, 
 {
     static int once = (us_quic_global_init(), 1);
     (void)once;
-    uWS::SocketContextOptions sco;
-    static_assert(sizeof(sco) == sizeof(options));
-    memcpy(&sco, &options, sizeof(sco));
-    return (uws_h3_app_t*)H3App::create(sco, idle_timeout_s);
+    return (uws_h3_app_t*)H3App::create(options, idle_timeout_s);
 }
 
 void uws_h3_app_destroy(uws_h3_app_t* app) { delete (H3App*)app; }
@@ -56,9 +53,7 @@ void uws_h3_app_clear_routes(uws_h3_app_t* app) { ((H3App*)app)->clearRoutes(); 
 bool uws_h3_app_add_server_name(uws_h3_app_t* app, const char* hostname,
     struct us_bun_socket_context_options_t options)
 {
-    uWS::SocketContextOptions sco;
-    memcpy(&sco, &options, sizeof(sco));
-    return ((H3App*)app)->addServerNameWithOptions(hostname, sco);
+    return ((H3App*)app)->addServerNameWithOptions(hostname, options);
 }
 
 #define H3_ROUTE(name, method)                                                                       \

@@ -1231,6 +1231,48 @@ describe("HTTP server CONNECT", () => {
     },
   );
 
+  test.each([
+    ["ends after the peer's FIN by default", undefined, "allowHalfOpen=false end close"],
+    ["stays writable after the peer's FIN with allowHalfOpen: true", true, "allowHalfOpen=true end writable"],
+  ])("an https 'upgrade' socket %s", async (_label, allowHalfOpen, expected) => {
+    await using server = https.createServer({ ...tlsCert, allowHalfOpen });
+    const events: string[] = [];
+    const done = Promise.withResolvers<void>();
+    server.on("upgrade", (_req, socket) => {
+      events.push(`allowHalfOpen=${socket.allowHalfOpen}`);
+      socket.on("close", () => {
+        events.push("close");
+        done.resolve();
+      });
+      socket.on("end", () => {
+        events.push("end");
+        if (!allowHalfOpen) return;
+        socket.end("still writable", () => {
+          events.push("writable");
+          socket.removeAllListeners("close");
+          done.resolve();
+        });
+      });
+      socket.resume();
+      client.end();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = tls.connect({
+      port: (server.address() as AddressInfo).port,
+      host: "127.0.0.1",
+      ca: tlsCert.cert,
+      allowHalfOpen: true,
+    });
+    client.on("error", done.reject);
+    client.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n");
+    try {
+      await done.promise;
+      expect(events.join(" ")).toBe(expected);
+    } finally {
+      client.destroy();
+    }
+  });
+
   test.skipIf(isWindows)(
     "AF_UNIX CONNECT sockets whose peer closes first do not spin the loop on EPOLLHUP",
     async () => {

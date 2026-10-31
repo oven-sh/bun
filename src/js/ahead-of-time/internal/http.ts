@@ -1,39 +1,11 @@
 // What the compiler reads in place of src/js/internal/http.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 fb8173ad4b1d435f59685c97012314538ff32e2e02c603547e9fb33660589e61.
+// Written against that file with the SHA-256 b6b0675af2f8d47da22c27d8338f7a547bbb0f8f3acd6749e3bfc147426e584b.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const { isIPv4 } = require("internal/net/isIP");
 const { queueTick1, queueTick2 } = require("internal/process/next_tick_queue");
 
-const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, drainMicrotasks } = $cpp(
-  "NodeHTTP.cpp",
-  "createNodeHTTPInternalBinding",
-) as {
-  setServerCustomOptions: (
-    server: $Node.NativeHTTPServer,
-    requireHostHeader: boolean,
-    useStrictMethodValidation: boolean,
-    lenientHttpFlags: number,
-    maxHeaderSize: number,
-    onClientError: (
-      ssl: boolean,
-      socket: $Node.NodeHTTPServerSocket,
-      errorCode: number,
-      rawPacket: ArrayBuffer,
-    ) => void,
-    onConnection: (socketHandle: $Node.NodeHTTPServerSocket) => void,
-    httpAllowHalfOpen: boolean,
-  ) => void;
-  setServerAppFlags: (
-    server: $Node.NativeHTTPServer,
-    requireHostHeader: boolean,
-    useStrictMethodValidation: boolean,
-    lenientHttpFlags: number,
-    httpAllowHalfOpen: boolean,
-  ) => void;
-  setServerMaxHeadersCount: (server: $Node.NativeHTTPServer, maxHeadersCount: number) => void;
-  drainMicrotasks: () => void;
-};
+const { drainMicrotasks } = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding") as { drainMicrotasks: () => void };
 
 const abortedSymbol = Symbol("aborted");
 const headerStateSymbol = Symbol("headerState");
@@ -579,7 +551,8 @@ declare global {
     interface HttpServer {
       [serverSymbol]: NativeHTTPServer | undefined;
       [isTlsSymbol]?: boolean;
-      [tlsSymbol]: HttpServerTLSOptions | null;
+      /** An `https.Server` keeps its TLS state in a `tls.Server` that never listens. */
+      [tlsSymbol]: TLSServer | null;
       [optionsSymbol]: HttpServerOptions;
       [kHighWaterMark]: number | undefined;
       [kUniqueHeaders]: Set<string> | null;
@@ -638,7 +611,7 @@ class ProxyConfig {
   bypassList: string[];
   proxyConnectionOptions: { host: string; port: number };
 
-  constructor(proxyUrl: string, keepAlive: boolean | undefined, noProxyList: string | undefined) {
+  constructor(proxyUrl: string, noProxyList: string | undefined) {
     let parsedURL: URL;
     try {
       parsedURL = new URL(proxyUrl);
@@ -736,11 +709,7 @@ function parseProxyUrl(env: Record<string, string | undefined>, protocol: string
   return proxyUrl;
 }
 
-function parseProxyConfigFromEnv(
-  env: Record<string, string | undefined>,
-  protocol: string,
-  keepAlive: boolean | undefined,
-) {
+function parseProxyConfigFromEnv(env: Record<string, string | undefined>, protocol: string) {
   // We only support proxying for HTTP and HTTPS requests.
   if (protocol !== "http:" && protocol !== "https:") return null;
   const proxyUrl = parseProxyUrl(env, protocol);
@@ -748,7 +717,7 @@ function parseProxyConfigFromEnv(
 
   // Only http:// and https:// proxies are supported. Ignore instead of throw, in case other protocols are supposed to be handled by the user land.
   if (!proxyUrl.startsWith("http://") && !proxyUrl.startsWith("https://")) return null;
-  return new ProxyConfig(proxyUrl, keepAlive, env.no_proxy || env.NO_PROXY);
+  return new ProxyConfig(proxyUrl, env.no_proxy || env.NO_PROXY);
 }
 
 function checkShouldUseProxy(
@@ -824,9 +793,6 @@ export {
   responseRoad,
   serverSymbol,
   setMaxHTTPHeaderSize,
-  setServerAppFlags,
-  setServerCustomOptions,
-  setServerMaxHeadersCount,
   takeRequestTrailers,
   tlsSymbol,
   utcDate,

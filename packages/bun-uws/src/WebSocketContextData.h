@@ -93,7 +93,6 @@ public:
     bool closeOnBackpressureLimit;
     bool resetIdleTimeoutOnSend;
     bool sendPingsAutomatically;
-    unsigned short maxLifetime;
 
     /* Server sockets of the `ws` package. end() only sends the close frame. The close handler runs when the peer's
      * close frame arrives or the connection closes, and gets -WebSocketFailureKind as its code on a protocol error. */

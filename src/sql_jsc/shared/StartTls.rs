@@ -64,12 +64,13 @@ pub(crate) fn start_tls<T>(
     // SAFETY: live, just returned by `adopt_tls` with an ext slot of `ext_size`.
     let sock = unsafe { &mut *new_socket };
     *sock.ext::<Option<NonNull<T>>>() = NonNull::new(owner);
-    if verifies_certificate(tls_config, ssl_mode) {
-        sock.set_inline_reject();
-    }
-    store(AnySocket::SocketTls(SocketTLS {
+    let tls = SocketTLS {
         socket: InternalSocket::Connected(new_socket),
-    }));
+    };
+    if verifies_certificate(tls_config, ssl_mode) {
+        tls.set_inline_reject();
+    }
+    store(AnySocket::SocketTls(tls));
     sock.start_tls_handshake();
     Ok(())
 }

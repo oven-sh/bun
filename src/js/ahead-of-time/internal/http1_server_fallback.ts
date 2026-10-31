@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/http1_server_fallback.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 9411c7ddf6a9e79667dfde90e0dc5ac6161ac63bd73bb2a91021597f3d5be87e.
+// Written against that file with the SHA-256 e56f013ce8f4a3ecb2068195a5238a368dfa183255a8d3fd3274195b486bc1f3.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // JS HTTP/1 server path over an arbitrary Duplex with a JS stand-in for NodeHTTPResponse.
@@ -765,6 +765,8 @@ function connectionListenerHTTP1(
       parser.close();
     } catch {}
   });
+  // Node's parser reads from the handle, so a pause() by the socket's previous owner doesn't stop it.
+  socket.resume();
 }
 
 function closeIdleHttp1Connections(server: $Node.HttpSocketServer) {

@@ -51,7 +51,12 @@ struct us_internal_loop_data_t {
      * timeout — no timerfd, no EVFILT_TIMER. */
     long long sweep_next_tick_ns;
 #endif
+    /* The sockets a sweep visits: linked in a group, connecting, or parked in the low-priority queue. Plus one per QUIC context. The sweep timer is armed while this isn't 0. */
     int sweep_timer_count;
+    /* Counts the sweeps. us_socket_t.timeout is the count at which that socket's timeout is due. */
+    uint32_t sweep_tick;
+    /* us_internal_coarse_ms() at the last sweep, or at the first socket if there was none since. */
+    uint64_t sweep_time_ms;
     struct us_internal_async *wakeup_async;
     struct us_socket_group_t *head;
     /* QUIC engines on this loop. us_quic_loop_process walks the list from

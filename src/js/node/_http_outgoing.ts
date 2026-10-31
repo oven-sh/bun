@@ -116,6 +116,7 @@ const kChunkedLength = Symbol("kChunkedLength");
 const kUniqueHeaders = Symbol("kUniqueHeaders");
 const kBytesWritten = Symbol("kBytesWritten");
 const kErrored = Symbol("errored");
+const kEndCallbacks = Symbol("kEndCallbacks");
 const kHighWaterMark = Symbol("kHighWaterMark");
 const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
 const kLenientValidation = Symbol("kLenientValidation");
@@ -1058,9 +1059,19 @@ OutgoingMessage.prototype.addTrailers = function addTrailers(headers) {
   }
 };
 
-function onFinish(outmsg) {
-  if (outmsg?.socket?._hadError) return;
-  outmsg.emit("finish");
+function queueEndCallback(msg, callback) {
+  msg.once("finish", callback);
+  (msg[kEndCallbacks] ??= []).push(callback);
+}
+
+// When the last write fails there's no 'finish', and end() callbacks get the error like a Writable's.
+function onFinish(outmsg, err?) {
+  const callbacks = outmsg[kEndCallbacks];
+  if (callbacks) outmsg[kEndCallbacks] = undefined;
+  if (!err && !outmsg.socket?._hadError) return void outmsg.emit("finish");
+  if (!callbacks) return;
+  err ??= outmsg[kErrored] ?? outmsg[kSocket]?.errored ?? $ERR_STREAM_DESTROYED("end");
+  for (let i = 0; i < callbacks.length; i++) callbacks[i](err);
 }
 
 OutgoingMessage.prototype.end = function end(chunk, encoding, callback) {
@@ -1087,7 +1098,7 @@ OutgoingMessage.prototype.end = function end(chunk, encoding, callback) {
   } else if (this.finished) {
     if (typeof callback === "function") {
       if (!this.writableFinished) {
-        this.on("finish", callback);
+        queueEndCallback(this, callback);
       } else {
         callback($ERR_STREAM_ALREADY_FINISHED("end"));
       }
@@ -1102,7 +1113,7 @@ OutgoingMessage.prototype.end = function end(chunk, encoding, callback) {
     this._implicitHeader();
   }
 
-  if (typeof callback === "function") this.once("finish", callback);
+  if (typeof callback === "function") queueEndCallback(this, callback);
 
   let contentLength;
   if (strictContentLength(this) && this[kBytesWritten] !== (contentLength = this._contentLength)) {

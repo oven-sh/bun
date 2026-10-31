@@ -175,13 +175,17 @@ struct us_udp_socket_t *us_create_udp_socket_from_fd(
     int *err,
     void *user
 ) {
-    if (bsd_prepare_adopted_udp_socket(fd)) {
+    int adopted = bsd_adopt_socket(fd, SOCK_DGRAM) == 0;
+    if (!adopted || bsd_prepare_adopted_udp_socket(fd)) {
         if (err != NULL) {
 #ifdef _WIN32
             *err = WSAGetLastError();
 #else
             *err = errno;
 #endif
+        }
+        if (adopted) {
+            bsd_disown_socket(fd);
         }
         return 0;
     }
@@ -211,6 +215,7 @@ struct us_udp_socket_t *us_create_udp_socket_from_fd(
 
     if (us_poll_start_rc((struct us_poll_t *) udp, udp->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE) != 0) {
         int saved_errno = errno;
+        bsd_disown_socket(fd);
         us_poll_free(p, loop);
         if (err) *err = saved_errno;
         errno = saved_errno;

@@ -1,12 +1,29 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isWindows,
+  libcPathForDlopen,
+  normalizeBunSnapshot,
+  tempDir,
+  tls,
+} from "harness";
 import { mkfifo } from "mkfifo";
 import path from "path";
 
 test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID", async () => {
-  // Sleep so worker 0 is busy when workers 1/2 come online and pick up the
-  // remaining files; otherwise one fast worker handles all three.
-  const fixture = `import {test} from "bun:test"; test("t", async () => { await Bun.sleep(200); console.log("WID="+process.env.JEST_WORKER_ID+" "+process.env.BUN_TEST_WORKER_ID); });`;
+  const report = `console.log("WID="+process.env.JEST_WORKER_ID+" "+process.env.BUN_TEST_WORKER_ID);`;
+  // Each file stays busy until all three workers run one. A worker that
+  // finished before the other two came online would take a second file.
+  const fixture = `import {test} from "bun:test"; import {existsSync, writeFileSync} from "node:fs";
+    test("t", async () => {
+      writeFileSync(process.env.JEST_WORKER_ID + ".started", "");
+      while (!["1", "2", "3"].every(id => existsSync(id + ".started"))) await Bun.sleep(1);
+      ${report}
+    });`;
   using dir = tempDir("parallel-worker-id", {
     "a.test.js": fixture,
     "b.test.js": fixture,
@@ -32,7 +49,9 @@ test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID
 
   // K<=1 serial-fallback (single file, or --parallel=1) still sets WORKER_ID=1
   // so tests can rely on it whenever --parallel is passed (matches Jest).
-  using single = tempDir("parallel-worker-id-single", { "a.test.js": fixture });
+  using single = tempDir("parallel-worker-id-single", {
+    "a.test.js": `import {test} from "bun:test"; test("t", () => { ${report} });`,
+  });
   await using p2 = Bun.spawn({
     cmd: [bunExe(), "test", "--parallel=5"],
     env: bunEnv,
@@ -1220,15 +1239,14 @@ test("--parallel forwards --use-openssl-ca to workers", async () => {
   const fixture = `import {test,expect} from "bun:test";
     import {getCACertificates, rootCertificates} from "node:tls";
     test("no bundled roots", () => expect(getCACertificates("default")).not.toContain(rootCertificates[0]));`;
-  // The workers' environment has what .env sets, which the flag wins over.
   using dir = tempDir("parallel-use-openssl-ca", {
     "a.test.js": fixture,
     "b.test.js": fixture,
-    ".env": "NODE_USE_SYSTEM_CA=1\n",
   });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--parallel=2", "--use-openssl-ca"],
-    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", NODE_USE_SYSTEM_CA: undefined },
+    // The workers' environment is the coordinator's. The flag wins over the variable in it.
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", NODE_USE_SYSTEM_CA: "1" },
     cwd: String(dir),
     stderr: "pipe",
     stdout: "pipe",
@@ -1287,9 +1305,9 @@ test("--parallel: workers get the --env-file values and skip the default .env", 
   expect(exitCode).toBe(0);
 });
 
-// A FIFO can be read once. The coordinator reads it and passes the values to the
-// workers in their environment. A worker that opened the FIFO again would block
-// in open(2), since no writer is left. That environment also carries
+// A FIFO can be read once. The coordinator reads it and sends the values to the
+// workers. A worker that opened the FIFO again would block in open(2), since no
+// writer is left. A worker's environment is the coordinator's, with its
 // BUN_OPTIONS, which a worker splices into its own argv.
 for (const route of ["argv", "BUN_OPTIONS"] as const) {
   test.skipIf(isWindows)(`--parallel: the coordinator reads a FIFO --env-file once (${route})`, async () => {
@@ -1326,6 +1344,412 @@ for (const route of ["argv", "BUN_OPTIONS"] as const) {
     expect(exitCode).toBe(0);
     expect(await writer.exited).toBe(0);
   });
+}
+
+// An env file sets `process.env`. It does not set the environment that native
+// code reads: `BUN_OPTIONS`, the CA store, the reporters, the CI restrictions.
+// A worker has the `process.env` and the environment of a run without workers,
+// so the results do not depend on having workers.
+for (const envFile of [
+  "BUNTEST_DOTENV=1\nBUNTEST_SAME=file\nBUN_OPTIONS=--smol\nNODE_EXTRA_CA_CERTS=./ca.pem\nGITHUB_ACTIONS=true\nTZ=Asia/Tokyo\n",
+  undefined,
+]) {
+  const name = `--parallel: a worker has the process.env and the environment of a run without workers (${envFile ? "env file" : "no env file"})`;
+  test(name, async () => {
+    const keys = [
+      "BUNTEST_DOTENV",
+      "BUNTEST_SAME",
+      "BUN_OPTIONS",
+      "NODE_EXTRA_CA_CERTS",
+      "GITHUB_ACTIONS",
+      "TZ",
+      "NODE_ENV",
+    ];
+    const fixture = `import {test,expect} from "bun:test";
+      import {readFileSync} from "node:fs";
+      import {getCACertificates} from "node:tls";
+      const keys = ${JSON.stringify(keys)};
+      test("passes", () => {
+        console.log("REPORT=" + JSON.stringify({
+          processEnv: keys.map(key => process.env[key] ?? null),
+          environ: ${isLinux}
+            ? readFileSync("/proc/self/environ", "utf8").split("\\0").filter(entry => keys.includes(entry.split("=")[0]))
+            : [],
+          execArgv: process.execArgv,
+          extraCAs: getCACertificates("extra").length,
+          // The time zone is read once, before the first test file.
+          timezoneOffset: new Date(0).getTimezoneOffset(),
+        }));
+      });
+      test("fails", () => expect(1).toBe(2));`;
+    using dir = tempDir("parallel-env-file-environ", {
+      "a.test.js": fixture,
+      "b.test.js": fixture,
+      "ca.pem": tls.cert,
+      ...(envFile && { ".env": envFile }),
+    });
+    // BUNTEST_SAME is in the environment too, and the environment wins over an env file.
+    const env = { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", BUNTEST_SAME: "environment" };
+    for (const key of keys) if (key !== "BUNTEST_SAME") delete env[key];
+
+    const run = async (...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...args, "./a.test.js", "./b.test.js"],
+        env,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return {
+        reports: [...(stdout + stderr).matchAll(/REPORT=(.*)/g)].map(match => JSON.parse(match[1])),
+        // GITHUB_ACTIONS in the environment adds these to a failure.
+        annotations: stderr.includes("::error"),
+        exitCode,
+      };
+    };
+
+    const report = {
+      processEnv: envFile
+        ? ["1", "environment", "--smol", "./ca.pem", "true", "Asia/Tokyo", "test"]
+        : [null, "environment", null, null, null, null, "test"],
+      environ: isLinux ? ["BUNTEST_SAME=environment"] : [],
+      execArgv: [],
+      extraCAs: 0,
+      timezoneOffset: envFile ? -540 : 0,
+    };
+    const expected = { reports: [report, report], annotations: false, exitCode: 1 };
+    expect({ plain: await run(), workers: await run("--parallel=2") }).toEqual({ plain: expected, workers: expected });
+  });
+}
+
+test("--parallel: a BUN_JSC_ option in an env file does not reach a worker's JavaScriptCore", async () => {
+  const fixture = `import {test,expect} from "bun:test"; test("env", () => expect(process.env.BUN_JSC_notAnOption).toBe("1"));`;
+  using dir = tempDir("parallel-env-file-jsc", {
+    "a.test.js": fixture,
+    "b.test.js": fixture,
+    ".env": "BUN_JSC_notAnOption=1\n",
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
+
+test("--parallel: workers get env file values that an environment cannot hold", async () => {
+  // One string of an environment holds 128 KiB on Linux, and a whole
+  // environment holds 1 MiB on macOS. A string of an environment ends at a NUL.
+  const size = 2 * 1024 * 1024;
+  const fixture = `import {test,expect} from "bun:test";
+    test("env", () => {
+      expect({ big: process.env.BUNTEST_BIG?.length, nul: process.env.BUNTEST_NUL, after: process.env.BUNTEST_AFTER })
+        .toEqual({ big: ${size}, nul: "a\\0b", after: "1" });
+    });`;
+  using dir = tempDir("parallel-env-file-big", {
+    "a.test.js": fixture,
+    "b.test.js": fixture,
+    ".env": `BUNTEST_BIG=${Buffer.alloc(size, "x").toString()}\nBUNTEST_NUL=a\0b\nBUNTEST_AFTER=1\n`,
+  });
+  for (const args of [[], ["--parallel=2"]]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  }
+});
+
+// The values go to a worker in one frame of the channel, which holds 64 MiB.
+const frameLimit = 64 * 1024 * 1024;
+
+test("--parallel: workers get env file values that nearly fill a frame", async () => {
+  const size = frameLimit - 1024;
+  const fixture = `import {test,expect} from "bun:test";
+    test("env", () => {
+      expect({ big: process.env.BUNTEST_BIG?.length, after: process.env.BUNTEST_AFTER }).toEqual({ big: ${size}, after: "1" });
+    });`;
+  using dir = tempDir("parallel-env-file-frame", {
+    "a.test.js": fixture,
+    "b.test.js": fixture,
+    ".env": `BUNTEST_BIG=${Buffer.alloc(size, "x").toString()}\nBUNTEST_AFTER=1\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+}, 90_000);
+
+test("--parallel: env file values that do not fit in a frame end the run with an error", async () => {
+  const ok = `import {test,expect} from "bun:test"; test("ok", () => expect(1).toBe(1));`;
+  using dir = tempDir("parallel-env-file-frame-over", {
+    "a.test.js": ok,
+    "b.test.js": ok,
+    ".env": `BUNTEST_BIG=${Buffer.alloc(frameLimit, "x").toString()}\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  expect(stderr).toMatch(
+    new RegExp(`error: the env files add \\d+ bytes of values, and --parallel can send a worker ${frameLimit} bytes`),
+  );
+  // No worker started.
+  expect(stderr).not.toContain("a.test.js");
+  expect(exitCode).toBe(1);
+}, 90_000);
+
+test("--parallel: a worker that replaces one that exited gets the env file values too", async () => {
+  // The first worker has `a1` and `a2`, the second `b1` and `b2`. `b1` keeps the
+  // second worker busy until `a2` ran, so only the replacement of the first
+  // worker can run `a2`.
+  using dir = tempDir("parallel-env-file-respawn", {
+    "a1.test.js": `import {test} from "bun:test"; test("exits", () => process.exit(7));`,
+    "a2.test.js": `import {test,expect} from "bun:test"; import {writeFileSync} from "node:fs";
+      test("env", () => { expect(process.env.BUNTEST_DOTENV).toBe("1"); writeFileSync("a2.ran", ""); });`,
+    "b1.test.js": `import {test,expect} from "bun:test"; import {existsSync} from "node:fs";
+      test("waits", async () => { while (!existsSync("a2.ran")) await Bun.sleep(1); expect(process.env.BUNTEST_DOTENV).toBe("1"); }, 30_000);`,
+    "b2.test.js": `import {test,expect} from "bun:test"; test("env", () => expect(process.env.BUNTEST_DOTENV).toBe("1"));`,
+    ".env": "BUNTEST_DOTENV=1\n",
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  expect(stderr).toContain("(worker crashed: exit code 7)");
+  expect(stderr).not.toContain("exited during startup");
+  expect(stderr).toContain("3 pass");
+  expect(stderr).toContain("1 fail");
+  expect(exitCode).toBe(1);
+});
+
+test("--parallel: a worker has one JEST_WORKER_ID, BUN_TEST_WORKER_ID and FORCE_COLOR, whatever the environment and an env file have", async () => {
+  const keys = ["JEST_WORKER_ID", "BUN_TEST_WORKER_ID", "FORCE_COLOR"];
+  // Each file stays busy until both workers run one.
+  const fixture = `import {test} from "bun:test"; import {existsSync, readFileSync, writeFileSync} from "node:fs";
+    const keys = ${JSON.stringify(keys)};
+    test("passes", async () => {
+      writeFileSync(process.env.JEST_WORKER_ID + ".started", "");
+      while (!["1", "2"].every(id => existsSync(id + ".started"))) await Bun.sleep(1);
+      console.log("REPORT=" + JSON.stringify({
+        processEnv: keys.map(key => process.env[key]),
+        environ: ${isLinux}
+          ? readFileSync("/proc/self/environ", "utf8").split("\\0").filter(entry => keys.includes(entry.split("=")[0])).sort()
+          : [],
+      }));
+    });`;
+  using dir = tempDir("parallel-worker-variables", {
+    "a.test.js": fixture,
+    "b.test.js": fixture,
+    ".env": "JEST_WORKER_ID=9\nBUN_TEST_WORKER_ID=9\nFORCE_COLOR=0\n",
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    // With FORCE_COLOR the coordinator prints in color, and then a worker's FORCE_COLOR is 1.
+    env: {
+      ...bunEnv,
+      BUN_TEST_PARALLEL_SCALE_MS: "0",
+      NO_COLOR: undefined,
+      FORCE_COLOR: "3",
+      JEST_WORKER_ID: "7",
+      BUN_TEST_WORKER_ID: "7",
+    },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const reports = [...(stdout + stderr).matchAll(/REPORT=(.*)/g)].map(match => JSON.parse(match[1]));
+  expect(reports.sort((a, b) => a.processEnv[0].localeCompare(b.processEnv[0]))).toEqual(
+    ["1", "2"].map(id => ({
+      processEnv: [id, id, "1"],
+      environ: isLinux ? [`BUN_TEST_WORKER_ID=${id}`, "FORCE_COLOR=1", `JEST_WORKER_ID=${id}`] : [],
+    })),
+  );
+  // A worker formats the line of a test, and the coordinator prints it as it is.
+  expect(stderr.split("\n").filter(line => line.includes("passes"))).toEqual([
+    expect.stringContaining("\x1b[32m"),
+    expect.stringContaining("\x1b[32m"),
+  ]);
+  expect(exitCode).toBe(0);
+});
+
+test("--parallel: NODE_CHANNEL_FD in an env file does not make a worker an IPC child", async () => {
+  const fixture = `import {test} from "bun:test"; import {readFileSync} from "node:fs";
+    test("t", () => {
+      console.log("REPORT=" + JSON.stringify({
+        send: typeof process.send,
+        connected: process.connected === true,
+        environ: ${isLinux}
+          ? readFileSync("/proc/self/environ", "utf8").split("\\0").filter(entry => entry.startsWith("NODE_CHANNEL_"))
+          : [],
+      }));
+    });`;
+  // The `bun test` process is an IPC child here: its environment has both keys.
+  for (const envFile of ["NODE_CHANNEL_FD=3\nNODE_CHANNEL_SERIALIZATION_MODE=json\n", undefined]) {
+    using dir = tempDir("parallel-env-file-ipc", {
+      "a.test.js": fixture,
+      "b.test.js": fixture,
+      ...(envFile && { ".env": envFile }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2"],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+      ipc() {},
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const worker = { send: "undefined", connected: false, environ: [] };
+    expect({
+      reports: [...(stdout + stderr).matchAll(/REPORT=(.*)/g)].map(match => JSON.parse(match[1])),
+      exitCode,
+    }).toEqual({ reports: [worker, worker], exitCode: 0 });
+  }
+});
+
+// A key can be in an environment twice. `getenv` reads the first entry, and
+// `process.env` has the last one.
+test.skipIf(isWindows)(
+  "--parallel: a key that is twice in the environment reads in a worker as in a run without workers",
+  async () => {
+    const fixture = `import {test} from "bun:test"; import {dlopen} from "bun:ffi";
+      test("t", () => {
+        const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, { getenv: { args: ["ptr"], returns: "cstring" } });
+        console.log("REPORT=" + JSON.stringify({
+          getenv: String(libc.symbols.getenv(Buffer.from("BUNTEST_TWICE\\0"))),
+          processEnv: process.env.BUNTEST_TWICE,
+        }));
+        libc.close();
+      });`;
+    using dir = tempDir("parallel-environ-twice", {
+      "a.test.js": fixture,
+      "b.test.js": fixture,
+      // Replaces itself with the command in its arguments, in its environment plus the key twice.
+      "exec.js": `import {dlopen, ptr} from "bun:ffi";
+        const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, { execve: { args: ["ptr", "ptr", "ptr"], returns: "int" } });
+        const vector = strings => {
+          const buffers = strings.map(string => Buffer.from(string + "\\0"));
+          return { buffers, pointers: new BigUint64Array([...buffers.map(buffer => BigInt(ptr(buffer))), 0n]) };
+        };
+        const argv = vector(process.argv.slice(2));
+        const environ = vector([
+          ...Object.entries(process.env).map(([key, value]) => key + "=" + value),
+          "BUNTEST_TWICE=first",
+          "BUNTEST_TWICE=second",
+        ]);
+        libc.symbols.execve(ptr(argv.buffers[0]), ptr(argv.pointers), ptr(environ.pointers));
+        throw new Error("execve failed");`,
+    });
+    const run = async (...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "exec.js", bunExe(), "test", ...args, "./a.test.js", "./b.test.js"],
+        env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return {
+        reports: [...(stdout + stderr).matchAll(/REPORT=(.*)/g)].map(match => JSON.parse(match[1])),
+        exitCode,
+      };
+    };
+    const report = { getenv: "first", processEnv: "second" };
+    const expected = { reports: [report, report], exitCode: 0 };
+    expect({ plain: await run(), workers: await run("--parallel=2") }).toEqual({ plain: expected, workers: expected });
+  },
+);
+
+// `.only` and a new snapshot are refused in CI. `CI` in an env file is not the
+// environment, so it decides neither, with workers or without.
+const notCI = { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" };
+for (const key of [
+  "CI",
+  "GITHUB_ACTIONS",
+  "GITLAB_CI",
+  "CIRCLECI",
+  "TRAVIS",
+  "BUILDKITE",
+  "JENKINS_URL",
+  "BUILD_ID",
+  "TF_BUILD",
+]) {
+  delete notCI[key];
+}
+for (const [guard, source] of [
+  ["test.only", `test.only("only", () => { expect(1).toBe(1); });`],
+  ["toMatchSnapshot", `test("snapshot", () => { expect("v").toMatchSnapshot(); });`],
+  ["toMatchInlineSnapshot", `test("snapshot", () => { expect("v").toMatchInlineSnapshot(); });`],
+] as const) {
+  for (const { title, envFile, env, refused } of [
+    { title: "CI=true in an env file", envFile: "CI=true\n", env: notCI, refused: false },
+    // Azure Pipelines sets TF_BUILD and no CI.
+    {
+      title: "CI=false in an env file, in a CI",
+      envFile: "CI=false\n",
+      env: { ...notCI, TF_BUILD: "1" },
+      refused: true,
+    },
+  ]) {
+    // An `--env-file` reaches the guard the same way: one guard checks it.
+    for (const envFileName of guard === "toMatchSnapshot" ? [".env", "ci.env"] : [".env"]) {
+      const name = `--parallel: ${guard} is ${refused ? "refused" : "allowed"} with workers and without: ${title} (${envFileName})`;
+      test.concurrent(name, async () => {
+        const modes = [[], ["--isolate"], ["--parallel=1"], ["--parallel=2"]];
+        const results = [];
+        for (const mode of modes) {
+          using dir = tempDir("parallel-env-file-ci", {
+            "guard.test.js": `import {test,expect} from "bun:test"; ${source}`,
+            "other.test.js": `import {test,expect} from "bun:test"; test("other", () => expect(1).toBe(1));`,
+            [envFileName]: envFile,
+          });
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "test", ...mode, ...(envFileName === ".env" ? [] : [`--env-file=${envFileName}`])],
+            env,
+            cwd: String(dir),
+            stderr: "pipe",
+            stdout: "pipe",
+          });
+          const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          results.push({ refused: stderr.includes("disabled in CI environments"), exitCode });
+        }
+        expect(results).toEqual(modes.map(() => ({ refused, exitCode: refused ? 1 : 0 })));
+      });
+    }
+  }
 }
 
 test("--parallel --reporter=junit emits a synthetic suite for crashed files", async () => {

@@ -167,15 +167,17 @@ static NODE_PATH_TO_USE_SET_ONCE: bun_core::RwLock<Option<Box<[u8]>>> = bun_core
 pub static HAS_NO_CLEAR_SCREEN_CLI_FLAG: OnceLock<bool> = OnceLock::new();
 
 /// Compares like [`HashTable`] keys, which are ASCII case-insensitive on Windows.
+fn eql_key(a: &[u8], b: &[u8]) -> bool {
+    if cfg!(windows) {
+        strings::eql_case_insensitive_ascii(a, b, true)
+    } else {
+        strings::eql(a, b)
+    }
+}
+
 fn is_ipc_channel_key(key: &[u8]) -> bool {
     const KEYS: [&[u8]; 2] = [b"NODE_CHANNEL_FD", b"NODE_CHANNEL_SERIALIZATION_MODE"];
-    KEYS.iter().any(|&k| {
-        if cfg!(windows) {
-            strings::eql_case_insensitive_ascii(key, k, true)
-        } else {
-            strings::eql(key, k)
-        }
-    })
+    KEYS.iter().any(|&k| eql_key(key, k))
 }
 
 impl Loader {
@@ -1349,6 +1351,64 @@ impl Map {
         Ok(NullDelimitedEnvMap {
             _storage: storage,
             envp: envp_buf.into_boxed_slice(),
+        })
+    }
+
+    /// The envp of a Bun child that gets the env file values through its loader, not through
+    /// its environment: this process's own entries for the keys of `self`, their bytes and order
+    /// kept, so a repeated key answers `getenv` there as it does here. Each key of `set` is
+    /// exactly one entry. [`Self::loader_only_entries`] has what this leaves out.
+    pub fn create_process_envp(
+        &self,
+        set: &[(&[u8], &[u8])],
+    ) -> Result<NullDelimitedEnvMap, AllocError> {
+        let mut storage: Vec<Box<[u8]>> = Vec::with_capacity(self.map.count() + set.len());
+        for (_, key, entry) in self.process_entries() {
+            if !set.iter().any(|&(k, _)| eql_key(k, key)) {
+                storage.push([entry, b"\0"].concat().into_boxed_slice());
+            }
+        }
+        for &(key, value) in set {
+            storage.push([key, b"=", value, b"\0"].concat().into_boxed_slice());
+        }
+        let mut envp: Vec<*const c_char> = Vec::with_capacity(storage.len() + 1);
+        envp.extend(storage.iter().map(|entry| entry.as_ptr().cast::<c_char>()));
+        envp.push(core::ptr::null()); // sentinel
+        Ok(NullDelimitedEnvMap {
+            _storage: storage,
+            envp: envp.into_boxed_slice(),
+        })
+    }
+
+    /// The entries of `self` that [`Self::create_process_envp`] leaves out of the envp for the
+    /// same `set`: what the env files and Bun itself added.
+    pub fn loader_only_entries(&self, set: &[(&[u8], &[u8])]) -> Vec<(&[u8], &[u8])> {
+        let mut in_process = vec![false; self.map.count()];
+        for (index, _, _) in self.process_entries() {
+            in_process[index] = true;
+        }
+        let (keys, values) = (self.map.keys(), self.map.values());
+        (0..keys.len())
+            .filter(|&i| !in_process[i] && !set.iter().any(|&(k, _)| eql_key(k, &keys[i])))
+            .map(|i| (&*keys[i], &*values[i].value))
+            .collect()
+    }
+
+    /// The entries of this process's environment whose key `Loader::load_process` put in
+    /// `self`: the index of the key, the key, the whole entry.
+    fn process_entries(&self) -> impl Iterator<Item = (usize, &[u8], &[u8])> {
+        bun_sys::environ().iter().filter_map(|&entry| {
+            // SAFETY: environ entries are NUL-terminated C strings from the OS
+            let entry = unsafe { bun_core::ffi::cstr(entry) }.to_bytes();
+            let key = match strings::index_of_char(entry, b'=') {
+                Some(i) => &entry[..i as usize],
+                None => entry,
+            };
+            // `load_process` leaves these out, and an env file can put the key in `self`.
+            if is_ipc_channel_key(key) {
+                return None;
+            }
+            Some((self.map.get_index(key)?, key, entry))
         })
     }
 

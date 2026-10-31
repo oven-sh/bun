@@ -123,6 +123,8 @@ void CryptoAlgorithmAES_CBC::importKey(CryptoKeyFormat format, KeyData&& data, c
         result = CryptoKeyAES::importRaw(parameters.identifier, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
         break;
     case CryptoKeyFormat::Jwk: {
+        if (!validateJwkKeyOps(std::get<JsonWebKey>(data), usages, exceptionCallback))
+            return;
         auto checkAlgCallback = [](size_t length, const String& alg) -> bool {
             switch (length) {
             case CryptoKeyAES::s_length128:

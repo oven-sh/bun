@@ -115,6 +115,19 @@ std::optional<Vector<uint8_t>> CryptoAlgorithm::extractDerivedBits(std::optional
     return WTF::move(secret);
 }
 
+bool CryptoAlgorithm::validateJwkKeyOps(const JsonWebKey& jwk, CryptoKeyUsageBitmap usages, const ExceptionCallback& exceptionCallback)
+{
+    if (hasDuplicateJwkKeyOps(jwk.key_ops)) {
+        exceptionCallback(DataError, "Duplicate key operation"_s);
+        return false;
+    }
+    if (jwk.key_ops && (jwk.usages & usages) != usages) {
+        exceptionCallback(DataError, "Key operations and usage mismatch"_s);
+        return false;
+    }
+    return true;
+}
+
 template<typename ResultCallbackType, typename OperationType>
 static void dispatchAlgorithmOperation(WorkQueue& workQueue, ScriptExecutionContext& context, ResultCallbackType&& callback, CryptoAlgorithm::ExceptionCallback&& exceptionCallback, OperationType&& operation)
 {

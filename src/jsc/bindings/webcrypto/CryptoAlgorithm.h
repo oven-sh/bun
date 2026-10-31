@@ -88,6 +88,11 @@ public:
     // final byte, per https://w3c.github.io/webcrypto/#SubtleCrypto-method-deriveBits. A null
     // `length` returns `secret` unchanged; a `length` larger than `secret` yields nullopt.
     static std::optional<Vector<uint8_t>> extractDerivedBits(std::optional<size_t> length, Vector<uint8_t>&& secret);
+
+    // The key_ops step shared by every jwk import: no duplicate entries (RFC 7517
+    // section 4.3), then every requested usage present, with Node's messages and
+    // order. Reports a DataError through exceptionCallback and returns false.
+    static bool validateJwkKeyOps(const JsonWebKey&, CryptoKeyUsageBitmap, const ExceptionCallback&);
 };
 
 } // namespace WebCore

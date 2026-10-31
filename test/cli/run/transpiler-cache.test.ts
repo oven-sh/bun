@@ -136,6 +136,19 @@ describe("transpiler cache", () => {
     expect(await bunRun(join(temp_dir, "b.js"), env)).toSpawn("b");
     expect(newCacheCount()).toBe(0);
   });
+  test("the entry of an anonymous default function does not name the file that wrote it", async () => {
+    // Two files with the same text share one entry, so what the parser prints for one has to fit the other.
+    const source =
+      "export default function () {}\n" +
+      "import(import.meta.url).then(self => console.log(self.default.name));\n" +
+      `//${Buffer.alloc(5 * 1024, "x").toString()}\n`;
+    writeFileSync(join(temp_dir, "alpha.mjs"), source);
+    writeFileSync(join(temp_dir, "beta.mjs"), source);
+    expect(await bunRun(join(temp_dir, "alpha.mjs"), env)).toSpawn("default");
+    expect(newCacheCount()).toBe(1);
+    expect(await bunRun(join(temp_dir, "beta.mjs"), env)).toSpawn("default");
+    expect(newCacheCount()).toBe(0);
+  });
   test("doing 50 buns at once does not crash", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
     writeFileSync(join(temp_dir, "b.js"), dummyFile(50 * 1024, "2", "b"));

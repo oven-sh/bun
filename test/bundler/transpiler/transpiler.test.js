@@ -2312,6 +2312,21 @@ export default class {
     });
   });
 
+  // `Bun.Transpiler` calls its input "input", so the generated default export name is `input_default`.
+  it("an anonymous default function gets no generated name without a bundle", async () => {
+    const js = new Bun.Transpiler({ loader: "js", target: "bun" });
+    const minifiesIdentifiers = new Bun.Transpiler({ loader: "js", target: "bun", minify: { identifiers: true } });
+    for (const keywords of ["function", "async function", "function*", "async function*"]) {
+      const source = `const input_default = 1;\nexport default ${keywords} () {}\n`;
+      expect(js.transformSync(source)).toBe(source);
+      expect(minifiesIdentifiers.transformSync(`export default ${keywords} () {}\n`)).toBe(
+        `export default ${keywords} () {}\n`,
+      );
+    }
+    expect(await js.transform("export default function () {}\n")).toBe("export default function () {}\n");
+    expect(js.transformSync("export default function named() {}\n")).toBe("export default function named() {}\n");
+  });
+
   describe("exports.replace", () => {
     const transpiler = new Bun.Transpiler({
       exports: {

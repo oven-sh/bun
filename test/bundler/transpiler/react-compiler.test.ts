@@ -65,6 +65,32 @@ describe("bundler", () => {
     },
   });
 
+  // An anonymous default function has no name of its own. In a bundle it gets the generated name of its default
+  // export (`App_default`), and by that name the compiler takes it for a component.
+  itBundled("react-compiler/AnonymousDefaultFunction", {
+    files: {
+      "/App.jsx": /* jsx */ `
+        import { useState } from "react";
+
+        export default function ({ step }) {
+          const [count, setCount] = useState(0);
+          const onClick = () => setCount(c => c + step);
+          return <button onClick={onClick}>{count}</button>;
+        }
+      `,
+    },
+    entryPoints: ["/App.jsx"],
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("function App_default(");
+      expect(out).toContain("react/compiler-runtime");
+      expect(out).toMatch(/\b_c\(\d+\)/);
+    },
+  });
+
   itBundled("react-compiler/ObjectPatternRestInProps", {
     files: {
       "/entry.tsx": /* tsx */ `

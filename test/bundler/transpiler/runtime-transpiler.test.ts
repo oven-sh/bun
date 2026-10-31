@@ -253,6 +253,101 @@ describe("unterminated string literals in large files", () => {
   });
 });
 
+describe.concurrent("an anonymous default function has no generated name", () => {
+  async function run(files: Record<string, string>, entry: string) {
+    using dir = tempDir("transpiler-default-function-name", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("its name is 'default' on each way to load the module", async () => {
+    const forms = {
+      "fn.mjs": "export default function () {}\nexport const binding = typeof fn_default;\n",
+      "async-fn.mjs": "export default async function () {}\n",
+      "gen.mjs": "export default function* () {}\n",
+      "async-gen.mjs": "export default async function* () {}\n",
+    };
+    const files: Record<string, string> = {
+      "named.mjs": "export default function Named() {}\n",
+      "reexport/index.mjs": `
+        export { default as fn } from "./fn.mjs";
+        export { default as asyncFn } from "./async-fn.mjs";
+        export { default as gen } from "./gen.mjs";
+        export { default as asyncGen } from "./async-gen.mjs";
+      `,
+      "entry.mjs": `
+        import fn, { binding } from "./static/fn.mjs";
+        import asyncFn from "./static/async-fn.mjs";
+        import gen from "./static/gen.mjs";
+        import asyncGen from "./static/async-gen.mjs";
+        import * as reexported from "./reexport/index.mjs";
+        import Named from "./named.mjs";
+        import { createRequire } from "node:module";
+        const require = createRequire(import.meta.url);
+        const files = ["fn", "async-fn", "gen", "async-gen"];
+        const dynamic = await Promise.all(files.map(file => import("./dynamic/" + file + ".mjs")));
+        console.log(
+          JSON.stringify({
+            static: [fn, asyncFn, gen, asyncGen].map(f => f.name),
+            reexport: [reexported.fn, reexported.asyncFn, reexported.gen, reexported.asyncGen].map(f => f.name),
+            dynamic: dynamic.map(module => module.default.name),
+            require: files.map(file => require("./require/" + file + ".mjs").default.name),
+            named: Named.name,
+            source: String(fn),
+            binding,
+          }),
+        );
+      `,
+    };
+    // Each way loads its own copy of the four modules, so each one transpiles them.
+    for (const way of ["static", "reexport", "dynamic", "require"]) {
+      for (const [name, source] of Object.entries(forms)) files[`${way}/${name}`] = source;
+    }
+
+    const { stdout, stderr, exitCode } = await run(files, "entry.mjs");
+    const names = ["default", "default", "default", "default"];
+    expect({ stderr, result: stdout && JSON.parse(stdout) }).toEqual({
+      stderr: "",
+      result: {
+        static: names,
+        reexport: names,
+        dynamic: names,
+        require: names,
+        named: "Named",
+        source: "function () {}",
+        binding: "undefined",
+      },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("its name is 'default' before the body of its module runs", async () => {
+    const result = await run(
+      {
+        "a.mjs": `import "./b.mjs";\nexport default function () {}\n`,
+        "b.mjs": `import f from "./a.mjs";\nconsole.log(f.name);\n`,
+      },
+      "a.mjs",
+    );
+    expect(result).toEqual({ stdout: "default\n", stderr: "", exitCode: 0 });
+  });
+
+  test("a binding with the name that was generated is not declared twice", async () => {
+    const result = await run(
+      { "fn.js": `const fn_default = 1;\nexport default function () {}\nconsole.log(fn_default);\n` },
+      "fn.js",
+    );
+    expect(result).toEqual({ stdout: "1\n", stderr: "", exitCode: 0 });
+  });
+});
+
 // 2 GiB through the printer takes over 30 seconds on a debug or ASAN build.
 test.skipIf(isDebug || isASAN)(
   "printing more than 2 GiB of modules in one process keeps the space after a keyword",

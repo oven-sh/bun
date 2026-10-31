@@ -908,6 +908,15 @@ impl<'a> Parser<'a> {
             debug_assert!(!p.options.tree_shaking);
         }
 
+        debug_assert!(
+            p.options.bundle
+                || !(p.options.features.hot_module_reloading
+                    || p.options.features.react_fast_refresh
+                    || p.options.features.react_compiler.is_enabled()
+                    || p.options.features.server_components.wraps_exports()),
+            "these features read the name that `s_export_default` sets only in a bundle"
+        );
+
         // Instead of doing "should_fold_typescript_constant_expressions or features.minify_syntax"
         // Let's enable this flag file-wide
         if p.options.features.minify_syntax || p.options.features.inlining {

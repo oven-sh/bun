@@ -329,7 +329,8 @@ const promises = ["Promise"];
 // The overload for a delay that fits a timer says that it runs no code.
 const timersWithOtherDelays = ["setInterval", "setTimeout"].map(path => ({ path, when: b.whenCallRunsOtherCode }));
 
-// Each takes its callback first, and queues it with the error where it fails before anything is scheduled.
+// Each takes its callback first, and queues it with the error where it fails before anything is scheduled. readFileCb,
+// writeFileCb and appendFileCb return the error of a signal that is already aborted instead, and do not queue the callback.
 const fsMethodsTakingCallback = [
   "access",
   "appendFile",

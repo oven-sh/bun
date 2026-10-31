@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "a7b59e61de2e2c4fae7c533e240ea85ca36fdddc";
+export const WEBKIT_VERSION = "4db1b25a23f4db215ace9c33213460a377ea85bb";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -192,7 +192,6 @@ export function webkitEngineSources(cfg: Config): EngineSources {
       schemaInputs: [schema, schemaGenerator],
       schemaGeneratedDirectory: undefined,
       schemaOutputs: [],
-      schemaUsers: [],
       builtinTableInputs: [join(builtinsGeneratedDirectory, engineDeclarations), join(builtinsGenerator, "engine.ts")],
       builtinTableOutputs: [],
       builtinsLeftOut: [],
@@ -213,7 +212,6 @@ export function webkitEngineSources(cfg: Config): EngineSources {
     ],
     schemaGeneratedDirectory: aotGeneratedDirectory(wk),
     schemaOutputs: aotGeneratedFiles(lists, "SCHEMA"),
-    schemaUsers: handwrittenAotFiles(wk.JSC),
     builtinTableInputs: [
       ...lists.paths("JavaScriptCore_AOT_BUILTIN_TABLE_DECLARATIONS"),
       ...lists.paths("JavaScriptCore_AOT_BUILTIN_TABLE_HANDWRITTEN_FUNCTIONS"),

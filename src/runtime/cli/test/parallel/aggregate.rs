@@ -1,6 +1,7 @@
 //! Builds the single JUnit document and coverage report from the per-file
 //! data workers stream over IPC, once `drive()` completes.
 
+use bun_collections::index_sort;
 use bun_core::Output;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
 use bun_sourcemap_jsc::code_coverage::Report;
@@ -21,28 +22,36 @@ pub(crate) fn replay_test_records(coord: &mut Coordinator) {
     };
     for (idx, file) in files.iter().enumerate() {
         let rel = junit_file_name(coord.files[idx].as_bytes());
+        junit.file_start_unix_ms = if file.started_unix_ms != 0 {
+            file.started_unix_ms
+        } else {
+            bun_core::time::milli_timestamp()
+        };
         for payload in &file.tests {
             if let Some(test) = runner::decode_test_case(&mut Reader { p: payload }, rel) {
                 junit.record_test_case(&test).expect("oom");
             }
         }
-        if coord.crashed_files.contains(&(idx as u32)) {
-            let crashed = TestCaseReport {
+        if let Some((name, message)) = file.unfinished {
+            let unfinished = TestCaseReport {
                 file: rel,
                 scopes: Vec::new(),
-                name: b"(worker crashed)",
+                name,
                 status: TestResult::Fail,
                 assertions: 0,
                 elapsed_ns: 0,
                 line_number: 0,
                 failure: Some(TestFailure {
-                    message: b"worker process crashed before reporting results".to_vec(),
+                    message: message.to_vec(),
                     ..Default::default()
                 }),
+                earlier_failures: Vec::new(),
             };
-            junit.record_test_case(&crashed).expect("oom");
+            junit.record_test_case(&unfinished).expect("oom");
         }
-        junit.end_file(Some(file.elapsed_ns)).expect("oom");
+        junit
+            .end_file(Some(rel), Some(file.elapsed_ns))
+            .expect("oom");
     }
 }
 
@@ -55,7 +64,7 @@ pub(crate) fn write_coverage_report(coord: &mut Coordinator, opts: &mut CodeCove
     if reports.is_empty() {
         return;
     }
-    reports.sort_unstable_by(|a, b| a.source_url.cmp(&b.source_url));
+    index_sort::sort_slice_unstable_by(&mut reports, |a, b| a.source_url.cmp(&b.source_url));
     if let Err(err) = print_coverage_reports(opts, &reports) {
         Output::err(err, "Failed to write lcov.info", ());
         coord.aborted.get_or_insert(1);

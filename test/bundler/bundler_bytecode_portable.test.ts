@@ -391,6 +391,7 @@ describe("bytecode cache portability", () => {
     const bundled = Promise.all(bundlerBuilds.map(build));
     const outputs: Record<string, unknown> = {};
     // Program and module code blocks straight from the encoder, without the bundler in between.
+    // `bun test` turns off tail calls, so these have none. The bundler builds run in child processes, so they do.
     outputs["vm.Script features.js"] = vmFingerprint(
       new vm.Script(featuresSource, { filename: "features.js", produceCachedData: true }).cachedData!,
     );
@@ -454,24 +455,24 @@ describe("bytecode cache portability", () => {
           "sha256": "2a5d62fb4ca9d107e3a5bb2abe6a73f3c859a6f1a91c6c3d77653cb8c2053361",
         },
         "bun build --bytecode --minify all.js": {
-          "js": "50b3e5192dd86a205c73583d585884c1b414467b14db54d03c77d3026bf236ff",
+          "js": "918f169d30d5a87cc6fde0abb5827ea858fde09e1df59a30f24870eba2e67e9f",
           "jsc": {
-            "bytes": 1730920,
-            "sha256": "99378bcb89b3fe041f25599fc41fb289625404efd8faa9f7727d0d66478b8dad",
+            "bytes": 1731912,
+            "sha256": "c1d13669a8b20b10ca0001c93e1a07cb6c14d00d1681dd5c092e3bfb0661aea0",
           },
         },
         "bun build --bytecode --minify features.js": {
-          "js": "d30a5febed53e316cc2dd2b076502079e809bb0c201ef1671e9a190ecdcf093d",
+          "js": "01891b9edc3e3f1e7cff44bd90d7d00543ddd64bd730cc4d111ad629436fb671",
           "jsc": {
-            "bytes": 41608,
-            "sha256": "be1714ac3f96c740aa2921728b66ef638a07268e31f04d0e2ec3f3a4c41573f4",
+            "bytes": 42528,
+            "sha256": "39135d12466ed6ca05c2adcd8d3f3d924fae51eba82f217114b248fe749c91f7",
           },
         },
         "bun build --bytecode --minify records.js": {
-          "js": "889cbb2c9525ff69a2676a6e81d97bb87760bdee65178b836c9c1d6808ac7c6e",
+          "js": "eba33198824cc48f618cb7be37d1321a9fa2daa7b3a1dee17bc67e9e81fc5a62",
           "jsc": {
-            "bytes": 80112,
-            "sha256": "f8dd9098f97e43a1cf3702235b67e8557de98de6a3db70fd6f7c68d8542d2c19",
+            "bytes": 81040,
+            "sha256": "2780bd7a3907288a5afa5502d3722e1ee76afaea848dada1404f937a48f1641b",
           },
         },
         "bun build --bytecode acorn/dist/acorn.mjs": {
@@ -482,10 +483,10 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode all.js": {
-          "js": "ce4cf9db35e0aa3257f982fb756363a5686fb52a3b7cc63ac0c66bdcaf13a849",
+          "js": "a55ff68728c0a42514e3b9de528f1131644774f16aa9fe37d365245b164e8b31",
           "jsc": {
-            "bytes": 1875224,
-            "sha256": "886f1adea30dfe50aed4744aae8a57af5a9012f5c4c568685158c96eeb7bf54c",
+            "bytes": 1876304,
+            "sha256": "a1fb643a65d4a1b72620937717bfffcacad9c9a44fe1098a2ed9eae5cf4577c6",
           },
         },
         "bun build --bytecode big.js": {
@@ -496,10 +497,10 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode features.js": {
-          "js": "2ee211924620db96d6e99e9490bfe0ee60a3bc6b003f37940c5631e6eabc2c73",
+          "js": "fab10827f6eeeee6927c7678ff66d6a40806be1b347138f4f4c93dc3f479c5f5",
           "jsc": {
-            "bytes": 43384,
-            "sha256": "e58565b9a1d777ddeb563573c6b63d9c26956e58a48143c1d8359212cb2e7f05",
+            "bytes": 44424,
+            "sha256": "72b86629531c80faf331f984b5829e088282fc6d13995041ba0054fd6d54c9d7",
           },
         },
         "bun build --bytecode happy-dom/lib/index.js": {
@@ -517,10 +518,10 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode libraries.js": {
-          "js": "7b8ce5d1861461086be174e60797d52794328828458a2086f4d49b39a3f8b28a",
+          "js": "efb37dc3389e11bf3b88e5b53164a56d20f9640d37c019182f92e391cb0bf3b2",
           "jsc": {
-            "bytes": 21177768,
-            "sha256": "620db040f8b0f43357f79a042560fd6d58a3ece4d4627d0aff4714eb9194fced",
+            "bytes": 21178784,
+            "sha256": "56f06763382d19e07fce8c74a50ac4db97be87d5cd8e5cff8461c9e127e6f717",
           },
         },
         "bun build --bytecode lodash/lodash.js": {
@@ -538,10 +539,10 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode records.js": {
-          "js": "c87ea35df4ad6b2063402c9901ef4775a82f12594f280db76f50695f4b0eba13",
+          "js": "7f7481845388ff377c5fbc630445cc90f235ba32f673d2c3cec030073c46b762",
           "jsc": {
-            "bytes": 82832,
-            "sha256": "ff6704a9302e9acd60d9e17d6b9c191e71e396dcb4b63281477761560f94022e",
+            "bytes": 83848,
+            "sha256": "c2bdc2f7079552566584729e73015cc661fade582948984aef375e317c07e865",
           },
         },
         "bun build --bytecode shapes.js": {
@@ -570,16 +571,16 @@ describe("bytecode cache portability", () => {
           "sha256": "c1ef75ee85e7e8ec9ec8623aad781ce99e3cf48e1ceaa50463aebc51f9176863",
         },
         "vm.Script features.js": {
-          "bytes": 45224,
-          "sha256": "ba0626eb7ef062b19fd1d2080c885be6bd8a81e84d60b41b03b865c39038d4f1",
+          "bytes": 45216,
+          "sha256": "50c62dc8f7e3840ae517cef900b2e48c58d42258c59d039fba3a74e899070bef",
         },
         "vm.Script lodash.js": {
           "bytes": 342896,
           "sha256": "c65a8b0603ccd5075ca3cf68c8f72573b2368dccd6086e82ecd0dfa279b74aa3",
         },
         "vm.Script records.js": {
-          "bytes": 86616,
-          "sha256": "1b080c2d59dd9b9ef5172d3a41ad034c89627b5997e75c37652ca33e1c73bdda",
+          "bytes": 86632,
+          "sha256": "6af8430e5178be6b2eeca43d5e20719caa582862310c2609736c7beb5096ae1e",
         },
         "vm.Script shapes.js": {
           "bytes": 257488,
@@ -590,12 +591,12 @@ describe("bytecode cache portability", () => {
           "sha256": "6b01942bf091814c4d2936d578e7c669b42ac0405df2e030b9466b479a9d28ae",
         },
         "vm.Script typescript.js": {
-          "bytes": 11325480,
-          "sha256": "5f4306c6460d0d963efadd9bfe1d5c6b0013cade4201baec14656d461801e266",
+          "bytes": 11318672,
+          "sha256": "ffac251a56c797661b5f3981f389464e9083a2b30a21c50d88df7e9321682a07",
         },
         "vm.SourceTextModule acorn.mjs": {
-          "bytes": 255184,
-          "sha256": "007336d87727700362a314a5d5be000c5412655c25cdb62685284ea68da2b570",
+          "bytes": 254920,
+          "sha256": "30859937ddebce4e11991b419e074d2ca3e80a5c8da7c677d7e719fd2b0db789",
         },
         "vm.SourceTextModule module.js": {
           "bytes": 9104,
@@ -633,6 +634,8 @@ describe("bytecode cache portability", () => {
       `,
     });
     const { entry, args } = bundlerBuilds[0];
+    // This process encodes too, and `bun test` turns off tail calls, which changes the bytecode.
+    const env = { ...bunEnv, BUN_JSC_useTailCalls: "0" };
     const hash = (bytes: Uint8Array) => fingerprint(bytes).sha256;
     const conditions: Record<string, Record<string, string>> = {
       "collectContinuously": { BUN_JSC_collectContinuously: "1" },
@@ -640,17 +643,17 @@ describe("bytecode cache portability", () => {
       "gcMaxHeapSize=64KB": { BUN_JSC_gcMaxHeapSize: "65536" },
     };
     // Start every child first; this process encodes its own internal modules while they run.
-    const reference = build(bundlerBuilds[0]);
+    const reference = bundle(join(String(dir), "reference"), entry, args, env);
     const conditioned = Promise.all(
-      Object.entries(conditions).map(async ([condition, env]) => {
-        const { jsc } = await bundle(join(String(dir), condition), entry, args, { ...bunEnv, ...env });
+      Object.entries(conditions).map(async ([condition, extra]) => {
+        const { jsc } = await bundle(join(String(dir), condition), entry, args, { ...env, ...extra });
         return [condition, hash(jsc)] as const;
       }),
     );
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(String(dir), "api.js"), entry, join(String(dir), "api"), join(corpusDir, "features.js")],
       cwd: corpusDir, // as bundle() does, so module path comments in the output agree
-      env: bunEnv,
+      env,
       stdout: "pipe",
       stderr: "pipe",
     });

@@ -10,6 +10,7 @@
 #include "ImportMetaObject.h"
 #include "JSCommonJSExtensions.h"
 #include "JSCommonJSModule.h"
+#include "JSNextTickQueue.h"
 #include "ModuleLoader.h"
 #include "WebCoreJSBuiltins.h"
 #include "ZigGlobalObject.h"
@@ -143,7 +144,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPrepareHoldersBeforeLookupsUnder, (JSC::JSGlo
 
 #if ENABLE(AOT)
 
-extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier);
+extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier, const BunString* typeAttribute);
 extern "C" JSC::EncodedJSValue Blob__createEmptyJSONBodyError(JSC::JSGlobalObject*);
 extern "C" bool Bun__compiledProgramRunsInPlace();
 extern "C" BunString Bun__AOT__pathOfForm(const BunString* path, const BunString* typeAttribute, bool* isFormWithoutAttributes);
@@ -324,7 +325,7 @@ bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject* globalObject, JSCom
     if (!module)
         return false;
     BunString pathString = Bun::toString(path);
-    auto loader = Bun__getDefaultLoader(globalObject, &pathString);
+    auto loader = Bun__getDefaultLoader(globalObject, &pathString, nullptr);
     bool isTypeScriptFile = loader == BunLoaderTypeTS || loader == BunLoaderTypeTSX;
     if (isTypeScriptFile != isTypeScriptLoader)
         return false;
@@ -608,6 +609,12 @@ static JSValue createLoadError(JSGlobalObject* realm, const String& path)
     return source.success ? JSValue() : JSValue::decode(source.result.err);
 }
 
+static bool hasQueuedTicks(JSGlobalObject* globalObject)
+{
+    auto* queue = defaultGlobalObject(globalObject)->m_nextTickQueue.get();
+    return queue && !queue->isEmpty();
+}
+
 const AOT::ModuleHost compiledModuleHost = {
     &createModuleObject,
     &createRequirer,
@@ -625,8 +632,10 @@ const AOT::ModuleHost compiledModuleHost = {
     &findModuleWithAttributes,
     &resolveFunctionOf,
     &replacesNativeModule,
+    &hasQueuedTicks,
     &isImportOfMainModule,
     &runMainModule,
+    nullptr,
 };
 
 JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path, NotInExecutable what)

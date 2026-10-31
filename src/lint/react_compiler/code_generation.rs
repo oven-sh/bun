@@ -107,7 +107,7 @@ pub fn find_candidates<'a>(file: &'a File<'a>) -> Vec<Candidate<'a>> {
         return candidates;
     }
     with_ast_arena(|_| {
-        // No member of `GenerationOptions` changes the answer of `may_compile`.
+        // No member of `GenerationOptions` changes the answer of `may_compile_by_name`.
         let options = ReactCompilerOptions {
             enabled: true,
             ..ReactCompilerOptions::default()
@@ -115,10 +115,9 @@ pub fn find_candidates<'a>(file: &'a File<'a>) -> Vec<Candidate<'a>> {
         let state = ReactCompilerState::new(options, false, Default::default());
         candidates.retain(|candidate| {
             let statements = candidate.function.body_statements();
-            state.may_compile(
+            state.may_compile_by_name(
                 candidate.name.map(Name::bytes),
                 candidate.is_in_react_wrapper,
-                false,
                 &statements.map_or_else(Vec::new, directive_prologue),
             )
         });
@@ -332,7 +331,9 @@ fn pending_compile(root: &Root, in_react_hoc: bool) -> (PendingCompile, StoreSli
                 body_loc: function.body.loc,
                 args_loc: function.open_parens_loc,
                 binding: None,
+                own_name: None,
                 in_react_hoc,
+                is_top_level: true,
             },
             function.body.stmts,
         ),
@@ -351,7 +352,9 @@ fn pending_compile(root: &Root, in_react_hoc: bool) -> (PendingCompile, StoreSli
                     body_loc: arrow.body.loc,
                     args_loc: arrow.body.loc,
                     binding: None,
+                    own_name: None,
                     in_react_hoc,
+                    is_top_level: true,
                 },
                 arrow.body.stmts,
             )

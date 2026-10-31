@@ -56,6 +56,7 @@ pub struct LoadOptions {
     pub entry_texts: Vec<EntryText>,
     pub omits_builtin_modules: bool,
     pub runs_tests: bool,
+    pub has_globals_of_vitest: bool,
     /// What the run time provides is of type `any` where `@types/bun` is not installed.
     pub takes_runtime_as_any: bool,
     /// What of Bun's own code an earlier compile of the same program lacked, by the word of the engine.
@@ -148,6 +149,7 @@ impl LoadOptions {
             entry_texts: Vec::new(),
             omits_builtin_modules: false,
             runs_tests: false,
+            has_globals_of_vitest: false,
             takes_runtime_as_any: false,
             library_code_lacked: LibraryCode::default(),
             keeps_library_code_without_names: false,

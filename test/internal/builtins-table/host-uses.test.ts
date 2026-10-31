@@ -187,6 +187,7 @@ test("a field of a host object lists everything that may be put there", () => {
       ],
       internalFields: [],
       keepsStringsOfStoredValues: false,
+      nativeAccessors: [],
     },
   ]);
 });
@@ -210,6 +211,7 @@ test("a host object says what lies under the names that it does not list, and th
       ],
       internalFields: [],
       keepsStringsOfStoredValues: true,
+      nativeAccessors: [],
     },
   ]);
 });

@@ -200,6 +200,14 @@ pub(crate) fn write_constant(
         is_pure: false,
     });
     let init = file.expr(ExprKind::Call(call), POSITION, POSITION);
+    write_initialized_constant(file, pat, init)
+}
+
+pub(crate) fn write_initialized_constant(
+    file: &mut FileBuilder,
+    pat: PatId,
+    init: ExprId,
+) -> StmtId {
     let declarations = file.add_var_decls(&[VarDecl {
         pat,
         ty: TypeNodeId::NONE,

@@ -59,12 +59,13 @@ fn get_expression(arrow: Func<'_>) -> Option<Expr<'_>> {
 }
 
 fn is_sequence(e: Expr<'_>) -> bool {
-    matches!(e.as_binary(), Some((BinOp::Comma, ..)))
-}
-
-/// True if [`write_expression_body`] writes parentheses around `body`, a sequence: `a => (b, c)`.
-pub(crate) fn is_sequence_in_parentheses<'a>(body: Expr<'a>, f: &Formatter<'a>) -> bool {
-    is_sequence(body) && !is_cast_target(body, f)
+    matches!(
+        e.kind(),
+        ExprKind::Binary {
+            op: BinOp::Comma,
+            ..
+        }
+    )
 }
 
 /// Returns the arrow function that's the body of `arrow`. For Prettier, one inside type cast parentheses is a
@@ -447,7 +448,7 @@ fn is_multiline_and_starts_on_same_line(expression: Expr<'_>, source_text: Sourc
 
 /// Prettier's `shouldAddParensIfNotBreak`: `a => (b ? c : d)`, so it isn't mistaken for `a <= b ? c : d`. This doesn't
 /// apply if the condition starts with something that gets parentheses anyway.
-pub(crate) fn should_add_parens_if_not_break(arrow: Func<'_>) -> bool {
+fn should_add_parens_if_not_break(arrow: Func<'_>) -> bool {
     let Some(expression) = get_expression(arrow) else {
         return false;
     };
@@ -738,7 +739,8 @@ fn write_expression_body<'a>(
     is_on_its_own_line: bool,
     f: &mut Formatter<'a>,
 ) {
-    if !is_sequence_in_parentheses(body, f) {
+    let is_sequence = is_sequence(body) && !is_cast_target(body, f);
+    if !is_sequence {
         return write!(f, body);
     }
     if f.is_quiet() {

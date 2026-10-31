@@ -586,7 +586,8 @@ describe.concurrent("module link error", () => {
   async function runJSON(files: Files, args: string[]) {
     using dir = tempDir("module-link-error", files);
     const { stdout, stderr, exitCode } = await spawn(String(dir), args, bunEnv);
-    const printed = JSON.parse(stdout || "null", (_, value) =>
+    const line = stdout.split("\n").find(line => line.startsWith("{"));
+    const printed = JSON.parse(line ?? "null", (_, value) =>
       typeof value === "string" ? value.replaceAll(String(dir), "<dir>").replaceAll("\\", "/") : value,
     );
     return { printed, stderr, exitCode };
@@ -1326,9 +1327,7 @@ describe.concurrent("module link error", () => {
           ``,
         ].join("\n"),
       };
-      // The first line that `bun test` prints is its own.
-      const { stdout, exitCode } = await run(files, ["test", "./rejects.test.ts"]);
-      const printed = JSON.parse(stdout.split("\n").find(line => line.startsWith("{")) ?? "null");
+      const { printed, exitCode } = await runJSON(files, ["test", "./rejects.test.ts"]);
       expect({ printed, exitCode }).toEqual({
         printed: {
           message,

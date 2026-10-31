@@ -1265,6 +1265,25 @@ test("--parallel forwards --conditions to workers", async () => {
   expect(exitCode).toBe(0);
 });
 
+test("--parallel forwards --enable-source-maps to workers", async () => {
+  const fixture = `import {test,expect} from "bun:test";
+    import {getSourceMapsSupport} from "node:module";
+    test("on", () => expect({...getSourceMapsSupport()}).toEqual({enabled:true, nodeModules:true, generatedCode:true}));`;
+  using dir = tempDir("parallel-enable-source-maps", { "a.test.js": fixture, "b.test.js": fixture });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--enable-source-maps"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
+
 test("--parallel: workers get the --env-file values and skip the default .env", async () => {
   const fixture = `import {test,expect} from "bun:test"; test("env", () => { expect(process.env.BUNTEST_CUSTOM).toBe("1"); expect(process.env.BUNTEST_DOTENV).toBeUndefined(); });`;
   using dir = tempDir("parallel-env-file", {

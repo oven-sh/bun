@@ -16,7 +16,7 @@ use crate::counters::Counters;
 use crate::event_loop::EventLoop;
 use crate::module_loader::{self as ModuleLoader, FetchFlags};
 use crate::rare_data::RareData;
-use crate::saved_source_map::SavedSourceMap;
+use crate::saved_source_map::{SavedSourceMap, SourceMapsSupport};
 use crate::{
     self as jsc, Exception, JSGlobalObject, JSInternalPromise, JSValue, JsResult, OpaqueCallback,
     PlatformEventLoop, ResolvedSource, VM, ZigException,
@@ -2861,13 +2861,15 @@ extern crate alloc;
 /// casts back on the other side of each hook.
 pub type RuntimeState = *mut c_void;
 
-/// Runtime flags a Worker's `execArgv` can set. `true` means allowed.
+/// Runtime flags a Worker's `execArgv` can set.
 #[derive(Copy, Clone, Debug)]
 pub struct WorkerExecArgvFlags {
     /// `!--no-addons`
     pub allow_addons: bool,
     /// `!--no-ffi-cc`
     pub allow_ffi_cc: bool,
+    /// `--enable-source-maps`
+    pub enable_source_maps: bool,
     /// Where a flag is that is the process's, which a Worker cannot be given
     /// (`ERR_WORKER_INVALID_EXEC_ARGV`): `--disallow-code-generation-from-strings`.
     pub invalid: Option<usize>,
@@ -3426,7 +3428,11 @@ impl VirtualMachine {
             let _ = (*regular).tasks.ensure_unused_capacity(64);
             addr_of_mut!((*vm).event_loop).write(regular);
 
-            addr_of_mut!((*vm).source_mappings).write(SavedSourceMap::default());
+            let source_mappings = SavedSourceMap::default();
+            source_mappings.set_source_maps_support(SourceMapsSupport::all(
+                opts.transform_options.enable_source_maps,
+            ));
+            addr_of_mut!((*vm).source_mappings).write(source_mappings);
         }
 
         // High-tier per-VM state — Transpiler / Timer::All / entry_point.
@@ -4411,6 +4417,21 @@ impl VirtualMachine {
     pub(crate) extern "C" fn is_code_generation_from_strings_strict_by_flags_for_cpp() -> bool {
         bun_core::code_generation_from_strings_by_flags()
             == bun_core::CodeGenerationFromStrings::Strict
+    }
+
+    /// `module.getSourceMapsSupport()` and `process.sourceMapsEnabled`.
+    #[unsafe(export_name = "Bun__VM__sourceMapsSupport")]
+    pub(crate) extern "C" fn source_maps_support(this: &VirtualMachine) -> SourceMapsSupport {
+        this.source_mappings.source_maps_support()
+    }
+
+    /// `module.setSourceMapsSupport()` and `process.setSourceMapsEnabled()`.
+    #[unsafe(export_name = "Bun__VM__setSourceMapsSupport")]
+    pub(crate) extern "C" fn set_source_maps_support(
+        this: &VirtualMachine,
+        support: SourceMapsSupport,
+    ) {
+        this.source_mappings.set_source_maps_support(support);
     }
 
     /// Whether `bun:ffi` `cc()` is allowed (`--no-ffi-cc` and `--no-addons` disable it).
@@ -6258,6 +6279,15 @@ impl VirtualMachine {
 
         self.undo_process_env_side_effects();
         self.undo_synthetic_allocation_limit();
+        self.undo_source_maps_support();
+    }
+
+    /// The switch is on the VM, which outlives the file: put the startup value back so a file's setting stays with it.
+    fn undo_source_maps_support(&mut self) {
+        self.source_mappings
+            .set_source_maps_support(SourceMapsSupport::all(
+                self.transpiler.options.transform_options.enable_source_maps,
+            ));
     }
 
     /// `setSyntheticAllocationLimitForTesting` lowers a process-wide limit.

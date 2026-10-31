@@ -127,7 +127,6 @@ export const optionsThatHelpDoesNotList = [
   "--tls-min-v1.3",
   "--tls-cipher-list=x",
   "--secure-heap=4096",
-  "--enable-source-maps",
   "--max-old-space-size=64",
   "--no-experimental-fetch",
   "--experimental-vm-modules",

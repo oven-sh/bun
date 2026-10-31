@@ -1587,6 +1587,7 @@ unsafe fn parse_worker_exec_argv_flags(
     let mut flags = WorkerExecArgvFlags {
         allow_addons: true,
         allow_ffi_cc: true,
+        enable_source_maps: false,
         invalid: None,
     };
     if crate::cli::startup_options::may_refuse_options() {
@@ -1616,6 +1617,8 @@ unsafe fn parse_worker_exec_argv_flags(
             flags.allow_addons = false;
         } else if bytes == b"--no-ffi-cc" {
             flags.allow_ffi_cc = false;
+        } else if bytes == b"--enable-source-maps" {
+            flags.enable_source_maps = true;
         } else if matches!(
             bytes.strip_prefix(b"--disallow-code-generation-from-strings".as_slice()),
             Some([] | [b'=', ..])

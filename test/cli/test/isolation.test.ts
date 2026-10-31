@@ -236,6 +236,55 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The switch is on the VM, which the files of a process share.
+  test.each([
+    { flags: [], atStart: false },
+    { flags: ["--enable-source-maps"], atStart: true },
+  ])(
+    "with --isolate, a file's process.setSourceMapsEnabled() is undone before the next file (flags: $flags)",
+    async ({ flags, atStart }) => {
+      const switchFixtures = {
+        "a-switch.test.ts": `
+          import { test, expect } from "bun:test";
+          test("the switch is where the command line put it, and this file moves it", () => {
+            expect(process.sourceMapsEnabled).toBe(${atStart});
+            process.setSourceMapsEnabled(${!atStart});
+            expect(process.sourceMapsEnabled).toBe(${!atStart});
+          });
+        `,
+        "b-switch.test.ts": `
+          import { test, expect } from "bun:test";
+          import { getSourceMapsSupport } from "node:module";
+          test("the switch is back where the command line put it", () => {
+            expect({ ...getSourceMapsSupport() }).toEqual({
+              enabled: ${atStart},
+              nodeModules: ${atStart},
+              generatedCode: ${atStart},
+            });
+          });
+        `,
+      };
+      const files = ["./a-switch.test.ts", "./b-switch.test.ts"];
+
+      using isolated = tempDir("isolate-source-maps-switch", switchFixtures);
+      const serial = await runTests(String(isolated), ["--isolate", ...flags], files);
+      expect(normalizeBunSnapshot(serial.stderr, isolated)).toContain("2 pass");
+      expect(serial.exitCode).toBe(0);
+
+      using parallel = tempDir("isolate-source-maps-switch-parallel", switchFixtures);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--parallel=2", ...flags, ...files],
+        env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "60000" },
+        cwd: String(parallel),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(normalizeBunSnapshot(stderr, parallel)).toContain("2 pass");
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test("with --isolate, --preload re-runs in each file's fresh global", async () => {
     using dir = tempDir("isolate-preload", {
       "preload.ts": `

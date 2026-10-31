@@ -278,6 +278,9 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--expose-gc                       Expose gc() on the global object. Has no effect on Bun.gc()."
     ),
     parse_param!(
+        "--enable-source-maps              Apply the source maps of loaded files to error stack traces"
+    ),
+    parse_param!(
         "--no-deprecation                  Suppress all reporting of the custom deprecation."
     ),
     parse_param!(
@@ -497,6 +500,7 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
         (Long(b"dns-result-order"), Nothing),
         (Long(b"experimental-stream-iter"), Nothing),
         (Long(b"expose-gc"), Nothing),
+        (Long(b"enable-source-maps"), Nothing),
         (Long(b"no-deprecation"), Nothing),
         (Long(b"throw-deprecation"), Nothing),
         (Long(b"no-warnings"), Nothing),
@@ -1578,6 +1582,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");
         ctx.runtime_options.experimental_http3_fetch = args.flag(b"--experimental-http3-fetch");
         ctx.runtime_options.expose_gc = args.flag(b"--expose-gc");
+        if args.flag(b"--enable-source-maps") {
+            opts.enable_source_maps = true;
+        }
         if args.flag(b"--expose-internals") {
             // Same gate the env var `BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING`
             // sets (VirtualMachine::configure_from_env): allows resolving

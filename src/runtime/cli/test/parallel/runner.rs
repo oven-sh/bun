@@ -365,6 +365,9 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     if ctx.args.allow_ffi_cc == Some(false) {
         argv.push(lit(b"--no-ffi-cc\0"));
     }
+    if ctx.args.enable_source_maps {
+        argv.push(lit(b"--enable-source-maps\0"));
+    }
     match bun_core::code_generation_from_strings() {
         bun_core::CodeGenerationFromStrings::Allowed => {}
         bun_core::CodeGenerationFromStrings::DisallowedLikeNode => {

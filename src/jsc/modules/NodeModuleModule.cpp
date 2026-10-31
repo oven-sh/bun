@@ -24,6 +24,7 @@
 #include "ZigGlobalObject.h"
 #include "headers.h"
 #include "ErrorCode.h"
+#include "NodeValidator.h"
 #include "VectorSizeLimit.h"
 #include "BunString.h"
 
@@ -983,6 +984,60 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFlushCompileCache,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+// Node returns one frozen object until the next setSourceMapsSupport(). The flags live on the VM, so each call builds its own.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionGetSourceMapsSupport,
+    (JSGlobalObject * globalObject,
+        JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    BunSourceMapsSupport support = Bun__VM__sourceMapsSupport(bunVM(globalObject));
+    auto* result = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    Bun::putDirectNamed(vm, result, "enabled"_s, JSC::jsBoolean(support.enabled));
+    Bun::putDirectNamed(vm, result, "nodeModules"_s, JSC::jsBoolean(support.nodeModules));
+    Bun::putDirectNamed(vm, result, "generatedCode"_s, JSC::jsBoolean(support.generatedCode));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::objectConstructorFreeze(globalObject, result)));
+}
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L71-L95
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetSourceMapsSupport,
+    (JSGlobalObject * globalObject,
+        JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue enabled = callFrame->argument(0);
+    V::validateBoolean(scope, globalObject, enabled, "enabled"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    BunSourceMapsSupport support = { enabled.asBoolean(), false, false };
+
+    JSValue optionsValue = callFrame->argument(1);
+    if (!optionsValue.isUndefined()) {
+        V::validateObject(scope, globalObject, optionsValue, "options"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSObject* options = optionsValue.getObject();
+        JSValue nodeModules = options->get(globalObject, Identifier::fromString(vm, "nodeModules"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue generatedCode = options->get(globalObject, Identifier::fromString(vm, "generatedCode"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!nodeModules.isUndefined()) {
+            V::validateBoolean(scope, globalObject, nodeModules, "options.nodeModules"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            support.nodeModules = nodeModules.asBoolean();
+        }
+        if (!generatedCode.isUndefined()) {
+            V::validateBoolean(scope, globalObject, generatedCode, "options.generatedCode"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            support.generatedCode = generatedCode.asBoolean();
+        }
+    }
+
+    Bun__VM__setSourceMapsSupport(bunVM(globalObject), support);
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
 static JSValue getModuleObject(VM& vm, JSObject* moduleObject)
 {
     return moduleObject;
@@ -1009,11 +1064,13 @@ enableCompileCache      jsFunctionEnableCompileCache      Function 1
 findSourceMap           Bun::Bindgen::Generated::Sourcemap::jsFindSourceMap Function 1
 flushCompileCache       jsFunctionFlushCompileCache       Function 0
 getCompileCacheDir      jsFunctionGetCompileCacheDir      Function 0
+getSourceMapsSupport    jsFunctionGetSourceMapsSupport    Function 0
 globalPaths             getGlobalPathsObject              PropertyCallback
 isBuiltin               jsFunctionIsBuiltinModule         Function 1
 prototype               getModulePrototypeObject          DontEnum|DontDelete|PropertyCallback
 register                jsFunctionRegister                Function 1
 runMain                 moduleRunMain                        CustomAccessor
+setSourceMapsSupport    jsFunctionSetSourceMapsSupport    Function 1
 SourceMap               Bun::Bindgen::Generated::Sourcemap::getSourceMapConstructor PropertyCallback
 syncBuiltinESMExports   jsFunctionSyncBuiltinESMExports   Function 0
 wrap                    jsFunctionWrap                    Function 1

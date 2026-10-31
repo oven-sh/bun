@@ -31,7 +31,7 @@ export const obeyed: Record<string, string[]> = {
   ...themselves(
     "--silent --version -v --revision --bun -b --no-orphans --workspaces --parallel --sequential --no-exit-on-error",
   ),
-  ...themselves("--no-clear-screen --smol --aot-huge-heap --interactive"),
+  ...themselves("--no-clear-screen --smol --aot-huge-heap --interactive --enable-source-maps"),
   ...themselves(
     "--if-present --no-install --prefer-offline --prefer-latest --experimental-http2-fetch --experimental-http3-fetch",
   ),

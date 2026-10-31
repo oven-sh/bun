@@ -1,6 +1,7 @@
 #![warn(unused_must_use)]
 
 use core::ffi::c_void;
+use core::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 
 use bun_collections::{HashMap, IdentityContext, TaggedPtrUnion};
@@ -17,6 +18,65 @@ pub struct SavedSourceMap {
     /// Only accessed between [`Self::lock`] and [`Self::unlock`].
     map: HashTable,
     mutex: Mutex,
+    /// A [`SourceMapsSupport`] as the bits of one word, so a reader on another thread never sees two calls mixed.
+    source_maps_support: AtomicU8,
+}
+
+/// What `module.getSourceMapsSupport()` answers. `BunSourceMapsSupport` in headers-handwritten.h mirrors it.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct SourceMapsSupport {
+    pub enabled: bool,
+    pub node_modules: bool,
+    pub generated_code: bool,
+}
+
+impl SourceMapsSupport {
+    const ENABLED: u8 = 1 << 0;
+    const NODE_MODULES: u8 = 1 << 1;
+    const GENERATED_CODE: u8 = 1 << 2;
+
+    /// `--enable-source-maps` and `process.setSourceMapsEnabled()` set the three alike, as Node does.
+    pub const fn all(enabled: bool) -> Self {
+        Self {
+            enabled,
+            node_modules: enabled,
+            generated_code: enabled,
+        }
+    }
+
+    const fn to_bits(self) -> u8 {
+        let mut bits = 0;
+        if self.enabled {
+            bits |= Self::ENABLED;
+        }
+        if self.node_modules {
+            bits |= Self::NODE_MODULES;
+        }
+        if self.generated_code {
+            bits |= Self::GENERATED_CODE;
+        }
+        bits
+    }
+
+    const fn from_bits(bits: u8) -> Self {
+        Self {
+            enabled: bits & Self::ENABLED != 0,
+            node_modules: bits & Self::NODE_MODULES != 0,
+            generated_code: bits & Self::GENERATED_CODE != 0,
+        }
+    }
+}
+
+impl SavedSourceMap {
+    pub fn source_maps_support(&self) -> SourceMapsSupport {
+        SourceMapsSupport::from_bits(self.source_maps_support.load(Ordering::SeqCst))
+    }
+
+    pub fn set_source_maps_support(&self, support: SourceMapsSupport) {
+        self.source_maps_support
+            .store(support.to_bits(), Ordering::SeqCst);
+    }
 }
 
 impl SavedSourceMap {

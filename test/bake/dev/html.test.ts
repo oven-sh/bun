@@ -555,6 +555,24 @@ devTest("a page fails when it gains a stylesheet link to a script that it alread
     await c.expectMessage("app");
   },
 });
+devTest("a page does not run a new script that it gains a stylesheet link to", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["./app.js"] }),
+    "app.js": `console.log("app");`,
+    "theme.js": `console.log("theme-script");`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("app");
+
+    // The page and the new script are bundled together. The page fails, and the open page does not get the script.
+    await dev.write("index.html", emptyHtmlFile({ styles: ["./theme.js"], scripts: ["./app.js"] }), {
+      errors: [stylesheetLinkError("theme.js")],
+    });
+    await c.expectMessage();
+    expect((await dev.fetch("/")).status).toBe(500);
+  },
+});
 devTest("a stylesheet link to a script with a syntax error still fails the page after the script is repaired", {
   files: {
     "index.html": emptyHtmlFile({ styles: ["./theme.js"], body: "<h1>Page</h1>" }),
@@ -567,7 +585,7 @@ devTest("a stylesheet link to a script with a syntax error still fails the page 
     await using c = await dev.client("/", { errors: [stylesheetLinkError("theme.js")] });
   },
 });
-// A page that failed on a link to a cached script is bundled again when that script goes away.
+// A page that failed on a link to a script is bundled again when that script goes away, and when it comes back.
 devTest("a page with a stylesheet link to a script that it loaded before follows that script", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["./app.js"] }),
@@ -576,9 +594,23 @@ devTest("a page with a stylesheet link to a script that it loaded before follows
   async test(dev) {
     expect((await dev.fetch("/")).status).toBe(200);
 
+    // Only the page is bundled again. The script comes from the module cache.
     await dev.write("index.html", emptyHtmlFile({ styles: ["./app.js"] }), { errors: null });
     await using c = await dev.client("/", { errors: [stylesheetLinkError("app.js")] });
     await dev.delete("app.js", { errors: ['index.html: error: Could not resolve: "./app.js"'] });
+    // The link still names the script.
+    await dev.write("app.js", `console.log("app");`, { errors: [stylesheetLinkError("app.js")] });
+  },
+});
+devTest("a page with a stylesheet link to a script that it never loaded follows that script", {
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["./theme.js"], body: "<h1>Page</h1>" }),
+    "theme.js": `console.log("theme-script");`,
+  },
+  async test(dev) {
+    // The page and the script are bundled together.
+    await using c = await dev.client("/", { errors: [stylesheetLinkError("theme.js")] });
+    await dev.delete("theme.js", { errors: ['index.html: error: Could not resolve: "./theme.js"'] });
   },
 });
 // A plugin can make a script of a stylesheet, to add the styles at run time. Those pages build, and the plugin loads the file once.

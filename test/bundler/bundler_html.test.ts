@@ -1294,6 +1294,46 @@ body {
     },
   });
 
+  // The `loader` option can make a script of any file extension. A stylesheet link to such a file is an error too.
+  itBundled("html/stylesheet-link-to-script-by-loader-option", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./theme.custom">
+    <link rel="stylesheet" href="./page.mdx">
+  </head>
+  <body></body>
+</html>`,
+      "/theme.custom": `console.log("custom");`,
+      "/page.mdx": `console.log("mdx");`,
+    },
+    entryPoints: ["/index.html"],
+    loader: { ".custom": "js", ".mdx": "jsx" },
+    bundleErrors: {
+      "/index.html": ['Cannot use "theme.custom" as a stylesheet', 'Cannot use "page.mdx" as a stylesheet'],
+    },
+  });
+
+  // The same option can make a stylesheet of any file extension. That page builds.
+  itBundled("html/stylesheet-link-to-css-by-loader-option", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<!doctype html><html><head><link rel="stylesheet" href="./theme.sheet"></head><body></body></html>`,
+      "/theme.sheet": `.from-sheet { color: blue; }`,
+    },
+    entryPoints: ["/index.html"],
+    loader: { ".sheet": "css" },
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const href = html.match(/<link rel="stylesheet" crossorigin href="(\.\/index-[a-z0-9]+\.css)">/)?.[1];
+      expect(href).toBeString();
+      expect(api.readFile("out/" + href)).toContain(".from-sheet");
+    },
+  });
+
   // A script that only imports CSS is still a script. Load it with <script type="module" src> to keep the styles.
   itBundled("html/stylesheet-link-to-script-that-imports-css", {
     outdir: "out/",
@@ -1472,14 +1512,8 @@ describe("a stylesheet link to a script", () => {
     "server.ts": `import page from "./index.html";\nconsole.log(page);`,
   };
 
-  // Each command prints the file, the link and the loader, writes nothing and exits with code 1.
-  test.concurrent.each([
-    { args: ["build", "./index.html", "--outdir", "out"], output: "out" },
-    { args: ["build", "--target=bun", "./server.ts", "--outdir", "out"], output: "out" },
-    { args: ["build", "--compile", "./server.ts", "--outfile", "app"], output: "app" },
-    // `--aot` checks the program as `bun build --compile` does before it runs it. The program does not run.
-    ...(unsupported ? [] : [{ args: ["--aot", "./server.ts"], output: "out" }]),
-  ])("bun $args fails", async ({ args, output }) => {
+  // The command prints the file, the link and the loader, writes nothing and exits with code 1.
+  const commandFails = async ({ args, output }: { args: string[]; output: string }) => {
     using dir = tempDir("html-stylesheet-link-cli", files);
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args],
@@ -1506,7 +1540,16 @@ describe("a stylesheet link to a script", () => {
       wroteOutput: false,
       exitCode: 1,
     });
-  });
+  };
+  test.concurrent.each([
+    { args: ["build", "./index.html", "--outdir", "out"], output: "out" },
+    { args: ["build", "--target=bun", "./server.ts", "--outdir", "out"], output: "out" },
+    { args: ["build", "--compile", "./server.ts", "--outfile", "app"], output: "app" },
+  ])("bun $args fails", commandFails);
+  // `--aot` checks the program as `bun build --compile` does before it runs it. The program does not run.
+  test.concurrent.skipIf(!!unsupported)("bun --aot ./server.ts fails", () =>
+    commandFails({ args: ["--aot", "./server.ts"], output: "out" }),
+  );
 
   const failed = (build: Bun.BuildOutput) => ({
     success: build.success,

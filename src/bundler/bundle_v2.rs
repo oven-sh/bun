@@ -5906,30 +5906,36 @@ pub mod bv2_impl {
                             if loaders[index] == Loader::Html {
                                 // A script that Bun failed to parse counts: its repair does not bundle the page again.
                                 let flags = input_files.items_flags();
-                                let mut log = bun_ast::Log::init();
                                 for record in import_records.as_slice() {
-                                    if record.source_index.is_valid() {
-                                        LinkerContext::check_html_import(
-                                            &mut log, sources, loaders, flags, index, record,
-                                        );
+                                    if !record.source_index.is_valid() {
+                                        continue;
                                     }
+                                    let Some(script_loader) = LinkerContext::check_html_import(
+                                        sources,
+                                        loaders,
+                                        flags,
+                                        &self.transpiler.options.loaders,
+                                        record,
+                                    ) else {
+                                        continue;
+                                    };
+                                    // This log fails the page when the bundle ends. Until then the page is linked, so it keeps its edge to the script.
+                                    let log = self.log_for_resolution_failures(
+                                        sources[index].path.key_for_incremental_graph(),
+                                        bake::Graph::Client,
+                                    );
+                                    LinkerContext::add_html_import_mismatch_error(
+                                        log,
+                                        &sources[index],
+                                        record,
+                                        sources[record.source_index.get() as usize].path.pretty,
+                                        script_loader,
+                                    );
                                 }
-                                if log.errors > 0 {
-                                    dev_server
-                                        .handle_parse_task_failure(
-                                            crate::Error::InvalidCssImport,
-                                            bake::Graph::Client,
-                                            sources[index].path.key_for_incremental_graph(),
-                                            &raw const log,
-                                            self,
-                                        )
-                                        .map_err(|_| AllocError)?;
-                                } else {
-                                    html_files.put(
-                                        Index::init(u32::try_from(index).expect("int cast")),
-                                        (),
-                                    )?;
-                                }
+                                html_files.put(
+                                    Index::init(u32::try_from(index).expect("int cast")),
+                                    (),
+                                )?;
                             } else {
                                 js_files.push(Index::init(u32::try_from(index).expect("int cast")));
 
@@ -7144,29 +7150,31 @@ pub mod bv2_impl {
                                     .path_with_pretty_initialized(path, target)
                                     .expect("oom");
                                 // A cached script has no source index, so `finish_from_bake_dev_server` does not see a tag that uses it.
-                                if entry.kind == bake_types::CacheKind::Js {
+                                if entry.kind == bake_types::CacheKind::Js
+                                    && LinkerContext::html_import_mismatch(
+                                        import_record.kind,
+                                        Loader::Js,
+                                        path,
+                                        &transpiler.options.loaders,
+                                    )
+                                    .is_some()
+                                {
                                     // The cache keeps no loader. A cached script has the loader of its path, unless a plugin or an import attribute chose another script loader.
-                                    let cached_loader = path
+                                    let script_loader = path
                                         .loader(&transpiler.options.loaders)
                                         .filter(|loader| loader.is_javascript_like())
                                         .unwrap_or(Loader::Js);
-                                    if let Some(script_loader) = LinkerContext::html_import_mismatch(
-                                        import_record.kind,
-                                        cached_loader,
-                                        path,
-                                    ) {
-                                        let log = self.log_for_resolution_failures(
-                                            source.path.text,
-                                            ctx.target.bake_graph(),
-                                        );
-                                        LinkerContext::add_html_import_mismatch_error(
-                                            log,
-                                            source,
-                                            import_record,
-                                            import_record.path.pretty,
-                                            script_loader,
-                                        );
-                                    }
+                                    let log = self.log_for_resolution_failures(
+                                        source.path.text,
+                                        ctx.target.bake_graph(),
+                                    );
+                                    LinkerContext::add_html_import_mismatch_error(
+                                        log,
+                                        source,
+                                        import_record,
+                                        import_record.path.pretty,
+                                        script_loader,
+                                    );
                                 }
                                 if loader == Loader::Html
                                     || entry.kind == bake_types::CacheKind::Css

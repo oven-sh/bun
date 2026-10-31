@@ -6,36 +6,32 @@ const common = require('../common');
 
 const assert = require('assert');
 const fs = require('fs');
+// Bun: internal/fs/utils does not provide BigIntStats, and node:fs does not export it.
+const BigIntStats = fs.statSync(__filename, { bigint: true }).constructor;
 
 const tmpdir = require('../common/tmpdir');
 
 const enoentFile = tmpdir.resolve('non-existent-file');
-
-// Bun does not expose node's internal/fs/utils module, so the all-zero
-// BigIntStats instance this test compares against cannot be constructed
-// directly. The observable contract is the same: every numeric field is the
-// BigInt 0n and every date field is the UNIX epoch.
-// const { BigIntStats } = require('internal/fs/utils');
-const zeroBigIntFields = [
-  'dev', 'mode', 'nlink', 'uid', 'gid', 'rdev', 'blksize', 'ino', 'size',
-  'blocks', 'atimeMs', 'mtimeMs', 'ctimeMs', 'birthtimeMs',
-  'atimeNs', 'mtimeNs', 'ctimeNs', 'birthtimeNs',
-];
-
-function assertZeroStatObject(stats) {
-  // deepStrictEqual against a real BigIntStats would also pin the class and the
-  // exact own-property set, so check those explicitly.
-  assert.strictEqual(stats.constructor.name, 'BigIntStats');
-  assert.strictEqual(typeof stats.isFile, 'function');
-  assert.strictEqual(stats.isFile(), false);
-  assert.strictEqual(stats.isDirectory(), false);
-  for (const field of zeroBigIntFields) {
-    assert.strictEqual(stats[field], 0n, `expected ${field} to be 0n`);
-  }
-  for (const field of ['atime', 'mtime', 'ctime', 'birthtime']) {
-    assert.strictEqual(stats[field].getTime(), 0, `expected ${field} to be the epoch`);
-  }
-}
+const expectedStatObject = new BigIntStats(
+  0n,                                        // dev
+  0n,                                        // mode
+  0n,                                        // nlink
+  0n,                                        // uid
+  0n,                                        // gid
+  0n,                                        // rdev
+  0n,                                        // blksize
+  0n,                                        // ino
+  0n,                                        // size
+  0n,                                        // blocks
+  0n,                                        // atimeMs
+  0n,                                        // mtimeMs
+  0n,                                        // ctimeMs
+  0n,                                        // birthtimeMs
+  0n,                                        // atimeNs
+  0n,                                        // mtimeNs
+  0n,                                        // ctimeNs
+  0n                                         // birthtimeNs
+);
 
 tmpdir.refresh();
 
@@ -49,8 +45,8 @@ const watcher =
     if (!fileExists) {
       // If the file does not exist, all the fields should be zero and the date
       // fields should be UNIX EPOCH time
-      assertZeroStatObject(curr);
-      assertZeroStatObject(prev);
+      assert.deepStrictEqual(curr, expectedStatObject);
+      assert.deepStrictEqual(prev, expectedStatObject);
       // Create the file now, so that the callback will be called back once the
       // event loop notices it.
       fs.closeSync(fs.openSync(enoentFile, 'w'));

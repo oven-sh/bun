@@ -1686,6 +1686,8 @@ function flagTruncates(flag): boolean {
 }
 
 async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, flag, mode) {
+  // node's getOptions: a function means no options
+  if ($isCallable(optionsOrEncoding)) optionsOrEncoding = undefined;
   let encoding;
   let signal: AbortSignal | null = null;
   if (typeof optionsOrEncoding === "object") {

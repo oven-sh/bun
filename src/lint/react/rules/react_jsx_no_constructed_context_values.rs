@@ -14,24 +14,24 @@ use smallvec::{SmallVec, smallvec};
 /// Disallows JSX context provider values from taking values that will cause needless rerenders
 pub struct JsxNoConstructedContextValues;
 
-const WITH_IDENTIFIER_MSG: Message = Message::new(
+const WITH_IDENTIFIER_MSG: &Message = &Message::new(
     "withIdentifierMsg",
     "The '{{variableName}}' {{type}} (at line {{nodeLine}}) passed as the value prop to the Context provider (at line {{usageLine}}) changes every render. To fix this consider wrapping it in a useMemo hook.",
 );
-const WITH_IDENTIFIER_MSG_FUNC: Message = Message::new(
+const WITH_IDENTIFIER_MSG_FUNC: &Message = &Message::new(
     "withIdentifierMsgFunc",
     "The '{{variableName}}' {{type}} (at line {{nodeLine}}) passed as the value prop to the Context provider (at line {{usageLine}}) changes every render. To fix this consider wrapping it in a useCallback hook.",
 );
-const DEFAULT_MSG: Message = Message::new(
+const DEFAULT_MSG: &Message = &Message::new(
     "defaultMsg",
     "The {{type}} passed as the value prop to the Context provider (at line {{nodeLine}}) changes every render. To fix this consider wrapping it in a useMemo hook.",
 );
-const DEFAULT_MSG_FUNC: Message = Message::new(
+const DEFAULT_MSG_FUNC: &Message = &Message::new(
     "defaultMsgFunc",
     "The {{type}} passed as the value prop to the Context provider (at line {{nodeLine}}) changes every render. To fix this consider wrapping it in a useCallback hook.",
 );
-const JSX_NO_CONSTRUCTED_CONTEXT_VALUES: Message =
-    Message::new("", "The Context `value` prop should not be constructed.");
+const JSX_NO_CONSTRUCTED_CONTEXT_VALUES: &Message =
+    &Message::new("", "The Context `value` prop should not be constructed.");
 
 #[derive(Default)]
 pub struct State<'a> {

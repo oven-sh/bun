@@ -1843,7 +1843,7 @@ void JSMockFunctionPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* g
     Bun::reifyStaticPropertyTable(vm, JSMockFunction::info(), JSMockFunctionPrototypeTableValues, *this);
     Bun::putToStringTagWithoutTransition(vm, this, info());
 
-    this->putDirect(vm, Identifier::fromString(vm, "_isMockFunction"_s), jsBoolean(true), 0);
+    Bun::putDirectNamed(vm, this, "_isMockFunction"_s, jsBoolean(true));
 
     // Support `using spy = spyOn(...)` — auto-restores when leaving scope.
     JSValue restoreFn = this->getDirect(vm, Identifier::fromString(vm, "mockRestore"_s));

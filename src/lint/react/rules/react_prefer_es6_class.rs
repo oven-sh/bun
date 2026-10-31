@@ -9,14 +9,14 @@ pub struct PreferEs6Class {
     is_always: bool,
 }
 
-const SHOULD_USE_ES6_CLASS: Message =
-    Message::new("shouldUseES6Class", "Component should use es6 class instead of createClass");
-const SHOULD_USE_CREATE_CLASS: Message =
-    Message::new("shouldUseCreateClass", "Component should use createClass instead of es6 class");
-const UNEXPECTED_ES6_CLASS: Message =
-    Message::new("", "Components should use `createReactClass` instead of an ES2015 class.");
-const EXPECTED_ES6_CLASS: Message =
-    Message::new("", "Components should use an ES2015 class instead of `createReactClass`.");
+const SHOULD_USE_ES6_CLASS: &Message =
+    &Message::new("shouldUseES6Class", "Component should use es6 class instead of createClass");
+const SHOULD_USE_CREATE_CLASS: &Message =
+    &Message::new("shouldUseCreateClass", "Component should use createClass instead of es6 class");
+const UNEXPECTED_ES6_CLASS: &Message =
+    &Message::new("", "Components should use `createReactClass` instead of an ES2015 class.");
+const EXPECTED_ES6_CLASS: &Message =
+    &Message::new("", "Components should use an ES2015 class instead of `createReactClass`.");
 
 pub struct State<'a> {
     /// `None` for oxlint, which only recognizes `React` and `createReactClass`.

@@ -86,11 +86,20 @@ impl ErrorCode {
 
     /// `Error.throw(this, globalThis, fmt, args)` — `.fmt` then
     /// `globalThis.throwValue`.
-    #[cold]
-    #[inline(never)]
+    #[inline]
     pub fn throw<G: GlobalObjectRef + ?Sized>(self, global: &G, args: Arguments<'_>) -> JsError {
-        global.throw_js_value(self.fmt(global, args))
+        throw_code(
+            JSGlobalObject::opaque_ref(global.as_global_ptr().cast::<JSGlobalObject>()),
+            self,
+            args,
+        )
     }
+}
+
+#[cold]
+#[inline(never)]
+fn throw_code(global: &JSGlobalObject, code: ErrorCode, args: Arguments<'_>) -> JsError {
+    global.throw_js_value(code.fmt(global, args))
 }
 
 impl From<ErrorCode> for &'static str {

@@ -345,7 +345,7 @@ static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObje
 
     JSObject* builderObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
 
-    builderObject->putDirect(vm, Identifier::fromString(vm, "target"_s), jsString(vm, String("bun"_s)), 0);
+    Bun::putDirectNamed(vm, builderObject, "target"_s, jsString(vm, String("bun"_s)));
     builderObject->putDirectNativeFunction(
         vm,
         globalObject,

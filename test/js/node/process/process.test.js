@@ -2378,6 +2378,94 @@ it("process.hasUncaughtExceptionCaptureCallback", () => {
   process.setUncaughtExceptionCaptureCallback(null);
 });
 
+// Each script prints the same under node v26.3.0 with the same flags.
+describe.concurrent("process.sourceMapsEnabled", () => {
+  async function run(flags, script) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flags, "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  it.each([
+    { flags: [], initial: false },
+    { flags: ["--enable-source-maps"], initial: true },
+  ])("starts as $initial with the flags $flags and follows setSourceMapsEnabled()", async ({ flags, initial }) => {
+    const script = `
+      const seen = [process.sourceMapsEnabled];
+      for (const value of [true, false, true]) {
+        seen.push(String(process.setSourceMapsEnabled(value)), process.sourceMapsEnabled);
+      }
+      console.log(JSON.stringify(seen));
+    `;
+    expect(await run(flags, script)).toEqual({
+      stdout: JSON.stringify([initial, "undefined", true, "undefined", false, "undefined", true]),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("is an own getter without a setter", async () => {
+    const script = `
+      const { get, set, enumerable, configurable } = Object.getOwnPropertyDescriptor(process, "sourceMapsEnabled");
+      const assigned = Reflect.set(process, "sourceMapsEnabled", true);
+      console.log(
+        JSON.stringify({ get: typeof get, set: typeof set, enumerable, configurable, assigned, value: process.sourceMapsEnabled }),
+      );
+    `;
+    expect(await run([], script)).toEqual({
+      stdout: JSON.stringify({
+        get: "function",
+        set: "undefined",
+        enumerable: true,
+        configurable: true,
+        assigned: false,
+        value: false,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("setSourceMapsEnabled() refuses what is not a boolean and leaves the switch as it was", async () => {
+    const script = `
+      const refused = [undefined, null, 1, "false", {}, []].map(value => {
+        try {
+          process.setSourceMapsEnabled(value);
+          return "no error";
+        } catch (error) {
+          return [error.name, error.code, error.message];
+        }
+      });
+      console.log(JSON.stringify({ refused, enabled: process.sourceMapsEnabled }));
+    `;
+    const received = [
+      "undefined",
+      "null",
+      "type number (1)",
+      "type string ('false')",
+      "an instance of Object",
+      "an instance of Array",
+    ];
+    expect(await run(["--enable-source-maps"], script)).toEqual({
+      stdout: JSON.stringify({
+        refused: received.map(value => [
+          "TypeError",
+          "ERR_INVALID_ARG_TYPE",
+          `The "enabled" argument must be of type boolean. Received ${value}`,
+        ]),
+        enabled: true,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 // Attaching a handler to a rejected promise used to search the rejections that
 // were not reported yet one by one (and shift the ones behind the hit), so
 // handling N of them cost O(N^2). Not concurrent: these measure time.

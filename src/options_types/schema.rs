@@ -133,6 +133,8 @@ pub mod api {
         pub allow_ffi_cc: Option<bool>,
         /// from `--unhandled-rejections`; default is `Bun`.
         pub unhandled_rejections: Option<UnhandledRejections>,
+        /// from `--enable-source-maps`, or from a Worker's `execArgv`.
+        pub enable_source_maps: bool,
 
         pub bunfig_path: Box<[u8]>,
     }

@@ -508,6 +508,8 @@ impl WebWorker {
                 transform_options.allow_addons = Some(parent_allows_addons && flags.allow_addons);
                 let parent_allows_ffi_cc = transform_options.allow_ffi_cc.unwrap_or(true);
                 transform_options.allow_ffi_cc = Some(parent_allows_ffi_cc && flags.allow_ffi_cc);
+                // As in Node, an `execArgv` stands in for the parent's flag: one without it turns the switch off.
+                transform_options.enable_source_maps = flags.enable_source_maps;
             }
         }
         // The worker's `process.env` starts as a copy of the parent's now (as in

@@ -1168,6 +1168,136 @@ console.log("survived", require("./late.js"));`,
     expect(Module.findSourceMap("foo")).toEqual(undefined);
   });
 
+  // Each script prints the same under node v26.3.0 with the same flags.
+  describe("getSourceMapsSupport() and setSourceMapsSupport()", () => {
+    async function run(flags, script) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...flags, "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    }
+    const support = (enabled, nodeModules, generatedCode) => ({ enabled, nodeModules, generatedCode });
+
+    test.each([
+      { flags: [], initial: support(false, false, false) },
+      { flags: ["--enable-source-maps"], initial: support(true, true, true) },
+    ])("getSourceMapsSupport() with the flags $flags", async ({ flags, initial }) => {
+      const script = `
+        const support = require("node:module").getSourceMapsSupport();
+        console.log(
+          JSON.stringify({
+            support,
+            keys: Reflect.ownKeys(support),
+            isFrozen: Object.isFrozen(support),
+            prototype: Object.getPrototypeOf(support),
+            enabled: process.sourceMapsEnabled,
+          }),
+        );
+      `;
+      expect(await run(flags, script)).toEqual({
+        stdout: JSON.stringify({
+          support: initial,
+          keys: ["enabled", "nodeModules", "generatedCode"],
+          isFrozen: true,
+          prototype: null,
+          enabled: initial.enabled,
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("setSourceMapsSupport() sets all three, and an option that is left out is false", async () => {
+      const steps = [
+        ["setSourceMapsSupport(true)", support(true, false, false)],
+        ["setSourceMapsSupport(true, { nodeModules: true })", support(true, true, false)],
+        ["setSourceMapsSupport(true, { generatedCode: true })", support(true, false, true)],
+        ["setSourceMapsSupport(true, { nodeModules: true, generatedCode: true })", support(true, true, true)],
+        ["setSourceMapsSupport(true, {})", support(true, false, false)],
+        ["setSourceMapsSupport(true, undefined)", support(true, false, false)],
+        [
+          "setSourceMapsSupport(true, { nodeModules: undefined, generatedCode: undefined })",
+          support(true, false, false),
+        ],
+        ["setSourceMapsSupport(false, { nodeModules: true, generatedCode: true })", support(false, true, true)],
+        ["setSourceMapsSupport(false)", support(false, false, false)],
+        ["process.setSourceMapsEnabled(true)", support(true, true, true)],
+        ["setSourceMapsSupport(true)", support(true, false, false)],
+        ["process.setSourceMapsEnabled(false)", support(false, false, false)],
+      ];
+      const script = `
+        import { getSourceMapsSupport, setSourceMapsSupport } from "node:module";
+        const seen = [];
+        ${steps.map(([call]) => `seen.push([String(${call}), process.sourceMapsEnabled, getSourceMapsSupport()]);`).join("\n")}
+        console.log(JSON.stringify(seen));
+      `;
+      expect(await run([], script)).toEqual({
+        stdout: JSON.stringify(steps.map(([, after]) => ["undefined", after.enabled, after])),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("setSourceMapsSupport() refuses what Node refuses and leaves the switch as it was", async () => {
+      const enabled = received => `The "enabled" argument must be of type boolean. Received ${received}`;
+      const options = received => `The "options" argument must be of type object. Received ${received}`;
+      const option = (name, received) => `The "options.${name}" property must be of type boolean. Received ${received}`;
+      const refused = [
+        ["", enabled("undefined")],
+        ["null", enabled("null")],
+        ["1", enabled("type number (1)")],
+        ['"true"', enabled("type string ('true')")],
+        ["{}", enabled("an instance of Object")],
+        ["true, null", options("null")],
+        ["true, 1", options("type number (1)")],
+        ["true, []", options("an instance of Array")],
+        ["true, function named() {}", options("function named")],
+        ["true, { nodeModules: null }", option("nodeModules", "null")],
+        ["true, { nodeModules: 1 }", option("nodeModules", "type number (1)")],
+        ['true, { generatedCode: "true" }', option("generatedCode", "type string ('true')")],
+        ['false, { nodeModules: "no", generatedCode: "no" }', option("nodeModules", "type string ('no')")],
+        // `enabled` is checked before an option is read, and both options are read before either is checked.
+        ['"no", observed', enabled("type string ('no')")],
+        ["false, observed", option("nodeModules", "type number (1)")],
+      ];
+      const script = `
+        const { getSourceMapsSupport, setSourceMapsSupport } = require("node:module");
+        const read = [];
+        const observed = {
+          get nodeModules() {
+            read.push("nodeModules");
+            return 1;
+          },
+          get generatedCode() {
+            read.push("generatedCode");
+            return 2;
+          },
+        };
+        const thrown = [];
+        ${refused
+          .map(
+            ([args]) =>
+              `try { setSourceMapsSupport(${args}); thrown.push("no error"); } catch (error) { thrown.push([error.name, error.code, error.message]); }`,
+          )
+          .join("\n")}
+        console.log(JSON.stringify({ thrown, read, support: getSourceMapsSupport() }));
+      `;
+      expect(await run(["--enable-source-maps"], script)).toEqual({
+        stdout: JSON.stringify({
+          thrown: refused.map(([, message]) => ["TypeError", "ERR_INVALID_ARG_TYPE", message]),
+          read: ["nodeModules", "generatedCode"],
+          support: support(true, true, true),
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
   test("require cache relative specifier", () => {
     require.cache["./bar.cjs"] = { exports: { default: "bar" } };
     expect(() => require("./bar.cjs")).toThrow("Cannot find module");

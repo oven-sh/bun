@@ -372,6 +372,70 @@ describe("execArgv option", async () => {
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
 
+// The script prints the same under node v26.3.0, with and without the flag.
+describe("--enable-source-maps in a Worker", () => {
+  const on = { enabled: true, nodeModules: true, generatedCode: true };
+  const off = { enabled: false, nodeModules: false, generatedCode: false };
+  const script = `
+    const { Worker } = require("node:worker_threads");
+    const { getSourceMapsSupport } = require("node:module");
+    const report = 'require("node:worker_threads").parentPort.postMessage(require("node:module").getSourceMapsSupport());';
+    const reportFromNested = \`
+      const { Worker, parentPort } = require("node:worker_threads");
+      new Worker(\${JSON.stringify(report)}, { eval: true }).once("message", support => parentPort.postMessage(support));
+    \`;
+    function ask(source, options) {
+      return new Promise((resolve, reject) => {
+        const worker = new Worker(source, { eval: true, ...options });
+        worker.once("message", resolve);
+        worker.once("error", reject);
+        worker.once("exit", code => reject(new Error("the worker exited with " + code + " before it answered")));
+      });
+    }
+    (async () => {
+      const initial = process.sourceMapsEnabled;
+      const seen = {};
+      seen.withoutExecArgv = await ask(report);
+      seen.flagInExecArgv = await ask(report, { execArgv: ["--enable-source-maps"] });
+      seen.emptyExecArgv = await ask(report, { execArgv: [] });
+      seen.nestedUnderFlagInExecArgv = await ask(reportFromNested, { execArgv: ["--enable-source-maps"] });
+      seen.setInWorker = await ask("process.setSourceMapsEnabled(" + !initial + ");" + report);
+      seen.parentAfterSetInWorker = getSourceMapsSupport();
+      process.setSourceMapsEnabled(!initial);
+      seen.withoutExecArgvAfterSetInParent = await ask(report);
+      console.log(JSON.stringify(seen));
+    })();
+  `;
+
+  it.concurrent.each([
+    { flags: [], initial: off, other: on },
+    { flags: ["--enable-source-maps"], initial: on, other: off },
+  ])("a parent started with the flags $flags", async ({ flags, initial, other }) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flags, "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        // The command line's flag is inherited, and an execArgv stands in for it.
+        withoutExecArgv: initial,
+        flagInExecArgv: on,
+        emptyExecArgv: off,
+        nestedUnderFlagInExecArgv: on,
+        // What a thread sets at run time stays in that thread.
+        setInWorker: other,
+        parentAfterSetInWorker: initial,
+        withoutExecArgvAfterSetInParent: initial,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 test("eval does not leak source code", async () => {
   const proc = Bun.spawn({
     cmd: [bunExe(), "eval-source-leak-fixture.js"],

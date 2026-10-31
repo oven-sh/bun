@@ -11,6 +11,7 @@ pub use error::{Error, Result};
 
 #[path = "Chunk.rs"]
 pub mod chunk;
+mod debug_id;
 #[path = "InternalSourceMap.rs"]
 pub mod internal_source_map;
 #[path = "LineOffsetTable.rs"]
@@ -535,8 +536,11 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                     Err(_) => break 'try_external,
                 };
 
-                match parse_json(&data, result) {
+                let source = provider.get_source_slice();
+                match parse_sidecar_json(&data, result, &source, source_filename) {
                     Ok(parsed) => break 'parsed (SourceMapLoadHint::IsExternalMap, parsed),
+                    // The warning is in `parse_json_impl`, which has the id of the map.
+                    Err(crate::Error::DebugIdMismatch) => return None,
                     Err(err) => {
                         // Print warning even if this came from non-visible code like
                         // calling `error.stack`. This message is only printed if
@@ -871,6 +875,29 @@ pub(crate) fn parse_url(
 /// `source` must be in UTF-8 and can be freed after this call.
 /// The mappings are owned by the global allocator.
 pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<ParseUrl> {
+    parse_json_impl(source, hint, None)
+}
+
+/// `parse_json` for `<source_filename>.map`: `Error::DebugIdMismatch` for a map with another debug id than `source`.
+fn parse_sidecar_json(
+    data: &[u8],
+    hint: ParseUrlResultHint,
+    source: &bun_core::String,
+    source_filename: &[u8],
+) -> crate::Result<ParseUrl> {
+    let file_id = debug_id::of_file(source);
+    let check = file_id.as_deref().map(|file_id| debug_id::Check {
+        file_id,
+        source_filename,
+    });
+    parse_json_impl(data, hint, check.as_ref())
+}
+
+fn parse_json_impl(
+    source: &[u8],
+    hint: ParseUrlResultHint,
+    check: Option<&debug_id::Check<'_>>,
+) -> crate::Result<ParseUrl> {
     use crate::mapping::SourceMap as SourceMapLog;
     use bun_ast::StoreResetGuard as DataStoreScope;
     use std::sync::Arc;
@@ -891,6 +918,20 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
         Err(_) => return Err(crate::Error::InvalidJSON),
     };
     let json = parsed.root;
+    let source_only = matches!(hint, ParseUrlResultHint::SourceOnly(_));
+
+    if let Some(check) = check
+        && let Some(map_id) = json.get(b"debugId")
+        && let Some(map_id) = map_id.as_utf8_string_literal()
+        && !map_id.is_empty()
+        && !check.is_id_of_file(map_id)
+    {
+        // A `SourceOnly` read follows a lookup that applied the map, so the map on disk changed after that.
+        if !source_only {
+            check.warn(map_id);
+        }
+        return Err(crate::Error::DebugIdMismatch);
+    }
 
     if let Some(version) = json.get(b"version") {
         match version.data.as_e_number() {
@@ -930,8 +971,6 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
     if sources_content.items().len() != sources_paths.items().len() {
         return Err(crate::Error::InvalidSourceMap);
     }
-
-    let source_only = matches!(hint, ParseUrlResultHint::SourceOnly(_));
 
     // `Vec<Box<[u8]>>` drops automatically on error.
     let source_paths_slice: Option<Vec<Box<[u8]>>> = if !source_only {

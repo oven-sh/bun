@@ -1912,10 +1912,7 @@ JSC::EncodedJSValue INVALID_MIME_SYNTAX(JSC::ThrowScope& scope, JSC::JSGlobalObj
 
 JSC::EncodedJSValue INVALID_THIS(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral expectedType)
 {
-    MessageBuilder builder;
-    builder.append("Value of \"this\" must be of type "_s);
-    builder.append(expectedType);
-    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_THIS, builder));
+    scope.throwException(globalObject, createInvalidThisErrorForType(globalObject, expectedType));
     scope.release();
     return {};
 }
@@ -2076,6 +2073,11 @@ extern "C" JSC::EncodedJSValue WebCore__CommonAbortReason__toJS(JSC::JSGlobalObj
 JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, const String& message)
 {
     return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, message);
+}
+
+JSC::JSObject* Bun::createInvalidThisErrorForType(JSC::JSGlobalObject* globalObject, ASCIILiteral expectedType)
+{
+    return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, makeString("Value of \"this\" must be of type "_s, expectedType));
 }
 
 JSC::EncodedJSValue Bun::throwInvalidThisCallError(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, const ASCIILiteral typeName)

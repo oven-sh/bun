@@ -554,11 +554,11 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableByteStreamControllerPrototypeFunction_enqueue
     auto* thisObject = dynamicDowncast<JSReadableByteStreamController>(callFrame->thisValue());
     if (!thisObject) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, globalObject, "ReadableByteStreamController"_s);
-    if (callFrame->argumentCount() < 1) [[unlikely]]
-        return throwVMError(globalObject, scope, createNotEnoughArgumentsError(globalObject));
-    auto* chunk = dynamicDowncast<JSArrayBufferView>(callFrame->uncheckedArgument(0));
+    JSArrayBufferView* chunk = nullptr;
+    if (callFrame->argumentCount() >= 1) [[likely]]
+        chunk = dynamicDowncast<JSArrayBufferView>(callFrame->uncheckedArgument(0));
     if (!chunk) [[unlikely]]
-        return Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, "buffer"_s, "Buffer, TypedArray, or DataView"_s, callFrame->uncheckedArgument(0));
+        return Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, "buffer"_s, "Buffer, TypedArray, or DataView"_s, callFrame->argument(0));
     JSC::ArrayBuffer* viewedBuffer = chunk->possiblySharedBuffer();
     if (viewedBuffer && viewedBuffer->isShared()) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "ReadableByteStreamController.enqueue does not accept a view over a SharedArrayBuffer"_s);

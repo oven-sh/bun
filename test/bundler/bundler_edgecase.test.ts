@@ -1843,7 +1843,8 @@ describe("bundler", () => {
     },
   });
   // More rows of the same rule. Each case builds with files that say "INLINED" and runs the
-  // output beside files that say "LOADED". An import that the output still has prints "LOADED".
+  // output beside files that say "LOADED". An import that the output still has prints "LOADED",
+  // and the output has it as written.
   const namedAliasFiles = {
     "/tsconfig.json": `{ "compilerOptions": { "paths": { "@/*": ["./src/*"], "util/*": ["./src/util/*"] } } }`,
     "/src/a.ts": `export const a = "INLINED";`,
@@ -1881,6 +1882,9 @@ describe("bundler", () => {
       external,
       target: "bun",
       ...options,
+      onAfterBundle(api) {
+        if (stdout === "LOADED") expect(api.readFile("/out.js")).toContain(`from "${specifier}"`);
+      },
       run: { stdout },
     });
   }
@@ -1900,6 +1904,9 @@ describe("bundler", () => {
     packages: "external",
     external: ["@/folder"],
     target: "bun",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain(`from "@/folder"`);
+    },
     run: { stdout: "LOADED" },
   });
   // The named file is not read either, so an error in it is not an error of the build.
@@ -1913,6 +1920,9 @@ describe("bundler", () => {
     packages: "external",
     external: ["@/a"],
     target: "bun",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain(`from "@/a"`);
+    },
     run: { stdout: "LOADED" },
   });
   itBundled("edgecase/ExternalNameBeatsTSConfigPaths/CSSImport", {

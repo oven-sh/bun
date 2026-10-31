@@ -334,8 +334,16 @@ const testPlatforms: Platform[] = [
       "aot/the-build-under-test",
     ],
   },
-  // Built with --lock-environment=off, so tests steer it as they steer any other: it runs them all.
-  { os: "linux", arch: "aarch64", profile: "hardened", distro: "debian", release: "13", tier: "latest" },
+  // It ran every test at 16de85f52. These are the ones that crash on purpose, and the one that crashed and printed its report.
+  {
+    os: "linux",
+    arch: "aarch64",
+    profile: "hardened",
+    distro: "debian",
+    release: "13",
+    tier: "latest",
+    tests: ["cli/run/run-crash-handler", "cli/format/conformance", "compile-trim-crash-report"],
+  },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "x64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },

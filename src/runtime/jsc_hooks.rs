@@ -4035,14 +4035,10 @@ struct LoaderResult<'a> {
     package_json: Option<&'a bun_resolver::package_json::PackageJSON>,
 }
 
-/// Whether a file that has a `require.extensions` entry loads without it.
-///
-/// - `--loader` or bunfig `[loader]` names a loader for the extension, and Bun has none for that
-///   extension by default. The configuration wins.
-/// - A standalone executable holds the file. The executable answers for it, with or without a
-///   `?query` on the key.
+/// Whether a file with a `require.extensions` entry loads without it: configured loader, or embedded file.
 fn loads_without_handler(vm: &VirtualMachine, lr: &LoaderResult<'_>) -> bool {
     if lr.loader.is_some() {
+        // A handler on an extension with a default loader wins: `--loader .js:jsx` keeps a `.js` hook.
         let ext = lr.path.name().ext;
         if options::DEFAULT_LOADERS.get(ext).is_none()
             && vm.transpiler.options.loaders.get(ext).is_some()

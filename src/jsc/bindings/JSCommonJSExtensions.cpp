@@ -241,8 +241,7 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
     JSC::JSValue filenameValue = callFrame->argument(1);
     WTF::String specifierWtfString = filenameValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    // A handler that `require()` calls for a key with a `?query` gets the file name. Given that name back, load the
-    // key: the query is part of the module, and of the ES module that the file can be.
+    // `require()` gave a handler the file name of a key with a `?query`. Given that name back, load the key.
     JSC::JSValue specifier = filenameValue;
     if (auto* call = currentExtensionHandlerCall; call && call->filename == specifierWtfString) [[unlikely]] {
         specifier = call->keyValue;

@@ -215,11 +215,7 @@ fn on_require_extension_modify_non_function(
     Ok(())
 }
 
-/// The `require.extensions` entry that loads the module `key` for a `require()`, and the file name
-/// that selects it. A handler gets that file name.
-///
-/// The file name is the path of the key: a `?query` belongs to the key. A `data:` URL has no file
-/// name and selects no entry.
+/// The `require.extensions` entry for the module `key`, and the key without its `?query`.
 pub fn registered_extension_for_require<'a, 'k>(
     vm: &'a VirtualMachine,
     key: &'k [u8],

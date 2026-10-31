@@ -666,11 +666,7 @@ void evaluateCommonJSCustomExtension(
         throwTypeError(globalObject, scope, makeString("require.extension is not a function"_s));
         return;
     }
-    // Node calls a handler with `module.filename`, which is a path:
-    // https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/lib/internal/modules/cjs/loader.js#L1596
-    // A key can end in a `?query` here. Node has no such module: the URL of a `registerHooks` resolve hook loses its
-    // query before the handler runs (loader.js#L1171). A handler reads the file by this name, so it gets the key without
-    // the query, as `process.dlopen` gets it for a `.node` id. `module.filename` keeps the key.
+    // A handler gets a path, as in Node: https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/lib/internal/modules/cjs/loader.js#L1596
     ExtensionHandlerCall call { keyValue, key, filename };
     SetForScope handlerCall(currentExtensionHandlerCall, &call);
     MarkedArgumentBuffer arguments;

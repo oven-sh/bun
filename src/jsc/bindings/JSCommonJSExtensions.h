@@ -5,8 +5,7 @@
 
 namespace Bun {
 
-// The `Module._extensions` handler call that `require()` is making on this thread, for the module `key`.
-// `filename` is what the handler got when the key has a `?query`: the key without it. It is null otherwise.
+// The `Module._extensions` handler that `require()` is calling on this thread. `filename` is null unless `key` has a `?query`.
 struct ExtensionHandlerCall {
     JSC::JSValue keyValue;
     const WTF::String& key;

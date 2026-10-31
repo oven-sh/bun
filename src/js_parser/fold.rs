@@ -112,6 +112,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// The `import.meta.hot` methods other than `accept`, which has its own lowering.
+    fn is_import_meta_hot_method(name: &[u8]) -> bool {
+        matches!(
+            name,
+            b"decline" | b"dispose" | b"prune" | b"invalidate" | b"on" | b"off" | b"send"
+        )
+    }
+
+    /// A property of `import.meta.hot` that `maybe_rewrite_property_access` lowers.
+    pub(crate) fn is_import_meta_hot_property(name: &[u8]) -> bool {
+        name == b"data" || name == b"accept" || Self::is_import_meta_hot_method(name)
+    }
+
     // EDot nodes represent a property access. This function may return an
     // expression to replace the property access with. It assumes that the
     // target of the EDot expression has already been visited.
@@ -773,18 +786,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 loc,
                             });
                         }
-                        // Membership check over 7 fixed keys.
-                        let in_lookup_table = matches!(
-                            name,
-                            b"decline"
-                                | b"dispose"
-                                | b"prune"
-                                | b"invalidate"
-                                | b"on"
-                                | b"off"
-                                | b"send"
-                        );
-                        if in_lookup_table {
+                        if Self::is_import_meta_hot_method(name) {
                             if enabled {
                                 return Some(Expr::init(
                                     E::Dot {

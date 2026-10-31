@@ -453,6 +453,135 @@ devTest("browser field is used", {
   },
 });
 
+// "fs" is switched off for the browser. test/bake/dev-and-prod.test.ts compares the values
+// with a production bundle. These tests cover what only the dev server does.
+devTest("an import of a disabled module keeps its value across a hot update", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import fs from "fs";
+      import * as star from "fs";
+      console.log("first: " + typeof fs + " " + typeof star);
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("first: undefined function");
+    await dev.patch("index.ts", { find: "first", replace: "second" });
+    await c.expectMessage("second: undefined function");
+  },
+});
+
+devTest("an import of a disabled module in every module form", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import * as imported from "fs";
+      import { required } from "cjs";
+      import mixed from "./mixed.js";
+      import { own } from "./star.js";
+      import unread from "./unread.js";
+
+      console.log({
+        imported: typeof imported,
+        required,
+        mixed,
+        own,
+        unread,
+      });
+    `,
+    // A CommonJS module takes the same value from require().
+    "node_modules/cjs/package.json": JSON.stringify({
+      name: "cjs",
+      version: "1.0.0",
+      main: "index.js",
+    }),
+    "node_modules/cjs/index.js": `
+      exports.required = typeof require("fs");
+    `,
+    // An import statement beside module.exports: the dev server prints this file as CommonJS.
+    "mixed.js": `
+      import fs, { readFileSync } from "fs";
+      module.exports = { defaultImport: typeof fs, namedImport: typeof readFileSync };
+    `,
+    // Not in the dev+production test: a production bundle of this file throws until #41220.
+    "star.js": `
+      export * from "fs";
+      export const own = "own";
+    `,
+    // Nothing reads these imports. The second one binds no name and the third one is a stylesheet.
+    "unread.js": `
+      import fs from "fs";
+      import "node:fs";
+      import styles from "./styles.css";
+      export default "loaded";
+    `,
+    "styles.css": `
+      body {
+        background-color: red;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage({
+      imported: "function",
+      required: "function",
+      mixed: { defaultImport: "undefined", namedImport: "undefined" },
+      own: "own",
+      unread: "loaded",
+    });
+    await c.style("body").backgroundColor.expect.toBe("red");
+  },
+});
+
+// A stylesheet is not a disabled module, so its binding must not get the value of one.
+// The dev server marks a stylesheet import in three places: one for each state below.
+devTest("a stylesheet import does not get the value of a disabled module", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import * as sheet from "./sheet.css";
+      console.log({ state: "failed", valueOfDisabledModule: typeof sheet === "function" });
+      import.meta.hot.accept();
+    `,
+    "sheet.css": `
+      body {
+        color: red;
+      }}
+    `,
+  },
+  async test(dev) {
+    // The stylesheet fails to build in the bundle that has its importer.
+    await using c = await dev.client("/", {
+      errors: ["sheet.css:3:3: error: Unexpected end of input"],
+    });
+    await c.expectReload(async () => {
+      await dev.write("sheet.css", `body { color: red; }`);
+    });
+    await c.expectMessage({ state: "failed", valueOfDisabledModule: false });
+
+    // Only the importer is bundled again: the dev server has the stylesheet.
+    await dev.patch("index.ts", { find: "failed", replace: "cached" });
+    await c.expectMessage({ state: "cached", valueOfDisabledModule: false });
+
+    // The importer and the stylesheet are bundled together.
+    {
+      await using batch = await dev.batchChanges();
+      await dev.patch("index.ts", { find: "cached", replace: "fresh" });
+      await dev.write("sheet.css", `body { color: blue; }`);
+    }
+    await c.expectMessage({ state: "fresh", valueOfDisabledModule: false });
+  },
+});
+
 devTest("browser console forwarding strips terminal control bytes", {
   files: {
     "index.html": emptyHtmlFile({

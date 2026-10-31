@@ -8,7 +8,7 @@ use bun_core::strings;
 use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{
-    ExprIn, FnOrArrowDataVisit, IdentifierOpts, PrependTempRefsOpts, ReactRefresh, Ref,
+    ExprIn, ExprParent, FnOrArrowDataVisit, IdentifierOpts, PrependTempRefsOpts, ReactRefresh, Ref,
     StrictModeFeature, ThenCatchChain, TransposeState, VisitArgsOpts, float_to_int32, prefill,
 };
 use crate::scan::scan_side_effects::SideEffects;
@@ -69,7 +69,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Tag::EIdentifier => Self::e_identifier(self, e, in_),
             Tag::EJsxElement => Self::e_jsx_element(self, e, in_),
             Tag::ETemplate => Self::e_template(self, e, in_),
-            Tag::EBinary => Self::e_binary(self, e),
+            Tag::EBinary => Self::e_binary(self, e, in_),
             Tag::EIndex => Self::e_index(self, e, in_),
             Tag::EUnary => Self::e_unary(self, e, in_),
             Tag::EDot => Self::e_dot(self, e, in_),
@@ -676,7 +676,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut e_ = expr.data.e_template().expect("infallible: variant checked");
         if let Some(tag) = e_.tag.as_mut() {
             p.template_tag = tag.data;
-            p.visit_expr(tag);
+            let was_wrapper = cfg!(debug_assertions) && Self::is_wrapper_around_operand(&tag.data);
+            p.visit_expr_in_out(
+                tag,
+                ExprIn {
+                    parent: ExprParent::CallOrTemplate,
+                    ..Default::default()
+                },
+            );
+            debug_assert!(
+                !(was_wrapper && p.has_value_for_this_in_call(tag)),
+                "a fold left a bare property access as the tag of a template"
+            );
         }
 
         // Visit the interpolation values before the macro dispatch below: its
@@ -790,7 +801,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
     }
-    fn e_binary(p: &mut Self, e: &mut Expr) {
+    fn e_binary(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         use crate::visit::visit_binary::BinaryExpressionVisitor;
         let e_ = expr.data.e_binary().expect("infallible: variant checked");
@@ -805,7 +816,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut v: BinaryExpressionVisitor = BinaryExpressionVisitor {
             e: e_,
             loc: expr.loc,
-            left_in: ExprIn::default(),
+            left_assign_target: js_ast::AssignTarget::None,
+            is_callee_or_tag: in_.is_callee_or_tag(),
         };
 
         // Everything uses a single stack to reduce allocation overhead. This stack
@@ -831,7 +843,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // cases we're trying to avoid crashing on have lots of left-associative
             // binary operators chained together without parentheses (e.g. "1+2+...").
             let left = v.e.left;
-            let left_in = v.left_in;
+            let left_assign_target = v.left_assign_target;
 
             let left_binary: Option<js_ast::StoreRef<E::Binary>> = left.data.e_binary();
 
@@ -839,8 +851,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // the assignment target because "visitExprInOut" has additional behavior
             // in that case that we don't want to miss (before the top-level "switch"
             // statement).
-            if left_binary.is_none() || left_in.assign_target != js_ast::AssignTarget::None {
-                p.visit_expr_in_out(&mut v.e.left, left_in);
+            if left_binary.is_none() || left_assign_target != js_ast::AssignTarget::None {
+                p.visit_expr_in_out(
+                    &mut v.e.left,
+                    ExprIn {
+                        assign_target: left_assign_target,
+                        ..Default::default()
+                    },
+                );
                 current = BinaryExpressionVisitor::visit_right_and_finish(&mut v, p);
                 break;
             }
@@ -852,7 +870,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             v = BinaryExpressionVisitor {
                 e: left_binary.unwrap(),
                 loc: left.loc,
-                left_in: ExprIn::default(),
+                left_assign_target: js_ast::AssignTarget::None,
+                is_callee_or_tag: false,
             };
         }
 
@@ -1063,8 +1082,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let target = e_.target.unwrap_inlined();
         let index = e_.index.unwrap_inlined();
 
-        // `[x][0] = v` writes into the temporary, not `x`.
-        if p.options.features.minify_syntax && in_.assign_target == js_ast::AssignTarget::None {
+        // `[x][0] = v` and `delete [x][0]` use the temporary, not `x`.
+        if p.options.features.minify_syntax
+            && in_.assign_target == js_ast::AssignTarget::None
+            && !is_delete_target
+        {
             if let Some(number) = index.data.as_e_number() {
                 if number.value() >= 0.0
                     && number.value() < (usize::MAX as f64)
@@ -1091,7 +1113,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 return;
                             }
                         }
-                    } else if let Some(array) = target.data.as_e_array() {
+                    } else if !in_.is_callee_or_tag()
+                        && let Some(array) = target.data.as_e_array()
+                    {
+                        // A call or a tagged template on `[x][0]` passes the array as `this`.
                         let int: usize = number.value() as usize;
                         // [x][0] -> x
                         // ['a', 'b', 'c'][1] -> 'b'
@@ -1111,13 +1136,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 return;
                             }
                             if inlined.can_be_inlined_from_property_access() {
-                                // "[obj.m][0]()" => "(0, obj.m)()"
-                                *e = if is_call_target && inlined.has_value_for_this_in_call() {
-                                    p.new_expr(E::Number::new(0.0), expr.loc)
-                                        .join_with_comma(inlined)
-                                } else {
-                                    inlined
-                                };
+                                *e = inlined;
                                 return;
                             }
                         }
@@ -1503,10 +1522,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    fn e_if(p: &mut Self, e: &mut Expr, _: ExprIn) {
+    fn e_if(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let mut e_ = e.data.e_if().expect("infallible: variant checked");
-        let is_call_target =
-            matches!(p.call_target, Data::EIf(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
 
         let prev_in_branch = p.in_branch_condition;
         p.in_branch_condition = true;
@@ -1531,24 +1548,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.visit_expr(&mut e_.no);
             p.is_control_flow_dead = old;
 
-            if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                *e = SideEffects::simplify_unused_expr(p, e_.test)
-                    .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
-                    .join_with_comma(e_.yes);
-                return;
-            }
-
             // "(1 ? fn : 2)()" => "fn()"
             // "(1 ? this.fn : 2)" => "this.fn"
             // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-            if is_call_target && e_.yes.has_value_for_this_in_call() {
-                *e = p
-                    .new_expr(E::Number::new(0.0), e_.test.loc)
-                    .join_with_comma(e_.yes);
-                return;
-            }
-
-            *e = e_.yes;
+            *e = Self::live_branch(p, e_.test, e_.yes, side_effects.side_effects, in_);
         } else {
             // "false ? dead : live"
             let old = p.is_control_flow_dead;
@@ -1558,23 +1561,76 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.visit_expr(&mut e_.no);
 
             // "(a, false) ? b : c" => "a, c"
-            if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                *e = SideEffects::simplify_unused_expr(p, e_.test)
-                    .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
-                    .join_with_comma(e_.no);
-                return;
-            }
-
             // "(1 ? fn : 2)()" => "fn()"
             // "(1 ? this.fn : 2)" => "this.fn"
             // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-            if is_call_target && e_.no.has_value_for_this_in_call() {
-                *e = p
-                    .new_expr(E::Number::new(0.0), e_.test.loc)
-                    .join_with_comma(e_.no);
-                return;
+            *e = Self::live_branch(p, e_.test, e_.no, side_effects.side_effects, in_);
+        }
+    }
+
+    /// The branch that is left of a `?:` whose test has a known value.
+    fn live_branch(
+        p: &mut Self,
+        test: Expr,
+        live: Expr,
+        test_side_effects: SideEffects,
+        in_: ExprIn,
+    ) -> Expr {
+        if test_side_effects == SideEffects::CouldHaveSideEffects {
+            if let Some(test) =
+                SideEffects::simplify_unused_expr(p, test).filter(|test| !test.is_empty())
+            {
+                return test.join_with_comma(live);
             }
-            *e = e_.no;
+        }
+        p.unwrapped_by_fold(live, in_.is_callee_or_tag(), test.loc)
+    }
+
+    /// `(0, x)` where a bare property access `x` would pass `this`. In esbuild's printer since 0.16.5.
+    pub(crate) fn unwrapped_by_fold(
+        &mut self,
+        operand: Expr,
+        is_callee_or_tag: bool,
+        zero_loc: bun_ast::Loc,
+    ) -> Expr {
+        if is_callee_or_tag && self.has_value_for_this_in_call(&operand) {
+            return self
+                .new_expr(E::Number::new(0.0), zero_loc)
+                .join_with_comma(operand);
+        }
+        operand
+    }
+
+    /// Does `expr()` pass a `this`? A property access does, but a call of a macro member passes none.
+    #[inline(never)] // PERF(port:frame): inlined, this adds 16 bytes to the `visit_expr_in_out` frame.
+    pub(crate) fn has_value_for_this_in_call(&self, expr: &Expr) -> bool {
+        match &expr.data {
+            // `m.fn` for a macro import `* as m`: `e_call` and `e_template` replace that call by the macro result.
+            Data::EDot(dot) => {
+                !(Self::ALLOW_MACROS
+                    && !self.macro_.refs.is_empty()
+                    && !self.options.features.is_macro_runtime
+                    && matches!(&dot.target.data, Data::EIdentifier(id) if self.macro_.refs.contains_key(&id.ref_)))
+            }
+            Data::EIndex(_) => true,
+            _ => false,
+        }
+    }
+
+    /// A node that a fold can replace by its operand `x`: `(0, x)`, `a && x`, `a ?? x`, `a ? x : y`.
+    fn is_wrapper_around_operand(data: &Data) -> bool {
+        match data {
+            Data::EIf(_) => true,
+            Data::EBinary(binary) => matches!(
+                binary.op,
+                Op::BinComma
+                    | Op::BinLogicalAnd
+                    | Op::BinLogicalOr
+                    | Op::BinNullishCoalescing
+                    | Op::BinNullishCoalescingAssign
+                    | Op::BinLogicalOrAssign
+            ),
+            _ => false,
         }
     }
 
@@ -1908,12 +1964,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
 
         let target_was_identifier_before_visit = matches!(e_.target.data, Data::EIdentifier(..));
+        let target_was_wrapper =
+            cfg!(debug_assertions) && Self::is_wrapper_around_operand(&e_.target.data);
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
                 property_access_for_method_call_maybe_should_replace_with_undefined: true,
+                parent: ExprParent::CallOrTemplate,
                 ..Default::default()
             },
+        );
+        debug_assert!(
+            !(target_was_wrapper && p.has_value_for_this_in_call(&e_.target)),
+            "a fold left a bare property access as the target of a call"
         );
 
         // Copy the call side effect flag over if this is a known target
@@ -2193,7 +2256,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if e_.args.len_u32() == 1 {
                 let first = e_.args.slice()[0];
                 let state = TransposeState {
-                    is_require_immediately_assigned_to_decl: in_.is_immediately_assigned_to_decl
+                    is_require_immediately_assigned_to_decl: in_.parent == ExprParent::Declaration
                         && matches!(first.data, Data::EString(..)),
                     loc: expr.loc,
                     ..Default::default()

@@ -130,6 +130,76 @@ test("namespace import", () => {
   expect(macros.escape()).toBe("\\\f\n\r\t\v\0'\"`$\x00\x0B\x0C");
 });
 
+// A macro call passes no `this`, so a fold leaves `m.fn` as the callee without `(0, m.fn)`.
+test.concurrent("a fold that leaves a member of a namespace import as the callee runs the macro", async () => {
+  const header = `import * as m from "./macro.ts" with { type: "macro" };\nconst g = () => 1;\n`;
+  const folded = [
+    "(true && m.fn)",
+    "(false || m.fn)",
+    "(null ?? m.fn)",
+    "(true ? m.fn : 0)",
+    "(false ? 0 : m.fn)",
+    "([] ? m.fn : 0)",
+    "(typeof g ? m.fn : 0)",
+    "(({}).p ??= m.fn)",
+    "(({}).p ||= m.fn)",
+    "((() => g()) && m.fn)",
+  ];
+  // Only --minify-syntax folds the comma and reads `m["fn"]` as `m.fn`.
+  const foldedWhenMinified = ["(0, m.fn)", "(/* @__PURE__ */ g(), m.fn)", '(true && m["fn"])'];
+  // A parameter with the name of the import, and a member of a local, are not macros.
+  const notMacros = ["((m) => (true && m.fn)())(g)", "(true && g.call)()"];
+  const notMacrosPrinted = "((m) => (0, m.fn)())(g), (0, g.call)()";
+  const call = (callees: string[]) => callees.map(callee => callee + "()");
+  using dir = tempDir("macro-behind-fold", {
+    "macro.ts": `export function fn() {\n  return "ran";\n}\n`,
+    "folded.mjs": header + `console.log(${[...call(folded), ...notMacros].join(", ")});\n`,
+    "comma.mjs": header + `console.log(${call(foldedWhenMinified).join(", ")});\n`,
+    "tag.mjs": header + "console.log((true && m.fn)`x`);\n",
+    "substituted-tag.mjs": header + "export function h() {\n  const t = m.fn;\n  return t`x` + 1;\n}\n",
+    "substituted-call.mjs": header + "export function h() {\n  const t = m.fn;\n  return t() + 1;\n}\n",
+    "in-macro-runtime.mjs": header + "console.log((true && m.fn)());\n",
+  });
+  const build = async (...args: string[]) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Debug builds print "[macro] call fn" to stdout first, so only the last line is compared.
+    return { stdout, lastLine: stdout.trim().split("\n").at(-1), stderr, exitCode };
+  };
+  const [plain, plainMinified, minified, tag, substitutedTag, substitutedCall, inMacroRuntime] = await Promise.all([
+    build("folded.mjs"),
+    build("--minify-syntax", "folded.mjs"),
+    build("--minify-syntax", "comma.mjs"),
+    build("tag.mjs"),
+    build("--minify-syntax", "substituted-tag.mjs"),
+    build("--minify-syntax", "substituted-call.mjs"),
+    build("--target=macro", "in-macro-runtime.mjs"),
+  ]);
+
+  const ran = (count: number) => Array(count).fill('"ran"').join(", ");
+  const foldedPrinted = `console.log(${ran(folded.length)}, ${notMacrosPrinted});`;
+  expect(plain).toMatchObject({ lastLine: foldedPrinted, exitCode: 0 });
+  expect(plainMinified).toMatchObject({ lastLine: foldedPrinted, exitCode: 0 });
+  expect(minified).toMatchObject({ lastLine: `console.log(${ran(foldedWhenMinified.length)});`, exitCode: 0 });
+  // A macro is not a tag, and the build says so instead of leaving `m` for run time.
+  const notATag = {
+    stderr: expect.stringContaining("template literal macro invocations are not supported"),
+    exitCode: 1,
+  };
+  expect(tag).toMatchObject(notATag);
+  expect(substitutedTag).toMatchObject(notATag);
+  // The single-use `t` is replaced by `m.fn`, and the `+` is visited again with that callee.
+  expect(substitutedCall).toMatchObject({ stdout: expect.stringContaining('return "ran" + 1;'), exitCode: 0 });
+  // Code that runs inside a macro gets no macro call, so the call keeps its comma.
+  expect(inMacroRuntime).toMatchObject({ lastLine: "console.log((0, m.fn)());", exitCode: 0 });
+});
+
 // test("template string ascii", () => {
 //   expect(identity(`A${""}`)).toBe("A");
 // });

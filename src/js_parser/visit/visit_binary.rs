@@ -3,7 +3,7 @@ use bun_collections::VecExt;
 use core::cmp::Ordering;
 
 use crate::p::P;
-use crate::parser::{ExprIn, float_to_int32, prefill};
+use crate::parser::{float_to_int32, prefill};
 use crate::scan::scan_side_effects::SideEffects;
 use bun_ast::fold_string_addition::{FoldStringAdditionKind, fold_string_addition};
 use bun_ast::{
@@ -101,26 +101,26 @@ pub struct BinaryExpressionVisitor {
     pub(crate) e: StoreRef<E::Binary>,
     pub(crate) loc: bun_ast::Loc,
 
-    /// Input for visiting the left child
-    pub(crate) left_in: ExprIn,
+    /// Assign target for visiting the left child
+    pub(crate) left_assign_target: js_ast::AssignTarget,
+
+    /// This node is the target of a call or the tag of a template
+    pub(crate) is_callee_or_tag: bool,
 }
+
+// `P::binary_expression_stack` holds one of these per nested left operand.
+const _: () = assert!(core::mem::size_of::<BinaryExpressionVisitor>() == 16);
 
 impl BinaryExpressionVisitor {
     pub(crate) fn visit_right_and_finish<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
         v: &mut Self,
         p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
     ) -> Expr {
-        // `v.e: StoreRef<E::Binary>` is the safe arena back-reference (Copy).
-        // Snapshot the handle for the identity check / tail re-wrap, then take
-        // the working `&mut` via `StoreRef::DerefMut` — the arena-backref
-        // invariant is encapsulated there. The borrow is on the `v.e` field
-        // only, so `v.loc` reads below split-borrow cleanly.
+        // `e_handle` is for the tail re-wrap. `e_` borrows `v.e` alone, so `v.loc` stays readable.
         let e_handle: StoreRef<E::Binary> = v.e;
-        let e_ptr: *mut E::Binary = e_handle.as_ptr();
+        let is_callee_or_tag = v.is_callee_or_tag;
         let e_ = &mut *v.e;
 
-        let is_call_target =
-            matches!(p.call_target, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), e_ptr));
         let was_anonymous_named_expr = e_.right.is_anonymous_named();
         let prev_decorator_class_name = p.decorator_class_name;
 
@@ -219,6 +219,7 @@ impl BinaryExpressionVisitor {
                 // "(sideEffects(), 2)" => "(sideEffects(), 2)"
                 // "(0, this.fn)" => "this.fn"
                 // "(0, this.fn)()" => "(0, this.fn)()"
+                // "(0, this.fn)`x`" => "(0, this.fn)`x`"
                 if p.options.features.minify_syntax {
                     // If e_.left is itself a comma, its .left was already simplified
                     // by the previous unwind step; only simplify its .right to avoid
@@ -235,23 +236,16 @@ impl BinaryExpressionVisitor {
                         }
                         _ => SideEffects::simplify_unused_expr(p, e_.left),
                     };
-                    if let Some(simplified_left) = simplified_left {
-                        if simplified_left.is_empty() {
-                            return e_.right;
-                        }
-                        e_.left = simplified_left;
-                    } else {
-                        // The left operand has no side effects, but we need to preserve
-                        // the comma operator semantics when used as a call target
-                        if is_call_target && e_.right.has_value_for_this_in_call() {
-                            // Keep the comma expression to strip "this" binding
+                    match simplified_left.filter(|left| !left.is_empty()) {
+                        Some(simplified_left) => e_.left = simplified_left,
+                        // A callee or a tag keeps the comma in place, so that "this" stays unbound.
+                        None if is_callee_or_tag && p.has_value_for_this_in_call(&e_.right) => {
                             e_.left = Expr {
                                 data: prefill::data::ZERO,
                                 loc: e_.left.loc,
                             };
-                        } else {
-                            return e_.right;
                         }
+                        None => return e_.right,
                     }
                 }
             }
@@ -363,17 +357,7 @@ impl BinaryExpressionVisitor {
                         // "(null ?? fn)()" => "fn()"
                         // "(null ?? this.fn)" => "this.fn"
                         // "(null ?? this.fn)()" => "(0, this.fn)()"
-                        if is_call_target && e_.right.has_value_for_this_in_call() {
-                            return Expr::join_with_comma(
-                                Expr {
-                                    data: ExprData::ENumber(E::Number::new(0.0)),
-                                    loc: e_.left.loc,
-                                },
-                                e_.right,
-                            );
-                        }
-
-                        return e_.right;
+                        return p.unwrapped_by_fold(e_.right, is_callee_or_tag, e_.left.loc);
                     }
                 }
             }
@@ -385,17 +369,7 @@ impl BinaryExpressionVisitor {
                         // "(0 || fn)()" => "fn()"
                         // "(0 || this.fn)" => "this.fn"
                         // "(0 || this.fn)()" => "(0, this.fn)()"
-                        if is_call_target && e_.right.has_value_for_this_in_call() {
-                            return Expr::join_with_comma(
-                                Expr {
-                                    data: prefill::data::ZERO,
-                                    loc: e_.left.loc,
-                                },
-                                e_.right,
-                            );
-                        }
-
-                        return e_.right;
+                        return p.unwrapped_by_fold(e_.right, is_callee_or_tag, e_.left.loc);
                     }
                 }
             }
@@ -407,17 +381,7 @@ impl BinaryExpressionVisitor {
                         // "(1 && fn)()" => "fn()"
                         // "(1 && this.fn)" => "this.fn"
                         // "(1 && this.fn)()" => "(0, this.fn)()"
-                        if is_call_target && e_.right.has_value_for_this_in_call() {
-                            return Expr::join_with_comma(
-                                Expr {
-                                    data: prefill::data::ZERO,
-                                    loc: e_.left.loc,
-                                },
-                                e_.right,
-                            );
-                        }
-
-                        return e_.right;
+                        return p.unwrapped_by_fold(e_.right, is_callee_or_tag, e_.left.loc);
                     }
                 }
             }
@@ -704,7 +668,12 @@ impl BinaryExpressionVisitor {
                     if let Some(obj) = dot.target.data.e_object() {
                         if obj.properties.len_u32() == 0 {
                             if dot.name != b"__proto__" {
-                                return e_.right;
+                                // "(({}).x ??= this.fn)()" => "(0, this.fn)()"
+                                return p.unwrapped_by_fold(
+                                    e_.right,
+                                    is_callee_or_tag,
+                                    e_.left.loc,
+                                );
                             }
                         }
                     }
@@ -770,10 +739,7 @@ impl BinaryExpressionVisitor {
             _ => {}
         }
 
-        v.left_in = ExprIn {
-            assign_target: Op::Code::binary_assign_target(e_.op),
-            ..ExprIn::default()
-        };
+        v.left_assign_target = Op::Code::binary_assign_target(e_.op);
 
         None
     }

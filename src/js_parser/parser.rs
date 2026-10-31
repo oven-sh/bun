@@ -1051,14 +1051,33 @@ pub struct ExprIn {
     /// tests.
     pub(crate) assign_target: js_ast::AssignTarget,
 
-    /// Currently this is only used when unwrapping a call to `require()`
-    /// with `__toESM()`.
-    pub(crate) is_immediately_assigned_to_decl: bool,
+    pub(crate) parent: ExprParent,
 
     pub(crate) property_access_for_method_call_maybe_should_replace_with_undefined: bool,
 
     /// The parent only reads, calls or assigns a property of this: `x.a`, `x[a]`, `const { a } = x`, not `delete x.a`.
     pub(crate) is_property_access_target: bool,
+}
+
+// Every visitor takes this by value.
+const _: () = assert!(core::mem::size_of::<ExprIn>() == 4);
+
+impl ExprIn {
+    #[inline]
+    pub(crate) fn is_callee_or_tag(self) -> bool {
+        self.parent == ExprParent::CallOrTemplate
+    }
+}
+
+/// What the parent of an expression does with its value.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum ExprParent {
+    #[default]
+    Other,
+    /// `const x = <this>`, read when a call to `require()` is unwrapped with `__toESM()`.
+    Declaration,
+    /// `<this>()` or a template with the tag `<this>`. A property access passes its object as `this`.
+    CallOrTemplate,
 }
 
 /// This function exists to tie all of these checks together in one place

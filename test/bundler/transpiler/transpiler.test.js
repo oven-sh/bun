@@ -192,15 +192,27 @@ describe("Bun.Transpiler", () => {
       ts.expectPrintedMin_("x = ({f: y}).f", "x = y");
       ts.expectPrintedMin_("x = new ({f: C}).f()", "x = new C");
     });
-    it("bails out or strips `this` when the index is a call/assignment target", () => {
+    it("bails out when the index is a call, assignment or delete target", () => {
       // `[obj.m][0]()` calls through a Reference into the temporary array,
-      // so `this` is the array; inlining to `obj.m()` would bind `this` to
-      // `obj`. Match the sibling folds and emit `(0, obj.m)()`.
-      ts.expectPrintedMin_("x = [obj.m][0]()", "x = (0, obj.m)()");
-      ts.expectPrintedMin_("x = [obj[m]][0]()", "x = (0, obj[m])()");
+      // so `this` is the array. `obj.m()` passes `obj`, and `(0, obj.m)()`
+      // and `y()` pass nothing.
+      ts.expectPrintedMin_("x = [obj.m][0]()", "x = [obj.m][0]()");
+      ts.expectPrintedMin_("x = [obj[m]][0]()", "x = [obj[m]][0]()");
       ts.expectPrintedMin_("x = [obj.m][0]", "x = obj.m");
-      ts.expectPrintedMin_("x = [y][0]()", "x = y()");
-      ts.expectPrintedMin_("x = [() => y][0]()", "x = (() => y)()");
+      ts.expectPrintedMin_("x = [y][0]()", "x = [y][0]()");
+      ts.expectPrintedMin_("x = [() => y][0]()", "x = [() => y][0]()");
+      ts.expectPrintedMin_("x = [a, b][1]()", "x = [a, b][1]()");
+      ts.expectPrintedMin_("x = [obj.m][0]?.()", "x = [obj.m][0]?.()");
+      ts.expectPrintedMin_("x = [obj.m]?.[0]()", "x = [obj.m][0]()");
+      // `new` passes no `this`.
+      ts.expectPrintedMin_("x = new [C][0]()", "x = new C");
+
+      // A tagged template passes `this` like a call.
+      ts.expectPrintedMin_("x = [obj.m][0]`t`", "x = [obj.m][0]`t`");
+      ts.expectPrintedMin_("x = [y][0]`t`", "x = [y][0]`t`");
+      ts.expectPrintedMin_("x = ({ f: g }).f()", "x = { f: g }.f()");
+      ts.expectPrintedMin_("x = ({ f: g }).f`t`", "x = { f: g }.f`t`");
+      ts.expectPrintedMin_('x = ({ f: g })["f"]`t`', "x = { f: g }.f`t`");
 
       // `[x][0] = v` writes into the temporary, not `x`. Same for `"s"[n]`.
       ts.expectPrintedMin_("[obj.p][0] = 5", "[obj.p][0] = 5");
@@ -211,6 +223,12 @@ describe("Bun.Transpiler", () => {
       ts.expectPrintedMin_('"foo"[2] = 1', '"foo"[2] = 1');
       ts.expectPrintedMin_('["a", "b"][1] = 1', '["a", "b"][1] = 1');
       ts.expectPrintedMin_("({ a: [obj.p][0] } = {})", "({ a: [obj.p][0] } = {})");
+
+      // `delete [x][0]` removes a slot of the temporary, not `x`. Same for `"s"[n]`.
+      ts.expectPrintedMin_("x = delete [obj.p][0]", "x = delete [obj.p][0]");
+      ts.expectPrintedMin_("x = delete [y][0]", "x = delete [y][0]");
+      ts.expectPrintedMin_("x = delete [a, b][1]", "x = delete [a, b][1]");
+      ts.expectPrintedMin_('x = delete "foo"[2]', 'x = delete "foo"[2]');
     });
     it("preserves runtime semantics when inlining from a literal index", async () => {
       const src = `
@@ -232,6 +250,7 @@ describe("Bun.Transpiler", () => {
         check("this",       () => [obj.m][0](), "=> false");
         var o2 = { p: 1 };
         check("assign",     () => ([o2.p][0] = 5, o2.p), "=> 1");
+        check("delete",     () => (delete [o2.p][0], o2.p), "=> 1");
         var ab = { b: class {} };
         check("new obj",    () => new ({ f: ab?.b }).f() instanceof ab.b, "=> true");
       `;
@@ -253,6 +272,7 @@ describe("Bun.Transpiler", () => {
         "chain pure: ok",
         "this: ok",
         "assign: ok",
+        "delete: ok",
         "new obj: ok",
       ]);
       expect(exitCode).toBe(0);
@@ -4763,6 +4783,172 @@ console.log(foo, array);
       expectPrinted("(0, obj.method)", "obj.method");
       expectPrinted("(0, obj[key])", "obj[key]");
       expectPrinted("(0, func())", "func()");
+    });
+
+    // `a.b()` and `a.b`t`` pass `a` as `this`. `(0, a.b)()` and `(0, a.b)`t`` do not.
+    const wrappersAroundOperand = {
+      and: x => `(true && ${x})`,
+      or: x => `(false || ${x})`,
+      nullish: x => `(null ?? ${x})`,
+      ternary: x => `(true ? ${x} : 0)`,
+      falseTest: x => `(false ? 0 : ${x})`,
+      pureTest: x => `([] ? ${x} : 0)`,
+      typeofTest: x => `(typeof zz ? ${x} : 0)`,
+      nullishAssign: x => `(({}).p ??= ${x})`,
+      orAssign: x => `(({}).p ||= ${x})`,
+      nested: x => `(true && (true && ${x}))`,
+      callInLeft: x => `((() => id()) && ${x})`,
+      // A chain: the left operand is a binary expression too.
+      andChain: x => `(true && true && ${x})`,
+      orChain: x => `(false || false || ${x})`,
+      nullishChain: x => `(null ?? null ?? ${x})`,
+      constantTest: x => `(1 === 1 && ${x})`,
+      callInLeftChain: x => `((() => id()) && true && ${x})`,
+    };
+
+    it("a fold that leaves a property access keeps `(0, x)` for a callee and for a tag", () => {
+      for (const wrap of Object.values(wrappersAroundOperand)) {
+        for (const expectPrinted of [ts.expectPrinted_, ts.expectPrintedMin_]) {
+          for (const operand of ["o.f", "o[k]", "a?.b"]) {
+            expectPrinted(`x = ${wrap(operand)}\`t\``, `x = (0, ${operand})\`t\``);
+            expectPrinted(`x = ${wrap(operand)}()`, `x = (0, ${operand})()`);
+            // Nothing calls this one, so it needs no comma.
+            expectPrinted(`x = ${wrap(operand)}`, `x = ${operand}`);
+          }
+          // An identifier has no `this` to pass.
+          expectPrinted(`x = ${wrap("fn")}\`t\``, "x = fn`t`");
+          expectPrinted(`x = ${wrap("fn")}()`, "x = fn()");
+        }
+      }
+
+      // Only the outermost node of a chain is the callee.
+      ts.expectPrinted_("x = ((true && o.f) && g)()", "x = (o.f && g)()");
+      ts.expectPrintedMin_("x = (!typeof zz ? 0 : o.f)()", "x = (0, o.f)()");
+
+      // The comma itself is folded under minify.syntax only.
+      for (const operand of ["o.f", "o[k]", "a?.b"]) {
+        ts.expectPrintedMin_(`x = (0, ${operand})\`t\``, `x = (0, ${operand})\`t\``);
+        ts.expectPrintedMin_(`x = (0, ${operand})()`, `x = (0, ${operand})()`);
+        ts.expectPrintedMin_(`x = (1, 2, ${operand})\`t\``, `x = (0, ${operand})\`t\``);
+        ts.expectPrintedMin_(`x = (1, 2, ${operand})()`, `x = (0, ${operand})()`);
+        ts.expectPrintedMin_(`x = (/* @__PURE__ */ f(), ${operand})\`t\``, `x = (0, ${operand})\`t\``);
+        ts.expectPrintedMin_(`x = (/* @__PURE__ */ f(), ${operand})()`, `x = (0, ${operand})()`);
+        ts.expectPrintedMin_(`x = (0, ${operand})`, `x = ${operand}`);
+      }
+      ts.expectPrintedMin_("x = (0, fn)`t`", "x = fn`t`");
+      // A call in the left operand does not change what the comma is.
+      ts.expectPrintedMin_("x = (() => f(), o.f)()", "x = (0, o.f)()");
+      ts.expectPrintedMin_("x = (() => f`a`, o.f)`t`", "x = (0, o.f)`t`");
+
+      // A single-use local is not moved into a tag when that gives the tag a `this`.
+      ts.expectPrintedMin_(
+        "function h() { let x = o.f; return x`t`; }",
+        "function h() {\n  let x = o.f;\n  return x`t`;\n}",
+      );
+      ts.expectPrintedMin_(
+        "function h() { let x = a?.b; return x`t`; }",
+        "function h() {\n  let x = a?.b;\n  return x`t`;\n}",
+      );
+      ts.expectPrintedMin_(
+        "function h() { const t = o.f; t`a${1}b`; }",
+        "function h() {\n  const t = o.f;\n  t`a${1}b`;\n}",
+      );
+      ts.expectPrintedMin_(
+        "function h() { const u = o.f; const r = u`a${1}b`; return r; }",
+        "function h() {\n  const u = o.f;\n  return u`a${1}b`;\n}",
+      );
+      ts.expectPrintedMin_("function h() { let x = fn; return x`t`; }", "function h() {\n  return fn`t`;\n}");
+      ts.expectPrintedMin_("function h() { let x = o.f; return x.g`t`; }", "function h() {\n  return o.f.g`t`;\n}");
+    });
+
+    // bun transpiles a file again when it runs it, unless `bun build --target=bun` made it.
+    async function runInEveryLane(source) {
+      using dir = tempDir("fold-keeps-this", { "t.mjs": source });
+      const run = async (...args) => {
+        await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+      const runBundle = async (out, ...flags) => {
+        const build = await run("build", "t.mjs", "--outfile=" + out, ...flags);
+        expect({ exitCode: build.exitCode, stderr: build.stderr }).toMatchObject({ exitCode: 0 });
+        return run(out);
+      };
+      return await Promise.all([
+        run("t.mjs"),
+        runBundle("plain.mjs"),
+        runBundle("target-bun.mjs", "--target=bun"),
+        runBundle("minify.mjs", "--minify"),
+      ]);
+    }
+
+    it.concurrent("a call or a tagged template gets the same `this` after a fold", async () => {
+      const rows = {
+        tag: "o.f`t`",
+        call: "o.f()",
+        objectTag: "({ f: o.f }).f`t`",
+        arrayTag: "[o.f][0]`t`",
+        arrayCall: "[o.f][0]()",
+        arrayOptionalCall: "[o.f][0]?.()",
+        arrayOfIdentifierCall: "[unbound][0]()",
+        arrayOfTwoCall: "[0, unbound][1]()",
+        arrayOfFunctionCall: "[function () { return this; }][0]()",
+        viaConst: "(() => { const t = o.f; return t`t`; })()",
+        commaTag: "(0, o.f)`t`",
+        commaCall: "(0, o.f)()",
+      };
+      const expected = { tag: "o", call: "o", objectTag: "object", viaConst: "undefined" };
+      for (const name of Object.keys(rows)) if (name.startsWith("array")) expected[name] = "array";
+      expected.commaTag = expected.commaCall = "undefined";
+      for (const [name, wrap] of Object.entries(wrappersAroundOperand)) {
+        rows[name + "Tag"] = wrap("o.f") + "`t`";
+        rows[name + "Call"] = wrap("o.f") + "()";
+        rows[name + "LiteralTag"] = wrap("({ f() { return this; } }).f") + "`t`";
+        expected[name + "Tag"] = expected[name + "Call"] = expected[name + "LiteralTag"] = "undefined";
+      }
+      // A module is strict code, so an unbound `this` is undefined.
+      const source = `
+        const o = { f() { return this; } };
+        const unbound = o.f;
+        const id = x => x;
+        const show = v =>
+          v === undefined ? "undefined" : v === o ? "o" : v === globalThis ? "globalThis" : Array.isArray(v) ? "array" : typeof v;
+        console.log(JSON.stringify({ ${Object.entries(rows)
+          .map(([name, expr]) => `${name}: show(${expr})`)
+          .join(", ")} }));
+      `;
+      for (const { stdout, stderr, exitCode } of await runInEveryLane(source)) {
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual(expected);
+        expect(exitCode).toBe(0);
+      }
+    });
+
+    // https://github.com/oven-sh/bun/issues/44578
+    it.concurrent("a tag that is read through a const or behind a comma gets no `this`", async () => {
+      const source = `
+        function tag(parts, n) {
+          console.log("tag", this === undefined, n);
+        }
+        const tools = { tag };
+        export function main(box) {
+          const t = tools.tag;
+          t\`a\${box.n}b\`;
+          const u = tools.tag;
+          const r = u\`a\${box.n}b\`;
+          return r;
+        }
+        main({ n: 1 });
+        const o = { tag };
+        (0, o.tag)\`x\`;
+        (0, o.tag)\`x\${1}\`;
+        (console.log("se"), o.tag)\`x\`;
+      `;
+      for (const { stdout, stderr, exitCode } of await runInEveryLane(source)) {
+        expect(stderr).toBe("");
+        expect(stdout).toBe("tag true 1\ntag true 1\ntag true undefined\ntag true 1\nse\ntag true undefined\n");
+        expect(exitCode).toBe(0);
+      }
     });
 
     it("constant folding", () => {

@@ -39,11 +39,12 @@ const apis = {
   execFileSync(args, options) {
     return { returned: show(cp.execFileSync(process.execPath, args, options)) };
   },
-  execSync(args, options) {
-    // sh expands $ and ` inside double quotes. cmd.exe has no other quote.
-    const quote = process.platform === "win32" ? arg => `"${arg}"` : arg => `'${arg.replaceAll("'", "'\\''")}'`;
-    const command = [process.execPath, ...args].map(quote).join(" ");
-    return { returned: show(cp.execSync(command, options)) };
+  execSync([file, ...rest], options) {
+    // The shell reads the two paths from the environment, so it expands nothing inside them.
+    const read = process.platform === "win32" ? name => `"%${name}%"` : name => `"$${name}"`;
+    const command = [read("STDIO_FD_SLOTS_EXE"), read("STDIO_FD_SLOTS_FILE"), ...rest].join(" ");
+    const env = { ...process.env, STDIO_FD_SLOTS_EXE: process.execPath, STDIO_FD_SLOTS_FILE: file };
+    return { returned: show(cp.execSync(command, { ...options, env })) };
   },
   fork(args, options) {
     const { promise, resolve, reject } = Promise.withResolvers();

@@ -3150,7 +3150,8 @@ struct us_server_names_t {
   /* hostname -> sni_node_t. NULL until the first name is added. */
   void *tree;
   /* Returns the SSL_CTX to serve for `hostname` on the in-flight handshake only
-   * (the caller does not cache it), or NULL to fall through to the tree. */
+   * (the caller does not cache it), or NULL to keep the default context. The
+   * tree is not consulted while this is set: see us_listen_socket_on_server_name. */
   struct ssl_ctx_st *(*on_server_name)(struct us_listen_socket_t *, const char *hostname, int *abort_handshake, struct us_socket_t *socket);
 };
 
@@ -3297,24 +3298,6 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
     if (resolved_ctx) {
       us_ssl_apply_selected_ctx(ssl, resolved_ctx);
       SSL_CTX_free(resolved_ctx);
-      return ssl_select_cert_success;
-    }
-    /* The asynchronous resolution selected nothing (cb(null, null)): fall
-     * through to the static SNI tree below, exactly like a synchronous
-     * resolver returning null - the resume must not skip the tree fallback
-     * the sync path gets. */
-    if (names) {
-      /* Read the servername from the raw ClientHello, same as the first-call
-       * path below: that is the read the early-callback contract guarantees
-       * (SSL_get_servername happens to be populated by the resume re-drive
-       * today, but the raw parse does not depend on that). */
-      char resumed_host[256];
-      if (us_client_hello_servername(hello, resumed_host, sizeof(resumed_host))) {
-        struct sni_node_t *resumed_node = us_server_names_find(names, resumed_host);
-        if (resumed_node) {
-          us_ssl_apply_selected_ctx(ssl, resumed_node->ctx);
-        }
-      }
     }
     return ssl_select_cert_success;
   }
@@ -3339,14 +3322,10 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
     return ssl_select_cert_success;
   }
 
-  /* The dynamic resolver (the user's SNICallback) runs FIRST, matching Node
-   * where a user-provided SNICallback replaces the default SNI handling
-   * entirely (tree-first would shadow the callback for every name that also
-   * has an addContext entry). The static tree (addContext entries) is the
-   * fallback when the resolver selects nothing, which is also the
-   * no-user-callback path: the JS dispatch returns undefined immediately in
-   * that case. */
-
+  /* The resolver alone selects: the names of us_listen_socket_add_server_name
+   * are not consulted. In Node a user SNICallback replaces the default one,
+   * the only reader of the addContext() entries:
+   * https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1270 */
   void *saved_loop_state[US_SSL_LOOP_STATE_SLOTS];
   us_internal_ssl_loop_state_save(ssl, saved_loop_state);
   int abort_handshake = 0;
@@ -3370,14 +3349,6 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
   if (dyn) {
     us_ssl_apply_selected_ctx(ssl, dyn);
     SSL_CTX_free(dyn);
-    return ssl_select_cert_success;
-  }
-
-  /* No dynamic selection: fall back to the static SNI tree (the
-   * addContext() entries). An adopted socket has no tree. */
-  struct sni_node_t *node = us_server_names_find(names, hostname);
-  if (node) {
-    us_ssl_apply_selected_ctx(ssl, node->ctx);
   }
   return ssl_select_cert_success;
 }
@@ -3391,11 +3362,8 @@ static int sni_cb(SSL *ssl, int *al, void *arg) {
   struct us_server_names_t *names = rare ? rare->server_names : NULL;
   if (!names) return SSL_TLSEXT_ERR_OK;
   if (names->on_server_name) {
-    /* A dynamic resolver (user SNICallback) exists: us_select_cert_cb already
-     * ran it - and the static-tree fallback - at the earlier
-     * select-certificate stage. Consulting the tree again here would
-     * OVERWRITE the resolver's per-connection selection with the tree entry,
-     * undoing the SNICallback-takes-precedence contract. */
+    /* us_select_cert_cb already ran the resolver, which alone selects for
+     * this listener. */
     return SSL_TLSEXT_ERR_OK;
   }
   const char *hostname = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
@@ -3469,8 +3437,7 @@ void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
   /* The dynamic resolver may need to suspend the handshake (async
    * SNICallback); only the early select-certificate callback supports retry,
    * so register it on the listener's default context. The servername-stage
-   * sni_cb stays registered for the static SNI tree (it is a no-op when the
-   * early callback already installed a context). */
+   * sni_cb then selects nothing for the connections of this listener. */
   SSL_CTX_set_select_certificate_cb(ls->ssl_ctx, us_select_cert_cb);
 }
 

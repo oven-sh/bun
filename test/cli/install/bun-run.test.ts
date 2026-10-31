@@ -781,6 +781,129 @@ describe.concurrent("bun run", () => {
     });
   });
 
+  // npm takes `-s` / `--silent` on either side of the script's name. `bun run` has `--silent`, in front of the name.
+  describe("npm run -s in scripts", () => {
+    // `start` is the script under test. `print` prints its arguments.
+    async function runStart(start: string, cmd: string[] = ["run", "start"]) {
+      const scripts = { start, print: "echo printed" };
+      const dir = tempDir("npm-run-silent", {
+        "package.json": JSON.stringify({ private: true, workspaces: ["apps/*"], scripts }),
+        "apps/app/package.json": JSON.stringify({ name: "app", scripts: { ...scripts, hello: "echo workspace-ok" } }),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...cmd],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // A debug build writes `bun-debug` where a release build writes `bun`.
+      const text = (output: string) => output.replaceAll("\r\n", "\n").replaceAll("bun-debug ", "bun ");
+      return { dir, stdout: text(stdout), stderr: text(stderr), exitCode };
+    }
+
+    // The script gets no `-s`, and `--silent` hides the command of `print`. The command ends at `&&`, `;` and `||`.
+    it.each([
+      ["npm run -s print", "$ bun run --silent print\n", "printed\n"],
+      ["npm run print -s", "$ bun run --silent print\n", "printed\n"],
+      ["npm run print --silent", "$ bun run --silent print\n", "printed\n"],
+      ["npm run print extra -s", "$ bun run --silent print extra\n", "printed extra\n"],
+      ["npm run -s print -- -s", "$ bun run --silent print -- -s\n", "printed -s\n"],
+      ["npm run print -s && echo done -s", "$ bun run --silent print && echo done -s\n", "printed\ndone -s\n"],
+      ["npm run print -s;echo done -s", "$ bun run --silent print;echo done -s\n", "printed\ndone -s\n"],
+      ["npm run print -s || echo done -s", "$ bun run --silent print || echo done -s\n", "printed\n"],
+      [`echo "it's" && npm run -s print`, `$ echo "it's" && bun run --silent print\n`, "it's\nprinted\n"],
+    ])("%s runs the script with --silent", async (start, rewritten, output) => {
+      const { dir, stdout, stderr, exitCode } = await runStart(start);
+      using _ = dir;
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: output, stderr: rewritten, exitCode: 0 });
+    });
+
+    // A command among the words of the script is rewritten too, in front of `--` and behind it.
+    // In front of `--`, a `-s` behind it is still a flag of the first `npm run`.
+    it.each([
+      ["npm run --silent print npm run print", "$ bun run --silent print bun run print\n"],
+      ["npm run print npm run print -s", "$ bun run --silent print bun run print\n"],
+      ["npm run -s print -- npm run print", "$ bun run --silent print -- bun run print\n"],
+      ["npm run -s print yarn print && echo done", "$ bun run --silent print bun run print && echo done\n"],
+    ])("%s rewrites both commands", async (start, rewritten) => {
+      const { dir, stdout, stderr, exitCode } = await runStart(start);
+      using _ = dir;
+      expect(stdout).toStartWith("printed bun run print\n");
+      expect({ stderr, exitCode }).toEqual({ stderr: rewritten, exitCode: 0 });
+    });
+
+    it.each([
+      ["npm run hello -w app -s", "$ bun run --filter=app --silent hello\n", "workspace-ok\n"],
+      ["npm run hello -ws -s", "$ bun run --workspaces --silent hello\n", "workspace-ok\n"],
+      ["npm run hello -ws --if-present", "$ bun run --workspaces --if-present hello\n", "workspace-ok\n"],
+      ["npm run hello npm run x -w app", "$ bun run --filter=app hello bun run x\n", "workspace-ok bun run x\n"],
+    ])("%s puts the flags in front of the name", async (start, rewritten, output) => {
+      const { dir, stdout, stderr, exitCode } = await runStart(start);
+      using _ = dir;
+      expect(stderr.split("\n")[0] + "\n").toBe(rewritten);
+      expect(stdout).toContain(output);
+      expect(exitCode).toBe(0);
+    });
+
+    it.each([
+      ['echo "npm run -s print && npm run -s print"', "bun run -s print && bun run -s print\n"],
+      [`echo "it's" && echo 'npm run -s print && npm run -s print'`, "it's\nbun run -s print && bun run -s print\n"],
+    ])("%s does not move `-s` in a quoted string", async (start, output) => {
+      const { dir, stdout, exitCode } = await runStart(start);
+      using _ = dir;
+      expect({ stdout, exitCode }).toEqual({ stdout: output, exitCode: 0 });
+    });
+
+    it.each(["run --filter app start", "run --parallel start", "run --sequential start", "run --shell=bun start"])(
+      "bun %s runs `npm run -s print`",
+      async cmd => {
+        const { dir, stdout, exitCode } = await runStart("npm run -s print", cmd.split(" "));
+        using _ = dir;
+        expect(stdout).toContain("printed\n");
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    // What follows `--` is for the script. Beside an option of npm that `bun run` does not have, or a
+    // lone `--if-present`, the command is not rewritten: `bun run` would run another thing than npm.
+    it.each([
+      ["npm run print -- -s", "printed -s\n"],
+      ["npm run print -s --if-present", "printed -s --if-present\n"],
+      ["npm run print -s --prefix apps/app", "printed -s --prefix apps/app\n"],
+      ["npm run print --silent -C apps/app", "printed --silent -C apps/app\n"],
+      ["npm run print --silent=true", "printed --silent=true\n"],
+      ["npm run print -sx", "printed -sx\n"],
+    ])("%s stays as it is written", async (start, output) => {
+      const { dir, stdout, stderr, exitCode } = await runStart(start);
+      using _ = dir;
+      expect(stderr.split("\n")[0]).toBe(`$ ${start.replace("npm run", "bun run")}`);
+      expect({ stdout, exitCode }).toEqual({ stdout: output, exitCode: 0 });
+    });
+
+    it("bun install runs a prepare script that says `npm run -s build`", async () => {
+      using dir = tempDir("npm-run-silent-install", {
+        "package.json": JSON.stringify({
+          name: "root",
+          version: "1.0.0",
+          scripts: { prepare: "npm run -s build", build: "echo built" },
+        }),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr.replaceAll("bun-debug ", "bun ")).toContain("$ bun run --silent build\n");
+      expect(stdout).toContain("built");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("'bun run' priority", async () => {
     // priority:
     // - 1: run script with matching name

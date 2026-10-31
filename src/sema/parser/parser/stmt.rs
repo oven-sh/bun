@@ -1751,8 +1751,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 self.f.rare_syntax |= rare::ODD_JUMP;
                 return self.add_stmt(StmtKind::Labeled { label, body }, start, Span::EMPTY);
             }
-            // `expression.Kind == ast.KindIdentifier` is true of a missing identifier too: a statement that starts with
-            // `:` is a label without a name.
+            // `expression.Kind == ast.KindIdentifier` holds for a missing identifier too: a label without a name.
             if self.recovers()
                 && self.options.dialect == Default::default()
                 && self.pos() == start.pos
@@ -1775,8 +1774,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     fn label_without_name(&mut self, start: Start) -> StmtId {
         self.pop_expr();
         self.next();
-        // `isFileProbablyExternalModule` reads the statements of the file alone, so an `import` or `export` that is this
-        // body doesn't make the file a module. This undoes what `embedded_statement` sets for one.
+        // `isFileProbablyExternalModule`: a statement of the file makes it a module, not an `import` or `export` body.
         let was_module = self.f.has_module_syntax;
         let body = self.embedded_statement();
         self.f.has_module_syntax = was_module;

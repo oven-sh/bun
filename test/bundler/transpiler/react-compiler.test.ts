@@ -4279,6 +4279,111 @@ test("react-compiler ends on a component whose types are made of each other", as
   expect(exitCode).toBe(0);
 });
 
+// A loop assigns the locals from each other, so the type of each is a cycle, and InferTypes works out what each holds
+// after the loop. The first component stays as written, because `v0` can be the prop. The second has one block for
+// `arr` and the loop that can change it. The third is compiled, with a block for each of its two values.
+test("react-compiler keeps what it works out for locals that a loop assigns from each other", async () => {
+  using dir = tempDir("react-compiler-cycles-of-types", {
+    "entry.jsx": `
+      export function ALocalArrayOrAProp(props) {
+        let v0 = [];
+        let v1 = props.list;
+        do {
+          if (props.e) v1 = v0;
+          for (let i = 0; i < props.n; i++) v0 = v1;
+        } while (props.again);
+        v0.push(1);
+        return <div>{v0}</div>;
+      }
+      export function FourFunctions(props) {
+        "use memo";
+        const arr = [props.x];
+        let v0 = props.mutate;
+        let v1 = props.other;
+        let v2 = Math.max;
+        let v3 = props.fn2;
+        let out = null;
+        for (let i = 0; i < props.n; i++) {
+          const a = v1;
+          v1 = v0;
+          v0 = a;
+          const b = v0;
+          v0 = v1;
+          v1 = v2;
+          v2 = v3;
+          v3 = b;
+          const c = v1;
+          v1 = v2;
+          v2 = c;
+          while (props.c) {
+            if (props.d) v3 = v2;
+          }
+          const d = v0;
+          v0 = v1;
+          v1 = v2;
+          v2 = v3;
+          v3 = d;
+          out = v1(arr);
+        }
+        return [arr, out];
+      }
+      export function AFunctionThatReturnsTheOneBefore(props) {
+        let back = props.first ? <Intro /> : null;
+        const rows = [];
+        for (const step of props.steps) {
+          const before = back;
+          back = () => {
+            stats.renders++;
+            return before;
+          };
+          rows.push(<Step key={step.id} step={step} back={back} onPick={() => props.onPick(step)} />);
+        }
+        return <ol>{rows}</ol>;
+      }
+    `,
+  });
+  // The text of each function in the output of a build.
+  const functionsOf = async (...flags: string[]) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...flags, "--target=browser", "--external=*", "entry.jsx"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return stdout
+      .split(/^function /m)
+      .slice(1)
+      .map(text => ({ name: text.slice(0, text.indexOf("(")), text }));
+  };
+  const [compiled, written] = await Promise.all([functionsOf("--react-compiler"), functionsOf()]);
+
+  // A component that the compiler refuses has the text of the build without the compiler. One that it compiles with
+  // an empty cache has no `_c` either, but another text.
+  expect(compiled[0].text).toBe(written[0].text);
+  // The size of the cache of each component, and what each of its blocks depends on.
+  expect(
+    compiled.map(({ name, text }) => ({
+      name,
+      cache: text.match(/\b_c\((\d+)\)/)?.[1] ?? "none",
+      blocks: Array.from(text.matchAll(/^ *if \((\$\[\d+\] .*)\)(?: \{)?$/gm), ([, condition]) =>
+        condition.replaceAll(/\$\[\d+\] (?:!== |=== __MEMO_CACHE_SENTINEL)/g, "").replaceAll(" || ", ", "),
+      ),
+    })),
+  ).toEqual([
+    { name: "ALocalArrayOrAProp", cache: "none", blocks: [] },
+    {
+      name: "FourFunctions",
+      cache: "8",
+      blocks: ["props.c, props.d, props.fn2, props.mutate, props.n, props.other, props.x"],
+    },
+    { name: "AFunctionThatReturnsTheOneBefore", cache: "5", blocks: ["props.first", "props, t0"] },
+  ]);
+});
+
 // ValidateNoRefAccessInRender gives a function the type of what it returns. The port
 // copied all that is nested in a type at each level of each join, so n functions that
 // return each other took the cube of n: 400 of them 10 seconds, 1,000 more than a minute.

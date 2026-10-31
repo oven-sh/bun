@@ -406,6 +406,134 @@ function NotNull(props: Props) {
 }
 `;
 
+/**
+ * A loop assigns two locals from each other, so the type of each is a cycle. What is called or changed after the loop
+ * has the type of what the locals held before it: a setter, an array that is frozen, or a prop.
+ */
+const cycles = `import { useState } from "react";
+
+export function useSameSetter(props) {
+  const [s, setS] = useState(0);
+  let v0 = setS;
+  let v1 = setS;
+  do {
+    if (props.e) v1 = v0;
+    for (let i = 0; i < props.n; i++) v0 = v1;
+  } while (props.again);
+  v0(1);
+  return s;
+}
+
+export function useTwoSetters(props) {
+  const [s, setS] = useState(0);
+  const [t, setT] = useState(0);
+  let v0 = setS;
+  let v1 = setT;
+  do {
+    if (props.e) v1 = v0;
+    for (const x of props.xs) v0 = v1;
+  } while (props.again);
+  v0(1);
+  return s + t;
+}
+
+export function useTwoSettersWithATernary(props) {
+  const [s, setS] = useState(0);
+  const [t, setT] = useState(0);
+  let v0 = setS;
+  let v1 = setT;
+  do {
+    v1 = props.e ? v0 : v1;
+    while (props.c()) v0 = v1;
+  } while (props.again);
+  v0(1);
+  return s + t;
+}
+
+export function useASetterOrAProp(props) {
+  const [s, setS] = useState(0);
+  let v0 = setS;
+  let v1 = props.mutate;
+  do {
+    if (props.e) v1 = v0;
+    for (let i = 0; i < props.n; i++) v0 = v1;
+  } while (props.again);
+  v0(1);
+  return s;
+}
+
+export function useFrozenArrays(props) {
+  const a = [props.x];
+  const b = [props.y];
+  const [s] = useState(a);
+  const [t] = useState(b);
+  let v0 = a;
+  let v1 = b;
+  do {
+    if (props.e) v1 = v0;
+    for (let i = 0; i < props.n; i++) v0 = v1;
+  } while (props.again);
+  v0.push(1);
+  return [s, t];
+}
+
+export function ALocalArrayOrAProp(props) {
+  let v0 = [];
+  let v1 = props.list;
+  do {
+    if (props.e) v1 = v0;
+    for (let i = 0; i < props.n; i++) v0 = v1;
+  } while (props.again);
+  v0.push(1);
+  return <div>{v0}</div>;
+}
+`;
+
+/** The same with one local, which a loop assigns a value of the same kind. */
+const oneLocal = `import { useState } from "react";
+
+export function PushAfterTheLoop({ items, extra }) {
+  let list = [];
+  for (const item of items) {
+    if (item) list = extra;
+  }
+  list.push(1);
+  return <div>{list}</div>;
+}
+
+export function SetAfterTheLoop({ items }) {
+  const [a, setA] = useState(0);
+  const [b, setB] = useState(0);
+  let set = setA;
+  for (const item of items) {
+    if (item) set = setB;
+  }
+  set(1);
+  return (
+    <div>
+      {a}
+      {b}
+    </div>
+  );
+}
+`;
+
+/** A cycle of types in a file that is TypeScript. */
+const typedCycle = `import { useState } from "react";
+
+export function useASetterOrATypedProp(props: { mutate: (n: number) => void; e: boolean; n: number; again: boolean }) {
+  const [s, setS] = useState(0);
+  let v0: (n: number) => void = setS;
+  let v1 = props.mutate;
+  do {
+    if (props.e) v1 = v0;
+    for (let i = 0; i < props.n; i++) v0 = v1;
+  } while (props.again);
+  v0(1);
+  return s;
+}
+`;
+
 /** The small input directories, keyed by test name. */
 export const small: Record<string, Files> = {
   comments,
@@ -644,6 +772,7 @@ function Component(props) {
     "callback-of-map.jsx": callbackOfMap,
   },
   lowering: { ".oxlintrc.json": rc(), "forever.tsx": forever, "defaults.tsx": defaults },
+  loops: { ".oxlintrc.json": rc(), "cycles.jsx": cycles, "one-local.jsx": oneLocal, "typed-cycle.ts": typedCycle },
   node_modules: {
     ".oxlintrc.json": rc(),
     "a.jsx": impure,
@@ -735,6 +864,9 @@ ${["a", "b", "c", "d", "e", "f", "g", "h", "i"].map(name => `    value += props.
   "flow-hook.jsx": readsRef("// $FlowFixMe[react-rule-hook]"),
   "flow-ref.jsx": readsRef("// $FlowFixMe[react-rule-unsafe-ref]"),
   "flow-other.jsx": readsRef("// $FlowFixMe[other]"),
+  "cycles.jsx": cycles,
+  "one-local.jsx": oneLocal,
+  "typed-cycle.ts": typedCycle,
   // typescript-eslint parses it. Babel, with the plugin's options, doesn't.
   "decorator.tsx": `@sealed\nclass Store {}\n\n${readsRef("")}`,
   // No function is named like a component or a hook, so the plugin doesn't compile anything.

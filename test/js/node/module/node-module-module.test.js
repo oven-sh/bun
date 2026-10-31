@@ -1683,6 +1683,50 @@ console.log("survived", require("./late.js"));`,
         exitCode: 0,
       });
     });
+
+    test("a Worker has the source maps of the modules that it loaded itself", async () => {
+      const files = {
+        ...withMap("lib.js"),
+        "main.cjs": `
+          ${prelude}
+          const { Worker, isMainThread, parentPort } = require("node:worker_threads");
+          const answer = () => {
+            require("./lib.js");
+            return [process.sourceMapsEnabled, kind(findSourceMap(at("lib.js")))];
+          };
+          const inWorker = options => {
+            const { promise, resolve, reject } = Promise.withResolvers();
+            const worker = new Worker(__filename, options);
+            worker.on("message", resolve);
+            worker.on("error", reject);
+            worker.on("exit", code => reject(new Error("the worker exited with " + code)));
+            return promise;
+          };
+          if (isMainThread) {
+            (async () => {
+              const seen = {};
+              seen["a Worker with --enable-source-maps in its execArgv"] = await inWorker({
+                execArgv: ["--enable-source-maps"],
+              });
+              seen["a Worker without it"] = await inWorker({});
+              seen["the main thread, after the Workers"] = answer();
+              print(seen);
+            })();
+          } else {
+            parentPort.postMessage(answer());
+          }
+        `,
+      };
+      expect(await run([], files)).toEqual({
+        stdout: {
+          "a Worker with --enable-source-maps in its execArgv": [true, "SourceMap"],
+          "a Worker without it": [false, "undefined"],
+          "the main thread, after the Workers": [false, "undefined"],
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
 
   test("require cache relative specifier", () => {

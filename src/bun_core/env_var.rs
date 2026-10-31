@@ -105,6 +105,8 @@ new!(pub BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES: unsigned, "BUN_DEBUG_TEST_ST
 new!(pub BUN_DEBUG_TEST_UNTRIMMED_OUTFILE: string, "BUN_DEBUG_TEST_UNTRIMMED_OUTFILE", {});
 // How long `bun check` runs before it draws its progress line (default 300), so a test can see the line on a small project.
 new!(pub BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS: unsigned, "BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS", {});
+// Megabytes that the inspector queues for a frontend that reads nothing before it drops it (default 128), so a test reaches the limit with a few.
+new!(pub BUN_DEBUG_TEST_INSPECTOR_BACKLOG_MB: unsigned, "BUN_DEBUG_TEST_INSPECTOR_BACKLOG_MB", {});
 new!(pub BUN_DEV_SERVER_TEST_RUNNER: string, "BUN_DEV_SERVER_TEST_RUNNER", {});
 // Debug-only: when set, `NumberRenamer` dumps the symbol table before
 // renaming (`src/js_printer/renamer.rs`). Presence-checked, value ignored.

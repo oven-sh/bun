@@ -11,10 +11,15 @@
 #include <JavaScriptCore/Debugger.h>
 #include <wtf/Condition.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/text/MakeString.h>
+#include <wtf/text/StringToIntegerConversion.h>
 #include "ScriptExecutionContext.h"
 #include "debug-helpers.h"
 #include "BunInjectedScriptHost.h"
+#include <JavaScriptCore/InspectorFrontendRouter.h>
 #include <JavaScriptCore/JSGlobalObjectInspectorController.h>
+#include <JavaScriptCore/JSLock.h>
+#include <JavaScriptCore/SamplingProfiler.h>
 #include <wtf/JSONValues.h>
 
 #include "InspectorLifecycleAgent.h"
@@ -96,14 +101,55 @@ enum class ConnectionStatus : int32_t {
     Disconnected = 3,
 };
 
+// A frontend is dropped once this much was queued for it since it last took a byte. Node queues without bound.
+static size_t stalledFrontendBacklog = 128 * 1024 * 1024;
+
+// BUN_DEBUG_TEST_INSPECTOR_BACKLOG_MB: a test reaches the limit with a few megabytes.
+extern "C" void Bun__Debugger__setStalledFrontendBacklog(uint64_t megabytes)
+{
+    stalledFrontendBacklog = static_cast<size_t>(megabytes) * 1024 * 1024;
+}
+
+// Beside `<Domain>.enable` and `<Domain>.disable`: a command that turns something on, and the one that turns it off.
+static constexpr std::pair<ASCIILiteral, ASCIILiteral> commandsThatTurnOnAndOff[] = {
+    { "ScriptProfiler.startTracking"_s, "ScriptProfiler.stopTracking"_s },
+    { "Runtime.enableTypeProfiler"_s, "Runtime.disableTypeProfiler"_s },
+};
+
+static constexpr bool isMethodNameCharacter(char16_t character)
+{
+    return isASCIIAlphanumeric(character) || character == '.';
+}
+
+// A command that turns off what a frontend turned on. One that removes a breakpoint names it in `params`, as JSON text.
+struct TurnOffCommand {
+    String method;
+    String params;
+
+    friend bool operator==(const TurnOffCommand&, const TurnOffCommand&) = default;
+
+    bool removesBreakpoint() const
+    {
+        return !params.isNull();
+    }
+
+    String text() const
+    {
+        if (params.isNull())
+            return makeString("{\"id\":-1,\"method\":\""_s, method, "\"}"_s);
+        return makeString("{\"id\":-1,\"method\":\""_s, method, "\",\"params\":"_s, params, '}');
+    }
+};
+
 class BunInspectorConnection : public ThreadSafeRefCounted<BunInspectorConnection>, public Inspector::FrontendChannel {
 
 public:
-    BunInspectorConnection(ScriptExecutionContext& scriptExecutionContext, JSC::JSGlobalObject* globalObject, bool shouldRefEventLoop)
+    BunInspectorConnection(ScriptExecutionContext& scriptExecutionContext, JSC::JSGlobalObject* globalObject, bool shouldRefEventLoop, bool hasTransport)
         : Inspector::FrontendChannel()
         , globalObject(globalObject)
         , scriptExecutionContextIdentifier(scriptExecutionContext.identifier())
         , unrefOnDisconnect(shouldRefEventLoop)
+        , hasTransport(hasTransport)
     {
     }
 
@@ -111,9 +157,9 @@ public:
     {
     }
 
-    static Ref<BunInspectorConnection> create(ScriptExecutionContext& scriptExecutionContext, JSC::JSGlobalObject* globalObject, bool shouldRefEventLoop)
+    static Ref<BunInspectorConnection> create(ScriptExecutionContext& scriptExecutionContext, JSC::JSGlobalObject* globalObject, bool shouldRefEventLoop, bool hasTransport)
     {
-        return adoptRef(*new BunInspectorConnection(scriptExecutionContext, globalObject, shouldRefEventLoop));
+        return adoptRef(*new BunInspectorConnection(scriptExecutionContext, globalObject, shouldRefEventLoop, hasTransport));
     }
 
     ConnectionType connectionType() const override
@@ -206,15 +252,23 @@ public:
 
             connection->status = ConnectionStatus::Disconnected;
 
-            // Do not call .disconnect() if we never actually connected.
-            if (connection->hasEverConnected) {
+            // Stopgap: JSC's disconnectFrontend() disables every agent before its last-frontend check. Delete when it checks first.
+            auto* inspectedGlobalObject = connection->globalObject;
+            auto& router = const_cast<Inspector::FrontendRouter&>(inspectedGlobalObject->inspectorController().frontendRouter());
+            if (!connection->hasEverConnected || router.frontendCount() > 1) {
+                JSC::JSLockHolder locker(inspectedGlobalObject->vm());
+                // A frontend that left before it was connected is not in the router, but its commands ran.
+                if (connection->hasEverConnected)
+                    router.disconnectFrontend(connection.get());
+                connection->turnOffWhatOnlyThisFrontendTurnedOn();
+            } else {
+                connection->removeBreakpointsThatTeardownKeeps();
                 connection->inspector().disconnect(connection.get());
             }
 
-            if (connection->unrefOnDisconnect) {
-                connection->unrefOnDisconnect = false;
-                Bun__VmHandle__refKeepAlive(WebCore::clientData(context.vm())->vmHandle, BunLoopKind::Regular, -1);
-            }
+            // The transport of a dropped frontend is still open, to tell it why. The process stays alive for that.
+            if (!connection->transportOutlivesDisconnect)
+                connection->releaseKeepAlive(context);
 
             {
                 Locker<Lock> locker(inspectorConnectionsLock);
@@ -227,14 +281,246 @@ public:
         });
     }
 
+    // Inspected thread.
+    void releaseKeepAlive(ScriptExecutionContext& context)
+    {
+        if (!unrefOnDisconnect)
+            return;
+        unrefOnDisconnect = false;
+        Bun__VmHandle__refKeepAlive(WebCore::clientData(context.vm())->vmHandle, BunLoopKind::Regular, -1);
+    }
+
     JSC::JSGlobalObjectDebuggable& inspector()
     {
         return globalObject->inspectorDebuggable();
     }
 
+    bool hasLeft() const
+    {
+        auto status = this->status.load();
+        return status == ConnectionStatus::Disconnected || status == ConnectionStatus::Disconnecting;
+    }
+
+    // Inspected thread.
+    bool turnedDebuggerOn() const
+    {
+        return !hasLeft() && turnOffCommands.contains(TurnOffCommand { "Debugger.disable"_s, {} });
+    }
+
+    // Inspected thread. A pause waits only for a frontend on a transport, and only if the debugger is on for it.
+    static size_t countFrontendsThatCannotResume(const Vector<RefPtr<BunInspectorConnection>, 8>& connections)
+    {
+        // The breakpoints of the in-process `inspector.Session` are for every client on a transport, as in Node.
+        bool debuggerIsOnForSession = connections.containsIf([](auto& connection) {
+            return !connection->hasTransport && connection->turnedDebuggerOn();
+        });
+
+        size_t count = 0;
+        for (auto& connection : connections) {
+            if (!connection->hasTransport || connection->hasLeft() || !(debuggerIsOnForSession || connection->turnedDebuggerOn()))
+                count++;
+        }
+        return count;
+    }
+
+    // Inspected thread. Remembers what this frontend turned on, as the command that turns it off.
+    void trackTurnOffCommand(const WTF::String& message)
+    {
+        StringView text { message };
+        StringView method;
+        String parsedMethod;
+
+        // The shape that every known frontend sends needs no parse: {"id":1,"method":"Domain.method"
+        if (text.startsWith("{\"id\":"_s)) {
+            unsigned cursor = 6;
+            while (cursor < text.length() && isASCIIDigit(text[cursor]))
+                cursor++;
+            if (cursor > 6 && text.substring(cursor).startsWith(",\"method\":\""_s)) {
+                cursor += 11;
+                if (size_t end = text.find('"', cursor); end != notFound)
+                    method = text.substring(cursor, end - cursor);
+            }
+        }
+
+        if (method.isNull() || method.contains('\\')) {
+            // Another shape is parsed here, up to this length. The backend parses each command again.
+            if (message.length() > 1024)
+                return;
+            auto value = JSON::Value::parseJSON(message);
+            auto object = value ? value->asObject() : nullptr;
+            // The backend runs no command without an integer id.
+            if (!object || !object->getInteger("id"_s))
+                return;
+            parsedMethod = object->getString("method"_s);
+            method = parsedMethod;
+        }
+
+        if (method.endsWith(".enable"_s)) {
+            turnOn({ makeString(method.left(method.length() - 6), "disable"_s), {} });
+        } else if (method.endsWith(".disable"_s)) {
+            turnOffCommands.removeAll(TurnOffCommand { method.toString(), {} });
+            if (method == "Debugger.disable"_s)
+                forgetEveryBreakpoint();
+        } else if (method == "Debugger.setBreakpointByUrl"_s || method == "Debugger.setBreakpoint"_s || method == "Debugger.addSymbolicBreakpoint"_s) {
+            // JSC refuses a breakpoint that exists, so it stays with the frontend that has it.
+            if (auto removal = breakpointRemoval(method, message); removal && !frontendsOfThisContext().containsIf([&](auto& frontend) { return frontend->turnOffCommands.contains(*removal); }))
+                turnOn(WTF::move(*removal));
+        } else if (method == "Debugger.removeBreakpoint"_s || method == "Debugger.removeSymbolicBreakpoint"_s) {
+            if (auto removal = breakpointRemoval(method, message))
+                turnOffCommands.removeAll(*removal);
+        } else {
+            for (auto& [on, off] : commandsThatTurnOnAndOff) {
+                if (method == on) {
+                    // With `includeSamples` it starts the sampling profiler of the VM. JSC ignores a second start.
+                    if (off == "ScriptProfiler.stopTracking"_s && !turnOffCommands.contains(TurnOffCommand { off, {} })) {
+                        auto params = paramsOf(message);
+                        recordsProfileSamples = params && params->getBoolean("includeSamples"_s).value_or(false);
+                    }
+                    turnOn({ off, {} });
+                } else if (method == off)
+                    turnOffCommands.removeAll(TurnOffCommand { off, {} });
+            }
+        }
+    }
+
+    void turnOn(TurnOffCommand&& command)
+    {
+        // The name goes into a command as it is.
+        if (!StringView(command.method).containsOnly<isMethodNameCharacter>())
+            return;
+        if (!turnOffCommands.contains(command))
+            turnOffCommands.append(WTF::move(command));
+    }
+
+    static RefPtr<JSON::Object> paramsOf(const WTF::String& message)
+    {
+        auto value = JSON::Value::parseJSON(message);
+        auto object = value ? value->asObject() : nullptr;
+        return object ? object->getObject("params"_s) : nullptr;
+    }
+
+    // The command that removes the breakpoint that `message` sets or removes, under the identity that JSC gives it.
+    static std::optional<TurnOffCommand> breakpointRemoval(StringView method, const WTF::String& message)
+    {
+        auto params = paramsOf(message);
+        if (!params)
+            return std::nullopt;
+
+        auto removal = JSON::Object::create();
+        if (method.endsWith("SymbolicBreakpoint"_s)) {
+            auto symbol = params->getString("symbol"_s);
+            if (symbol.isNull())
+                return std::nullopt;
+            removal->setString("symbol"_s, symbol);
+            removal->setBoolean("caseSensitive"_s, params->getBoolean("caseSensitive"_s).value_or(true));
+            removal->setBoolean("isRegex"_s, params->getBoolean("isRegex"_s).value_or(false));
+            return TurnOffCommand { "Debugger.removeSymbolicBreakpoint"_s, removal->toJSONString() };
+        }
+
+        String breakpointId;
+        if (method == "Debugger.removeBreakpoint"_s) {
+            breakpointId = params->getString("breakpointId"_s);
+        } else if (method == "Debugger.setBreakpoint"_s) {
+            auto location = params->getObject("location"_s);
+            auto lineNumber = location ? location->getInteger("lineNumber"_s) : std::nullopt;
+            auto scriptId = location ? location->getString("scriptId"_s) : String();
+            if (lineNumber && !scriptId.isNull()) {
+                auto sourceID = parseIntegerAllowingTrailingJunk<JSC::SourceID>(scriptId).value_or(0);
+                unsigned columnNumber = location->getInteger("columnNumber"_s).value_or(0);
+                breakpointId = makeString(sourceID, ':', static_cast<unsigned>(*lineNumber), ':', columnNumber);
+            }
+        } else {
+            auto lineNumber = params->getInteger("lineNumber"_s);
+            auto url = params->getString("url"_s);
+            auto urlRegex = params->getString("urlRegex"_s);
+            if (lineNumber && url.isNull() != urlRegex.isNull()) {
+                auto slash = url.isNull() ? "/"_s : ""_s;
+                unsigned columnNumber = params->getInteger("columnNumber"_s).value_or(0);
+                breakpointId = makeString(slash, url.isNull() ? urlRegex : url, slash, ':', static_cast<unsigned>(*lineNumber), ':', columnNumber);
+            }
+        }
+        if (breakpointId.isNull())
+            return std::nullopt;
+        removal->setString("breakpointId"_s, breakpointId);
+        return TurnOffCommand { "Debugger.removeBreakpoint"_s, removal->toJSONString() };
+    }
+
+    // Inspected thread. Every frontend of this context, this one too.
+    Vector<RefPtr<BunInspectorConnection>, 8> frontendsOfThisContext() const
+    {
+        Locker<Lock> locker(inspectorConnectionsLock);
+        return inspectorConnections->get(scriptExecutionContextIdentifier);
+    }
+
+    // Inspected thread. `Debugger.disable` removed the breakpoints of every frontend.
+    void forgetEveryBreakpoint()
+    {
+        for (auto& frontend : frontendsOfThisContext())
+            frontend->turnOffCommands.removeAllMatching([](auto& command) { return command.removesBreakpoint(); });
+    }
+
+    // Inspected thread. JSC keeps one state for every frontend, so what only this frontend turned on goes off with it.
+    void turnOffWhatOnlyThisFrontendTurnedOn()
+    {
+        if (turnOffCommands.isEmpty())
+            return;
+
+        auto frontends = frontendsOfThisContext();
+        // What the in-process `inspector.Session` turned on does not stay on for it: it has no client.
+        auto anotherFrontendTurnedOn = [&](const TurnOffCommand& command) {
+            return frontends.containsIf([&](auto& other) {
+                return other.get() != this && other->hasTransport && other->status != ConnectionStatus::Disconnected && other->turnOffCommands.contains(command);
+            });
+        };
+
+        auto commands = std::exchange(turnOffCommands, {});
+        TurnOffCommand disableDebugger { "Debugger.disable"_s, {} };
+        // JSC asserts when a frontend disables a debugger that is not attached.
+        bool debuggerGoesOff = globalObject->debugger() && commands.contains(disableDebugger) && !anotherFrontendTurnedOn(disableDebugger);
+        for (auto& command : commands) {
+            if (command == disableDebugger ? !debuggerGoesOff : anotherFrontendTurnedOn(command))
+                continue;
+            // `Debugger.disable` removes every breakpoint.
+            if (debuggerGoesOff && command.removesBreakpoint())
+                continue;
+            if (recordsProfileSamples && command.method == "ScriptProfiler.stopTracking"_s)
+                discardProfileSamples();
+            inspector().dispatchMessageFromRemote(command.text());
+        }
+        if (debuggerGoesOff)
+            forgetEveryBreakpoint();
+    }
+
+    // Inspected thread. JSC's teardown for the last frontend keeps the breakpoints that were set while the debugger was off.
+    void removeBreakpointsThatTeardownKeeps()
+    {
+        if (globalObject->debugger())
+            return;
+        for (auto& command : std::exchange(turnOffCommands, {})) {
+            if (command.removesBreakpoint())
+                inspector().dispatchMessageFromRemote(command.text());
+        }
+    }
+
+    // Inspected thread. Nobody asked for the profile of the frontend that left: JSC drops it too when a frontend disconnects.
+    void discardProfileSamples()
+    {
+#if ENABLE(SAMPLING_PROFILER)
+        if (auto* profiler = globalObject->vm().samplingProfiler()) {
+            Locker locker { profiler->getLock() };
+            profiler->pause();
+            profiler->clearData();
+        }
+#endif
+    }
+
     void sendMessageToFrontend(const String& message) override
     {
         if (message.length() == 0)
+            return;
+
+        // A frontend that left gets nothing more.
+        if (this->status.load(std::memory_order_relaxed) >= ConnectionStatus::Disconnecting)
             return;
 
         this->sendMessageToDebuggerThread(message.isolatedCopy());
@@ -261,18 +547,23 @@ public:
         }
 
         while (!isDoneProcessingEvents) {
-            size_t closedCount = 0;
             for (auto& connection : connections) {
-                ConnectionStatus status = connection->status.load();
-                if (status == ConnectionStatus::Disconnected || status == ConnectionStatus::Disconnecting) {
-                    closedCount++;
+                if (connection->hasLeft())
                     continue;
-                }
                 connection->receiveMessagesOnInspectorThread(*global->scriptExecutionContext(), global, true);
                 if (isDoneProcessingEvents)
                     break;
             }
 
+            if (isDoneProcessingEvents)
+                break;
+
+            size_t closedCount = countFrontendsThatCannotResume(connections);
+            // The thread runs no disconnect task during the pause, and the breakpoints of a frontend that left would pause it again.
+            for (auto& connection : connections) {
+                if (connection->hasLeft())
+                    connection->turnOffWhatOnlyThisFrontendTurnedOn();
+            }
             if (isDoneProcessingEvents)
                 break;
 
@@ -300,13 +591,9 @@ public:
 
     static bool anyConnectionHasPendingWork(const Vector<RefPtr<BunInspectorConnection>, 8>& connections, size_t previousClosedCount)
     {
-        size_t closedCount = 0;
         for (auto& connection : connections) {
-            ConnectionStatus status = connection->status.load();
-            if (status == ConnectionStatus::Disconnected || status == ConnectionStatus::Disconnecting) {
-                closedCount++;
+            if (connection->hasLeft())
                 continue;
-            }
 
             Locker<Lock> locker(connection->jsThreadMessagesLock);
             if (!connection->jsThreadMessages.isEmpty())
@@ -317,7 +604,7 @@ public:
         // closed connection among several would cause us to spin). Only
         // treat a *change* in the closed count as pending work so the outer
         // loop re-evaluates whether every connection is gone.
-        return closedCount != previousClosedCount;
+        return countFrontendsThatCannotResume(connections) != previousClosedCount;
     }
 
     // Wake the inspected thread if it is blocked inside runWhilePaused.
@@ -368,6 +655,7 @@ public:
         if (!debugger) {
             for (auto message : messages) {
                 resolveWaitIfInitialized(message);
+                trackTurnOffCommand(message);
                 dispatcher.dispatchMessageFromRemote(WTF::move(message));
 
                 if (!debugger) {
@@ -382,6 +670,7 @@ public:
         } else {
             for (auto message : messages) {
                 resolveWaitIfInitialized(message);
+                trackTurnOffCommand(message);
                 dispatcher.dispatchMessageFromRemote(WTF::move(message));
             }
         }
@@ -389,45 +678,218 @@ public:
         messages.clear();
     }
 
-    void receiveMessagesOnDebuggerThread(ScriptExecutionContext& context, Zig::GlobalObject* debuggerGlobalObject)
+    // Debugger thread. Hands the queued messages to debugger.ts for as long as the transport takes them.
+    void deliverMessagesOnDebuggerThread(Zig::GlobalObject* debuggerGlobalObject)
     {
-        debuggerThreadMessageScheduledCount.store(0);
-        WTF::Vector<WTF::String, 12> messages;
+        // One call takes at most Interpreter::maxArguments arguments.
+        static constexpr size_t maxPieceMessages = 1024;
+        static constexpr size_t maxPieceBytes = 1024 * 1024;
 
-        {
-            Locker<Lock> locker(debuggerThreadMessagesLock);
-            this->debuggerThreadMessages.swap(messages);
+        debuggerThreadMessageScheduledCount.store(0);
+
+        auto& vm = debuggerGlobalObject->vm();
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+        if (!jsBunDebuggerOnMessageFunction) {
+            dropQueuedMessages();
+            return;
         }
 
-        if (!jsBunDebuggerOnMessageFunction)
+        if (transportIsFull && !transportHasRoom(debuggerGlobalObject))
             return;
 
-        JSFunction* onMessageFn = uncheckedDowncast<JSFunction>(jsBunDebuggerOnMessageFunction.get());
-        MarkedArgumentBuffer arguments;
-        arguments.ensureCapacity(messages.size());
-        auto& vm = debuggerGlobalObject->vm();
-
-        for (auto& message : messages) {
-            arguments.append(jsString(vm, message));
+        // One batch per task, so that the debugger thread's other tasks and sockets get their turn.
+        if (undeliveredIndex == undelivered.size()) {
+            undelivered.clear();
+            undeliveredIndex = 0;
+            Locker<Lock> locker(debuggerThreadMessagesLock);
+            debuggerThreadMessages.swap(undelivered);
         }
 
-        messages.clear();
+        while (undeliveredIndex < undelivered.size()) {
+            // jsFunctionDisconnect() clears it, also from inside the call below.
+            if (!jsBunDebuggerOnMessageFunction) {
+                dropQueuedMessages();
+                return;
+            }
 
-        JSC::call(debuggerGlobalObject, onMessageFn, arguments, "BunInspectorConnection::receiveMessagesOnDebuggerThread - onMessageFn"_s);
+            MarkedArgumentBuffer arguments;
+            size_t pieceBytes = 0;
+            do {
+                auto& message = undelivered[undeliveredIndex];
+                size_t bytes = message.sizeInBytes();
+                if (pieceBytes && pieceBytes + bytes > maxPieceBytes)
+                    break;
+                pieceBytes += bytes;
+                arguments.append(jsString(vm, WTF::move(message)));
+                undeliveredIndex++;
+            } while (undeliveredIndex < undelivered.size() && arguments.size() < maxPieceMessages);
+
+            JSValue unsent = JSC::call(debuggerGlobalObject, jsBunDebuggerOnMessageFunction.get(), arguments, "BunInspectorConnection::deliverMessagesOnDebuggerThread - onMessageFn"_s);
+            bool threw = reportExceptionOnDebuggerThread(debuggerGlobalObject, scope);
+            RETURN_IF_EXCEPTION(scope, );
+
+            // The callback returns what the transport could not write, when there is any.
+            size_t unsentBytes = !threw && unsent.isNumber() && unsent.asNumber() > 0 ? static_cast<size_t>(unsent.asNumber()) : 0;
+            bool hasMoreQueued;
+            {
+                Locker<Lock> locker(debuggerThreadMessagesLock);
+                queuedBytes -= std::min(queuedBytes, pieceBytes);
+                hasMoreQueued = !debuggerThreadMessages.isEmpty();
+                if (unsentBytes) {
+                    transportIsFull = true;
+                    queuedBytesAtProgress = queuedBytes;
+                    queuedBytesAtStall = 0;
+                    nextStallCheck = queuedBytes + stalledFrontendBacklog / 8;
+                }
+            }
+            if (unsentBytes) {
+                transportUnsentBytes = unsentBytes;
+                return;
+            }
+            // What was queued while the transport was full has no task of its own.
+            if (hasMoreQueued && undeliveredIndex == undelivered.size())
+                scheduleDeliveryOnDebuggerThread();
+        }
+    }
+
+    // Debugger thread. False while the transport still holds bytes, and then `queuedBytes` only grows.
+    bool transportHasRoom(Zig::GlobalObject* debuggerGlobalObject)
+    {
+        auto& vm = debuggerGlobalObject->vm();
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+        size_t unsentBytes = 0;
+        if (jsTransportUnsentBytesFunction) {
+            JSValue unsent = JSC::call(debuggerGlobalObject, jsTransportUnsentBytesFunction.get(), MarkedArgumentBuffer(), "BunInspectorConnection::transportHasRoom - unsentBytesFn"_s);
+            bool threw = reportExceptionOnDebuggerThread(debuggerGlobalObject, scope);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!threw && unsent.isNumber() && unsent.asNumber() > 0)
+                unsentBytes = static_cast<size_t>(unsent.asNumber());
+        }
+
+        bool tookBytes = unsentBytes < transportUnsentBytes;
+        transportUnsentBytes = unsentBytes;
+
+        size_t stalledBytes = 0;
+        {
+            Locker<Lock> locker(debuggerThreadMessagesLock);
+            if (!unsentBytes) {
+                transportIsFull = false;
+                return true;
+            }
+            if (tookBytes) {
+                queuedBytesAtProgress = queuedBytes;
+                queuedBytesAtStall = 0;
+            } else if (queuedBytes >= queuedBytesAtProgress + stalledFrontendBacklog) {
+                // One message can pass the limit by itself, so the frontend gets until the next check.
+                if (!queuedBytesAtStall)
+                    queuedBytesAtStall = queuedBytes;
+                else if (queuedBytes >= queuedBytesAtStall + stalledFrontendBacklog / 8)
+                    stalledBytes = queuedBytes - queuedBytesAtProgress;
+            }
+        }
+
+        if (stalledBytes)
+            dropStalledFrontend(debuggerGlobalObject, stalledBytes);
+        return false;
+    }
+
+    // Debugger thread. The frontend leaves the inspector now. debugger.ts closes the transport once it has said why.
+    void dropStalledFrontend(Zig::GlobalObject* debuggerGlobalObject, size_t stalledBytes)
+    {
+        if (JSValue dismissFn = jsTransportDismissFunction.get()) {
+            auto& vm = debuggerGlobalObject->vm();
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            MarkedArgumentBuffer arguments;
+            arguments.append(jsString(vm, makeString("Inspector frontend read nothing while "_s, stalledBytes / (1024 * 1024), " MB were queued for it"_s)));
+            JSC::call(debuggerGlobalObject, dismissFn, arguments, "BunInspectorConnection::dropStalledFrontend - dismissFn"_s);
+            reportExceptionOnDebuggerThread(debuggerGlobalObject, scope);
+            // Unless the call closed the transport already, it closes later: disconnectFromDebuggerThread() runs again then.
+            transportOutlivesDisconnect = status == ConnectionStatus::Connected;
+        }
+        disconnectFromDebuggerThread();
+    }
+
+    // Debugger thread.
+    void disconnectFromDebuggerThread()
+    {
+        auto status = this->status.load();
+        if (status != ConnectionStatus::Connected && status != ConnectionStatus::Pending) {
+            if (transportOutlivesDisconnect.exchange(false)) {
+                ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, BunLoopKind::Regular, [connection = Ref { *this }](ScriptExecutionContext& context) {
+                    connection->releaseKeepAlive(context);
+                });
+            }
+            return;
+        }
+
+        this->status = ConnectionStatus::Disconnecting;
+        jsBunDebuggerOnMessageFunction.clear();
+        jsTransportUnsentBytesFunction.clear();
+        jsTransportDismissFunction.clear();
+        dropQueuedMessages();
+        disconnect();
+    }
+
+    // debugger.ts runs at the top of the stack here, so what it throws has no handler.
+    static bool reportExceptionOnDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, JSC::TopExceptionScope& scope)
+    {
+        auto* exception = scope.exception();
+        if (!exception) [[likely]]
+            return false;
+        (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(debuggerGlobalObject, exception);
+        return true;
+    }
+
+    // Debugger thread.
+    void dropQueuedMessages()
+    {
+        WTF::Vector<WTF::String, 12> dropped;
+        {
+            Locker<Lock> locker(debuggerThreadMessagesLock);
+            queuedBytes = 0;
+            dropped.swap(debuggerThreadMessages);
+        }
+        undelivered.clear();
+        undeliveredIndex = 0;
+    }
+
+    // Debugger thread. The transport wrote what it held.
+    void resumeDeliveryOnDebuggerThread()
+    {
+        if (transportIsFull)
+            scheduleDeliveryOnDebuggerThread();
+    }
+
+    void scheduleDeliveryOnDebuggerThread()
+    {
+        if (this->debuggerThreadMessageScheduledCount++ == 0) {
+            debuggerScriptExecutionContext->postTaskConcurrently([connection = Ref { *this }](ScriptExecutionContext& context) {
+                connection->deliverMessagesOnDebuggerThread(static_cast<Zig::GlobalObject*>(context.jsGlobalObject()));
+            });
+        }
     }
 
     void sendMessageToDebuggerThread(WTF::String&& inputMessage)
     {
+        size_t bytes = inputMessage.sizeInBytes();
+        bool schedule = true;
         {
             Locker<Lock> locker(debuggerThreadMessagesLock);
-            debuggerThreadMessages.append(inputMessage);
+            debuggerThreadMessages.append(WTF::move(inputMessage));
+            queuedBytes += bytes;
+            if (transportIsFull) [[unlikely]] {
+                // Nothing is handed over now. The debugger thread asks the transport again as the queue grows.
+                schedule = queuedBytes >= nextStallCheck;
+                if (schedule)
+                    nextStallCheck = queuedBytes + stalledFrontendBacklog / 8;
+            }
         }
 
-        if (this->debuggerThreadMessageScheduledCount++ == 0) {
-            debuggerScriptExecutionContext->postTaskConcurrently([connection = Ref { *this }](ScriptExecutionContext& context) {
-                connection->receiveMessagesOnDebuggerThread(context, static_cast<Zig::GlobalObject*>(context.jsGlobalObject()));
-            });
-        }
+        if (schedule)
+            scheduleDeliveryOnDebuggerThread();
     }
 
     void sendMessageToInspectorFromDebuggerThread(Vector<WTF::String, 12>&& inputMessages)
@@ -464,7 +926,22 @@ public:
 
     WTF::Vector<WTF::String, 12> debuggerThreadMessages;
     WTF::Lock debuggerThreadMessagesLock = WTF::Lock();
+    // Bytes in `debuggerThreadMessages` and in what is left of `undelivered`.
+    size_t queuedBytes { 0 };
+    // The debugger thread writes it under the lock and is the only one to read it without.
+    bool transportIsFull { false };
+    // `queuedBytes` when the frontend last took a byte.
+    size_t queuedBytesAtProgress { 0 };
+    // `queuedBytes` at the first check that found the limit passed with no byte taken, or 0.
+    size_t queuedBytesAtStall { 0 };
+    // `queuedBytes` at which the debugger thread asks the transport again.
+    size_t nextStallCheck { 0 };
     std::atomic<uint32_t> debuggerThreadMessageScheduledCount { 0 };
+
+    // Debugger thread only: the batch it is handing to debugger.ts.
+    WTF::Vector<WTF::String, 12> undelivered;
+    size_t undeliveredIndex { 0 };
+    size_t transportUnsentBytes { 0 };
 
     WTF::Vector<WTF::String, 12> jsThreadMessages;
     WTF::Lock jsThreadMessagesLock = WTF::Lock();
@@ -473,16 +950,31 @@ public:
     JSC::JSGlobalObject* globalObject;
     ScriptExecutionContextIdentifier scriptExecutionContextIdentifier;
     JSC::Strong<JSC::Unknown> jsBunDebuggerOnMessageFunction {};
+    JSC::Strong<JSC::Unknown> jsTransportUnsentBytesFunction {};
+    JSC::Strong<JSC::Unknown> jsTransportDismissFunction {};
+
+    // Inspected thread only: the commands that turn off what this frontend turned on.
+    WTF::Vector<TurnOffCommand, 4> turnOffCommands;
 
     std::atomic<ConnectionStatus> status = ConnectionStatus::Pending;
 
     bool unrefOnDisconnect = false;
 
     bool hasEverConnected = false;
+
+    // False for the in-process `inspector.Session`: no client reads its events or answers a pause.
+    const bool hasTransport;
+
+    // Set when the frontend is dropped: its transport is still open, and that keeps the process alive.
+    std::atomic<bool> transportOutlivesDisconnect { false };
+
+    // Inspected thread only: this frontend's `ScriptProfiler.startTracking` asked for samples.
+    bool recordsProfileSamples = false;
 };
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSend);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDisconnect);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionResume);
 
 class JSBunInspectorConnection final : public JSC::JSDestructibleObject {
 public:
@@ -542,6 +1034,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSend, (JSC::JSGlobalObject * globalObject, JS
     if (!jsConnection)
         return JSValue::encode(jsUndefined());
 
+    // Nothing answers a frontend that left.
+    auto status = jsConnection->connection()->status.load();
+    if (status != ConnectionStatus::Pending && status != ConnectionStatus::Connected)
+        return JSValue::encode(jsUndefined());
+
     if (message.isString()) {
         jsConnection->connection()->sendMessageToInspectorFromDebuggerThread(message.toWTFString(globalObject).isolatedCopy());
     } else if (message.isCell()) {
@@ -563,13 +1060,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDisconnect, (JSC::JSGlobalObject * globalObje
     if (!jsConnection)
         return JSValue::encode(jsUndefined());
 
-    auto& connection = *jsConnection->connection();
+    jsConnection->connection()->disconnectFromDebuggerThread();
 
-    if (connection.status == ConnectionStatus::Connected || connection.status == ConnectionStatus::Pending) {
-        connection.status = ConnectionStatus::Disconnecting;
-        connection.jsBunDebuggerOnMessageFunction.clear();
-        connection.disconnect();
-    }
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionResume, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    if (auto* jsConnection = dynamicDowncast<JSBunInspectorConnection>(callFrame->thisValue()))
+        jsConnection->connection()->resumeDeliveryOnDebuggerThread();
 
     return JSValue::encode(jsUndefined());
 }
@@ -662,9 +1161,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
     if (!targetContext || !onMessageFn)
         return JSValue::encode(jsUndefined());
 
+    JSValue unsentBytesFn = callFrame->argument(3);
+    JSValue dismissFn = callFrame->argument(4);
+    // A transport gives both. The in-process `inspector.Session` gives none.
     auto connection = BunInspectorConnection::create(
         *targetContext,
-        targetContext->jsGlobalObject(), shouldRef);
+        targetContext->jsGlobalObject(), shouldRef, unsentBytesFn.isCallable());
 
     {
         Locker<Lock> locker(inspectorConnectionsLock);
@@ -673,6 +1175,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
         inspectorConnections->set(targetContext->identifier(), connections);
     }
     connection->jsBunDebuggerOnMessageFunction = { vm, onMessageFn };
+    if (unsentBytesFn.isCallable())
+        connection->jsTransportUnsentBytesFunction = { vm, unsentBytesFn };
+    if (dismissFn.isCallable())
+        connection->jsTransportDismissFunction = { vm, dismissFn };
     connection->connect();
 
     return JSValue::encode(JSBunInspectorConnection::create(vm, JSBunInspectorConnection::createStructure(vm, globalObject, globalObject->objectPrototype()), WTF::move(connection)));
@@ -951,13 +1457,14 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
         return;
     }
     arguments.append(portOrPathJS);
-    arguments.append(JSFunction::create(vm, debuggerGlobalObject, 3, String(), jsFunctionCreateConnection, ImplementationVisibility::Public));
+    arguments.append(JSFunction::create(vm, debuggerGlobalObject, 5, String(), jsFunctionCreateConnection, ImplementationVisibility::Public));
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 1, String("send"_s), jsFunctionSend, ImplementationVisibility::Public));
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 0, String("disconnect"_s), jsFunctionDisconnect, ImplementationVisibility::Public));
     arguments.append(jsBoolean(isAutomatic));
     arguments.append(jsBoolean(isUrlServer));
     arguments.append(jsBoolean(isNodeInspector));
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 3, String("reportNodeInspectorServerStarted"_s), jsFunctionReportNodeInspectorServerStarted, ImplementationVisibility::Public));
+    arguments.append(JSFunction::create(vm, debuggerGlobalObject, 0, String("resume"_s), jsFunctionResume, ImplementationVisibility::Public));
 
     JSC::call(debuggerGlobalObject, debuggerDefaultFn, arguments, "Bun__initJSDebuggerThread - debuggerDefaultFn"_s);
     scope.assertNoException();

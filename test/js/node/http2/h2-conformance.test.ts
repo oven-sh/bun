@@ -493,6 +493,35 @@ describe("a stream that the server finishes before respond() (RFC 9113 §8.1)", 
       server.close();
     }
   });
+
+  // What Node 26 emits on the stream.
+  test("the events of the stream after the client resets it", async () => {
+    const server = http2.createServer();
+    const { promise: opened, resolve: open } = Promise.withResolvers<void>();
+    const { promise: events, resolve } = Promise.withResolvers<{ seen: string[]; writableFinished: boolean }>();
+    server.on("stream", stream => {
+      const seen: string[] = [];
+      for (const event of ["aborted", "finish", "error", "close"]) stream.on(event, () => seen.push(event));
+      stream.on("close", () => resolve({ seen, writableFinished: stream.writableFinished }));
+      open();
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x5 /* END_STREAM | END_HEADERS */, 1, requestHeaderBlock("GET"));
+      await opened;
+      const code = Buffer.alloc(4);
+      code.writeUInt32BE(ErrorCode.CANCEL, 0);
+      c.sendFrame(FrameType.RST_STREAM, 0, 1, code);
+      expect(await events).toEqual({ seen: ["aborted", "finish", "close"], writableFinished: true });
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
 });
 
 describe("a response that the server resets after its headers", () => {

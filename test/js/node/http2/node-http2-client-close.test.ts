@@ -12,6 +12,7 @@
 import assert from "node:assert";
 import http2 from "node:http2";
 import net from "node:net";
+import { Duplex } from "node:stream";
 import { describe, test } from "node:test";
 
 const { NGHTTP2_NO_ERROR, NGHTTP2_CANCEL, NGHTTP2_INTERNAL_ERROR, NGHTTP2_ENHANCE_YOUR_CALM } = http2.constants;
@@ -445,6 +446,35 @@ describe("session.destroy() with no close() before it", () => {
     } finally {
       peer.destroy();
       server.close();
+    }
+  });
+
+  test("a client session over a Duplex that never emits 'close' still emits its own", async () => {
+    const peer = net.createServer({ allowHalfOpen: true }, socket => {
+      socket.on("error", () => {});
+      socket.resume();
+      socket.write(settings);
+    });
+    const port = await listen(peer);
+    const socket = net.connect(port, "127.0.0.1");
+    try {
+      const transport = new Duplex({
+        emitClose: false,
+        read() {},
+        write: (chunk, encoding, callback) => void socket.write(chunk, encoding, callback),
+        destroy: (error, callback) => (socket.destroy(), callback(error)),
+      });
+      socket.on("data", chunk => transport.push(chunk));
+      socket.on("error", () => {});
+      const session = http2.connect(`http://127.0.0.1:${port}`, { createConnection: () => transport });
+      session.on("error", () => {});
+      await new Promise(resolve => session.once("remoteSettings", resolve));
+      const closed = new Promise<void>(resolve => session.on("close", resolve));
+      session.destroy();
+      await closed;
+    } finally {
+      socket.destroy();
+      peer.close();
     }
   });
 });

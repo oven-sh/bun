@@ -2829,3 +2829,82 @@ devTest("css file that does not print does not bundle the stylesheet that import
     expect(await memberLoads()).toBe(2);
   },
 });
+devTest("css file that did not print in two ways comes back in the stylesheet that failed with it", {
+  // A request for a failed page answers with the recorded failure. It does not bundle the page again.
+  env: { BUN_ASSUME_PERFECT_INCREMENTAL: "1" },
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./leaf-plugin.ts"]
+    `,
+    // "leaf.css" is what "leaf.txt" holds. The plugin counts its loads of "member.css".
+    "leaf-plugin.ts": `
+      import { join } from "node:path";
+      export default {
+        name: "leaf-plugin",
+        setup(build) {
+          build.onLoad({ filter: /leaf\\.css$/ }, async () => ({
+            contents: await Bun.file(join(import.meta.dir, "leaf.txt")).text(),
+            loader: "css",
+          }));
+          build.onLoad({ filter: /member\\.css$/ }, () => {
+            globalThis.memberLoads = (globalThis.memberLoads ?? 0) + 1;
+            return { contents: ".member-v1 { color: red; }", loader: "css" };
+          });
+        },
+      };
+    `,
+    // "/member-loads" answers how many times the plugin loaded "member.css".
+    "bun.app.ts": `
+      import inner from "./inner.html";
+      import outer from "./outer.html";
+      export default {
+        static: { "/inner": inner, "/outer": outer },
+        fetch(req) {
+          if (new URL(req.url).pathname === "/member-loads") return Response.json(globalThis.memberLoads ?? 0);
+          return new Response("Not Found", { status: 404 });
+        },
+      };
+    `,
+    "outer.html": emptyHtmlFile({ styles: ["outer.css"] }),
+    "inner.html": emptyHtmlFile({ styles: ["inner.css"] }),
+    "outer.css": `@import "./inner.css";\n@import "./member.css";\n.outer-v1 { color: red; }`,
+    "inner.css": `@import "./leaf.css";\n.inner-v1 { color: red; }`,
+    "leaf.css": ``,
+    "leaf.txt": `.leaf-v1 { color: red; }`,
+    "member.css": ``,
+  },
+  // The harness does not write a "bun.app.ts" of its own for the two pages.
+  htmlFiles: [],
+  async test(dev) {
+    const memberLoads = () => dev.fetch("/member-loads").json();
+    // Each save bundles "inner.css" again, and the plugin reads "leaf.txt" for it. No watcher event reaches "leaf.css".
+    const saveInnerPage = (body: string) =>
+      dev.write("inner.html", emptyHtmlFile({ styles: ["inner.css"], body }), { errors: null });
+    expect(await linkedStylesheets(dev, "/outer")).toEqual({
+      status: 200,
+      sheets: [".leaf-v1 .inner-v1 .member-v1 .outer-v1"],
+    });
+    // "leaf.css" stops printing. The first bundle of the other page has it in "inner.css", and not in "outer.css".
+    await Bun.write(dev.join("leaf.txt"), stylesheetThatDoesNotPrint);
+    expect(await linkedStylesheets(dev, "/inner")).toEqual({ status: 500, sheets: [] });
+    expect(await memberLoads()).toBe(1);
+    // Another text that does not print: the bundle of this save has "outer.css" too, and neither stylesheet prints.
+    await Bun.write(dev.join("leaf.txt"), stylesheetThatDoesNotPrint + "/* changed */\n");
+    await saveInnerPage("changed");
+    expect(await linkedStylesheets(dev, "/outer")).toEqual({ status: 500, sheets: [] });
+    expect(await memberLoads()).toBe(2);
+    // The same text again: this bundle has "inner.css" alone, and "outer.css" keeps the failure of the bundle before.
+    await saveInnerPage("same");
+    expect(await memberLoads()).toBe(2);
+    // The bundle that repairs "inner.css" has "outer.css" again: a stylesheet of its failed tree changed.
+    await Bun.write(dev.join("leaf.txt"), `.leaf-v2 { color: red; }`);
+    await saveInnerPage("repaired");
+    expect(await linkedStylesheets(dev, "/inner")).toEqual({ status: 200, sheets: [".leaf-v2 .inner-v1"] });
+    expect(await linkedStylesheets(dev, "/outer")).toEqual({
+      status: 200,
+      sheets: [".leaf-v2 .inner-v1 .member-v1 .outer-v1"],
+    });
+    expect(await memberLoads()).toBe(3);
+  },
+});

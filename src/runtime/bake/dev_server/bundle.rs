@@ -664,6 +664,7 @@ impl DevServer {
             for &(file, source_index) in &repaired {
                 self.client_graph.holders_of_repaired_css(
                     &self.server_graph,
+                    &self.css_link_failures,
                     file,
                     source_index,
                     &repaired,

@@ -1280,6 +1280,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     pub(crate) fn holders_of_repaired_css(
         &mut self,
         server_graph: &IncrementalGraph<{ Side::Server }>,
+        link_failures: &[(ClientFileIndex, u64)],
         file: FileIndex<SIDE>,
         source_index: bun_ast::Index,
         repaired: &[(FileIndex<SIDE>, bun_ast::Index)],
@@ -1316,7 +1317,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 let request = match repaired.iter().find(|(index, _)| *index == root) {
                     Some(&(_, parsed)) => JoinRequest::Parsed(parsed),
                     // That failure still gates the root, and the bundle that clears it joins the root.
-                    None if self.reaches_unrepaired_failure(server_graph, root, &unrepaired) => {
+                    None if self.is_held_back(server_graph, link_failures, root, &unrepaired) => {
                         continue;
                     }
                     None if self.css_root_can_enter(server_graph, root, &unrepaired) => {
@@ -1339,6 +1340,31 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
     }
 
+    /// True if a failure that the running bundle did not repair keeps the css root `root` out of the join.
+    fn is_held_back(
+        &self,
+        server_graph: &IncrementalGraph<{ Side::Server }>,
+        link_failures: &[(ClientFileIndex, u64)],
+        root: FileIndex<SIDE>,
+        unrepaired: &impl Fn(&[u8], bool) -> bool,
+    ) -> bool {
+        let holder = ClientFileIndex::init(root.get());
+        if !link_failures.iter().any(|(file, _)| *file == holder) {
+            return self.reaches_unrepaired_failure(server_graph, root, unrepaired);
+        }
+        // The link step failed `root` for its whole tree, and this bundle repaired a file of it: only its imports hold it back.
+        let root_key: &[u8] = &self.bundled_files.keys()[root.get() as usize];
+        let gates = |key: &[u8], failed: bool| key != root_key && unrepaired(key, failed);
+        let mut imports = Vec::new();
+        let mut it = self.edge_lists[root.get() as usize].first_import;
+        while let Some(edge_index) = it {
+            let edge = self.edges[edge_index.get() as usize];
+            it = edge.next_import;
+            imports.push(edge.imported);
+        }
+        self.any_reaches_unrepaired_failure(server_graph, &imports, &gates)
+    }
+
     /// True if `unrepaired(key, failed)` holds for `from`, or for a file that the imports of `from` reach.
     fn reaches_unrepaired_failure<const TWIN: bake::Side>(
         &self,
@@ -1346,10 +1372,22 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         from: FileIndex<SIDE>,
         unrepaired: &impl Fn(&[u8], bool) -> bool,
     ) -> bool {
+        self.any_reaches_unrepaired_failure(twin_graph, &[from], unrepaired)
+    }
+
+    /// [`reaches_unrepaired_failure`](Self::reaches_unrepaired_failure) for every file of `from`, in one walk.
+    fn any_reaches_unrepaired_failure<const TWIN: bake::Side>(
+        &self,
+        twin_graph: &IncrementalGraph<TWIN>,
+        from: &[FileIndex<SIDE>],
+        unrepaired: &impl Fn(&[u8], bool) -> bool,
+    ) -> bool {
         let files = self.bundled_files.count();
         let mut seen = bun_core::handle_oom(DynamicBitSetUnmanaged::init_empty(files));
-        seen.set(from.get() as usize);
-        let mut queue = vec![from];
+        for index in from {
+            seen.set(index.get() as usize);
+        }
+        let mut queue = from.to_vec();
         while let Some(index) = queue.pop() {
             let key: &[u8] = &self.bundled_files.keys()[index.get() as usize];
             let file = &self.bundled_files.values()[index.get() as usize];
@@ -1420,6 +1458,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         unrepaired: &impl Fn(&[u8], bool) -> bool,
     ) -> Vec<FileIndex<SIDE>> {
         let mut importers = Vec::new();
+        // The join takes `root` with a failure that the link step filed for it: bundling an importer links `root` again.
+        let root_key: &[u8] = &self.bundled_files.keys()[root.get() as usize];
+        let gates = |key: &[u8], failed: bool| key != root_key && unrepaired(key, failed);
         let mut it = self.edge_lists[root.get() as usize].first_dep;
         while let Some(edge_index) = it {
             let edge = self.edges[edge_index.get() as usize];
@@ -1432,7 +1473,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 continue;
             }
             // Bundled again, an importer that reaches such a failure would file it again.
-            if !self.reaches_unrepaired_failure(twin_graph, importer, unrepaired) {
+            if !self.reaches_unrepaired_failure(twin_graph, importer, &gates) {
                 importers.push(importer);
             }
         }

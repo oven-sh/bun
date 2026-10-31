@@ -820,7 +820,7 @@ static ALWAYS_INLINE void putStatsFieldByName(JSC::VM& vm, JSC::JSObject* object
     if constexpr (offset >= static_cast<size_t>(DateFieldType::atime) && offset <= static_cast<size_t>(DateFieldType::birthtime))
         object->putDirect(vm, identifier(vm, static_cast<DateFieldType>(offset)), value, 0);
     else
-        object->putDirect(vm, JSC::Identifier::fromString(vm, statsFieldNames[offset]), value, 0);
+        Bun::putDirectNamed(vm, object, statsFieldNames[offset], value);
 }
 
 // One put per field, in the order of the list. A subclass structure has no properties yet, so that order is its own-key order.

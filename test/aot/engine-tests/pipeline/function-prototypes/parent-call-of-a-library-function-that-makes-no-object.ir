@@ -543,7 +543,7 @@ function f33 module=m2 role=Signature thisType={type=anything} results=[{type=an
 function f34 module=m2 role=Signature thisType={type=anything} results=[{type=anything}]
 function f35 module=m2 role=Signature thisType={type=anything} results=[{type=anything}]
 function f36 module=m2 role=Signature thisType={type=anything} results=[{type=anything}]
-function f37 name="next" module=m3 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f37 name="next" module=m3 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -2091,5 +2091,5 @@ function f230 module=m13 role=Signature thisType={type=anything} results=[{type=
 function f231 module=m13 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
 runtimefunction id=4 function=f39
 runtimefunction id=12 function=f38
-runtimefunction id=69 function=f37
+runtimefunction id=68 function=f37
 # -- generated: *

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { unsupported } from "../aot/harness/commands";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -1222,7 +1223,7 @@ body {
   });
 
   // A plugin can also make a script of a stylesheet, to add the styles at run time. That page builds.
-  // The check leaves each file alone whose contents an `onLoad` plugin returns, with or without a `loader`.
+  // The same holds for a module that a plugin makes: it is not a script file.
   itBundled("html/stylesheet-link-loaded-as-script-by-plugin", {
     outdir: "out/",
     files: {
@@ -1231,12 +1232,11 @@ body {
 <html>
   <head>
     <link rel="stylesheet" href="./styles.css">
-    <link rel="stylesheet" href="./theme.js">
+    <link rel="stylesheet" href="virtual:styles.js">
   </head>
   <body></body>
 </html>`,
       "/styles.css": `body { color: red; }`,
-      "/theme.js": `console.log("theme-on-disk");`,
     },
     entryPoints: ["/index.html"],
     plugins(builder) {
@@ -1244,7 +1244,11 @@ body {
         contents: `console.log("styles-from-plugin");`,
         loader: "js",
       }));
-      builder.onLoad({ filter: /theme\.js$/ }, () => ({ contents: `console.log("theme-from-plugin");` }));
+      builder.onResolve({ filter: /^virtual:styles\.js$/ }, () => ({ path: "styles.js", namespace: "virtual" }));
+      builder.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({
+        contents: `console.log("virtual-from-plugin");`,
+        loader: "js",
+      }));
     },
     onAfterBundle(api) {
       const html = api.readFile("out/index.html");
@@ -1253,24 +1257,40 @@ body {
       expect(html).not.toContain("<link");
       const script = api.readFile("out/" + src);
       expect(script).toContain("styles-from-plugin");
-      expect(script).toContain("theme-from-plugin");
-      expect(script).not.toContain("theme-on-disk");
+      expect(script).toContain("virtual-from-plugin");
     },
   });
 
-  // An `onLoad` plugin that returns nothing did not load the file. Bun loads it as a script by itself.
-  itBundled("html/stylesheet-link-to-script-that-plugin-declines", {
+  // A script file stays a script when an `onLoad` plugin declines it, transforms it, or returns its contents.
+  itBundled("html/stylesheet-link-to-script-that-plugin-loads", {
     outdir: "out/",
     files: {
-      "/index.html": `<!doctype html><html><head><link rel="stylesheet" href="./theme.js"></head><body></body></html>`,
-      "/theme.js": `console.log("theme");`,
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./declined.js">
+    <link rel="stylesheet" href="./transformed.js">
+    <link rel="stylesheet" href="./returned.ts">
+  </head>
+  <body></body>
+</html>`,
+      "/declined.js": `console.log("declined");`,
+      "/transformed.js": `console.log("transformed");`,
+      "/returned.ts": `console.log("returned" as string);`,
     },
     entryPoints: ["/index.html"],
     plugins(builder) {
-      builder.onLoad({ filter: /theme\.js$/ }, () => undefined);
+      builder.onLoad({ filter: /declined\.js$/ }, () => undefined);
+      builder.onLoad({ filter: /transformed\.js$/ }, () => ({ contents: `console.log("by-plugin");`, loader: "jsx" }));
+      builder.onLoad({ filter: /returned\.ts$/ }, () => ({ contents: `console.log("by-plugin");` }));
     },
     bundleErrors: {
-      "/index.html": ['Cannot use "theme.js" as a stylesheet'],
+      "/index.html": [
+        'Cannot use "declined.js" as a stylesheet',
+        'Cannot use "transformed.js" as a stylesheet',
+        'Cannot use "returned.ts" as a stylesheet',
+      ],
     },
   });
 
@@ -1458,7 +1478,7 @@ describe("a stylesheet link to a script", () => {
     { args: ["build", "--target=bun", "./server.ts", "--outdir", "out"], output: "out" },
     { args: ["build", "--compile", "./server.ts", "--outfile", "app"], output: "app" },
     // `--aot` checks the program as `bun build --compile` does before it runs it. The program does not run.
-    { args: ["--aot", "./server.ts"], output: "out" },
+    ...(unsupported ? [] : [{ args: ["--aot", "./server.ts"], output: "out" }]),
   ])("bun $args fails", async ({ args, output }) => {
     using dir = tempDir("html-stylesheet-link-cli", files);
     await using proc = Bun.spawn({
@@ -1494,17 +1514,33 @@ describe("a stylesheet link to a script", () => {
     errors: build.logs.map(log => ({ message: log.message, notes: log.notes.map(note => note.message) })),
   });
 
-  // The note quotes the href as the page wrote it, or no href. The HTML scanner replaces a rooted href and a bare href with an absolute path.
+  // The note quotes the href when it is the text of the attribute. The HTML scanner replaces a rooted href with an absolute path,
+  // and the note quotes no path. It does the same for a bare href today, so the note then quotes the attribute or nothing.
   const noteWithoutHref = `A stylesheet link resolves to this file, and the "jsx" loader loads it. Link a CSS file, or use <script src> for a script.`;
   test.concurrent.each([
-    { href: "./theme.js", page: "app/index.html", script: "app/theme.js", entry: "./index.html", file: "theme.js" },
-    { href: "/theme.js", page: "app/index.html", script: "app/theme.js", entry: "./index.html", file: "theme.js" },
+    {
+      href: "./theme.js",
+      page: "app/index.html",
+      script: "app/theme.js",
+      entry: "./index.html",
+      file: "theme.js",
+      notes: [note("./theme.js")],
+    },
+    {
+      href: "/theme.js",
+      page: "app/index.html",
+      script: "app/theme.js",
+      entry: "./index.html",
+      file: "theme.js",
+      notes: [noteWithoutHref],
+    },
     {
       href: "theme.js",
       page: "app/src/index.html",
       script: "app/src/theme.js",
       entry: "./src/index.html",
       file: "src/theme.js",
+      notes: [noteWithoutHref, note("theme.js")],
     },
     // The name of the page's directory starts with the name of the working directory.
     {
@@ -1513,8 +1549,9 @@ describe("a stylesheet link to a script", () => {
       script: "app-v2/theme.js",
       entry: "../app-v2/index.html",
       file: "../app-v2/theme.js",
+      notes: [noteWithoutHref, note("theme.js")],
     },
-  ])("Bun.build names the link $href of $page", async ({ href, page: pagePath, script, entry, file }) => {
+  ])("Bun.build names the link $href of $page", async ({ href, page: pagePath, script, entry, file, notes }) => {
     using dir = tempDir("html-stylesheet-link-href", {
       "app/package.json": `{}`,
       [pagePath]: page(href),
@@ -1539,7 +1576,7 @@ describe("a stylesheet link to a script", () => {
       stderr: "",
       exitCode: 0,
     });
-    expect(href.startsWith("./") ? [note(href)] : [noteWithoutHref, note(href)]).toContain(logs[0].notes[0]);
+    expect(notes).toContain(logs[0].notes[0]);
   });
 
   test.concurrent("Bun.build with compile and target browser fails", async () => {

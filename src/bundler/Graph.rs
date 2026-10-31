@@ -157,14 +157,6 @@ bitflags::bitflags! {
     }
 }
 
-impl InputFileFlags {
-    /// An `onLoad` plugin took this file: it returned the contents, or it threw.
-    #[inline]
-    pub(crate) fn is_taken_by_plugin(self) -> bool {
-        self.intersects(Self::IS_LOADED_BY_PLUGIN.union(Self::PLUGIN_FAILED_TO_LOAD))
-    }
-}
-
 impl<'a> Graph<'a> {
     pub(crate) fn new(heap: &'a ThreadLocalArena) -> Self {
         Self {

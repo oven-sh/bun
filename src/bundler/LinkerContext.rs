@@ -3143,26 +3143,21 @@ impl<'a> LinkerContext<'a> {
         source_index: crate::IndexInt,
     ) {
         let input_files = &self.parse_graph().input_files;
+        let sources = input_files.items_source();
         let (loaders, flags) = (input_files.items_loader(), input_files.items_flags());
         for record in ctx.import_records[source_index as usize].iter() {
             if !record.source_index.is_valid() {
                 continue;
             }
+            Self::check_html_import(
+                self.log_disjoint(),
+                sources,
+                loaders,
+                flags,
+                source_index as usize,
+                record,
+            );
             let other = record.source_index.get();
-            if let Some(loader) = Self::html_import_mismatch(
-                record.kind,
-                loaders[other as usize],
-                flags[other as usize].is_taken_by_plugin(),
-            ) {
-                let sources = input_files.items_source();
-                Self::add_html_import_mismatch_error(
-                    self.log_disjoint(),
-                    &sources[source_index as usize],
-                    record,
-                    sources[other as usize].path.pretty,
-                    loader,
-                );
-            }
             if !self.graph.files_live.is_set(other as usize) {
                 ctx.worklist.push(TreeShakeWork::File(other));
             }
@@ -3374,17 +3369,46 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    /// The loader of the script that a tag of an HTML file would put in the page, for a target that Bun loads with `loader`. `by_plugin`: an `onLoad` plugin took the target, so the loader is not the choice of Bun.
+    /// Reports `record` of the HTML file `page` when [`Self::html_import_mismatch`] rejects its target. `sources`, `loaders` and `flags` are the columns of the input files, and the target is one of those files.
+    #[inline(always)]
+    pub(crate) fn check_html_import(
+        log: &mut Log,
+        sources: &[Source],
+        loaders: &[Loader],
+        flags: &[crate::Graph::InputFileFlags],
+        page: usize,
+        record: &ImportRecord,
+    ) {
+        let target = record.source_index.get() as usize;
+        let Some(loader) =
+            Self::html_import_mismatch(record.kind, loaders[target], &sources[target].path)
+        else {
+            return;
+        };
+        // A file for which an `onLoad` plugin threw has the loader of its path. What the plugin makes of the file is not known.
+        if flags[target].contains(crate::Graph::InputFileFlags::PLUGIN_FAILED_TO_LOAD) {
+            return;
+        }
+        Self::add_html_import_mismatch_error(
+            log,
+            &sources[page],
+            record,
+            sources[target].path.pretty,
+            loader,
+        );
+    }
+
+    /// The loader of the script that a tag of an HTML file would put in the page. `loader` loads the file that the tag resolves to, and `path` is the path of that file.
+    #[inline]
     pub(crate) fn html_import_mismatch(
         kind: ImportKind,
         loader: Loader,
-        by_plugin: bool,
+        path: &bun_paths::fs::Path<'_>,
     ) -> Option<Loader> {
         match kind {
-            // `<link rel="stylesheet">` and `<link as="style">`
+            // `<link rel="stylesheet">` and `<link as="style">`. A plugin can make a script of a stylesheet, so the path must be the path of a script too.
             ImportKind::At => {
-                let adds_scripts = loader.is_javascript_like() || loader == Loader::Html;
-                (adds_scripts && !by_plugin).then_some(loader)
+                (Self::adds_scripts(loader) && Self::is_script_path(path)).then_some(loader)
             }
             // `<script src>`. Also `<link as="worker">`, which this rule does not judge.
             ImportKind::Stmt => None,
@@ -3401,6 +3425,18 @@ impl<'a> LinkerContext<'a> {
             | ImportKind::HtmlManifest
             | ImportKind::Internal => None,
         }
+    }
+
+    /// A file that this loader loads puts scripts in the page that uses it.
+    #[inline]
+    fn adds_scripts(loader: Loader) -> bool {
+        loader.is_javascript_like() || loader == Loader::Html
+    }
+
+    /// `path` is a file that Bun loads as a script or a page when nothing else chooses the loader. Cold: asked only for a stylesheet link to a file that is loaded as one.
+    #[cold]
+    fn is_script_path(path: &bun_paths::fs::Path<'_>) -> bool {
+        path.is_file() && Loader::from_string(path.name().ext).is_some_and(Self::adds_scripts)
     }
 
     /// Reports what [`Self::html_import_mismatch`] found for `record` of the HTML file `page`. `target` is the pretty path of the file that the tag resolves to.

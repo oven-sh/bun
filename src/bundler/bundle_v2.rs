@@ -400,8 +400,6 @@ pub mod bv2_impl {
         #[derive(Copy, Clone)]
         pub struct CacheEntry {
             pub kind: CacheKind,
-            /// An `onLoad` plugin returned the contents of the file.
-            pub loaded_by_plugin: bool,
         }
         /// INTERNAL_PREFIX ++ "/asset" = "/_bun/asset".
         pub(crate) const ASSET_PREFIX: &str = "/_bun/asset";
@@ -5910,21 +5908,9 @@ pub mod bv2_impl {
                                 let flags = input_files.items_flags();
                                 let mut log = bun_ast::Log::init();
                                 for record in import_records.as_slice() {
-                                    if !record.source_index.is_valid() {
-                                        continue;
-                                    }
-                                    let target = record.source_index.get() as usize;
-                                    if let Some(loader) = LinkerContext::html_import_mismatch(
-                                        record.kind,
-                                        loaders[target],
-                                        flags[target].is_taken_by_plugin(),
-                                    ) {
-                                        LinkerContext::add_html_import_mismatch_error(
-                                            &mut log,
-                                            &sources[index],
-                                            record,
-                                            sources[target].path.pretty,
-                                            loader,
+                                    if record.source_index.is_valid() {
+                                        LinkerContext::check_html_import(
+                                            &mut log, sources, loaders, flags, index, record,
                                         );
                                     }
                                 }
@@ -7152,9 +7138,14 @@ pub mod bv2_impl {
                                     .as_bytes();
                                 import_record.path.is_disabled = false;
                             } else {
+                                import_record.path.text = path.text;
+                                import_record.path.pretty = rel;
+                                import_record.path = self
+                                    .path_with_pretty_initialized(path, target)
+                                    .expect("oom");
                                 // A cached script has no source index, so `finish_from_bake_dev_server` does not see a tag that uses it.
                                 if entry.kind == bake_types::CacheKind::Js {
-                                    // The cache keeps no loader. A cached script has the loader of its path, unless an import attribute chose another script loader.
+                                    // The cache keeps no loader. A cached script has the loader of its path, unless a plugin or an import attribute chose another script loader.
                                     let cached_loader = path
                                         .loader(&transpiler.options.loaders)
                                         .filter(|loader| loader.is_javascript_like())
@@ -7162,12 +7153,8 @@ pub mod bv2_impl {
                                     if let Some(script_loader) = LinkerContext::html_import_mismatch(
                                         import_record.kind,
                                         cached_loader,
-                                        entry.loaded_by_plugin,
+                                        path,
                                     ) {
-                                        let pretty = self
-                                            .path_with_pretty_initialized(path, target)
-                                            .expect("oom")
-                                            .pretty;
                                         let log = self.log_for_resolution_failures(
                                             source.path.text,
                                             ctx.target.bake_graph(),
@@ -7176,17 +7163,11 @@ pub mod bv2_impl {
                                             log,
                                             source,
                                             import_record,
-                                            pretty,
+                                            import_record.path.pretty,
                                             script_loader,
                                         );
-                                        continue 'outer;
                                     }
                                 }
-                                import_record.path.text = path.text;
-                                import_record.path.pretty = rel;
-                                import_record.path = self
-                                    .path_with_pretty_initialized(path, target)
-                                    .expect("oom");
                                 if loader == Loader::Html
                                     || entry.kind == bake_types::CacheKind::Css
                                 {

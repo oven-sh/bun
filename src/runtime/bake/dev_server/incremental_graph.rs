@@ -126,8 +126,6 @@ pub(crate) struct File {
     // ── client-side ────────────────────────────────────────────────────
     pub(crate) is_hmr_root: bool,
     pub(crate) is_special_framework_file: bool,
-    /// An `onLoad` plugin returned the contents of the file.
-    pub(crate) loaded_by_plugin: bool,
     pub(crate) html_route_bundle_index: Option<route_bundle::Index>,
     pub(crate) source_map: packed_map::Shared,
     pub(crate) content: Content,
@@ -169,7 +167,6 @@ impl Default for File {
             is_route: false,
             is_hmr_root: false,
             is_special_framework_file: false,
-            loaded_by_plugin: false,
             html_route_bundle_index: None,
             source_map: Default::default(),
             content: Content::Unknown,
@@ -696,8 +693,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     is_route: false,
                     is_hmr_root: ctx.server_to_client_bitset.is_set(index.get() as usize),
                     is_special_framework_file,
-                    loaded_by_plugin: ctx.flags[index.get() as usize]
-                        .contains(bun_bundler::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN),
                     html_route_bundle_index,
                     source_map: new_source_map,
                     content: new_content,

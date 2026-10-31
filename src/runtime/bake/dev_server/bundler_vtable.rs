@@ -51,7 +51,6 @@ bun_bundler::link_impl_DevServerHandle! {
                         FileKind::Asset => CacheKind::Asset,
                         FileKind::Css => CacheKind::Css,
                     },
-                    loaded_by_plugin: e.loaded_by_plugin,
                 }
             })
         },

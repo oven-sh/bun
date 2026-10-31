@@ -9,8 +9,6 @@ pub(crate) struct HotUpdateContext<'a> {
     pub import_records: &'a [bun_ast::import_record::List<'a>],
     /// bundle_v2.Graph.input_files.items(.loader)
     pub loaders: &'a [Loader],
-    /// bundle_v2.Graph.input_files.items(.flags)
-    pub flags: &'a [bun_bundler::Graph::InputFileFlags],
     /// Which files have a server-component boundary.
     pub server_to_client_bitset: DynamicBitSet,
     /// Used to reduce calls to the IncrementalGraph hash table.
@@ -251,7 +249,6 @@ fn finalize_bundle_inner(
         import_records,
         sources: input_file_sources,
         loaders: input_file_loaders,
-        flags: bv2.graph.input_files.items_flags(),
         server_to_client_bitset: scb_bitset,
         resolved_index_cache: &mut resolved_index_cache,
         server_seen_bit_set: DynamicBitSet::default(), // assigned below

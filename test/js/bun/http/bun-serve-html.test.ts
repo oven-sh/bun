@@ -1439,34 +1439,28 @@ describe("html route whose page has a stylesheet link to a script", () => {
   });
 
   // A plugin can make a script of a stylesheet, to add the styles at run time. That page is served.
-  test.concurrent.each(["styles.css", "styles.js"])(
-    "is served when a plugin loads %s as a script",
-    async stylesheet => {
-      using dir = tempDir("bun-serve-html-stylesheet-link-to-js-plugin", {
-        "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
-        "index.html": page("./" + stylesheet),
-        [stylesheet]: `body { color: red; }`,
-        "plugin.ts": /*ts*/ `
+  test.concurrent("is served when a plugin loads the stylesheet as a script", async () => {
+    using dir = tempDir("bun-serve-html-stylesheet-link-css-to-js-plugin", {
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+      "index.html": page("./styles.css"),
+      "styles.css": `body { color: red; }`,
+      "plugin.ts": /*ts*/ `
         export default {
-          name: "to-js",
+          name: "css-to-js",
           setup(build) {
-            build.onLoad({ filter: /styles\\.(css|js)$/ }, () => ({
-              contents: "console.log('linked-file-marker');",
-              loader: "js",
-            }));
+            build.onLoad({ filter: /\\.css$/ }, () => ({ contents: "console.log('linked-file-marker');", loader: "js" }));
           },
         };
       `,
-        "serve.ts": serveInEachMode,
-      });
-      const { stdout, stderr, exitCode } = await runServeFixture(dir);
-      const served = { status: 200, runsTheFile: true };
-      expect({ stdout, exitCode }, stderr).toEqual({
-        stdout: JSON.stringify({ devServer: [served, served], devWithoutHmr: [served, served], production: [served] }),
-        exitCode: 0,
-      });
-    },
-  );
+      "serve.ts": serveInEachMode,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    const served = { status: 200, runsTheFile: true };
+    expect({ stdout, exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({ devServer: [served, served], devWithoutHmr: [served, served], production: [served] }),
+      exitCode: 0,
+    });
+  });
 
   // The check is about scripts and pages only. It does not decide what a link to a data file becomes.
   test.concurrent("is served when the link is to a data file", async () => {

@@ -81,7 +81,6 @@ impl DevServer {
 #[derive(Copy, Clone)]
 pub(crate) struct CacheEntry {
     pub(crate) kind: FileKind,
-    pub(crate) loaded_by_plugin: bool,
 }
 
 impl DevServer {
@@ -108,7 +107,6 @@ impl DevServer {
                 }
                 return Some(CacheEntry {
                     kind: $file.file_kind(),
-                    loaded_by_plugin: $file.loaded_by_plugin,
                 });
             }};
         }

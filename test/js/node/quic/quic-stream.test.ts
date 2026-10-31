@@ -496,6 +496,492 @@ describe("headers queued before the handshake", () => {
   });
 });
 
+// An HTTP/3 message sends its header block first. lsquic refuses body bytes before
+// the first block, and it resets the stream when the write side ends before it.
+// Outside a node:quic callback a stream is written to lsquic before the call
+// returns, so a body that is ready first has to wait for sendHeaders().
+describe("an HTTP/3 body that is ready before sendHeaders()", () => {
+  const request = { ":method": "POST", ":path": "/", ":scheme": "https", ":authority": "localhost" };
+  const encoder = new TextEncoder();
+  const empty = new Uint8Array(0);
+  const leaveCallback = () => new Promise<void>(resolve => setImmediate(resolve));
+  const settled = (closed: Promise<unknown>) =>
+    closed.then(
+      () => "closed",
+      (err: any) => `${err.code} ${err.errorCode}`,
+    );
+  const text = async (stream: any) => {
+    let body = "";
+    for await (const batch of stream) for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+    return body;
+  };
+  const writeBody = (stream: any) => {
+    stream.writer.writeSync(encoder.encode("body"));
+    stream.writer.endSync();
+  };
+  type Where = "outside a callback" | "in a callback" | "before the handshake";
+  type Exchange = {
+    // Where the client creates its stream, and where the server answers.
+    where?: Where;
+    options?: Record<string, unknown>;
+    send?: (stream: any, client: any) => unknown;
+    // `interim` settles when the client has an interim response.
+    respond?: (stream: any, interim: Promise<void>) => unknown;
+  };
+
+  async function exchange({ where = "outside a callback", options = { headers: request }, send, respond }: Exchange) {
+    let blocked = 0;
+    const requestBody = Promise.withResolvers<string>();
+    const responded = Promise.withResolvers<unknown>();
+    const interim = Promise.withResolvers<void>();
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.onblocked = () => blocked++;
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        async onheaders(this: any) {
+          requestBody.resolve(await text(this));
+          if (where !== "in a callback") await leaveCallback();
+          responded.resolve(
+            respond ? await respond(this, interim.promise) : this.sendHeaders({ ":status": "200" }, { terminal: true }),
+          );
+        },
+      },
+    );
+    const client = await connect(server.address!, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+    } as SessionOptions);
+    if (where !== "before the handshake") await client.opened;
+    if (where === "outside a callback") await leaveCallback();
+
+    const response: string[] = [];
+    let trailers: Record<string, string> | undefined;
+    const stream = await client.createBidirectionalStream({
+      ...options,
+      oninfo: (headers: Record<string, any>) => {
+        response.push("info " + headers[":status"]);
+        interim.resolve();
+      },
+      onheaders: (headers: Record<string, any>) => response.push("headers " + headers[":status"]),
+      ontrailers: (headers: Record<string, any>) => (trailers = { ...headers }),
+    });
+    stream.onblocked = () => blocked++;
+    await send?.(stream, client);
+    const closed = settled(stream.closed);
+    response.push(
+      await text(stream).then(
+        body => "body " + JSON.stringify(body),
+        (err: any) => err.code,
+      ),
+    );
+    return {
+      request: await Promise.race([requestBody.promise, closed]),
+      sent: await Promise.race([responded.promise, closed]),
+      response,
+      trailers,
+      // lsquic refuses a body before the header block. That isn't flow control.
+      blocked,
+      closed: await closed,
+      // A stream that still waits for its header block would keep a graceful close open.
+      session: await settled(client.close()),
+    };
+  }
+  const delivered = { sent: true, trailers: undefined, blocked: 0, closed: "closed", session: "closed" };
+
+  test.each<[string, string, Exchange["options"], Exchange["send"]]>([
+    ['the body option is ""', "", { headers: request, body: "" }, undefined],
+    ["the body option is an empty Uint8Array", "", { headers: request, body: empty }, undefined],
+    [
+      'the body option is "" and sendHeaders() is terminal',
+      "",
+      { body: "" },
+      stream => stream.sendHeaders(request, { terminal: true }),
+    ],
+    [
+      "setBody() gets an empty Uint8Array",
+      "",
+      {},
+      stream => {
+        stream.setBody(empty);
+        stream.sendHeaders(request);
+      },
+    ],
+    [
+      "setBody() gets null",
+      "",
+      {},
+      stream => {
+        stream.setBody(null);
+        stream.sendHeaders(request);
+      },
+    ],
+    [
+      "the writer ends without a write",
+      "",
+      {},
+      stream => {
+        stream.writer.endSync();
+        stream.sendHeaders(request);
+      },
+    ],
+    [
+      "the writer ends a loop turn before sendHeaders()",
+      "",
+      {},
+      async stream => {
+        stream.writer.endSync();
+        await leaveCallback();
+        stream.sendHeaders(request);
+      },
+    ],
+    [
+      "the writer ends after a write",
+      "body",
+      {},
+      stream => {
+        writeBody(stream);
+        stream.sendHeaders(request);
+      },
+    ],
+  ])("a request arrives whole when %s", async (_, body, options, send) => {
+    expect(await exchange({ options, send })).toEqual({
+      ...delivered,
+      request: body,
+      response: ["headers 200", 'body ""'],
+    });
+  });
+
+  // lsquic opens this stream inside the engine pass that ends the handshake.
+  test("a request arrives whole when its stream and its empty body come before the handshake", async () => {
+    const send = async (stream: any, client: any) => {
+      await client.opened;
+      stream.sendHeaders(request);
+    };
+    expect(await exchange({ where: "before the handshake", options: { body: "" }, send })).toEqual({
+      ...delivered,
+      request: "",
+      response: ["headers 200", 'body ""'],
+    });
+  });
+
+  test.each<[string, string[], NonNullable<Exchange["respond"]>]>([
+    [
+      "the writer ends without a write",
+      ["headers 200", 'body ""'],
+      stream => {
+        stream.writer.endSync();
+        return stream.sendHeaders({ ":status": "200" });
+      },
+    ],
+    [
+      "the writer ends a loop turn before sendHeaders()",
+      ["headers 200", 'body ""'],
+      async stream => {
+        stream.writer.endSync();
+        await leaveCallback();
+        return stream.sendHeaders({ ":status": "200" });
+      },
+    ],
+    [
+      "setBody() gets an empty Uint8Array",
+      ["headers 200", 'body ""'],
+      stream => {
+        stream.setBody(empty);
+        return stream.sendHeaders({ ":status": "200" });
+      },
+    ],
+    [
+      "the writer ends after a write",
+      ["headers 200", 'body "body"'],
+      stream => {
+        writeBody(stream);
+        return stream.sendHeaders({ ":status": "200" });
+      },
+    ],
+    // An interim response is a header block too, but the body belongs to the final response.
+    [
+      "the writer ends without a write after an interim response",
+      ["info 103", "headers 200", 'body ""'],
+      stream => {
+        stream.sendInformationalHeaders({ ":status": "103" });
+        stream.writer.endSync();
+        return stream.sendHeaders({ ":status": "200" });
+      },
+    ],
+    [
+      "the writer ends after a write and an interim response",
+      ["info 103", "headers 200", 'body "body"'],
+      stream => {
+        stream.sendInformationalHeaders({ ":status": "103" });
+        writeBody(stream);
+        return stream.sendHeaders({ ":status": "200" });
+      },
+    ],
+    // The interim response leaves at once. The final response waits until the client has it.
+    [
+      "the client gets an interim response first",
+      ["info 103", "headers 200", 'body ""'],
+      async (stream, interim) => {
+        stream.sendInformationalHeaders({ ":status": "103" });
+        await interim;
+        const sent = stream.sendHeaders({ ":status": "200" });
+        stream.writer.endSync();
+        return sent;
+      },
+    ],
+    [
+      "the client gets an interim response first and the writer ended before it",
+      ["info 103", "headers 200", 'body ""'],
+      async (stream, interim) => {
+        stream.sendInformationalHeaders({ ":status": "103" });
+        stream.writer.endSync();
+        await interim;
+        return stream.sendHeaders({ ":status": "200" });
+      },
+    ],
+    [
+      "the client gets an interim response first and the body was written before it",
+      ["info 103", "headers 200", 'body "body"'],
+      async (stream, interim) => {
+        stream.sendInformationalHeaders({ ":status": "103" });
+        writeBody(stream);
+        await interim;
+        return stream.sendHeaders({ ":status": "200" });
+      },
+    ],
+  ])("a response arrives whole when %s", async (_, response, respond) => {
+    expect(await exchange({ respond })).toEqual({ ...delivered, request: "", response });
+  });
+
+  // The request for trailers follows the end of the body, so it waits for the header block too.
+  test.each<[string, string[], (stream: any) => void]>([
+    ["the writer ends a loop turn before sendHeaders()", ["headers 200", 'body ""'], () => {}],
+    [
+      "the writer ends after an interim response and a loop turn before sendHeaders()",
+      ["info 103", "headers 200", 'body ""'],
+      stream => stream.sendInformationalHeaders({ ":status": "103" }),
+    ],
+  ])("a response arrives with its trailers when %s", async (_, response, before) => {
+    const respond = async (stream: any) => {
+      stream.onwanttrailers = () => stream.sendTrailers({ "x-checksum": "abc" });
+      before(stream);
+      stream.writer.endSync();
+      await leaveCallback();
+      return stream.sendHeaders({ ":status": "200" });
+    };
+    expect(await exchange({ respond })).toEqual({
+      ...delivered,
+      request: "",
+      response,
+      trailers: { "x-checksum": "abc" },
+    });
+  });
+
+  // One sendHeaders() call takes 128 fields at most.
+  const refused: Record<string, string> = { ":status": "200" };
+  for (let i = 0; i < 128; i++) refused[`x-field-${i}`] = "v";
+  const reset = {
+    request: "",
+    response: ["ERR_QUIC_STREAM_RESET"],
+    trailers: undefined,
+    blocked: 0,
+    closed: "ERR_QUIC_APPLICATION_ERROR 258",
+    session: "closed",
+  };
+  describe.each<Where>(["outside a callback", "in a callback"])("%s", where => {
+    test.each<[string, NonNullable<Exchange["respond"]>]>([
+      [
+        "the writer ended before it",
+        stream => {
+          stream.writer.endSync();
+          return stream.sendHeaders(refused);
+        },
+      ],
+      [
+        "the writer ends after it",
+        stream => {
+          const sent = stream.sendHeaders(refused);
+          stream.writer.endSync();
+          return sent;
+        },
+      ],
+      [
+        "a body was written before it",
+        stream => {
+          writeBody(stream);
+          return stream.sendHeaders(refused);
+        },
+      ],
+    ])("a response whose header block can't be sent resets the stream when %s", async (_, respond) => {
+      expect(await exchange({ where, respond })).toEqual({ ...reset, sent: false });
+    });
+  });
+
+  // Outside a callback the refused call writes to lsquic before it returns, so the stream is reset by then.
+  test.each<[Where, Awaited<ReturnType<typeof exchange>>]>([
+    ["in a callback", { ...delivered, sent: [false, true], request: "", response: ["headers 500", 'body "body"'] }],
+    ["outside a callback", { ...reset, sent: [false, false] }],
+  ])("a second sendHeaders() after one that can't be sent, with a body written first, %s", async (where, expected) => {
+    const respond = (stream: any) => {
+      writeBody(stream);
+      return [stream.sendHeaders(refused), stream.sendHeaders({ ":status": "500" })];
+    };
+    expect(await exchange({ where, respond })).toEqual(expected);
+  });
+
+  // Nothing was queued for the block that can't be sent, so the write event of the interim response fails nothing.
+  test("a response arrives whole when a sendHeaders() that can't be sent comes first", async () => {
+    const respond = (stream: any) => [
+      stream.sendHeaders(refused),
+      stream.sendInformationalHeaders({ ":status": "103" }),
+      stream.sendHeaders({ ":status": "200" }, { terminal: true }),
+    ];
+    expect(await exchange({ respond })).toEqual({
+      ...delivered,
+      sent: [false, true, true],
+      request: "",
+      response: ["info 103", "headers 200", 'body ""'],
+    });
+  });
+
+  // The body belongs to the final response, so an interim response that can't be sent doesn't fail it.
+  const refusedInterim = { ...refused, ":status": "103" };
+  test.each<[string, string, (stream: any) => void]>([
+    ["the writer ends without a write", "", stream => stream.writer.endSync()],
+    ["the writer ends after a write", "body", writeBody],
+  ])("a response arrives whole after an interim response that can't be sent when %s", async (_, body, end) => {
+    const respond = (stream: any) => {
+      const interim = stream.sendInformationalHeaders(refusedInterim);
+      end(stream);
+      return [interim, stream.sendHeaders({ ":status": "200" })];
+    };
+    expect(await exchange({ respond })).toEqual({
+      ...delivered,
+      sent: [false, true],
+      request: "",
+      response: ["headers 200", "body " + JSON.stringify(body)],
+    });
+  });
+
+  test("a body or an end that waits for sendHeaders() isn't offered to lsquic", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import { createPrivateKey } from "node:crypto";
+          import { readFileSync } from "node:fs";
+          import { join } from "node:path";
+          import { connect, listen } from "node:quic";
+          const keys = process.env.QUIC_KEYS_DIR;
+          const key = createPrivateKey(readFileSync(join(keys, "agent1-key.pem")));
+          const cert = readFileSync(join(keys, "agent1-cert.pem"));
+          const interim = Promise.withResolvers();
+          const server = await listen(
+            async session => {
+              session.onstream = stream => stream.closed.catch(() => {});
+              await session.closed.catch(() => {});
+            },
+            {
+              sni: { "*": { keys: [key], certs: [cert] } },
+              transportParams: { maxIdleTimeout: 5 },
+              async onheaders() {
+                let bytes = 0;
+                for await (const batch of this) for (const chunk of batch) bytes += chunk.byteLength;
+                // The end of the response waits, with the write event of the interim response behind it.
+                this.sendInformationalHeaders({ ":status": "103" });
+                this.writer.endSync();
+                await interim.promise;
+                this.sendHeaders({ ":status": "200", "x-request-bytes": String(bytes) });
+              },
+            },
+          );
+          const client = await connect(server.address, {
+            servername: "localhost",
+            verifyPeer: "manual",
+            transportParams: { maxIdleTimeout: 5 },
+          });
+          await client.opened;
+          await new Promise(resolve => setImmediate(resolve));
+          const answered = Promise.withResolvers();
+          const stream = await client.createBidirectionalStream({
+            headers: { ":method": "POST", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+            body: new Uint8Array(1024),
+            oninfo: interim.resolve,
+            onheaders: headers => answered.resolve(headers["x-request-bytes"]),
+          });
+          stream.closed.then(() => answered.reject(new Error("closed without a response")), answered.reject);
+          console.log("request bytes", await answered.promise);
+          process.exit(0);
+        `,
+      ],
+      env: { ...bunEnv, QUIC_KEYS_DIR: keysDir, BUN_DEBUG_lsquic: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const count = (line: string) => stderr.split(line).length - 1;
+    expect({
+      stdout,
+      // The log is on when this line is there.
+      engines: count("engine: instantiated engine"),
+      refusedWrites: count("Attempt to write to stream before sending HTTP headers"),
+      // lsquic logs this when a stream keeps its write event and writes nothing.
+      idleWriteEvents: count("broke suspected infinite loop"),
+      exitCode,
+    }).toEqual({ stdout: "request bytes 1024\n", engines: 2, refusedWrites: 0, idleWriteEvents: 0, exitCode: 0 });
+  });
+});
+
+test("a header block for an HTTP/3 stream that has closed on the wire is not accepted", async () => {
+  const request = { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" };
+  await using server = await listen(
+    async serverSession => {
+      serverSession.onstream = (stream: any) => {
+        stream.closed.catch(() => {});
+      };
+      await serverSession.closed.catch(() => {});
+    },
+    {
+      sni: { "*": { keys: [key], certs: [cert] } },
+      transportParams: { maxIdleTimeout: 1 },
+      onheaders(this: any) {
+        this.sendHeaders({ ":status": "200" }, { terminal: true });
+      },
+    },
+  );
+  const client = await connect(server.address!, {
+    servername: "localhost",
+    verifyPeer: "manual",
+    transportParams: { maxIdleTimeout: 1 },
+  } as SessionOptions);
+  await client.opened;
+
+  // Both sides have ended here, so lsquic closed the stream before this callback runs.
+  const sent = Promise.withResolvers<boolean[]>();
+  const stream = await client.createBidirectionalStream({
+    headers: request,
+    onheaders(this: any) {
+      sent.resolve([
+        this.sendHeaders(request),
+        this.sendInformationalHeaders({ ":status": "103" }),
+        this.sendTrailers({ "x-late": "1" }),
+      ]);
+    },
+  });
+  stream.closed.then(() => sent.reject(new Error("closed without a response")), sent.reject);
+  const accepted = await sent.promise.finally(() => client.close());
+  expect(accepted).toEqual([false, false, false]);
+});
+
 // lsquic can finish the handshake, read the peer's first stream and close the connection in one
 // engine pass, before JS sees any of it. A request created before `opened` is sent with the
 // client's Finished, and lsquic rejects its bad content-length with H3_MESSAGE_ERROR (0x10e).

@@ -131,7 +131,10 @@ extern "C" fn NodeModuleModule__nodeModulePaths(global: &JSGlobalObject) -> JSVa
     let Some(paths) = resolver.node_module_paths.as_deref() else {
         return JSValue::ZERO;
     };
-    let paths: Vec<BunString> = paths.iter().map(|path| BunString::clone_utf8(path)).collect();
+    let paths: Vec<BunString> = paths
+        .iter()
+        .map(|path| BunString::clone_utf8(path))
+        .collect();
     crate::bun_string_jsc::to_js_array(global, &paths).or_pending_exception()
 }
 

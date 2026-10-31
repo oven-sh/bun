@@ -1750,7 +1750,12 @@ console.log("survived", require("./late.js"));`,
           });
         `,
       });
-      const { stdout, stderr, exitCode } = await run(dir, ["test", "--isolate", "./1-lists.test.js", "./2-finds-nothing.test.js"]);
+      const { stdout, stderr, exitCode } = await run(dir, [
+        "test",
+        "--isolate",
+        "./1-lists.test.js",
+        "./2-finds-nothing.test.js",
+      ]);
       expect(stdout + stderr).toContain("2 pass");
       expect(exitCode).toBe(0);
     });

@@ -2026,6 +2026,106 @@ describe.concurrent("TLS server: write() to the accepted socket from inside its 
   }
 });
 
+// serverName is the listener hook node:tls's SNICallback goes through. `true` suspends the handshake until
+// resumeSNI() answers. A TLS 1.3 client that sends early data puts records directly behind its ClientHello.
+describe("TLS server: what the peer sends behind its ClientHello while serverName has not answered", () => {
+  // TLS 1.3 ignores this record during the handshake.
+  const changeCipherSpec = Buffer.from([0x14, 0x03, 0x03, 0x00, 0x01, 0x01]);
+  // A record that no key opens.
+  const sealed = Buffer.from([0x17, 0x03, 0x03, 0x00, 0x20, ...Buffer.alloc(32)]);
+  // The certificate of the listener has an RSA key, so cipher selection fails. BoringSSL selects after the answer.
+  const noSharedCipher = { maxVersion: "TLSv1.2", ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256" } as const;
+
+  // A listener whose serverName waits for resumeSNI(), and a client whose ClientHello and `behind` go out in one
+  // write, so the server reads both at once.
+  async function suspend(behind: Buffer, clientOptions: { maxVersion?: "TLSv1.2"; ciphers?: string } = {}) {
+    const events: string[] = [];
+    const asked = Promise.withResolvers<Socket & { resumeSNI(context: unknown, isError: boolean): void }>();
+    const closed = Promise.withResolvers<void>();
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      socket: {
+        serverName(_listenerData: unknown, _servername: string, socket: Socket) {
+          asked.resolve(socket as never);
+          return true;
+        },
+        handshake(socket, success, error) {
+          events.push(success ? "handshake:true" : `handshake:false ${(error as NodeJS.ErrnoException)?.code ?? null}`);
+          if (success) socket.end();
+        },
+        data() {},
+        error(_socket, error) {
+          events.push(`error ${(error as NodeJS.ErrnoException).code}`);
+        },
+        close() {
+          events.push("close");
+          closed.resolve();
+        },
+      } as SocketHandler,
+    });
+    const raw = net.connect(server.port, "127.0.0.1");
+    raw.on("error", () => {});
+    let first = true;
+    const transport = new Duplex({
+      read() {},
+      write(chunk, _encoding, callback) {
+        raw.write(first ? Buffer.concat([chunk, behind]) : chunk);
+        first = false;
+        callback();
+      },
+    });
+    raw.on("data", chunk => transport.push(chunk));
+    raw.on("close", () => transport.destroy());
+    const client = tlsConnect({
+      socket: transport,
+      servername: "pending.test",
+      rejectUnauthorized: false,
+      ...clientOptions,
+    });
+    client.on("error", () => {});
+    return {
+      events,
+      socket: await asked.promise,
+      closed: closed.promise,
+      [Symbol.dispose]() {
+        client.destroy();
+        raw.destroy();
+        server.stop(true);
+      },
+    };
+  }
+
+  it("a ChangeCipherSpec is read after the answer, and the handshake completes", async () => {
+    using t = await suspend(changeCipherSpec);
+    expect(t.events).toEqual([]);
+    t.socket.resumeSNI(undefined, false);
+    await t.closed;
+    expect(t.events).toEqual(["handshake:true", "close"]);
+  });
+
+  // The engine closes a handshake that failed, in the call that answers. A Bun.listen handler does not have to.
+  it.each([
+    ["on a record that no key opens", sealed, {}],
+    ["in the step after the answer, with a ChangeCipherSpec kept", changeCipherSpec, noSharedCipher],
+    ["in the step after the answer, with nothing kept", Buffer.alloc(0), noSharedCipher],
+  ] as const)("a handshake that fails %s is closed", async (_, behind, clientOptions) => {
+    using t = await suspend(behind, clientOptions);
+    expect(t.events).toEqual([]);
+    t.socket.resumeSNI(undefined, false);
+    expect(t.events).toEqual(["handshake:false EPROTO", "close"]);
+  });
+
+  it("a record is not read when the owner's shutdown() ended the handshake before the answer", async () => {
+    using t = await suspend(sealed);
+    t.socket.shutdown();
+    t.socket.resumeSNI(undefined, false);
+    // One report, and it is not about the record.
+    expect(t.events).toEqual(["handshake:false null"]);
+  });
+});
+
 it("alpnCallback: a selection whose ToString throws surfaces the thrown Error, not an engine-internal cell", async () => {
   // The thrown value must reach the `error` handler as a plain Error, not the
   // JSC::Exception wrapper cell: `Object.prototype.toString.call` on the cell

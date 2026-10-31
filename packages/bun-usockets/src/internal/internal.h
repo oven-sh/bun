@@ -332,8 +332,8 @@ struct us_socket_t {
   unsigned char ssl_write_parked : 1;
   unsigned char ssl_fatal_error : 1;
   unsigned char ssl_is_server : 1;
-  /* If set, us_internal_ssl_on_data() first dispatches the still-encrypted
-   * bytes via us_dispatch_ssl_raw_tap() before feeding them to SSL_read.
+  /* If set, the read dispatch (loop.c) first hands the still-encrypted bytes
+   * of a recv() to us_dispatch_ssl_raw_tap(), then to us_internal_ssl_on_data().
    * Used by Bun's `socket.upgradeTLS()` so the returned [raw, tls] pair's
    * `raw` half can observe ciphertext (node:net Duplex.ondata semantics). */
   unsigned char ssl_raw_tap : 1;

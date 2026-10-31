@@ -53,7 +53,8 @@
  *
  *   loop.c readable → s->ssl ? us_internal_ssl_on_data : us_dispatch_data
  *
- * and us_internal_ssl_on_data decrypts then re-enters us_dispatch_data with
+ * (behind us_dispatch_ssl_raw_tap for a socket with ssl_raw_tap), and
+ * us_internal_ssl_on_data decrypts then re-enters us_dispatch_data with
  * plaintext. Same shape for open/writable/close/end.
  * ────────────────────────────────────────────────────────────────────────── */
 
@@ -201,6 +202,17 @@ struct us_ssl_spill_t {
   char data[];
 };
 
+/* Ciphertext the peer sent behind its ClientHello while an asynchronous SNICallback has the handshake
+ * suspended. The loop's read BIO is a window onto one recv(), so nothing can wait in it. */
+struct us_ssl_held_t {
+  unsigned int length;
+  char data[];
+};
+
+/* A client's ChangeCipherSpec record (6 bytes), and as much rejected early data behind it as BoringSSL
+ * skips (kMaxEarlyDataSkipped in tls_record.cc: this follows it). */
+#define US_SSL_SNI_HELD_MAX (6 + 16384)
+
 /* Allocated for an accepted socket, a node:tls socket's events, a client's first renegotiation, fetch's session sink, and a first spill. */
 struct us_ssl_rare_t {
   /* Non-NULL exactly while us_socket_t::ssl_spilled is set. */
@@ -211,9 +223,12 @@ struct us_ssl_rare_t {
   struct us_ssl_pending_event_t *pending_head, *pending_tail;
   void *session_sink;
   void (*session_sink_free)(void *sink);
-  uint64_t reneg_window_start_ms;
+  uint32_t reneg_window_start_s;
   uint32_t reneg_count;
+  /* us_socket_sni_resolve reads it after the answer. */
+  struct us_ssl_held_t *sni_held;
 };
+_Static_assert(sizeof(struct us_ssl_rare_t) == 64, "us_ssl_rare_t left its allocation size class");
 
 static void us_ctx_ex_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
                            int index, long argl, void *argp) {
@@ -234,6 +249,7 @@ static void us_ssl_rare_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
   }
   if (rare->session_sink_free) rare->session_sink_free(rare->session_sink);
   if (rare->server_names) us_server_names_unref(rare->server_names);
+  if (rare->sni_held) us_free(rare->sni_held);
   us_free(rare);
 }
 
@@ -2083,11 +2099,11 @@ static int ssl_renegotiate(struct us_socket_t *s) {
   /* Wall-clock time can step backwards (NTP, manual adjustment); the
    * unsigned subtraction below would underflow and reset the window every
    * time. Only treat the window as elapsed when time has moved forward. */
-  uint64_t now_ms = (uint64_t)time(NULL) * 1000;
+  uint32_t now_s = (uint32_t)time(NULL);
   if (st->reneg_count == 0 ||
-      (window && now_ms >= st->reneg_window_start_ms &&
-       now_ms - st->reneg_window_start_ms >= (uint64_t)window * 1000)) {
-    st->reneg_window_start_ms = now_ms;
+      (window && now_s >= st->reneg_window_start_s &&
+       now_s - st->reneg_window_start_s >= window)) {
+    st->reneg_window_start_s = now_s;
     st->reneg_count = 0;
   }
   /* Over the limit BoringSSL refuses, so every refusal queues the same SSL_R_NO_RENEGOTIATION. */
@@ -2559,6 +2575,23 @@ static struct us_socket_t *ssl_fail_established_session(struct us_socket_t *s, s
   return NULL;
 }
 
+/* Moves the unread rest of the read window behind what `s` already holds. 0: more than US_SSL_SNI_HELD_MAX in all, nothing moved. */
+__attribute__((cold, noinline)) static int ssl_hold_input(struct us_socket_t *s, struct loop_ssl_data *loop_ssl_data) {
+  unsigned int length = loop_ssl_data->ssl_read_input_length;
+  struct us_ssl_rare_t *rare = us_ssl_rare_ensure(s_ssl(s));
+  unsigned int held = rare->sni_held ? rare->sni_held->length : 0;
+  if (length > US_SSL_SNI_HELD_MAX - held) return 0;
+  struct us_ssl_held_t *grown = us_realloc(rare->sni_held, sizeof(*grown) + held + length);
+  if (!grown) return 0;
+  memcpy(grown->data + held, loop_ssl_data->ssl_read_input + loop_ssl_data->ssl_read_input_offset, length);
+  grown->length = held + length;
+  rare->sni_held = grown;
+  loop_ssl_data->ssl_read_input_offset += length;
+  loop_ssl_data->ssl_read_input_length = 0;
+  return 1;
+}
+
+/* Every byte of `s` reaches BoringSSL through here: a recv() (loop.c), us_socket_tls_feed, and us_socket_sni_resolve. */
 struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *socket, char *data, int length) {
   /* The parameter is _Nonnull in release builds, and the helpers below return NULL for a socket that is gone. */
   struct us_socket_t *s = socket;
@@ -2566,11 +2599,6 @@ struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *socket, char *da
    * per-thread error queue so a captured reason cannot belong to another
    * socket on the same thread. */
   ERR_clear_error();
-  /* upgradeTLS [raw, _] half observes ciphertext before SSL_read consumes it. */
-  if (s->ssl_raw_tap) {
-    s = us_dispatch_ssl_raw_tap(s, data, length);
-    if (!s || us_socket_is_closed(s) || !s->ssl) return s;
-  }
 
   struct loop_ssl_data *loop_ssl_data = ssl_set_loop_data(s);
 
@@ -2651,8 +2679,8 @@ restart:
       /* SSL_ERROR_PENDING_CERTIFICATE: the handshake is suspended waiting for
        * an async SNICallback (us_select_cert_cb returned retry). Treat it
        * like WANT_READ - stop the read loop, deliver whatever was decrypted,
-       * and park the socket; us_socket_sni_resolve() re-drives the handshake
-       * when the JS resolution arrives. */
+       * keep what is still unread, and park the socket; us_socket_sni_resolve()
+       * re-drives the handshake when the JS resolution arrives. */
       if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_PENDING_CERTIFICATE) {
         if (err == SSL_ERROR_WANT_RENEGOTIATE) {
           /* The HelloRequest can share a read with the server's Finished. */
@@ -2724,9 +2752,9 @@ restart:
         loop_ssl_data->ssl_last_fatal_error[0] = 0;
         return NULL;
       } else {
-        /* If the BIO still has unread ciphertext at this point, the TLS
-         * framing is broken — close. */
-        if (loop_ssl_data->ssl_read_input_length) {
+        /* Only a suspended handshake leaves input unread: what a client sends behind its ClientHello, which is early data. */
+        if (loop_ssl_data->ssl_read_input_length &&
+            (err != SSL_ERROR_PENDING_CERTIFICATE || !ssl_hold_input(s, loop_ssl_data))) {
           return ssl_close(s, 0, NULL);
         }
         /* SSL_read drove the handshake to completion but returned no app
@@ -3062,6 +3090,10 @@ void us_socket_sni_resolve(struct us_socket_t *s, struct ssl_ctx_st *ctx, int er
   struct loop_ssl_data *loop_ssl_data = ssl_set_loop_data(s);
   SSL_CTX *outer_ctx = loop_ssl_data->ssl_sni_resolved_ctx;
   loop_ssl_data->ssl_sni_resolved_ctx = NULL;
+  /* Taken now: the SSL, and with it the rare block, can go in the re-drive. */
+  struct us_ssl_rare_t *rare = us_ssl_rare(s_ssl(s));
+  struct us_ssl_held_t *held = rare ? rare->sni_held : NULL;
+  if (held) rare->sni_held = NULL;
   if (error) {
     s->ssl_sni_pending = US_SNI_ERROR;
     if (ctx) SSL_CTX_free(ctx);
@@ -3079,6 +3111,18 @@ void us_socket_sni_resolve(struct us_socket_t *s, struct ssl_ctx_st *ctx, int er
   }
   /* Re-drive the handshake; select_cert_cb re-fires and consumes the state. */
   ssl_update_handshake(s, 1);
+  /* Nothing else closes a socket whose handshake failed in this call: no read or writable event is due. */
+  ssl_close_if_fatal(s);
+  if (held) {
+    /* The handshake goes on: what the peer sent behind its ClientHello is read as a recv() of it would be.
+     * A handshake that this call ended (a refusal, the owner's shutdown) has no use for it. */
+    if (!ssl_gone(s) && s->ssl_handshake_state == HANDSHAKE_PENDING) {
+      us_internal_ssl_on_data(s, held->data, (int)held->length);
+      /* The read window must not outlive the block. */
+      loop_ssl_data->ssl_read_input_length = 0;
+    }
+    us_free(held);
+  }
   if (loop_ssl_data->ssl_sni_resolved_ctx) SSL_CTX_free(loop_ssl_data->ssl_sni_resolved_ctx);
   loop_ssl_data->ssl_sni_resolved_ctx = outer_ctx;
 }

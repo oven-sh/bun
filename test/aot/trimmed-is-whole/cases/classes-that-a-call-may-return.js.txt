@@ -32,3 +32,17 @@ import { createHistogram } from "node:perf_hooks";
 const histogram = createHistogram();
 histogram.record(5);
 console.log(histogram.count, histogram.max);
+//// the-event-of-an-abort-listener
+import { addAbortListener } from "node:events";
+const signal = AbortSignal.abort("why");
+addAbortListener(signal, event => console.log(event.type, event.isTrusted, event.target === signal, event.target.reason, new event.constructor("made").type));
+addAbortListener(signal, () => console.log("disposed"))[Symbol.dispose]();
+await new Promise(resolve => setImmediate(resolve));
+//// no-event-for-an-abort-listener-of-an-object-that-is-no-signal
+//@ removes Event
+import { EventEmitter, addAbortListener } from "node:events";
+const emitter = new EventEmitter();
+emitter.on("x", value => console.log("got", value));
+emitter.emit("x", 1);
+addAbortListener({ aborted: true }, (...args) => console.log(args.length));
+await new Promise(resolve => setImmediate(resolve));

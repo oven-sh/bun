@@ -166,6 +166,28 @@ describe("bundler", () => {
       assert(!out.includes("$newPromiseCapability"), "events polyfill must not reference a JSC builtin intrinsic");
     },
   });
+  // For a signal that is aborted already the polyfill has the cancel of node:events: dispose() before
+  // the microtask stops the call. It hands the listener no event and names no `Event`, which the host
+  // of a bundle may not have.
+  itBundled("browser/NodeEventsAddAbortListenerAborted", {
+    files: {
+      "/entry.js": /* js */ `
+        import { addAbortListener } from "node:events";
+        const microtasksRan = () => new Promise(resolve => queueMicrotask(resolve));
+        delete globalThis.Event;
+        const signal = AbortSignal.abort();
+        const calls = [];
+        addAbortListener(signal, (...args) => calls.push("kept, " + args.length + " arguments"));
+        addAbortListener(signal, () => calls.push("disposed"))[Symbol.dispose]();
+        await microtasksRan();
+        console.log(JSON.stringify(calls));
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: '["kept, 0 arguments"]',
+    },
+  });
   itBundled("browser/NodeUrlProtocolTablesIgnorePrototype", {
     files: {
       "/entry.js": /* js */ `

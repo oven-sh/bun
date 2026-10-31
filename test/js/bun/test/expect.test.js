@@ -3795,6 +3795,213 @@ describe("expect()", () => {
       expect(a1).not.toMatchObject({ 1: 1 });
       expect(a1).toMatchObject(a1);
     });
+
+    // https://github.com/oven-sh/bun/issues/3521
+    // toEqual accepts a matcher on either side, so these read what a matcher would have replaced and compare with toBe.
+    describe("leaves both values as they were", () => {
+      test("when asymmetric matchers pass", () => {
+        const obj = { foo: "foo", bar: "bar" };
+        expect(obj).toMatchObject({ bar: expect.any(String) });
+        expect(obj.bar).toBe("bar");
+        expect(obj).toMatchObject({ bar: expect.any(String) });
+        expect(obj).not.toEqual({ foo: "foo", bar: "other" });
+
+        const nested = { a: { b: { c: 42 } }, list: [1, "two", 3] };
+        expect(nested).toMatchObject({ a: { b: { c: expect.any(Number) } }, list: [1, expect.any(String), 3] });
+        expect(nested.a.b.c).toBe(42);
+        expect(nested.list[1]).toBe("two");
+
+        const list = ["x", "y"];
+        const inner = { model: "m" };
+        const kinds = { list, inner, text: "needs work", ratio: 0.1 + 0.2, any: 1 };
+        expect(kinds).toMatchObject({
+          list: expect.arrayContaining(["x"]),
+          inner: expect.objectContaining({ model: expect.any(String) }),
+          text: expect.stringContaining("needs"),
+          ratio: expect.closeTo(0.3, 5),
+          any: expect.anything(),
+        });
+        expect(kinds.list).toBe(list);
+        expect(kinds.inner).toBe(inner);
+        expect(inner.model).toBe("m");
+        expect(kinds.text).toBe("needs work");
+        expect(kinds.ratio).toBe(0.1 + 0.2);
+        expect(kinds.any).toBe(1);
+      });
+
+      test("when the matcher is on the received side", () => {
+        const matcher = expect.any(String);
+        const received = { a: matcher };
+        const expected = { a: "hello" };
+        expect(received).toMatchObject(expected);
+        expect(received.a).toBe(matcher);
+        expect(expected.a).toBe("hello");
+      });
+
+      test("when the received object is frozen", () => {
+        const frozen = Object.freeze({ n: 5 });
+        expect(frozen).toMatchObject({ n: expect.any(Number) });
+        expect(frozen.n).toBe(5);
+        expect(Object.isFrozen(frozen)).toBe(true);
+      });
+
+      test("when the property is an accessor or is inherited", () => {
+        class User {
+          get id() {
+            return 1;
+          }
+        }
+        const user = new User();
+        expect(user).toMatchObject({ id: expect.any(Number) });
+        expect(Object.keys(user)).toEqual([]);
+
+        const own = {
+          get id() {
+            return 1;
+          },
+        };
+        expect(own).toMatchObject({ id: expect.any(Number) });
+        expect(typeof Object.getOwnPropertyDescriptor(own, "id")?.get).toBe("function");
+      });
+
+      test("when the property is not an ordinary one", () => {
+        const bytes = new Uint8Array([1, 2, 3]);
+        expect(bytes).toMatchObject({ 0: expect.any(Number) });
+        expect(bytes[0]).toBe(1);
+
+        const bigints = new BigInt64Array([1n]);
+        expect(bigints).toMatchObject({ 0: expect.any(BigInt) });
+        expect(bigints[0]).toBe(1n);
+
+        const array = [1, 2];
+        expect(array).toMatchObject({ length: expect.any(Number) });
+        expect(Object.keys(array)).toEqual(["0", "1"]);
+      });
+
+      test("so a cyclic value matches a cyclic pattern", () => {
+        /** @type {any} */
+        const value = { x: 1 };
+        value.self = value;
+        /** @type {any} */
+        const pattern = { x: expect.any(Number) };
+        pattern.self = pattern;
+        expect(value).toMatchObject(pattern);
+        expect(value.x).toBe(1);
+      });
+
+      if (isBun) {
+        /** The lines of the failure's diff that differ between `received` and `expected`. */
+        const changedLines = (/** @type {any} */ received, /** @type {any} */ expected) => {
+          let message = "";
+          try {
+            expect(received).toMatchObject(expected);
+          } catch (e) {
+            message = Bun.stripANSI(ANY(e).message);
+          }
+          expect(message).toStartWith("expect(received).toMatchObject(expected)");
+          return message.split("\n").filter(line => /^[-+] {3}/.test(line));
+        };
+
+        test("when the match fails, and the diff prints the matchers that passed", () => {
+          const received = Object.freeze({ id: 7, tags: ["a", "b"], name: "alice" });
+          const expected = { id: expect.any(Number), tags: [expect.any(String), "b"], name: "bob" };
+          expect(changedLines(received, expected)).toEqual(['-   "name": "bob",', '+   "name": "alice",']);
+          expect(received.id).toBe(7);
+          expect(received.tags[0]).toBe("a");
+          expect(Object.isFrozen(received)).toBe(true);
+
+          const event = new Event("x");
+          expect(changedLines(event, { timeStamp: expect.any(Number), type: "y" })).toEqual([
+            '+   "isTrusted": false,',
+            '-   "type": "y",',
+          ]);
+          expect(Object.keys(event)).toEqual(["isTrusted"]);
+        });
+
+        test("when the match fails after a matcher passed on a property that cannot hold one", () => {
+          const bigints = new BigInt64Array([7n, 2n]);
+          expect(changedLines(bigints, { 0: expect.any(BigInt), 1: 3n })).toContain("+   7,");
+          expect(bigints[0]).toBe(7n);
+
+          const array = [1, 2];
+          changedLines(array, { length: expect.any(Number), missing: 1 });
+          expect(Object.keys(array)).toEqual(["0", "1"]);
+
+          const frozen = Object.freeze([1, 2]);
+          changedLines(frozen, [expect.any(Number), 3]);
+          expect(frozen[0]).toBe(1);
+          expect(Object.isFrozen(frozen)).toBe(true);
+
+          class List extends Array {}
+          List.prototype[5] = "inherited";
+          const list = List.of(1);
+          changedLines(list, { 5: expect.any(String), missing: 1 });
+          expect(list.length).toBe(1);
+
+          const event = new Event("x");
+          changedLines(event, { isTrusted: expect.any(Boolean), type: "y" });
+          expect(event.isTrusted).toBe(false);
+
+          function fn() {}
+          changedLines(fn, { name: expect.any(String), missing: 1 });
+          expect(Object.getOwnPropertyDescriptor(fn, "name")).toEqual({
+            value: "fn",
+            writable: false,
+            enumerable: false,
+            configurable: true,
+          });
+        });
+
+        test("when the matcher passed on an element of a typed array or of a Proxy", () => {
+          for (const make of [
+            (/** @type {number} */ n) => new Uint8Array([n, 2]),
+            (/** @type {number} */ n) => new Float64Array([n, 2]),
+            (/** @type {number} */ n) => Buffer.from([n, 2]),
+            (/** @type {number} */ n) => new Proxy([n, 2], {}),
+          ]) {
+            const received = make(7);
+            const expected = { 0: expect.any(Number), 1: 3 };
+            // The element is not printed, so a snapshot of a value that differs from run to run stays the same.
+            expect(changedLines(received, expected)).toEqual(changedLines(make(9), expected));
+            expect(received[0]).toBe(7);
+          }
+        });
+
+        test("when a Proxy trap throws while the properties are put back", () => {
+          let defines = 0;
+          const proxy = new Proxy([1, 2], {
+            defineProperty(target, key, descriptor) {
+              if (++defines === 2) throw new Error("thrown by the trap");
+              return Reflect.defineProperty(target, key, descriptor);
+            },
+          });
+          const received = { id: 5, proxy };
+          const expected = { id: expect.any(Number), proxy: { 0: expect.any(Number) }, missing: 1 };
+          expect(() => expect(received).toMatchObject(expected)).toThrow("thrown by the trap");
+          expect(received.id).toBe(5);
+        });
+
+        test("and runs getters and custom matchers once when the match fails", () => {
+          let reads = 0;
+          let calls = 0;
+          expect.extend({
+            toBeCounted() {
+              calls++;
+              return { pass: true, message: () => "" };
+            },
+          });
+          const received = {
+            get id() {
+              reads++;
+              return 1;
+            },
+            name: "alice",
+          };
+          changedLines(received, { id: ANY(expect).toBeCounted(), name: "bob" });
+          expect({ reads, calls }).toEqual({ reads: 1, calls: 1 });
+        });
+      }
+    });
   });
 
   describe("toMatch()", () => {

@@ -506,7 +506,11 @@ pub(crate) fn convert_stmts_for_chunk(
                         && s.origin.is_commonjs_export()
                         && wrap == WrapKind::Cjs
                     {
-                        debug_assert!(s.decls.len() == 1);
+                        // A lowered top-level `using` declares its lifted exports without values.
+                        debug_assert!(
+                            s.decls.len() == 1
+                                || s.decls.slice().iter().all(|decl| decl.value.is_none())
+                        );
                         let decl = *s.decls.at(0);
                         if let Some(decl_value) = decl.value {
                             let ident_ref = match decl.binding.data {

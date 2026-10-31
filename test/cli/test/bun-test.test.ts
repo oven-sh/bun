@@ -2672,6 +2672,7 @@ describe.concurrent("a test file that can never finish loading", () => {
     ["process.stdout", []],
     ["process.stderr", []],
     [`process.stdout.write("written\\n")`, []],
+    ["process.stdout", ["--isolate"]],
     // On Windows the pipe to the coordinator keeps a worker's loop alive.
     ...(isWindows ? [] : [["process.stdout", ["--parallel=2"]]]),
   ] as [string, string[]][])("after %s %j", async (touch, flags) => {

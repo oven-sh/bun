@@ -181,6 +181,24 @@ plugin_impl_baz(const OnBeforeParseArguments *args,
   plugin_impl_with_needle(args, result, "baz");
 }
 
+// Fetches the source and keeps it. Fails the build unless the source is
+// "decoded text" with a NUL after it.
+extern "C" BUN_PLUGIN_EXPORT void
+plugin_impl_expect_decoded_text(const OnBeforeParseArguments *args,
+                                OnBeforeParseResult *result) {
+  if (result->fetchSourceCode(args, result) != 0) {
+    exit(1);
+  }
+
+  static const char expected[] = "decoded text";
+  if (result->source_len != sizeof(expected) - 1 ||
+      memcmp(result->source_ptr, expected, sizeof(expected)) != 0) {
+    const char *msg = "fetchSourceCode did not return decoded text with a NUL "
+                      "after it";
+    log_error(args, result, BUN_LOG_LEVEL_ERROR, msg, strlen(msg));
+  }
+}
+
 extern "C" void finalizer(napi_env env, void *data, void *hint) {
   External *external = (External *)data;
   if (external != nullptr) {

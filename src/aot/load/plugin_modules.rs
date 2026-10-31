@@ -1,5 +1,4 @@
 use crate::diagnostics::LoadMessages;
-use crate::load::loaders::reads_raw_bytes;
 use crate::load::source_provider::{
     Failed, LoadRequest, Loaded, ModuleName, Resolution, ResolveRequest, SourceProvider,
 };
@@ -383,7 +382,7 @@ impl<'a> PluginModules<'a> {
         if self.virtual_module(path).is_some() {
             return None;
         }
-        if !reads_raw_bytes(loader) {
+        if !loader.is_binary() {
             return self.disk.read(path);
         }
         let in_memory_path = to_path(path, self.disk.is_case_sensitive());

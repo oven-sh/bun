@@ -585,7 +585,7 @@ impl BOM {
         }
     }
 
-    pub(crate) fn length(self) -> usize {
+    pub fn length(self) -> usize {
         self.get_header().len()
     }
 
@@ -612,33 +612,6 @@ impl BOM {
                 let out = crate::strings_impl::to_utf8_alloc_from_le_bytes(trimmed_bytes);
                 drop(bytes);
                 out
-            }
-        }
-    }
-
-    /// This is required for the fs `use_shared_buffer` flag. we cannot free that pointer.
-    /// The returned slice will always point to the base of the input.
-    ///
-    /// Requires an arraylist in case it must be grown.
-    pub fn remove_and_convert_to_utf8_without_dealloc<'a>(self, list: &'a mut Vec<u8>) -> &'a [u8] {
-        match self {
-            BOM::Utf8 => {
-                let n = Self::UTF8_BYTES.len();
-                let len = list.len();
-                list.copy_within(n.., 0);
-                &list[..len - n]
-            }
-            BOM::Utf16Le => {
-                // See `remove_and_convert_to_utf8_and_free` — `&list[2..]` has no
-                // u16-alignment guarantee, so use the byte-level transcode helper.
-                let out = crate::strings_impl::to_utf8_alloc_from_le_bytes(
-                    &list[Self::UTF16_LE_BYTES.len()..],
-                );
-                list.clear();
-                list.extend_from_slice(&out);
-                // Return the list slice (not `out`, the new alloc) to honor the
-                // "always points to the base of the input" doc comment.
-                &list[..]
             }
         }
     }

@@ -129,6 +129,25 @@ devTest("image import in JS", {
     // await dev.fetch(img1).expect404();
   },
 });
+devTest("an asset that starts with a byte order mark is served byte for byte", {
+  files: {
+    "index.html": `
+      <!DOCTYPE html><html><head></head><body>
+      <img src="utf8.png"><img src="utf16le.png">
+      </body></html>
+    `,
+    "utf8.png": Buffer.from([0xef, 0xbb, 0xbf, 0x61, 0x2c, 0x62, 0x0a]),
+    // A lone surrogate and an odd length: UTF-16LE to UTF-8 and back cannot restore these.
+    "utf16le.png": Buffer.from([0xff, 0xfe, 0x41, 0x00, 0xd8, 0xd8, 0x09]),
+  },
+  async test(dev) {
+    const html = await dev.fetch("/").text();
+    const urls = Array.from(html.matchAll(/<img src="([^"]+)"/g), match => match[1]);
+    expect(urls).toHaveLength(2);
+    await dev.fetch(urls[0]).expectFile(Buffer.from([0xef, 0xbb, 0xbf, 0x61, 0x2c, 0x62, 0x0a]));
+    await dev.fetch(urls[1]).expectFile(Buffer.from([0xff, 0xfe, 0x41, 0x00, 0xd8, 0xd8, 0x09]));
+  },
+});
 devTest("html references a json file that is cached as a module", {
   files: {
     "index.html": `

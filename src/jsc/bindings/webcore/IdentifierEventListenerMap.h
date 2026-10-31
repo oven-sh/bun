@@ -45,7 +45,6 @@ public:
 
     bool isEmpty() const { return m_entries.isEmpty(); }
     bool contains(const JSC::Identifier& eventType) const { return find(eventType); }
-    bool containsActive(const JSC::Identifier& eventType) const;
 
     const EntriesVector& entries() const { return m_entries; }
 

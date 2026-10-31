@@ -143,6 +143,8 @@
 #include "JavaScriptCore/AOTJSONHooks.h"
 #include "DOMURL.h"
 #include "JSDOMURL.h"
+#include "JSCryptoKey.h"
+#include "JSKeyObject.h"
 
 #include <string_view>
 #include <bun-uws/src/App.h>
@@ -1407,6 +1409,23 @@ static std::optional<bool> temporalObjectsDequal(JSC::JSObject* o1, JSC::JSObjec
     return std::nullopt;
 }
 
+// A KeyObject or CryptoKey keeps its key in an internal slot and has no own properties
+// either. Own properties are still compared afterwards, like node does.
+static bool keyObjectsDequal(JSC::JSObject* o1, JSC::JSObject* o2)
+{
+    auto* key1 = dynamicDowncast<Bun::JSKeyObject>(o1);
+    auto* key2 = dynamicDowncast<Bun::JSKeyObject>(o2);
+    if (key1 || key2)
+        return key1 && key2 && key1->handle().equals(key2->handle()).value_or(false);
+
+    auto* cryptoKey1 = dynamicDowncast<JSCryptoKey>(o1);
+    auto* cryptoKey2 = dynamicDowncast<JSCryptoKey>(o2);
+    if (cryptoKey1 || cryptoKey2)
+        return cryptoKey1 && cryptoKey2 && Bun::KeyObject::cryptoKeysEqual(cryptoKey1->wrapped(), cryptoKey2->wrapped());
+
+    return true;
+}
+
 struct DeepEqualsMode {
     bool isStrict;
     bool enableAsymmetricMatchers;
@@ -1994,6 +2013,9 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             if (temporalEqual.has_value())
                 return temporalEqual;
 
+            if (!keyObjectsDequal(obj1, obj2))
+                return false;
+
             const bool isSymbol1 = obj1->inherits<SymbolObject>();
             const bool isBigInt1 = obj1->inherits<BigIntObject>();
             if (isSymbol1 || isBigInt1) {
@@ -2176,6 +2198,9 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             std::optional<bool> temporalEqual = temporalObjectsDequal(obj1, obj2);
             if (temporalEqual.has_value())
                 return temporalEqual;
+
+            if (!keyObjectsDequal(obj1, obj2))
+                return false;
 
             const bool isSymbol1 = obj1->inherits<SymbolObject>();
             const bool isBigInt1 = obj1->inherits<BigIntObject>();

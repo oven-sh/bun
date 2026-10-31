@@ -920,6 +920,35 @@ std::optional<bool> KeyObject::equals(const KeyObject& other) const
     }
 }
 
+// The CryptoKey branch of Node's deep equality:
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L426-L457
+bool KeyObject::cryptoKeysEqual(WebCore::CryptoKey& a, WebCore::CryptoKey& b)
+{
+    if (a.type() != b.type() || a.extractable() != b.extractable() || a.usagesBitmap() != b.usagesBitmap() || a.algorithmIdentifier() != b.algorithmIdentifier()) {
+        return false;
+    }
+
+    // The other members of `algorithm` (lengths, curve, modulus, exponent) follow from the key material.
+    static constexpr auto hashName = [](const WebCore::CryptoKey::KeyAlgorithm& algorithm) {
+        return std::visit(
+            WTF::makeVisitor(
+                [](const WebCore::CryptoHmacKeyAlgorithm& hmac) { return hmac.hash.name; },
+                [](const WebCore::CryptoRsaHashedKeyAlgorithm& rsa) { return rsa.hash.name; },
+                [](const auto&) { return String(); }),
+            algorithm);
+    };
+    if (hashName(a.algorithm()) != hashName(b.algorithm())) {
+        return false;
+    }
+
+    auto keyA = create(a);
+    auto keyB = create(b);
+    if (keyA.hasException() || keyB.hasException()) {
+        return false;
+    }
+    return keyA.returnValue().equals(keyB.returnValue()).value_or(false);
+}
+
 static std::optional<Vector<uint8_t>> marshalAsymmetricKey(const ncrypto::EVPKeyPointer& pkey, bool isPublic)
 {
     return WebCore::marshalEVPKey(pkey.get(), isPublic);

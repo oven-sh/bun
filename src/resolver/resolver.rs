@@ -3639,7 +3639,7 @@ impl<'a> Resolver<'a> {
 
         if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
             if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                if entries.generation >= self.generation {
+                if entries.generation >= self.generation && entries.complete {
                     dir_entries_option = cached_entry;
                     needs_iter = false;
                 } else {
@@ -3652,6 +3652,11 @@ impl<'a> Resolver<'a> {
             // SAFETY: (block-wide) `in_place`/`dir_entries_ptr`/`dir_entries_option` point to slots
             // in `rfs.entries` (BSSMap singleton) or a fresh leaked Box; both outlive this fn and
             // are accessed under `rfs.entries_mutex` (see LIFETIMES.tsv).
+            // A full re-read of a newer probe-only listing keeps its generation.
+            let generation = in_place.map_or(self.generation, |existing| {
+                // SAFETY: see block-wide note above.
+                self.generation.max(unsafe { &*existing }.generation)
+            });
             let mut new_entry = Fs::file_system::DirEntry::init(
                 if let Some(existing) = in_place {
                     // SAFETY: see block-wide note above.
@@ -3661,7 +3666,7 @@ impl<'a> Resolver<'a> {
                         .append_slice(dir_path)
                         .expect("unreachable")
                 },
-                self.generation,
+                generation,
             );
 
             // Pre-size `data` so the per-entry inserts below skip the
@@ -3677,8 +3682,15 @@ impl<'a> Resolver<'a> {
             while let Ok(Some(_value)) = dir_iterator.next() {
                 new_entry
                     .add_entry_with_store(
-                        // SAFETY: see block-wide note above.
-                        in_place.map(|existing| unsafe { &mut (*existing).data }),
+                        in_place
+                            .filter(|existing| {
+                                // SAFETY: see block-wide note above.
+                                unsafe { (**existing).complete }
+                            })
+                            .map(|existing| {
+                                // SAFETY: see block-wide note above.
+                                unsafe { &mut (*existing).data }
+                            }),
                         &_value,
                         &mut filename_store,
                     )
@@ -4841,10 +4853,22 @@ impl<'a> Resolver<'a> {
                 core::ptr::null_mut();
             let mut needs_iter = true;
             let mut in_place: Option<*mut Fs::file_system::DirEntry> = None;
+            // Queue index 0 is the requested directory. An ancestor above the
+            // working directory only needs a few fixed names for its
+            // `DirInfo`. Directories below the cwd and `node_modules` are
+            // resolved in later, so they are read in full now.
+            let is_ancestor = queue_slice_len > 0;
+            let probe_only = is_ancestor
+                && bun_paths::resolve_path::is_parent_or_equal(
+                    self.fs_ref().top_level_dir(),
+                    dir_path,
+                ) == bun_paths::resolve_path::ParentEqual::Unrelated
+                && bun_paths::basename(strings::without_trailing_slash_windows_path(dir_path))
+                    != b"node_modules";
 
             if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
                 if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                    if entries.generation >= self.generation {
+                    if entries.generation >= self.generation && (entries.complete || probe_only) {
                         dir_entries_option = cached_entry;
                         needs_iter = false;
                     } else {
@@ -4857,6 +4881,11 @@ impl<'a> Resolver<'a> {
                 // SAFETY: (block-wide) `in_place`/`dir_entries_ptr`/`dir_entries_option` point to
                 // slots in `rfs.entries` (BSSMap singleton) or a fresh leaked Box; both outlive this
                 // fn and are accessed under `rfs.entries_mutex` (see LIFETIMES.tsv).
+                // A full re-read of a newer probe-only listing keeps its generation.
+                let generation = in_place.map_or(self.generation, |existing| {
+                    // SAFETY: see block-wide note above.
+                    self.generation.max(unsafe { &*existing }.generation)
+                });
                 let mut new_entry = Fs::file_system::DirEntry::init(
                     if let Some(existing) = in_place {
                         // SAFETY: see block-wide note above.
@@ -4866,18 +4895,28 @@ impl<'a> Resolver<'a> {
                             .append_slice(dir_path)
                             .expect("unreachable")
                     },
-                    self.generation,
+                    generation,
                 );
 
-                // Pre-size `data` so the per-entry inserts below skip the
-                // 1→2→4→…→N hashbrown rehash cascade from an empty table. 64
-                // covers a typical node_modules package dir; larger dirs
-                // still rehash from there (cheap relative to starting at 0).
-                new_entry.data.reserve(64);
+                // A re-read (`in_place`) is always a full one.
+                let probe_only = probe_only && in_place.is_none();
+                if !probe_only {
+                    // Pre-size `data` so the per-entry inserts below skip the
+                    // 1→2→4→…→N hashbrown rehash cascade from an empty table. 64
+                    // covers a typical node_modules package dir; larger dirs
+                    // still rehash from there (cheap relative to starting at 0).
+                    new_entry.data.reserve(64);
+                }
 
                 // A permission-denied ancestor has no fd to enumerate; its
                 // entry set stays empty.
-                if open_dir.is_valid() {
+                if probe_only && open_dir.is_valid() {
+                    new_entry.probe_dir_info_names(open_dir)?;
+                } else if open_dir.is_valid() {
+                    // A probe-only listing's entries are not reused (see
+                    // `read_directory_with_iterator`).
+                    // SAFETY: see block-wide note above.
+                    let prev_map = in_place.filter(|existing| unsafe { (**existing).complete });
                     let mut dir_iterator = bun_sys::iterate_dir(open_dir);
                     // NOTE: `WrappedIterator::next` returns
                     // `Result<Option<IteratorResult>>`, so use `?`-style break-on-error.
@@ -4893,7 +4932,7 @@ impl<'a> Resolver<'a> {
                         new_entry
                             .add_entry_with_store(
                                 // SAFETY: see block-wide note above.
-                                in_place.map(|existing| unsafe { &mut (*existing).data }),
+                                prev_map.map(|existing| unsafe { &mut (*existing).data }),
                                 &_value,
                                 &mut filename_store,
                             )
@@ -4923,7 +4962,8 @@ impl<'a> Resolver<'a> {
                 // is unobservable).
                 bun_core::scoped_log!(
                     crate::fs_full::Fs,
-                    "readdir({}, {}) = {}",
+                    "{}({}, {}) = {}",
+                    if probe_only { "probe" } else { "readdir" },
                     open_dir,
                     bstr::BStr::new(dir_path),
                     // SAFETY: `dir_entries_ptr` is a live BSSMap slot (`in_place`) or a
@@ -6503,8 +6543,10 @@ impl<'a> Resolver<'a> {
                 // The only caller that reaches this with `parent` set
                 // (`dir_info_cached_miss`) already holds `entries_mutex`, and that
                 // mutex is non-recursive, so go through the `_locked` accessor.
-                if let Some(parent_entries) = parent_.get_entries_ref_locked(self.generation) {
-                    if let Some(lookup) = parent_entries.get(base) {
+                if let Some(parent_entries) =
+                    parent_.get_entries_mut_locked_allow_partial(self.generation)
+                {
+                    if let Some(lookup) = parent_entries.get_or_probe(base)? {
                         let entries_fd = entries!().fd;
                         if entries_fd.is_valid()
                             && !lookup.entry().cache().fd.is_valid()

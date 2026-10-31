@@ -348,23 +348,132 @@ impl DirEntryIterator for () {
     fn next<R: EntryKindResolver>(&mut self, _fs: &R, _entry: &Entry, _fd: Fd) {}
 }
 
+/// The only names `Resolver::dir_info_uncached` looks up in a directory's own
+/// listing. A probe-only listing holds these and nothing else.
+const DIR_INFO_PROBE_NAMES: [&bun_core::ZStr; 4] = [
+    bun_core::zstr!("package.json"),
+    bun_core::zstr!("tsconfig.json"),
+    bun_core::zstr!("jsconfig.json"),
+    bun_core::zstr!("node_modules"),
+];
+
 pub struct DirEntry {
     // `dir` is interned in
     // DirnameStore (a process-lifetime BSSList), so `&'static` is correct.
     pub dir: &'static [u8],
     pub fd: Fd,
     pub(crate) generation: Generation,
+    /// `false` while `data` holds only `DIR_INFO_PROBE_NAMES`. Accessors
+    /// refresh such a listing in full, like a stale `generation`.
+    pub(crate) complete: bool,
     pub data: dir_entry::EntryMap,
 }
 
 impl DirEntry {
+    #[inline]
+    pub fn is_complete(&self) -> bool {
+        self.complete
+    }
+
     pub(crate) fn init(dir: &'static [u8], generation: Generation) -> DirEntry {
         DirEntry {
             dir,
             data: dir_entry::EntryMap::default(),
             generation,
             fd: Fd::INVALID,
+            complete: true,
         }
+    }
+
+    /// `None`: not listed. `Some(None)`: the kind needs a later `stat`.
+    fn entry_kind_to_store(kind: bun_sys::FileKind) -> Option<Option<EntryKind>> {
+        use bun_sys::FileKind as DK;
+        match kind {
+            DK::Directory => Some(Some(EntryKind::Dir)),
+            DK::File => Some(Some(EntryKind::File)),
+
+            // For a symlink, we will need to stat the target later
+            DK::SymLink
+            // Some filesystems return `.unknown` from getdents() no matter the actual kind of the file
+            // (often because it would be slow to look up the kind). If we get this, then code that
+            // needs the kind will have to find it out later by calling stat().
+            | DK::Unknown => Some(None),
+
+            DK::BlockDevice
+            | DK::CharacterDevice
+            | DK::NamedPipe
+            | DK::UnixDomainSocket
+            | DK::Whiteout
+            | DK::Door
+            | DK::EventPort => None,
+        }
+    }
+
+    /// Fills a fresh listing with `DIR_INFO_PROBE_NAMES`, one `lstat` each,
+    /// and marks it probe-only. `dir_fd` is an open handle on `self.dir`.
+    pub(crate) fn probe_dir_info_names(&mut self, dir_fd: Fd) -> crate::CrateResult<()> {
+        debug_assert!(self.data.count() == 0);
+        self.complete = false;
+        let mut filename_store = FilenameStoreAppender::new();
+        for name in DIR_INFO_PROBE_NAMES {
+            self.add_probed_entry(dir_fd, name, &mut filename_store)?;
+        }
+        Ok(())
+    }
+
+    /// `get`, except that a miss in a probe-only listing is answered with one
+    /// `lstat` of `self.dir/base`, which adds the entry when it exists.
+    pub(crate) fn get_or_probe(
+        &mut self,
+        base: &[u8],
+    ) -> crate::CrateResult<Option<EntryLookup<'_>>> {
+        if self.complete || self.lookup(base).is_some() {
+            return Ok(self.lookup(base));
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let join_capacity = buf.len() - 1;
+        let len = bun_paths::resolve_path::join_string_buf::<bun_paths::platform::Auto>(
+            &mut buf[..join_capacity],
+            &[self.dir, base],
+        )
+        .len();
+        buf[len] = 0;
+        let path = bun_core::ZStr::from_buf(&buf[..], len);
+        let mut filename_store = FilenameStoreAppender::new();
+        self.add_probed_entry(Fd::INVALID, path, &mut filename_store)?;
+        Ok(self.lookup(base))
+    }
+
+    /// Adds the basename of `name` from an `lstat` of `dir_fd/name`
+    /// (`Fd::INVALID` for an absolute `name`). A missing name adds nothing.
+    fn add_probed_entry(
+        &mut self,
+        dir_fd: Fd,
+        name: &bun_core::ZStr,
+        filename_store: &mut FilenameStoreAppender,
+    ) -> crate::CrateResult<()> {
+        debug_assert!(!self.complete);
+        let Ok(kind) = bun_sys::entry_kind_at(dir_fd, name) else {
+            return Ok(());
+        };
+        let Some(found_kind) = Self::entry_kind_to_store(kind) else {
+            return Ok(());
+        };
+        let base = bun_paths::basename(name.as_bytes());
+        self.add_entry_inner(None, base, found_kind, filename_store)?;
+        Ok(())
+    }
+
+    #[inline]
+    fn debug_assert_probed_name(&self, query_lower: &[u8]) {
+        debug_assert!(
+            self.complete
+                || DIR_INFO_PROBE_NAMES
+                    .iter()
+                    .any(|n| n.as_bytes() == query_lower),
+            "probe-only listing asked about \"{}\", which is not a probed name",
+            bstr::BStr::new(query_lower)
+        );
     }
 
     // Compatibility wrapper for callers outside the `readdir` hot loop —
@@ -379,31 +488,26 @@ impl DirEntry {
         entry: &bun_sys::dir_iterator::IteratorResult,
         filename_store: &mut FilenameStoreAppender,
     ) -> crate::CrateResult<Option<&Entry>> {
-        use bun_sys::FileKind as DK;
         // `entry.name.slice()` is OS-native (`&[u16]` on Windows); the
         // entry-store / hashmap key in `data` is UTF-8, so use the eagerly-
         // transcoded `slice_u8()`.
         let name_slice = entry.name.slice_u8();
-        let found_kind: Option<EntryKind> = match entry.kind {
-            DK::Directory => Some(EntryKind::Dir),
-            DK::File => Some(EntryKind::File),
-
-            // For a symlink, we will need to stat the target later
-            DK::SymLink
-            // Some filesystems return `.unknown` from getdents() no matter the actual kind of the file
-            // (often because it would be slow to look up the kind). If we get this, then code that
-            // needs the kind will have to find it out later by calling stat().
-            | DK::Unknown => None,
-
-            DK::BlockDevice
-            | DK::CharacterDevice
-            | DK::NamedPipe
-            | DK::UnixDomainSocket
-            | DK::Whiteout
-            | DK::Door
-            | DK::EventPort => return Ok(None),
+        let Some(found_kind) = Self::entry_kind_to_store(entry.kind) else {
+            return Ok(None);
         };
+        let stored = self.add_entry_inner(prev_map, name_slice, found_kind, filename_store)?;
+        // SAFETY: just produced from EntryStore append or prev_map lookup. Shared, because
+        // the map's key can point into the entry.
+        Ok(Some(unsafe { &*stored }))
+    }
 
+    fn add_entry_inner(
+        &mut self,
+        prev_map: Option<&mut dir_entry::EntryMap>,
+        name_slice: &[u8],
+        found_kind: Option<EntryKind>,
+        filename_store: &mut FilenameStoreAppender,
+    ) -> crate::CrateResult<*mut Entry> {
         // Lowercase the entry basename once. The same bytes drive the
         // previous-generation case-insensitive probe, the new entry's
         // lowercased key, *and* the insert into `self.data` — and the hash is
@@ -536,9 +640,7 @@ impl DirEntry {
         // `name_hash` is its hash too — insert without re-hashing.
         self.data.put_static_key_hashed(name_hash, key, stored)?;
 
-        // SAFETY: just produced from EntryStore append or prev_map lookup. Shared, because
-        // `key` can point into the entry.
-        Ok(Some(unsafe { &*stored }))
+        Ok(stored)
     }
 
     /// Debug-only contract check: every `.data` probe must run under
@@ -564,6 +666,11 @@ impl DirEntry {
     // lookup key is the lowercased basename; a case-mismatched query still
     // returns the stored entry.
     pub fn get<'a>(&'a self, query_: &[u8]) -> Option<EntryLookup<'a>> {
+        debug_assert!(self.complete, "general lookup in a probe-only listing");
+        self.lookup(query_)
+    }
+
+    fn lookup<'a>(&'a self, query_: &[u8]) -> Option<EntryLookup<'a>> {
         Self::debug_assert_entries_mutex_held();
         if query_.is_empty() || query_.len() > MAX_PATH_BYTES {
             return None;
@@ -585,6 +692,7 @@ impl DirEntry {
         query_lower: &'static [u8],
     ) -> Option<EntryLookup<'a>> {
         Self::debug_assert_entries_mutex_held();
+        self.debug_assert_probed_name(query_lower);
         let &result_ptr = self.data.get(query_lower)?;
         Some(EntryLookup {
             entry: result_ptr,
@@ -595,6 +703,7 @@ impl DirEntry {
     /// True if a cached entry exists for the given already-lowercase name.
     pub fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
         Self::debug_assert_entries_mutex_held();
+        self.debug_assert_probed_name(query_lower);
         self.data.contains_key(query_lower)
     }
 }

@@ -16,6 +16,7 @@ use bstr::BStr;
 
 use bun_alloc::Arena;
 use bun_ast::Index;
+use bun_bundler::bundle_v2::ScannedEntryPoint;
 use bun_bundler::{BundleV2, Transpiler};
 use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
 use bun_core::PathBuffer as CorePathBuffer;
@@ -165,11 +166,15 @@ pub(crate) fn filter<'a>(
     // scope exit; the arena bulk-free skips Drop.
     let mut event_loop = bun_event_loop::AnyEventLoop::init();
 
+    // Filled by position: a test file behind a symbolic link has another path in the graph.
+    let mut slot_to_source = vec![ScannedEntryPoint::default(); test_files.len()];
+
     let mut bundle = match BundleV2::scan_module_graph_from_cli(
         scan_transpiler,
         arena,
         Some(core::ptr::NonNull::from(&mut event_loop)),
         &entry_points,
+        &mut slot_to_source,
     ) {
         Ok(b) => b,
         Err(err) => {
@@ -242,15 +247,6 @@ pub(crate) fn filter<'a>(
         }
     }
 
-    // Map the original test_files slot -> bundler source index. An entry
-    // point that failed to resolve is skipped by enqueueEntryPoints, so
-    // match by absolute path via path_to_index rather than by position.
-    let mut slot_to_source: Vec<Option<u32>> = vec![None; test_files.len()];
-    debug_assert_eq!(test_files.len(), slot_to_source.len());
-    for (tf, out) in test_files.iter().zip(slot_to_source.iter_mut()) {
-        *out = path_to_index.get(tf.as_bytes()).copied();
-    }
-
     // BFS backward from every changed file that participates in the graph.
     let mut affected = bun_core::handle_oom(DynamicBitSet::init_empty(sources.len()));
     let mut queue: Vec<u32> = Vec::new();
@@ -283,11 +279,21 @@ pub(crate) fn filter<'a>(
     // reshaped for borrowck — capture len before re-borrowing test_files
     let total = test_files.len();
     debug_assert_eq!(test_files.len(), slot_to_source.len());
+    // When several test paths name one file, (a) holds for one of them only.
+    let kept = if slot_to_source.iter().any(|slot| slot.is_duplicate) {
+        kept_paths(test_files, &slot_to_source, sources)
+    } else {
+        Vec::new()
+    };
     for i in 0..total {
         let tf = test_files[i];
-        let maybe_source = slot_to_source[i];
         let keep = changed_files.contains(tf.as_bytes())
-            || maybe_source.is_some_and(|src| affected.is_set(src as usize));
+            || slot_to_source[i].source_index.is_some_and(|src| {
+                affected.is_set(src as usize)
+                    && kept
+                        .get(src as usize)
+                        .is_none_or(|path| *path == tf.as_bytes())
+            });
 
         if keep {
             test_files[write] = tf;
@@ -306,6 +312,8 @@ pub(crate) fn filter<'a>(
     // SAFETY: `bundle.transpiler` is the arena-backed `&'static mut` noted
     // above — its `Drop` never runs, so `deinit` cannot lead to a double-drop.
     unsafe { bundle.transpiler.deinit() };
+    // The log is in the CLI arena too, with a message for each test file that did not resolve.
+    bundle.transpiler.log_mut().clear_and_free();
 
     Ok(Result {
         test_files: &mut test_files[0..write],
@@ -313,6 +321,30 @@ pub(crate) fn filter<'a>(
         total_tests: total,
         module_graph_files: graph_files,
     })
+}
+
+/// For each source, the one test path that the module graph can select.
+#[cold]
+fn kept_paths(
+    test_files: &[Interned],
+    scanned: &[ScannedEntryPoint],
+    sources: &[bun_ast::Source],
+) -> Vec<&'static [u8]> {
+    let mut paths: Vec<&'static [u8]> = vec![b""; sources.len()];
+    for (tf, slot) in test_files.iter().zip(scanned) {
+        let Some(src) = slot.source_index else {
+            continue;
+        };
+        let (path, graph_path) = (tf.as_bytes(), sources[src as usize].path.text);
+        let kept = &mut paths[src as usize];
+        // The path that the graph has, or else the smallest: the order of discovery does not decide.
+        if kept.is_empty()
+            || (*kept != graph_path && (path == graph_path || strings::order(path, kept).is_lt()))
+        {
+            *kept = path;
+        }
+    }
+    paths
 }
 
 #[cfg(not(windows))]

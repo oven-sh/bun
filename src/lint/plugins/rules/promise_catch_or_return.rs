@@ -14,7 +14,7 @@ pub struct CatchOrReturn {
     help: String,
 }
 
-const CATCH_OR_RETURN: Message = Message::new("", "Expected {{expected_methods}}.");
+const CATCH_OR_RETURN: &Message = &Message::new("", "Expected {{expected_methods}}.");
 
 impl Rule for CatchOrReturn {
     const META: Meta = Meta::oxlint(Plugin::Promise, "catch-or-return", Kind::Suggestion);

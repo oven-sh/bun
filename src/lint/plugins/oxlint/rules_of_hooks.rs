@@ -10,11 +10,11 @@ use bun_lint_oxlint::ast_util::static_property_name;
 
 const CALLED_HERE: &str = "Hook is called here";
 
-const CONDITIONAL: Message = Message::new(
+const CONDITIONAL: &Message = &Message::new(
     "",
     "React Hook \"{{hook}}\" is called conditionally. React Hooks must be called in the exact same order in every component render.",
 );
-const ASYNC: Message = Message::new(
+const ASYNC: &Message = &Message::new(
     "",
     "React Hook \"{{hook}}\" cannot be called in an async function. ",
 );
@@ -258,7 +258,7 @@ pub(crate) fn check<'a, R: Rule>(
     let Some(hook) = callee_name(call) else {
         return;
     };
-    let report = |message: Message, first_label: &'static str| {
+    let report = |message: &'static Message, first_label: &'static str| {
         cx.report(node, message)
             .data("hook", hook)
             .first_label(first_label)

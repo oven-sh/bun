@@ -15,11 +15,11 @@ pub struct InteractiveSupportsFocus {
     tabbable: Vec<String>,
 }
 
-const MUST_BE_TABBABLE: Message = Message::new("", "Elements with the '{{role}}' interactive role must be tabbable.");
-const MUST_BE_FOCUSABLE: Message = Message::new("", "Elements with the '{{role}}' interactive role must be focusable.");
-const ADD_TAB_INDEX: Message =
-    Message::new("", "Add `tabIndex={0}` to make the element reachable via sequential keyboard navigation.");
-const ADD_EITHER_TAB_INDEX: Message = Message::new("", "Add `tabIndex={0}` or `tabIndex={-1}` to make the element focusable.");
+const MUST_BE_TABBABLE: &Message = &Message::new("", "Elements with the '{{role}}' interactive role must be tabbable.");
+const MUST_BE_FOCUSABLE: &Message = &Message::new("", "Elements with the '{{role}}' interactive role must be focusable.");
+const ADD_TAB_INDEX: &Message =
+    &Message::new("", "Add `tabIndex={0}` to make the element reachable via sequential keyboard navigation.");
+const ADD_EITHER_TAB_INDEX: &Message = &Message::new("", "Add `tabIndex={0}` or `tabIndex={-1}` to make the element focusable.");
 
 impl Rule for InteractiveSupportsFocus {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "interactive-supports-focus", Kind::Problem).has_suggestions();

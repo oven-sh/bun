@@ -8,7 +8,7 @@ pub struct NoUnresolved {
     visitor: Visitor,
 }
 
-const UNRESOLVED: Message = Message::new("", "Unable to resolve path to module '{{source}}'.");
+const UNRESOLVED: &Message = &Message::new("", "Unable to resolve path to module '{{source}}'.");
 
 /// `node.importKind === 'type' || node.exportKind === 'type'`
 fn is_type_only(node: Node) -> bool {

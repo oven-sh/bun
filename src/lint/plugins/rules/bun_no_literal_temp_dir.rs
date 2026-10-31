@@ -10,7 +10,7 @@ pub struct NoLiteralTempDir {
     directories: Box<[Box<[u8]>]>,
 }
 
-const LITERAL_DIRECTORY: Message = Message::new(
+const LITERAL_DIRECTORY: &Message = &Message::new(
     "literalDirectory",
     "`{{directory}}` is not the temporary directory on every system. Use `os.tmpdir()`.",
 );

@@ -6,8 +6,8 @@ use bun_lint::rule::Plugin;
 /// Prefer `Number()` over `parseFloat()` and base-10 `parseInt()`.
 pub struct PreferNumberCoercion;
 
-const PREFER_NUMBER_COERCION: Message = Message::new("", "Prefer `{{replacement}}`.");
-const REPLACE: Message = Message::new("", "Replace this call with `{{replacement}}`.");
+const PREFER_NUMBER_COERCION: &Message = &Message::new("", "Prefer `{{replacement}}`.");
+const REPLACE: &Message = &Message::new("", "Replace this call with `{{replacement}}`.");
 
 impl Rule for PreferNumberCoercion {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-number-coercion", Kind::Suggestion).has_suggestions();

@@ -41,6 +41,7 @@ const { getTimerDuration } = require("internal/timers");
 const kTimeout = Symbol.for("::buntimeout::");
 const { validateFunction, validateNumber, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
+const { lookupListenAddress } = require("internal/net/server");
 const netSymbols = require("internal/net/symbols");
 const kArmHandshakeTimeout: typeof netSymbols.kArmHandshakeTimeout = netSymbols.kArmHandshakeTimeout;
 const kDestroyOnRead: typeof netSymbols.kDestroyOnRead = netSymbols.kDestroyOnRead;
@@ -4327,6 +4328,70 @@ Server.prototype.getConnections = function getConnections(
   return this;
 };
 
+function startServerListen(
+  server: $Node.NetServer,
+  queryAddress: string | null,
+  queryPort: number | null | undefined,
+  queryAddressType: number | null,
+  backlog: number | undefined,
+  fd: number | undefined,
+  exclusive: boolean,
+  ipv6Only: boolean,
+  reusePort: boolean,
+  readableAll: boolean,
+  writableAll: boolean,
+  flags: number,
+  path: string | undefined,
+  hostname: string | undefined,
+  onListen: unknown,
+  errorHostname: string | undefined,
+  errorPort: number | null | undefined,
+) {
+  try {
+    let tls: ServerTLSOptions | undefined;
+    let TLSSocketClass: $Node.SocketConstructor | undefined;
+    const bunTLS = server[bunTlsSymbol];
+    const options = server[bunSocketServerOptions]!;
+    let contexts: Map<string, $Node.SecureContext> | null = null;
+    if (typeof bunTLS === "function") {
+      [tls, TLSSocketClass] = bunTLS.$call(server, errorPort, errorHostname, false);
+      options.servername = tls!.serverName;
+      options[kSocketClass] = TLSSocketClass;
+      contexts = tls!.contexts;
+    } else {
+      options[kSocketClass] = Socket;
+    }
+
+    listenInCluster(
+      server,
+      queryAddress,
+      queryPort,
+      queryAddressType,
+      backlog,
+      fd,
+      exclusive,
+      ipv6Only,
+      reusePort,
+      readableAll,
+      writableAll,
+      flags,
+      undefined,
+      path,
+      hostname,
+      tls,
+      contexts,
+      onListen,
+    );
+  } catch (err) {
+    const isUnix = path != null;
+    process.nextTick(
+      emitErrorNextTick,
+      server,
+      formatListenError(err, isUnix ? path : errorHostname, isUnix ? undefined : errorPort),
+    );
+  }
+}
+
 Server.prototype.listen = function listen(this: $Node.NetServer, port, hostname, onListen) {
   const argsLength = arguments.length;
   if (typeof port === "string") {
@@ -4489,38 +4554,57 @@ Server.prototype.listen = function listen(this: $Node.NetServer, port, hostname,
     this.once("listening", onListen);
   }
 
-  try {
-    var tls: ServerTLSOptions | undefined = undefined;
-    var TLSSocketClass: $Node.SocketConstructor | undefined = undefined;
-    const bunTLS = this[bunTlsSymbol];
-    const options = this[bunSocketServerOptions]!;
-    let contexts: Map<string, $Node.SecureContext> | null = null;
-    if (typeof bunTLS === "function") {
-      [tls, TLSSocketClass] = bunTLS.$call(this, port, hostname, false);
-      options.servername = tls!.serverName;
-      options[kSocketClass] = TLSSocketClass;
-      contexts = tls!.contexts;
-    } else {
-      options[kSocketClass] = Socket;
-    }
+  const listeningId = (this[kClusterListeningId] = (this[kClusterListeningId] || 0) + 1);
 
-    const flags = (ipv6Only === true ? 1 : 0) | (reusePort === true ? 2 : 0);
-    let queryAddress: string | null = null;
-    let queryPort: number | null | undefined = port;
-    let queryAddressType: number | null = 4;
-    if (path) {
-      queryAddress = path;
-      queryPort = -1;
-      queryAddressType = -1;
-    } else if (typeof fd === "number" && fd >= 0) {
-      queryPort = null;
-      queryAddressType = null;
-    } else if (typeof clusterHost === "string") {
-      queryAddress = clusterHost;
-      queryAddressType = isIP(clusterHost) || 4;
-    }
+  const flags = (ipv6Only === true ? 1 : 0) | (reusePort === true ? 2 : 0);
+  let queryAddress: string | null = null;
+  let queryPort: number | null | undefined = port;
+  let queryAddressType: number | null = 4;
+  if (path) {
+    queryAddress = path;
+    queryPort = -1;
+    queryAddressType = -1;
+  } else if (typeof fd === "number" && fd >= 0) {
+    queryPort = null;
+    queryAddressType = null;
+  } else if (typeof clusterHost === "string") {
+    queryAddress = clusterHost;
+    queryAddressType = isIP(clusterHost) || 4;
+  }
 
-    listenInCluster(
+  if (clusterHost && !path && fd === undefined && typeof queryPort === "number" && queryPort >= 0) {
+    try {
+      lookupListenAddress(clusterHost, (err, address, addressType) => {
+        if (listeningId !== this[kClusterListeningId] || isStoppedModuleGraphRunning()) return;
+        if (err) {
+          this.emit("error", err);
+          return;
+        }
+        startServerListen(
+          this,
+          address!,
+          queryPort,
+          addressType!,
+          backlog,
+          fd,
+          exclusive,
+          ipv6Only,
+          reusePort,
+          readableAll,
+          writableAll,
+          flags,
+          path,
+          address,
+          onListen,
+          clusterHost!,
+          port,
+        );
+      });
+    } catch (err) {
+      process.nextTick(emitErrorNextTick, this, formatListenError(err, clusterHost, port));
+    }
+  } else {
+    startServerListen(
       this,
       queryAddress,
       queryPort,
@@ -4533,19 +4617,11 @@ Server.prototype.listen = function listen(this: $Node.NetServer, port, hostname,
       readableAll,
       writableAll,
       flags,
-      undefined,
       path,
       hostname,
-      tls,
-      contexts,
       onListen,
-    );
-  } catch (err) {
-    const isUnix = path != null;
-    process.nextTick(
-      emitErrorNextTick,
-      this,
-      formatListenError(err, isUnix ? path : hostname, isUnix ? undefined : port),
+      hostname,
+      port,
     );
   }
   return this;
@@ -4717,48 +4793,6 @@ function listenInCluster(
   // of the places that happens, exclusive or not.
   if (!isPrimary && cluster === undefined) {
     cluster = loadChild();
-  }
-
-  if (
-    !isPrimary &&
-    !exclusive &&
-    typeof address === "string" &&
-    address.length > 0 &&
-    typeof port === "number" &&
-    port >= 0 &&
-    isIP(address) === 0
-  ) {
-    const lookupListeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2259-L2278
-    require("node:dns").lookup(address, (err, ip, family) => {
-      if (lookupListeningId !== server[kClusterListeningId]) return;
-      if (err) {
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2268-L2269
-        server.emit("error", err);
-        return;
-      }
-      listenInCluster(
-        server,
-        ip as string,
-        port,
-        family === 6 ? 6 : 4,
-        backlog,
-        fd,
-        exclusive,
-        ipv6Only,
-        reusePort,
-        readableAll,
-        writableAll,
-        flags,
-        options,
-        path,
-        hostname,
-        tls,
-        contexts,
-        onListen,
-      );
-    });
-    return;
   }
 
   if (isPrimary || exclusive) {

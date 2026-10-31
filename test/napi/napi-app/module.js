@@ -1760,6 +1760,121 @@ nativeTests.test_external_buffer_finalized_by_idle_collection = async () => {
   }
 };
 
+// Loops that are hot before the ArrayBuffer changes size: JIT code decides from a
+// Buffer's Structure whether its bounds can change. `new Function`: a CodeBlock per Buffer.
+function warmBufferLoops(buffer, value) {
+  const sum = new Function(
+    "view",
+    "let total = 0; for (let i = 0; i < view.length; i++) total += view[i]; return total;",
+  );
+  const fill = new Function("view", "value", "for (let i = 0; i < view.length; i++) view[i] = value;");
+  let total = 0;
+  for (let i = 0; i < 100_000; i++) {
+    fill(buffer, value);
+    total += sum(buffer);
+  }
+  return { sum, fill, total };
+}
+
+nativeTests.test_create_buffer_from_arraybuffer = () => {
+  const create = nativeTests.create_buffer_from_arraybuffer;
+  const state = (buffer, sum) =>
+    `length=${buffer.length} byteLength=${buffer.byteLength} byteOffset=${buffer.byteOffset} first=${buffer[0]} sum=${sum(buffer)}`;
+  const preventExtensions = buffer => {
+    try {
+      Object.preventExtensions(buffer);
+      return "ok";
+    } catch (e) {
+      return e.constructor.name;
+    }
+  };
+
+  {
+    const arrayBuffer = new ArrayBuffer(16);
+    new Uint8Array(arrayBuffer).set([1, 2, 3, 4, 5, 6, 7, 8]);
+    const buffer = create(arrayBuffer, 2, 4);
+    console.log(
+      `fixed: isBuffer=${Buffer.isBuffer(buffer)} sameArrayBuffer=${buffer.buffer === arrayBuffer} bytes=${[...buffer]}`,
+    );
+    const { sum, total } = warmBufferLoops(buffer, 7);
+    console.log(`fixed: warm=${total} ${state(buffer, sum)} arrayBuffer=${[...new Uint8Array(arrayBuffer)]}`);
+    const empty = create(arrayBuffer, 16, 0);
+    console.log(`fixed: empty at the end: length=${empty.length} byteOffset=${empty.byteOffset}`);
+    console.log(`fixed: preventExtensions=${preventExtensions(buffer)}`);
+  }
+
+  {
+    // The Buffer is in the last 64 KiB, so the shrink below takes its pages away.
+    const K = 64 * 1024;
+    const arrayBuffer = new ArrayBuffer(4 * K, { maxByteLength: 16 * K });
+    const buffer = create(arrayBuffer, 3 * K, 8);
+    console.log(`resizable: isBuffer=${Buffer.isBuffer(buffer)} sameArrayBuffer=${buffer.buffer === arrayBuffer}`);
+    // Not on `buffer`: where this does not throw, it changes the Structure.
+    console.log(`resizable: preventExtensions=${preventExtensions(create(arrayBuffer, 0, 8))}`);
+    const { sum, fill, total } = warmBufferLoops(buffer, 7);
+    console.log(`resizable: warm=${total} ${state(buffer, sum)}`);
+    arrayBuffer.resize(16);
+    console.log(`resizable: shrunk: ${state(buffer, sum)}`);
+    fill(buffer, 9);
+    console.log(`resizable: shrunk, filled: ${state(buffer, sum)}`);
+    arrayBuffer.resize(4 * K);
+    console.log(`resizable: grown: ${state(buffer, sum)}`);
+    fill(buffer, 3);
+    console.log(`resizable: grown, filled: ${state(buffer, sum)}`);
+    arrayBuffer.resize(8 * K);
+    console.log(`resizable: grown again: ${state(buffer, sum)}`);
+    const part = buffer.subarray(2, 6);
+    console.log(
+      `resizable: subarray: isBuffer=${Buffer.isBuffer(part)} length=${part.length} byteOffset=${part.byteOffset}`,
+    );
+    arrayBuffer.transfer();
+    console.log(`resizable: detached: ${state(buffer, sum)}`);
+  }
+
+  {
+    // This shrink keeps the page mapped: a read or a store past the new end does not
+    // fault, it reaches bytes that are no longer part of the ArrayBuffer.
+    const arrayBuffer = new ArrayBuffer(64, { maxByteLength: 128 });
+    const buffer = create(arrayBuffer, 16, 8);
+    const { sum, fill, total } = warmBufferLoops(buffer, 7);
+    console.log(`same page: warm=${total} ${state(buffer, sum)}`);
+    arrayBuffer.resize(8);
+    console.log(`same page: shrunk: ${state(buffer, sum)}`);
+    fill(buffer, 9);
+    console.log(`same page: shrunk, filled: ${state(buffer, sum)}`);
+    arrayBuffer.resize(64);
+    console.log(`same page: grown: ${state(buffer, sum)}`);
+    const empty = create(arrayBuffer, 64, 0);
+    console.log(`same page: empty at the end: length=${empty.length} byteOffset=${empty.byteOffset}`);
+    arrayBuffer.resize(32);
+    console.log(`same page: empty at the end, shrunk: length=${empty.length} byteOffset=${empty.byteOffset}`);
+  }
+};
+
+// Bun-only: bun:jsc shows the Structure. Bun accepts a SharedArrayBuffer here and Node
+// returns napi_invalid_arg: the growable shared row holds only while that is so.
+nativeTests.test_create_buffer_from_arraybuffer_structure = () => {
+  const { jscDescribe } = require("bun:jsc");
+  const structureId = value => jscDescribe(value).match(/StructureID: (\d+)/)[1];
+  const ids = {};
+  for (const [kind, arrayBuffer] of [
+    ["fixed", new ArrayBuffer(64)],
+    ["resizable", new ArrayBuffer(64, { maxByteLength: 128 })],
+    ["growable shared", new SharedArrayBuffer(64, { maxByteLength: 128 })],
+  ]) {
+    const buffer = nativeTests.create_buffer_from_arraybuffer(arrayBuffer, 56, 8);
+    ids[kind] = structureId(buffer);
+    console.log(
+      `${kind}: isBuffer=${Buffer.isBuffer(buffer)} sameArrayBuffer=${buffer.buffer === arrayBuffer}`,
+      `sameStructureAsBufferFrom=${ids[kind] === structureId(Buffer.from(arrayBuffer, 56, 8))}`,
+    );
+  }
+  console.log(
+    `resizable and growable shared: ${ids.resizable === ids["growable shared"]},`,
+    `fixed and resizable: ${ids.fixed === ids.resizable}`,
+  );
+};
+
 // Bun-only: an orphaned threadsafe function is freed by whichever thread drops
 // its last reference, including a call that reports napi_closing. Every
 // iteration must end with as many live threadsafe functions as it started with.

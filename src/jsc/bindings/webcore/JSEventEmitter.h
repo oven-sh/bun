@@ -24,6 +24,8 @@ public:
 
     static inline JSC::EncodedJSValue addListener(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSEventEmitter* castedThis, bool once, bool prepend);
     static inline JSC::EncodedJSValue removeListener(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSEventEmitter* castedThis);
+    // Whether `value` is the `emit` that the prototype is created with.
+    static bool isBuiltInEmit(JSC::JSValue);
 
     DECLARE_INFO;
 

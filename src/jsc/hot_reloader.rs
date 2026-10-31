@@ -295,6 +295,9 @@ unsafe impl Sync for WatchChangedPaths {}
 pub static WATCH_CHANGED_TRIGGER_FILE: std::sync::OnceLock<&'static ZStr> =
     std::sync::OnceLock::new();
 
+/// Ends each path in the trigger file. A path can hold a line break, but not a NUL.
+pub const WATCH_CHANGED_PATHS_TERMINATOR: &[u8] = b"\0";
+
 fn record_changed_path(path: &[u8]) {
     let Some(set) = WATCH_CHANGED_PATHS.get() else {
         return;
@@ -331,11 +334,14 @@ fn flush_changed_paths_for_reload() {
 
         let mut buf: Vec<u8> = Vec::new();
         for p in set.keys() {
-            if buf.try_reserve(p.len() + 1).is_err() {
+            if buf
+                .try_reserve(p.len() + WATCH_CHANGED_PATHS_TERMINATOR.len())
+                .is_err()
+            {
                 return;
             }
             buf.extend_from_slice(p);
-            buf.push(b'\n');
+            buf.extend_from_slice(WATCH_CHANGED_PATHS_TERMINATOR);
         }
         let _ = bun_sys::File::write_file(Fd::cwd(), dest, &buf);
     }

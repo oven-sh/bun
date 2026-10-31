@@ -1,8 +1,12 @@
 #include "V8Object.h"
 #include "shim/InternalFieldObject.h"
 #include "V8HandleScope.h"
+#include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/ConstructData.h"
+#include "JavaScriptCore/IdentifierInlines.h"
 #include "JavaScriptCore/ObjectConstructor.h"
+#include "JavaScriptCore/PropertyNameArray.h"
+#include "JavaScriptCore/StringObject.h"
 #include "v8_compatibility_assertions.h"
 
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::Object)
@@ -11,6 +15,17 @@ ASSERT_V8_ENUM_MATCHES(PropertyAttribute, None)
 ASSERT_V8_ENUM_MATCHES(PropertyAttribute, ReadOnly)
 ASSERT_V8_ENUM_MATCHES(PropertyAttribute, DontEnum)
 ASSERT_V8_ENUM_MATCHES(PropertyAttribute, DontDelete)
+
+ASSERT_V8_ENUM_MATCHES(PropertyFilter, ALL_PROPERTIES)
+ASSERT_V8_ENUM_MATCHES(PropertyFilter, ONLY_WRITABLE)
+ASSERT_V8_ENUM_MATCHES(PropertyFilter, ONLY_ENUMERABLE)
+ASSERT_V8_ENUM_MATCHES(PropertyFilter, ONLY_CONFIGURABLE)
+ASSERT_V8_ENUM_MATCHES(PropertyFilter, SKIP_STRINGS)
+ASSERT_V8_ENUM_MATCHES(PropertyFilter, SKIP_SYMBOLS)
+
+ASSERT_V8_ENUM_MATCHES(KeyConversionMode, kConvertToString)
+ASSERT_V8_ENUM_MATCHES(KeyConversionMode, kKeepNumbers)
+ASSERT_V8_ENUM_MATCHES(KeyConversionMode, kNoNumbers)
 
 using JSC::Identifier;
 using JSC::JSFinalObject;
@@ -209,6 +224,67 @@ Maybe<bool> Object::DefineOwnProperty(Local<Context> context, Local<Name> key, L
     bool success = object->methodTable()->defineOwnProperty(object, globalObject, identifier, descriptor, false);
     RETURN_IF_EXCEPTION(scope, Nothing<bool>());
     return Just(success);
+}
+
+MaybeLocal<Array> Object::GetOwnPropertyNames(Local<Context> context, PropertyFilter filter, KeyConversionMode key_conversion)
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    JSObject* object = localToObjectPointer<JSObject>();
+    auto& vm = JSC::getVM(globalObject);
+
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    const bool skipStrings = filter & SKIP_STRINGS;
+    const bool skipSymbols = filter & SKIP_SYMBOLS;
+    // V8 asks a Proxy for its keys even when the filter skips all of them, but then for no descriptor.
+    const bool skipAllKeys = skipStrings && skipSymbols;
+
+    auto nameMode = JSC::PropertyNameMode::StringsAndSymbols;
+    if (skipSymbols) {
+        nameMode = JSC::PropertyNameMode::Strings;
+    } else if (skipStrings) {
+        nameMode = JSC::PropertyNameMode::Symbols;
+    }
+    const auto dontEnumMode = (filter & ONLY_ENUMERABLE) && !skipAllKeys ? JSC::DontEnumPropertiesMode::Exclude : JSC::DontEnumPropertiesMode::Include;
+
+    JSC::PropertyNameArrayBuilder names(vm, nameMode, JSC::PrivateSymbolMode::Exclude);
+    object->methodTable()->getOwnPropertyNames(object, globalObject, names, dontEnumMode);
+    RETURN_IF_EXCEPTION(scope, MaybeLocal<Array>());
+
+    JSC::MarkedArgumentBuffer keys;
+    if (!skipAllKeys) {
+        // V8 applies ONLY_WRITABLE and ONLY_CONFIGURABLE neither to the keys of a Proxy nor to the characters of a String object.
+        const bool filterByAttributes = (filter & (ONLY_WRITABLE | ONLY_CONFIGURABLE)) && object->type() != JSC::ProxyObjectType;
+        auto* stringObject = dynamicDowncast<JSC::StringObject>(object);
+        const unsigned characterCount = stringObject ? stringObject->internalValue()->length() : 0;
+
+        for (const Identifier& name : names) {
+            std::optional<uint32_t> index = JSC::parseIndex(name);
+            if (filterByAttributes && !(index && *index < characterCount)) {
+                JSC::PropertyDescriptor descriptor;
+                object->getOwnPropertyDescriptor(globalObject, name, descriptor);
+                RETURN_IF_EXCEPTION(scope, MaybeLocal<Array>());
+                // ONLY_WRITABLE rejects V8's READ_ONLY attribute, which an accessor property never has.
+                if ((filter & ONLY_WRITABLE) && !descriptor.isAccessorDescriptor() && !descriptor.writable()) {
+                    continue;
+                }
+                if ((filter & ONLY_CONFIGURABLE) && !descriptor.configurable()) {
+                    continue;
+                }
+            }
+            // V8 checks kNoNumbers with a debug assertion only, so index keys stay numbers as for kKeepNumbers.
+            if (index && key_conversion != KeyConversionMode::kConvertToString) {
+                keys.appendWithCrashOnOverflow(JSC::jsNumber(*index));
+            } else {
+                keys.appendWithCrashOnOverflow(JSC::identifierToJSValue(vm, name));
+            }
+        }
+    }
+
+    JSC::JSArray* array = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), keys);
+    RETURN_IF_EXCEPTION(scope, MaybeLocal<Array>());
+
+    return context->currentHandleScope()->createLocal<Array>(vm, array);
 }
 
 internal::ExternalPointerTag ToExternalPointerTag(uint16_t api_tag)

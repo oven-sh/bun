@@ -152,7 +152,9 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
 }
 
 #if LIBUS_UDP_RECV_PER_MESSAGE
-/* The batch receive for the arms with no kernel one: one recvmsg(2) per datagram. */
+/* The batch receive for the arms with no kernel one. Each recvmsg dequeues what
+ * it returns, so a failure after the first datagram leaves two results: the
+ * datagrams already in recvbuf, and an errno that the kernel does not repeat. */
 static int bsd_recvmsg_each(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags, int max_packets) {
     for (int i = 0; i < max_packets; ++i) {
         while (1) {
@@ -164,7 +166,8 @@ static int bsd_recvmsg_each(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recv
             if (ret < 0) {
                 if (errno == EINTR) continue;
                 if (errno == EAGAIN || errno == EWOULDBLOCK) return i;
-                return (int) ret;
+                recvbuf->received_before_error = i;
+                return -1;
             }
             recvbuf->msgvec[i].msg_len = ret;
             break;

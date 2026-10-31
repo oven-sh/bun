@@ -151,6 +151,11 @@ struct udp_recvbuf {
     struct iovec iov[LIBUS_UDP_RECV_COUNT];
     struct sockaddr_storage addr[LIBUS_UDP_RECV_COUNT];
     char control[LIBUS_UDP_RECV_COUNT][256];
+#if LIBUS_UDP_RECV_PER_MESSAGE
+    /* Set when bsd_recvmmsg returns -1: the datagrams a per-message batch read
+     * before the recvmsg that failed. They are in msgvec. */
+    int received_before_error;
+#endif
 #endif
 };
 
@@ -169,6 +174,11 @@ struct udp_sendbuf {
 };
 
 int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int flags);
+/* Returns the number of datagrams received, or -1 with errno set. A per-message
+ * batch that fails after some datagrams also sets recvbuf->received_before_error.
+ * Each recvmsg consumes what it returns, so the kernel has already cleared that
+ * error and does not raise it again: the caller delivers those datagrams, then
+ * reports errno. */
 int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags, int max_packets);
 void bsd_udp_setup_recvbuf(struct udp_recvbuf *recvbuf, void *databuf, size_t databuflen);
 int bsd_udp_setup_sendbuf(struct udp_sendbuf *buf, size_t bufsize, void** payloads, size_t* lengths, void** addresses, int num);

@@ -4361,9 +4361,19 @@ static bool hasUncalledFactoryThatAwaits(Zig::JSModuleMock* mock)
     auto* factory = value ? dynamicDowncast<JSC::JSFunction>(value) : nullptr;
     if (!factory || factory->isHostOrBuiltinFunction())
         return false;
-    // Without an `await` it settles during the call, so require() gets the mock.
     auto* executable = factory->jsExecutable();
-    return JSC::isAsyncFunctionParseMode(executable->parseMode()) && executable->source().view().contains("await"_s);
+    if (!JSC::isAsyncFunctionParseMode(executable->parseMode()))
+        return false;
+    // The parser says so once the body is compiled. Without an `await` of its own it settles during the call, so require() gets the mock.
+    auto& vm = mock->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSC::CodeBlock* codeBlock = nullptr;
+    executable->prepareForExecution<JSC::FunctionExecutable>(vm, factory, factory->scope(), JSC::CodeSpecializationKind::CodeForCall, codeBlock);
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return false;
+    }
+    return !(executable->features() & JSC::AsyncFunctionWithoutAwaitFeature);
 }
 
 bool hasModuleMockUnsettledAsyncFactory(JSC::JSObject* moduleMock)

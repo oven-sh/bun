@@ -877,14 +877,14 @@ describe.concurrent("the original of a mocked module", () => {
   });
 
   test.each(["mock.module", "vi.mock", "jest.mock"])(
-    "require() returns the mock of %s() with an async factory that awaits nothing",
+    "require() returns the mock of %s() with an async factory that awaits nothing itself",
     async mockModule => {
       await expectFixturesToPass(
         {
           ...modules,
           "settles.test.ts": `
             import { expect, jest, mock, test, vi } from "bun:test";
-            ${mockModule}("./mod", async () => ({ value: "mocked" }));
+            ${mockModule}("./mod", async () => ({ /* await */ value: "mocked", text: "await", later: async () => await 1 }));
             ${mockModule}("cjs-pkg", async () => ({ hello: () => "mocked" }));
             ${mockModule}("node:os", async () => ({ platform: () => "mocked" }));
             test("a file, a package and a builtin", () => {

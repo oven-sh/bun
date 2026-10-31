@@ -50,6 +50,12 @@ To run a specific file in the test runner, make sure the path starts with `./` o
 bun test ./test/specific-file.test.ts
 ```
 
+To run a list of files that is too long for a command line (Windows allows 32,767 characters), write one path per line to a file and pass it with `--files-from`. Every line is read as a path, with or without a leading `./`. Further paths may stand on the command line; a filter there is an error:
+
+```bash terminal icon="terminal"
+bun test --files-from ./shard-1.txt
+```
+
 ### Filter by Test Name
 
 To filter tests by name rather than file path, use the `-t`/`--test-name-pattern` flag with a regex pattern:

@@ -564,10 +564,6 @@ function f98 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: combine assignedInTry pickEither
 # CHECK-LABEL: function {{*}}name="combine"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 0, patchpoints: 1
-# CHECK-NEXT: end of function f2
-# CHECK-LABEL: function {{*}}name="combine"
-# CHECK: role=Source
 # CHECK-NEXT: instructions: 30, patchpoints: 0
 # CHECK-NEXT: end of function f114
 # CHECK-LABEL: function {{*}}name="assignedInTry"
@@ -576,7 +572,7 @@ function f98 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: end of function f5
 # CHECK-LABEL: function {{*}}name="assignedInTry"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 16, patchpoints: 1
+# CHECK-NEXT: instructions: 15, patchpoints: 1
 # CHECK-NEXT: end of function f100
 # CHECK-LABEL: function {{*}}name="assignedInTry"
 # CHECK: role=GenericVersion
@@ -588,7 +584,7 @@ function f98 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: end of function f7
 # CHECK-LABEL: function {{*}}name="pickEither"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 29, patchpoints: 2, rare instructions: 6
+# CHECK-NEXT: instructions: 27, patchpoints: 3, rare instructions: 6
 # CHECK-NEXT: end of function f101
 # CHECK-LABEL: function {{*}}name="pickEither"
 # CHECK: role=GenericVersion

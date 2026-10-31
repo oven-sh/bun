@@ -62,6 +62,8 @@ export const {
   functionIn,
   functionUsed,
   functionsConvertedUnderNamesOnly,
+  functionsOnlyNamed,
+  proxiesPrintedAsTargets,
   generic,
   handedOver,
   handwritten,
@@ -192,6 +194,8 @@ export const {
   whenOperandHasProperty,
   whenOperandOfCallOn,
   whenOperandStartsWith,
+  whenProgramStores,
+  whenTestsReplaceBuiltins,
   withoutEntryColumns,
   writesContents,
 } = engineModule;

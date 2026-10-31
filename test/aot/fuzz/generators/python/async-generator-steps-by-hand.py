@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""async-generator-steps-by-hand.py <seed>: random strict TypeScript programs that step async generators by hand: `await generator.next(sent)` in async functions and async generators, with the result
-destructured, kept in a local, read in place, handed on or logged whole. Generators have their items at hand, wait for jobs or for immediates, yield promises and thenables, throw, return and clean up.
-Requests are left waiting, two consumers share a generator, return() and throw() come in between. Every step logs, and other jobs are queued at random places, so the log shows the order of jobs."""
+"""async-generator-steps-by-hand.py <seed>: Random strict TypeScript programs that step async generators by hand: `await
+generator.next(sent)` in async functions and async generators, with the result destructured, stored in a local, or
+read in place.
+"""
 import random, sys
 seed = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 R = random.Random(seed)

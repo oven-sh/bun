@@ -2,4 +2,4 @@
 // A call of a member of it hands the namespace object to nobody: the other functions of node:fs are not compiled.
 // STATISTIC: ImageFunctionsEmitted <= 1100
 import * as fs from "node:fs";
-console.log(fs.readFileSync("/dev/null").length, fs.existsSync("/dev/null"));
+console.log(fs.statSync(process.execPath).isFile(), fs.existsSync(process.execPath));

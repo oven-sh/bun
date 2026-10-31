@@ -1,7 +1,6 @@
-// One program for each column kind that the row decoder of sql<Row[]> knows. Each declares the column as many field types, required and optional,
-// and prints every row: it reads as in plain Bun whether it was decoded into a typed object, converted in place or left a plain object.
-// One program for each of three widths of a table: the row decoder keeps the values of up to 64 columns on the stack and those of a wider row in a rooted buffer.
-// The stand-in Postgres is the one of ../parallel/external-data/sql-typed-rows.ts.
+// One program per column type that the row decoder of sql<Row[]> supports. Each declares the column as many field
+// types, required and optional, and prints every row: it must read as in plain Bun whether it was decoded into a typed
+// object, converted in place or left a plain object.
 import { readFileSync } from "fs";
 import { join } from "path";
 

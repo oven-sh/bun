@@ -85,14 +85,14 @@ TypeError: Cannot assign to process.isBun because built-in objects are read-only
 TypeError: Cannot delete process.isBun because built-in objects are read-only in a compiled executable
 TypeError: Cannot assign to process.versions because built-in objects are read-only in a compiled executable
 TypeError: Cannot assign to process.release because built-in objects are read-only in a compiled executable
-TypeError: Attempted to assign to readonly property.
-TypeError: Unable to delete property.
-TypeError: Attempted to assign to readonly property.
-TypeError: Unable to delete property.
-TypeError: Attempting to change value of a readonly property.
-TypeError: Attempted to assign to readonly property.
-TypeError: Attempted to assign to readonly property.
-TypeError: Unable to delete property.
+TypeError: Cannot assign to process.versions.bun because built-in objects are read-only in a compiled executable
+TypeError: Cannot delete process.versions.bun because built-in objects are read-only in a compiled executable
+TypeError: Cannot assign to process.versions.node because built-in objects are read-only in a compiled executable
+TypeError: Cannot delete process.versions.node because built-in objects are read-only in a compiled executable
+TypeError: Cannot assign to process.versions.node because built-in objects are read-only in a compiled executable
+TypeError: Cannot assign to process.versions.node because built-in objects are read-only in a compiled executable
+TypeError: Cannot assign to process.release.name because built-in objects are read-only in a compiled executable
+TypeError: Cannot delete process.release.name because built-in objects are read-only in a compiled executable
 false false false
 object true string false node
 true

@@ -128,811 +128,811 @@ data d11 root=Array{contents=boolean elements=[Boolean{value=true}, Boolean{}]} 
 data d12 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @0
   b1():
-    v0 = NewClosure function=f1
-    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v2 = NewClosure function=f2
-    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v4 = NewClosure function=f3
-    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v6 = NewClosure function=f4
-    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v8 = NewClosure function=f5
-    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v10 = NewClosure function=f6
-    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v12 = NewClosure function=f7
-    v13 = Convert v12 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v14 = NewClosure function=f8
-    v15 = Convert v14 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v16 = NewClosure function=f9
-    v17 = Convert v16 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v18 = NewClosure function=f10
-    v19 = Convert v18 declared={type=f10 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v20 = NewClosure function=f11
-    v21 = Convert v20 declared={type=f11 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v22 = NewClosure function=f12
-    v23 = Convert v22 declared={type=f12 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v24 = Data data=d0
-    v25 = Convert v24 declared={type=undefined|null|Array<undefined|null|string> site=w0 flags=[OmitsNull, OmitsUndefined]}
-    v26 = String string="unknowns"
-    v27 = NewArray v26, v1 contents=undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8
-    v28 = String string="anys"
-    v29 = NewArray v28, v3 contents=undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8
-    v30 = String string="generic"
-    v31 = NewArray v30, v5 contents=undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8
-    v32 = String string="two"
-    v33 = NewArray v32, v7 contents=undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8
-    v34 = String string="usesFirst"
-    v35 = NewArray v34, v9 contents=undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8
-    v36 = String string="usedBehind"
-    v37 = NewArray v36, v11 contents=undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8
-    v38 = String string="all"
-    v39 = NewArray v38, v13 contents=undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8
-    v40 = String string="skipped"
-    v41 = NewArray v40, v15 contents=undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8
-    v42 = NewArray v27, v29, v31, v33, v35, v37, v39, v41 contents=undefined|null|Array<undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8>
-    v43 = Convert v42 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8>> site=w1 flags=[OmitsNull, OmitsUndefined]}
-    v44 = IteratorOpen v43
-    Jump -> next b2()
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v8 = NewClosure function=f5 @0
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v10 = NewClosure function=f6 @0
+    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v12 = NewClosure function=f7 @0
+    v13 = Convert v12 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v14 = NewClosure function=f8 @0
+    v15 = Convert v14 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v16 = NewClosure function=f9 @0
+    v17 = Convert v16 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v18 = NewClosure function=f10 @0
+    v19 = Convert v18 declared={type=f10 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v20 = NewClosure function=f11 @0
+    v21 = Convert v20 declared={type=f11 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v22 = NewClosure function=f12 @0
+    v23 = Convert v22 declared={type=f12 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v24 = Data data=d0 @104
+    v25 = Convert v24 declared={type=undefined|null|Array<undefined|null|string> site=w0 flags=[OmitsNull, OmitsUndefined]} @104
+    v26 = String string="unknowns" @938
+    v27 = NewArray v26, v1 contents=undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8 @937
+    v28 = String string="anys" @962
+    v29 = NewArray v28, v3 contents=undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8 @961
+    v30 = String string="generic" @978
+    v31 = NewArray v30, v5 contents=undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8 @977
+    v32 = String string="two" @1000
+    v33 = NewArray v32, v7 contents=undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8 @999
+    v34 = String string="usesFirst" @1014
+    v35 = NewArray v34, v9 contents=undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8 @1013
+    v36 = String string="usedBehind" @1040
+    v37 = NewArray v36, v11 contents=undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8 @1039
+    v38 = String string="all" @1068
+    v39 = NewArray v38, v13 contents=undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8 @1067
+    v40 = String string="skipped" @1082
+    v41 = NewArray v40, v15 contents=undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8 @1081
+    v42 = NewArray v27, v29, v31, v33, v35, v37, v39, v41 contents=undefined|null|Array<undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8> @936
+    v43 = Convert v42 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8>> site=w1 flags=[OmitsNull, OmitsUndefined]} @936
+    v44 = IteratorOpen v43 @1122
+    Jump -> next b2() @1122
   b2():
-    LoopHint
-    v46 = IteratorResume v44
-    v47 = ResultAt v46
-    v48 = ResultAt v46 index=1
-    Branch v47 -> taken b3(), notTaken b14()
+    LoopHint @1122
+    v46 = IteratorResume v44 @1122
+    v47 = ResultAt v46 @1122
+    v48 = ResultAt v46 index=1 @1122
+    Branch v47 -> taken b3(), notTaken b14() @1122
   b3():
-    v49 = Data data=d8
-    v50 = IteratorOpen v49
-    Jump -> next b4()
+    v49 = Data data=d8 @1375
+    v50 = IteratorOpen v49 @1370
+    Jump -> next b4() @1370
   b4():
-    LoopHint
-    v52 = IteratorResume v50
-    v53 = ResultAt v52
-    v54 = ResultAt v52 index=1
-    Branch v53 -> taken b5(), notTaken b11()
+    LoopHint @1370
+    v52 = IteratorResume v50 @1370
+    v53 = ResultAt v52 @1370
+    v54 = ResultAt v52 index=1 @1370
+    Branch v53 -> taken b5(), notTaken b11() @1370
   b5():
-    v55 = Data data=d9
-    v56 = IteratorOpen v55
-    Jump -> next b6()
+    v55 = Data data=d9 @1577
+    v56 = IteratorOpen v55 @1572
+    Jump -> next b6() @1572
   b6():
-    LoopHint
-    v58 = IteratorResume v56
-    v59 = ResultAt v58
-    v60 = ResultAt v58 index=1
-    Branch v59 -> taken b7(), notTaken b8()
+    LoopHint @1572
+    v58 = IteratorResume v56 @1572
+    v59 = ResultAt v58 @1572
+    v60 = ResultAt v58 index=1 @1572
+    Branch v59 -> taken b7(), notTaken b8() @1572
   b7():
-    v61 = PropGet v25 key="push"
-    v62 = Builtin builtin=JSON
-    v63 = PropGet v62 key="stringify"
-    v64 = Convert v63 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-    v65 = Integer
-    v66 = Call v21, -, v65 calleeName="rest"
-    v67 = Convert v66 declared={type=undefined|null|Array site=w46 flags=[OmitsNull, OmitsUndefined]}
-    v68 = Call v64, v62, v67 calleeKey="stringify" calleeName="JSON.stringify"
-    v69 = Convert v68 declared={type=undefined|null|string site=w47 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v70 = Builtin builtin=JSON
-    v71 = PropGet v70 key="stringify"
-    v72 = Convert v71 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-    v73 = Integer
-    v74 = Integer integer=1
-    v75 = Call v21, -, v73, v74 calleeName="rest"
-    v76 = Convert v75 declared={type=undefined|null|Array site=w48 flags=[OmitsNull, OmitsUndefined]}
-    v77 = Call v72, v70, v76 calleeKey="stringify" calleeName="JSON.stringify"
-    v78 = Convert v77 declared={type=undefined|null|string site=w49 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v79 = Builtin builtin=JSON
-    v80 = PropGet v79 key="stringify"
-    v81 = Convert v80 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-    v82 = Integer
-    v83 = Integer integer=1
-    v84 = Integer integer=2
-    v85 = Integer integer=3
-    v86 = Call v21, -, v82, v83, v84, v85 calleeName="rest"
-    v87 = Convert v86 declared={type=undefined|null|Array site=w50 flags=[OmitsNull, OmitsUndefined]}
-    v88 = Call v81, v79, v87 calleeKey="stringify" calleeName="JSON.stringify"
-    v89 = Convert v88 declared={type=undefined|null|string site=w51 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v90 = Call v61, v25, v69, v78, v89 calleeKey="push" calleeName="out.push"
-    v91 = Convert v90 declared={type=number site=w52} illTypedCause=DeclarationWithoutBody
-    v92 = PropGet v25 key="push"
-    v93 = Builtin builtin=JSON
-    v94 = PropGet v93 key="stringify"
-    v95 = Convert v94 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-    v96 = Data data=d10
-    v97 = Call v23, -, v96 calleeName="union"
-    v98 = Convert v97 declared={type=undefined|null|Array site=w53 flags=[OmitsNull, OmitsUndefined]}
-    v99 = Call v95, v93, v98 calleeKey="stringify" calleeName="JSON.stringify"
-    v100 = Convert v99 declared={type=undefined|null|string site=w54 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v101 = Builtin builtin=JSON
-    v102 = PropGet v101 key="stringify"
-    v103 = Convert v102 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-    v104 = Data data=d11
-    v105 = Call v23, -, v104 calleeName="union"
-    v106 = Convert v105 declared={type=undefined|null|Array site=w55 flags=[OmitsNull, OmitsUndefined]}
-    v107 = Call v103, v101, v106 calleeKey="stringify" calleeName="JSON.stringify"
-    v108 = Convert v107 declared={type=undefined|null|string site=w56 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v109 = Call v92, v25, v100, v108 calleeKey="push" calleeName="out.push"
-    v110 = Convert v109 declared={type=number site=w57} illTypedCause=DeclarationWithoutBody
-    v111 = PropGet v25 key="push"
-    v112 = Builtin builtin=String
-    v113 = NewClosure function=f13
-    v114 = Data data=d12
-    v115 = Call v113, -, v114
-    v116 = Convert v115 declared={type=undefined|null|Array site=w60 flags=[OmitsNull, OmitsUndefined]}
-    v117 = PropGet v116 key="length"
-    v118 = Call v112, -, v117 calleeName="String"
-    v119 = Convert v118 declared={type=undefined|null|string site=w61 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v120 = Call v111, v25, v119 calleeKey="push" calleeName="out.push"
-    v121 = Convert v120 declared={type=number site=w62} illTypedCause=DeclarationWithoutBody
-    v122 = Builtin builtin=GlobalThis
-    v123 = PropGet v122 key="console" [isFreeName]
-    v124 = Convert v123 declared={type=builtin(Console) flags=[IsExpected]}
-    v125 = PropGet v124 key="log"
-    v126 = Convert v125 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v127 = PropGet v25 key="join"
-    v128 = String string="\n"
-    v129 = Call v127, v25, v128 calleeKey="join" calleeName="out.join"
-    v130 = Convert v129 declared={type=undefined|null|string site=w63 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v131 = Call v126, v124, v130 calleeKey="log" calleeName="console.log"
-    v132 = Undefined
-    Return v132
+    v61 = PropGet v25 key="push" @1863
+    v62 = Builtin builtin=JSON @1872
+    v63 = PropGet v62 key="stringify" @1872
+    v64 = Convert v63 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1872
+    v65 = Integer @1892
+    v66 = Call v21, -, v65 calleeName="rest" @1887
+    v67 = Convert v66 declared={type=undefined|null|Array site=w46 flags=[OmitsNull, OmitsUndefined]} @1887
+    v68 = Call v64, v62, v67 calleeKey="stringify" calleeName="JSON.stringify" @1877
+    v69 = Convert v68 declared={type=undefined|null|string site=w47 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1872
+    v70 = Builtin builtin=JSON @1897
+    v71 = PropGet v70 key="stringify" @1897
+    v72 = Convert v71 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1897
+    v73 = Integer @1917
+    v74 = Integer integer=1 @1920
+    v75 = Call v21, -, v73, v74 calleeName="rest" @1912
+    v76 = Convert v75 declared={type=undefined|null|Array site=w48 flags=[OmitsNull, OmitsUndefined]} @1912
+    v77 = Call v72, v70, v76 calleeKey="stringify" calleeName="JSON.stringify" @1902
+    v78 = Convert v77 declared={type=undefined|null|string site=w49 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1897
+    v79 = Builtin builtin=JSON @1925
+    v80 = PropGet v79 key="stringify" @1925
+    v81 = Convert v80 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1925
+    v82 = Integer @1945
+    v83 = Integer integer=1 @1948
+    v84 = Integer integer=2 @1951
+    v85 = Integer integer=3 @1954
+    v86 = Call v21, -, v82, v83, v84, v85 calleeName="rest" @1940
+    v87 = Convert v86 declared={type=undefined|null|Array site=w50 flags=[OmitsNull, OmitsUndefined]} @1940
+    v88 = Call v81, v79, v87 calleeKey="stringify" calleeName="JSON.stringify" @1930
+    v89 = Convert v88 declared={type=undefined|null|string site=w51 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1925
+    v90 = Call v61, v25, v69, v78, v89 calleeKey="push" calleeName="out.push" @1867
+    v91 = Convert v90 declared={type=number site=w52} illTypedCause=DeclarationWithoutBody @1863
+    v92 = PropGet v25 key="push" @2057
+    v93 = Builtin builtin=JSON @2066
+    v94 = PropGet v93 key="stringify" @2066
+    v95 = Convert v94 declared={type=builtin(JSONStringify) flags=[IsExpected]} @2066
+    v96 = Data data=d10 @2087
+    v97 = Call v23, -, v96 calleeName="union" @2081
+    v98 = Convert v97 declared={type=undefined|null|Array site=w53 flags=[OmitsNull, OmitsUndefined]} @2081
+    v99 = Call v95, v93, v98 calleeKey="stringify" calleeName="JSON.stringify" @2071
+    v100 = Convert v99 declared={type=undefined|null|string site=w54 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @2066
+    v101 = Builtin builtin=JSON @2104
+    v102 = PropGet v101 key="stringify" @2104
+    v103 = Convert v102 declared={type=builtin(JSONStringify) flags=[IsExpected]} @2104
+    v104 = Data data=d11 @2125
+    v105 = Call v23, -, v104 calleeName="union" @2119
+    v106 = Convert v105 declared={type=undefined|null|Array site=w55 flags=[OmitsNull, OmitsUndefined]} @2119
+    v107 = Call v103, v101, v106 calleeKey="stringify" calleeName="JSON.stringify" @2109
+    v108 = Convert v107 declared={type=undefined|null|string site=w56 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @2104
+    v109 = Call v92, v25, v100, v108 calleeKey="push" calleeName="out.push" @2061
+    v110 = Convert v109 declared={type=number site=w57} illTypedCause=DeclarationWithoutBody @2057
+    v111 = PropGet v25 key="push" @2143
+    v112 = Builtin builtin=String @2152
+    v113 = NewClosure function=f13 @2160
+    v114 = Data data=d12 @2214
+    v115 = Call v113, -, v114 @2208
+    v116 = Convert v115 declared={type=undefined|null|Array site=w60 flags=[OmitsNull, OmitsUndefined]} @2159
+    v117 = PropGet v116 key="length" @2223
+    v118 = Call v112, -, v117 calleeName="String" @2152
+    v119 = Convert v118 declared={type=undefined|null|string site=w61 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @2152
+    v120 = Call v111, v25, v119 calleeKey="push" calleeName="out.push" @2147
+    v121 = Convert v120 declared={type=number site=w62} illTypedCause=DeclarationWithoutBody @2143
+    v122 = Builtin builtin=GlobalThis @2235
+    v123 = PropGet v122 key="console" [isFreeName] @2235
+    v124 = Convert v123 declared={type=builtin(Console) flags=[IsExpected]} @2235
+    v125 = PropGet v124 key="log" @2235
+    v126 = Convert v125 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @2235
+    v127 = PropGet v25 key="join" @2247
+    v128 = String string="\n" @2256
+    v129 = Call v127, v25, v128 calleeKey="join" calleeName="out.join" @2251
+    v130 = Convert v129 declared={type=undefined|null|string site=w63 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @2247
+    v131 = Call v126, v124, v130 calleeKey="log" calleeName="console.log" @2243
+    v132 = Undefined @2235
+    Return v132 @2235
   b8():
-    Jump -> next b9()
+    Jump -> next b9() @1572
   b9() handler=b10():
-    v133 = Convert v60 declared={type=undefined|null|Array<number> site=w39 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
-    v134 = PropGet v25 key="push"
-    v135 = String string="numbers "
-    v136 = PropGet v133 key="length"
-    v137 = Convert v136 declared={type=number site=w40} illTypedCause=Assertion
-    v138 = Add v135, v137
-    v139 = String string=" -> "
-    v140 = Add v138, v139
-    v141 = Builtin builtin=JSON
-    v142 = PropGet v141 key="stringify"
-    v143 = Convert v142 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-    v144 = Call v19, -, v133 calleeName="numbers"
-    v145 = Convert v144 declared={type=undefined|null|Array<number> site=w41 flags=[OmitsNull, OmitsUndefined]}
-    v146 = Call v143, v141, v145 calleeKey="stringify" calleeName="JSON.stringify"
-    v147 = Convert v146 declared={type=undefined|null|string site=w42 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v148 = Add v140, v147
-    v149 = String string=" "
-    v150 = Add v148, v149
-    v151 = Builtin builtin=JSON
-    v152 = PropGet v151 key="stringify"
-    v153 = Convert v152 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-    v154 = Call v5, -, v133 calleeName="generic"
-    v155 = Convert v154 declared={type=undefined|null|Array<number> site=w43 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    v156 = Call v153, v151, v155 calleeKey="stringify" calleeName="JSON.stringify"
-    v157 = Convert v156 declared={type=undefined|null|string site=w44 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v158 = Add v150, v157
-    v159 = Call v134, v25, v158 calleeKey="push" calleeName="out.push"
-    v160 = Convert v159 declared={type=number site=w45} illTypedCause=DeclarationWithoutBody
-    Jump -> next b6()
+    v133 = Convert v60 declared={type=undefined|null|Array<number> site=w39 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @1572
+    v134 = PropGet v25 key="push" @1646
+    v135 = String string="numbers " @1655
+    v136 = PropGet v133 key="length" @1668
+    v137 = Convert v136 declared={type=number site=w40} illTypedCause=Assertion @1668
+    v138 = Add v135, v137 @1668
+    v139 = String string=" -> " @1679
+    v140 = Add v138, v139 @1668
+    v141 = Builtin builtin=JSON @1688
+    v142 = PropGet v141 key="stringify" @1688
+    v143 = Convert v142 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1688
+    v144 = Call v19, -, v133 calleeName="numbers" @1703
+    v145 = Convert v144 declared={type=undefined|null|Array<number> site=w41 flags=[OmitsNull, OmitsUndefined]} @1703
+    v146 = Call v143, v141, v145 calleeKey="stringify" calleeName="JSON.stringify" @1693
+    v147 = Convert v146 declared={type=undefined|null|string site=w42 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1688
+    v148 = Add v140, v147 @1693
+    v149 = String string=" " @1717
+    v150 = Add v148, v149 @1693
+    v151 = Builtin builtin=JSON @1723
+    v152 = PropGet v151 key="stringify" @1723
+    v153 = Convert v152 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1723
+    v154 = Call v5, -, v133 calleeName="generic" @1738
+    v155 = Convert v154 declared={type=undefined|null|Array<number> site=w43 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @1738
+    v156 = Call v153, v151, v155 calleeKey="stringify" calleeName="JSON.stringify" @1728
+    v157 = Convert v156 declared={type=undefined|null|string site=w44 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1723
+    v158 = Add v150, v157 @1728
+    v159 = Call v134, v25, v158 calleeKey="push" calleeName="out.push" @1650
+    v160 = Convert v159 declared={type=number site=w45} illTypedCause=DeclarationWithoutBody @1646
+    Jump -> next b6() @1646
   b10() role=IterationCleanup subject=v56:
-    v161 = CatchException
-    IteratorClose v56 completion=Throw
-    Rethrow v161
+    v161 = CatchException @1572
+    IteratorClose v56 completion=Throw @1572
+    Rethrow v161 @1572
   b11():
-    Jump -> next b12()
+    Jump -> next b12() @1370
   b12() handler=b13():
-    v163 = Convert v54 declared={type=undefined|null|Array<undefined|null|string> site=w32 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
-    v164 = PropGet v25 key="push"
-    v165 = String string="strings "
-    v166 = PropGet v163 key="length"
-    v167 = Convert v166 declared={type=number site=w33} illTypedCause=Assertion
-    v168 = Add v165, v167
-    v169 = String string=" -> "
-    v170 = Add v168, v169
-    v171 = Builtin builtin=JSON
-    v172 = PropGet v171 key="stringify"
-    v173 = Convert v172 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-    v174 = Call v17, -, v163 calleeName="strings"
-    v175 = Convert v174 declared={type=undefined|null|Array<undefined|null|string> site=w34 flags=[OmitsNull, OmitsUndefined]}
-    v176 = Call v173, v171, v175 calleeKey="stringify" calleeName="JSON.stringify"
-    v177 = Convert v176 declared={type=undefined|null|string site=w35 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v178 = Add v170, v177
-    v179 = String string=" "
-    v180 = Add v178, v179
-    v181 = Builtin builtin=JSON
-    v182 = PropGet v181 key="stringify"
-    v183 = Convert v182 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-    v184 = Call v5, -, v163 calleeName="generic"
-    v185 = Convert v184 declared={type=undefined|null|Array<undefined|null|string> site=w36 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    v186 = Call v183, v181, v185 calleeKey="stringify" calleeName="JSON.stringify"
-    v187 = Convert v186 declared={type=undefined|null|string site=w37 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v188 = Add v180, v187
-    v189 = Call v164, v25, v188 calleeKey="push" calleeName="out.push"
-    v190 = Convert v189 declared={type=number site=w38} illTypedCause=DeclarationWithoutBody
-    Jump -> next b4()
+    v163 = Convert v54 declared={type=undefined|null|Array<undefined|null|string> site=w32 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @1370
+    v164 = PropGet v25 key="push" @1447
+    v165 = String string="strings " @1456
+    v166 = PropGet v163 key="length" @1469
+    v167 = Convert v166 declared={type=number site=w33} illTypedCause=Assertion @1469
+    v168 = Add v165, v167 @1469
+    v169 = String string=" -> " @1480
+    v170 = Add v168, v169 @1469
+    v171 = Builtin builtin=JSON @1489
+    v172 = PropGet v171 key="stringify" @1489
+    v173 = Convert v172 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1489
+    v174 = Call v17, -, v163 calleeName="strings" @1504
+    v175 = Convert v174 declared={type=undefined|null|Array<undefined|null|string> site=w34 flags=[OmitsNull, OmitsUndefined]} @1504
+    v176 = Call v173, v171, v175 calleeKey="stringify" calleeName="JSON.stringify" @1494
+    v177 = Convert v176 declared={type=undefined|null|string site=w35 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1489
+    v178 = Add v170, v177 @1494
+    v179 = String string=" " @1518
+    v180 = Add v178, v179 @1494
+    v181 = Builtin builtin=JSON @1524
+    v182 = PropGet v181 key="stringify" @1524
+    v183 = Convert v182 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1524
+    v184 = Call v5, -, v163 calleeName="generic" @1539
+    v185 = Convert v184 declared={type=undefined|null|Array<undefined|null|string> site=w36 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @1539
+    v186 = Call v183, v181, v185 calleeKey="stringify" calleeName="JSON.stringify" @1529
+    v187 = Convert v186 declared={type=undefined|null|string site=w37 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1524
+    v188 = Add v180, v187 @1529
+    v189 = Call v164, v25, v188 calleeKey="push" calleeName="out.push" @1451
+    v190 = Convert v189 declared={type=number site=w38} illTypedCause=DeclarationWithoutBody @1447
+    Jump -> next b4() @1447
   b13() role=IterationCleanup subject=v50:
-    v191 = CatchException
-    IteratorClose v50 completion=Throw
-    Rethrow v191
+    v191 = CatchException @1370
+    IteratorClose v50 completion=Throw @1370
+    Rethrow v191 @1370
   b14():
-    Jump -> next b15()
+    Jump -> next b15() @1122
   b15() handler=b27():
-    v193 = Convert v48 declared={type=undefined|null|Array<undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8> site=w26 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
-    v194 = IteratorOpen v193 elementCount=2 [isDestructuring]
-    Jump -> next b16()
+    v193 = Convert v48 declared={type=undefined|null|Array<undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8> site=w26 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @1122
+    v194 = IteratorOpen v193 elementCount=2 [isDestructuring] @1115 constructs
+    Jump -> next b16() @1104
   b16() handler=b26():
-    v195 = IteratorResume v194 stepIndex=0
-    v196 = ResultAt v195
-    v197 = ResultAt v195 index=1
-    v198 = Convert v197 declared={type=undefined|null|string} illTypedCause=Assertion
-    Jump -> next b17()
+    v195 = IteratorResume v194 stepIndex=0 @1104
+    v196 = ResultAt v195 @1104
+    v197 = ResultAt v195 index=1 @1104
+    v198 = Convert v197 declared={type=undefined|null|string} illTypedCause=Assertion @1116
+    Jump -> next b17() @1116
   b17() handler=b26():
-    v199 = IteratorResume v194 stepIndex=1
-    v200 = ResultAt v199
-    v201 = ResultAt v199 index=1
-    v202 = Convert v201 declared={type=undefined|null|function|f1|f2|f3|f4|f5|f6|f7|f8} illTypedCause=Assertion
-    Jump -> next b18()
+    v199 = IteratorResume v194 stepIndex=1 @1104
+    v200 = ResultAt v199 @1104
+    v201 = ResultAt v199 index=1 @1104
+    v202 = Convert v201 declared={type=undefined|null|function|f1|f2|f3|f4|f5|f6|f7|f8} illTypedCause=Assertion @1122
+    Jump -> next b18() @1122
   b18() handler=b26():
-    Jump -> next b19()
+    Jump -> next b19() @1122
   b19() handler=b27():
-    IteratorClose v194
-    Jump -> next b20()
+    IteratorClose v194 @1104
+    Jump -> next b20() @1104
   b20() handler=b27():
-    v204 = Data data=d1
-    v205 = Data data=d2
-    v206 = Data data=d3
-    v207 = Data data=d4
-    v208 = Data data=d5
-    v209 = Data data=d6
-    v210 = Integer integer=1
-    v211 = Integer integer=2
-    v212 = NewArray v210, v211 contents=undefined|number holes=[0, 2]
-    v213 = Data data=d7
-    v214 = NewArray v204, v205, v206, v207, v208, v209, v212, v213 contents=undefined|null|Array
-    v215 = IteratorOpen v214
-    Jump -> next b21()
+    v204 = Data data=d1 @1159
+    v205 = Data data=d2 @1163
+    v206 = Data data=d3 @1168
+    v207 = Data data=d4 @1176
+    v208 = Data data=d5 @1187
+    v209 = Data data=d6 @1234
+    v210 = Integer integer=1 @1254
+    v211 = Integer integer=2 @1259
+    v212 = NewArray v210, v211 contents=undefined|number holes=[0, 2] @1251
+    v213 = Data data=d7 @1263
+    v214 = NewArray v204, v205, v206, v207, v208, v209, v212, v213 contents=undefined|null|Array @1158
+    v215 = IteratorOpen v214 @1153
+    Jump -> next b21() @1153
   b21() handler=b27():
-    LoopHint
-    v217 = IteratorResume v215
-    v218 = ResultAt v217
-    v219 = ResultAt v217 index=1
-    Branch v218 -> taken b22(), notTaken b23()
+    LoopHint @1153
+    v217 = IteratorResume v215 @1153
+    v218 = ResultAt v217 @1153
+    v219 = ResultAt v217 index=1 @1153
+    Branch v218 -> taken b22(), notTaken b23() @1153
   b22() handler=b27():
-    Jump -> next b2()
+    Jump -> next b2() @1153
   b23() handler=b27():
-    Jump -> next b24()
+    Jump -> next b24() @1153
   b24() handler=b25():
-    v220 = Convert v219 declared={type=undefined|null|Array site=w27 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
-    v221 = PropGet v25 key="push"
-    v222 = String string=" "
-    v223 = Add v198, v222
-    v224 = PropGet v220 key="length"
-    v225 = Convert v224 declared={type=number site=w28} illTypedCause=Assertion
-    v226 = Add v223, v225
-    v227 = String string=" -> "
-    v228 = Add v226, v227
-    v229 = Builtin builtin=JSON
-    v230 = PropGet v229 key="stringify"
-    v231 = Convert v230 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-    v232 = Call v202, -, v220 calleeName="f"
-    v233 = Convert v232 declared={type=undefined|null|Array site=w29 flags=[OmitsNull, OmitsUndefined]}
-    v234 = Call v231, v229, v233 calleeKey="stringify" calleeName="JSON.stringify"
-    v235 = Convert v234 declared={type=undefined|null|string site=w30 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v236 = Add v228, v235
-    v237 = Call v221, v25, v236 calleeKey="push" calleeName="out.push"
-    v238 = Convert v237 declared={type=number site=w31} illTypedCause=DeclarationWithoutBody
-    Jump -> next b21()
+    v220 = Convert v219 declared={type=undefined|null|Array site=w27 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @1153
+    v221 = PropGet v25 key="push" @1292
+    v222 = String string=" " @1308
+    v223 = Add v198, v222 @1301
+    v224 = PropGet v220 key="length" @1314
+    v225 = Convert v224 declared={type=number site=w28} illTypedCause=Assertion @1314
+    v226 = Add v223, v225 @1314
+    v227 = String string=" -> " @1325
+    v228 = Add v226, v227 @1314
+    v229 = Builtin builtin=JSON @1334
+    v230 = PropGet v229 key="stringify" @1334
+    v231 = Convert v230 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1334
+    v232 = Call v202, -, v220 calleeName="f" @1349
+    v233 = Convert v232 declared={type=undefined|null|Array site=w29 flags=[OmitsNull, OmitsUndefined]} @1349
+    v234 = Call v231, v229, v233 calleeKey="stringify" calleeName="JSON.stringify" @1339
+    v235 = Convert v234 declared={type=undefined|null|string site=w30 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1334
+    v236 = Add v228, v235 @1339
+    v237 = Call v221, v25, v236 calleeKey="push" calleeName="out.push" @1296
+    v238 = Convert v237 declared={type=number site=w31} illTypedCause=DeclarationWithoutBody @1292
+    Jump -> next b21() @1292
   b25() role=IterationCleanup subject=v215 handler=b27():
-    v239 = CatchException
-    IteratorClose v215 completion=Throw
-    Rethrow v239
+    v239 = CatchException @1153
+    IteratorClose v215 completion=Throw @1153
+    Rethrow v239 @1153
   b26() role=IterationCleanup subject=v194 handler=b27():
-    v241 = CatchException
-    IteratorClose v194 completion=Throw
-    Rethrow v241
+    v241 = CatchException @1104
+    IteratorClose v194 completion=Throw @1104
+    Rethrow v241 @1104
   b27() role=IterationCleanup subject=v44:
-    v243 = CatchException
-    IteratorClose v44 completion=Throw
-    Rethrow v243
+    v243 = CatchException @1122
+    IteratorClose v44 completion=Throw @1122
+    Rethrow v243 @1122
 }
 function f1 name="unknowns" module=m0 position=108 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array site=w3 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array):
-    Jump -> next b1()
+    Jump -> next b1() @108
   b1():
-    v1 = IteratorOpen v0 elementCount=1 [isDestructuring, hasRest]
-    Jump -> next b2()
+    v1 = IteratorOpen v0 elementCount=1 [isDestructuring, hasRest] @159 constructs
+    Jump -> next b2() @153
   b2() handler=b10():
-    v2 = IteratorResume v1 stepIndex=0
-    v3 = ResultAt v2
-    v4 = ResultAt v2 index=1
-    Jump -> next b3()
+    v2 = IteratorResume v1 stepIndex=0 @153
+    v3 = ResultAt v2 @153
+    v4 = ResultAt v2 index=1 @153
+    Jump -> next b3() @160
   b3() handler=b10():
-    v5 = NewArray contents=anything
-    Jump -> next b4()
+    v5 = NewArray contents=anything @153
+    Jump -> next b4() @153
   b4() handler=b10():
-    LoopHint
-    v7 = IteratorResume v1 stepIndex=1
-    v8 = ResultAt v7
-    v9 = ResultAt v7 index=1
-    Branch v8 -> taken b5(), notTaken b9()
+    LoopHint @153
+    v7 = IteratorResume v1 stepIndex=1 @153
+    v8 = ResultAt v7 @153
+    v9 = ResultAt v7 index=1 @153
+    Branch v8 -> taken b5(), notTaken b9() @153
   b5() handler=b10():
-    v10 = Convert v5 declared={type=undefined|null|Array site=w64 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    Jump -> next b6()
+    v10 = Convert v5 declared={type=undefined|null|Array site=w64 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @166
+    Jump -> next b6() @166
   b6() handler=b10():
-    Jump -> next b7()
+    Jump -> next b7() @166
   b7():
-    IteratorClose v1
-    Jump -> next b8()
+    IteratorClose v1 @153
+    Jump -> next b8() @153
   b8():
-    Return v10
+    Return v10 @181
   b9() handler=b10():
-    AppendElement v5, v9
-    Jump -> next b4()
+    AppendElement v5, v9 @153
+    Jump -> next b4() @153
   b10() role=IterationCleanup subject=v1:
-    v13 = CatchException
-    IteratorClose v1 completion=Throw
-    Rethrow v13
+    v13 = CatchException @153
+    IteratorClose v1 completion=Throw @153
+    Rethrow v13 @153
 }
 function f2 name="anys" module=m0 position=186 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array site=w4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array site=w5 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array):
-    Jump -> next b1()
+    Jump -> next b1() @186
   b1():
-    v1 = IteratorOpen v0 elementCount=1 [isDestructuring, hasRest]
-    Jump -> next b2()
+    v1 = IteratorOpen v0 elementCount=1 [isDestructuring, hasRest] @225 constructs
+    Jump -> next b2() @219
   b2() handler=b10():
-    v2 = IteratorResume v1 stepIndex=0
-    v3 = ResultAt v2
-    v4 = ResultAt v2 index=1
-    Jump -> next b3()
+    v2 = IteratorResume v1 stepIndex=0 @219
+    v3 = ResultAt v2 @219
+    v4 = ResultAt v2 index=1 @219
+    Jump -> next b3() @226
   b3() handler=b10():
-    v5 = NewArray contents=anything
-    Jump -> next b4()
+    v5 = NewArray contents=anything @219
+    Jump -> next b4() @219
   b4() handler=b10():
-    LoopHint
-    v7 = IteratorResume v1 stepIndex=1
-    v8 = ResultAt v7
-    v9 = ResultAt v7 index=1
-    Branch v8 -> taken b5(), notTaken b9()
+    LoopHint @219
+    v7 = IteratorResume v1 stepIndex=1 @219
+    v8 = ResultAt v7 @219
+    v9 = ResultAt v7 index=1 @219
+    Branch v8 -> taken b5(), notTaken b9() @219
   b5() handler=b10():
-    v10 = Convert v5 declared={type=undefined|null|Array site=w65 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    Jump -> next b6()
+    v10 = Convert v5 declared={type=undefined|null|Array site=w65 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @232
+    Jump -> next b6() @232
   b6() handler=b10():
-    Jump -> next b7()
+    Jump -> next b7() @232
   b7():
-    IteratorClose v1
-    Jump -> next b8()
+    IteratorClose v1 @219
+    Jump -> next b8() @219
   b8():
-    Return v10
+    Return v10 @247
   b9() handler=b10():
-    AppendElement v5, v9
-    Jump -> next b4()
+    AppendElement v5, v9 @219
+    Jump -> next b4() @219
   b10() role=IterationCleanup subject=v1:
-    v13 = CatchException
-    IteratorClose v1 completion=Throw
-    Rethrow v13
+    v13 = CatchException @219
+    IteratorClose v1 completion=Throw @219
+    Rethrow v13 @219
 }
 function f3 name="generic" module=m0 position=252 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array site=w6 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array site=w7 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array):
-    Jump -> next b1()
+    Jump -> next b1() @252
   b1():
-    v1 = IteratorOpen v0 elementCount=1 [isDestructuring, hasRest]
-    Jump -> next b2()
+    v1 = IteratorOpen v0 elementCount=1 [isDestructuring, hasRest] @293 constructs
+    Jump -> next b2() @287
   b2() handler=b10():
-    v2 = IteratorResume v1 stepIndex=0
-    v3 = ResultAt v2
-    v4 = ResultAt v2 index=1
-    v5 = Convert v4 declared={type=anything} illTypedCause=Assertion
-    Jump -> next b3()
+    v2 = IteratorResume v1 stepIndex=0 @287
+    v3 = ResultAt v2 @287
+    v4 = ResultAt v2 index=1 @287
+    v5 = Convert v4 declared={type=anything} illTypedCause=Assertion @294
+    Jump -> next b3() @294
   b3() handler=b10():
-    v6 = NewArray contents=anything
-    Jump -> next b4()
+    v6 = NewArray contents=anything @287
+    Jump -> next b4() @287
   b4() handler=b10():
-    LoopHint
-    v8 = IteratorResume v1 stepIndex=1
-    v9 = ResultAt v8
-    v10 = ResultAt v8 index=1
-    Branch v9 -> taken b5(), notTaken b9()
+    LoopHint @287
+    v8 = IteratorResume v1 stepIndex=1 @287
+    v9 = ResultAt v8 @287
+    v10 = ResultAt v8 index=1 @287
+    Branch v9 -> taken b5(), notTaken b9() @287
   b5() handler=b10():
-    v11 = Convert v6 declared={type=undefined|null|Array site=w66 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    Jump -> next b6()
+    v11 = Convert v6 declared={type=undefined|null|Array site=w66 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @300
+    Jump -> next b6() @300
   b6() handler=b10():
-    Jump -> next b7()
+    Jump -> next b7() @300
   b7():
-    IteratorClose v1
-    Jump -> next b8()
+    IteratorClose v1 @287
+    Jump -> next b8() @287
   b8():
-    Return v11
+    Return v11 @315
   b9() handler=b10():
-    AppendElement v6, v10
-    Jump -> next b4()
+    AppendElement v6, v10 @287
+    Jump -> next b4() @287
   b10() role=IterationCleanup subject=v1:
-    v14 = CatchException
-    IteratorClose v1 completion=Throw
-    Rethrow v14
+    v14 = CatchException @287
+    IteratorClose v1 completion=Throw @287
+    Rethrow v14 @287
 }
 function f4 name="two" module=m0 position=320 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array site=w8 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array site=w9 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array):
-    Jump -> next b1()
+    Jump -> next b1() @320
   b1():
-    v1 = IteratorOpen v0 elementCount=2 [isDestructuring, hasRest]
-    Jump -> next b2()
+    v1 = IteratorOpen v0 elementCount=2 [isDestructuring, hasRest] @366 constructs
+    Jump -> next b2() @360
   b2() handler=b11():
-    v2 = IteratorResume v1 stepIndex=0
-    v3 = ResultAt v2
-    v4 = ResultAt v2 index=1
-    Jump -> next b3()
+    v2 = IteratorResume v1 stepIndex=0 @360
+    v3 = ResultAt v2 @360
+    v4 = ResultAt v2 index=1 @360
+    Jump -> next b3() @367
   b3() handler=b11():
-    v5 = IteratorResume v1 stepIndex=1
-    v6 = ResultAt v5
-    v7 = ResultAt v5 index=1
-    Jump -> next b4()
+    v5 = IteratorResume v1 stepIndex=1 @360
+    v6 = ResultAt v5 @360
+    v7 = ResultAt v5 index=1 @360
+    Jump -> next b4() @370
   b4() handler=b11():
-    v8 = NewArray contents=anything
-    Jump -> next b5()
+    v8 = NewArray contents=anything @360
+    Jump -> next b5() @360
   b5() handler=b11():
-    LoopHint
-    v10 = IteratorResume v1 stepIndex=2
-    v11 = ResultAt v10
-    v12 = ResultAt v10 index=1
-    Branch v11 -> taken b6(), notTaken b10()
+    LoopHint @360
+    v10 = IteratorResume v1 stepIndex=2 @360
+    v11 = ResultAt v10 @360
+    v12 = ResultAt v10 index=1 @360
+    Branch v11 -> taken b6(), notTaken b10() @360
   b6() handler=b11():
-    v13 = Convert v8 declared={type=undefined|null|Array site=w67 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    Jump -> next b7()
+    v13 = Convert v8 declared={type=undefined|null|Array site=w67 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @376
+    Jump -> next b7() @376
   b7() handler=b11():
-    Jump -> next b8()
+    Jump -> next b8() @376
   b8():
-    IteratorClose v1
-    Jump -> next b9()
+    IteratorClose v1 @360
+    Jump -> next b9() @360
   b9():
-    Return v13
+    Return v13 @391
   b10() handler=b11():
-    AppendElement v8, v12
-    Jump -> next b5()
+    AppendElement v8, v12 @360
+    Jump -> next b5() @360
   b11() role=IterationCleanup subject=v1:
-    v16 = CatchException
-    IteratorClose v1 completion=Throw
-    Rethrow v16
+    v16 = CatchException @360
+    IteratorClose v1 completion=Throw @360
+    Rethrow v16 @360
 }
 function f5 name="usesFirst" module=m0 position=396 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array site=w10 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array site=w11 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array):
-    Jump -> next b1()
+    Jump -> next b1() @396
   b1():
-    v1 = IteratorOpen v0 elementCount=1 [isDestructuring, hasRest]
-    Jump -> next b2()
+    v1 = IteratorOpen v0 elementCount=1 [isDestructuring, hasRest] @448 constructs
+    Jump -> next b2() @442
   b2() handler=b10():
-    v2 = IteratorResume v1 stepIndex=0
-    v3 = ResultAt v2
-    v4 = ResultAt v2 index=1
-    Jump -> next b3()
+    v2 = IteratorResume v1 stepIndex=0 @442
+    v3 = ResultAt v2 @442
+    v4 = ResultAt v2 index=1 @442
+    Jump -> next b3() @449
   b3() handler=b10():
-    v5 = NewArray contents=anything
-    Jump -> next b4()
+    v5 = NewArray contents=anything @442
+    Jump -> next b4() @442
   b4() handler=b10():
-    LoopHint
-    v7 = IteratorResume v1 stepIndex=1
-    v8 = ResultAt v7
-    v9 = ResultAt v7 index=1
-    Branch v8 -> taken b5(), notTaken b9()
+    LoopHint @442
+    v7 = IteratorResume v1 stepIndex=1 @442
+    v8 = ResultAt v7 @442
+    v9 = ResultAt v7 index=1 @442
+    Branch v8 -> taken b5(), notTaken b9() @442
   b5() handler=b10():
-    v10 = Convert v5 declared={type=undefined|null|Array site=w68 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    Jump -> next b6()
+    v10 = Convert v5 declared={type=undefined|null|Array site=w68 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @455
+    Jump -> next b6() @455
   b6() handler=b10():
-    Jump -> next b7()
+    Jump -> next b7() @455
   b7():
-    IteratorClose v1
-    Jump -> next b8()
+    IteratorClose v1 @442
+    Jump -> next b8() @442
   b8():
-    v12 = PropGet v10 key="push"
-    v13 = Call v12, v10, v4 calleeKey="push" calleeName="z.push"
-    v14 = Convert v13 declared={type=number site=w69} illTypedCause=DeclarationWithoutBody
-    Return v10
+    v12 = PropGet v10 key="push" @463
+    v13 = Call v12, v10, v4 calleeKey="push" calleeName="z.push" @465
+    v14 = Convert v13 declared={type=number site=w69} illTypedCause=DeclarationWithoutBody @463
+    Return v10 @481
   b9() handler=b10():
-    AppendElement v5, v9
-    Jump -> next b4()
+    AppendElement v5, v9 @442
+    Jump -> next b4() @442
   b10() role=IterationCleanup subject=v1:
-    v16 = CatchException
-    IteratorClose v1 completion=Throw
-    Rethrow v16
+    v16 = CatchException @442
+    IteratorClose v1 completion=Throw @442
+    Rethrow v16 @442
 }
 function f6 name="usedBehind" module=m0 position=486 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array site=w12 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array site=w13 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array):
-    Jump -> next b1()
+    Jump -> next b1() @486
   b1():
-    v1 = IteratorOpen v0 elementCount=1 [isDestructuring, hasRest]
-    Jump -> next b2()
+    v1 = IteratorOpen v0 elementCount=1 [isDestructuring, hasRest] @539 constructs
+    Jump -> next b2() @533
   b2() handler=b10():
-    v2 = IteratorResume v1 stepIndex=0
-    v3 = ResultAt v2
-    v4 = ResultAt v2 index=1
-    Jump -> next b3()
+    v2 = IteratorResume v1 stepIndex=0 @533
+    v3 = ResultAt v2 @533
+    v4 = ResultAt v2 index=1 @533
+    Jump -> next b3() @540
   b3() handler=b10():
-    v5 = NewArray contents=anything
-    Jump -> next b4()
+    v5 = NewArray contents=anything @533
+    Jump -> next b4() @533
   b4() handler=b10():
-    LoopHint
-    v7 = IteratorResume v1 stepIndex=1
-    v8 = ResultAt v7
-    v9 = ResultAt v7 index=1
-    Branch v8 -> taken b5(), notTaken b9()
+    LoopHint @533
+    v7 = IteratorResume v1 stepIndex=1 @533
+    v8 = ResultAt v7 @533
+    v9 = ResultAt v7 index=1 @533
+    Branch v8 -> taken b5(), notTaken b9() @533
   b5() handler=b10():
-    v10 = Convert v5 declared={type=undefined|null|Array site=w70 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    Jump -> next b6()
+    v10 = Convert v5 declared={type=undefined|null|Array site=w70 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @546
+    Jump -> next b6() @546
   b6() handler=b10():
-    Jump -> next b7()
+    Jump -> next b7() @546
   b7():
-    IteratorClose v1
-    Jump -> next b8()
+    IteratorClose v1 @533
+    Jump -> next b8() @533
   b8():
-    v12 = PropGet v10 key="push"
-    v13 = PropGet v0 key="length"
-    v14 = Convert v13 declared={type=number site=w71} illTypedCause=Assertion
-    v15 = Call v12, v10, v14 calleeKey="push" calleeName="z.push"
-    v16 = Convert v15 declared={type=number site=w72} illTypedCause=DeclarationWithoutBody
-    Return v10
+    v12 = PropGet v10 key="push" @554
+    v13 = PropGet v0 key="length" @561
+    v14 = Convert v13 declared={type=number site=w71} illTypedCause=Assertion @561
+    v15 = Call v12, v10, v14 calleeKey="push" calleeName="z.push" @556
+    v16 = Convert v15 declared={type=number site=w72} illTypedCause=DeclarationWithoutBody @554
+    Return v10 @579
   b9() handler=b10():
-    AppendElement v5, v9
-    Jump -> next b4()
+    AppendElement v5, v9 @533
+    Jump -> next b4() @533
   b10() role=IterationCleanup subject=v1:
-    v18 = CatchException
-    IteratorClose v1 completion=Throw
-    Rethrow v18
+    v18 = CatchException @533
+    IteratorClose v1 completion=Throw @533
+    Rethrow v18 @533
 }
 function f7 name="all" module=m0 position=584 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array site=w14 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array site=w15 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array):
-    Jump -> next b1()
+    Jump -> next b1() @584
   b1():
-    v1 = IteratorOpen v0 elementCount=0 [isDestructuring, hasRest]
-    Jump -> next b2()
+    v1 = IteratorOpen v0 elementCount=0 [isDestructuring, hasRest] @630 constructs
+    Jump -> next b2() @624
   b2() handler=b9():
-    v2 = NewArray contents=anything
-    Jump -> next b3()
+    v2 = NewArray contents=anything @624
+    Jump -> next b3() @624
   b3() handler=b9():
-    LoopHint
-    v4 = IteratorResume v1 stepIndex=0
-    v5 = ResultAt v4
-    v6 = ResultAt v4 index=1
-    Branch v5 -> taken b4(), notTaken b8()
+    LoopHint @624
+    v4 = IteratorResume v1 stepIndex=0 @624
+    v5 = ResultAt v4 @624
+    v6 = ResultAt v4 index=1 @624
+    Branch v5 -> taken b4(), notTaken b8() @624
   b4() handler=b9():
-    v7 = Convert v2 declared={type=undefined|null|Array site=w73 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    Jump -> next b5()
+    v7 = Convert v2 declared={type=undefined|null|Array site=w73 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @634
+    Jump -> next b5() @634
   b5() handler=b9():
-    Jump -> next b6()
+    Jump -> next b6() @634
   b6():
-    IteratorClose v1
-    Jump -> next b7()
+    IteratorClose v1 @624
+    Jump -> next b7() @624
   b7():
-    Return v7
+    Return v7 @649
   b8() handler=b9():
-    AppendElement v2, v6
-    Jump -> next b3()
+    AppendElement v2, v6 @624
+    Jump -> next b3() @624
   b9() role=IterationCleanup subject=v1:
-    v10 = CatchException
-    IteratorClose v1 completion=Throw
-    Rethrow v10
+    v10 = CatchException @624
+    IteratorClose v1 completion=Throw @624
+    Rethrow v10 @624
 }
 function f8 name="skipped" module=m0 position=654 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array site=w16 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array site=w17 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array):
-    Jump -> next b1()
+    Jump -> next b1() @654
   b1():
-    v1 = IteratorOpen v0 elementCount=1 [isDestructuring, hasRest]
-    Jump -> next b2()
+    v1 = IteratorOpen v0 elementCount=1 [isDestructuring, hasRest] @704 constructs
+    Jump -> next b2() @698
   b2() handler=b9():
-    v2 = IteratorResume v1 stepIndex=0
-    v3 = ResultAt v2
-    v4 = ResultAt v2 index=1
-    v5 = NewArray contents=anything
-    Jump -> next b3()
+    v2 = IteratorResume v1 stepIndex=0 @698
+    v3 = ResultAt v2 @698
+    v4 = ResultAt v2 index=1 @698
+    v5 = NewArray contents=anything @698
+    Jump -> next b3() @698
   b3() handler=b9():
-    LoopHint
-    v7 = IteratorResume v1 stepIndex=1
-    v8 = ResultAt v7
-    v9 = ResultAt v7 index=1
-    Branch v8 -> taken b4(), notTaken b8()
+    LoopHint @698
+    v7 = IteratorResume v1 stepIndex=1 @698
+    v8 = ResultAt v7 @698
+    v9 = ResultAt v7 index=1 @698
+    Branch v8 -> taken b4(), notTaken b8() @698
   b4() handler=b9():
-    v10 = Convert v5 declared={type=undefined|null|Array site=w74 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    Jump -> next b5()
+    v10 = Convert v5 declared={type=undefined|null|Array site=w74 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @710
+    Jump -> next b5() @710
   b5() handler=b9():
-    Jump -> next b6()
+    Jump -> next b6() @710
   b6():
-    IteratorClose v1
-    Jump -> next b7()
+    IteratorClose v1 @698
+    Jump -> next b7() @698
   b7():
-    Return v10
+    Return v10 @725
   b8() handler=b9():
-    AppendElement v5, v9
-    Jump -> next b3()
+    AppendElement v5, v9 @698
+    Jump -> next b3() @698
   b9() role=IterationCleanup subject=v1:
-    v13 = CatchException
-    IteratorClose v1 completion=Throw
-    Rethrow v13
+    v13 = CatchException @698
+    IteratorClose v1 completion=Throw @698
+    Rethrow v13 @698
 }
 function f9 name="strings" module=m0 position=730 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> site=w18 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<undefined|null|string> site=w19 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<undefined|null|string>):
-    Jump -> next b1()
+    Jump -> next b1() @730
   b1():
-    v1 = IteratorOpen v0 elementCount=1 [isDestructuring, hasRest]
-    Jump -> next b2()
+    v1 = IteratorOpen v0 elementCount=1 [isDestructuring, hasRest] @778 constructs
+    Jump -> next b2() @772
   b2() handler=b10():
-    v2 = IteratorResume v1 stepIndex=0
-    v3 = ResultAt v2
-    v4 = ResultAt v2 index=1
-    v5 = Convert v4 declared={type=undefined|null|string} illTypedCause=Assertion
-    Jump -> next b3()
+    v2 = IteratorResume v1 stepIndex=0 @772
+    v3 = ResultAt v2 @772
+    v4 = ResultAt v2 index=1 @772
+    v5 = Convert v4 declared={type=undefined|null|string} illTypedCause=Assertion @779
+    Jump -> next b3() @779
   b3() handler=b10():
-    v6 = NewArray contents=anything
-    Jump -> next b4()
+    v6 = NewArray contents=anything @772
+    Jump -> next b4() @772
   b4() handler=b10():
-    LoopHint
-    v8 = IteratorResume v1 stepIndex=1
-    v9 = ResultAt v8
-    v10 = ResultAt v8 index=1
-    Branch v9 -> taken b5(), notTaken b9()
+    LoopHint @772
+    v8 = IteratorResume v1 stepIndex=1 @772
+    v9 = ResultAt v8 @772
+    v10 = ResultAt v8 index=1 @772
+    Branch v9 -> taken b5(), notTaken b9() @772
   b5() handler=b10():
-    v11 = Convert v6 declared={type=undefined|null|Array<undefined|null|string> site=w75 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    Jump -> next b6()
+    v11 = Convert v6 declared={type=undefined|null|Array<undefined|null|string> site=w75 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @785
+    Jump -> next b6() @785
   b6() handler=b10():
-    Jump -> next b7()
+    Jump -> next b7() @785
   b7():
-    IteratorClose v1
-    Jump -> next b8()
+    IteratorClose v1 @772
+    Jump -> next b8() @772
   b8():
-    Return v11
+    Return v11 @800
   b9() handler=b10():
-    AppendElement v6, v10
-    Jump -> next b4()
+    AppendElement v6, v10 @772
+    Jump -> next b4() @772
   b10() role=IterationCleanup subject=v1:
-    v14 = CatchException
-    IteratorClose v1 completion=Throw
-    Rethrow v14
+    v14 = CatchException @772
+    IteratorClose v1 completion=Throw @772
+    Rethrow v14 @772
 }
 function f10 name="numbers" module=m0 position=805 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w20 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<number> site=w21 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<number>):
-    Jump -> next b1()
+    Jump -> next b1() @805
   b1():
-    v1 = IteratorOpen v0 elementCount=1 [isDestructuring, hasRest]
-    Jump -> next b2()
+    v1 = IteratorOpen v0 elementCount=1 [isDestructuring, hasRest] @853 constructs
+    Jump -> next b2() @847
   b2() handler=b10():
-    v2 = IteratorResume v1 stepIndex=0
-    v3 = ResultAt v2
-    v4 = ResultAt v2 index=1
-    v5 = Convert v4 declared={type=number} illTypedCause=Assertion
-    Jump -> next b3()
+    v2 = IteratorResume v1 stepIndex=0 @847
+    v3 = ResultAt v2 @847
+    v4 = ResultAt v2 index=1 @847
+    v5 = Convert v4 declared={type=number} illTypedCause=Assertion @854
+    Jump -> next b3() @854
   b3() handler=b10():
-    v6 = NewArray contents=anything
-    Jump -> next b4()
+    v6 = NewArray contents=anything @847
+    Jump -> next b4() @847
   b4() handler=b10():
-    LoopHint
-    v8 = IteratorResume v1 stepIndex=1
-    v9 = ResultAt v8
-    v10 = ResultAt v8 index=1
-    Branch v9 -> taken b5(), notTaken b9()
+    LoopHint @847
+    v8 = IteratorResume v1 stepIndex=1 @847
+    v9 = ResultAt v8 @847
+    v10 = ResultAt v8 index=1 @847
+    Branch v9 -> taken b5(), notTaken b9() @847
   b5() handler=b10():
-    v11 = Convert v6 declared={type=undefined|null|Array<number> site=w76 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    Jump -> next b6()
+    v11 = Convert v6 declared={type=undefined|null|Array<number> site=w76 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @860
+    Jump -> next b6() @860
   b6() handler=b10():
-    Jump -> next b7()
+    Jump -> next b7() @860
   b7():
-    IteratorClose v1
-    Jump -> next b8()
+    IteratorClose v1 @847
+    Jump -> next b8() @847
   b8():
-    Return v11
+    Return v11 @875
   b9() handler=b10():
-    AppendElement v6, v10
-    Jump -> next b4()
+    AppendElement v6, v10 @847
+    Jump -> next b4() @847
   b10() role=IterationCleanup subject=v1:
-    v14 = CatchException
-    IteratorClose v1 completion=Throw
-    Rethrow v14
+    v14 = CatchException @847
+    IteratorClose v1 completion=Throw @847
+    Rethrow v14 @847
 }
 function f11 name="rest" module=m0 position=1760 flags=[HasRestParameter, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}, {type=Array site=w22 flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array site=w23 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything, v1: Array):
-    Jump -> next b1()
+    Jump -> next b1() @1760
   b1():
-    v2 = IteratorOpen v1 elementCount=1 [isDestructuring, hasRest]
-    Jump -> next b2()
+    v2 = IteratorOpen v1 elementCount=1 [isDestructuring, hasRest] @1831 constructs
+    Jump -> next b2() @1825
   b2() handler=b10():
-    v3 = IteratorResume v2 stepIndex=0
-    v4 = ResultAt v3
-    v5 = ResultAt v3 index=1
-    Jump -> next b3()
+    v3 = IteratorResume v2 stepIndex=0 @1825
+    v4 = ResultAt v3 @1825
+    v5 = ResultAt v3 index=1 @1825
+    Jump -> next b3() @1832
   b3() handler=b10():
-    v6 = NewArray contents=anything
-    Jump -> next b4()
+    v6 = NewArray contents=anything @1825
+    Jump -> next b4() @1825
   b4() handler=b10():
-    LoopHint
-    v8 = IteratorResume v2 stepIndex=1
-    v9 = ResultAt v8
-    v10 = ResultAt v8 index=1
-    Branch v9 -> taken b5(), notTaken b9()
+    LoopHint @1825
+    v8 = IteratorResume v2 stepIndex=1 @1825
+    v9 = ResultAt v8 @1825
+    v10 = ResultAt v8 index=1 @1825
+    Branch v9 -> taken b5(), notTaken b9() @1825
   b5() handler=b10():
-    v11 = Convert v6 declared={type=undefined|null|Array site=w77 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    Jump -> next b6()
+    v11 = Convert v6 declared={type=undefined|null|Array site=w77 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @1838
+    Jump -> next b6() @1838
   b6() handler=b10():
-    Jump -> next b7()
+    Jump -> next b7() @1838
   b7():
-    IteratorClose v2
-    Jump -> next b8()
+    IteratorClose v2 @1825
+    Jump -> next b8() @1825
   b8():
-    Return v11
+    Return v11 @1858
   b9() handler=b10():
-    AppendElement v6, v10
-    Jump -> next b4()
+    AppendElement v6, v10 @1825
+    Jump -> next b4() @1825
   b10() role=IterationCleanup subject=v2:
-    v14 = CatchException
-    IteratorClose v2 completion=Throw
-    Rethrow v14
+    v14 = CatchException @1825
+    IteratorClose v2 completion=Throw @1825
+    Rethrow v14 @1825
 }
 function f12 name="union" module=m0 position=1960 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|boolean|number|string> site=w24 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array site=w25 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<undefined|null|boolean|number|string>):
-    Jump -> next b1()
+    Jump -> next b1() @1960
   b1():
-    v1 = IteratorOpen v0 elementCount=1 [isDestructuring, hasRest]
-    Jump -> next b2()
+    v1 = IteratorOpen v0 elementCount=1 [isDestructuring, hasRest] @2030 constructs
+    Jump -> next b2() @2024
   b2() handler=b10():
-    v2 = IteratorResume v1 stepIndex=0
-    v3 = ResultAt v2
-    v4 = ResultAt v2 index=1
-    v5 = Convert v4 declared={type=undefined|null|boolean|number|string} illTypedCause=Assertion
-    Jump -> next b3()
+    v2 = IteratorResume v1 stepIndex=0 @2024
+    v3 = ResultAt v2 @2024
+    v4 = ResultAt v2 index=1 @2024
+    v5 = Convert v4 declared={type=undefined|null|boolean|number|string} illTypedCause=Assertion @2031
+    Jump -> next b3() @2031
   b3() handler=b10():
-    v6 = NewArray contents=anything
-    Jump -> next b4()
+    v6 = NewArray contents=anything @2024
+    Jump -> next b4() @2024
   b4() handler=b10():
-    LoopHint
-    v8 = IteratorResume v1 stepIndex=1
-    v9 = ResultAt v8
-    v10 = ResultAt v8 index=1
-    Branch v9 -> taken b5(), notTaken b9()
+    LoopHint @2024
+    v8 = IteratorResume v1 stepIndex=1 @2024
+    v9 = ResultAt v8 @2024
+    v10 = ResultAt v8 index=1 @2024
+    Branch v9 -> taken b5(), notTaken b9() @2024
   b5() handler=b10():
-    v11 = Convert v6 declared={type=undefined|null|Array<undefined|null|boolean|number|string> site=w78 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    Jump -> next b6()
+    v11 = Convert v6 declared={type=undefined|null|Array<undefined|null|boolean|number|string> site=w78 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @2037
+    Jump -> next b6() @2037
   b6() handler=b10():
-    Jump -> next b7()
+    Jump -> next b7() @2037
   b7():
-    IteratorClose v1
-    Jump -> next b8()
+    IteratorClose v1 @2024
+    Jump -> next b8() @2024
   b8():
-    v13 = Convert v11 declared={type=undefined|null|Array site=w25 flags=[OmitsNull, OmitsUndefined]}
-    Return v13
+    v13 = Convert v11 declared={type=undefined|null|Array site=w25 flags=[OmitsNull, OmitsUndefined]} @2052
+    Return v13 @2052
   b9() handler=b10():
-    AppendElement v6, v10
-    Jump -> next b4()
+    AppendElement v6, v10 @2024
+    Jump -> next b4() @2024
   b10() role=IterationCleanup subject=v1:
-    v15 = CatchException
-    IteratorClose v1 completion=Throw
-    Rethrow v15
+    v15 = CatchException @2024
+    IteratorClose v1 completion=Throw @2024
+    Rethrow v15 @2024
 }
 function f13 module=m0 position=2160 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array site=w58 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array site=w59 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array):
-    Jump -> next b1()
+    Jump -> next b1() @2160
   b1():
-    v1 = IteratorOpen v0 elementCount=1 [isDestructuring, hasRest]
-    Jump -> next b2()
+    v1 = IteratorOpen v0 elementCount=1 [isDestructuring, hasRest] @2186 constructs
+    Jump -> next b2() @2180
   b2() handler=b10():
-    v2 = IteratorResume v1 stepIndex=0
-    v3 = ResultAt v2
-    v4 = ResultAt v2 index=1
-    Jump -> next b3()
+    v2 = IteratorResume v1 stepIndex=0 @2180
+    v3 = ResultAt v2 @2180
+    v4 = ResultAt v2 index=1 @2180
+    Jump -> next b3() @2187
   b3() handler=b10():
-    v5 = NewArray contents=anything
-    Jump -> next b4()
+    v5 = NewArray contents=anything @2180
+    Jump -> next b4() @2180
   b4() handler=b10():
-    LoopHint
-    v7 = IteratorResume v1 stepIndex=1
-    v8 = ResultAt v7
-    v9 = ResultAt v7 index=1
-    Branch v8 -> taken b5(), notTaken b9()
+    LoopHint @2180
+    v7 = IteratorResume v1 stepIndex=1 @2180
+    v8 = ResultAt v7 @2180
+    v9 = ResultAt v7 index=1 @2180
+    Branch v8 -> taken b5(), notTaken b9() @2180
   b5() handler=b10():
-    v10 = Convert v5 declared={type=undefined|null|Array site=w79 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    Jump -> next b6()
+    v10 = Convert v5 declared={type=undefined|null|Array site=w79 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @2193
+    Jump -> next b6() @2193
   b6() handler=b10():
-    Jump -> next b7()
+    Jump -> next b7() @2193
   b7():
-    IteratorClose v1
-    Jump -> next b8()
+    IteratorClose v1 @2180
+    Jump -> next b8() @2180
   b8():
-    Return v10
+    Return v10 @2208
   b9() handler=b10():
-    AppendElement v5, v9
-    Jump -> next b4()
+    AppendElement v5, v9 @2180
+    Jump -> next b4() @2180
   b10() role=IterationCleanup subject=v1:
-    v13 = CatchException
-    IteratorClose v1 completion=Throw
-    Rethrow v13
+    v13 = CatchException @2180
+    IteratorClose v1 completion=Throw @2180
+    Rethrow v13 @2180
 }
 function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f22]
 function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f22]
@@ -943,470 +943,434 @@ function f19 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f20 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14, f22]
 function f21 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14, f22]
 function f22 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f23 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f23 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
-    Jump -> next b1()
+    Jump -> next b1() @25
   b1():
-    v1 = HasJSType v0 first=5 last=5
-    v2 = ToBoolean v1
-    Branch v2 -> taken b2(| 0), notTaken b4(| 0)
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
   b2(v3):
-    Jump -> next b3()
+    Jump -> next b3() @78
   b3():
-    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
-    v5 = StepArrayIterator v4
-    v6 = ResultAt v5 index=1
-    v7 = ResultAt v5
-    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]}
-    v9 = CreateIteratorResult v6, v8
-    Return v9
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
   b4(v10):
-    Jump -> next b5()
+    Jump -> next b5() @78
   b5():
-    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance"
-    Unreachable
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
 }
-runtimefunction id=68 function=f23
+runtimefunction id=ArrayIteratorPrototypeNext function=f23 visibility=Private
 # -- generated: unknowns anys generic all skipped strings union f13
 # CHECK-LABEL: function {{*}}name="unknowns"
-# CHECK: module=m0 position=108 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|Array<undefined|null|int[1, 3]|fractional|string|L0, proven, pristine[Storage, Names]> site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]> site=w3 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|Array<undefined|null|int[1, 3]|fractional|string|L0, proven, pristine[Storage, Names]>):
-# CHECK-NEXT: v1: Array<undefined|null|int[1, 3]|fractional|string|L0, proven, pristine[Storage, Names]> = RequireObjectCoercible v0 nullishAccess=Iterate
-# CHECK-NEXT: v2: 0 = Integer
-# CHECK-NEXT: v3: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v4: boolean = Less v2, v3
-# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b5()
+# CHECK: module=m0 position=108 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, pristine[Storage, Names]> site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, Contiguous, pristine[Storage, Names, Dense]> site=w3 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, pristine[Storage, Names]>):
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: v2: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v3: boolean = Less v1, v2
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b5()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v5: boolean = HasArrayStorage v1 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b4()
-# CHECK-NEXT: b2(v6: guard):
-# CHECK-NEXT: v7: boolean = IsElementPresent v1, v2, v6 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v7 -> taken b3(), notTaken b4()
-# CHECK-NEXT: b3():
+# CHECK-NEXT: v4: boolean = HasArrayStorage v0 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v5: guard):
+# CHECK-NEXT: v6: boolean = IsElementPresent v0, v1, v5 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v6 -> taken b4(), notTaken b3()
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: v7: undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0 = ElemGet v0, v1 [keyIsIntegral, storageIsUndecided]
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4():
 # CHECK-NEXT: v8: 1 = Integer integer=1
 # CHECK-NEXT: v9: false = Boolean
 # CHECK-NEXT: Jump -> next b6(v9, v8)
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: v10: undefined|null|int[1, 3]|fractional|string|L0 = ElemGet v1, v2 [keyIsIntegral, storageIsUndecided]
-# CHECK-NEXT: v11: 1 = Integer integer=1
-# CHECK-NEXT: v12: false = Boolean
-# CHECK-NEXT: v13: Array<undefined|null|int|fractional|string|L0> = NewArray contents=undefined|null|int|fractional|string|L0 allocationSite=37 [contentsAreProven]
-# CHECK-NEXT: v14: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]> = AssumeType v13 provenType=Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b14(v12, v11, v14)
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v15: true = Boolean boolean=true
-# CHECK-NEXT: Jump -> next b6(v15, v2)
-# CHECK-NEXT: b6(v16: boolean, v17: int[0, 1]):
-# CHECK-NEXT: v18: Array<undefined|null|int|fractional|string|L0> = NewArray contents=undefined|null|int|fractional|string|L0 allocationSite=37 [contentsAreProven]
-# CHECK-NEXT: v19: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]> = AssumeType v18 provenType=Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b7(v16, v17, v19)
-# CHECK-NEXT: b7(v20: boolean, v21: int[0, 4294967295] ~ int[0, 1], v22: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v23: boolean = HasArrayStorage v1 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v23 -> taken b8(| 0), notTaken b14(v20, v21, v22)
-# CHECK-NEXT: b8(v24: guard):
-# CHECK-NEXT: Jump -> next b9(v20, v21)
-# CHECK-NEXT: b9(v25: boolean, v26: int[0, 4294967295]):
+# CHECK-NEXT: v10: true = Boolean boolean=true
+# CHECK-NEXT: Jump -> next b6(v10, v1)
+# CHECK-NEXT: b6(v11: boolean, v12: int[0, 1]):
+# CHECK-NEXT: v13: Array<undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, Contiguous> = NewArray contents=undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0 allocationSite=37 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v14: Array<undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v13 provenType=Array<undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b7(v11, v12)
+# CHECK-NEXT: b7(v15: boolean, v16: int[0, 4294967295] ~ int[0, 1]):
+# CHECK-NEXT: v17: boolean = HasArrayStorage v0 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v17 -> taken b8(| 0), notTaken b13()
+# CHECK-NEXT: b8(v18: guard):
+# CHECK-NEXT: v19: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: Jump -> next b9(v15, v16)
+# CHECK-NEXT: b9(v20: boolean, v21: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Branch v25 -> taken b13(), notTaken b10()
+# CHECK-NEXT: Branch v20 -> taken b17(), notTaken b10()
 # CHECK-NEXT: b10():
-# CHECK-NEXT: v28: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v29: boolean = Less v26, v28
-# CHECK-NEXT: Branch v29 -> taken b11(| 0), notTaken b13()
-# CHECK-NEXT: b11(v30: int[0, 4294967294]):
-# CHECK-NEXT: v31: boolean = IsElementPresent v1, v30, v24 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v31 -> taken b12(| 0), notTaken b17(v30, v22)
-# CHECK-NEXT: b12(v32: guard):
-# CHECK-NEXT: v33: guard = AllGuards v24, v32
-# CHECK-NEXT: v34: undefined|null|int[1, 3]|fractional|string|L0 = GetArrayElement v1, v30, v33 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent, storageIsUndecided]
-# CHECK-NEXT: v35: 1 = Integer integer=1
-# CHECK-NEXT: v36: int[1, 4294967295] = Add v30, v35
-# CHECK-NEXT: v37: false = Boolean
-# CHECK-NEXT: AppendElement v22, v34
-# CHECK-NEXT: Jump -> next b9(v37, v36)
-# CHECK-NEXT: b13():
-# CHECK-NEXT: Return v22
-# CHECK-NEXT: b14(v39: boolean, v40: int[0, 4294967295] ~ int[0, 1], v41: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>) frequency=Rare:
+# CHECK-NEXT: v23: boolean = Less v21, v19
+# CHECK-NEXT: Branch v23 -> taken b11(| 0), notTaken b17()
+# CHECK-NEXT: b11(v24: int[0, 4294967294]):
+# CHECK-NEXT: v25: boolean = IsElementPresent v0, v24, v18, v19 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v25 -> taken b12(| 0), notTaken b16(v24)
+# CHECK-NEXT: b12(v26: guard):
+# CHECK-NEXT: v27: guard = AllGuards v18, v26
+# CHECK-NEXT: v28: undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0 = GetArrayElement v0, v24, v27, v19 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent, storageIsUndecided]
+# CHECK-NEXT: v29: 1 = Integer integer=1
+# CHECK-NEXT: v30: int[1, 4294967295] = Add v24, v29
+# CHECK-NEXT: v31: false = Boolean
+# CHECK-NEXT: AppendElement v14, v28
+# CHECK-NEXT: Jump -> next b9(v31, v30)
+# CHECK-NEXT: b13() frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Branch v39 -> taken b18(), notTaken b15()
-# CHECK-NEXT: b15() frequency=Rare:
-# CHECK-NEXT: v43: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v44: boolean = Less v40, v43
-# CHECK-NEXT: Branch v44 -> taken b16(| 0), notTaken b18()
-# CHECK-NEXT: b16(v45: int[0, 4294967294] ~ int[0, 1]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b17(v45, v41)
-# CHECK-NEXT: b17(v46: int[0, 4294967294], v47: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>) frequency=Rare:
-# CHECK-NEXT: v48: undefined|null|int[1, 3]|fractional|string|L0 = ElemGet v1, v46 [keyIsIntegral, storageIsUndecided]
-# CHECK-NEXT: v49: 1 = Integer integer=1
-# CHECK-NEXT: v50: int[1, 4294967295] = Add v46, v49
-# CHECK-NEXT: v51: false = Boolean
-# CHECK-NEXT: AppendElement v47, v48
-# CHECK-NEXT: Jump -> next b7(v51, v50, v47)
-# CHECK-NEXT: b18() frequency=Rare:
-# CHECK-NEXT: Return v41
+# CHECK-NEXT: Branch v15 -> taken b17(), notTaken b14()
+# CHECK-NEXT: b14() frequency=Rare:
+# CHECK-NEXT: v34: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v35: boolean = Less v16, v34
+# CHECK-NEXT: Branch v35 -> taken b15(| 0), notTaken b17()
+# CHECK-NEXT: b15(v36: int[0, 4294967294] ~ int[0, 1]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b16(v36)
+# CHECK-NEXT: b16(v37: int[0, 4294967294]) frequency=Rare:
+# CHECK-NEXT: v38: undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0 = ElemGet v0, v37 [keyIsIntegral, storageIsUndecided]
+# CHECK-NEXT: v39: 1 = Integer integer=1
+# CHECK-NEXT: v40: int[1, 4294967295] = Add v37, v39
+# CHECK-NEXT: v41: false = Boolean
+# CHECK-NEXT: AppendElement v14, v38
+# CHECK-NEXT: Jump -> next b7(v41, v40)
+# CHECK-NEXT: b17():
+# CHECK-NEXT: Return v14
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="anys"
-# CHECK: module=m0 position=186 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|Array<undefined|null|int[1, 3]|fractional|string|L0, proven, pristine[Storage, Names]> site=w4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]> site=w5 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|Array<undefined|null|int[1, 3]|fractional|string|L0, proven, pristine[Storage, Names]>):
-# CHECK-NEXT: v1: Array<undefined|null|int[1, 3]|fractional|string|L0, proven, pristine[Storage, Names]> = RequireObjectCoercible v0 nullishAccess=Iterate
-# CHECK-NEXT: v2: 0 = Integer
-# CHECK-NEXT: v3: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v4: boolean = Less v2, v3
-# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b5()
+# CHECK: module=m0 position=186 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, pristine[Storage, Names]> site=w4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, Contiguous, pristine[Storage, Names, Dense]> site=w5 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, pristine[Storage, Names]>):
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: v2: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v3: boolean = Less v1, v2
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b5()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v5: boolean = HasArrayStorage v1 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b4()
-# CHECK-NEXT: b2(v6: guard):
-# CHECK-NEXT: v7: boolean = IsElementPresent v1, v2, v6 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v7 -> taken b3(), notTaken b4()
-# CHECK-NEXT: b3():
+# CHECK-NEXT: v4: boolean = HasArrayStorage v0 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v5: guard):
+# CHECK-NEXT: v6: boolean = IsElementPresent v0, v1, v5 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v6 -> taken b4(), notTaken b3()
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: v7: undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0 = ElemGet v0, v1 [keyIsIntegral, storageIsUndecided]
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4():
 # CHECK-NEXT: v8: 1 = Integer integer=1
 # CHECK-NEXT: v9: false = Boolean
 # CHECK-NEXT: Jump -> next b6(v9, v8)
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: v10: undefined|null|int[1, 3]|fractional|string|L0 = ElemGet v1, v2 [keyIsIntegral, storageIsUndecided]
-# CHECK-NEXT: v11: 1 = Integer integer=1
-# CHECK-NEXT: v12: false = Boolean
-# CHECK-NEXT: v13: Array<undefined|null|int|fractional|string|L0> = NewArray contents=undefined|null|int|fractional|string|L0 allocationSite=38 [contentsAreProven]
-# CHECK-NEXT: v14: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]> = AssumeType v13 provenType=Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b14(v12, v11, v14)
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v15: true = Boolean boolean=true
-# CHECK-NEXT: Jump -> next b6(v15, v2)
-# CHECK-NEXT: b6(v16: boolean, v17: int[0, 1]):
-# CHECK-NEXT: v18: Array<undefined|null|int|fractional|string|L0> = NewArray contents=undefined|null|int|fractional|string|L0 allocationSite=38 [contentsAreProven]
-# CHECK-NEXT: v19: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]> = AssumeType v18 provenType=Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b7(v16, v17, v19)
-# CHECK-NEXT: b7(v20: boolean, v21: int[0, 4294967295] ~ int[0, 1], v22: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v23: boolean = HasArrayStorage v1 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v23 -> taken b8(| 0), notTaken b14(v20, v21, v22)
-# CHECK-NEXT: b8(v24: guard):
-# CHECK-NEXT: Jump -> next b9(v20, v21)
-# CHECK-NEXT: b9(v25: boolean, v26: int[0, 4294967295]):
+# CHECK-NEXT: v10: true = Boolean boolean=true
+# CHECK-NEXT: Jump -> next b6(v10, v1)
+# CHECK-NEXT: b6(v11: boolean, v12: int[0, 1]):
+# CHECK-NEXT: v13: Array<undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, Contiguous> = NewArray contents=undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0 allocationSite=38 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v14: Array<undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v13 provenType=Array<undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b7(v11, v12)
+# CHECK-NEXT: b7(v15: boolean, v16: int[0, 4294967295] ~ int[0, 1]):
+# CHECK-NEXT: v17: boolean = HasArrayStorage v0 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v17 -> taken b8(| 0), notTaken b13()
+# CHECK-NEXT: b8(v18: guard):
+# CHECK-NEXT: v19: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: Jump -> next b9(v15, v16)
+# CHECK-NEXT: b9(v20: boolean, v21: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Branch v25 -> taken b13(), notTaken b10()
+# CHECK-NEXT: Branch v20 -> taken b17(), notTaken b10()
 # CHECK-NEXT: b10():
-# CHECK-NEXT: v28: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v29: boolean = Less v26, v28
-# CHECK-NEXT: Branch v29 -> taken b11(| 0), notTaken b13()
-# CHECK-NEXT: b11(v30: int[0, 4294967294]):
-# CHECK-NEXT: v31: boolean = IsElementPresent v1, v30, v24 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v31 -> taken b12(| 0), notTaken b17(v30, v22)
-# CHECK-NEXT: b12(v32: guard):
-# CHECK-NEXT: v33: guard = AllGuards v24, v32
-# CHECK-NEXT: v34: undefined|null|int[1, 3]|fractional|string|L0 = GetArrayElement v1, v30, v33 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent, storageIsUndecided]
-# CHECK-NEXT: v35: 1 = Integer integer=1
-# CHECK-NEXT: v36: int[1, 4294967295] = Add v30, v35
-# CHECK-NEXT: v37: false = Boolean
-# CHECK-NEXT: AppendElement v22, v34
-# CHECK-NEXT: Jump -> next b9(v37, v36)
-# CHECK-NEXT: b13():
-# CHECK-NEXT: Return v22
-# CHECK-NEXT: b14(v39: boolean, v40: int[0, 4294967295] ~ int[0, 1], v41: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>) frequency=Rare:
+# CHECK-NEXT: v23: boolean = Less v21, v19
+# CHECK-NEXT: Branch v23 -> taken b11(| 0), notTaken b17()
+# CHECK-NEXT: b11(v24: int[0, 4294967294]):
+# CHECK-NEXT: v25: boolean = IsElementPresent v0, v24, v18, v19 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v25 -> taken b12(| 0), notTaken b16(v24)
+# CHECK-NEXT: b12(v26: guard):
+# CHECK-NEXT: v27: guard = AllGuards v18, v26
+# CHECK-NEXT: v28: undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0 = GetArrayElement v0, v24, v27, v19 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent, storageIsUndecided]
+# CHECK-NEXT: v29: 1 = Integer integer=1
+# CHECK-NEXT: v30: int[1, 4294967295] = Add v24, v29
+# CHECK-NEXT: v31: false = Boolean
+# CHECK-NEXT: AppendElement v14, v28
+# CHECK-NEXT: Jump -> next b9(v31, v30)
+# CHECK-NEXT: b13() frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Branch v39 -> taken b18(), notTaken b15()
-# CHECK-NEXT: b15() frequency=Rare:
-# CHECK-NEXT: v43: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v44: boolean = Less v40, v43
-# CHECK-NEXT: Branch v44 -> taken b16(| 0), notTaken b18()
-# CHECK-NEXT: b16(v45: int[0, 4294967294] ~ int[0, 1]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b17(v45, v41)
-# CHECK-NEXT: b17(v46: int[0, 4294967294], v47: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>) frequency=Rare:
-# CHECK-NEXT: v48: undefined|null|int[1, 3]|fractional|string|L0 = ElemGet v1, v46 [keyIsIntegral, storageIsUndecided]
-# CHECK-NEXT: v49: 1 = Integer integer=1
-# CHECK-NEXT: v50: int[1, 4294967295] = Add v46, v49
-# CHECK-NEXT: v51: false = Boolean
-# CHECK-NEXT: AppendElement v47, v48
-# CHECK-NEXT: Jump -> next b7(v51, v50, v47)
-# CHECK-NEXT: b18() frequency=Rare:
-# CHECK-NEXT: Return v41
+# CHECK-NEXT: Branch v15 -> taken b17(), notTaken b14()
+# CHECK-NEXT: b14() frequency=Rare:
+# CHECK-NEXT: v34: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v35: boolean = Less v16, v34
+# CHECK-NEXT: Branch v35 -> taken b15(| 0), notTaken b17()
+# CHECK-NEXT: b15(v36: int[0, 4294967294] ~ int[0, 1]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b16(v36)
+# CHECK-NEXT: b16(v37: int[0, 4294967294]) frequency=Rare:
+# CHECK-NEXT: v38: undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0 = ElemGet v0, v37 [keyIsIntegral, storageIsUndecided]
+# CHECK-NEXT: v39: 1 = Integer integer=1
+# CHECK-NEXT: v40: int[1, 4294967295] = Add v37, v39
+# CHECK-NEXT: v41: false = Boolean
+# CHECK-NEXT: AppendElement v14, v38
+# CHECK-NEXT: Jump -> next b7(v41, v40)
+# CHECK-NEXT: b17():
+# CHECK-NEXT: Return v14
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="generic"
-# CHECK: module=m0 position=252 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|Array<undefined|null|int[1, 10]|fractional|string|L0, proven, pristine[Storage, Names]> site=w6 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]> site=w7 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|Array<undefined|null|int[1, 10]|fractional|string|L0, proven, pristine[Storage, Names]>):
-# CHECK-NEXT: v1: Array<undefined|null|int[1, 10]|fractional|string|L0, proven, pristine[Storage, Names]> = RequireObjectCoercible v0 nullishAccess=Iterate
-# CHECK-NEXT: v2: 0 = Integer
-# CHECK-NEXT: v3: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v4: boolean = Less v2, v3
-# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b5()
+# CHECK: module=m0 position=252 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<undefined|null|int[1, 10]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, pristine[Storage, Names]> site=w6 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, Contiguous, pristine[Storage, Names, Dense]> site=w7 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<undefined|null|int[1, 10]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, pristine[Storage, Names]>):
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: v2: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v3: boolean = Less v1, v2
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b5()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v5: boolean = HasArrayStorage v1 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b4()
-# CHECK-NEXT: b2(v6: guard):
-# CHECK-NEXT: v7: boolean = IsElementPresent v1, v2, v6 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v7 -> taken b3(), notTaken b4()
-# CHECK-NEXT: b3():
+# CHECK-NEXT: v4: boolean = HasArrayStorage v0 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v5: guard):
+# CHECK-NEXT: v6: boolean = IsElementPresent v0, v1, v5 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v6 -> taken b4(), notTaken b3()
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: v7: undefined|null|int[1, 10]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0 = ElemGet v0, v1 [keyIsIntegral, storageIsUndecided]
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4():
 # CHECK-NEXT: v8: 1 = Integer integer=1
 # CHECK-NEXT: v9: false = Boolean
 # CHECK-NEXT: Jump -> next b6(v9, v8)
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: v10: undefined|null|int[1, 10]|fractional|string|L0 = ElemGet v1, v2 [keyIsIntegral, storageIsUndecided]
-# CHECK-NEXT: v11: 1 = Integer integer=1
-# CHECK-NEXT: v12: false = Boolean
-# CHECK-NEXT: v13: Array<undefined|null|int|fractional|string|L0> = NewArray contents=undefined|null|int|fractional|string|L0 allocationSite=39 [contentsAreProven]
-# CHECK-NEXT: v14: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]> = AssumeType v13 provenType=Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b14(v12, v11, v14)
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v15: true = Boolean boolean=true
-# CHECK-NEXT: Jump -> next b6(v15, v2)
-# CHECK-NEXT: b6(v16: boolean, v17: int[0, 1]):
-# CHECK-NEXT: v18: Array<undefined|null|int|fractional|string|L0> = NewArray contents=undefined|null|int|fractional|string|L0 allocationSite=39 [contentsAreProven]
-# CHECK-NEXT: v19: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]> = AssumeType v18 provenType=Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b7(v16, v17, v19)
-# CHECK-NEXT: b7(v20: boolean, v21: int[0, 4294967295] ~ int[0, 1], v22: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v23: boolean = HasArrayStorage v1 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v23 -> taken b8(| 0), notTaken b14(v20, v21, v22)
-# CHECK-NEXT: b8(v24: guard):
-# CHECK-NEXT: Jump -> next b9(v20, v21)
-# CHECK-NEXT: b9(v25: boolean, v26: int[0, 4294967295]):
+# CHECK-NEXT: v10: true = Boolean boolean=true
+# CHECK-NEXT: Jump -> next b6(v10, v1)
+# CHECK-NEXT: b6(v11: boolean, v12: int[0, 1]):
+# CHECK-NEXT: v13: Array<undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, Contiguous> = NewArray contents=undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0 allocationSite=39 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v14: Array<undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v13 provenType=Array<undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b7(v11, v12)
+# CHECK-NEXT: b7(v15: boolean, v16: int[0, 4294967295] ~ int[0, 1]):
+# CHECK-NEXT: v17: boolean = HasArrayStorage v0 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v17 -> taken b8(| 0), notTaken b13()
+# CHECK-NEXT: b8(v18: guard):
+# CHECK-NEXT: v19: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: Jump -> next b9(v15, v16)
+# CHECK-NEXT: b9(v20: boolean, v21: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Branch v25 -> taken b13(), notTaken b10()
+# CHECK-NEXT: Branch v20 -> taken b17(), notTaken b10()
 # CHECK-NEXT: b10():
-# CHECK-NEXT: v28: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v29: boolean = Less v26, v28
-# CHECK-NEXT: Branch v29 -> taken b11(| 0), notTaken b13()
-# CHECK-NEXT: b11(v30: int[0, 4294967294]):
-# CHECK-NEXT: v31: boolean = IsElementPresent v1, v30, v24 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v31 -> taken b12(| 0), notTaken b17(v30, v22)
-# CHECK-NEXT: b12(v32: guard):
-# CHECK-NEXT: v33: guard = AllGuards v24, v32
-# CHECK-NEXT: v34: undefined|null|int[1, 10]|fractional|string|L0 = GetArrayElement v1, v30, v33 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent, storageIsUndecided]
-# CHECK-NEXT: v35: 1 = Integer integer=1
-# CHECK-NEXT: v36: int[1, 4294967295] = Add v30, v35
-# CHECK-NEXT: v37: false = Boolean
-# CHECK-NEXT: AppendElement v22, v34
-# CHECK-NEXT: Jump -> next b9(v37, v36)
-# CHECK-NEXT: b13():
-# CHECK-NEXT: Return v22
-# CHECK-NEXT: b14(v39: boolean, v40: int[0, 4294967295] ~ int[0, 1], v41: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>) frequency=Rare:
+# CHECK-NEXT: v23: boolean = Less v21, v19
+# CHECK-NEXT: Branch v23 -> taken b11(| 0), notTaken b17()
+# CHECK-NEXT: b11(v24: int[0, 4294967294]):
+# CHECK-NEXT: v25: boolean = IsElementPresent v0, v24, v18, v19 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v25 -> taken b12(| 0), notTaken b16(v24)
+# CHECK-NEXT: b12(v26: guard):
+# CHECK-NEXT: v27: guard = AllGuards v18, v26
+# CHECK-NEXT: v28: undefined|null|int[1, 10]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0 = GetArrayElement v0, v24, v27, v19 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent, storageIsUndecided]
+# CHECK-NEXT: v29: 1 = Integer integer=1
+# CHECK-NEXT: v30: int[1, 4294967295] = Add v24, v29
+# CHECK-NEXT: v31: false = Boolean
+# CHECK-NEXT: AppendElement v14, v28
+# CHECK-NEXT: Jump -> next b9(v31, v30)
+# CHECK-NEXT: b13() frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Branch v39 -> taken b18(), notTaken b15()
-# CHECK-NEXT: b15() frequency=Rare:
-# CHECK-NEXT: v43: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v44: boolean = Less v40, v43
-# CHECK-NEXT: Branch v44 -> taken b16(| 0), notTaken b18()
-# CHECK-NEXT: b16(v45: int[0, 4294967294] ~ int[0, 1]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b17(v45, v41)
-# CHECK-NEXT: b17(v46: int[0, 4294967294], v47: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>) frequency=Rare:
-# CHECK-NEXT: v48: undefined|null|int[1, 10]|fractional|string|L0 = ElemGet v1, v46 [keyIsIntegral, storageIsUndecided]
-# CHECK-NEXT: v49: 1 = Integer integer=1
-# CHECK-NEXT: v50: int[1, 4294967295] = Add v46, v49
-# CHECK-NEXT: v51: false = Boolean
-# CHECK-NEXT: AppendElement v47, v48
-# CHECK-NEXT: Jump -> next b7(v51, v50, v47)
-# CHECK-NEXT: b18() frequency=Rare:
-# CHECK-NEXT: Return v41
+# CHECK-NEXT: Branch v15 -> taken b17(), notTaken b14()
+# CHECK-NEXT: b14() frequency=Rare:
+# CHECK-NEXT: v34: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v35: boolean = Less v16, v34
+# CHECK-NEXT: Branch v35 -> taken b15(| 0), notTaken b17()
+# CHECK-NEXT: b15(v36: int[0, 4294967294] ~ int[0, 1]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b16(v36)
+# CHECK-NEXT: b16(v37: int[0, 4294967294]) frequency=Rare:
+# CHECK-NEXT: v38: undefined|null|int[1, 10]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0 = ElemGet v0, v37 [keyIsIntegral, storageIsUndecided]
+# CHECK-NEXT: v39: 1 = Integer integer=1
+# CHECK-NEXT: v40: int[1, 4294967295] = Add v37, v39
+# CHECK-NEXT: v41: false = Boolean
+# CHECK-NEXT: AppendElement v14, v38
+# CHECK-NEXT: Jump -> next b7(v41, v40)
+# CHECK-NEXT: b17():
+# CHECK-NEXT: Return v14
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="all"
-# CHECK: module=m0 position=584 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|Array<undefined|null|int[1, 3]|fractional|string|L0, proven, pristine[Storage, Names]> site=w14 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]> site=w15 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|Array<undefined|null|int[1, 3]|fractional|string|L0, proven, pristine[Storage, Names]>):
-# CHECK-NEXT: v1: Array<undefined|null|int[1, 3]|fractional|string|L0, proven, pristine[Storage, Names]> = RequireObjectCoercible v0 nullishAccess=Iterate
-# CHECK-NEXT: v2: 0 = Integer
-# CHECK-NEXT: v3: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v4: 0 = Integer
-# CHECK-NEXT: v5: int[0, 4294967295] = Add v4, v3
-# CHECK-NEXT: v6: Array<undefined|null|int|fractional|string|L0> = NewArray contents=undefined|null|int|fractional|string|L0 capacity=v5 allocationSite=43 [contentsAreProven]
-# CHECK-NEXT: v7: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]> = AssumeType v6 provenType=Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b1(v2)
-# CHECK-NEXT: b1(v8: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: v9: boolean = HasArrayStorage v1 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b9()
-# CHECK-NEXT: b2(v10: guard):
-# CHECK-NEXT: Jump -> next b3(v8)
+# CHECK: module=m0 position=584 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, pristine[Storage, Names]> site=w14 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, Contiguous, pristine[Storage, Names, Dense]> site=w15 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, pristine[Storage, Names]>):
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: v2: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v3: 0 = Integer
+# CHECK-NEXT: v4: int[0, 4294967295] = Add v3, v2
+# CHECK-NEXT: v5: Array<undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, Contiguous> = NewArray contents=undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0 capacity=v4 allocationSite=43 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v6: Array<undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v5 provenType=Array<undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b1(v1)
+# CHECK-NEXT: b1(v7: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: v8: boolean = HasArrayStorage v0 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b9()
+# CHECK-NEXT: b2(v9: guard):
+# CHECK-NEXT: v10: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: Jump -> next b3(v7)
 # CHECK-NEXT: b3(v11: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v13: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v14: boolean = Less v11, v13
-# CHECK-NEXT: Branch v14 -> taken b4(| 0), notTaken b12()
-# CHECK-NEXT: b4(v15: int[0, 4294967294]):
-# CHECK-NEXT: v16: boolean = IsElementPresent v1, v15, v10 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v16 -> taken b5(| 0), notTaken b11(v15)
-# CHECK-NEXT: b5(v17: guard):
-# CHECK-NEXT: v18: guard = AllGuards v10, v17
-# CHECK-NEXT: v19: undefined|null|int[1, 3]|fractional|string|L0 = GetArrayElement v1, v15, v18 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent, storageIsUndecided]
-# CHECK-NEXT: v20: 1 = Integer integer=1
-# CHECK-NEXT: v21: int[1, 4294967295] = Add v15, v20
-# CHECK-NEXT: v22: boolean = HasSpareArrayCapacity v7
-# CHECK-NEXT: Branch v22 -> taken b6(), notTaken b7()
+# CHECK-NEXT: v13: boolean = Less v11, v10
+# CHECK-NEXT: Branch v13 -> taken b4(| 0), notTaken b12()
+# CHECK-NEXT: b4(v14: int[0, 4294967294]):
+# CHECK-NEXT: v15: boolean = IsElementPresent v0, v14, v9, v10 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v15 -> taken b5(| 0), notTaken b11(v14)
+# CHECK-NEXT: b5(v16: guard):
+# CHECK-NEXT: v17: guard = AllGuards v9, v16
+# CHECK-NEXT: v18: undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0 = GetArrayElement v0, v14, v17, v10 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent, storageIsUndecided]
+# CHECK-NEXT: v19: 1 = Integer integer=1
+# CHECK-NEXT: v20: int[1, 4294967295] = Add v14, v19
+# CHECK-NEXT: v21: boolean = HasSpareArrayCapacity v6
+# CHECK-NEXT: Branch v21 -> taken b6(), notTaken b7()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: AppendElement v7, v19
+# CHECK-NEXT: AppendElement v6, v18
 # CHECK-NEXT: Jump -> next b8()
 # CHECK-NEXT: b7() frequency=Rare:
-# CHECK-NEXT: v24: int[-4294967295, 4294967295] = Sub v13, v11
-# CHECK-NEXT: ReserveArrayCapacity v7, v24
-# CHECK-NEXT: AppendElement v7, v19
+# CHECK-NEXT: v23: int[-4294967295, 4294967295] = Sub v10, v11
+# CHECK-NEXT: ReserveArrayCapacity v6, v23
+# CHECK-NEXT: AppendElement v6, v18
 # CHECK-NEXT: Jump -> next b8()
 # CHECK-NEXT: b8():
-# CHECK-NEXT: Jump -> next b3(v21)
+# CHECK-NEXT: Jump -> next b3(v20)
 # CHECK-NEXT: b9() frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v28: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v29: boolean = Less v8, v28
-# CHECK-NEXT: Branch v29 -> taken b10(| 0), notTaken b12()
-# CHECK-NEXT: b10(v30: int[0, 4294967294] ~ 0) frequency=Rare:
-# CHECK-NEXT: Jump -> next b11(v30)
-# CHECK-NEXT: b11(v31: int[0, 4294967294]) frequency=Rare:
-# CHECK-NEXT: v32: undefined|null|int[1, 3]|fractional|string|L0 = ElemGet v1, v31 [keyIsIntegral, storageIsUndecided]
-# CHECK-NEXT: v33: 1 = Integer integer=1
-# CHECK-NEXT: v34: int[1, 4294967295] = Add v31, v33
-# CHECK-NEXT: AppendElement v7, v32
-# CHECK-NEXT: Jump -> next b1(v34)
+# CHECK-NEXT: v27: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v28: boolean = Less v7, v27
+# CHECK-NEXT: Branch v28 -> taken b10(| 0), notTaken b12()
+# CHECK-NEXT: b10(v29: int[0, 4294967294] ~ 0) frequency=Rare:
+# CHECK-NEXT: Jump -> next b11(v29)
+# CHECK-NEXT: b11(v30: int[0, 4294967294]) frequency=Rare:
+# CHECK-NEXT: v31: undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0 = ElemGet v0, v30 [keyIsIntegral, storageIsUndecided]
+# CHECK-NEXT: v32: 1 = Integer integer=1
+# CHECK-NEXT: v33: int[1, 4294967295] = Add v30, v32
+# CHECK-NEXT: AppendElement v6, v31
+# CHECK-NEXT: Jump -> next b1(v33)
 # CHECK-NEXT: b12():
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="skipped"
-# CHECK: module=m0 position=654 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|Array<undefined|null|int[1, 3]|fractional|string|L0, proven, pristine[Storage, Names]> site=w16 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]> site=w17 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|Array<undefined|null|int[1, 3]|fractional|string|L0, proven, pristine[Storage, Names]>):
-# CHECK-NEXT: v1: Array<undefined|null|int[1, 3]|fractional|string|L0, proven, pristine[Storage, Names]> = RequireObjectCoercible v0 nullishAccess=Iterate
-# CHECK-NEXT: v2: 0 = Integer
-# CHECK-NEXT: v3: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v4: boolean = Less v2, v3
-# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b5()
+# CHECK: module=m0 position=654 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, pristine[Storage, Names]> site=w16 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, Contiguous, pristine[Storage, Names, Dense]> site=w17 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, pristine[Storage, Names]>):
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: v2: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v3: boolean = Less v1, v2
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b5()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v5: boolean = HasArrayStorage v1 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b4()
-# CHECK-NEXT: b2(v6: guard):
-# CHECK-NEXT: v7: boolean = IsElementPresent v1, v2, v6 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v7 -> taken b3(), notTaken b4()
-# CHECK-NEXT: b3():
+# CHECK-NEXT: v4: boolean = HasArrayStorage v0 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v5: guard):
+# CHECK-NEXT: v6: boolean = IsElementPresent v0, v1, v5 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v6 -> taken b4(), notTaken b3()
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: v7: undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0 = ElemGet v0, v1 [keyIsIntegral, storageIsUndecided]
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4():
 # CHECK-NEXT: v8: 1 = Integer integer=1
 # CHECK-NEXT: v9: false = Boolean
 # CHECK-NEXT: Jump -> next b6(v9, v8)
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: v10: undefined|null|int[1, 3]|fractional|string|L0 = ElemGet v1, v2 [keyIsIntegral, storageIsUndecided]
-# CHECK-NEXT: v11: 1 = Integer integer=1
-# CHECK-NEXT: v12: false = Boolean
-# CHECK-NEXT: v13: Array<undefined|null|int|fractional|string|L0> = NewArray contents=undefined|null|int|fractional|string|L0 allocationSite=44 [contentsAreProven]
-# CHECK-NEXT: v14: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]> = AssumeType v13 provenType=Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b14(v12, v11, v14)
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v15: true = Boolean boolean=true
-# CHECK-NEXT: Jump -> next b6(v15, v2)
-# CHECK-NEXT: b6(v16: boolean, v17: int[0, 1]):
-# CHECK-NEXT: v18: Array<undefined|null|int|fractional|string|L0> = NewArray contents=undefined|null|int|fractional|string|L0 allocationSite=44 [contentsAreProven]
-# CHECK-NEXT: v19: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]> = AssumeType v18 provenType=Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b7(v16, v17, v19)
-# CHECK-NEXT: b7(v20: boolean, v21: int[0, 4294967295] ~ int[0, 1], v22: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v23: boolean = HasArrayStorage v1 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v23 -> taken b8(| 0), notTaken b14(v20, v21, v22)
-# CHECK-NEXT: b8(v24: guard):
-# CHECK-NEXT: Jump -> next b9(v20, v21)
-# CHECK-NEXT: b9(v25: boolean, v26: int[0, 4294967295]):
+# CHECK-NEXT: v10: true = Boolean boolean=true
+# CHECK-NEXT: Jump -> next b6(v10, v1)
+# CHECK-NEXT: b6(v11: boolean, v12: int[0, 1]):
+# CHECK-NEXT: v13: Array<undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, Contiguous> = NewArray contents=undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0 allocationSite=44 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v14: Array<undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v13 provenType=Array<undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b7(v11, v12)
+# CHECK-NEXT: b7(v15: boolean, v16: int[0, 4294967295] ~ int[0, 1]):
+# CHECK-NEXT: v17: boolean = HasArrayStorage v0 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v17 -> taken b8(| 0), notTaken b13()
+# CHECK-NEXT: b8(v18: guard):
+# CHECK-NEXT: v19: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: Jump -> next b9(v15, v16)
+# CHECK-NEXT: b9(v20: boolean, v21: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Branch v25 -> taken b13(), notTaken b10()
+# CHECK-NEXT: Branch v20 -> taken b17(), notTaken b10()
 # CHECK-NEXT: b10():
-# CHECK-NEXT: v28: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v29: boolean = Less v26, v28
-# CHECK-NEXT: Branch v29 -> taken b11(| 0), notTaken b13()
-# CHECK-NEXT: b11(v30: int[0, 4294967294]):
-# CHECK-NEXT: v31: boolean = IsElementPresent v1, v30, v24 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v31 -> taken b12(| 0), notTaken b17(v30, v22)
-# CHECK-NEXT: b12(v32: guard):
-# CHECK-NEXT: v33: guard = AllGuards v24, v32
-# CHECK-NEXT: v34: undefined|null|int[1, 3]|fractional|string|L0 = GetArrayElement v1, v30, v33 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent, storageIsUndecided]
-# CHECK-NEXT: v35: 1 = Integer integer=1
-# CHECK-NEXT: v36: int[1, 4294967295] = Add v30, v35
-# CHECK-NEXT: v37: false = Boolean
-# CHECK-NEXT: AppendElement v22, v34
-# CHECK-NEXT: Jump -> next b9(v37, v36)
-# CHECK-NEXT: b13():
-# CHECK-NEXT: Return v22
-# CHECK-NEXT: b14(v39: boolean, v40: int[0, 4294967295] ~ int[0, 1], v41: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>) frequency=Rare:
+# CHECK-NEXT: v23: boolean = Less v21, v19
+# CHECK-NEXT: Branch v23 -> taken b11(| 0), notTaken b17()
+# CHECK-NEXT: b11(v24: int[0, 4294967294]):
+# CHECK-NEXT: v25: boolean = IsElementPresent v0, v24, v18, v19 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v25 -> taken b12(| 0), notTaken b16(v24)
+# CHECK-NEXT: b12(v26: guard):
+# CHECK-NEXT: v27: guard = AllGuards v18, v26
+# CHECK-NEXT: v28: undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0 = GetArrayElement v0, v24, v27, v19 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent, storageIsUndecided]
+# CHECK-NEXT: v29: 1 = Integer integer=1
+# CHECK-NEXT: v30: int[1, 4294967295] = Add v24, v29
+# CHECK-NEXT: v31: false = Boolean
+# CHECK-NEXT: AppendElement v14, v28
+# CHECK-NEXT: Jump -> next b9(v31, v30)
+# CHECK-NEXT: b13() frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Branch v39 -> taken b18(), notTaken b15()
-# CHECK-NEXT: b15() frequency=Rare:
-# CHECK-NEXT: v43: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v44: boolean = Less v40, v43
-# CHECK-NEXT: Branch v44 -> taken b16(| 0), notTaken b18()
-# CHECK-NEXT: b16(v45: int[0, 4294967294] ~ int[0, 1]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b17(v45, v41)
-# CHECK-NEXT: b17(v46: int[0, 4294967294], v47: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>) frequency=Rare:
-# CHECK-NEXT: v48: undefined|null|int[1, 3]|fractional|string|L0 = ElemGet v1, v46 [keyIsIntegral, storageIsUndecided]
-# CHECK-NEXT: v49: 1 = Integer integer=1
-# CHECK-NEXT: v50: int[1, 4294967295] = Add v46, v49
-# CHECK-NEXT: v51: false = Boolean
-# CHECK-NEXT: AppendElement v47, v48
-# CHECK-NEXT: Jump -> next b7(v51, v50, v47)
-# CHECK-NEXT: b18() frequency=Rare:
-# CHECK-NEXT: Return v41
+# CHECK-NEXT: Branch v15 -> taken b17(), notTaken b14()
+# CHECK-NEXT: b14() frequency=Rare:
+# CHECK-NEXT: v34: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v35: boolean = Less v16, v34
+# CHECK-NEXT: Branch v35 -> taken b15(| 0), notTaken b17()
+# CHECK-NEXT: b15(v36: int[0, 4294967294] ~ int[0, 1]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b16(v36)
+# CHECK-NEXT: b16(v37: int[0, 4294967294]) frequency=Rare:
+# CHECK-NEXT: v38: undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0 = ElemGet v0, v37 [keyIsIntegral, storageIsUndecided]
+# CHECK-NEXT: v39: 1 = Integer integer=1
+# CHECK-NEXT: v40: int[1, 4294967295] = Add v37, v39
+# CHECK-NEXT: v41: false = Boolean
+# CHECK-NEXT: AppendElement v14, v38
+# CHECK-NEXT: Jump -> next b7(v41, v40)
+# CHECK-NEXT: b17():
+# CHECK-NEXT: Return v14
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="strings"
-# CHECK: module=m0 position=730 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|Array<string, proven, pristine[Storage, Names, Dense]> site=w18 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|string, proven, Contiguous, pristine[Storage, Names, Dense]> site=w19 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|Array<string, proven, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v1: Array<string, proven, pristine[Storage, Names, Dense]> = RequireObjectCoercible v0 nullishAccess=Iterate
-# CHECK-NEXT: v2: 0 = Integer
-# CHECK-NEXT: v3: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v4: boolean = Less v2, v3
-# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b5()
+# CHECK: module=m0 position=730 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i", proven, pristine[Storage, Names, Dense]> site=w18 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i", proven, Contiguous, pristine[Storage, Names, Dense]> site=w19 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i", proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: v2: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v3: boolean = Less v1, v2
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b5()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v5: boolean = HasArrayStorage v1 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v5 -> taken b2(), notTaken b4()
+# CHECK-NEXT: v4: boolean = HasArrayStorage v0 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v4 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v6: boolean = IsInBounds v1, v2
-# CHECK-NEXT: Branch v6 -> taken b3(), notTaken b4()
-# CHECK-NEXT: b3():
+# CHECK-NEXT: v5: boolean = IsInBounds v0, v1
+# CHECK-NEXT: Branch v5 -> taken b4(), notTaken b3()
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: v6: undefined|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i" = ElemGet v0, v1 [keyIsIntegral, storageIsUndecided]
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4():
 # CHECK-NEXT: v7: 1 = Integer integer=1
 # CHECK-NEXT: v8: false = Boolean
 # CHECK-NEXT: Jump -> next b6(v8, v7)
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: v9: undefined|string = ElemGet v1, v2 [keyIsIntegral, storageIsUndecided]
-# CHECK-NEXT: v10: 1 = Integer integer=1
-# CHECK-NEXT: v11: false = Boolean
-# CHECK-NEXT: v12: Array<undefined|string, Contiguous> = NewArray contents=undefined|string allocationSite=45 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v13: Array<undefined|string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v12 provenType=Array<undefined|string, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b14(v11, v10, v13)
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v14: true = Boolean boolean=true
-# CHECK-NEXT: Jump -> next b6(v14, v2)
-# CHECK-NEXT: b6(v15: boolean, v16: int[0, 1]):
-# CHECK-NEXT: v17: Array<undefined|string, Contiguous> = NewArray contents=undefined|string allocationSite=45 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v18: Array<undefined|string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v17 provenType=Array<undefined|string, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b7(v15, v16, v18)
-# CHECK-NEXT: b7(v19: boolean, v20: int[0, 4294967295] ~ int[0, 1], v21: Array<undefined|string, proven, Contiguous, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v22: boolean = HasArrayStorage v1 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v22 -> taken b8(| 0), notTaken b14(v19, v20, v21)
-# CHECK-NEXT: b8(v23: guard):
-# CHECK-NEXT: Jump -> next b9(v19, v20)
-# CHECK-NEXT: b9(v24: boolean, v25: int[0, 4294967295]):
+# CHECK-NEXT: v9: true = Boolean boolean=true
+# CHECK-NEXT: Jump -> next b6(v9, v1)
+# CHECK-NEXT: b6(v10: boolean, v11: int[0, 1]):
+# CHECK-NEXT: v12: Array<undefined|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i", Contiguous> = NewArray contents=undefined|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i" allocationSite=45 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v13: Array<undefined|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v12 provenType=Array<undefined|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i", proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b7(v10, v11)
+# CHECK-NEXT: b7(v14: boolean, v15: int[0, 4294967295] ~ int[0, 1]):
+# CHECK-NEXT: v16: boolean = HasArrayStorage v0 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v16 -> taken b8(| 0), notTaken b13()
+# CHECK-NEXT: b8(v17: guard):
+# CHECK-NEXT: v18: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: Jump -> next b9(v14, v15)
+# CHECK-NEXT: b9(v19: boolean, v20: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Branch v24 -> taken b13(), notTaken b10()
+# CHECK-NEXT: Branch v19 -> taken b17(), notTaken b10()
 # CHECK-NEXT: b10():
-# CHECK-NEXT: v27: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v28: boolean = Less v25, v27
-# CHECK-NEXT: Branch v28 -> taken b11(| 0), notTaken b13()
-# CHECK-NEXT: b11(v29: int[0, 4294967294]):
-# CHECK-NEXT: v30: boolean = IsInBounds v1, v29
-# CHECK-NEXT: Branch v30 -> taken b12(| 0), notTaken b17(v29, v21)
-# CHECK-NEXT: b12(v31: guard):
-# CHECK-NEXT: v32: guard = AllGuards v23, v31
-# CHECK-NEXT: v33: string = GetArrayElement v1, v29, v32 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds, storageIsUndecided]
-# CHECK-NEXT: v34: 1 = Integer integer=1
-# CHECK-NEXT: v35: int[1, 4294967295] = Add v29, v34
-# CHECK-NEXT: v36: false = Boolean
-# CHECK-NEXT: AppendElement v21, v33
-# CHECK-NEXT: Jump -> next b9(v36, v35)
-# CHECK-NEXT: b13():
-# CHECK-NEXT: Return v21
-# CHECK-NEXT: b14(v38: boolean, v39: int[0, 4294967295] ~ int[0, 1], v40: Array<undefined|string, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Rare:
+# CHECK-NEXT: v22: boolean = Less v20, v18
+# CHECK-NEXT: Branch v22 -> taken b11(| 0), notTaken b17()
+# CHECK-NEXT: b11(v23: int[0, 4294967294]):
+# CHECK-NEXT: v24: boolean = IsInBounds v0, v23, v18
+# CHECK-NEXT: Branch v24 -> taken b12(| 0), notTaken b16(v23)
+# CHECK-NEXT: b12(v25: guard):
+# CHECK-NEXT: v26: guard = AllGuards v17, v25
+# CHECK-NEXT: v27: "a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i" = GetArrayElement v0, v23, v26 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds, storageIsUndecided]
+# CHECK-NEXT: v28: 1 = Integer integer=1
+# CHECK-NEXT: v29: int[1, 4294967295] = Add v23, v28
+# CHECK-NEXT: v30: false = Boolean
+# CHECK-NEXT: AppendElement v13, v27
+# CHECK-NEXT: Jump -> next b9(v30, v29)
+# CHECK-NEXT: b13() frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Branch v38 -> taken b18(), notTaken b15()
-# CHECK-NEXT: b15() frequency=Rare:
-# CHECK-NEXT: v42: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v43: boolean = Less v39, v42
-# CHECK-NEXT: Branch v43 -> taken b16(| 0), notTaken b18()
-# CHECK-NEXT: b16(v44: int[0, 4294967294] ~ int[0, 1]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b17(v44, v40)
-# CHECK-NEXT: b17(v45: int[0, 4294967294], v46: Array<undefined|string, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Rare:
-# CHECK-NEXT: v47: undefined|string = ElemGet v1, v45 [keyIsIntegral, storageIsUndecided]
-# CHECK-NEXT: v48: 1 = Integer integer=1
-# CHECK-NEXT: v49: int[1, 4294967295] = Add v45, v48
-# CHECK-NEXT: v50: false = Boolean
-# CHECK-NEXT: AppendElement v46, v47
-# CHECK-NEXT: Jump -> next b7(v50, v49, v46)
-# CHECK-NEXT: b18() frequency=Rare:
-# CHECK-NEXT: Return v40
+# CHECK-NEXT: Branch v14 -> taken b17(), notTaken b14()
+# CHECK-NEXT: b14() frequency=Rare:
+# CHECK-NEXT: v33: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v34: boolean = Less v15, v33
+# CHECK-NEXT: Branch v34 -> taken b15(| 0), notTaken b17()
+# CHECK-NEXT: b15(v35: int[0, 4294967294] ~ int[0, 1]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b16(v35)
+# CHECK-NEXT: b16(v36: int[0, 4294967294]) frequency=Rare:
+# CHECK-NEXT: v37: undefined|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i" = ElemGet v0, v36 [keyIsIntegral, storageIsUndecided]
+# CHECK-NEXT: v38: 1 = Integer integer=1
+# CHECK-NEXT: v39: int[1, 4294967295] = Add v36, v38
+# CHECK-NEXT: v40: false = Boolean
+# CHECK-NEXT: AppendElement v13, v37
+# CHECK-NEXT: Jump -> next b7(v40, v39)
+# CHECK-NEXT: b17():
+# CHECK-NEXT: Return v13
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="union"
-# CHECK: module=m0 position=1960 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<boolean|1|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]> site=w24 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|boolean|int|"a"|"b", proven, pristine[Storage, Names, Dense]> site=w25 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=1960 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<boolean|1|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]> site=w24 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|boolean|int|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]> site=w25 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: Array<boolean|1|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: v2: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
@@ -1420,30 +1384,30 @@ runtimefunction id=68 function=f23
 # CHECK-NEXT: v6: true = Boolean boolean=true
 # CHECK-NEXT: Jump -> next b3(v6, v1)
 # CHECK-NEXT: b3(v7: boolean, v8: int[0, 1]):
-# CHECK-NEXT: v9: Array<undefined|boolean|int|"a"|"b"> = NewArray contents=undefined|boolean|int|"a"|"b" allocationSite=48 [contentsAreProven]
-# CHECK-NEXT: v10: Array<undefined|boolean|int|"a"|"b", proven, pristine[Storage, Names, Dense]> = AssumeType v9 provenType=Array<undefined|boolean|int|"a"|"b", proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v9: Array<undefined|boolean|int|"a"|"b", Contiguous> = NewArray contents=undefined|boolean|int|"a"|"b" allocationSite=48 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v10: Array<undefined|boolean|int|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v9 provenType=Array<undefined|boolean|int|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v11: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: Jump -> next b4(v7, v8)
-# CHECK-NEXT: b4(v11: boolean, v12: int[0, 4294967295] ~ int[0, 1]):
-# CHECK-NEXT: Jump -> next b5(v11, v12)
-# CHECK-NEXT: b5(v13: boolean, v14: int[0, 4294967295]):
+# CHECK-NEXT: b4(v12: boolean, v13: int[0, 4294967295] ~ int[0, 1]):
+# CHECK-NEXT: Jump -> next b5(v12, v13)
+# CHECK-NEXT: b5(v14: boolean, v15: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Branch v13 -> taken b10(), notTaken b6()
+# CHECK-NEXT: Branch v14 -> taken b10(), notTaken b6()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v16: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v17: boolean = Less v14, v16
+# CHECK-NEXT: v17: boolean = Less v15, v11
 # CHECK-NEXT: Branch v17 -> taken b7(| 0), notTaken b10()
 # CHECK-NEXT: b7(v18: int[0, 4294967294]):
-# CHECK-NEXT: v19: boolean = IsInBounds v0, v18
+# CHECK-NEXT: v19: boolean = IsInBounds v0, v18, v11
 # CHECK-NEXT: Branch v19 -> taken b8(| 0), notTaken b9()
 # CHECK-NEXT: b8(v20: guard):
-# CHECK-NEXT: v21: boolean|1|"a"|"b" = GetArrayElement v0, v18, v20 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v21: boolean|1|"a"|"b" = GetArrayElement v0, v18, v20, v11 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
 # CHECK-NEXT: v22: 1 = Integer integer=1
 # CHECK-NEXT: v23: int[1, 4294967295] = Add v18, v22
 # CHECK-NEXT: v24: false = Boolean
 # CHECK-NEXT: AppendElement v10, v21
 # CHECK-NEXT: Jump -> next b5(v24, v23)
 # CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: v26: undefined|boolean|1|"a"|"b" = GetArrayElement v0, v18 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v26: undefined|boolean|1|"a"|"b" = GetArrayElement v0, v18, -, v11 arrayStorage=Contiguous level=Proven [keyIsIntegral]
 # CHECK-NEXT: v27: 1 = Integer integer=1
 # CHECK-NEXT: v28: int[1, 4294967295] = Add v18, v27
 # CHECK-NEXT: v29: false = Boolean
@@ -1469,28 +1433,28 @@ runtimefunction id=68 function=f23
 # CHECK-NEXT: b3(v7: boolean, v8: int[0, 1]):
 # CHECK-NEXT: v9: Array<undefined|int> = NewArray contents=undefined|int allocationSite=49 [contentsAreProven]
 # CHECK-NEXT: v10: Array<undefined|int, proven, pristine[Storage, Names, Dense]> = AssumeType v9 provenType=Array<undefined|int, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v11: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: Jump -> next b4(v7, v8)
-# CHECK-NEXT: b4(v11: boolean, v12: int[0, 4294967295] ~ int[0, 1]):
-# CHECK-NEXT: Jump -> next b5(v11, v12)
-# CHECK-NEXT: b5(v13: boolean, v14: int[0, 4294967295]):
+# CHECK-NEXT: b4(v12: boolean, v13: int[0, 4294967295] ~ int[0, 1]):
+# CHECK-NEXT: Jump -> next b5(v12, v13)
+# CHECK-NEXT: b5(v14: boolean, v15: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Branch v13 -> taken b10(), notTaken b6()
+# CHECK-NEXT: Branch v14 -> taken b10(), notTaken b6()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v16: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v17: boolean = Less v14, v16
+# CHECK-NEXT: v17: boolean = Less v15, v11
 # CHECK-NEXT: Branch v17 -> taken b7(| 0), notTaken b10()
 # CHECK-NEXT: b7(v18: int[0, 4294967294]):
-# CHECK-NEXT: v19: boolean = IsInBounds v0, v18
+# CHECK-NEXT: v19: boolean = IsInBounds v0, v18, v11
 # CHECK-NEXT: Branch v19 -> taken b8(| 0), notTaken b9()
 # CHECK-NEXT: b8(v20: guard):
-# CHECK-NEXT: v21: int[1, 3] = GetArrayElement v0, v18, v20 arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v21: int[1, 3] = GetArrayElement v0, v18, v20, v11 arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds]
 # CHECK-NEXT: v22: 1 = Integer integer=1
 # CHECK-NEXT: v23: int[1, 4294967295] = Add v18, v22
 # CHECK-NEXT: v24: false = Boolean
 # CHECK-NEXT: AppendElement v10, v21
 # CHECK-NEXT: Jump -> next b5(v24, v23)
 # CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: v26: undefined|int[1, 3] = GetArrayElement v0, v18 arrayStorage=Int32 level=Proven [keyIsIntegral]
+# CHECK-NEXT: v26: undefined|int[1, 3] = GetArrayElement v0, v18, -, v11 arrayStorage=Int32 level=Proven [keyIsIntegral]
 # CHECK-NEXT: v27: 1 = Integer integer=1
 # CHECK-NEXT: v28: int[1, 4294967295] = Add v18, v27
 # CHECK-NEXT: v29: false = Boolean
@@ -1502,105 +1466,35 @@ runtimefunction id=68 function=f23
 # CHECK-LABEL: function {{*}}name="unknowns"
 # CHECK: module=m0 position=108 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f1}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f1, v1: anything, v2: anything):
-# CHECK-NEXT: v3: undefined|Array<undefined|null|int[1, 3]|fractional|string|L0, proven, pristine[Storage, Names]> = AssumeType v2 provenType=undefined|Array<undefined|null|int[1, 3]|fractional|string|L0, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v4: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]> = CallDirect v3 function=f1
+# CHECK-NEXT: v3: Array<undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, pristine[Storage, Names]> = AssumeType v2 provenType=Array<undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v4: Array<undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v3 function=f1
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="anys"
 # CHECK: module=m0 position=186 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f2}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f2, v1: anything, v2: anything):
-# CHECK-NEXT: v3: undefined|Array<undefined|null|int[1, 3]|fractional|string|L0, proven, pristine[Storage, Names]> = AssumeType v2 provenType=undefined|Array<undefined|null|int[1, 3]|fractional|string|L0, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v4: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]> = CallDirect v3 function=f2
+# CHECK-NEXT: v3: Array<undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, pristine[Storage, Names]> = AssumeType v2 provenType=Array<undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v4: Array<undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v3 function=f2
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="generic"
-# CHECK: module=m0 position=252 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f3}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers} inlineFrames=[{}, {callee=f3 callPosition=252 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=252 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f3}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f3, v1: anything, v2: anything):
-# CHECK-NEXT: v3: undefined|Array<undefined|null|int[1, 10]|fractional|string|L0, proven, pristine[Storage, Names]> = AssumeType v2 provenType=undefined|Array<undefined|null|int[1, 10]|fractional|string|L0, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v4: Array<undefined|null|int[1, 10]|fractional|string|L0, proven, pristine[Storage, Names]> = RequireObjectCoercible v3 nullishAccess=Iterate
-# CHECK-NEXT: v5: 0 = Integer
-# CHECK-NEXT: v6: int[0, 4294967295] = CallBuiltin v4 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v7: boolean = Less v5, v6
-# CHECK-NEXT: Branch v7 -> taken b1(), notTaken b5()
-# CHECK-NEXT: b1():
-# CHECK-NEXT: v8: boolean = HasArrayStorage v4 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b4()
-# CHECK-NEXT: b2(v9: guard):
-# CHECK-NEXT: v10: boolean = IsElementPresent v4, v5, v9 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v10 -> taken b3(), notTaken b4()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v11: 1 = Integer integer=1
-# CHECK-NEXT: v12: false = Boolean
-# CHECK-NEXT: Jump -> next b6(v12, v11)
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: v13: undefined|null|int[1, 10]|fractional|string|L0 = ElemGet v4, v5 [keyIsIntegral, storageIsUndecided]
-# CHECK-NEXT: v14: 1 = Integer integer=1
-# CHECK-NEXT: v15: false = Boolean
-# CHECK-NEXT: v16: Array<undefined|null|int|fractional|string|L0> = NewArray contents=undefined|null|int|fractional|string|L0 allocationSite=39 [contentsAreProven]
-# CHECK-NEXT: v17: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]> = AssumeType v16 provenType=Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b14(v15, v14, v17)
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v18: true = Boolean boolean=true
-# CHECK-NEXT: Jump -> next b6(v18, v5)
-# CHECK-NEXT: b6(v19: boolean, v20: int[0, 1]):
-# CHECK-NEXT: v21: Array<undefined|null|int|fractional|string|L0> = NewArray contents=undefined|null|int|fractional|string|L0 allocationSite=39 [contentsAreProven]
-# CHECK-NEXT: v22: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]> = AssumeType v21 provenType=Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b7(v19, v20, v22)
-# CHECK-NEXT: b7(v23: boolean, v24: int[0, 4294967295] ~ int[0, 1], v25: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v26: boolean = HasArrayStorage v4 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v26 -> taken b8(| 0), notTaken b14(v23, v24, v25)
-# CHECK-NEXT: b8(v27: guard):
-# CHECK-NEXT: Jump -> next b9(v23, v24)
-# CHECK-NEXT: b9(v28: boolean, v29: int[0, 4294967295]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: Branch v28 -> taken b13(), notTaken b10()
-# CHECK-NEXT: b10():
-# CHECK-NEXT: v31: int[0, 4294967295] = CallBuiltin v4 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v32: boolean = Less v29, v31
-# CHECK-NEXT: Branch v32 -> taken b11(| 0), notTaken b13()
-# CHECK-NEXT: b11(v33: int[0, 4294967294]):
-# CHECK-NEXT: v34: boolean = IsElementPresent v4, v33, v27 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v34 -> taken b12(| 0), notTaken b17(v33, v25)
-# CHECK-NEXT: b12(v35: guard):
-# CHECK-NEXT: v36: guard = AllGuards v27, v35
-# CHECK-NEXT: v37: undefined|null|int[1, 10]|fractional|string|L0 = GetArrayElement v4, v33, v36 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent, storageIsUndecided]
-# CHECK-NEXT: v38: 1 = Integer integer=1
-# CHECK-NEXT: v39: int[1, 4294967295] = Add v33, v38
-# CHECK-NEXT: v40: false = Boolean
-# CHECK-NEXT: AppendElement v25, v37
-# CHECK-NEXT: Jump -> next b9(v40, v39)
-# CHECK-NEXT: b13():
-# CHECK-NEXT: Return v25
-# CHECK-NEXT: b14(v42: boolean, v43: int[0, 4294967295] ~ int[0, 1], v44: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>) frequency=Rare:
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: Branch v42 -> taken b18(), notTaken b15()
-# CHECK-NEXT: b15() frequency=Rare:
-# CHECK-NEXT: v46: int[0, 4294967295] = CallBuiltin v4 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v47: boolean = Less v43, v46
-# CHECK-NEXT: Branch v47 -> taken b16(| 0), notTaken b18()
-# CHECK-NEXT: b16(v48: int[0, 4294967294] ~ int[0, 1]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b17(v48, v44)
-# CHECK-NEXT: b17(v49: int[0, 4294967294], v50: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]>) frequency=Rare:
-# CHECK-NEXT: v51: undefined|null|int[1, 10]|fractional|string|L0 = ElemGet v4, v49 [keyIsIntegral, storageIsUndecided]
-# CHECK-NEXT: v52: 1 = Integer integer=1
-# CHECK-NEXT: v53: int[1, 4294967295] = Add v49, v52
-# CHECK-NEXT: v54: false = Boolean
-# CHECK-NEXT: AppendElement v50, v51
-# CHECK-NEXT: Jump -> next b7(v54, v53, v50)
-# CHECK-NEXT: b18() frequency=Rare:
-# CHECK-NEXT: Return v44
+# CHECK-NEXT: v3: Array<undefined|null|int[1, 10]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, pristine[Storage, Names]> = AssumeType v2 provenType=Array<undefined|null|int[1, 10]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v4: Array<undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v3 function=f3
+# CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="all"
 # CHECK: module=m0 position=584 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f7}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f7} creator=Entrypoint{target=f7 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f7, v1: anything, v2: anything):
-# CHECK-NEXT: v3: undefined|Array<undefined|null|int[1, 3]|fractional|string|L0, proven, pristine[Storage, Names]> = AssumeType v2 provenType=undefined|Array<undefined|null|int[1, 3]|fractional|string|L0, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v4: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]> = CallDirect v3 function=f7
+# CHECK-NEXT: v3: Array<undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, pristine[Storage, Names]> = AssumeType v2 provenType=Array<undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v4: Array<undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v3 function=f7
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="skipped"
 # CHECK: module=m0 position=654 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f8}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f8} creator=Entrypoint{target=f8 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f8, v1: anything, v2: anything):
-# CHECK-NEXT: v3: undefined|Array<undefined|null|int[1, 3]|fractional|string|L0, proven, pristine[Storage, Names]> = AssumeType v2 provenType=undefined|Array<undefined|null|int[1, 3]|fractional|string|L0, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v4: Array<undefined|null|int|fractional|string|L0, proven, pristine[Storage, Names, Dense]> = CallDirect v3 function=f8
+# CHECK-NEXT: v3: Array<undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, pristine[Storage, Names]> = AssumeType v2 provenType=Array<undefined|null|int[1, 3]|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v4: Array<undefined|null|int|fractional|"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"x"|L0, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v3 function=f8
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }

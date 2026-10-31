@@ -142,7 +142,7 @@ These are settled. Each was argued, and most were learned by building the opposi
 - **An option is on by default or deleted.** No always-on options, no knobs kept "for safety".
 - **No run-time safety net for compiler bugs.** Fix the bug, at no cost in speed. Checks belong in the checking builds.
 - **The table of built-ins is data**, generated from `*.builtins.ts`. Type predicates (`Array.isArray`, `typeof`) always fold. `Math` functions are intrinsics.
-- **CommonJS is just a function.** A module of the image runs at most once; cycles must work.
+- **CommonJS is just a function.** A module of the image runs at most once; cycles must work. The one exception is an ES module that is a test file under `bun test --rerun-each` (`ModuleFlags::RunsAgain`): each run holds what the file declares in an environment of its own, and flow takes the body to run any number of times. The body of a library module that threw is entered again by the next `require`, as in plain Bun: the run time first forgets what the failed run made (`Modules::forgetRunOfLibraryModule`), so for the code each run is the first.
 
 **What an executable is**
 

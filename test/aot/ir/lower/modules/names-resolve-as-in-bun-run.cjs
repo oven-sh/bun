@@ -33,7 +33,7 @@
 // CHECK-NOT: RequireDynamic
 // CHECK-LABEL: function {{*}}name="resolve"
 // CHECK-NOT: ResolveDynamic
-// CHECK: = ResolveModule module=m
+// CHECK: = String string="{{*}}imports/common.cjs"
 // CHECK-NOT: ResolveDynamic
 // CHECK-LABEL: function {{*}}name="requireThatAModuleExports"
 // CHECK: EvaluateModule module=m

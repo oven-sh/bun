@@ -3,7 +3,7 @@ import { expect } from "bun:test";
 import { readFileSync } from "fs";
 import { isWindows } from "harness";
 import { join } from "path";
-import { parseModuleExports } from "../../src/codegen/builtins/collect-modules";
+import { parseModuleExports, readListedExports } from "../../src/codegen/builtins/collect-modules";
 import { test } from "./supported";
 
 const readLines = (path: string) =>
@@ -62,8 +62,10 @@ test("every name in src/codegen/builtins/data/module-exports.txt is exported", a
 // Compiled code looks up an unlisted name of these three at run time.
 const decidedAtRunTime = ["bun", "node:constants", "node:process"];
 
-// An import of a name that the line of any other native module does not list stops the build. So the line has to list every export.
-test("src/codegen/builtins/data/module-exports.txt lists every export of a native module", async () => {
+// An import of a name that the table does not have for any other native module stops the build. The table has the names
+// that the module's C++ passes to put() and putNativeFn(), and the names of its line in module-exports.txt.
+test("the table has every export of a native module", async () => {
+  const known = readListedExports(join(import.meta.dir, "../.."));
   const namesIn = (list: string[], specifier: string) =>
     list
       .find(line => line.startsWith(specifier + " "))
@@ -74,7 +76,10 @@ test("src/codegen/builtins/data/module-exports.txt lists every export of a nativ
   const unlisted: string[] = [];
   for (const specifier of closed) {
     const absent = isWindows ? namesIn(absentOnWindowsLines, specifier) : [];
-    const listed = namesIn(lines, specifier).filter(name => !absent.includes(name));
+    const listed = known
+      .get(specifier)!
+      .exports.map(({ name }) => name)
+      .filter(name => !absent.includes(name));
     for (const name of Object.keys(await import(specifier)))
       if (!listed.includes(name)) unlisted.push(specifier + " " + name);
   }

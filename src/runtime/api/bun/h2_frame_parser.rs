@@ -897,6 +897,17 @@ struct SendDataOptions {
     defer_write_callback: bool,
 }
 
+/// What one `H2FrameParser::send_data` call leaves to its caller.
+#[must_use]
+struct SentData {
+    /// The state the close tail settled on (5 = HALF_CLOSED_LOCAL, 7 = CLOSED, 0 = none).
+    settled_state: u8,
+    /// `callback` was left to the caller.
+    callback_deferred: bool,
+    /// An earlier write's callback, to call once the payload and `&mut Stream` borrows have ended.
+    displaced_callback: StrongOptional,
+}
+
 struct DispatchGuard<'a>(&'a Cell<u32>);
 
 impl Drop for DispatchGuard<'_> {
@@ -1656,75 +1667,41 @@ impl Stream {
         }
     }
 
+    /// Returns the write callback that `callback` displaced from the tail frame, not yet called.
+    #[must_use]
     pub(crate) fn queue_frame(
         &mut self,
         client: &H2FrameParser,
         bytes: &[u8],
         callback: JSValue,
-        end_stream: bool,
-    ) {
+        mut end_stream: bool,
+    ) -> StrongOptional {
         let global_this = client.global_this;
 
-        // Note: `dispatch_write_callback()` below re-enters JS, which can
-        // call back into `H2FrameParser` host-fns (e.g. `writeStream`) that
-        // look this `Stream` up by id from `client.streams` and reach
-        // `queue_frame()` again with a fresh `&mut Stream` aliasing this one.
-        // R-2: `client` is now `&H2FrameParser` (UnsafeCell-backed fields), so
-        // the parser-side noalias miscompile is structurally impossible. The
-        // `Stream`-side `&mut self` alias across re-entry remains; keep the
-        // `black_box` launder on `self`/`last_frame` as defense-in-depth until
-        // `Stream` itself is celled.
-        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        // SAFETY: `this` is the live `&mut self` payload; no other `&` to
-        // `*this` exists between here and the dispatch call.
-        if let Some(last_frame_ref) = unsafe { (*this).data_frame_queue.peek_last() } {
-            // Raw, opaque-provenance pointer for post-dispatch accesses.
-            let last_frame: *mut PendingFrame =
-                core::hint::black_box(core::ptr::from_mut(last_frame_ref));
-            // SAFETY: helper for the pre-dispatch accesses below; `last_frame`
-            // is the unique tail slot in `self.data_frame_queue.data`, valid
-            // until the dispatch call (after which we re-`black_box` before
-            // every access — see note above).
-            macro_rules! lf {
-                () => {
-                    // SAFETY: `last_frame` points at the live tail slot of
-                    // `self.data_frame_queue`; provenance is re-laundered via
-                    // `black_box` before each post-dispatch expansion so no
-                    // other `&mut` to the slot is live here (see note).
-                    unsafe { &mut *last_frame }
-                };
-            }
+        if let Some(last_frame) = self.data_frame_queue.peek_last() {
+            // A queued END_STREAM moves to whichever frame ends up last.
+            end_stream |= core::mem::take(&mut last_frame.end_stream);
             if bytes.is_empty() {
                 // just merge the end_stream
-                lf!().end_stream = end_stream;
-                // we can only hold 1 callback at a time so we conclude the last one, and keep the last one as pending
-                // this is fine is like a per-stream CORKING in a frame level
-                let old_callback = core::mem::replace(
-                    &mut lf!().callback,
+                last_frame.end_stream = end_stream;
+                // a frame holds 1 callback: like a per-stream CORKING in a frame level
+                return core::mem::replace(
+                    &mut last_frame.callback,
                     StrongOptional::create(callback, &global_this),
                 );
-                if let Some(old_callback_value) = old_callback.get() {
-                    // Escape `this` so a self-derived address is observable
-                    // across the opaque JS call (belt-and-suspenders; either
-                    // launder alone defeats the caching).
-                    core::hint::black_box(this);
-                    client.dispatch_write_callback(old_callback_value);
-                }
-                drop(old_callback);
-                return;
             }
-            if lf!().len == 0 {
+            if last_frame.len == 0 {
                 // we have an empty frame with means we can just use this frame with a new buffer
-                lf!().buffer = Vec::with_capacity(MAX_PAYLOAD_SIZE_WITHOUT_FRAME);
+                last_frame.buffer = Vec::with_capacity(MAX_PAYLOAD_SIZE_WITHOUT_FRAME);
             }
             let max_size = MAX_PAYLOAD_SIZE_WITHOUT_FRAME as u32;
-            let remaining = max_size - lf!().len;
+            let remaining = max_size - last_frame.len;
             if remaining > 0 {
                 // ok we can cork frames
                 let consumed_len = (remaining as usize).min(bytes.len());
                 let merge = &bytes[0..consumed_len];
-                lf!().buffer.extend_from_slice(merge);
-                lf!().len += u32::try_from(consumed_len).expect("int cast");
+                last_frame.buffer.extend_from_slice(merge);
+                last_frame.len += u32::try_from(consumed_len).expect("int cast");
                 bun_output::scoped_log!(H2FrameParser, "dataFrame merged {}", consumed_len);
 
                 client
@@ -1733,25 +1710,15 @@ impl Stream {
                 // lets fallthrough if we still have some data
                 let more_data = &bytes[consumed_len..];
                 if more_data.is_empty() {
-                    lf!().end_stream = end_stream;
-                    // we can only hold 1 callback at a time so we conclude the last one, and keep the last one as pending
-                    // this is fine is like a per-stream CORKING in a frame level
-                    let old_callback = core::mem::replace(
-                        &mut lf!().callback,
+                    last_frame.end_stream = end_stream;
+                    // a frame holds 1 callback: like a per-stream CORKING in a frame level
+                    return core::mem::replace(
+                        &mut last_frame.callback,
                         StrongOptional::create(callback, &global_this),
                     );
-                    if let Some(old_callback_value) = old_callback.get() {
-                        core::hint::black_box(this);
-                        client.dispatch_write_callback(old_callback_value);
-                    }
-                    drop(old_callback);
-                    return;
                 }
                 // we keep the old callback because the new will be part of another frame
-                // SAFETY: `this` is the live `&mut self`; no borrow of `*this`
-                // is held here (the `last_frame` raw pointer is unused past
-                // this point).
-                return unsafe { (*this).queue_frame(client, more_data, callback, end_stream) };
+                return self.queue_frame(client, more_data, callback, end_stream);
             }
         }
         bun_output::scoped_log!(
@@ -1796,6 +1763,7 @@ impl Stream {
         client
             .queued_data_size
             .set(client.queued_data_size.get() + bytes.len() as u64);
+        StrongOptional::empty()
     }
 
     pub(crate) fn init(
@@ -5126,15 +5094,13 @@ impl H2FrameParser {
         (self.write_buffer.get().len_u32() as u64 + self.queued_data_size.get()) as f64
     }
 
-    /// Returns `(settled_state, callback_deferred)`: the state the close tail settled on (5 =
-    /// HALF_CLOSED_LOCAL, 7 = CLOSED, 0 = none) and whether `callback` was left to the caller.
     fn send_data(
         &self,
         stream: &mut Stream,
         payload: &[u8],
         callback: JSValue,
         options: SendDataOptions,
-    ) -> (u8, bool) {
+    ) -> SentData {
         let SendDataOptions {
             close,
             suppress_half_closed_local_dispatch,
@@ -5155,6 +5121,7 @@ impl H2FrameParser {
 
         let stream_id = stream.id;
         let mut enqueued = false;
+        let mut displaced_callback = StrongOptional::empty();
         let _keepalive = self.keepalive();
 
         let can_close = close && !stream.wait_for_trailers;
@@ -5172,7 +5139,7 @@ impl H2FrameParser {
             };
             if self.has_backpressure() || self.outbound_queue_size.get() > 0 {
                 enqueued = true;
-                stream.queue_frame(self, b"", callback, close);
+                displaced_callback = stream.queue_frame(self, b"", callback, close);
             } else {
                 let mut writer = self.to_writer();
                 let _ = data_header.write(&mut writer, &self.frames_sent_legacy);
@@ -5215,10 +5182,9 @@ impl H2FrameParser {
                     // Preserve wire order: anything already batched goes out before the
                     // queued remainder is flushed later by the drain path.
                     self.flush_batch_buffer();
-                    enqueued = true;
                     // write the full frame in memory and queue the frame
                     // the callback will only be called after the last frame is sended
-                    stream.queue_frame(
+                    let displaced = stream.queue_frame(
                         self,
                         slice,
                         if offset >= payload.len() {
@@ -5228,6 +5194,11 @@ impl H2FrameParser {
                         },
                         offset >= payload.len() && close,
                     );
+                    // Later slices only land on frames this write queued or took over.
+                    if !enqueued {
+                        displaced_callback = displaced;
+                    }
+                    enqueued = true;
                 } else {
                     let padding = stream.get_padding(size, max_size - 1);
                     let payload_size = size
@@ -5369,7 +5340,11 @@ impl H2FrameParser {
                 }
             }
         }
-        (settled_state, callback_deferred)
+        SentData {
+            settled_state,
+            callback_deferred,
+            displaced_callback,
+        }
     }
 
     fn stream_from_js(
@@ -5398,7 +5373,7 @@ impl H2FrameParser {
         let stream = unsafe { &mut *stream };
 
         stream.wait_for_trailers = false;
-        let _ = self.send_data(
+        let sent = self.send_data(
             stream,
             b"",
             JSValue::UNDEFINED,
@@ -5408,6 +5383,9 @@ impl H2FrameParser {
                 defer_write_callback: false,
             },
         );
+        if let Some(displaced_callback) = sent.displaced_callback.get() {
+            self.dispatch_write_callback(displaced_callback);
+        }
         Ok(())
     }
 
@@ -5901,7 +5879,7 @@ impl H2FrameParser {
         };
 
         let payload = self.stable_payload(buffer.slice());
-        let (settled_state, callback_deferred) = self.send_data(
+        let sent = self.send_data(
             &mut stream,
             &payload,
             callback,
@@ -5911,14 +5889,20 @@ impl H2FrameParser {
                 defer_write_callback: defer_callback.to_boolean(),
             },
         );
+        drop(payload);
+        drop(buffer);
+        drop(stream);
+        if let Some(displaced_callback) = sent.displaced_callback.get() {
+            self.dispatch_write_callback(displaced_callback);
+        }
 
         // 5 = HALF_CLOSED_LOCAL: the JS caller runs markWritableDone itself instead of
         // the engine re-entering the VM with an onStreamEnd(5) dispatch.
         // WRITE_FLUSHED_WITHOUT_CALLBACK: the data was handed to the socket synchronously and
         // the write callback was not (and will not be) invoked by the engine; the JS caller
         // completes the Writable callback asynchronously.
-        let mut result = settled_state as u32;
-        if callback_deferred {
+        let mut result = sent.settled_state as u32;
+        if sent.callback_deferred {
             result |= WRITE_FLUSHED_WITHOUT_CALLBACK;
         }
         Ok(JSValue::js_number(result as f64))

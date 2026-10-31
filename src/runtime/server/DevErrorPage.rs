@@ -4,10 +4,10 @@
 
 use std::io::Write as _;
 
-use bun_ast::{Kind, Location, Log, Metadata, Msg};
+use bun_ast::{Kind, Location, Metadata, Msg};
 use bun_core::fmt::{JSONFormatterUTF8Options, format_json_string_utf8, substitute_named};
 use bun_core::strings;
-use bun_jsc::exception_list::{JsException, StackTrace};
+use bun_jsc::exception_list::{ExceptionList, StackTrace};
 
 const HTML_TEMPLATE: &[u8] = include_bytes!("dev-error-page.html");
 
@@ -15,9 +15,8 @@ pub(crate) struct DevErrorPage<'a> {
     /// One-line summary, e.g. `GET /foo failed`.
     pub message: &'a [u8],
     pub cwd: &'a [u8],
-    pub exceptions: &'a [JsException],
-    /// Build/resolve errors logged while handling the request.
-    pub log: Option<&'a Log>,
+    /// The thrown errors and the build/resolve errors of the failed request.
+    pub problems: &'a ExceptionList,
 }
 
 impl DevErrorPage<'_> {
@@ -48,7 +47,7 @@ impl DevErrorPage<'_> {
         write_string(w, self.cwd);
 
         w.extend_from_slice(b",\"problems\":{\"exceptions\":[");
-        for (i, exception) in self.exceptions.iter().enumerate() {
+        for (i, exception) in self.problems.exceptions.iter().enumerate() {
             if i > 0 {
                 w.push(b',');
             }
@@ -69,12 +68,7 @@ impl DevErrorPage<'_> {
             w.push(b'}');
         }
 
-        // `Log.errors` / `Log.warnings` don't count messages added via
-        // `add_msg`, which is how build/resolve errors reach this log.
-        let msgs: &[Msg] = match self.log {
-            Some(log) => &log.msgs,
-            None => &[],
-        };
+        let msgs = &self.problems.build;
         let (mut errors, mut warnings) = (0u32, 0u32);
         for msg in msgs {
             errors += (msg.kind == Kind::Err) as u32;

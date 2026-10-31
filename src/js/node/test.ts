@@ -456,7 +456,8 @@ function reportCancelledFile(
 }
 
 // Bound by the first file of the first run(): importing node:test costs nothing for it.
-let fileFlags: ((cwd: string) => string[][]) | undefined;
+type FileFlags = (cwd: string) => string[][];
+let fileFlags: FileFlags | undefined;
 
 function isCAStoreFlag(arg: string) {
   return arg === "--use-system-ca" || arg === "--use-openssl-ca" || arg === "--use-bundled-ca";
@@ -478,7 +479,7 @@ async function runOneFile(
 ) {
   const path = require("node:path");
   const absolute = path.resolve(opts.cwd as string, file);
-  fileFlags ??= $bindgen("jest.bind.ts", "nodeTestFileFlags");
+  fileFlags ??= $bindgen("jest.bind.ts", "nodeTestFileFlags") as FileFlags;
   let [beforeTest, afterTest] = fileFlags(opts.cwd as string);
   const execArgv = opts.execArgv as string[];
   let choosesCAStore = false;

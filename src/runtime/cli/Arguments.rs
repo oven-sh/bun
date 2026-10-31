@@ -1133,6 +1133,7 @@ const HANDED_ON_TO_NODE_TEST_FILE: &[&[u8]] = &[
     b"--trace-exit",
     b"--expose-internals",
     b"--stack-trace-limit",
+    b"--no-orphans",
 ];
 
 /// The shared flags that stay with the caller.
@@ -1165,6 +1166,8 @@ const WITHHELD_FROM_NODE_TEST_FILE: &[&[u8]] = &[
     b"--aot-build-id",
     // The caller moved already, and the child starts where `run()` says.
     b"--cwd",
+    // To `bun test` this name means something else.
+    b"--parallel",
 ];
 
 /// Started as `node`, Bun reads these as Node.js does or not at all. The child reads them as Bun.
@@ -1231,14 +1234,34 @@ const fn names_one_of<Id>(params: &[clap::Param<Id>], dashed: &[u8]) -> bool {
     false
 }
 
-const _: () = {
-    let shared = BASE_RUNTIME_TRANSPILER_PARAMS;
+/// Whether one of `params` is a flag with the name of `names`.
+const fn has_flag<Id>(params: &[clap::Param<Id>], names: &clap::Names) -> bool {
     let mut i = 0;
-    while i < shared.len() {
-        let names = &shared[i].names;
-        let is_flag = names.long.is_some() || names.short.is_some();
+    while i < params.len() {
+        let is_same = match (names.long, params[i].names.long) {
+            (Some(name), Some(other)) => strings::const_bytes_eq(name, other),
+            (None, None) => {
+                matches!((names.short, params[i].names.short), (Some(name), Some(other)) if name == other)
+            }
+            _ => false,
+        };
+        if is_same {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
+const _: () = {
+    let of_test = TEST_PARAMS;
+    let mut i = 0;
+    while i < of_test.len() {
+        let names = &of_test[i].names;
+        // Also a flag of a caller that is not `bun test`.
+        let is_shared = has_flag(AUTO_PARAMS, names) || has_flag(RUN_PARAMS, names);
         assert!(
-            !is_flag
+            !is_shared
                 || count_in(HANDED_ON_TO_NODE_TEST_FILE, names)
                     + count_in(WITHHELD_FROM_NODE_TEST_FILE, names)
                     == 1,
@@ -1261,8 +1284,11 @@ const _: () = {
         let mut i = 0;
         while i < lists[list].len() {
             // The flag of `DEBUG_PARAMS` is shared only in a build that has it.
+            let name = lists[list][i];
+            let is_shared = names_one_of(of_test, name)
+                && (names_one_of(AUTO_PARAMS, name) || names_one_of(RUN_PARAMS, name));
             assert!(
-                names_one_of(shared, lists[list][i]) || names_one_of(DEBUG_PARAMS, lists[list][i]),
+                is_shared || names_one_of(DEBUG_PARAMS, name),
                 "A name in the lists for the test files of `run()` is not a flag that `bun run` and `bun test` share."
             );
             i += 1;
@@ -1273,8 +1299,8 @@ const _: () = {
 
 /// The command this process was started as, if it reads the shared flags from its command line.
 fn started_as() -> Option<CommandTag> {
-    // The arguments of a compiled executable are its program's.
-    if bun_standalone_graph::Graph::get().is_some() {
+    // The arguments of a compiled executable are its program's. Not so with a graph from `--aot`.
+    if bun_standalone_graph::Graph::get().is_some() && !cli::run_compiled::runs_compiled_code() {
         return None;
     }
     let started = bun_crash_handler::cli_state::cmd_char()?;
@@ -1468,7 +1494,7 @@ pub(crate) fn node_test_file_flags(
         if bun_core::CODE_GENERATION_FROM_STRINGS_DISALLOWED_BY_BUILD {
             None
         } else {
-            match bun_core::code_generation_from_strings() {
+            match bun_core::code_generation_from_strings_by_flags() {
                 bun_core::CodeGenerationFromStrings::Allowed => None,
                 bun_core::CodeGenerationFromStrings::DisallowedLikeNode => {
                     Some(b"--disallow-code-generation-from-strings")

@@ -1,7 +1,8 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isWindows, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, nodeExe, tempDir } from "harness";
 import { join, sep } from "node:path";
+import { unsupported as aotUnsupported } from "../../../aot/harness/compiler";
 
 describe("node:test", () => {
   // These three drive the largest fixtures (01-harness has 32 node:test cases);
@@ -815,7 +816,7 @@ describe("run() starts each file with the runtime flags of its caller", () => {
         --unhandled-rejections=strict --console-depth=4 --user-agent=every-flag/1
         --trace-events-enabled --trace-event-categories=node --trace-event-file-pattern=trace.log
         --trace-env --trace-env-js-stack --trace-env-native-stack --trace-exit --expose-internals
-        --stack-trace-limit=20 --network-family-autoselection --no-network-family-autoselection
+        --stack-trace-limit=20 --no-orphans --network-family-autoselection --no-network-family-autoselection
         --network-family-autoselection-attempt-timeout=500 --tls-keylog=./keys.log
       `;
       const { probes, fail, exitCode } = await result({ "runner.mjs": runner }, [
@@ -1266,6 +1267,29 @@ describe("run() starts each file with the runtime flags of its caller", () => {
       });
     },
     60_000,
+  );
+
+  // The process that runs the compiled program has it from the first one. It is no compiled
+  // executable: its arguments are Bun's. It refuses code from strings because of the compiled
+  // program, and no flag says so: the child does not.
+  // Not run on a debug or ASAN build: there the build of node:test takes over a minute.
+  test.skipIf(!!aotUnsupported || isDebug || isASAN).concurrent(
+    "--debug-aot: the process that runs the compiled program hands its flags on",
+    async () => {
+      const { probes, fail, exitCode } = await result({ "runner.mjs": runner }, [
+        bunExe(),
+        "--debug-aot",
+        "--no-addons",
+        "--smol",
+        "runner.mjs",
+      ]);
+      expect({ probes, fail, exitCode }).toMatchObject({
+        probes: [{ execArgv: ["--no-addons", "--smol"], dlopen: "refused", codeFromString: "allowed" }],
+        fail: 0,
+        exitCode: 0,
+      });
+    },
+    120_000,
   );
 
   // Not run on a debug build: a compiled executable is a copy of the build, which is over 1 GB.

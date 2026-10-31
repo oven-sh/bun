@@ -179,3 +179,5 @@ For source-specific multicast (SSM), use `addSourceSpecificMembership` and `drop
 socket.addSourceSpecificMembership("10.0.0.1", "232.0.0.1");
 socket.dropSourceSpecificMembership("10.0.0.1", "232.0.0.1");
 ```
+
+Write each address of a multicast method as a full IP address, such as `224.0.0.1` or `192.168.1.100`. For other text, such as a host name, an interface name or the shorthand `224.1`, `setMulticastInterface` returns `false` and the membership methods throw `EINVAL`.

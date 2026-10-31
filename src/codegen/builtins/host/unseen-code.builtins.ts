@@ -263,6 +263,7 @@ const nativeFiles = [
   "ZigSourceProvider.cpp",
   "bindgen_test.bind.ts",
   "decodeURIComponentSIMD.cpp",
+  "highway_jpeg_testing.cpp",
   "highway_strings_testing.cpp",
   "node_crypto_binding.cpp",
   "streams/BunStreamConsumers.cpp",

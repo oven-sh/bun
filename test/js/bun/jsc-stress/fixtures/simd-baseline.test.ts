@@ -6,7 +6,9 @@
 // to catch both SIGILL and miscompilation from wrong instruction lowering.
 
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import { deflateSync } from "node:zlib";
+import { hash, load, observeDecodeCase, readPng, type DecodeCase } from "../../image/jpeg-golden/observe";
 
 // Use Buffer.alloc instead of "x".repeat() — repeat is slow in debug JSC builds.
 const ascii256 = Buffer.alloc(256, "a").toString();
@@ -203,12 +205,13 @@ describe("String search — Highway memMem/indexOfChar", () => {
   });
 });
 
-describe("JPEG codec: libjpeg-turbo jsimd runtime dispatch", () => {
-  // libjpeg-turbo picks its kernels per codec instance from CPUID (simd/jsimd.c; on
-  // x64: AVX2, else SSE2; Neon on aarch64). On the emulated baseline CPU the
-  // AVX2 kernels must stay unselected, so this traps if that gate breaks.
-  // 72 px wide: two full 32-pixel AVX2 / 16-pixel SSE2 column iterations plus an
-  // 8-pixel tail; 40 px tall keeps h2v2 chroma downsampling and upsampling busy.
+describe("JPEG codec", () => {
+  // What works on a row of samples (colour conversion, downsampling, upsampling) is Highway
+  // kernels with runtime dispatch (highway_jpeg.cpp), so this traps if the dispatch picks a
+  // target that the CPU lacks. The rest of bun_jpeg is loops that the compiler turns into
+  // vector code for the CPU the build targets, so this traps if that is not the baseline CPU.
+  // 72 px wide: not a whole number of vectors of 16, 32 or 64 pixels; 40 px tall keeps h2v2
+  // chroma downsampling and upsampling busy.
   const width = 72;
   const height = 40;
 
@@ -256,8 +259,8 @@ describe("JPEG codec: libjpeg-turbo jsimd runtime dispatch", () => {
     // 100 stores exactly, and a grey value converts to YCbCr and back exactly.
     // So decoding the JPEG gives back the exact source pixels, and encoding
     // them again has to reproduce the first file. That runs the colour
-    // conversion, downsampling, DCT, quantization and Huffman kernels on the
-    // encode side and the IDCT, upsampling and colour conversion kernels on the
+    // conversion, downsampling, DCT, quantization and Huffman coding on the
+    // encode side and the IDCT, upsampling and colour conversion on the
     // decode side, and checks their results, not just that they did not trap.
     const first = await new Bun.Image(png(() => [77, 77, 77])).jpeg({ quality: 100 }).bytes();
     const second = await new Bun.Image(first).jpeg({ quality: 100 }).bytes();
@@ -266,14 +269,25 @@ describe("JPEG codec: libjpeg-turbo jsimd runtime dispatch", () => {
   });
 
   test("gradient round-trips through baseline and progressive encoders", async () => {
-    // Non-flat content drives the AC coefficient paths of the Huffman kernels
-    // and of the progressive encoder's coefficient preparation.
+    // Non-flat content drives the AC coefficient paths of the Huffman coders.
     const source = png((x, y) => [x * 3, y * 6, (x + y) & 0xff]);
-    for (const progressive of [false, true]) {
+    // The hashes are of what Bun 1.4.4 made with libjpeg-turbo on x86-64. Every CPU gives the same bytes.
+    for (const [progressive, bytes, pixels] of [
+      [false, "992f7574be", "531cf6f036"],
+      [true, "c3f721e6bd", "531cf6f036"],
+    ] as const) {
       const jpeg = await new Bun.Image(source).jpeg({ quality: 90, progressive }).bytes();
       expect(await new Bun.Image(jpeg).metadata()).toEqual({ width, height, format: "jpeg" });
       const decoded = await new Bun.Image(jpeg).png().bytes();
       expect(await new Bun.Image(decoded).metadata()).toEqual({ width, height, format: "png" });
+      expect({ bytes: hash(jpeg), pixels: hash(readPng(decoded).rgba) }).toEqual({ bytes, pixels });
     }
+  });
+
+  // Bun writes neither: 4:2:2 is upsampled in one direction only, and YCCK has a row of K to convert.
+  test.each(["wide/422.jpg", "wide/ycck420.jpg"])("%s decodes as it did with libjpeg-turbo", async name => {
+    const files = await load<DecodeCase[]>(join(import.meta.dir, "../../image/jpeg-golden/cases.json.gz"));
+    const file = files.find(file => file.name === name)!;
+    expect(await observeDecodeCase(Buffer.from(file.data, "base64"), file.seed)).toEqual(file.expected!);
   });
 });

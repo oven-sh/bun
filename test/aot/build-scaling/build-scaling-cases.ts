@@ -331,9 +331,12 @@ export const buildScaling = (part: number, parts: number) =>
           const fastCounts = growthOfCounts.flatMap(([name, times]) =>
             times > mostGrowth ? [[name, rounded(times)]] : [],
           );
+          // The bounds hold on every platform, so a growth that this machine does not judge stays as the file has it.
+          const overTheBoundOrKept = (what: keyof typeof growth) =>
+            growth[what] === undefined ? budget?.growth?.[what] : overTheBound(growth[what]);
           const fast = {
-            instructions: overTheBound(growth.instructions),
-            peakBytes: overTheBound(growth.peakBytes),
+            instructions: overTheBoundOrKept("instructions"),
+            peakBytes: overTheBoundOrKept("peakBytes"),
             counts: fastCounts.length ? (Object.fromEntries(fastCounts) as Record<string, number>) : undefined,
           };
           const orNothing = (growth: NonNullable<Budget["growth"]>) =>

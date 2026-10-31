@@ -412,6 +412,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "ipc.bind.ts": null,
   "ipc_host.bind.ts": null,
   "jest.bind.ts": null,
+  "jpeg_rows_testing.bind.ts": null,
   "js_bun_spawn_bindings.bind.ts": "typeof Bun",
   "jsc_hooks.bind.ts": null,
   "linear_fifo_testing.bind.ts": null,

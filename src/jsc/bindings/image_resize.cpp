@@ -320,7 +320,7 @@ static HWY_INLINE V8 MulDiv255(D8 d8, V8 a, V8 k)
     return hn::OrderedDemote2To(d8, lo, hi);
 }
 
-// In-place inverted CMYK (byte = 255 − ink, libjpeg-turbo's TJPF_CMYK) → opaque RGBA via RGB = CMY·K/255, the non-CMS formula Skia and pdf.js use.
+// In-place inverted CMYK (byte = 255 − ink, what bun_jpeg gives for a 4-component JPEG) → opaque RGBA via RGB = CMY·K/255, the non-CMS formula Skia and pdf.js use.
 static void CmykToRgbaImpl(uint8_t* HWY_RESTRICT buf, size_t npx)
 {
     const hn::ScalableTag<uint8_t> d8;

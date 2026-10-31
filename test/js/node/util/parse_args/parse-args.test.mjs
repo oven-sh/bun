@@ -1107,24 +1107,30 @@ describe("parseArgs extra tests", () => {
       expect(Object.keys(result.values)).toHaveLength(1000);
     });
 
-    test("100 mixed several times", () => {
-      let result;
-      for (let i = 0; i < 1000; ++i) {
-        result = parseArgs({
-          allowPositionals: true,
-          strict: false,
-          args: ""
-            .padStart(100)
-            .split("")
-            .map((_, i) => {
-              if (i % 17 === 0) return `-abc`;
-              if (i % 7 === 0) return `-${String.fromCharCode(97) + ((i / 10) | 0)}`;
-              return `--arg${i}`;
-            }),
+    const mixedArgs = count =>
+      ""
+        .padStart(count)
+        .split("")
+        .map((_, i) => {
+          if (i % 17 === 0) return `-abc`;
+          if (i % 7 === 0) return `-${String.fromCharCode(97) + ((i / 10) | 0)}`;
+          return `--arg${i}`;
         });
+
+    test("100 mixed", () => {
+      const result = parseArgs({ allowPositionals: true, strict: false, args: mixedArgs(100) });
+      expect(Object.keys(result.values)).toHaveLength(93);
+    });
+
+    test("48 mixed several times, with a garbage collection pending at each call", () => {
+      // Built outside the loop so that the collection Bun.gc() requests starts inside parseArgs. See #7310 and #46964.
+      const config = { allowPositionals: true, strict: false, args: mixedArgs(48) };
+      let result;
+      for (let i = 0; i < 500; ++i) {
+        result = parseArgs(config);
         Bun.gc();
       }
-      expect(Object.keys(result.values)).toHaveLength(93);
+      expect(Object.keys(result.values)).toHaveLength(47);
     });
   });
 

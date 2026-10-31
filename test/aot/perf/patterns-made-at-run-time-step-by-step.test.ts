@@ -36,7 +36,16 @@ describe.skipIf(!!skipped)("compile/aot/perf/patterns-made-at-run-time-step-by-s
   beforeAll(async () => {
     built(
       await spawned(
-        [bunExe(), "build", "--compile", "--aot", ...withoutDebugInformation(), join(root, "main.js"), "--outfile", executable],
+        [
+          bunExe(),
+          "build",
+          "--compile",
+          "--aot",
+          ...withoutDebugInformation(),
+          join(root, "main.js"),
+          "--outfile",
+          executable,
+        ],
         root,
         bunEnv,
       ),

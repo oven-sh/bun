@@ -306,7 +306,9 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     let loads_by_unknown_path = imports.iter().any(|file| file.loads_by_unknown_path);
     // Where a file loads under a path that nobody reads, every namespace object has escaped for flow, and a spy in sight whose object and name it loses on
     // the way is a spy on every export of them all: it finds that behind a whole front end. A name that is a constant where the spy is called it does not lose.
-    let meets_all_that_escaped = spies.clone().any(|it| it.is_any_name || it.has_name_that_is_no_constant)
+    let meets_all_that_escaped = spies
+        .clone()
+        .any(|it| it.is_any_name || it.has_name_that_is_no_constant)
         && loads_by_unknown_path
         && !input.every_export_is_asked_for
         && !input.host_runs_files_from_disk;

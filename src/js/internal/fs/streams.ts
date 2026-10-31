@@ -652,7 +652,8 @@ function writeAll(
   cb: ErrorCallback,
   retries = 0,
 ) {
-  if (IS_COMPILED_AHEAD_OF_TIME && this[kFs] == null) throw new TypeError(`${this[kFs]} is not an object (evaluating 'size')`);
+  if (IS_COMPILED_AHEAD_OF_TIME && this[kFs] == null)
+    throw new TypeError(`${this[kFs]} is not an object (evaluating 'size')`);
   this[kFs].write!(this.fd, data, 0, size, pos, (er, bytesWritten, buffer) => {
     // No data currently available and operation should be retried later.
     if (er?.code === "EAGAIN") {

@@ -101,7 +101,10 @@ fn ends_declaration_of_types(before_from: &[u8]) -> bool {
     let declared = before_from[start + b"import".len()..].trim_ascii();
     let is_one_declaration = !strings::contains_char(declared, b';')
         && strings::index_of_any(declared, b"\"'`(").is_none();
-    let Some(names) = declared.strip_prefix(b"type").filter(|_| is_one_declaration) else {
+    let Some(names) = declared
+        .strip_prefix(b"type")
+        .filter(|_| is_one_declaration)
+    else {
         return false;
     };
     let begins_names = |byte: &u8| byte.is_ascii_whitespace() || *byte == b'{' || *byte == b'*';
@@ -142,7 +145,10 @@ fn is_imported_as_data(behind_name: &[u8]) -> bool {
     let Some(end) = strings::index_of_char_usize(value, quote) else {
         return false;
     };
-    !matches!(&value[..end], b"js" | b"jsx" | b"ts" | b"tsx" | b"mjs" | b"cjs")
+    !matches!(
+        &value[..end],
+        b"js" | b"jsx" | b"ts" | b"tsx" | b"mjs" | b"cjs"
+    )
 }
 
 // A file with JSX imports the run time of JSX and does not spell its name. The names are what the tsconfig.json of the file makes of them.

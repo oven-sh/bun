@@ -107,8 +107,6 @@ pub(crate) fn create_disk(options: &Options<'_>, threads: NonZeroUsize) -> Disk 
     if let Some(listener) = options.aot.before_read.clone() {
         disk.before_read = Some(Box::new(move |path| (listener.0)(path)));
     }
-    // What the test files of a run share is built by a process of its own, before any test runs.
-    disk.maps_large_files = options.aot.shares_realms && !options.aot.is_part_of_test_files;
     disk
 }
 

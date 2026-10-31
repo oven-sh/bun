@@ -25,7 +25,6 @@ use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, FxHashSet, ShardedMap};
 use bun_sys::{EntryKind, ExistsAtType, Fd};
 use std::borrow::Cow;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 /// TypeScript's `lib.*.d.ts` files embedded in the executable, by name.
@@ -275,11 +274,6 @@ pub struct Disk {
     /// `Request::script_kinds_by_extension`
     pub(crate) script_kinds_by_extension: Vec<(Vec<u8>, ScriptKind)>,
     pub before_read: Option<BeforeRead>,
-    /// The text of a file of `MIN_MAPPED_LEN` bytes and more is the file itself, mapped until the process ends, not a
-    /// copy of it. The system takes such pages away when memory is short and reads them again when they're touched, so
-    /// they don't add to what the process needs. Only for a process that ends with its one request, while nobody writes
-    /// to the files it reads: a file that gets shorter takes its last pages away from under the text.
-    pub maps_large_files: bool,
     /// `Host::extended_config`. The projects of a build often extend the same file.
     extended_configs: bun_threading::Guarded<FxHashMap<Vec<u8>, CachedConfig>>,
     /// `Host::shared_paths`
@@ -387,99 +381,8 @@ impl Drop for ReadSlot<'_> {
     }
 }
 
-enum FileBytes {
-    Copied(Vec<u8>),
-    /// See `Disk::maps_large_files`.
-    Mapped(&'static [u8]),
-}
-
-impl FileBytes {
-    fn len(&self) -> usize {
-        match self {
-            FileBytes::Copied(bytes) => bytes.len(),
-            FileBytes::Mapped(bytes) => bytes.len(),
-        }
-    }
-}
-
-/// A mapping takes whole pages and an entry in a table of the process that holds 65,530 by default.
-const MIN_MAPPED_LEN: usize = 8 * 1024;
-/// Half of that table. The rest is for the allocator, which fails for good where the table is full, and takes a few
-/// hundred entries for 5 GB. The files behind these are copied.
-const MAX_MAPPED_FILES: usize = 32 * 1024;
-
-/// What `map_file` has mapped, by path. A build that loads its files a second time finds them here: a mapping stays until
-/// the process ends, so a second one of the same file would only take another entry of that table. Each with the stamp of
-/// the file when it was mapped: a file that somebody has written since is read anew, into memory of the process's own.
-static MAPPED_FILES: bun_threading::RwLock<Option<FxHashMap<Vec<u8>, (&'static [u8], FileStamp)>>> =
-    bun_threading::RwLock::new(None);
-/// How often a later load found that a mapped file had been written.
-static MAPPED_FILES_WRITTEN_SINCE: AtomicUsize = AtomicUsize::new(0);
-
-/// A run writes there what it makes for itself, and may write it again.
-fn is_made_by_runs(path: &[u8]) -> bool {
-    contains(path, b"/node_modules/.cache/")
-}
-
-/// `start`: how the file begins. A file with a byte order mark is decoded, so its text is a copy anyway.
-fn map_file(file: &bun_sys::File, len: usize, start: &[u8]) -> Option<&'static [u8]> {
-    let has_mark = start.starts_with(&[0xFE, 0xFF])
-        || start.starts_with(&[0xFF, 0xFE])
-        || BOM::detect(start).is_some();
-    if len < MIN_MAPPED_LEN {
-        return None;
-    }
-    static ASKED: AtomicUsize = AtomicUsize::new(0);
-    let has_room = || ASKED.fetch_add(1, Ordering::Relaxed) < MAX_MAPPED_FILES;
-    let mapped = (!has_mark && has_room())
-        .then(|| bun_sys::map_for_reading(file.handle(), len).ok())
-        .flatten();
-    let counted = if mapped.is_some() { 0 } else { 2 };
-    LARGE_FILES_SO_FAR[counted].fetch_add(1, Ordering::Relaxed);
-    LARGE_FILES_SO_FAR[counted + 1].fetch_add(len, Ordering::Relaxed);
-    let mapped = mapped?;
-    // SAFETY: the mapping has `len` readable bytes and is never unmapped. See `Disk::maps_large_files` for who may write.
-    Some(unsafe { std::slice::from_raw_parts(mapped, len) })
-}
-
-static LARGE_FILES_SO_FAR: [AtomicUsize; 4] = [const { AtomicUsize::new(0) }; 4];
-
-/// For a log, where `Disk::maps_large_files`: of the files of `MIN_MAPPED_LEN` bytes and more, how many the process has
-/// mapped and their bytes, and how many it has copied and their bytes.
-pub fn large_files_so_far() -> [usize; 4] {
-    LARGE_FILES_SO_FAR
-        .each_ref()
-        .map(|it| it.load(Ordering::Relaxed))
-}
-
-/// For the same log.
-pub fn mapped_files_written_since() -> usize {
-    MAPPED_FILES_WRITTEN_SINCE.load(Ordering::Relaxed)
-}
-
-/// For the same log: the mapped files and their bytes, by what they are: the declarations of packages, the other files of
-/// packages, the declarations outside of packages, the rest.
-pub fn mapped_files_by_kind() -> [[usize; 2]; 4] {
-    const OF_PACKAGE: &[u8] = b"/node_modules/";
-    const DECLARATIONS: [&[u8]; 3] = [b".d.ts", b".d.mts", b".d.cts"];
-    let mut kinds = [[0; 2]; 4];
-    for (path, (text, _)) in MAPPED_FILES.read().iter().flatten() {
-        let is_of_package = contains(path, OF_PACKAGE);
-        let is_declaration = DECLARATIONS.iter().any(|ending| path.ends_with(ending));
-        let kind = &mut kinds[usize::from(!is_of_package) * 2 + usize::from(!is_declaration)];
-        kind[0] += 1;
-        kind[1] += text.len();
-    }
-    kinds
-}
-
 /// Returns the full contents of the file `name` in `directory`.
-fn read_file(
-    directory: Fd,
-    name: &[u8],
-    buffer: &mut Vec<u8>,
-    maps_large_files: bool,
-) -> Option<FileBytes> {
+fn read_file(directory: Fd, name: &[u8], buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
     /// Few files are bigger.
     const FIRST_READ: usize = 64 * 1024;
     let file = bun_sys::File::openat(directory, name, bun_sys::O::RDONLY, 0).ok()?;
@@ -487,24 +390,14 @@ fn read_file(
     // Reads until the end of the file, because some file systems return less than is available.
     let count = file.read_all(&mut buffer[..]).ok()?;
     if count < FIRST_READ {
-        let mapped = maps_large_files.then(|| map_file(&file, count, &buffer[..count]));
-        return Some(match mapped.flatten() {
-            Some(bytes) => FileBytes::Mapped(bytes),
-            None => FileBytes::Copied(buffer[..count].to_vec()),
-        });
+        return Some(buffer[..count].to_vec());
     }
     let size = file.get_end_pos().ok()?.max(count);
-    if let Some(bytes) = maps_large_files
-        .then(|| map_file(&file, size, &buffer[..count]))
-        .flatten()
-    {
-        return Some(FileBytes::Mapped(bytes));
-    }
     let mut all = Vec::new();
     all.try_reserve_exact(size.saturating_add(16)).ok()?;
     all.extend_from_slice(&buffer[..count]);
     file.read_to_end_into(&mut all).ok()?;
-    Some(FileBytes::Copied(all))
+    Some(all)
 }
 
 #[cfg(unix)]
@@ -620,7 +513,6 @@ impl Disk {
                     .collect(),
             },
             keeps_byte_order_marks: false,
-            maps_large_files: false,
             ends_the_process: false,
             to_drop_before_the_process_ends: Default::default(),
             extended_configs: Default::default(),
@@ -1523,18 +1415,6 @@ impl Host for Disk {
             before_read(path);
         }
         to_syscall_path(path)?;
-        let mut maps_large_files = self.maps_large_files && !is_made_by_runs(path);
-        if maps_large_files {
-            let mapped = MAPPED_FILES.read();
-            if let Some(&(text, stamp)) = mapped.as_ref().and_then(|mapped| mapped.get(path)) {
-                if stamp_on_disk(path) == Some(stamp) {
-                    crate::did_read_source(text.len());
-                    return Some(Cow::Borrowed(text));
-                }
-                MAPPED_FILES_WRITTEN_SINCE.fetch_add(1, Ordering::Relaxed);
-                maps_large_files = false;
-            }
-        }
         let Split { parent, name } = split(path);
         // Config files and `package.json` are read as JSON, so they never keep the mark.
         let keeps_mark = self.keeps_byte_order_marks && ScriptKind::from_file_name(path).is_some();
@@ -1560,29 +1440,16 @@ impl Host for Disk {
             let Reader { handle, buffer, .. } = &mut reader;
             handle
                 .as_ref()
-                .map(|directory| read_file(directory.fd(), name, buffer, maps_large_files))
+                .map(|directory| read_file(directory.fd(), name, buffer))
         };
         let read = read.unwrap_or_else(|| {
             let path = to_native(without_trailing_slash(path));
-            read_file(Fd::cwd(), path, &mut reader.buffer, maps_large_files)
+            read_file(Fd::cwd(), path, &mut reader.buffer)
         });
         self.return_reader(reader);
         read.map(|bytes| {
             crate::did_read_source(bytes.len());
-            match bytes {
-                FileBytes::Copied(bytes) => decoded(bytes, keeps_mark),
-                FileBytes::Mapped(bytes) => {
-                    // A file that was written between the mapping and this look is not found again by a later load.
-                    if let Some(stamp) = stamp_on_disk(path)
-                        && stamp.size == bytes.len() as u64
-                    {
-                        let mut mapped = MAPPED_FILES.write();
-                        let mapped = mapped.get_or_insert_default();
-                        mapped.insert(path.to_vec(), (bytes, stamp));
-                    }
-                    Cow::Borrowed(bytes)
-                }
-            }
+            decoded(bytes, keeps_mark)
         })
     }
     fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {

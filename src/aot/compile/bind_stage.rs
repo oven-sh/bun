@@ -271,6 +271,7 @@ impl Build<'_> {
                         .reads_main_module_without_its_name,
                     stores_path_of_main_module: self.options.load.stores_path_of_main_module,
                     stores_loader_functions: self.options.load.stores_loader_functions,
+                    asks_loader_functions_once_stored: self.options.load.runs_tests,
                     ways_read_out_of_sight: self.options.load.ways_read_out_of_sight,
                     any_file_is_named_at_run_time: code_on_disk_names_files
                         || (!self.options.aot.host_runs_files_from_disk
@@ -290,15 +291,15 @@ impl Build<'_> {
                 let nobody_reads = self.options.load.ways_named_that_nobody_reads;
                 let (left_out, reached) = find_left_out_code(&input, nobody_reads, &in_parallel);
                 finish_modules(&mut graph, &reached);
-                graph.set_asks_loader_functions(
-                    self.options.load.runs_tests
-                        && (reached.stores_loader_functions
-                            || self.options.load.stores_loader_functions
-                            || tests_store_loader_functions(
-                                &self.options.load.replaced_builtins,
-                                &self.options.load.replaced_exports,
-                            )),
-                );
+                let asks_loader_functions = self.options.load.runs_tests
+                    && (reached.stores_loader_functions
+                        || self.options.load.stores_loader_functions
+                        || tests_store_loader_functions(
+                            &self.options.load.replaced_builtins,
+                            &self.options.load.replaced_exports,
+                        ));
+                graph.set_asks_loader_functions(asks_loader_functions);
+                self.replaced_builtins.stores_loader_functions |= asks_loader_functions;
                 if !reached.found_by_name.is_empty() {
                     self.started_workers.root_folders_spelled = find_root_folders_spelled(
                         view.files(),

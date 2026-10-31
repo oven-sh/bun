@@ -49,6 +49,8 @@ pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
     pub(in crate::lower) disposal_position: Option<Option<u32>>,
     // The call that is being lowered stands in tail position. What loads a module in its place says so.
     pub(in crate::lower) is_call_in_tail_position: bool,
+    /// How many branches with another way to the answer of a `require` stand around what is emitted: `module::loads::OtherWay`.
+    pub(in crate::lower) open_ways_around_require: u32,
     // The counter of the expression that is being lowered, where it has one.
     pub(in crate::lower) counted_expression: Option<u32>,
     handler: Option<Handler>,
@@ -87,6 +89,7 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
             printed_sums: FxHashMap::default(),
             disposal_position: None,
             is_call_in_tail_position: false,
+            open_ways_around_require: 0,
             counted_expression: None,
             handler: None,
             position,

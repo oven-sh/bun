@@ -20,6 +20,7 @@ const files = {
   ...Object.fromEntries(
     ["a", "b", "c", "d", "h", "i", "j"].map(name => [`src/late-${name}.js`, `exports.name = "late-${name}";\n`]),
   ),
+  "src/typed.ts": `export const name: string = "typed";\n`,
   "src/user.js": `
 exports.load = () => require("./late-h.js").name;
 exports.loadOther = () => require("./late-i.js").name;
@@ -37,6 +38,7 @@ test("a resolver", () => {
   say("required before the store:", require("./src/late-j.js").name, seen.join()); seen.length = 0;
   const user = require("./src/user.js"); seen.length = 0;
   say("in a file of the project:", user.load(), seen.join()); seen.length = 0;
+  say("an ES module of the project:", require("./src/typed.ts").name, seen.join()); seen.length = 0;
   say("resolve:", short(require.resolve("./src/late-a.js")), seen.join()); seen.length = 0;
   say("a library module:", typeof require("node:os").hostname, seen.join()); seen.length = 0;
   Module._resolveFilename = function (request, ...rest) { return original.call(this, request.replace("late-b", "late-c").replace("late-i", "late-c"), ...rest); };
@@ -63,6 +65,7 @@ test("a function round every require", () => {
   say("again:", require("./src/late-a.js").name, seen.join()); seen.length = 0;
   const user = require("./src/user.js"); seen.length = 0;
   say("in a file of the project:", user.load(), seen.join()); seen.length = 0;
+  say("an ES module of the project:", require("./src/typed.ts").name, seen.join()); seen.length = 0;
   Module.prototype.require = function (id) {
     const exports = original.apply(this, arguments);
     return id === "http" || id === "node:http" ? { ...exports, patched: true } : id.endsWith("late-b.js") ? { name: "wrapped " + exports.name } : exports;
@@ -94,9 +97,9 @@ const seenWith = async (dir: string, env: Record<string, string>, ...flags: stri
 };
 
 test.each([
-  ["resolver.test.cjs", 9, []],
+  ["resolver.test.cjs", 10, []],
   ["alias.test.cjs", 3, []],
-  ["wrapper.test.cjs", 6, []],
+  ["wrapper.test.cjs", 7, []],
   ["behind-a-preload.test.cjs", 2, ["--preload", "./setup.cjs"]],
 ] as const)("%s prints what it prints under plain bun test", async (file, lines, flags) => {
   using dir = tempDir("aot-loader-functions-of-a-test", files);

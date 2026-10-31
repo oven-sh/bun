@@ -696,6 +696,8 @@ pub(crate) fn find_what_tests_replace(
         files_imported_by_calls,
         files_required,
         names_file_with_query: found.names_file_with_query,
+        // What the test files store stands among `builtins` and `exports`.
+        stores_loader_functions: false,
         parameters_that_start_workers: Vec::new(),
     };
     // `spyOn(barrel, "f")` stores into the variable of the file that declares f, which may lie in another image than the barrel: every file on the way is told.

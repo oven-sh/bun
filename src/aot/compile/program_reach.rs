@@ -51,6 +51,8 @@ pub(crate) struct ProgramReachInput<'a, 's> {
     pub stores_path_of_main_module: bool,
     /// `LoadOptions::stores_loader_functions`
     pub stores_loader_functions: bool,
+    /// `LoadOptions::runs_tests`: there a `require` of a constant name asks the loader functions that the program has stored, which may answer with any file.
+    pub asks_loader_functions_once_stored: bool,
     /// `LoadOptions::ways_read_out_of_sight`
     pub ways_read_out_of_sight: WaysBetweenModuleObjects,
     /// Code that the build has not seen names files: `AotOptions::loads_code_from_disk`. So do the helpers of a test suite: `LoadOptions::runs_tests`.
@@ -3104,7 +3106,12 @@ impl<'a, 's> Walk<'a, 's> {
             Interest::ModuleObject(owner, object_use) => {
                 self.reach_module_object(file, owner, object_use);
             }
-            Interest::StoreOfLoaderFunction => self.stores_loader_functions = true,
+            Interest::StoreOfLoaderFunction => {
+                self.stores_loader_functions = true;
+                if self.input.asks_loader_functions_once_stored {
+                    self.hand_on_files_found_by_name(file, None);
+                }
+            }
             Interest::RequestThatLoaderFunctionsAnswer if self.input.stores_loader_functions => {
                 let (owner, object_use) = (ModuleObjectOwner::OwnFile, ModuleObjectUse::HandedOn);
                 self.reach_module_object(file, owner, object_use);
@@ -3125,8 +3132,10 @@ impl<'a, 's> Walk<'a, 's> {
                 self.hand_on_files_found_by_name(file, None);
             }
         }
+        let is_known_to_ask =
+            self.input.stores_loader_functions && self.input.asks_loader_functions_once_stored;
         for &file in self.input.files.compiled_files() {
-            if self.loads_by_unknown_name_outside_units(file) {
+            if is_known_to_ask || self.loads_by_unknown_name_outside_units(file) {
                 self.hand_on_files_found_by_name(file, None);
             }
             // A mock is stored under every name of the module. A file that runs again does so as code that the build has not seen, and links to the names it imports.

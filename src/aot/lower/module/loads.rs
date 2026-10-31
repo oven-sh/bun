@@ -781,8 +781,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if plan.records {
             self.builder.record_require(module, referrer);
         }
+        // A run that takes the other way to the answer passes no site in this arm: where the program has stored a resolver, the host answers.
+        let is_in_one_arm = self.open_ways_around_require != 0;
         // The function that holds the text of a file with a wrapper is not the body of the module, and what stands behind a `using` declaration stands under the handler that disposes of the resource.
-        let is_bare = plan.is_bare && self.is_module_body() && self.handler().is_none();
+        let is_bare =
+            plan.is_bare && !is_in_one_arm && self.is_module_body() && self.handler().is_none();
         // The callback of a wrapper in a bundle is called by the function that the wrapper has made.
         let is_call_of_require = matches!(plan.target, ModuleRef::File(_) | ModuleRef::Runtime(_));
         self.builder
@@ -991,6 +994,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.jump(done);
 
         self.continue_in(with_prefix);
+        self.open_ways_around_require += 1;
         OtherWay {
             answer,
             done,
@@ -1000,6 +1004,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn finish_other_way(&mut self, other_way: OtherWay, found: ValueId) -> ValueId {
         self.is_call_in_tail_position = other_way.was_call_in_tail_position;
+        self.open_ways_around_require -= 1;
         self.builder.write_variable(other_way.answer, found);
         self.jump(other_way.done);
 
@@ -1049,6 +1054,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             .branch(is_held, Edge::to(done), Edge::to(read_as_code));
 
         self.continue_in(read_as_code);
+        self.open_ways_around_require += 1;
         OtherWay {
             answer,
             done,
@@ -1104,6 +1110,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 looks_in_cache,
                 |this| this.emit_require_of_answer(site, specifier),
             );
+            return match other_way {
+                Some(other_way) => self.finish_other_way(other_way, found),
+                None => found,
+            };
+        }
+        // A name that the build finds nothing under may be one that the program's own resolver knows: `require("@app/file")` behind module-alias.
+        if let (SiteAnswer::Failed(_), ImportSpecifier::Constant(written)) =
+            (site.answer, site.specifier)
+        {
+            let referrer = self.referrer_of(site);
+            let other_way =
+                self.emit_require_as_written_if_loader_functions_are_stored(written, referrer);
+            let found = self.emit_require_of_answer(site, specifier);
             return match other_way {
                 Some(other_way) => self.finish_other_way(other_way, found),
                 None => found,

@@ -3458,101 +3458,6 @@ mod posix_impl {
         }
         Ok(p.cast())
     }
-    /// The files that `map_for_reading` maps lie side by side in one stretch of addresses. So one call lets go of the
-    /// pages of all of them, and one comparison tells an address among them. Addresses alone: no memory stands behind
-    /// what no file is mapped to.
-    const ROOM_FOR_MAPPED_FILES: usize = 1 << 36;
-    /// 0: nobody has asked. 1: the system gave no such stretch.
-    static START_OF_MAPPED_FILES: core::sync::atomic::AtomicUsize =
-        core::sync::atomic::AtomicUsize::new(0);
-    static LEN_OF_MAPPED_FILES: core::sync::atomic::AtomicUsize =
-        core::sync::atomic::AtomicUsize::new(0);
-
-    fn start_of_mapped_files() -> Option<usize> {
-        use core::sync::atomic::Ordering::{Acquire, Release};
-        match START_OF_MAPPED_FILES.load(Acquire) {
-            0 => {}
-            1 => return None,
-            start => return Some(start),
-        }
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        let flags = libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_NORESERVE;
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        let flags = libc::MAP_PRIVATE | libc::MAP_ANON;
-        // SAFETY: the kernel chooses the address, and nothing can be read or written there.
-        let room = unsafe {
-            libc::mmap(
-                core::ptr::null_mut(),
-                ROOM_FOR_MAPPED_FILES,
-                libc::PROT_NONE,
-                flags,
-                -1,
-                0,
-            )
-        };
-        let mine = if room == libc::MAP_FAILED {
-            1
-        } else {
-            room.addr()
-        };
-        match START_OF_MAPPED_FILES.compare_exchange(0, mine, Release, Acquire) {
-            Ok(_) => (mine != 1).then_some(mine),
-            Err(theirs) => {
-                if mine != 1 {
-                    let _ = munmap(room.cast(), ROOM_FOR_MAPPED_FILES);
-                }
-                (theirs != 1).then_some(theirs)
-            }
-        }
-    }
-
-    /// The first `len` bytes of the file, readable and private to the process, until it ends.
-    pub fn map_for_reading(fd: Fd, len: usize) -> Maybe<*mut u8> {
-        let no_room = || Error::new(E::ENOMEM, Tag::mmap);
-        let start = start_of_mapped_files().ok_or_else(no_room)?;
-        let size = len.next_multiple_of(bun_alloc::page_size());
-        let at = LEN_OF_MAPPED_FILES.fetch_add(size, core::sync::atomic::Ordering::Relaxed);
-        if at.saturating_add(size) > ROOM_FOR_MAPPED_FILES {
-            return Err(no_room());
-        }
-        mmap(
-            core::ptr::without_provenance_mut(start + at),
-            len,
-            libc::PROT_READ,
-            libc::MAP_PRIVATE | libc::MAP_FIXED,
-            fd,
-            0,
-        )
-    }
-
-    fn mapped_files() -> Option<(usize, usize)> {
-        let start = START_OF_MAPPED_FILES.load(core::sync::atomic::Ordering::Acquire);
-        let len = LEN_OF_MAPPED_FILES.load(core::sync::atomic::Ordering::Relaxed);
-        (start > 1).then_some((start, len.min(ROOM_FOR_MAPPED_FILES)))
-    }
-
-    /// Whether the address lies among what `map_for_reading` has mapped. A read behind the end of a file that somebody
-    /// has made shorter since raises SIGBUS there.
-    pub fn is_among_files_mapped_for_reading(address: usize) -> bool {
-        mapped_files().is_some_and(|(start, len)| start <= address && address - start < len)
-    }
-
-    /// The pages that were read through `map_for_reading` count as the process's until it lets go of them. They stay in
-    /// the system's cache, as after a `read`, and the next read through the mapping takes them from there.
-    pub fn let_go_of_pages_mapped_for_reading() {
-        if let Some((start, len)) = mapped_files()
-            && len != 0
-        {
-            // SAFETY: the pages are copies of files that nothing has written to. Whoever reads them meanwhile gets them again.
-            unsafe {
-                libc::madvise(
-                    core::ptr::without_provenance_mut(start),
-                    len,
-                    libc::MADV_DONTNEED,
-                )
-            };
-        }
-    }
     pub fn munmap(ptr: *mut u8, len: usize) -> Maybe<()> {
         // SAFETY: caller passes a `(ptr, len)` pair previously returned by
         // `mmap`; `munmap` only inspects the mapping, never Rust-owned memory.
@@ -4670,13 +4575,6 @@ mod windows_impl {
     ) -> Maybe<*mut u8> {
         Err(Error::new(E::ENOTSUP, Tag::mmap))
     }
-    pub fn map_for_reading(_fd: Fd, _len: usize) -> Maybe<*mut u8> {
-        Err(Error::new(E::ENOTSUP, Tag::mmap))
-    }
-    pub fn is_among_files_mapped_for_reading(_address: usize) -> bool {
-        false
-    }
-    pub fn let_go_of_pages_mapped_for_reading() {}
     pub fn munmap(_ptr: *mut u8, _len: usize) -> Maybe<()> {
         Err(Error::new(E::ENOTSUP, Tag::munmap))
     }

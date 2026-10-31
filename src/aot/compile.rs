@@ -1854,6 +1854,7 @@ fn add_program(first: &mut Compilation, program: Compilation) {
     all.builtins.extend(further.builtins);
     (all.names_added_to_builtins).extend(further.names_added_to_builtins);
     (all.parameters_that_start_workers).extend(further.parameters_that_start_workers);
+    all.stores_loader_functions |= further.stores_loader_functions;
 }
 
 fn compile_written_entry_points(
@@ -2729,30 +2730,6 @@ impl<'a> Build<'a> {
     ) -> EngineResult {
         self.clock.stop();
         ENGINE_RUNS.set(ENGINE_RUNS.get() + 1);
-        // The link has read every text once more, and the engine reads none. See `Disk::maps_large_files`.
-        bun_sys::let_go_of_pages_mapped_for_reading();
-        let [mapped, mapped_bytes, copied, copied_bytes] =
-            bun_sema_driver::host::large_files_so_far();
-        if mapped + copied != 0 && logs_stages() {
-            let [declared_by_packages, of_packages, declared, rest] =
-                bun_sema_driver::host::mapped_files_by_kind();
-            bun_core::print_errorln!(
-                "AOT texts of 8 KB and more | mapped {} files, {} MB | copied {} files, {} MB | mapped: declarations of packages {} files, {} MB | other files of packages {} files, {} MB | other declarations {} files, {} MB | the rest {} files, {} MB | written since they were mapped, and read anew {}",
-                mapped,
-                mapped_bytes >> 20,
-                copied,
-                copied_bytes >> 20,
-                declared_by_packages[0],
-                declared_by_packages[1] >> 20,
-                of_packages[0],
-                of_packages[1] >> 20,
-                declared[0],
-                declared[1] >> 20,
-                rest[0],
-                rest[1] >> 20,
-                bun_sema_driver::host::mapped_files_written_since(),
-            );
-        }
         // The pool has as many threads as there was source text of the program's own to read. The engine fits its threads to the program that
         // it gets, of which Bun's own code may be the larger part: the lowest layer of a test run holds all of it.
         if self.options.aot.thread_count.is_none() {

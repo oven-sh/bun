@@ -255,6 +255,9 @@ pub struct ReplacedByTests {
     pub files_required: Vec<Vec<u8>>,
     /// `import("./a?again")` loads the file once more, from disk. Nobody has read a file that is reached in no other way.
     pub names_file_with_query: bool,
+    /// `Module._resolveFilename = f`, `Module.prototype.require = f`. It goes the other way too: the look through the test files reads no package, so the program that holds
+    /// module-alias or require-in-the-middle says it to those that are built above it. From the store on every `require()` of theirs asks the function.
+    pub stores_loader_functions: bool,
 }
 
 impl ReplacedByTests {
@@ -273,7 +276,8 @@ impl ReplacedByTests {
                 | u8::from(self.evicts_any_module) << 2
                 | u8::from(self.spy_may_meet_module_that_no_file_spells) << 3
                 | u8::from(self.hands_on_any_module) << 4
-                | u8::from(self.names_file_with_query) << 5,
+                | u8::from(self.names_file_with_query) << 5
+                | u8::from(self.stores_loader_functions) << 6,
         ];
         push_number(&mut bytes, self.builtins.len());
         for &member in &self.builtins {
@@ -350,6 +354,7 @@ impl ReplacedByTests {
             spy_may_meet_module_that_no_file_spells: answers & 8 != 0,
             hands_on_any_module: answers & 16 != 0,
             names_file_with_query: answers & 32 != 0,
+            stores_loader_functions: answers & 64 != 0,
             builtins: take_list(&mut bytes, take_number)?,
             names_added_to_builtins: take_list(&mut bytes, |bytes| {
                 Some((take_number(bytes)?, take_text(bytes)?))
@@ -504,6 +509,7 @@ mod tests {
             names_spied_on_unknown_objects: vec![b"read".to_vec(), b"write".to_vec()],
             evicts_any_module: true,
             names_file_with_query: true,
+            stores_loader_functions: true,
             spy_may_meet_module_that_no_file_spells: true,
         };
         let bytes = replaced.to_bytes();

@@ -711,6 +711,7 @@
     "aot/embedded-assets.test.ts",
     "aot/entry-point-names.test.ts",
     "aot/entry-points-begin-programs-of-their-own.test.ts",
+    "aot/every-built-in-object-is-an-instance-of-what-plain-bun-says.test.ts",
     "aot/fastify-validators-written-to-files.test.ts",
     "aot/first-reads-by-name-avoid-the-lookup-of-the-runtime.test.ts",
     "aot/fuzzer-judging.test.ts",

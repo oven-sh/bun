@@ -792,22 +792,6 @@ fn give_back_free_memory(files_left: usize) {
     }
     if is_due {
         bun_sema::session::give_back_free_memory();
-        let_go_of_mapped_texts();
-    }
-}
-
-/// See `Disk::maps_large_files`. A text is read from end to end when it's parsed and here and there afterwards. Its pages
-/// count as the process's from then on, and the system takes a page away from a process last of all. One thread at a
-/// time, a few times a second: it's one call for all texts, and every thread stops for it for a moment.
-fn let_go_of_mapped_texts() {
-    static BEGAN: OnceLock<Instant> = OnceLock::new();
-    static LAST: AtomicU64 = AtomicU64::new(0);
-    let now = BEGAN.get_or_init(Instant::now).elapsed().as_millis() as u64;
-    let last = LAST.load(Ordering::Relaxed);
-    let is_mine = now >= last + 250
-        && (LAST.compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)).is_ok();
-    if is_mine {
-        bun_sys::let_go_of_pages_mapped_for_reading();
     }
 }
 

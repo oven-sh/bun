@@ -768,6 +768,43 @@ const projects: Record<string, Record<string, string>> = {
       });`,
     "wants-absent.mjs": `import { z } from "./local/hands-on-a-package.cjs"; console.log(z);`,
   },
+  "a module below a graph that failed runs for the next graph that imports it": {
+    "first.mjs": `
+      import { next } from "./shared.mjs";
+      import { made } from "./barrel.mjs";
+      import "./throws.cjs";
+      console.log("first runs", next(), made);`,
+    "shared.mjs": `
+      console.log("shared runs");
+      let count = 0;
+      export function next() {
+        return ++count;
+      }`,
+    "barrel.mjs": `export * from "./behind-barrel.mjs";`,
+    "behind-barrel.mjs": `
+      console.log("behind-barrel runs");
+      export const made = "behind the barrel " + process.argv.slice(0, 0).length;`,
+    "throws.cjs": `
+      console.log("throws.cjs runs");
+      exports.v = 4;
+      throw new Error("boom");`,
+    "third.mjs": `
+      import { next } from "./shared.mjs";
+      import { made } from "./barrel.mjs";
+      console.log("third runs", next(), made);`,
+    "fourth.mjs": `
+      import { next } from "./shared.mjs";
+      console.log("fourth runs", next());`,
+    "failed.test.ts": `${head}
+      test("in a test", async () => {
+        await import("./first.mjs").then(
+          () => console.log("first loaded"),
+          error => console.log("first rejected:", error.message),
+        );
+        await import("./third.mjs");
+        await import("./fourth.mjs");
+      });`,
+  },
   "a require() that has answered before answers anew behind an eviction and a mock": {
     "data.json": `{ "value": 1 }`,
     "other.json": `{ "value": 5 }`,

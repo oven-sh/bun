@@ -293,7 +293,7 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         // Code that a test loads from disk may read it, and no build sees that code. The engine's word comes a front end and a flow analysis later.
         reads_main_module_without_its_name: input.aot.runs_tests,
         stores_path_of_main_module: false,
-        stores_loader_functions: false,
+        stores_loader_functions: replaced.stores_loader_functions,
         // Bun's own code reads `parent` of objects that nobody knows, and a program that other programs import from hands its module
         // objects out. So with all of that code the engine always finds this, a front end and a flow analysis later.
         ways_read_out_of_sight: WaysBetweenModuleObjects {

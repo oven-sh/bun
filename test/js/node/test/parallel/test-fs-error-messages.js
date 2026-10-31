@@ -42,6 +42,7 @@ fs.writeFileSync(existingFile2, 'test', 'utf-8');
 
 
 const { COPYFILE_EXCL } = fs.constants;
+const { internalBinding } = require('internal/test/binding');
 const {
   UV_EBADF,
   UV_EEXIST,
@@ -50,7 +51,7 @@ const {
   UV_ENOTDIR,
   UV_ENOTEMPTY,
   UV_EPERM
-} = process.binding('uv');
+} = internalBinding('uv');
 
 // Template tag function for escaping special characters in strings so that:
 // new RegExp(re`${str}`).test(str) === true

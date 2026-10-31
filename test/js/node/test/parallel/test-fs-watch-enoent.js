@@ -12,10 +12,11 @@ const assert = require('assert');
 const fs = require('fs');
 const tmpdir = require('../common/tmpdir');
 const nonexistentFile = tmpdir.resolve('non-existent');
+const { internalBinding } = require('internal/test/binding');
 const {
   UV_ENODEV,
   UV_ENOENT
-} = process.binding('uv');
+} = internalBinding('uv');
 
 tmpdir.refresh();
 

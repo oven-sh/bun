@@ -27,6 +27,7 @@ import {
   source,
   spawned,
   started,
+  wasLeftOut,
 } from "./compile-trim-options";
 
 /** For each part of Bun that an option is declared to need, an option that needs it. */
@@ -116,6 +117,7 @@ test("every part of Bun that an option is declared to need has an option here", 
       wrote("trimmed", name === optionThatNeeds.Inspector ? keptForCodeLoadedAtRunTime : ""),
     ]);
     const [inWhole, inTrimmed] = await Promise.all([started(whole.folder, name), started(trimmed.folder, name)]);
+    expect(inWhole.stderr).not.toMatch(wasLeftOut);
     expect(inTrimmed).toEqual(inWhole);
     return inWhole;
   }

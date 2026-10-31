@@ -889,6 +889,115 @@ describe("`bun audit`", () => {
       expect(exitCode).toBe(0);
     });
 
+    // `severity` is free text from the registry. `info` and the four levels of --audit-level have a rank.
+    const withLow = (severity?: string) =>
+      JSON.stringify({
+        ms: [
+          { id: 1, severity, title: "first", url: "https://example.com/1", vulnerable_versions: "<2.0.0" },
+          { id: 2, severity: "low", title: "second", url: "https://example.com/2", vulnerable_versions: "<2.0.0" },
+        ],
+      });
+
+    test.concurrent.each([
+      ["HIGH", "unknown severity (HIGH):"],
+      ["medium", "unknown severity (medium):"],
+      [undefined, "unknown severity:"],
+    ])("a severity Bun cannot rank (%p) is never below --audit-level", async (severity, label) => {
+      const [report, critical, json] = await Promise.all([
+        auditAgainst(withLow(severity)),
+        auditAgainst(withLow(severity), ["--audit-level=critical"]),
+        auditAgainst(withLow(severity), ["--json", "--audit-level=critical"]),
+      ]);
+
+      expect(report.stdout).toContain(`  ${label} first (<2.0.0) - https://example.com/1\n`);
+      expect(report.stdout).toContain("2 vulnerabilities (1 low, 1 unknown severity)\n");
+      expect(report.exitCode).toBe(1);
+
+      expect(critical.stdout).not.toContain("low: second");
+      expect(critical.stdout).toContain(`  ${label} first`);
+      expect(critical.stdout).toContain("1 vulnerability (1 unknown severity)\n");
+      expect(critical.exitCode).toBe(1);
+
+      expect(JSON.parse(json.stdout).ms).toHaveLength(2);
+      expect(json.exitCode).toBe(1);
+    });
+
+    test.concurrent("--ignore accepts an advisory that Bun cannot rank", async () => {
+      const [report, json] = await Promise.all([
+        auditAgainst(withLow("HIGH"), ["--audit-level=critical", "--ignore", "1"]),
+        auditAgainst(withLow("HIGH"), ["--json", "--audit-level=critical", "--ignore", "1"]),
+      ]);
+
+      expect(normalizeBunSnapshot(report.stdout)).toBe(
+        AUDIT_HEADER + noVulnerabilities(1, "1 below --audit-level=critical", "1 ignored"),
+      );
+      expect(report.exitCode).toBe(0);
+
+      expect(JSON.parse(json.stdout).ms).toHaveLength(2);
+      expect(json.exitCode).toBe(0);
+    });
+
+    test.concurrent("info is below every --audit-level, and is reported without one", async () => {
+      const body = JSON.stringify({ ms: [{ severity: "info", title: "minor", url: "https://example.com/minor" }] });
+      const [report, low, critical] = await Promise.all([
+        auditAgainst(body),
+        auditAgainst(body, ["--audit-level=low"]),
+        auditAgainst(body, ["--audit-level=critical"]),
+      ]);
+
+      expect(report.stdout).toContain("  info: minor - https://example.com/minor\n");
+      expect(report.stdout).toContain("1 vulnerability (1 info)\n");
+      expect(report.exitCode).toBe(1);
+
+      expect(normalizeBunSnapshot(low.stdout)).toBe(AUDIT_HEADER + noVulnerabilities(1, "1 below --audit-level=low"));
+      expect(low.exitCode).toBe(0);
+
+      expect(normalizeBunSnapshot(critical.stdout)).toBe(
+        AUDIT_HEADER + noVulnerabilities(1, "1 below --audit-level=critical"),
+      );
+      expect(critical.exitCode).toBe(0);
+    });
+
+    test.concurrent("each --audit-level keeps its own severity and the ones above it", async () => {
+      const severities = ["info", "low", "moderate", "high", "critical"];
+      const body = JSON.stringify({
+        ms: severities.map(severity => ({ severity, title: severity, url: `https://example.com/${severity}` })),
+      });
+      const reports = await Promise.all([
+        auditAgainst(body),
+        ...severities.slice(1).map(level => auditAgainst(body, [`--audit-level=${level}`])),
+      ]);
+
+      expect(reports.map(report => report.stdout.match(/^\d+ vulnerabilit.*$/m)?.[0])).toEqual([
+        "5 vulnerabilities (1 critical, 1 high, 1 moderate, 1 low, 1 info)",
+        "4 vulnerabilities (1 critical, 1 high, 1 moderate, 1 low)",
+        "3 vulnerabilities (1 critical, 1 high, 1 moderate)",
+        "2 vulnerabilities (1 critical, 1 high)",
+        "1 vulnerability (1 critical)",
+      ]);
+      expect(reports.map(report => report.exitCode)).toEqual([1, 1, 1, 1, 1]);
+    });
+
+    test.concurrent("an advisory with an empty title has a line in the report", async () => {
+      const { stdout, stderr, exitCode } = await auditAgainst(
+        JSON.stringify({ ms: [{ severity: "high", title: "", url: "https://example.com/untitled" }] }),
+      );
+      expect(withoutHeader(stdout)).toBe(
+        [
+          "ms@0.7.0",
+          "  (direct dependency)",
+          "  high: Vulnerability found - https://example.com/untitled",
+          "",
+          "1 vulnerability (1 high)",
+          "",
+          REPORT_FOOTER,
+          "",
+        ].join("\n"),
+      );
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(1);
+    });
+
     test.concurrent("control characters in advisories and package names are escaped in the report", async () => {
       const { stdout, stderr, exitCode } = await auditAgainst(
         JSON.stringify({
@@ -898,6 +1007,11 @@ describe("`bun audit`", () => {
               title: "ms \x1b[2J\x1b]0;owned\x07 ReDoS in \\d+\r\n\tparsing\x7f \x9b \u00a9 2015",
               url: "https://example.com/ms\x1b]8;;https://evil.example/\x07",
               vulnerable_versions: "<2.0.0\x1b[0m",
+            },
+            {
+              severity: "high\x1b[2J\x07\r\n\x9b\u202e<red>",
+              title: "a severity Bun cannot rank",
+              url: "https://example.com/sev",
             },
           ],
           "ms\x1b[31m": [{ severity: "critical", title: "not a real package", url: "https://example.com/fake" }],
@@ -909,11 +1023,12 @@ describe("`bun audit`", () => {
           "ms@0.7.0",
           "  (direct dependency)",
           "  high: ms \\x1b[2J\\x1b]0;owned\\x07 ReDoS in \\d+\\r\\n\\tparsing\\x7f \\u009b \u00a9 2015 (<2.0.0\\x1b[0m) - https://example.com/ms\\x1b]8;;https://evil.example/\\x07",
+          "  unknown severity (high\\x1b[2J\\x07\\r\\n\\u009b\\u202e<red>): a severity Bun cannot rank - https://example.com/sev",
           "",
           "ms\\x1b[31m",
           "  critical: not a real package - https://example.com/fake",
           "",
-          "2 vulnerabilities (1 critical, 1 high)",
+          "3 vulnerabilities (1 critical, 1 high, 1 unknown severity)",
           "",
           REPORT_FOOTER,
           "",
@@ -1288,22 +1403,31 @@ describe("`bun audit --help`", () => {
 });
 
 describe("`bun audit` report", () => {
-  test.concurrent("an unknown severity is counted and filtered as moderate", async () => {
-    await using server = startRegistry({ "a-dep": [{ ...adv("<1.0.4"), severity: "info" }] });
-    using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2" } });
+  test.concurrent("audit fix upgrades for an advisory that Bun cannot rank, unless --ignore names it", async () => {
+    await using server = startRegistry({
+      "a-dep": [
+        { ...adv("<1.0.4", 1), severity: "HIGH" },
+        { ...adv("<1.0.4", 2), severity: "low" },
+      ],
+    });
+    using dir = await setupVulnerableADep(server);
+    const lockBefore = await lock(dir);
 
-    const report = await audit(dir);
-    expect(report.stdout).toContain("1 vulnerability (1 moderate)");
-    expect(report.stdout).toContain("moderate: test advisory");
-    expect(report.exitCode).toBe(1);
+    // Neither of these writes to the project.
+    const [fix, ignored] = await Promise.all([
+      auditFix(dir, "--dry-run", "--audit-level=critical"),
+      auditFix(dir, "--audit-level=critical", "--ignore", "1"),
+    ]);
 
-    const high = await audit(dir, "--audit-level=high");
-    expect(normalizeBunSnapshot(high.stdout)).toBe(AUDIT_HEADER + noVulnerabilities(1, "1 below --audit-level=high"));
-    expect(high.exitCode).toBe(0);
+    expect(fix.stdout).toContain("  ^ a-dep 1.0.2 -> 1.0.4");
+    expect(fix.stdout).toContain("Would fix 1 vulnerability in 1 package");
+    expect(fix.exitCode).toBe(0);
 
-    const moderate = await audit(dir, "--audit-level=moderate");
-    expect(moderate.stdout).toContain("1 vulnerability (1 moderate)");
-    expect(moderate.exitCode).toBe(1);
+    expect(normalizeBunSnapshot(ignored.stdout)).toBe(
+      FIX_HEADER + noVulnerabilities(1, "1 below --audit-level=critical", "1 ignored"),
+    );
+    expect(ignored.exitCode).toBe(0);
+    expect(await lock(dir)).toBe(lockBefore);
   });
 
   test.concurrent("names the installed version, one range per advisory, and ends on the fix commands", async () => {

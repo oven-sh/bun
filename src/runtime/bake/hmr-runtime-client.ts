@@ -17,6 +17,7 @@ import { MessageId } from "./generated";
 import {
   emitEvent,
   fullReload,
+  loadExports,
   loadModuleAsync,
   onEvent,
   onServerSideReload,
@@ -368,7 +369,7 @@ try {
     setRefreshRuntime(refreshRuntime);
   }
 
-  await loadModuleAsync(config.main, false, null);
+  await loadExports(config.main);
 
   emitEvent("bun:ready", null);
 } catch (e) {

@@ -19,6 +19,7 @@ import {
   withoutAggressiveGC,
 } from "harness";
 import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { totalmem } from "node:os";
 import path, { join } from "path";
 
 let tmp: string;
@@ -2469,4 +2470,71 @@ it("doesn't crash when a subprocess pipe is canceled and the event loop runs ins
   // An expect().resolves that isn't awaited runs the event loop synchronously.
   expect(Bun.sleep(1)).resolves.toBeUndefined();
   expect(fetch(server.url).then(r => r.text())).resolves.toBe("ok");
+});
+
+// A typed array holds at most 2^32 bytes, and on Windows one libuv buffer
+// describes at most 2^32 - 1. The stdin writer there handed libuv the whole
+// payload as one buffer whose length wrapped: 2^32 bytes became a write of 0
+// bytes that was reported as complete, and the child read an empty stdin.
+// Each case holds its 4 GiB in a child of its own, not in the test runner.
+describe.skipIf(!isWindows || totalmem() < 12 * 1024 ** 3)("a stdin buffer of about 4 GiB", () => {
+  // Prints the number of bytes on stdin and the byte at each offset in PROBES.
+  const countStdin = `
+    const probes = JSON.parse(process.env.PROBES);
+    const seen = probes.map(() => null);
+    let total = 0;
+    for await (const chunk of Bun.stdin.stream()) {
+      for (let i = 0; i < probes.length; i++) {
+        const at = probes[i] - total;
+        if (at >= 0 && at < chunk.length) seen[i] = chunk[at];
+      }
+      total += chunk.length;
+    }
+    console.log(JSON.stringify({ total, seen }));
+  `;
+
+  it.each([2 ** 32 - 1, 2 ** 32])(
+    "a Uint8Array of %d bytes reaches the child whole",
+    async size => {
+      // [offset, value]: both ends, and both sides of the offsets where a write that went out in parts would resume.
+      const marks = [0, 0x7fff_f000 - 1, 0x7fff_f000, 2 ** 31 - 1, 2 ** 31, size - 2, size - 1].map((at, i) => [
+        at,
+        i + 1,
+      ]);
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const payload = new Uint8Array(${size});
+          for (const [at, value] of JSON.parse(process.env.MARKS)) payload[at] = value;
+          const proc = Bun.spawn({
+            cmd: [process.execPath, "-e", process.env.COUNT_STDIN],
+            env: process.env,
+            stdin: payload,
+            stdout: "inherit",
+            stderr: "inherit",
+          });
+          process.exitCode = await proc.exited;
+          `,
+        ],
+        env: {
+          ...bunEnv,
+          COUNT_STDIN: countStdin,
+          MARKS: JSON.stringify(marks),
+          PROBES: JSON.stringify(marks.map(([at]) => at)),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ result: JSON.parse(stdout.trim() || "null"), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        result: { total: size, seen: marks.map(([, value]) => value) },
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    180_000,
+  );
 });

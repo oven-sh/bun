@@ -1713,10 +1713,11 @@ describe("Bun.inspect JSX children with holes", () => {
       Object.defineProperty(Array.prototype, 1, { get: () => (calls++, "inherited") });
       const far = ["a", , "c"];
       far[100_000] = "far";
-      console.log(element(far), calls);
+      console.log(element(far));
+      console.log(calls);
     `);
     expect(result).toEqual({
-      stdout: div("a", "empty item", "c", "99997 x empty items", "far") + " 0\n",
+      stdout: div("a", "empty item", "c", "99997 x empty items", "far") + "\n0\n",
       stderr: "",
       exitCode: 0,
       signalCode: null,

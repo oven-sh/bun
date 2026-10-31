@@ -267,9 +267,21 @@ public:
         return m_inspectCustomPublicName;
     }
 
+    // The fields of a React element that the console formatter reads. Each name is made on first use.
+    enum class ReactField : uint8_t { Typeof, Type, Key, Props, Children, Count_ };
+    const JSC::Identifier& reactFieldName(ReactField field) {
+        static constexpr ASCIILiteral strings[] = { "$$typeof"_s, "type"_s, "key"_s, "props"_s, "children"_s };
+        auto& name = m_reactFieldNames[static_cast<size_t>(field)];
+        if (name.isEmpty()) [[unlikely]] {
+            name = JSC::Identifier::fromString(m_vm, strings[static_cast<size_t>(field)]);
+        }
+        return name;
+    }
+
 private:
     JSC::VM& m_vm;
     JSC::Identifier m_inspectCustomPublicName {};
+    std::array<JSC::Identifier, static_cast<size_t>(ReactField::Count_)> m_reactFieldNames;
     std::array<JSC::Identifier, count> m_publicNames;
     std::array<JSC::Identifier, count> m_privateNames;
 };

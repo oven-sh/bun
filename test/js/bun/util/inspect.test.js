@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { openSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -9,6 +10,7 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
+import * as pathNamespace from "path";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -754,6 +756,21 @@ describe.concurrent("Bun.inspect when a property lookup throws", () => {
       }
     `);
     expect(result).toEqual({ stdout: "threw: getPrototypeOf trap\n", stderr: "", exitCode: 0 });
+  });
+
+  it("prints a $$typeof getter as [Getter] instead of calling it", async () => {
+    // The React element check reads `$$typeof`. Like every other property, an accessor is
+    // printed as [Getter] and never called, so a throwing getter cannot abort console.log.
+    const result = await inspectInChild(`
+      const obj = { get $$typeof() { throw new Error("boom"); } };
+      console.log(obj);
+      console.log(new Map([[1, obj], [2, "after"]]));
+    `);
+    expect(result).toEqual({
+      stdout: "{\n  $$typeof: [Getter],\n}\n" + 'Map(2) {\n  1: {\n    $$typeof: [Getter],\n  },\n  2: "after",\n}\n',
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   it("propagates an error thrown by toJSON while formatting", () => {
@@ -1535,4 +1552,229 @@ it.skipIf(!isASAN)("prints a substring-rope jsx type after a prop's inspect.cust
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toEndWith("</div-abcdefghijklmnopqrstuvwxyz>\n");
   expect(exitCode).toBe(0);
+});
+
+it("does not call a $$typeof getter while checking for a React element", () => {
+  let called = 0;
+  const obj = {
+    get $$typeof() {
+      called++;
+      return Symbol.for("react.element");
+    },
+  };
+
+  expect(Bun.inspect(obj)).toBe("{\n" + "  $$typeof: [Getter]," + "\n" + "}");
+  expect(called).toBe(0);
+
+  const throwing = {
+    get $$typeof() {
+      called++;
+      throw new Error("Test failed!");
+    },
+  };
+
+  expect(Bun.inspect(throwing)).toBe("{\n" + "  $$typeof: [Getter]," + "\n" + "}");
+  expect(Bun.inspect([throwing, "after"])).toBe('[\n  {\n    $$typeof: [Getter],\n  }, "after"\n]');
+  expect(Bun.inspect(new Map([[1, throwing]]))).toBe("Map(1) {\n  1: {\n    $$typeof: [Getter],\n  },\n}");
+  expect(Bun.inspect(new Set([throwing]))).toBe("Set(1) {\n  {\n    $$typeof: [Getter],\n  },\n}");
+  expect(Bun.inspect({ nested: throwing })).toBe("{\n  nested: {\n    $$typeof: [Getter],\n  },\n}");
+  expect(Bun.inspect({ nested: throwing }, { depth: 0 })).toBe("{\n  nested: [Object ...],\n}");
+
+  const hidden = {};
+  Object.defineProperty(hidden, "$$typeof", {
+    get() {
+      called++;
+      throw new Error("Test failed!");
+    },
+    enumerable: false,
+  });
+  expect(Bun.inspect(hidden)).toStartWith("{");
+  expect(called).toBe(0);
+
+  // A data property still marks a React element, and an element of React prints as before.
+  const element = { $$typeof: Symbol.for("react.element"), type: "div", key: null, ref: null, props: { id: "x" } };
+  expect(Bun.inspect(element)).toBe('<div id="x" />');
+  expect(
+    Bun.inspect(
+      <div id="x" key="k">
+        hi
+      </div>,
+    ),
+  ).toBe('<div key="k" id="x">hi</div>');
+});
+
+it("prints a React element without calling getters on its type, key, props or children", () => {
+  const $$typeof = Symbol.for("react.element");
+  let called = 0;
+  const getter = {
+    get() {
+      called++;
+      throw new Error("Test failed!");
+    },
+    enumerable: true,
+  };
+  const withGetter = (target, name) => Object.defineProperty(target, name, getter);
+
+  // An accessor field reads as absent. So does an inherited one.
+  expect(Bun.inspect(withGetter({ $$typeof, props: {} }, "type"))).toBe("<unknown />");
+  expect(Bun.inspect(withGetter({ $$typeof, type: "div", props: {} }, "key"))).toBe("<div />");
+  expect(Bun.inspect(withGetter({ $$typeof, type: "div" }, "props"))).toBe("<div />");
+  expect(Bun.inspect(Object.assign(Object.create({ type: "span", props: { id: "x" } }), { $$typeof }))).toBe(
+    "<unknown />",
+  );
+  // An accessor prop prints like every other accessor. An accessor `children` is such a prop.
+  expect(Bun.inspect({ $$typeof, type: "div", props: withGetter({ id: "x" }, "hidden") })).toBe(
+    '<div id="x" hidden=[Getter] />',
+  );
+  expect(Bun.inspect({ $$typeof, type: "div", props: withGetter({ id: "x" }, "children") })).toBe(
+    '<div id="x" children=[Getter] />',
+  );
+  expect(Bun.inspect({ $$typeof, type: "div", props: { id: "x", children: undefined } }).replace(/ +/g, " ")).toBe(
+    '<div id="x" />',
+  );
+
+  // A Proxy, nested or not, is read through its innermost target. A revoked one has nothing to read.
+  const trap = () => {
+    called++;
+    throw new Error("Test failed!");
+  };
+  const traps = { get: trap, has: trap, ownKeys: trap, getOwnPropertyDescriptor: trap };
+  const proxyProps = new Proxy({ id: "x" }, traps);
+  expect(Bun.inspect({ $$typeof, type: "div", props: proxyProps })).toBe('<div id="x" />');
+  expect(Bun.inspect({ $$typeof, type: "div", props: new Proxy(proxyProps, {}) })).toBe('<div id="x" />');
+  const revokedProps = Proxy.revocable({ id: "x" }, {});
+  revokedProps.revoke();
+  expect(Bun.inspect({ $$typeof, type: "div", props: revokedProps.proxy })).toBe("<div />");
+  expect(Bun.inspect({ $$typeof, type: "div", props: new Proxy(revokedProps.proxy, {}) })).toBe("<div />");
+  function Component() {}
+  expect(Bun.inspect({ $$typeof, type: new Proxy(Component, traps), props: {} })).toBe("<Component />");
+  const revokedType = Proxy.revocable(Component, {});
+  revokedType.revoke();
+  expect(Bun.inspect({ $$typeof, type: revokedType.proxy, props: {} })).toBe("<NoName />");
+  expect(called).toBe(0);
+
+  // Data props, including a numeric key, still print.
+  expect(Bun.inspect({ $$typeof, type: "div", key: "k", props: { 0: "a", b: 1, children: "hi" } })).toBe(
+    '<div key="k" 0="a" b=1>hi</div>',
+  );
+  // The export of a module namespace is no data property, so it does not print as a prop.
+  expect(Bun.inspect({ $$typeof, type: "div", props: pathNamespace })).toBe("<div />");
+});
+
+it("a Node argument error and a matcher message print a $$typeof getter and do not call it", () => {
+  let called = 0;
+  const value = {
+    get $$typeof() {
+      called++;
+      throw new Error("boom");
+    },
+  };
+
+  let error;
+  try {
+    openSync(import.meta.path, value);
+  } catch (e) {
+    error = e;
+  }
+  expect({ code: error?.code, message: error?.message }).toEqual({
+    code: "ERR_INVALID_ARG_VALUE",
+    message: "The argument 'flags' is invalid. Received { $$typeof: [Getter] }",
+  });
+
+  let message = "";
+  try {
+    expect(value).toBe(1);
+  } catch (e) {
+    message = Bun.stripANSI(e.message);
+  }
+  expect(message).toBe("expect(received).toBe(expected)\n\nExpected: 1\nReceived: {\n  $$typeof: [Getter],\n}\n");
+  expect(called).toBe(0);
+});
+
+describe.concurrent("a $$typeof getter at the other console entry points", () => {
+  async function run(args, cwd) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("Bun.serve answers for the object as for any other value that is no Response", async () => {
+    const { stdout, stderr, exitCode } = await run([
+      "-e",
+      `let called = 0;
+       const values = [{ plain: 1 }, { get $$typeof() { called++; throw new Error("boom"); } }];
+       const server = Bun.serve({ port: 0, fetch: () => values.shift(), error: e => new Response(e.message, { status: 500 }) });
+       const answers = [];
+       for (let i = 0; i < 2; i++) {
+         const response = await fetch(server.url);
+         answers.push(response.status + " " + (await response.text()));
+       }
+       await server.stop(true);
+       console.log(JSON.stringify({ same: answers[0] === answers[1], called }));`,
+    ]);
+    expect(stderr).toContain("Expected a Response object, but received '{\n  $$typeof: [Getter],\n}'");
+    expect({ stdout, exitCode }).toEqual({ stdout: '{"same":true,"called":0}\n', exitCode: 0 });
+  });
+
+  it("a test.each title prints an accessor prop as [Getter]", async () => {
+    using dir = tempDir("inspect-each-title", {
+      "title.test.js": `
+        import { test } from "bun:test";
+        const props = Object.defineProperty({}, "className", { get: () => "foo", enumerable: true });
+        test.each([[{ $$typeof: Symbol.for("react.element"), type: "div", key: null, props }]])("title %p", () => {});
+      `,
+    });
+    const { stderr, exitCode } = await run(["test", "title.test.js"], String(dir));
+    expect(stderr).toContain("title <div className=[Getter] />");
+    expect(exitCode).toBe(0);
+  });
+
+  it("bun -p prints the object", async () => {
+    expect(await run(["-p", `({ get $$typeof() { throw new Error("boom"); } })`])).toEqual({
+      stdout: "{\n  $$typeof: [Getter],\n}\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("the error printer finishes its report", async () => {
+    const { stdout, stderr, exitCode } = await run([
+      "-e",
+      `const error = new Error("x");
+       error.element = { get $$typeof() { throw new Error("boom"); } };
+       error.after = 1;
+       throw error;`,
+    ]);
+    expect(stderr).toContain("element: {\n  $$typeof: [Getter],\n},\n");
+    expect(stderr).toContain("after: 1,\n");
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+  });
+
+  // The global of a node:vm context throws a stack overflow from every property lookup, a
+  // non-observable one too. The formatter must report that error.
+  it.skipIf(!isASAN)("reports a stack overflow from the props of a React element", async () => {
+    const result = await run([
+      "-e",
+      `const vm = require("node:vm");
+       const props = vm.runInContext("globalThis", vm.createContext({}));
+       const element = { $$typeof: Symbol.for("react.element"), type: "div", props };
+       const inspect = Bun.inspect;
+       let out;
+       (function recurse() {
+         try {
+           recurse();
+         } catch {
+           if (out === undefined) {
+             try {
+               out = inspect(element);
+             } catch (e) {
+               out = "threw: " + e.message;
+             }
+           }
+         }
+       })();
+       console.log(out);`,
+    ]);
+    expect(result).toEqual({ stdout: "threw: Maximum call stack size exceeded.\n", stderr: "", exitCode: 0 });
+  });
 });

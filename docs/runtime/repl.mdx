@@ -122,6 +122,19 @@ Type `.help` at the prompt to see all available REPL commands.
 | `.break`   | Cancel the current multi-line input                                                              |
 | `.history` | Print the command history                                                                        |
 
+The REPL reads the first word of a line that starts with `.` as a command name. A line that starts with a number, such as `.5 + 1`, or with a spread, such as `...args`, is JavaScript.
+
+In a multi-line input, a line that starts with `.` is a command only when its first word is a full command name: `.break`, or `.save ./out.txt`. Every other line is JavaScript, such as `.sort()`, `.clear()` or `...args`:
+
+```txt
+> ([3, 1, 2]
+... .sort()
+... .reverse())
+[ 3, 2, 1 ]
+```
+
+The REPL runs a complete line when you press `Enter`, so the next line cannot continue it. To continue an expression on the next line, open a parenthesis first, as above, or use `.editor`. To leave a multi-line input, type `.break` or press `Ctrl+C`.
+
 ---
 
 ## Keybindings

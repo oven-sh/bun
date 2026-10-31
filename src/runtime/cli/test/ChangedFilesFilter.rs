@@ -192,8 +192,7 @@ pub(crate) fn filter<'a>(
     let sources = bundle.graph.input_files.items_source();
     let import_records = bundle.graph.ast.items_import_records();
 
-    // Map absolute source path -> source index for paths that participate in
-    // the graph. This lets us look up changed-file paths quickly.
+    // Map absolute source path -> the first source index of that path: a test file is its own first copy.
     let mut path_to_index: StringHashMap<u32> = StringHashMap::new();
     path_to_index.reserve(sources.len());
 
@@ -222,7 +221,9 @@ pub(crate) fn filter<'a>(
         }
         // All scanned entry points are absolute, and the resolver emits
         // absolute file paths as well.
-        path_to_index.put_assume_capacity(path_text, u32::try_from(idx).unwrap());
+        bun_core::handle_oom(
+            path_to_index.get_or_put_value(path_text, u32::try_from(idx).unwrap()),
+        );
         // Copy out of the bundler's arena so the caller can use these paths
         // after the BundleV2 heap is gone.
         graph_files.push(Box::<[u8]>::from(path_text));
@@ -256,12 +257,11 @@ pub(crate) fn filter<'a>(
     let mut queue: Vec<u32> = Vec::new();
 
     {
-        for changed_path in changed_files.keys() {
-            if let Some(&idx) = path_to_index.get(changed_path.as_ref()) {
-                if !affected.is_set(idx as usize) {
-                    affected.set(idx as usize);
-                    queue.push(idx);
-                }
+        // The graph holds a file once per target (a test and the script of a page can both import it), so every copy is a start.
+        for (idx, source) in sources.iter().enumerate() {
+            if source.path.is_file() && changed_files.contains(source.path.text) {
+                affected.set(idx);
+                queue.push(u32::try_from(idx).unwrap());
             }
         }
     }

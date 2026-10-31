@@ -8553,6 +8553,36 @@ describe("math functions", () => {
     minify_test("a{rotate:atan2(1in,10px)}", "a{rotate:1.467rad}");
   });
 
+  describe("atan2() takes two values of one type", () => {
+    minify_test("a{rotate:atan2(2s,1s)}", "a{rotate:1.10715rad}");
+    minify_test("a{rotate:atan2(50%,25%)}", "a{rotate:1.10715rad}");
+    minify_test("a{rotate:atan2(2px + 1em - 1em,1px)}", "a{rotate:1.10715rad}");
+    minify_test("a{rotate:atan2(1px,1s)}", "a{rotate:atan2(1px,1s)}");
+    minify_test("a{rotate:atan2(1px + 1s,1px)}", "a{rotate:atan2(1px + 1s,1px)}");
+    // sign() gives a number for every type.
+    minify_test("a{rotate:atan2(2*sign(1px),sign(1s))}", "a{rotate:1.10715rad}");
+    // A length plus a number is no length, also when the length is zero.
+    minify_test("a{rotate:atan2(0px + 5,1)}", "a{rotate:atan2(0px + 5,1)}");
+    // The end of the input closes every block.
+    minify_test("a{rotate:atan2(2,sign(1s", "a{rotate:1.10715rad}");
+  });
+
+  describe("functions of numbers and angles", () => {
+    minify_test("a{opacity:sin(1)}", "a{opacity:.841471}");
+    minify_test("a{rotate:asin(.25)}", "a{rotate:.25268rad}");
+    minify_test("a{rotate:acos(.25)}", "a{rotate:1.31812rad}");
+    minify_test("a{rotate:atan(2)}", "a{rotate:1.10715rad}");
+    minify_test("a{rotate:asin(2)}", "a{rotate:asin(2)}");
+    minify_test("a{rotate:asin(1deg)}", "a{rotate:asin(1deg)}");
+    minify_test("a{width:asin(.5)}", "a{width:asin(.5)}");
+    minify_test("a{width:calc(1px*pow(2,3))}", "a{width:8px}");
+    minify_test("a{width:calc(1px*pow(2px,3))}", "a{width:calc(1px*pow(2px,3))}");
+    minify_test("a{width:calc(1px*sqrt(16))}", "a{width:4px}");
+    minify_test("a{width:calc(1px*exp(0))}", "a{width:1px}");
+    minify_test("a{width:calc(1px*log(8,2))}", "a{width:3px}");
+    minify_test("a{width:calc(1px*log(e))}", "a{width:1px}");
+  });
+
   describe("rem() keeps the sign of the dividend", () => {
     minify_test("a{margin-left:rem(-18px,5px)}", "a{margin-left:-3px}");
     minify_test("a{rotate:rem(140deg,-90deg)}", "a{rotate:50deg}");
@@ -8628,6 +8658,12 @@ describe("relative color channel keywords", () => {
   minify_test(".a { color: lab(from lab(50% 20 30) a b l) }", ".a{color:lab(20% 30 50)}");
   // Browsers reject a keyword plus a percentage. It folds as it always has.
   minify_test(".a { color: lch(from purple calc(l + 15%) c h) }", ".a{color:lch(44.6915% 66.8257 327.105)}");
+  // A keyword is a number in sin(), pow() and the like, when the function is the whole channel.
+  minify_test(".a { color: hsl(from hsl(90 50% 50%) sin(h) s l) }", ".a{color:#bf4240}");
+  minify_test(".a { color: rgb(from rgb(100 2 3) sqrt(r) g b) }", ".a{color:#0a0203}");
+  minify_test(".a { color: rgb(from rgb(100 2 3) pow(2, b) g b) }", ".a{color:#080203}");
+  minify_test(".a { color: rgb(from rgb(100 2 3) log(r, 10) g b) }", ".a{color:#020203}");
+  minify_test(".a { color: rgb(from rgb(100 2 3) exp(b) g b) }", ".a{color:#140203}");
 });
 
 describe("relative color outside sRGB", () => {

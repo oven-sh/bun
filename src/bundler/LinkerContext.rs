@@ -5160,7 +5160,7 @@ impl InsideWrapperPrefix {
         Ok(())
     }
 
-    fn append_async_dependency(
+    pub(crate) fn append_async_dependency(
         &mut self,
         call_expr: Expr,
         promise_all_ref: Ref,

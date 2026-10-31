@@ -76,6 +76,12 @@ bun_bundler::link_impl_DevServerHandle! {
             };
             let _ = gop.value_ptr.get_or_put(alias);
         },
+        join_holders_of_repaired(bv2) => {
+            if (*this).bundling_failures.is_empty() {
+                return;
+            }
+            (*this).join_holders_of_repaired(&mut *bv2.cast());
+        },
     }
 }
 

@@ -415,6 +415,8 @@ bun_dispatch::link_interface! {
         fn current_bundle_start_data() -> *mut ();
         fn register_barrel_with_deferrals(path: &[u8]) -> Result<(), crate::Error>;
         fn register_barrel_export(barrel_path: &[u8], alias: &[u8]);
+        // Scan end. It can add entry points to `bv2`: the caller then reads its pending counter.
+        fn join_holders_of_repaired(bv2: *mut bundle_v2::BundleV2<'_>);
     }
 }
 // SAFETY: the handle is `{ kind, owner: *mut () }`; the raw pointer is what

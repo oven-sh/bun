@@ -48,6 +48,7 @@ not_called_by_tests! {
     __bun_dispatch__DevServerHandle__Bake__register_barrel_export
     __bun_dispatch__DevServerHandle__Bake__put_or_overwrite_asset
     __bun_dispatch__DevServerHandle__Bake__log_for_resolution_failures
+    __bun_dispatch__DevServerHandle__Bake__join_holders_of_repaired
     __bun_dispatch__DevServerHandle__Bake__is_file_cached
     __bun_dispatch__DevServerHandle__Bake__handle_parse_task_failure
     __bun_dispatch__DevServerHandle__Bake__finalize_bundle

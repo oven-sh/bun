@@ -47,7 +47,14 @@ static struct us_socket_t *us_internal_poll_cb_adopted_socket(struct us_poll_t *
   return us_internal_socket_follow_adopted((struct us_socket_t *)wp);
 }
 
-static void close_cb_free_poll(uv_handle_t *h);
+/* Polls on this backend are sockets (listening, connecting, connected) or UDP
+ * sockets. Timers and asyncs are libuv handles of their own. */
+static struct us_loop_t *us_internal_poll_loop(struct us_poll_t *p) {
+  if (us_internal_poll_type(p) == POLL_TYPE_UDP) {
+    return ((struct us_udp_socket_t *)p)->loop;
+  }
+  return ((struct us_socket_t *)p)->group->loop;
+}
 
 /* uv_poll_t->data always points to the us_poll_t, even after us_poll_resize.
  * libuv doesn't call poll_cb after us_poll_stop, and a stopped poll is never
@@ -125,23 +132,24 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
   if (!error && !eof && !(events & (UV_READABLE | UV_WRITABLE))) {
     return;
   }
+  /* A handler may close this socket (us_poll_stop: uv_close, then closesocket)
+   * and then run the loop again (a promise wait, or an addon's uv_run). That
+   * inner run can finish the handle's close, but it must not free the blocks:
+   * libuv's frame under this one still reads the handle, and the dispatch
+   * still reads the socket. tick_depth is raised here, not only in
+   * us_loop_run / us_loop_pump, so us_internal_loop_post frees closed sockets
+   * only once every dispatch frame has returned, whoever runs the loop. A run
+   * that Bun did not start is at depth 0 here; it counts as the outermost
+   * tick, so the frame is at depth 2 or more either way. The frame under this
+   * one does not queue the endgame a second time
+   * (win-poll-no-reendgame-after-close), so nothing here reads the poll after
+   * the dispatch. */
   struct us_poll_t *wp = (struct us_poll_t *)p->data;
-  wp->poll_cb_depth++;
+  struct us_loop_t *loop = us_internal_poll_loop(wp);
+  int depth = loop->data.tick_depth;
+  loop->data.tick_depth = (depth > 0 ? depth : 1) + 1;
   us_internal_dispatch_ready_poll(wp, error, eof, events);
-  /* us_poll_resize may have moved the poll during the dispatch. The counter
-   * moved with it, so reload the pointer from the handle. */
-  wp = (struct us_poll_t *)p->data;
-  /* A handler that waits for a promise re-enters uv_run. Closing the handle in
-   * that inner run would run its endgame while libuv's outer frame still uses
-   * the handle. So us_poll_stop only disarms the handle while a poll_cb frame is
-   * on the stack, and the outermost frame closes it here. Close the handle
-   * before the socket (see close_fd). */
-  if (--wp->poll_cb_depth == 0 && wp->stopped) {
-    uv_close((uv_handle_t *)p, close_cb_free_poll);
-    if (wp->close_fd) {
-      bsd_close_socket(wp->fd);
-    }
-  }
+  loop->data.tick_depth = depth;
 }
 
 static void prepare_cb(uv_prepare_t *p) {
@@ -211,8 +219,10 @@ void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
 }
 
 /* Stopping a poll closes its handle, so a stopped poll can't be restarted.
- * close_cb_free_poll frees the blocks later. Callers must close the socket with
- * us_internal_poll_close_fd, which waits for a deferred uv_close. */
+ * close_cb_free_poll frees the blocks later. Callers close the socket with
+ * us_internal_poll_close_fd after this: uv_close cancels the in-flight AFD
+ * request with an ioctl on the socket, and a process with strict handle checks
+ * (every AppContainer) dies if that socket is already closed. */
 void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
   uv_poll_t *h = p->uv_p;
   if (!h || p->stopped) return;
@@ -222,19 +232,13 @@ void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
   /* Disarm first so an already dequeued completion doesn't reach poll_cb for a
    * socket on the closed list. */
   uv_poll_stop(h);
-  /* Otherwise the outermost poll_cb frame closes the handle. */
-  if (p->poll_cb_depth == 0) {
-    uv_close((uv_handle_t *)h, close_cb_free_poll);
-  }
+  /* Also from inside this poll's own poll_cb: the close must not wait for the
+   * frame to return, because a handler that closes a socket may listen on its
+   * port before it returns (see poll_cb for why the frame is safe). */
+  uv_close((uv_handle_t *)h, close_cb_free_poll);
 }
 
 void us_internal_poll_close_fd(struct us_poll_t *p) {
-  /* uv_close is deferred to the outermost poll_cb frame and needs the socket
-   * open (see close_fd in us_poll_t), so that frame closes both. */
-  if (p->stopped && p->poll_cb_depth > 0) {
-    p->close_fd = 1;
-    return;
-  }
   bsd_close_socket(p->fd);
 }
 
@@ -487,10 +491,8 @@ struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,
   p->uv_p = us_calloc(1, sizeof(uv_poll_t));
   p->uv_p->data = p;
   p->stopped = 0;
-  p->close_fd = 0;
   p->uv_closed = 0;
   p->released = 0;
-  p->poll_cb_depth = 0;
   return p;
 }
 

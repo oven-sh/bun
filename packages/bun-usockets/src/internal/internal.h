@@ -232,9 +232,9 @@ void us_internal_async_wakeup(struct us_internal_async *a);
 size_t us_internal_accept_poll_event(struct us_poll_t *p);
 int us_internal_poll_type(struct us_poll_t *p);
 void us_internal_poll_set_type(struct us_poll_t *p, int poll_type);
-/* Closes a stopped poll's descriptor. On epoll/kqueue this is bsd_close_socket.
- * On libuv the descriptor must outlive the handle's uv_close, which can be
- * deferred (see us_poll_stop in eventing/libuv.c). */
+/* Closes a stopped poll's descriptor (bsd_close_socket). Call it after
+ * us_poll_stop: on libuv the handle's uv_close needs the descriptor open (see
+ * us_poll_stop in eventing/libuv.c). */
 void us_internal_poll_close_fd(struct us_poll_t *p);
 
 /* SSL loop data */

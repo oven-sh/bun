@@ -160,7 +160,7 @@ The key can carry a version selector so the rule only applies to dependents whos
 }
 ```
 
-Bun compares the selector with the range each dependent _declares_, not the resolved version. `"semver@<7.5.2"` applies to a dependent that declares `^7.3.0` (which could still pick `7.3.x`) but not to one that declares `^7.5.2`. Dependents using a dist-tag, `workspace:`, git, or URL specifier never match a selector.
+Bun compares the selector with the range each dependent _declares_, not the resolved version. `"semver@<7.5.2"` applies to a dependent that declares `^7.3.0` (which could still pick `7.3.x`) but not to one that declares `^7.5.2`. Dependents using a dist-tag, `workspace:`, git, or URL specifier never match a selector. Neither does a dependency of your project or of one of its workspaces whose range links a workspace package of that name: it keeps the link.
 
 `bun add foo` and `bun update --latest` write a range to `package.json`, and the selector is compared with that range. With `"foo@>=2.0.0": "1.2.0"` and `2.0.0` as the latest release, `bun add foo` writes `"foo": "^2.0.0"` and installs `foo@1.2.0`.
 

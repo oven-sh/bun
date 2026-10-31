@@ -444,6 +444,14 @@ impl Loaded {
             route => route,
         }
     }
+
+    /// [`Loaded::routes`] for the file at `path` without its processor. This is also the route of a processor's output.
+    pub(crate) fn routes_without_processor(&self, config: &ResolvedConfig, path: &[u8]) -> Route {
+        match config.route_without_processor(path) {
+            Route::Eslint if self.for_eslint.is_none() => Route::Unsupported,
+            route => route,
+        }
+    }
 }
 
 pub(crate) type Found = Result<Arc<Loaded>, Fatal>;

@@ -67,6 +67,9 @@ pub trait RunTasksCallbacks {
 
     const PROGRESS_BAR: bool = false;
     const MANIFESTS_ONLY: bool = false;
+    /// The packages are in the lockfile and only have to get into the cache. The lockfile stays as
+    /// it is, so what a package.json says is not looked at.
+    const CACHE_ONLY: bool = false;
 
     const HAS_ON_EXTRACT: bool = false;
     const HAS_ON_PACKAGE_MANIFEST_ERROR: bool = false;
@@ -141,6 +144,7 @@ pub trait RunTasksCallbacks {
 struct ErasedCallbacks {
     progress_bar: bool,
     manifests_only: bool,
+    cache_only: bool,
     has_on_extract: bool,
     has_on_package_manifest_error: bool,
     has_on_package_download_error: bool,
@@ -170,6 +174,7 @@ impl ErasedCallbacks {
         Self {
             progress_bar: C::PROGRESS_BAR,
             manifests_only: C::MANIFESTS_ONLY,
+            cache_only: C::CACHE_ONLY,
             has_on_extract: C::HAS_ON_EXTRACT,
             has_on_package_manifest_error: C::HAS_ON_PACKAGE_MANIFEST_ERROR,
             has_on_package_download_error: C::HAS_ON_PACKAGE_DOWNLOAD_ERROR,
@@ -1369,6 +1374,9 @@ fn run_tasks_erased(
                     } else {
                         unreachable!("unexpected context type");
                     }
+                } else if cb.cache_only {
+                    // `bun patch --commit` installs next.
+                    let _ = forget_task(manager, task.id);
                 } else if manager.defers_remote_package(task.id, resolution) {
                     manager.keep_arrived_package(task.id, resolution, task.data_extract());
                     name_progress(manager, alias, EXTRACT);
@@ -1477,13 +1485,7 @@ fn run_tasks_erased(
 
                 // `bun pm fetch` has no installer, but like an installer, it queues its checkouts
                 // on the clone task.
-                let has_checkout_waiters = cb.has_on_extract
-                    || manager.task_queue.get(&task.id).is_some_and(|waiters| {
-                        waiters.iter().any(|waiter| {
-                            matches!(waiter, bun_install::TaskCallbackContext::GitCheckout { .. })
-                        })
-                    });
-                if has_checkout_waiters {
+                if cb.has_on_extract || cb.cache_only {
                     // Installing! The clone task is shared by every dependency on
                     // this repo URL; enqueue a checkout per waiter, not just one.
                     let Some(waiters) = manager.task_queue.remove(&task.id) else {
@@ -1671,6 +1673,9 @@ fn run_tasks_erased(
                     } else {
                         unreachable!("unexpected context type");
                     }
+                } else if cb.cache_only {
+                    // `bun patch --commit` installs next.
+                    let _ = forget_task(manager, task.id);
                 } else if manager.defers_remote_package(task.id, resolution) {
                     manager.keep_arrived_package(task.id, resolution, task.data_git_checkout());
                 } else if let Some(pkg) = manager.process_extracted_tarball_package(
@@ -1886,14 +1891,18 @@ pub(crate) fn alloc_github_url_for_ref(
 }
 
 /// A later dependency that joins an entry left in `task_queue` waits forever. Returns the waiters.
+fn forget_task(this: &mut PackageManager, task_id: Task::Id) -> TaskCallbackList {
+    let _ = this.network_dedupe_map.remove(&task_id);
+    this.task_queue.remove(&task_id).unwrap_or_default()
+}
+
 fn forget_failed_git_task(
     this: &mut PackageManager,
     task_id: Task::Id,
     name: &[u8],
 ) -> TaskCallbackList {
     fail_update_requests(this, task_id, name, None, false);
-    let _ = this.network_dedupe_map.remove(&task_id);
-    this.task_queue.remove(&task_id).unwrap_or_default()
+    forget_task(this, task_id)
 }
 
 /// How often a failed manifest request is retried. When `bunx` already has a copy of the tool, it

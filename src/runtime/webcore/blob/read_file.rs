@@ -803,7 +803,7 @@ impl ReadFile {
         // If we immediately call read(), it will block until stdin is
         // readable.
         if self.could_block {
-            if bun_core::is_readable(fd) == bun_core::Pollable::NotReady {
+            if self.max_length > 0 && bun_core::is_readable(fd) == bun_core::Pollable::NotReady {
                 self.wait_for_readable();
                 return;
             }
@@ -862,6 +862,8 @@ impl ReadFile {
                     // SAFETY: read() wrote `read_amount` initialized bytes into spare capacity.
                     unsafe { bun_core::vec::commit_spare(&mut buffer, read_amount) };
                 }
+                // The next read asks for what is left of `max_length`.
+                self.read_off += read_amount as SizeType;
                 // - If they DID set a max length, we should stop
                 //   reading after that.
                 //
@@ -1330,7 +1332,8 @@ impl<'a> ReadFileUV<'a> {
     pub(crate) fn queue_read(&mut self) {
         // if not a regular file, buffer capacity is arbitrary, and running out doesn't mean we're
         // at the end of the file
-        if (!self.remaining_buffer().is_empty() || !self.is_regular_file)
+        if self.read_off < self.max_length
+            && (!self.remaining_buffer().is_empty() || !self.is_regular_file)
             && self.errno.is_none()
             && !self.read_eof
         {

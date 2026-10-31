@@ -7223,6 +7223,144 @@ it("fs.promises.writeFile keeps the source buffer attached while the write is in
   expect(readFileSync(file, "latin1")).toBe("EEEEEEEE");
 });
 
+// A pin cannot keep the bytes of a resizable ArrayBuffer mapped, so an operation that only reads
+// them takes a copy when it starts. Nothing reads the buffer after that, and it is not pinned:
+// a transfer moves it, as in Node, and the operation still reads the bytes it was given.
+describe("an operation that reads a resizable ArrayBuffer leaves it free to be transferred", () => {
+  type Started = { view: Uint8Array; result: Promise<unknown>; expected: unknown };
+  const bytes = Uint8Array.from({ length: 16 }, (_, i) => i + 1);
+  function resizable(content: Uint8Array) {
+    const view = new Uint8Array(new ArrayBuffer(content.length, { maxByteLength: content.length * 4 }));
+    view.set(content);
+    return view;
+  }
+  const cases: Array<[string, (dir: string) => Started]> = [
+    [
+      "fs.write",
+      dir => {
+        const file = join(dir, "written.bin");
+        const fd = openSync(file, "w");
+        const view = resizable(bytes);
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        fs.write(fd, view, 0, view.byteLength, 0, err => {
+          closeSync(fd);
+          if (err) reject(err);
+          else resolve();
+        });
+        return { view, result: promise.then(() => [...readFileSync(file)]), expected: [...bytes] };
+      },
+    ],
+    [
+      "fs.promises.writeFile",
+      dir => {
+        const file = join(dir, "written.bin");
+        const view = resizable(bytes);
+        const result = fs.promises.writeFile(file, view).then(() => [...readFileSync(file)]);
+        return { view, result, expected: [...bytes] };
+      },
+    ],
+    [
+      "fs.promises.stat of a Buffer path",
+      dir => {
+        const view = resizable(Buffer.from(join(dir, "file.txt")));
+        return { view, result: fs.promises.stat(view).then(stats => stats.size), expected: 11 };
+      },
+    ],
+    [
+      "Bun.zstdCompress",
+      () => {
+        const view = resizable(bytes);
+        const result = Bun.zstdCompress(view).then(compressed => [...Bun.zstdDecompressSync(compressed)]);
+        return { view, result, expected: [...bytes] };
+      },
+    ],
+  ];
+
+  it.concurrent.each(cases)("%s", async (_name, start) => {
+    using dir = tempDir("fs-resizable-not-pinned", { "file.txt": "hello world" });
+    const { view, result, expected } = start(String(dir));
+    const sender = view.buffer;
+    const content = [...view];
+    const received: Uint8Array = structuredClone(view, { transfer: [sender] });
+    expect({
+      senderDetached: sender.detached,
+      received: [...received],
+      resizable: received.buffer.resizable,
+      maxByteLength: received.buffer.maxByteLength,
+    }).toEqual({
+      senderDetached: true,
+      received: content,
+      resizable: true,
+      maxByteLength: content.length * 4,
+    });
+    expect(await result).toEqual(expected);
+  });
+
+  // The reader drains the fifo one pipe buffer at a time, so the pool thread is still inside `write(2)`
+  // when the receiver overwrites the block that the transfer moved to it.
+  it.concurrent.skipIf(isWindows)(
+    "fs.write sends the bytes the caller passed when the receiver overwrites the buffer mid-write",
+    async () => {
+      using dir = tempDir("fs-write-transferred", {});
+      const fifoPath = join(String(dir), "w.fifo");
+      mkfifo(fifoPath);
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          import fs from "node:fs";
+          const TOTAL = 16 * 65536; // 1 MB, which is 16 pipe buffers
+          const view = new Uint8Array(new ArrayBuffer(TOTAL, { maxByteLength: TOTAL * 2 })).fill(0x41);
+
+          // O_RDWR keeps the open from blocking and lets this process drain the fifo itself.
+          const fd = fs.openSync(process.env.FIFO_PATH, fs.constants.O_RDWR);
+          const written = Promise.withResolvers();
+          fs.write(fd, view, 0, TOTAL, null, (err, n) => written.resolve(err ? err.code : n));
+
+          const chunk = Buffer.alloc(65536);
+          const expected = Buffer.alloc(65536, 0x41);
+          const read = () =>
+            new Promise((resolve, reject) =>
+              fs.read(fd, chunk, 0, chunk.length, null, (err, n) => (err ? reject(err) : resolve(n))),
+            );
+
+          // Read one pipe buffer. The pool thread is still inside write(2) with the rest.
+          let drained = await read();
+          const sender = view.buffer;
+          const received = structuredClone(view, { transfer: [sender] });
+          received.fill(0xee);
+
+          let foreignChunks = 0;
+          // A write that fails or stops short leaves the fifo empty for good, so it ends the loop.
+          const stopped = written.promise.then(n => (n === TOTAL ? new Promise(() => {}) : 0));
+          while (drained < TOTAL) {
+            const n = await Promise.race([read(), stopped]);
+            if (!n) break;
+            if (Buffer.compare(chunk.subarray(0, n), expected.subarray(0, n)) !== 0) foreignChunks++;
+            drained += n;
+          }
+          const senderDetached = sender.detached;
+          console.log(JSON.stringify({ senderDetached, drained, foreignChunks, written: await written.promise }));
+          process.exit(0);
+        `,
+        ],
+        env: { ...bunEnv, FIFO_PATH: fifoPath },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe(
+        JSON.stringify({ senderDetached: true, drained: 1048576, foreignChunks: 0, written: 1048576 }),
+      );
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+  );
+});
+
 // A pin stops a detach but not `ArrayBuffer.prototype.resize()`. The pool thread copies the path into
 // its own buffer, so it must read the bytes captured at call time, not the shrunk buffer.
 it("fs.promises.stat reads a Buffer path captured at call time when its resizable ArrayBuffer shrinks in flight", async () => {

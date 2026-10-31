@@ -957,7 +957,7 @@ static JSObject* createCodeNotCompiledError(JSGlobalObject* globalObject, const 
 {
     auto& vm = getVM(globalObject);
     JSObject* error = JSC::createError(globalObject, message);
-    error->putDirect(vm, Identifier::fromString(vm, "code"_s), jsString(vm, String("ERR_CODE_NOT_COMPILED"_s)));
+    Bun::putDirectNamed(vm, error, "code"_s, jsString(vm, String("ERR_CODE_NOT_COMPILED"_s)));
     return error;
 }
 

@@ -256,7 +256,7 @@ function getAzureVmSize(os: Os, arch: Arch, tier: AzureVmTier = "build"): string
  */
 const buildHostPlatform: Platform = { os: "linux", arch: "aarch64", distro: "debian", release: "13" };
 
-const buildPlatforms: Platform[] = [
+const everyBuildPlatforms: Platform[] = [
   // macOS is cross-compiled from the debian-13 aarch64 host (clang --target +
   // the Apple SDK fetched by xmac + ld64.lld — see scripts/build/macos-sdk.ts
   // and scripts/build/flags.ts). There is no native macOS build lane: the mac
@@ -294,9 +294,9 @@ const buildPlatforms: Platform[] = [
   // stays non-LTO (no windows-arm64-lto WebKit prebuilt, see config.ts).
   { os: "windows", arch: "x64", crossCompile: true, distro: "debian", release: "13" },
   { os: "windows", arch: "aarch64", crossCompile: true, distro: "debian", release: "13" },
-].filter(platform => platform.profile === "hardened" && platform.arch === "aarch64"); // The WebKit that this links is newer than what the other lanes are written for.
+];
 
-const testPlatforms: Platform[] = [
+const everyTestPlatforms: Platform[] = [
   // Darwin arm64 is targeted by `release-tier` (see getTestAgent): one job on
   // `latest` (current macOS, 26 today) and one on `previous` (anything older
   // — currently 13/14/15). x64 is NOT tier-targeted: a single entry runs on
@@ -342,7 +342,12 @@ const testPlatforms: Platform[] = [
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },
   { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
   { os: "windows", arch: "aarch64", release: "11", tier: "latest" },
-].filter(platform => platform.profile === "hardened" && platform.arch === "aarch64"); // The WebKit that this links is newer than what the other lanes are written for.
+];
+
+// The WebKit that this links is newer than what the other lanes are written for.
+const isOnlyLane = (platform: Platform) => platform.profile === "hardened" && platform.arch === "aarch64";
+const buildPlatforms = everyBuildPlatforms.filter(isOnlyLane);
+const testPlatforms = everyTestPlatforms.filter(isOnlyLane);
 
 /** Pull requests build and test the other profiles. main does not: nothing ships them. */
 const isInRelease = ({ profile }: Target) => profile !== "asan" && profile !== "hardened";

@@ -336,7 +336,7 @@ impl<'a, T> BabyVec<'a, T> {
     }
 
     #[cold]
-    fn grow_to(&mut self, at_least: usize) {
+    extern "rust-cold" fn grow_to(&mut self, at_least: usize) {
         assert!(at_least <= u32::MAX as usize, "BabyVec capacity overflow");
         if Self::T_IS_ZST {
             return;

@@ -61,7 +61,7 @@ pub fn wake(ptr: &AtomicU32, max_waiters: u32) {
 /// [`wake`] for a word the woken side may already have freed (`Mutex::unlock_raw`): every
 /// backend keys on the address and never reads the word, so at worst this wakes spuriously.
 #[cold]
-pub(crate) fn wake_raw(ptr: *const AtomicU32, max_waiters: u32) {
+pub(crate) extern "rust-cold" fn wake_raw(ptr: *const AtomicU32, max_waiters: u32) {
     // Avoid calling into the OS if there's nothing to wake up.
     if max_waiters == 0 {
         return;

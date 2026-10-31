@@ -1,5 +1,7 @@
 //! bun_threading crate root — thin re-exports.
 
+#![feature(rust_cold_cc)]
+
 pub mod channel;
 #[path = "Condition.rs"]
 pub mod condition;

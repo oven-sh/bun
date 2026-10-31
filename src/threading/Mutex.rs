@@ -381,7 +381,7 @@ impl FutexImpl {
     }
 
     #[cold]
-    fn lock_slow(&self) {
+    extern "rust-cold" fn lock_slow(&self) {
         // Avoid doing an atomic swap below if we already know the state is contended.
         // An atomic swap unconditionally stores which marks the cache-line as modified unnecessarily.
         if self.state.load(Ordering::Relaxed) == Self::CONTENDED {

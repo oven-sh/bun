@@ -771,8 +771,9 @@ impl<'a> File<'a> {
         }
     }
 
+    #[cold]
     #[inline(never)]
-    fn without_jsdoc_casts(&self, mut id: hir::ExprId) -> hir::ExprId {
+    extern "rust-cold" fn without_jsdoc_casts(&self, mut id: hir::ExprId) -> hir::ExprId {
         while let Some(operand) = self.operand_if_jsdoc_cast(id) {
             id = operand;
         }

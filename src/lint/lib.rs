@@ -19,6 +19,7 @@
 // `#[optimize(size)]` roughly halves that code, and its speed doesn't matter. Nothing that runs for a file without
 // errors uses it.
 #![feature(optimize_attribute)]
+#![feature(rust_cold_cc)]
 
 pub mod ast;
 pub mod code_path;

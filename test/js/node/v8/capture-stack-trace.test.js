@@ -1,9 +1,13 @@
 import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, nodeExeAtLeast, tempDir } from "harness";
+import assert from "node:assert";
+import { Console } from "node:console";
 import { totalmem } from "node:os";
+import { Writable } from "node:stream";
 import { createContext, runInContext } from "node:vm";
+import { Worker } from "node:worker_threads";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -1380,15 +1384,428 @@ test("captureStackTrace does not crash when stackTraceLimit is non-numeric", () 
     Error.stackTraceLimit = "foo";
     const obj = {};
     expect(() => Error.captureStackTrace(obj)).not.toThrow();
-    expect(typeof obj.stack).toBe("string");
+    // V8 records no stack under a limit that is not a number.
+    expect(obj).toHaveProperty("stack", undefined);
 
     delete Error.stackTraceLimit;
     const obj2 = {};
     expect(() => Error.captureStackTrace(obj2)).not.toThrow();
-    expect(typeof obj2.stack).toBe("string");
+    expect(obj2).toHaveProperty("stack", undefined);
   } finally {
     Error.stackTraceLimit = origLimit;
   }
+});
+
+// Error.captureStackTrace() under each value of Error.stackTraceLimit, onto five targets: a plain object, an Error made
+// before, an Error whose stack was read before, an Error subclass that captures in its constructor, and a plain object
+// with the caller argument. It uses nothing from outside, so a Worker and a ShadowRealm can evaluate its text.
+function captureUnderEveryStackTraceLimit() {
+  const descriptor = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
+  const depth = 12;
+  // try/finally keeps the recursive call out of tail position, so every frame stays on the stack.
+  function deep(n, f) {
+    try {
+      return n ? deep(n - 1, f) : f();
+    } finally {
+    }
+  }
+  const describe = target => {
+    const stack = target.stack;
+    if (typeof stack !== "string") return Object.hasOwn(target, "stack") ? `stack is ${stack}` : "no stack property";
+    const lines = stack.split("\n");
+    const frames = lines.filter(line => /^\s+at /.test(line));
+    const hasEveryFrame = frames.filter(line => /^\s+at deep /.test(line)).length === depth + 1;
+    return `${lines[0]}, ${hasEveryFrame ? "every frame" : `${frames.length} frames`}`;
+  };
+  const limits = [
+    ["10", () => (Error.stackTraceLimit = 10)],
+    ["3", () => (Error.stackTraceLimit = 3)],
+    ["1", () => (Error.stackTraceLimit = 1)],
+    ["1.9", () => (Error.stackTraceLimit = 1.9)],
+    ["Infinity", () => (Error.stackTraceLimit = Infinity)],
+    ["0", () => (Error.stackTraceLimit = 0)],
+    ["-0", () => (Error.stackTraceLimit = -0)],
+    ["-1", () => (Error.stackTraceLimit = -1)],
+    ["0.5", () => (Error.stackTraceLimit = 0.5)],
+    ["NaN", () => (Error.stackTraceLimit = NaN)],
+    ["-Infinity", () => (Error.stackTraceLimit = -Infinity)],
+    ["0, not writable", () => Object.defineProperty(Error, "stackTraceLimit", { value: 0, writable: false })],
+    ['"0"', () => (Error.stackTraceLimit = "0")],
+    ["null", () => (Error.stackTraceLimit = null)],
+    ["undefined", () => (Error.stackTraceLimit = undefined)],
+    ["true", () => (Error.stackTraceLimit = true)],
+    ["1n", () => (Error.stackTraceLimit = 1n)],
+    ["new Number(3)", () => (Error.stackTraceLimit = new Number(3))],
+    ["an accessor", () => Object.defineProperty(Error, "stackTraceLimit", { get: () => 3, set() {} })],
+    ["deleted", () => delete Error.stackTraceLimit],
+  ];
+  const rows = [];
+  for (const [name, setLimit] of limits) {
+    const made = new Error("made");
+    const read = new Error("read");
+    void read.stack;
+    class Sub extends Error {
+      constructor() {
+        super("sub");
+        Error.captureStackTrace(this, Sub);
+      }
+    }
+    try {
+      setLimit();
+      rows.push([
+        name,
+        ...deep(depth, () => {
+          const plain = {};
+          Error.captureStackTrace(plain);
+          Error.captureStackTrace(made);
+          Error.captureStackTrace(read);
+          const sub = new Sub();
+          const below = {};
+          (function caller() {
+            Error.captureStackTrace(below, caller);
+          })();
+          return [plain, made, read, sub, below].map(describe);
+        }),
+      ]);
+    } finally {
+      Object.defineProperty(Error, "stackTraceLimit", descriptor);
+    }
+  }
+  return JSON.stringify(rows);
+}
+
+// What Node.js v26.3.0 prints for captureUnderEveryStackTraceLimit(). V8 reads the limit in Isolate::GetStackTraceLimit():
+// https://github.com/nodejs/node/blob/v26.3.0/deps/v8/src/execution/isolate.cc#L1836-L1854
+const capturedWith = frames =>
+  ["Error", "Error: made", "Error: read", "Error: sub", "Error"].map(header => `${header}, ${frames}`);
+const capturedNoStack = Array(5).fill("stack is undefined");
+const capturesUnderEveryStackTraceLimit = [
+  ["10", ...capturedWith("10 frames")],
+  ["3", ...capturedWith("3 frames")],
+  ["1", ...capturedWith("1 frames")],
+  ["1.9", ...capturedWith("1 frames")],
+  ["Infinity", ...capturedWith("every frame")],
+  ["0", ...capturedWith("0 frames")],
+  ["-0", ...capturedWith("0 frames")],
+  ["-1", ...capturedWith("0 frames")],
+  ["0.5", ...capturedWith("0 frames")],
+  ["NaN", ...capturedWith("0 frames")],
+  ["-Infinity", ...capturedWith("0 frames")],
+  ["0, not writable", ...capturedWith("0 frames")],
+  ['"0"', ...capturedNoStack],
+  ["null", ...capturedNoStack],
+  ["undefined", ...capturedNoStack],
+  ["true", ...capturedNoStack],
+  ["1n", ...capturedNoStack],
+  ["new Number(3)", ...capturedNoStack],
+  ["an accessor", ...capturedNoStack],
+  ["deleted", ...capturedNoStack],
+];
+
+test.each([
+  ["the main realm", () => captureUnderEveryStackTraceLimit()],
+  ["a ShadowRealm", () => new ShadowRealm().evaluate(`(${captureUnderEveryStackTraceLimit})()`)],
+  [
+    "a Worker",
+    async () => {
+      const worker = new Worker(
+        `require("node:worker_threads").parentPort.postMessage((${captureUnderEveryStackTraceLimit})())`,
+        { eval: true },
+      );
+      try {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        worker.once("message", resolve);
+        worker.once("error", reject);
+        worker.once("exit", code => reject(new Error(`the worker exited with code ${code} and sent nothing`)));
+        return await promise;
+      } finally {
+        await worker.terminate();
+      }
+    },
+  ],
+])("Error.captureStackTrace reads Error.stackTraceLimit as V8 does in %s", async (_, capture) => {
+  expect(JSON.parse(await capture())).toEqual(capturesUnderEveryStackTraceLimit);
+});
+
+const nodeForStackTraceLimit = nodeExeAtLeast("26.3.0");
+test.skipIf(!nodeForStackTraceLimit)("Node.js prints the same for every Error.stackTraceLimit", async () => {
+  await using proc = Bun.spawn({
+    cmd: [nodeForStackTraceLimit, "-p", `(${captureUnderEveryStackTraceLimit})()`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual(capturesUnderEveryStackTraceLimit);
+  expect(exitCode).toBe(0);
+});
+
+// V8 takes the first data property named stackTraceLimit on the prototype chain of Error (Node.js v26.3.0: 3 frames).
+// JavaScriptCore reads the own property of Error only, so this capture records no stack.
+test.failing("Error.captureStackTrace reads an Error.stackTraceLimit that Error inherits", () => {
+  const descriptor = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
+  const prototype = Object.getPrototypeOf(Error);
+  const target = {};
+  try {
+    delete Error.stackTraceLimit;
+    prototype.stackTraceLimit = 3;
+    captureSixDeep(() => Error.captureStackTrace(target));
+  } finally {
+    delete prototype.stackTraceLimit;
+    Object.defineProperty(Error, "stackTraceLimit", descriptor);
+  }
+  expect(framesOf(target)).toBe(3);
+});
+
+// The frame lines of a stack, or what `stack` is when it is no string.
+function framesOf(target) {
+  const stack = target.stack;
+  return typeof stack === "string" ? stack.split("\n").filter(line => /^\s+at /.test(line)).length : stack;
+}
+
+// Calls `capture` six calls deep, so that a limit of up to 6 is the number of frames.
+function captureSixDeep(capture, n = 6) {
+  try {
+    return n ? captureSixDeep(capture, n - 1) : capture();
+  } finally {
+  }
+}
+
+test("Error.captureStackTrace replaces what an earlier capture left on the same target", () => {
+  const descriptor = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
+  const plain = {};
+  const readEachTime = new Error("read each time");
+  const readAtTheEnd = new Error("read at the end");
+  const seen = [];
+  try {
+    for (const limit of [5, 0, "x", 2, undefined, NaN, 5]) {
+      Error.stackTraceLimit = limit;
+      captureSixDeep(() => {
+        Error.captureStackTrace(plain);
+        Error.captureStackTrace(readEachTime);
+        Error.captureStackTrace(readAtTheEnd);
+      });
+      seen.push([framesOf(plain), framesOf(readEachTime)]);
+    }
+  } finally {
+    Object.defineProperty(Error, "stackTraceLimit", descriptor);
+  }
+  // Node.js v26.3.0 gives the same.
+  expect(seen).toEqual([
+    [5, 5],
+    [0, 0],
+    [undefined, undefined],
+    [2, 2],
+    [undefined, undefined],
+    [0, 0],
+    [5, 5],
+  ]);
+  expect(framesOf(readAtTheEnd)).toBe(5);
+});
+
+test("Error.captureStackTrace uses the Error.stackTraceLimit of the capture, not of the first read", () => {
+  const descriptor = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
+  const capturedUnder = limit => {
+    const error = new Error("captured");
+    Error.stackTraceLimit = limit;
+    captureSixDeep(() => Error.captureStackTrace(error));
+    return error;
+  };
+  try {
+    const three = capturedUnder(3);
+    const zero = capturedUnder(0);
+    const noNumber = capturedUnder("x");
+    Error.stackTraceLimit = "x";
+    expect(framesOf(three)).toBe(3);
+    Error.stackTraceLimit = 10;
+    expect([zero.stack, noNumber.stack]).toEqual(["Error: captured", undefined]);
+  } finally {
+    Object.defineProperty(Error, "stackTraceLimit", descriptor);
+  }
+});
+
+test("Error.captureStackTrace calls Error.prepareStackTrace with no call sites under a limit below 1, and not at all under a limit that is no number", () => {
+  const descriptor = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
+  const callsUnder = limit => {
+    const calls = [];
+    const made = new Error("made");
+    const read = new Error("read");
+    void read.stack;
+    Error.prepareStackTrace = (error, callSites) => {
+      calls.push(callSites.length);
+      return `prepared ${callSites.length}`;
+    };
+    try {
+      Error.stackTraceLimit = limit;
+      const stacks = captureSixDeep(() => {
+        const plain = {};
+        Error.captureStackTrace(plain);
+        Error.captureStackTrace(made);
+        Error.captureStackTrace(read);
+        return [plain.stack, made.stack, read.stack];
+      });
+      return { stacks, calls };
+    } finally {
+      Error.prepareStackTrace = origPrepareStackTrace;
+      Object.defineProperty(Error, "stackTraceLimit", descriptor);
+    }
+  };
+  // Node.js v26.3.0 gives the same.
+  expect({
+    "2": callsUnder(2),
+    "0": callsUnder(0),
+    "NaN": callsUnder(NaN),
+    '"0"': callsUnder("0"),
+    "undefined": callsUnder(undefined),
+  }).toEqual({
+    "2": { stacks: ["prepared 2", "prepared 2", "prepared 2"], calls: [2, 2, 2] },
+    "0": { stacks: ["prepared 0", "prepared 0", "prepared 0"], calls: [0, 0, 0] },
+    "NaN": { stacks: ["prepared 0", "prepared 0", "prepared 0"], calls: [0, 0, 0] },
+    '"0"': { stacks: [undefined, undefined, undefined], calls: [] },
+    "undefined": { stacks: [undefined, undefined, undefined], calls: [] },
+  });
+});
+
+test("Error.captureStackTrace under a limit that is no number leaves an own, non-enumerable stack and no frames", () => {
+  const descriptor = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
+  const plain = { name: "plain" };
+  const made = new Error("made");
+  const read = new Error("read");
+  const framesOfRead = framesOf(read);
+  try {
+    Error.stackTraceLimit = "x";
+    captureSixDeep(() => {
+      Error.captureStackTrace(plain);
+      Error.captureStackTrace(made);
+      Error.captureStackTrace(read);
+    });
+  } finally {
+    Object.defineProperty(Error, "stackTraceLimit", descriptor);
+  }
+  Bun.gc(true);
+  expect(framesOfRead).toBeGreaterThan(0);
+  // The frames `made` was constructed with are gone: `line` and `column` do not appear, and nothing formats a stack from them.
+  expect([plain, made].map(target => Object.getOwnPropertyNames(target).sort())).toEqual([
+    ["name", "stack"],
+    ["message", "stack"],
+  ]);
+  for (const target of [plain, made, read]) {
+    // V8 has an accessor there, so no `writable`. Bun has a data property.
+    const { enumerable, configurable, writable } = Object.getOwnPropertyDescriptor(target, "stack");
+    expect({ enumerable, configurable, isReadOnly: writable === false, stack: target.stack }).toEqual({
+      enumerable: false,
+      configurable: true,
+      isReadOnly: false,
+      stack: undefined,
+    });
+  }
+});
+
+// Rejects a pending reader.read() with `error` from native code, while an async function awaits it.
+async function rejectNativelyWith(error) {
+  let controller;
+  const reader = new ReadableStream({
+    start(c) {
+      controller = c;
+    },
+  }).getReader();
+  async function awaitsTheRead() {
+    try {
+      await reader.read();
+    } catch (rejection) {
+      return rejection;
+    }
+  }
+  const pending = awaitsTheRead();
+  controller.error(error);
+  expect(await pending).toBe(error);
+}
+
+// Node.js v26.3.0 gives the same in every row: a rejection adds nothing to what a capture left.
+test.each([
+  ["NaN", NaN, "Error: captured"],
+  ['"x"', "x", undefined],
+  ["undefined", undefined, undefined],
+])(
+  "a stack captured under an Error.stackTraceLimit of %s is the same after a native rejection under that limit",
+  async (_, limit, stack) => {
+    const descriptor = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
+    const error = new Error("captured");
+    let read;
+    try {
+      Error.stackTraceLimit = limit;
+      Error.captureStackTrace(error);
+      await rejectNativelyWith(error);
+      // Not `error.stack`: a cached property access can give the value from before the rejection.
+      read = Reflect.get(error, "stack");
+    } finally {
+      Object.defineProperty(Error, "stackTraceLimit", descriptor);
+    }
+    expect(read).toBe(stack);
+  },
+);
+
+test.concurrent.each(["0", "-1"])(
+  "Error.captureStackTrace captures no frames under --stack-trace-limit=%s",
+  async limit => {
+    const src = `
+    function deep(n) {
+      if (n) return deep(n - 1) + 0;
+      const target = {};
+      Error.captureStackTrace(target);
+      console.log(JSON.stringify({ limit: Error.stackTraceLimit, stack: target.stack }));
+      return 0;
+    }
+    deep(8);
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), `--stack-trace-limit=${limit}`, "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({ limit: Number(limit), stack: "Error" }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+test("built-in modules that call Error.captureStackTrace capture under the Error.stackTraceLimit of the program", () => {
+  const descriptor = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
+  const under = limit => {
+    let traced = "";
+    const sink = new Writable({
+      write(chunk, encoding, callback) {
+        traced += chunk;
+        callback();
+      },
+    });
+    let failed;
+    try {
+      Error.stackTraceLimit = limit;
+      captureSixDeep(() => {
+        new Console(sink).trace("traced");
+        try {
+          assert.strictEqual(1, 2);
+        } catch (error) {
+          failed = error;
+        }
+      });
+    } finally {
+      Object.defineProperty(Error, "stackTraceLimit", descriptor);
+    }
+    return { assert: framesOf(failed), trace: traced === "undefined\n" ? undefined : framesOf({ stack: traced }) };
+  };
+  // Node.js v26.3.0 gives the same.
+  expect({ "3": under(3), "0": under(0), '"x"': under("x") }).toEqual({
+    "3": { assert: 3, trace: 3 },
+    "0": { assert: 0, trace: 0 },
+    '"x"': { assert: undefined, trace: undefined },
+  });
 });
 
 test.concurrent.each([

@@ -168,9 +168,9 @@ limit 0, error: (none)
 limit 0, throw: (none)
   again: same
   frames: 0
-limit 0, capture: leaf@19 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59
+limit 0, capture: (none)
   again: same
-  frames: 10
+  frames: 0
 limit 1, error: leaf@15
   again: same
   frames: 1

@@ -873,6 +873,28 @@ JSC_DEFINE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter, (JSGlobalObject * g
 
 bool isImportMetaEnvForTests(JSC::JSObject*);
 
+// JSGlobalObject::stackTraceLimit() has no number for an Error.stackTraceLimit of NaN, as for one that is not a number.
+static NEVER_INLINE bool isStackTraceLimitNaN(JSC::JSGlobalObject* globalObject)
+{
+    JSC::VM& vm = globalObject->vm();
+    JSC::JSValue limit = globalObject->m_errorStructure.constructor(globalObject)->getDirect(vm, vm.propertyNames->stackTraceLimit);
+    return limit.isNumber() && std::isnan(limit.asNumber());
+}
+
+static NEVER_INLINE void defineStackWithoutCapture(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSObject* errorObject)
+{
+    auto* instance = dynamicDowncast<JSC::ErrorInstance>(errorObject);
+    if (!instance) {
+        putDirectOrThrow(globalObject, errorObject, vm.propertyNames->stack, jsUndefined(), JSC::PropertyAttribute::DontEnum | 0);
+        return;
+    }
+
+    // The frames the error was made with would format a stack when `line` or `column` is read.
+    if (!instance->hasMaterializedErrorInfo())
+        instance->setStackFrames(vm, {});
+    instance->putDirect(vm, vm.propertyNames->stack, jsUndefined(), JSC::PropertyAttribute::DontEnum | 0);
+}
+
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -889,14 +911,22 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     JSC::JSObject* errorObject = objectArg.asCell()->getObject();
     JSC::JSValue caller = callFrame->argument(1);
 
-    size_t stackTraceLimit = globalObject->stackTraceLimit().value_or(DEFAULT_ERROR_STACK_TRACE_LIMIT);
-    if (stackTraceLimit == 0) {
-        stackTraceLimit = DEFAULT_ERROR_STACK_TRACE_LIMIT;
+    // As V8's Isolate::GetStackTraceLimit(): a limit that is not a number records no stack, and a number allows max(int(limit), 0) frames, so NaN allows none.
+    std::optional<unsigned> stackTraceLimit = globalObject->stackTraceLimit();
+    if (!stackTraceLimit) [[unlikely]] {
+        if (!isStackTraceLimitNaN(globalObject)) {
+            defineStackWithoutCapture(vm, globalObject, errorObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        }
+        stackTraceLimit = 0;
     }
 
     WTF::Vector<JSC::StackFrame> stackTrace;
-    JSCStackTrace::getFramesForCaller(vm, callFrame, errorObject, caller, stackTrace, stackTraceLimit);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (*stackTraceLimit) [[likely]] {
+        JSCStackTrace::getFramesForCaller(vm, callFrame, errorObject, caller, stackTrace, *stackTraceLimit);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     if (auto* instance = dynamicDowncast<JSC::ErrorInstance>(errorObject)) {
         if (instance->hasMaterializedErrorInfo()) {

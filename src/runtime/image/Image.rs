@@ -421,11 +421,11 @@ impl Image {
         // 0x3FFF² is the max_pixels default; capping each side at 0x3FFFF (≈262k)
         // keeps every downstream u32 product in range without a per-stage check.
         let mut r = Resize {
-            w: coerce_int!(u32, width.as_number(), 1.0, 0x3FFFF as f64),
+            w: coerce_int!(u32, width.as_number(), 1.0, MAX_SIDE as f64),
             // 0 height = preserve aspect ratio (resolved at execute time once the
             // source dimensions are known).
             h: if height.is_number() {
-                coerce_int!(u32, height.as_number(), 0.0, 0x3FFFF as f64)
+                coerce_int!(u32, height.as_number(), 0.0, MAX_SIDE as f64)
             } else {
                 0
             },
@@ -2001,27 +2001,36 @@ fn make_placeholder(rgba: &[u8], sw: u32, sh: u32) -> Result<TaskResult, codecs:
     })
 }
 
+/// Per-side cap for a requested or derived side.
+const MAX_SIDE: u32 = 0x3FFFF;
+
+/// The side that keeps the source ratio once `given` is fixed, ties to even.
+fn derive_side(given: u32, src_given: u32, src_other: u32) -> u32 {
+    ((given as f64) * (src_other as f64) / (src_given as f64))
+        .round_ties_even()
+        .clamp(1.0, MAX_SIDE as f64) as u32
+}
+
 /// Map a resize spec to concrete output dims given the current dims.
 fn resolve_resize(r: Resize, sw: u32, sh: u32) -> (u32, u32) {
     let mut w = r.w;
-    // Widen before multiplying — `r.w` is user-controlled and `sh` is
-    // bounded only by `max_pixels`, so the u32 product can wrap; and the
-    // quotient can exceed u32 for tall-thin sources (1×5M with .resize(1k)
-    // → 5e9), so clamp to the same per-side cap `resize` uses before the
-    // narrowing cast. The maxPixels guard then rejects the product.
-    let mut h: u32 = if r.h != 0 {
-        r.h
-    } else {
-        u32::try_from((0x3FFFFu64).min(1u64.max((r.w as u64) * (sh as u64) / (sw as u64)))).unwrap()
-    };
-    if r.fit == Fit::Inside {
-        // Shrink the box so the source's aspect ratio is preserved and
-        // both sides fit. (Sharp's `fit:'inside'`.)
-        let sx = (w as f64) / (sw as f64);
-        let sy = (h as f64) / (sh as f64);
-        let s = sx.min(sy);
-        w = 1u32.max(((sw as f64) * s).round() as u32);
-        h = 1u32.max(((sh as f64) * s).round() as u32);
+    let mut h = r.h;
+    if h == 0 {
+        // The width stays exact. Only a capped height shrinks it.
+        h = derive_side(w, sw, sh);
+        if r.without_enlargement && w > sw {
+            return (sw, sh);
+        }
+        if h == MAX_SIDE {
+            w = derive_side(h, sh, sw);
+        }
+    } else if r.fit == Fit::Inside {
+        // The side that binds stays exact, the other follows the source ratio.
+        if (w as u64) * (sh as u64) <= (h as u64) * (sw as u64) {
+            h = derive_side(w, sw, sh);
+        } else {
+            w = derive_side(h, sh, sw);
+        }
     }
     if r.without_enlargement && (w > sw || h > sh) {
         return (sw, sh);

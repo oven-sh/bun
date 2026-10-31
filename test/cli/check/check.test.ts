@@ -4166,6 +4166,7 @@ class Derived extends Base {
             ["function", "method: function(): number { return 1; }", "method(): number { return 2; }"],
             ["getter", "get method() { return (): number => 1; }", "method(): number { return 2; }"],
             ["accessor", "method(): number { return 1; }", "get method() { return (): number => 2; }"],
+            ["setter", "set method(value: () => number) {}", "method = (): number => 2;"],
           ].map(([name, base, derived]) => [
             `${name}.ts`,
             `export {};
@@ -4184,7 +4185,8 @@ class Derived extends Base {
         "accessor.ts(6,16): error TS2611: 'method' is defined as a property in class 'Base', but is overridden here in 'Derived' as an accessor.
         arrow.ts(6,12): error TS2425: Class 'Base' defines instance member property 'method', but extended class 'Derived' defines it as instance member function.
         function.ts(6,12): error TS2425: Class 'Base' defines instance member property 'method', but extended class 'Derived' defines it as instance member function.
-        getter.ts(6,12): error TS2426: Class 'Base' defines instance member accessor 'method', but extended class 'Derived' defines it as instance member function."
+        getter.ts(6,12): error TS2426: Class 'Base' defines instance member accessor 'method', but extended class 'Derived' defines it as instance member function.
+        setter.ts(6,12): error TS2610: 'method' is defined as an accessor in class 'Base', but is overridden here in 'Derived' as an instance property."
       `);
       expect(exitCode).toBe(1);
     });

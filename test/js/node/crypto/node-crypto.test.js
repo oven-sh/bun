@@ -1228,6 +1228,33 @@ it("a 2 GiB buffer argument throws ERR_OUT_OF_RANGE", async () => {
   expect(exitCode).toBe(0);
 });
 
+it.concurrent("generatePrimeSync({ safe: true }) fails for the sizes BoringSSL cannot reach", async () => {
+  // The search did not end for 4 and 5 bits, so this runs in a process the test can give up on.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { generatePrimeSync } = require("node:crypto");
+      console.log(JSON.stringify([3, 4, 5, 6].map(size => {
+        try {
+          return Number(generatePrimeSync(size, { safe: true, bigint: true }));
+        } catch (e) {
+          return e.code;
+        }
+      })));
+    `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual([7, "ERR_CRYPTO_OPERATION_FAILED", "ERR_CRYPTO_OPERATION_FAILED", 59]);
+  expect(exitCode).toBe(0);
+});
+
 it("generatePrime(Sync) should return an ArrayBuffer", async () => {
   const prime = crypto.generatePrimeSync(512);
   expect(prime).toBeInstanceOf(ArrayBuffer);

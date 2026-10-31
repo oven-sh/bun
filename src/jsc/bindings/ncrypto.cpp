@@ -393,7 +393,7 @@ bool BignumPointer::generate(const PrimeConfig& params,
     if (innerCb) {
         cb = BignumGenCallbackPointer(BN_GENCB_new());
         if (!cb) [[unlikely]]
-            return -1;
+            return false;
         BN_GENCB_set(
             cb.get(),
             [](int a, int b, BN_GENCB* ctx) mutable -> int {
@@ -402,6 +402,11 @@ bool BignumPointer::generate(const PrimeConfig& params,
             },
             &innerCb);
     }
+
+    // BN_generate_prime_ex() sets the top two bits, which the 4 and 5 bit safe primes (11 and 23) do not have.
+    if (params.safe && !params.add && params.bits < 6 && params.bits != 3)
+        return false;
+
     if (BN_generate_prime_ex(get(),
             params.bits,
             params.safe ? 1 : 0,

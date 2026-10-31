@@ -1,0 +1,140 @@
+# Closures of a function are slim if its kind, role, flags and number of captures allow it and it is not expected to get properties: all of them are only called, or it constructs no layout and lies outside the runtime modules
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: plan-slots closures
+# RUN(KINDS): place
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="bun:sqlite" displayPath="bun:sqlite" kind=RuntimeSource exportRule=RuntimeModule runtimeModule=BunSqlite body=f11
+entry module=m0
+layout L0 kind=Instance name="Widget" constructor=f9
+layout L1 name="WithGetter"
+layout L2 kind=Instance name="Made" constructor=f6 flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewClosure function=f1
+    v4 = Call v3
+    v5 = NewClosure v2, v2, v2, v2 function=f2
+    v6 = Call v5
+    v7 = NewClosure function=f3
+    v8 = Call v7
+    v9 = NewObject layout=L1
+    v10 = NewClosure function=f4
+    DefineGetter v9, v10 key="x"
+    v12 = FinishObject v9
+    v13 = PropGet v12 key="x"
+    v14 = NewClosure v2, v2, v2, v2, v2 function=f5
+    v15 = Call v14
+    v16 = NewClosure function=f6
+    v17 = Call v1, -, v16
+    v18 = NewClosure function=f7
+    v19 = Call v18
+    v20 = NewClosure function=f8
+    v21 = Call v20
+    v22 = NewClosure function=f9
+    v23 = NewClass v22 layout=L0
+    v24 = FinishClass v23 layout=L0
+    v25 = Construct v24
+    v26 = NewClosure function=f12
+    v27 = Call v1, -, v26
+    Return
+}
+function f1 name="calledOnly" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="fourCaptures" kind=Arrow captures=[{type=number}, {type=number}, {type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number, v2: number, v3: number):
+    Return
+}
+function f3 name="asyncCalledOnly" kind=Arrow flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    v1 = Await v0
+    Return
+}
+function f4 name="getter" kind=Getter flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f5 name="fiveCaptures" kind=Arrow captures=[{type=number}, {type=number}, {type=number}, {type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number, v2: number, v3: number, v4: number):
+    Return
+}
+function f6 name="constructsLayoutAndReachesNativeCode" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f7 name="generator" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
+  b0(v0: function):
+    InitialYield
+    Return
+}
+function f8 name="readsNewTarget" flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f9 name="Widget" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f10 name="inRuntimeModule" module=m1 kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f11 name="example" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f10
+    v1 = Call v0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="publish" [isFreeName]
+    v4 = NewClosure function=f13
+    v5 = Call v3, -, v4
+    Return
+}
+function f12 name="reachesNativeCode" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f13 name="inRuntimeModuleAndReachesNativeCode" module=m1 kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+
+# CHECK: f0 Full
+# CHECK-NEXT: f1 Slim
+# CHECK-NEXT: f2 Slim
+# CHECK-NEXT: f3 Slim
+# CHECK-NEXT: f4 Slim
+# CHECK-NEXT: f5 Full
+# CHECK-NEXT: f6 Full
+# CHECK-NEXT: f7 Full
+# CHECK-NEXT: f8 Full
+# CHECK-NEXT: f9 Full
+# CHECK-NEXT: f10 Slim
+# CHECK-NEXT: f11 Full
+# CHECK-NEXT: f12 Slim
+# CHECK-NEXT: f13 Full
+# CHECK-NOT: Slim
+
+# KINDS: f1 isSlim callableKind=Arrow
+# KINDS-NEXT: f2 isSlim callableKind=Arrow
+# KINDS-NEXT: f3 closureStructure=1 isSlim isAsync callableKind=Arrow
+# KINDS-NEXT: f4 isSlim accessorKind=Getter callableKind=Method
+# KINDS-NEXT: f5 callableKind=Arrow
+# KINDS-NEXT: f6 hasInferredName
+# KINDS-NEXT: f7 closureStructure=2 isGenerator
+# KINDS-NEXT: f8 takesNewTarget
+# KINDS-NEXT: f9 closureStructure=4 takesNewTarget isConstructor
+# KINDS-NEXT: f10 isSlim isInRuntimeModule callableKind=Arrow
+# KINDS-NEXT: f11 isInRuntimeModule
+# KINDS-NEXT: f12 isSlim callableKind=Arrow
+# KINDS-NEXT: f13 isInRuntimeModule callableKind=Arrow
+# The body of the async function is entered by the run time and is no closure of the program. A generic entrypoint is described as the function it enters.
+# KINDS: closureStructure=1 isAsync callableKind=Arrow
+# KINDS: isSlim accessorKind=Getter callableKind=Method

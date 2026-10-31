@@ -1,0 +1,19 @@
+# SubtleCrypto.prototype.exportKey.call({})
+# The table lists the methods of SubtleCrypto.prototype. The one that is called is used, with the features of SubtleCrypto, and the prototype object is only read.
+# RUN: flow-report
+# CHECK: builtin-used SubtleCryptoPrototype [Read]
+# CHECK: builtin-used SubtleCryptoPrototypeExportKey [Read, Called]
+# CHECK: feature-used {{*}} SubtleCryptoPrototypeExportKey
+# CHECK: feature-used {{*}} SubtleCryptoPrototypeExportKey
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=SubtleCrypto
+    v1 = PropGet v0 key="prototype"
+    v2 = PropGet v1 key="exportKey"
+    v3 = PropGet v2 key="call"
+    v4 = NewDictionary
+    v5 = Call v3, v2, v4 calleeKey="call"
+    Return v5
+}

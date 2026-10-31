@@ -1,0 +1,18 @@
+# IsLibrary is for a module of a kind that has a file, without a body and without exports
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: InvalidModule 4
+
+variable g0 name="a" module=m0 declared={type=anything}
+module m0 path="main" displayPath="main" body=f0
+module m1 path="goodSourceText" displayPath="goodSourceText" flags=[IsLibrary]
+module m2 path="goodCommonJs" displayPath="goodCommonJs" kind=CommonJs flags=[IsLibrary] exportRule=CommonJs
+module m3 path="goodData" displayPath="goodData" kind=Data flags=[IsLibrary]
+module m4 path="goodRuntimeSource" displayPath="goodRuntimeSource" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
+module m5 path="badBody" displayPath="badBody" flags=[IsLibrary] body=f1
+module m6 path="badExport" displayPath="badExport" flags=[IsLibrary] exports=[{name="a" variable=g0}]
+module m7 path="badRuntime" displayPath="badRuntime" kind=Runtime flags=[IsLibrary] exportRule=RuntimeModule runtimeModule=BunFfi
+module m8 path="badExternal" displayPath="badExternal" kind=External flags=[IsLibrary] referrer=m0
+entry module=m0
+function f0 name="" kind=Module results=[{type=anything}]
+function f1 name="" kind=Module results=[{type=anything}]

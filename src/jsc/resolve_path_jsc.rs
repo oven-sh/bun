@@ -1,5 +1,5 @@
 //! C++ export that joins a path against the VM's cwd. Lives in `jsc/` because
-//! it reaches into `globalObject.bunVM().transpiler.fs`; `paths/` is JSC-free.
+//! it takes a `JSGlobalObject`; `paths/` is JSC-free.
 //! Referenced from `PathInlines.h`.
 
 use crate::JSGlobalObject;
@@ -16,8 +16,9 @@ extern "C" fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
 
     // The cwd is the FileSystem singleton's top_level_dir (resolver_jsc.rs
     // uses the same backing storage).
-    let cwd: &[u8] = bun_paths::fs::FileSystem::instance().top_level_dir();
-    let _ = global_object; // bun_vm() retained for future direct field access
+    let cwd: &[u8] = bun_core::working_directory_in_executable()
+        .unwrap_or_else(|| bun_paths::fs::FileSystem::instance().top_level_dir());
+    let _ = global_object; // the cwd is process-wide
 
     // The input is user-controlled and may be arbitrarily long. The
     // threadlocal `join_buf` is only 4096 bytes, so allocate a buffer sized

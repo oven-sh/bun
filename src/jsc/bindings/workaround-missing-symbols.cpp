@@ -462,18 +462,15 @@ extern "C" int __wrap_posix_spawn_file_actions_addchdir_np(posix_spawn_file_acti
 // __libc_start_main: 2.34 dropped the init/fini contract (crt1.o passes
 // NULL). The 2.2.5 compat symbol on ≥ 2.34 ignores init and walks
 // DT_INIT_ARRAY itself; on < 2.34 it calls init, so supply a walker that
-// reproduces what the now-absent __libc_csu_init did.
+// reproduces what the now-absent __libc_csu_init did. As there, not the
+// preinit array: the dynamic linker has run it.
 extern "C" {
-extern void (*__preinit_array_start[])(int, char**, char**) __attribute__((weak));
-extern void (*__preinit_array_end[])(int, char**, char**) __attribute__((weak));
 extern void (*__init_array_start[])(int, char**, char**) __attribute__((weak));
 extern void (*__init_array_end[])(int, char**, char**) __attribute__((weak));
 extern void _init() __attribute__((weak));
 }
 static int bun_libc_csu_init(int argc, char** argv, char** envp)
 {
-    for (auto f = __preinit_array_start; f < __preinit_array_end; ++f)
-        (*f)(argc, argv, envp);
     if (&_init) _init();
     for (auto f = __init_array_start; f < __init_array_end; ++f)
         (*f)(argc, argv, envp);
@@ -481,9 +478,14 @@ static int bun_libc_csu_init(int argc, char** argv, char** envp)
 }
 BUN_SYMVER(__libc_start_main, BUN_GLIBC_BASE);
 extern "C" int __libc_start_main(int (*)(int, char**, char**), int, char**, int (*)(int, char**, char**), void (*)(), void (*)(), void*);
+extern "C" void Bun__askForAddressSpaceToStart();
 extern "C" int __wrap___libc_start_main(int (*main)(int, char**, char**), int argc, char** argv,
     int (*init)(int, char**, char**), void (*fini)(), void (*rtld_fini)(), void* stack_end)
 {
+    // libstdc++ allocates in an initializer. AddressSanitizer starts in one, and its address space can't be limited.
+#if !__has_feature(address_sanitizer)
+    Bun__askForAddressSpaceToStart();
+#endif
     return __libc_start_main(main, argc, argv, init ? init : bun_libc_csu_init, fini, rtld_fini, stack_end);
 }
 

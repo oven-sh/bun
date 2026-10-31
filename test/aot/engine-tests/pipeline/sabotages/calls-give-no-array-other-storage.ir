@@ -1,0 +1,6 @@
+# sabotage=CallsGiveNoArrayOtherStorage: a call that pushes onto a list is said to leave the storage of lists alone. The caller keeps the storage it has read across the call: the check in the compiled code stops the run
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls,pass:InlineHeads check=MovedLoads sabotage=CallsGiveNoArrayOtherStorage
+# CHECK: AOT claim check: LoadMayMove
+# PROGRAM-OF: calls-give-no-array-other-storage-left-alone.ir

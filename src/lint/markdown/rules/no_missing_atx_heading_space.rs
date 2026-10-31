@@ -5,7 +5,7 @@ pub struct NoMissingAtxHeadingSpace {
     check_closed_headings: bool,
 }
 
-const MISSING_SPACE: Message = Message::new(
+const MISSING_SPACE: &Message = &Message::new(
     "missingSpace",
     "Missing space {{position}} hash(es) on ATX style heading.",
 );

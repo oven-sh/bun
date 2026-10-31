@@ -188,12 +188,12 @@ JSObject* create(VM& vm, JSGlobalObject* globalObject)
     // spreads it ({...process.binding("uv")} in internal/test/binding.ts).
     auto bindingObject = JSC::constructEmptyObject(globalObject);
     EnsureStillAliveScope ensureStillAlive(bindingObject);
-    bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, "errname"_s), JSC::JSFunction::create(vm, globalObject, 1, "errname"_s, jsErrname, ImplementationVisibility::Public));
+    Bun::putDirectNamed(vm, bindingObject, "errname"_s, JSC::JSFunction::create(vm, globalObject, 1, "errname"_s, jsErrname, ImplementationVisibility::Public));
 
     for (auto& entry : uvErrnoEntries)
         bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, makeString("UV_"_s, entry.name)), JSC::jsNumber(entry.value));
 
-    bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, "getErrorMap"_s), JSC::JSFunction::create(vm, globalObject, 0, "getErrorMap"_s, jsGetErrorMap, ImplementationVisibility::Public));
+    Bun::putDirectNamed(vm, bindingObject, "getErrorMap"_s, JSC::JSFunction::create(vm, globalObject, 0, "getErrorMap"_s, jsGetErrorMap, ImplementationVisibility::Public));
 
     return bindingObject;
 }

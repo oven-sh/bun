@@ -1,0 +1,380 @@
+a response made by hand nothing: undefined | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+a response made by hand getHeaders: {"x-two":"2","x-list":["a","b"]} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+a response made by hand getHeaderNames: ["x-two","x-list"] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+a response made by hand getRawHeaderNames: ["X-Two","X-List"] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+a response made by hand getHeader: ["2",["a","b"],null] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+a response made by hand hasHeader: [true,true,false] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+a response made by hand removeHeader: {"x-list":["a","b"]} | {"x-list":["X-List",["a","b"]]}
+a response made by hand removeBoth: {} | {}
+a response made by hand appendHeader: {"x-two":["2","3"],"x-list":["a","b"]} | {"x-two":["X-Two",["2","3"]],"x-list":["X-List",["a","b"]]}
+a response made by hand appendNew: {"x-two":"2","x-list":["a","b"],"x-new":"n"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"x-new":["X-New","n"]}
+a response made by hand setHeader: {"x-two":"2","x-list":["a","b"],"x-three":"3"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"x-three":["X-Three","3"]}
+a response made by hand setSame: [{"x-two":"again","x-list":["a","b"]},["X-TWO","X-List"]] | {"x-two":["X-TWO","again"],"x-list":["X-List",["a","b"]]}
+a response made by hand setHeaders: {"x-two":"2","x-list":["a","b"],"x-four":"4"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"x-four":["X-Four","4"]}
+a response made by hand contentLength: {"x-two":"2","x-list":["a","b"],"content-length":"2"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"content-length":["Content-Length","2"]}
+a response made by hand connectionClose: {"x-two":"2","x-list":["a","b"],"connection":"close"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"connection":["Connection","close"]}
+a response made by hand date: {"x-two":"2","x-list":["a","b"],"date":"then"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"date":["Date","then"]}
+a response made by hand anotherMap: {"x-five":"5"} | {"x-five":["X-Five","5"]}
+a response made by hand backToNull: [{},[],false] | null
+a response made by hand theMapItself: {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+a message made by hand nothing: undefined | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+a message made by hand getHeaders: {"x-two":"2","x-list":["a","b"]} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+a message made by hand getHeaderNames: ["x-two","x-list"] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+a message made by hand getRawHeaderNames: ["X-Two","X-List"] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+a message made by hand getHeader: ["2",["a","b"],null] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+a message made by hand hasHeader: [true,true,false] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+a message made by hand removeHeader: {"x-list":["a","b"]} | {"x-list":["X-List",["a","b"]]}
+a message made by hand removeBoth: {} | {}
+a message made by hand appendHeader: {"x-two":["2","3"],"x-list":["a","b"]} | {"x-two":["X-Two",["2","3"]],"x-list":["X-List",["a","b"]]}
+a message made by hand appendNew: {"x-two":"2","x-list":["a","b"],"x-new":"n"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"x-new":["X-New","n"]}
+a message made by hand setHeader: {"x-two":"2","x-list":["a","b"],"x-three":"3"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"x-three":["X-Three","3"]}
+a message made by hand setSame: [{"x-two":"again","x-list":["a","b"]},["X-TWO","X-List"]] | {"x-two":["X-TWO","again"],"x-list":["X-List",["a","b"]]}
+a message made by hand setHeaders: {"x-two":"2","x-list":["a","b"],"x-four":"4"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"x-four":["X-Four","4"]}
+a message made by hand contentLength: {"x-two":"2","x-list":["a","b"],"content-length":"2"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"content-length":["Content-Length","2"]}
+a message made by hand connectionClose: {"x-two":"2","x-list":["a","b"],"connection":"close"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"connection":["Connection","close"]}
+a message made by hand date: {"x-two":"2","x-list":["a","b"],"date":"then"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"date":["Date","then"]}
+a message made by hand anotherMap: {"x-five":"5"} | {"x-five":["X-Five","5"]}
+a message made by hand backToNull: [{},[],false] | null
+a message made by hand theMapItself: {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/nothing/end: undefined | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/nothing/end behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=2 connection=keep-alive transfer-encoding=null date=string "ok"
+/nothing/writeThenEnd: undefined | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/nothing/writeThenEnd behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/nothing/writeHead: undefined | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/nothing/writeHead behind: {"x-two":"2","x-list":["a","b"],"x-six":"6"} true
+  201 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=6 x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/nothing/writeHeadList: undefined | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/nothing/writeHeadList behind: {"x-two":"2","x-list":["a","b"],"x-seven":"7"} true
+  202 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=7 content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/nothing/flushHeaders: undefined | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/nothing/flushHeaders behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/nothing/endWithoutBody: undefined | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/nothing/endWithoutBody behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=0 connection=keep-alive transfer-encoding=null date=string ""
+/getHeaders/end: {"x-two":"2","x-list":["a","b"]} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/getHeaders/end behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=2 connection=keep-alive transfer-encoding=null date=string "ok"
+/getHeaders/writeThenEnd: {"x-two":"2","x-list":["a","b"]} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/getHeaders/writeThenEnd behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/getHeaders/writeHead: {"x-two":"2","x-list":["a","b"]} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/getHeaders/writeHead behind: {"x-two":"2","x-list":["a","b"],"x-six":"6"} true
+  201 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=6 x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/getHeaders/writeHeadList: {"x-two":"2","x-list":["a","b"]} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/getHeaders/writeHeadList behind: {"x-two":"2","x-list":["a","b"],"x-seven":"7"} true
+  202 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=7 content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/getHeaders/flushHeaders: {"x-two":"2","x-list":["a","b"]} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/getHeaders/flushHeaders behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/getHeaders/endWithoutBody: {"x-two":"2","x-list":["a","b"]} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/getHeaders/endWithoutBody behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=0 connection=keep-alive transfer-encoding=null date=string ""
+/getHeaderNames/end: ["x-two","x-list"] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/getHeaderNames/end behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=2 connection=keep-alive transfer-encoding=null date=string "ok"
+/getHeaderNames/writeThenEnd: ["x-two","x-list"] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/getHeaderNames/writeThenEnd behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/getHeaderNames/writeHead: ["x-two","x-list"] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/getHeaderNames/writeHead behind: {"x-two":"2","x-list":["a","b"],"x-six":"6"} true
+  201 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=6 x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/getHeaderNames/writeHeadList: ["x-two","x-list"] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/getHeaderNames/writeHeadList behind: {"x-two":"2","x-list":["a","b"],"x-seven":"7"} true
+  202 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=7 content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/getHeaderNames/flushHeaders: ["x-two","x-list"] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/getHeaderNames/flushHeaders behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/getHeaderNames/endWithoutBody: ["x-two","x-list"] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/getHeaderNames/endWithoutBody behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=0 connection=keep-alive transfer-encoding=null date=string ""
+/getRawHeaderNames/end: ["X-Two","X-List"] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/getRawHeaderNames/end behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=2 connection=keep-alive transfer-encoding=null date=string "ok"
+/getRawHeaderNames/writeThenEnd: ["X-Two","X-List"] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/getRawHeaderNames/writeThenEnd behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/getRawHeaderNames/writeHead: ["X-Two","X-List"] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/getRawHeaderNames/writeHead behind: {"x-two":"2","x-list":["a","b"],"x-six":"6"} true
+  201 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=6 x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/getRawHeaderNames/writeHeadList: ["X-Two","X-List"] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/getRawHeaderNames/writeHeadList behind: {"x-two":"2","x-list":["a","b"],"x-seven":"7"} true
+  202 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=7 content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/getRawHeaderNames/flushHeaders: ["X-Two","X-List"] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/getRawHeaderNames/flushHeaders behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/getRawHeaderNames/endWithoutBody: ["X-Two","X-List"] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/getRawHeaderNames/endWithoutBody behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=0 connection=keep-alive transfer-encoding=null date=string ""
+/getHeader/end: ["2",["a","b"],null] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/getHeader/end behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=2 connection=keep-alive transfer-encoding=null date=string "ok"
+/getHeader/writeThenEnd: ["2",["a","b"],null] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/getHeader/writeThenEnd behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/getHeader/writeHead: ["2",["a","b"],null] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/getHeader/writeHead behind: {"x-two":"2","x-list":["a","b"],"x-six":"6"} true
+  201 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=6 x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/getHeader/writeHeadList: ["2",["a","b"],null] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/getHeader/writeHeadList behind: {"x-two":"2","x-list":["a","b"],"x-seven":"7"} true
+  202 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=7 content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/getHeader/flushHeaders: ["2",["a","b"],null] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/getHeader/flushHeaders behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/getHeader/endWithoutBody: ["2",["a","b"],null] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/getHeader/endWithoutBody behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=0 connection=keep-alive transfer-encoding=null date=string ""
+/hasHeader/end: [true,true,false] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/hasHeader/end behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=2 connection=keep-alive transfer-encoding=null date=string "ok"
+/hasHeader/writeThenEnd: [true,true,false] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/hasHeader/writeThenEnd behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/hasHeader/writeHead: [true,true,false] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/hasHeader/writeHead behind: {"x-two":"2","x-list":["a","b"],"x-six":"6"} true
+  201 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=6 x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/hasHeader/writeHeadList: [true,true,false] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/hasHeader/writeHeadList behind: {"x-two":"2","x-list":["a","b"],"x-seven":"7"} true
+  202 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=7 content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/hasHeader/flushHeaders: [true,true,false] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/hasHeader/flushHeaders behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/hasHeader/endWithoutBody: [true,true,false] | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/hasHeader/endWithoutBody behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=0 connection=keep-alive transfer-encoding=null date=string ""
+/removeHeader/end: {"x-list":["a","b"]} | {"x-list":["X-List",["a","b"]]}
+/removeHeader/end behind: {"x-list":["a","b"]} true
+  200 x-two=null x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=2 connection=keep-alive transfer-encoding=null date=string "ok"
+/removeHeader/writeThenEnd: {"x-list":["a","b"]} | {"x-list":["X-List",["a","b"]]}
+/removeHeader/writeThenEnd behind: {"x-list":["a","b"]} true
+  200 x-two=null x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/removeHeader/writeHead: {"x-list":["a","b"]} | {"x-list":["X-List",["a","b"]]}
+/removeHeader/writeHead behind: {"x-list":["a","b"],"x-six":"6"} true
+  201 x-two=null x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=6 x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/removeHeader/writeHeadList: {"x-list":["a","b"]} | {"x-list":["X-List",["a","b"]]}
+/removeHeader/writeHeadList behind: {"x-list":["a","b"],"x-seven":"7"} true
+  202 x-two=null x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=7 content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/removeHeader/flushHeaders: {"x-list":["a","b"]} | {"x-list":["X-List",["a","b"]]}
+/removeHeader/flushHeaders behind: {"x-list":["a","b"]} true
+  200 x-two=null x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/removeHeader/endWithoutBody: {"x-list":["a","b"]} | {"x-list":["X-List",["a","b"]]}
+/removeHeader/endWithoutBody behind: {"x-list":["a","b"]} true
+  200 x-two=null x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=0 connection=keep-alive transfer-encoding=null date=string ""
+/removeBoth/end: {} | {}
+/removeBoth/end behind: {} true
+  200 x-two=null x-list=null x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=2 connection=keep-alive transfer-encoding=null date=string "ok"
+/removeBoth/writeThenEnd: {} | {}
+/removeBoth/writeThenEnd behind: {} true
+  200 x-two=null x-list=null x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/removeBoth/writeHead: {} | {}
+/removeBoth/writeHead behind: {"x-six":"6"} true
+  201 x-two=null x-list=null x-new=null x-three=null x-four=null x-five=null x-six=6 x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/removeBoth/writeHeadList: {} | {}
+/removeBoth/writeHeadList behind: {"x-seven":"7"} true
+  202 x-two=null x-list=null x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=7 content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/removeBoth/flushHeaders: {} | {}
+/removeBoth/flushHeaders behind: {} true
+  200 x-two=null x-list=null x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/removeBoth/endWithoutBody: {} | {}
+/removeBoth/endWithoutBody behind: {} true
+  200 x-two=null x-list=null x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=0 connection=keep-alive transfer-encoding=null date=string ""
+/appendHeader/end: {"x-two":["2","3"],"x-list":["a","b"]} | {"x-two":["X-Two",["2","3"]],"x-list":["X-List",["a","b"]]}
+/appendHeader/end behind: {"x-two":["2","3"],"x-list":["a","b"]} true
+  200 x-two=2, 3 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=2 connection=keep-alive transfer-encoding=null date=string "ok"
+/appendHeader/writeThenEnd: {"x-two":["2","3"],"x-list":["a","b"]} | {"x-two":["X-Two",["2","3"]],"x-list":["X-List",["a","b"]]}
+/appendHeader/writeThenEnd behind: {"x-two":["2","3"],"x-list":["a","b"]} true
+  200 x-two=2, 3 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/appendHeader/writeHead: {"x-two":["2","3"],"x-list":["a","b"]} | {"x-two":["X-Two",["2","3"]],"x-list":["X-List",["a","b"]]}
+/appendHeader/writeHead behind: {"x-two":["2","3"],"x-list":["a","b"],"x-six":"6"} true
+  201 x-two=2, 3 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=6 x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/appendHeader/writeHeadList: {"x-two":["2","3"],"x-list":["a","b"]} | {"x-two":["X-Two",["2","3"]],"x-list":["X-List",["a","b"]]}
+/appendHeader/writeHeadList behind: {"x-two":["2","3"],"x-list":["a","b"],"x-seven":"7"} true
+  202 x-two=2, 3 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=7 content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/appendHeader/flushHeaders: {"x-two":["2","3"],"x-list":["a","b"]} | {"x-two":["X-Two",["2","3"]],"x-list":["X-List",["a","b"]]}
+/appendHeader/flushHeaders behind: {"x-two":["2","3"],"x-list":["a","b"]} true
+  200 x-two=2, 3 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/appendHeader/endWithoutBody: {"x-two":["2","3"],"x-list":["a","b"]} | {"x-two":["X-Two",["2","3"]],"x-list":["X-List",["a","b"]]}
+/appendHeader/endWithoutBody behind: {"x-two":["2","3"],"x-list":["a","b"]} true
+  200 x-two=2, 3 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=0 connection=keep-alive transfer-encoding=null date=string ""
+/appendNew/end: {"x-two":"2","x-list":["a","b"],"x-new":"n"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"x-new":["X-New","n"]}
+/appendNew/end behind: {"x-two":"2","x-list":["a","b"],"x-new":"n"} true
+  200 x-two=2 x-list=a, b x-new=n x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=2 connection=keep-alive transfer-encoding=null date=string "ok"
+/appendNew/writeThenEnd: {"x-two":"2","x-list":["a","b"],"x-new":"n"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"x-new":["X-New","n"]}
+/appendNew/writeThenEnd behind: {"x-two":"2","x-list":["a","b"],"x-new":"n"} true
+  200 x-two=2 x-list=a, b x-new=n x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/appendNew/writeHead: {"x-two":"2","x-list":["a","b"],"x-new":"n"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"x-new":["X-New","n"]}
+/appendNew/writeHead behind: {"x-two":"2","x-list":["a","b"],"x-new":"n","x-six":"6"} true
+  201 x-two=2 x-list=a, b x-new=n x-three=null x-four=null x-five=null x-six=6 x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/appendNew/writeHeadList: {"x-two":"2","x-list":["a","b"],"x-new":"n"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"x-new":["X-New","n"]}
+/appendNew/writeHeadList behind: {"x-two":"2","x-list":["a","b"],"x-new":"n","x-seven":"7"} true
+  202 x-two=2 x-list=a, b x-new=n x-three=null x-four=null x-five=null x-six=null x-seven=7 content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/appendNew/flushHeaders: {"x-two":"2","x-list":["a","b"],"x-new":"n"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"x-new":["X-New","n"]}
+/appendNew/flushHeaders behind: {"x-two":"2","x-list":["a","b"],"x-new":"n"} true
+  200 x-two=2 x-list=a, b x-new=n x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/appendNew/endWithoutBody: {"x-two":"2","x-list":["a","b"],"x-new":"n"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"x-new":["X-New","n"]}
+/appendNew/endWithoutBody behind: {"x-two":"2","x-list":["a","b"],"x-new":"n"} true
+  200 x-two=2 x-list=a, b x-new=n x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=0 connection=keep-alive transfer-encoding=null date=string ""
+/setHeader/end: {"x-two":"2","x-list":["a","b"],"x-three":"3"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"x-three":["X-Three","3"]}
+/setHeader/end behind: {"x-two":"2","x-list":["a","b"],"x-three":"3"} true
+  200 x-two=2 x-list=a, b x-new=null x-three=3 x-four=null x-five=null x-six=null x-seven=null content-length=2 connection=keep-alive transfer-encoding=null date=string "ok"
+/setHeader/writeThenEnd: {"x-two":"2","x-list":["a","b"],"x-three":"3"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"x-three":["X-Three","3"]}
+/setHeader/writeThenEnd behind: {"x-two":"2","x-list":["a","b"],"x-three":"3"} true
+  200 x-two=2 x-list=a, b x-new=null x-three=3 x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/setHeader/writeHead: {"x-two":"2","x-list":["a","b"],"x-three":"3"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"x-three":["X-Three","3"]}
+/setHeader/writeHead behind: {"x-two":"2","x-list":["a","b"],"x-three":"3","x-six":"6"} true
+  201 x-two=2 x-list=a, b x-new=null x-three=3 x-four=null x-five=null x-six=6 x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/setHeader/writeHeadList: {"x-two":"2","x-list":["a","b"],"x-three":"3"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"x-three":["X-Three","3"]}
+/setHeader/writeHeadList behind: {"x-two":"2","x-list":["a","b"],"x-three":"3","x-seven":"7"} true
+  202 x-two=2 x-list=a, b x-new=null x-three=3 x-four=null x-five=null x-six=null x-seven=7 content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/setHeader/flushHeaders: {"x-two":"2","x-list":["a","b"],"x-three":"3"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"x-three":["X-Three","3"]}
+/setHeader/flushHeaders behind: {"x-two":"2","x-list":["a","b"],"x-three":"3"} true
+  200 x-two=2 x-list=a, b x-new=null x-three=3 x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/setHeader/endWithoutBody: {"x-two":"2","x-list":["a","b"],"x-three":"3"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"x-three":["X-Three","3"]}
+/setHeader/endWithoutBody behind: {"x-two":"2","x-list":["a","b"],"x-three":"3"} true
+  200 x-two=2 x-list=a, b x-new=null x-three=3 x-four=null x-five=null x-six=null x-seven=null content-length=0 connection=keep-alive transfer-encoding=null date=string ""
+/setSame/end: [{"x-two":"again","x-list":["a","b"]},["X-TWO","X-List"]] | {"x-two":["X-TWO","again"],"x-list":["X-List",["a","b"]]}
+/setSame/end behind: {"x-two":"again","x-list":["a","b"]} true
+  200 x-two=again x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=2 connection=keep-alive transfer-encoding=null date=string "ok"
+/setSame/writeThenEnd: [{"x-two":"again","x-list":["a","b"]},["X-TWO","X-List"]] | {"x-two":["X-TWO","again"],"x-list":["X-List",["a","b"]]}
+/setSame/writeThenEnd behind: {"x-two":"again","x-list":["a","b"]} true
+  200 x-two=again x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/setSame/writeHead: [{"x-two":"again","x-list":["a","b"]},["X-TWO","X-List"]] | {"x-two":["X-TWO","again"],"x-list":["X-List",["a","b"]]}
+/setSame/writeHead behind: {"x-two":"again","x-list":["a","b"],"x-six":"6"} true
+  201 x-two=again x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=6 x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/setSame/writeHeadList: [{"x-two":"again","x-list":["a","b"]},["X-TWO","X-List"]] | {"x-two":["X-TWO","again"],"x-list":["X-List",["a","b"]]}
+/setSame/writeHeadList behind: {"x-two":"again","x-list":["a","b"],"x-seven":"7"} true
+  202 x-two=again x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=7 content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/setSame/flushHeaders: [{"x-two":"again","x-list":["a","b"]},["X-TWO","X-List"]] | {"x-two":["X-TWO","again"],"x-list":["X-List",["a","b"]]}
+/setSame/flushHeaders behind: {"x-two":"again","x-list":["a","b"]} true
+  200 x-two=again x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/setSame/endWithoutBody: [{"x-two":"again","x-list":["a","b"]},["X-TWO","X-List"]] | {"x-two":["X-TWO","again"],"x-list":["X-List",["a","b"]]}
+/setSame/endWithoutBody behind: {"x-two":"again","x-list":["a","b"]} true
+  200 x-two=again x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=0 connection=keep-alive transfer-encoding=null date=string ""
+/setHeaders/end: {"x-two":"2","x-list":["a","b"],"x-four":"4"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"x-four":["X-Four","4"]}
+/setHeaders/end behind: {"x-two":"2","x-list":["a","b"],"x-four":"4"} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=4 x-five=null x-six=null x-seven=null content-length=2 connection=keep-alive transfer-encoding=null date=string "ok"
+/setHeaders/writeThenEnd: {"x-two":"2","x-list":["a","b"],"x-four":"4"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"x-four":["X-Four","4"]}
+/setHeaders/writeThenEnd behind: {"x-two":"2","x-list":["a","b"],"x-four":"4"} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=4 x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/setHeaders/writeHead: {"x-two":"2","x-list":["a","b"],"x-four":"4"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"x-four":["X-Four","4"]}
+/setHeaders/writeHead behind: {"x-two":"2","x-list":["a","b"],"x-four":"4","x-six":"6"} true
+  201 x-two=2 x-list=a, b x-new=null x-three=null x-four=4 x-five=null x-six=6 x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/setHeaders/writeHeadList: {"x-two":"2","x-list":["a","b"],"x-four":"4"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"x-four":["X-Four","4"]}
+/setHeaders/writeHeadList behind: {"x-two":"2","x-list":["a","b"],"x-four":"4","x-seven":"7"} true
+  202 x-two=2 x-list=a, b x-new=null x-three=null x-four=4 x-five=null x-six=null x-seven=7 content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/setHeaders/flushHeaders: {"x-two":"2","x-list":["a","b"],"x-four":"4"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"x-four":["X-Four","4"]}
+/setHeaders/flushHeaders behind: {"x-two":"2","x-list":["a","b"],"x-four":"4"} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=4 x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/setHeaders/endWithoutBody: {"x-two":"2","x-list":["a","b"],"x-four":"4"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"x-four":["X-Four","4"]}
+/setHeaders/endWithoutBody behind: {"x-two":"2","x-list":["a","b"],"x-four":"4"} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=4 x-five=null x-six=null x-seven=null content-length=0 connection=keep-alive transfer-encoding=null date=string ""
+/contentLength/end: {"x-two":"2","x-list":["a","b"],"content-length":"2"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"content-length":["Content-Length","2"]}
+/contentLength/end behind: {"x-two":"2","x-list":["a","b"],"content-length":"2"} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=2 connection=keep-alive transfer-encoding=null date=string "ok"
+/contentLength/writeThenEnd: {"x-two":"2","x-list":["a","b"],"content-length":"2"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"content-length":["Content-Length","2"]}
+/contentLength/writeThenEnd behind: {"x-two":"2","x-list":["a","b"],"content-length":"2"} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=2 connection=keep-alive transfer-encoding=null date=string "ok"
+/contentLength/writeHead: {"x-two":"2","x-list":["a","b"],"content-length":"2"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"content-length":["Content-Length","2"]}
+/contentLength/writeHead behind: {"x-two":"2","x-list":["a","b"],"content-length":"2","x-six":"6"} true
+  201 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=6 x-seven=null content-length=2 connection=keep-alive transfer-encoding=null date=string "ok"
+/contentLength/writeHeadList: {"x-two":"2","x-list":["a","b"],"content-length":"2"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"content-length":["Content-Length","2"]}
+/contentLength/writeHeadList behind: {"x-two":"2","x-list":["a","b"],"content-length":"2","x-seven":"7"} true
+  202 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=7 content-length=2 connection=keep-alive transfer-encoding=null date=string "ok"
+/contentLength/flushHeaders: {"x-two":"2","x-list":["a","b"],"content-length":"2"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"content-length":["Content-Length","2"]}
+/contentLength/flushHeaders behind: {"x-two":"2","x-list":["a","b"],"content-length":"2"} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=2 connection=keep-alive transfer-encoding=null date=string "ok"
+/contentLength/endWithoutBody: {"x-two":"2","x-list":["a","b"],"content-length":"0"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"content-length":["Content-Length","0"]}
+/contentLength/endWithoutBody behind: {"x-two":"2","x-list":["a","b"],"content-length":"0"} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=0 connection=keep-alive transfer-encoding=null date=string ""
+/connectionClose/end: {"x-two":"2","x-list":["a","b"],"connection":"close"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"connection":["Connection","close"]}
+/connectionClose/end behind: {"x-two":"2","x-list":["a","b"],"connection":"close"} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=2 connection=close transfer-encoding=null date=string "ok"
+/connectionClose/writeThenEnd: {"x-two":"2","x-list":["a","b"],"connection":"close"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"connection":["Connection","close"]}
+/connectionClose/writeThenEnd behind: {"x-two":"2","x-list":["a","b"],"connection":"close"} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=close transfer-encoding=chunked date=string "ok"
+/connectionClose/writeHead: {"x-two":"2","x-list":["a","b"],"connection":"close"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"connection":["Connection","close"]}
+/connectionClose/writeHead behind: {"x-two":"2","x-list":["a","b"],"connection":"close","x-six":"6"} true
+  201 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=6 x-seven=null content-length=null connection=close transfer-encoding=chunked date=string "ok"
+/connectionClose/writeHeadList: {"x-two":"2","x-list":["a","b"],"connection":"close"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"connection":["Connection","close"]}
+/connectionClose/writeHeadList behind: {"x-two":"2","x-list":["a","b"],"connection":"close","x-seven":"7"} true
+  202 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=7 content-length=null connection=close transfer-encoding=chunked date=string "ok"
+/connectionClose/flushHeaders: {"x-two":"2","x-list":["a","b"],"connection":"close"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"connection":["Connection","close"]}
+/connectionClose/flushHeaders behind: {"x-two":"2","x-list":["a","b"],"connection":"close"} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=close transfer-encoding=chunked date=string "ok"
+/connectionClose/endWithoutBody: {"x-two":"2","x-list":["a","b"],"connection":"close"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"connection":["Connection","close"]}
+/connectionClose/endWithoutBody behind: {"x-two":"2","x-list":["a","b"],"connection":"close"} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=0 connection=close transfer-encoding=null date=string ""
+/date/end: {"x-two":"2","x-list":["a","b"],"date":"then"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"date":["Date","then"]}
+/date/end behind: {"x-two":"2","x-list":["a","b"],"date":"then"} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=2 connection=keep-alive transfer-encoding=null date=then "ok"
+/date/writeThenEnd: {"x-two":"2","x-list":["a","b"],"date":"then"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"date":["Date","then"]}
+/date/writeThenEnd behind: {"x-two":"2","x-list":["a","b"],"date":"then"} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=then "ok"
+/date/writeHead: {"x-two":"2","x-list":["a","b"],"date":"then"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"date":["Date","then"]}
+/date/writeHead behind: {"x-two":"2","x-list":["a","b"],"date":"then","x-six":"6"} true
+  201 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=6 x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=then "ok"
+/date/writeHeadList: {"x-two":"2","x-list":["a","b"],"date":"then"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"date":["Date","then"]}
+/date/writeHeadList behind: {"x-two":"2","x-list":["a","b"],"date":"then","x-seven":"7"} true
+  202 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=7 content-length=null connection=keep-alive transfer-encoding=chunked date=then "ok"
+/date/flushHeaders: {"x-two":"2","x-list":["a","b"],"date":"then"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"date":["Date","then"]}
+/date/flushHeaders behind: {"x-two":"2","x-list":["a","b"],"date":"then"} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=then "ok"
+/date/endWithoutBody: {"x-two":"2","x-list":["a","b"],"date":"then"} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]],"date":["Date","then"]}
+/date/endWithoutBody behind: {"x-two":"2","x-list":["a","b"],"date":"then"} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=0 connection=keep-alive transfer-encoding=null date=then ""
+/anotherMap/end: {"x-five":"5"} | {"x-five":["X-Five","5"]}
+/anotherMap/end behind: {"x-five":"5"} true
+  200 x-two=null x-list=null x-new=null x-three=null x-four=null x-five=5 x-six=null x-seven=null content-length=2 connection=keep-alive transfer-encoding=null date=string "ok"
+/anotherMap/writeThenEnd: {"x-five":"5"} | {"x-five":["X-Five","5"]}
+/anotherMap/writeThenEnd behind: {"x-five":"5"} true
+  200 x-two=null x-list=null x-new=null x-three=null x-four=null x-five=5 x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/anotherMap/writeHead: {"x-five":"5"} | {"x-five":["X-Five","5"]}
+/anotherMap/writeHead behind: {"x-five":"5","x-six":"6"} true
+  201 x-two=null x-list=null x-new=null x-three=null x-four=null x-five=5 x-six=6 x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/anotherMap/writeHeadList: {"x-five":"5"} | {"x-five":["X-Five","5"]}
+/anotherMap/writeHeadList behind: {"x-five":"5","x-seven":"7"} true
+  202 x-two=null x-list=null x-new=null x-three=null x-four=null x-five=5 x-six=null x-seven=7 content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/anotherMap/flushHeaders: {"x-five":"5"} | {"x-five":["X-Five","5"]}
+/anotherMap/flushHeaders behind: {"x-five":"5"} true
+  200 x-two=null x-list=null x-new=null x-three=null x-four=null x-five=5 x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/anotherMap/endWithoutBody: {"x-five":"5"} | {"x-five":["X-Five","5"]}
+/anotherMap/endWithoutBody behind: {"x-five":"5"} true
+  200 x-two=null x-list=null x-new=null x-three=null x-four=null x-five=5 x-six=null x-seven=null content-length=0 connection=keep-alive transfer-encoding=null date=string ""
+/backToNull/end: [{},[],false] | null
+/backToNull/end behind: {} true
+  200 x-two=null x-list=null x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=2 connection=keep-alive transfer-encoding=null date=string "ok"
+/backToNull/writeThenEnd: [{},[],false] | null
+/backToNull/writeThenEnd behind: {} true
+  200 x-two=null x-list=null x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/backToNull/writeHead: [{},[],false] | null
+/backToNull/writeHead behind: {"x-six":"6"} true
+  201 x-two=null x-list=null x-new=null x-three=null x-four=null x-five=null x-six=6 x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/backToNull/writeHeadList: [{},[],false] | null
+/backToNull/writeHeadList behind: {"x-seven":"7"} true
+  202 x-two=null x-list=null x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=7 content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/backToNull/flushHeaders: [{},[],false] | null
+/backToNull/flushHeaders behind: {} true
+  200 x-two=null x-list=null x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/backToNull/endWithoutBody: [{},[],false] | null
+/backToNull/endWithoutBody behind: {} true
+  200 x-two=null x-list=null x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=0 connection=keep-alive transfer-encoding=null date=string ""
+/theMapItself/end: {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/theMapItself/end behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=2 connection=keep-alive transfer-encoding=null date=string "ok"
+/theMapItself/writeThenEnd: {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/theMapItself/writeThenEnd behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/theMapItself/writeHead: {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/theMapItself/writeHead behind: {"x-two":"2","x-list":["a","b"],"x-six":"6"} true
+  201 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=6 x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/theMapItself/writeHeadList: {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/theMapItself/writeHeadList behind: {"x-two":"2","x-list":["a","b"],"x-seven":"7"} true
+  202 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=7 content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/theMapItself/flushHeaders: {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/theMapItself/flushHeaders behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=null connection=keep-alive transfer-encoding=chunked date=string "ok"
+/theMapItself/endWithoutBody: {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]} | {"x-two":["X-Two","2"],"x-list":["X-List",["a","b"]]}
+/theMapItself/endWithoutBody behind: {"x-two":"2","x-list":["a","b"]} true
+  200 x-two=2 x-list=a, b x-new=null x-three=null x-four=null x-five=null x-six=null x-seven=null content-length=0 connection=keep-alive transfer-encoding=null date=string ""

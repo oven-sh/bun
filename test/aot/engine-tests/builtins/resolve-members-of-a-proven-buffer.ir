@@ -1,0 +1,54 @@
+# A Buffer has the cell type of a Uint8Array, so no test at run time tells that one is pristine. A proof needs no test: the type of a Buffer that flow follows, and the creation of a new one
+# FORM: Prepared
+# Each run takes the facts as they stand when it begins, where a read by name that it has not resolved yet counts as unknown code: the call, then one read a run
+# RUN: pass ResolveBuiltins ResolveBuiltins ResolveBuiltins ResolveBuiltins
+# CHECK-NOT: IsPristine
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="provenByType" parameters=[{type=Buffer<anything, pristine[Names]>}] results=[{type=anything}] {
+  b0(v0: Buffer<anything, pristine[Names]>):
+    v1 = PropGet v0 key="length"
+    v2 = PropGet v0 key="readUInt8"
+    v3 = PropGet v0 key="slice"
+    v4 = NewArray v1, v2, v3 contents=anything
+    Return v4
+}
+# CHECK-LABEL: function f0 name="provenByType"
+# CHECK: v1: int[0, 4294967296] = CallBuiltin v0 overload=TypedArrayPrototypeLength/0
+# CHECK-NEXT: v2: builtin(BufferPrototypeReadUInt8) = Builtin builtin=BufferPrototypeReadUInt8
+# CHECK-NEXT: v3: builtin(BufferPrototypeSlice) = Builtin builtin=BufferPrototypeSlice
+
+function f1 name="sinceCreation" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Builtin builtin=BufferAlloc
+    v2 = Call v1, -, v0
+    v3 = PropGet v2 key="length"
+    v4 = PropGet v2 key="byteLength"
+    v5 = PropGet v2 key="readUInt8"
+    v6 = NewArray v3, v4, v5 contents=anything
+    Return v6
+}
+# CHECK-LABEL: function f1 name="sinceCreation"
+# CHECK: v2: Buffer = CallBuiltin -, v0 overload=BufferAlloc/0
+# CHECK-NEXT: v3: int[0, 4294967296] = CallBuiltin v2 overload=TypedArrayPrototypeLength/0
+# CHECK-NEXT: v4: int[0, 4294967296] = CallBuiltin v2 overload=TypedArrayPrototypeByteLength/0
+# CHECK-NEXT: v5: builtin(BufferPrototypeReadUInt8) = Builtin builtin=BufferPrototypeReadUInt8
+
+function f2 name="untilItEscapes" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything):
+    v2 = Builtin builtin=BufferAlloc
+    v3 = Call v2, -, v0
+    v4 = Call v1, -, v3
+    v5 = PropGet v3 key="length"
+    Return v5
+}
+# CHECK-LABEL: function f2 name="untilItEscapes"
+# CHECK: v5: anything = PropGet v3 key="length"
+
+function f3 name="onlyExpected" parameters=[{type=Buffer flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ Buffer):
+    v1 = PropGet v0 key="length"
+    Return v1
+}
+# CHECK-LABEL: function f3 name="onlyExpected"
+# CHECK: v1: anything = PropGet v0 key="length"

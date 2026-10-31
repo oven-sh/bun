@@ -39,6 +39,7 @@ pub mod compress {
 }
 pub mod heap;
 
+pub mod current_work;
 pub mod debug;
 pub mod env;
 #[cfg(windows)]
@@ -247,7 +248,12 @@ pub mod env_var;
 pub mod feature_flags;
 pub use code_generation::{
     CODE_GENERATION_FROM_STRINGS_DISALLOWED_BY_BUILD, CodeGenerationFromStrings,
-    code_generation_from_strings, disallow_code_generation_from_strings,
+    code_generation_from_strings, code_generation_from_strings_by_flags,
+    disallow_code_generation_for_compiled_program,
+    disallow_code_generation_for_removed_interpreter, disallow_code_generation_from_strings,
+    is_code_generation_disallowed_by_compiled_program, is_code_generation_disallowed_by_trimming,
+    is_strict_only_beside_compiled_program, run_no_compiled_program_on_this_thread,
+    runs_no_compiled_program,
 };
 
 /// Tier-0 path-separator predicates. Sunk from `bun_paths` so `bun_core::util`
@@ -1202,7 +1208,7 @@ pub use crate::string::immutable::{
     format_escapes, has_prefix, has_prefix_case_insensitive, has_prefix_comptime,
     has_prefix_comptime_utf16, has_suffix_comptime, index_of, index_of_scalar, is_all_whitespace,
     is_npm_package_name, is_npm_package_name_ignore_length, is_on_char_boundary,
-    is_utf8_char_boundary, is_valid_utf8, last_index_of, last_index_of_t,
+    is_utf8_char_boundary, is_valid_utf8, last_index_of, last_index_of_utf16,
     length_of_leading_whitespace_ascii, memmem, order, order_t, percent_encode_write, sort_asc,
     sort_desc, split, starts_with_case_insensitive_ascii, starts_with_char, str_utf8,
     to_ascii_hex_value, to_utf16_alloc, trim_leading_char, trim_prefix, trim_prefix_comptime,
@@ -1601,51 +1607,45 @@ pub(crate) mod strings_impl {
         [0xC0 | (cp >> 6) as u8, 0x80 | (cp & 0x3F) as u8]
     }
 
+    /// Appends `latin1` as UTF-8, of which it makes `utf8_length` bytes.
+    fn append_latin1_as_utf8(list: &mut Vec<u8>, latin1: &[u8], utf8_length: usize) {
+        list.reserve(utf8_length);
+        // SAFETY: simdutf writes `utf8_length_from_latin1(latin1)` initialized bytes, which were just reserved.
+        unsafe {
+            let written = simdutf::simdutf__convert_latin1_to_utf8(
+                latin1.as_ptr(),
+                latin1.len(),
+                list.as_mut_ptr().add(list.len()),
+            );
+            debug_assert_eq!(written, utf8_length);
+            list.set_len(list.len() + written);
+        }
+    }
+
     /// Port of `allocateLatin1IntoUTF8WithList`.
-    /// Uses `first_non_ascii` (simdutf SIMD) for the ASCII-span scan.
     pub fn allocate_latin1_into_utf8_with_list(
         mut list: Vec<u8>,
         offset_into_list: usize,
         latin1: &[u8],
     ) -> Vec<u8> {
         list.truncate(offset_into_list);
-        list.reserve(latin1.len());
-        let mut rest = latin1;
-        while !rest.is_empty() {
-            match first_non_ascii_usize(rest) {
-                None => {
-                    list.extend_from_slice(rest);
-                    break;
-                }
-                Some(i) => {
-                    list.extend_from_slice(&rest[..i]);
-                    rest = &rest[i..];
-                    while let Some(&c) = rest.first() {
-                        if c < 0x80 {
-                            break;
-                        }
-                        list.reserve(2);
-                        let [a, b] = latin1_to_codepoint_bytes_assume_not_ascii(c);
-                        list.push(a);
-                        list.push(b);
-                        rest = &rest[1..];
-                    }
-                }
-            }
-        }
+        append_latin1_as_utf8(
+            &mut list,
+            latin1,
+            simdutf::length::utf8::from::latin1(latin1),
+        );
         list
     }
 
     /// Port of `toUTF8FromLatin1` — None if input is already ASCII.
     pub fn to_utf8_from_latin1(latin1: &[u8]) -> Option<Vec<u8>> {
-        if is_all_ascii(latin1) {
+        let utf8_length = simdutf::length::utf8::from::latin1(latin1);
+        if utf8_length == latin1.len() {
             return None;
         }
-        Some(allocate_latin1_into_utf8_with_list(
-            Vec::with_capacity(latin1.len()),
-            0,
-            latin1,
-        ))
+        let mut utf8 = Vec::new();
+        append_latin1_as_utf8(&mut utf8, latin1, utf8_length);
+        Some(utf8)
     }
 
     /// Slow-path fallback for unpaired surrogates (port of `toUTF8ListWithTypeBun` core loop).
@@ -1832,7 +1832,69 @@ pub(crate) mod strings_impl {
     /// Port of `copyLatin1IntoUTF8` — encode Latin-1 into a fixed-size UTF-8 buffer.
     #[inline]
     pub fn copy_latin1_into_utf8(buf: &mut [u8], latin1: &[u8]) -> EncodeIntoResult {
+        if latin1.len() <= 16 && latin1.len() <= buf.len() && copy_short_ascii(buf, latin1) {
+            return EncodeIntoResult {
+                read: latin1.len(),
+                written: latin1.len(),
+            };
+        }
+        const MIN_LEN_FOR_SIMDUTF: usize = 64;
+        if latin1.len() >= MIN_LEN_FOR_SIMDUTF
+            && buf.len() >= simdutf::length::utf8::from::latin1(latin1)
+        {
+            // SAFETY: simdutf writes `utf8_length_from_latin1(latin1)` bytes, which `buf` has room for.
+            let written = unsafe {
+                simdutf::simdutf__convert_latin1_to_utf8(
+                    latin1.as_ptr(),
+                    latin1.len(),
+                    buf.as_mut_ptr(),
+                )
+            };
+            return EncodeIntoResult {
+                read: latin1.len(),
+                written,
+            };
+        }
         copy_latin1_into_utf8_stop_on_non_ascii::<false>(buf, latin1)
+    }
+
+    /// Copies at most 16 bytes with two loads and two stores that overlap. Writes nothing and
+    /// returns false unless all of `src` is ASCII. `dst` is at least as long as `src`.
+    #[inline(always)]
+    fn copy_short_ascii(dst: &mut [u8], src: &[u8]) -> bool {
+        let n = src.len();
+        assert!(n <= 16 && n <= dst.len());
+        let (from, to) = (src.as_ptr(), dst.as_mut_ptr());
+        // SAFETY: every access below lies in the first `n` bytes of `src` or of `dst`.
+        unsafe {
+            if n >= 8 {
+                let first = from.cast::<u64>().read_unaligned();
+                let last = from.add(n - 8).cast::<u64>().read_unaligned();
+                if (first | last) & 0x8080_8080_8080_8080 != 0 {
+                    return false;
+                }
+                to.cast::<u64>().write_unaligned(first);
+                to.add(n - 8).cast::<u64>().write_unaligned(last);
+            } else if n >= 4 {
+                let first = from.cast::<u32>().read_unaligned();
+                let last = from.add(n - 4).cast::<u32>().read_unaligned();
+                if (first | last) & 0x8080_8080 != 0 {
+                    return false;
+                }
+                to.cast::<u32>().write_unaligned(first);
+                to.add(n - 4).cast::<u32>().write_unaligned(last);
+            } else if n > 0 {
+                // The first, the middle and the last of one, two or three bytes are all of them.
+                let (first, middle, last) = (*from, *from.add(n / 2), *from.add(n - 1));
+                if (first | middle | last) >= 0x80 {
+                    return false;
+                }
+                *to = first;
+                *to.add(n / 2) = middle;
+                *to.add(n - 1) = last;
+            }
+        }
+        true
     }
 
     #[inline]
@@ -1845,26 +1907,32 @@ pub(crate) mod strings_impl {
         }
 
         const HIGH_BITS: u64 = 0x8080_8080_8080_8080;
+        let n = src.len();
+        assert!(dst.len() >= n);
+        let (from, to) = (src.as_ptr(), dst.as_mut_ptr());
         let mut copied = 0usize;
-        let (dst_chunks, _) = dst.as_chunks_mut::<8>();
-        let (src_chunks, _) = src.as_chunks::<8>();
-        for (d, s) in dst_chunks.iter_mut().zip(src_chunks) {
-            let word = u64::from_ne_bytes(*s);
-            let mask = word & HIGH_BITS;
-            if mask != 0 {
-                let ascii = (mask.trailing_zeros() / 8) as usize;
-                d[..ascii].copy_from_slice(&s[..ascii]);
-                return copied + ascii;
+        // SAFETY: every access below lies in the first `n` bytes of `src` or of `dst`.
+        unsafe {
+            while copied + 8 <= n {
+                let word = from.add(copied).cast::<u64>().read_unaligned();
+                if word & HIGH_BITS != 0 {
+                    break;
+                }
+                to.add(copied).cast::<u64>().write_unaligned(word);
+                copied += 8;
             }
-            *d = word.to_ne_bytes();
-            copied += 8;
-        }
-        for (d, &s) in dst[copied..].iter_mut().zip(&src[copied..]) {
-            if s >= 0x80 {
-                return copied;
+            // The last word overlaps the one before it.
+            if copied + 8 > n && n >= 8 {
+                let word = from.add(n - 8).cast::<u64>().read_unaligned();
+                if word & HIGH_BITS == 0 {
+                    to.add(n - 8).cast::<u64>().write_unaligned(word);
+                    return n;
+                }
             }
-            *d = s;
-            copied += 1;
+            while copied < n && *from.add(copied) < 0x80 {
+                *to.add(copied) = *from.add(copied);
+                copied += 1;
+            }
         }
         copied
     }
@@ -2245,19 +2313,64 @@ pub(crate) mod strings_impl {
     // Minimal code-unit trait so the generic basename impls can live at T0
     // without pulling `bun_paths::PathChar` (T1) down. `PathChar` and
     // `PathUnit` both add `: PathByte` as a supertrait and inherit `from_u8`.
-    pub trait PathByte: Copy + Eq + crate::NoUninit + 'static {
+    pub trait PathByte: Eq + crate::Pod {
         fn from_u8(b: u8) -> Self;
+        /// `s` as the concrete slice it is, for code with a different kernel per width.
+        fn units(s: &[Self]) -> CodeUnits<'_>;
+        fn units_mut(s: &mut [Self]) -> CodeUnitsMut<'_>;
+        fn index_of_unit(s: &[Self], unit: Self) -> Option<usize>;
+        fn last_index_of_unit(s: &[Self], unit: Self) -> Option<usize>;
+    }
+    pub enum CodeUnits<'a> {
+        U8(&'a [u8]),
+        U16(&'a [u16]),
+    }
+    pub enum CodeUnitsMut<'a> {
+        U8(&'a mut [u8]),
+        U16(&'a mut [u16]),
     }
     impl PathByte for u8 {
         #[inline(always)]
         fn from_u8(b: u8) -> Self {
             b
         }
+        #[inline(always)]
+        fn units(s: &[u8]) -> CodeUnits<'_> {
+            CodeUnits::U8(s)
+        }
+        #[inline(always)]
+        fn units_mut(s: &mut [u8]) -> CodeUnitsMut<'_> {
+            CodeUnitsMut::U8(s)
+        }
+        #[inline(always)]
+        fn index_of_unit(s: &[u8], unit: u8) -> Option<usize> {
+            bun_highway::index_of_char(s, unit)
+        }
+        #[inline(always)]
+        fn last_index_of_unit(s: &[u8], unit: u8) -> Option<usize> {
+            bun_highway::last_index_of_char(s, unit)
+        }
     }
     impl PathByte for u16 {
         #[inline(always)]
         fn from_u8(b: u8) -> Self {
             b as u16
+        }
+        #[inline(always)]
+        fn units(s: &[u16]) -> CodeUnits<'_> {
+            CodeUnits::U16(s)
+        }
+        #[inline(always)]
+        fn units_mut(s: &mut [u16]) -> CodeUnitsMut<'_> {
+            CodeUnitsMut::U16(s)
+        }
+        #[inline(always)]
+        fn index_of_unit(s: &[u16], unit: u16) -> Option<usize> {
+            bun_highway::memmem16(s, &[unit])
+        }
+        #[inline(always)]
+        fn last_index_of_unit(s: &[u16], unit: u16) -> Option<usize> {
+            bun_highway::memrmem16(s, &[unit])
         }
     }
 
@@ -2519,52 +2632,16 @@ pub mod ffi {
     /// of [`cstr_bytes`] for inline arrays like `utsname::release`.
     #[inline]
     pub fn c_field_bytes(s: &[core::ffi::c_char]) -> &[u8] {
-        // `c_char` is a type alias for `i8`/`u8`; both are `bytemuck::Pod`, so
-        // the byte-sized reinterpretation is a safe `cast_slice`.
-        let b: &[u8] = bytemuck::cast_slice(s);
+        let b = crate::slice_as_bytes(s);
         &b[..crate::strings::index_of_char_usize(b, 0).unwrap_or(b.len())]
     }
 
-    /// All-bits-zero value of `T` for `#[repr(C)]` FFI structs.
-    ///
-    /// Single audited wrapper over `core::mem::zeroed()` so libc/uv/c-ares
-    /// out-param init sites (`let mut x: libc::sigaction = zeroed();`) don't
-    /// each open-code an `unsafe` block.
-    ///
-    /// The `T: Zeroable` bound discharges the `mem::zeroed` safety obligation
-    /// once per type (at the `unsafe impl`), so callers need no `unsafe`
-    /// block. Prefer `T::default()` when `T` implements (or can derive)
-    /// `Default` — reserve this for foreign POD where the orphan rule blocks a
-    /// `Default` impl (libc, bindgen output) or where `Default` would be wrong
-    /// but zero-init matches the C API contract.
-    #[inline(always)]
-    pub const fn zeroed<T: Zeroable>() -> T {
-        // SAFETY: `T: Zeroable` is exactly the assertion that the all-zero bit
-        // pattern is a valid `T` (no `NonNull`/`NonZero`/ref/fn-ptr fields, no
-        // niche enums). `core::mem::zeroed` is therefore sound for `T`.
-        unsafe { core::mem::zeroed() }
-    }
-
-    /// Marker: the all-zero bit pattern is a valid value of `Self`.
-    ///
-    /// Local re-spelling of `bytemuck::Zeroable` so we can blanket-`impl` it
-    /// for foreign `libc` POD (orphan rule blocks impl-ing the upstream trait
-    /// on `libc::sigaction` et al.). Once a type carries this marker,
-    /// [`zeroed`] is a *safe* call — the audit happens once at the `unsafe
-    /// impl`, not at every out-param init site.
-    ///
-    /// # Safety
-    /// `Self` must be inhabited at the all-zero bit pattern: no non-nullable
-    /// pointers (`&T`, `Box<T>`, `NonNull<T>`, fn ptrs), no `bool`/`char`
-    /// outside their valid range, no niche-optimised enums. `#[repr(C)]`
-    /// structs of integers, raw pointers, and nested `Zeroable` POD satisfy
-    /// this. Padding bytes are fine (zero is a valid padding value).
-    pub unsafe trait Zeroable: Sized {}
+    pub use bun_pod::{Zeroable, zeroed};
 
     /// Unchecked all-bits-zero — escape hatch for types not yet proven
     /// [`Zeroable`] (libuv handles, bindgen structs in `_sys` crates that
     /// don't depend on `bun_core`, generic `T` where the bound can't be
-    /// threaded). Prefer [`zeroed`] + an `unsafe impl Zeroable` whenever the
+    /// threaded). Prefer [`zeroed`] + `impl_zeroable!` whenever the
     /// type is reachable.
     ///
     /// # Safety
@@ -2575,181 +2652,6 @@ pub mod ffi {
         // SAFETY: caller guarantees T is valid at the all-zero bit pattern.
         unsafe { core::mem::zeroed() }
     }
-
-    // ── Zeroable impls ──────────────────────────────────────────────────────
-    // Primitives, raw pointers, arrays — match `bytemuck::Zeroable` blankets.
-    macro_rules! zeroable_prim {
-        ($($t:ty),* $(,)?) => { $(
-            // SAFETY: primitive numeric/unit type — the all-zero bit pattern is
-            // a valid value (`0`, `0.0`, or `()`).
-            unsafe impl Zeroable for $t {}
-        )* };
-    }
-    zeroable_prim!(
-        (),
-        u8,
-        u16,
-        u32,
-        u64,
-        u128,
-        usize,
-        i8,
-        i16,
-        i32,
-        i64,
-        i128,
-        isize,
-        f32,
-        f64,
-    );
-    // SAFETY: null is a valid raw pointer.
-    unsafe impl<T: ?Sized> Zeroable for *const T {}
-    // SAFETY: null is a valid raw pointer.
-    unsafe impl<T: ?Sized> Zeroable for *mut T {}
-    // SAFETY: array of zero-valid elements is zero-valid.
-    unsafe impl<T: Zeroable, const N: usize> Zeroable for [T; N] {}
-
-    // libc POD — every field is an integer / raw pointer / nested C POD; the
-    // C API contract for each is "zero-init before the kernel/libc fills it".
-    // SAFETY: each `unsafe impl` below was audited against the libc crate's
-    // struct definition for that target; none contain `NonNull`/`NonZero`/
-    // references/fn-ptrs (bare `extern fn` fields in `sigaction` are stored as
-    // `usize` sighandler_t on every libc target).
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::sigaction {}
-    // `sigset_t` is a `u32` typedef on Darwin (covered by the primitive
-    // blanket → E0119 if re-impl'd) but a real struct on Linux/Android
-    // (`__val: [c_ulong; 16]`) and FreeBSD (`__bits: [u32; 4]`). Gate the
-    // explicit impl to everywhere it's NOT already a primitive.
-    // SAFETY: integer-array struct on the gated targets; all-zero is valid.
-    #[cfg(all(unix, not(target_vendor = "apple")))]
-    unsafe impl Zeroable for libc::sigset_t {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::utsname {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::winsize {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::rlimit {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::passwd {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::stat {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::rusage {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::timespec {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::timeval {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::pollfd {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::tm {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::Dl_info {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::sockaddr {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::sockaddr_in {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::sockaddr_in6 {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::sockaddr_storage {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::addrinfo {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    unsafe impl Zeroable for libc::sysinfo {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    unsafe impl Zeroable for libc::epoll_event {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    unsafe impl Zeroable for libc::signalfd_siginfo {}
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "macos",
-        target_os = "freebsd"
-    ))]
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    unsafe impl Zeroable for libc::statfs {}
-    #[cfg(any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "netbsd"
-    ))]
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    unsafe impl Zeroable for libc::kevent {}
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    unsafe impl Zeroable for libc::kevent64_s {}
-    #[cfg(target_os = "freebsd")]
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    unsafe impl Zeroable for libc::_umtx_time {}
-
-    // Windows POD — `bun_windows_sys` `#[repr(C)]` out-param structs that are
-    // zero-init before the kernel fills them. All fields are integers / raw
-    // pointers / nested POD; audited against the Win32 SDK headers (S016).
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::IO_STATUS_BLOCK {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::FILE_BASIC_INFORMATION {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::FILE_ALL_INFORMATION {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::FILE_FS_DEVICE_INFORMATION {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::FILE_FS_VOLUME_INFORMATION {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::BY_HANDLE_FILE_INFORMATION {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::WIN32_FILE_ATTRIBUTE_DATA {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::WIN32_FIND_DATAW {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::OBJECT_ATTRIBUTES {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::UNICODE_STRING {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::SECURITY_ATTRIBUTES {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::FILETIME {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_storage {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_in {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_in6 {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::addrinfo {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::IO_COUNTERS {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::JOBOBJECT_BASIC_LIMIT_INFORMATION {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::JOBOBJECT_EXTENDED_LIMIT_INFORMATION {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::OVERLAPPED {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::PROCESS_INFORMATION {}
 
     /// Conjure a value of a zero-sized type without `unsafe` at the call site.
     ///

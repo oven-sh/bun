@@ -733,14 +733,285 @@ Url.prototype.parseHost = function () {
   if (host) this.hostname = host;
 };
 
+// fileURLToPath, pathToFileURL, urlToHttpOptions, domainToASCII and
+// domainToUnicode follow lib/internal/url.js in Node.js. They are written
+// out here rather than imported from the path and punycode polyfills:
+// build-fallbacks.ts strips a leading `import` from each built polyfill, so a
+// sibling import would be undefined at run time.
+
+function nodeError(Ctor, code, message) {
+  const error = new Ctor(message);
+  error.code = code;
+  return error;
+}
+
+// Like Node.js, ERR_INVALID_FILE_URL_PATH carries the parsed URL as `input`.
+function invalidFileURLPath(reason, url) {
+  const error = nodeError(TypeError, "ERR_INVALID_FILE_URL_PATH", `File URL path ${reason}`);
+  error.input = url;
+  return error;
+}
+
+function describeReceived(value) {
+  if (value == null) return ` Received ${value}`;
+  if (typeof value === "function") return ` Received function ${value.name}`;
+  if (typeof value === "object") return ` Received an instance of ${value.constructor?.name ?? "Object"}`;
+  if (typeof value === "string") {
+    const truncated = value.length > 28 ? `${value.slice(0, 25)}...` : value;
+    return ` Received type string (${truncated.includes("'") ? JSON.stringify(truncated) : `'${truncated}'`})`;
+  }
+  const shown = typeof value === "bigint" ? `${value}n` : Object.is(value, -0) ? "-0" : String(value);
+  return ` Received type ${typeof value} (${shown})`;
+}
+
+function isURL(self) {
+  return Boolean(self?.href && self.protocol && self.auth === undefined && self.path === undefined);
+}
+
+// The WHATWG hostname setter performs host parsing with a hostname state
+// override, which is what Node.js calls through ada. The setter ignores an
+// input it rejects instead of throwing, so it runs from two different hosts:
+// a rejected input leaves each one unchanged.
+function toASCIIHost(domain) {
+  if (domain === "") return "";
+  const a = new URL("ws://a.invalid");
+  const b = new URL("ws://b.invalid");
+  a.hostname = domain;
+  b.hostname = domain;
+  return a.hostname === b.hostname ? a.hostname : "";
+}
+
+// RFC 3492 decoding, as in the punycode package.
+const punycodeBase = 36;
+const punycodeMaxInt = 0x7fffffff;
+
+function punycodeAdapt(delta, numPoints, firstTime) {
+  let k = 0;
+  delta = firstTime ? Math.floor(delta / 700) : delta >> 1;
+  delta += Math.floor(delta / numPoints);
+  for (; delta > ((punycodeBase - 1) * 26) >> 1; k += punycodeBase) {
+    delta = Math.floor(delta / (punycodeBase - 1));
+  }
+  return Math.floor(k + (punycodeBase * delta) / (delta + 38));
+}
+
+function punycodeDigit(codePoint) {
+  if (codePoint >= 0x30 && codePoint < 0x3a) return 26 + (codePoint - 0x30);
+  if (codePoint >= 0x41 && codePoint < 0x5b) return codePoint - 0x41;
+  if (codePoint >= 0x61 && codePoint < 0x7b) return codePoint - 0x61;
+  return punycodeBase;
+}
+
+function punycodeDecode(input) {
+  const output = [];
+  let i = 0;
+  let n = 128;
+  let bias = 72;
+  let basic = input.lastIndexOf("-");
+  if (basic < 0) basic = 0;
+  for (let j = 0; j < basic; ++j) {
+    if (input.charCodeAt(j) >= 0x80) throw new RangeError("Illegal input >= 0x80 (not a basic code point)");
+    output.push(input.charCodeAt(j));
+  }
+  for (let index = basic > 0 ? basic + 1 : 0; index < input.length; ) {
+    const oldi = i;
+    for (let w = 1, k = punycodeBase; ; k += punycodeBase) {
+      if (index >= input.length) throw new RangeError("Invalid input");
+      const digit = punycodeDigit(input.charCodeAt(index++));
+      if (digit >= punycodeBase || digit > Math.floor((punycodeMaxInt - i) / w)) {
+        throw new RangeError("Invalid input");
+      }
+      i += digit * w;
+      const t = k <= bias ? 1 : k >= bias + 26 ? 26 : k - bias;
+      if (digit < t) break;
+      if (w > Math.floor(punycodeMaxInt / (punycodeBase - t))) throw new RangeError("Overflow");
+      w *= punycodeBase - t;
+    }
+    const out = output.length + 1;
+    bias = punycodeAdapt(i - oldi, out, oldi === 0);
+    if (Math.floor(i / out) > punycodeMaxInt - n) throw new RangeError("Overflow");
+    n += Math.floor(i / out);
+    i %= out;
+    output.splice(i++, 0, n);
+  }
+  return String.fromCodePoint(...output);
+}
+
+function domainToASCII(domain) {
+  if (arguments.length < 1) throw nodeError(TypeError, "ERR_MISSING_ARGS", 'The "domain" argument must be specified');
+  return toASCIIHost(`${domain}`);
+}
+
+function domainToUnicode(domain) {
+  if (arguments.length < 1) throw nodeError(TypeError, "ERR_MISSING_ARGS", 'The "domain" argument must be specified');
+  const host = toASCIIHost(`${domain}`);
+  if (host === "") return "";
+  try {
+    return host
+      .split(".")
+      .map(label => (label.startsWith("xn--") ? punycodeDecode(label.slice(4)) : label))
+      .join(".");
+  } catch {
+    return "";
+  }
+}
+
+function urlToHttpOptions(url) {
+  if (url === null || (typeof url !== "object" && typeof url !== "function")) {
+    throw nodeError(
+      TypeError,
+      "ERR_INVALID_ARG_TYPE",
+      'The "url" argument must be of type object.' + describeReceived(url),
+    );
+  }
+  const { hostname, pathname, port, username, password, search } = url;
+  const options = {
+    __proto__: null,
+    ...url,
+    protocol: url.protocol,
+    hostname: hostname && hostname[0] === "[" ? hostname.slice(1, -1) : hostname,
+    hash: url.hash,
+    search: search,
+    pathname: pathname,
+    path: `${pathname || ""}${search || ""}`,
+    href: url.href,
+  };
+  if (port !== "") {
+    options.port = Number(port);
+  }
+  if (username || password) {
+    options.auth = `${decodeURIComponent(username)}:${decodeURIComponent(password)}`;
+  }
+  return options;
+}
+
+function getPathFromURLPosix(url) {
+  if (url.hostname !== "") {
+    // Node.js names process.platform. The process polyfill has none, so a
+    // browser without one reports "browser".
+    const platform = typeof globalThis.process?.platform === "string" ? globalThis.process.platform : "browser";
+    throw nodeError(
+      TypeError,
+      "ERR_INVALID_FILE_URL_HOST",
+      `File URL host must be "localhost" or empty on ${platform}`,
+    );
+  }
+  const pathname = url.pathname;
+  for (let n = 0; n < pathname.length; n++) {
+    if (pathname[n] === "%") {
+      const third = pathname.codePointAt(n + 2) | 0x20;
+      if (pathname[n + 1] === "2" && third === 102) {
+        throw invalidFileURLPath("must not include encoded / characters", url);
+      }
+    }
+  }
+  return decodeURIComponent(pathname);
+}
+
+function getPathFromURLWin32(url) {
+  const hostname = url.hostname;
+  let pathname = url.pathname;
+  for (let n = 0; n < pathname.length; n++) {
+    if (pathname[n] === "%") {
+      const third = pathname.codePointAt(n + 2) | 0x20;
+      if ((pathname[n + 1] === "2" && third === 102) || (pathname[n + 1] === "5" && third === 99)) {
+        throw invalidFileURLPath("must not include encoded \\ or / characters", url);
+      }
+    }
+  }
+  pathname = decodeURIComponent(pathname.replace(/\//g, "\\"));
+  if (hostname !== "") {
+    // A UNC path. The hostname may be an IDN in its xn-- form.
+    return `\\\\${domainToUnicode(hostname)}${pathname}`;
+  }
+  const letter = pathname.codePointAt(1) | 0x20;
+  if (letter < 0x61 || letter > 0x7a || pathname.charAt(2) !== ":") {
+    throw invalidFileURLPath("must be absolute", url);
+  }
+  return pathname.slice(1);
+}
+
+function fileURLToPath(path, options) {
+  const windows = options?.windows;
+  if (typeof path === "string") path = new URL(path);
+  else if (!isURL(path)) {
+    throw nodeError(
+      TypeError,
+      "ERR_INVALID_ARG_TYPE",
+      'The "path" argument must be of type string or an instance of URL.' + describeReceived(path),
+    );
+  }
+  if (path.protocol !== "file:") {
+    throw nodeError(TypeError, "ERR_INVALID_URL_SCHEME", "The URL must be of scheme file");
+  }
+  return windows ? getPathFromURLWin32(path) : getPathFromURLPosix(path);
+}
+
+// posix path.resolve. A browser has no working directory unless the page
+// provides a `process.cwd()`.
+function resolvePosix(path) {
+  if (typeof path !== "string") {
+    throw nodeError(
+      TypeError,
+      "ERR_INVALID_ARG_TYPE",
+      'The "path" argument must be of type string.' + describeReceived(path),
+    );
+  }
+  let resolved = path;
+  if (path.charCodeAt(0) !== 47) {
+    const cwd = typeof globalThis.process?.cwd === "function" ? globalThis.process.cwd() : "/";
+    resolved = `${cwd}/${path}`;
+  }
+  const segments = [];
+  for (const segment of resolved.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") segments.pop();
+    else segments.push(segment);
+  }
+  return `/${segments.join("/")}`;
+}
+
+// The code points that Node.js percent-encodes in a posix path, beyond the
+// C0 controls, DEL and non-ASCII: the WHATWG path set plus % [ \ ] ^ | ~.
+const pathCharsToEncode = /[\x00-\x20"#%<>?[\\\]^`{|}~\x7f]/g;
+
+function pathToFileURL(filepath, options) {
+  if (options?.windows) {
+    throw nodeError(
+      Error,
+      "ERR_FEATURE_UNAVAILABLE_ON_PLATFORM",
+      "The `windows` option of pathToFileURL is not available in the browser polyfill",
+    );
+  }
+  let resolved = resolvePosix(filepath);
+  // path.resolve drops a trailing slash, so add it back.
+  if (filepath.charCodeAt(filepath.length - 1) === 47 && resolved[resolved.length - 1] !== "/") {
+    resolved += "/";
+  }
+  const encoded = resolved.replace(
+    pathCharsToEncode,
+    char => `%${char.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`,
+  );
+  // new URL() percent-encodes the non-ASCII code points as UTF-8.
+  return new URL(`file://${encoded}`);
+}
+
+const URLPattern = /* @__PURE__ */ globalThis.URLPattern;
+
 export {
   URL,
+  URLPattern,
   URLSearchParams,
   Url as Url,
+  domainToASCII,
+  domainToUnicode,
+  fileURLToPath,
   urlFormat as format,
   urlParse as parse,
+  pathToFileURL,
   urlResolve as resolve,
   urlResolveObject as resolveObject,
+  urlToHttpOptions,
 };
 
 export default {
@@ -749,10 +1020,12 @@ export default {
   resolveObject: urlResolveObject,
   format: urlFormat,
   Url: Url,
-  // pathToFileURL: pathToFileURL,
-  // fileURLToPath: fileURLToPath,
-  // domainToASCII,
-  // domainToUnicode,
+  pathToFileURL,
+  fileURLToPath,
+  domainToASCII,
+  domainToUnicode,
+  urlToHttpOptions,
   URL,
+  URLPattern,
   URLSearchParams,
 };

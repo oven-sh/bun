@@ -30,6 +30,8 @@
 #include "ErrorCode.h"
 #include "napi_external.h"
 #include "WebCoreJSBuiltins.h"
+#include "AsyncContextFrame.h"
+#include "ModuleGraph.h"
 
 #include <JavaScriptCore/JSPromise.h>
 
@@ -161,6 +163,8 @@ public:
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onLoadFunction;
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onResolveFunction;
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> setupFunction;
+    // The AsyncLocalStorage stores onResolve, onLoad and onEnd hooks run in. Empty: those the event loop calls them in.
+    JSC::WriteBarrier<JSC::Unknown> m_asyncContext;
 
     JSC::JSGlobalObject* m_globalObject;
 
@@ -189,6 +193,7 @@ void JSBundlerPlugin::visitAdditionalChildrenInGCThread(Visitor& visitor)
     this->onLoadFunction.visit(visitor);
     this->onResolveFunction.visit(visitor);
     this->setupFunction.visit(visitor);
+    visitor.append(this->m_asyncContext);
     this->plugin.deferredPromises.visit(this, visitor);
     this->plugin.onBeforeParseExternals.visit(this, visitor);
 }
@@ -571,6 +576,28 @@ extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, 
 
 extern "C" void JSBundlerPlugin__answerCancelled(uint8_t kind, void* context);
 
+// One hook dispatch in the async context the plugin object keeps. That context has no Bun.ModuleGraph frames, so the graph the event loop entered for the dispatch is entered again on top of it.
+class HookContextScope {
+    WTF_MAKE_NONCOPYABLE(HookContextScope);
+    WTF_FORBID_HEAP_ALLOCATION;
+
+public:
+    HookContextScope(Zig::GlobalObject* globalObject, JSBundlerPlugin* plugin)
+        : HookContextScope(globalObject, plugin, Bun::currentModuleGraph(globalObject))
+    {
+    }
+
+private:
+    HookContextScope(Zig::GlobalObject* globalObject, JSBundlerPlugin* plugin, JSModuleGraph* graph)
+        : m_asyncContext(globalObject, plugin->m_asyncContext.get())
+        , m_moduleGraph(globalObject, graph)
+    {
+    }
+
+    AsyncContextScope m_asyncContext;
+    ModuleGraphContextScope m_moduleGraph;
+};
+
 // The bundle thread hands an onResolve / onLoad request over to the plugins' (this) thread. From here it is
 // answered exactly once, on this thread: by the plugin, or as cancelled if the plugin can no longer run.
 template<typename BuildArguments>
@@ -595,6 +622,7 @@ static void dispatchRequest(Bun::JSBundlerPlugin* plugin, BundlerPlugin::Request
     buildArguments(globalObject, scope, arguments);
     RETURN_IF_EXCEPTION(scope, cancel());
 
+    HookContextScope hookContext(defaultGlobalObject(globalObject), plugin);
     call(globalObject, function, callData, plugin, arguments);
 
     if (auto* exception = scope.exception()) [[unlikely]] {
@@ -635,19 +663,24 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, Bu
     });
 }
 
-extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* globalObject, BunPluginTarget target)
+extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* globalObject, BunPluginTarget target, BundlerPluginAsyncContext asyncContext)
 {
-    return JSBundlerPlugin::create(
-        globalObject->vm(),
+    auto& vm = globalObject->vm();
+    auto* plugin = JSBundlerPlugin::create(
+        vm,
         globalObject,
         // TODO: cache this structure on the global object
         JSBundlerPlugin::createStructure(
-            globalObject->vm(),
+            vm,
             globalObject,
             // Null prototype, so an accessor on Object.prototype can't get this object as its receiver.
             jsNull()),
         nullptr,
         target);
+    // Without the Bun.ModuleGraph frames: the plugin object is protected for the whole build, and a build must not keep its caller's graph alive.
+    if (asyncContext == BundlerPluginAsyncContext::Caller)
+        plugin->m_asyncContext.set(vm, plugin, Bun::asyncContextWithoutModuleGraphs(globalObject, globalObject->m_asyncContextData.get()->getInternalField(0)));
+    return plugin;
 }
 
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__loadAndResolvePluginsForServe(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedPlugins, JSC::EncodedJSValue encodedBunfigFolder)
@@ -742,6 +775,8 @@ void BundlerPlugin::tombstone()
 extern "C" void JSBundlerPlugin__tombstone(Bun::JSBundlerPlugin* plugin)
 {
     plugin->plugin.tombstone();
+    // No hook is called after this, and script can keep the plugin object alive.
+    plugin->m_asyncContext.clear();
 }
 
 extern "C" void JSBundlerPlugin__freezeFilters(Bun::JSBundlerPlugin* plugin)
@@ -769,7 +804,7 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundler
     arguments.append(JSValue::decode(encodedBuildResult));
     arguments.append(JSValue::decode(encodedRejection));
 
-    // TODO: use AsyncContextFrame?
+    HookContextScope hookContext(defaultGlobalObject(globalObject), plugin);
     auto result
         = JSC::profiledCall(globalObject, ProfilingReason::API, runOnEndCallbacksFn, callData, plugin, arguments);
     RETURN_IF_EXCEPTION(scope, {});

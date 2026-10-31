@@ -246,7 +246,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
         if (!hadMessage)
             return JSC::JSValue::encode(jsUndefined());
         auto* result = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), 1);
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "message"_s), message);
+        Bun::putDirectNamed(vm, result, "message"_s, message);
         return JSC::JSValue::encode(result);
     } else if (dynamicDowncast<JSBroadcastChannel>(port)) {
         // TODO: support broadcast channels

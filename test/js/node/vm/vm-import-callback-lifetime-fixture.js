@@ -36,11 +36,11 @@ function kindOf(referrer) {
 }
 
 // A hook and the import() outcome it leads to.
-function makeHook() {
+function makeHook(result = "hooked") {
   const seen = { referrer: undefined };
   const hook = (specifier, referrer) => {
     seen.referrer = kindOf(referrer);
-    throw new Error("hooked");
+    throw new Error(result);
   };
   return { hook, seen };
 }
@@ -146,6 +146,23 @@ const scenarios = {
     })();
     await collectGarbage();
     return outcome(seen, f);
+  },
+  // Two modules with the same identifier and source text: each function's code roots its own module's fetcher.
+  async "alive-sameSourceModules"() {
+    const load = async name => {
+      const { hook, seen } = makeHook("hooked by " + name);
+      const m = await evaluated(
+        new vm.SourceTextModule("export const f = () => import('x')", {
+          identifier: "same.mjs",
+          importModuleDynamically: hook,
+        }),
+      );
+      return { f: m.namespace.f, seen };
+    };
+    const first = await load("first");
+    const second = await load("second");
+    await collectGarbage();
+    return { first: await outcome(first.seen, first.f), second: await outcome(second.seen, second.f) };
   },
 
   // One closure per Script run in a long-lived context, as a REPL does.

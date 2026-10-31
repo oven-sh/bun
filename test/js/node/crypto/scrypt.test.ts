@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, nodeExeAtLeast, tempDir } from "harness";
 import { scrypt, scryptSync } from "node:crypto";
+import { join } from "node:path";
 
 // When `crypto.scrypt` fails to allocate the output buffer (OOM for a huge
 // `keylen`), `CryptoJob.init` takes the error path. Previously the `errdefer`
@@ -173,3 +174,124 @@ test("scrypt passes null as the error of a successful derivation", async () => {
   scrypt("password", "salt", 4, { N: 2 }, (...args) => resolve(args));
   expect(await promise).toEqual([null, scryptSync("password", "salt", 4, { N: 2 })]);
 });
+
+// Node refuses the second name of an option where it reads it: before it validates what the name holds, before it reads
+// a later option, and before it checks the callback. Without a fifth argument, the fourth is the callback.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/scrypt.js#L40-L50 and #L90-L129
+// The fixture prints how each call ends. The expected text is the output of node v26.3.0.
+const optionChecksFixture = join(import.meta.dir, "scrypt-option-checks.fixture.js");
+const optionChecksExpected = `{ N: 2, cost: "x" }
+  TypeError [ERR_INCOMPATIBLE_OPTION_PAIR]: Option "N" cannot be used in combination with option "cost"
+{ N: 2, cost: null }
+  TypeError [ERR_INCOMPATIBLE_OPTION_PAIR]: Option "N" cannot be used in combination with option "cost"
+{ N: 2, cost: -1 }
+  TypeError [ERR_INCOMPATIBLE_OPTION_PAIR]: Option "N" cannot be used in combination with option "cost"
+{ N: 2, cost: 1.5 }
+  TypeError [ERR_INCOMPATIBLE_OPTION_PAIR]: Option "N" cannot be used in combination with option "cost"
+{ N: 2, cost: NaN }
+  TypeError [ERR_INCOMPATIBLE_OPTION_PAIR]: Option "N" cannot be used in combination with option "cost"
+{ N: 2, cost: {} }
+  TypeError [ERR_INCOMPATIBLE_OPTION_PAIR]: Option "N" cannot be used in combination with option "cost"
+{ N: 2, cost: true }
+  TypeError [ERR_INCOMPATIBLE_OPTION_PAIR]: Option "N" cannot be used in combination with option "cost"
+{ N: 2, cost: 2 }
+  TypeError [ERR_INCOMPATIBLE_OPTION_PAIR]: Option "N" cannot be used in combination with option "cost"
+{ N: 0, cost: 2 }
+  TypeError [ERR_INCOMPATIBLE_OPTION_PAIR]: Option "N" cannot be used in combination with option "cost"
+{ r: 2, blockSize: "x" }
+  TypeError [ERR_INCOMPATIBLE_OPTION_PAIR]: Option "r" cannot be used in combination with option "blockSize"
+{ r: 2, blockSize: -1 }
+  TypeError [ERR_INCOMPATIBLE_OPTION_PAIR]: Option "r" cannot be used in combination with option "blockSize"
+{ r: 0, blockSize: null }
+  TypeError [ERR_INCOMPATIBLE_OPTION_PAIR]: Option "r" cannot be used in combination with option "blockSize"
+{ p: 1, parallelization: "x" }
+  TypeError [ERR_INCOMPATIBLE_OPTION_PAIR]: Option "p" cannot be used in combination with option "parallelization"
+{ p: 1, parallelization: 1.5 }
+  TypeError [ERR_INCOMPATIBLE_OPTION_PAIR]: Option "p" cannot be used in combination with option "parallelization"
+{ N: 2, cost: 2, r: "x" }
+  TypeError [ERR_INCOMPATIBLE_OPTION_PAIR]: Option "N" cannot be used in combination with option "cost"
+{ r: 2, blockSize: 2, p: "x" }
+  TypeError [ERR_INCOMPATIBLE_OPTION_PAIR]: Option "r" cannot be used in combination with option "blockSize"
+{ p: 1, parallelization: 1, maxmem: -1 }
+  TypeError [ERR_INCOMPATIBLE_OPTION_PAIR]: Option "p" cannot be used in combination with option "parallelization"
+{ N: 2, cost: 2, r: 2, blockSize: 2 }
+  TypeError [ERR_INCOMPATIBLE_OPTION_PAIR]: Option "N" cannot be used in combination with option "cost"
+{ N: "x", cost: 2 }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "N" argument must be of type number. Received type string ('x')
+{ r: 2, blockSize: 2, N: "x" }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "N" argument must be of type number. Received type string ('x')
+{ p: 1, parallelization: 1, blockSize: -1 }
+  RangeError [ERR_OUT_OF_RANGE]: The value of "blockSize" is out of range. It must be >= 0 && <= 4294967295. Received -1
+{ cost: "x" }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "cost" argument must be of type number. Received type string ('x')
+{ blockSize: -1 }
+  RangeError [ERR_OUT_OF_RANGE]: The value of "blockSize" is out of range. It must be >= 0 && <= 4294967295. Received -1
+{ parallelization: 1.5 }
+  RangeError [ERR_OUT_OF_RANGE]: The value of "parallelization" is out of range. It must be an integer. Received 1.5
+{ N: 2, r: 1, p: 1 }
+  key 48b0d2a8
+{ cost: 2, blockSize: 1, parallelization: 1 }
+  key 48b0d2a8
+{ N: 2, cost: undefined, r: undefined, blockSize: 1, p: 1, parallelization: undefined }
+  key 48b0d2a8
+scryptSync(p, s, "x", { N: 2, cost: 2 })
+  TypeError [ERR_INVALID_ARG_TYPE]: The "keylen" argument must be of type number. Received type string ('x')
+  reads: none
+scryptSync(p, s, 4, { N: 2, cost: "x", r: 1 })
+  TypeError [ERR_INCOMPATIBLE_OPTION_PAIR]: Option "N" cannot be used in combination with option "cost"
+  reads: N, cost
+scryptSync(p, s, 4, { N: 2, r: 2, blockSize: 2, p: "x" })
+  TypeError [ERR_INCOMPATIBLE_OPTION_PAIR]: Option "r" cannot be used in combination with option "blockSize"
+  reads: N, cost, r, blockSize
+scryptSync(p, s, 4, { N: 2, r: 1, p: 1 })
+  key 48b0d2a8
+  reads: N, cost, r, blockSize, p, parallelization, maxmem
+scrypt(p, s, 4, { N: 2, cost: 2 }, 5)
+  TypeError [ERR_INCOMPATIBLE_OPTION_PAIR]: Option "N" cannot be used in combination with option "cost"
+  reads: N, cost
+scrypt(p, s, 4, { N: 2, cost: "x" }, null)
+  TypeError [ERR_INCOMPATIBLE_OPTION_PAIR]: Option "N" cannot be used in combination with option "cost"
+  reads: N, cost
+scrypt(p, s, 4, { N: "x" }, 5)
+  TypeError [ERR_INVALID_ARG_TYPE]: The "N" argument must be of type number. Received type string ('x')
+  reads: N
+scrypt(p, s, 4, { N: 2 }, 5)
+  TypeError [ERR_INVALID_ARG_TYPE]: The "callback" argument must be of type function. Received type number (5)
+  reads: N, cost, r, blockSize, p, parallelization, maxmem
+scrypt(p, s, 4, { N: 2, cost: "x" })
+  TypeError [ERR_INVALID_ARG_TYPE]: The "callback" argument must be of type function. Received an instance of Object
+  reads: none
+scrypt(p, s, 4, { N: 2, cost: "x" }, undefined)
+  TypeError [ERR_INVALID_ARG_TYPE]: The "callback" argument must be of type function. Received an instance of Object
+  reads: none
+scrypt(p, s, 4, 5)
+  TypeError [ERR_INVALID_ARG_TYPE]: The "callback" argument must be of type function. Received type number (5)
+scrypt(p, s, 4, null)
+  TypeError [ERR_INVALID_ARG_TYPE]: The "callback" argument must be of type function. Received null
+scrypt(p, s, 4)
+  TypeError [ERR_INVALID_ARG_TYPE]: The "callback" argument must be of type function. Received undefined
+scrypt(p, s, 4, undefined, callback)
+  key 43297877
+scrypt(p, s, 4, null, callback)
+  key 43297877
+scrypt(p, s, 4, callback)
+  key 43297877
+promisify(scrypt)(p, s, 4, { N: 2, cost: "x" })
+  rejects with TypeError [ERR_INCOMPATIBLE_OPTION_PAIR]: Option "N" cannot be used in combination with option "cost"
+`;
+
+for (const [name, runtime] of [
+  ["bun", bunExe()],
+  ["node", nodeExeAtLeast("26.3.0")],
+] as const) {
+  test.skipIf(!runtime)(`scrypt checks its options and its callback in the order of node v26 (${name})`, async () => {
+    await using proc = Bun.spawn({
+      cmd: [runtime!, optionChecksFixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: optionChecksExpected, stderr: "", exitCode: 0 });
+  });
+}

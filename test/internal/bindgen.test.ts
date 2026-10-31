@@ -193,6 +193,16 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     );
   }
   expect(() => b.dictionary({ size: { type: range, expected: ["number"] } })).toThrow("expected: size is a range");
+  for (const altNames of [undefined, [], ["size"], ["length", "count"]]) {
+    expect(() => b.dictionary({ size: { type: b.u8.optional, altNames, exclusive: true } })).toThrow(
+      "exclusive: size has one other name in altNames",
+    );
+  }
+  for (const type of [b.u8, b.u8.nullable, b.u8.default(0), b.string.optional, b.callable.optional]) {
+    expect(() => b.dictionary({ size: { type, altNames: ["length"], exclusive: true } })).toThrow(
+      "exclusive: size is .optional, and not a string, bytes, an instance or a JS value",
+    );
+  }
   const point = b.dictionary({ x: b.f64 });
   for (const later of [b.jsArray, b.callable, b.bufferSource, b.array(b.f64)]) {
     expect(() => b.union({ point, later, text: b.string })).toThrow("later is never chosen");
@@ -1084,6 +1094,76 @@ describe("the members of a dictionary", () => {
       `The "size" argument must be of type number. Received null`,
     );
   });
+
+  const bothNames = (first: string, second: string) =>
+    expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INCOMPATIBLE_OPTION_PAIR",
+      message: `Option "${first}" cannot be used in combination with option "${second}"`,
+    });
+
+  it("exclusive: either name fills the field, each is reported as itself, and both are refused", () => {
+    expect(bindgen.exclusiveEcho({ size: 3, ratio: 0.5 })).toStrictEqual({ size: 3, ratio: 0.5 });
+    expect(bindgen.exclusiveEcho({ length: 4, scale: 0.25 })).toStrictEqual({ size: 4, ratio: 0.25 });
+    expect(bindgen.exclusiveEcho({ size: undefined, length: 4 })).toStrictEqual({ size: 4 });
+    expect(bindgen.exclusiveEcho({ size: 3, length: undefined })).toStrictEqual({ size: 3 });
+
+    expect(() => bindgen.exclusiveEcho({ size: "3" })).toThrow("TestExclusive.size must be");
+    expect(() => bindgen.exclusiveEcho({ length: "4" })).toThrow("TestExclusive.length must be");
+    expect(() => bindgen.exclusiveEcho({ ratio: "x", scale: 1 })).toThrow(
+      `The "TestExclusive.ratio" property must be of type number. Received type string ('x')`,
+    );
+    expect(() => bindgen.exclusiveEcho({ scale: "x" })).toThrow(
+      `The "TestExclusive.scale" property must be of type number. Received type string ('x')`,
+    );
+
+    // The second name is refused for what it is, not for what it holds.
+    for (const length of [4, 0, "4", null, 1.5, 256, {}]) {
+      expect(() => bindgen.exclusiveEcho({ size: 3, length })).toThrow(bothNames("size", "length"));
+    }
+    expect(() => bindgen.exclusiveEcho({ size: 0, length: 4 })).toThrow(bothNames("size", "length"));
+    expect(() => bindgen.exclusiveEcho({ ratio: 1, scale: "x" })).toThrow(bothNames("ratio", "scale"));
+  });
+
+  it("exclusive: each name is read once, in order, and none after the one that is refused", () => {
+    const log: string[] = [];
+    const logged = (members: Record<string, unknown>) =>
+      Object.defineProperties(
+        {},
+        Object.fromEntries(
+          ["last", "scale", "ratio", "length", "size"].map(key => [
+            key,
+            {
+              get() {
+                log.push(key);
+                return members[key];
+              },
+              enumerable: true,
+            },
+          ]),
+        ),
+      );
+    expect(bindgen.exclusiveEcho(logged({ length: 4, ratio: 0.5, last: 1 }))).toStrictEqual({
+      size: 4,
+      ratio: 0.5,
+      last: 1,
+    });
+    expect(log.splice(0)).toEqual(["size", "length", "ratio", "scale", "last"]);
+
+    expect(() => bindgen.exclusiveEcho(logged({ size: 3, length: "4", scale: 1 }))).toThrow(
+      bothNames("size", "length"),
+    );
+    expect(log.splice(0)).toEqual(["size", "length"]);
+
+    expect(() => bindgen.exclusiveEcho(logged({ size: "3", length: 4 }))).toThrow("TestExclusive.size must be");
+    expect(log.splice(0)).toEqual(["size"]);
+  });
+});
+
+itAlways("a dictionary with an exclusive member can refuse an object its members would take", () => {
+  const ratio = { type: b.f64.loose.optional, altNames: ["scale"] };
+  expect(b.dictionary({ ratio }, { nonObjectAsEmpty: true }).canRefuse).toBe(false);
+  expect(b.dictionary({ ratio: { ...ratio, exclusive: true } }, { nonObjectAsEmpty: true }).canRefuse).toBe(true);
 });
 
 describe("b.callable, b.jsArray, b.object and b.undefined", () => {
@@ -2774,10 +2854,11 @@ describe("classes", () => {
     it("estimated_size is reported to the GC", () => {
       Bun.gc(true);
       const before = heapStats().extraMemorySize;
-      const size = 1024 * 1024;
+      const size = 64 * 1024 * 1024;
       const note = new Note("text", size);
       Bun.gc(true);
-      expect(heapStats().extraMemorySize - before).toBeGreaterThanOrEqual(size);
+      // The second collection also frees code that last ran 5 seconds ago, which comes off the total: some hundred KiB.
+      expect(heapStats().extraMemorySize - before).toBeGreaterThan(size - 8 * 1024 * 1024);
       expect(note.text).toBe("text");
     });
 

@@ -315,6 +315,7 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   testNamespace: $bindgen("bindgen_test.bind.ts", "testNamespace"),
   nodeOptionsSize: $bindgen("bindgen_test.bind.ts", "nodeOptionsSize"),
   bareOptionsSize: $bindgen("bindgen_test.bind.ts", "bareOptionsSize"),
+  exclusiveEcho: $bindgen("bindgen_test.bind.ts", "exclusiveEcho"),
   timeValue: $bindgen("bindgen_test.bind.ts", "timeValue"),
   textIfPassed: $bindgen("bindgen_test.bind.ts", "textIfPassed"),
   isPassed: $bindgen("bindgen_test.bind.ts", "isPassed"),

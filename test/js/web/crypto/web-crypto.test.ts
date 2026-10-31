@@ -1,10 +1,14 @@
 import { spawnSync } from "bun";
+import { deserialize, serialize } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { createCipheriv, createSecretKey, type webcrypto } from "node:crypto";
+import { deserialize as v8Deserialize, serialize as v8Serialize } from "node:v8";
+import { receiveMessageOnPort } from "node:worker_threads";
 
 type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
 type HmacImportParams = webcrypto.HmacImportParams;
+type HmacKeyAlgorithm = webcrypto.HmacKeyAlgorithm;
 type JsonWebKey = webcrypto.JsonWebKey;
 type KeyUsage = webcrypto.KeyUsage;
 
@@ -1207,6 +1211,308 @@ describe("SubtleCrypto.deriveBits length", () => {
 
     const aesKey = await crypto.subtle.deriveKey(alg, priv, { name: "AES-GCM", length: 256 }, true, ["encrypt"]);
     expect(hex(await crypto.subtle.exportKey("raw", aesKey))).toBe(ecSecret);
+  });
+});
+
+describe("HMAC key length that is not a multiple of 8", () => {
+  // https://w3c.github.io/webcrypto/#hmac-operations: the key is the first `length` bits of
+  // the data, and only a length that does not end in the last byte is a DataError. Except
+  // for the bun:jsc, node:v8 and IPC clones, Node.js v26.12.1 gives the same results.
+  const keyData = new Uint8Array(32).map((_, i) => (i == 31 ? 0xff : i));
+  const hex = (b: ArrayBuffer) => Buffer.from(b).toString("hex");
+  // The types do not declare the static SubtleCrypto.supports().
+  const subtleCrypto = SubtleCrypto as unknown as { supports(...args: unknown[]): boolean };
+  const importRaw = (length: number) =>
+    crypto.subtle.importKey("raw", keyData, { name: "HMAC", hash: "SHA-256", length }, true, ["sign"]);
+  const describeKey = async (p: Promise<CryptoKey>) =>
+    p
+      .then(
+        async k =>
+          `${(k.algorithm as HmacKeyAlgorithm).length} ${hex(await crypto.subtle.exportKey("raw", k)).slice(56)}`,
+      )
+      .catch(e => `${e.name}: ${e.message}`);
+
+  it("importKey keeps the requested length and clears the bits past it", async () => {
+    const jwk = { kty: "oct", k: Buffer.from(keyData).toString("base64url"), alg: "HS256" };
+    expect({
+      256: await describeKey(importRaw(256)),
+      255: await describeKey(importRaw(255)),
+      252: await describeKey(importRaw(252)),
+      249: await describeKey(importRaw(249)),
+      248: await describeKey(importRaw(248)),
+      257: await describeKey(importRaw(257)),
+      1: await describeKey(importRaw(1)),
+      0: await describeKey(importRaw(0)),
+      "jwk 250": await describeKey(
+        crypto.subtle.importKey("jwk", jwk, { name: "HMAC", hash: "SHA-256", length: 250 }, true, ["sign"]),
+      ),
+      "jwk 264": await describeKey(
+        crypto.subtle.importKey("jwk", jwk, { name: "HMAC", hash: "SHA-256", length: 264 }, true, ["sign"]),
+      ),
+    }).toEqual({
+      256: "256 1c1d1eff",
+      255: "255 1c1d1efe",
+      252: "252 1c1d1ef0",
+      249: "249 1c1d1e80",
+      248: "DataError: Invalid key length",
+      257: "DataError: Invalid key length",
+      1: "DataError: Invalid key length",
+      0: "DataError: HmacImportParams.length cannot be 0",
+      "jwk 250": "250 1c1d1ec0",
+      "jwk 264": "DataError: Invalid key length",
+    });
+  });
+
+  it("a truncated key signs like its zero-padded bytes", async () => {
+    const padded = keyData.slice();
+    padded[31] = 0xf0;
+    const [truncatedKey, paddedKey] = await Promise.all([
+      importRaw(252),
+      crypto.subtle.importKey("raw", padded, { name: "HMAC", hash: "SHA-256" }, true, ["sign"]),
+    ]);
+    const data = new TextEncoder().encode("hello");
+    expect(hex(await crypto.subtle.sign("HMAC", truncatedKey, data))).toBe(
+      hex(await crypto.subtle.sign("HMAC", paddedKey, data)),
+    );
+  });
+
+  it("generateKey rounds the key data up to whole bytes and clears the bits past the length", async () => {
+    const results: Record<number, unknown> = {};
+    for (const length of [1, 7, 9, 17, 255]) {
+      const key = await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256", length }, true, ["sign", "verify"]);
+      const raw = new Uint8Array(await crypto.subtle.exportKey("raw", key));
+      results[length] = {
+        length: (key.algorithm as HmacKeyAlgorithm).length,
+        bytes: raw.byteLength,
+        bitsPastLength: raw[raw.byteLength - 1] & (0xff >> (length % 8)),
+      };
+    }
+    expect(results).toEqual({
+      1: { length: 1, bytes: 1, bitsPastLength: 0 },
+      7: { length: 7, bytes: 1, bitsPastLength: 0 },
+      9: { length: 9, bytes: 2, bitsPastLength: 0 },
+      17: { length: 17, bytes: 3, bitsPastLength: 0 },
+      255: { length: 255, bytes: 32, bitsPastLength: 0 },
+    });
+    // A zero length is still an OperationError (generate-key step 2).
+    expect(
+      await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256", length: 0 }, true, ["sign"]).then(
+        () => "resolved",
+        e => e.name,
+      ),
+    ).toBe("OperationError");
+  });
+
+  it("structuredClone preserves the length", async () => {
+    const key = await importRaw(249);
+    const clone = structuredClone(key);
+    expect((clone.algorithm as HmacKeyAlgorithm).length).toBe(249);
+    expect(hex(await crypto.subtle.exportKey("raw", clone))).toBe(hex(await crypto.subtle.exportKey("raw", key)));
+  });
+
+  it("every way to clone the key in one process preserves the length", async () => {
+    const key = await importRaw(249);
+    const notExtractable = await crypto.subtle.importKey(
+      "raw",
+      keyData,
+      { name: "HMAC", hash: "SHA-256", length: 249 },
+      false,
+      ["sign"],
+    );
+    const { port1, port2 } = new MessageChannel();
+    port1.postMessage(key);
+    const clones: Record<string, CryptoKey> = {
+      "bun:jsc": deserialize(serialize(key)),
+      "node:v8": v8Deserialize(v8Serialize(key)),
+      "clone of a clone": structuredClone(structuredClone(key)),
+      "MessageChannel": receiveMessageOnPort(port2)!.message,
+      "not extractable": structuredClone(notExtractable),
+    };
+    port1.close();
+
+    const data = new TextEncoder().encode("hello");
+    const lengthAndSignature = async (k: CryptoKey) => [
+      (k.algorithm as HmacKeyAlgorithm).length,
+      hex(await crypto.subtle.sign("HMAC", k, data)),
+    ];
+    const expected = [249, hex(await crypto.subtle.sign("HMAC", key, data))];
+    for (const [path, clone] of Object.entries(clones)) {
+      expect([path, ...(await lengthAndSignature(clone))]).toEqual([path, ...expected]);
+    }
+  });
+
+  it("advanced IPC preserves the length in both directions", async () => {
+    const key = await importRaw(249);
+    const { promise, resolve, reject } = Promise.withResolvers<{ length: number; key: CryptoKey }>();
+    await using child = Bun.spawn(
+      [bunExe(), "-e", `process.on("message", key => process.send({ length: key.algorithm.length, key }));`],
+      {
+        env: bunEnv,
+        stdio: ["ignore", "inherit", "inherit"],
+        serialization: "advanced",
+        ipc: resolve,
+        onExit(_subprocess, exitCode, signalCode) {
+          reject(new Error(`the child exited (${exitCode}, ${signalCode}) before it replied`));
+        },
+      },
+    );
+    child.send(key);
+    const reply = await promise;
+    expect({
+      inChild: reply.length,
+      inParent: (reply.key.algorithm as HmacKeyAlgorithm).length,
+      raw: hex(await crypto.subtle.exportKey("raw", reply.key)),
+    }).toEqual({ inChild: 249, inParent: 249, raw: hex(await crypto.subtle.exportKey("raw", key)) });
+  });
+
+  it("deriveKey can derive an HMAC key of such a length", async () => {
+    const { privateKey, publicKey } = (await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, false, [
+      "deriveKey",
+      "deriveBits",
+    ])) as CryptoKeyPair;
+    const alg = { name: "ECDH", public: publicKey };
+    const key = await crypto.subtle.deriveKey(alg, privateKey, { name: "HMAC", hash: "SHA-256", length: 255 }, true, [
+      "sign",
+    ]);
+    expect((key.algorithm as HmacKeyAlgorithm).length).toBe(255);
+    expect(hex(await crypto.subtle.exportKey("raw", key))).toBe(
+      hex(await crypto.subtle.deriveBits(alg, privateKey, 255)),
+    );
+  });
+
+  // ML-KEM's 32-byte shared secret becomes the HMAC key, so exactly the lengths that end in
+  // byte 32 work, and SubtleCrypto.supports() must predict the same set.
+  it("encapsulateKey accepts the lengths a 32-byte key can have and supports() agrees", async () => {
+    const { subtle } = crypto;
+    const { publicKey, privateKey } = (await subtle.generateKey("ML-KEM-768", false, [
+      "encapsulateKey",
+      "decapsulateKey",
+      "decapsulateBits",
+    ])) as CryptoKeyPair;
+    const results: Record<string, unknown> = {};
+    for (const length of [undefined, 256, 255, 252, 249, 248, 257, 264]) {
+      const hmac = { name: "HMAC", hash: "SHA-256", length };
+      results[length ?? "no length"] = {
+        supports: ["encapsulateKey", "decapsulateKey"].map(operation =>
+          subtleCrypto.supports(operation, "ML-KEM-768", hmac),
+        ),
+        encapsulate: await subtle.encapsulateKey("ML-KEM-768", publicKey, hmac, true, ["sign"]).then(
+          async ({ sharedKey, ciphertext }) => {
+            const back = await subtle.decapsulateKey("ML-KEM-768", privateKey, ciphertext, hmac, true, ["sign"]);
+            // The key is the shared secret with the bits past the length cleared.
+            const secret = new Uint8Array(await subtle.decapsulateBits("ML-KEM-768", privateKey, ciphertext));
+            secret[31] &= 0xff << (256 - (length ?? 256));
+            const keys = [hex(await subtle.exportKey("raw", sharedKey)), hex(await subtle.exportKey("raw", back))];
+            return [
+              (sharedKey.algorithm as HmacKeyAlgorithm).length,
+              (back.algorithm as HmacKeyAlgorithm).length,
+              keys.every(key => key === hex(secret.buffer)),
+            ];
+          },
+          e => e.name,
+        ),
+      };
+    }
+    expect(results).toEqual({
+      "no length": { supports: [true, true], encapsulate: [256, 256, true] },
+      256: { supports: [true, true], encapsulate: [256, 256, true] },
+      255: { supports: [true, true], encapsulate: [255, 255, true] },
+      252: { supports: [true, true], encapsulate: [252, 252, true] },
+      249: { supports: [true, true], encapsulate: [249, 249, true] },
+      248: { supports: [false, false], encapsulate: "DataError" },
+      257: { supports: [false, false], encapsulate: "DataError" },
+      264: { supports: [false, false], encapsulate: "DataError" },
+    });
+  });
+
+  // supports() answered true for these calls before they worked.
+  it("generateKey, importKey, unwrapKey and deriveKey work where supports() says they do", async () => {
+    const { subtle } = crypto;
+    const lengthOf = (key: Promise<CryptoKey>) =>
+      key.then(
+        k => (k.algorithm as HmacKeyAlgorithm).length,
+        e => e.name,
+      );
+    const { publicKey, privateKey } = (await subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, false, [
+      "deriveKey",
+    ])) as CryptoKeyPair;
+    const ecdh = { name: "ECDH", public: publicKey };
+    const kek = await subtle.importKey("raw", new Uint8Array(16).fill(3), "AES-KW", false, ["wrapKey", "unwrapKey"]);
+    const wrapped = await subtle.wrapKey("raw", await importRaw(256), kek, "AES-KW");
+
+    const results: Record<string, unknown> = {};
+    for (const length of [255, 25]) {
+      const hmac = { name: "HMAC", hash: "SHA-256", length };
+      results[`generateKey ${length}`] = [
+        subtleCrypto.supports("generateKey", hmac),
+        await lengthOf(subtle.generateKey(hmac, true, ["sign"]) as Promise<CryptoKey>),
+      ];
+      results[`importKey ${length}`] = [
+        subtleCrypto.supports("importKey", hmac),
+        await lengthOf(subtle.importKey("raw", keyData.subarray(0, Math.ceil(length / 8)), hmac, true, ["sign"])),
+      ];
+    }
+    const hmac = { name: "HMAC", hash: "SHA-256", length: 255 };
+    results["unwrapKey 255"] = [
+      subtleCrypto.supports("unwrapKey", "AES-KW", hmac),
+      await lengthOf(subtle.unwrapKey("raw", wrapped, kek, "AES-KW", hmac, true, ["sign"])),
+    ];
+    results["deriveKey 255"] = [
+      subtleCrypto.supports("deriveKey", ecdh, hmac),
+      await lengthOf(subtle.deriveKey(ecdh, privateKey, hmac, true, ["sign"])),
+    ];
+    expect(results).toEqual({
+      "generateKey 255": [true, 255],
+      "importKey 255": [true, 255],
+      "generateKey 25": [true, 25],
+      "importKey 25": [true, 25],
+      "unwrapKey 255": [true, 255],
+      "deriveKey 255": [true, 255],
+    });
+  });
+
+  // The unwrapKey rows are those of testNonByteLengthWrapUnwrap in Node v26.12.1's
+  // test/parallel/test-webcrypto-wrap-unwrap.js. That file fails here on an unrelated message.
+  it("unwrapKey and KeyObject.toCryptoKey take the length", async () => {
+    const { subtle } = crypto;
+    const hmac = (length?: number) => ({ name: "HMAC", hash: "SHA-256", length });
+    const lengthAndBytes = (key: Promise<CryptoKey>) =>
+      key.then(
+        async k => `${(k.algorithm as HmacKeyAlgorithm).length} ${hex(await subtle.exportKey("raw", k))}`,
+        e => `${e.name}: ${e.message}`,
+      );
+    const gcm = { name: "AES-GCM", iv: new Uint8Array(12).fill(2) };
+    const kek = await subtle.importKey("raw", new Uint8Array(16).fill(1), "AES-GCM", false, ["wrapKey", "unwrapKey"]);
+    const nineBits = await subtle.importKey("raw", new Uint8Array([0xff, 0xff]), hmac(9), true, ["sign"]);
+
+    const results: Record<string, string> = {};
+    for (const format of ["raw", "jwk"] as const) {
+      const wrapped = await subtle.wrapKey(format, nineBits, kek, gcm);
+      const unwrap = (length?: number) => subtle.unwrapKey(format, wrapped, kek, gcm, hmac(length), true, ["sign"]);
+      results[`${format}, length 9`] = await lengthAndBytes(unwrap(9));
+      // The wrapped bytes do not carry the bit length.
+      results[`${format}, no length`] = await lengthAndBytes(unwrap());
+    }
+    const wrapped = await subtle.wrapKey("raw", await importRaw(256), kek, gcm);
+    results["32 bytes, length 248"] = await lengthAndBytes(
+      subtle.unwrapKey("raw", wrapped, kek, gcm, hmac(248), true, ["sign"]),
+    );
+    expect(results).toEqual({
+      "raw, length 9": "9 ff80",
+      "raw, no length": "16 ff80",
+      "jwk, length 9": "9 ff80",
+      "jwk, no length": "16 ff80",
+      "32 bytes, length 248": "DataError: Invalid key length",
+    });
+
+    // The KeyObject keeps every bit of its bytes.
+    const keyObject = createSecretKey(keyData);
+    const fromKeyObject = keyObject.toCryptoKey(hmac(252), true, ["sign"]);
+    expect([
+      (fromKeyObject.algorithm as HmacKeyAlgorithm).length,
+      hex(await subtle.exportKey("raw", fromKeyObject)).slice(56),
+      keyObject.export().toString("hex").slice(56),
+    ]).toEqual([252, "1c1d1ef0", "1c1d1eff"]);
   });
 });
 

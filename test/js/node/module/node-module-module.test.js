@@ -1287,6 +1287,7 @@ console.log("survived", require("./late.js"));`,
         "sub/dep.mjs": `export const dep = "sub dep";`,
         "commonjs.cjs": `module.exports = { commonjs: true };`,
         "required.cjs": `module.exports = { required: true };`,
+        "in-flight.mjs": `globalThis.inFlightFileRan = true; export const who = "file";`,
       });
       await using proc = Bun.spawn({ cmd: [exe, "main.cjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -1430,14 +1431,35 @@ console.log("survived", require("./late.js"));`,
       // In Node.js the filename is the path of a file, "?" and all. import() with the query loads dep.mjs.
       queryInTheFilename: { dep: "text", filename: "dep.mjs?query" },
       importWithTheQueryOfTheFilename: "dep",
+      // Node.js gives the name to an import() when the import() starts. Text that comes in the same tick is refused.
+      importInFlight: {
+        compile: { threw: "Error", code: "ERR_REQUIRE_ESM_RACE_CONDITION" },
+        import: "file",
+        fileRan: true,
+      },
       // Node.js stops looking for ES modules for good once Module.wrap or Module.wrapper is assigned. Bun does not
       // count Module.wrap, and looks again when Module.wrapper is the default one again.
       wrapAssigned: { threw: "SyntaxError" },
       afterTheWrapperIsPutBack: { threw: "SyntaxError" },
     };
 
+    let rowsUnderBun;
     test("under bun", async () => {
-      expect(await rows(bunExe())).toEqual({ rows: underBun, stderr: "", exitCode: 0 });
+      const result = await (rowsUnderBun ??= rows(bunExe()));
+      const { importInFlight, ...others } = result.rows || {};
+      expect({ ...result, rows: others }).toEqual({ rows: underBun, stderr: "", exitCode: 0 });
+    });
+
+    // The import() started first, so the name is its own: the text keeps the error of the CommonJS parse, and the
+    // import() gets the file. Bun's loader has no entry for a load by name until the source of the load arrives
+    // (JSModuleLoader::loadModule in oven-sh/WebKit), so today the text takes the name and the import() gets the text.
+    test.failing("an import() of the file that has started keeps the name of the file", async () => {
+      const result = await (rowsUnderBun ??= rows(bunExe()));
+      expect(result.rows.importInFlight).toEqual({
+        compile: syntaxError("Unexpected keyword 'export'"),
+        import: "file",
+        fileRan: true,
+      });
     });
 
     const node = nodeExeAtLeast("26.3.0");
@@ -1453,6 +1475,50 @@ console.log("survived", require("./late.js"));`,
     const module = new Module(filename);
     expect(() => module._compile(`export const from = "the text";`, filename)).toThrow(SyntaxError);
     expect((await import(filename)).from).toBe("the mock");
+  });
+
+  // The loader has an entry for a file from the moment that a static import starts to fetch it.
+  test("Module.prototype._compile leaves a filename to the static import that still fetches the file", async () => {
+    using dir = tempDir("module-compile-static-import-in-flight", {
+      "importer.js": `export { from } from "./dependency.js";`,
+      "dependency.js": `export const from = "the file on the disk";`,
+      "entry.ts": `
+        import Module from "node:module";
+        import { join } from "node:path";
+        const requested = Promise.withResolvers<void>();
+        const mayLoad = Promise.withResolvers<void>();
+        Bun.plugin({
+          name: "hold the load of dependency.js open",
+          setup(build) {
+            build.onLoad({ filter: /dependency\\.js$/ }, async () => {
+              requested.resolve();
+              await mayLoad.promise;
+              return { contents: "export const from = 'the file';", loader: "js" };
+            });
+          },
+        });
+        const dependency = join(import.meta.dir, "dependency.js");
+        const importer = import("./importer.js");
+        await requested.promise;
+        const module = new Module(dependency);
+        let compiled;
+        try {
+          module._compile("export const from = 'the text';", dependency);
+          compiled = module.exports.from;
+        } catch (e) {
+          compiled = e.name + ": " + e.message;
+        }
+        mayLoad.resolve();
+        console.log(JSON.stringify({ compiled, imported: (await importer).from }));
+      `,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "entry.ts"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: { compiled: "SyntaxError: Unexpected keyword 'export'", imported: "the file" },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   // The text gets a name only after the CommonJS parse failed, and the name is what path.resolve() answers. For ""

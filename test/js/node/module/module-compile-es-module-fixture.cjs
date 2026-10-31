@@ -241,6 +241,9 @@ rows.queryInTheFilename = attempt(() => ({ dep: withQuery.dep, filename: relativ
 const importWithTheQuery = attempt(
   () => exportsOf('export const dep = import("../dep.mjs?query");', here("sub", "imports-query.js")).dep,
 );
+// An import() of a file has started, and in the same tick the text comes under the name of the file.
+const importInFlight = import("./in-flight.mjs");
+const textUnderAnImportInFlight = attempt(() => exportsOf('export const who = "text";', here("in-flight.mjs")).who);
 if (isBun) {
   // Node.js prints a line of its own loader to stderr for a value that is no error.
   rows.esModuleThrowsANumber = attempt(() => exportsOf("export {}; throw 1;", here("virtual", "n10.js")));
@@ -305,11 +308,16 @@ rows.wrapperPutBackByTheBody = attempt(() => {
 });
 rows.afterTheWrapperIsPutBack = attempt(() => ({ ...exportsOf("export const a = 1;", here("virtual", "z.js")) }));
 
-Promise.all([dynamicImport, importWithTheQuery, import("./required.cjs")]).then(
-  ([namespace, withTheQuery, afterTheText]) => {
+Promise.all([dynamicImport, importWithTheQuery, import("./required.cjs"), importInFlight]).then(
+  ([namespace, withTheQuery, afterTheText, inFlight]) => {
     rows.dynamicImportFollowsTheFilename = namespace.dep ?? namespace;
     rows.importWithTheQueryOfTheFilename = withTheQuery.dep ?? withTheQuery;
     rows.afterTheTextOfARequiredCommonJSFile = { import: { ...afterTheText }, require: require(requiredCommonJS) };
+    rows.importInFlight = {
+      compile: textUnderAnImportInFlight,
+      import: inFlight.who,
+      fileRan: globalThis.inFlightFileRan === true,
+    };
     console.log(JSON.stringify(rows));
   },
 );

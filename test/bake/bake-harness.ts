@@ -186,7 +186,7 @@ type ErrorSpec = string;
 
 type FileObject = Record<string, string | Buffer | BunFile>;
 
-enum WatchSynchronization {
+export enum WatchSynchronization {
   // Callback for starting a batch
   Started = 0,
   // During a batch, files were seen. Batch is still running.

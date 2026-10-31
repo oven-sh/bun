@@ -8802,6 +8802,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let bundling = self.options.bundle;
         let mut parts_end: usize = usize::from(bundling);
+        let mut hmr_stable_reexports = false;
 
         // When bundling with HMR, we need every module to be just a
         // single part, as we later wrap each module into a function,
@@ -8856,6 +8857,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 )?;
             }
 
+            hmr_stable_reexports = hmr_transform_ctx
+                .stmts
+                .iter()
+                .all(|stmt| matches!(stmt.data, js_ast::StmtData::SImport(_)))
+                && (hmr_transform_ctx.is_in_node_modules
+                    || (hmr_transform_ctx.export_star_props.is_empty()
+                        && hmr_transform_ctx
+                            .export_props
+                            .iter()
+                            .all(|prop| prop.kind == js_ast::G::PropertyKind::Get)));
             hmr_transform_ctx.finalize(self, head_parts)?;
         } else {
             // Handle import paths after the whole file has been visited because we need
@@ -9377,6 +9388,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // const_values: self.const_values,
             ts_enums,
             import_meta_ref: self.import_meta_ref,
+            hmr_stable_reexports,
 
             symbols,
             parts: parts_list,

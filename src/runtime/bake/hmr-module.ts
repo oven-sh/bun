@@ -41,6 +41,8 @@ const enum State {
   Stale,
   Loaded,
   Error,
+  /** Loaded, and `replaceModules` has a definition for the module that it did not load yet. */
+  Replaced,
 }
 const enum ESMProps {
   imports,
@@ -614,7 +616,12 @@ type HMREvent =
   | "bun:ws:connect";
 
 /** Called when modules are replaced. */
-export async function replaceModules(modules: Record<Id, UnloadedModule>, sourceMapId?: SourceMapURL) {
+export async function replaceModules(
+  modules: Record<Id, UnloadedModule>,
+  sourceMapId?: SourceMapURL,
+  reprintedBarrels?: Id[] | null,
+) {
+  const kept = side === "client" && reprintedBarrels ? keptBarrels(modules, reprintedBarrels) : undefined;
   Object.assign(unloadedModuleRegistry, modules);
 
   emitEvent("bun:beforeUpdate", null);
@@ -639,9 +646,10 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     }
 
     const existing = registry.get(key);
-    if (!existing) continue;
+    if (!existing || kept?.has(existing)) continue;
 
     toReload.add(existing);
+    if (side === "client" && existing.state === State.Loaded) existing.state = State.Replaced;
 
     // Discover all HMR boundaries
     const visited = new Set<HMRModule>();
@@ -812,6 +820,77 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   }
 
   emitEvent("bun:afterUpdate", null);
+}
+
+/** The barrels of `reprintedBarrels` that stay as they are, each with true if it holds a copy of an export. */
+function keptBarrels(modules: Record<Id, UnloadedModule>, reprintedBarrels: Id[]) {
+  DEBUG.ASSERT(reprintedBarrels.every(id => id in modules));
+  const kept = new Map<HMRModule, boolean>();
+  for (const key of reprintedBarrels) {
+    const existing = registry.get(key);
+    const copies = existing ? keepsBarrel(existing, modules[key]) : null;
+    if (copies !== null) kept.set(existing!, copies);
+  }
+  // A copy is out of date when the module that it is from loads again.
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const [mod, copies] of kept) {
+      if (!copies || !(mod.imports as HMRModule[]).some(dep => dep.id in modules && !kept.has(dep))) continue;
+      kept.delete(mod);
+      changed = true;
+    }
+  }
+  return kept;
+}
+
+/** Null if `mod` has to load `definition` as a changed module. If not, true if `mod` holds a copy of an export. */
+function keepsBarrel(mod: HMRModule, definition: UnloadedModule): boolean | null {
+  const current = unloadedModuleRegistry[mod.id];
+  const deps = mod.imports as HMRModule[] | null;
+  if (mod.state !== State.Loaded || !deps || !Array.isArray(current) || !Array.isArray(definition)) return null;
+  // An update of a module binds its exports to the first place that it has in the imports.
+  if (new Set(deps).size !== deps.length) return null;
+  for (const dep of deps) {
+    if (dep.state !== State.Loaded) return null;
+  }
+  for (const list of [ESMProps.imports, ESMProps.exports, ESMProps.stars] as const) {
+    const a = current[list];
+    const b = definition[list];
+    if (a.length !== b.length) return null;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return null;
+    }
+  }
+  let copies = false;
+  try {
+    // A read of a CommonJS export can run code of that module. Both evaluations get one object that throws instead.
+    let unreadable: object | undefined;
+    const imports = deps.map(dep => (dep.esm ? dep.exports : (unreadable ??= revokedProxy())));
+    // A value that is the same in two evaluations is a copy of an export. Any other is an object of the definition.
+    const [first, second] = [0, 1].map(() => {
+      const evaluated = new HMRModule(mod.id, false);
+      evaluated.imports = imports;
+      definition[ESMProps.load](evaluated);
+      return Object.getOwnPropertyDescriptors(evaluated.exports);
+    });
+    const has = Object.getOwnPropertyDescriptors(mod.exports);
+    for (const name in first) {
+      const copy = first[name];
+      if (!("value" in copy) || !Object.is(copy.value, second[name].value)) continue;
+      if (!Object.is(copy.value, has[name].value)) return null;
+      copies = true;
+    }
+  } catch {
+    return null;
+  }
+  return copies;
+}
+
+/** An object that throws on each operation on it. */
+function revokedProxy(): object {
+  const { proxy, revoke } = Proxy.revocable({}, {});
+  revoke();
+  return proxy;
 }
 
 function patchImporters(mod: HMRModule) {

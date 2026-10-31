@@ -11,6 +11,7 @@
 use core::mem::offset_of;
 use std::io::Write as _;
 
+use bun_bundler::Graph::InputFileFlags;
 use bun_collections::{ArrayHashMap, StringArrayHashMap, bit_set::DynamicBitSetUnmanaged};
 use bun_core::strings;
 
@@ -185,6 +186,13 @@ pub(crate) struct CurrentChunkSourceMapData {
 // Method-argument types (formerly re-exported from `incremental_graph_body`)
 // ──────────────────────────────────────────────────────────────────────────
 
+/// A barrel of the current client chunk for which `barrel_print` returned true.
+pub(crate) struct ReprintedBarrel<const SIDE: bake::Side> {
+    pub(crate) file: FileIndex<SIDE>,
+    /// The key of the module in the chunk.
+    pub(crate) id: Box<[u8]>,
+}
+
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub(crate) enum ProcessMode {
     Normal,
@@ -300,6 +308,8 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     pub(crate) edges: Vec<Edge<SIDE>>,
     /// Freed edge slots for reuse by `new_edge`.
     pub(crate) edges_free_list: Vec<EdgeIndex>,
+    /// Client side: for each barrel, the hash that `barrel_print` made for its last print.
+    pub(crate) barrel_prints: ArrayHashMap<FileIndex<SIDE>, u64>,
     // ── per-bundle scratch (`current_chunk_*`) ─────────────────────────
     /// Total byte length of the current JS chunk being assembled.
     pub(crate) current_chunk_len: usize,
@@ -313,6 +323,8 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     pub(crate) current_chunk_source_maps: Vec<CurrentChunkSourceMapData>,
     /// Client side: CSS asset content-hashes referenced by the current chunk.
     pub(crate) current_css_files: Vec<u64>,
+    /// Client side: see `ReprintedBarrel`.
+    pub(crate) current_chunk_reprinted_barrels: Vec<ReprintedBarrel<SIDE>>,
 }
 
 /// Byte-count breakdown of an incremental graph's memory usage (graph
@@ -404,6 +416,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         graph += self.edge_lists.capacity() * size_of::<EdgeLists>();
         graph += self.edges.capacity() * size_of::<Edge<SIDE>>();
         graph += self.edges_free_list.capacity() * size_of::<EdgeIndex>();
+        graph += self.barrel_prints.count() * (size_of::<FileIndex<SIDE>>() + size_of::<u64>());
+        graph +=
+            self.current_chunk_reprinted_barrels.capacity() * size_of::<ReprintedBarrel<SIDE>>();
+        for barrel in &self.current_chunk_reprinted_barrels {
+            graph += barrel.id.len();
+        }
         match SIDE {
             Side::Client => {
                 graph += self.current_chunk_parts.capacity() * size_of::<FileIndex<SIDE>>();
@@ -446,6 +464,57 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             }
         }
         self.current_chunk_parts.clear();
+        self.current_chunk_reprinted_barrels.clear();
+    }
+
+    fn is_reprinted_barrel(&self, file: FileIndex<SIDE>) -> bool {
+        self.current_chunk_reprinted_barrels
+            .iter()
+            .any(|barrel| barrel.file == file)
+    }
+
+    /// True if this print of a barrel has the text and the live import records of its last print.
+    fn barrel_print(
+        &mut self,
+        ctx: &HotUpdateContext<'_>,
+        index: bun_ast::Index,
+        file_index: FileIndex<SIDE>,
+    ) -> Result<bool, crate::Error> {
+        let source = &ctx.sources[index.get() as usize];
+        let records = ctx.import_records[index.get() as usize].as_slice();
+        let is_live = |record: &bun_ast::ImportRecord| {
+            !record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED)
+        };
+        // A barrel in node_modules has a copy of each export. No save changes a file there.
+        let is_barrel = ctx.input_file_flags[index.get() as usize]
+            .contains(InputFileFlags::IS_BARREL)
+            && (!source.path.is_node_module()
+                || records
+                    .iter()
+                    .filter(|record| is_live(record))
+                    .all(|record| {
+                        let path = if record.source_index.is_valid() {
+                            &ctx.sources[record.source_index.get() as usize].path
+                        } else {
+                            &record.path
+                        };
+                        path.is_node_module()
+                    }));
+        if !is_barrel {
+            if self.barrel_prints.count() > 0 {
+                self.barrel_prints.swap_remove(&file_index);
+            }
+            return Ok(false);
+        }
+        let mut hasher = bun_wyhash::Wyhash::init(bun_wyhash::hash(source.contents()));
+        for record in records {
+            hasher.update(&[u8::from(is_live(record))]);
+        }
+        let print = hasher.final_();
+        let gop = self.barrel_prints.get_or_put(file_index)?;
+        let same = gop.found_existing && *gop.value_ptr == print;
+        *gop.value_ptr = print;
+        Ok(same)
     }
 
     /// Grows `stale_files` to cover all currently-known files, filling new
@@ -611,6 +680,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.edge_lists.push(EdgeLists::default());
         }
 
+        let reprinted_barrel =
+            matches!(SIDE, Side::Client) && self.barrel_print(ctx, index, file_index)?;
+
         if self.stale_files.bit_length > file_index.get() as usize {
             self.stale_files.unset(file_index.get() as usize);
         }
@@ -701,6 +773,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 if let Some(len) = code_len {
                     self.current_chunk_parts.push(file_index);
                     self.current_chunk_len += len;
+                    if reprinted_barrel {
+                        self.current_chunk_reprinted_barrels.push(ReprintedBarrel {
+                            file: file_index,
+                            id: Box::from(path.pretty),
+                        });
+                    }
                 }
             }
             Side::Server => {
@@ -883,15 +961,26 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         self.edge_lists[file_index.get() as usize].first_import = None;
 
         // '.seen = false' means an import was removed and should be freed.
+        let mut lost_an_import = false;
         for val in &quick_lookup.values()[0..quick_lookup_values_to_care_len] {
             if !val.seen {
                 self.dev_incremental_result().had_adjusted_edges = true;
                 self.disconnect_edge_from_dependency_list(val.edge_index);
                 self.free_edge(val.edge_index);
+                lost_an_import = true;
             }
         }
 
         self.edge_lists[file_index.get() as usize].first_import = new_imports;
+
+        // A listed barrel that imports the files that it imported: no route has another script.
+        if matches!(SIDE, Side::Client)
+            && !lost_an_import
+            && quick_lookup.count() == quick_lookup_values_to_care_len
+            && self.is_reprinted_barrel(file_index)
+        {
+            return Ok(());
+        }
 
         // Follow this file to the route / HMR root to mark it stale.
         self.trace_dependencies(
@@ -1907,7 +1996,18 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     "{}",
                     bun_core::fmt::hex_lower(&options.script_id.get().to_ne_bytes())
                 );
-                end_list.extend_from_slice(b"\")");
+                end_list.push(b'"');
+                for (i, barrel) in self.current_chunk_reprinted_barrels.iter().enumerate() {
+                    end_list.extend_from_slice(if i == 0 { b", [" } else { b", " });
+                    bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(
+                        &barrel.id,
+                        &mut end_list,
+                    )?;
+                }
+                if !self.current_chunk_reprinted_barrels.is_empty() {
+                    end_list.push(b']');
+                }
+                end_list.push(b')');
             }
         }
         // sourceMappingURL footer (client only).

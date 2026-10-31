@@ -1,6 +1,5 @@
 // HTML tests are tests relating to HTML files themselves.
 import { expect } from "bun:test";
-import { isDebug } from "harness";
 import { renameSync } from "node:fs";
 import { type Dev, devTest, emptyHtmlFile } from "../bake-harness";
 
@@ -918,52 +917,52 @@ devTest("script that is renamed away and written again loads by its module id", 
 // The rename save, and the save of an html file together with its script, with the page open. A debug build
 // stops at `ASSERTION FAILED` in `replaceModules` of the HMR runtime, because the open page gets the html file
 // as a hot update: https://github.com/oven-sh/bun/issues/31908
-if (!isDebug) {
-  devTest("script that is renamed away and written again reloads the open page", {
-    files: {
-      "index.html": emptyHtmlFile({
-        scripts: ["./main.js"],
-        body: "<h1>Hello</h1>",
-      }),
-      "main.js": `
-        console.log("v1");
-      `,
-    },
-    async test(dev) {
-      await using c = await dev.client("/");
-      await c.expectMessage("v1");
-      await renameToBackup(dev, "main.js");
-      await c.expectReload(async () => {
-        await dev.write("main.js", `console.log("v2");`, { errors: null });
-      });
-      // previously: Failed to load bundled module './main.js'
-      await c.expectMessage("v2");
-    },
-  });
-  devTest("html file and its script saved together reload the open page", {
-    files: {
-      "index.html": emptyHtmlFile({
-        scripts: ["script.ts"],
-        body: "<h1>Hello</h1>",
-      }),
-      "script.ts": `
-        console.log("v1");
-      `,
-    },
-    async test(dev) {
-      await using c = await dev.client("/");
-      await c.expectMessage("v1");
-      await c.expectReload(async () => {
-        await using _batch = await dev.batchChanges();
-        await dev.patch("index.html", { find: "Hello", replace: "World" });
-        await dev.write("script.ts", `console.log("v2");`);
-      });
-      // previously: Failed to load bundled module '<absolute path>/script.ts'
-      await c.expectMessage("v2");
-      expect(await c.elemText("h1")).toBe("World");
-    },
-  });
-}
+devTest("script that is renamed away and written again reloads the open page", {
+  skip: ["debug"],
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["./main.js"],
+      body: "<h1>Hello</h1>",
+    }),
+    "main.js": `
+      console.log("v1");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("v1");
+    await renameToBackup(dev, "main.js");
+    await c.expectReload(async () => {
+      await dev.write("main.js", `console.log("v2");`, { errors: null });
+    });
+    // previously: Failed to load bundled module './main.js'
+    await c.expectMessage("v2");
+  },
+});
+devTest("html file and its script saved together reload the open page", {
+  skip: ["debug"],
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["script.ts"],
+      body: "<h1>Hello</h1>",
+    }),
+    "script.ts": `
+      console.log("v1");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("v1");
+    await c.expectReload(async () => {
+      await using _batch = await dev.batchChanges();
+      await dev.patch("index.html", { find: "Hello", replace: "World" });
+      await dev.write("script.ts", `console.log("v2");`);
+    });
+    // previously: Failed to load bundled module '<absolute path>/script.ts'
+    await c.expectMessage("v2");
+    expect(await c.elemText("h1")).toBe("World");
+  },
+});
 devTest("html routes that share a script and are first bundled together", {
   files: {
     "a.html": emptyHtmlFile({ scripts: ["./ab.ts", "./ac.ts"] }),

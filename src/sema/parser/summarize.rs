@@ -85,6 +85,8 @@ struct ParseSettings<'a> {
     jsdoc: JsDoc,
     /// `Options::attach_comments`
     attach_comments: bool,
+    /// `Options::is_before_typescript_7_1`
+    is_before_typescript_7_1: bool,
     /// `Options::compiles`
     compiles: bool,
     /// `Options::keeps_function_directives`
@@ -265,6 +267,7 @@ fn parse_file_as(
         dialect,
         part: None,
         attach_comments: how.attach_comments,
+        is_before_typescript_7_1: how.is_before_typescript_7_1,
         compiles: how.compiles,
         keeps_function_directives: how.keeps_function_directives,
         skips_function_blocks: how.skips_function_blocks,
@@ -437,6 +440,7 @@ pub fn summarize<'s>(
     atoms: &Interner<'s>,
     experimental_decorators: bool,
     every_file_is_a_module: bool,
+    is_before_typescript_7_1: bool,
 ) -> File<'s> {
     let how = ParseSettings {
         dialect: Dialect::default(),
@@ -446,6 +450,7 @@ pub fn summarize<'s>(
         every_file_is_a_module,
         jsdoc: JsDoc::Read,
         attach_comments: false,
+        is_before_typescript_7_1,
         compiles: false,
         keeps_function_directives: false,
         skips_function_blocks: false,
@@ -483,6 +488,7 @@ pub fn summarize_top_level<'s>(
             every_file_is_a_module,
             jsdoc: JsDoc::Read,
             attach_comments: false,
+            is_before_typescript_7_1: false,
             compiles: false,
             keeps_function_directives: false,
             skips_function_blocks: true,
@@ -545,6 +551,7 @@ pub fn summarize_in<'s>(
         every_file_is_a_module,
         jsdoc: JsDoc::Ignored,
         attach_comments: false,
+        is_before_typescript_7_1: false,
         compiles: false,
         keeps_function_directives: false,
         skips_function_blocks: false,
@@ -639,28 +646,43 @@ pub fn with_summary_in_place<'s, R>(
         every_file_is_a_module,
         jsdoc: JsDoc::Ignored,
         attach_comments,
+        is_before_typescript_7_1: false,
         compiles: false,
         keeps_function_directives: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
     };
+    let (mut then, mut result) = (Some(then), None);
+    summarize_in_place(how, memory, text, atoms, &mut |summary, atoms| {
+        result = then.take().map(|then| then(summary, atoms));
+    });
+    result.expect("`summarize_in_place` calls `then`")
+}
+
+/// Calls `then` once.
+fn summarize_in_place<'s>(
+    how: ParseSettings,
+    memory: (&'s Arena, &'s Session),
+    text: &[u8],
+    atoms: &dyn Intern,
+    then: &mut dyn FnMut(Summary<'_, 's>, &dyn Intern),
+) {
     // `then` may parse another text.
     let mut scratch = take_scratch();
     // JSON is validated once it's in the arena.
-    if is_json(path, script_kind) {
+    if is_json(how.path, how.script_kind) {
         let file = parse_into_arena(&mut scratch, how, memory, text, atoms);
         return_scratch(scratch);
         return then(Summary::InArena(Box::new(file)), atoms);
     }
     let mut file = parse_file(&mut scratch, how, text, None);
-    let result = then(Summary::InPlace(&mut file), &scratch.atoms(text));
+    then(Summary::InPlace(&mut file), &scratch.atoms(text));
     // Don't keep a very large file's capacity around for every later file.
     if text.len() >= 4 << 20 {
         *file = FileBuilder::default();
     }
     scratch.recycle(file);
     return_scratch(scratch);
-    result
 }
 
 /// Why a part can't be parsed.

@@ -19,6 +19,15 @@ pub(super) struct Enclosing {
     pub(super) fake_scope: u32,
 }
 
+/// What `getSpecifierForModuleSymbol` reads from `originalModuleSpecifier`.
+#[derive(Copy, Clone)]
+pub(super) struct EnclosingModuleSpecifier {
+    /// `GetModeForUsageLocation`
+    pub(super) mode: ResolutionMode,
+    /// `GetImportAttributes` of the declaration it's in, an `ExprKind::Object`.
+    pub(super) attributes: Option<ExprId>,
+}
+
 impl Enclosing {
     /// `enclosingDeclaration == nil`: only the globals are in scope.
     pub(super) const NONE: Enclosing = Enclosing {

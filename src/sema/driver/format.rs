@@ -100,9 +100,9 @@ fn truncate_to_width(text: &[u8], width: usize) -> &[u8] {
 /// lines up to the line it starts on. Only an error includes its code.
 fn to_data(d: &Diagnostic, style: &Style, includes_code: bool, max_lines: usize) -> bun_ast::Data {
     // Bun's own diagnostics have no code.
-    let text = match d.code {
-        code if code != 0 && includes_code => alloc_print!("TS{code}: {}", d.text.as_bstr()).into(),
-        _ => d.text.clone(),
+    let text = match d.code_label().filter(|_| includes_code) {
+        Some(code) => alloc_print!("{}: {}", code.as_bstr(), d.text.as_bstr()).into(),
+        None => d.text.clone(),
     };
     // Leading blank lines carry no information.
     let lines = &d.source[..d.source.len().min((d.line - d.source_line) as usize + 1)];
@@ -274,14 +274,11 @@ fn write_plain(out: &mut Vec<u8>, d: &Diagnostic, path: &BStr) {
     if !d.path.is_empty() {
         let _ = write!(out, "{path}({},{}): ", d.line, d.column);
     }
-    match d.code {
-        0 => {
-            let _ = writeln!(out, "{}: {}", d.category.name(), d.text.as_bstr());
-        }
-        code => {
-            let _ = writeln!(out, "{} TS{code}: {}", d.category.name(), d.text.as_bstr());
-        }
+    let _ = write!(out, "{}", d.category.name());
+    if let Some(code) = d.code_label() {
+        let _ = write!(out, " {}", code.as_bstr());
     }
+    let _ = writeln!(out, ": {}", d.text.as_bstr());
 }
 
 /// Escapes an attribute value. Doesn't add the quotes.
@@ -333,8 +330,8 @@ fn write_agent(out: &mut Vec<u8>, d: &Diagnostic, duplicates: &[&Diagnostic], st
             d.column
         );
     }
-    if d.code != 0 {
-        let _ = write!(out, " code=\"TS{}\"", d.code);
+    if let Some(code) = d.code_label() {
+        let _ = write!(out, " code=\"{}\"", attribute(&code));
     }
     if !duplicates.is_empty() {
         let _ = write!(out, " times=\"{}\"", duplicates.len() + 1);
@@ -434,7 +431,9 @@ fn write_github_annotation(out: &mut Vec<u8>, d: &Diagnostic, style: &Style) {
         b"%0D",
     );
     let text = strings::replace_owned(&text, b"\n", b"%0A");
-    let _ = writeln!(out, "title=TS{}::{}", d.code, text.as_bstr());
+    let code = d.code_label().unwrap_or_default();
+    let code = bun_core::fmt::github_action_property(&code);
+    let _ = writeln!(out, "title={code}::{}", text.as_bstr());
 }
 
 /// Writes the diagnostics, in order.
@@ -552,9 +551,9 @@ fn write_grouped(out: &mut Vec<u8>, report: &Report, style: &Style) {
             pretty!(
                 out,
                 style.color,
-                "  {:>2$}  <d>TS{:<6}<r>",
+                "  {:>2$}  <d>{:<8}<r>",
                 with_commas(group.len()),
-                first.code,
+                first.code_label().unwrap_or_default().as_bstr(),
                 width
             );
             let reported = summary_line(&first.text);

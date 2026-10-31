@@ -10,7 +10,7 @@ use super::{
 use crate::atom::Atom;
 use crate::bind::{
     Bound, BoundBuilder, BoundIn, Decl, FnOwner, MemberOwner, Parent, ScopeId, ScopeKind, SymbolId,
-    TableId,
+    TableId, name_slot,
 };
 use crate::hir::*;
 
@@ -49,8 +49,18 @@ impl BoundBuilder {
             let entry = entries.iter().find(|entry| entry.0 == name);
             return entry.map(|entry| entry.1);
         }
-        let entry_index = *self.large_tables.get(&(table, name))?;
-        Some(self.entries[entry_index as usize].1)
+        let first = self.tables[table.idx()] - entries.len() as u32;
+        let mut at = name_slot(table, name, self.name_slots.len());
+        loop {
+            let index = self.name_slots[at].checked_sub(1)?;
+            // The index of a name in an earlier table wraps around to one that is out of range.
+            if let Some(entry) = entries.get(index.wrapping_sub(first) as usize)
+                && entry.0 == name
+            {
+                return Some(entry.1);
+            }
+            at = (at + 1) & (self.name_slots.len() - 1);
+        }
     }
 }
 

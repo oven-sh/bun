@@ -27,8 +27,8 @@ pub use static_referent::{
 
 use crate::atom::{Atom, known};
 use crate::hir::*;
-use crate::session::{Arena, ArenaHashMap, ArenaVec, transfer_arena};
-use crate::util::{FxBuild, FxHashMap, SharedSort};
+use crate::session::{Arena, ArenaVec, transfer_arena};
+use crate::util::{FxHashMap, SharedSort};
 use smallvec::SmallVec;
 use std::hint::cold_path;
 
@@ -420,8 +420,14 @@ impl GrowingDecls {
     fn push(&mut self, decl: Decl) {
         match self {
             GrowingDecls::None => *self = GrowingDecls::One(decl),
-            GrowingDecls::One(first) => *self = GrowingDecls::Many(vec![*first, decl]),
-            GrowingDecls::Many(all) => all.push(decl),
+            GrowingDecls::One(first) => {
+                cold_path();
+                *self = GrowingDecls::Many(vec![*first, decl]);
+            }
+            GrowingDecls::Many(all) => {
+                cold_path();
+                all.push(decl);
+            }
         }
     }
 }
@@ -614,9 +620,13 @@ impl<'s> Symbols<'s> {
     /// Appends `symbol`. Two or more declarations are copied into `arena`.
     pub fn push(&mut self, symbol: Symbol<'_>, arena: &'s Arena) {
         let decls = match *symbol.decls {
-            [] => StoredDecls::None,
+            [] => {
+                cold_path();
+                StoredDecls::None
+            }
             [decl] => StoredDecls::One(decl),
             ref all => {
+                cold_path();
                 self.many.push(arena.alloc_slice_copy(all));
                 StoredDecls::Many(self.many.len() as u32 - 1)
             }
@@ -840,7 +850,7 @@ macro_rules! packed {
         }
 
         $(#[$packed_doc])*
-        #[derive(Copy, Clone, PartialEq, Eq, Default)]
+        #[derive(Copy, Clone, PartialEq, Eq, Hash, Default)]
         pub struct $packed(u32);
 
         const _: () = {
@@ -926,6 +936,17 @@ packed! {
         /// A decorator on a parameter of a class member.
         ParamDecorator(ParamId),
         Module(ModuleId),
+    }
+}
+
+impl Parent {
+    /// True if this is a file or an ambient module with a string name, where `export =` and `export default` belong.
+    pub fn allows_export_assignment(self, hir: &File) -> bool {
+        match self {
+            Parent::File => true,
+            Parent::Module(m) => !matches!(hir[m].name, ModuleName::Ident(_)),
+            _ => false,
+        }
     }
 }
 
@@ -1428,17 +1449,13 @@ pub struct FnInfo {
     pub enclosing: FnId,
     /// The `return` statements, as a range of `Bound::ids`.
     pub returns: IdList<StmtId>,
-    /// The yield expressions `forEachYieldExpression` finds, including those in the static blocks
-    /// of classes nested in it. A static block itself has none.
-    pub yields: IdList<ExprId>,
     /// `Unreachable` if control can't fall off the end.
     pub end: FlowId,
-    /// `ReturnFlowNode`: the exit of a constructor, a static block or a function that the enclosing
-    /// control flow continues through. A `return` or falling off the end leads here.
-    pub exit: FlowId,
     /// `NodeFlagsContainsThis`: it contains a `this` expression or type, possibly inside arrow
     /// functions, function types or signatures.
     pub contains_this: bool,
+    /// `isContextSensitiveFunctionLikeDeclaration`
+    pub is_context_sensitive: bool,
 }
 
 /// The syntactic position of an `infer T`, for the positions `getInferredTypeParameterConstraint`
@@ -1479,11 +1496,14 @@ pub struct BoundIn<S: Storage> {
     pub is_bound_in_part: bool,
     pub symbols: S::Symbols,
     pub scopes: S::List<Scope>,
-    /// Each table is a contiguous range of `entries`, in symbol creation order.
-    pub tables: S::List<(u32, u32)>,
+    /// Each table is a contiguous range of `entries`, in symbol creation order. This is where it ends. It starts where
+    /// the table before it ends. See `range_of_table`.
+    pub tables: S::List<u32>,
     pub entries: S::List<(Atom, SymbolId)>,
-    /// The index in `entries` of each name of a table with more than `SCANNED` names.
-    pub large_tables: S::Map<(TableId, Atom), u32>,
+    /// A hash table of the names in the tables with more than `SCANNED` names. A slot has 1 + the index of the name in
+    /// `entries`, or 0 if it's free. See `name_slot`. The number of slots is a power of two, or zero if there's no such
+    /// table.
+    pub name_slots: S::List<u32>,
     /// A Bloom filter with one hash function over the names in the `locals` of the scopes that have
     /// no `symbol` and aren't the file scope. Its length in words is a power of two, or zero if
     /// those scopes declare nothing. See `scope_to_resolve_from`.
@@ -1565,6 +1585,12 @@ pub struct BoundIn<S: Storage> {
     /// The scope that declares a type parameter (its class, interface, function, alias, ...).
     pub type_param_scope: S::List<ScopeId>,
     pub fns: S::List<FnInfo>,
+    /// The yield expressions `forEachYieldExpression` finds in a function, including those in the static blocks of
+    /// classes nested in it, as a range of `ids`. A static block itself has none. Sorted by function. See `yields_of`.
+    pub yields: S::Few<(FnId, IdList<ExprId>)>,
+    /// `ReturnFlowNode`: the exit of a constructor, a static block or a function that the enclosing control flow
+    /// continues through. A `return` or falling off the end leads here. Sorted by function. See `exit_of`.
+    pub exits: S::Few<(FnId, FlowId)>,
     /// Indexed by function. True if `requiresScopeChange` is true for some parameter, in which case
     /// names in its parameters resolve to variables of its body.
     pub requires_scope_change: S::List<bool>,
@@ -1601,6 +1627,9 @@ pub struct BoundIn<S: Storage> {
     pub unchecked_exprs: S::Few<ExprId>,
     /// The type nodes under one of those, and the type arguments of a `super` call. Sorted.
     pub unchecked_types: S::Few<TypeNodeId>,
+    /// The ranges of the outermost type literals, function types and mapped types in the type arguments of import
+    /// types. Sorted. See `is_resolved_on_demand`.
+    pub resolved_on_demand: S::Few<(u32, u32)>,
     /// The position of each `infer T` whose position implies a constraint on `T`. Ordered by type
     /// parameter.
     pub infer_positions: S::Few<(TypeParamId, InferPosition)>,
@@ -1609,6 +1638,9 @@ pub struct BoundIn<S: Storage> {
     /// The symbol of each `this[k] = v` with a dynamic name, and the table that declares it, in
     /// binding order. See `computed_symbol_in_table`.
     pub computed_symbols: S::Few<(TableId, SymbolId)>,
+    /// `getTargetOfImportClause`: the variable that the name of each `import source x from "m"` is an alias of. It's in
+    /// no table.
+    pub source_phase_targets: S::Few<(ImportId, SymbolId)>,
     pub case_stmt: S::List<StmtId>,
     /// The flow node at the start of each statement.
     pub stmt_flow: S::Ids<FlowId>,
@@ -1645,6 +1677,9 @@ pub struct BoundIn<S: Storage> {
     /// scope. It takes the whole program to tell whether the alias is a value. Sorted by
     /// expression.
     pub alias_idents: S::List<(ExprId, ScopeId)>,
+    /// The identifiers in a namespace or an enum that resolve to a declaration outside of it, each with the scope of the
+    /// innermost such namespace or enum. Another file's declaration of it may export the name. Sorted by expression.
+    pub idents_out_of_namespaces: S::List<(ExprId, ScopeId)>,
     /// The `arguments` identifiers that refer to the arguments of an enclosing function. Sorted.
     pub arguments_objects: S::Few<ExprId>,
     /// The identifiers that have an `associatedDeclarationForContainingInitializerOrBindingName`
@@ -1663,6 +1698,8 @@ pub struct BoundIn<S: Storage> {
     /// `FlowFlagsShared`, one bit per node of `flow`. Set if the node is the antecedent of more
     /// than one node.
     pub flow_shared: S::List<u64>,
+    /// `isContextSensitive`, one bit per expression.
+    pub context_sensitive: S::List<u64>,
     /// Upper bound on how deep `getTypeAtFlowNode` calls can nest in a walk of `flow`. See
     /// [`can_reach_flow_depth_limit`](Self::can_reach_flow_depth_limit).
     pub flow_depth: u32,
@@ -1770,6 +1807,105 @@ impl<S: Storage> BoundIn<S> {
     pub fn symbol(&self, id: SymbolId) -> Symbol<'_> {
         let symbol = self.symbols.get(id.idx());
         symbol.expect("the symbol belongs to this file")
+    }
+
+    #[inline]
+    pub fn ids<T: From<u32>>(
+        &self,
+        list: IdList<T>,
+    ) -> impl ExactSizeIterator<Item = T> + Clone + '_ {
+        self.ids[list.range()].iter().map(|&i| T::from(i))
+    }
+
+    /// `isContextSensitive`, or false if `e` is `NONE`. For `JsxAttributes`, see
+    /// `Checker::is_jsx_attributes_context_sensitive`.
+    #[inline]
+    pub fn is_context_sensitive(&self, e: ExprId) -> bool {
+        let word = self.context_sensitive.get(e.idx() / 64);
+        word.is_some_and(|word| word >> (e.idx() % 64) & 1 != 0)
+    }
+
+    /// `isContextSensitive(e)`, for the binder. The answers for the expressions in `e` are in place.
+    fn is_context_sensitive_given_operands(&self, hir: &File, e: ExprId) -> bool {
+        match hir[e].kind {
+            // There is no case for an accessor.
+            ExprKind::Fn(f) => {
+                !matches!(hir[f].kind, FnKind::Getter | FnKind::Setter)
+                    && self.fns[f.idx()].is_context_sensitive
+            }
+            ExprKind::Yield { value, .. } => self.is_context_sensitive(value),
+            // There is no case for a `SpreadAssignment` or a `ShorthandPropertyAssignment`.
+            ExprKind::Object(props) => props.iter().any(|p| {
+                matches!(hir[p].kind, PropKind::Init | PropKind::Method)
+                    && self.is_context_sensitive(hir[p].value)
+            }),
+            ExprKind::Array(items) => hir.ids(items).any(|i| self.is_context_sensitive(i)),
+            ExprKind::Cond { branches, .. } => {
+                let Branches { yes, no } = hir.branches(branches);
+                self.is_context_sensitive(yes) || self.is_context_sensitive(no)
+            }
+            ExprKind::Binary {
+                op: BinOp::Or | BinOp::Nullish,
+                left,
+                right,
+            } => self.is_context_sensitive(left) || self.is_context_sensitive(right),
+            _ => false,
+        }
+    }
+
+    /// `HasContextSensitiveParameters`
+    pub fn has_context_sensitive_parameters(&self, hir: &File, f: FnId) -> bool {
+        let func = &hir[f];
+        if !func.type_params.is_empty() {
+            return false;
+        }
+        // `node.Parameters()`, of which the `this` parameter is the first.
+        if func.this_param.is_some() && func.this_ty(hir).is_none()
+            || func.params.iter().any(|p| hir[p].ty.is_none())
+        {
+            return true;
+        }
+        func.kind != FnKind::Arrow && func.this_param.is_none() && self.fns[f.idx()].contains_this
+    }
+
+    /// `isContextSensitiveFunctionLikeDeclaration`, for the binder. `yields` is what `yields_of(f)` returns once the
+    /// file is bound. Everything else about `f`, and about the functions in it, is in place.
+    fn is_context_sensitive_function_like_declaration(
+        &self,
+        hir: &File,
+        f: FnId,
+        yields: IdList<ExprId>,
+    ) -> bool {
+        let func = &hir[f];
+        // `hasContextSensitiveReturnExpression`
+        let returns_one = || match func.body {
+            _ if !func.type_params.is_empty() || func.ret.is_some() => false,
+            FnBody::None => false,
+            FnBody::Expr(body) => self.is_context_sensitive(body),
+            FnBody::Block(_) => self
+                .ids(self.fns[f.idx()].returns)
+                .any(|s| match hir[s].kind {
+                    StmtKind::Return(value) => self.is_context_sensitive(value),
+                    _ => false,
+                }),
+        };
+        self.has_context_sensitive_parameters(hir, f)
+            || returns_one()
+            // `hasContextSensitiveYieldExpression`
+            || func.flags.contains(Flags::GENERATOR)
+                && self.ids(yields).any(|y| self.is_context_sensitive(y))
+    }
+
+    /// Returns the entry of `yields` for `f`, or an empty list.
+    pub fn yields_of(&self, f: FnId) -> IdList<ExprId> {
+        let found = self.yields.binary_search_by_key(&f, |it| it.0);
+        found.map_or(IdList::EMPTY, |at| self.yields[at].1)
+    }
+
+    /// Returns the entry of `exits` for `f`, or `NONE`.
+    pub fn exit_of(&self, f: FnId) -> FlowId {
+        let found = self.exits.binary_search_by_key(&f, |it| it.0);
+        found.map_or(FlowId::NONE, |at| self.exits[at].1)
     }
 
     /// Returns the parent of `e`, or `Parent::None` if `e` isn't an expression of this file.
@@ -1921,6 +2057,7 @@ impl<S: Storage> BoundIn<S> {
         if !hir.is_js {
             return None;
         }
+        cold_path();
         let (pattern, property_name) = match self.pat_parent[pat.idx()] {
             PatParent::Var(d) => return Some((module_required_by(hir, d)?, None)),
             PatParent::Prop(pattern, p) => (pattern, Some(&hir[p])),
@@ -1949,8 +2086,7 @@ impl<S: Storage> BoundIn<S> {
         if table.is_none() {
             return &[];
         }
-        let (start, len) = self.tables[table.idx()];
-        &self.entries[start as usize..(start + len) as usize]
+        &self.entries[range_of_table(&self.tables, table)]
     }
 
     /// `NameResolver.Resolve`: `IsSourceFile(location) || IsModuleDeclaration(location) &&
@@ -1997,7 +2133,10 @@ impl<S: Storage> BoundIn<S> {
             return false;
         }
         let f = match from {
-            ScopeKind::TypeParamList(f) | ScopeKind::Param(f) | ScopeKind::ReturnType(f) => f,
+            ScopeKind::TypeParamList(f) | ScopeKind::Param(f) | ScopeKind::ReturnType(f) => {
+                cold_path();
+                f
+            }
             // The `infer` type parameters of a conditional type are visible only from its true
             // branch.
             ScopeKind::Extends => return false,
@@ -2051,26 +2190,49 @@ fn module_required_by(hir: &File, d: VarDeclId) -> Option<Atom> {
     required_specifier(hir, init)
 }
 
-/// Builds `BoundIn::large_tables`.
-pub(crate) fn large_table_entries(
-    tables: &[(u32, u32)],
-    entries: &[(Atom, SymbolId)],
-) -> impl Iterator<Item = ((TableId, Atom), u32)> {
-    let large = (0..)
-        .zip(tables)
-        .filter(|it| it.1.1 as usize > BoundBuilder::SCANNED);
-    large.flat_map(|(id, &(start, len))| {
-        let names = &entries[start as usize..(start + len) as usize];
-        (start..)
-            .zip(names)
-            .map(move |(entry_index, entry)| ((TableId(id), entry.0), entry_index))
-    })
+/// Returns the range of `BoundIn::entries` that is `table`. `tables` is `BoundIn::tables`.
+#[inline]
+fn range_of_table(tables: &[u32], table: TableId) -> std::ops::Range<usize> {
+    let before = table.idx().checked_sub(1);
+    before.map_or(0, |before| tables[before] as usize)..tables[table.idx()] as usize
+}
+
+/// Returns the slot of `BoundIn::name_slots` where the search for `name` in `table` starts. It continues with the next
+/// slot, and after the last slot with the first.
+#[inline]
+fn name_slot(table: TableId, name: Atom, slots: usize) -> usize {
+    let key = u64::from(table.0) << 32 | u64::from(name.0);
+    (key.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32) as usize & (slots - 1)
+}
+
+/// Builds `BoundIn::name_slots`, at most three quarters full.
+pub(crate) fn fill_name_slots(tables: &[u32], entries: &[(Atom, SymbolId)], slots: &mut Vec<u32>) {
+    let large = || {
+        let all =
+            (0..tables.len() as u32).map(|id| (TableId(id), range_of_table(tables, TableId(id))));
+        all.filter(|it| it.1.len() > BoundBuilder::SCANNED)
+    };
+    let names: usize = large().map(|it| it.1.len()).sum();
+    slots.clear();
+    if names == 0 {
+        return;
+    }
+    slots.resize((names * 4).div_ceil(3).next_power_of_two(), 0);
+    for (table, range) in large() {
+        for index in range {
+            let mut at = name_slot(table, entries[index].0, slots.len());
+            while slots[at] != 0 {
+                at = (at + 1) & (slots.len() - 1);
+            }
+            slots[at] = index as u32 + 1;
+        }
+    }
 }
 
 /// Builds `BoundIn::nested_names`, at 8 bits per name.
 pub(crate) fn nested_names_of(
     scopes: &[Scope],
-    tables: &[(u32, u32)],
+    tables: &[u32],
     entries: &[(Atom, SymbolId)],
 ) -> Vec<u64> {
     let is_nested = |s: &&Scope| s.symbol.is_none() && s.parent.is_some() && s.locals.is_some();
@@ -2078,14 +2240,14 @@ pub(crate) fn nested_names_of(
         scopes
             .iter()
             .filter(is_nested)
-            .map(|s| tables[s.locals.idx()])
+            .map(|s| range_of_table(tables, s.locals))
     };
-    let count: usize = nested().map(|(_, len)| len as usize).sum();
+    let count: usize = nested().map(|range| range.len()).sum();
     if count == 0 {
         return Vec::new();
     }
     let mut filter = vec![0u64; (count / 8 + 1).next_power_of_two()];
-    let names = nested().flat_map(|(start, len)| &entries[start as usize..(start + len) as usize]);
+    let names = nested().flat_map(|range| &entries[range]);
     for &(name, _) in names {
         let (word, bit) = bit_of_nested_name(filter.len(), name);
         filter[word] |= bit;
@@ -2252,6 +2414,17 @@ impl Bound<'_> {
                 .is_ok()
     }
 
+    /// True if `pos` is in a type literal, a function type or a mapped type in the type arguments of an import type.
+    /// `checkImportType` doesn't visit the type arguments. `getTypeFromTypeNode` resolves them with the import type, but
+    /// what's in one of these types is resolved when something needs it.
+    #[inline]
+    pub fn is_resolved_on_demand(&self, pos: u32) -> bool {
+        let ranges = &self.resolved_on_demand[..];
+        !ranges.is_empty()
+            && (ranges[..ranges.partition_point(|range| range.0 <= pos)].last())
+                .is_some_and(|range| pos < range.1)
+    }
+
     /// `IsInstantiatedModule`
     pub fn is_instantiated_module(&self, m: ModuleId, preserve_const_enums: bool) -> bool {
         match self.module_instance_state[m.idx()] {
@@ -2396,16 +2569,18 @@ impl Bound<'_> {
         if entries.len() <= Self::SCANNED {
             return entries.iter().find(|e| e.0 == name).map(|e| e.1);
         }
-        let entry_index = *self.large_tables.get(&(table, name))?;
-        Some(self.entries[entry_index as usize].1)
-    }
-
-    #[inline]
-    pub fn ids<T: From<u32>>(
-        &self,
-        list: IdList<T>,
-    ) -> impl ExactSizeIterator<Item = T> + Clone + '_ {
-        self.ids[list.range()].iter().map(|&i| T::from(i))
+        let first = self.tables[table.idx()] - entries.len() as u32;
+        let mut at = name_slot(table, name, self.name_slots.len());
+        loop {
+            let index = self.name_slots[at].checked_sub(1)?;
+            // The index of a name in an earlier table wraps around to one that is out of range.
+            if let Some(entry) = entries.get(index.wrapping_sub(first) as usize)
+                && entry.0 == name
+            {
+                return Some(entry.1);
+            }
+            at = (at + 1) & (self.name_slots.len() - 1);
+        }
     }
 
     pub fn is_shared(&self, flow: FlowId) -> bool {
@@ -2505,15 +2680,6 @@ impl Bound<'_> {
     }
 }
 
-fn map_to_arena<'s, K: Eq + std::hash::Hash, V>(
-    map: FxHashMap<K, V>,
-    arena: &'s Arena,
-) -> ArenaHashMap<'s, K, V> {
-    let mut exact = ArenaHashMap::with_capacity_and_hasher_in(map.len(), FxBuild, arena);
-    exact.extend(map);
-    exact
-}
-
 fn few_map_to_arena<K: Ord, V>(map: FxHashMap<K, V>, arena: &Arena) -> ArenaFewMap<'_, K, V> {
     ArenaFewMap::from_iter_in(map.into_iter(), arena)
 }
@@ -2536,7 +2702,7 @@ impl BoundBuilder {
             scopes,
             tables,
             entries,
-            large_tables,
+            name_slots,
             nested_names,
             ids,
             file_symbol,
@@ -2592,13 +2758,17 @@ impl BoundBuilder {
             type_query_operands,
             unchecked_exprs,
             unchecked_types,
+            resolved_on_demand,
             infer_positions,
             expando_declarations,
             computed_symbols,
+            source_phase_targets,
             case_stmt,
             stmt_flow,
             case_fallthrough,
             hoisted_vars,
+            yields,
+            exits,
             rejected_decorators,
             unused_labels,
             import_scope,
@@ -2610,6 +2780,7 @@ impl BoundBuilder {
             classes_of_private_names,
             free_idents,
             alias_idents,
+            idents_out_of_namespaces,
             arguments_objects,
             identifiers_in_parameters,
             jsdoc_param_errors,
@@ -2617,6 +2788,7 @@ impl BoundBuilder {
             flow,
             flow_edges,
             flow_shared,
+            context_sensitive,
             flow_depth,
             has_loop_types_that_depend_on_order,
             expr_kinds,
@@ -2631,7 +2803,7 @@ impl BoundBuilder {
         scopes.clear();
         tables.clear();
         entries.clear();
-        large_tables.clear();
+        name_slots.clear();
         nested_names.clear();
         ids.clear();
         *file_symbol = Default::default();
@@ -2687,13 +2859,17 @@ impl BoundBuilder {
         type_query_operands.clear();
         unchecked_exprs.clear();
         unchecked_types.clear();
+        resolved_on_demand.clear();
         infer_positions.clear();
         expando_declarations.clear();
         computed_symbols.clear();
+        source_phase_targets.clear();
         case_stmt.clear();
         stmt_flow.clear();
         case_fallthrough.clear();
         hoisted_vars.clear();
+        yields.clear();
+        exits.clear();
         rejected_decorators.clear();
         unused_labels.clear();
         import_scope.clear();
@@ -2705,6 +2881,7 @@ impl BoundBuilder {
         classes_of_private_names.clear();
         free_idents.clear();
         alias_idents.clear();
+        idents_out_of_namespaces.clear();
         arguments_objects.clear();
         identifiers_in_parameters.clear();
         jsdoc_param_errors.clear();
@@ -2712,6 +2889,7 @@ impl BoundBuilder {
         flow.clear();
         flow_edges.clear();
         flow_shared.clear();
+        context_sensitive.clear();
         *flow_depth = Default::default();
         *has_loop_types_that_depend_on_order = Default::default();
         expr_kinds.clear();
@@ -2735,10 +2913,7 @@ impl BoundBuilder {
             scopes: copy_to_arena(&mut self.scopes, arena),
             tables: copy_to_arena(&mut self.tables, arena),
             entries: copy_to_arena(&mut self.entries, arena),
-            large_tables: FixedMap::Arena(map_to_arena(
-                std::mem::take(&mut self.large_tables),
-                arena,
-            )),
+            name_slots: copy_to_arena(&mut self.name_slots, arena),
             nested_names: copy_to_arena(&mut self.nested_names, arena),
             ids: copy_to_arena(&mut self.ids, arena),
             file_symbol: self.file_symbol,
@@ -2809,16 +2984,23 @@ impl BoundBuilder {
             type_query_operands: few_to_arena(std::mem::take(&mut self.type_query_operands), arena),
             unchecked_exprs: few_to_arena(std::mem::take(&mut self.unchecked_exprs), arena),
             unchecked_types: few_to_arena(std::mem::take(&mut self.unchecked_types), arena),
+            resolved_on_demand: few_to_arena(std::mem::take(&mut self.resolved_on_demand), arena),
             infer_positions: few_to_arena(std::mem::take(&mut self.infer_positions), arena),
             expando_declarations: few_to_arena(
                 std::mem::take(&mut self.expando_declarations),
                 arena,
             ),
             computed_symbols: few_to_arena(std::mem::take(&mut self.computed_symbols), arena),
+            source_phase_targets: few_to_arena(
+                std::mem::take(&mut self.source_phase_targets),
+                arena,
+            ),
             case_stmt: copy_to_arena(&mut self.case_stmt, arena),
             stmt_flow: Narrow::moved_in(arena, &mut self.stmt_flow),
             case_fallthrough: copy_to_arena(&mut self.case_fallthrough, arena),
             hoisted_vars: few_to_arena(std::mem::take(&mut self.hoisted_vars), arena),
+            yields: few_to_arena(std::mem::take(&mut self.yields), arena),
+            exits: few_to_arena(std::mem::take(&mut self.exits), arena),
             rejected_decorators: few_to_arena(std::mem::take(&mut self.rejected_decorators), arena),
             unused_labels: few_to_arena(std::mem::take(&mut self.unused_labels), arena),
             import_scope: copy_to_arena(&mut self.import_scope, arena),
@@ -2836,6 +3018,7 @@ impl BoundBuilder {
             ),
             free_idents: copy_to_arena(&mut self.free_idents, arena),
             alias_idents: copy_to_arena(&mut self.alias_idents, arena),
+            idents_out_of_namespaces: copy_to_arena(&mut self.idents_out_of_namespaces, arena),
             arguments_objects: few_to_arena(std::mem::take(&mut self.arguments_objects), arena),
             identifiers_in_parameters: few_to_arena(
                 std::mem::take(&mut self.identifiers_in_parameters),
@@ -2849,6 +3032,7 @@ impl BoundBuilder {
             flow: copy_to_arena(&mut self.flow, arena),
             flow_edges: copy_to_arena(&mut self.flow_edges, arena),
             flow_shared: copy_to_arena(&mut self.flow_shared, arena),
+            context_sensitive: copy_to_arena(&mut self.context_sensitive, arena),
             flow_depth: self.flow_depth,
             has_loop_types_that_depend_on_order: self.has_loop_types_that_depend_on_order,
             expr_kinds: copy_to_arena(&mut self.expr_kinds, arena),
@@ -2871,7 +3055,7 @@ impl Bound<'_> {
             scopes: Fixed::shared(&self.scopes),
             tables: Fixed::shared(&self.tables),
             entries: Fixed::shared(&self.entries),
-            large_tables: FixedMap::Shared(&self.large_tables),
+            name_slots: Fixed::shared(&self.name_slots),
             nested_names: Fixed::shared(&self.nested_names),
             ids: Fixed::shared(&self.ids),
             file_symbol: self.file_symbol,
@@ -2951,16 +3135,26 @@ impl Bound<'_> {
             ),
             unchecked_exprs: ArenaFew::from_iter_in(self.unchecked_exprs.iter().cloned(), arena),
             unchecked_types: ArenaFew::from_iter_in(self.unchecked_types.iter().cloned(), arena),
+            resolved_on_demand: ArenaFew::from_iter_in(
+                self.resolved_on_demand.iter().cloned(),
+                arena,
+            ),
             infer_positions: ArenaFew::from_iter_in(self.infer_positions.iter().cloned(), arena),
             expando_declarations: ArenaFew::from_iter_in(
                 self.expando_declarations.iter().cloned(),
                 arena,
             ),
             computed_symbols: ArenaFew::from_iter_in(self.computed_symbols.iter().cloned(), arena),
+            source_phase_targets: ArenaFew::from_iter_in(
+                self.source_phase_targets.iter().cloned(),
+                arena,
+            ),
             case_stmt: Fixed::shared(&self.case_stmt),
             stmt_flow: self.stmt_flow.shared(),
             case_fallthrough: Fixed::shared(&self.case_fallthrough),
             hoisted_vars: ArenaFew::from_iter_in(self.hoisted_vars.iter().cloned(), arena),
+            yields: ArenaFew::from_iter_in(self.yields.iter().cloned(), arena),
+            exits: ArenaFew::from_iter_in(self.exits.iter().cloned(), arena),
             rejected_decorators: ArenaFew::from_iter_in(
                 self.rejected_decorators.iter().cloned(),
                 arena,
@@ -2984,6 +3178,7 @@ impl Bound<'_> {
             ),
             free_idents: Fixed::shared(&self.free_idents),
             alias_idents: Fixed::shared(&self.alias_idents),
+            idents_out_of_namespaces: Fixed::shared(&self.idents_out_of_namespaces),
             arguments_objects: ArenaFew::from_iter_in(
                 self.arguments_objects.iter().cloned(),
                 arena,
@@ -3003,6 +3198,7 @@ impl Bound<'_> {
             flow: Fixed::shared(&self.flow),
             flow_edges: Fixed::shared(&self.flow_edges),
             flow_shared: Fixed::shared(&self.flow_shared),
+            context_sensitive: Fixed::shared(&self.context_sensitive),
             flow_depth: self.flow_depth,
             has_loop_types_that_depend_on_order: self.has_loop_types_that_depend_on_order,
             expr_kinds: Fixed::shared(&self.expr_kinds),

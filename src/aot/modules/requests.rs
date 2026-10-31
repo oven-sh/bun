@@ -394,9 +394,9 @@ fn diagnostic_node(hir: &hir::File<'_>, site: &ImportSite) -> NodeData {
 }
 
 pub(super) fn import_phase(hir: &hir::File<'_>, import: ImportId) -> ImportPhase {
-    match hir[import].is_deferred {
-        true => ImportPhase::Defer,
-        false => ImportPhase::Evaluation,
+    match hir[import].phase {
+        hir::ImportPhase::Evaluation => ImportPhase::Evaluation,
+        hir::ImportPhase::Defer | hir::ImportPhase::Source => ImportPhase::Defer,
     }
 }
 

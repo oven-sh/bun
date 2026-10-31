@@ -312,6 +312,8 @@ pub(crate) fn new_driver_diagnostic(
         source_line: 0,
         related: Vec::new(),
         project: 0,
+        external_source: Box::default(),
+        found_at: None,
         class: COMPILER_DIAGNOSTIC_CLASS,
         subject: DiagnosticSubject::None,
         file: None,

@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::fold::{FoldInputs, FoldOptions};
+use crate::hir::ImportPhase;
 use crate::hir_from_data::{DataModule, DataModuleTree, DataValue, HostValue, module_from_data};
 use crate::resolve::{
     CodeHost, CodeImportKind, CodeOptions, CodeParseRequest, CodeRead, CodeRequest, FinishedFile,
@@ -703,7 +704,7 @@ impl<'s> StatementParser<'_, '_, 's> {
             named: Span::EMPTY,
             has_named_imports: false,
             type_only,
-            is_deferred: false,
+            phase: ImportPhase::Evaluation,
             mode: ResolutionMode::None,
             stmt: StmtId::NONE,
             attributes,
@@ -781,10 +782,14 @@ impl<'s> StatementParser<'_, '_, 's> {
         let arguments = self.arguments()?;
         self.add_call_specifier_use(arguments[0], SpecifierKind::ImportCall);
         let args = self.file.list(&arguments);
-        Some(
-            self.file
-                .expr(ExprKind::ImportCall { args }, start, self.offset()),
-        )
+        Some(self.file.expr(
+            ExprKind::ImportCall {
+                args,
+                phase: ImportPhase::Evaluation,
+            },
+            start,
+            self.offset(),
+        ))
     }
 
     fn call(&mut self, callee: ExprId, start: u32) -> Option<ExprId> {

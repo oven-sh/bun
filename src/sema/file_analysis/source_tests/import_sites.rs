@@ -708,7 +708,7 @@ fn first_argument_of_last_call(hir: &File<'_>) -> ExprId {
     });
     let args = match hir[calls[calls.len() - 1]].kind {
         ExprKind::Call(call) => hir[call].args,
-        ExprKind::ImportCall { args } => args,
+        ExprKind::ImportCall { args, .. } => args,
         kind => panic!("{kind:?} is no call"),
     };
     hir.id_at(args, 0)

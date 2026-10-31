@@ -572,8 +572,16 @@ mod tests {
         let session = Session::new();
         let atoms = Interner::new_in(&session);
         let arena = session.arena();
-        let mut tree =
-            bun_sema_parser::summarize(arena, path, None, text.as_bytes(), &atoms, false, true);
+        let mut tree = bun_sema_parser::summarize(
+            arena,
+            path,
+            None,
+            text.as_bytes(),
+            &atoms,
+            false,
+            true,
+            false,
+        );
         tree.text = Cow::Borrowed(text.as_bytes());
         let mut recycled = Recycled::for_current_thread();
         let bound = bind_for_lint_in(&tree, BindOptions::default(), &atoms, &mut recycled);

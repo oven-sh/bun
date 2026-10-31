@@ -208,9 +208,23 @@ pub(crate) fn write_ts_type_literal<'a>(
     ObjectLike::TSTypeLiteral(ty, members).fmt(f);
 }
 
+/// What a list of signatures is in, which decides their separators.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum SignaturesOf {
+    TypeLiteral,
+    Interface,
+    /// `declare module "*.css" with { type: "css" }`: commas, as in the attributes of an import.
+    ModuleAttributes,
+}
+
 /// A type literal's members, with their separators.
 pub(crate) fn write_ts_signatures<'a>(members: List<'a, Member<'a>>, f: &mut Formatter<'a>) {
-    write_signatures(members, false, f);
+    write_signatures(members, SignaturesOf::TypeLiteral, f);
+}
+
+/// The import attributes of an ambient module, with their separators.
+pub(crate) fn write_ts_module_attributes<'a>(members: List<'a, Member<'a>>, f: &mut Formatter<'a>) {
+    write_signatures(members, SignaturesOf::ModuleAttributes, f);
 }
 
 /// An interface's members, with their separators.
@@ -218,10 +232,11 @@ pub(crate) fn write_ts_interface_signatures<'a>(
     members: List<'a, Member<'a>>,
     f: &mut Formatter<'a>,
 ) {
-    write_signatures(members, true, f);
+    write_signatures(members, SignaturesOf::Interface, f);
 }
 
-fn write_signatures<'a>(members: List<'a, Member<'a>>, is_interface: bool, f: &mut Formatter<'a>) {
+fn write_signatures<'a>(members: List<'a, Member<'a>>, owner: SignaturesOf, f: &mut Formatter<'a>) {
+    let is_interface = owner == SignaturesOf::Interface;
     let is_consistent = f.options().quote_properties.is_consistent();
     if is_consistent {
         let quote_needed = members.iter().any(|signature| {
@@ -245,6 +260,7 @@ fn write_signatures<'a>(members: List<'a, Member<'a>>, is_interface: bool, f: &m
             signature,
             next_signature: iter.peek().copied(),
             is_interface,
+            is_attribute: owner == SignaturesOf::ModuleAttributes,
         };
         // `a: 1⏎⏎// comment⏎; b: 2`: a Flow member ends before its separator, and Prettier's `isNextLineEmpty` starts
         // there.
@@ -275,6 +291,7 @@ struct FormatTSSignature<'a> {
     signature: Member<'a>,
     next_signature: Option<Member<'a>>,
     is_interface: bool,
+    is_attribute: bool,
 }
 
 impl<'a> Format<'a> for FormatTSSignature<'a> {
@@ -292,7 +309,10 @@ impl<'a> Format<'a> for FormatTSSignature<'a> {
                 return;
             }
             // Flow's `,` goes after the member's trailing comments.
-            if (f.file().is_flow() && !self.is_interface) || separator_goes_after_comments(f) {
+            if (f.file().is_flow() && !self.is_interface)
+                || self.is_attribute
+                || separator_goes_after_comments(f)
+            {
                 write!(f, signature);
                 return self.write_separator(f);
             }
@@ -308,8 +328,8 @@ impl<'a> Format<'a> for FormatTSSignature<'a> {
 
 impl<'a> FormatTSSignature<'a> {
     fn write_separator(&self, f: &mut Formatter<'a>) {
-        // Types in a JavaScript file are Flow's.
-        if f.file().is_javascript() {
+        // Types in a JavaScript file are Flow's. A module's attributes have commas too.
+        if f.file().is_javascript() || self.is_attribute {
             return match (self.is_interface, self.next_signature) {
                 (true, _) => write!(f, ";"),
                 (false, None) if super::flow::is_inexact_mark(self.signature) => {}

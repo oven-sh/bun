@@ -799,7 +799,7 @@ fn last_call_argument(s: &Analyzed<'_>) -> ExprId {
     });
     let args = match s.hir[calls[calls.len() - 1]].kind {
         ExprKind::Call(call) => s.hir[call].args,
-        ExprKind::ImportCall { args } => args,
+        ExprKind::ImportCall { args, .. } => args,
         kind => panic!("{kind:?} is no call"),
     };
     s.hir.id_at(args, 0)

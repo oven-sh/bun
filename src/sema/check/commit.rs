@@ -63,14 +63,30 @@
 //!   (`Checker::is_left_to_an_earlier_file`). And whether tsc reports an error can depend on the context in which it first
 //!   gets there. So a task ignores what a task of a later file has stored under a file, if the later task found an error
 //!   there and this task would still report it (`View::hides`). A task only moves forward in program order, so it
-//!   never finds such entries of its own. This covers the entries under nodes, not those under records.
+//!   never finds such entries of its own. This covers the entries under nodes, not those under records. Only an error
+//!   found by a commit in the task's snapshot of the file counts, so the file doesn't change under a statement or
+//!   during a visit because of this either. A control flow walk that ended with an incomplete type counts as an error:
+//!   the next check of the expression may report one, and what it finds depends on `flowLoopCache`, which belongs to
+//!   the task that made the walk (`Checker::check_expression_again`).
+//! - **A comparison during which a type was inferred from the body of a function expression or of a method or an
+//!   accessor of an object literal never leaves the task** (`relations_of_this_task`). It's stored under two types, so
+//!   a task would find it that doesn't see the inferred type, which is stored under a node: its snapshot of that file
+//!   is older, or it ignores the entry because of an error. It wouldn't ask for the type at that point. It would infer
+//!   it later, after the call whose inference made the comparison, where `this` has another type than on one thread.
+//! - **What no check visits is resolved in program order.** tsc resolves what's in a type literal in the type arguments of
+//!   an import type when something needs it, and reports what's wrong there if that's by the end of the file's check. So
+//!   the task of a later file that gets there waits for that check, as for a cycle. The file's own task waits for the
+//!   earlier files if something is left unresolved (`Task::wait_for_earlier_files`). See
+//!   `Checker::note_resolved_on_demand`.
 //! - **What a task stores about an expression of the file it visits never leaves the task**
 //!   (`crate::table::Location::KEEPS_VISITED_FILE_LOCAL`). That's most of what a check stores, and other tasks rarely
 //!   look it up. It's neither logged nor counted as a `Task::hold_back`.
 //! - **A record-keyed entry doesn't wait for a commit if nothing it depends on does** (`Task::may_write_immediately`).
 //!   That requires that neither its key nor its value is bound, and that since its evaluation began nothing was stored
 //!   that waits for a commit and nothing was read that's only valid for the checker's current stack
-//!   (`Task::hold_back`). Then everything its evaluation stored was also published immediately, before it. An entry
+//!   (`Task::hold_back`). A failed comparison of the task's own that isn't published counts as such a read: a task that
+//!   doesn't find the failure can cut the comparison off a level above it, where it counts as true. Then everything
+//!   its evaluation stored was also published immediately, before it. An entry
 //!   that's published immediately can't be rolled back. So a task stops publishing immediately from the moment
 //!   something happens that may get it discarded, or it stores the result of a resolution cycle, until its next commit
 //!   (`Task::stop_writing_immediately`).
@@ -79,6 +95,12 @@
 //!   comparisons that follow from either (`Checker::constraints_of_this_task`, `relations_of_this_task`). In a shared
 //!   table the first such result would stick for every task. They stay for the rest of the task, because its other
 //!   tables keep what was derived from them for that long.
+//! - **A comparison that only succeeds where an error is reported counts as a cycle.** tsc gives up on two instantiations
+//!   of an alias whose type arguments aren't related by the variances. Only while it reports that, and if a type
+//!   parameter is invariant, it continues and compares them structurally. Two conditional types can pass, and that
+//!   result replaces the failure. So the result depends on what the checker has reported before. The failure waits for
+//!   a commit, because a published entry can't be replaced. If it's published anyway, by a task that never got to the
+//!   error, the success stays in the task that did (`relations_of_this_task`).
 //! - Variances don't wait for a commit either. See `Claims`.
 
 use super::task::{Task, tables_of, tables_written_immediately};
@@ -90,6 +112,7 @@ use crate::table::Publish;
 use crate::util::{FxHashMap, SharedSort};
 use bun_threading::{Condvar, Guarded};
 use std::cell::{Cell, RefCell};
+use std::hint::cold_path;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// A field of `Program`.
@@ -102,11 +125,17 @@ pub(super) struct Commits<'s> {
     cycle_commits: Guarded<Vec<CycleCommit>>,
     /// `Files::rank_of_file`, indexed by file.
     ranks_of_files: &'s [u32],
-    /// One bit per file. Set once a task that was checking another file has found an error while evaluating something
-    /// about this file, and has committed. See `View::hides`.
-    with_errors: &'s [AtomicU32],
+    /// Indexed by file: the number of the first commit by a task that was checking another file and found an error while
+    /// evaluating something about this file. 0 if there's none. See `View::hides`.
+    first_with_error: &'s [AtomicU32],
     /// `tables_written_immediately`
     immediate_tables: u128,
+}
+
+/// The check of `file`, as a member of a cycle. The commit that follows that check resolves it. See
+/// `Checker::note_resolved_on_demand`.
+pub(super) fn end_of_check(file: FileId) -> u64 {
+    crate::util::fx_hash(&(u64::MAX, file))
 }
 
 /// Allocated in an arena so that tasks can refer to it.
@@ -155,7 +184,7 @@ impl<'s> Commits<'s> {
             },
             cycle_commits: Guarded::default(),
             ranks_of_files: &[],
-            with_errors: &[],
+            first_with_error: &[],
             immediate_tables: tables_written_immediately(),
         }
     }
@@ -169,8 +198,8 @@ impl<'s> Commits<'s> {
 
     /// `ranks` is `Files::rank_of_file`, indexed by file. Without this call, no task hides anything. See `View::hides`.
     pub(super) fn for_files(mut self, ranks: &'s [u32], arena: &'s Arena) -> Commits<'s> {
-        let words = (0..ranks.len().div_ceil(32)).map(|_| AtomicU32::new(0));
-        (self.ranks_of_files, self.with_errors) = (ranks, arena.alloc_slice_fill_iter(words));
+        let none = ranks.iter().map(|_| AtomicU32::new(0));
+        (self.ranks_of_files, self.first_with_error) = (ranks, arena.alloc_slice_fill_iter(none));
         self
     }
 
@@ -184,7 +213,7 @@ impl<'s> Commits<'s> {
         View {
             numbers: self.numbers,
             ranks_of_files: self.ranks_of_files,
-            with_errors: self.with_errors,
+            first_with_error: self.first_with_error,
             rank: Cell::new(0),
             file_snapshots: vec![Cell::new(0); files].into_boxed_slice(),
             touched: RefCell::default(),
@@ -259,7 +288,7 @@ pub(crate) struct View<'s> {
     numbers: &'s Numbers,
     /// See `Commits`.
     ranks_of_files: &'s [u32],
-    with_errors: &'s [AtomicU32],
+    first_with_error: &'s [AtomicU32],
     /// `ranks_of_files[pinned]`
     rank: Cell<u32>,
     /// Indexed by file: one more than the number of the last commit the task sees there, or 0 if the task hasn't looked
@@ -333,18 +362,21 @@ impl View<'_> {
         self.compared_with_pinned.set(snapshot);
     }
 
-    /// True if the task ignores what `commit` stored under `file`.
+    /// True if the task, which sees the commits up to `snapshot` in `file`, ignores what `commit` stored under `file`.
     ///
     /// tsc checks the files in program order, and whether it reports an error can depend on the context in which it
     /// first gets there. The first task in program order that gets to an error decides. So once a task has found an
     /// error while it evaluated something about another file, the tasks that would still report in that file ignore
     /// what tasks of later files stored under it. That way they run into the same cache misses as on one thread. Files
     /// without errors lose nothing.
+    ///
+    /// An error that a commit after `snapshot` found doesn't count. The task has already looked at the file, and an
+    /// entry it found there must not vanish, nor the entries that were stored together with it.
     #[inline]
-    pub(crate) fn hides(&self, file: FileId, commit: u32) -> bool {
-        let word = self.with_errors.get(file.idx() / 32);
-        word.is_some_and(|it| it.load(Ordering::Relaxed) >> (file.0 % 32) & 1 != 0)
-            && self.hides_a_later_commit(file, commit)
+    pub(crate) fn hides(&self, file: FileId, snapshot: u32, commit: u32) -> bool {
+        let first = self.first_with_error.get(file.idx());
+        let first = first.map_or(0, |it| it.load(Ordering::Relaxed));
+        first != 0 && first <= snapshot && self.hides_a_later_commit(file, commit)
     }
 
     #[cold]
@@ -621,7 +653,12 @@ impl<'s> Checker<'_, 's> {
     fn on_idle(&mut self) {
         self.discard_if_missed_cycle_member();
         // A commit here would store the members of a cycle that are in other files, and withhold those in this one.
-        if self.is_commit_due() && !self.task.was_discarded() && !self.task.has_resolved_a_cycle() {
+        if self.is_commit_due()
+            && !self.task.was_discarded()
+            && !self.task.has_resolved_a_cycle()
+            && !self.task.commits_after_file_only()
+        {
+            cold_path();
             let is_between_files = false;
             self.commit(is_between_files);
         } else if let Some(view) = self.task.view() {
@@ -646,6 +683,7 @@ impl<'s> Checker<'_, 's> {
         if newest <= last_idle_commit.min(compared) {
             return;
         }
+        cold_path();
         // Copied because `identities_of` borrows the task's buffer again.
         let (record_keys, node_keys) = self.task.logged_since_idle();
         let (record_keys, node_keys) = (record_keys.to_vec(), node_keys.to_vec());
@@ -715,6 +753,11 @@ impl<'s> Checker<'_, 's> {
     /// round's task.
     pub fn commit_after_file(&mut self, is_last: bool) -> bool {
         self.discard_if_missed_cycle_member();
+        if let Some(file) = self.task.file
+            && !self.bound(file).resolved_on_demand.is_empty()
+        {
+            self.task.resolve_with_next_commit(end_of_check(file));
+        }
         // The last round's task commits once, when it ends. See `is_commit_due`. It's never discarded.
         if self.task.is_trusted() && !is_last && !self.task.was_discarded() {
             return true;
@@ -774,10 +817,12 @@ impl<'s> Checker<'_, 's> {
         }
         let number = *committing + 1;
         *committing = number;
-        // Set before the commit stores, so a task that finds one of its entries also sees these.
+        // Set before the commit stores, so a task that sees this commit also sees these.
         for file in self.files_with_errors.drain() {
-            if let Some(word) = p.commits.with_errors.get(file.idx() / 32) {
-                word.fetch_or(1 << (file.0 % 32), Ordering::Relaxed);
+            if let Some(first) = p.commits.first_with_error.get(file.idx())
+                && first.load(Ordering::Relaxed) == 0
+            {
+                first.store(number, Ordering::Relaxed);
             }
         }
         p.commits.numbers.ranks.lock().push(rank);

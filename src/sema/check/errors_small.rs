@@ -1,7 +1,7 @@
 //! Small independent checks: 2481, 2774 2801 2845, 2698, 2432 2473.
 //!
 //! Mirrors `checkVarDeclaredNamesNotShadowed`, `checkTestingKnownTruthyCallableOrAwaitableOrEnumMemberType`,
-//! `getSymbolAtLocation`, `isValidSpreadType` and the end of `checkEnumDeclaration` in TypeScript 7.0.2's checker.go.
+//! `getSymbolAtLocation`, `isValidSpreadType` and the end of `checkEnumDeclaration` in TypeScript 7.1's checker.go.
 
 use super::*;
 use crate::bind::{
@@ -127,12 +127,35 @@ impl<'p> Checker<'p, '_> {
         if !self.reports_null_checks(file) {
             return;
         }
+        let hir = self.hir(file);
+        let body = match self.parent_of_logical_chain(file, e) {
+            Parent::Stmt(s) if s.is_some() => match hir[s].kind {
+                StmtKind::If { yes, .. } => Some(hir.node(yes)),
+                _ => None,
+            },
+            _ => None,
+        };
+        if is_and || body.is_some() {
+            self.check_known_truthy_types(file, left, left, body.unwrap_or(Node::NONE));
+        }
+    }
+
+    /// Walks up from `e`, which is `&&`, `||` or `??`, out of the chain of such operators that it's part of.
+    fn parent_of_logical_chain(&mut self, file: FileId, e: ExprId) -> Parent {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // Walks up out of the chain it's part of. FOR SPEED, as in `parent_of_whole_expression`: a
-        // long walk notes where it ends for every `LONG`th node it passes. Without this, the n
-        // operands of a chain take n * n steps.
-        const LONG: u32 = 32;
         let mut parent = bound.parent_of_expr(e);
+        // A chain's operators are checked one after the other, outward or inward. The walk from each of them would
+        // make a chain of n operators take n * n steps.
+        let (last_file, last, answer) = self.last_logical_chain;
+        if last_file == file
+            && (parent == Parent::Expr(last) || bound.parent_of_expr(last) == Parent::Expr(e))
+        {
+            self.last_logical_chain.1 = e;
+            return answer;
+        }
+        // FOR SPEED, as in `parent_of_whole_expression`: a long walk notes where it ends for every `LONG`th node it
+        // passes.
+        const LONG: u32 = 32;
         let mut steps = 0;
         let mut passed = smallvec::SmallVec::<[ExprId; 4]>::new();
         while let Parent::Expr(p) = parent
@@ -160,32 +183,73 @@ impl<'p> Checker<'p, '_> {
         for below in passed {
             (self.flow_memo.parents_of_logical_chains).insert((file, below), parent);
         }
-        let body = match parent {
-            Parent::Stmt(s) if s.is_some() => match hir[s].kind {
-                StmtKind::If { yes, .. } => Some(hir.node(yes)),
-                _ => None,
-            },
-            _ => None,
-        };
-        if is_and || body.is_some() {
-            self.check_known_truthy_types(file, left, left, body.unwrap_or(Node::NONE));
-        }
+        self.last_logical_chain = (file, e, parent);
+        parent
     }
 
     /// `checkTestingKnownTruthyTypes`. `whole` is the condition the check was first called with, whose type is
     /// `condType`.
     fn check_known_truthy_types(&mut self, file: FileId, test: ExprId, whole: ExprId, body: Node) {
         let hir = self.hir(file);
-        let mut test = test;
-        self.check_known_truthy_type(file, test, whole, body);
-        while let ExprKind::Binary {
-            op: BinOp::Or | BinOp::Nullish,
-            left,
-            ..
-        } = hir[test].kind
-        {
-            test = left;
-            self.check_known_truthy_type(file, test, whole, body);
+        let is_logical = |e: ExprId| {
+            matches!(
+                hir[e].kind,
+                ExprKind::Binary {
+                    op: BinOp::And | BinOp::Or | BinOp::Nullish,
+                    ..
+                }
+            )
+        };
+        // Each `||` of a chain in the condition of an `if` visits all the operators to its left, which would make a
+        // chain of n operators take n * n steps. Only the check of the leftmost operand depends on `whole`, unless a
+        // right operand is itself a chain. The other checks are the same each time, so those that reported nothing
+        // aren't repeated. What a check reports or resolves isn't final in a loop or while something is in resolution.
+        let is_repeatable =
+            !self.is_prechecking && !self.is_rechecking() && !self.is_in_flow_loop();
+        let known = if is_repeatable {
+            let known = self.last_known_truthy_chain.take();
+            known.filter(|known| (known.file, known.body) == (file, body))
+        } else {
+            None
+        };
+        let mut repeated = smallvec::SmallVec::new();
+        let mut at = test;
+        loop {
+            if let Some(known) = &known
+                && (at == known.top
+                    || matches!(hir[known.top].kind, ExprKind::Binary { op: BinOp::Or | BinOp::Nullish, left, .. } if left == at))
+            {
+                for &again in &known.repeated {
+                    if again != known.top || at == known.top {
+                        self.check_known_truthy_type(file, again, whole, body);
+                        repeated.push(again);
+                    }
+                }
+                at = known.leftmost;
+            }
+            let reported = self.reported.len();
+            self.check_known_truthy_type(file, at, whole, body);
+            let ExprKind::Binary {
+                op: BinOp::Or | BinOp::Nullish,
+                left,
+                right,
+            } = hir[at].kind
+            else {
+                break;
+            };
+            if is_logical(right) || self.reported.len() != reported {
+                repeated.push(at);
+            }
+            at = left;
+        }
+        if is_repeatable {
+            self.last_known_truthy_chain = Some(KnownTruthyChain {
+                file,
+                top: test,
+                leftmost: at,
+                body,
+                repeated,
+            });
         }
     }
 
@@ -223,9 +287,17 @@ impl<'p> Checker<'p, '_> {
         } else if self.is_rechecking() {
             self.check_expression_ex(file, location, CheckMode::empty())
         } else {
-            let outside = self.type_only_node.take();
-            let ty = self.type_of_expr(file, location);
-            self.type_only_node = outside;
+            let outside = (self.type_only_node.take(), self.check_in_flow_loop);
+            if let Some(check) = &mut self.check_in_flow_loop {
+                check.is_second_visit = false;
+            }
+            // What's kept while a loop is analyzed was computed in `CheckModeTypeOnly`.
+            let ty = if self.is_in_flow_loop() {
+                self.check_expression_anew(file, location)
+            } else {
+                self.check_expression_again(file, location)
+            };
+            (self.type_only_node, self.check_in_flow_loop) = outside;
             ty
         };
         let start = self.start_inside_parentheses(file, location);
@@ -535,7 +607,7 @@ impl<'p> Checker<'p, '_> {
     /// `t.symbol`
     pub(super) fn symbol_of_type(&self, ty: TypeId) -> Option<SymbolAtLocation<'p>> {
         let files = self.files();
-        Some(match *self.data(ty) {
+        Some(match *self.data(self.non_distributed(ty)) {
             TypeData::ThisParam(symbol) | TypeData::Enum { symbol, .. } => {
                 SymbolAtLocation::Symbol(symbol)
             }
@@ -795,7 +867,9 @@ impl<'p> Checker<'p, '_> {
         if enums.iter().any(is_checked_before) {
             return;
         }
-        let enum_is_const = self.hir(file)[e].flags.contains(Flags::CONST);
+        // `GetDeclarationOfKind(enumSymbol, KindEnumDeclaration)`
+        let (first_file, first) = enums[0];
+        let enum_is_const = self.hir(first_file)[first].flags.contains(Flags::CONST);
         for &(f, e) in &enums {
             if self.hir(f)[e].flags.contains(Flags::CONST) != enum_is_const {
                 self.error(f, self.hir(f).name(self.hir(f).node(e)), 2473, &[]);

@@ -196,7 +196,7 @@ pub(crate) fn lower_import_call(
     call: ExprId,
 ) -> ValueId {
     let hir = lowering.file.hir;
-    let ExprKind::ImportCall { args } = hir[call].kind else {
+    let ExprKind::ImportCall { args, .. } = hir[call].kind else {
         unreachable!("lower_import_call takes an ImportCall");
     };
     let position = hir[call].pos;

@@ -756,6 +756,7 @@ fn is_like_new(task: &mut Task) -> bool {
         was_discarded,
         is_trusted,
         can_recheck_early,
+        commits_after_file_only,
         is_first_in_order,
         is_first_in_component,
         cycle_members,
@@ -781,6 +782,7 @@ fn is_like_new(task: &mut Task) -> bool {
         && !was_discarded.get()
         && !*is_trusted
         && !can_recheck_early.get()
+        && !commits_after_file_only.get()
         && !is_first_in_order.get()
         && !is_first_in_component.get()
         && cycle_members.get_mut().is_empty()
@@ -1278,6 +1280,38 @@ fn held_back_entry_wins_over_later_immediate_write() {
     assert_eq!(in_table, NUMBER);
     assert_eq!(tables.by_id.get(&other, &STRING), None);
     assert_eq!(tables.by_key.get(&other, &(STRING, STRING)), None);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn reading_an_unpublished_entry_holds_back_what_follows_from_it() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let task = begin_writing_immediately(&session, &tables, &commits, 0);
+    let other = begin_writing_immediately(&session, &tables, &commits, 1);
+    let (waiting, following, published) = ((STRING, STRING), (STRING, NUMBER), (NUMBER, NUMBER));
+    let read = |task: &Task<'_>, key, is_missed: bool| {
+        let since = from_now(task);
+        let found = (tables.by_key).get_and_hold_back_if(task, &key, |_| is_missed);
+        (found, task.has_held_back_since(since))
+    };
+    (tables.by_key).insert(&task, waiting, NUMBER, stored());
+    (tables.by_key).insert(&task, published, NUMBER, from_now(&task));
+    assert_eq!(tables.by_key.get(&other, &waiting), None);
+    assert_eq!(tables.by_key.get(&other, &published), Some(NUMBER));
+    // Nothing waits because of an entry that every task finds, one that no task misses, or no entry.
+    assert_eq!(read(&task, published, true), (Some(NUMBER), false));
+    assert_eq!(read(&other, published, true), (Some(NUMBER), false));
+    assert_eq!(read(&task, waiting, false), (Some(NUMBER), false));
+    assert_eq!(read(&other, waiting, true), (None, false));
+    let since = from_now(&task);
+    assert_eq!(read(&task, waiting, true), (Some(NUMBER), true));
+    (tables.by_key).insert(&task, following, STRING, since);
+    assert_eq!(tables.by_key.get(&other, &following), None);
+    assert_eq!(commit(&tables, &commits, &task, 1), 2);
+    assert_eq!(tables.by_key.get(&other, &waiting), Some(NUMBER));
+    assert_eq!(tables.by_key.get(&other, &following), Some(STRING));
+    assert_eq!(read(&task, waiting, true), (Some(NUMBER), false));
 }
 
 #[test]

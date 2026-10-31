@@ -46,6 +46,7 @@ pub fn parse_for_compile<'s>(
             false => JsDoc::Ignored,
         },
         attach_comments: false,
+        is_before_typescript_7_1: false,
         compiles: true,
         keeps_function_directives: options.keeps_function_directives,
         skips_function_blocks: false,

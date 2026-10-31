@@ -108,7 +108,7 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
         let hir = self.hir;
         let (argument, face) = match expr_kind(hir, e)? {
             ExprKind::Await(promise) => match expr_kind(hir, hir.skip_type_assertions(promise))? {
-                ExprKind::ImportCall { args } => (hir.ids(args).next(), ModuleFace::Namespace),
+                ExprKind::ImportCall { args, .. } => (hir.ids(args).next(), ModuleFace::Namespace),
                 _ => return None,
             },
             ExprKind::Call(_) => {

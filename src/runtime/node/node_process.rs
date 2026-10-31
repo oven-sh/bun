@@ -303,13 +303,18 @@ mod _impl {
             let arg: &[u8] = arg;
 
             if arg.len() >= 1 && arg[0] == b'-' {
-                args.push(if arg.starts_with(b"--aot-graph-fd=") {
-                    BunString::static_("--debug-aot")
-                } else if arg.starts_with(b"--aot-checked=") {
-                    BunString::static_("--aot")
-                } else {
-                    BunString::clone_utf8(arg)
-                });
+                // `child_process.fork` passes these on as arguments. There this flag counts, so it has to have counted here.
+                if arg != b"--runExternalCode"
+                    || crate::cli::check_command::command_runs_external_code()
+                {
+                    args.push(if arg.starts_with(b"--aot-graph-fd=") {
+                        BunString::static_("--debug-aot")
+                    } else if arg.starts_with(b"--aot-checked=") {
+                        BunString::static_("--aot")
+                    } else {
+                        BunString::clone_utf8(arg)
+                    });
+                }
                 prev = Some(arg);
                 continue;
             }

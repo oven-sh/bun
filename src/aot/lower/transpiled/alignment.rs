@@ -924,7 +924,7 @@ impl<'a, 's> Alignment<'a, 's> {
                 }
                 true
             }
-            (ExprKind::ImportCall { args }, ExprData::EImport(import)) => {
+            (ExprKind::ImportCall { args, .. }, ExprData::EImport(import)) => {
                 self.push(hir.id_at(args, 0), import.expr);
                 true
             }

@@ -197,6 +197,7 @@ fn configuration_case(registry: &Registry, case: &Json) -> Json {
                 plugins_from: None,
                 cascade: 1,
                 named: &[],
+                eslint_major: 8,
             },
             &mut [LegacyFile {
                 path: paths::join(base_path, b".eslintrc.json"),

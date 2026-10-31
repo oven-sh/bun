@@ -617,6 +617,17 @@ fn finalize_bundle_inner(
         )?;
     }
 
+    // `index_failures` drains `failures_removed`, so the check of the join runs before it.
+    #[cfg(debug_assertions)]
+    dev.client_graph.assert_holders_of_repaired_css_printed(
+        &mut ctx,
+        bv2.graph.ast.items_css(),
+        result.css_file_list.keys(),
+        &dev.incremental_result.failures_removed,
+        &current_bundle!().joined_css_roots,
+        &dev.server_graph,
+    );
+
     // Index all failed files now that the incremental graph has been updated.
     if !dev.incremental_result.failures_removed.is_empty()
         || !dev.incremental_result.failures_added.is_empty()

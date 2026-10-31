@@ -631,16 +631,10 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     );
                     self.free_file_content(key, &mut existing, FreeCssMode::IgnoreCss);
 
-                    if existing.failed {
-                        let owner =
-                            serialized_failure::OwnerPacked::new(Side::Client, file_index.get());
-                        let kv = self.dev_bundling_failures().fetch_swap_remove(&owner);
-                        let kv = kv.unwrap_or_else(|| {
-                            bun_core::Output::panic(format_args!(
-                                "Missing SerializedFailure in IncrementalGraph",
-                            ))
-                        });
-                        self.dev_incremental_result().failures_removed.push(kv.1);
+                    if existing.failed && !self.retract_failure(file_index) {
+                        bun_core::Output::panic(format_args!(
+                            "Missing SerializedFailure in IncrementalGraph",
+                        ));
                     }
 
                     html_route_bundle_index = existing.html_route_bundle_index;
@@ -1123,9 +1117,105 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             return;
         }
         self.bundled_files.values_mut()[index.get() as usize].failed = false;
-        let owner = serialized_failure::OwnerPacked::new(Side::Client, index.get());
-        if let Some(kv) = self.dev_bundling_failures().fetch_swap_remove(&owner) {
-            self.dev_incremental_result().failures_removed.push(kv.1);
+        let _ = self.retract_failure(index);
+    }
+
+    /// Drops the failure on record for `index`. `false`: there was none.
+    #[cold]
+    fn retract_failure(&mut self, index: FileIndex<SIDE>) -> bool {
+        let owner = serialized_failure::OwnerPacked::new(SIDE, index.get());
+        let Some(kv) = self.dev_bundling_failures().fetch_swap_remove(&owner) else {
+            return false;
+        };
+        self.dev_incremental_result().failures_removed.push(kv.1);
+        true
+    }
+
+    /// The bundle that drops the failure of a stylesheet prints every css root that holds it.
+    #[cfg(debug_assertions)]
+    pub(crate) fn assert_holders_of_repaired_css_printed<Css>(
+        &mut self,
+        ctx: &mut HotUpdateContext<'_>,
+        css: &[Option<Css>],
+        css_roots: &[bun_ast::Index],
+        removed: &[SerializedFailure],
+        joined: &[ClientFileIndex],
+        server_graph: &IncrementalGraph<{ Side::Server }>,
+    ) {
+        debug_assert!(matches!(SIDE, Side::Client));
+        let on_server = &server_graph.bundled_files;
+        // A record that this bundle filed again leaves its file failed.
+        let dropped: Vec<FileIndex<SIDE>> = removed
+            .iter()
+            .filter_map(|failure| match failure.get_owner() {
+                serialized_failure::Owner::Client(index) => Some(FileIndex::init(index.get())),
+                // A stylesheet that failed under a server file has its holders on this graph.
+                serialized_failure::Owner::Server(index) => {
+                    let file = index.get() as usize;
+                    let key = (!on_server.values()[file].failed).then(|| &on_server.keys()[file]);
+                    key.and_then(|key| self.get_file_index(key))
+                }
+                _ => None,
+            })
+            .filter(|index| !self.bundled_files.values()[index.get() as usize].failed)
+            .collect();
+        if dropped.is_empty() {
+            return;
+        }
+        // The join counts a file as repaired only if this bundle parsed it as a stylesheet.
+        let repaired: Vec<FileIndex<SIDE>> = css
+            .iter()
+            .zip(ctx.sources)
+            .filter(|(css, _)| css.is_some())
+            .filter_map(|(_, source)| self.get_file_index(source.path.key_for_incremental_graph()))
+            .filter(|file| dropped.contains(file))
+            .collect();
+        let unrepaired =
+            |index: FileIndex<SIDE>| dropped.contains(&index) && !repaired.contains(&index);
+        let sources = ctx.sources;
+        let mut printed = |root: FileIndex<SIDE>| {
+            css_roots
+                .iter()
+                .any(|&index| ctx.get_cached_index(SIDE, index).unwrap::<SIDE>() == Some(root))
+        };
+        for &file in &repaired {
+            let mut holders: Vec<FileIndex<SIDE>> = Vec::new();
+            let mut it = self.edge_lists[file.get() as usize].first_dep;
+            while let Some(edge_index) = it {
+                let edge = self.edges[edge_index.get() as usize];
+                it = edge.next_dependency;
+                if matches!(
+                    self.bundled_files.values()[edge.dependency.get() as usize].content,
+                    Content::CssRoot(_),
+                ) {
+                    holders.push(edge.dependency);
+                }
+            }
+            if self.has_html_or_script_importer(file) {
+                holders.push(file);
+            }
+            for holder in holders {
+                // The skip rule holds a root back for a failed asset, also when this bundle repairs it.
+                let mut held_back = self.reaches_unrepaired_failure(server_graph, holder, &[]);
+                let mut it = self.edge_lists[holder.get() as usize].first_import;
+                while let Some(edge_index) = it {
+                    let edge = self.edges[edge_index.get() as usize];
+                    it = edge.next_import;
+                    held_back |= unrepaired(edge.imported);
+                }
+                // Handed to the bundler, and no stylesheet of the bundle has its key: it was not entered.
+                let key = &self.bundled_files.keys()[holder.get() as usize];
+                let not_entered = joined.contains(&ClientFileIndex::init(holder.get()))
+                    && !css.iter().zip(sources).any(|(css, source)| {
+                        css.is_some() && source.path.key_for_incremental_graph() == &**key
+                    });
+                debug_assert!(
+                    held_back || printed(holder) || not_entered,
+                    "{} lost its failure in a bundle that did not print the css root {}",
+                    bstr::BStr::new(&self.bundled_files.keys()[file.get() as usize]),
+                    bstr::BStr::new(key),
+                );
+            }
         }
     }
 

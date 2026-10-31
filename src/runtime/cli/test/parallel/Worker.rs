@@ -97,8 +97,8 @@ pub(crate) struct SpawnContext<'a> {
     /// `Parts::layers`: the worker gets them behind `compiled_program`.
     #[cfg_attr(windows, expect(dead_code))]
     pub(crate) programs_below: &'a [bun_sys::Fd],
-    /// A run of test files one after another prints to the stdout of `bun test`, as without workers.
-    pub(crate) inherits_stdout: bool,
+    /// A run of test files one after another prints to the stdout and stderr of `bun test`, as without workers.
+    pub(crate) inherits_output: bool,
     #[cfg(windows)]
     pub(crate) windows_job: Option<*mut c_void>,
 }
@@ -174,12 +174,16 @@ impl Worker {
             let programs_below = coord.programs_below.iter().copied().map(Stdio::Pipe);
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
-                stdout: if coord.inherits_stdout {
+                stdout: if coord.inherits_output {
                     Stdio::Inherit
                 } else {
                     Stdio::Buffer
                 },
-                stderr: Stdio::Buffer,
+                stderr: if coord.inherits_output {
+                    Stdio::Inherit
+                } else {
+                    Stdio::Buffer
+                },
                 extra_fds: core::iter::once(Stdio::Buffer)
                     .chain(compiled_program)
                     .chain(programs_below)
@@ -263,16 +267,20 @@ impl Worker {
 
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
-                stdout: if coord.inherits_stdout {
+                stdout: if coord.inherits_output {
                     Stdio::Inherit
                 } else {
                     Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
                         uv::Pipe,
                     >())))
                 },
-                stderr: Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
-                    uv::Pipe,
-                >()))),
+                stderr: if coord.inherits_output {
+                    Stdio::Inherit
+                } else {
+                    Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
+                        uv::Pipe,
+                    >())))
+                },
                 extra_fds: vec![Stdio::Ipc(ipc_pipe)].into_boxed_slice(),
                 cwd: coord.cwd.to_vec().into_boxed_slice(),
                 windows: spawn::WindowsOptions {
@@ -399,12 +407,16 @@ impl Worker {
         file_idx: u32,
         file: &[u8],
         exit_code_left_by_tests: Option<u8>,
+        stands_for_one_process: bool,
+        failures_until_bail: u32,
     ) {
         f.begin(frame::Kind::Run);
         f.u32(file_idx);
         f.str(file);
         f.u32(exit_code_left_by_tests.map_or(0, |code| u32::from(code) + 1));
         f.str(&self.first_loads);
+        f.u32(u32::from(stands_for_one_process));
+        f.u32(failures_until_bail);
         self.ipc.send(f.finish());
         self.inflight = Some(file_idx);
         self.dispatched_at = bun_core::time::milli_timestamp();

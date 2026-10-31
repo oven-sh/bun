@@ -56,6 +56,7 @@ export const neverCalled: ReadonlyMap<RegExp, string> = new Map([
   [/^%CompilerHelpers%\.(ownEntriesFlat|definePropertiesFrom)$/, "it works on the instance of a compiled program, and this process has none"],
   [/^%CompilerHelpers%\.plainQuery(Entries|Keys|Values)$/, "the compiler hands it what another helper answered for the same operands, and takes that on trust"],
   [/^%CompilerHelpers%\..*_inRanges$/, "the compiler hands it bounds that it has clamped itself, and takes them on trust"],
+  [/^%CompilerHelpers%\.importRejectedByLoader$/, "it is written with the intrinsics that make and settle promises, and only compiled code has those"],
   [/^%PrivateGlobals%\.(makeErrorWithCode|inherits)$/, "a call spells out a number, and by it native code takes the other operands on trust: the table does not say which"],
 ]);
 

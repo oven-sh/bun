@@ -226,6 +226,17 @@ export default b.declarations(
       },
     },
     definePropertiesFrom: definitionFrom,
+    importRejectedByLoader: {
+      args: { reason: b.any },
+      returns: b.instance("Promise").holding({ value: b.never }).fresh,
+      capability: "js",
+      throws: false,
+      runsOnlyOperandCode: true,
+      runsUnseenCode: false,
+      // As the reason of Promise.reject: the host hands it to the listeners for unhandled rejections.
+      uses: { reason: [b.storedIn(b.resultSlot("reason")), b.retained] },
+      implementation: b.compiled("prelude/rejected-imports", "importRejectedByLoader"),
+    },
     ...helpersIn("prelude/decorators", {
       decorateClass: { decorators: calledOrChanged, target: calledOrChanged },
       decorateMethod: { decorators: calledOrChanged, target: calledOrChanged, key: usedAsKey },

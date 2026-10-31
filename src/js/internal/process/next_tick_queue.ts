@@ -56,7 +56,7 @@ function /* as in builtins/ProcessObjectInternals.ts: function nextTick */ nextT
   const frame: Frame = $getInternalField(asyncContext, 0);
   if (tickInitHooks.length !== 0) {
     ("unlikely");
-    whileHooked.push!(cb, count !== 0 ? listOf(...args) : undefined, frame);
+    (whileHooked.push ?? ring.pushWithInitHooks)!(cb, count !== 0 ? listOf(...args) : undefined, frame);
   } else if (count > 3) {
     ("unlikely");
     pushWithList(cb, listOf(...args), frame);
@@ -158,7 +158,8 @@ function install(process: NodeJS.Process, marker: unknown, start: () => void, pr
 
 // What follows is for nextTick alone. It stands behind the functions that run without ahead-of-time compilation too, whose lines a stack names.
 
-// What nextTick queues a tick with while an `init` hook is enabled. node:async_hooks puts it here with the first hook.
+// What nextTick queues a tick with while an `init` hook is enabled. node:async_hooks puts it here with the first hook, where it is compiled with the program.
+// An executable that runs code from outside makes the modules that it does not hold out of the library's text. That text fills `ring.pushWithInitHooks` alone.
 const whileHooked: { push: TickRing["pushInsideNextTick"] | undefined } = { push: undefined };
 
 export default {

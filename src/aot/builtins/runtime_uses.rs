@@ -483,6 +483,8 @@ pub struct Mentions<'a> {
     pub has_generator: bool,
     /// An async function, `await` or `import()`.
     pub makes_promise: bool,
+    /// `import()`
+    pub imports_by_call: bool,
     /// No code of Bun's own.
     pub is_of_program: bool,
     /// `AotOptions::imports_are_in_other_images`: native code takes what it calls of Bun's own code from the first of those images.
@@ -548,6 +550,7 @@ impl Collector {
             iterates,
             has_generator,
             makes_promise,
+            imports_by_call,
             is_of_program,
             is_served_by_other_images,
         } = *mentions;
@@ -555,7 +558,12 @@ impl Collector {
             && exposed.is_empty()
             && linked_functions.is_empty()
             && members_read.is_empty()
-            && !(has_decorator || disposes_resource || iterates || has_generator || makes_promise);
+            && !(has_decorator
+                || disposes_resource
+                || iterates
+                || has_generator
+                || makes_promise
+                || imports_by_call);
         if names_nothing {
             return None;
         }
@@ -588,6 +596,10 @@ impl Collector {
             (iterates, &[BuiltinId::ArrayIteratorPrototypeNext]),
             (has_generator, METHODS_OF_GENERATORS),
             (makes_promise, &[BuiltinId::Promise]),
+            (
+                imports_by_call,
+                &[BuiltinId::CompilerHelpersImportRejectedByLoader],
+            ),
         ];
         for (_, helpers) in helpers.into_iter().filter(|it| it.0) {
             for &helper in helpers {

@@ -1766,18 +1766,20 @@ Process::~Process()
 
 extern "C" bool Bun__NODE_NO_WARNINGS();
 
+// All of the bytes, to a descriptor that the process has had from its start. Zero, or the number of the error.
 #if OS(WINDOWS)
-static void writeToStandardError(std::span<const char> bytes)
+static int writeToStandardDescriptor(int descriptor, std::span<const char> bytes)
 {
     while (!bytes.empty()) {
         uv_buf_t buffer = uv_buf_init(const_cast<char*>(bytes.data()), static_cast<unsigned int>(std::min<size_t>(bytes.size(), 1 << 30)));
         uv_fs_t request;
-        int written = uv_fs_write(nullptr, &request, 2, &buffer, 1, -1, nullptr);
+        int written = uv_fs_write(nullptr, &request, descriptor, &buffer, 1, -1, nullptr);
         uv_fs_req_cleanup(&request);
         if (written <= 0)
-            return;
+            return EIO;
         bytes = bytes.subspan(static_cast<size_t>(written));
     }
+    return 0;
 }
 #else
 static bool waitUntilWritable(int descriptor)
@@ -1799,22 +1801,28 @@ static bool waitUntilWritable(int descriptor)
     return ready == 1;
 }
 
-static void writeToStandardError(std::span<const char> bytes)
+static int writeToStandardDescriptor(int descriptor, std::span<const char> bytes)
 {
     while (!bytes.empty()) {
-        ssize_t written = ::write(STDERR_FILENO, bytes.data(), bytes.size());
+        ssize_t written = ::write(descriptor, bytes.data(), bytes.size());
         if (written > 0) {
             bytes = bytes.subspan(static_cast<size_t>(written));
             continue;
         }
         if (written < 0 && errno == EINTR)
             continue;
-        if (written < 0 && errno == EAGAIN && waitUntilWritable(STDERR_FILENO))
+        if (written < 0 && errno == EAGAIN && waitUntilWritable(descriptor))
             continue;
-        return;
+        return written < 0 ? errno : EIO;
     }
+    return 0;
 }
 #endif
+
+static void writeToStandardError(std::span<const char> bytes)
+{
+    writeToStandardDescriptor(2, bytes);
+}
 
 static void readMembers(Zig::GlobalObject* globalObject, JSValue holder, std::span<const ASCIILiteral> names)
 {
@@ -3294,7 +3302,48 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteToStandardSink, (JSC::JSGlobalObje
     RELEASE_AND_RETURN(scope, JSValue::encode(callMethod(globalObject, sink, "write"_s, args)));
 }
 
-// Bun.file(fd).writer(), whatever the program has stored in Bun.file
+// write(data) of a stream for which no sink could be opened. It takes what write() of a sink takes and answers as that does: a number, or a promise that is rejected.
+static JSC::EncodedJSValue writeWithoutDescriptorOfItsOwn(JSC::JSGlobalObject* globalObject, CallFrame* callFrame, int fd)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue data = callFrame->argument(0);
+    size_t length = 0;
+    int error = 0;
+    auto write = [&](std::span<const uint8_t> bytes) {
+        length = bytes.size();
+        error = writeToStandardDescriptor(fd, byteCast<char>(bytes));
+    };
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(data)) {
+        if (!view->isDetached())
+            write(view->span());
+    } else if (auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(data))
+        write(buffer->impl()->span());
+    else if (data.isString()) {
+        auto text = data.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto bytes = text.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+        write(byteCast<uint8_t>(bytes.span()));
+    } else
+        return Bun::throwError(globalObject, scope, data.isUndefinedOrNull() ? ErrorCode::ERR_STREAM_NULL_VALUES : ErrorCode::ERR_INVALID_ARG_TYPE, "write() expects a string, ArrayBufferView, or ArrayBuffer"_s);
+    if (error)
+        return JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, createSystemError(globalObject, "write"_s, error)));
+    return JSValue::encode(jsNumber(length));
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionWriteToStandardOutputWithoutSink, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return writeWithoutDescriptorOfItsOwn(globalObject, callFrame, 1);
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionWriteToStandardErrorWithoutSink, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return writeWithoutDescriptorOfItsOwn(globalObject, callFrame, 2);
+}
+
+// Bun.file(fd).writer(), whatever the program has stored in Bun.file.
+// The writer takes a descriptor of its own, and a process that has opened as many files as it may gets none. The constructor of fs.WriteStream catches that and writes to the descriptor
+// that it was given. So here: what is answered then has write() alone, which is all that these streams ask of a sink. A read of process.stderr does not throw for want of a descriptor.
 static JSValue openStandardSink(JSC::JSGlobalObject* globalObject, int fd)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3304,8 +3353,18 @@ static JSValue openStandardSink(JSC::JSGlobalObject* globalObject, int fd)
     descriptor.append(JSC::jsNumber(fd));
     JSValue blob = JSC::profiledCall(globalObject, ProfilingReason::API, file, JSC::getCallData(file), jsUndefined(), descriptor);
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::MarkedArgumentBuffer none;
-    RELEASE_AND_RETURN(scope, callMethod(globalObject, blob, "writer"_s, none));
+    {
+        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        JSC::MarkedArgumentBuffer none;
+        JSValue sink = callMethod(globalObject, blob, "writer"_s, none);
+        if (!catchScope.exception()) [[likely]]
+            return sink;
+        if (!catchScope.tryClearException())
+            return {};
+    }
+    JSObject* withoutDescriptor = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    withoutDescriptor->putDirect(vm, Identifier::fromString(vm, "write"_s), JSFunction::create(vm, globalObject, 1, "write"_s, fd == 1 ? Process_functionWriteToStandardOutputWithoutSink : Process_functionWriteToStandardErrorWithoutSink, JSC::ImplementationVisibility::Private));
+    return withoutDescriptor;
 }
 
 static bool writesSynchronously(BunProcessStdinFdType fdType)

@@ -1,6 +1,6 @@
 // Constructors and objects of the global object and of native modules of which the table says no more than what they are: whoever reads one gets that object.
 import * as b from "bun-builtins-table";
-import { builtinModulesCell, cryptoObjectCell } from "./native-cells.ts";
+import { builtinModulesCell, cryptoObjectCell, targetsOfEventsCell } from "./native-cells.ts";
 import { handedOver } from "./native-code.ts";
 
 const constructorOnly = (path: b.BuiltinPath, options: b.ClassOptions = {}) =>
@@ -126,6 +126,23 @@ const readsStream = (getter: b.TableType) =>
     reads: ["ExternalState"],
     implementation: b.generic,
   }) satisfies b.GetterField;
+// An event that nobody dispatched has none.
+const targetOfEvent = {
+  ...readsStream(b.null),
+  uses: { this: [b.returnedFrom(targetsOfEventsCell)] },
+} satisfies b.GetterField;
+// JSEvent.cpp: the setter makes a boolean of what it is given.
+const flagOfEvent = {
+  ...readsStream(b.bool),
+  setter: {
+    value: b.any,
+    capability: "heap",
+    throws: true,
+    uses: { this: b.inspected, value: b.inspected },
+    writes: ["ExternalState"],
+    implementation: b.generic,
+  },
+} satisfies b.GetterField;
 const partOfByteStream = (name: string, proto: Readonly<Record<string, b.Field>>) =>
   b.class(name, { instanceCppClass: b.cppClass(`JS${name}`, `streams/JS${name}.h`), proto });
 const takesBytesOf = (operand: string, returns: b.TableType) =>
@@ -280,6 +297,12 @@ export default b.declarations(
       cancelable: readsStream(b.bool),
       defaultPrevented: readsStream(b.bool),
       composed: readsStream(b.bool),
+      timeStamp: readsStream(b.f64),
+      target: targetOfEvent,
+      currentTarget: targetOfEvent,
+      srcElement: targetOfEvent,
+      cancelBubble: flagOfEvent,
+      returnValue: flagOfEvent,
       ...Object.fromEntries(
         ["preventDefault", "stopPropagation", "stopImmediatePropagation"].map(name => [
           name,

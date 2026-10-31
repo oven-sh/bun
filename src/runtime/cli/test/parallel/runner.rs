@@ -16,7 +16,7 @@ use bun_sys::Fd;
 
 use super::aggregate;
 use super::channel::{Channel, ChannelOwner};
-use super::coordinator::{Coordinator, abort_handler};
+use super::coordinator::{Coordinator, StopReason, abort_handler};
 use super::file_range::FileRange;
 use super::frame::{self, Frame};
 use super::parts::Parts;
@@ -40,6 +40,7 @@ pub(crate) struct LeftByWorkers {
     /// `process.exitCode = 3` in a test.
     pub(crate) exit_code: Option<u8>,
     pub(crate) failed_to_write_inline_snapshots: bool,
+    pub(crate) bailed_out: bool,
 }
 
 /// Returns true if files were actually run via the worker pool, false if it
@@ -96,8 +97,9 @@ pub(crate) fn run_as_coordinator(
     // Each worker owns a contiguous chunk; co-located files share imports, so
     // this keeps each worker's isolation SourceProvider cache hot. --randomize
     // explicitly opts out of locality (the caller already shuffled).
+    let ends_as_in_one_process = ctx.test_options.parallel.min(n) <= 1;
     let mut sorted: Vec<Interned> = files.to_vec();
-    if !ctx.test_options.randomize {
+    if !ctx.test_options.randomize && !ends_as_in_one_process {
         index_sort::sort_slice_by(&mut sorted, |a, b| {
             bun_core::order(a.as_bytes(), b.as_bytes())
         });
@@ -264,6 +266,7 @@ pub(crate) fn run_as_coordinator(
         },
         coverage_files: Default::default(),
         last_header_idx: None,
+        header_printed_by_worker: None,
         frame: Frame::default(),
         files_done: 0,
         spawned_count: if splits_files { k } else { 0 },
@@ -282,7 +285,7 @@ pub(crate) fn run_as_coordinator(
         live_workers: 0,
         crashed_files: Vec::new(),
         aborted: None,
-        ends_as_in_one_process: ctx.test_options.parallel.min(n) <= 1,
+        ends_as_in_one_process,
         exit_code_left_by_tests: None,
         failed_to_write_inline_snapshots: false,
         stop_reason: None,
@@ -334,6 +337,7 @@ pub(crate) fn run_as_coordinator(
     *left_by_workers = LeftByWorkers {
         exit_code: coord.exit_code_left_by_tests,
         failed_to_write_inline_snapshots: coord.failed_to_write_inline_snapshots,
+        bailed_out: coord.ends_as_in_one_process && coord.stop_reason == Some(StopReason::Bail),
     };
     Ok(true)
 }
@@ -606,6 +610,17 @@ pub(crate) struct PendingFile {
     idx: u32,
     /// What the files before this one have left in `process.exitCode`, in whichever worker they ran.
     exit_code: Option<u8>,
+    stands_for_one_process: bool,
+    failures_until_bail: u32,
+}
+
+struct RunningFile {
+    idx: u32,
+    before: crate::test_runner::jest::Summary,
+    before_unhandled: u32,
+    exit_code_before: u8,
+    started_ns: u64,
+    resident_at_start: Option<ResidentAtStart>,
 }
 
 pub(crate) struct WorkerCommands {
@@ -618,9 +633,16 @@ pub(crate) struct WorkerCommands {
     pub(crate) pending_path: Vec<u8>,
     /// `first_loads` of the process that ran in this one's place before it.
     pub(crate) pending_first_loads: Vec<u8>,
+    running: Option<RunningFile>,
     /// EOF, error, `.shutdown`, or a corrupt frame.
     pub(crate) done: bool,
+    /// `worker_flush_aggregates`. Whatever lets a timer fire reaches `bail_out`, `Bun.spawnSync` in an executable too, and the flush reaches the
+    /// transpiler and the bundler. Held here, only `run_as_worker` names it, and an executable that never runs tests need not hold what it reaches.
+    flush_aggregates: FlushAggregates,
 }
+
+type FlushAggregates =
+    fn(&mut CommandLineReporter, &mut VirtualMachine, &CodeCoverageOptions, &mut WorkerCommands);
 
 impl WorkerCommands {
     /// Sends one frame of `kind`; `fill` writes its payload.
@@ -628,6 +650,49 @@ impl WorkerCommands {
         self.frame.begin(kind);
         fill(&mut self.frame);
         self.channel.send(self.frame.finish());
+    }
+
+    /// Says what the file that runs has counted: at its end, or where `--bail` ends it.
+    fn emit_file_done(&mut self, reporter: &mut CommandLineReporter, vm: &VirtualMachine) {
+        let Some(file) = self.running.take() else {
+            return;
+        };
+        let growth = file.resident_at_start.map(growth_since).unwrap_or_default();
+        let elapsed_ns = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
+            .ns()
+            .saturating_sub(file.started_ns);
+        let (before, after) = (file.before, *reporter.summary());
+        // What the file printed goes out ahead of the word that it is done, so that it is printed under the file's name.
+        Output::flush();
+        for refusal in crate::cli::run_compiled::refused_changes() {
+            self.emit(frame::Kind::RefusedChange, |wf| wf.str(&refusal));
+        }
+        let first_loads = first_loads(vm);
+        self.emit(frame::Kind::FileDone, |wf| {
+            for v in [
+                file.idx,
+                after.pass - before.pass,
+                after.fail - before.fail,
+                after.skip - before.skip,
+                after.todo - before.todo,
+                after.expectations - before.expectations,
+                after.skipped_because_label - before.skipped_because_label,
+                after.files - before.files,
+                reporter.jest.unhandled_errors_between_tests - file.before_unhandled,
+            ] {
+                wf.u32(v);
+            }
+            wf.u64(elapsed_ns);
+            wf.u32(growth.of_worker);
+            wf.u32(growth.largest_child);
+            wf.u32(growth.peak);
+            wf.u32(growth.rest);
+            wf.u32(match vm.exit_handler.exit_code {
+                code if code == file.exit_code_before => 0,
+                code => u32::from(code) + 1,
+            });
+            wf.str(&first_loads);
+        });
     }
 }
 
@@ -640,9 +705,14 @@ impl ChannelOwner for WorkerCommands {
                 self.pending_path.clear();
                 self.pending_path.extend_from_slice(rd.str());
                 let exit_code = rd.u32().checked_sub(1).map(|code| code as u8);
-                self.pending_file = Some(PendingFile { idx, exit_code });
                 self.pending_first_loads.clear();
                 self.pending_first_loads.extend_from_slice(rd.str());
+                self.pending_file = Some(PendingFile {
+                    idx,
+                    exit_code,
+                    stands_for_one_process: rd.u32() != 0,
+                    failures_until_bail: rd.u32(),
+                });
             }
             frame::Kind::Shutdown => self.done = true,
             _ => {}
@@ -702,7 +772,13 @@ impl<'a> WorkerLoop<'a> {
                 }
                 vm.event_loop_ref().auto_tick();
             }
-            let Some(PendingFile { idx, exit_code }) = self.cmds.pending_file.take() else {
+            let Some(PendingFile {
+                idx,
+                exit_code,
+                stands_for_one_process,
+                failures_until_bail,
+            }) = self.cmds.pending_file.take()
+            else {
                 break;
             };
             if self.files_run == 0 {
@@ -711,17 +787,24 @@ impl<'a> WorkerLoop<'a> {
             self.files_run += 1;
 
             self.reporter.worker_ipc_file_idx = Some(idx);
+            self.reporter.worker_stands_for_one_process = stands_for_one_process;
+            self.reporter.jest.bail = match failures_until_bail {
+                0 => 0,
+                left => self.reporter.summary().fail + left,
+            };
             self.cmds.emit(frame::Kind::FileStart, |wf| wf.u32(idx));
 
-            let before = *self.reporter.summary();
-            let before_unhandled = self.reporter.jest.unhandled_errors_between_tests;
             if let Some(code) = exit_code {
                 vm.exit_handler.exit_code = code;
             }
-            let exit_code_before = vm.exit_handler.exit_code;
-            let started_ns =
-                bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns();
-            let resident_at_start = start_measuring_growth();
+            self.cmds.running = Some(RunningFile {
+                idx,
+                before: *self.reporter.summary(),
+                before_unhandled: self.reporter.jest.unhandled_errors_between_tests,
+                exit_code_before: vm.exit_handler.exit_code,
+                started_ns: bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns(),
+                resident_at_start: start_measuring_growth(),
+            });
 
             // A worker never knows which file is its last, so preload-level hooks wrap every file (with or without --isolate).
             if let Err(err) = TestCommand::run(
@@ -746,45 +829,7 @@ impl<'a> WorkerLoop<'a> {
                 Global::mimalloc_cleanup(false);
             }
             self.reporter.jest.default_timeout_override = u32::MAX;
-            let growth = resident_at_start.map(growth_since).unwrap_or_default();
-
-            let elapsed_ns = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
-                .ns()
-                .saturating_sub(started_ns);
-
-            let after = *self.reporter.summary();
-            // What the file printed goes out ahead of the word that it is done, so that it is printed under the file's name.
-            Output::flush();
-            for refusal in crate::cli::run_compiled::refused_changes() {
-                self.cmds
-                    .emit(frame::Kind::RefusedChange, |wf| wf.str(&refusal));
-            }
-            let first_loads = first_loads(vm);
-            self.cmds.emit(frame::Kind::FileDone, |wf| {
-                for v in [
-                    idx,
-                    after.pass - before.pass,
-                    after.fail - before.fail,
-                    after.skip - before.skip,
-                    after.todo - before.todo,
-                    after.expectations - before.expectations,
-                    after.skipped_because_label - before.skipped_because_label,
-                    after.files - before.files,
-                    self.reporter.jest.unhandled_errors_between_tests - before_unhandled,
-                ] {
-                    wf.u32(v);
-                }
-                wf.u64(elapsed_ns);
-                wf.u32(growth.of_worker);
-                wf.u32(growth.largest_child);
-                wf.u32(growth.peak);
-                wf.u32(growth.rest);
-                wf.u32(match vm.exit_handler.exit_code {
-                    code if code == exit_code_before => 0,
-                    code => u32::from(code) + 1,
-                });
-                wf.str(&first_loads);
-            });
+            self.cmds.emit_file_done(self.reporter, vm);
         }
     }
 }
@@ -925,7 +970,9 @@ pub(crate) fn run_as_worker(
             pending_file: None,
             pending_path: Vec::new(),
             pending_first_loads: Vec::new(),
+            running: None,
             done: false,
+            flush_aggregates: worker_flush_aggregates,
         },
         files_run: 0,
     };
@@ -935,20 +982,12 @@ pub(crate) fn run_as_worker(
         wloop.files_run
     ));
 
-    worker_flush_aggregates(wloop.reporter, vm, ctx, &mut wloop.cmds);
-    // Drain any backpressure-buffered frames before exit so the coordinator
-    // sees repeat_bufs / coverage_file.
-    vm.run_with_api_lock(|| {
-        while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done.get() {
-            // SAFETY: event_loop pointer is valid while vm lives.
-            unsafe { (*vm.event_loop()).tick() };
-            if !wloop.cmds.channel.has_pending_writes() || wloop.cmds.channel.done.get() {
-                break;
-            }
-            // SAFETY: event_loop pointer is valid while vm lives.
-            unsafe { (*vm.event_loop()).auto_tick() };
-        }
-    });
+    worker_flush_aggregates(
+        wloop.reporter,
+        vm,
+        &ctx.test_options.coverage,
+        &mut wloop.cmds,
+    );
     // Mirror TestCommand::exec's exit path so BUN_DESTRUCT_VM_ON_EXIT teardown
     // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
     vm.exit_handler.exit_code = 0;
@@ -966,7 +1005,7 @@ pub(crate) fn run_as_worker(
 fn worker_flush_aggregates(
     reporter: &mut CommandLineReporter,
     vm: &mut VirtualMachine,
-    ctx: &Command::ContextData,
+    coverage: &CodeCoverageOptions,
     cmds: &mut WorkerCommands,
 ) {
     // Snapshots flush lazily when the next file opens its snapshot file; the
@@ -999,15 +1038,43 @@ fn worker_flush_aggregates(
         wf.str(reporter.todos_to_repeat_buf.as_slice());
     });
 
-    if ctx.test_options.coverage.enabled {
+    if coverage.enabled {
         let mut encoded: Vec<u8> = Vec::new();
         CommandLineReporter::add_compiled_files_to_coverage(vm);
-        CommandLineReporter::for_each_coverage_report(vm, &ctx.test_options.coverage, |report| {
+        CommandLineReporter::for_each_coverage_report(vm, coverage, |report| {
             encoded.clear();
             code_coverage::wire::encode(&report, &mut encoded);
             cmds.emit(frame::Kind::CoverageFile, |wf| wf.str(&encoded));
         });
     }
+
+    // Drain any backpressure-buffered frames before exit so the coordinator
+    // sees repeat_bufs / coverage_file.
+    vm.run_with_api_lock(|| {
+        while cmds.channel.has_pending_writes() && !cmds.channel.done.get() {
+            // SAFETY: event_loop pointer is valid while vm lives.
+            unsafe { (*vm.event_loop()).tick() };
+            if !cmds.channel.has_pending_writes() || cmds.channel.done.get() {
+                break;
+            }
+            // SAFETY: event_loop pointer is valid while vm lives.
+            unsafe { (*vm.event_loop()).auto_tick() };
+        }
+    });
+}
+
+/// `--bail` is reached in a worker that stands for the one process of plain `bun test`: no further test runs, as there.
+pub(crate) fn worker_ends_at_bail(reporter: &mut CommandLineReporter, vm: &mut VirtualMachine) {
+    // SAFETY: single-threaded worker; WORKER_CMDS only written/read on this thread.
+    let Some(cmds_ptr) = (unsafe { WORKER_CMDS.read() }) else {
+        return;
+    };
+    // SAFETY: cmds_ptr was set from &mut WorkerCommands in run_as_worker; pointee
+    // outlives all callers (process exits before it is dropped).
+    let cmds = unsafe { &mut *cmds_ptr };
+    cmds.emit_file_done(reporter, vm);
+    let options = reporter.jest.test_options;
+    (cmds.flush_aggregates)(reporter, vm, &options.coverage, cmds);
 }
 
 /// Set in `run_as_worker` so `worker_emit_test_done` (called from

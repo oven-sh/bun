@@ -443,10 +443,16 @@ pub(crate) fn library_modules_spelled_in(text: &[u8]) -> Option<Vec<&'static [u8
     {
         return None;
     }
-    // No module of Bun's own code has a name that begins so, however the name goes on.
-    let begins_as_path = |name: &[u8]| {
-        let beginnings: [&[u8]; 4] = [b"./", b"../", b"/", b"file:"];
-        beginnings.into_iter().any(|it| name.starts_with(it))
+    // No module of Bun's own code has a name that begins so, however the name goes on. A package maps a name behind "#" to any.
+    let begins_as_no_module = |name: &[u8]| {
+        let fixed = strings::index_of(name, b"${").map_or(name, |end| &name[..end]);
+        let mut spellings = BUN_ALIASES.iter().copied().flatten();
+        !fixed.is_empty()
+            && !fixed.starts_with(b"#")
+            && !fixed.starts_with(b"bun:")
+            && !b"bun:".starts_with(fixed)
+            && !strings::contains_char(fixed, b'\\')
+            && !spellings.any(|(spelling, _)| spelling.starts_with(fixed))
     };
     let begins_with_path_of_this_file = |at: usize| {
         let paths: [&[u8]; 7] = [
@@ -479,7 +485,7 @@ pub(crate) fn library_modules_spelled_in(text: &[u8]) -> Option<Vec<&'static [u8
                     let argument = skip_space(next + 1);
                     begins_with_path_of_this_file(argument)
                         || read_string(argument).is_some_and(|(name, end)| {
-                            begins_as_path(name)
+                            begins_as_no_module(name)
                                 || (!strings::contains(name, b"${")
                                     && matches!(code.get(skip_space(end)), Some(b')' | b',')))
                         })
@@ -867,6 +873,10 @@ mod tests {
             "require(`../${name}.js`)",
             "import('/opt/' + name)",
             "import('file://' + path)",
+            "import(`specs/build/${name}.js`)",
+            "import('@/pages/' + name)",
+            "require('~/' + name)",
+            "import('node:zz' + name)",
             "require(import.meta.path)",
             "import(import.meta.dir + name)",
             "require(__dirname + '/' + name)",
@@ -883,6 +893,15 @@ mod tests {
             "import('node:' + name)",
             "require('node:' + name)",
             "import(`node:${name}`)",
+            "import(`${name}`)",
+            "import('' + name)",
+            "import('s' + name)",
+            "import('fs/' + name)",
+            "import('b' + name)",
+            "import('bun:' + name)",
+            "import('bun:f' + name)",
+            "import('#internal/' + name)",
+            "import('\\x66' + name)",
             "import(name + './x')",
             "import(import.meta.directory)",
             "const load = require;",

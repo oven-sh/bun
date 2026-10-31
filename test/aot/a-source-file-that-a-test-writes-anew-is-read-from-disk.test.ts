@@ -61,7 +61,7 @@ const ways: [string[], string][] = [
   [["--isolate"], "TestRunLayers:2,TestRunPartFiles:1"],
 ];
 
-test.each(ways)(
+test.concurrent.each(ways)(
   "a later test file imports the new text: %j %s",
   async (flags, words) => {
     using dir = tempDir("a-source-file-written-anew", files(newText));
@@ -73,7 +73,7 @@ test.each(ways)(
   240_000,
 );
 
-test.each(ways)(
+test.concurrent.each(ways)(
   "through a module that has not run yet: %j %s",
   async (flags, words) => {
     using dir = tempDir("a-source-file-written-anew-helper", files(newText, true));
@@ -85,7 +85,7 @@ test.each(ways)(
   240_000,
 );
 
-test.each(ways)(
+test.concurrent.each(ways)(
   "a name that the new text lacks fails the later test file: %j %s",
   async (flags, words) => {
     using dir = tempDir("a-source-file-written-anew-lacks", files(`export let count = 100;\n`));
@@ -99,7 +99,7 @@ test.each(ways)(
 
 // The price, by count: a file is looked at on disk once in a realm, before it first loads there, and only where the run may read it
 // again from disk at all. A run that takes nothing out of require.cache looks at no file.
-test.each([
+test.concurrent.each([
   ["takes a file out of require.cache", true],
   ["takes nothing out", false],
 ])(

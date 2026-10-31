@@ -88,12 +88,6 @@ function makePortReadable(
   return stream;
 }
 
-function isOutOfMemoryError(error: unknown): boolean {
-  if (error == null || typeof error !== "object" || (error as Partial<Error>).name !== "RangeError") return false;
-  const message = (error as Partial<Error>).message;
-  return typeof message === "string" && message.startsWith("Out of memory");
-}
-
 // Writable that forwards chunks over a MessagePort (worker.stdin on the parent,
 // process.stdout/stderr in the worker). final() posts null as EOF.
 function makePortWritable(port: MessagePort) {
@@ -116,18 +110,12 @@ function makePortWritable(port: MessagePort) {
   const stream = new Writable({
     decodeStrings: false,
     writev(chunks: $Node.ChunkToWrite[], cb: $Node.ErrorCallback) {
-      try {
-        const payload = new Array(chunks.length);
-        for (let i = 0; i < chunks.length; i++) {
-          const { chunk, encoding } = chunks[i];
-          payload[i] = typeof chunk === "string" ? Buffer.from(chunk, encoding as BufferEncoding) : chunk;
-        }
-        port.postMessage(payload);
-      } catch (error) {
-        if (!isOutOfMemoryError(error)) throw error;
-        cb(error as Error);
-        return;
+      const payload = new Array(chunks.length);
+      for (let i = 0; i < chunks.length; i++) {
+        const { chunk, encoding } = chunks[i];
+        payload[i] = typeof chunk === "string" ? Buffer.from(chunk, encoding as BufferEncoding) : chunk;
       }
+      port.postMessage(payload);
       if (process._exiting) {
         // No event loop turns remain to deliver an ack; complete synchronously
         // so exit-time writes are not lost (node does the same).
@@ -142,13 +130,7 @@ function makePortWritable(port: MessagePort) {
       port.postMessage(null);
       cb();
     },
-    destroy(this: PortWritable, err: Error | null, cb: $Node.ErrorCallback) {
-      if (isOutOfMemoryError(err)) {
-        // The write has failed, the stream goes on, as process.stdout of the main thread does.
-        cb(err);
-        this._undestroy();
-        return;
-      }
+    destroy(err: Error | null, cb: $Node.ErrorCallback) {
       // Discharge an in-flight batch: the reader may never ack a destroyed
       // stream, so release the loop ref taken in writev and complete the
       // parked callback; drop the ack listener so a late ack can't fire

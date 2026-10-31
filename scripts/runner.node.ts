@@ -37,6 +37,7 @@ import { createInterface } from "node:readline";
 import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { heldTooMuchTogether } from "../test/aot/harness/killed-for-memory.ts";
 import { ownTemporaryFolder } from "../test/aot/harness/temporary-folders.ts";
 import { startsToolsOfTheEngine } from "../test/aot/harness/tests-that-start-tools-of-the-engine.ts";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
@@ -80,6 +81,7 @@ import {
   uploadArtifact,
   type JunitFileSuite,
 } from "./buildkite.ts";
+import { costOfNewTests } from "./ci-cost-of-new-tests.ts";
 
 const isX64 = process.arch === "x64";
 
@@ -1840,7 +1842,8 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
     const unbucketedTests = serialTests.filter(t => !modifiedSerialTests.includes(t) && !bucketable.has(t));
     // Those of them that take too long for a bucket run beside one another too, each in a process of its own. The longest first: what is left for the end is short.
     const expectedDurations = loadExpectedDurations(testsPath);
-    const expectedDuration = (t: string) => expectedDurations[t.replaceAll("\\", "/")] ?? 0;
+    const costOfNewTest = costOfNewTests(expectedDurations);
+    const expectedDuration = (t: string) => expectedDurations[t.replaceAll("\\", "/")] ?? costOfNewTest(t);
     const buildingTests = unbucketedTests
       .filter(runsBesideBuildingFiles)
       .sort(
@@ -3485,14 +3488,12 @@ function getRelevantTests(
     // Every shard computes the same deterministic assignment from the same
     // sorted input and picks its own bin, so the result is identical across
     // machines without any coordination. Tests absent from the table (new
-    // files, or the file failing to load) fall back to the table's median so
-    // they spread across shards instead of all landing on shard 0.
+    // files, or the file failing to load) count as the files beside them do.
     const durations = loadExpectedDurations(cwd);
-    const known = Object.values(durations).sort((a, b) => a - b);
-    const unknownCost = known.length ? known[Math.floor(known.length / 2)]! : 100;
+    const costOfNewTest = costOfNewTests(durations);
     // What is balanced is wall time, and a file that runs beside others adds only its share of it.
     const costOf = (testPath: string) =>
-      (durations[testPath.replaceAll("\\", "/")] ?? unknownCost) / filesAtOnce(testPath);
+      (durations[testPath.replaceAll("\\", "/")] ?? costOfNewTest(testPath)) / filesAtOnce(testPath);
     const indexOf = new Map(availableTests.map((testPath, originalIndex) => [testPath, originalIndex]));
     const programs = availableTests.filter(isAotProgram);
 
@@ -3959,7 +3960,8 @@ function isAlwaysFailure(error: string | undefined): boolean {
     error.includes("error: addresssanitizer") ||
     error.includes("internal assertion failure") ||
     error.includes("core dumped") ||
-    error.includes("crash reported")
+    error.includes("crash reported") ||
+    error.includes(heldTooMuchTogether.toLowerCase())
   );
 }
 

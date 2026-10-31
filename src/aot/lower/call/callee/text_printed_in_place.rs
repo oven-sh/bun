@@ -413,6 +413,12 @@ impl FileLowering<'_, '_, '_, '_> {
             // Nothing beneath what is given as bytes is printed. A copy there still says where the place of an error in an initializer leads.
             // Of two for one piece the first stands for both.
             let is_bytes = !matches!(text.printed, PrintedText::Copy { .. });
+            let is_in_order = text.start <= text.end
+                && !matches!(text.printed, PrintedText::Copy { start, end, .. } if end < start);
+            debug_assert!(is_in_order, "a piece ends in front of where it starts");
+            if !is_in_order {
+                continue;
+            }
             if (is_bytes && text.start < end_of_bytes)
                 || (text.start, text.end) == (last_start, last_end)
             {
@@ -618,6 +624,10 @@ impl FileLowering<'_, '_, '_, '_> {
 
     fn find_text_printed_in_place_of(&self, expression: ExprId) -> Option<ReplacedText> {
         let hir = self.hir;
+        // The hole of `[a, , c]` has no text: it ends in front of where it starts.
+        if matches!(hir[expression].kind, ExprKind::Missing) {
+            return None;
+        }
         if let ExprKind::Index { obj, index, chain } = hir[expression].kind
             && self.find_rewrite(expression).is_none()
         {
@@ -642,9 +652,11 @@ impl FileLowering<'_, '_, '_, '_> {
             ExprKind::Ident(_) => self.find_printed_initializer(expression),
             _ => self.find_operand_printed_alone(expression),
         };
-        if let Some(operand) = operand {
+        let operand = operand.map(|operand| self.skip_unprinted_syntax(operand));
+        // `[a, , c][1]` is printed `void 0`.
+        let is_hole = operand.is_some_and(|operand| matches!(hir[operand].kind, ExprKind::Missing));
+        if let Some(operand) = operand.filter(|_| !is_hole) {
             // `const r = (a, b)`: `b` is printed in the place of `r`. The piece for the brackets and all in them does not lie in what stands between them.
-            let operand = self.skip_unprinted_syntax(operand);
             return Some(ReplacedText {
                 start,
                 end,
@@ -655,8 +667,10 @@ impl FileLowering<'_, '_, '_, '_> {
                 },
             });
         }
-        let Some(Rewrite::Literal { value, .. }) = self.find_rewrite(expression) else {
-            return None;
+        let value = match self.find_rewrite(expression) {
+            _ if is_hole => Constant::Undefined,
+            Some(Rewrite::Literal { value, .. }) => value,
+            _ => return None,
         };
         let mut printed = Vec::new();
         let is_in_brackets = self.place_of(expression) == Place::Target;

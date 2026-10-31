@@ -108,3 +108,15 @@ test("--files-from fails on a missing list and on a list with no paths, rather t
   expect(empty.out).not.toContain("alpha");
   expect(empty.exitCode).toBe(1);
 });
+
+test("--files-from refuses a filter beside it, rather than running the listed files as if it were not there", async () => {
+  using dir = tempDir("files-from-filter", {
+    "unit-a.test.js": passes("alpha"),
+    "other-b.test.js": passes("beta"),
+    "list.txt": "unit-a.test.js\nother-b.test.js\n",
+  });
+  const mixed = await run(String(dir), "unit", "--files-from", "list.txt");
+  expect(mixed.out).toContain("unit is a filter, and --files-from takes none beside it");
+  expect(mixed.out).not.toContain("beta");
+  expect(mixed.exitCode).toBe(1);
+});

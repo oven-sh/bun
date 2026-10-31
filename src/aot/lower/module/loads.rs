@@ -1732,17 +1732,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     // The loader of `bun run` rejects a promise of its own, and import() resolves the promise of the program with that one: the program hears of the failure two jobs later.
     fn emit_import_rejected_by_loader(&mut self, error: ValueId) -> ValueId {
-        let rejected = self.emit_settled_promise(BuiltinId::PromiseReject, error);
-        let with_resolvers = self.emit_builtin_itself(BuiltinId::PromiseWithResolvers);
-        let constructor = self.emit_builtin_itself(BuiltinId::Promise);
-        let capability = call::emit_call(self, with_resolvers, Some(constructor), &[]);
-        let resolve = self.file.intern_bytes(b"resolve");
-        let resolve = PropertyName::Constant(self.file.text_key(resolve));
-        let resolve = self.emit_get(capability, resolve);
-        call::emit_call(self, resolve, None, &[rejected]);
-        let promise = self.file.intern_bytes(b"promise");
-        let promise = PropertyName::Constant(self.file.text_key(promise));
-        self.emit_get(capability, promise)
+        self.emit_builtin_call(BuiltinId::CompilerHelpersImportRejectedByLoader, &[error])
     }
 
     fn lower_untested_call(

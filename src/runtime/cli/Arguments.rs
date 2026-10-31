@@ -39,6 +39,14 @@ fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
     input.iter().map(|s| Box::<[u8]>::from(*s)).collect()
 }
 
+/// Whether `bun test` takes the argument for a path. One such argument makes paths of all.
+fn reads_as_path_of_tests(argument: &[u8]) -> bool {
+    bun_paths::is_absolute(argument)
+        || argument.starts_with(b"./")
+        || argument.starts_with(b"../")
+        || (cfg!(windows) && (argument.starts_with(b".\\") || argument.starts_with(b"..\\")))
+}
+
 /// `bun test --files-from <list>`. Every line is a path, never a filter. A list
 /// with no paths is an error: with no positionals `bun test` runs everything.
 fn append_test_files_from(list: &[u8], positionals: &mut Vec<Box<[u8]>>) {
@@ -59,11 +67,7 @@ fn append_test_files_from(list: &[u8], positionals: &mut Vec<Box<[u8]>>) {
         if path.is_empty() {
             continue;
         }
-        let reads_as_path = bun_paths::is_absolute(path)
-            || path.starts_with(b"./")
-            || path.starts_with(b"../")
-            || (cfg!(windows) && (path.starts_with(b".\\") || path.starts_with(b"..\\")));
-        positionals.push(if reads_as_path {
+        positionals.push(if reads_as_path_of_tests(path) {
             path.into()
         } else {
             [b"./".as_slice(), path].concat().into()
@@ -1336,8 +1340,21 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     ctx.args.absolute_working_dir = Some(cwd);
     ctx.positionals = slice_to_owned(args.positionals());
     if cmd == CommandTag::TestCommand {
+        let typed = ctx.positionals.len();
         for list in args.options(b"--files-from") {
             append_test_files_from(list, &mut ctx.positionals);
+        }
+        // Beside a path every argument is a path, and one that leads nowhere is passed over: the listed files would run as if the filter were not there.
+        let (typed, listed) = ctx.positionals.split_at(typed);
+        if !listed.is_empty()
+            && let Some(filter) = typed.iter().skip(1).find(|it| !reads_as_path_of_tests(it))
+        {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: <b>{}<r> is a filter, and --files-from takes none beside it. For the file or folder of that name write <b>./{}<r>",
+                BStr::new(filter),
+                BStr::new(filter)
+            );
+            Global::exit(1);
         }
     }
 

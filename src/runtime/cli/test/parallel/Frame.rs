@@ -26,7 +26,9 @@ pub(crate) enum Kind {
     RepeatBufs,
     // coordinator → worker
     /// u32 file_idx, str path, u32: 0, or one more than the `process.exitCode` that the files before it have left,
-    /// str: what the last FileDone of the worker's slot said of first loads
+    /// str: what the last FileDone of the worker's slot said of first loads,
+    /// u32: 1 where the worker stands for the one process of plain `bun test` and prints what that prints,
+    /// u32: there, how many more failures `--bail` allows; 0 without it
     Run,
     /// (empty)
     Shutdown,

@@ -416,6 +416,18 @@ fn caller_finds_in_the_realm_what_an_object_holds() {
 }
 
 #[test]
+fn caller_holds_what_rejects_an_import_that_finds_nothing() {
+    let uses = uses_of_program(&Mentions {
+        imports_by_call: true,
+        ..Mentions::default()
+    });
+    let behind = table::entry(BuiltinId::CompilerHelpersImportRejectedByLoader).implemented_by();
+    assert!(!behind.is_empty());
+    let held: Vec<RuntimeFunction> = uses.functions_held_with_caller().collect();
+    assert!(behind.iter().all(|it| held.contains(it)));
+}
+
+#[test]
 fn caller_holds_what_stands_behind_a_helper_of_the_compiler() {
     let uses = uses_of_program(&Mentions {
         disposes_resource: true,

@@ -52,7 +52,8 @@ export function outOfRange(buffer: ArrayBuffer, offset: number): string {
 }
 
 const buffer = new ArrayBuffer(8);
-print(String(lengthsOfNewViews(buffer)) + " " + String(lengthsOfGivenView(new Uint8Array(buffer, 3))));
+print(String(lengthsOfNewViews(buffer)));
+for (let offset = 1; offset < 4; offset++) print(String(lengthsOfGivenView(new Uint8Array(buffer, offset))));
 storedThroughViewNobodyReads(buffer, 7);
 print(new Uint8Array(buffer).join(","));
 print(String(storedThroughOtherView(buffer, 9)) + " " + String(storedThroughPart(buffer, 11)) + " " + String(storedThroughDataView(buffer, 513)));

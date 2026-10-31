@@ -1586,15 +1586,39 @@ fn copy_into_mapping_of_empty_file(descriptor: Fd, parts: [&[u8]; 2]) -> bool {
         .div_ceil(usize::from(bun_core::get_thread_count()))
         .max(MIN_BYTES_OF_THREAD);
     let (first, second) = mapped.split_at_mut(parts[0].len());
-    std::thread::scope(|scope| {
-        for (target, source) in [(first, parts[0]), (second, parts[1])] {
-            for (target, source) in target.chunks_mut(share).zip(source.chunks(share)) {
-                scope.spawn(move || target.copy_from_slice(source));
-            }
-        }
+    let shares = [(first, parts[0]), (second, parts[1])].into_iter();
+    let shares =
+        shares.flat_map(|(target, source)| target.chunks_mut(share).zip(source.chunks(share)));
+    for_each_on_threads(shares.collect(), |(target, source)| {
+        target.copy_from_slice(source)
     });
     let _ = bun_sys::munmap(start, length);
     true
+}
+
+/// `run` for each of `tasks`, on this thread and on as many others as there are further tasks. Where the system has reached a limit
+/// of threads it gives fewer, or none: those that run take what is left.
+pub(crate) fn for_each_on_threads<Task: Send>(tasks: Vec<Task>, run: impl Fn(Task) + Sync) {
+    let others = tasks.len().saturating_sub(1);
+    let tasks = Guarded::new(tasks);
+    let run_what_is_left = || {
+        loop {
+            let Some(task) = tasks.lock().pop() else {
+                return;
+            };
+            run(task);
+        }
+    };
+    std::thread::scope(|scope| {
+        for _ in 0..others {
+            // SAFETY: no state of a VM goes along. `Task` is `Send` and `run` is `Sync`, which a VM, its event loop and its global object are not.
+            let thread = std::thread::Builder::new();
+            if thread.spawn_scoped(scope, run_what_is_left).is_err() {
+                break;
+            }
+        }
+        run_what_is_left();
+    });
 }
 
 #[cold]

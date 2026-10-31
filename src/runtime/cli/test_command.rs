@@ -214,15 +214,12 @@ fn find_names_in<Path: core::ops::Deref<Target = [u8]> + Sync>(
     let mut names: Vec<Vec<Box<[u8]>>> = Vec::new();
     names.resize_with(files.len(), Vec::new);
     let share = files.len().div_ceil(MAX_READERS).max(MIN_FILES_OF_READER);
-    std::thread::scope(|scope| {
-        for (files, names) in files.chunks(share).zip(names.chunks_mut(share)) {
-            scope.spawn(move || {
-                for (file, names) in files.iter().zip(names) {
-                    if let Ok(text) = File::read_from(Fd::cwd(), file) {
-                        for_each_name(&text, &mut |name| names.push(Box::from(name)));
-                    }
-                }
-            });
+    let shares = files.chunks(share).zip(names.chunks_mut(share));
+    run_compiled::for_each_on_threads(shares.collect(), |(files, names)| {
+        for (file, names) in files.iter().zip(names) {
+            if let Ok(text) = File::read_from(Fd::cwd(), file) {
+                for_each_name(&text, &mut |name| names.push(Box::from(name)));
+            }
         }
     });
     names
@@ -2907,6 +2904,9 @@ pub(crate) struct CommandLineReporter {
     /// is sent over the IPC pipe instead of to stderr; the coordinator owns
     /// the terminal.
     pub(crate) worker_ipc_file_idx: Option<u32>,
+    /// `bun test --aot` over several programs, where plain `bun test` starts no worker: this one has the terminal and prints what
+    /// the one process prints. The coordinator still gets its counts.
+    pub(crate) worker_stands_for_one_process: bool,
     /// Errors thrown by the test now running, captured while a reporter
     /// that attaches them to the test case (JUnit) is on. Taken by
     /// `handle_test_completed`.
@@ -3301,7 +3301,14 @@ impl CommandLineReporter {
             Self::test_case_report(result, buntest, sequence, test_entry, elapsed_ns, failure)
         });
         if let Some(idx) = this.worker_ipc_file_idx {
-            ParallelRunner::worker_emit_test_done(idx, formatted_line, report.as_ref());
+            let line_for_coordinator = match this.worker_stands_for_one_process {
+                true => {
+                    let _ = Output::error_writer().write_all(formatted_line);
+                    &[][..]
+                }
+                false => formatted_line,
+            };
+            ParallelRunner::worker_emit_test_done(idx, line_for_coordinator, report.as_ref());
         } else {
             let _ = Output::error_writer().write_all(formatted_line);
             if let (Some(junit), Some(report)) = (this.reporters.junit.as_mut(), &report) {
@@ -3372,17 +3379,22 @@ impl CommandLineReporter {
 
     /// Prints that `--bail` hit its failure count, then exits with code 1. Tears down the VM the same way `exec` does.
     pub(crate) fn bail_out(&mut self, vm: &mut VirtualMachine) -> ! {
-        self.print_summary();
-        pretty_error!(
-            "\nBailed out after {} failure{}<r>\n",
-            self.jest.bail,
-            if self.jest.bail == 1 { "" } else { "s" }
-        );
-        Output::flush();
-        self.write_junit_report_if_needed();
-        self.write_timings_if_needed();
+        let is_worker = self.worker_ipc_file_idx.is_some();
+        if is_worker {
+            ParallelRunner::worker_ends_at_bail(self, vm);
+        } else {
+            self.print_summary();
+            pretty_error!(
+                "\nBailed out after {} failure{}<r>\n",
+                self.jest.bail,
+                if self.jest.bail == 1 { "" } else { "s" }
+            );
+            Output::flush();
+            self.write_junit_report_if_needed();
+            self.write_timings_if_needed();
+        }
 
-        vm.exit_handler.exit_code = 1;
+        vm.exit_handler.exit_code = u8::from(!is_worker);
         vm.exit_handler.skip_exit_listeners = skip_exit_listeners(self);
         vm.exit_handler.requested = true;
         vm.run_with_api_lock_mut(VirtualMachine::on_exit);
@@ -3860,6 +3872,7 @@ impl TestCommand {
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),
             worker_ipc_file_idx: None,
+            worker_stands_for_one_process: false,
             test_failure: None,
             failures_to_repeat_buf: Vec::new(),
             skips_to_repeat_buf: Vec::new(),
@@ -4541,6 +4554,9 @@ impl TestCommand {
                 if let Some(code) = left_by_workers.exit_code {
                     vm.exit_handler.exit_code = code;
                 }
+                if left_by_workers.bailed_out {
+                    reporter.bail_out(vm);
+                }
             }
             if !ran_parallel {
                 Self::run_all_tests(&mut reporter, vm, test_files);
@@ -5100,7 +5116,7 @@ impl TestCommand {
                 file_prefix,
                 repeat_count,
                 repeat_index,
-                reporter.worker_ipc_file_idx.is_some(),
+                reporter.worker_ipc_file_idx.is_some() && !reporter.worker_stands_for_one_process,
                 &reporter.reporters,
             );
 
@@ -5217,7 +5233,10 @@ impl TestCommand {
 
             let _ = vm.global().handle_rejected_promises();
 
-            if Output::is_github_action() && reporter.worker_ipc_file_idx.is_none() {
+            if Output::is_github_action()
+                && (reporter.worker_ipc_file_idx.is_none()
+                    || reporter.worker_stands_for_one_process)
+            {
                 pretty_errorln!("<r>\n::endgroup::\n");
                 Output::flush();
             }

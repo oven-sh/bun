@@ -10,6 +10,7 @@ import {
   socketOptionsCell,
   socketsCell,
   standardBlobCell,
+  targetsOfEventsCell,
   timelineHandlerCell,
   timerArgumentsCell,
   timerCallbackCell,
@@ -1918,13 +1919,22 @@ export default b.declarations(
       readsStateBeforeConversions: true,
     }),
     removeEventListener: () => ({ ...listenerRemoval, uses: { this: b.inspected, ...listenerRemoval.uses } }),
-    // The listeners that were added earlier run, with the event and the target.
-    dispatchEvent: () => ({
+    // The listeners that were added earlier run, with the event and the target, and the event keeps the target.
+    // What stands for the global object there is an object of the host.
+    dispatchEvent: (eventTarget: b.TableType) => ({
       args: { event: b.object },
       returns: b.bool,
       capability: "js",
       throws: true,
-      uses: { this: [b.retained], event: [b.retained] },
+      uses: {
+        this: [
+          b.retained,
+          eventTarget === receiver
+            ? b.storedIn(b.nativeCell(targetsOfEventsCell))
+            : b.createdIn(b.object, b.nativeCell(targetsOfEventsCell)),
+        ],
+        event: [b.retained],
+      },
       reads: externalState,
       writes: externalState,
     }),

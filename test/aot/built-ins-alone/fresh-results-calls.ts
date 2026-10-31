@@ -465,6 +465,7 @@ export const notCalled: Record<string, string> = {
   "%CompilerHelpers%.arrayFromLength": ofTheCompiler,
   "%CompilerHelpers%.arrayOfUndefined": ofTheCompiler,
   "%CompilerHelpers%.filledArray": ofTheCompiler,
+  "%CompilerHelpers%.importRejectedByLoader": ofTheCompiler,
   "%CompilerHelpers%.jsonSourceOfBody": ofTheCompiler,
   "%CompilerHelpers%.mappedFilledArray": ofTheCompiler,
   "%CompilerHelpers%.newResponseFromParts": ofTheCompiler,

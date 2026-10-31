@@ -64,6 +64,8 @@ pub(crate) struct Coordinator<'a> {
     /// from concurrent workers interleave; whenever the source file changes the
     /// header is re-emitted so every line has visible context. None at start.
     pub(crate) last_header_idx: Option<u32>,
+    /// Where the run ends as in one process: the file that the worker has begun. It has printed the header itself.
+    pub(crate) header_printed_by_worker: Option<u32>,
     pub frame: Frame,
     pub(crate) parallel_limit: u32,
     /// A compiled run with `--timings` that say how much memory files took: no two files that took over a gigabyte run at once, and
@@ -392,7 +394,7 @@ impl<'a> Coordinator<'a> {
             envps: &self.envps,
             compiled_program: crate::cli::run_compiled::graph_descriptor(),
             programs_below: &[],
-            inherits_stdout: false,
+            inherits_output: false,
             #[cfg(windows)]
             windows_job: self.windows_job,
         }) {
@@ -770,11 +772,13 @@ impl<'a> Coordinator<'a> {
         self.stop_reason = Some(StopReason::Bail);
         self.end_builds();
         self.break_dots();
-        bun_core::pretty_error!(
-            "\nBailed out after {} failure{}<r>\n",
-            self.bail,
-            if self.bail == 1 { "" } else { "s" }
-        );
+        if !self.ends_as_in_one_process {
+            bun_core::pretty_error!(
+                "\nBailed out after {} failure{}<r>\n",
+                self.bail,
+                if self.bail == 1 { "" } else { "s" }
+            );
+        }
         Output::flush();
         // Reachable from on_frame/account_crash with the caller's
         // `w: &mut Worker` still live and used afterward; iter_mut() here
@@ -823,7 +827,8 @@ impl<'a> Coordinator<'a> {
     }
 
     fn ensure_header(&mut self, file_idx: u32) {
-        if self.last_header_idx == Some(file_idx) {
+        if self.last_header_idx == Some(file_idx) || self.header_printed_by_worker == Some(file_idx)
+        {
             return;
         }
         self.end_group();
@@ -882,7 +887,10 @@ impl<'a> Coordinator<'a> {
             }
             frame::Kind::FileStart => {
                 log_first_time_in_test_run("the first test file has begun");
-                let _ = rd.u32();
+                let idx = rd.u32();
+                if self.ends_as_in_one_process {
+                    self.header_printed_by_worker = Some(idx);
+                }
             }
             frame::Kind::TestDone => {
                 log_first_time_in_test_run("the first result is there");
@@ -1052,7 +1060,18 @@ impl<'a> Coordinator<'a> {
             reservation.file_starts(w.idx as usize, record, is_heavy);
         }
         let file = self.files[idx as usize].as_bytes();
-        w.dispatch(&mut self.frame, idx, file, self.exit_code_left_by_tests);
+        let failures_until_bail = match self.ends_as_in_one_process {
+            true => self.bail.saturating_sub(self.reporter.jest.summary.fail),
+            false => 0,
+        };
+        w.dispatch(
+            &mut self.frame,
+            idx,
+            file,
+            self.exit_code_left_by_tests,
+            self.ends_as_in_one_process,
+            failures_until_bail,
+        );
     }
 
     pub(crate) fn on_worker_exit(&mut self, w: &mut Worker, status: SpawnStatus, peak_rss_mb: u32) {
@@ -1248,7 +1267,7 @@ impl<'a> Coordinator<'a> {
                 envps: &self.envps,
                 compiled_program: crate::cli::run_compiled::graph_descriptor(),
                 programs_below: &[],
-                inherits_stdout: false,
+                inherits_output: false,
                 #[cfg(windows)]
                 windows_job: self.windows_job,
             }) {
@@ -1802,7 +1821,7 @@ impl<'a> Coordinator<'a> {
             envps: &self.envps,
             compiled_program,
             programs_below: &programs_below,
-            inherits_stdout: self.parallel_limit == 1,
+            inherits_output: self.ends_as_in_one_process,
             #[cfg(windows)]
             windows_job: self.windows_job,
         }) {

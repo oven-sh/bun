@@ -116,6 +116,7 @@ struct SyntaxWithHelpers {
     generators: Vec<u32>,
     /// Async functions, `await` and `import()`.
     promises: Vec<u32>,
+    import_calls: Vec<u32>,
     /// `for (.. of ..)`, `[...list]`, `[a, b] = list`, `yield* list`
     iterations: Vec<u32>,
 }
@@ -128,6 +129,8 @@ impl SyntaxWithHelpers {
         let awaited = hir.exprs.iter();
         let awaited = awaited
             .filter(|it| matches!(it.kind, ExprKind::Await(_) | ExprKind::ImportCall { .. }));
+        let import_calls = hir.exprs.iter();
+        let import_calls = import_calls.filter(|it| matches!(it.kind, ExprKind::ImportCall { .. }));
         let awaiting_loops = hir.stmts.iter();
         let awaiting_loops =
             awaiting_loops.filter(|it| matches!(it.kind, StmtKind::ForOf { is_await: true, .. }));
@@ -156,6 +159,7 @@ impl SyntaxWithHelpers {
                 .chain(awaited.map(|it| it.pos))
                 .chain(awaiting_loops.map(|it| it.start))
                 .collect(),
+            import_calls: import_calls.map(|it| it.pos).collect(),
             iterations: expressions
                 .map(|it| it.pos)
                 .chain(statements.map(|it| it.start))
@@ -167,6 +171,7 @@ impl SyntaxWithHelpers {
             disposed_resources,
             generators,
             promises,
+            import_calls,
             iterations,
         } = &mut syntax;
         for positions in [
@@ -174,6 +179,7 @@ impl SyntaxWithHelpers {
             disposed_resources,
             generators,
             promises,
+            import_calls,
             iterations,
         ] {
             positions.sort_unstable();
@@ -268,6 +274,7 @@ pub(super) struct ResolverOutput {
     pub(super) iterates: bool,
     pub(super) has_generator: bool,
     pub(super) makes_promise: bool,
+    pub(super) imports_by_call: bool,
     pub(super) evaluated_texts: Vec<EvaluatedText>,
     pub(super) module_object_mentions: Vec<ModuleObjectMention>,
     pub(super) stores_with_module_exports: Vec<ExprId>,
@@ -711,6 +718,7 @@ impl<'a, 's> Resolver<'a, 's> {
         output.disposes_resource = is_any_within(&syntax.disposed_resources, self.within);
         output.has_generator = is_any_within(&syntax.generators, self.within);
         output.makes_promise = is_any_within(&syntax.promises, self.within);
+        output.imports_by_call = is_any_within(&syntax.import_calls, self.within);
         output.iterates = is_any_within(&syntax.iterations, self.within);
     }
 
@@ -738,6 +746,7 @@ impl<'a, 's> Resolver<'a, 's> {
             iterates: output.iterates,
             has_generator: output.has_generator,
             makes_promise: output.makes_promise,
+            imports_by_call: output.imports_by_call,
             is_of_program: input.dialect == SourceDialect::Program,
             is_served_by_other_images,
         };

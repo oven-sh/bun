@@ -37,6 +37,7 @@ BunUdpSocket/0: it is not called: it blocks, starts a process or opens a socket
 CompilerHelpersDefinePropertiesFrom/0: it is not called: it works on the instance of a compiled program, and this process has none
 CompilerHelpersGetAsyncDisposeMethod/0: it is not called: this realm does not have it
 CompilerHelpersGetDisposeMethod/0: it is not called: this realm does not have it
+CompilerHelpersImportRejectedByLoader/0: it is not called: it is written with the intrinsics that make and settle promises, and only compiled code has those
 CompilerHelpersOwnEntriesFlat/0: it is not called: it works on the instance of a compiled program, and this process has none
 CompilerHelpersPlainQueryEntries/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 CompilerHelpersPlainQueryKeys/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust

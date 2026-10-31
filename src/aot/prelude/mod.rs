@@ -7,6 +7,7 @@ pub const FILES: &[(&str, &str)] = &[
         "iterator-consumers.ts",
         include_str!("iterator-consumers.ts"),
     ),
+    ("rejected-imports.ts", include_str!("rejected-imports.ts")),
     ("written-lists.ts", include_str!("written-lists.ts")),
 ];
 

@@ -1,15 +1,15 @@
 // What `bun fmt` prints for conditionals of arrow functions in TypeScript, judged by tsc's own parser: it has to read
-// the text as it reads the source. See `is_read_as_return_type` in src/format/js/print/parameters.rs.
+// the text as it reads the source. See `names_read_as_return_type` in src/format/js/utils/conditional.rs.
 //
-//   node judge.mjs --modules=<dir> --bun=<bun> [--main=<bun>] [--matrix [--jsx] | --values | --sites | --comments]
-//     [--bare] [--always] [--count=5000] [--seed=1] [--width=80,40] [--experimental-ternaries] [--oxfmt]
-//     [--babel-ts] [--show=5]
+//   node judge.mjs --modules=<dir> --bun=<bun> [--main=<bun>] [--matrix [--jsx] | --values | --sites | --paths |
+//     --comments | --file=<json>] [--bare] [--always] [--count=5000] [--seed=1] [--width=80,40]
+//     [--experimental-ternaries] [--oxfmt] [--babel-ts] [--reader=<program>] [--show=5]
 //
 // - `--modules`: a directory with node_modules/prettier and node_modules/typescript, and node_modules/esbuild for the
-//   counts about esbuild and Node. The rule was checked with Prettier 3.9.9, TypeScript 6.0.2, esbuild 0.21.5 and
+//   counts about esbuild and Node. The rule was checked with Prettier 3.9.9, TypeScript 6.0.2, esbuild 0.18.6 and
 //   Node 26.3.0.
-// - `--main`: a build of main. A text that it prints as `--bun` does is not counted as `broken`, `pairs` or
-//   `unstable`: there Bun differs from Prettier for another reason. Without it, random sources with
+// - `--main`: a build of main. A text that it prints as `--bun` does is not counted as `broken`, `pairs`, `silenced`
+//   or `unstable`: there Bun differs from Prettier for another reason. Without it, random sources with
 //   `<T>function () {}` in them count as `pairs`.
 // - `--matrix`: instead of random sources, every pair of an operand before the `:` and one after it, in ten
 //   positions, with every parameter in parentheses.
@@ -21,8 +21,12 @@
 // - `--sites`: conditionals after a `( .. )` and a `:` that the rule does not cover: `case (a, b):`, a `yield`,
 //   `() => async(q)`, `<U>(a, b)`, a conditional under `// prettier-ignore`. Parentheses that tsc does not need can
 //   change how it reads the text after such a `:`.
+// - `--paths`: the conditional of the rule at the end of what follows the `:` of another conditional, through arrow
+//   functions, conditionals, an assignment, brackets and a block. With `(d) =>` kept in it, tsc can read on from a
+//   `( .. )` before that other `:`: the rule keeps nothing there.
 // - `--comments`: every pair of the matrix with a comment in one place: before and after each operand, in the
 //   parentheses that end the first one, before a `=>`, as `// prettier-ignore` and as a JSDoc type cast.
+// - `--file`: instead of generated sources, the sources in a file: a JSON array of texts.
 // - `--always`: with the default `arrowParens: "always"` instead of "avoid".
 // - `--width`: one print width or several. The counts are summed.
 // - `--oxfmt`: Bun formats in the flavor of oxfmt. The counts are still about what Prettier prints, and oxfmt puts
@@ -30,21 +34,39 @@
 // - `--babel-ts`: the files are `.js`, read with the parser `babel-ts`, which keeps JSDoc type casts. The parser of
 //   `bun fmt` reads no return type before the `:` of a conditional in a `.js` file, so it reads some sources as
 //   another program and refuses others, on main too: use `--main`, and compare `refused` with a run of main.
+// - `--reader`: a program that reads the texts in place of the `typescript` package. It gets the directory of
+//   `--modules` as its argument and a JSON array of `{ text, ext }` on standard input, and prints one
+//   `{ diags, shape }` for each: the messages of the syntax errors, and the tree without parentheses.
+//   typescript7.mjs in this directory reads with the native TypeScript. The rule was also checked with TypeScript's
+//   parser in Go at the head of microsoft/TypeScript#64233, which gives up a return type if the reading ends in a
+//   syntax error. Such a tree has the white space between the children of an element: not for `--jsx`.
 //
-// A source that tsc reports a syntax error for is left out. Of the others it counts, and shows a few of each:
+// A source that tsc reports a syntax error for is left out, and with `--reader` one that either reader reports one
+// for. Of the others it counts, and shows a few of each:
 //
 // - `broken`: tsc reads what Prettier prints as the source, and what Bun prints as another program or as a syntax
 //   error. There must be none.
 // - `pairs`: it reads both as the source, and Bun prints something else than Prettier: parentheses that tsc does not
 //   need. There must be none. `broken` can only come from such parentheses.
+// - `silenced`: tsc reports a syntax error for what Prettier prints, and reads what Bun prints as another program
+//   with no error. With `--main`, only where main prints what Prettier prints: in a `.js` file, main prints
+//   `async<U>(q)` as `async < U > q`, and that is the other program. There must be none.
 // - `repaired`: it reads what Bun prints as the source, and what Prettier prints as something else.
+// - `kept`: Bun prints something else than Prettier. With `--main`: and than main.
 // - `left`: it reads neither as the source. The rule keeps parentheses only in the shape of
-//   `a ? b => ({ c }) : (d) => (e): T => f`. It leaves `a ? () => ({}) : c => c`, which is a syntax error for tsc
-//   (microsoft/TypeScript#64231).
-// - `unstable`: formatting what Bun prints changes it, and Prettier does not change what it printed itself. There must
-//   be none.
+//   `a ? b => ({ c }) : (d) => (e): T => f`, before a return type that is one name. It leaves
+//   `a ? () => ({}) : c => c` and `a ? b => ({ c }) : d => (e): Promise<T> => f`, for which tsc reports a syntax
+//   error, and which the parser of microsoft/TypeScript#64233 reads as the source. `refusedAgain` and `changedAgain`
+//   are what a second run of Bun does with them: it reports the syntax error, or it prints the program that tsc
+//   reads. With `--main`, `anew` are the ones that main prints in another way: the parentheses that Bun keeps are
+//   right for one conditional, and tsc misreads another one. `againNotAsOnMain` are the ones that main prints in
+//   the same way and formats again in another way. There must be none.
+// - `unstable`: tsc reads what Bun prints as the source, and formatting that changes it. Where Bun prints what
+//   Prettier prints, and Prettier changes that on a second run, it is not counted. There must be none.
 // - `refused`: `bun fmt` reports an error for a source, or for what it or Prettier prints for one where tsc reads
 //   that as the source. There must be none. A source that it refuses is not in the other counts.
+// - `refusedAnew`: with `--main`, `bun fmt` reports an error for what it prints, and main reports none for what
+//   main prints. There must be none.
 // - `leftToEsbuild`: esbuild reads the source, and reports a syntax error for what Bun prints.
 // - `node`: for the sources where Bun prints something else than Prettier, how Node's type stripping reads each text:
 //   as the `source`, as some `other` program, or as an `error`. Its `broken` is the sources where it reads what
@@ -78,8 +100,8 @@ const widths = String(named.width ?? 80)
 const extension = "jsx" in named ? "tsx" : "babel-ts" in named ? "js" : "ts";
 const oneLine = text => text.trim().replace(/\s+/g, " ");
 
-/** The tree without parentheses, or the first syntax error. */
-function read(text) {
+/** The tree without parentheses, or the first syntax error, as the `typescript` package reads `text`. */
+function readWithTypeScript(text) {
   const file = ts.createSourceFile(extension === "tsx" ? "a.tsx" : "a.ts", text, ts.ScriptTarget.Latest, true);
   if (file.parseDiagnostics.length)
     return `error: ${ts.flattenDiagnosticMessageText(file.parseDiagnostics[0].messageText, " ")}`;
@@ -101,6 +123,8 @@ function read(text) {
     }
     // The line breaks and the indentation that Prettier puts between the children of an element are no text.
     if (ts.isJsxText(node)) return node.containsOnlyTriviaWhiteSpaces ? "" : oneLine(node.getText());
+    // Prettier removes the `;` after `case a: { k: b };`.
+    if (ts.isEmptyStatement(node)) return "";
     const children = [];
     node.forEachChild(child => {
       const text = shape(child);
@@ -109,6 +133,40 @@ function read(text) {
     return children.length ? `${ts.SyntaxKind[node.kind]}(${children.join(" ")})` : node.getText();
   };
   return file.statements.map(shape).join(" ");
+}
+
+const readings = new Map();
+/** Reads the texts that have no reading yet, with `--reader` if there is one. */
+function readAll(texts) {
+  const fresh = Array.from(new Set(texts)).filter(text => typeof text === "string" && !readings.has(text));
+  if (!named.reader) {
+    for (const text of fresh) readings.set(text, readWithTypeScript(text));
+    return;
+  }
+  // One run for every 20,000 texts keeps its input and output below what a string can hold.
+  for (let start = 0; start < fresh.length; start += 20000) {
+    const texts = fresh.slice(start, start + 20000);
+    // A script runs with this Node.
+    const reader = resolve(named.reader);
+    const command = reader.endsWith(".mjs") ? [process.execPath, reader] : [reader];
+    const run = spawnSync(command[0], [...command.slice(1), resolve(named.modules)], {
+      input: JSON.stringify(texts.map(text => ({ text, ext: extension === "tsx" ? "tsx" : "ts" }))),
+      encoding: "utf8",
+      maxBuffer: 2 ** 30,
+    });
+    if (run.error || run.status !== 0)
+      throw run.error ?? new Error(`the reader ended with ${run.status}: ${run.stderr}`);
+    JSON.parse(run.stdout).forEach(({ diags, shape }, index) => {
+      // As above, an empty statement is nothing.
+      const tree = shape.replace(/ (?:Kind)?EmptyStatement ;/g, "");
+      readings.set(texts[index], diags.length ? `error: ${diags[0]}` : tree);
+    });
+  }
+}
+/** The tree without parentheses, or the first syntax error. */
+function read(text) {
+  if (!readings.has(text)) readAll([text]);
+  return readings.get(text);
 }
 
 let state = Number(named.seed ?? 1) >>> 0;
@@ -262,6 +320,14 @@ function matrix() {
     ..."async((q, r))|async(q = r, s)|async(q as T)|async(q.r = s)".split("|"),
     ..."(() => ({}))|((q) => ({ c: q }))|() => (({}))".split("|"),
     ..."b ? c : () => ({})|b ? c : d ? e : () => ({})|b ? (q) => ({}) : () => ({ c: q })".split("|"),
+    // What tsc reads as parameters, and what it does not: a pattern after `...` in an object, a default in a target.
+    ..."(q) => ({ ...[...a] })|(q) => ({ ...{ a } })|(q) => ({ a: [b, , ...c], ...d })|(q) => ({ a: b = 1 })".split(
+      "|",
+    ),
+    ..."({ a = 1 } = r)|([a = 1] = r)|(q) => ({ a = 1 } = r)|(q) => ([a = 1, { b: c = 2 }] = r)".split("|"),
+    // A body that loses its parentheses when it breaks, and conditionals with a `( .. ) :` of their own.
+    ..."(q) => (b ? c : (x, y))|b ? (x, y) : (inner) => ({ q })|b ? (inner) => ({ q }) : (x, y)".split("|"),
+    ..."b ? (q) => ({ q }) : (s) => f(s)|(this, r)".split("|"),
   ];
   const after = [
     ..."(x) => x|(x) => (y) => 1|(x) => (id): T => 1|(x) => (y) => (id): T => 1|() => (y) => (id): T => 1".split("|"),
@@ -290,6 +356,22 @@ function matrix() {
     "{ m: (x) => x.d, n() { return 1; } }",
     "{ fetch: async (x) => load(x), reset() { return 1; } }",
     "(s: S) => ({ on: async (x) => { if (!x) { return; } await s.save(x); } })",
+    // Return types that are no single name: tsc reports a syntax error for what Prettier prints.
+    ..."(x) => (id): Promise<T> => 1|(x) => (id): void => 1|(x) => (id): T[] => 1|(x) => (id): A.B => 1".split("|"),
+    ...["(x) => (id): T | U => 1", "(x) => (id): id is T => true", "(x) => (id): string => 1"],
+    // Other heads before and with the return type.
+    ..."(a, b) => (d) => (id): T => 1|(x) => async (g) => (e): T => 1|(x) => (e = 1): T => 1".split("|"),
+    ..."(x) => (id, key: U): T => 1|(x) => (id, ...rest): T => 1|(x) => (id, key?): T => 1".split("|"),
+    ..."(x) => ({ id }): T => 1|(x) => (id, key): T => 1".split("|"),
+    `${Array.from({ length: 20 }, (_, index) => `(n${index}) => `).join("")}(id): T => 1`,
+    // A return type right after the `:`, and conditionals that end an arrow function after it: tsc can read on.
+    ..."(id): T => 1|(x) => t ? () => ({}) : (y) => (id): T => 1|(x) => t ? (q) => ({ q }) : (y) => (id): T => 1".split(
+      "|",
+    ),
+    ..."(x) => t ? u : (y) => (id): T => 1|(a: U) => t ? () => ({}) : (y) => (id): T => 1".split("|"),
+    ..."(x) => () => t ? () => ({}) : (y) => (id): T => 1|() => (y) => t ? (q) => ({ q }) : (z) => (id): T => 1".split(
+      "|",
+    ),
   ];
   const around = [
     (b, a) => `cond ? ${b} : ${a}`,
@@ -431,7 +513,7 @@ function sitesMatrix() {
   ];
   const after = [
     ..."b2 < null|(y) => y|[v]|{ m() {} }|(y) => (id): T => y|(y) => (z) => (id, w): T => y|new A()".split("|"),
-    ...["await2", "v << w", "v | w"],
+    ...["await2", "v << w", "v | w", "(y) => (id): Promise<T> => y"],
   ];
 
   const around = [
@@ -458,6 +540,39 @@ function sitesMatrix() {
     for (const test of tests) {
       for (const b of before) {
         for (const a of after) for (const make of around) sources.push(`${site(make(`${test} ? ${b} : ${a}`))}\n`);
+      }
+    }
+  }
+  return sources;
+}
+
+/** The conditional of the rule at the end of what follows the `:` of another conditional, where tsc can read on. */
+function pathsMatrix() {
+  const outerBefore = [
+    ..."(a, b)|(q) => ({ q })|() => ({})|async(q)|z|(b = 1)|<U>(a, b)|(q) => [q]|(p: T) => ({})".split("|"),
+  ];
+  const paths = [
+    ...[c => `(y) => ${c}`, c => `(y) => (z) => ${c}`, c => `(y) => t2 ? u : ${c}`, c => `t2 ? u : (y) => ${c}`],
+    ...[c => `(y) => t2 ? (k) => ({ k }) : ${c}`, c => `(y) => (a1: T) => ${c}`, c => `(a1: T) => (y) => ${c}`],
+    ...[c => `(y) => async (z) => ${c}`, c => `async (y) => ${c}`, c => `(y) => (z = ${c})`, c => `(y) => (${c})`],
+    ...[c => `(y) => [${c}]`, c => `(y, z) => ${c}`, c => `(y) => (z, w) => ${c}`, c => `() => (y) => ${c}`],
+    ...[c => `(y) => () => ${c}`, c => `(y) => ({ z }) => ${c}`, c => `(y) => (z): U => ${c}`, c => `(y) => z = ${c}`],
+    ...[c => `(y) => t2 ? () => ({}) : (z) => ${c}`, c => `(y) => t2 ? (x2, y2) : t3 ? u : ${c}`],
+    ...[c => `(y) => { return ${c}; }`, c => `(y) => f(${c})`],
+  ];
+  const before = "() => ({})|(q) => ({ q })|(c: T) => ({})|(m, n)|async (q) => ({ q })".split("|");
+  const after = "(d) => (e): T => f|(d) => (g) => (e): T => f|(d) => (e, h): T => { return 1; }".split("|");
+  const statements = [
+    ...[c => `x = ${c};`, c => `x = p ? (${c}) : z;`, c => `f(${c}, (s) => s);`, c => `const v = p ? w : ${c};`],
+  ];
+  const sources = [];
+  for (const outer of outerBefore) {
+    for (const path of paths) {
+      for (const b of before) {
+        for (const a of after) {
+          for (const statement of statements)
+            sources.push(`${statement(`c6 ? ${outer} : ${path(`t ? ${b} : ${a}`)}`)}\n`);
+        }
       }
     }
   }
@@ -575,19 +690,28 @@ const countsNode = esbuild != null && extension === "ts" && typeof module.stripT
 // `(x) =>` as `x =>`.
 const bared = source => source.replace(/\((\w+)\) =>/g, "$1 =>");
 const generated =
-  "values" in named
-    ? valuesMatrix()
-    : "sites" in named
-      ? sitesMatrix()
-      : "comments" in named
-        ? commentsMatrix()
-        : "jsx" in named
-          ? jsxMatrix()
-          : "matrix" in named
-            ? matrix()
-            : random_sources();
+  "file" in named
+    ? JSON.parse(fs.readFileSync(named.file, "utf8"))
+    : "values" in named
+      ? valuesMatrix()
+      : "sites" in named
+        ? sitesMatrix()
+        : "paths" in named
+          ? pathsMatrix()
+          : "comments" in named
+            ? commentsMatrix()
+            : "jsx" in named
+              ? jsxMatrix()
+              : "matrix" in named
+                ? matrix()
+                : random_sources();
 const made = "bare" in named ? generated.map(bared) : generated;
-const sources = made.filter(source => !read(source).startsWith("error: "));
+readAll(made);
+// Prettier reads the source with the `typescript` package, so a source is one that both readers read.
+const isRead = source =>
+  !read(source).startsWith("error: ") && !(named.reader && readWithTypeScript(source).startsWith("error: "));
+const sources = made.filter(isRead);
+const sourceSet = new Set(sources);
 
 async function judge(printWidth) {
   const byPrettier = text =>
@@ -597,16 +721,21 @@ async function judge(printWidth) {
   // Where main prints the same text, a difference from Prettier is not from this rule.
   const isAsOnMain = index => byMain[index] != null && byMain[index] === ours[index];
   const theirs = await Promise.all(sources.map(byPrettier));
+  readAll([...ours, ...theirs]);
   const again = format(ours, printWidth);
+  const againByMain = named.main ? format(byMain, printWidth, named.main) : [];
   // Bun reads what Prettier prints, where tsc reads that as the source.
   const theirsAgain = format(
     theirs.map((text, index) => (text != null && read(text) === read(sources[index]) ? text : null)),
     printWidth,
   );
 
-  const counts = { sources: sources.length, broken: 0, pairs: 0, repaired: 0, left: 0, unstable: 0, leftToEsbuild: 0 };
+  const counts = { sources: sources.length, broken: 0, pairs: 0, silenced: 0, repaired: 0, kept: 0 };
+  Object.assign(counts, { left: { all: 0, anew: 0, refusedAgain: 0, changedAgain: 0, againNotAsOnMain: 0 } });
+  Object.assign(counts, { unstable: 0, refusedAnew: 0, leftToEsbuild: 0 });
   const node = { broken: 0, ours: { source: 0, other: 0, error: 0 }, theirs: { source: 0, other: 0, error: 0 } };
-  const shown = { broken: [], pairs: [], left: [], unstable: [], leftToEsbuild: [], brokenForNode: [] };
+  const shown = { broken: [], pairs: [], silenced: [], leftAnew: [], againNotAsOnMain: [], left: [], unstable: [] };
+  Object.assign(shown, { refusedAnew: [], leftToEsbuild: [], brokenForNode: [] });
   const refused = new Set();
   const changed = [];
   sources.forEach((source, index) => {
@@ -624,16 +753,39 @@ async function judge(printWidth) {
         shown.broken.push(`${both}\n    ${read(ours[index]).slice(0, 80)}`);
       }
     } else if (!isRight) {
-      counts.left++;
+      counts.left.all++;
       shown.left.push(both);
+      if (again[index] == null) counts.left.refusedAgain++;
+      else if (again[index] !== ours[index]) counts.left.changedAgain++;
+      if (isAsOnMain(index)) {
+        if (again[index] !== againByMain[index]) {
+          counts.left.againNotAsOnMain++;
+          shown.againNotAsOnMain.push(`${both}\n    ${oneLine(again[index] ?? "an error")}`);
+        }
+      } else if (named.main) {
+        counts.left.anew++;
+        shown.leftAnew.push(both);
+      }
+      // Where main prints another text than Prettier, the parentheses are not the only difference.
+      const isOnlyTheRule = !isAsOnMain(index) && (!named.main || byMain[index] === theirs[index]);
+      const isSilent = !read(ours[index]).startsWith("error: ");
+      if (isSilent && theirs[index] != null && read(theirs[index]).startsWith("error: ") && isOnlyTheRule) {
+        counts.silenced++;
+        shown.silenced.push(both);
+      }
     } else if (!isRightByPrettier) counts.repaired++;
     else if (ours[index] !== theirs[index] && !isAsOnMain(index)) {
       counts.pairs++;
       shown.pairs.push(`${oneLine(theirs[index])}\n    ${oneLine(ours[index])}`);
     }
+    if (theirs[index] != null && ours[index] !== theirs[index] && !isAsOnMain(index)) counts.kept++;
     if (again[index] == null) {
       if (isRight) refused.add(ours[index]);
-    } else if (again[index] !== ours[index] && !isAsOnMain(index)) changed.push(index);
+      if (named.main && againByMain[index] !== null) {
+        counts.refusedAnew++;
+        shown.refusedAnew.push(both);
+      }
+    } else if (isRight && again[index] !== ours[index] && !isAsOnMain(index)) changed.push(index);
     if (theirsAgain[index] === null) refused.add(theirs[index]);
     if (esbuild && refusedByEsbuild(ours[index]) && !refusedByEsbuild(source)) {
       counts.leftToEsbuild++;
@@ -658,7 +810,7 @@ async function judge(printWidth) {
   // Prettier changes some of its own texts on a second run, and so does Bun then: `<T>(((a: T) => ({})))`.
   await Promise.all(
     changed.map(async index => {
-      if (theirs[index] != null && (await byPrettier(theirs[index])) !== theirs[index]) return;
+      if (ours[index] === theirs[index] && (await byPrettier(theirs[index])) !== theirs[index]) return;
       counts.unstable++;
       shown.unstable.push(`${oneLine(ours[index])}\n    ${oneLine(again[index])}`);
     }),
@@ -668,10 +820,16 @@ async function judge(printWidth) {
     for (const text of texts.slice(0, Number(named.show ?? 5))) console.log(`${kind}: ${text}`);
   const result = { width: printWidth, ...counts, refused: refused.size, ...(countsNode ? { node } : {}) };
   console.log(JSON.stringify(result));
+  // The next width has other texts.
+  for (const text of [...ours, ...theirs, ...again]) if (!sourceSet.has(text)) readings.delete(text);
   return result;
 }
 
 for (const printWidth of widths) {
-  const { broken, pairs, unstable, refused, node } = await judge(printWidth);
-  if (broken || pairs || unstable || refused || node?.broken) process.exitCode = 1;
+  const { broken, pairs, silenced, left, unstable, refused, refusedAnew, node } = await judge(printWidth);
+  // The parser of `bun fmt` reports the syntax errors of tsc, which another reader may not report. In a `.js` file it
+  // reads no return type before the `:` of a conditional, on main too.
+  const isRefused = refusedAnew > 0 || (refused > 0 && !named.reader && !("babel-ts" in named));
+  if (broken || pairs || silenced || left.againNotAsOnMain || unstable || isRefused || node?.broken)
+    process.exitCode = 1;
 }

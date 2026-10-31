@@ -979,9 +979,15 @@ describe.concurrent("bun fmt", () => {
     // flags if they aren't `--arrow-parens=avoid`, and the extension if it isn't `ts`.
     type Row = [name: string, text: string, printed: string, byPrettier: string, flags?: string[], ext?: string];
     type Same = [name: string, text: string, printed: string, flags?: string[], ext?: string];
+    // What a second `bun fmt` does with what is printed: it reports a syntax error, it prints the program that tsc
+    // reads, or it leaves the text, which Bun's own parser reads as the input.
+    type Again = "refused" | "changed" | "unchanged";
+    type Known = [name: string, text: string, printed: string, again: Again, flags?: string[], ext?: string];
     const avoid = ["--arrow-parens=avoid"];
 
-    // tsc 6.0.2 reads what Prettier prints for these as another program, or reports a syntax error.
+    // tsc reads what Prettier prints for these as another program. For three of them it reports a syntax error: after
+    // `() =>`, and where another `:` follows the conditional. The parser of microsoft/TypeScript#64233 reads another
+    // program there too.
     const repaired: Row[] = [
       [
         "after an arrow function that returns an object",
@@ -1026,6 +1032,12 @@ describe.concurrent("bun fmt", () => {
         "x = cond\n  ? q => ({ q } = r)\n  : deps =>\n      (id): T =>\n        y;\n",
       ],
       [
+        "after one that returns a destructuring assignment with a default",
+        "x = cond ? (q) => ({ a = 1, b: [c = 2] } = r) : (deps) => (id): T => y;\n",
+        "x = cond\n  ? q =>\n      ({\n        a = 1,\n        b: [c = 2],\n      } = r)\n  : (deps) =>\n      (id): T =>\n        y;\n",
+        "x = cond\n  ? q =>\n      ({\n        a = 1,\n        b: [c = 2],\n      } = r)\n  : deps =>\n      (id): T =>\n        y;\n",
+      ],
+      [
         "after one that returns an arrow function that returns an object",
         "x = cond ? (a) => (b) => ({ a, b }) : (deps) => (id): T => y;\n",
         "x = cond\n  ? a => b => ({ a, b })\n  : (deps) =>\n      (id): T =>\n        y;\n",
@@ -1056,16 +1068,22 @@ describe.concurrent("bun fmt", () => {
         "x = cond\n  ? (b = 1)\n  : deps =>\n      (id): T =>\n        y;\n",
       ],
       [
+        "after a destructuring assignment with a default",
+        "x = cond ? ({ a = 1 } = r) : (deps) => (id): T => y;\n",
+        "x = cond\n  ? ({ a = 1 } = r)\n  : (deps) =>\n      (id): T =>\n        y;\n",
+        "x = cond\n  ? ({ a = 1 } = r)\n  : deps =>\n      (id): T =>\n        y;\n",
+      ],
+      [
         "around each name before the return type",
         "x = cond ? (q) => ({ q }) : (a) => (b) => (id): T => y;\n",
         "x = cond\n  ? q => ({ q })\n  : (a) =>\n      (b) =>\n      (id): T =>\n        y;\n",
         "x = cond\n  ? q => ({ q })\n  : a =>\n      b =>\n      (id): T =>\n        y;\n",
       ],
       [
-        "around 16 names before the return type",
-        "x = cond ? (q) => ({ q }) : (n0) => (n1) => (n2) => (n3) => (n4) => (n5) => (n6) => (n7) => (n8) => (n9) => (n10) => (n11) => (n12) => (n13) => (n14) => (n15) => (id): T => y;\n",
-        "x = cond\n  ? q => ({ q })\n  : (n0) =>\n      (n1) =>\n      (n2) =>\n      (n3) =>\n      (n4) =>\n      (n5) =>\n      (n6) =>\n      (n7) =>\n      (n8) =>\n      (n9) =>\n      (n10) =>\n      (n11) =>\n      (n12) =>\n      (n13) =>\n      (n14) =>\n      (n15) =>\n      (id): T =>\n        y;\n",
-        "x = cond\n  ? q => ({ q })\n  : n0 =>\n      n1 =>\n      n2 =>\n      n3 =>\n      n4 =>\n      n5 =>\n      n6 =>\n      n7 =>\n      n8 =>\n      n9 =>\n      n10 =>\n      n11 =>\n      n12 =>\n      n13 =>\n      n14 =>\n      n15 =>\n      (id): T =>\n        y;\n",
+        "around each of 17 names before the return type",
+        "x = cond ? (q) => ({ q }) : (n0) => (n1) => (n2) => (n3) => (n4) => (n5) => (n6) => (n7) => (n8) => (n9) => (n10) => (n11) => (n12) => (n13) => (n14) => (n15) => (n16) => (id): T => y;\n",
+        "x = cond\n  ? q => ({ q })\n  : (n0) =>\n      (n1) =>\n      (n2) =>\n      (n3) =>\n      (n4) =>\n      (n5) =>\n      (n6) =>\n      (n7) =>\n      (n8) =>\n      (n9) =>\n      (n10) =>\n      (n11) =>\n      (n12) =>\n      (n13) =>\n      (n14) =>\n      (n15) =>\n      (n16) =>\n      (id): T =>\n        y;\n",
+        "x = cond\n  ? q => ({ q })\n  : n0 =>\n      n1 =>\n      n2 =>\n      n3 =>\n      n4 =>\n      n5 =>\n      n6 =>\n      n7 =>\n      n8 =>\n      n9 =>\n      n10 =>\n      n11 =>\n      n12 =>\n      n13 =>\n      n14 =>\n      n15 =>\n      n16 =>\n      (id): T =>\n        y;\n",
       ],
       [
         "before a return type after two names",
@@ -1074,10 +1092,16 @@ describe.concurrent("bun fmt", () => {
         "x = cond\n  ? q => ({ q })\n  : deps =>\n      (id, key): T =>\n        y;\n",
       ],
       [
+        "before a return type that is a keyword",
+        "x = cond ? (q) => ({ q }) : (deps) => (id): string => y;\n",
+        "x = cond\n  ? q => ({ q })\n  : (deps) =>\n      (id): string =>\n        y;\n",
+        "x = cond\n  ? q => ({ q })\n  : deps =>\n      (id): string =>\n        y;\n",
+      ],
+      [
         "before an `async` arrow function with the return type",
-        "x = cond ? (q) => ({ q }) : (deps) => async (id): Promise<T> => y;\n",
-        "x = cond\n  ? q => ({ q })\n  : (deps) =>\n      async (id): Promise<T> =>\n        y;\n",
-        "x = cond\n  ? q => ({ q })\n  : deps =>\n      async (id): Promise<T> =>\n        y;\n",
+        "x = cond ? (q) => ({ q }) : (deps) => async (id): Task => y;\n",
+        "x = cond\n  ? q => ({ q })\n  : (deps) =>\n      async (id): Task =>\n        y;\n",
+        "x = cond\n  ? q => ({ q })\n  : deps =>\n      async (id): Task =>\n        y;\n",
       ],
       [
         "before a return type and a block",
@@ -1086,16 +1110,22 @@ describe.concurrent("bun fmt", () => {
         "x = cond\n  ? q => ({ q })\n  : deps =>\n      (id): T => {\n        return y;\n      };\n",
       ],
       [
-        "before a return type that is no name, where tsc reports a syntax error for what Prettier prints",
-        "x = cond ? (q) => ({ q }) : (deps) => (id): Promise<T> => y;\n",
-        "x = cond\n  ? q => ({ q })\n  : (deps) =>\n      (id): Promise<T> =>\n        y;\n",
-        "x = cond\n  ? q => ({ q })\n  : deps =>\n      (id): Promise<T> =>\n        y;\n",
-      ],
-      [
         "before a comment after the return type",
         "x = cond ? (q) => ({ q }) : (deps) => (id): T => /* c */ y;\n",
         "x = cond\n  ? q => ({ q })\n  : (deps) =>\n      (id): T =>\n        /* c */ y;\n",
         "x = cond\n  ? q => ({ q })\n  : deps =>\n      (id): T =>\n        /* c */ y;\n",
+      ],
+      [
+        "after a comment before the arrow function",
+        "x = cond ? /* c */ (q) => ({ q }) : (deps) => (id): T => y;\n",
+        "x = cond\n  ? /* c */ q => ({ q })\n  : (deps) =>\n      (id): T =>\n        y;\n",
+        "x = cond\n  ? /* c */ q => ({ q })\n  : deps =>\n      (id): T =>\n        y;\n",
+      ],
+      [
+        "before a comment before the return type",
+        "x = cond ? (q) => ({ q }) : (deps) => (id /* c */): T => y;\n",
+        "x = cond\n  ? q => ({ q })\n  : (deps) =>\n      (id /* c */): T =>\n        y;\n",
+        "x = cond\n  ? q => ({ q })\n  : deps =>\n      (id /* c */): T =>\n        y;\n",
       ],
       [
         "in a conditional after the `:` of another one",
@@ -1108,25 +1138,6 @@ describe.concurrent("bun fmt", () => {
         "x = p ? cond ? (q) => ({ x }) : (deps) => (id): T => y : z;\n",
         "x = p\n  ? cond\n    ? q => ({ x })\n    : (deps) =>\n        (id): T =>\n          y\n  : z;\n",
         "x = p\n  ? cond\n    ? q => ({ x })\n    : deps =>\n        (id): T =>\n          y\n  : z;\n",
-      ],
-      [
-        "after an arrow function that ends a conditional, which has no parentheses because it breaks",
-        "x = a ? b ? c : (q) => ({ x }) : (deps) => (id): T => y;\n",
-        "x = a\n  ? b\n    ? c\n    : q => ({ x })\n  : (deps) =>\n      (id): T =>\n        y;\n",
-        "x = a\n  ? b\n    ? c\n    : q => ({ x })\n  : deps =>\n      (id): T =>\n        y;\n",
-      ],
-      [
-        "after one that ends a chain of conditionals",
-        "x = a ? b ? c : d ? e : (q) => ({ x }) : (deps) => (id): T => y;\n",
-        "x = a\n  ? b\n    ? c\n    : d\n      ? e\n      : q => ({ x })\n  : (deps) =>\n      (id): T =>\n        y;\n",
-        "x = a\n  ? b\n    ? c\n    : d\n      ? e\n      : q => ({ x })\n  : deps =>\n      (id): T =>\n        y;\n",
-      ],
-      [
-        "after one that ends a conditional, with --experimental-ternaries",
-        "x = a ? b ? c : (q) => ({ x }) : (deps) => (id): T => y;\n",
-        "x =\n  a ?\n    b ? c\n    : q => ({ x })\n  : (deps) =>\n      (id): T =>\n        y;\n",
-        "x =\n  a ?\n    b ? c\n    : q => ({ x })\n  : deps =>\n      (id): T =>\n        y;\n",
-        [...avoid, "--experimental-ternaries"],
       ],
       [
         "in the test of a `case`",
@@ -1147,6 +1158,22 @@ describe.concurrent("bun fmt", () => {
         "x = (\n  <i\n    a={\n      cond\n        ? q => ({ x })\n        : (deps) =>\n            (id): T =>\n              y\n    }\n  />\n);\n",
         "x = (\n  <i\n    a={\n      cond\n        ? q => ({ x })\n        : deps =>\n            (id): T =>\n              y\n    }\n  />\n);\n",
         avoid,
+        "tsx",
+      ],
+      [
+        "in a conditional with an element in it, with --experimental-ternaries",
+        "x = <i /> ? (q) => ({ x }) : (c) => (d): T => e;\n",
+        "x =\n  <i /> ?\n    q => ({ x })\n  : (c) =>\n      (d): T =>\n        e;\n",
+        "x =\n  <i /> ?\n    q => ({ x })\n  : c =>\n      (d): T =>\n        e;\n",
+        [...avoid, "--experimental-ternaries"],
+        "tsx",
+      ],
+      [
+        "after a conditional with an element in it, with --experimental-ternaries",
+        "x = a ? <i /> : b ? (q) => ({ x }) : (deps) => (id): T => y;\n",
+        "x =\n  a ? <i />\n  : b ? q => ({ x })\n  : (deps) =>\n      (id): T =>\n        y;\n",
+        "x =\n  a ? <i />\n  : b ? q => ({ x })\n  : deps =>\n      (id): T =>\n        y;\n",
+        [...avoid, "--experimental-ternaries"],
         "tsx",
       ],
       [
@@ -1179,6 +1206,11 @@ describe.concurrent("bun fmt", () => {
         "where the object has a default, which Prettier prints in parentheses",
         "x = cond ? (q) => ({ a: b = 1 }) : (deps) => (id): T => y;\n",
         "x = cond\n  ? q => ({ a: (b = 1) })\n  : deps =>\n      (id): T =>\n        y;\n",
+      ],
+      [
+        "where the object has an array after `...`",
+        "x = cond ? (q) => ({ ...[...a] }) : (deps) => (id): T => y;\n",
+        "x = cond\n  ? q => ({ ...[...a] })\n  : deps =>\n      (id): T =>\n        y;\n",
       ],
       [
         "where the sequence has an assignment, which Prettier prints in parentheses",
@@ -1308,6 +1340,12 @@ describe.concurrent("bun fmt", () => {
         "tsx",
       ],
       [
+        "in a conditional before the `:` that fits on the line, which has parentheses",
+        "export const reducer = enabled ? useImmer ? (draft) => ({ draft }) : (state) => reduceWithPlainObjects(state, initialAction) : fallbackReducerForDisabled;\n",
+        "export const reducer = enabled ? (useImmer ? draft => ({ draft }) : state => reduceWithPlainObjects(state, initialAction)) : fallbackReducerForDisabled;\n",
+        [...avoid, "--print-width=200"],
+      ],
+      [
         "that ends the conditional that is the test of another one",
         "x = (a ? b : (q) => ({ x })) ? c : (deps) => (id): T => y;\n",
         "x = (a ? b : q => ({ x }))\n  ? c\n  : deps =>\n      (id): T =>\n        y;\n",
@@ -1315,44 +1353,55 @@ describe.concurrent("bun fmt", () => {
     ];
 
     // Known issues: Bun prints what Prettier prints, and tsc reads that as another program or reports a syntax error.
-    // The rule is only for the text that it is sure about. `() => ({})` before `c => c` is microsoft/TypeScript#64231,
-    // which has a fix in review: if an upgrade of TypeScript makes it read a row right, move the row one table up.
-    const knownIssues: Same[] = [
+    // The rule keeps `(d) =>` only before a return type that is one name, in the shape above. There the parser of
+    // microsoft/TypeScript#64233 still reads another program. That pull request gives up a return type if the reading
+    // ends in a syntax error: it reads `a ? () => ({}) : c => c` and a return type like `Promise<T>` as the input.
+    // No issue of microsoft/TypeScript names the first of those: after `() =>` or `(a: T) =>`, tsc reads the body
+    // with a return type allowed again. If an upgrade of `typescript` or `typescript7` reads a row in another way, the
+    // test below fails: move the row then.
+    const knownIssues: Known[] = [
       [
-        "`() => ({})` before a name without parentheses, which is microsoft/TypeScript#64231",
+        "`() => ({})` before a name without parentheses",
         "x = a ? () => ({}) : (c) => c;\n",
         "x = a ? () => ({}) : c => c;\n",
+        "refused",
       ],
       [
         "a typed parameter before a name without parentheses",
         "x = cond ? (a: T) => ({ c: a }) : (y) => 1;\n",
         "x = cond ? (a: T) => ({ c: a }) : y => 1;\n",
+        "refused",
       ],
       [
         "`async () => ({})` before a name without parentheses",
         "x = cond ? async () => ({}) : (y) => y;\n",
         "x = cond ? async () => ({}) : y => y;\n",
+        "refused",
       ],
       [
         "`() => ({})` before `a < b` and another argument",
         "x = f(cond ? () => ({}) : a < b, (s) => s);\n",
         "x = f(cond ? () => ({}) : a < b, s => s);\n",
+        "unchanged",
       ],
       [
         "`() => ({})` before an array",
         "const v = cond ? () => ({}) : [(y) => y];\n",
         "const v = cond ? () => ({}) : [y => y];\n",
+        "unchanged",
       ],
       [
         "`() => ({})` before an object with an `async` arrow function and a method, with the default options",
         "x = mock ? () => ({}) : { fetch: async id => load(id), reset() { return 1; } };\n",
         "x = mock\n  ? () => ({})\n  : {\n      fetch: async (id) => load(id),\n      reset() {\n        return 1;\n      },\n    };\n",
+        "unchanged",
         [],
       ],
       [
         "`() => ({})` in a conditional with an element in it that fits on the line",
         "x = a ? () => ({}) : (deps) => <i />;\n",
         "x = a ? () => ({}) : deps => <i />;\n",
+        "refused",
         avoid,
         "tsx",
       ],
@@ -1360,77 +1409,220 @@ describe.concurrent("bun fmt", () => {
         "an object with a number, where tsc reports a syntax error",
         "x = cond ? (q) => ({ a: 1 }) : (deps) => (id): T => y;\n",
         "x = cond\n  ? q => ({ a: 1 })\n  : deps =>\n      (id): T =>\n        y;\n",
+        "unchanged",
+      ],
+      [
+        "an object with an object after `...`, where tsc reports a syntax error",
+        "x = cond ? (q) => ({ ...{ a } }) : (deps) => (id): T => y;\n",
+        "x = cond\n  ? q => ({ ...{ a } })\n  : deps =>\n      (id): T =>\n        y;\n",
+        "unchanged",
+      ],
+      [
+        "a sequence with `this`",
+        "x = cond ? (this, r) : (deps) => (id): T => y;\n",
+        "x = cond\n  ? (this, r)\n  : deps =>\n      (id): T =>\n        y;\n",
+        "changed",
+      ],
+      [
+        "a return type with type arguments",
+        "x = cond ? (q) => ({ q }) : (deps) => (id): Promise<T> => y;\n",
+        "x = cond\n  ? q => ({ q })\n  : deps =>\n      (id): Promise<T> =>\n        y;\n",
+        "refused",
+      ],
+      [
+        "a return type with type arguments after `async`",
+        "x = cond ? (q) => ({ q }) : (deps) => async (id): Promise<T> => y;\n",
+        "x = cond\n  ? q => ({ q })\n  : deps =>\n      async (id): Promise<T> =>\n        y;\n",
+        "refused",
+      ],
+      [
+        "the return type `void`",
+        "x = cond ? (q) => ({ q }) : (deps) => (id): void => y;\n",
+        "x = cond\n  ? q => ({ q })\n  : deps =>\n      (id): void =>\n        y;\n",
+        "refused",
+      ],
+      [
+        "a return type with a `.`",
+        "x = cond ? (q) => ({ q }) : (deps) => (id): A.B => y;\n",
+        "x = cond\n  ? q => ({ q })\n  : deps =>\n      (id): A.B =>\n        y;\n",
+        "refused",
       ],
       [
         "a pattern before the return type",
         "x = cond ? (q) => ({ q }) : (deps) => ({ id }): T => y;\n",
         "x = cond\n  ? q => ({ q })\n  : deps =>\n      ({ id }): T =>\n        y;\n",
+        "changed",
+      ],
+      [
+        "a default before the return type",
+        "x = cond ? (q) => ({ q }) : (deps) => (id = 1): T => y;\n",
+        "x = cond\n  ? q => ({ q })\n  : deps =>\n      (id = 1): T =>\n        y;\n",
+        "changed",
+      ],
+      [
+        "type parameters before the return type",
+        "x = cond ? (q) => ({ q }) : (deps) => <U>(id): T => y;\n",
+        "x = cond\n  ? q => ({ q })\n  : deps =>\n      <U>(id): T =>\n        y;\n",
+        "changed",
+      ],
+      [
+        "a typed parameter after the first one before the return type",
+        "x = cond ? (q) => ({ q }) : (deps) => (id, key: U): T => y;\n",
+        "x = cond\n  ? q => ({ q })\n  : deps =>\n      (id, key: U): T =>\n        y;\n",
+        "refused",
+      ],
+      [
+        "a rest parameter after the first one before the return type",
+        "x = cond ? (q) => ({ q }) : (deps) => (id, ...rest): T => y;\n",
+        "x = cond\n  ? q => ({ q })\n  : deps =>\n      (id, ...rest): T =>\n        y;\n",
+        "refused",
+      ],
+      [
+        "an optional parameter after the first one before the return type",
+        "x = cond ? (q) => ({ q }) : (deps) => (id, key?): T => y;\n",
+        "x = cond\n  ? q => ({ q })\n  : deps =>\n      (id, key?): T =>\n        y;\n",
+        "refused",
       ],
       [
         "two parameters in parentheses before the one with the return type",
         "x = cond ? (q) => ({ q }) : (deps) => (a, b) => (id): T => y;\n",
         "x = cond\n  ? q => ({ q })\n  : deps =>\n      (a, b) =>\n      (id): T =>\n        y;\n",
+        "changed",
       ],
       [
-        "more than 16 names before the return type",
-        "x = cond ? (q) => ({ q }) : (n0) => (n1) => (n2) => (n3) => (n4) => (n5) => (n6) => (n7) => (n8) => (n9) => (n10) => (n11) => (n12) => (n13) => (n14) => (n15) => (n16) => (id): T => y;\n",
-        "x = cond\n  ? q => ({ q })\n  : n0 =>\n      n1 =>\n      n2 =>\n      n3 =>\n      n4 =>\n      n5 =>\n      n6 =>\n      n7 =>\n      n8 =>\n      n9 =>\n      n10 =>\n      n11 =>\n      n12 =>\n      n13 =>\n      n14 =>\n      n15 =>\n      n16 =>\n      (id): T =>\n        y;\n",
+        "two parameters in parentheses before the name",
+        "x = cond ? (q) => ({ q }) : (a, b) => (deps) => (id): T => y;\n",
+        "x = cond\n  ? q => ({ q })\n  : (a, b) =>\n      deps =>\n      (id): T =>\n        y;\n",
+        "changed",
       ],
       [
-        "a comment before the arrow function",
-        "x = cond ? /* c */ (q) => ({ q }) : (deps) => (id): T => y;\n",
-        "x = cond\n  ? /* c */ q => ({ q })\n  : deps =>\n      (id): T =>\n        y;\n",
+        "`()` before the name",
+        "x = cond ? (q) => ({ q }) : () => (deps) => (id): T => y;\n",
+        "x = cond\n  ? q => ({ q })\n  : () =>\n      deps =>\n      (id): T =>\n        y;\n",
+        "changed",
       ],
       [
-        "a comment in the parentheses of the object",
-        "x = cond ? (q) => ({ q } /* c */) : (deps) => (id): T => y;\n",
-        "x = cond\n  ? q => ({ q }) /* c */\n  : deps =>\n      (id): T =>\n        y;\n",
-      ],
-      [
-        "a comment before the return type",
-        "x = cond ? (q) => ({ q }) : (deps) => /* c */ (id): T => y;\n",
-        "x = cond\n  ? q => ({ q })\n  : deps =>\n      /* c */ (id): T =>\n        y;\n",
+        "an `async` arrow function between the name and the return type",
+        "x = cond ? (q) => ({ q }) : (deps) => async (g) => (id): T => y;\n",
+        "x = cond\n  ? q => ({ q })\n  : deps =>\n      async g =>\n      (id): T =>\n        y;\n",
+        "changed",
       ],
       [
         "an arrow function under `// prettier-ignore`",
         "x = cond\n  ? // prettier-ignore\n    q => ({ q })\n  : (deps) => (id): T => y;\n",
         "x = cond\n  ? // prettier-ignore\n    q => ({ q })\n  : deps =>\n      (id): T =>\n        y;\n",
+        "changed",
       ],
       [
         "a conditional under `// prettier-ignore`",
         "x = a\n  ? // prettier-ignore\n    b ? c : (q) => ({ q })\n  : (deps) => (id): T => y;\n",
         "x = a\n  ? // prettier-ignore\n    b ? c : (q) => ({ q })\n  : deps =>\n      (id): T =>\n        y;\n",
+        "changed",
       ],
       [
         "a call of a function named `async`",
         "x = a ? async(q) : (deps) => (id): T => y;\n",
         "x = a\n  ? async(q)\n  : deps =>\n      (id): T =>\n        y;\n",
+        "changed",
       ],
       [
         "a type assertion in angle brackets",
         "x = a ? <U>(q, r) : (deps) => (id): T => y;\n",
         "x = a\n  ? <U>(q, r)\n  : deps =>\n      (id): T =>\n        y;\n",
+        "changed",
       ],
       [
         "`yield` and a sequence",
         "function* g() {\n  x = a ? yield (q, r) : (deps) => y;\n}\n",
         "function* g() {\n  x = a ? yield (q, r) : deps => y;\n}\n",
+        "refused",
       ],
       [
         "`yield` and an arrow function",
         "function* g() {\n  x = a ? yield (q) => ({ q }) : (deps) => (id): T => y;\n}\n",
         "function* g() {\n  x = a\n    ? yield q => ({ q })\n    : deps =>\n        (id): T =>\n          y;\n}\n",
+        "refused",
       ],
       [
         "the test of a `case` before an arrow function",
         "switch (v) {\n  case (a, b):\n    (c) => d;\n}\n",
         "switch (v) {\n  case (a, b):\n    c => d;\n}\n",
+        "refused",
       ],
       [
         "the parentheses that --experimental-ternaries puts around what follows another `:`",
         "x = p ? () => (c ? d : [first, second, third]) : (y) => 1;\n",
         "x =\n  p ?\n    () =>\n      c ? d : (\n        [first, second, third]\n      )\n  : y => 1;\n",
-        ["--arrow-parens=avoid", "--experimental-ternaries", "--print-width=30"],
+        "refused",
+        [...avoid, "--experimental-ternaries", "--print-width=30"],
+      ],
+      [
+        "a conditional that loses its parentheses where it breaks",
+        "x = a ? (q) => (b ? c : (x, y)) : (d) => (e): T => f;\n",
+        "x = a\n  ? q =>\n      b ? c : (x, y)\n  : d =>\n      (e): T =>\n        f;\n",
+        "changed",
+        [...avoid, "--print-width=20"],
+      ],
+      [
+        "an arrow function that ends a conditional before the `:`",
+        "x = a ? b ? c : (q) => ({ x }) : (deps) => (id): T => y;\n",
+        "x = a\n  ? b\n    ? c\n    : q => ({ x })\n  : deps =>\n      (id): T =>\n        y;\n",
+        "changed",
+      ],
+      [
+        "one that ends a chain of conditionals before the `:`",
+        "x = a ? b ? c : d ? e : (q) => ({ x }) : (deps) => (id): T => y;\n",
+        "x = a\n  ? b\n    ? c\n    : d\n      ? e\n      : q => ({ x })\n  : deps =>\n      (id): T =>\n        y;\n",
+        "changed",
+      ],
+      [
+        "one that ends a conditional before the `:`, with --experimental-ternaries",
+        "x = a ? b ? c : (q) => ({ x }) : (deps) => (id): T => y;\n",
+        "x =\n  a ?\n    b ? c\n    : q => ({ x })\n  : deps =>\n      (id): T =>\n        y;\n",
+        "changed",
+        [...avoid, "--experimental-ternaries"],
+      ],
+      [
+        "a conditional of two arrow functions before the `:`",
+        "x = a ? b ? (q) => ({ q }) : (r) => ({ r }) : (deps) => (id): T => y;\n",
+        "x = a\n  ? b\n    ? q => ({ q })\n    : r => ({ r })\n  : deps =>\n      (id): T =>\n        y;\n",
+        "refused",
+      ],
+      [
+        "a conditional with a sequence in it before the `:`",
+        "x = a ? (b ? (x, y) : (inner) => ({ q })) : (deps) => (id): T => y;\n",
+        "x = a\n  ? b\n    ? (x, y)\n    : inner => ({ q })\n  : deps =>\n      (id): T =>\n        y;\n",
+        "refused",
+      ],
+      [
+        "a conditional before the `:` and no return type",
+        "export const reducer = enabled ? useImmer ? (draft) => ({ draft }) : (state) => reduceWithPlainObjects(state, initialAction) : fallbackReducerForDisabled;\n",
+        "export const reducer = enabled\n  ? useImmer\n    ? draft => ({ draft })\n    : state => reduceWithPlainObjects(state, initialAction)\n  : fallbackReducerForDisabled;\n",
+        "refused",
+      ],
+      [
+        "a conditional before the `:`, and a return type after it",
+        "x = a ? b ? (q) => ({ q }) : (state) => f(state) : (fallback): Handler => fallback;\n",
+        "x = a\n  ? b\n    ? q => ({ q })\n    : state => f(state)\n  : (fallback): Handler => fallback;\n",
+        "changed",
+      ],
+      [
+        "a conditional before the `:` of a `case`",
+        "switch (v) {\n  case cond ? (q) => ({ q }) : (d) => d:\n    break;\n}\n",
+        "switch (v) {\n  case cond ? q => ({ q }) : d => d:\n    break;\n}\n",
+        "refused",
+      ],
+      [
+        "a conditional that ends an arrow function after the `:` of another one",
+        "x = p ? (a, b) : (y) => cond ? () => ({}) : (d) => (e): T => f;\n",
+        "x = p\n  ? (a, b)\n  : y =>\n      cond\n        ? () => ({})\n        : d =>\n            (e): T =>\n              f;\n",
+        "refused",
+      ],
+      [
+        "a conditional that ends an arrow function after the `:` of one with a name before it",
+        "x = p ? z : (y) => cond ? (q) => ({ q }) : (d) => (e): T => f;\n",
+        "x = p\n  ? z\n  : y =>\n      cond\n        ? q => ({ q })\n        : d =>\n            (e): T =>\n              f;\n",
+        "changed",
       ],
     ];
 
@@ -1460,61 +1652,140 @@ describe.concurrent("bun fmt", () => {
 
     test.each(knownIssues)(
       "known issue: Prettier's text for %s",
-      async (_, text, byPrettier, flags = avoid, ext = "ts") => {
+      async (_, text, byPrettier, again, flags = avoid, ext = "ts") => {
         const a = `a.${ext}`;
-        const result = await format({ [a]: text }, flags, { reads: [a] });
+        const [result, second, checked] = await Promise.all([
+          format({ [a]: text }, flags, { reads: [a] }),
+          format({ [a]: byPrettier }, flags, { reads: [a] }),
+          format({ [a]: text }, [...flags, "--debug-check"]),
+        ]);
         expect(result.files).toEqual({ [a]: byPrettier });
         expect(result.exitCode).toBe(0);
+        const outcome = second.exitCode !== 0 ? "refused" : second.files[a] !== byPrettier ? "changed" : "unchanged";
+        // `--debug-check` reads what is printed with Bun's parser, and reports the first two.
+        expect({ outcome, check: checked.exitCode }).toEqual({ outcome: again, check: again === "unchanged" ? 0 : 2 });
       },
     );
+
+    // For each row: the input is read, what's printed is read as the input, and what Prettier prints is.
+    const tables: [rows: [string, string, string, string, string][], reading: boolean[]][] = [
+      [repaired.map(row => [row[0], row[1], row[2], row[3], row[5] ?? "ts"]), [true, true, false]],
+      [asPrettierPrints.map(row => [row[0], row[1], row[2], row[2], row[4] ?? "ts"]), [true, true, true]],
+      [knownIssues.map(row => [row[0], row[1], row[2], row[2], row[5] ?? "ts"]), [true, false, false]],
+    ];
+    const judged = tables.flatMap(([rows, reading]) => rows.map(row => ({ row, reading })));
+    const readings = (trees: string[]) =>
+      Object.fromEntries(
+        judged.map(({ row }, index) => {
+          const [input, printed, byPrettier] = trees.slice(index * 3, index * 3 + 3);
+          return [row[0], [input !== "a syntax error", printed === input, byPrettier === input]];
+        }),
+      );
+    const asEachTableSays = Object.fromEntries(judged.map(({ row, reading }) => [row[0], reading]));
+    // The tree without the parentheses.
+    const shape = `node => {
+      if (node.kind === SyntaxKind.ParenthesizedExpression) return shape(node.expression);
+      const children = [];
+      node.forEachChild(child => void children.push(shape(child)));
+      return SyntaxKind[node.kind] + (children.length ? "(" + children.join(" ") + ")" : " " + node.getText());
+    }`;
 
     test(
       "tsc reads what's printed as the input, and what Prettier prints as each table says",
       async () => {
-        // The tree without the parentheses, or that there's a syntax error.
         const judge = `
           const ts = require("typescript");
-          const read = (text, ext) => {
+          const { SyntaxKind } = ts;
+          const shape = ${shape};
+          const read = ([text, ext]) => {
             const file = ts.createSourceFile("a." + ext, text, ts.ScriptTarget.Latest, true);
-            const shape = node => {
-              if (ts.isParenthesizedExpression(node)) return shape(node.expression);
-              const children = [];
-              node.forEachChild(child => void children.push(shape(child)));
-              return ts.SyntaxKind[node.kind] + (children.length ? "(" + children.join(" ") + ")" : " " + node.getText());
-            };
             return file.parseDiagnostics.length ? "a syntax error" : file.statements.map(shape).join(" ");
           };
-          const texts = JSON.parse(await Bun.stdin.text());
-          const readings = texts.map(([text, printed, byPrettier, ext]) => {
-            const input = read(text, ext);
-            return [input !== "a syntax error", read(printed, ext) === input, read(byPrettier, ext) === input];
-          });
-          console.log(JSON.stringify(readings));
+          console.log(JSON.stringify(JSON.parse(await Bun.stdin.text()).map(read)));
         `;
-        // For each row: the input is read, what's printed is read as the input, and what Prettier prints is.
-        const tables: [rows: [string, string, string, string, string][], reading: boolean[]][] = [
-          [repaired.map(row => [row[0], row[1], row[2], row[3], row[5] ?? "ts"]), [true, true, false]],
-          [asPrettierPrints.map(row => [row[0], row[1], row[2], row[2], row[4] ?? "ts"]), [true, true, true]],
-          [knownIssues.map(row => [row[0], row[1], row[2], row[2], row[4] ?? "ts"]), [true, false, false]],
-        ];
-        const rows = tables.flatMap(([rows, reading]) => rows.map(row => ({ row, reading })));
+        const texts = judged.flatMap(({ row: [, text, printed, byPrettier, ext] }) =>
+          [text, printed, byPrettier].map(text => [text, ext]),
+        );
         await using proc = spawn({
           cmd: [bunExe(), "-e", judge],
           env,
           cwd: import.meta.dir,
-          stdin: Buffer.from(JSON.stringify(rows.map(({ row }) => row.slice(1)))),
+          stdin: Buffer.from(JSON.stringify(texts)),
           stdout: "pipe",
           stderr: "pipe",
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stderr).toBe("");
-        const readings: boolean[][] = JSON.parse(stdout);
-        expect(Object.fromEntries(rows.map(({ row }, index) => [row[0], readings[index]]))).toEqual(
-          Object.fromEntries(rows.map(({ row, reading }) => [row[0], reading])),
-        );
+        expect(readings(JSON.parse(stdout))).toEqual(asEachTableSays);
         expect(exitCode).toBe(0);
       },
       // Loading TypeScript takes a debug build half a minute.
+      longLimit,
+    );
+
+    // `typescript7` is the native TypeScript, which `bun check` follows. Its parser is in a package for each platform,
+    // and its API was not tried with Bun on Windows.
+    const hasTypeScript7 = (() => {
+      try {
+        const paths = [dirname(require.resolve("typescript7/package.json"))];
+        require.resolve(`@typescript/typescript-${process.platform}-${process.arch}/package.json`, { paths });
+        return !isWindows;
+      } catch {
+        return false;
+      }
+    })();
+
+    test.skipIf(!hasTypeScript7)(
+      "TypeScript 7 reads each text in the same way",
+      async () => {
+        // Its API reads the files of a project.
+        const files = judged.flatMap(({ row: [, text, printed, byPrettier, ext] }, index) =>
+          [text, printed, byPrettier].map((text, part) => [`texts/${index}-${part}.${ext}`, text]),
+        );
+        const compilerOptions = { noCheck: true, noLib: true, noResolve: true, noEmit: true, types: [] };
+        using dir = tempDir("bun-format-typescript7", {
+          "tsconfig.json": JSON.stringify({
+            compilerOptions: { ...compilerOptions, target: "esnext", module: "preserve", jsx: "preserve" },
+            include: ["texts"],
+          }),
+          ...Object.fromEntries(files),
+        });
+        const judge = `
+          const { API } = await import("typescript7/unstable/async");
+          const { SyntaxKind } = await import("typescript7/unstable/ast");
+          const { join } = require("node:path");
+          const shape = ${shape};
+          const { directory, names } = JSON.parse(await Bun.stdin.text());
+          const api = new API({ cwd: directory });
+          try {
+            const project = { openProjects: [join(directory, "tsconfig.json")] };
+            const snapshot = await (api.createSnapshot ?? api.updateSnapshot).call(api, project);
+            const program = snapshot.getProjects()[0].program;
+            const trees = [];
+            for (const name of names) {
+              const path = join(directory, name);
+              const hasError = (await program.getSyntacticDiagnostics(path)).length > 0;
+              const file = hasError ? null : await program.getSourceFile(path);
+              trees.push(file ? Array.from(file.statements, shape).join(" ") : "a syntax error");
+            }
+            console.log(JSON.stringify(trees));
+          } finally {
+            await api.close();
+          }
+        `;
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", judge],
+          env,
+          cwd: import.meta.dir,
+          stdin: Buffer.from(JSON.stringify({ directory: String(dir), names: files.map(([name]) => name) })),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(readings(JSON.parse(stdout))).toEqual(asEachTableSays);
+        expect(exitCode).toBe(0);
+      },
       longLimit,
     );
 
@@ -1522,6 +1793,12 @@ describe.concurrent("bun fmt", () => {
       const code = "x = cond ? (q) => ({ q }) : (deps) => (id): T => y;\n";
       const printed = "x = cond\n  ? q => ({ q })\n  : (deps) =>\n      (id): T =>\n        y;\n";
       const indented = printed.replace(/^(?=.)/gm, "  ");
+      // On one line, Prettier prints parentheses around a conditional before the `:`. tsc tries no `((`.
+      const [kept, inParentheses] = [
+        "a ? q => ({ q }) : (d) => (e): T => f",
+        "a ? (b ? c : (p, q)) : d => (e): T => f",
+      ];
+      const cell = (text: string) => text.padEnd("${}".length + inParentheses.length);
       const hosts: Record<string, [text: string, printed: string, flags: string[], config?: Record<string, string>]> = {
         "a.vue": [
           `<template>\n  <a :b="cond ? (q) => ({ q }) : (deps) => (id): T => y" />\n</template>\n\n<script setup lang="ts">\n${code}</script>\n`,
@@ -1535,6 +1812,18 @@ describe.concurrent("bun fmt", () => {
         ],
         // The plugin reads a `<script>` with `babel-ts`, with `lang="ts"` or without.
         "b.svelte": [`<script>\n  ${code}</script>\n`, `<script>\n${indented}</script>\n`, avoid],
+        // The start of a block is on one line.
+        "c.svelte": [
+          `<script lang="ts">\n  let a;\n</script>\n\n{#if a ? (q) => ({ q }) : (d) => (e): T => f}<p>x</p>{/if}\n{#if a ? b ? c : (p, q) : (d) => (e): T => f}<p>y</p>{/if}\n`,
+          `<script lang="ts">\n  let a;\n</script>\n\n{#if ${kept}}<p>x</p>{/if}\n{#if ${inParentheses}}<p>y</p>{/if}\n`,
+          avoid,
+        ],
+        // So is a cell of a table.
+        "a.test.ts": [
+          'test.each`\n  a | b\n  ${a ? (q) => ({ q }) : (d) => (e): T => f} | ${1}\n  ${a ? b ? c : (p, q) : (d) => (e): T => f} | ${2}\n`("x", () => {});\n',
+          `test.each\`\n  ${cell("a")} | b\n  ${cell(`\${${kept}}`)} | \${1}\n  ${cell(`\${${inParentheses}}`)} | \${2}\n\`("x", () => {});\n`,
+          avoid,
+        ],
         "a.html": [`<script lang="ts">\n  ${code}</script>\n`, `<script lang="ts">\n${indented}</script>\n`, avoid],
         "a.md": [`\`\`\`ts\n${code}\`\`\`\n`, `\`\`\`ts\n${printed}\`\`\`\n`, avoid],
         "a.js": [code, printed, [...avoid, "--parser", "typescript"]],
@@ -1556,39 +1845,65 @@ describe.concurrent("bun fmt", () => {
       );
     });
 
-    test("doesn't apply to Flow", async () => {
-      // The rule is about how tsc reads the text. This is what Prettier prints for Flow.
-      const text = "// @flow\nx = cond ? ((q) => ({ q })) : (deps) => (id): T => y;\n";
-      const result = await format({ "a.js": text }, avoid, { reads: ["a.js"] });
-      expect(result.files).toEqual({
-        "a.js": "// @flow\nx = cond\n  ? q => ({ q })\n  : deps =>\n      (id): T =>\n        y;\n",
-      });
-      expect(result.exitCode).toBe(0);
-    });
+    test.each([[[]], [avoid]])(
+      "known issue: in Flow, Prettier's text for the same conditional is a syntax error, with %j",
+      async flags => {
+        // `@babel/parser` reports `AmbiguousConditionalArrow` for it, and `flow-parser` expects a `:`. `(deps) =>` does
+        // not help: Flow needs the parentheses of the input around the arrow function before the `:`.
+        const text = "// @flow\nx = cond ? ((q) => ({ q })) : (deps) => (id): T => y;\n";
+        const [before, after] = flags.length ? ["q", "deps"] : ["(q)", "(deps)"];
+        const [result, checked] = await Promise.all([
+          format({ "a.js": text }, flags, { reads: ["a.js"] }),
+          format({ "a.js": text }, [...flags, "--debug-check"]),
+        ]);
+        expect(result.files).toEqual({
+          "a.js": `// @flow\nx = cond\n  ? ${before} => ({ q })\n  : ${after} =>\n      (id): T =>\n        y;\n`,
+        });
+        expect(result.exitCode).toBe(0);
+        expect(checked.stderr).toContain("Not formatted, because formatting would change what the code does");
+        expect(checked.exitCode).toBe(2);
+      },
+    );
 
-    test("takes no more time for 64 conditionals or arrow functions in each other", async () => {
+    test("decides once for each conditional, with 64 arrow functions or conditionals in each other", async () => {
       const after = "(deps) => (id): T => y";
       const nested = (make: (inner: string) => string, innermost: string) =>
         Array.from({ length: 64 }).reduce<string>(inner => make(inner), innermost);
       const files = {
-        // The arrow function before the `:` ends 64 conditionals.
-        "a.ts": `x = p ? ${nested(inner => `c ? d : ${inner}`, "(q) => ({ q })")} : ${after};\n`,
-        // Each arrow function returns a conditional with the next one after its `:`.
-        "b.ts": `x = ${nested(inner => `a ? (q) => (b ? c : ${inner}) : ${after}`, "z")};\n`,
+        // 64 arrow functions come before the `:`, and the last one returns the object.
+        "a.ts": `x = a ? ${nested(inner => `(q) => ${inner}`, "({ q })")} : ${after};\n`,
+        // 64 names come before the return type.
+        "b.ts": `x = a ? (q) => ({ q }) : ${nested(inner => `(deps) => ${inner}`, "(id): T => y")};\n`,
         // Each arrow function returns the conditional that the next one is in.
         "c.ts": `x = a ? ${nested(inner => `(q) => (a ? ${inner} : ${after})`, "(q) => ({ q })")} : ${after};\n`,
-        // 64 names come before the return type, which is more than the rule follows.
-        "d.ts": `x = a ? (q) => ({ q }) : ${nested(inner => `(deps) => ${inner}`, "(id): T => y")};\n`,
+        // Each conditional ends an arrow function after the `:` of the one that it is in.
+        "d.ts": `x = ${nested(inner => `a ? (b, c) : (y) => ${inner}`, `a ? (q) => ({ q }) : ${after}`)};\n`,
       };
       const result = await format(files, avoid, { reads: Object.keys(files) });
       expect(result.exitCode).toBe(0);
-      // One `(deps) =>` is after the `:` that follows `q => ({ q })` in `a.ts`. The one in `c.ts` is on three lines.
-      const kept = Object.values(result.files).map(text => text.match(/\(\s*deps,?\s*\) =>/g)?.length ?? 0);
-      expect(kept).toEqual([1, 0, 1, 0]);
-      // tsc reads what's printed for `d.ts` as another program, and so does the next run.
-      const { "d.ts": _, ...stable } = result.files;
+      const printed = result.files as Record<keyof typeof files, string>;
+      // The one in `c.ts` is on three lines. In `d.ts`, tsc would read `(b, c): y => ..` up to a `(deps) => (id)`.
+      const kept = Object.values(printed).map(text => text.match(/\(\s*deps,?\s*\) =>/g)?.length ?? 0);
+      expect(kept).toEqual([1, 64, 1, 0]);
+      // tsc reports a syntax error for what's printed for `d.ts`, and so does the next run.
+      const { "d.ts": _, ...stable } = printed;
       const checked = await format(stable, [...avoid, "--check"]);
       expect(checked.exitCode).toBe(0);
+    });
+
+    test("takes linear time for conditionals in conditionals", async () => {
+      // A balanced tree keeps the lines short. Each leaf is a conditional that keeps `(d) =>`.
+      const tree = (leaf: string, leaves: number): string =>
+        leaves === 1 ? leaf : `c ? ${tree(leaf, leaves / 2)} : ${tree(leaf, leaves / 2)}`;
+      const leaves = isDebug || isASAN ? 2_048 : 16_384;
+      const run = (parameter: string) =>
+        format({ "a.ts": `x = ${tree(`a ? (q) => ({ q }) : (d) => (${parameter}): T => f`, leaves)};\n` }, [
+          ...avoid,
+          "--check",
+        ]);
+      // Before `(e: U): T`, tsc is sure of an arrow function, and nothing is kept.
+      const [odd, plain] = [await run("e"), await run("e: U")];
+      expect(slowdown(odd, plain)).toBeLessThan(4);
     });
   });
 

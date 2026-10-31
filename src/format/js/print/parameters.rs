@@ -5,7 +5,6 @@ use crate::js::format::{FormatTypeAnnotation, format_node};
 use crate::js::utils::call_expression::{
     is_angular_test_wrapper, is_test_call_expression_in_flavor,
 };
-use crate::js::utils::conditional::is_jsx_conditional_chain;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
@@ -405,185 +404,21 @@ impl<'a> Format<'a> for ParameterList<'a> {
 /// `a => a`: true if the options ask for it and the parameters allow it. Prettier's `shouldPrintParamsWithoutParens`.
 pub(crate) fn can_avoid_parentheses<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> bool {
     f.options().arrow_parentheses.is_as_needed()
-        && only_name(arrow).is_some_and(|param| !parameter_has_comment(param, f))
+        && arrow.params().len() == 1
+        && arrow.this_param().is_none()
+        && arrow.type_params().is_empty()
+        && arrow.return_type().is_none()
+        && arrow.params().first().is_some_and(|param| {
+            !param.is_rest()
+                && param.ty().is_none()
+                && !param.is_optional()
+                && param.default().is_none()
+                && matches!(param.pat().kind(), PatKind::Ident(_))
+                && !parameter_has_comment(param, f)
+        })
         && (f.comments().of_node(arrow.as_ast_nodes()).dangling).is_empty()
         // Prettier prints `a ? b => ({ c }) : d => (e): T => f`. tsc reads `({ c }): d => (e)` as an arrow function.
-        && !returned_arrow_function(arrow)
-            .is_some_and(|returned| is_read_as_return_type(arrow, returned, f))
-}
-
-/// The `b => c` of `a => b => c`.
-#[inline]
-fn returned_arrow_function(function: Func<'_>) -> Option<Func<'_>> {
-    match function.body() {
-        FnBody::Expr(body) => body.arrow_function(),
-        _ => None,
-    }
-}
-
-/// The `a` of `a => ..`: the only parameter, if it's just a name and the arrow function has no types of its own.
-fn only_name(arrow: Func<'_>) -> Option<Param<'_>> {
-    if arrow.params().len() != 1
-        || arrow.this_param().is_some()
-        || !arrow.type_params().is_empty()
-        || arrow.return_type().is_some()
-    {
-        return None;
-    }
-    arrow
-        .params()
-        .first()
-        .filter(|param| is_just_a_name(*param))
-}
-
-/// True for `a`. Not for `a: T`, `a?`, `a = 1`, `...a` and `{ a }`.
-fn is_just_a_name(param: Param<'_>) -> bool {
-    !param.is_rest()
-        && param.ty().is_none()
-        && !param.is_optional()
-        && param.default().is_none()
-        && matches!(param.pat().kind(), PatKind::Ident(_))
-}
-
-/// tsc has no limit. The rule follows this many names at most, so a long chain of arrow functions takes linear time.
-const MOST_NAMES_BEFORE_RETURN_TYPE: u32 = 16;
-
-/// True if tsc reads the name of `arrow` as a return type: the `d` of `a ? b => ({ c }) : d => (e): T => f`, not `(d)`.
-#[inline(never)]
-fn is_read_as_return_type<'a>(arrow: Func<'a>, returned: Func<'a>, f: &Formatter<'a>) -> bool {
-    // Down to `(e): T =>`. In the body of `d =>`, tsc reads `(e)` as a value, and the `:` as the end of that body.
-    let mut typed = returned;
-    let mut names = 1;
-    while typed.return_type().is_none() {
-        names += 1;
-        match returned_arrow_function(typed) {
-            Some(next) if names <= MOST_NAMES_BEFORE_RETURN_TYPE => typed = next,
-            _ => return false,
-        }
-    }
-    // Up to the arrow function after the `:`.
-    let mut first = arrow;
-    let (conditional, test, consequent) = loop {
-        let Some(e) = first.owner().as_expr() else {
-            return false;
-        };
-        match e.parent() {
-            Node::Func(outer)
-                if names < MOST_NAMES_BEFORE_RETURN_TYPE
-                    && returned_arrow_function(outer) == Some(first) =>
-            {
-                names += 1;
-                first = outer;
-            }
-            Node::Expr(parent) => match parent.as_cond() {
-                Some((test, consequent, alternate)) if alternate == e => {
-                    break (parent, test, consequent);
-                }
-                _ => return false,
-            },
-            _ => return false,
-        }
-    };
-    // Each one before the return type is printed as `d =>`. `async d` is no type.
-    let mut function = first;
-    while function != typed {
-        if function.is_async() || only_name(function).is_none() {
-            return false;
-        }
-        let Some(next) = returned_arrow_function(function) else {
-            return false;
-        };
-        function = next;
-    }
-    // After `()`, `(e: U)`, `(e?)` and `(...e)` tsc is sure of an arrow function, and reads `: T` as its return type.
-    let Some(return_type) = typed.return_type() else {
-        return false;
-    };
-    if !typed.type_params().is_empty()
-        || typed.this_param().is_some()
-        || typed.params().is_empty()
-        || !typed.params().iter().all(is_just_a_name)
-    {
-        return false;
-    }
-    // `a ? b ? c : x : d => ..` has no parentheses around `b ? c : x`: `d => (e): T => f` always breaks the line.
-    let mut before = consequent;
-    while let Some((_, _, alternate)) = before.as_cond() {
-        before = alternate;
-    }
-    ends_with_parameters(before)
-        && is_read_by_typescript(f)
-        && !is_in_jsx_conditional_chain(conditional)
-        // A comment can be a type cast or `prettier-ignore`, which keep the parentheses that the source has.
-        && !(f.comments())
-            .has_comment_in_span(Span::new(test.outer_span().end, return_type.span().end))
-}
-
-/// True if `operand` is printed with `( .. )` at its end that tsc reads as parameters, with no error: `b => ({ c })`.
-fn ends_with_parameters(operand: Expr<'_>) -> bool {
-    let mut body = operand;
-    while let Some(function) = body.arrow_function() {
-        let FnBody::Expr(next) = function.body() else {
-            return false;
-        };
-        body = next;
-    }
-    match body.kind() {
-        // An object has parentheses only as the body of an arrow function.
-        ExprKind::Object(_) => body != operand && is_parameter_name(body),
-        ExprKind::Binary {
-            op: BinOp::Comma, ..
-        } => body.sequence().into_iter().all(is_parameter_name),
-        ExprKind::Assign {
-            op: None, target, ..
-        } => is_parameter_name(target),
-        _ => false,
-    }
-}
-
-/// `a`, `{ a, b: c, ...d }`, `[a, , ...b]`: what tsc reads as a parameter's name. A default is printed as `[(a = 1)]`.
-fn is_parameter_name(e: Expr<'_>) -> bool {
-    let mut pending = smallvec::SmallVec::<[Expr<'_>; 8]>::new();
-    pending.push(e);
-    while let Some(e) = pending.pop() {
-        match e.kind() {
-            ExprKind::Ident(_) | ExprKind::Missing => {}
-            ExprKind::Object(properties) => {
-                for property in properties {
-                    match (property.kind(), property.value()) {
-                        (PropKind::Init | PropKind::Shorthand | PropKind::Spread, Some(value)) => {
-                            pending.push(value);
-                        }
-                        _ => return false,
-                    }
-                }
-            }
-            ExprKind::Array(elements) => pending.extend(elements),
-            ExprKind::Spread(rest) => pending.push(rest),
-            _ => return false,
-        }
-    }
-    true
-}
-
-/// True if a TypeScript parser reads the code: in JavaScript, only the parsers `typescript`, `babel-ts` and `oxc-ts`.
-fn is_read_by_typescript(f: &Formatter<'_>) -> bool {
-    !f.file().is_javascript()
-        || matches!(
-            f.options().parser.as_deref(),
-            Some(b"typescript" | b"babel-ts" | b"oxc-ts")
-        )
-}
-
-/// Prettier writes `( .. )` of its own around the operands of a conditional that breaks, if an element is in its chain.
-fn is_in_jsx_conditional_chain(conditional: Expr<'_>) -> bool {
-    let mut outermost = conditional;
-    while let Node::Expr(parent) = outermost.parent()
-        && parent.as_cond().is_some_and(|(test, ..)| test != outermost)
-    {
-        outermost = parent;
-    }
-    is_jsx_conditional_chain(outermost)
+        && !f.context().after_colon.get().keeps_parentheses_of(arrow)
 }
 
 /// Prettier's `shouldHugTheOnlyFunctionParameter`.

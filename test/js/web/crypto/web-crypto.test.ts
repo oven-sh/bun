@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { createSecretKey, type webcrypto } from "node:crypto";
+import { createCipheriv, createSecretKey, type webcrypto } from "node:crypto";
 
 type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
 type HmacImportParams = webcrypto.HmacImportParams;
@@ -1557,5 +1557,27 @@ describe("exception scope discipline", () => {
       uncheckedScopes: [],
       exitCode: 0,
     });
+  });
+});
+
+describe("AES-CTR", () => {
+  // 2^64 blocks are left before these counters wrap, which does not fit the size_t it was counted in.
+  it.each([
+    ["ffffffffffffffff0000000000000000", 128],
+    ["7fffffffffffffff0000000000000000", 127],
+    ["aabbccddffffffff0000000000000000", 96],
+    ["aabbccddeeff00010000000000000000", 65],
+  ])("counter %s with length %d", async (counter, length) => {
+    const rawKey = Buffer.alloc(16, 7);
+    const data = Buffer.alloc(40, 1);
+    const key = await crypto.subtle.importKey("raw", rawKey, "AES-CTR", false, ["encrypt"]);
+    const encrypted = await crypto.subtle.encrypt(
+      { name: "AES-CTR", counter: Buffer.from(counter, "hex"), length },
+      key,
+      data,
+    );
+    expect(Buffer.from(encrypted).toString("hex")).toBe(
+      createCipheriv("aes-128-ctr", rawKey, Buffer.from(counter, "hex")).update(data).toString("hex"),
+    );
   });
 });

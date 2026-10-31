@@ -135,10 +135,11 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           mixedRealAbsolute: [...new Bun.Glob(realDirPosix + "/*").scanSync({ cwd: import.meta.dir })],
           // A real-fs cwd inside a compiled executable still walks the real filesystem.
           realCwdRelative: [...new Bun.Glob("*").scanSync(realDir)],
-          // Pins the current walker behavior for a fully-literal absolute pattern:
-          // the match is dropped ([]), on the real filesystem and in the embedded
-          // graph alike. If a walker fix changes this, both must change together.
+          // A fully literal absolute pattern is one stat of the embedded path.
           absoluteLiteralFile: [...new Bun.Glob(rootPosix + "/index.html").scanSync({})],
+          absoluteLiteralDir: [...new Bun.Glob(rootPosix + "/_app").scanSync({ onlyFiles: false })],
+          absoluteLiteralDirOnlyFiles: [...new Bun.Glob(rootPosix + "/_app").scanSync({})],
+          absoluteLiteralMissing: [...new Bun.Glob(rootPosix + "/missing.html").scanSync({})],
           enoentCode: errcode(() => [...new Bun.Glob("*").scanSync(missing)]),
           enotdirCode: errcode(() => [...new Bun.Glob("*").scanSync(indexHtml)]),
         };
@@ -232,7 +233,10 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
             .sort(),
           mixedRealAbsolute: [r.realDirPosix + "/real.txt"],
           realCwdRelative: ["real.txt"],
-          absoluteLiteralFile: [],
+          absoluteLiteralFile: [r.client.root.replaceAll(sep, "/") + "/index.html"],
+          absoluteLiteralDir: [r.client.root.replaceAll(sep, "/") + "/_app"],
+          absoluteLiteralDirOnlyFiles: [],
+          absoluteLiteralMissing: [],
           enoentCode: "ENOENT",
           enotdirCode: "ENOTDIR",
         },

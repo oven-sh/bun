@@ -1,171 +1,60 @@
-import type { S3Options } from "bun";
-import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, getSecret, tempDir } from "harness";
+import { afterAll, describe, it } from "bun:test";
+import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isDebug } from "harness";
 import path from "path";
-const s3Options: S3Options = {
-  accessKeyId: getSecret("S3_R2_ACCESS_KEY"),
-  secretAccessKey: getSecret("S3_R2_SECRET_KEY"),
-  endpoint: getSecret("S3_R2_ENDPOINT"),
+import { spawnServer } from "s3-server";
+
+// The server and the S3 client follow these for an http endpoint, also for one on loopback.
+const noProxy = { HTTP_PROXY: undefined, http_proxy: undefined, ALL_PROXY: undefined, all_proxy: undefined };
+
+// The S3 server of test/packages/s3-server, in a process of its own.
+const localServer = await spawnServer({
+  bunExe: bunExe(),
+  env: { ...bunEnv, ...noProxy },
+  region: "us-east-1",
+  buckets: ["buntest"],
+});
+afterAll(() => localServer.stop());
+
+const { endpoint, accessKeyId, secretAccessKey, region, bucket } = localServer.clientOptions("buntest");
+const env = {
+  ...bunEnv,
+  ...noProxy,
+  BUN_JSC_gcMaxHeapSize: "503316",
+  // `Bun.s3` reads an S3_* variable before the AWS_* one, so these win over what the machine has.
+  S3_ENDPOINT: endpoint,
+  S3_ACCESS_KEY_ID: accessKeyId,
+  S3_SECRET_ACCESS_KEY: secretAccessKey,
+  S3_REGION: region,
+  S3_BUCKET: bucket,
+  S3_SESSION_TOKEN: undefined,
+  AWS_SESSION_TOKEN: undefined,
 };
 
-const S3Bucket = getSecret("S3_R2_BUCKET");
-
-describe.skipIf(!s3Options.accessKeyId)("s3", () => {
+describe("s3", () => {
   describe("leak tests", () => {
-    it(
-      "s3().stream() should not leak",
-      async () => {
-        await using dir = tempDir("s3-stream-leak-fixture", {
-          "s3-stream-leak-fixture.js": await Bun.file(path.join(import.meta.dir, "s3-stream-leak-fixture.js")).text(),
-          "out.bin": "here",
-        });
-
-        const dest = path.join(dir, "out.bin");
-
-        const { exitCode, stderr } = Bun.spawnSync(
-          [bunExe(), "--smol", path.join(dir, "s3-stream-leak-fixture.js"), dest],
-          {
-            env: {
-              ...bunEnv,
-              BUN_JSC_gcMaxHeapSize: "503316",
-              AWS_ACCESS_KEY_ID: s3Options.accessKeyId,
-              AWS_SECRET_ACCESS_KEY: s3Options.secretAccessKey,
-              AWS_ENDPOINT: s3Options.endpoint,
-              AWS_BUCKET: S3Bucket,
-            },
-            stderr: "inherit",
-            stdout: "inherit",
-            stdin: "ignore",
-          },
+    // The fixtures share the server. In a debug build the server needs about 20 ms for a request,
+    // and with five fixtures at the same time a case takes up to 24 s. One fixture alone takes up to
+    // 11 s. So a debug build or a build with ASAN runs them one at a time.
+    it.concurrentIf(!isASAN && !isDebug).each([
+      ["s3().stream()", "stream"],
+      ["s3().text()", "text"],
+      ["s3().writer().write()", "writer"],
+      ["s3().write()", "write"],
+      ["Bun.write", "Bun.write"],
+    ])(
+      "%s should not leak",
+      async (_, operation) => {
+        // The fixture measures 100 operations with a body of 1 MiB, so an operation that keeps its
+        // body adds about 100 MiB. Without a leak the RSS grows by up to 6 MiB in a release build and
+        // by up to 10 MiB in a debug build with ASAN.
+        await expectRssDeltaBelow(
+          ["--smol", path.join(import.meta.dir, "s3-leak-fixture.ts"), operation],
+          { release: 25, debug: 40 },
+          env,
         );
-        expect(exitCode).toBe(0);
       },
-      30 * 1000,
-    );
-    it(
-      "s3().text() should not leak",
-      async () => {
-        await using dir = tempDir("s3-text-leak-fixture", {
-          "s3-text-leak-fixture.js": await Bun.file(path.join(import.meta.dir, "s3-text-leak-fixture.js")).text(),
-          "out.bin": "here",
-        });
-
-        const dest = path.join(dir, "out.bin");
-
-        const { exitCode, stderr } = Bun.spawnSync(
-          [bunExe(), "--smol", path.join(dir, "s3-text-leak-fixture.js"), dest],
-          {
-            env: {
-              ...bunEnv,
-              BUN_JSC_gcMaxHeapSize: "503316",
-              AWS_ACCESS_KEY_ID: s3Options.accessKeyId,
-              AWS_SECRET_ACCESS_KEY: s3Options.secretAccessKey,
-              AWS_ENDPOINT: s3Options.endpoint,
-              AWS_BUCKET: S3Bucket,
-            },
-            stderr: "pipe",
-            stdout: "inherit",
-            stdin: "ignore",
-          },
-        );
-        expect(exitCode).toBe(0);
-        expect(stderr.toString()).toBe("");
-      },
-      30 * 1000,
-    );
-    it(
-      "s3().writer().write() should not leak",
-      async () => {
-        await using dir = tempDir("s3-writer-leak-fixture", {
-          "s3-writer-leak-fixture.js": await Bun.file(path.join(import.meta.dir, "s3-writer-leak-fixture.js")).text(),
-          "out.bin": "here",
-        });
-
-        const dest = path.join(dir, "out.bin");
-
-        const { exitCode, stderr } = Bun.spawnSync(
-          [bunExe(), "--smol", path.join(dir, "s3-writer-leak-fixture.js"), dest],
-          {
-            env: {
-              ...bunEnv,
-              BUN_JSC_gcMaxHeapSize: "503316",
-              AWS_ACCESS_KEY_ID: s3Options.accessKeyId,
-              AWS_SECRET_ACCESS_KEY: s3Options.secretAccessKey,
-              AWS_ENDPOINT: s3Options.endpoint,
-              AWS_BUCKET: S3Bucket,
-            },
-            stderr: "pipe",
-            stdout: "inherit",
-            stdin: "ignore",
-          },
-        );
-        expect(exitCode).toBe(0);
-        expect(stderr.toString()).toBe("");
-      },
-      30 * 1000,
-    );
-    it(
-      "s3().write() should not leak",
-      async () => {
-        await using dir = tempDir("s3-write-leak-fixture", {
-          "s3-write-leak-fixture.js": await Bun.file(path.join(import.meta.dir, "s3-write-leak-fixture.js")).text(),
-          "out.bin": "here",
-        });
-
-        const dest = path.join(dir, "out.bin");
-
-        const { exitCode, stderr } = Bun.spawnSync(
-          [bunExe(), "--smol", path.join(dir, "s3-write-leak-fixture.js"), dest],
-          {
-            env: {
-              ...bunEnv,
-              BUN_JSC_gcMaxHeapSize: "503316",
-              AWS_ACCESS_KEY_ID: s3Options.accessKeyId,
-              AWS_SECRET_ACCESS_KEY: s3Options.secretAccessKey,
-              AWS_ENDPOINT: s3Options.endpoint,
-              AWS_BUCKET: S3Bucket,
-            },
-            stderr: "pipe",
-            stdout: "inherit",
-            stdin: "ignore",
-          },
-        );
-        expect(exitCode).toBe(0);
-        expect(stderr.toString()).toBe("");
-      },
-      30 * 1000,
-    );
-
-    it(
-      "Bun.write should not leak",
-      async () => {
-        await using dir = tempDir("bun-write-leak-fixture", {
-          "bun-write-leak-fixture.js": await Bun.file(path.join(import.meta.dir, "bun-write-leak-fixture.js")).text(),
-          "out.bin": "here",
-        });
-
-        const dest = path.join(dir, "out.bin");
-
-        const { exitCode, stderr } = Bun.spawnSync(
-          [bunExe(), "--smol", path.join(dir, "bun-write-leak-fixture.js"), dest],
-          {
-            env: {
-              ...bunEnv,
-              BUN_JSC_gcMaxHeapSize: "503316",
-              AWS_ACCESS_KEY_ID: s3Options.accessKeyId,
-              AWS_SECRET_ACCESS_KEY: s3Options.secretAccessKey,
-              AWS_ENDPOINT: s3Options.endpoint,
-              AWS_BUCKET: S3Bucket,
-            },
-            stderr: "pipe",
-            stdout: "inherit",
-            stdin: "ignore",
-          },
-        );
-        expect(exitCode).toBe(0);
-        expect(stderr.toString()).toBe("");
-      },
-      30 * 1000,
+      // Only a debug build needs more than the default limit: a case takes up to 11 s there.
+      isDebug ? 30_000 : undefined,
     );
   });
 });

@@ -447,6 +447,10 @@ extern "C" void Bun__EventLoop__runCallback2(JSC::JSGlobalObject* global, JSC::E
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope& scope, bool addToStack);
 
+namespace Bun {
+class DeferredMatcherWrites;
+}
+
 /**
  * @brief `Bun.deepMatch(a, b)`
  *
@@ -473,7 +477,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JS
  * @param globalObject
  * @param Scope
  * @param gcBuffer
- * @param replacePropsWithAsymmetricMatchers
+ * @param matcherWrites if not null, receives every property an asymmetric matcher passed on. Neither value is written to.
  * @param isMatchingObjectContaining
  *
  * @return true
@@ -488,7 +492,7 @@ bool Bun__deepMatch(
     JSC::JSGlobalObject* globalObject,
     JSC::ThrowScope& throwScope,
     JSC::MarkedArgumentBuffer* gcBuffer,
-    bool replacePropsWithAsymmetricMatchers,
+    Bun::DeferredMatcherWrites* matcherWrites,
     bool isMatchingObjectContaining);
 
 extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t);

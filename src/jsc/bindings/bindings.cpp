@@ -270,7 +270,7 @@ template bool Bun__deepMatch<true>(
     JSGlobalObject* globalObject,
     ThrowScope& throwScope,
     MarkedArgumentBuffer* gcBuffer,
-    bool replacePropsWithAsymmetricMatchers,
+    Bun::DeferredMatcherWrites* matcherWrites,
     bool isMatchingObjectContaining);
 
 template bool Bun__deepMatch<false>(
@@ -281,7 +281,7 @@ template bool Bun__deepMatch<false>(
     JSGlobalObject* globalObject,
     ThrowScope& throwScope,
     MarkedArgumentBuffer* gcBuffer,
-    bool replacePropsWithAsymmetricMatchers,
+    Bun::DeferredMatcherWrites* matcherWrites,
     bool isMatchingObjectContaining);
 
 extern "C" bool Expect_readFlagsAndProcessPromise(JSC::EncodedJSValue instanceValue, JSC::JSGlobalObject* globalObject, ExpectFlags* flags, JSC::EncodedJSValue* value, AsymmetricMatcherConstructorType* constructorType);
@@ -575,7 +575,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
                 // SAFETY: visited property sets are not required when
                 // `enableAsymmetricMatchers` and `isMatchingObjectContaining`
                 // are both true
-                bool match = Bun__deepMatch<true>(otherProp, nullptr, patternObject, nullptr, globalObject, throwScope, nullptr, false, true);
+                bool match = Bun__deepMatch<true>(otherProp, nullptr, patternObject, nullptr, globalObject, throwScope, nullptr, nullptr, true);
                 RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
                 if (match) {
                     return AsymmetricMatcherResult::PASS;
@@ -2200,6 +2200,34 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
 // only reached from `Bun.deepEquals(a, b, true, true)` in BunObject.cpp.
 template bool Bun__deepEquals<true, false, false, true>(JSC::JSGlobalObject*, JSValue, JSValue, MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>&, ThrowScope&, bool);
 
+// The properties `Bun__deepMatch` matched with an asymmetric matcher, which the snapshot and diff formatters print as that matcher.
+class Bun::DeferredMatcherWrites {
+    WTF_FORBID_HEAP_ALLOCATION;
+
+public:
+    void append(JSObject* target, const Identifier& key, JSValue matcher)
+    {
+        m_values.append(target);
+        m_values.append(matcher);
+        m_writes.append({ key });
+    }
+
+    // Puts each matcher over the property it matched, where the formatters read it.
+    void apply(JSGlobalObject*, ThrowScope&);
+    // Puts back what `apply` replaced.
+    void undo(JSGlobalObject*, ThrowScope&);
+
+private:
+    struct Write {
+        Identifier key;
+        unsigned previousAttributes { 0 };
+        bool written { false };
+    };
+    Vector<Write, 4> m_writes;
+    MarkedArgumentBuffer m_values; // the (target, matcher) of each write
+    MarkedArgumentBuffer m_previousValues; // what each write replaced, empty if the target had no such property
+};
+
 /**
  * @brief `Bun.deepMatch(a, b)`
  *
@@ -2221,7 +2249,7 @@ template bool Bun__deepEquals<true, false, false, true>(JSC::JSGlobalObject*, JS
  * @param globalObject
  * @param throwScope
  * @param gcBuffer
- * @param replacePropsWithAsymmetricMatchers
+ * @param matcherWrites
  * @param isMatchingObjectContaining
  *
  * @return true
@@ -2236,7 +2264,7 @@ bool Bun__deepMatch(
     JSGlobalObject* globalObject,
     ThrowScope& throwScope,
     MarkedArgumentBuffer* gcBuffer,
-    bool replacePropsWithAsymmetricMatchers,
+    Bun::DeferredMatcherWrites* matcherWrites,
     bool isMatchingObjectContaining)
 {
 
@@ -2299,10 +2327,8 @@ bool Bun__deepMatch(
                 case AsymmetricMatcherResult::FAIL:
                     return false;
                 case AsymmetricMatcherResult::PASS:
-                    if (replacePropsWithAsymmetricMatchers) {
-                        obj->putDirectMayBeIndex(globalObject, property, subsetProp);
-                        RETURN_IF_EXCEPTION(throwScope, false);
-                    }
+                    RETURN_IF_EXCEPTION(throwScope, false);
+                    if (matcherWrites) matcherWrites->append(obj, property, subsetProp);
                     // continue to next subset prop
                     continue;
                 case AsymmetricMatcherResult::NOT_MATCHER:
@@ -2313,10 +2339,8 @@ bool Bun__deepMatch(
                 case AsymmetricMatcherResult::FAIL:
                     return false;
                 case AsymmetricMatcherResult::PASS:
-                    if (replacePropsWithAsymmetricMatchers) {
-                        subsetObj->putDirectMayBeIndex(globalObject, property, prop);
-                        RETURN_IF_EXCEPTION(throwScope, false);
-                    }
+                    RETURN_IF_EXCEPTION(throwScope, false);
+                    if (matcherWrites) matcherWrites->append(subsetObj, property, prop);
                     // continue to next subset prop
                     continue;
                 case AsymmetricMatcherResult::NOT_MATCHER:
@@ -2345,7 +2369,7 @@ bool Bun__deepMatch(
                 gcBuffer->append(subsetProp);
                 // property cycle detected
                 if (!didInsertProp.second || !didInsertSubset.second) continue;
-                bool matched = Bun__deepMatch<enableAsymmetricMatchers>(prop, seenObjProperties, subsetProp, seenSubsetProperties, globalObject, throwScope, gcBuffer, replacePropsWithAsymmetricMatchers, isMatchingObjectContaining);
+                bool matched = Bun__deepMatch<enableAsymmetricMatchers>(prop, seenObjProperties, subsetProp, seenSubsetProperties, globalObject, throwScope, gcBuffer, matcherWrites, isMatchingObjectContaining);
                 RETURN_IF_EXCEPTION(throwScope, false);
                 if (!matched) return false;
             }
@@ -2357,6 +2381,73 @@ bool Bun__deepMatch(
     }
 
     return true;
+}
+
+// Reads the own property of `target` as it is stored. False if a direct put over it could not be undone.
+static bool readReplaceableProperty(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* target, const Identifier& key, JSValue& value, unsigned& attributes)
+{
+    VM& vm = globalObject->vm();
+    if (std::optional<uint32_t> index = parseIndex(key)) {
+        JSC::JSType type = target->type();
+        // These keep their elements elsewhere, but take a put and take the element back. A BigInt array throws on a matcher.
+        bool asksClass = type == ProxyObjectType || (isTypedArrayType(type) && type != BigInt64ArrayType && type != BigUint64ArrayType);
+        PropertySlot slot(target, asksClass ? PropertySlot::InternalMethodType::GetOwnProperty : PropertySlot::InternalMethodType::VMInquiry, asksClass ? nullptr : &vm);
+        bool hasOwnProperty = asksClass ? target->methodTable()->getOwnPropertySlotByIndex(target, globalObject, *index, slot) : JSObject::getOwnPropertySlotByIndex(target, globalObject, *index, slot);
+        RETURN_IF_EXCEPTION(scope, false);
+        // A new element can grow an array.
+        if (!hasOwnProperty) return false;
+        value = slot.isAccessor() ? JSValue(slot.getterSetter()) : slot.getValue(globalObject, *index);
+        attributes = slot.attributes();
+        return true;
+    }
+    value = target->getDirect(vm, key, attributes);
+    // A property the class implements natively, stored or still in its static table, cannot be put over another one.
+    return value ? !value.isCustomGetterSetter() : !target->hasNonReifiedStaticProperties() || !target->findPropertyHashEntry(key);
+}
+
+void Bun::DeferredMatcherWrites::apply(JSGlobalObject* globalObject, ThrowScope& scope)
+{
+    for (size_t i = 0; i < m_writes.size(); i++) {
+        Write& write = m_writes[i];
+        JSObject* target = asObject(m_values.at(i * 2));
+        JSValue previous;
+        bool replaceable = readReplaceableProperty(globalObject, scope, target, write.key, previous, write.previousAttributes);
+        RETURN_IF_EXCEPTION(scope, );
+        m_previousValues.append(previous);
+        if (!replaceable) continue;
+        write.written = target->putDirectMayBeIndex(globalObject, write.key, m_values.at(i * 2 + 1));
+        RETURN_IF_EXCEPTION(scope, );
+    }
+}
+
+void Bun::DeferredMatcherWrites::undo(JSGlobalObject* globalObject, ThrowScope& scope)
+{
+    JSC::Exception* failure = nullptr;
+    // Last first: two matchers can be written over one property.
+    for (size_t i = m_writes.size(); i--;) {
+        const Write& write = m_writes[i];
+        if (!write.written) continue;
+        JSObject* target = asObject(m_values.at(i * 2));
+        JSValue previous = m_previousValues.at(i);
+
+        if (!previous) {
+            DeletePropertySlot slot;
+            JSObject::deleteProperty(target, globalObject, write.key, slot);
+        } else if (previous.isGetterSetter())
+            target->putDirectAccessor(globalObject, write.key, uncheckedDowncast<GetterSetter>(previous), write.previousAttributes);
+        else if (std::optional<uint32_t> index = parseIndex(write.key))
+            target->putDirectIndex(globalObject, *index, previous, write.previousAttributes, PutDirectIndexLikePutDirect);
+        else
+            target->putDirect(globalObject->vm(), write.key, previous, write.previousAttributes);
+
+        // A Proxy trap can throw. The other properties are still put back.
+        if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
+            if (!scope.tryClearException()) return;
+            if (!failure) failure = exception;
+        }
+    }
+    if (failure) [[unlikely]]
+        scope.throwException(globalObject, failure);
 }
 
 // anonymous namespace to avoid name collision
@@ -3319,7 +3410,7 @@ bool Bun__deepEqualsNodeStrictSkipProto(JSC::EncodedJSValue JSValue0, JSC::Encod
 
 #undef IMPL_DEEP_EQUALS_WRAPPER
 
-bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject, bool replacePropsWithAsymmetricMatchers)
+bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject, bool formatIfMatched, bool formatIfNotMatched, void* ctx, void (*format)(void* ctx, bool matched))
 {
     JSValue obj = JSValue::decode(JSValue0);
     JSValue subset = JSValue::decode(JSValue1);
@@ -3329,7 +3420,27 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
     std::set<EncodedJSValue> objVisited;
     std::set<EncodedJSValue> subsetVisited;
     MarkedArgumentBuffer gcBuffer;
-    RELEASE_AND_RETURN(scope, Bun__deepMatch<true>(obj, &objVisited, subset, &subsetVisited, globalObject, scope, &gcBuffer, replacePropsWithAsymmetricMatchers, false));
+    Bun::DeferredMatcherWrites matcherWrites;
+    bool matched = Bun__deepMatch<true>(obj, &objVisited, subset, &subsetVisited, globalObject, scope, &gcBuffer, &matcherWrites, false);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!(matched ? formatIfMatched : formatIfNotMatched)) return matched;
+
+    matcherWrites.apply(globalObject, scope);
+    if (!scope.exception()) [[likely]]
+        format(ctx, matched);
+
+    {
+        // A termination cannot be cleared, and after a `node:vm` timeout the caller goes on. This holds it until the end of the block.
+        DeferTermination deferTermination(scope.vm());
+        // `undo` calls into JSC, which returns early while an exception is pending.
+        JSC::Exception* exception = scope.exception();
+        if (exception && !scope.tryClearException()) [[unlikely]]
+            exception = nullptr;
+        matcherWrites.undo(globalObject, scope);
+        if (exception && !scope.exception()) [[unlikely]]
+            scope.throwException(globalObject, exception);
+    }
+    return matched;
 }
 
 extern "C" bool Bun__JSValue__isAsyncContextFrame(JSC::EncodedJSValue value)

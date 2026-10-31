@@ -1,5 +1,65 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, nodeExeAtLeast, tempDir } from "harness";
+import { join } from "node:path";
+import { unsupported as aotUnsupported } from "../../../aot/supported";
+import { responseCorkOracle } from "./node-http-cork-oracle.fixture";
+
+const corkRuntimes: Array<[string, string]> = [["bun", bunExe()]];
+const corkNode = nodeExeAtLeast("24.0.0");
+if (corkNode) corkRuntimes.push(["node", corkNode]);
+const corkModes = [
+  "pipeline",
+  "counts",
+  "bodyless-write",
+  "cross-content-length",
+  "cross-chunked",
+  "socket-cork",
+  "end-corked",
+  "high-water",
+  "next-tick",
+  "timer",
+  "destroy",
+  "destroy-no-error",
+  "headers",
+  "informational",
+  "callbacks",
+  "reassigned",
+  "interleaved",
+  "after-uncork",
+  "accounting",
+  "headers-frozen",
+  "raw-drain",
+  "reassigned-informational",
+  "strict-end",
+  "strict-sequence",
+  "strict-first-write",
+  "strict-no-body",
+  "strict-mutable-header",
+  "reassigned-no-body",
+  "native-raw-drain",
+  "native-queued",
+  "standalone",
+  "standalone-strict",
+  "informational-pressure",
+];
+describe.each(corkRuntimes)("response cork Node oracle (%s)", (_runtime, executable) => {
+  for (const mode of corkModes) {
+    test.concurrent(mode, async () => {
+      await using child = Bun.spawn({
+        cmd: [
+          executable,
+          "-e",
+          `(${responseCorkOracle.toString()})(${JSON.stringify(mode)}).catch(error => { console.error(error); process.exit(1); })`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+    });
+  }
+});
 
 // Security test: with two cork slots that can be stolen/evicted, a bug in slot
 // bookkeeping could cause bytes meant for socket A to land in socket B's
@@ -318,4 +378,36 @@ describe.concurrent("cork buffer: no cross-socket data bleed", () => {
       });
     `);
   });
+});
+
+test.skipIf(!!aotUnsupported)("compiled responses retain corked socket operations", async () => {
+  using dir = tempDir("compiled-response-cork", {
+    "main.ts": await Bun.file(join(import.meta.dir, "node-http-cork-oracle.fixture.ts")).text(),
+  });
+  const executable = join(String(dir), process.platform === "win32" ? "app.exe" : "app");
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [buildOut, buildError, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect({ buildOut: buildExit ? buildOut : "", buildError: buildExit ? buildError : "", buildExit }).toEqual({
+    buildOut: "",
+    buildError: "",
+    buildExit: 0,
+  });
+  for (const mode of corkModes) {
+    await using proc = Bun.spawn({
+      cmd: [executable, mode],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 10000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ mode, stdout, stderr, exitCode }).toEqual({ mode, stdout: "ok\n", stderr: "", exitCode: 0 });
+  }
 });

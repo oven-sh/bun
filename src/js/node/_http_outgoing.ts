@@ -1321,6 +1321,7 @@ ObjectDefineProperty(OutgoingMessage.prototype, "_headerNames", {
 });
 
 export default {
+  kCorked,
   kHighWaterMark,
   kUniqueHeaders,
   kOutHeaders,

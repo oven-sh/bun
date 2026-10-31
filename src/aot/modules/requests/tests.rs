@@ -7,9 +7,11 @@ use crate::modules::{
     Candidates, ModuleFailure, ModuleFailureId, ModuleGraph, SiteAnswer, compare_modules,
 };
 use bstr::BStr;
+use bun_ast::Loader;
 use bun_core::strings::split;
 use bun_sema::hir::ImportEqualsId;
 use bun_sema::program::HostModuleId;
+use bun_sema::resolve::ComputedUnknown;
 
 const JSX_RUNTIME: &str = "node_modules/react/jsx-dev-runtime.js";
 const JSX_PACKAGE: &str = "node_modules/react/index.js";
@@ -44,8 +46,15 @@ fn with_scanner(source: &str, check: impl FnOnce(&mut FileScanner<'_, '_>, &[Imp
         let files = program.input.files;
         let compiled = files.compiled(main);
         let compiled = compiled.expect("the loader compiles the entry point");
+        let mocked_paths = FxHashSet::default();
         let mut scanner = FileScanner {
             file: main,
+            files,
+            sources: program.input.sources,
+            mocked_paths: &mocked_paths,
+            runs_tests: program.input.runs_tests,
+            loads_code_from_disk: program.input.loads_code_from_disk,
+            mocks_any_module: false,
             hir: files.hir(main),
             compiled,
             named_in_choices: &[],
@@ -53,7 +62,7 @@ fn with_scanner(source: &str, check: impl FnOnce(&mut FileScanner<'_, '_>, &[Imp
             spellings: Vec::new(),
             externals: Vec::new(),
             failures: Vec::new(),
-            sites_over_candidate_limit: Vec::new(),
+            computed_imports: Vec::new(),
         };
         check(&mut scanner, compiled.analysis.import_sites);
     });
@@ -595,19 +604,7 @@ fn site_over_candidate_limit_is_recorded() {
             let scanned = scanner.scan_site(0, site, unknown_for(cause));
             assert_eq!(scanned, ScannedSite::AllModules, "{cause:?}");
         }
-        assert!(scanner.sites_over_candidate_limit.is_empty());
-
-        let over_limit = unknown_for(ComputedUnknown::TooManyCandidates);
-        assert_eq!(
-            scanner.scan_site(0, site, over_limit),
-            ScannedSite::AllModules
-        );
-        let [span] = scanner.sites_over_candidate_limit[..] else {
-            panic!("the sites are {:?}", scanner.sites_over_candidate_limit);
-        };
-        assert_eq!(span.file, scanner.file);
-        let text = &scanner.hir.text[span.start as usize..span.end as usize];
-        assert_eq!(BStr::new(text), "`./pages/${name}.js`");
+        assert!(scanner.computed_imports.is_empty());
         assert!(scanner.candidates.is_empty());
         assert!(scanner.failures.is_empty());
     });
@@ -632,6 +629,7 @@ fn external_kind_is_recorded() {
             let module = ModuleRef::External {
                 importer,
                 specifier,
+                type_attribute: None,
             };
             assert_eq!(answer, SiteAnswer::Module(module));
             assert_eq!(program.graph.external_kind(module), Some(kind));
@@ -640,6 +638,37 @@ fn external_kind_is_recorded() {
         let expected_requests = [UNCOMPILED_MODULE, HOST_VALUE_MODULE]
             .map(|specifier| format!("request external:{specifier}"));
         assert_eq!(program.request_lines("main.js"), expected_requests);
+    });
+}
+
+#[test]
+fn import_statement_hands_its_type_to_the_loader() {
+    let main = format!(
+        "import a from '{UNCOMPILED_MODULE}' with {{ type: 'toml' }};
+        import b from '{UNCOMPILED_MODULE}';
+        import c from '{UNCOMPILED_MODULE}' with {{ type: 'TEXT' }};
+        import d from '{UNCOMPILED_MODULE}' with {{ type: 'no loader' }};
+        export {{ e }} from '{UNCOMPILED_MODULE}' with {{ type: 'toml' }};
+        import('{UNCOMPILED_MODULE}', {{ with: {{ type: 'toml' }} }});"
+    );
+    with_program(&[("main.js", main.as_str())], |program| {
+        let external = |type_attribute| {
+            SiteAnswer::Module(ModuleRef::External {
+                importer: program.file("main.js"),
+                specifier: program.atom(UNCOMPILED_MODULE),
+                type_attribute,
+            })
+        };
+        let answers = program.site_answers("main.js");
+        let answers: Vec<_> = answers.iter().map(|&(_, answer)| answer).collect();
+        let (toml, text) = (Some(Loader::Toml), Some(Loader::Text));
+        let expected = [toml, None, text, None, None, None].map(external);
+        assert_eq!(answers, expected);
+        // One module for each type, and the one that no attribute asks for comes first.
+        let modules = [None, toml, text].map(external);
+        let listed = program.graph.other_modules().iter();
+        let listed: Vec<_> = listed.map(|&module| SiteAnswer::Module(module)).collect();
+        assert_eq!(listed, modules);
     });
 }
 
@@ -688,11 +717,19 @@ fn file_without_jsx_requests_no_jsx_module() {
 }
 
 #[test]
-fn commonjs_file_has_jsx_site_without_request() {
+fn commonjs_file_requires_module_of_its_jsx() {
     with_react_program("module.exports = <div />;", |program| {
         let main = program.file("main.jsx");
         assert_eq!(program.graph.kind(main), ModuleKind::CommonJs);
-        assert!(program.graph.requests(main).is_empty());
+        let requests = program.graph.requests(main);
+        let [request] = requests else {
+            panic!("the requests are {requests:?}");
+        };
+        assert_eq!(request.target, program.module(JSX_RUNTIME));
+        assert_eq!(
+            request.kind,
+            crate::ir::generated::ModuleRequestKind::Require
+        );
         let runtime = SiteAnswer::Module(program.module(JSX_RUNTIME));
         let expected = [(ImportSiteKind::JsxRuntime, runtime)];
         assert_eq!(program.site_answers("main.jsx"), expected);
@@ -766,6 +803,7 @@ fn external_module_names_importer_and_specifier() {
         let module = ModuleRef::External {
             importer: scanner.file,
             specifier,
+            type_attribute: None,
         };
         let result = scanner.answer_of(CodeAnswer::External { specifier, kind });
         assert_eq!(result, Ok(ScannedSite::Module(module)));

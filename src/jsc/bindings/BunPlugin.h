@@ -96,7 +96,18 @@ public:
             delete virtualModules;
             virtualModules = nullptr;
             mustDoExpensiveRelativeLookup = false;
+#if ENABLE(AOT)
+            compiledMocksToRun.clear();
+            factoriesOfCompiledMocks.clear();
+#endif
         }
+
+#if ENABLE(AOT)
+        // By module. The factory of each runs when a graph comes to the module.
+        WTF::Vector<std::pair<uint32_t, JSC::Strong<JSC::JSObject>>> compiledMocksToRun;
+        // What those factories have returned and is not settled: the graph waits.
+        WTF::Vector<JSC::Strong<JSC::JSPromise>> factoriesOfCompiledMocks;
+#endif
 
         ~OnLoad()
         {

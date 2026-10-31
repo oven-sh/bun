@@ -205,6 +205,17 @@ const MADE_REQUIRES: &[(&str, &str, &[&str])] = &[
         r#"import { createRequire } from "node:module"; import.meta.url = other; createRequire(import.meta.url)("a");"#,
         &[],
     ),
+    // What is made is asked for on the way to what it is made of.
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; const load = createRequire(load("url").fileURLToPath(import.meta.url)); load("a");"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"const load = require("module").createRequire(load("path").join(__dirname, "lib", "index.js")); load("a");"#,
+        &["module"],
+    ),
     (
         "a.mts",
         r#"import { createRequire } from "node:module"; const meta = import.meta; createRequire(import.meta.url)("a");"#,
@@ -1014,6 +1025,34 @@ const NAMES_THAT_ARE_ONE_OF_A_FEW: &[(&str, &[&str])] = &[
         &["./b.js", "./lib/a.js"],
     ),
     (
+        "const path = require('path'); const folder = path.join(__dirname, 'lib'); require(path.join(folder, x));",
+        &["./lib/*"],
+    ),
+    (
+        "const path = require('path'); const all = path.join(__dirname, 'lib'); const folder = path.join(all, x); require(path.join(folder, y));",
+        &["./lib/*"],
+    ),
+    (
+        "const path = require('path'); function walk(folder) { for (const name of list(folder)) { const full = path.join(folder, name); if (c(full)) walk(full); else require(full); } } walk(path.join(__dirname, 'lib'));",
+        &["./lib/*"],
+    ),
+    (
+        "const path = require('path'); function walk(folder) { for (const name of list(folder)) { if (c(name)) walk(path.join(folder, name)); else require(path.join(folder, name + '.js')); } } walk(path.join(__dirname, 'lib'));",
+        &["./lib/*.js"],
+    ),
+    (
+        "const { join } = require('path'); require(join(__dirname, 'lib', x, y + '.js'));",
+        &["./lib/*.js"],
+    ),
+    (
+        "const { join } = require('path'); require(join(__dirname, 'lib', x, 'a', 'index.js'));",
+        &["./lib/*/a/index.js"],
+    ),
+    (
+        "const path = require('path'); const folder = path.resolve(__dirname, 'lib', 'b'); require(path.join(folder, '..', x + '.js'));",
+        &["./lib/*.js"],
+    ),
+    (
         "const path = require('node:path'); const folder = c ? 'a' : 'b'; require(path.resolve(__dirname, folder, `${x}.js`));",
         &["./a/*.js", "./b/*.js"],
     ),
@@ -1134,7 +1173,11 @@ const NAMES_WITH_A_PART_OUT_OF_WHAT_MAY_CHANGE: &[(&str, &[&str])] = &[
 ];
 
 fn describe_alternatives(s: &Analyzed<'_>, site: &ImportSite) -> Vec<String> {
-    let alternatives = s.analysis.alternatives_of(&site.specifier).iter();
+    describe_specifier(s, &site.specifier)
+}
+
+fn describe_specifier(s: &Analyzed<'_>, specifier: &ImportSpecifier) -> Vec<String> {
+    let alternatives = s.analysis.alternatives_of(specifier).iter();
     let described = alternatives.filter_map(|&it| match it {
         ImportSpecifier::Constant(text) => Some(s.workspace.text(text).to_owned()),
         ImportSpecifier::Pattern { prefix, suffix } => {
@@ -1243,6 +1286,71 @@ const NAMES_THAT_A_RESOLVER_ANSWERED_FOR: &[(&str, ResolvedForm, &[&str])] = &[
         ResolvedForm::Url,
         &["./a/*.js"],
     ),
+    (
+        "export {}; await import(new URL('./a.js', import.meta.url));",
+        ResolvedForm::UrlObject,
+        &["./a.js"],
+    ),
+    (
+        "export {}; await import(new URL(`a/${x}.js`, import.meta.url));",
+        ResolvedForm::UrlObject,
+        &["./a/*.js"],
+    ),
+    (
+        "export {}; const found = new URL('../a/' + x, import.meta.url); await import(found.href);",
+        ResolvedForm::Url,
+        &["../a/*"],
+    ),
+    (
+        "export {}; await import(`${new URL(`./a/${x}.js`, import.meta.url)}`);",
+        ResolvedForm::Url,
+        &["./a/*.js"],
+    ),
+    (
+        "export {}; await import(String(new URL(new URL(`./a/${x}.js`, import.meta.url))));",
+        ResolvedForm::Url,
+        &["./a/*.js"],
+    ),
+    (
+        "import { fileURLToPath } from 'node:url'; await import(fileURLToPath(new URL(`./a/${x}.js`, import.meta.url)));",
+        ResolvedForm::Path,
+        &["./a/*.js"],
+    ),
+    (
+        "import(require('url').pathToFileURL(require('path').join(__dirname, 'a', x + '.js')).href);",
+        ResolvedForm::Url,
+        &["./a/*.js"],
+    ),
+    (
+        "import(require('node:url').pathToFileURL(require.resolve('./a')));",
+        ResolvedForm::UrlObject,
+        &["./a"],
+    ),
+    (
+        "export {}; const folder = new URL('./a/', import.meta.url); await import(new URL(x, folder));",
+        ResolvedForm::UrlObject,
+        &["./a/*"],
+    ),
+    (
+        "export {}; await import(new URL('./c.js', new URL('../a/b.js', import.meta.url)).href);",
+        ResolvedForm::Url,
+        &["../a/c.js"],
+    ),
+    (
+        "const path = require('path'), folder = path.join(__dirname, 'a'); import(require('url').pathToFileURL(path.join(folder, x)).href);",
+        ResolvedForm::Url,
+        &["./a/*"],
+    ),
+    (
+        "require(require.resolve(`./a/${x}.js`).trim());",
+        ResolvedForm::Path,
+        &["./a/*.js"],
+    ),
+    (
+        "require(require('path').normalize(require.resolve('./a') + ''));",
+        ResolvedForm::Path,
+        &["./a"],
+    ),
 ];
 
 const ANSWERS_OF_RESOLVERS_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
@@ -1252,6 +1360,18 @@ const ANSWERS_OF_RESOLVERS_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
     "require(require.resolve('./a', { paths: [x] }));",
     "require(require.resolve(x));",
     "export {}; await import(c ? import.meta.resolve('./a') : require.resolve('./b'));",
+    "export {}; await import(new URL('./a.js', x));",
+    "export {}; await import(new URL('./a.js', new URL(`./${x}/`, import.meta.url)));",
+    "export {}; await import(new URL(x, import.meta.url));",
+    "export {}; await import(new URL('/a.js', import.meta.url));",
+    "export {}; await import(new URL('./a.js?b', import.meta.url));",
+    "export {}; await import(new URL('https://a/' + x, import.meta.url));",
+    "export {}; await import(new URL('./a.js', import.meta.url).search);",
+    "export {}; await import(new URL('./a.js', import.meta.url).href + x);",
+    "export {}; class URL {} await import(new URL('./a.js', import.meta.url));",
+    "export {}; import.meta.url = x; await import(new URL('./a.js', import.meta.url));",
+    "export {}; await import(c ? new URL('./a.js', import.meta.url) : import.meta.resolve('./b'));",
+    "require(require.resolve('./a').trimEnd(x));",
 ];
 
 fn find_site_given_answer_of_resolver<'a>(
@@ -1282,6 +1402,161 @@ fn answer_of_a_resolver_that_is_changed_or_mixed_is_not_followed() {
         with_last_site(text, |s, _| {
             assert!(find_site_given_answer_of_resolver(s).is_none(), "{text}");
         });
+    }
+}
+
+const NAMES_OF_WORKERS_THAT_ARE_KNOWN_IN_PART: &[(&str, &[&str])] = &[
+    ("new Worker('./a/' + x + '.js');", &["./a/*.js"]),
+    (
+        "new threads.Worker(c ? './a.js' : './b.js');",
+        &["./a.js", "./b.js"],
+    ),
+    (
+        "const { Worker } = require('node:worker_threads'); new Worker(require('path').join(__dirname, 'a', x));",
+        &["./a/*"],
+    ),
+    ("new Worker(require.resolve('./a/' + x));", &["./a/*"]),
+    (
+        "export {}; new Worker(new URL(`./a/${x}.js`, import.meta.url), { name });",
+        &["./a/*.js"],
+    ),
+];
+
+const NAMES_OF_WORKERS_THAT_ARE_WHOLE_OR_UNKNOWN: &[&str] = &[
+    "new Worker('./a.js');",
+    "new Worker(x);",
+    "new Worker(x + '.js');",
+    "new Worker();",
+    "new Other('./a/' + x);",
+    "Worker('./a/' + x);",
+    "if (false) new Worker('./a/' + x);",
+];
+
+fn describe_name_of_worker(text: &str) -> Option<Vec<String>> {
+    let mut described = None;
+    let path = if text.starts_with("export") {
+        "a.mjs"
+    } else {
+        "a.cjs"
+    };
+    with_workspace(|w| {
+        let s = &w.analyze(&Source::new(path, text), &w.fold_inputs(&TARGET));
+        let constructions = find_exprs(&s.hir, |kind| matches!(kind, ExprKind::New(_)));
+        described = constructions.into_iter().find_map(|construction| {
+            let ExprKind::New(call) = s.hir[construction].kind else {
+                return None;
+            };
+            let argument = s.hir.ids(s.hir[call].args).next()?;
+            let specifier = s.analysis.find_name_of_worker(argument)?;
+            Some(describe_specifier(s, specifier))
+        });
+    });
+    described
+}
+
+#[test]
+fn name_of_a_worker_is_known_in_part() {
+    for &(text, names) in NAMES_OF_WORKERS_THAT_ARE_KNOWN_IN_PART {
+        let described = describe_name_of_worker(text);
+        assert_eq!(described.unwrap_or_default(), names, "{text}");
+    }
+    for &text in NAMES_OF_WORKERS_THAT_ARE_WHOLE_OR_UNKNOWN {
+        assert_eq!(describe_name_of_worker(text), None, "{text}");
+    }
+}
+
+const PATHS_OF_CHANGED_FILES: &[(&str, &[&str])] = &[
+    (
+        "import { writeFileSync } from 'node:fs'; writeFileSync('/p/a.js', text);",
+        &["/p/a.js"],
+    ),
+    (
+        "import { writeFileSync as put } from 'fs'; put('a.js', text);",
+        &["a.js"],
+    ),
+    (
+        "import fs from 'node:fs'; fs.writeFileSync('/p/a.js', text);",
+        &["/p/a.js"],
+    ),
+    (
+        "import * as fs from 'node:fs'; const put = fs.appendFileSync; put('/p/a.js', text);",
+        &["/p/a.js"],
+    ),
+    (
+        "import fs from 'node:fs'; await fs.promises.writeFile('/p/a.js', text);",
+        &["/p/a.js"],
+    ),
+    (
+        "import { rm } from 'node:fs/promises'; await rm('/p/a.js');",
+        &["/p/a.js"],
+    ),
+    (
+        "import { renameSync } from 'node:fs'; renameSync('/p/a.js', '/p/b.js');",
+        &["/p/a.js", "/p/b.js"],
+    ),
+    (
+        "import { copyFileSync } from 'node:fs'; copyFileSync('/p/a.js', '/p/b.js');",
+        &["/p/b.js"],
+    ),
+    (
+        "import { openSync } from 'node:fs'; openSync('/p/a.js', 'w');",
+        &["/p/a.js"],
+    ),
+    (
+        "export {}; require('fs').unlinkSync('/p/a.js');",
+        &["/p/a.js"],
+    ),
+    ("export {}; await Bun.write('/p/a.js', text);", &["/p/a.js"]),
+    (
+        "export {}; await Bun.write(Bun.file('/p/a.js'), text);",
+        &["/p/a.js"],
+    ),
+    (
+        "export {}; const file = Bun.file('/p/a.js'); await file.delete();",
+        &["/p/a.js"],
+    ),
+    (
+        "import { writeFileSync } from 'node:fs'; import { join } from 'node:path'; writeFileSync(join(import.meta.dir, 'a.js'), text);",
+        &["./a.js"],
+    ),
+    (
+        "import { writeFileSync } from 'node:fs'; for (const name of ['a.js', 'b.js']) writeFileSync('/p/' + name, text);",
+        &["/p/a.js", "/p/b.js"],
+    ),
+];
+
+const CALLS_THAT_CHANGE_NO_FILE_THAT_IS_KNOWN: &[&str] = &[
+    "import { writeFileSync } from 'node:fs'; writeFileSync(path, text);",
+    "import { readFileSync } from 'node:fs'; readFileSync('/p/a.js');",
+    "import { openSync } from 'node:fs'; openSync('/p/a.js'); openSync('/p/a.js', 'r'); openSync('/p/a.js', flags);",
+    "import { writeFileSync } from './mine.js'; writeFileSync('/p/a.js', text);",
+    "export {}; function writeFileSync() {} writeFileSync('/p/a.js', text);",
+    "export {}; other.writeFileSync('/p/a.js', text);",
+    "export {}; const Bun = other; Bun.write('/p/a.js', text);",
+    "import { writeFileSync } from 'node:fs'; if (false) writeFileSync('/p/a.js', text);",
+    "import { writeFileSync } from 'node:fs'; writeFileSync(...all);",
+    "export {}; other.file('/p/a.js').write(text);",
+];
+
+fn describe_paths_of_changed_files(text: &str) -> Vec<String> {
+    let mut described = Vec::new();
+    with_workspace(|w| {
+        let s = &w.analyze(&Source::new("a.mjs", text), &w.fold_inputs(&TARGET));
+        let paths = s.analysis.paths_of_changed_files.iter();
+        described = paths
+            .flat_map(|(_, specifier)| describe_specifier(s, specifier))
+            .collect();
+    });
+    described
+}
+
+#[test]
+fn paths_that_a_file_spells_to_calls_which_change_what_is_there() {
+    for &(text, paths) in PATHS_OF_CHANGED_FILES {
+        assert_eq!(describe_paths_of_changed_files(text), paths, "{text}");
+    }
+    for &text in CALLS_THAT_CHANGE_NO_FILE_THAT_IS_KNOWN {
+        assert!(describe_paths_of_changed_files(text).is_empty(), "{text}");
     }
 }
 

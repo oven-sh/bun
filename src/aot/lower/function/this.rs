@@ -3,8 +3,8 @@ use bun_sema::hir::{FnId, FnKind};
 
 use crate::ir::generated::{BlockFrequency, HomeObjectKind, ModuleKind, RuntimeErrorKind};
 use crate::ir::{DeclaredType, TypeTable, ValueId};
-use crate::lower::FunctionLowering;
 use crate::lower::scope::{BindingRef, ScopeSlot};
+use crate::lower::{FileLowering, FunctionLowering, class};
 
 #[derive(Copy, Clone)]
 enum LexicalOwner {
@@ -12,6 +12,17 @@ enum LexicalOwner {
     File(ScopeId),
     Function(ScopeId, FnId),
     FieldInitializer(ScopeId),
+}
+
+impl FileLowering<'_, '_, '_, '_> {
+    /// The scope is that of a field's value, and the constructor evaluates the value itself.
+    pub(in crate::lower) fn is_code_of_constructor(&self, scope: ScopeId) -> bool {
+        let ScopeKind::FieldInitializer(member) = self.bound.scopes[scope.idx()].kind else {
+            return false;
+        };
+        let (settings, transpiled) = (self.compiled.settings, self.transpiled.as_ref());
+        class::is_evaluated_in_constructor(self.hir, self.bound, settings, transpiled, member)
+    }
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -124,6 +135,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     }
                     _ => self.builder.undefined(),
                 }
+            }
+            LexicalOwner::FieldInitializer(scope) if self.file.is_code_of_constructor(scope) => {
+                self.get_slot(scope, ScopeSlot::NewTarget)
             }
             LexicalOwner::Generated | LexicalOwner::File(_) | LexicalOwner::FieldInitializer(_) => {
                 self.builder.undefined()

@@ -235,7 +235,7 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
     return JSC::ErrorInstance::create(vm, structure, messageString, cause, nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
 }
 
-JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, const String& message)
+NEVER_INLINE JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, const String& message)
 {
     return errorCache(globalObject)->createError(vm, globalObject, code, jsString(vm, message), jsUndefined());
 }
@@ -245,7 +245,7 @@ JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, const Str
     return createError(globalObject->vm(), globalObject, code, message);
 }
 
-JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message)
+NEVER_INLINE JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message)
 {
     return createError(vm, defaultGlobalObject(globalObject), code, message);
 }
@@ -268,7 +268,7 @@ JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode co
     return errorCache(globalObject)->createError(vm, globalObject, code, message, options);
 }
 
-JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message)
+NEVER_INLINE JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message)
 {
     return createError(globalObject->vm(), globalObject, code, message);
 }
@@ -2078,7 +2078,7 @@ JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, co
     return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, message);
 }
 
-JSC::EncodedJSValue Bun::throwInvalidThisCallError(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, const ASCIILiteral typeName)
+NEVER_INLINE JSC::EncodedJSValue Bun::throwInvalidThisCallError(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, const ASCIILiteral typeName)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

@@ -87,4 +87,6 @@ export function readsC(i: number): number {
 export function readsCAgain(i: number): number {
   return make(i, 6).c + 1;
 }
-console.log(unusedField(1, 5), unusedNest(2, []), countsDown(3), usedResult(4), unknownBound(5, 6), hasSideEffect(7), calls, stepsByZero(8, 3), readsC(9), readsCAgain(10));
+// What the build cannot know: a number that is read from a text.
+const read = (text: string): number => Number(text);
+console.log(unusedField(1, read("5")), unusedNest(2, []), countsDown(3), usedResult(4), unknownBound(5, read("6")), hasSideEffect(7), calls, stepsByZero(8, read("3")), readsC(9), readsCAgain(10));

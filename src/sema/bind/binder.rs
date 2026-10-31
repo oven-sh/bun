@@ -10,14 +10,11 @@ struct Label {
     edges: smallvec::SmallVec<[FlowId; 4]>,
     /// No antecedent has a higher id.
     highest_edge: FlowId,
+    /// How many of `edges`, from the first on, are in `Binder::edges_of_long_labels`.
+    indexed_edges: u32,
     /// Its flow node, created once something follows it.
     node: FlowId,
     is_loop: bool,
-}
-
-impl Label {
-    /// A label with fewer antecedents is searched linearly.
-    const FEW: usize = 16;
 }
 
 /// A scope's names, or a symbol's exports or members, while the file is being bound. Most tables
@@ -177,9 +174,8 @@ pub(super) struct Binder<'f, 's> {
     is_unchecked: bool,
     /// Until the file is finished, `start` of a label's flow node identifies its entry here.
     label_edges: Vec<Label>,
-    /// The antecedents of the labels that have at least `Label::FEW`, each with the label's index
-    /// in `label_edges`.
-    edges_of_large_labels: crate::util::FxHashSet<(usize, FlowId)>,
+    /// An index in `label_edges` and an antecedent of that label. See `Label::indexed_edges`.
+    edges_of_long_labels: crate::util::FxHashSet<(usize, FlowId)>,
     /// `FlowFlagsReferenced`, one bit per flow node.
     referenced: Vec<u64>,
     /// The start flow node for functions without a body, where no outer narrowing applies.
@@ -362,7 +358,7 @@ impl<'f, 's> Binder<'f, 's> {
             is_reached: false,
             is_unchecked: false,
             label_edges: Vec::new(),
-            edges_of_large_labels: Default::default(),
+            edges_of_long_labels: Default::default(),
             referenced: Vec::new(),
 
             start_of_signatures: FlowId::NONE,
@@ -972,6 +968,7 @@ impl<'f, 's> Binder<'f, 's> {
         self.label_edges.push(Label {
             edges: Default::default(),
             highest_edge: FlowId(0),
+            indexed_edges: 0,
             node: FlowId::NONE,
             is_loop,
         });
@@ -1047,24 +1044,25 @@ impl<'f, 's> Binder<'f, 's> {
         let Label {
             edges,
             highest_edge,
+            indexed_edges,
             ..
         } = &mut self.label_edges[at];
-        // Most antecedents are newer than all the others, so a label with very many is not searched for each.
+        // Most antecedents are newer than all the others. In `a && 1 && b && 2 && ..` every second one isn't.
+        const MAX_EDGES_SEARCHED: usize = 16;
         let is_highest = from.0 > highest_edge.0;
-        if is_highest {
-            *highest_edge = from;
-        }
-        let is_new = if edges.len() < Label::FEW {
-            is_highest || !edges.contains(&from)
-        } else {
-            cold_path();
-            if edges.len() == Label::FEW {
-                let known = edges.iter().map(|&edge| (at, edge));
-                self.edges_of_large_labels.extend(known);
+        let is_known = !is_highest
+            && if edges.len() <= MAX_EDGES_SEARCHED {
+                edges.contains(&from)
+            } else {
+                let known = &mut self.edges_of_long_labels;
+                known.extend(edges[*indexed_edges as usize..].iter().map(|&it| (at, it)));
+                *indexed_edges = edges.len() as u32;
+                known.contains(&(at, from))
+            };
+        if !is_known {
+            if is_highest {
+                *highest_edge = from;
             }
-            self.edges_of_large_labels.insert((at, from))
-        };
-        if is_new {
             edges.push(from);
             self.set_flow_node_referenced(from);
         }
@@ -2196,7 +2194,7 @@ impl<'f, 's> Binder<'f, 's> {
         self.b
             .infer_positions
             .as_mut_slice()
-            .sort_unstable_by_key(|p| p.0);
+            .shared_sort_unstable_by_key(|p| p.0);
         self.bind_deferred_expando_assignments();
         // Flatten the tables.
         self.b.tables.reserve_exact(self.tables.len());

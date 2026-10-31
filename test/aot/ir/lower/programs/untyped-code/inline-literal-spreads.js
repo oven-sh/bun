@@ -99,30 +99,31 @@ let sum = 0; for (let i = 0; i < 150000; i++) { const o = { first: i, ...(i & 1 
 // CHECK-NEXT: Jump -> next b4()
 // CHECK-NEXT: b4():
 // CHECK-NEXT: v11 = CopyObject v5
-// CHECK-NEXT: v12 = NewDictionary
-// CHECK-NEXT: v13 = String string="k"
-// CHECK-NEXT: v14 = Add v13, v10
-// CHECK-NEXT: v15 = ToPropertyKey v14
-// CHECK-NEXT: v16 = Convert v10 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: ElemDefine v12, v15, v16
-// CHECK-NEXT: CopyDataProperties v11, v12
+// CHECK-NEXT: v12 = String string="k"
+// CHECK-NEXT: v13 = Add v12, v10
+// CHECK-NEXT: v14 = ToPropertyKey v13
+// CHECK-NEXT: v15 = Convert v10 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: v16 = NewObject layout=[[L_8]]
+// CHECK-NEXT: ElemDefine v16, v14, v15
+// CHECK-NEXT: v18 = FinishObject v16
+// CHECK-NEXT: CopyDataProperties v11, v18
 // CHECK-NEXT: PropDefine v11, v10 key="last"
 // CHECK-NEXT: Jump -> next b5()
 // CHECK-NEXT: b5():
-// CHECK-NEXT: v20 = Increment v10
-// CHECK-NEXT: v21 = Convert v20 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b2(v11, v21)
-// CHECK-NEXT: b6(v22):
+// CHECK-NEXT: v21 = Increment v10
+// CHECK-NEXT: v22 = Convert v21 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: Jump -> next b2(v11, v22)
+// CHECK-NEXT: b6(v23):
 // CHECK-NEXT: Jump -> next b7()
 // CHECK-NEXT: b7():
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="a"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=anything variableName="i"}] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_8]]
+// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_9]]
 // CHECK-NEXT: v2 = CheckInitialized v1 name="note"
 // CHECK-NEXT: v3 = String string="got"
 // CHECK-NEXT: v4 = Call v2, -, v3 calleeName="note"
@@ -131,7 +132,7 @@ let sum = 0; for (let i = 0; i < 150000; i++) { const o = { first: i, ...(i & 1 
 // CHECK-NEXT: Return v6
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="m"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_9]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=anything variableName="i"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_10]]] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

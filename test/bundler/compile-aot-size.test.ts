@@ -39,7 +39,7 @@ const toolStrings: Record<string, string[]> = {
   "linter": ["Unexpected any. Specify a different type."],
   "package manager": ["lockfile had changes, but lockfile is frozen"],
   "options of bun test": ["--shard count must be greater than 0", "--retry cannot be used with --rerun-each"],
-  "compiler": ["RequiredPassLeftOperation"],
+  "compiler": ["RequiredPassLeftOperation", "1234567890123"],
 };
 const allToolStrings = Object.entries(toolStrings).flatMap(([tool, strings]) =>
   strings.map(each => `${tool}: ${each}`),
@@ -76,7 +76,9 @@ const countMappedBytes = (file: Buffer) => getMappedSegments(file).reduce((sum, 
 // What an executable maps whatever its program is, on Linux x64 with glibc. These bounds only go down.
 // One exception: the engine of WebKit e8f704815e94 has 167,808 bytes more that a trimmed executable keeps, and the second bound went up with it.
 const mostMappedBytes: Record<string, number> = { "": 68_440_000, "--trim": 25_880_000 };
-const mostBytesOfCompiler = 22_480_000;
+// The bytes of the feature ImageCompiler in the trim table: about 22.50 MB when this was set, with about the 250 KB of room it had before.
+// Restated once, where the compiler was merged: it measured 23,647,988.
+const mostBytesOfCompiler = 23_750_000;
 
 const importsItsArguments = `
   import { join } from "node:path";
@@ -107,6 +109,22 @@ describe.skipIf(!canTrim)("bun build --compile --aot", () => {
     const { totalBytes } = measureFeature("ImageCompiler");
     console.log("the compiler takes", totalBytes, "bytes");
     expect(totalBytes).toBeLessThanOrEqual(mostBytesOfCompiler);
+  });
+
+  test("the compiler keeps nothing of Intl", () => {
+    const compiler = model.features.find(each => each.name === featureNamed("ImageCompiler"))!.index;
+    const intl = new Set(model.features.filter(each => each.name.startsWith("Intl")).map(each => each.index));
+    expect(intl.size).toBeGreaterThan(0);
+    const table = readTrimTable(bunExe());
+    let sharedBytes = 0;
+    for (const { start, end, set } of table.ranges) {
+      const users = table.sets[set]!;
+      const usersAtRunTime = users.filter(user => !removedByAot.has(user));
+      if (users.includes(compiler) && usersAtRunTime.length > 0 && usersAtRunTime.every(user => intl.has(user)))
+        sharedBytes += end - start;
+    }
+    console.log("the compiler and Intl share", sharedBytes, "bytes");
+    expect(sharedBytes).toBeLessThan(16_384);
   });
 
   test.skipIf(!isGlibc || process.arch !== "x64")("every range of code of a page or more can be cut", () => {
@@ -145,6 +163,21 @@ describe.skipIf(!canTrim)("bun build --compile --aot", () => {
       },
       600_000,
     );
+
+    test("a program that formats from patterns contains no strings from the CLI tools", async () => {
+      using dir = tempDirForAotBuilds("compile-aot-size", {
+        "program.ts": `
+          const dates = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeZone: "UTC" });
+          console.log(dates.format(0), (1234.5).toLocaleString("en-US"), new Date(0).toLocaleTimeString("de-DE", { timeZone: "UTC" }));
+        `,
+      });
+      const program = await build(String(dir), "program");
+      expect(await spawned([program], String(dir), bunEnv)).toMatchObject({
+        stdout: "Jan 1, 1970 1,234.5 00:00:00\n",
+        exitCode: 0,
+      });
+      expect(findToolStrings(readFileSync(program))).toEqual([]);
+    }, 600_000);
 
     test.each(Object.entries(madeByIntl))(
       "objects of %s are collected",

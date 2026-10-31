@@ -1,4 +1,5 @@
-use super::alternatives::{WrittenNames, find_alternatives};
+use super::alternatives::{WrittenNames, find_alternatives, find_texts_of_key};
+use super::changed_files::find_operands_that_name_changed_files;
 use super::made_requires::{
     OwnRequire, StepsLeft, Text, find_imported_export, find_own_require, follow_settled_bindings,
     follow_to_own_require, holds_import_meta_require, may_be_modified, may_require_get_members,
@@ -6,8 +7,8 @@ use super::made_requires::{
 };
 use super::{Alternatives, ImportSite, ImportSiteKind, ImportSpecifier, ResolvedForm, ScanInputs};
 use crate::atom::{Atom, Interner, known};
-use crate::bind::{Binding, Bound, CommonJsVariable, Parent, ScopeKind};
-use crate::fold::Decisions;
+use crate::bind::{Binding, Bound, CommonJsVariable, Decl, FnOwner, Parent, PatParent, ScopeKind};
+use crate::fold::{Decisions, FoldedValue, find_export_of_module};
 use crate::hir::{
     ExprFlags, ExprId, ExprKind, File, IdList, MemberKey, NodeData, PropKey, PropKind,
 };
@@ -242,7 +243,68 @@ fn find_call_site(
         let on_process = is_process(hir, bound, object, &[known::globalThis, known::global]);
         return on_process.then(|| create_site(ImportSiteKind::GetBuiltinModule(call), args));
     }
+    // A name that is made at run time says nothing of the modules that the build knows, unlike that of a mock.
+    let is_written_out = matches!(
+        expr_kind(hir, hir.id_at(args, 0)),
+        Some(ExprKind::String(_))
+    );
+    if is_mock_module(hir, bound, object, name)
+        || (is_written_out && is_module_of_plugin(hir, bound, object, name))
+    {
+        return Some(create_site(ImportSiteKind::MockModule(call), args));
+    }
     None
+}
+
+/// Whether the call of an `ImportSiteKind::MockModule` is the `build.module(..)` of a plugin. A mock is laid over the module that its name resolves to.
+/// The module of a plugin answers for the name as it is written, from then on, and what the name stood for stays as it is for whoever has it.
+pub fn is_module_call_of_plugin(hir: &File<'_>, bound: &Bound<'_>, call: ExprId) -> bool {
+    let Some(ExprKind::Call(call)) = expr_kind(hir, call) else {
+        return false;
+    };
+    matches!(hir.member_key(hir.skip_type_assertions(hir[call].callee)),
+        Some((object, MemberKey::Name(name)))
+            if is_module_of_plugin(hir, bound, hir.skip_type_assertions(object), name))
+}
+
+// `build.module(..)`, where `build` is the first parameter of the `setup` of an object literal, as `Bun.plugin` takes one.
+// The loader answers for the name from then on, as it does for a mock.
+fn is_module_of_plugin(hir: &File<'_>, bound: &Bound<'_>, object: ExprId, name: Atom) -> bool {
+    if name != known::module {
+        return false;
+    }
+    let Some(symbol) = settled_symbol(hir, bound, object) else {
+        return false;
+    };
+    bound.symbol(symbol).decls.iter().any(|&declaration| {
+        let Decl::Param(pattern) = declaration else {
+            return false;
+        };
+        let PatParent::Param(parameter) = bound.pat_parent[pattern.idx()] else {
+            return false;
+        };
+        let function = bound.param_fn[parameter.idx()];
+        let FnOwner::Expr(value) = bound.fns[function.idx()].owner else {
+            return false;
+        };
+        hir[function].params.iter().next() == Some(parameter)
+            && matches!(bound.parent_of_expr(value), Parent::Prop(property)
+                if hir[property].key == PropKey::Name(known::setup))
+    })
+}
+
+// `object.name` is `mock.module`, `jest.mock` or `vi.mock`, where the object is imported from the test runner.
+fn is_mock_module(hir: &File<'_>, bound: &Bound<'_>, object: ExprId, name: Atom) -> bool {
+    let holders: &[Atom] = match name {
+        _ if name == known::module => &[known::mock],
+        _ if name == known::mock => &[known::jest, known::vi],
+        _ => return false,
+    };
+    let imported = settled_symbol(hir, bound, object)
+        .and_then(|symbol| find_imported_export(hir, bound, symbol));
+    matches!(imported, Some((specifier, Some(export)))
+        if [known::bun_test, known::jest_globals, known::vitest].contains(&specifier)
+            && holders.contains(&export))
 }
 
 pub(super) fn is_free_name(hir: &File<'_>, bound: &Bound<'_>, e: ExprId, names: &[Atom]) -> bool {
@@ -323,6 +385,45 @@ pub fn find_module_printed_as_require(
     }
 }
 
+/// `bun build` links an import, `require(K)`, `module.require(K)` and `import a = require(K)` to the file. In its executable the loader of
+/// `bun run` answers every other call: what `createRequire` made, `import.meta.require`, `require` under another name.
+pub fn is_linked_by_bundler(hir: &File<'_>, bound: &Bound<'_>, site: ImportSiteKind) -> bool {
+    let call = match site {
+        ImportSiteKind::ImportMetaRequire(_) => return false,
+        ImportSiteKind::Require(call) => call,
+        _ => return true,
+    };
+    let Some(ExprKind::Call(call)) = expr_kind(hir, call) else {
+        return false;
+    };
+    let callee = hir.skip_type_assertions(hir[call].callee);
+    is_free_common_js(hir, bound, callee, CommonJsVariable::Require)
+        || find_module_printed_as_require(hir, bound, callee).is_some()
+}
+
+/// The transpiler reads the name in an import, `import(K)`, `require(K)`, `module.require(K)` and `require.resolve(K)`, and prints the one that the loader knows.
+/// These hand their argument to the loader as the program wrote it: `import.meta.require(K)`, what `createRequire` made, the `require` of another file,
+/// `require.call(..)`, `require.apply(..)`, `require(K, more)`, `process.getBuiltinModule(K)`.
+/// `const load = require; return load(K)` it reads too, where it puts `require` in place of `load`. Where it does so is not followed: such a call counts as read.
+pub fn is_name_read_by_transpiler(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+    site: ImportSiteKind,
+) -> bool {
+    let call = match site {
+        ImportSiteKind::ImportMetaRequire(_) | ImportSiteKind::GetBuiltinModule(_) => return false,
+        ImportSiteKind::Require(call) => call,
+        _ => return true,
+    };
+    let Some(CallForm::Call { callee, args }) = find_call_form(hir, call) else {
+        return false;
+    };
+    let text = Text::of(hir, bound, Some(decisions));
+    args.len() == 1
+        && follow_to_own_require(text, callee, StepsLeft::ALL) == Some(OwnRequire::OfFile)
+}
+
 // The path of the file whose `require` a call goes through, if the file imports that `require`.
 // A specifier that stands for a whole path starts at the folder of the file that writes it, whichever `require` gets it.
 fn find_path_to_resolve_from(
@@ -357,6 +458,9 @@ pub(super) struct ScannedCalls {
     pub(super) alternatives: Vec<ImportSpecifier>,
     pub(super) paths_from_own_directory: Vec<ExprId>,
     pub(super) answers_of_resolvers: Vec<(ExprId, ResolvedForm)>,
+    pub(super) names_of_workers: Vec<(ExprId, ImportSpecifier)>,
+    pub(super) paths_of_changed_files: Vec<(ExprId, ImportSpecifier)>,
+    pub(super) keys_stored_in_caches: Vec<(ExprId, ImportSpecifier)>,
     pub(super) module_require_objects: Vec<ExprId>,
     pub(super) requires_of_other_files: Vec<(u32, Atom)>,
 }
@@ -371,15 +475,28 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     let mut alternatives = FoundAlternatives::default();
     let mut module_require_objects = Vec::new();
     let mut requires_of_other_files = Vec::new();
+    let mut names_of_workers = Vec::new();
+    let mut paths_of_changed_files = Vec::new();
+    let mut keys_stored_in_caches = Vec::new();
     for index in 0..hir.exprs.len() {
         let call = ExprId(index as u32);
         let Some(form) = find_call_form(hir, call) else {
+            names_of_workers.extend(find_name_of_worker(inputs, call, &mut alternatives));
+            keys_stored_in_caches.extend(find_key_stored_in_cache(inputs, call, &mut alternatives));
             continue;
         };
         let is_dead = decisions.is_dead_expr(call);
         let is_dead_in_bun_run = is_dead && decisions.as_folded_by_bun_run().is_dead_expr(call);
         if bound.parent_of_expr(call) == Parent::None || is_dead_in_bun_run {
             continue;
+        }
+        if let (false, CallForm::Call { callee, args }) = (is_dead, form) {
+            for path in find_operands_that_name_changed_files(inputs, callee, args) {
+                let specifier = call_specifier(inputs, path, &mut alternatives);
+                if specifier != ImportSpecifier::Unknown {
+                    paths_of_changed_files.push((path, specifier));
+                }
+            }
         }
         let text = Text::of(hir, bound, Some(decisions));
         let Some(found) = find_call_site(text, call, form, StepsLeft::ALL) else {
@@ -404,13 +521,121 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     module_require_objects.shared_sort_unstable();
     alternatives.paths_from_own_directory.shared_sort_unstable();
     alternatives.answers_of_resolvers.shared_sort_unstable();
+    names_of_workers.shared_sort_unstable_by_key(|it: &(ExprId, ImportSpecifier)| it.0);
+    keys_stored_in_caches.shared_sort_unstable_by_key(|it: &(ExprId, ImportSpecifier)| it.0);
     ScannedCalls {
         alternatives: alternatives.found,
         paths_from_own_directory: alternatives.paths_from_own_directory,
         answers_of_resolvers: alternatives.answers_of_resolvers,
+        names_of_workers,
+        paths_of_changed_files,
+        keys_stored_in_caches,
         module_require_objects,
         requires_of_other_files,
     }
+}
+
+fn names_module_cache(inputs: &ScanInputs<'_, '_>, table: ExprId) -> bool {
+    let &ScanInputs {
+        hir,
+        bound,
+        decisions,
+        atoms,
+        ..
+    } = inputs;
+    let table = follow_settled_bindings(hir, bound, table);
+    if let Some((object, MemberKey::Name(name))) = hir.member_key(table)
+        && atoms.bytes(name) == b"cache"
+    {
+        let object = hir.skip_type_assertions(object);
+        return is_free_common_js(hir, bound, object, CommonJsVariable::Require);
+    }
+    let find_constant = |e| match decisions.constant(hir, e) {
+        FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => {
+            Some(constant)
+        }
+        FoldedValue::Unknown => None,
+    };
+    let is_module = |specifier: Atom| matches!(atoms.bytes(specifier), b"module" | b"node:module");
+    find_export_of_module(hir, bound, table, &find_constant, &is_module)
+        .is_some_and(|name| atoms.bytes(name) == b"_cache")
+}
+
+fn find_key_stored_in_cache(
+    inputs: &ScanInputs<'_, '_>,
+    entry: ExprId,
+    alternatives: &mut FoundAlternatives,
+) -> Option<(ExprId, ImportSpecifier)> {
+    let &ScanInputs {
+        hir,
+        bound,
+        decisions,
+        ..
+    } = inputs;
+    let ExprKind::Index { .. } = expr_kind(hir, entry)? else {
+        return None;
+    };
+    let (table, MemberKey::Computed(key)) = hir.member_key(entry)? else {
+        return None;
+    };
+    let mut target = entry;
+    while let Parent::Expr(parent) = bound.parent_of_expr(target)
+        && hir.type_assertion_operand(parent) == Some(target)
+    {
+        target = parent;
+    }
+    bound.get_assignment_target(hir, target)?;
+    if decisions.is_dead_expr(entry) || !names_module_cache(inputs, table) {
+        return None;
+    }
+    let texts = find_texts_of_key(inputs, &alternatives.written_names, key)?;
+    let text = match texts[..] {
+        [only] => only,
+        _ => {
+            let first = alternatives.found.len() as u32;
+            alternatives.found.extend_from_slice(&texts);
+            ImportSpecifier::OneOf(Alternatives {
+                first,
+                count: texts.len() as u32,
+            })
+        }
+    };
+    Some((key, text))
+}
+
+// `new Worker(name)`, whatever is called `Worker` there: the argument with what it may be, where it is no constant and is known in part.
+fn find_name_of_worker(
+    inputs: &ScanInputs<'_, '_>,
+    construction: ExprId,
+    alternatives: &mut FoundAlternatives,
+) -> Option<(ExprId, ImportSpecifier)> {
+    let &ScanInputs {
+        hir,
+        bound,
+        decisions,
+        atoms,
+        ..
+    } = inputs;
+    let ExprKind::New(call) = expr_kind(hir, construction)? else {
+        return None;
+    };
+    let (ExprKind::Ident(name) | ExprKind::Dot { name, .. }) =
+        expr_kind(hir, hir.skip_type_assertions(hir[call].callee))?
+    else {
+        return None;
+    };
+    let is_evaluated =
+        bound.parent_of_expr(construction) != Parent::None && !decisions.is_dead_expr(construction);
+    if atoms.bytes(name) != b"Worker" || !is_evaluated {
+        return None;
+    }
+    let argument = hir.ids(hir[call].args).next()?;
+    let specifier = call_specifier(inputs, argument, alternatives);
+    let is_known_in_part = matches!(
+        specifier,
+        ImportSpecifier::Pattern { .. } | ImportSpecifier::OneOf(_)
+    );
+    is_known_in_part.then_some((argument, specifier))
 }
 
 fn is_ordinary_builtin_call(site: &ImportSite) -> bool {
@@ -496,7 +721,15 @@ fn call_specifier(
         [pattern @ ImportSpecifier::Pattern { .. }] => Some(pattern),
         _ => None,
     };
-    if only_pattern.is_some() && folded != ImportSpecifier::Unknown {
+    // Folding knows the start of a text up to the first part that it does not know.
+    let length_of_start = |specifier| match specifier {
+        ImportSpecifier::Pattern { prefix, .. } => inputs.atoms.bytes(prefix).len(),
+        _ => 0,
+    };
+    if let Some(pattern) = only_pattern
+        && folded != ImportSpecifier::Unknown
+        && length_of_start(pattern) <= length_of_start(folded)
+    {
         return folded;
     }
     if found.start_at_own_directory {

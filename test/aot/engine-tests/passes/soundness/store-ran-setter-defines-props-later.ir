@@ -255,7 +255,7 @@ function f21 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v30: anything ~ L3 = Upcast v29 castType=anything
 # CHECK-NEXT: v31: object = CallDirect v30 function=f2 accessSite=12
 # CHECK-NEXT: v32: true = Boolean boolean=true
-# CHECK-NEXT: v33: L10 = NewObject -, v32 layout=L10 fields=[0] allocationSite=8 allocationClass=10
+# CHECK-NEXT: v33: L10 = NewObject -, v32 layout=L10 fields=[0] allocationSite=8 allocationClass=9
 # CHECK-NEXT: v34: object = CallDirect v33 function=f2 accessSite=13
 # CHECK-NEXT: v35: object = CallBuiltin -, v31, v34 overload=ObjectSetPrototypeOf/0 accessSite=14
 # CHECK-NEXT: v36: 2 = Integer integer=2
@@ -268,67 +268,60 @@ function f21 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v43: anything ~ L4 = Upcast v42 castType=anything
 # CHECK-NEXT: v44: 1 = Integer integer=1
 # CHECK-NEXT: v45: anything = Call v38, -, v43, v44 calleeName="store" accessSite=17 callees=[f10]
-# CHECK-NEXT: v46: "xyz" = String string="xyz"
-# CHECK-NEXT: v47: 0 = Integer
-# CHECK-NEXT: v48: 1 = Integer integer=1
-# CHECK-NEXT: v49: 3 = Integer integer=3
-# CHECK-NEXT: v50: undefined = StringRange v49, v47, v48
-# CHECK-NEXT: v51: int[0, 2147483647] = ResultAt v50
-# CHECK-NEXT: v52: int[0, 2147483647] = ResultAt v50 index=1
-# CHECK-NEXT: v53: string = Substring v46, v51, v52
-# CHECK-NEXT: v54: anything ~ object = Construct v41 calleeName="C" accessSite=20 callees=[f11]
-# CHECK-NEXT: v55: anything ~ L4 = Upcast v54 castType=anything
-# CHECK-NEXT: v56: object = CallDirect v55 function=f2 accessSite=21
-# CHECK-NEXT: v57: 0 = Integer
-# CHECK-NEXT: v58: L12 = NewObject -, v57 layout=L12 fields=[4] allocationSite=11 allocationClass=11
-# CHECK-NEXT: v59: L12 = FinishObject v58
-# CHECK-NEXT: v60: object = CallBuiltin -, v56, v53, v59 overload=ObjectDefineProperty/0 accessSite=22
-# CHECK-NEXT: v61: 2 = Integer integer=2
-# CHECK-NEXT: v62: anything = Call v38, -, v55, v61 calleeName="store" accessSite=23 callees=[f10]
-# CHECK-NEXT: v63: "5b" = String string="5b"
-# CHECK-NEXT: v64: anything ~ undefined|null|string = Call v1, -, v55 calleeName="own" accessSite=24 callees=[f4]
-# CHECK-NEXT: v65: anything = PropGet v55 key="x" accessSite=25 receivers=[]
-# CHECK-NEXT: v66: anything ~ number = Upcast v65 castType=anything
-# CHECK-NEXT: v67: 1 = Integer integer=1
-# CHECK-NEXT: v68: number|string|bigint ~ number = Add v66, v67
-# CHECK-NEXT: v69: anything = PropGet v55 key="seen" accessSite=26 receivers=[]
-# CHECK-NEXT: v70: anything = Call v0, -, v63, v64, v68, v69 calleeName="show" accessSite=27 callees=[f3]
-# CHECK-NEXT: v71: f13 = NewClosure function=f13 allocationSite=13
-# CHECK-NEXT: v72: f13 = NewClass v71 layout=L5
-# CHECK-NEXT: v73: f14 = NewClosure function=f14 allocationSite=14
-# CHECK-NEXT: DefineMethod v72, v73 layout=L5 methodKind=Setter key="x"
-# CHECK-NEXT: v75: f13 = FinishClass v72 layout=L5
-# CHECK-NEXT: v76: null|object = ResolveHeritage v75
-# CHECK-NEXT: v77: object = AssumeType v76 provenType=object
-# CHECK-NEXT: v78: f15 = NewClosure function=f15 allocationSite=15
-# CHECK-NEXT: v79: f15 = NewClass v78, v75, v77 layout=L6
-# CHECK-NEXT: v80: f15 = FinishClass v79 layout=L6
-# CHECK-NEXT: v81: null|object = ResolveHeritage v80
-# CHECK-NEXT: v82: object = AssumeType v81 provenType=object
-# CHECK-NEXT: v83: f16 = NewClosure function=f16 allocationSite=16
-# CHECK-NEXT: v84: f16 = NewClass v83, v80, v82 layout=L7
-# CHECK-NEXT: v85: L7 = NewObject layout=L7 allocationClass=7
-# CHECK-NEXT: v86: 1 = Integer integer=1
-# CHECK-NEXT: PropSet v85, v86 key="x" accessSite=46 receivers=[L7]
-# CHECK-NEXT: v88: anything = PropGet v80 key="prototype" accessSite=30
-# CHECK-NEXT: v89: boolean = AreMembersUnchanged conditions=[{layout=L7 key="x"}, {kind=PrototypeLinkUnchanged layout=L6}, {kind=MemberNotHidden layout=L7 key="x"}]
-# CHECK-NEXT: Branch v89 -> taken b1(), notTaken b2()
+# CHECK-NEXT: v46: "x" = String string="x"
+# CHECK-NEXT: v47: anything ~ object = Construct v41 calleeName="C" accessSite=20 callees=[f11]
+# CHECK-NEXT: v48: anything ~ L4 = Upcast v47 castType=anything
+# CHECK-NEXT: v49: object = CallDirect v48 function=f2 accessSite=21
+# CHECK-NEXT: v50: 0 = Integer
+# CHECK-NEXT: v51: L12 = NewObject -, v50 layout=L12 fields=[4] allocationSite=11 allocationClass=10
+# CHECK-NEXT: v52: L12 = FinishObject v51
+# CHECK-NEXT: v53: object = CallBuiltin -, v49, v46, v52 overload=ObjectDefineProperty/0 accessSite=22
+# CHECK-NEXT: v54: 2 = Integer integer=2
+# CHECK-NEXT: v55: anything = Call v38, -, v48, v54 calleeName="store" accessSite=23 callees=[f10]
+# CHECK-NEXT: v56: "5b" = String string="5b"
+# CHECK-NEXT: v57: anything ~ undefined|null|string = Call v1, -, v48 calleeName="own" accessSite=24 callees=[f4]
+# CHECK-NEXT: v58: anything = PropGet v48 key="x" accessSite=25 receivers=[]
+# CHECK-NEXT: v59: anything ~ number = Upcast v58 castType=anything
+# CHECK-NEXT: v60: 1 = Integer integer=1
+# CHECK-NEXT: v61: number|string|bigint ~ number = Add v59, v60
+# CHECK-NEXT: v62: anything = PropGet v48 key="seen" accessSite=26 receivers=[]
+# CHECK-NEXT: v63: anything = Call v0, -, v56, v57, v61, v62 calleeName="show" accessSite=27 callees=[f3]
+# CHECK-NEXT: v64: f13 = NewClosure function=f13 allocationSite=13
+# CHECK-NEXT: v65: f13 = NewClass v64 layout=L5
+# CHECK-NEXT: v66: f14 = NewClosure function=f14 allocationSite=14
+# CHECK-NEXT: DefineMethod v65, v66 layout=L5 methodKind=Setter key="x"
+# CHECK-NEXT: v68: f13 = FinishClass v65 layout=L5
+# CHECK-NEXT: v69: null|object = ResolveHeritage v68
+# CHECK-NEXT: v70: object = AssumeType v69 provenType=object
+# CHECK-NEXT: v71: f15 = NewClosure function=f15 allocationSite=15
+# CHECK-NEXT: v72: f15 = NewClass v71, v68, v70 layout=L6
+# CHECK-NEXT: v73: f15 = FinishClass v72 layout=L6
+# CHECK-NEXT: v74: null|object = ResolveHeritage v73
+# CHECK-NEXT: v75: object = AssumeType v74 provenType=object
+# CHECK-NEXT: v76: f16 = NewClosure function=f16 allocationSite=16
+# CHECK-NEXT: v77: f16 = NewClass v76, v73, v75 layout=L7
+# CHECK-NEXT: v78: L7 = NewObject layout=L7 allocationClass=6
+# CHECK-NEXT: v79: 1 = Integer integer=1
+# CHECK-NEXT: PropSet v78, v79 key="x" accessSite=46 receivers=[L7]
+# CHECK-NEXT: v81: anything = PropGet v73 key="prototype" accessSite=30
+# CHECK-NEXT: v82: boolean = AreMembersUnchanged conditions=[{layout=L7 key="x"}, {kind=PrototypeLinkUnchanged layout=L6}, {kind=MemberNotHidden layout=L7 key="x"}]
+# CHECK-NEXT: Branch v82 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v90: f17 = NewClosure function=f17 allocationSite=17
-# CHECK-NEXT: v91: f17 = NewClass v90 layout=L8
-# CHECK-NEXT: v92: f17 = FinishClass v91 layout=L8
-# CHECK-NEXT: v93: anything ~ object = Construct v92 calleeName="C" accessSite=34 callees=[f17]
-# CHECK-NEXT: v94: anything ~ object = Construct v92 calleeName="C" accessSite=35 callees=[f17]
-# CHECK-NEXT: v95: f18 = NewClosure function=f18 allocationSite=18
-# CHECK-NEXT: v96: f18 = NewClass v95 layout=L9
-# CHECK-NEXT: v97: f18 = FinishClass v96 layout=L9
-# CHECK-NEXT: v98: anything ~ object = Construct v97 calleeName="C" accessSite=36 callees=[f18]
-# CHECK-NEXT: v99: anything ~ object = Construct v97 calleeName="C" accessSite=37 callees=[f18]
-# CHECK-NEXT: v100: undefined = Undefined
-# CHECK-NEXT: Return v100
+# CHECK-NEXT: v83: f17 = NewClosure function=f17 allocationSite=17
+# CHECK-NEXT: v84: f17 = NewClass v83 layout=L8
+# CHECK-NEXT: v85: f17 = FinishClass v84 layout=L8
+# CHECK-NEXT: v86: anything ~ object = Construct v85 calleeName="C" accessSite=34 callees=[f17]
+# CHECK-NEXT: v87: anything ~ object = Construct v85 calleeName="C" accessSite=35 callees=[f17]
+# CHECK-NEXT: v88: f18 = NewClosure function=f18 allocationSite=18
+# CHECK-NEXT: v89: f18 = NewClass v88 layout=L9
+# CHECK-NEXT: v90: f18 = FinishClass v89 layout=L9
+# CHECK-NEXT: v91: anything ~ object = Construct v90 calleeName="C" accessSite=36 callees=[f18]
+# CHECK-NEXT: v92: anything ~ object = Construct v90 calleeName="C" accessSite=37 callees=[f18]
+# CHECK-NEXT: v93: undefined = Undefined
+# CHECK-NEXT: Return v93
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v101: L7 = NewObject layout=L7 allocationClass=7 [listsOnlyStoredValues]
-# CHECK-NEXT: v102: anything = PropGet v101 key="x" accessSite=33 receivers=[L7]
+# CHECK-NEXT: v94: L7 = NewObject layout=L7 allocationClass=6 [listsOnlyStoredValues]
+# CHECK-NEXT: v95: anything = PropGet v94 key="x" accessSite=33 receivers=[L7]
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="id"
@@ -347,7 +340,7 @@ function f21 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f16 = AssumeType v0 provenType=f16
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L5
-# CHECK-NEXT: v3: object ~ L5|L6|L7 = NewObject v2 layout=L5 allocationSite=19 allocationClass=5
+# CHECK-NEXT: v3: object ~ L7 = NewObject v2 layout=L5 allocationSite=19 allocationClass=5
 # CHECK-NEXT: v4: L7 = AssumeType v3 provenType=L7
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
@@ -364,7 +357,7 @@ function f21 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Branch v9 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v10: object = GetConstructPrototype v4 layout=L5
-# CHECK-NEXT: v11: object ~ L5|L6|L7 = NewObject v10 layout=L5 allocationSite=19 allocationClass=5
+# CHECK-NEXT: v11: object ~ L7 = NewObject v10 layout=L5 allocationSite=19 allocationClass=5
 # CHECK-NEXT: v12: L7 = AssumeType v11 provenType=L7
 # CHECK-NEXT: Jump -> next b3(v12)
 # CHECK-NEXT: b2() frequency=Rare:

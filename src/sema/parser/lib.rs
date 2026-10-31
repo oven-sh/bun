@@ -154,6 +154,8 @@ pub struct Options {
     pub is_before_typescript_7_1: bool,
     /// Parsing for `bun compile`.
     pub compiles: bool,
+    /// The lexer reads text as `bun run` does. `compiles` implies it.
+    pub reads_as_bun_run: bool,
     /// With `compiles`: the engine gets the text as it is written. A `"use strict"` directive of a function counts, and a comment says of no call that it is pure.
     pub keeps_function_directives: bool,
     /// Functions have empty bodies wherever `parser/skipped_blocks.rs` can step over their blocks.

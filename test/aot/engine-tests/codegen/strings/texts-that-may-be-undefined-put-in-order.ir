@@ -123,5 +123,5 @@ function f1 name="isWordCharacter" module=m0 position=323 flags=[IsChecked, HasE
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 141, patchpoints: 24, rare instructions: 63, polls: 3
+# CHECK-NEXT: instructions: 123, patchpoints: 22, rare instructions: 55, polls: 2
 # CHECK-NEXT: end of function f0

@@ -332,6 +332,8 @@ pub struct Program<'s> {
     package_names_of_linked_files: std::sync::OnceLock<FxHashMap<FileId, Vec<u8>>>,
     /// See `Checker::modules_that_export`. Built on first use.
     exporting_modules: std::sync::OnceLock<errors_declaration_emit::ExportingModules>,
+    /// What `exporting_modules` returns to a task that was discarded.
+    no_exporting_modules: errors_declaration_emit::ExportingModules,
     aot_symbols: std::sync::OnceLock<aot::ProgramSymbols>,
     aot_store_indexes: std::sync::OnceLock<&'s [std::sync::OnceLock<aot::StoreIndex<'s>>]>,
     aot_prototype_links: std::sync::OnceLock<&'s [std::sync::OnceLock<aot::PrototypeLinks<'s>>]>,
@@ -522,8 +524,8 @@ pub struct Program<'s> {
         ByNode<(FileId, FnId), AssignedSignature, buffered!(context_checked), &'s Session>,
     /// `contextFreeTypes` for a function.
     context_free_types: ByNode<(FileId, FnId), TypeId, buffered!(context_free_types), &'s Session>,
-    /// The diagnostics `resolveCall` reported for a call the first time it was resolved again while
-    /// its resolution was in progress, with their related information. Or those of the resolution in progress, if it
+    /// The diagnostics `resolveCall` reported for a call each time it was resolved again while its
+    /// resolution was in progress, with their related information. Or those of the resolution in progress, if it
     /// failed after that and its result isn't stored.
     diagnostics_of_re_resolved_calls: ByNodeIndirect<
         (FileId, ExprId),
@@ -641,11 +643,17 @@ type Rechecked = (
     FxHashMap<(FileId, PropId), TypeId>,
 );
 
+/// For each file: whether it is a leaf, and how many nodes of each kind it has.
+pub type NodeCounts = Vec<(bool, [usize; 10])>;
+
 impl<'s> Program<'s> {
     pub fn new(session: &'s Session, files: &'s Files<'s>) -> Program<'s> {
-        // Nothing that mentions a leaf file's node is published, so the shared part has no capacity
-        // for those nodes, and `Bases::at` returns `None` for them. The counts are read in one pass
-        // because the modules are far apart in memory.
+        Program::with_node_counts(session, files, &Program::count_nodes(files))
+    }
+
+    /// While every file still has its tree.
+    pub fn count_nodes(files: &Files<'_>) -> NodeCounts {
+        // The counts are read in one pass because the modules are far apart in memory.
         let counts = files.modules.iter().map(|m| {
             let counts = [
                 m.hir.exprs.len(),
@@ -661,7 +669,16 @@ impl<'s> Program<'s> {
             ];
             (m.is_leaf, counts)
         });
-        let counts: Vec<(bool, [usize; 10])> = counts.collect();
+        counts.collect()
+    }
+
+    pub fn with_node_counts(
+        session: &'s Session,
+        files: &'s Files<'s>,
+        counts: &NodeCounts,
+    ) -> Program<'s> {
+        // Nothing that mentions a leaf file's node is published, so the shared part has no capacity
+        // for those nodes, and `Bases::at` returns `None` for them.
         let bases = |kind: usize| {
             let shared = counts.iter().map(|it| if it.0 { 0 } else { it.1[kind] });
             Bases::new_in(shared, &session)
@@ -708,6 +725,7 @@ impl<'s> Program<'s> {
             auto_array_type,
             package_names_of_linked_files: Default::default(),
             exporting_modules: Default::default(),
+            no_exporting_modules: Default::default(),
             aot_symbols: Default::default(),
             aot_store_indexes: Default::default(),
             aot_prototype_links: Default::default(),
@@ -906,6 +924,7 @@ impl<'s> Program<'s> {
             this_types: Default::default(),
             this_types_in_progress: Vec::new(),
             thisless_members: Default::default(),
+            flow_type_skips: Default::default(),
             instantiated_symbol_links: Default::default(),
             late_binding: Vec::new(),
             late_binding_by_symbol: Vec::new(),
@@ -960,7 +979,7 @@ impl<'s> Program<'s> {
             listed_in_unions: Default::default(),
             quick_initializers: Vec::new(),
             initializers_checked_inside: Vec::new(),
-            contextual: Vec::new(),
+            contextual: Default::default(),
             pulls_contextual_types_at: usize::MAX,
             rechecks_at: usize::MAX,
             mode_of_recheck: CheckMode::empty(),
@@ -978,6 +997,7 @@ impl<'s> Program<'s> {
             recent_composed: Default::default(),
             recent_with_this: Default::default(),
             recent_const_type_variables: Default::default(),
+            recent_walks_outwards: Default::default(),
             recent_derived_sigs: Default::default(),
             known_mapped_prop_types: Default::default(),
             members_in_place_hits: 0,
@@ -994,6 +1014,11 @@ impl<'s> Program<'s> {
             constraints_of_this_task: Default::default(),
             constraint_cuts: Default::default(),
             instantiations_in_progress: Vec::new(),
+            instantiation_chain: Vec::new(),
+            refused_instantiations: Vec::new(),
+            leaves_depth_limit_unreported: false,
+            refused_instantiations_tried: Default::default(),
+            instantiations_spent_on_refused: 0,
             keys_of_properties_in_progress: Vec::new(),
             instantiations_up_to_a_limit: Default::default(),
             relations_cut_short: Default::default(),
@@ -1039,6 +1064,7 @@ impl<'s> Program<'s> {
             reduced_unions: spare.reduced_unions,
             union_members: Default::default(),
             unlisted_intersections: Default::default(),
+            class_members_by_name: Default::default(),
             sibling_intersections: None,
             mapped_types_in_progress: Default::default(),
             never_in_progress_from: Vec::new(),
@@ -1070,6 +1096,7 @@ impl<'s> Program<'s> {
             ran_out_of_stack: std::cell::Cell::new(false),
             scopes_inside_exprs: Default::default(),
             enclosing_fns: Default::default(),
+            containers_inside_exprs: Default::default(),
             spread_indices_of_many: Default::default(),
             times_cut_short: std::cell::Cell::new(0),
             exprs_by_kind: None,
@@ -1094,7 +1121,10 @@ impl<'s> Program<'s> {
             flow_analysis_disabled: Vec::new(),
             inline_level: 0,
             walk_declared: TypeId::NEVER,
-            constants_in_evaluation: Vec::new(),
+            constants_in_evaluation: Default::default(),
+            evaluated_initializers: Default::default(),
+            evaluations_of_the_moment: 0,
+            calls_among_assignments: Default::default(),
             recent_sig_params: Box::new([(SigId(u32::MAX), &[] as &[SigParam]); RECENT_SIGS]),
             recent_sig_type_params: Box::new([(SigId(u32::MAX), &[] as &[TypeId]); RECENT_SIGS]),
             recent_type_params: Box::new(std::array::from_fn(|_| {
@@ -1169,6 +1199,7 @@ impl<'s> Program<'s> {
             fully_marked: FullyMarked::default(),
             signatures_resolved_within: Vec::new(),
             resolutions_with_unused_result: 0,
+            errors_of_nested_resolutions: Vec::new(),
             restrictive_instantiations: Default::default(),
             unresolved_renamed_params: Default::default(),
             pinned_restrictive_instantiations: Default::default(),
@@ -1423,6 +1454,8 @@ struct ContextualInfo {
     /// `None` for `pushCachedContextualType` of a node without a contextual type.
     t: Option<TypeId>,
     is_cache: bool,
+    /// See `Checker::are_literals_around_pushed`.
+    are_literals_around_pushed: Option<bool>,
 }
 
 /// `InferenceContextInfo`
@@ -1614,6 +1647,29 @@ struct QueryFrame {
     held_back: u64,
 }
 
+#[cfg(test)]
+impl QueryFrame {
+    fn for_test(serial: u64) -> QueryFrame {
+        QueryFrame {
+            serial,
+            entry_depth: 0,
+            marks: Marks::new(false, false),
+            circular: false,
+            reported_from: 0,
+            class: 0,
+            next_of_class: 0,
+            has_result: false,
+            incomplete_flow: false,
+            is_stored_by_nested_visit: false,
+            has_read_members_in_place: false,
+            may_substitute_constraints: false,
+            is_quick_type: false,
+            source_element: None,
+            held_back: 0,
+        }
+    }
+}
+
 /// Which diagnostics of a file `check_file` computes.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Requested {
@@ -1631,6 +1687,17 @@ pub enum Requested {
     All,
     /// `Syntactic`, and every diagnostic of class `EarlyError`. It computes no type.
     EarlyErrors,
+}
+
+/// The ancestors of a node at which `conditional_flow_type_of_type` finds nothing.
+#[derive(Clone, Copy)]
+struct FlowTypeSkip {
+    /// The highest of them, or the node itself.
+    below: Node,
+    /// The highest type node among them. `NONE` if there's none.
+    node: TypeNodeId,
+    /// True if an odd number of them are parameters.
+    flips_variance: bool,
 }
 
 // The fields are laid out as declared: small ones that most accesses touch first, where x86-64 reaches them with a
@@ -1685,6 +1752,8 @@ pub struct Checker<'p, 's> {
     this_types: FxHashMap<Sym, bool>,
     /// See `is_thisless_for_this_mapper`.
     thisless_members: FxHashMap<Sym, bool>,
+    /// See `skip_ancestors_without_flow_constraint`.
+    flow_type_skips: FxHashMap<(FileId, Node), FlowTypeSkip>,
     /// `links.resolvedType` of instantiated symbols, by target and mapper. Only contains the ones that differ from what
     /// the target's type gives. See `link_of_instantiated_symbol`.
     instantiated_symbol_links: FxHashMap<Sym, Vec<(MapperId, TypeId)>>,
@@ -2088,16 +2157,26 @@ pub struct Checker<'p, 's> {
     /// leaves its own behind. Listed from the bottom. Each entry is the height of `stack` below it
     /// and `!result`. Each has its property (`typeResolutionHasProperty`).
     stale_resolutions: Vec<(usize, bool)>,
-    /// `contextualInfos`
-    contextual: Vec<ContextualInfo>,
+    contextual: context::PushedContextualTypes,
     /// Empty maps that `set_rechecked_aside` reuses.
     spare_rechecked: Vec<Rechecked>,
     /// `inferenceContextInfos`
     inference_contexts: Vec<InferenceContextInfo>,
+    recent_walks_outwards: std::cell::RefCell<instantiate::Recent>,
     /// Only in a task that commits. The keys of the `instantiate_cached` calls in progress that missed the
     /// cache, and the types of the `get_literal_type_from_properties` calls in progress. Of two calls with the
     /// same key, the outer one stores last and its entry wins, so the inner one doesn't write immediately.
     instantiations_in_progress: Vec<(TypeId, MapperId)>,
+    /// Outermost first. Kept while `leaves_depth_limit_unreported`.
+    instantiation_chain: Vec<(TypeId, MapperId)>,
+    /// `compute_refused_instantiations`
+    refused_instantiations: Vec<(TypeId, MapperId)>,
+    /// `leave_depth_limit_unreported`
+    leaves_depth_limit_unreported: bool,
+    /// `compute_refused_instantiations`
+    refused_instantiations_tried: crate::util::FxHashSet<(TypeId, MapperId)>,
+    /// `compute_refused_instantiations`
+    instantiations_spent_on_refused: u64,
     keys_of_properties_in_progress: Vec<TypeId>,
     #[expect(
         clippy::vec_box,
@@ -2121,6 +2200,8 @@ pub struct Checker<'p, 's> {
     reported: Vec<Reported>,
     /// The intersections being tested for being uninhabited.
     pub(super) never_in_progress: Vec<TypeId>,
+    /// See check/class_members_by_name.rs.
+    class_members_by_name: shape::ClassMembersByName<'p>,
     /// The height of `stack` at which `is_empty_intersection` began, for each one in progress.
     pub(super) never_in_progress_from: Vec<usize>,
     /// The height of `stack` at which the worker of each `inferReverseMappedType` in progress began.
@@ -2150,6 +2231,8 @@ pub struct Checker<'p, 's> {
     /// times, because no `Query` is in flight at that point (`popTypeResolution` has already run).
     /// Each comes with `d.resolvedTypeArguments`, which a request in the meantime has assigned.
     type_arguments_in_instantiation: Vec<(TypeId, Option<&'p [TypeId]>)>,
+    /// `get_control_flow_container` for the children of these expressions.
+    containers_inside_exprs: std::cell::RefCell<FxHashMap<(FileId, ExprId), errors::Container>>,
     /// `work` and `from` of each call of `mark_tainted_by_pattern_from` and `taint_from`, in order.
     /// An event is dropped when a later one has a lower or equal `from`, so `from` increases and
     /// the length is bounded by the depth of `stack`. See `lowest_taint_since`.
@@ -2161,7 +2244,14 @@ pub struct Checker<'p, 's> {
     /// that a query reaches in the meantime, whose `errorType` then ends up in what the query stores.
     flow_analysis_disabled: Vec<FileId>,
     /// The constants whose initializers `evaluateEntity` is evaluating.
-    constants_in_evaluation: Vec<(FileId, VarDeclId)>,
+    constants_in_evaluation: crate::util::FxHashSet<(FileId, VarDeclId)>,
+    /// What `evaluate` has found for the initializer of a constant, and whether that was for a build.
+    evaluated_initializers: FxHashMap<(FileId, VarDeclId, bool), decl::Evaluated>,
+    /// How often `evaluate` has met something that it may answer differently another time: a constant or an enum whose
+    /// evaluation was in progress, an error that it reported, the end of the stack.
+    evaluations_of_the_moment: u32,
+    /// `calls_among_assignments_of_symbol`, by the address of a permanent list of declarations.
+    calls_among_assignments: FxHashMap<usize, smallvec::SmallVec<[(FileId, ExprId); 2]>>,
     /// The unions whose members are being awaited.
     awaiting: Vec<TypeId>,
     /// `Checked::unused_private_members` of the file being checked.
@@ -2250,6 +2340,8 @@ pub struct Checker<'p, 's> {
     /// The tuple type that `contextual_element_at` looked at last, and its `fixed_length`.
     fixed_length_asked_last: Option<(TypeId, usize)>,
     fully_marked: FullyMarked,
+    /// What becomes an entry of `diagnostics_of_re_resolved_calls` when the outermost resolution returns.
+    errors_of_nested_resolutions: Vec<(FileId, ExprId, Vec<Reported>)>,
     /// During declaration emit: the indentation depth of the current line.
     declaration_indent: Option<usize>,
     /// `varianceTypeParameter`: its name.
@@ -2948,8 +3040,12 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Calls `Task::close_cycle` for a cycle whose queries are all in `stack[from..]`.
     pub(super) fn close_cycle(&self, from: usize) {
-        let members = self.stack[from..].iter().map(crate::util::fx_hash);
-        (self.task).close_cycle(|| self.is_reachable_only_by_importers(from), members);
+        self.task.close_cycle_in_progress(
+            || self.is_reachable_only_by_importers(from),
+            &self.stack,
+            &self.frames,
+            from,
+        );
     }
 
     /// True if only files that import the current file can run any query in `stack[from..]`.
@@ -2957,6 +3053,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// That's the case when every query is about, or mentions, a declaration in the current file's import cycle
     /// (`Components`), and those files declare nothing global. An importer comes after the files it imports in program
     /// order, unless they import each other.
+    ///
+    /// The target of an alias is an exception. A file that prints the name of a type it doesn't import resolves the
+    /// exports of every module in the program (`exporting_modules`), whether it imports them or not.
     fn is_reachable_only_by_importers(&self, from: usize) -> bool {
         let (files, Some(visited)) = (self.files(), self.task.file) else {
             return false;
@@ -2982,6 +3081,9 @@ impl<'p, 's> Checker<'p, 's> {
                 | Query::MappedProp(ty, _) => mentioned.ty(ty),
                 Query::ReturnOfSignature(signature) => mentioned.sig(signature),
                 Query::Cond(_, _, mapper) => mentioned.mapper(mapper),
+                Query::AliasTarget(alias) if self.is_searched_for_exports(alias.file) => {
+                    return false;
+                }
                 Query::AliasTarget(alias) => mentioned.file(alias.file),
                 Query::WriteType(file, _) => mentioned.file(file),
                 _ => {}
@@ -3768,6 +3870,16 @@ impl<'p, 's> Checker<'p, 's> {
     /// `instantiateTypeWithAlias`: `instantiationDepth == 100`. `instantiation_depth` counts what tsgo counts under a
     /// conditional type too, because `resolve_conditional` follows a tail call in a loop, as `getConditionalType` does.
     pub(super) fn instantiation_too_deep(&mut self) -> TypeId {
+        // The depth is tested in front of every cache, so the refused one itself would be refused again.
+        if self.leaves_depth_limit_unreported
+            && self.instantiation_count < 5_000_000
+            && let Some(&middle) = self
+                .instantiation_chain
+                .get(self.instantiation_chain.len() / 2)
+            && self.refused_instantiations.last() != Some(&middle)
+        {
+            self.refused_instantiations.push(middle);
+        }
         self.note_gave_up();
         self.instantiation_limit_hits += 1;
         // Nothing the task does from now on is kept. With every instantiation at the limit, it gets to the end of the
@@ -3779,6 +3891,11 @@ impl<'p, 's> Checker<'p, 's> {
         if std::mem::replace(&mut self.last_enter, EnterOutcome::Entered) == EnterOutcome::Rejected
         {
             return TypeId::UNRESOLVED;
+        }
+        if self.leaves_depth_limit_unreported && self.instantiation_count < 5_000_000 {
+            self.note_limit();
+            self.mark_tainted_from(0);
+            return TypeId::ERROR;
         }
         let names = self.circular_type_names();
         let (code, names) = match &names[..] {
@@ -4008,6 +4125,7 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline(always)]
     fn leave_inline(&mut self) -> Result<Stored, Open> {
         let q = self.stack.pop().unwrap();
+        self.task.leaves_the_cycles_below(self.stack.len());
         self.last_enter = EnterOutcome::Entered;
         let frame = self.frames.pop().unwrap();
         self.in_progress[frame.class as usize] = frame.next_of_class;

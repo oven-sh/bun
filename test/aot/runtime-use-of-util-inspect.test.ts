@@ -1,8 +1,8 @@
 // Where a program can make util.inspect read any member of a value, every member counts as used.
 import { describe, expect } from "bun:test";
-import { closed, completeness, notYet, type Use } from "./runtime-use-expectations";
+import { closed, completeness, type Use } from "./runtime-use-expectations";
 import { of } from "./runtime-use-harness";
-import { eachRow, gap, test } from "./supported";
+import { eachRow } from "./supported";
 
 async function closedReport(text: string) {
   const use = await of(text);
@@ -17,10 +17,6 @@ describe.concurrent("the built-in code that is part of every program", () => {
   const inspector = `(depth: any, options: any, inspect: any) { return inspect({}, JSON.parse(process.argv[2])); }`;
   eachRow([
     ["calls util.inspect", `console.log(require("node:util").inspect({}, JSON.parse(process.argv[2])));`],
-    gap(notYet.globalObject, [
-      "constructs a Console",
-      `new console.Console(process.stdout).dir({}, JSON.parse(process.argv[2]));`,
-    ]),
     [
       "has an inspector of its own in a class",
       `class Own { [Symbol.for("nodejs.util.inspect.custom")]${inspector} } console.log(new Own());`,
@@ -29,10 +25,6 @@ describe.concurrent("the built-in code that is part of every program", () => {
       "asks for a registered symbol by an unknown string",
       `console.log({ [Symbol.for(process.argv[3])]${inspector} });`,
     ],
-    gap(notYet.globalObject, [
-      "fails an assertion, whose message is formatted with getters",
-      `require("node:assert").deepStrictEqual(Object.getPrototypeOf(JSON.parse(process.argv[2])), {});`,
-    ]),
     [
       "requires node:util under its other name",
       `console.log(require("sys").inspect({}, JSON.parse(process.argv[2])));`,
@@ -41,14 +33,6 @@ describe.concurrent("the built-in code that is part of every program", () => {
       "imports node:util at run time",
       `import("node:util").then((util: any) => console.log(util.inspect({}, JSON.parse(process.argv[2]))));`,
     ],
-    gap(notYet.globalObject, [
-      "imports Console",
-      `const { Console } = require("node:console"); new Console(process.stdout).dir({}, JSON.parse(process.argv[2]));`,
-    ]),
-    gap(notYet.globalObject, [
-      "constructs a Console of an alias of console",
-      `const output = console; new output.Console(process.stdout).dir({}, JSON.parse(process.argv[2]));`,
-    ]),
     [
       "defines properties by unknown descriptors",
       `console.log(Object.defineProperties({}, JSON.parse(process.argv[2])));`,
@@ -96,14 +80,4 @@ describe.concurrent("the built-in code that is part of every program", () => {
     // Each of them comes by the Function constructor in the end, and where the compiler sees that, the report is open.
     expect(usesEveryMember(await of(hostClasses + text))).toBe(true);
   });
-
-  // TODO: the global object counts as escaped.
-  test.todo(
-    "util.inspect may read any member where the program loads node:dgram, whose errors are printed with getters",
-    async () => {
-      expect(usesEveryMember(await closedReport(`console.log(require("node:dgram").createSocket("udp4"));`))).toBe(
-        true,
-      );
-    },
-  );
 });

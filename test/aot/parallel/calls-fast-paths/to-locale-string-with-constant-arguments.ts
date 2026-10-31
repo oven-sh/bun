@@ -10,7 +10,7 @@
 // CALLS+ percent operationAOTFormatWithPattern
 // CALLS+ twoDigits operationAOTFormatWithPattern
 // CALLS- fourDigits operationAOTFormatWithPattern
-// CALLS- withSharedOptions operationAOTFormatWithPattern
+// CALLS+ withSharedOptions operationAOTFormatWithPattern
 // CALLS+ dollarsWithSharedOptions operationAOTFormatWithPattern
 // CALLS- withOptionsThatAreChanged operationAOTFormatWithPattern
 // CALLS+ inUntypedCode operationAOTFormatWithPattern
@@ -19,7 +19,7 @@
 // CALLS- optionsFromOutside operationAOTFormatWithPattern
 // CALLS+ inNewYork operationAOTFormatWithPattern
 // CALLS- inNewYorkByName operationAOTFormatWithPattern
-// CALLS- threeArguments operationAOTFormatWithPattern
+// CALLS+ threeArguments operationAOTFormatWithPattern
 function notConstant<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }
@@ -116,7 +116,7 @@ compareDates("withOptionsThatAreChanged", withOptionsThatAreChanged, date => dat
 optionsThatAreChanged.month = "long";
 compareDates("withOptionsThatAreChanged, changed", withOptionsThatAreChanged, date => date.toLocaleDateString(notConstant("en-US"), notConstant({ year: "numeric", month: "long", day: "numeric", timeZone: "UTC" })));
 compareDates("hostLocale", hostLocale, date => date.toLocaleDateString(undefined, notConstant({})));
-compareDates("localeFromOutside", date => localeFromOutside(date, "ja-JP"), date => date.toLocaleDateString(notConstant("ja-JP")));
+compareDates("localeFromOutside", date => localeFromOutside(date, notConstant("ja-JP")), date => date.toLocaleDateString(notConstant("ja-JP")));
 compareDates("optionsFromOutside", date => optionsFromOutside(date, { month: "narrow" }), date => date.toLocaleDateString(notConstant("en-US"), notConstant({ month: "narrow" })));
 compareDates("inNewYork", inNewYork, date => date.toLocaleString(notConstant("en-US"), notConstant({ timeZone: "America/New_York" })));
 compareDates("inNewYorkByName", inNewYorkByName, date => date.toLocaleString(notConstant("en-US"), notConstant({ timeZone: "America/New_York", timeZoneName: "short" })));

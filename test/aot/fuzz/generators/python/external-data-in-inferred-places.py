@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""external-data-in-inferred-places.py <seed>: a primitive from external data travels through places whose types are only inferred: variables, functions, properties, fields, parameters, generic calls.
-The seed picks the way and the kind of data: an even seed a string where a number is declared, an odd seed a number where a string is declared. Each program uses the value in every way. The program type-checks.
-As plain Bun, line by line."""
+"""external-data-in-inferred-places.py <seed>: A primitive from external data travels through places whose types are
+only inferred: variables, functions, properties, fields, parameters, generic calls. The seed picks the path and the
+kind of data.
+"""
 import sys
 seed = int(sys.argv[1]); f = "ns"[seed % 2]; GOOD = {"n": "1", "s": "'z'"}[f]; T = {"n": "number", "s": "string"}[f]; X = "data." + f
 CARRY = [("direct", "const taken = X;"), ("a const", "const a = X; const taken = a;"), ("a let", "let a = GOOD; a = X; const taken = a;"), ("a var", "var a = GOOD; a = X; const taken = a;"), ("two lets", "let a = GOOD, b = GOOD; a = X; b = a; const taken = b;"), ("a let assigned in a branch", "let a = GOOD; if (hide(true)) a = X; const taken = a;"), ("a let assigned in a loop", "let a = GOOD; for (let i = 0; i < 2; i++) a = X; const taken = a;"), ("a let assigned in a closure", "let a = GOOD; const set = () => { a = X; }; set(); const taken = a;"), ("a let assigned in try", "let a = GOOD; try { a = X; } finally { } const taken = a;"), ("a let assigned in a switch", "let a = GOOD; switch (hide(1)) { case 1: a = X; break; default: a = GOOD; } const taken = a;"),

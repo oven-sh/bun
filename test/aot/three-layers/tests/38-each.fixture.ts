@@ -1,0 +1,18 @@
+import { test, describe, beforeAll, afterAll, afterEach } from "bun:test";
+import { show } from "../src/show";
+import { makePoint, kinds } from "fake-shapes";
+import { Vec2, makeItem, weigh } from "fake-typed";
+import { makeUser } from "../src/models";
+const F = "38";
+const log: string[] = [];
+beforeAll(() => { log.push("before all"); });
+afterEach(() => { log.push("after each"); });
+afterAll(() => { console.log("RESULT|" + F + "|the order of everything|-|" + show(log)); });
+test.each([makePoint(1, 2), makePoint(3, 4)])("points %o", p => { log.push("point " + (p.x + p.y)); });
+test.each([[new Vec2(1, 1), 2], [new Vec2(2, 3), 5]] as Array<[Vec2, number]>)("vectors %#", (v, sum) => { log.push("vec " + (v.x + v.y === sum)); });
+describe.each([1, 2].map(makeUser))("user $name", user => { beforeAll(() => { log.push("describe " + user.id); }); test("roles", () => { log.push(user.name + " " + user.roles.length); }); test.each(user.roles)("role %s", role => { log.push(user.id + role); }); });
+test.each(Object.values(kinds).filter(k => typeof k === "string"))("kind %s", k => { log.push("kind " + k); });
+test.each([0, 1, 2].map(makeItem))("item $kind", item => { log.push(item.kind + weigh(item)); });
+test.skip("skipped", () => { log.push("never"); });
+test.todo("to do");
+test.if(makeUser(1).roles.length > 1)("conditional", () => { log.push("conditional ran"); });

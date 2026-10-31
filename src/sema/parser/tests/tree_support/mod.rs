@@ -182,6 +182,7 @@ impl<'s> Workspace<'s> {
             false,
             false,
             false,
+            false,
         );
         self.set_text(&mut hir, text);
         hir

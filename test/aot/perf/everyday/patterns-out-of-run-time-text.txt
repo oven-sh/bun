@@ -1,5 +1,5 @@
 // Patterns whose text the build cannot know: names, globs turned into patterns, words looked for in a command. Eight go back over the same places again and again.
-// The last three start an unbounded run at every bracket of one long line and never match.
+// Three start an unbounded run at every bracket of one long line and never match, one at every bracket of ten lines. Two have a hundred capture groups and a subject of astral characters. The last four have a run in front of a back reference.
 //// globstar-that-matches
 const nothing = String(Date.now()).slice(99);
 const pattern = new RegExp("^(?:.*/)?src/.*\\.tsx?$" + nothing);
@@ -256,6 +256,13 @@ const subjects: string[] = ["[a](".repeat(300) + "x" + nothing, "[b](".repeat(30
 function turn(i: number): number {
   return pattern.test(subjects[i & 1]!) ? 1 : 2;
 }
+//// an-emulated-atomic-group-on-ten-lines-of-thirty-links
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("\\[(?=(.+?\\]\\(#))\\1" + nothing);
+const subjects: string[] = [("[a](".repeat(30) + "\n").repeat(10) + nothing, ("[b](".repeat(30) + "\n").repeat(10) + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
 //// a-lazy-run-from-every-bracket-without-a-match
 const nothing = String(Date.now()).slice(99);
 const pattern = new RegExp("\\[.+?\\]\\(#" + nothing);
@@ -263,10 +270,123 @@ const subjects: string[] = ["[a](".repeat(300) + "x" + nothing, "[b](".repeat(30
 function turn(i: number): number {
   return pattern.test(subjects[i & 1]!) ? 1 : 2;
 }
+// Every engine that goes back takes the cube of the length for this one: 300 brackets are 20 ms an exec under the JIT, so the subject is short.
+//// a-lazy-run-behind-a-lazy-run-without-a-match
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("\\[.*?\\].*?#" + nothing);
+const subjects: string[] = ["[a](".repeat(20) + "x" + nothing, "[b](".repeat(20) + "y" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
 //// a-greedy-run-from-every-bracket-without-a-match
 const nothing = String(Date.now()).slice(99);
 const pattern = new RegExp("\\[.*\\]\\(#" + nothing);
 const subjects: string[] = ["[a](".repeat(300) + "x" + nothing, "[b](".repeat(300) + "y" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// many-groups-on-astral-text
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("<" + "(a)".repeat(100) + "\\u{1f000}" + nothing, "u");
+const subjects: string[] = ["\u{e0041}".repeat(200) + nothing, "\u{e0042}".repeat(200) + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// many-groups-after-an-astral-class
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("[\\u{e0000}-\\u{e0fff}][<>]" + "(a)".repeat(100) + nothing, "u");
+const subjects: string[] = ["\u{e0041}".repeat(200) + nothing, "\u{e0042}".repeat(200) + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-quoted-word
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("([\"'])(.*?)\\1" + nothing);
+const subjects: string[] = ['say "hello world" now' + nothing, "name = 'a longer text in quotes';" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-quote-that-is-never-closed
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("([\"'])(.*?)\\1" + nothing);
+const subjects: string[] = ['say "hello world, and nothing closes it on this line of eighty units or so, you see' + nothing, "it's the same with the other kind of quote, which is also an apostrophe, is it not" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-reference-behind-a-lazy-run-without-a-match
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("\\[(.+?)\\]\\(\\1#" + nothing);
+const subjects: string[] = ["[a](".repeat(300) + "x" + nothing, "[b](".repeat(300) + "y" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-reference-behind-a-greedy-run-without-a-match
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("\\[(.+)\\]\\(\\1#" + nothing);
+const subjects: string[] = ["[a](".repeat(300) + "x" + nothing, "[b](".repeat(300) + "y" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-tag-in-a-short-astral-text
+const nothing = String(Date.now()).slice(99);
+const atomic = (body: string, group: number): string => `(?=([${body}]*))(?:\\${group})`;
+const pattern = new RegExp("[<\\u2039\\u3008\\uff1c](?!\\\\)(?=" + atomic("^A-Za-z0-9_<>/", 1) + "[/\\u2044]" + atomic("^A-Za-z0-9_<>", 2) + "e" + atomic("\\u200b\\u{e0000}-\\u{e0fff}", 3) + "n(?:[^A-Za-z0-9_]|$))" + nothing, "giu");
+const subjects: string[] = ["<\u{1d236}/en>" + nothing, "</en\u{1d237}" + nothing];
+function turn(i: number): number {
+  return subjects[i & 1]!.replace(pattern, "<\\").length;
+}
+//// a-name-or-the-end-of-a-deep-path
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("(?:(?:^|\\/)private(?=$|\\/$))|$" + nothing, "i");
+const folders: string[] = Array.from({ length: 64 }, (_, depth) => `n${depth}`.padEnd(15, "q"));
+const subjects: string[] = [folders.join("/") + nothing, folders.slice(0, 32).join("/") + "/" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-name-or-the-end-of-a-deep-16-bit-path
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("(?:(?:^|\\/)private(?=$|\\/$))|$" + nothing, "i");
+const folders: string[] = Array.from({ length: 64 }, (_, depth) => `n${depth}`.padEnd(15, "ﷺ"));
+const subjects: string[] = [folders.join("/") + nothing, folders.slice(0, 32).join("/") + "/" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// an-extension-below-any-folder-or-the-end-of-a-deep-path
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("(?:^(?:.*\\/)?[^\\/]*\\.pem(?=$|\\/$))|$" + nothing, "i");
+const folders: string[] = Array.from({ length: 64 }, (_, depth) => `n${depth}`.padEnd(15, "q"));
+const subjects: string[] = [folders.join("/") + nothing, folders.slice(0, 32).join("/") + "/" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// an-extension-behind-a-slash-or-the-end-of-a-deep-path
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("(?:(?:^|\\/)[^\\/]*\\.log(?=$|\\/$))|$" + nothing, "i");
+const folders: string[] = Array.from({ length: 64 }, (_, depth) => `n${depth}`.padEnd(15, "q"));
+const subjects: string[] = [folders.join("/") + nothing, folders.slice(0, 32).join("/") + "/" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-comma-or-the-end-of-a-short-text
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp(",|$" + nothing);
+const subjects: string[] = ["alpha beta gamma" + nothing, "alpha, beta" + nothing];
+function turn(i: number): number {
+  return pattern.exec(subjects[i & 1]!)!.index;
+}
+//// a-name-behind-a-slash-in-a-deep-path
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("(?:^|\\/)private(?=$|\\/$)" + nothing, "i");
+const folders: string[] = Array.from({ length: 64 }, (_, depth) => `n${depth}`.padEnd(15, "q"));
+const subjects: string[] = [folders.join("/") + nothing, folders.slice(0, 32).join("/") + "/" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-name-behind-a-slash-in-a-deep-16-bit-path
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("(?:^|\\/)private(?=$|\\/$)" + nothing, "i");
+const folders: string[] = Array.from({ length: 64 }, (_, depth) => `n${depth}`.padEnd(15, "ﷺ"));
+const subjects: string[] = [folders.join("/") + nothing, folders.slice(0, 32).join("/") + "/" + nothing];
 function turn(i: number): number {
   return pattern.test(subjects[i & 1]!) ? 1 : 2;
 }

@@ -40,6 +40,8 @@ pub use bun_event_loop::EventLoopHandle;
 pub use bun_spawn_sys::{Argv, CStrPtr, Envp, ffi};
 
 pub use bun_spawn_sys::RusageFields;
+#[cfg(unix)]
+pub use bun_spawn_sys::posix_spawn::posix_spawn::LARGEST_REAPED_CHILD;
 pub use process::{
     Dup2, Exited, ExtraPipe, PidT, Poller, Process, ProcessHandle, Rusage, SpawnEnv, SpawnOptions,
     SpawnProcessResult, SpawnResultExt, Status, StdioKind, spawn_process, spawn_process_cstr,
@@ -58,6 +60,7 @@ bun_dispatch::link_interface! {
         FilterRunHandle,
         MultiRunHandle,
         TestParallelWorker,
+        TestPartBuilder,
         CronRegister,
         CronRemove,
         ChromeProcess,

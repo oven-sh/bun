@@ -74,6 +74,8 @@ const hiddenObjects = new Map([
   ["%AsyncIterator%.prototype", getPrototypeOf(asyncGeneratorPrototype)],
   ["%BunRequest%.prototype", await findPrototypeOfRoutedRequests()],
   ["%EventEmitter%.prototype", getPrototypeOf(process)],
+  // The function pointer is never called.
+  ["%FFI%.prototype", getPrototypeOf(require("bun:ffi").linkSymbols({ never: { ptr: 8, args: [], returns: "void" } }))],
   ["%Generator%.prototype", getPrototypeOf(function* () {}).prototype],
   ["%GeneratorFunction%.prototype", getPrototypeOf(function* () {})],
   ["%HeadersIterator%.prototype", getPrototypeOf(new Headers()[Symbol.iterator]())],

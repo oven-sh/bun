@@ -157,13 +157,19 @@ void HandleScopeBuffer::evacuateActiveReturnValues(Bun::HandleScopeImpl* parent)
     }
 }
 
+TaggedPointer* HandleScopeBuffer::setHandle(Handle& handle, const Handle& value)
+{
+    WTF::Locker locker { m_owner->cellLock() };
+    handle = value;
+    return handle.slot();
+}
+
 TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer address, Handle* reuseHandle)
 {
     int32_t smi;
     if (address.getSmi(smi)) {
         if (reuseHandle) {
-            *reuseHandle = Handle(smi);
-            return reuseHandle->slot();
+            return setHandle(*reuseHandle, Handle(smi));
         } else {
             return createSmiHandle(smi);
         }
@@ -186,13 +192,68 @@ TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer a
                     reinterpret_cast<Oddball*>(v8_object)->kind());
             }
         }
+        if (v8_object->map()->m_instanceType == InstanceType::HeapNumber) {
+            if (reuseHandle) {
+                return setHandle(*reuseHandle, Handle(v8_object->asDouble()));
+            } else {
+                return createDoubleHandle(v8_object->asDouble());
+            }
+        }
         if (reuseHandle) {
-            *reuseHandle = Handle(v8_object->map(), v8_object->asCell(), vm(), m_owner);
-            return reuseHandle->slot();
+            return setHandle(*reuseHandle, Handle(v8_object->map(), v8_object->asCell(), vm(), m_owner));
         } else {
             return createHandle(v8_object->asCell(), v8_object->map(), vm());
         }
     }
+}
+
+// Whether `scope` or a scope around it has V8 handles.
+static bool hasV8Handles(Bun::HandleScopeImpl* scope)
+{
+    for (; scope; scope = scope->parent()) {
+        if (scope->v8Handles()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+TaggedPointer* HandleScopeBuffer::createGlobalHandle(TaggedPointer address)
+{
+    Handle* handle = m_freeGlobalHandles.isEmpty() ? &createEmptyHandle() : m_freeGlobalHandles.takeLast();
+    TaggedPointer* slot = createHandleFromExistingObject(address, handle);
+    if (slot != handle->slot()) {
+        // undefined, null, true or false: the slot is one of the isolate's roots
+        m_freeGlobalHandles.append(handle);
+        return slot;
+    }
+    m_liveGlobalHandles.add(handle);
+    return slot;
+}
+
+void HandleScopeBuffer::disposeGlobalHandle(TaggedPointer* slot)
+{
+    auto* handle = reinterpret_cast<Handle*>(slot);
+    if (!m_liveGlobalHandles.remove(handle)) {
+        return;
+    }
+    m_disposedGlobalHandles.append(handle);
+    if (hasV8Handles(m_isolate->globalObject()->m_currentHandleScopeImpl.get())) {
+        return;
+    }
+    // Never waits: a static v8::Global is destroyed at exit, when the thread that holds the lock may be gone.
+    if (auto locker = WTF::Locker<JSC::JSCellLock>::tryLock(m_owner->cellLock())) {
+        releaseDisposedGlobalHandles(locker);
+    }
+}
+
+void HandleScopeBuffer::releaseDisposedGlobalHandles(const WTF::AbstractLocker&)
+{
+    for (Handle* handle : m_disposedGlobalHandles) {
+        *handle = Handle();
+    }
+    m_freeGlobalHandles.appendVector(m_disposedGlobalHandles);
+    m_disposedGlobalHandles.shrink(0);
 }
 
 void HandleScopeBuffer::close(Bun::HandleScopeImpl* parent)
@@ -210,6 +271,12 @@ void HandleScopeBuffer::close(Bun::HandleScopeImpl* parent)
     // the frame is read.
     if (parent && !internals->activeReturnValueSlots().isEmpty()) {
         evacuateActiveReturnValues(parent);
+    }
+    if (auto* globalHandles = internals->globalHandlesIfCreated()) {
+        if (!globalHandles->m_disposedGlobalHandles.isEmpty() && !hasV8Handles(parent)) {
+            WTF::Locker locker { globalHandles->m_owner->cellLock() };
+            globalHandles->releaseDisposedGlobalHandles(locker);
+        }
     }
     // The owner detaches this buffer and then frees it, along with every handle.
 }

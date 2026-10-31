@@ -71,6 +71,14 @@ HandleScopeBuffer* GlobalInternals::globalHandles()
     return &m_globalHandles.getInitializedOnMainThread(this)->ensureV8Handles(&m_isolate);
 }
 
+HandleScopeBuffer* GlobalInternals::globalHandlesIfCreated()
+{
+    if (!m_globalHandles.isInitialized()) {
+        return nullptr;
+    }
+    return m_globalHandles.getInitializedOnMainThread(this)->v8Handles();
+}
+
 HandleScopeBuffer* GlobalInternals::currentHandleScope()
 {
     auto* scope = m_globalObject->m_currentHandleScopeImpl.get();

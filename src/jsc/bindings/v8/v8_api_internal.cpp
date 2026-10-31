@@ -36,15 +36,23 @@ uintptr_t* GlobalizeReference(internal::Isolate* i_isolate, uintptr_t address)
 {
     auto* isolate = reinterpret_cast<Isolate*>(i_isolate);
     auto* globalHandles = isolate->globalInternals()->globalHandles();
-    TaggedPointer* newSlot = globalHandles->createHandleFromExistingObject(TaggedPointer::fromRaw(address));
+    TaggedPointer* newSlot = globalHandles->createGlobalHandle(TaggedPointer::fromRaw(address));
     return newSlot->asRawPtrLocation();
 }
 
 void DisposeGlobal(uintptr_t* location)
 {
-    if (location) weakHandleParameters().remove(location);
-    // TODO free up a slot in the handle scope
-    (void)location;
+    if (!location) return;
+    // A v8::Global can be destroyed on a thread that has no isolate.
+    auto* isolate = Isolate::TryGetCurrent();
+    if (!isolate) return;
+    // Finalizers also run while the VM is destroyed, after the scope that owns the global handles.
+    if (isolate->vm().heap.isShuttingDown()) return;
+    auto* internals = isolate->globalInternals();
+    internals->weakHandleParameters().remove(location);
+    if (auto* globalHandles = internals->globalHandlesIfCreated()) {
+        globalHandles->disposeGlobalHandle(reinterpret_cast<TaggedPointer*>(location));
+    }
 }
 
 void MakeWeak(uintptr_t* location, void* data, WeakCallbackInfo<void>::Callback weak_callback, WeakCallbackType type)

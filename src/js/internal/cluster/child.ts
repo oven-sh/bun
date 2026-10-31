@@ -23,6 +23,7 @@ interface ChildCluster extends InstanceType<typeof EventEmitter> {
   Worker: typeof Worker;
   _setupWorker(): void;
   _getServer(obj: ListeningObject, options, cb: GetServerCallback): void;
+  _trackServer(server): void;
 }
 
 /** A `net.Server` or a `dgram.Socket`. */
@@ -55,8 +56,13 @@ interface RoundRobinFauxHandle {
   onconnection?(err: number, handle: ConnectionHandle): void;
 }
 
+/** Stands in `handles`, as its own key, for a server that bound its own socket. */
+interface TrackedServerHandle {
+  [owner_symbol]: Pick<HandleOwner, "close">;
+}
+
 const cluster = new EventEmitter() as ChildCluster;
-const handles = new Map<string, SharedHandle | RoundRobinFauxHandle>();
+const handles = new Map<string | TrackedServerHandle, SharedHandle | RoundRobinFauxHandle | TrackedServerHandle>();
 const indexes = new Map<string, { nextIndex: number; set: Set<number> }>();
 const noop = FunctionPrototype as () => void;
 const TIMEOUT_MAX = 2 ** 31 - 1;
@@ -144,8 +150,10 @@ cluster._setupWorker = function () {
 cluster._getServer = function (obj, options, cb) {
   let address = options.address;
 
-  // Resolve unix socket paths to absolute paths
-  if (options.port < 0 && typeof address === "string" && process.platform !== "win32") address = path.resolve(address);
+  // Resolve unix socket paths to absolute paths. An abstract name (leading NUL) isn't a path.
+  if (options.port < 0 && typeof address === "string" && process.platform !== "win32" && address.charCodeAt(0) !== 0) {
+    address = path.resolve(address);
+  }
 
   const indexesKey = ArrayPrototypeJoin.$call([address, options.port, options.addressType, options.fd], ":");
 
@@ -198,6 +206,13 @@ cluster._getServer = function (obj, options, cb) {
     message.port = (address && (address as { port?: number }).port) || options.port;
     send(message);
   });
+};
+
+// For a server that bound its own socket, so that worker.disconnect() closes it too.
+cluster._trackServer = function (server) {
+  const handle = { [owner_symbol]: server };
+  handles.set(handle, handle);
+  server.once("close", () => handles.delete(handle));
 };
 
 function removeIndexesKey(indexesKey: string, index: number) {
@@ -384,7 +399,7 @@ Worker.prototype._disconnect = function (this: ClusterWorker, primaryInitiated?)
     waitingCount++;
 
     if (handle[owner_symbol]) (handle[owner_symbol] as HandleOwner).close(checkWaitingCount);
-    else handle.close(checkWaitingCount);
+    else (handle as SharedHandle | RoundRobinFauxHandle).close(checkWaitingCount);
   });
 
   handles.clear();

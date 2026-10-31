@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 6acea1f32be784f6cc5297335ed19b6b69edaf6ceca9bec51ec7e891dd5dac80.
+// Written against that file with the SHA-256 ee755256625c421fe93da11a93c4a3d59aedd27e95ce3eb97e65ededab38a02c.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const { validateInteger, validateObject } = require("internal/validators");
@@ -9,7 +9,7 @@ const { ClientRequest } = require("node:_http_client");
 const { validateHeaderName, validateHeaderValue, parsers } = require("node:_http_common");
 const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
-const { Server, ServerResponse } = require("node:_http_server");
+const { Server, ServerResponse, _connectionListener } = require("node:_http_server");
 
 const { METHODS, STATUS_CODES, setMaxHTTPHeaderSize, getMaxHTTPHeaderSize } = require("internal/http");
 
@@ -55,6 +55,7 @@ function get(url?: ClientRequestParameters[0], options?: ClientRequestParameters
 }
 
 const http_exports = {
+  _connectionListener,
   Agent,
   Server,
   METHODS,

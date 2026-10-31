@@ -486,79 +486,14 @@ _http_outgoing[OutgoingMessage][prototype][pipe][name] c-- string
 _http_outgoing[OutgoingMessage][prototype][_headers] --a accessor get=function set=function
 _http_outgoing[OutgoingMessage][prototype][headers] --a accessor get=function set=function
 _http_outgoing[OutgoingMessage][prototype][_headerNames] --a accessor get=function set=function
+_http_outgoing[OutgoingMessage][prototype][Symbol(kFailHeldWrites)] cew function
+_http_outgoing[OutgoingMessage][prototype][Symbol(kFailHeldWrites)]: function function name="" length=1 above=Function extensible=true
+_http_outgoing[OutgoingMessage][prototype][Symbol(kFailHeldWrites)][length] c-- number
+_http_outgoing[OutgoingMessage][prototype][Symbol(kFailHeldWrites)][name] c-- string
 _http_outgoing[OutgoingMessage][prototype][Symbol(nodejs.rejection)] cew function
 _http_outgoing[OutgoingMessage][prototype][Symbol(nodejs.rejection)]: function function name="" length=2 above=Function extensible=true
 _http_outgoing[OutgoingMessage][prototype][Symbol(nodejs.rejection)][length] c-- number
 _http_outgoing[OutgoingMessage][prototype][Symbol(nodejs.rejection)][name] c-- string
-_http_outgoing[FakeSocket] cew function
-_http_outgoing[FakeSocket]: function class name="Socket" length=1 above=Function extensible=true
-_http_outgoing[FakeSocket][length] c-- number
-_http_outgoing[FakeSocket][name] c-- string
-_http_outgoing[FakeSocket][prototype] --- object
-_http_outgoing[FakeSocket][prototype]: object above=Duplex extensible=true
-_http_outgoing[FakeSocket][prototype][constructor] c-w function
-_http_outgoing[FakeSocket][prototype][constructor] = _http_outgoing[FakeSocket]
-_http_outgoing[FakeSocket][prototype][address] c-w function
-_http_outgoing[FakeSocket][prototype][address]: function function name="address" length=0 above=Function extensible=true
-_http_outgoing[FakeSocket][prototype][address][length] c-- number
-_http_outgoing[FakeSocket][prototype][address][name] c-- string
-_http_outgoing[FakeSocket][prototype][bufferSize] c-a accessor get=function set=undefined
-_http_outgoing[FakeSocket][prototype][connect] c-w function
-_http_outgoing[FakeSocket][prototype][connect]: function function name="connect" length=3 above=Function extensible=true
-_http_outgoing[FakeSocket][prototype][connect][length] c-- number
-_http_outgoing[FakeSocket][prototype][connect][name] c-- string
-_http_outgoing[FakeSocket][prototype][_destroy] c-w function
-_http_outgoing[FakeSocket][prototype][_destroy]: function function name="_destroy" length=2 above=Function extensible=true
-_http_outgoing[FakeSocket][prototype][_destroy][length] c-- number
-_http_outgoing[FakeSocket][prototype][_destroy][name] c-- string
-_http_outgoing[FakeSocket][prototype][_final] c-w function
-_http_outgoing[FakeSocket][prototype][_final]: function function name="_final" length=1 above=Function extensible=true
-_http_outgoing[FakeSocket][prototype][_final][length] c-- number
-_http_outgoing[FakeSocket][prototype][_final][name] c-- string
-_http_outgoing[FakeSocket][prototype][localAddress] c-a accessor get=function set=undefined
-_http_outgoing[FakeSocket][prototype][localFamily] c-a accessor get=function set=undefined
-_http_outgoing[FakeSocket][prototype][localPort] c-a accessor get=function set=undefined
-_http_outgoing[FakeSocket][prototype][pending] c-a accessor get=function set=undefined
-_http_outgoing[FakeSocket][prototype][_read] c-w function
-_http_outgoing[FakeSocket][prototype][_read]: function function name="_read" length=1 above=Function extensible=true
-_http_outgoing[FakeSocket][prototype][_read][length] c-- number
-_http_outgoing[FakeSocket][prototype][_read][name] c-- string
-_http_outgoing[FakeSocket][prototype][readyState] c-a accessor get=function set=undefined
-_http_outgoing[FakeSocket][prototype][ref] c-w function
-_http_outgoing[FakeSocket][prototype][ref]: function function name="ref" length=0 above=Function extensible=true
-_http_outgoing[FakeSocket][prototype][ref][length] c-- number
-_http_outgoing[FakeSocket][prototype][ref][name] c-- string
-_http_outgoing[FakeSocket][prototype][remoteAddress] c-a accessor get=function set=function
-_http_outgoing[FakeSocket][prototype][remotePort] c-a accessor get=function set=function
-_http_outgoing[FakeSocket][prototype][remoteFamily] c-a accessor get=function set=function
-_http_outgoing[FakeSocket][prototype][resetAndDestroy] c-w function
-_http_outgoing[FakeSocket][prototype][resetAndDestroy]: function function name="resetAndDestroy" length=0 above=Function extensible=true
-_http_outgoing[FakeSocket][prototype][resetAndDestroy][length] c-- number
-_http_outgoing[FakeSocket][prototype][resetAndDestroy][name] c-- string
-_http_outgoing[FakeSocket][prototype][setKeepAlive] c-w function
-_http_outgoing[FakeSocket][prototype][setKeepAlive]: function function name="setKeepAlive" length=0 above=Function extensible=true
-_http_outgoing[FakeSocket][prototype][setKeepAlive][length] c-- number
-_http_outgoing[FakeSocket][prototype][setKeepAlive][name] c-- string
-_http_outgoing[FakeSocket][prototype][setNoDelay] c-w function
-_http_outgoing[FakeSocket][prototype][setNoDelay]: function function name="setNoDelay" length=0 above=Function extensible=true
-_http_outgoing[FakeSocket][prototype][setNoDelay][length] c-- number
-_http_outgoing[FakeSocket][prototype][setNoDelay][name] c-- string
-_http_outgoing[FakeSocket][prototype][setTimeout] c-w function
-_http_outgoing[FakeSocket][prototype][setTimeout]: function function name="setTimeout" length=2 above=Function extensible=true
-_http_outgoing[FakeSocket][prototype][setTimeout][length] c-- number
-_http_outgoing[FakeSocket][prototype][setTimeout][name] c-- string
-_http_outgoing[FakeSocket][prototype][unref] c-w function
-_http_outgoing[FakeSocket][prototype][unref]: function function name="unref" length=0 above=Function extensible=true
-_http_outgoing[FakeSocket][prototype][unref][length] c-- number
-_http_outgoing[FakeSocket][prototype][unref][name] c-- string
-_http_outgoing[FakeSocket][prototype][_write] c-w function
-_http_outgoing[FakeSocket][prototype][_write]: function function name="_write" length=3 above=Function extensible=true
-_http_outgoing[FakeSocket][prototype][_write][length] c-- number
-_http_outgoing[FakeSocket][prototype][_write][name] c-- string
-_http_outgoing[FakeSocket][prototype][destroy] c-w function
-_http_outgoing[FakeSocket][prototype][destroy]: function function name="destroy" length=0 above=Function extensible=true
-_http_outgoing[FakeSocket][prototype][destroy][length] c-- number
-_http_outgoing[FakeSocket][prototype][destroy][name] c-- string
 _http_server: object above=Object extensible=true
 _http_server[Server] cew function
 _http_server[Server]: function function name="Server" length=2 above=Function extensible=true
@@ -568,6 +503,11 @@ _http_server[Server][prototype] c-w object
 _http_server[Server][prototype]: object above=EventEmitter extensible=true
 _http_server[Server][prototype][constructor] c-w function
 _http_server[Server][prototype][constructor] = _http_server[Server]
+_http_server[Server][prototype][_requestCert] c-a accessor get=function set=undefined
+_http_server[Server][prototype][_rejectUnauthorized] c-a accessor get=function set=undefined
+_http_server[Server][prototype][_handshakeTimeout] c-a accessor get=function set=undefined
+_http_server[Server][prototype][_ALPNCallback] c-a accessor get=function set=undefined
+_http_server[Server][prototype][_SNICallback] c-a accessor get=function set=undefined
 _http_server[Server][prototype][listening] cea accessor get=function set=undefined
 _http_server[Server][prototype][ref] cew function
 _http_server[Server][prototype][ref]: function function name="" length=0 above=Function extensible=true
@@ -581,6 +521,10 @@ _http_server[Server][prototype][closeAllConnections] cew function
 _http_server[Server][prototype][closeAllConnections]: function function name="" length=0 above=Function extensible=true
 _http_server[Server][prototype][closeAllConnections][length] c-- number
 _http_server[Server][prototype][closeAllConnections][name] c-- string
+_http_server[Server][prototype][_emitCloseIfDrained] cew function
+_http_server[Server][prototype][_emitCloseIfDrained]: function function name="" length=0 above=Function extensible=true
+_http_server[Server][prototype][_emitCloseIfDrained][length] c-- number
+_http_server[Server][prototype][_emitCloseIfDrained][name] c-- string
 _http_server[Server][prototype][getConnections] cew function
 _http_server[Server][prototype][getConnections]: function function name="" length=1 above=Function extensible=true
 _http_server[Server][prototype][getConnections][length] c-- number
@@ -608,6 +552,8 @@ _http_server[Server][prototype][setTimeout][name] c-- string
 _http_server[Server][prototype][Symbol(IncomingMessage)] cew undefined
 _http_server[Server][prototype][Symbol(ServerResponse)] cew undefined
 _http_server[Server][prototype][Symbol(http.server.connectionsCheckingInterval)] cew undefined
+_http_server[Server][prototype][Symbol(http.server.clusterHandle)] cew undefined
+_http_server[Server][prototype][Symbol(http.server.clusterListeningId)] cew number
 _http_server[Server][prototype][Symbol(nodejs.rejection)] cew function
 _http_server[Server][prototype][Symbol(nodejs.rejection)]: function function name="" length=2 above=Function extensible=true
 _http_server[Server][prototype][Symbol(nodejs.rejection)][length] c-- number
@@ -617,9 +563,13 @@ _http_server[Server][prototype][Symbol(Symbol.asyncDispose)]: function function 
 _http_server[Server][prototype][Symbol(Symbol.asyncDispose)][length] c-- number
 _http_server[Server][prototype][Symbol(Symbol.asyncDispose)][name] c-- string
 _http_server[Server][prototype][Symbol(kRealListen)] cew function
-_http_server[Server][prototype][Symbol(kRealListen)]: function function name="" length=5 above=Function extensible=true
+_http_server[Server][prototype][Symbol(kRealListen)]: function function name="" length=7 above=Function extensible=true
 _http_server[Server][prototype][Symbol(kRealListen)][length] c-- number
 _http_server[Server][prototype][Symbol(kRealListen)][name] c-- string
+_http_server[Server][prototype][Symbol(kLeaveHttp)] cew function
+_http_server[Server][prototype][Symbol(kLeaveHttp)]: function function name="" length=2 above=Function extensible=true
+_http_server[Server][prototype][Symbol(kLeaveHttp)][length] c-- number
+_http_server[Server][prototype][Symbol(kLeaveHttp)][name] c-- string
 _http_server[ServerResponse] cew function
 _http_server[ServerResponse]: function function name="ServerResponse" length=2 above=_http_outgoing[OutgoingMessage] extensible=true
 _http_server[ServerResponse][length] c-- number
@@ -629,26 +579,9 @@ _http_server[ServerResponse][prototype]: object above=_http_outgoing[OutgoingMes
 _http_server[ServerResponse][prototype][constructor] c-w function
 _http_server[ServerResponse][prototype][constructor] = _http_server[ServerResponse]
 _http_server[ServerResponse][prototype][statusCode] cew number
-_http_server[ServerResponse][prototype][setHeader] cew function
-_http_server[ServerResponse][prototype][setHeader]: function function name="setHeader" length=2 above=Function extensible=true
-_http_server[ServerResponse][prototype][setHeader][length] c-- number
-_http_server[ServerResponse][prototype][setHeader][name] c-- string
-_http_server[ServerResponse][prototype][appendHeader] cew function
-_http_server[ServerResponse][prototype][appendHeader]: function function name="appendHeader" length=2 above=Function extensible=true
-_http_server[ServerResponse][prototype][appendHeader][length] c-- number
-_http_server[ServerResponse][prototype][appendHeader][name] c-- string
-_http_server[ServerResponse][prototype][setHeaders] cew function
-_http_server[ServerResponse][prototype][setHeaders]: function function name="setHeaders" length=1 above=Function extensible=true
-_http_server[ServerResponse][prototype][setHeaders][length] c-- number
-_http_server[ServerResponse][prototype][setHeaders][name] c-- string
-_http_server[ServerResponse][prototype][removeHeader] cew function
-_http_server[ServerResponse][prototype][removeHeader]: function function name="removeHeader" length=1 above=Function extensible=true
-_http_server[ServerResponse][prototype][removeHeader][length] c-- number
-_http_server[ServerResponse][prototype][removeHeader][name] c-- string
 _http_server[ServerResponse][prototype][headers] --a accessor get=function set=function
 _http_server[ServerResponse][prototype][socket] --a accessor get=function set=function
 _http_server[ServerResponse][prototype][connection] --a accessor get=function set=function
-_http_server[ServerResponse][prototype][chunkedEncoding] --a accessor get=function set=function
 _http_server[ServerResponse][prototype][writableCorked] --a accessor get=function set=function
 _http_server[ServerResponse][prototype][cork] cew function
 _http_server[ServerResponse][prototype][cork]: function function name="cork" length=0 above=Function extensible=true
@@ -658,15 +591,7 @@ _http_server[ServerResponse][prototype][uncork] cew function
 _http_server[ServerResponse][prototype][uncork]: function function name="uncork" length=0 above=Function extensible=true
 _http_server[ServerResponse][prototype][uncork][length] c-- number
 _http_server[ServerResponse][prototype][uncork][name] c-- string
-_http_server[ServerResponse][prototype][setTimeout] cew function
-_http_server[ServerResponse][prototype][setTimeout]: function function name="setTimeout2" length=2 above=Function extensible=true
-_http_server[ServerResponse][prototype][setTimeout][length] c-- number
-_http_server[ServerResponse][prototype][setTimeout][name] c-- string
-_http_server[ServerResponse][prototype][_removedConnection] cew boolean
-_http_server[ServerResponse][prototype][_removedContLen] cew boolean
-_http_server[ServerResponse][prototype][_hasBody] cew boolean
 _http_server[ServerResponse][prototype][_ended] cew boolean
-_http_server[ServerResponse][prototype][headersSent] --a accessor get=function set=function
 _http_server[ServerResponse][prototype][_writeRaw] cew function
 _http_server[ServerResponse][prototype][_writeRaw]: function function name="" length=3 above=Function extensible=true
 _http_server[ServerResponse][prototype][_writeRaw][length] c-- number
@@ -691,7 +616,6 @@ _http_server[ServerResponse][prototype][end] cew function
 _http_server[ServerResponse][prototype][end]: function function name="" length=3 above=Function extensible=true
 _http_server[ServerResponse][prototype][end][length] c-- number
 _http_server[ServerResponse][prototype][end][name] c-- string
-_http_server[ServerResponse][prototype][writable] --a accessor get=function set=function
 _http_server[ServerResponse][prototype][write] cew function
 _http_server[ServerResponse][prototype][write]: function function name="" length=3 above=Function extensible=true
 _http_server[ServerResponse][prototype][write][length] c-- number
@@ -700,10 +624,6 @@ _http_server[ServerResponse][prototype][_callPendingCallbacks] cew function
 _http_server[ServerResponse][prototype][_callPendingCallbacks]: function function name="" length=0 above=Function extensible=true
 _http_server[ServerResponse][prototype][_callPendingCallbacks][length] c-- number
 _http_server[ServerResponse][prototype][_callPendingCallbacks][name] c-- string
-_http_server[ServerResponse][prototype][_finish] cew function
-_http_server[ServerResponse][prototype][_finish]: function function name="" length=0 above=Function extensible=true
-_http_server[ServerResponse][prototype][_finish][length] c-- number
-_http_server[ServerResponse][prototype][_finish][name] c-- string
 _http_server[ServerResponse][prototype][detachSocket] cew function
 _http_server[ServerResponse][prototype][detachSocket]: function function name="" length=1 above=Function extensible=true
 _http_server[ServerResponse][prototype][detachSocket][length] c-- number
@@ -715,8 +635,6 @@ _http_server[ServerResponse][prototype][_implicitHeader][name] c-- string
 _http_server[ServerResponse][prototype][writableNeedDrain] --a accessor get=function set=undefined
 _http_server[ServerResponse][prototype][writableFinished] --a accessor get=function set=undefined
 _http_server[ServerResponse][prototype][writableLength] --a accessor get=function set=undefined
-_http_server[ServerResponse][prototype][writableHighWaterMark] --a accessor get=function set=undefined
-_http_server[ServerResponse][prototype][closed] --a accessor get=function set=undefined
 _http_server[ServerResponse][prototype][_send] cew function
 _http_server[ServerResponse][prototype][_send]: function function name="" length=4 above=Function extensible=true
 _http_server[ServerResponse][prototype][_send][length] c-- number
@@ -729,7 +647,6 @@ _http_server[ServerResponse][prototype][assignSocket] cew function
 _http_server[ServerResponse][prototype][assignSocket]: function function name="" length=1 above=Function extensible=true
 _http_server[ServerResponse][prototype][assignSocket][length] c-- number
 _http_server[ServerResponse][prototype][assignSocket][name] c-- string
-_http_server[ServerResponse][prototype][shouldKeepAlive] --a accessor get=function set=function
 _http_server[ServerResponse][prototype][destroy] cew function
 _http_server[ServerResponse][prototype][destroy]: function function name="" length=1 above=Function extensible=true
 _http_server[ServerResponse][prototype][destroy][length] c-- number
@@ -742,8 +659,25 @@ _http_server[ServerResponse][prototype][flushHeaders] cew function
 _http_server[ServerResponse][prototype][flushHeaders]: function function name="" length=0 above=Function extensible=true
 _http_server[ServerResponse][prototype][flushHeaders][length] c-- number
 _http_server[ServerResponse][prototype][flushHeaders][name] c-- string
+_http_server[ServerResponse][prototype][_expect_continue] cew boolean
+_http_server[ServerResponse][prototype][Symbol(kFinishesWithoutLastWrite)] cew boolean
 _http_server[ServerResponse][prototype][Symbol(kPendingFinish)] cew undefined
-_http_server[ServerResponse][prototype][Symbol(kRejectNonStandardBodyWrites)] cew undefined
+_http_server[setupConnectionsTracking] cew function
+_http_server[setupConnectionsTracking]: function function name="setupConnectionsTracking" length=0 above=Function extensible=true
+_http_server[setupConnectionsTracking][length] c-- number
+_http_server[setupConnectionsTracking][name] c-- string
+_http_server[storeHTTPOptions] cew function
+_http_server[storeHTTPOptions]: function function name="storeHTTPOptions" length=1 above=Function extensible=true
+_http_server[storeHTTPOptions][length] c-- number
+_http_server[storeHTTPOptions][name] c-- string
+_http_server[_connectionListener] cew function
+_http_server[_connectionListener]: function function name="connectionListener" length=1 above=Function extensible=true
+_http_server[_connectionListener][length] c-- number
+_http_server[_connectionListener][name] c-- string
+_http_server[httpServerPreClose] cew function
+_http_server[httpServerPreClose]: function function name="httpServerPreClose" length=1 above=Function extensible=true
+_http_server[httpServerPreClose][length] c-- number
+_http_server[httpServerPreClose][name] c-- string
 _http_server[kConnectionsCheckingInterval] cew symbol
 _stream_duplex: function function name="Duplex" length=1 above=Function extensible=true
 _stream_duplex[length] c-- number
@@ -1712,6 +1646,8 @@ events[listenerCount]: function function name="listenerCount" length=2 above=Fun
 events[listenerCount][length] c-- number
 events[listenerCount][name] c-- string
 http: object above=Object extensible=true
+http[_connectionListener] cew function
+http[_connectionListener] = _http_server[_connectionListener]
 http[Agent] cew function
 http[Agent] = _http_agent[Agent]
 http[Server] cew function
@@ -1978,15 +1914,7 @@ https[globalAgent][_sessionCache][map]: object above=Object extensible=true
 https[globalAgent][_sessionCache][list] cew object
 https[globalAgent][Symbol(shapeMode)] cew boolean
 https[globalAgent][Symbol(kCapture)] cew boolean
-https[Server] cew function
-https[Server]: function function name="Server" length=2 above=_http_server[Server] extensible=true
-https[Server][length] c-- number
-https[Server][name] c-- string
-https[Server][prototype] c-w object
-https[Server][prototype]: object above=_http_server[Server][prototype] extensible=true
-https[Server][prototype][constructor] c-w function
-https[Server][prototype][constructor] = https[Server]
-https[Server][prototype][Symbol(is_tls)] cew boolean
+https[Server] cea accessor get=function set=function
 https[createServer] cew function
 https[createServer]: function function name="createServer" length=2 above=Function extensible=true
 https[createServer][length] c-- number
@@ -2045,12 +1973,16 @@ net[Server][prototype][getsockname] cew function
 net[Server][prototype][getsockname]: function function name="getsockname" length=1 above=Function extensible=true
 net[Server][prototype][getsockname][length] c-- number
 net[Server][prototype][getsockname][name] c-- string
+net[Server][prototype][Symbol(kForeignListener)] cew function
+net[Server][prototype][Symbol(kForeignListener)]: function function name="" length=1 above=Function extensible=true
+net[Server][prototype][Symbol(kForeignListener)][length] c-- number
+net[Server][prototype][Symbol(kForeignListener)][name] c-- string
 net[Server][prototype][Symbol(Symbol.asyncDispose)] cew function
 net[Server][prototype][Symbol(Symbol.asyncDispose)]: function function name="" length=0 above=Function extensible=true
 net[Server][prototype][Symbol(Symbol.asyncDispose)][length] c-- number
 net[Server][prototype][Symbol(Symbol.asyncDispose)][name] c-- string
 net[Server][prototype][Symbol(kRealListen)] cew function
-net[Server][prototype][Symbol(kRealListen)]: function function name="" length=12 above=Function extensible=true
+net[Server][prototype][Symbol(kRealListen)]: function function name="" length=11 above=Function extensible=true
 net[Server][prototype][Symbol(kRealListen)][length] c-- number
 net[Server][prototype][Symbol(kRealListen)][name] c-- string
 net[Server][prototype][Symbol(nodejs.rejection)] cew function
@@ -2100,6 +2032,7 @@ net[Socket][prototype][_onTimeout]: function function name="" length=0 above=Fun
 net[Socket][prototype][_onTimeout][length] c-- number
 net[Socket][prototype][_onTimeout][name] c-- string
 net[Socket][prototype][bufferSize] --a accessor get=function set=undefined
+net[Socket][prototype][bytesRead] -ea accessor get=function set=undefined
 net[Socket][prototype][_bytesDispatched] --a accessor get=function set=undefined
 net[Socket][prototype][bytesWritten] --a accessor get=function set=undefined
 net[Socket][prototype][connect] cew function
@@ -2204,7 +2137,7 @@ net[Socket][prototype][_write]: function function name="_write" length=3 above=F
 net[Socket][prototype][_write][length] c-- number
 net[Socket][prototype][_write][name] c-- string
 net[Socket][prototype][Symbol(kAttach)] cew function
-net[Socket][prototype][Symbol(kAttach)]: function function name="" length=2 above=Function extensible=true
+net[Socket][prototype][Symbol(kAttach)]: function function name="" length=1 above=Function extensible=true
 net[Socket][prototype][Symbol(kAttach)][length] c-- number
 net[Socket][prototype][Symbol(kAttach)][name] c-- string
 net[Socket][prototype][Symbol(kCloseRawConnection)] cew function
@@ -2215,6 +2148,10 @@ net[Socket][prototype][Symbol(kReinitializeHandle)] cew function
 net[Socket][prototype][Symbol(kReinitializeHandle)]: function function name="reinitializeHandle" length=1 above=Function extensible=true
 net[Socket][prototype][Symbol(kReinitializeHandle)][length] c-- number
 net[Socket][prototype][Symbol(kReinitializeHandle)][name] c-- string
+net[Socket][prototype][Symbol(kReadStop)] cew function
+net[Socket][prototype][Symbol(kReadStop)]: function function name="" length=0 above=Function extensible=true
+net[Socket][prototype][Symbol(kReadStop)][length] c-- number
+net[Socket][prototype][Symbol(kReadStop)][name] c-- string
 net[Socket][prototype][Symbol(::bunUpgradeServerTLS::)] cew function
 net[Socket][prototype][Symbol(::bunUpgradeServerTLS::)]: function function name="" length=2 above=Function extensible=true
 net[Socket][prototype][Symbol(::bunUpgradeServerTLS::)][length] c-- number
@@ -2232,19 +2169,19 @@ net[_setSimultaneousAccepts]: function function name="_setSimultaneousAccepts" l
 net[_setSimultaneousAccepts][length] c-- number
 net[_setSimultaneousAccepts][name] c-- string
 net[getDefaultAutoSelectFamily] cew function
-net[getDefaultAutoSelectFamily]: function native name="getDefaultAutoSelectFamily" length=0 above=Function extensible=true
+net[getDefaultAutoSelectFamily]: function function name="getDefaultAutoSelectFamily" length=0 above=Function extensible=true
 net[getDefaultAutoSelectFamily][length] c-- number
 net[getDefaultAutoSelectFamily][name] c-- string
 net[setDefaultAutoSelectFamily] cew function
-net[setDefaultAutoSelectFamily]: function native name="setDefaultAutoSelectFamily" length=1 above=Function extensible=true
+net[setDefaultAutoSelectFamily]: function function name="setDefaultAutoSelectFamily" length=1 above=Function extensible=true
 net[setDefaultAutoSelectFamily][length] c-- number
 net[setDefaultAutoSelectFamily][name] c-- string
 net[getDefaultAutoSelectFamilyAttemptTimeout] cew function
-net[getDefaultAutoSelectFamilyAttemptTimeout]: function native name="getDefaultAutoSelectFamilyAttemptTimeout" length=0 above=Function extensible=true
+net[getDefaultAutoSelectFamilyAttemptTimeout]: function function name="getDefaultAutoSelectFamilyAttemptTimeout" length=0 above=Function extensible=true
 net[getDefaultAutoSelectFamilyAttemptTimeout][length] c-- number
 net[getDefaultAutoSelectFamilyAttemptTimeout][name] c-- string
 net[setDefaultAutoSelectFamilyAttemptTimeout] cew function
-net[setDefaultAutoSelectFamilyAttemptTimeout]: function native name="setDefaultAutoSelectFamilyAttemptTimeout" length=1 above=Function extensible=true
+net[setDefaultAutoSelectFamilyAttemptTimeout]: function function name="setDefaultAutoSelectFamilyAttemptTimeout" length=1 above=Function extensible=true
 net[setDefaultAutoSelectFamilyAttemptTimeout][length] c-- number
 net[setDefaultAutoSelectFamilyAttemptTimeout][name] c-- string
 net[BlockList] cea accessor get=function set=function
@@ -2779,11 +2716,11 @@ tls[Server][prototype]: object above=net[Server][prototype] extensible=true
 tls[Server][prototype][constructor] c-w function
 tls[Server][prototype][constructor] = tls[Server]
 tls[Server][prototype][getTicketKeys] cew function
-tls[Server][prototype][getTicketKeys]: function function name="" length=0 above=Function extensible=true
+tls[Server][prototype][getTicketKeys]: function function name="getTicketKeys" length=0 above=Function extensible=true
 tls[Server][prototype][getTicketKeys][length] c-- number
 tls[Server][prototype][getTicketKeys][name] c-- string
 tls[Server][prototype][setTicketKeys] cew function
-tls[Server][prototype][setTicketKeys]: function function name="" length=1 above=Function extensible=true
+tls[Server][prototype][setTicketKeys]: function function name="setTicketKeys" length=1 above=Function extensible=true
 tls[Server][prototype][setTicketKeys][length] c-- number
 tls[Server][prototype][setTicketKeys][name] c-- string
 tls[Server][prototype][Symbol(::buntlsnativesecurecontextctor::)] cew function
@@ -2918,7 +2855,7 @@ tls[TLSSocket][prototype][getX509Certificate][name] c-- string
 tls[TLSSocket][prototype][Symbol(::buntlsnativesecurecontextctor::)] cew function
 tls[TLSSocket][prototype][Symbol(::buntlsnativesecurecontextctor::)] = tls[Server][prototype][Symbol(::buntlsnativesecurecontextctor::)]
 tls[TLSSocket][prototype][Symbol(::buntls::)] cew function
-tls[TLSSocket][prototype][Symbol(::buntls::)]: function function name="" length=2 above=Function extensible=true
+tls[TLSSocket][prototype][Symbol(::buntls::)]: function function name="" length=1 above=Function extensible=true
 tls[TLSSocket][prototype][Symbol(::buntls::)][length] c-- number
 tls[TLSSocket][prototype][Symbol(::buntls::)][name] c-- string
 tls[checkServerIdentity] cew function
@@ -4232,14 +4169,14 @@ ReadableState level 0: highWaterMark:cew buffer:cew bufferIndex:cew length:cew p
 ReadableState level 1: objectMode:--a ended:--a endEmitted:--a reading:--a constructed:--a sync:--a needReadable:--a emittedReadable:--a readableListening:--a resumeScheduled:--a errorEmitted:--a emitClose:--a autoDestroy:--a destroyed:--a closed:--a closeEmitted:--a multiAwaitDrain:--a readingMore:--a dataEmitted:--a errored:--a defaultEncoding:--a decoder:--a encoding:--a flowing:--a pipesCount:--a paused:--a Symbol(kOnConstructed):cew
 WritableState level 0: highWaterMark:cew length:cew corked:cew onwrite:cew writelen:cew bufferedIndex:cew pendingcb:cew Symbol(kState):cew Symbol(kBufferedValue):cew
 WritableState level 1: objectMode:--a finalCalled:--a needDrain:--a ending:--a ended:--a finished:--a destroyed:--a decodeStrings:--a writing:--a sync:--a bufferProcessing:--a constructed:--a prefinished:--a errorEmitted:--a emitClose:--a autoDestroy:--a closed:--a closeEmitted:--a allBuffers:--a allNoop:--a errored:--a writable:--a defaultEncoding:--a writecb:--a afterWriteTickInfo:--a buffered:--a getBuffer:cew bufferedRequestCount:--a Symbol(kOnConstructed):cew
-net.Socket level 0: _events:cew _readableState:cew _writableState:cew allowHalfOpen:cew _maxListeners:cew _parent:cew _parentWrap:cew bytesRead:cew connecting:cew _host:cew _port:cew timeout:cew _pendingData:cew _pendingEncoding:cew _hadError:cew isServer:cew _handle:cew server:cew _server:cew _peername:cew _sockname:cew _closeAfterHandlingError:cew _eventsCount:cew Symbol(shapeMode):cew Symbol(kCapture):cew Symbol(kupgraded):cew Symbol(kStandaloneWrap):cew Symbol(kOnUpgradedClose):cew Symbol(kOwesRawClose):cew Symbol(kSetNoDelay):cew Symbol(kSetKeepAlive):cew Symbol(kSetKeepAliveInitialDelay):cew Symbol(khandlers):cew Symbol(kDestroyOnRead):cew Symbol(kBytesWritten):cew Symbol(closed):cew Symbol(ended):cew Symbol(::buntlsconnectoptions::):cew Symbol(::buntimeout::):cew Symbol(writeCallback):cew Symbol(ksocket):cew
-net.Socket level 1: constructor:c-w address:cew _onTimeout:cew bufferSize:--a _bytesDispatched:--a bytesWritten:--a connect:cew end:cew _destroy:cew _final:cew localAddress:--a localFamily:--a localPort:--a _connecting:--a pending:--a resume:cew pause:cew read:cew _read:cew _reset:cew _getpeername:cew _getsockname:cew readyState:--a ref:cew remotePort:--a remoteAddress:--a remoteFamily:--a resetAndDestroy:cew setKeepAlive:cew setNoDelay:cew setTypeOfService:cew getTypeOfService:cew setTimeout:cew _unrefTimer:cew unref:cew destroySoon:cew _writev:cew _write:cew Symbol(kAttach):cew Symbol(kCloseRawConnection):cew Symbol(kReinitializeHandle):cew Symbol(::bunUpgradeServerTLS::):cew Symbol(kUpgradeClientTLS):cew
+net.Socket level 0: _events:cew _readableState:cew _writableState:cew allowHalfOpen:cew _maxListeners:cew _parent:cew _parentWrap:cew connecting:cew _host:cew _port:cew timeout:cew _pendingData:cew _pendingEncoding:cew _hadError:cew isServer:cew _handle:cew server:cew _server:cew _peername:cew _sockname:cew _closeAfterHandlingError:cew _eventsCount:cew Symbol(shapeMode):cew Symbol(kCapture):cew Symbol(kupgraded):cew Symbol(kStandaloneWrap):cew Symbol(kOnUpgradedClose):cew Symbol(kOwesRawClose):cew Symbol(kSetNoDelay):cew Symbol(kSetKeepAlive):cew Symbol(kSetKeepAliveInitialDelay):cew Symbol(khandlers):cew Symbol(kDestroyOnRead):cew Symbol(kBytesRead):cew Symbol(kBytesWritten):cew Symbol(kLastBytesSent):cew Symbol(closed):cew Symbol(ended):cew Symbol(kHungUp):cew Symbol(::buntlsconnectoptions::):cew Symbol(::buntimeout::):cew Symbol(kWriteReq):cew Symbol(ksocket):cew
+net.Socket level 1: constructor:c-w address:cew _onTimeout:cew bufferSize:--a bytesRead:-ea _bytesDispatched:--a bytesWritten:--a connect:cew end:cew _destroy:cew _final:cew localAddress:--a localFamily:--a localPort:--a _connecting:--a pending:--a resume:cew pause:cew read:cew _read:cew _reset:cew _getpeername:cew _getsockname:cew readyState:--a ref:cew remotePort:--a remoteAddress:--a remoteFamily:--a resetAndDestroy:cew setKeepAlive:cew setNoDelay:cew setTypeOfService:cew getTypeOfService:cew setTimeout:cew _unrefTimer:cew unref:cew destroySoon:cew _writev:cew _write:cew Symbol(kAttach):cew Symbol(kCloseRawConnection):cew Symbol(kReinitializeHandle):cew Symbol(kReadStop):cew Symbol(::bunUpgradeServerTLS::):cew Symbol(kUpgradeClientTLS):cew
 net.Socket level 2: constructor:c-w destroy:cew write:cew cork:cew uncork:cew setDefaultEncoding:cew _write:cew _writev:cew end:cew writable:--a writableHighWaterMark:--a writableObjectMode:--a writableBuffer:--a writableLength:--a writableFinished:--a writableCorked:--a writableEnded:--a writableNeedDrain:--a destroyed:--a
 net.Socket level 3: constructor:c-w destroy:cew _undestroy:cew _destroy:cew push:cew unshift:cew isPaused:cew setEncoding:cew read:cew _read:cew pipe:cew unpipe:cew on:cew addListener:cew removeListener:cew off:cew removeAllListeners:cew resume:cew pause:cew wrap:cew iterator:cew compose:cew readable:--a readableDidRead:--a readableAborted:--a readableHighWaterMark:--a readableBuffer:--a readableFlowing:--a readableLength:--a readableObjectMode:--a readableEncoding:--a errored:--a closed:--a destroyed:--a readableEnded:--a drop:c-w filter:c-w flatMap:c-w map:c-w take:c-w every:c-w forEach:c-w reduce:c-w toArray:c-w some:c-w find:c-w Symbol(nodejs.rejection):cew Symbol(Symbol.asyncDispose):cew Symbol(Symbol.asyncIterator):cew Symbol(Stream.toAsyncStreamable):cew
 net.Socket level 4: constructor:c-w pipe:cew eventNames:cew
 net.Socket level 5: setMaxListeners:cew constructor:cew getMaxListeners:cew emit:cew addListener:cew on:cew prependListener:cew once:cew prependOnceListener:cew removeListener:cew off:cew removeAllListeners:cew listeners:cew rawListeners:cew listenerCount:cew eventNames:cew _eventsCount:cew Symbol(kCapture):cew
 net.Server level 0: _events:cew _eventsCount:cew _maxListeners:cew _connections:cew _handle:cew _usingWorkers:cew workers:cew _unref:cew allowHalfOpen:cew keepAlive:cew keepAliveInitialDelay:cew highWaterMark:cew pauseOnConnect:cew noDelay:cew Symbol(shapeMode):cew Symbol(kCapture):cew Symbol(::bunnetserveroptions::):cew
-net.Server level 1: constructor:c-w listening:--a ref:cew unref:cew close:cew _emitCloseIfDrained:cew address:cew getConnections:cew listen:cew getsockname:cew Symbol(Symbol.asyncDispose):cew Symbol(kRealListen):cew Symbol(nodejs.rejection):cew Symbol(kClusterFauxListen):cew Symbol(kArmHandshakeTimeout):cew
+net.Server level 1: constructor:c-w listening:--a ref:cew unref:cew close:cew _emitCloseIfDrained:cew address:cew getConnections:cew listen:cew getsockname:cew Symbol(kForeignListener):cew Symbol(Symbol.asyncDispose):cew Symbol(kRealListen):cew Symbol(nodejs.rejection):cew Symbol(kClusterFauxListen):cew Symbol(kArmHandshakeTimeout):cew
 net.Server level 2: setMaxListeners:cew constructor:cew getMaxListeners:cew emit:cew addListener:cew on:cew prependListener:cew once:cew prependOnceListener:cew removeListener:cew off:cew removeAllListeners:cew listeners:cew rawListeners:cew listenerCount:cew eventNames:cew _eventsCount:cew Symbol(kCapture):cew
 http.Agent level 0: _events:cew _eventsCount:cew _maxListeners:cew options:cew defaultPort:cew protocol:cew requests:cew sockets:cew freeSockets:cew keepAliveMsecs:cew keepAlive:cew maxSockets:cew maxFreeSockets:cew scheduling:cew maxTotalSockets:cew totalSocketCount:cew agentKeepAliveTimeoutBuffer:cew Symbol(shapeMode):cew Symbol(kCapture):cew
 http.Agent level 1: constructor:c-w createConnection:cew getName:cew addRequest:cew createSocket:cew removeSocket:cew keepSocketAlive:cew reuseSocket:cew destroy:cew
@@ -4248,8 +4185,8 @@ https.Agent level 0: _events:cew _eventsCount:cew _maxListeners:cew options:cew 
 https.Agent level 1: constructor:c-w createConnection:cew getName:cew _getSession:cew _cacheSession:cew _evictSession:cew
 https.Agent level 2: constructor:c-w createConnection:cew getName:cew addRequest:cew createSocket:cew removeSocket:cew keepSocketAlive:cew reuseSocket:cew destroy:cew
 https.Agent level 3: setMaxListeners:cew constructor:cew getMaxListeners:cew emit:cew addListener:cew on:cew prependListener:cew once:cew prependOnceListener:cew removeListener:cew off:cew removeAllListeners:cew listeners:cew rawListeners:cew listenerCount:cew eventNames:cew _eventsCount:cew Symbol(kCapture):cew
-http.Server level 0: _events:cew _eventsCount:cew _maxListeners:cew _unref:cew timeout:cew maxRequestsPerSocket:cew maxHeadersCount:cea httpAllowHalfOpen:cea noDelay:cew maxHeaderSize:cew insecureHTTPParser:cew requestTimeout:cew headersTimeout:cew keepAliveTimeout:cew keepAliveTimeoutBuffer:cew connectionsCheckingInterval:cew requireHostHeader:cew joinDuplicateHeaders:cew shouldUpgradeCallback:cew rejectNonStandardBodyWrites:cew Symbol(shapeMode):cew Symbol(kCapture):cew Symbol(http.server.maxHeadersCount):cew Symbol(http.server.httpAllowHalfOpen):cew Symbol(::bunternal::):cew Symbol(http.server.trackedConnections):cew Symbol(http.server.pendingDrainClose):cew Symbol(http.server.pendingCloseGenerations):cew Symbol(http.server.listenerGeneration):cew Symbol(tls):cew Symbol(options):cew Symbol(IncomingMessage):cew Symbol(ServerResponse):cew Symbol(kHighWaterMark):cew Symbol(kUniqueHeaders):cew Symbol(kOptimizeEmptyRequests):cew
-http.Server level 1: constructor:c-w listening:cea ref:cew unref:cew closeAllConnections:cew getConnections:cew closeIdleConnections:cew close:cew address:cew listen:cew setTimeout:cew Symbol(IncomingMessage):cew Symbol(ServerResponse):cew Symbol(http.server.connectionsCheckingInterval):cew Symbol(nodejs.rejection):cew Symbol(Symbol.asyncDispose):cew Symbol(kRealListen):cew
+http.Server level 0: _events:cew _eventsCount:cew _maxListeners:cew _handle:cew _unref:cew timeout:cew maxRequestsPerSocket:cew maxHeadersCount:cea httpAllowHalfOpen:cea _connections:cew noDelay:cew maxHeaderSize:cew insecureHTTPParser:cew requestTimeout:cew headersTimeout:cew keepAliveTimeout:cew keepAliveTimeoutBuffer:cew connectionsCheckingInterval:cew requireHostHeader:cew joinDuplicateHeaders:cew shouldUpgradeCallback:cew rejectNonStandardBodyWrites:cew allowHalfOpen:cew highWaterMark:cew keepAlive:cew keepAliveInitialDelay:cew Symbol(shapeMode):cew Symbol(kCapture):cew Symbol(http.server.maxHeadersCount):cew Symbol(http.server.httpAllowHalfOpen):cew Symbol(::bunternal::):cew Symbol(http.server.trackedConnections):cew Symbol(kHandedOffSockets):cew Symbol(http.server.pendingDrainClose):cew Symbol(http.server.pendingCloseGenerations):cew Symbol(http.server.listenerGeneration):cew Symbol(tls):cew Symbol(IncomingMessage):cew Symbol(ServerResponse):cew Symbol(kOptimizeEmptyRequests):cew Symbol(kConstructed):cew Symbol(kHighWaterMark):cew Symbol(kUniqueHeaders):cew
+http.Server level 1: constructor:c-w _requestCert:c-a _rejectUnauthorized:c-a _handshakeTimeout:c-a _ALPNCallback:c-a _SNICallback:c-a listening:cea ref:cew unref:cew closeAllConnections:cew _emitCloseIfDrained:cew getConnections:cew closeIdleConnections:cew close:cew address:cew listen:cew setTimeout:cew Symbol(IncomingMessage):cew Symbol(ServerResponse):cew Symbol(http.server.connectionsCheckingInterval):cew Symbol(http.server.clusterHandle):cew Symbol(http.server.clusterListeningId):cew Symbol(nodejs.rejection):cew Symbol(Symbol.asyncDispose):cew Symbol(kRealListen):cew Symbol(kLeaveHttp):cew
 http.Server level 2: setMaxListeners:cew constructor:cew getMaxListeners:cew emit:cew addListener:cew on:cew prependListener:cew once:cew prependOnceListener:cew removeListener:cew off:cew removeAllListeners:cew listeners:cew rawListeners:cew listenerCount:cew eventNames:cew _eventsCount:cew Symbol(kCapture):cew
 http.IncomingMessage level 0: _consuming:cew _dumped:cew complete:cew _closed:cew rawTrailers:cew _events:cew _readableState:cew _maxListeners:cew socket:cew httpVersionMajor:cew httpVersionMinor:cew httpVersion:cew joinDuplicateHeaders:cew upgrade:cew url:cew method:cew statusCode:cew statusMessage:cew client:cew Symbol(aborted):cew Symbol(eofInProgress):cew Symbol(kHeaders):cew Symbol(kReqShouldKeepAlive):cew Symbol(kRawHeaders):cew Symbol(kHeaderSource):cew Symbol(kHeadersCount):cew Symbol(kTrailers):cew Symbol(kTrailersCount):cew Symbol(kAbortController):cew Symbol(shapeMode):cew Symbol(kCapture):cew Symbol(noBody):cew
 http.IncomingMessage level 1: constructor:c-w httpVersion:cew httpVersionMajor:cew httpVersionMinor:cew url:cew method:cew statusCode:cew statusMessage:cew upgrade:cew joinDuplicateHeaders:cew connection:--a aborted:--a rawHeaders:-ea headers:--a headersDistinct:--a trailers:--a trailersDistinct:--a signal:c-a setTimeout:cew _read:cew _destroy:cew _addHeaderLines:cew _addHeaderLine:cew _addHeaderLineDistinct:cew _dumpAndCloseReadable:cew _dump:cew
@@ -4257,12 +4194,12 @@ http.IncomingMessage level 2: constructor:c-w destroy:cew _undestroy:cew _destro
 http.IncomingMessage level 3: constructor:c-w pipe:cew eventNames:cew
 http.IncomingMessage level 4: setMaxListeners:cew constructor:cew getMaxListeners:cew emit:cew addListener:cew on:cew prependListener:cew once:cew prependOnceListener:cew removeListener:cew off:cew removeAllListeners:cew listeners:cew rawListeners:cew listenerCount:cew eventNames:cew _eventsCount:cew Symbol(kCapture):cew
 http.OutgoingMessage level 0: _events:cew _eventsCount:cew _maxListeners:cew outputData:cew outputSize:cew writable:cew destroyed:cew _last:cew chunkedEncoding:cew shouldKeepAlive:cew maxRequestsOnConnectionReached:cew _defaultKeepAlive:cew useChunkedEncodingByDefault:cew sendDate:cew _removedConnection:cew _removedContLen:cew _removedTE:cew strictContentLength:cew _contentLength:cew _hasBody:cew _trailer:cew finished:cew _headerSent:cew _closed:cew _header:cew _keepAliveTimeout:cew _onPendingData:cew Symbol(shapeMode):cew Symbol(kCapture):cew Symbol(kBytesWritten):cew Symbol(kNeedDrain):cew Symbol(corked):cew Symbol(kChunkedBuffer):cew Symbol(kChunkedLength):cew Symbol(kSocket):cew Symbol(kOutHeaders):cew Symbol(errored):cew Symbol(kHighWaterMark):cew Symbol(kRejectNonStandardBodyWrites):cew Symbol(kLenientValidation):cew
-http.OutgoingMessage level 1: constructor:c-w _isLenientHeaderValidation:cew errored:--a closed:--a writableFinished:--a writableObjectMode:--a writableLength:--a writableHighWaterMark:--a writableCorked:--a connection:--a socket:--a _renderHeaders:cew cork:cew uncork:cew setTimeout:cew destroy:cew _send:cew _writeRaw:cew _storeHeader:cew setHeader:cew setHeaders:cew appendHeader:cew getHeader:cew getHeaderNames:cew getRawHeaderNames:cew getHeaders:cew hasHeader:cew removeHeader:cew _implicitHeader:cew headersSent:cea writableEnded:--a writableNeedDrain:--a write:cew addTrailers:cew end:cew _finish:cew _flush:cew _flushOutput:cew flushHeaders:cew pipe:cew _headers:--a headers:--a _headerNames:--a Symbol(nodejs.rejection):cew
+http.OutgoingMessage level 1: constructor:c-w _isLenientHeaderValidation:cew errored:--a closed:--a writableFinished:--a writableObjectMode:--a writableLength:--a writableHighWaterMark:--a writableCorked:--a connection:--a socket:--a _renderHeaders:cew cork:cew uncork:cew setTimeout:cew destroy:cew _send:cew _writeRaw:cew _storeHeader:cew setHeader:cew setHeaders:cew appendHeader:cew getHeader:cew getHeaderNames:cew getRawHeaderNames:cew getHeaders:cew hasHeader:cew removeHeader:cew _implicitHeader:cew headersSent:cea writableEnded:--a writableNeedDrain:--a write:cew addTrailers:cew end:cew _finish:cew _flush:cew _flushOutput:cew flushHeaders:cew pipe:cew _headers:--a headers:--a _headerNames:--a Symbol(kFailHeldWrites):cew Symbol(nodejs.rejection):cew
 http.OutgoingMessage level 2: constructor:c-w pipe:cew eventNames:cew
 http.OutgoingMessage level 3: setMaxListeners:cew constructor:cew getMaxListeners:cew emit:cew addListener:cew on:cew prependListener:cew once:cew prependOnceListener:cew removeListener:cew off:cew removeAllListeners:cew listeners:cew rawListeners:cew listenerCount:cew eventNames:cew _eventsCount:cew Symbol(kCapture):cew
-http.ServerResponse level 0: _events:cew _eventsCount:cew _maxListeners:cew outputData:cew outputSize:cew destroyed:cew _last:cew maxRequestsOnConnectionReached:cew _defaultKeepAlive:cew useChunkedEncodingByDefault:cew sendDate:cew _removedConnection:cew _removedContLen:cew _removedTE:cew strictContentLength:cew _contentLength:cew _hasBody:cew _trailer:cew finished:cew _headerSent:cew _closed:cew _header:cew _keepAliveTimeout:cew _onPendingData:cew req:cew _sent100:cew statusCode:cew statusMessage:cew Symbol(shapeMode):cew Symbol(kCapture):cew Symbol(kChunkedEncoding):cew Symbol(kShouldKeepAlive):cew Symbol(kBytesWritten):cew Symbol(kNeedDrain):cew Symbol(corked):cew Symbol(kChunkedBuffer):cew Symbol(kChunkedLength):cew Symbol(kSocket):cew Symbol(kOutHeaders):cew Symbol(errored):cew Symbol(kHighWaterMark):cew Symbol(kRejectNonStandardBodyWrites):cew Symbol(kLenientValidation):cew Symbol(headerState):cew Symbol(pendingCallbacks):cew Symbol(handle):cew
-http.ServerResponse level 1: constructor:c-w statusCode:cew setHeader:cew appendHeader:cew setHeaders:cew removeHeader:cew headers:--a socket:--a connection:--a chunkedEncoding:--a writableCorked:--a cork:cew uncork:cew setTimeout:cew _removedConnection:cew _removedContLen:cew _hasBody:cew _ended:cew headersSent:--a _writeRaw:cew writeEarlyHints:cew writeInformation:cew writeProcessing:cew writeContinue:cew end:cew writable:--a write:cew _callPendingCallbacks:cew _finish:cew detachSocket:cew _implicitHeader:cew writableNeedDrain:--a writableFinished:--a writableLength:--a writableHighWaterMark:--a closed:--a _send:cew writeHead:cew assignSocket:cew shouldKeepAlive:--a destroy:cew emit:cew flushHeaders:cew Symbol(kPendingFinish):cew Symbol(kRejectNonStandardBodyWrites):cew
-http.ServerResponse level 2: constructor:c-w _isLenientHeaderValidation:cew errored:--a closed:--a writableFinished:--a writableObjectMode:--a writableLength:--a writableHighWaterMark:--a writableCorked:--a connection:--a socket:--a _renderHeaders:cew cork:cew uncork:cew setTimeout:cew destroy:cew _send:cew _writeRaw:cew _storeHeader:cew setHeader:cew setHeaders:cew appendHeader:cew getHeader:cew getHeaderNames:cew getRawHeaderNames:cew getHeaders:cew hasHeader:cew removeHeader:cew _implicitHeader:cew headersSent:cea writableEnded:--a writableNeedDrain:--a write:cew addTrailers:cew end:cew _finish:cew _flush:cew _flushOutput:cew flushHeaders:cew pipe:cew _headers:--a headers:--a _headerNames:--a Symbol(nodejs.rejection):cew
+http.ServerResponse level 0: _events:cew _eventsCount:cew _maxListeners:cew outputData:cew outputSize:cew writable:cew destroyed:cew _last:cew chunkedEncoding:cew shouldKeepAlive:cew maxRequestsOnConnectionReached:cew _defaultKeepAlive:cew useChunkedEncodingByDefault:cew sendDate:cew _removedConnection:cew _removedContLen:cew _removedTE:cew strictContentLength:cew _contentLength:cew _hasBody:cew _trailer:cew finished:cew _headerSent:cew _closed:cew _header:cew _keepAliveTimeout:cew _onPendingData:cew req:cew _sent100:cew statusCode:cew statusMessage:cew Symbol(shapeMode):cew Symbol(kCapture):cew Symbol(kBytesWritten):cew Symbol(kNeedDrain):cew Symbol(corked):cew Symbol(kChunkedBuffer):cew Symbol(kChunkedLength):cew Symbol(kSocket):cew Symbol(kOutHeaders):cew Symbol(errored):cew Symbol(kHighWaterMark):cew Symbol(kRejectNonStandardBodyWrites):cew Symbol(kLenientValidation):cew Symbol(pendingCallbacks):cew Symbol(handle):cew
+http.ServerResponse level 1: constructor:c-w statusCode:cew headers:--a socket:--a connection:--a writableCorked:--a cork:cew uncork:cew _ended:cew _writeRaw:cew writeEarlyHints:cew writeInformation:cew writeProcessing:cew writeContinue:cew end:cew write:cew _callPendingCallbacks:cew detachSocket:cew _implicitHeader:cew writableNeedDrain:--a writableFinished:--a writableLength:--a _send:cew writeHead:cew assignSocket:cew destroy:cew emit:cew flushHeaders:cew _expect_continue:cew Symbol(kFinishesWithoutLastWrite):cew Symbol(kPendingFinish):cew
+http.ServerResponse level 2: constructor:c-w _isLenientHeaderValidation:cew errored:--a closed:--a writableFinished:--a writableObjectMode:--a writableLength:--a writableHighWaterMark:--a writableCorked:--a connection:--a socket:--a _renderHeaders:cew cork:cew uncork:cew setTimeout:cew destroy:cew _send:cew _writeRaw:cew _storeHeader:cew setHeader:cew setHeaders:cew appendHeader:cew getHeader:cew getHeaderNames:cew getRawHeaderNames:cew getHeaders:cew hasHeader:cew removeHeader:cew _implicitHeader:cew headersSent:cea writableEnded:--a writableNeedDrain:--a write:cew addTrailers:cew end:cew _finish:cew _flush:cew _flushOutput:cew flushHeaders:cew pipe:cew _headers:--a headers:--a _headerNames:--a Symbol(kFailHeldWrites):cew Symbol(nodejs.rejection):cew
 http.ServerResponse level 3: constructor:c-w pipe:cew eventNames:cew
 http.ServerResponse level 4: setMaxListeners:cew constructor:cew getMaxListeners:cew emit:cew addListener:cew on:cew prependListener:cew once:cew prependOnceListener:cew removeListener:cew off:cew removeAllListeners:cew listeners:cew rawListeners:cew listenerCount:cew eventNames:cew _eventsCount:cew Symbol(kCapture):cew
 AsyncLocalStorage level 0: 

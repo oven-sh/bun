@@ -49,7 +49,6 @@ function wrapCertificate(der: Uint8Array | undefined) {
 
 // Stand-ins for the Node.js primordials used by the original source.
 const ArrayIsArray = Array.isArray;
-const StringPrototypeStartsWith = uncurryThis(String.prototype.startsWith);
 const StringPrototypeIncludes = uncurryThis(String.prototype.includes);
 const NumberIsInteger = Number.isInteger;
 const NumberIsNaN = Number.isNaN;
@@ -148,25 +147,6 @@ function ERR_QUIC_VERSION_NEGOTIATION_ERROR() {
   return $ERR_QUIC_VERSION_NEGOTIATION_ERROR("The QUIC session requires version negotiation");
 }
 
-const kClientHttp = Symbol("kClientHttp");
-const kNoteClientHttp = Symbol("kNoteClientHttp");
-
-const kSocketAddressHandle = Symbol("kSocketAddressHandle");
-Object.defineProperty(SocketAddress.prototype, kSocketAddressHandle, {
-  __proto__: null,
-  get() {
-    return this;
-  },
-  configurable: true,
-});
-const kBlockListHandle = Symbol("kBlockListHandle");
-Object.defineProperty(BlockList.prototype, kBlockListHandle, {
-  __proto__: null,
-  get() {
-    return this;
-  },
-  configurable: true,
-});
 function InternalSocketAddress(handle): void {
   return handle;
 }
@@ -224,6 +204,7 @@ const kEmptyObject: {} = { __proto__: null };
 
 const symbols = require("internal/quic/symbols");
 const kAttachFileHandle: typeof symbols.kAttachFileHandle = symbols.kAttachFileHandle;
+const kAvailable: typeof symbols.kAvailable = symbols.kAvailable;
 const kBlocked: typeof symbols.kBlocked = symbols.kBlocked;
 const kConnect: typeof symbols.kConnect = symbols.kConnect;
 const kDatagram: typeof symbols.kDatagram = symbols.kDatagram;
@@ -252,6 +233,7 @@ const kPathValidation: typeof symbols.kPathValidation = symbols.kPathValidation;
 const kPrivateConstructor: typeof symbols.kPrivateConstructor = symbols.kPrivateConstructor;
 const kReset: typeof symbols.kReset = symbols.kReset;
 const kSessionTicket: typeof symbols.kSessionTicket = symbols.kSessionTicket;
+const kStopSending: typeof symbols.kStopSending = symbols.kStopSending;
 const kTrailers: typeof symbols.kTrailers = symbols.kTrailers;
 const kVersionNegotiation: typeof symbols.kVersionNegotiation = symbols.kVersionNegotiation;
 const kInspect: typeof symbols.kInspect = symbols.kInspect;
@@ -368,6 +350,17 @@ async function* createBlobReaderIterable(reader: QuicStreamReader, options: Blob
 const kNilDatagramId = 0n;
 
 const endpointRegistry: Set<QuicEndpoint> = new SafeSet();
+
+// Each [kInspect] below inspects a fresh wrapper object, so util.inspect's own cycle check never sees the back-references.
+const beingInspected = new SafeSet();
+function inspectOnce(self, fields, options) {
+  beingInspected.add(self);
+  try {
+    return inspect(fields, options);
+  } finally {
+    beingInspected.delete(self);
+  }
+}
 
 let releaseEndpointSocket: (endpoint: QuicEndpoint) => void;
 process.on("exit", () => {
@@ -843,6 +836,11 @@ setCallbacks({
     this[kOwner]![kFinishClose](errorType, code, reason, errorName);
   },
 
+  /** For `session.onapplication`, which isn't implemented. Node's setCallbacks() requires it. */
+  onSessionApplication(settings) {
+    debug("session application callback", settings, this[kOwner]);
+  },
+
   /**
    * Called when the peer sends a GOAWAY frame (HTTP/3 only).
    * @param {bigint} lastStreamId The highest stream ID the peer may have
@@ -1023,6 +1021,12 @@ setCallbacks({
     session[kNewStream](stream, direction);
   },
 
+  /** Called when a pending stream gets its ID. */
+  onStreamAvailable() {
+    debug("stream available callback", this[kOwner]);
+    this[kOwner][kAvailable]();
+  },
+
   onStreamBlocked(this: StreamHandle) {
     debug("stream blocked callback", this[kOwner]);
     this[kOwner]![kBlocked]();
@@ -1037,16 +1041,7 @@ setCallbacks({
     if (error !== undefined) {
       error = convertQuicError(error);
     } else if (this[kOwner] && !this[kOwner].destroyed) {
-      const resetCode = getQuicStreamState(this[kOwner]).resetCode;
-      if (resetCode !== undefined && resetCode > 0n) {
-        error = makeQuicError(
-          "ERR_QUIC_APPLICATION_ERROR",
-          "QUIC application error",
-          "application",
-          resetCode,
-          `stream reset with code ${resetCode}`,
-        );
-      }
+      error = streamResetError(this[kOwner]);
     }
     debug(`stream ${this[kOwner]!.id} closed callback with error: ${error}`);
     this[kOwner]![kFinishClose](error);
@@ -1058,6 +1053,15 @@ setCallbacks({
     }
     debug("stream reset callback", this[kOwner], error);
     this[kOwner]![kReset](error);
+  },
+
+  /** @param {any} error The application error carried by the peer's STOP_SENDING. */
+  onStreamStopSending(error) {
+    if (error !== undefined) {
+      error = convertQuicError(error);
+    }
+    debug("stream stop sending callback", this[kOwner], error);
+    this[kOwner][kStopSending](error);
   },
 
   onStreamHeaders(this: StreamHandle, headers, kind) {
@@ -1266,10 +1270,9 @@ function invokeOnerror(fn: Callback, error: unknown) {
 
 function validateBody(body) {
   if (body === undefined) return body;
-  if (isArrayBuffer(body) || isSharedArrayBuffer(body) || isArrayBufferView(body)) {
+  if (isArrayBuffer(body) || isSharedArrayBuffer(body) || isArrayBufferView(body) || isBlob(body)) {
     return body;
   }
-  if (isBlob(body)) return body;
 
   if (typeof body === "string") {
     return Buffer.from(body, "utf8");
@@ -1308,6 +1311,12 @@ function parseHeaderPairs(pairs) {
     }
   }
   return block;
+}
+
+// One native flag gates all three kinds of header block, as in Node's updateHeaderInterest().
+function updateHeaderInterest(inner: QuicStreamInner) {
+  inner.state.wantsHeaders =
+    inner.onheaders !== undefined || inner.ontrailers !== undefined || inner.oninfo !== undefined;
 }
 
 /**
@@ -1383,14 +1392,21 @@ function configureOutbound(handle: StreamHandle, stream: QuicStream, body) {
   }
 
   if (isPromise(body)) {
+    const onError = err => {
+      if (!stream.destroyed) {
+        stream.destroy(err);
+      }
+    };
     PromisePrototypeThen(
       body,
-      resolved => configureOutbound(handle, stream, resolved),
-      err => {
-        if (!stream.destroyed) {
-          stream.destroy(err);
+      resolved => {
+        try {
+          configureOutbound(handle, stream, resolved);
+        } catch (err) {
+          onError(err);
         }
       },
+      onError,
     );
     return;
   }
@@ -1405,11 +1421,17 @@ function configureOutbound(handle: StreamHandle, stream: QuicStream, body) {
       throw $ERR_INVALID_STATE("FileHandle is locked");
     }
     body[kFileLocked] = true;
+    // Node attaches a FileHandle or a Blob natively, which drops it on a receive-only stream.
+    if (isReceiveOnlyQuicStream(stream)) {
+      markPromiseAsHandled(body.close());
+      return;
+    }
     consumeAsyncSource(handle, stream, body.createReadStream());
     return;
   }
 
   if (isBlob(body)) {
+    if (isReceiveOnlyQuicStream(stream)) return;
     consumeAsyncSource(handle, stream, body.stream());
     return;
   }
@@ -1485,9 +1507,9 @@ async function writeBatchWithDrain(handle: StreamHandle, stream: QuicStream, bat
 }
 
 async function consumeAsyncSource(handle: StreamHandle, stream: QuicStream, source) {
-  handle.initStreamingSource();
-  initStreamingBackpressure(stream);
   try {
+    handle.initStreamingSource();
+    initStreamingBackpressure(stream);
     const normalized = streamFrom(source);
     for await (const batch of normalized) {
       if (stream.destroyed) return;
@@ -1504,11 +1526,11 @@ async function consumeAsyncSource(handle: StreamHandle, stream: QuicStream, sour
 }
 
 async function consumeSyncSource(handle: StreamHandle, stream: QuicStream, source) {
-  handle.initStreamingSource();
-  initStreamingBackpressure(stream);
-  const normalized: Iterable<Uint8Array[]> = streamFromSync(source);
-  const iter: Iterator<Uint8Array[]> = normalized[SymbolIterator]();
   try {
+    handle.initStreamingSource();
+    initStreamingBackpressure(stream);
+    const normalized: Iterable<Uint8Array[]> = streamFromSync(source);
+    const iter: Iterator<Uint8Array[]> = normalized[SymbolIterator]();
     while (true) {
       if (stream.destroyed) return;
       const { value: batch, done } = iter.next();
@@ -1536,6 +1558,7 @@ function isSyncIterable(obj) {
 let getQuicStreamState: (stream: QuicStream) => QuicStreamInner["state"];
 let getQuicSessionState: (session: QuicSession | undefined) => QuicSessionInner["state"];
 let isQuicSessionDestroying: (session: QuicSession | undefined) => QuicSessionInner["destroying"];
+let isQuicSessionClosedByNative;
 let getQuicEndpointState: (endpoint: QuicEndpoint) => QuicEndpointInner["state"];
 let assertIsQuicEndpoint: (val: unknown) => asserts val is QuicEndpoint;
 let assertIsQuicStream: (val: unknown) => asserts val is QuicStream;
@@ -1544,8 +1567,23 @@ let assertHeadersSupported: (session: QuicSession | undefined) => void;
 let assertEndpointNotClosedOrClosing: (endpoint: QuicEndpoint) => void;
 let assertEndpointIsNotBusy: (endpoint: QuicEndpoint) => void;
 let isQuicStream: (val: unknown) => val is QuicStream;
+let isReceiveOnlyQuicStream;
 let isQuicSession: (val: unknown) => val is QuicSession;
 let isQuicEndpoint: (val: unknown) => val is QuicEndpoint;
+
+// A reset is an abnormal end of the stream even if the stream or its session then closes cleanly.
+function streamResetError(stream) {
+  const resetCode = getQuicStreamState(stream).resetCode;
+  if (resetCode !== undefined && resetCode > 0n) {
+    return makeQuicError(
+      "ERR_QUIC_APPLICATION_ERROR",
+      "QUIC application error",
+      "application",
+      resetCode,
+      `stream reset with code ${resetCode}`,
+    );
+  }
+}
 
 function maybeGetCloseError(context, status, pendingError) {
   switch (context) {
@@ -1636,6 +1674,7 @@ interface QuicStreamInner {
   state: QuicStreamState;
   stats: QuicStreamStats | undefined;
   pendingClose: PendingPromise | undefined;
+  pendingOpen: PendingPromise | undefined;
   reader: QuicStreamReader | undefined;
   destroying: boolean;
   iteratorLocked: boolean;
@@ -1648,11 +1687,13 @@ interface QuicStreamInner {
   onerror: Callback | undefined;
   onblocked: Callback | undefined;
   onreset: Callback | undefined;
+  onstopsending: Callback | undefined;
   onheaders: Callback | undefined;
   ontrailers: Callback | undefined;
   oninfo: Callback | undefined;
   onwanttrailers: Callback | undefined;
   earlySnapshot?: boolean;
+  finReceivedSnapshot?: boolean;
 }
 
 class QuicStream {
@@ -1665,6 +1706,7 @@ class QuicStream {
     state: undefined as unknown as QuicStreamState,
     stats: undefined,
     pendingClose: undefined,
+    pendingOpen: undefined,
     reader: undefined,
     destroying: false,
     iteratorLocked: false,
@@ -1677,6 +1719,7 @@ class QuicStream {
     onerror: undefined,
     onblocked: undefined,
     onreset: undefined,
+    onstopsending: undefined,
     onheaders: undefined,
     ontrailers: undefined,
     oninfo: undefined,
@@ -1686,6 +1729,11 @@ class QuicStream {
   static {
     isQuicStream = function (val): val is QuicStream {
       return val != null && typeof val === "object" && #handle in val;
+    };
+
+    isReceiveOnlyQuicStream = function (stream) {
+      const inner = stream.#inner;
+      return inner.direction === kStreamDirectionUnidirectional && !inner.isLocal;
     };
 
     assertIsQuicStream = function (val): asserts val is QuicStream {
@@ -1723,6 +1771,9 @@ class QuicStream {
     inner.direction = direction;
     inner.isLocal = isLocal;
     inner.state = new QuicStreamState(kPrivateConstructor, handle.state, handle.stateByteOffset);
+    if (inner.state.pending) {
+      inner.pendingOpen = PromiseWithResolvers();
+    }
 
     if (hasObserver("quic")) {
       startPerf(this, kPerfEntry, { type: "quic", name: "QuicStream" });
@@ -1763,6 +1814,10 @@ class QuicStream {
         return $ERR_INVALID_STATE("The stream is not readable");
       },
     });
+
+    // The stream was destroyed before a FIN arrived, so the read is truncated. `closed` has the reason.
+    const writeOnly = inner.direction === kStreamDirectionUnidirectional && inner.isLocal;
+    if (inner.finReceivedSnapshot === false && !writeOnly) await this.closed;
   }
 
   /**
@@ -1773,6 +1828,15 @@ class QuicStream {
   get pending() {
     assertIsQuicStream(this);
     return this.#inner.state.pending;
+  }
+
+  /** @type {Promise<void>} Fulfilled once the stream has an ID. */
+  get opened() {
+    assertIsQuicStream(this);
+    const inner = this.#inner;
+    // Only a stream that was pending at creation gets a deferred.
+    const pendingOpen = (inner.pendingOpen ??= { promise: PromiseResolve(), resolve: undefined, reject: undefined });
+    return pendingOpen.promise;
   }
 
   /**
@@ -1864,6 +1928,25 @@ class QuicStream {
     }
   }
 
+  /** @type {OnStreamErrorCallback} */
+  get onstopsending() {
+    assertIsQuicStream(this);
+    return this.#inner.onstopsending;
+  }
+
+  set onstopsending(fn) {
+    assertIsQuicStream(this);
+    const inner = this.#inner;
+    if (fn === undefined) {
+      inner.onstopsending = undefined;
+      inner.state.wantsStopSending = false;
+    } else {
+      validateFunction(fn, "onstopsending");
+      inner.onstopsending = FunctionPrototypeBind(fn, this);
+      inner.state.wantsStopSending = true;
+    }
+  }
+
   /** @type {OnHeadersCallback} */
   get onheaders() {
     assertIsQuicStream(this);
@@ -1875,13 +1958,12 @@ class QuicStream {
     const inner = this.#inner;
     if (fn === undefined) {
       inner.onheaders = undefined;
-      inner.state.wantsHeaders = false;
     } else {
       validateFunction(fn, "onheaders");
       assertHeadersSupported(inner.session);
       inner.onheaders = FunctionPrototypeBind(fn, this);
-      inner.state.wantsHeaders = true;
     }
+    updateHeaderInterest(inner);
   }
 
   /** @type {Function|undefined} */
@@ -1900,6 +1982,7 @@ class QuicStream {
       assertHeadersSupported(inner.session);
       inner.oninfo = FunctionPrototypeBind(fn, this);
     }
+    updateHeaderInterest(inner);
   }
 
   /** @type {Function|undefined} */
@@ -1918,6 +2001,7 @@ class QuicStream {
       assertHeadersSupported(inner.session);
       inner.ontrailers = FunctionPrototypeBind(fn, this);
     }
+    updateHeaderInterest(inner);
   }
 
   /** @type {Function|undefined} */
@@ -2094,8 +2178,13 @@ class QuicStream {
         this.#handle!.abortForDestroy(wantStop ? abortCode : undefined, wantReset ? abortCode : undefined);
       }
     }
+    // Node doesn't call `onerror` for a stream that its connection closed. `session.closed` rejects with the same error.
+    const closedByConnection = cascadingFromSessionDestroy && isQuicSessionClosedByNative(inner.session);
+    if (closedByConnection) error ??= inner.localResetError ?? streamResetError(this);
     const { onerror } = inner;
-    if (error !== undefined && typeof onerror === "function") {
+    if (error !== undefined && closedByConnection) {
+      markPromiseAsHandled(this.closed);
+    } else if (error !== undefined && typeof onerror === "function") {
       invokeOnerror(onerror, error);
     }
     const handle = this.#handle;
@@ -2203,6 +2292,22 @@ class QuicStream {
         drainWakeup.resolve(true);
         drainWakeup = null;
       }
+    };
+
+    const onStopSending = stream[kStopSending];
+    stream[kStopSending] = reason => {
+      if (!closed && !errored) {
+        errored = true;
+        error = reason;
+        // `fail()` is a no-op for an errored writer, so mark `closed` here.
+        markPromiseAsHandled(stream.closed);
+        if (drainWakeup != null) {
+          markPromiseAsHandled(drainWakeup.promise);
+          drainWakeup.reject(error);
+          drainWakeup = null;
+        }
+      }
+      onStopSending.$call(stream, reason);
     };
 
     function writeSync(chunk) {
@@ -2357,12 +2462,7 @@ class QuicStream {
       },
     };
 
-    if (
-      !handle ||
-      this.destroyed ||
-      inner.state.writeEnded ||
-      (inner.direction === kStreamDirectionUnidirectional && !inner.isLocal)
-    ) {
+    if (!handle || this.destroyed || inner.state.writeEnded || isReceiveOnlyQuicStream(this)) {
       closed = true;
       return (inner.writer = writer);
     }
@@ -2432,7 +2532,8 @@ class QuicStream {
     assertIsQuicStream(this);
     if (this.destroyed) return;
     code = BigInt(code);
-    this.#handle!.resetStream(code);
+    // The native side returns false for a receive-only stream, which has nothing to reset.
+    if (this.#handle!.resetStream(code) === false) return;
     this.#inner.localResetError ??= makeQuicError(
       "ERR_QUIC_APPLICATION_ERROR",
       "QUIC application error",
@@ -2490,6 +2591,18 @@ class QuicStream {
     } else {
       inner.pendingClose.resolve!();
     }
+    const { pendingOpen } = inner;
+    if (pendingOpen?.resolve !== undefined) {
+      // A stream with an ID did open, even if kAvailable hasn't run yet.
+      if (error !== undefined && inner.state.pending) {
+        markPromiseAsHandled(pendingOpen.promise);
+        pendingOpen.reject!(error);
+      } else {
+        pendingOpen.resolve();
+      }
+      pendingOpen.resolve = undefined;
+      pendingOpen.reject = undefined;
+    }
     debug("stream closed");
     if (onStreamClosedChannel.hasSubscribers) {
       onStreamClosedChannel.publish({
@@ -2510,6 +2623,7 @@ class QuicStream {
     }
     inner.stats?.[kFinishClose]();
     inner.earlySnapshot = inner.state?.early;
+    inner.finReceivedSnapshot = inner.state?.finReceived;
     inner.state?.[kFinishClose]();
     inner.session![kRemoveStream](this);
     inner.writer?.fail(error);
@@ -2519,19 +2633,26 @@ class QuicStream {
     inner.pendingClose.resolve = undefined;
     inner.onblocked = undefined;
     inner.onreset = undefined;
+    inner.onstopsending = undefined;
     inner.onheaders = undefined;
     inner.onerror = undefined;
     inner.ontrailers = undefined;
     inner.oninfo = undefined;
     inner.onwanttrailers = undefined;
-    inner.headers = undefined;
-    inner.pendingTrailers = undefined;
     this.#handle = undefined;
     this[kDrain]?.();
     if (inner.fileHandle !== undefined) {
       markPromiseAsHandled(inner.fileHandle.close());
       inner.fileHandle = undefined;
     }
+  }
+
+  [kAvailable]() {
+    const { pendingOpen } = this.#inner;
+    if (pendingOpen?.resolve === undefined) return;
+    pendingOpen.resolve();
+    pendingOpen.resolve = undefined;
+    pendingOpen.reject = undefined;
   }
 
   [kBlocked]() {
@@ -2563,6 +2684,12 @@ class QuicStream {
     safeCallbackInvoke(inner.onreset, this, error);
   }
 
+  [kStopSending](error) {
+    const inner = this.#inner;
+    assert(inner.onstopsending, "Unexpected stream stop sending event");
+    safeCallbackInvoke(inner.onstopsending, this, error);
+  }
+
   [kHeaders](headers, kind) {
     const block = parseHeaderPairs(headers);
     const kindName = kHeadersKindName[kind] ?? kind;
@@ -2570,7 +2697,6 @@ class QuicStream {
 
     switch (kindName) {
       case "initial":
-        assert(inner.onheaders, "Unexpected stream headers event");
         inner.headers ??= block;
         if (onStreamHeadersChannel.hasSubscribers) {
           onStreamHeadersChannel.publish({
@@ -2580,7 +2706,10 @@ class QuicStream {
             headers: block,
           });
         }
-        safeCallbackInvoke(inner.onheaders, this, block);
+        {
+          const { onheaders } = inner;
+          if (onheaders) safeCallbackInvoke(onheaders, this, block);
+        }
         break;
       case "trailing":
         if (onStreamTrailersChannel.hasSubscribers) {
@@ -2618,7 +2747,17 @@ class QuicStream {
     const inner = this.#inner;
 
     if (inner.pendingTrailers) {
-      this.sendTrailers(inner.pendingTrailers);
+      let sent;
+      try {
+        sent = this.sendTrailers(inner.pendingTrailers);
+      } catch (error) {
+        this.destroy(error);
+        return;
+      }
+      if (!sent) {
+        this.destroy(ERR_QUIC_STREAM_ABORTED("Failed to submit trailing headers"));
+        return;
+      }
       inner.pendingTrailers = undefined;
     } else {
       const { onwanttrailers } = inner;
@@ -2630,6 +2769,9 @@ class QuicStream {
     if (depth < 0) {
       return "QuicStream { }";
     }
+    if (beingInspected.has(this)) {
+      return "[Circular]";
+    }
 
     const opts = {
       __proto__: null,
@@ -2639,7 +2781,8 @@ class QuicStream {
 
     const { id, direction, pending, stats, session } = this;
 
-    return `QuicStream ${inspect(
+    return `QuicStream ${inspectOnce(
+      this,
       {
         __proto__: null,
         id,
@@ -2718,6 +2861,7 @@ interface QuicSessionInner {
   isPendingClose: boolean;
   selfInitiatedClose: boolean;
   destroying: boolean;
+  closedByNative: boolean;
   handshakeCompleted: boolean;
   pendingClose: PendingPromise;
   pendingOpen: PendingPromise;
@@ -2760,6 +2904,7 @@ class QuicSession {
     isPendingClose: false,
     selfInitiatedClose: false,
     destroying: false,
+    closedByNative: false,
     handshakeCompleted: false,
     pendingClose: PromiseWithResolvers(),
     pendingOpen: PromiseWithResolvers(),
@@ -2811,6 +2956,11 @@ class QuicSession {
     isQuicSessionDestroying = function (session) {
       assertIsQuicSession(session);
       return session.#inner.destroying;
+    };
+
+    isQuicSessionClosedByNative = function (session) {
+      assertIsQuicSession(session);
+      return session.#inner.closedByNative;
     };
   }
 
@@ -3646,6 +3796,7 @@ class QuicSession {
    * @param {string} [reason]
    */
   [kFinishClose](errorType, code, reason, errorName) {
+    this.#inner.closedByNative = true;
     if (code === 0n) {
       debug("finishing closing the session with no error");
       this.destroy();
@@ -4022,6 +4173,9 @@ class QuicSession {
     if (depth < 0) {
       return "QuicSession { }";
     }
+    if (beingInspected.has(this)) {
+      return "[Circular]";
+    }
 
     const opts = {
       __proto__: null,
@@ -4031,7 +4185,8 @@ class QuicSession {
 
     const { isPendingClose: closing, endpoint, path, state, stats, streams } = this.#inner;
 
-    return `QuicSession ${inspect(
+    return `QuicSession ${inspectOnce(
+      this,
       {
         closed: this.closed,
         closing,
@@ -4216,7 +4371,6 @@ interface QuicEndpointInner {
   busy: boolean;
   isPendingClose: boolean;
   listening: boolean;
-  clientHttp: boolean | undefined;
   pendingClose: PendingPromise;
   pendingError: unknown;
   sessions: Set<QuicSession>;
@@ -4236,7 +4390,6 @@ class QuicEndpoint {
     busy: false,
     isPendingClose: false,
     listening: false,
-    clientHttp: undefined,
     pendingClose: PromiseWithResolvers(),
     pendingError: undefined,
     sessions: new SafeSet(),
@@ -4311,10 +4464,8 @@ class QuicEndpoint {
       udpSendBufferSize,
       udpTTL,
       idleTimeout,
-      validateAddress,
       ipv6Only,
       reusePort,
-      cc,
       resetTokenSecret,
       tokenSecret,
     } = options;
@@ -4396,39 +4547,23 @@ class QuicEndpoint {
       }
     }
 
+    // The other options are checked like in Node, and have no effect.
     return {
       __proto__: null,
-      address: address?.[kSocketAddressHandle],
-      retryTokenExpiration,
-      tokenExpiration,
+      address,
       maxConnectionsPerHost,
       maxConnectionsTotal,
       disableStatelessReset,
-      addressLRUSize,
-      retryRate,
-      retryBurst,
       statelessResetRate,
       statelessResetBurst,
-      versionNegotiationRate,
-      versionNegotiationBurst,
-      immediateCloseRate,
-      immediateCloseBurst,
-      sessionCreationRate,
-      sessionCreationBurst,
-      blockList: blockList?.[kBlockListHandle],
+      blockList,
       blockListPolicy,
-      rxDiagnosticLoss,
-      txDiagnosticLoss,
       udpReceiveBufferSize,
       udpSendBufferSize,
       udpTTL,
       idleTimeout,
-      validateAddress,
       ipv6Only,
       reusePort,
-      cc,
-      resetTokenSecret,
-      tokenSecret,
     };
   }
 
@@ -4712,14 +4847,6 @@ class QuicEndpoint {
     return this.#inner.listening;
   }
 
-  get [kClientHttp]() {
-    return this.#inner.clientHttp;
-  }
-
-  [kNoteClientHttp](wantHttp) {
-    this.#inner.clientHttp ??= wantHttp;
-  }
-
   /** @type {boolean} */
   get destroyed() {
     assertIsQuicEndpoint(this);
@@ -4882,6 +5009,9 @@ class QuicEndpoint {
     if (depth < 0) {
       return "QuicEndpoint { }";
     }
+    if (beingInspected.has(this)) {
+      return "[Circular]";
+    }
 
     const opts = {
       __proto__: null,
@@ -4891,7 +5021,8 @@ class QuicEndpoint {
 
     const { address, busy, isPendingClose: closing, listening, sessions, stats, state } = this.#inner;
 
-    return `QuicEndpoint ${inspect(
+    return `QuicEndpoint ${inspectOnce(
+      this,
       {
         address,
         busy,
@@ -4912,28 +5043,9 @@ class QuicEndpoint {
   }
 }
 
-/**
- * MUST match `alpn_cstr_is_http` in `src/runtime/node/quic/endpoint.rs`
- * (which cross-references this fn). `alpn` is the RAW, not-yet-validated
- * `options.alpn`: never throw here -- a non-string is treated as the HTTP/3
- * default and rejected with the proper error by `processTlsOptions` later.
- * @param {string|string[]|undefined} alpn
- */
-function alpnWantsHttp(alpn) {
-  const first = ArrayIsArray(alpn) ? alpn[0] : alpn;
-  return typeof first !== "string" || first === "h3" || StringPrototypeStartsWith(first, "h3-");
-}
-
-function findSuitableEndpoint(wantHttp) {
+function findSuitableEndpoint() {
   for (const endpoint of endpointRegistry) {
-    if (!endpoint.destroyed && !endpoint.closing && !endpoint.busy) {
-      const mode = endpoint[kClientHttp];
-      if (mode !== undefined && mode !== wantHttp) {
-        continue;
-      }
-      if (endpoint.listening) {
-        continue;
-      }
+    if (!endpoint.destroyed && !endpoint.closing && !endpoint.busy && !endpoint.listening) {
       return endpoint;
     }
   }
@@ -4946,7 +5058,7 @@ function findSuitableEndpoint(wantHttp) {
  * @param {boolean} forServer
  * @returns {QuicEndpoint}
  */
-function processEndpointOption(endpoint, reuseEndpoint = true, forServer = false, wantHttp = true): QuicEndpoint {
+function processEndpointOption(endpoint, reuseEndpoint, forServer): QuicEndpoint {
   if (isQuicEndpoint(endpoint)) {
     return endpoint;
   }
@@ -4954,7 +5066,7 @@ function processEndpointOption(endpoint, reuseEndpoint = true, forServer = false
     return new QuicEndpoint(endpoint);
   }
   if (reuseEndpoint && !forServer) {
-    const existing = findSuitableEndpoint(wantHttp);
+    const existing = findSuitableEndpoint();
     if (existing !== undefined) return existing;
   }
   return new QuicEndpoint();
@@ -5254,13 +5366,8 @@ function processSessionOptions(options, config: ProcessSessionOptions = kEmptyOb
     qlog = false,
     sessionTicket,
     token,
-    maxPayloadSize,
-    unacknowledgedPacketThreshold = 0,
     handshakeTimeout,
-    initialRtt,
     keepAlive,
-    maxStreamWindow,
-    maxWindow,
     cc,
     datagramDropPolicy = "drop-oldest",
     drainingPeriodMultiplier = 3,
@@ -5308,6 +5415,8 @@ function processSessionOptions(options, config: ProcessSessionOptions = kEmptyOb
 
   validateInteger(maxDatagramSendAttempts, "options.maxDatagramSendAttempts", 1, 255);
 
+  // Native code reads this copy, so each option is read from the caller's object once, and what was checked is what is used.
+  const checkedTransportParams = { __proto__: null };
   // Node accepts number | bigint and rejects everything else with ERR_INVALID_ARG_TYPE.
   for (const name of [
     "initialMaxStreamDataBidiLocal",
@@ -5334,9 +5443,10 @@ function processSessionOptions(options, config: ProcessSessionOptions = kEmptyOb
     ) {
       throw $ERR_INVALID_ARG_VALUE(`options.transportParams.${name}`, v, "must be a non-negative number or bigint");
     }
+    checkedTransportParams[name] = v;
   }
 
-  const { preferredAddressIpv4, preferredAddressIpv6 } = transportParams;
+  const { preferredAddressIpv4, preferredAddressIpv6, disableActiveMigration } = transportParams;
   if (preferredAddressIpv4 !== undefined) {
     if (!SocketAddress.isSocketAddress(preferredAddressIpv4)) {
       throw $ERR_INVALID_ARG_TYPE(
@@ -5370,9 +5480,6 @@ function processSessionOptions(options, config: ProcessSessionOptions = kEmptyOb
     }
   }
 
-  const wantHttp = forServer || alpnWantsHttp(options.alpn);
-  const actualEndpoint = processEndpointOption(endpoint, reuseEndpoint, forServer, wantHttp);
-
   // Normalize into the shape Node stores and returns from `session.applicationOptions`.
   const {
     maxHeaderPairs = 128n,
@@ -5384,6 +5491,9 @@ function processSessionOptions(options, config: ProcessSessionOptions = kEmptyOb
     enableConnectProtocol = false,
     enableDatagrams = true,
   } = application;
+
+  const actualEndpoint = processEndpointOption(endpoint, reuseEndpoint, forServer);
+
   if (sessionTicket !== undefined) {
     if (!isArrayBufferView(sessionTicket)) {
       throw $ERR_INVALID_ARG_TYPE("options.sessionTicket", ["ArrayBufferView"], sessionTicket);
@@ -5421,11 +5531,7 @@ function processSessionOptions(options, config: ProcessSessionOptions = kEmptyOb
     version,
     minVersion,
     preferredAddressPolicy: getPreferredAddressPolicy(preferredAddressPolicy),
-    transportParams: {
-      ...transportParams,
-      preferredAddressIpv4: preferredAddressIpv4?.[kSocketAddressHandle],
-      preferredAddressIpv6: preferredAddressIpv6?.[kSocketAddressHandle],
-    },
+    transportParams: { ...checkedTransportParams, preferredAddressIpv4, preferredAddressIpv6, disableActiveMigration },
     tls: {
       ...processTlsOptions(options, forServer),
       verifyPeerStrict: verifyPeer === "strict",
@@ -5433,19 +5539,11 @@ function processSessionOptions(options, config: ProcessSessionOptions = kEmptyOb
     },
     verifyPeer,
     qlog,
-    maxPayloadSize,
-    unacknowledgedPacketThreshold,
     handshakeTimeout,
-    initialRtt,
     keepAlive,
-    maxStreamWindow,
-    maxWindow,
     sessionTicket,
-    token,
     cc,
     datagramDropPolicy,
-    drainingPeriodMultiplier,
-    maxDatagramSendAttempts,
     streamIdleTimeout,
     application: normalizedApplication,
     onerror,
@@ -5518,9 +5616,7 @@ async function connect(address, options: SessionOptions = kEmptyObject) {
     });
   }
 
-  const session = endpoint[kConnect](address[kSocketAddressHandle], rest);
-
-  endpoint[kNoteClientHttp](alpnWantsHttp(options.alpn));
+  const session = endpoint[kConnect](address, rest);
 
   if (onEndpointClientSessionChannel.hasSubscribers) {
     onEndpointClientSessionChannel.publish({

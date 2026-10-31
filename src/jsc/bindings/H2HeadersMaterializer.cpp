@@ -11,10 +11,10 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSString.h>
+#include <JavaScriptCore/JSStringInlines.h>
 #include <JavaScriptCore/JSCast.h>
 #include <JavaScriptCore/Symbol.h>
 #include <wtf/text/SymbolImpl.h>
-#include <wtf/text/MakeString.h>
 #include <wtf/text/StringView.h>
 #include "HTTPHeaderIdentifiers.h"
 #include "HTTPHeaderNames.h"
@@ -171,15 +171,13 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__h2__materializ
                 arr->putDirectIndex(globalObject, arr->length(), fieldValue);
                 RETURN_IF_EXCEPTION(scope, {});
             } else {
-                // cookie joins with "; ", everything else with ", " (RFC 7230 §3.2.2).
-                auto existingString = existing.toWTFString(globalObject);
+                // cookie joins with "; ", everything else with ", " (RFC 7230 §3.2.2). A rope, so a repeat doesn't copy what's joined so far.
+                JSString* existingString = existing.toString(globalObject);
                 RETURN_IF_EXCEPTION(scope, {});
-                auto valueString = valueStr->getString(globalObject);
+                JSString* separator = jsNontrivialString(vm, isCookie ? "; "_s : ", "_s);
+                JSString* joined = jsString(globalObject, existingString, separator, valueStr);
                 RETURN_IF_EXCEPTION(scope, {});
-                auto joined = isCookie
-                    ? WTF::makeString(existingString, "; "_s, valueString)
-                    : WTF::makeString(existingString, ", "_s, valueString);
-                obj->putDirect(vm, ident, jsString(vm, WTF::move(joined)), 0);
+                obj->putDirect(vm, ident, joined, 0);
             }
         }
     }

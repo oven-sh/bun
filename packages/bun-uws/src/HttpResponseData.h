@@ -30,6 +30,35 @@ namespace uWS {
 template <bool SSL>
 struct HttpContext;
 
+/* Minimum allowed throughput, either way: a client that uploads, or takes a blocked response, at less than 16 kB per second gets dropped. */
+static constexpr uint64_t HTTP_MIN_THROUGHPUT_BYTES_PER_SECOND = 16 * 1024;
+
+/* The idle timeout of an HTTP/1 or HTTP/2 connection. It tells a peer that reads a blocked response slowly from one that stopped reading. */
+struct IdleTimeout {
+    /* The kernel drains a blocked write at the peer's pace, and a writable event only comes once a good part of the send buffer is free. */
+    void arm(us_socket_t *s, unsigned int seconds) {
+        us_socket_timeout(s, seconds);
+        if (s->flags.last_write_failed) [[unlikely]] {
+            if (!seconds || us_socket_delivered_bytes(s, &deliveredBytes) != 0) {
+                deliveredBytes = UINT64_MAX;
+            }
+        }
+    }
+
+    /* For on_timeout. Returns true, armed again, if the peer took enough of a blocked write since arm(). */
+    bool rearmIfPeerStillReads(us_socket_t *s, unsigned int seconds) {
+        if (!s->flags.last_write_failed || !us_socket_delivered_since(s, &deliveredBytes, HTTP_MIN_THROUGHPUT_BYTES_PER_SECOND * seconds)) {
+            return false;
+        }
+        us_socket_timeout(s, seconds);
+        return true;
+    }
+
+private:
+    /* us_socket_delivered_bytes() at the last arm() with a write blocked. UINT64_MAX, which no count reaches, if there is none. */
+    uint64_t deliveredBytes = UINT64_MAX;
+};
+
 /* IsNodeHttp defaults to false; the default lives on the declaration in
  * HttpParser.h (the common include of this header and HttpContext.h). */
 template <bool SSL, bool IsNodeHttp>
@@ -61,8 +90,14 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
         HttpResponseData<SSL> *httpResponseData = uwsRes->getHttpResponseData();
         /* A queued pipelined response (node:http) still owes output on this
-         * connection, so it is not idle between the responses. */
-        httpResponseData->isIdle = httpResponseData->nodeHttpQueuedPipelinedCount == 0;
+         * connection, and a parked request (Bun.serve) is still owed a dispatch,
+         * so it is not idle between the responses. */
+        httpResponseData->isIdle = httpResponseData->nodeHttpQueuedPipelinedCount == 0 && this->parkedRequestBytes.isEmpty();
+
+        /* HttpContext::onWritable replays the parked requests. Every caller of markDone() is still tearing this response down. */
+        if (!this->parkedRequestBytes.isEmpty()) [[unlikely]] {
+            us_socket_request_writable((us_socket_t *) uwsRes);
+        }
     }
 
     /* Caller of onWritable. It is possible onWritable calls markDone so we need to borrow it. */
@@ -98,19 +133,18 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         HTTP_CONNECTION_CLOSE = 16, // used
         HTTP_WROTE_CONTENT_LENGTH_HEADER = 32, // used
         HTTP_WROTE_DATE_HEADER = 64, // used
-        HTTP_WROTE_TRANSFER_ENCODING_HEADER = 128, // used
+        /* The request body is longer than maxRequestBodySize: by its Content-Length, or by what has arrived for a handler that reads it. */
+        HTTP_REQUEST_BODY_TOO_LARGE = 128,
 
         /* The request was HTTP/1.0 or older: no keep-alive and no chunked
          * framing, so a body without Content-Length is delimited by close. */
         HTTP_ANCIENT_REQUEST = 1 << 8,
-        /* The response carries no body framing at all: no Content-Length, no
-         * chunked encoding, no terminating chunk. writeStatus() sets it for 1xx
-         * and 204 (RFC 9110 8.6); node:http additionally sets it for 304. */
-        HTTP_NO_BODY_STATUS = 1 << 9,
-        /* The response body is delimited by connection close: write it raw with
-         * no Content-Length and no chunked framing, then close. Used by node:http
-         * when the user removed the framing headers. */
-        HTTP_CLOSE_DELIMITED = 1 << 10,
+        /* How the response body is delimited (RFC 9112 6.3). Valid once HTTP_FRAMING_DECIDED is set. */
+        HTTP_BODY_LENGTH = 0 << 9, // raw bytes, counted by Content-Length
+        HTTP_BODY_CHUNKED = 1 << 9,
+        HTTP_BODY_UNTIL_CLOSE = 2 << 9, // raw bytes, ended by closing the connection
+        HTTP_BODY_NONE = 3 << 9, // no bytes: the response ends at the blank line
+        HTTP_BODY_MASK = 3 << 9,
 
         /* The node:http bits below are only ever set on a node:http compat
          * connection, but they live in the shared word (rather than in
@@ -121,24 +155,17 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * this connection is still in flight (HTTP/1.1 pipelining). NodeHTTP.cpp
          * queues it on the server socket instead of making it the connection's
          * current response; the per-response state reset is applied later by
-         * JSNodeHTTPServerSocket::startPipelinedResponse(). Only meaningful while
+         * JSNodeHTTPServerSocket::startRawResponse(). Only meaningful while
          * the request handler dispatch is on the stack. */
         HTTP_NODE_PIPELINED_DISPATCH = 1 << 11,
         /* The JS layer stopped HTTP processing on this connection (Node frees the
          * parser when 'close' is emitted on the socket); any further request data
          * in the buffer is not parsed. */
         HTTP_NODE_PARSING_STOPPED = 1 << 12,
-        /* Socket reads were paused because pipelined responses are (or were)
-         * queued. Reads resume once the queue has drained AND the socket has no
-         * outgoing backpressure left (Node's flood prevention pauses the socket
-         * while responses back up). */
-        HTTP_NODE_READS_PAUSED = 1 << 13,
-        /* An accepted Upgrade request with a body. The body is parsed and
-         * delivered through the request as usual; once it completes, the
-         * connection switches into CONNECT-style tunnel mode (isConnectRequest)
-         * and everything after the end of the message is opaque data for the
-         * 'upgrade' listener's socket. */
-        HTTP_NODE_TUNNEL_AFTER_BODY = 1 << 14,
+        /* HttpResponse::terminateHeaders() decides the framing, unless the status (1xx, 204) or node:http did before it. */
+        HTTP_FRAMING_DECIDED = 1 << 13,
+        /* An accepted Upgrade request with a body. The body is parsed and delivered through the request as usual. Behind its last chunk the connection leaves HTTP (NodeHttpSocketHooks::onUpgradeBodyEnded). */
+        HTTP_NODE_LEAVE_AFTER_BODY = 1 << 14,
         /* The peer half-closed (FIN) while there was still something to flush
          * before teardown: buffered/pinned response bytes, or (with
          * httpAllowHalfOpen) an in-flight or queued pipelined response. The
@@ -167,27 +194,49 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* node:http socket.destroySoon() with outgoing bytes still queued: close when they have flushed, whether or not the response in flight has ended. */
         HTTP_NODE_CLOSE_AFTER_DRAIN = 1 << 21,
         /* node:http: the peer sent its FIN first (HTTP_NODE_RECEIVED_FIN only covers a
-         * deferred close). onSocketClosed reports it so the JS socket emits 'end'. */
+         * deferred close). NodeHttpSocketHooks::onClosed reports it so the JS socket emits 'end'. */
         HTTP_NODE_PEER_ENDED = 1 << 22,
         /* node:http socket.end() or destroySoon() ended the write side. Until the socket closes, the request in flight still gets its body. */
         HTTP_NODE_HALF_CLOSED = 1 << 23,
+        /* Bun.serve is sending a file of known length itself (sendfile(), or read() and write()). uWS never holds
+         * the rest of the body, so onEnd needs this bit to let the response finish after the peer's FIN. */
+        HTTP_FIXED_LENGTH_FILE_BODY = 1 << 24,
+        /* node:http: the JS socket has a 'data' or 'readable' listener, so it gets every read before the parser does. */
+        HTTP_NODE_RAW_READS = 1 << 25,
+        /* node:http: socket.end() found outgoing bytes still queued. The FIN follows them, even if the response in flight never ends. */
+        HTTP_NODE_SHUTDOWN_AFTER_DRAIN = 1 << 26,
+        /* The caller wrote this response's Connection header (a Response or route header, node:http's writeHead, the 101 of upgrade()), so uWS adds none. */
+        HTTP_WROTE_CONNECTION_HEADER = 1 << 27,
+        HTTP_WROTE_TRANSFER_ENCODING_HEADER = 1 << 28,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a
          * keep-alive connection, so starting a new response clears the rest of the
          * word (resetResponseState) - these have to survive that. */
-        /* node:http: call Bun__NodeHTTP__onReadParsed once the read being parsed is consumed. */
+        /* node:http: call NodeHttpSocketHooks::onReadParsed once the read being parsed is consumed. */
         HTTP_NODE_NOTIFY_READ_PARSED = 1 << 19,
 
-        HTTP_CONNECTION_SCOPED = HTTP_NODE_PARSING_STOPPED | HTTP_NODE_READS_PAUSED
-            | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE
+        HTTP_CONNECTION_SCOPED = HTTP_NODE_PARSING_STOPPED
+            | HTTP_NODE_LEAVE_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE
             | HTTP_NODE_CLOSE_AFTER_MESSAGE | HTTP_NODE_CLOSE_AFTER_DRAIN | HTTP_NODE_PEER_ENDED
-            | HTTP_NODE_HALF_CLOSED,
+            | HTTP_NODE_HALF_CLOSED | HTTP_NODE_RAW_READS | HTTP_NODE_SHUTDOWN_AFTER_DRAIN,
+    };
+
+    /* Why reads are paused. HttpResponse::pauseReads() and resumeReads() keep the socket paused while any reason is set. */
+    enum : uint8_t {
+        /* The request body's reader is full: Bun.serve's high-water mark, node:http's req.pause(). */
+        READ_PAUSE_BODY = 1,
+        /* Bun.serve: a read's worth of pipelined requests is parked behind the pending response. */
+        READ_PAUSE_PARKED = 2,
+        /* node:http: responses are backed up, so no further request is read (Node's flood prevention). */
+        READ_PAUSE_FLOOD = 4,
+        /* node:http: the JS socket stopped reading. */
+        READ_PAUSE_SOCKET = 8,
     };
 
     /* Begin a new response on this connection. Clearing the word in one go is
-     * what keeps a 204/304 (HTTP_NO_BODY_STATUS), a close-delimited body or a
-     * previous response's trailers from leaking into the next request on a
+     * what keeps a previous response's framing or
+     * trailers from leaking into the next request on a
      * keep-alive socket; only the connection-scoped bits are carried over. */
     void resetResponseState() {
         state = (state & HTTP_CONNECTION_SCOPED) | HTTP_RESPONSE_PENDING;
@@ -196,13 +245,9 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         this->isIdle = false;
     }
 
-    /* Set or clear a flag from a runtime bool. */
-    void setFlag(uint32_t flag, bool value) {
-        if (value) {
-            state |= flag;
-        } else {
-            state &= ~flag;
-        }
+    /* node:http: 'connect' or 'upgrade' has the socket, and responses ahead of that request are still owed. Nothing is parsed, and the socket's handle gets every read. */
+    bool isParserDetached() const {
+        return (state & (HTTP_NODE_PARSING_STOPPED | HTTP_NODE_RAW_READS)) == (HTTP_NODE_PARSING_STOPPED | HTTP_NODE_RAW_READS);
     }
 
     /* Shared context pointer for onAborted/onTimeout/onData */
@@ -223,13 +268,18 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     OnTimeoutCallback onTimeout = nullptr;
     /* Outgoing offset */
     uint64_t offset = 0;
+    IdleTimeout idleTimer;
+    /* How much more request body the handler may get. Unlimited until HttpResponse::acceptRequestBody(). */
+    uint64_t requestBodyBudget = UINT64_MAX;
 
     /* Let's track number of bytes since last timeout reset in data handler */
     unsigned int received_bytes_per_timeout = 0;
 
     /* Current state (content-length sent, status sent, write called, etc */
     uint32_t state = 0;
-    uint8_t idleTimeout = 10; // default HTTP_TIMEOUT 10 seconds
+    /* HttpContextData::idleTimeout, until HttpResponse::setTimeout() overrides it. The next request starts from the context's value again. */
+    uint8_t idleTimeout = 0;
+    uint8_t readPauseReasons = 0;
     /* The parser writes this through a bool& (getHeaders / consumePostPadded),
      * so it cannot live in `state`. */
     bool isConnectRequest = false;
@@ -247,15 +297,20 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     /* node:http server compat: number of pipelined responses dispatched to JS
      * that have not yet become this connection's current response. While
      * non-zero, newly parsed requests keep being queued (preserving response
-     * order) and socket reads stay paused (bounding memory under a pipeline
-     * flood). */
+     * order). */
     uint32_t nodeHttpQueuedPipelinedCount = 0;
 
+    /* Returns true if the response in flight is the last one on this connection. A graceful stop still answers a parked request. */
+    bool closesAfterResponse() const {
+        return (state & HTTP_CONNECTION_CLOSE) || ((state & HTTP_CLOSE_WHEN_IDLE) && this->parkedRequestBytes.isEmpty());
+    }
+
     /* Whether the connection should be torn down once the in-flight response (if
-     * any) has completed and all buffered outgoing data has been flushed. */
+     * any) has completed and all buffered outgoing data has been flushed. A peer
+     * that sent its FIN still gets answers to the requests it sent before it. */
     bool shouldCloseConnection() const {
         return (state & (HTTP_CONNECTION_CLOSE | HTTP_NODE_CLOSE_AFTER_DRAIN))
-            || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0)
+            || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0 && this->parkedRequestBytes.isEmpty())
             || ((state & HTTP_CLOSE_WHEN_IDLE) && this->isIdle);
     }
 
@@ -289,6 +344,8 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
      * Mirrors last_message_start_/headers_completed_ in Node's http parser
      * ConnectionsList, which back server.headersTimeout/requestTimeout. */
     uint64_t lastMessageStartMs = 0;
+    /* socket.bytesRead: bytes read from the connection, after TLS decryption. */
+    uint64_t bytesRead = 0;
     /* Trailer fields set via response.addTrailers(), pre-rendered as
      * "name: value\r\n" lines. Written between the terminating 0 chunk and the
      * final CRLF of a chunked response (RFC 9112 7.1.2); non-empty also forces
@@ -304,6 +361,8 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
     bool headersCompleted = false;
     /* Timeout sweep already reported this message; reset when it completes. */
     bool requestTimeoutReported = false;
+    /* The parse error that set HTTP_NODE_PARSING_STOPPED, if one did. */
+    HttpParserError parseError = HTTP_PARSER_ERROR_NONE;
 };
 
 /* Readable name for the IsNodeHttp=true specialization (used by the node:http

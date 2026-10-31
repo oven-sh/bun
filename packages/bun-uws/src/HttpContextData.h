@@ -30,10 +30,7 @@ struct Http2Context;
 
 struct HttpFlags {
     bool isParsingHttp: 1 = false;
-    bool rejectUnauthorized: 1 = false;
     bool usingCustomExpectHandler: 1 = false;
-    bool requireHostHeader: 1 = true;
-    bool useStrictMethodValidation: 1 = false;
     /* node:http parser leniency. Two llhttp lenient bits: useInsecureHTTPParser = LENIENT_HEADERS
      * ("relaxed"+"insecure"); useLenientTransferEncoding = LENIENT_TRANSFER_ENCODING ("insecure"
      * only). TE+CL conflict, chunked-size/CRLF, version, header-token checks stay enforced. */
@@ -43,6 +40,25 @@ struct HttpFlags {
      * or queued responses keeps the connection open until they drain (Node's
      * socketOnEnd); when false (the default), the connection ends right away. */
     bool httpAllowHalfOpen: 1 = false;
+    /* The new owner of upgradedWebSocket already has what follows the request head in this read. */
+    bool restOfReadTaken: 1 = false;
+};
+
+/* What node:http hears about a connection. socketData is HttpResponseData::socketData. */
+struct NodeHttpSocketHooks {
+    /* readError: 0, or the error of the failed read (a peer RST). peerEnded: the peer sent its FIN first. */
+    void (*onClosed)(void *socketData, int readError, bool peerEnded);
+    void (*onDrain)(void *socketData);
+    void (*onRawRead)(void *socketData, const char *data, int length);
+    void (*onReadParsed)(void *socketData);
+    /* The body of an accepted Upgrade request has ended. The socket can have left this context when this returns. */
+    void (*onUpgradeBodyEnded)(void *socketData);
+    /* A TLS handshake ended, or an established session failed. The socket can be closed when this returns. */
+    void (*onHandshake)(void *socketData, int success, struct us_bun_verify_error_t verifyError);
+    /* The peer sent its FIN. The socket can be closed when this returns. Returns whether the socket's 'end' listener calls HttpResponse::finishParsing(). */
+    bool (*onPeerEnded)(void *socketData);
+    /* The bytes a socket.end() waited for are out. The socket can be closed when this returns. */
+    void (*halfCloseAfterDrain)(void *socketData);
 };
 
 template <bool SSL>
@@ -53,14 +69,7 @@ struct alignas(16) HttpContextData {
     friend struct Http2Context;
 private:
     std::vector<MoveOnlyFunction<void(HttpResponse<SSL> *, int)>> filterHandlers;
-    using OnSocketDataCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket, const char *data, int length, bool last);
-    using OnSocketDrainCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
-    using OnSocketUpgradedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
     using OnClientErrorCallback = MoveOnlyFunction<void(int is_ssl, struct us_socket_t *rawSocket, uWS::HttpParserError errorCode, char *rawPacket, int rawPacketLength)>;
-    /* readError: 0, or the error of the failed read (a peer RST). peerEnded: the peer sent its FIN first. */
-    using OnSocketClosedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket, int readError, bool peerEnded);
-
-    MoveOnlyFunction<void(const char *hostname)> missingServerNameHandler;
 
     struct RouterData {
         HttpResponse<SSL> *httpResponse;
@@ -77,14 +86,15 @@ private:
 
     HttpRouter<RouterData> router;
     void *upgradedWebSocket = nullptr;
-    /* Used to simulate Node.js socket events. */
-    OnSocketClosedCallback onSocketClosed = nullptr;
-    OnSocketDrainCallback onSocketDrain = nullptr;
-    OnSocketDataCallback onSocketData = nullptr;
-    OnSocketUpgradedCallback onSocketUpgraded = nullptr;
+    /* Set by enableNodeHttpCompat(). A socket only has socketData in such a context. */
+    const NodeHttpSocketHooks *nodeHttpHooks = nullptr;
     OnClientErrorCallback onClientError = nullptr;
 
+    /* Seconds a connection may stay silent before it's closed, 0 for never. node:http runs its own timers and leaves it at 0. */
+    uint8_t idleTimeout = 0;
     uint64_t maxHeaderSize = 0; // 0 means no limit
+    /* Bun.serve answers 413 to a larger Content-Length, so such a request gets no automatic 100 Continue. */
+    uint64_t maxRequestBodySize = UINT64_MAX;
     uint32_t maxHeadersCount = 0; // node:http server.maxHeadersCount; 0 means not set
 
     /* HTTP/2: set by Http2Context::attach(). A connection that negotiated h2
@@ -110,6 +120,14 @@ public:
     HttpFlags flags;
 
     bool isParsing(struct us_socket_t *s) const { return flags.isParsingHttp && parsingSocket == s; }
+
+    /* An owner outside uWS adopted s after HttpResponse::leaveHttp(). If s is being parsed, the parser stops here. */
+    void socketLeft(struct us_socket_t *s, bool restOfReadTaken) {
+        if (isParsing(s)) {
+            upgradedWebSocket = s;
+            flags.restOfReadTaken = restOfReadTaken;
+        }
+    }
 };
 
 }

@@ -6,44 +6,35 @@ use super::client_session::ClientSession;
 use super::stream::Stream;
 use super::{LOCAL_INITIAL_WINDOW_SIZE, LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_HIGH_WATER};
 use crate::HTTPClient;
-use crate::h2_frame_parser as wire;
 use crate::http_request_body::HTTPRequestBody;
 use crate::internal_state::HTTPStage;
 use bun_core::strings;
+use bun_http_types::h2::flow_control::DEFAULT_WINDOW_SIZE;
+use bun_http_types::h2::frame::{CONNECTION_PREFACE, FrameType, flags};
+use bun_http_types::h2::settings::{self, SettingId};
 use bun_picohttp as picohttp;
 
 pub(crate) fn write_preface(session: &mut ClientSession) {
-    session.queue(wire::CLIENT_PREFACE);
+    session.queue(CONNECTION_PREFACE);
 
-    let mut settings = [0u8; 3 * wire::SettingsPayloadUnit::BYTE_SIZE];
-    encode_setting(
-        &mut settings[0..6],
-        wire::SettingsType::SETTINGS_ENABLE_PUSH,
-        0,
-    );
-    encode_setting(
-        &mut settings[6..12],
-        wire::SettingsType::SETTINGS_INITIAL_WINDOW_SIZE,
-        LOCAL_INITIAL_WINDOW_SIZE,
-    );
-    encode_setting(
-        &mut settings[12..18],
-        wire::SettingsType::SETTINGS_MAX_HEADER_LIST_SIZE,
-        LOCAL_MAX_HEADER_LIST_SIZE,
-    );
-    session.write_frame(wire::FrameType::HTTP_FRAME_SETTINGS, 0, 0, &settings);
+    let settings = [
+        settings::entry(SettingId::EnablePush as u16, 0),
+        settings::entry(
+            SettingId::InitialWindowSize as u16,
+            LOCAL_INITIAL_WINDOW_SIZE,
+        ),
+        settings::entry(
+            SettingId::MaxHeaderListSize as u16,
+            LOCAL_MAX_HEADER_LIST_SIZE,
+        ),
+    ];
+    session.write_frame(FrameType::Settings, 0, 0, settings.as_flattened());
 
     // Connection-level window starts at 64 KiB regardless of SETTINGS;
     // open it to match the per-stream window so the first response isn't
     // throttled before our first WINDOW_UPDATE.
-    session.write_window_update(0, LOCAL_INITIAL_WINDOW_SIZE - wire::DEFAULT_WINDOW_SIZE);
+    session.write_window_update(0, LOCAL_INITIAL_WINDOW_SIZE - DEFAULT_WINDOW_SIZE);
     session.preface_sent = true;
-}
-
-#[inline]
-fn encode_setting(dst: &mut [u8], setting: wire::SettingsType, value: u32) {
-    dst[0..2].copy_from_slice(&setting.0.to_be_bytes());
-    dst[2..6].copy_from_slice(&value.to_be_bytes());
 }
 
 /// One classification pass per request header replaces a dozen case-insensitive
@@ -85,24 +76,13 @@ fn classify_request_header(name: &[u8]) -> Option<RequestHeader> {
     })
 }
 
+/// `Err` leaves the connection and its HPACK table as they were: nothing of the request was queued.
 pub(crate) fn write_request(
     session: &mut ClientSession,
     client: &mut HTTPClient,
     stream: &mut Stream,
     request: &picohttp::Request<'_>,
 ) -> crate::Result<()> {
-    // `encode_scratch` would be borrowed mutably
-    // alongside `&mut *session` below; pull the Vec out, push it back at the end.
-    let mut encoded = core::mem::take(&mut session.encode_scratch);
-    encoded.clear();
-
-    if let Some(cap) = session.pending_hpack_enc_capacity {
-        session.pending_hpack_enc_capacity = None;
-        session.hpack.set_encoder_max_capacity(cap);
-        encoded.reserve(8);
-        encode_hpack_table_size_update(&mut encoded, cap);
-    }
-
     let mut authority: &[u8] = client.url.host;
     let mut has_expect_continue = false;
     let mut lower_buf = [0u8; 256];
@@ -126,12 +106,12 @@ pub(crate) fn write_request(
         }
     }
 
-    encode_header(session, &mut encoded, b":method", request.method, false)?;
-    encode_header(session, &mut encoded, b":scheme", b"https", false)?;
-    encode_header(session, &mut encoded, b":authority", authority, false)?;
-    encode_header(
-        session,
-        &mut encoded,
+    let fields = &mut session.request_fields;
+    fields.clear();
+    fields.push(b":method", request.method, false)?;
+    fields.push(b":scheme", b"https", false)?;
+    fields.push(b":authority", authority, false)?;
+    fields.push(
         b":path",
         if !request.path.is_empty() {
             request.path
@@ -175,8 +155,15 @@ pub(crate) fn write_request(
                 RequestHeader::Expect => {}
             }
         }
-        encode_header(session, &mut encoded, name, h.value(), never_index)?;
+        fields.push(name, h.value(), never_index)?;
     }
+
+    // `write_header_block` takes `&mut *session`, so the scratch Vec moves out for the call.
+    let mut encoded = core::mem::take(&mut session.encode_scratch);
+    encoded.clear();
+    session
+        .hpack
+        .encode_block(&session.request_fields, &mut encoded)?;
 
     // request_body points into original_request_body.bytes (lives in client.state).
     let body = client.state.request_body;
@@ -199,10 +186,9 @@ pub(crate) fn write_request(
         &encoded,
         !has_inline_body && !is_streaming,
     );
-    if encoded.capacity() > 64 * 1024 {
-        encoded = Vec::new();
+    if encoded.capacity() <= 64 * 1024 {
+        session.encode_scratch = encoded;
     }
-    session.encode_scratch = encoded;
     if has_inline_body {
         stream.pending_body = body;
         drain_send_body(session, stream, usize::MAX);
@@ -225,20 +211,20 @@ pub(crate) fn write_header_block(
         let chunk = &remaining[0..remaining.len().min(max)];
         remaining = &remaining[chunk.len()..];
         let last = remaining.is_empty();
-        let mut flags: u8 = 0;
+        let mut frame_flags: u8 = 0;
         if last {
-            flags |= wire::HeadersFrameFlags::END_HEADERS as u8;
+            frame_flags |= flags::END_HEADERS;
         }
         if first && end_stream {
-            flags |= wire::HeadersFrameFlags::END_STREAM as u8;
+            frame_flags |= flags::END_STREAM;
         }
         session.write_frame(
             if first {
-                wire::FrameType::HTTP_FRAME_HEADERS
+                FrameType::Headers
             } else {
-                wire::FrameType::HTTP_FRAME_CONTINUATION
+                FrameType::Continuation
             },
-            flags,
+            frame_flags,
             stream_id,
             chunk,
         );
@@ -262,9 +248,10 @@ pub(crate) fn write_data_windowed(
     let mut remaining = data;
     let mut consumed: usize = 0;
     loop {
-        let window: usize =
-            usize::try_from(stream.send_window.min(session.conn_send_window).max(0))
-                .expect("int cast");
+        let window = stream
+            .send_window
+            .available()
+            .min(session.conn_send_window.available());
         if !remaining.is_empty() && window == 0 {
             break;
         }
@@ -281,19 +268,18 @@ pub(crate) fn write_data_windowed(
             .min(session.remote_max_frame_size as usize)
             .min(window);
         let last = chunk_len == remaining.len();
-        let flags: u8 = if last && end_stream {
-            wire::DataFrameFlags::END_STREAM as u8
-        } else {
-            0
-        };
         session.write_frame(
-            wire::FrameType::HTTP_FRAME_DATA,
-            flags,
+            FrameType::Data,
+            if last && end_stream {
+                flags::END_STREAM
+            } else {
+                0
+            },
             stream.id,
             &remaining[0..chunk_len],
         );
-        stream.send_window -= i32::try_from(chunk_len).expect("int cast");
-        session.conn_send_window -= i32::try_from(chunk_len).expect("int cast");
+        stream.send_window.consume(chunk_len);
+        session.conn_send_window.consume(chunk_len);
         consumed += chunk_len;
         remaining = &remaining[chunk_len..];
         if last {
@@ -370,7 +356,7 @@ pub(crate) fn drain_send_bodies(session: &mut ClientSession) -> bool {
     // the lowest-index stream can't monopolise conn_send_window.
     let slice: usize = session.remote_max_frame_size as usize;
     loop {
-        if session.conn_send_window <= 0 {
+        if session.conn_send_window.available() == 0 {
             return false;
         }
         if session.write_buffer.size() >= WRITE_BUFFER_HIGH_WATER {
@@ -385,7 +371,7 @@ pub(crate) fn drain_send_bodies(session: &mut ClientSession) -> bool {
             let stream = session.streams.values()[i];
             let s = super::client_session::stream_mut(stream);
             i += 1;
-            if s.local_closed() || s.send_window <= 0 {
+            if s.local_closed() || s.send_window.available() == 0 {
                 continue;
             }
             let before = session.conn_send_window;
@@ -398,44 +384,4 @@ pub(crate) fn drain_send_bodies(session: &mut ClientSession) -> bool {
             return false;
         }
     }
-}
-
-fn encode_header(
-    session: &mut ClientSession,
-    encoded: &mut Vec<u8>,
-    name: &[u8],
-    value: &[u8],
-    never_index: bool,
-) -> crate::Result<()> {
-    let required = encoded.len() + name.len() + value.len() + 32;
-    encoded.reserve(required.saturating_sub(encoded.len()));
-    let len = encoded.len();
-    // Write through the raw buffer and set_len after.
-    // SAFETY: `hpack.encode` writes only into `[len..len+written]`, which is
-    // within the just-reserved capacity; bytes in `[0..len]` are initialized.
-    let buf = unsafe { bun_core::vec::allocated_bytes_mut(encoded) };
-    let written = session
-        .hpack
-        .encode(name, value, never_index, buf, len)
-        .map_err(crate::Error::from)?;
-    // SAFETY: hpack wrote `written` bytes at offset `len`; new_len <= capacity.
-    unsafe { bun_core::vec::commit_spare(encoded, written) };
-    Ok(())
-}
-
-/// RFC 7541 §6.3 Dynamic Table Size Update: `001` prefix, 5-bit-prefix
-/// integer. Must be the first opcode in a header block. Caller guarantees
-/// at least 6 bytes of capacity (max for a u32).
-fn encode_hpack_table_size_update(encoded: &mut Vec<u8>, value: u32) {
-    if value < 31 {
-        encoded.push(0x20 | u8::try_from(value).expect("int cast"));
-        return;
-    }
-    encoded.push(0x20 | 31);
-    let mut rest = value - 31;
-    while rest >= 128 {
-        encoded.push((rest as u8) | 0x80);
-        rest >>= 7;
-    }
-    encoded.push(rest as u8);
 }

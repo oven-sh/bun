@@ -542,6 +542,8 @@ DIFFERS test/js/node/events/event-emitter.test.ts > EventEmitter constructors > 
 DIFFERS test/js/node/events/event-emitter.test.ts > EventEmitter constructors > new (class extends EventEmitter {})() should work: the name of the test is made of a function's text, or the plain run was cut
 DIFFERS test/js/node/events/event-emitter.test.ts > EventEmitter constructors > new EventEmitter() should work: the name of the test is made of a function's text, or the plain run was cut
 DIFFERS test/js/node/http/node-http-backpressure.test.ts > backpressure > 'drain' after a later write() flushes the backlog > (unnamed): the name of the test is made of a function's text, or the plain run was cut
+DIFFERS test/js/node/http/node-http-server-close-drain.test.ts > closing a Bun.ModuleGraph's server from the host > emits 'close' in the graph's context: a file by a path that is computed or made at run time
+DIFFERS test/js/node/http/node-http-server-close-drain.test.ts > closing a Bun.ModuleGraph's server from the host > emits no 'close' once the graph is disposed: a file by a path that is computed or made at run time
 DIFFERS test/js/node/inspector/inspector.test.ts > Object.prototype pollution does not cause Runtime.enable to hook extra console methods: the lock of the built-ins
 DIFFERS test/js/node/inspector/inspector.test.ts > a tampered Set.prototype[Symbol.iterator] or Date.now does not break console.log while Runtime is enabled: the lock of the built-ins
 DIFFERS test/js/node/module/module-resolve-filename-paths.test.js > Module._resolveFilename with overridden function receives options.paths: the lock of the built-ins
@@ -552,6 +554,12 @@ DIFFERS test/js/node/perf_hooks/perf_hooks.test.ts > histograms that another thr
 DIFFERS test/js/node/process/stdin/stdin-fixtures.test.ts > stdin > works with readable listener: the clock
 DIFFERS test/js/node/string-module.test.js > should import a base64 data: URL longer than the path-length limit: text at run time (eval, the Function constructor, a Worker or an import of text)
 DIFFERS test/js/node/string-module.test.js > should import a data: URL longer than the path-length limit: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/string-module.test.js > should import and execute ES module from string (base64): text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/string-module.test.js > should import base64 in the URL-safe alphabet: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/string-module.test.js > should treat " base64" as the base64 marker: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/string-module.test.js > should treat "BASE64" as the base64 marker: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/string-module.test.js > should treat "Base64" as the base64 marker: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/string-module.test.js > should treat "base64 " as the base64 marker: text at run time (eval, the Function constructor, a Worker or an import of text)
 DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require _http_agent: a file by a path that is computed or made at run time
 DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require _http_client: a file by a path that is computed or made at run time
 DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require _http_common: a file by a path that is computed or made at run time

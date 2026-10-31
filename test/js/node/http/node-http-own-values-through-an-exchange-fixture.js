@@ -1,5 +1,5 @@
 // Prints what the own properties of a server's response and socket hold through several exchanges, and the own keys of the
-// objects that the socket inherits from.
+// objects between the socket and net.Socket.prototype, if there are any.
 const http = require("node:http");
 const net = require("node:net");
 

@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as COMMON_CERT, gc, isASAN, isCI, isDebug } from "harness";
+import { bunEnv, bunExe, tls as COMMON_CERT, gc, isASAN, isCI, isDebug, tempDir } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import net from "node:net";
 import { join } from "node:path";
 
-describe("fetch doesn't leak", () => {
+// Each test measures its own child process, so they can run concurrently.
+describe.concurrent("fetch doesn't leak", () => {
   test("fixture #1", async () => {
     const body = new Blob(["some body in here!".repeat(100)]);
     var count = 0;
@@ -112,56 +113,59 @@ describe("fetch doesn't leak", () => {
   }
 });
 
-describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "stream", "iterator"])("Sending %s", type => {
-  test(
-    "does not leak",
-    async () => {
-      using server = Bun.serve({
-        port: 0,
-        idleTimeout: 0,
-        fetch(req) {
-          return new Response();
-        },
-      });
+describe.concurrent.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "stream", "iterator"])(
+  "Sending %s",
+  type => {
+    test(
+      "does not leak",
+      async () => {
+        using server = Bun.serve({
+          port: 0,
+          idleTimeout: 0,
+          fetch(req) {
+            return new Response();
+          },
+        });
 
-      const rss: number[] = [];
+        const rss: number[] = [];
 
-      await using process = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "--smol",
-          join(import.meta.dir, "fetch-leak-test-fixture-5.js"),
-          server.url.href,
-          1024 * 1024 * 2 + "",
-          type,
-        ],
-        stdin: "ignore",
-        stdout: "inherit",
-        stderr: "inherit",
-        env: {
-          ...bunEnv,
-        },
-        ipc(message) {
-          rss.push(message.rss);
-        },
-      });
+        await using process = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "--smol",
+            join(import.meta.dir, "fetch-leak-test-fixture-5.js"),
+            server.url.href,
+            1024 * 1024 * 2 + "",
+            type,
+            // A debug build needs 0.25s to URL-encode one 2MB body, so 50 batches of 10 can't finish in time.
+            isDebug ? "15" : "50",
+          ],
+          stdin: "ignore",
+          stdout: "inherit",
+          stderr: "inherit",
+          env: {
+            ...bunEnv,
+          },
+          ipc(message) {
+            rss.push(message.rss);
+          },
+        });
 
-      await process.exited;
+        await process.exited;
 
-      const first = rss[0];
-      const last = rss[rss.length - 1];
-      if (!isCI || !(last < first * 10)) {
-        console.log({ rss, delta: (((last - first) / 1024 / 1024) | 0) + " MB" });
-      }
-      expect(last).toBeLessThan(first * 10);
-    },
-    // The URLSearchParams variant URL-encodes the 2MB body on each of the 500
-    // requests - pure throughput that a debug build cannot fit in 20s, and
-    // ASAN instrumentation overruns the 20s release deadline the same way
-    // (observed 20000.61ms on the x64-asan lane).
-    isDebug || isASAN ? 120 * 1000 : 20 * 1000,
-  );
-});
+        const first = rss[0];
+        const last = rss[rss.length - 1];
+        if (!isCI || !(last < first * 10)) {
+          console.log({ rss, delta: (((last - first) / 1024 / 1024) | 0) + " MB" });
+        }
+        expect(last).toBeLessThan(first * 10);
+      },
+      // The URLSearchParams variant URL-encodes the 2MB body on every request, which takes a
+      // release build 15 to 20s and a debug or ASAN build much longer.
+      isDebug || isASAN ? 120 * 1000 : 60 * 1000,
+    );
+  },
+);
 
 test("do not leak", async () => {
   await using server = createServer((req, res) => {
@@ -525,29 +529,41 @@ test.concurrent(
   async () => {
     // The leaked impl is "file://<resolved abs path>", and fetch_impl decodes
     // url.path into a stack PathBuffer that is 1024 bytes on macOS/BSD, 4096 on
-    // Linux, ~98 KiB on Windows. Use a ~900-byte path so decode_into succeeds on
-    // every platform and url_string is actually assigned, with enough iterations
-    // for the small per-call leak to show in RSS.
+    // Linux, ~98 KiB on Windows. Use a ~850-byte path so decode_into succeeds on
+    // every platform, with enough iterations for the small per-call leak to
+    // show in RSS. The file has to exist, or fetch() rejects without a Response.
+    using dir = tempDir("fetch-file-url-leak", {});
     const script = /* js */ `
-    const pad = Buffer.alloc(900, "a").toString();
-    // Windows strips the leading "/" then asserts is_absolute_windows() in
-    // PosixToWinNormalizer under debug_assertions, which needs a drive letter.
-    const prefix = process.platform === "win32" ? "file:///C:/" : "file:///";
+    import { mkdirSync, writeFileSync } from "node:fs";
+    import { join } from "node:path";
+    import { pathToFileURL } from "node:url";
+
+    const component = Buffer.alloc(200, "a").toString();
+    const parent = join(process.cwd(), component, component, component, component);
+    mkdirSync(parent, { recursive: true });
+    const file = join(parent, "file.txt");
+    writeFileSync(file, "hello");
+    const url = pathToFileURL(file).href;
+
     const rss = process.memoryUsage.rss;
-    async function hit(i) {
-      // Fresh path per iteration so each leaked ref pins a distinct impl.
-      // The file does not exist; the Response is created (with url_string set)
-      // and the lazy Blob body is never read, so no fs I/O happens.
-      await fetch(prefix + i + pad);
+    async function hit() {
+      // Every call builds a fresh url_string impl for the Response. The lazy
+      // Blob body is never read, so the Response is the only thing created.
+      await fetch(url);
     }
-    for (let i = 0; i < 200; i++) { try { await hit(-i); } catch {} }
+    // Warm up until the heap and allocator have reached their steady state, so
+    // the baseline is not taken while they are still growing.
+    for (let i = 0; i < 2000; i++) {
+      await hit();
+      if ((i & 255) === 0) Bun.gc(true);
+    }
     Bun.gc(true);
     const baseline = rss();
 
     const ITERS = 20000;
     for (let i = 0; i < ITERS; i++) {
-      try { await hit(i); } catch {}
-      if ((i & 1023) === 0) Bun.gc(true);
+      await hit();
+      if ((i & 255) === 0) Bun.gc(true);
     }
     Bun.gc(true);
     const final = rss();
@@ -558,15 +574,18 @@ test.concurrent(
       finalMB: (final / 1024 / 1024) | 0,
       deltaMB: Math.round(deltaMB * 10) / 10,
     }));
-    // ~0.9 KiB × 20000 ≈ 18 MiB raw leak (measured ~32 MiB on debug+ASAN)
-    // when the extra ref is dropped on the floor; ~12 MiB noise with the fix.
-    if (deltaMB > 20) {
+    // Each leaked impl is ~0.9 KiB, so 20000 of them are ~17 MiB raw. Leaking vs
+    // fixed: 26-27 vs 8-10 MiB on debug+ASAN (extra ref re-added), 19-21 vs ~2 MiB
+    // on a release build (leak approximated by retaining one equal-sized string
+    // per call).
+    if (deltaMB > ${isASAN ? 18 : 12}) {
       throw new Error("fetch(file://) leaked " + deltaMB.toFixed(1) + " MB over " + ITERS + " iterations");
     }
   `;
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--smol", "-e", script],
+      cwd: String(dir),
       env: {
         ...bunEnv,
         ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
@@ -672,7 +691,9 @@ describe("Request body HiveRef pool returns slot via Body.Value.deinit (does not
       kind,
       async () => {
         const script = `
-        const payload = Buffer.alloc(128 * 1024, 0x61); // 128 KiB of 'a'
+        // cycle() keeps 512 bodies alive, and gc() may not have returned them to the OS when rss() is
+        // sampled. That's 8 MiB of noise with 16 KiB bodies, far below the threshold.
+        const payload = Buffer.alloc(16 * 1024, 0x61); // 16 KiB of 'a'
         const str = payload.toString("latin1");
         const sharedBlob = new Blob([payload]);
         const rss = process.memoryUsage.rss;
@@ -704,18 +725,21 @@ describe("Request body HiveRef pool returns slot via Body.Value.deinit (does not
 
         const deltaMB = (final - baseline) / 1024 / 1024;
         console.log(JSON.stringify({ kind: "${kind}", baselineMB: (baseline / 1024 / 1024) | 0, finalMB: (final / 1024 / 1024) | 0, deltaMB: Math.round(deltaMB) }));
-        // 32 cycles * 512 Requests * 128 KiB = 2 GiB through the pool. If deinit() is
-        // skipped for any heap-backed variant, RSS climbs by ~2 GiB; with the
+        // 32 cycles * 512 Requests * 16 KiB = 256 MiB through the pool. If deinit() is
+        // skipped for any heap-backed variant, RSS climbs by ~256 MiB; with the
         // Zig semantics it stays flat. 64 MiB is well above GC/allocator noise.
-        // ASAN's quarantine retains freed allocations so widen the threshold there.
-        if (deltaMB > ${isASAN ? 320 : 64}) {
+        // The ASAN bound also has to stay below 256 MiB, so the child's quarantine is capped.
+        if (deltaMB > ${isASAN ? 128 : 64}) {
           throw new Error("Request body (${kind}) leaked " + Math.round(deltaMB) + " MB over 32 cycles of 512 Requests");
         }
       `;
 
         await using proc = Bun.spawn({
           cmd: [bunExe(), "--smol", "-e", script],
-          env: bunEnv,
+          env: {
+            ...bunEnv,
+            ...(isASAN && { ASAN_OPTIONS: `${bunEnv.ASAN_OPTIONS ?? ""}:quarantine_size_mb=32`.replace(/^:/, "") }),
+          },
           stdout: "pipe",
           stderr: "pipe",
         });
@@ -741,13 +765,13 @@ test("should not leak using readable stream", async () => {
     env: {
       ...bunEnv,
       SERVER_URL: server.url.href,
-      // ASAN's quarantine retains freed allocations so RSS stays elevated
-      // under bun-asan; the fixture only allows MAX_MEMORY_INCREASE MiB.
-      MAX_MEMORY_INCREASE: isASAN ? "64" : "5", // in MB
+      // Retaining the 128 KiB body per request adds ~32 MiB over the 250 sampled
+      // iterations, so the allowance has to stay below that under ASAN too.
+      MAX_MEMORY_INCREASE: isASAN ? "24" : "5", // in MB
       // The fixture asserts RSS stabilizes after iteration 250, but with the
       // default 256 MB quarantine the freed 128 KB bodies are never reused and
       // RSS keeps climbing through all 500 iterations (~97 MB past the sample
-      // point, over the 64 MB allowance). Cap the quarantine so freed churn
+      // point, far over the allowance). Cap the quarantine so freed churn
       // recycles and the stabilization the test asserts can actually happen.
       ...(isASAN && { ASAN_OPTIONS: `${bunEnv.ASAN_OPTIONS ?? ""}:quarantine_size_mb=32`.replace(/^:/, "") }),
     },

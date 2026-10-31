@@ -260,27 +260,18 @@ describe.concurrent("npm ws on node:http upgrade sockets", () => {
 
   test.each([
     ["a fresh caller cork", "fresh"],
-    ["a caller cork below the dispatcher cork", "below-dispatcher"],
+    ["a caller cork on a reused keep-alive socket", "reused"],
     ["nested caller corks after a partial release", "partial-nested"],
-    ["a caller cork that replaced the dispatcher cork", "replaced-dispatcher"],
-    ["a caller cork when dispatcher corking is suppressed", "suppressed-dispatcher"],
   ] as const)("preserves %s and its pending writes", async (_name, mode) => {
     let serverSocket!: Socket;
-    let suppressedCork: Socket["cork"] | undefined;
     const server = http.createServer((_req, res) => res.end("ok"));
     server.on("connection", socket => {
       serverSocket = socket;
-      if (mode !== "replaced-dispatcher") socket.cork();
-      if (mode === "partial-nested") socket.cork();
-      if (mode === "suppressed-dispatcher") {
-        suppressedCork = socket.cork;
-        socket.cork = () => {};
-      }
+      socket.cork();
     });
     const wss = new NpmWebSocketServer({ noServer: true });
     const upgraded = Promise.withResolvers<void>();
     server.on("upgrade", (req, socket, head) => {
-      if (suppressedCork) socket.cork = suppressedCork;
       try {
         wss.handleUpgrade(req, socket, head, ws => {
           ws.send("pending");
@@ -297,12 +288,14 @@ describe.concurrent("npm ws on node:http upgrade sockets", () => {
     try {
       if (mode !== "fresh") {
         await finishKeepAliveRequest(port, agent);
-      }
-      if (mode === "replaced-dispatcher") {
-        serverSocket.uncork();
+        // Like Node, res.end() fully uncorks the connection, including the cork from the 'connection' listener.
+        expect(serverSocket.writableCorked).toBe(0);
         serverSocket.cork();
       }
-      if (mode === "partial-nested") serverSocket.uncork();
+      if (mode === "partial-nested") {
+        serverSocket.cork();
+        serverSocket.uncork();
+      }
       client = new NpmWebSocket(`ws://127.0.0.1:${port}/upgrade`, { agent });
       const opened = waitForWebSocketOpen(client);
       const message = waitForWebSocketMessage(client);
@@ -996,8 +989,8 @@ describe.concurrent("the request stream when ws upgrades before the declared bod
           req.read();
           return upgrade();
         case "paused, resumed in the upgrade tick":
-          // After a read(), push() emits 'data' at once. While paused, the bytes wait in native code.
-          req.read();
+          // As in Node, what came with the head is in the request's buffer when 'upgrade' is emitted.
+          events.push("read:" + req.read());
           req.pause();
           return setImmediate(() => {
             listenForData();
@@ -1088,16 +1081,13 @@ describe.concurrent("the request stream when ws upgrades before the declared bod
     });
   });
 
-  // This reader called read() before the pause, so nothing calls _read() again: resume() has to bring
-  // the bytes. They come after handleUpgrade() returned. A 'data' listener that closed the socket inside
-  // it left a closed WebSocket in wsServer.clients.
-  test("a reader that paused and resumes in the upgrade tick gets the buffered bytes", async () => {
+  test("a reader that paused and resumes in the upgrade tick gets 'end'", async () => {
     const sent = body.slice(0, 5);
     expect(await upgradeBeforeTheBodyIsComplete("upgrade", sent, "paused, resumed in the upgrade tick")).toEqual({
       ...upgraded,
       readerWaitedBeforeUpgrade: true,
       duringUpgrade: ["connection"],
-      events: ["connection", "data:" + sent, "end", "close"],
+      events: ["read:" + sent, "connection", "end", "close"],
       complete: true,
     });
   });

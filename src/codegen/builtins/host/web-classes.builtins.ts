@@ -21,6 +21,8 @@ const operandCodeOnly = {
 const anyCode = { capability: "js", throws: true, implementation: b.hostCall } as const;
 
 const primitiveOrAbsent = b.primitiveValue.optional;
+// JSON.stringify asks a BigInt for its toJSON.
+const primitiveWithoutToJSON = b.union(b.undefined, b.strictNull, b.bool, b.f64, b.string, b.symbol).optional;
 const anythingOrAbsent = b.any.optional;
 const typedArrayOrBuffer = b.union(
   b.instance("TypedArray"),
@@ -176,7 +178,7 @@ const responseConstructionFromParts = [
 
 // A call without a value makes an empty body, and a call with undefined throws.
 const responseFromJSON = [
-  { ...nativeOnly, args: { value: primitiveOrAbsent, init: primitiveOrAbsent }, returns: newResponse },
+  { ...nativeOnly, args: { value: primitiveWithoutToJSON, init: primitiveOrAbsent }, returns: newResponse },
   {
     ...operandCodeOnly,
     args: { value: anythingOrAbsent, init: primitiveOrAbsent },
@@ -276,7 +278,7 @@ const readsBlob = (settledValue: b.TableType) =>
 
 const parsedBody = { typedResultForm: { form: "ParsedBody", source: "this" } } as const;
 
-// What json() parses: the string that holds the body, the text behind the UTF-16 mark of a Blob, otherwise the bytes.
+// What json() parses: the string that holds the body, the text behind the UTF-16 mark of a string or a Blob, otherwise the bytes.
 // The call of json() that this one stands for has matched its receiver, by a test where the type does not say it.
 const jsonSourceOfBody = {
   ...anyCode,

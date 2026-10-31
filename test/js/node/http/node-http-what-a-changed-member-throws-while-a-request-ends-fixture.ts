@@ -85,10 +85,6 @@ const steps: [which: "req" | "socket", name: string, change: string][] = [
   ["socket", "readableHighWaterMark", "getter throws"],
   ["socket", "_paused", "getter throws"],
   ["socket", "parser", "getter throws"],
-  ["socket", "@kUpgradeIncoming", "getter throws"],
-  ["socket", "@kUpgradeIncoming", "a number"],
-  ["socket", "@kHandoffResponse", "getter throws"],
-  ["socket", "@kStreamingEnabled", "getter throws"],
 ];
 
 let step: (typeof steps)[number];

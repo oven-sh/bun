@@ -157,10 +157,6 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
-    pub(crate) fn is_connect_request(&mut self) -> bool {
-        c::uws_res_is_connect_request(Self::ssl_flag(), self.as_raw())
-    }
-
     pub(crate) fn flush_headers(&mut self, flush_immediately: bool) {
         c::uws_res_flush_headers(Self::ssl_flag(), self.as_raw(), flush_immediately)
     }
@@ -213,9 +209,9 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_send_when_complete(Self::ssl_flag(), self.as_raw())
     }
 
-    /// Defers the close to the end of the read uws is parsing. False: not parsing, the caller closes now.
-    pub fn close_after_message_if_parsing(&mut self) -> bool {
-        c::uws_res_close_after_message_if_parsing(Self::ssl_flag(), self.as_raw())
+    /// Defers the close to the end of the read uws is parsing. False: not parsing, the caller closes now. `drop_corked`: what waits in the cork buffer isn't sent.
+    pub fn close_after_message_if_parsing(&mut self, drop_corked: bool) -> bool {
+        c::uws_res_close_after_message_if_parsing(Self::ssl_flag(), self.as_raw(), drop_corked)
     }
 
     /// Removes the handlers that were attached with `user_data`. See `HttpResponse::clearHandlersOf`.
@@ -229,6 +225,10 @@ impl<const SSL: bool> Response<SSL> {
 
     pub(crate) fn resume(&mut self) {
         c::uws_res_resume(Self::ssl_flag(), self.as_raw())
+    }
+
+    pub(crate) fn is_paused(&mut self) -> bool {
+        c::uws_res_is_paused(Self::ssl_flag(), self.as_raw())
     }
 
     pub(crate) fn write_continue(&mut self) {
@@ -290,6 +290,18 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_end_without_body(Self::ssl_flag(), self.as_raw(), close_connection)
     }
 
+    pub(crate) fn accept_request_body(&mut self) -> bool {
+        c::uws_res_accept_request_body(Self::ssl_flag(), self.as_raw())
+    }
+
+    pub(crate) fn end_head_of_stream(&mut self, close_connection: bool) {
+        c::uws_res_end_head_of_stream(Self::ssl_flag(), self.as_raw(), close_connection)
+    }
+
+    pub(crate) fn abandon(&mut self) {
+        c::uws_res_abandon(Self::ssl_flag(), self.as_raw())
+    }
+
     pub(crate) fn end_send_file(&mut self, write_offset: u64, close_connection: bool) {
         c::uws_res_end_sendfile(
             Self::ssl_flag(),
@@ -306,12 +318,16 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_close_if_done_and_marked(Self::ssl_flag(), self.as_raw())
     }
 
-    pub fn timeout(&mut self, seconds: u8) {
+    pub(crate) fn timeout(&mut self, seconds: u8) {
         c::uws_res_timeout(Self::ssl_flag(), self.as_raw(), seconds)
     }
 
     pub(crate) fn reset_timeout(&mut self) {
         c::uws_res_reset_timeout(Self::ssl_flag(), self.as_raw())
+    }
+
+    pub(crate) fn suspend_timeout(&mut self) {
+        us_socket_t::opaque_mut(self.downcast_socket()).set_timeout(0);
     }
 
     pub(crate) fn get_buffered_amount(&mut self) -> u64 {
@@ -367,16 +383,9 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_has_responded(Self::ssl_flag(), self.as_raw())
     }
 
-    pub(crate) fn mark_wrote_content_length_header(&mut self) {
-        c::uws_res_mark_wrote_content_length_header(Self::ssl_flag(), self.as_raw())
-    }
-
-    pub(crate) fn mark_wrote_date_header(&mut self) {
-        c::uws_res_mark_wrote_date_header(Self::ssl_flag(), self.as_raw())
-    }
-
-    pub(crate) fn write_mark(&mut self) {
-        c::uws_res_write_mark(Self::ssl_flag(), self.as_raw())
+    /// Sets `HTTP_FIXED_LENGTH_FILE_BODY`. See `HttpResponseData.h`.
+    pub(crate) fn mark_fixed_length_file_body(&mut self) {
+        c::uws_res_mark_fixed_length_file_body(Self::ssl_flag(), self.as_raw())
     }
 
     pub(crate) fn get_native_handle(&mut self) -> Fd {
@@ -467,13 +476,6 @@ impl<const SSL: bool> Response<SSL> {
 
     pub(crate) fn clear_on_writable(&mut self) {
         c::uws_res_clear_on_writable(Self::ssl_flag(), self.as_raw())
-    }
-
-    #[inline]
-    pub(crate) fn mark_needs_more(&mut self) {
-        if !SSL {
-            c::us_socket_mark_needs_more_not_ssl(self.as_raw())
-        }
     }
 
     pub(crate) fn on_aborted<U, H>(&mut self, _handler: H, optional_data: *mut U)
@@ -656,29 +658,6 @@ impl<const SSL: bool> Response<SSL> {
             )
         }
     }
-
-    /// Like `upgrade`, but the caller already negotiated. `handshake` is the complete response head
-    /// and is written verbatim. `deflate_params` is `None` if permessage-deflate wasn't negotiated.
-    pub(crate) fn upgrade_raw<D>(
-        &mut self,
-        data: *mut D,
-        handshake: &[u8],
-        deflate_params: Option<&PerMessageDeflateParams>,
-        ctx: &mut WebSocketUpgradeContext,
-    ) -> *mut Socket {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; ptr+len from &[u8].
-        unsafe {
-            c::uws_res_upgrade_raw(
-                Self::ssl_flag(),
-                self.downcast(),
-                data.cast::<c_void>(),
-                handshake.as_ptr(),
-                handshake.len(),
-                deflate_params,
-                ctx,
-            )
-        }
-    }
 }
 
 pub type TCPResponse = Response<false>;
@@ -782,40 +761,20 @@ macro_rules! any_response_register_cb {
 }
 
 impl AnyResponse {
-    pub fn assert_ssl(self) -> *mut TLSResponse {
-        match self {
-            AnyResponse::SSL(resp) => resp,
-            AnyResponse::TCP(_) => panic!("Expected SSL response, got TCP response"),
-            AnyResponse::H3(_) | AnyResponse::H2(_) => {
-                panic!("Expected SSL response, got a stream response")
-            }
+    /// Calls `on_writable` once the socket takes more, and arms the idle timeout for the wait. For sendfile, which is plain HTTP/1 only.
+    pub fn request_writable(self) {
+        if let AnyResponse::TCP(ptr) = self {
+            c::uws_res_request_writable(TCPResponse::as_handle(ptr).as_raw())
         }
     }
 
-    pub fn assert_no_ssl(self) -> *mut TCPResponse {
+    /// See `Response::mark_fixed_length_file_body`. An H2 or H3 stream keeps sending after the peer ends its side.
+    pub fn mark_fixed_length_file_body(self) {
         match self {
-            AnyResponse::SSL(_) => panic!("Expected TCP response, got SSL response"),
-            AnyResponse::TCP(resp) => resp,
-            AnyResponse::H3(_) | AnyResponse::H2(_) => {
-                panic!("Expected TCP response, got a stream response")
-            }
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).mark_fixed_length_file_body(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).mark_fixed_length_file_body(),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => {}
         }
-    }
-
-    pub fn mark_needs_more(self) {
-        any_dispatch!(self, |r| r.mark_needs_more())
-    }
-
-    pub fn mark_wrote_content_length_header(self) {
-        any_dispatch!(self, |r| r.mark_wrote_content_length_header())
-    }
-
-    pub fn mark_wrote_date_header(self) {
-        any_dispatch!(self, |r| r.mark_wrote_date_header())
-    }
-
-    pub fn write_mark(self) {
-        any_dispatch!(self, |r| r.write_mark())
     }
 
     pub fn end_send_file(self, write_offset: u64, close_connection: bool) {
@@ -860,12 +819,53 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.flush_headers(flush_immediately))
     }
 
+    /// Ends the header section of a live HTTP/1 response whose body has sent nothing yet.
+    pub fn commit_head(self) {
+        // HTTP/2 and HTTP/3 send HEADERS with the first DATA frame.
+        if matches!(self, AnyResponse::H3(_) | AnyResponse::H2(_)) {
+            return;
+        }
+        let open_head = State::HTTP_STATUS_CALLED | State::HTTP_RESPONSE_PENDING;
+        // A `try_end` parked on backpressure sets only END_CALLED, and its head is out too.
+        let head_is_out = State::HTTP_WRITE_CALLED | State::HTTP_END_CALLED;
+        if self.state().bits() & (open_head | head_is_out).bits() != open_head.bits() {
+            return;
+        }
+        self.corked(|| self.flush_headers(false));
+    }
+
     pub fn is_corked(self) -> bool {
         any_dispatch!(self, |r| r.is_corked())
     }
 
     pub fn uncork(self) {
         any_dispatch!(self, |r| r.uncork())
+    }
+
+    /// See `Response::send_corked`. H2 and H3 have no cork buffer.
+    pub fn send_corked(self) {
+        match self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).send_corked(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).send_corked(),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => {}
+        }
+    }
+
+    /// See `Response::send_when_complete`. HTTP/1 only.
+    pub fn send_when_complete(self) {
+        match self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).send_when_complete(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).send_when_complete(),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => {}
+        }
+    }
+
+    /// HTTP/2: END_STREAM on the HEADERS frame, or `content-length: 0`. A QUIC FIN is only seen by a read after dispatch.
+    pub fn request_body_ended(self) -> bool {
+        match self {
+            AnyResponse::H2(ptr) => H2Response::as_handle(ptr).request_body_ended(),
+            AnyResponse::SSL(_) | AnyResponse::TCP(_) | AnyResponse::H3(_) => false,
+        }
     }
 
     pub fn get_buffered_amount(self) -> u64 {
@@ -952,6 +952,7 @@ impl AnyResponse {
             bun_opaque::opaque_deref_mut(r).grow_request_window();
         }
     }
+    /// Stops reading the request body. uWS keeps the socket paused until everyone who paused it has resumed it.
     pub fn pause(self) {
         any_dispatch!(self, |r| r.pause())
     }
@@ -960,12 +961,48 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.resume())
     }
 
+    /// Returns true between `pause()` and `resume()`. node:http only, so HTTP/1 only.
+    pub fn is_paused(self) -> bool {
+        match self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).is_paused(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).is_paused(),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => false,
+        }
+    }
+
     pub fn write_header_int(self, key: &[u8], value: u64) {
         any_dispatch!(self, |r| r.write_header_int(key, value))
     }
 
     pub fn end_without_body(self, close_connection: bool) {
         any_dispatch!(self, |r| r.end_without_body(close_connection))
+    }
+
+    /// For a handler that can read the request body: `maxRequestBodySize` holds from here on. Returns false, with 413 sent, if the Content-Length is already over it.
+    pub fn accept_request_body(self) -> bool {
+        any_dispatch!(self, |r| r.accept_request_body())
+    }
+
+    /// Ends the response to a HEAD whose GET would stream its body: HTTP/1.1 says `Transfer-Encoding: chunked`, as that GET would.
+    pub fn end_head_of_stream(self, close_connection: bool) {
+        match self {
+            AnyResponse::SSL(ptr) => {
+                TLSResponse::as_handle(ptr).end_head_of_stream(close_connection)
+            }
+            AnyResponse::TCP(ptr) => {
+                TCPResponse::as_handle(ptr).end_head_of_stream(close_connection)
+            }
+            AnyResponse::H3(_) | AnyResponse::H2(_) => self.end_without_body(close_connection),
+        }
+    }
+
+    /// Marks the response ended without writing anything. HTTP/1 only: node:http's `destroy()` is the one caller.
+    pub fn abandon(self) {
+        match self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).abandon(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).abandon(),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => {}
+        }
     }
 
     /// HTTP/1 only: the handlers of an HTTP/2 or HTTP/3 stream belong to one response.
@@ -982,10 +1019,14 @@ impl AnyResponse {
     }
 
     /// HTTP/1 only: an HTTP/2 or HTTP/3 stream has no socket read to finish.
-    pub fn close_after_message_if_parsing(self) -> bool {
+    pub fn close_after_message_if_parsing(self, drop_corked: bool) -> bool {
         match self {
-            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).close_after_message_if_parsing(),
-            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).close_after_message_if_parsing(),
+            AnyResponse::SSL(ptr) => {
+                TLSResponse::as_handle(ptr).close_after_message_if_parsing(drop_corked)
+            }
+            AnyResponse::TCP(ptr) => {
+                TCPResponse::as_handle(ptr).close_after_message_if_parsing(drop_corked)
+            }
             AnyResponse::H3(_) | AnyResponse::H2(_) => false,
         }
     }
@@ -1103,12 +1144,17 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.reset_timeout())
     }
 
-    pub fn clear_on_data(self) {
-        any_dispatch!(self, |r| r.clear_on_data())
+    /// Disarms an HTTP/1 connection's idle timer until the next write, for a response that waits on the server's own work (a bundle build).
+    pub fn suspend_timeout(self) {
+        match self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).suspend_timeout(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).suspend_timeout(),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => {}
+        }
     }
 
-    pub fn is_connect_request(self) -> bool {
-        any_dispatch!(self, |r| r.is_connect_request())
+    pub fn clear_on_data(self) {
+        any_dispatch!(self, |r| r.clear_on_data())
     }
 
     pub fn end_stream(self, close_connection: bool) {
@@ -1163,25 +1209,6 @@ impl AnyResponse {
             ),
         }
     }
-
-    /// See `Response::upgrade_raw`. Returns null in the same cases as `upgrade`.
-    pub fn upgrade_raw<D>(
-        self,
-        data: *mut D,
-        handshake: &[u8],
-        deflate_params: Option<&PerMessageDeflateParams>,
-        ctx: &mut WebSocketUpgradeContext,
-    ) -> *mut Socket {
-        match self {
-            AnyResponse::H3(_) | AnyResponse::H2(_) => core::ptr::null_mut(),
-            AnyResponse::SSL(ptr) => {
-                TLSResponse::as_handle(ptr).upgrade_raw(data, handshake, deflate_params, ctx)
-            }
-            AnyResponse::TCP(ptr) => {
-                TCPResponse::as_handle(ptr).upgrade_raw(data, handshake, deflate_params, ctx)
-            }
-        }
-    }
 }
 
 impl From<*mut TLSResponse> for AnyResponse {
@@ -1221,14 +1248,14 @@ bitflags::bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct State: u32 {
-        const HTTP_STATUS_CALLED               = 1;
-        const HTTP_WRITE_CALLED                = 2;
-        const HTTP_END_CALLED                  = 4;
-        const HTTP_RESPONSE_PENDING            = 8;
-        const HTTP_CONNECTION_CLOSE            = 16;
-        const HTTP_WROTE_CONTENT_LENGTH_HEADER = 32;
-        const HTTP_NODE_RECEIVED_FIN           = 1 << 15;
-        const HTTP_NODE_CLOSE_AFTER_MESSAGE    = 1 << 20;
+        const HTTP_STATUS_CALLED            = 1;
+        const HTTP_WRITE_CALLED             = 2;
+        const HTTP_END_CALLED               = 4;
+        const HTTP_RESPONSE_PENDING         = 8;
+        const HTTP_CONNECTION_CLOSE         = 16;
+        const HTTP_REQUEST_BODY_TOO_LARGE   = 128;
+        const HTTP_NODE_RECEIVED_FIN        = 1 << 15;
+        const HTTP_NODE_CLOSE_AFTER_MESSAGE = 1 << 20;
     }
 }
 
@@ -1239,8 +1266,8 @@ impl State {
     }
 
     #[inline]
-    pub fn has_written_content_length_header(self) -> bool {
-        self.bits() & State::HTTP_WROTE_CONTENT_LENGTH_HEADER.bits() != 0
+    pub fn is_request_body_too_large(self) -> bool {
+        self.bits() & State::HTTP_REQUEST_BODY_TOO_LARGE.bits() != 0
     }
 
     #[inline]
@@ -1295,12 +1322,8 @@ pub mod c {
     // shims are `safe fn`; (ptr,len), nullable raw, *mut c_void ctx stay
     // unsafe.
     unsafe extern "C" {
-        pub(crate) safe fn uws_res_mark_wrote_content_length_header(ssl: i32, res: &mut uws_res);
-        pub(crate) safe fn uws_res_mark_wrote_date_header(ssl: i32, res: &mut uws_res);
-        pub(crate) safe fn uws_res_write_mark(ssl: i32, res: &mut uws_res);
-        pub(crate) safe fn us_socket_mark_needs_more_not_ssl(socket: &mut uws_res);
+        pub(crate) safe fn uws_res_mark_fixed_length_file_body(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_state(ssl: c_int, res: &uws_res) -> State;
-        pub(crate) safe fn uws_res_is_connect_request(ssl: i32, res: &mut uws_res) -> bool;
         // Out-params are `&mut` (non-null, valid for write); the C shim only
         // stores into them and returns a length — no read-through precondition.
         pub(crate) safe fn uws_res_get_remote_address_info(
@@ -1315,6 +1338,7 @@ pub mod c {
         pub(crate) safe fn uws_res_close_after_message_if_parsing(
             ssl: i32,
             res: &mut uws_res,
+            drop_corked: bool,
         ) -> bool;
         pub(crate) safe fn uws_res_clear_handlers_of(
             ssl: i32,
@@ -1336,6 +1360,7 @@ pub mod c {
         pub(crate) safe fn uws_res_is_corked(ssl: i32, res: &mut uws_res) -> bool;
         pub(crate) safe fn uws_res_pause(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_resume(ssl: i32, res: &mut uws_res);
+        pub(crate) safe fn uws_res_is_paused(ssl: i32, res: &mut uws_res) -> bool;
         pub(crate) safe fn uws_res_write_continue(ssl: i32, res: &mut uws_res);
         pub(crate) fn uws_res_write_informational(
             ssl: i32,
@@ -1369,6 +1394,14 @@ pub mod c {
             res: &mut uws_res,
             close_connection: bool,
         );
+        pub(crate) safe fn uws_res_end_head_of_stream(
+            ssl: i32,
+            res: &mut uws_res,
+            close_connection: bool,
+        );
+        pub(crate) safe fn uws_res_accept_request_body(ssl: i32, res: &mut uws_res) -> bool;
+        pub(crate) safe fn uws_res_abandon(ssl: i32, res: &mut uws_res);
+        pub(crate) safe fn uws_res_request_writable(res: &mut uws_res);
         pub(crate) safe fn uws_res_end_sendfile(
             ssl: i32,
             res: &mut uws_res,
@@ -1451,15 +1484,6 @@ pub mod c {
             sec_web_socket_protocol_length: usize,
             sec_web_socket_extensions: *const u8,
             sec_web_socket_extensions_length: usize,
-            ws: *mut WebSocketUpgradeContext,
-        ) -> *mut Socket;
-        pub(crate) fn uws_res_upgrade_raw(
-            ssl: i32,
-            res: *mut uws_res,
-            data: *mut c_void,
-            handshake: *const u8,
-            handshake_length: usize,
-            deflate_params: Option<&PerMessageDeflateParams>,
             ws: *mut WebSocketUpgradeContext,
         ) -> *mut Socket;
         // safe: cork is synchronous — `ctx` is passed straight back to

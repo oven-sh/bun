@@ -257,6 +257,7 @@ nobody caught TypeError Attempted to assign to readonly property.
 response 1 close 
 request 1 end 
 request 1 close 
+nobody caught Error ServerResponse has an already assigned socket
 nobody caught TypeError Attempted to assign to readonly property.
 nobody caught TypeError Attempted to assign to readonly property.
 response 2 finish 
@@ -265,8 +266,6 @@ request 2 end
 request 2 close 
 connections 2
 socket error TypeError Attempted to assign to readonly property.
-socket close 
-socket close, heard through an heir
 socket close 
 socket close, heard through an heir
 == freeze socket during
@@ -284,6 +283,7 @@ nobody caught TypeError Attempted to assign to readonly property.
 response 1 close 
 request 1 end 
 request 1 close 
+nobody caught Error ServerResponse has an already assigned socket
 nobody caught TypeError Attempted to assign to readonly property.
 nobody caught TypeError Attempted to assign to readonly property.
 response 2 finish 
@@ -292,8 +292,6 @@ request 2 end
 request 2 close 
 connections 2
 socket error TypeError Attempted to assign to readonly property.
-socket close 
-socket close, heard through an heir
 socket close 
 socket close, heard through an heir
 == freeze socket after
@@ -311,6 +309,7 @@ nobody caught TypeError Attempted to assign to readonly property.
 response 1 close 
 request 1 end 
 request 1 close 
+nobody caught Error ServerResponse has an already assigned socket
 nobody caught TypeError Attempted to assign to readonly property.
 nobody caught TypeError Attempted to assign to readonly property.
 response 2 finish 
@@ -319,8 +318,6 @@ request 2 end
 request 2 close 
 connections 2
 socket error TypeError Attempted to assign to readonly property.
-socket close 
-socket close, heard through an heir
 socket close 
 socket close, heard through an heir
 == seal request before
@@ -336,7 +333,7 @@ seal request before closed sealed
 response 1 finish 
 response 1 close 
 request 1 end 
-nobody caught TypeError Attempting to define property on object that is not extensible.
+request 1 close 
 response 2 finish 
 response 2 close 
 request 2 end 
@@ -361,7 +358,7 @@ seal request during closed sealed
 response 1 finish 
 response 1 close 
 request 1 end 
-nobody caught TypeError Attempting to define property on object that is not extensible.
+request 1 close 
 response 2 finish 
 response 2 close 
 request 2 end 
@@ -386,7 +383,7 @@ seal request after closed sealed
 response 1 finish 
 response 1 close 
 request 1 end 
-nobody caught TypeError Attempting to define property on object that is not extensible.
+request 1 close 
 response 2 finish 
 response 2 close 
 request 2 end 
@@ -567,7 +564,7 @@ preventExtensions request before closed
 response 1 finish 
 response 1 close 
 request 1 end 
-nobody caught TypeError Attempting to define property on object that is not extensible.
+request 1 close 
 response 2 finish 
 response 2 close 
 request 2 end 
@@ -592,7 +589,7 @@ preventExtensions request during closed
 response 1 finish 
 response 1 close 
 request 1 end 
-nobody caught TypeError Attempting to define property on object that is not extensible.
+request 1 close 
 response 2 finish 
 response 2 close 
 request 2 end 
@@ -617,7 +614,7 @@ preventExtensions request after closed
 response 1 finish 
 response 1 close 
 request 1 end 
-nobody caught TypeError Attempting to define property on object that is not extensible.
+request 1 close 
 response 2 finish 
 response 2 close 
 request 2 end 

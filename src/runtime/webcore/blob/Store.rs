@@ -6,7 +6,6 @@
 //! (S3 I/O, async file ops, structured-clone serialize) via extension traits.
 
 use core::ffi::c_void;
-use core::ptr::NonNull;
 
 use crate::node::fs as node_fs;
 use crate::node::types::PathOrFileDescriptorSerializeTag;
@@ -487,23 +486,6 @@ impl BytesExt for Bytes {
         self.len = 0;
         self.cap = 0;
         self.allocator = bun_alloc::basic::C_ALLOCATOR;
-        super::Internal {
-            bytes,
-            was_string: false,
-        }
+        bytes.into()
     }
-}
-
-/// JSC `ArrayBuffer` external
-/// deallocator callback for buffers backed by a `Blob.Store`. C++ stashes a
-/// `*mut Store` as the deallocator context; this releases that ref.
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn BlobArrayBuffer_deallocator(
-    _bytes: *mut core::ffi::c_void,
-    blob: *mut core::ffi::c_void,
-) {
-    // SAFETY: `blob` is the non-null `*mut Store` C++ stashed as deallocator
-    // context (originating from `heap::alloc` / `RefPtr<Store>::into_raw`); it
-    // owns one outstanding reference being released here.
-    unsafe { Store::deref(NonNull::new_unchecked(blob.cast::<Store>())) };
 }

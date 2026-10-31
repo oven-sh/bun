@@ -12,15 +12,11 @@ namespace uWS {
 struct H3App {
     Http3Context *http3Context;
 
-    static H3App *create(SocketContextOptions options, unsigned idleTimeoutSecs = 0) {
-        us_bun_socket_context_options_t raw;
-        memcpy(&raw, &options, sizeof(raw));
-        Http3Context *ctx = Http3Context::create(Loop::get(), raw, idleTimeoutSecs);
+    static H3App *create(us_bun_socket_context_options_t options, unsigned idleTimeoutSecs, uint64_t maxRequestBodySize) {
+        Http3Context *ctx = Http3Context::create(Loop::get(), options, idleTimeoutSecs, maxRequestBodySize);
         if (!ctx) return nullptr;
         return new H3App{ctx};
     }
-
-    bool constructorFailed() { return http3Context == nullptr; }
 
     ~H3App() {
         if (http3Context) http3Context->free();
@@ -45,7 +41,7 @@ struct H3App {
 #undef H3_METHOD
 
     H3App &&listen(const std::string &host, int port, int options,
-                   MoveOnlyFunction<void(us_quic_listen_socket_t *)> &&cb) {
+                   MoveOnlyFunction<void(us_quic_udp_t *)> &&cb) {
         cb(http3Context->listen(host.empty() ? nullptr : host.c_str(), port, options));
         return std::move(*this);
     }
@@ -55,12 +51,15 @@ struct H3App {
     }
     /* GOAWAY + drain. The engine itself is torn down in the destructor. */
     void close() { http3Context->shutdown(); }
-    bool addServerNameWithOptions(const char *hostname, SocketContextOptions options) {
-        us_bun_socket_context_options_t raw;
-        memcpy(&raw, &options, sizeof(raw));
-        return http3Context->addServerName(hostname, raw);
+    /* See us_quic_socket_context_on_released. */
+    void onReleased(void (*cb)(void *), void *user) {
+        http3Context->getContextData()->onReleased = cb;
+        http3Context->getContextData()->onReleasedUser = user;
     }
-    void *getNativeHandle() { return http3Context; }
+    bool isReleased() { return us_quic_socket_context_is_released((us_quic_socket_context_t *) http3Context) != 0; }
+    bool addServerNameWithOptions(const char *hostname, us_bun_socket_context_options_t options) {
+        return http3Context->addServerName(hostname, options);
+    }
 };
 
 }

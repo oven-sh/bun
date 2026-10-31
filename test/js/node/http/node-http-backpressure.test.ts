@@ -15,7 +15,7 @@ import https from "node:https";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
 import path from "node:path";
-import { Duplex, duplexPair, finished, Readable } from "node:stream";
+import { Duplex, duplexPair, finished, pipeline, Readable, Writable } from "node:stream";
 import nodeTls from "node:tls";
 import { Worker } from "node:worker_threads";
 
@@ -25,31 +25,56 @@ describe("backpressure", () => {
   // chunk buffer keeps the test's peak memory small (the previous version held
   // a single 2 GB payload plus the server's queued copy, which pushed peak RSS
   // past 4.5 GB and intermittently got OOM-killed on 8 GB CI runners).
+  // Resolves with the number of writes that returned false.
   async function writeBytes(res: http.ServerResponse, total: number, chunk: Buffer) {
     let remaining = total;
+    let backedUp = 0;
     while (remaining > 0) {
       const slice = remaining >= chunk.byteLength ? chunk : chunk.subarray(0, remaining);
       remaining -= slice.byteLength;
       if (!res.write(slice)) {
+        backedUp++;
         await once(res, "drain");
       }
     }
     res.end();
+    return backedUp;
   }
 
-  async function countResponseBytes(port: number): Promise<number> {
-    const response = await fetch(`http://localhost:${port}/`);
-    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
-    let totalBytes = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-
-      if (value) {
-        totalBytes += value.byteLength;
+  // Counts the body of a chunked response on a raw socket. Only the server is under test, and a
+  // fetch() body reader takes about three times as long for 2 GiB on a debug build.
+  async function countChunkedBody(port: number) {
+    const socket = net.connect(port, "127.0.0.1");
+    socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    let inHead = true;
+    let line = "";
+    // Bytes left of the current chunk's data and its CRLF.
+    let skip = 0;
+    let bytes = 0;
+    let terminated = false;
+    socket.on("data", (buf: Buffer) => {
+      for (let i = 0; i < buf.length;) {
+        if (skip > 0) {
+          const n = Math.min(skip, buf.length - i);
+          skip -= n;
+          i += n;
+          continue;
+        }
+        line += String.fromCharCode(buf[i++]);
+        if (!line.endsWith("\r\n")) continue;
+        if (inHead) {
+          inHead = line !== "\r\n";
+        } else {
+          const size = parseInt(line, 16);
+          bytes += size;
+          skip = size + 2;
+          terminated = size === 0;
+        }
+        line = "";
       }
-      if (done) break;
-    }
-    return totalBytes;
+    });
+    await once(socket, "close");
+    return { bytes, terminated: terminated && skip === 0 };
   }
 
   it("should handle backpressure", async () => {
@@ -188,6 +213,38 @@ describe("backpressure", () => {
       client.postMessage({ port, bodyBytesRead });
       const [{ needDrain, drained, written }, body] = await Promise.all([outcome.promise, clientClosed]);
       expect({ needDrain, drained, body }).toEqual({ needDrain: true, drained: true, body: written });
+    });
+  });
+
+  describe.each(["listen()", 'emit("connection")'] as const)("on a connection from %s", kind => {
+    it("'drain' waits until the connection has sent every write, so the handler can reuse its buffer", async () => {
+      const size = 16 * 1024 * 1024;
+      const slice = 64 * 1024;
+      let drains = 0;
+      const httpServer = http.createServer((req, res) => {
+        const buffer = Buffer.alloc(size, "a");
+        res.setHeader("Content-Length", size);
+        for (let offset = 0; offset < size; offset += slice) res.write(buffer.subarray(offset, offset + slice));
+        res.on("drain", () => {
+          if (++drains > 1) return;
+          buffer.fill("b");
+          res.end();
+        });
+      });
+      const server =
+        kind === "listen()" ? httpServer : net.createServer(socket => httpServer.emit("connection", socket));
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      try {
+        const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+        const body = Buffer.from(await response.arrayBuffer());
+        expect({ length: body.length, firstOverwrittenByte: body.indexOf("b"), drains }).toEqual({
+          length: size,
+          firstOverwrittenByte: -1,
+          drains: 1,
+        });
+      } finally {
+        server.close();
+      }
     });
   });
 
@@ -806,6 +863,27 @@ describe("backpressure", () => {
       if (backlog) {
         expect(events.indexOf("request second")).toBeLessThan(events.indexOf("finish first"));
       }
+    });
+
+    it("stream.pipe(res) answers a request pipelined behind the unfinished response", async () => {
+      const needDrain = Promise.withResolvers<boolean>();
+      await using server = http.createServer((req, res) => {
+        if (req.url === "/first") return void writeBody(res);
+        needDrain.resolve(res.writableNeedDrain);
+        Readable.from(["sec", "ond"]).pipe(res);
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      using client = pausedClient(
+        (server.address() as AddressInfo).port,
+        "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\nGET /second HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+      );
+      expect(await needDrain.promise).toBe(false);
+      client.resume();
+      const { bytes } = await client.done;
+      const secondHead = bytes.indexOf("\r\n\r\n") + 4 + BODY;
+      expect(bytes.subarray(bytes.indexOf("\r\n\r\n", secondHead) + 4).toString()).toBe(
+        "3\r\nsec\r\n3\r\nond\r\n0\r\n\r\n",
+      );
     });
 
     // These replies are raw socket.write() calls, which do not go through a response.
@@ -1453,24 +1531,36 @@ describe("backpressure", () => {
       key: readFileSync(path.join(keysDir, "agent1-key.pem")),
     };
     type RequestListener = (req: http.IncomingMessage, res: http.ServerResponse) => void;
+    async function connectTcp(port: number) {
+      const sock = net.connect(port, "127.0.0.1");
+      sock.on("error", () => {});
+      await once(sock, "connect");
+      return sock;
+    }
+    async function connectTls(port: number) {
+      const sock = nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+      sock.on("error", () => {});
+      await once(sock, "secureConnect");
+      return sock;
+    }
     const transports = {
-      http: {
-        createServer: (listener: RequestListener) => http.createServer(listener),
-        async connect(port: number) {
-          const sock = net.connect(port, "127.0.0.1");
-          sock.on("error", () => {});
-          await once(sock, "connect");
-          return sock;
-        },
-      },
+      http: { createServer: (listener: RequestListener) => http.createServer(listener), connect: connectTcp },
       https: {
         createServer: (listener: RequestListener) => https.createServer(tlsOptions, listener),
-        async connect(port: number) {
-          const sock = nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
-          sock.on("error", () => {});
-          await once(sock, "secureConnect");
-          return sock;
+        connect: connectTls,
+      },
+      // The next two are parsed in JS, not by the native server.
+      "server.emit('connection', socket)": {
+        createServer(listener: RequestListener) {
+          const server = http.createServer(listener);
+          return net.createServer(socket => void server.emit("connection", socket));
         },
+        connect: connectTcp,
+      },
+      "http2.createSecureServer({ allowHTTP1: true })": {
+        createServer: (listener: RequestListener) =>
+          http2.createSecureServer({ ...tlsOptions, allowHTTP1: true }, listener as never),
+        connect: connectTls,
       },
     };
     type Transport = (typeof transports)[keyof typeof transports];
@@ -1583,6 +1673,120 @@ describe("backpressure", () => {
           expect(await upload.finish()).toStartWith("HTTP/1.1 200 ");
         } finally {
           upload.sock.destroy();
+        }
+      });
+    });
+
+    describe("on a socket passed to server.emit('connection')", () => {
+      const HWM = 64 * 1024;
+      const GET = (path: string) => `GET ${path} HTTP/1.1\r\nHost: localhost\r\n\r\n`;
+      const POST = (path: string, length: number) =>
+        `POST ${path} HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${length}\r\n\r\n`;
+      // The server gets exactly the chunks the test pushes.
+      const scriptedSocket = () => new Duplex({ read() {}, write: (chunk, encoding, callback) => callback() });
+
+      it("reads the next request while a complete, unread body is still buffered", async () => {
+        const socket = scriptedSocket();
+        const events: string[] = [];
+        const next = Promise.withResolvers<void>();
+        const server = http.createServer(req => {
+          events.push(req.url!);
+          if (req.url === "/next") return next.resolve();
+          req.socket.once("pause", () => events.push("pause"));
+        });
+        server.emit("connection", socket);
+        try {
+          socket.push(POST("/unread", 2 * HWM) + Buffer.alloc(2 * HWM, "x"));
+          socket.push(GET("/next"));
+          await next.promise;
+          expect(events).toEqual(["/unread", "pause", "/next"]);
+        } finally {
+          socket.destroy();
+        }
+      });
+
+      it("reads a body on a socket that still has an earlier connection's _paused mark", async () => {
+        const socket = scriptedSocket() as Duplex & { _paused?: boolean };
+        const { promise, resolve } = Promise.withResolvers<number>();
+        const server = http.createServer(req => {
+          req.socket.once("pause", () => {
+            let total = 0;
+            req.on("data", (chunk: Buffer) => (total += chunk.byteLength));
+            req.on("end", () => resolve(total));
+          });
+        });
+        socket._paused = true;
+        server.emit("connection", socket);
+        try {
+          socket.push(POST("/", 4 * HWM));
+          for (let i = 0; i < 4; i++) socket.push(Buffer.alloc(HWM, "b"));
+          expect(await promise).toBe(4 * HWM);
+        } finally {
+          socket.destroy();
+        }
+      });
+
+      it.each<[string, (req: http.IncomingMessage) => Promise<void>]>([
+        [
+          "pipeline()'s sink fails",
+          req => {
+            const { promise, resolve } = Promise.withResolvers<void>();
+            // The sink holds its first chunk, so the request fills up behind it and stops the socket.
+            let held: ((error: Error) => void) | undefined;
+            const sink = new Writable({ write: (chunk, encoding, callback) => void (held = callback) });
+            req.socket.on("pause", () => {
+              const fail = held;
+              held = undefined;
+              fail?.(new Error("sink"));
+            });
+            pipeline(req, sink, () => resolve());
+            return promise;
+          },
+        ],
+        [
+          "a `for await` over the request breaks",
+          async req => {
+            for await (const _ of req) break;
+          },
+        ],
+      ])("serves the next request after %s with the body still arriving", async (_, abandon) => {
+        const socket = scriptedSocket();
+        const next = Promise.withResolvers<void>();
+        const server = http.createServer(async (req, res) => {
+          if (req.url === "/next") return next.resolve();
+          await abandon(req);
+          res.end("first");
+        });
+        server.emit("connection", socket);
+        try {
+          socket.push(POST("/first", 8 * HWM));
+          for (let i = 0; i < 8; i++) socket.push(Buffer.alloc(HWM, "b"));
+          socket.push(GET("/next"));
+          await next.promise;
+        } finally {
+          socket.destroy();
+        }
+      });
+
+      it("runs the next request in the connection's async context, not the context that resumed the body", async () => {
+        const storage = new AsyncLocalStorage<string>();
+        const stores: string[] = [];
+        const next = Promise.withResolvers<void>();
+        const server = http.createServer(req => {
+          stores.push(`${req.url} in ${storage.getStore()}`);
+          if (req.url === "/next") return next.resolve();
+          req.socket.once("pause", () => storage.run("reader", () => void req.resume()));
+        });
+        const socket = scriptedSocket();
+        storage.run("connection", () => void server.emit("connection", socket));
+        try {
+          socket.push(POST("/first", 4 * HWM));
+          for (let i = 0; i < 4; i++) socket.push(Buffer.alloc(HWM, "b"));
+          socket.push(GET("/next"));
+          await next.promise;
+          expect(stores).toEqual(["/first in connection", "/next in connection"]);
+        } finally {
+          socket.destroy();
         }
       });
     });
@@ -1878,17 +2082,17 @@ describe("backpressure", () => {
         earlierResponsePending: boolean;
         returned: boolean[];
       }>();
+      let earlier: http.ServerResponse;
       await using server = http.createServer((req, res) => {
         if (req.url !== "/ignored") {
+          earlier = res;
           res.end(payload);
           return;
         }
         try {
           res.statusCode = req.method === "HEAD" ? 200 : 204;
           res.on("drain", () => called.push("drain"));
-          // Bun counts the unsent bytes of the earlier response on this
-          // response, Node counts them on the socket.
-          const earlierResponsePending = res.writableLength + req.socket.writableLength > 0;
+          const earlierResponsePending = earlier.writableLength > 0;
           const returned = [
             res.write("x", () => called.push("x")),
             res.write("", () => called.push("empty string")),
@@ -2368,21 +2572,21 @@ describe("backpressure", () => {
   it("should handle backpressure with INT_MAX bytes", async () => {
     const totalSize = 1024 * 1024 * 1024 * 2; // 2^31, one past INT_MAX
     const chunk = Buffer.alloc(64 * 1024 * 1024, "a");
+    const backedUp = Promise.withResolvers<number>();
     await using server = http.createServer((req, res) => {
       res.writeHead(200, {
         "Content-Type": "application/octet-stream",
         "Transfer-Encoding": "chunked",
       });
 
-      writeBytes(res, totalSize, chunk);
+      writeBytes(res, totalSize, chunk).then(backedUp.resolve, backedUp.reject);
     });
 
     await once(server.listen(0), "listening");
 
     const PORT = (server.address() as AddressInfo).port;
-    const totalBytes = await countResponseBytes(PORT);
-
-    expect(totalBytes).toBe(totalSize);
+    expect(await countChunkedBody(PORT)).toEqual({ bytes: totalSize, terminated: true });
+    expect(await backedUp.promise).toBe(totalSize / chunk.length);
   }, 30_000);
 
   it("should handle backpressure with more than INT_MAX bytes", async () => {
@@ -2390,20 +2594,20 @@ describe("backpressure", () => {
     const smallPayloadSize = 1024 * 1024;
     const totalSize = 1024 * 1024 * 1024 * 2; // 2^31, one past INT_MAX
     const chunk = Buffer.alloc(64 * 1024 * 1024, "a");
+    const backedUp = Promise.withResolvers<number>();
     await using server = http.createServer((req, res) => {
       res.writeHead(200, {
         "Content-Type": "application/octet-stream",
         "Transfer-Encoding": "chunked",
       });
       res.write(Buffer.alloc(smallPayloadSize, "a"));
-      writeBytes(res, totalSize, chunk);
+      writeBytes(res, totalSize, chunk).then(backedUp.resolve, backedUp.reject);
     });
 
     await once(server.listen(0), "listening");
 
     const PORT = (server.address() as AddressInfo).port;
-    const totalBytes = await countResponseBytes(PORT);
-
-    expect(totalBytes).toBe(totalSize + smallPayloadSize);
+    expect(await countChunkedBody(PORT)).toEqual({ bytes: totalSize + smallPayloadSize, terminated: true });
+    expect(await backedUp.promise).toBe(totalSize / chunk.length);
   }, 30_000);
 });

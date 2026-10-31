@@ -218,6 +218,7 @@ enum class CommonStringsForRust : uint8_t {
     fetchOptionTls = 30,
     fetchOptionUnix = 31,
     fetchOptionVerbose = 32,
+    fetchBasic = 33,
 };
 
 static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForRust commonString)
@@ -290,6 +291,8 @@ static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForRust c
         return commonStrings.fetchOptionUnixString();
     case CommonStringsForRust::fetchOptionVerbose:
         return commonStrings.fetchOptionVerboseString();
+    case CommonStringsForRust::fetchBasic:
+        return commonStrings.fetchBasicString();
     default: {
         ASSERT_NOT_REACHED();
         return jsUndefined();

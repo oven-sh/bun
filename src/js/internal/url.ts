@@ -17,6 +17,11 @@ interface HttpOptions {
   auth?: string;
 }
 
+// Node's isURL (lib/internal/url.js). Legacy url.parse() objects set `auth` and `path`, so they don't match.
+function isURL(self) {
+  return Boolean(self?.href && self.protocol && self.auth === undefined && self.path === undefined);
+}
+
 function urlToHttpOptions(url: URL) {
   const options: HttpOptions = {
     __proto__: null,
@@ -47,5 +52,6 @@ export default {
   domainToASCII,
   domainToUnicode,
   idnaToASCII,
+  isURL,
   urlToHttpOptions,
 };

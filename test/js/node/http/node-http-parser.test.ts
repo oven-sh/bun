@@ -315,6 +315,67 @@ describe("HTTPParser.prototype.execute", () => {
   });
 });
 
+describe("the callback slots are read at each call", () => {
+  const request = Buffer.from(
+    "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n",
+  );
+  function parse(prepare: (parser: any, log: string[]) => void) {
+    const parser = new HTTPParser();
+    const log: string[] = [];
+    parser.initialize(HTTPParser.REQUEST, {});
+    parser[HTTPParser.kOnMessageComplete] = () => log.push("complete");
+    prepare(parser, log);
+    const parsed = parser.execute(request);
+    parser.close();
+    return { parsed, log };
+  }
+
+  test("a slot that its own callback replaces", () => {
+    const result = parse((parser, log) => {
+      parser[HTTPParser.kOnBody] = (chunk: Buffer) => {
+        log.push(`first ${chunk}`);
+        parser[HTTPParser.kOnBody] = (chunk: Buffer) => log.push(`second ${chunk}`);
+      };
+    });
+    expect(result).toEqual({ parsed: request.length, log: ["first a", "second b", "second c", "complete"] });
+  });
+
+  test("a slot that its own callback deletes", () => {
+    const result = parse((parser, log) => {
+      parser[HTTPParser.kOnBody] = (chunk: Buffer) => {
+        log.push(`first ${chunk}`);
+        delete parser[HTTPParser.kOnBody];
+      };
+    });
+    expect(result).toEqual({ parsed: request.length, log: ["first a", "complete"] });
+  });
+
+  test("a slot that holds something else than a function", () => {
+    const result = parse(parser => void (parser[HTTPParser.kOnBody] = 1));
+    expect(result).toEqual({ parsed: request.length, log: ["complete"] });
+  });
+
+  test("an accessor", () => {
+    const result = parse((parser, log) => {
+      let reads = 0;
+      Object.defineProperty(parser, HTTPParser.kOnBody, {
+        get: () => (chunk: Buffer) => log.push(`read ${++reads} ${chunk}`),
+      });
+    });
+    expect(result).toEqual({ parsed: request.length, log: ["read 1 a", "read 2 b", "read 3 c", "complete"] });
+  });
+
+  test("a slot on the prototype chain", () => {
+    const result = parse((parser, log) => {
+      Object.setPrototypeOf(parser, {
+        __proto__: HTTPParser.prototype,
+        [HTTPParser.kOnBody]: (chunk: Buffer) => log.push(`inherited ${chunk}`),
+      });
+    });
+    expect(result).toEqual({ parsed: request.length, log: ["inherited a", "inherited b", "inherited c", "complete"] });
+  });
+});
+
 describe("a callback that throws stops the parse", () => {
   const kOnMessageBegin = HTTPParser.kOnMessageBegin;
   const kOnBody = HTTPParser.kOnBody;
@@ -436,7 +497,7 @@ describe("ConnectionsList", () => {
     p4.initialize(HTTPParser.REQUEST, {}, 0, 0, list);
 
     expect(list.all()).toEqual([p1, p2, p3, p4]);
-    expect(list.idle()).toEqual([]);
+    expect(list.idle()).toEqual([p1, p2, p3, p4]);
     expect(list.active()).toEqual([p1, p2, p3, p4]);
     expect(list.expired()).toEqual([]);
     p2.remove();
@@ -450,6 +511,52 @@ describe("ConnectionsList", () => {
     // frees the implementation causing remove to not be able
     // to remove it.
     expect(list.all()).toEqual([p1, p4, p3]);
+  });
+
+  test("idle() lists a parser until its first byte arrives", () => {
+    const list = new ConnectionsList();
+    const parser = new HTTPParser();
+    parser.initialize(HTTPParser.REQUEST, {}, 0, 0, list);
+    expect(list.idle()).toEqual([parser]);
+    parser.execute(Buffer.from("G"));
+    expect(list.idle()).toEqual([]);
+  });
+
+  test("a parser removed during execute() stays out of the list", () => {
+    const list = new ConnectionsList();
+    const parser = new HTTPParser();
+    parser.initialize(HTTPParser.REQUEST, {}, 0, 0, list);
+    parser[HTTPParser.kOnHeadersComplete] = () => parser.remove();
+    parser.execute(Buffer.from("GET / HTTP/1.1\r\n\r\nGET / HTTP/1.1\r\n\r\n"));
+    expect(list.all()).toEqual([]);
+    expect(list.active()).toEqual([]);
+  });
+
+  // 4,227,858,433 ms in nanoseconds wraps to exactly 1 ms in 32 bits.
+  const longTimeout = 4_227_858_433;
+  test.each([
+    [1, 0, ["incomplete"]],
+    [0, 1, ["incomplete", "complete"]],
+    [longTimeout, 0, []],
+    [0, longTimeout, []],
+    [longTimeout, longTimeout, []],
+    [longTimeout, 1, ["incomplete"]],
+    [1, longTimeout, ["incomplete"]],
+  ])("expired(%d, %d) matches Node", (headersTimeout, requestTimeout, expired) => {
+    const list = new ConnectionsList();
+    const incomplete = new HTTPParser();
+    incomplete.initialize(HTTPParser.REQUEST, {}, 0, 0, list);
+    const complete = new HTTPParser();
+    complete.initialize(HTTPParser.REQUEST, {}, 0, 0, list);
+    complete.execute(Buffer.from("POST / HTTP/1.1\r\nContent-Length: 1\r\n\r\n"));
+    expect([incomplete.headersCompleted(), complete.headersCompleted()]).toEqual([false, true]);
+    while (incomplete.duration() < 2 || complete.duration() < 2) {}
+
+    const names = new Map([
+      [incomplete, "incomplete"],
+      [complete, "complete"],
+    ]);
+    expect(list.expired(headersTimeout, requestTimeout).map(parser => names.get(parser))).toEqual(expired);
   });
 });
 

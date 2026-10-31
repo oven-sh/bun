@@ -59,6 +59,27 @@ public:
         return &fromSocket(s)->data;
     }
 
+    /* Makes a WebSocket of an open socket whose ext (extSize bytes) has no owner left. Returns nullptr, with s untouched, if s is closed or shut down. */
+    us_socket_t *adoptSocket(us_socket_t *s, int extSize, USERDATA &&userData, std::string_view handshake, bool perMessageDeflate,
+            CompressOptions compressOptions, void *socketData, WebSocketData::OnSocketClosedCallback onSocketClosed) {
+        us_socket_t *adopted = us_socket_adopt(s, &group, socketKind(), extSize, sizeof(WebSocketData) + sizeof(USERDATA));
+        if (!adopted) {
+            return nullptr;
+        }
+        auto *webSocket = (WebSocket<SSL, isServer, USERDATA> *) adopted;
+        auto *asyncSocket = (AsyncSocket<SSL> *) adopted;
+        webSocket->init(perMessageDeflate, compressOptions, BackPressure(), socketData, onSocketClosed);
+        asyncSocket->cork();
+        asyncSocket->write(handshake.data(), (int) handshake.length());
+        us_socket_timeout(adopted, data.idleTimeoutComponents.first);
+        new (webSocket->getUserData()) USERDATA(std::move(userData));
+        if (data.openHandler) {
+            data.openHandler(webSocket);
+        }
+        asyncSocket->uncork();
+        return adopted;
+    }
+
 private:
     /* If we have negotiated compression, mark the message as compressed. Idempotent:
      * consume() re-validates the same header when an extended-length header straddles
@@ -314,7 +335,7 @@ private:
         /* For whatever reason, if we already have emitted close event, do not emit it again */
         WebSocketData *webSocketData = (WebSocketData *) (us_socket_ext(s));
         if (webSocketData->socketData && webSocketData->onSocketClosed) {
-            webSocketData->onSocketClosed(webSocketData->socketData, SSL, (us_socket_t *) s, 0, false);
+            webSocketData->onSocketClosed(webSocketData->socketData, s, 0, false);
         }
         if (!webSocketData->isShuttingDown) {
             /* Emit close event */
@@ -428,12 +449,6 @@ private:
         return s;
     }
 
-    static us_socket_t *onLongTimeout(us_socket_t *s) {
-        ((WebSocket<SSL, isServer, USERDATA> *) s)->end(1000, "please reconnect");
-
-        return s;
-    }
-
     static us_socket_t *onTimeout(us_socket_t *s) {
         auto *webSocketData = (WebSocketData *)(us_socket_ext(s));
         auto *webSocketContextData = getExtS(s);
@@ -459,7 +474,6 @@ private:
         /* on_writable */     &onWritable,
         /* on_close */        &onClose,
         /* on_timeout */      &onTimeout,
-        /* on_long_timeout */ &onLongTimeout,
         /* on_end */          &onEnd,
         /* on_connect_error */nullptr,
         /* on_connecting_error */ nullptr,

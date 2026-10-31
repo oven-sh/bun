@@ -613,6 +613,20 @@ describe("spawn stdin ReadableStream", () => {
     }).toThrow("'stdin' ReadableStream has already been used");
   });
 
+  test.each([
+    ["a stream script made", () => new ReadableStream({ pull: controller => controller.close() })],
+    ["a Blob's stream", () => new Blob(["data"]).stream()],
+  ])("a locked ReadableStream throws error: %s", (_, make) => {
+    const stream = make();
+    stream.getReader();
+    const cmd = [bunExe(), "-e", "process.stdin.pipe(process.stdout)"];
+    expect(() => spawn({ cmd, stdin: stream, env: bunEnv })).toThrow("'stdin' ReadableStream has already been used");
+
+    const response = new Response(make());
+    response.body!.getReader();
+    expect(() => spawn({ cmd, stdin: response, env: bunEnv })).toThrow("ReadableStream has already been used");
+  });
+
   test("ReadableStream with abort signal calls cancel", async () => {
     const controller = new AbortController();
     const cancel = mock();

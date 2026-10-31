@@ -29,16 +29,20 @@ pub(crate) mod callbacks {
             .set(global, holder);
     }
 
-    pub(crate) fn get(global: &JSGlobalObject, name: &str) -> Option<JSValue> {
-        let holder = global
-            .bun_vm()
-            .as_mut()
-            .rare_data()
-            .node_quic_callbacks
-            .get()?;
-        match holder.get(global, name) {
-            Ok(Some(value)) if value.is_callable() => Some(value),
-            _ => None,
+    /// Calls the callback that `setCallbacks()` got under `name`, and reports what it throws as uncaught.
+    pub(crate) fn call(global: &JSGlobalObject, name: &str, this: JSValue, args: &[JSValue]) {
+        let vm = global.bun_vm().as_mut();
+        let Some(holder) = vm.rare_data().node_quic_callbacks.get() else {
+            return;
+        };
+        if let Ok(Some(callback)) = holder.get(global, name) {
+            vm.event_loop_ref().run_callback(
+                bun_event_loop::ContextId::NONE,
+                callback,
+                global,
+                this,
+                args,
+            );
         }
     }
 }

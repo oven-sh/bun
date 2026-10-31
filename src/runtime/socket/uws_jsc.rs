@@ -2,43 +2,114 @@
 //! Exports here are referenced via aliases on the original structs so call
 //! sites do not change.
 
-use bun_jsc::{JSGlobalObject, JSValue};
-use bun_uws::{
-    AnyWebSocket, RawWebSocket, create_bun_socket_error_t, us_socket_stream_buffer_t, us_socket_t,
-};
+use bun_jsc::{JSGlobalObject, JSValue, JsError};
+use bun_uws::{AnyWebSocket, RawWebSocket, create_bun_socket_error_t};
 
-use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
-
-// ── local extension: StreamBuffer accessors (upstream `bun_uws_sys::us_socket::StreamBuffer`
-// is a bare `{ list: Vec<u8>, cursor: usize }`; mirror `bun_io::StreamBuffer` API here) ──
-trait StreamBufferExt {
-    fn is_not_empty(&self) -> bool;
-    fn slice(&self) -> &[u8];
-    fn wrote(&mut self, amount: usize);
-    fn write(&mut self, buffer: &[u8]);
+/// What a failed `listen()` was asked to listen on.
+pub(crate) enum ListenTarget<'a> {
+    Tcp {
+        hostname: Option<&'a [u8]>,
+        port: u16,
+    },
+    Unix(&'a [u8]),
+    Fd,
 }
-impl StreamBufferExt for bun_uws_sys::us_socket::StreamBuffer {
-    #[inline]
-    fn is_not_empty(&self) -> bool {
-        self.list.len() > self.cursor
-    }
-    #[inline]
-    fn slice(&self) -> &[u8] {
-        &self.list[self.cursor..]
-    }
-    #[inline]
-    fn wrote(&mut self, amount: usize) {
-        self.cursor += amount;
-    }
-    #[inline]
-    fn write(&mut self, buffer: &[u8]) {
-        // Same rule as `bun_io::StreamBuffer::compact`.
-        if self.cursor > 0 && self.cursor >= self.list.len() - self.cursor {
-            self.list.drain(..self.cursor);
-            self.cursor = 0;
+
+impl<'a> ListenTarget<'a> {
+    fn address(&self) -> Option<&'a [u8]> {
+        match *self {
+            ListenTarget::Tcp { hostname, .. } => hostname,
+            ListenTarget::Unix(path) => Some(path),
+            ListenTarget::Fd => None,
         }
-        self.list.extend_from_slice(buffer);
     }
+}
+
+/// Each API keeps the message it has always thrown.
+#[derive(Clone, Copy)]
+pub(crate) enum ListenApi {
+    BunServe,
+    BunListen,
+}
+
+/// Throws the error of a failed `Bun.serve()` or `Bun.listen()`. node:http and node:net build theirs from its `code` and `syscall`.
+#[cold]
+pub(crate) fn throw_listen_error(
+    global: &JSGlobalObject,
+    api: ListenApi,
+    target: &ListenTarget<'_>,
+    failure: bun_uws_sys::app::ListenError,
+) -> JsError {
+    use bun_sys::SystemErrno;
+
+    if let Some(err) = crate::dns_jsc::cares_jsc::getaddrinfo_error(
+        failure.dns_error,
+        target.address().unwrap_or(b""),
+    ) {
+        return global.throw_value(err.to_error_instance(global));
+    }
+
+    let errno = bun_uws_sys::SocketGroup::errno(failure.error).unwrap_or(SystemErrno::EUNKNOWN);
+    throw_listen_errno(global, api, target, errno)
+}
+
+/// [`throw_listen_error`] for a `listen()` that isn't uSockets': a Windows named pipe's.
+#[cold]
+pub(crate) fn throw_listen_errno(
+    global: &JSGlobalObject,
+    api: ListenApi,
+    target: &ListenTarget<'_>,
+    errno: bun_sys::SystemErrno,
+) -> JsError {
+    use bun_sys::SystemErrno;
+
+    let address = target.address();
+    // Winsock has no privileged ports: WSAEACCES means the port is held or in an excluded range.
+    #[cfg(windows)]
+    let errno = match (api, target, errno) {
+        (ListenApi::BunServe, ListenTarget::Tcp { .. }, SystemErrno::EACCES) => {
+            SystemErrno::EADDRINUSE
+        }
+        _ => errno,
+    };
+
+    let mut sys_error = bun_sys::Error::new(errno, bun_sys::Tag::listen);
+    if let ListenTarget::Unix(path) = *target {
+        sys_error = sys_error.with_path(path);
+    }
+    let mut err = bun_jsc::SystemError::from(sys_error.to_system_error());
+    match (api, target, errno) {
+        (ListenApi::BunListen, ..) => {
+            err.message = bun_core::String::create_format(format_args!(
+                "Failed to listen at {}",
+                bstr::BStr::new(address.unwrap_or(b""))
+            ));
+        }
+        (ListenApi::BunServe, ListenTarget::Tcp { port, .. }, SystemErrno::EADDRINUSE) => {
+            err.message = bun_core::String::create_format(format_args!(
+                "Failed to start server. Is port {port} in use?"
+            ));
+        }
+        (ListenApi::BunServe, ListenTarget::Tcp { port, .. }, SystemErrno::EACCES) => {
+            err.message = bun_core::String::create_format(format_args!(
+                "permission denied {}:{port}",
+                bstr::BStr::new(address.unwrap_or(b"0.0.0.0"))
+            ));
+        }
+        (ListenApi::BunServe, ..) => {}
+    }
+
+    let error = err.to_error_instance(global);
+    if let Some(address) = address {
+        match bun_jsc::bun_string_jsc::create_utf8_for_js(global, address) {
+            Ok(address) => error.put(global, b"address", address),
+            Err(thrown) => return thrown,
+        }
+    }
+    if let ListenTarget::Tcp { port, .. } = *target {
+        error.put(global, b"port", JSValue::js_number(f64::from(port)));
+    }
+    global.throw_value(error)
 }
 
 // ── create_bun_socket_error_t.toJS / us_bun_verify_error_t.toJS ────────────
@@ -46,15 +117,16 @@ pub(crate) fn create_bun_socket_error_to_js(
     this: create_bun_socket_error_t,
     global_object: &JSGlobalObject,
 ) -> JSValue {
+    let queued = bun_boringssl_sys::ERR_get_error();
+    bun_boringssl_sys::ERR_clear_error();
     match this {
         // us_ssl_ctx_from_options only sets *err for the CA/cipher cases;
         // bad cert/key/DH return NULL with .none and the detail is on the
         // BoringSSL error queue. Surfacing it here keeps every
         // `createSSLContext(...) orelse return err.toJS()` site correct.
-        create_bun_socket_error_t::none => crate::crypto::boringssl_jsc::err_to_js(
-            global_object,
-            bun_boringssl_sys::ERR_get_error(),
-        ),
+        create_bun_socket_error_t::none => {
+            crate::crypto::boringssl_jsc::err_to_js(global_object, queued)
+        }
         create_bun_socket_error_t::load_ca_file => global_object
             .err(
                 bun_jsc::ErrorCode::BORINGSSL,
@@ -122,150 +194,4 @@ pub(crate) fn any_web_socket_get_topics_as_js_array(
         AnyWebSocket::Tcp(p) => (0, RawWebSocket::opaque_mut(p)),
     };
     uws_ws_get_topics_as_js_array(ssl, ws, global_object)
-}
-
-unsafe extern "C" {
-    /// JSNodeHTTPServerSocket.cpp. Writes through the uWS buffer of the connection and returns whether uWS still holds bytes.
-    fn Bun__NodeHTTPServerSocket__writeBehindResponse(
-        socket: *mut us_socket_t,
-        ssl: bool,
-        data: *const u8,
-        length: usize,
-    ) -> bool;
-}
-
-// ── us_socket_buffered_js_write (C-exported, called from JSNodeHTTPServerSocket.cpp) ──
-/// # Safety
-/// `socket` and `buffer` must be valid, non-null pointers for the duration of the call
-/// (guaranteed by the C++ caller `JSNodeHTTPServerSocket.cpp`).
-#[unsafe(no_mangle)]
-unsafe extern "C" fn us_socket_buffered_js_write(
-    socket: *mut us_socket_t,
-    ssl: bool,
-    ended: bool,
-    // uWS still holds response bytes: write through its buffer. The caller defers a shutdown (`shutdownAfterResponseDrains`).
-    hold: bool,
-    // A drain call flushes `buffer` (a tunnel). On any other socket the uWS buffer takes what the kernel does not.
-    flushes_buffer_on_drain: bool,
-    buffer: *mut us_socket_stream_buffer_t,
-    global_object: &JSGlobalObject,
-    data: JSValue,
-    encoding: JSValue,
-) -> JSValue {
-    // NOTE: `socket`/`buffer` are kept as raw `*mut` for the function lifetime and only
-    // dereferenced to `&mut` at each point of use. The JS calls below
-    // (`from_js_with_encoding_value_allow_request_response`, `throw_*`) can re-enter
-    // `JSNodeHTTPServerSocket.write` on the same socket, which would alias a long-lived
-    // `&mut *socket` / `&mut *buffer` under Stacked Borrows, so raw pointers with
-    // no uniqueness assertion are used throughout.
-
-    // Convert `data`/`encoding` BEFORE materializing the stream buffer into an owning
-    // `Vec<u8>`: the conversion can run arbitrary JS (toString/Symbol.toPrimitive,
-    // Request/Response body coercion) which can re-enter this function on the same
-    // socket. Taking the buffer first would leave two owning `Vec`s over the same
-    // `list_ptr`; the inner call's realloc would free the allocation out from under
-    // the outer frame (use-after-free).
-    let node_buffer: BlobOrStringOrBuffer = if data.is_undefined() {
-        BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::EMPTY)
-    } else {
-        match BlobOrStringOrBuffer::from_js_with_encoding_value_allow_request_response(
-            global_object,
-            data,
-            encoding,
-            true,
-        ) {
-            Err(_) => return JSValue::ZERO,
-            Ok(Some(v)) => v,
-            Ok(None) => {
-                if !global_object.has_exception() {
-                    let _ = global_object.throw_invalid_argument_type_value(
-                        "data",
-                        "string, buffer, or blob",
-                        data,
-                    );
-                }
-                return JSValue::ZERO;
-            }
-        }
-    };
-
-    if let BlobOrStringOrBuffer::Blob(ref blob) = node_buffer {
-        if blob.needs_to_read_file() {
-            let _ = global_object.throw(format_args!(
-                "File blob not supported yet in this function."
-            ));
-            return JSValue::ZERO;
-        }
-    }
-
-    // SAFETY: caller (JSNodeHTTPServerSocket.cpp) guarantees `buffer` is valid for the call.
-    // No JS executes between here and the `update()` below, so this owning `Vec` is the
-    // sole owner of `list_ptr` for the remainder of the function.
-    let mut stream_buffer = unsafe { &mut *buffer }.to_stream_buffer();
-    let mut total_written: usize = 0;
-
-    // Labeled block + post-block cleanup so the `buffer.update` / `buffer.wrote`
-    // side effects run on every
-    // exit path without a scopeguard borrow conflict.
-    let result: JSValue = 'body: {
-        let data_slice = node_buffer.slice();
-        // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        // No JS executes between here and `JSValue::TRUE/FALSE` below, so the
-        // single `&mut` does not alias the re-entrant write path documented at
-        // the top of this fn (raw `socket` is still kept for that reason).
-        let socket_ref = us_socket_t::opaque_mut(socket);
-        // SAFETY: the caller guarantees `socket` is live for the call; the slice is valid for its length.
-        let write_behind_response = |bytes: &[u8]| unsafe {
-            Bun__NodeHTTPServerSocket__writeBehindResponse(socket, ssl, bytes.as_ptr(), bytes.len())
-        };
-        if hold {
-            // What an earlier write still owes goes first.
-            let owed = stream_buffer.slice().len();
-            write_behind_response(stream_buffer.slice());
-            let still_held = write_behind_response(data_slice);
-            stream_buffer.wrote(owed);
-            total_written = owed.saturating_add(data_slice.len());
-            break 'body JSValue::js_boolean(!still_held);
-        }
-        if stream_buffer.is_not_empty() {
-            let to_flush = stream_buffer.slice();
-            let to_flush_len = to_flush.len();
-            let written: u32 = u32::try_from(socket_ref.write(to_flush).max(0)).unwrap();
-            stream_buffer.wrote(written as usize);
-            total_written = total_written.saturating_add(written as usize);
-            if (written as usize) < to_flush_len {
-                if !data_slice.is_empty() {
-                    stream_buffer.write(data_slice);
-                }
-                break 'body JSValue::FALSE;
-            }
-        }
-
-        if !data_slice.is_empty() {
-            let written: u32 = u32::try_from(socket_ref.write(data_slice).max(0)).unwrap();
-            total_written = total_written.saturating_add(written as usize);
-            if (written as usize) < data_slice.len() {
-                let rest = &data_slice[written as usize..];
-                if flushes_buffer_on_drain {
-                    stream_buffer.write(rest);
-                } else {
-                    write_behind_response(rest);
-                    total_written = total_written.saturating_add(rest.len());
-                }
-                break 'body JSValue::FALSE;
-            }
-        }
-        if ended {
-            socket_ref.shutdown();
-        }
-        JSValue::TRUE
-    };
-
-    // SAFETY: caller guarantees `buffer` is valid for the call; no JS executes between here
-    // and return, so no re-entrancy aliasing.
-    unsafe {
-        (*buffer).update(stream_buffer);
-        (*buffer).wrote(total_written);
-    }
-    result
 }

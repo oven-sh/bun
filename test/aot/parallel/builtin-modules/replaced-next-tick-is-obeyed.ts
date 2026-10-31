@@ -171,10 +171,9 @@ got /one
 -- a GET without a body: 1
 emitResponseFinished 1 x1
 posted the body
--- a POST with a body: 9
+-- a POST with a body: 8
 clearServerParserIncoming 2 x1
 emitCloseNT 1 x1
-emitEOFIncomingMessageOuter 1 x1
 emitErrorNextTickIfErrorListener 3 x1
 emitResponseFinished 1 x1
 endReadableNT 2 x1
@@ -182,7 +181,7 @@ flushWriteAccountingNT 1 x1
 maybeReadMore_ 2 x1
 resume_ 2 x1
 got /three
-seen behind the last watch: 9
+seen behind the last watch: 8
 -- a replacement that holds the ticks back
 before:  | held 3
 after: data held,end

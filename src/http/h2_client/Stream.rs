@@ -8,6 +8,8 @@ use core::sync::atomic::Ordering;
 use std::time::Instant;
 
 use crate::Error;
+use bun_http_types::h2::flow_control::{RecvWindow, SendWindow};
+use bun_http_types::h2::stream::{Event, State, transition};
 use bun_picohttp as picohttp;
 
 // `live_streams` lives in the parent module of `h2_client/`.
@@ -20,18 +22,13 @@ use crate::HTTPClient;
 pub struct Stream {
     // HTTP/2 stream IDs are 31-bit; the top bit must stay clear.
     pub(crate) id: u32,
-    /// Snapshot of `client.async_http_id` at attach time. Stored so the
-    /// session's `by_http_id` index can be maintained after `client` has been
-    /// cleared (terminal delivery nulls `client` before `remove_stream`).
-    /// `None` for clients without an abort-signal store (not indexed).
-    pub(crate) async_http_id: Option<u32>,
+    // BACKREF: the session owns the stream through its `streams` map.
+    pub(crate) session: NonNull<super::ClientSession>,
     // BACKREF: weak back-pointer, cleared before terminal callbacks.
     // Lifetime-erased — the stream never reads borrowed fields through this.
     pub(crate) client: Option<NonNull<HTTPClient<'static>>>,
     pub(crate) opened_at: Instant,
 
-    /// HEADERS + CONTINUATION fragments, decoded once END_HEADERS arrives.
-    pub(crate) header_block: Vec<u8>,
     /// DATA payload accumulated across one onData() pass.
     pub(crate) body_buffer: Vec<u8>,
 
@@ -43,6 +40,7 @@ pub struct Stream {
     /// Final (non-1xx) status code; 0 until the response HEADERS arrive.
     pub(crate) status_code: u32,
 
+    /// A `Stream` is created by sending HEADERS, so it starts `Open`.
     pub(crate) state: State,
     /// `.closed` was reached via RST_STREAM (sent or received). Kept distinct
     /// from `state` so `rst()` stays idempotent (never answers an inbound RST,
@@ -56,15 +54,10 @@ pub struct Stream {
     /// or final status arrives.
     pub(crate) awaiting_continue: bool,
     pub(crate) fatal_error: Option<Error>,
-    /// DATA bytes consumed since the last WINDOW_UPDATE for this stream.
-    pub(crate) unacked_bytes: u32,
-    /// Σ DATA payload bytes (post-padding) for §8.1.1 Content-Length check —
-    /// `total_body_received` is clamped at content_length so it can't catch
-    /// overshoot.
-    pub(crate) data_bytes_received: u64,
-    /// Per-stream send window (server's INITIAL_WINDOW_SIZE plus any
-    /// WINDOW_UPDATEs minus DATA bytes already framed).
-    pub(crate) send_window: i32,
+    /// The server refused the stream with HTTP_1_1_REQUIRED. Separate from `fatal_error` because a later GOAWAY overwrites that.
+    pub(crate) http1_required: bool,
+    pub(crate) recv_window: RecvWindow,
+    pub(crate) send_window: SendWindow,
     /// Unsent suffix of a `.bytes` request body, parked while the send
     /// window is exhausted. Borrows from `client.state.request_body`.
     // BACKREF: borrows from `client.state.request_body`; `RawSlice` carries
@@ -99,24 +92,10 @@ impl Stream {
     }
 }
 
-/// RFC 9113 §5.1. A `Stream` is created by sending HEADERS, so it starts
-/// `.open`; `idle`/`reserved` are never represented as objects. END_STREAM
-/// half-closes one side; both, or any RST_STREAM, transitions to `.closed`.
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum State {
-    Open,
-    /// We have written END_STREAM; no more DATA may be queued.
-    HalfClosedLocal,
-    /// Peer has sent END_STREAM; further DATA is STREAM_CLOSED.
-    HalfClosedRemote,
-    Closed,
-}
-
 impl Drop for Stream {
     fn drop(&mut self) {
         let _ = super::LIVE_STREAMS.fetch_sub(1, Ordering::Relaxed);
-        // header_block / body_buffer / decoded_bytes / decoded_headers: Vec<_> drops automatically.
+        // body_buffer / decoded_bytes / decoded_headers: Vec<_> drops automatically.
         // Freeing the Box is the caller's drop; nothing to do here.
     }
 }
@@ -124,16 +103,15 @@ impl Drop for Stream {
 impl Stream {
     pub(crate) fn new(
         id: u32,
-        async_http_id: Option<u32>,
+        session: NonNull<super::ClientSession>,
         client: Option<NonNull<HTTPClient<'static>>>,
-        send_window: i32,
+        send_window: SendWindow,
     ) -> Box<Self> {
         Box::new(Self {
             id,
-            async_http_id,
+            session,
             client,
             opened_at: Instant::now(),
-            header_block: Vec::new(),
             body_buffer: Vec::new(),
             decoded_bytes: Vec::new(),
             decoded_headers: Vec::new(),
@@ -144,8 +122,8 @@ impl Stream {
             headers_end_stream: false,
             awaiting_continue: false,
             fatal_error: None,
-            unacked_bytes: 0,
-            data_bytes_received: 0,
+            http1_required: false,
+            recv_window: RecvWindow::new(super::LOCAL_INITIAL_WINDOW_SIZE),
             send_window,
             pending_body: bun_ptr::RawSlice::EMPTY,
         })
@@ -158,31 +136,23 @@ impl Stream {
     // session `&mut` is already in scope at every call site.
 
     pub(crate) fn sent_end_stream(&mut self) {
-        self.state = match self.state {
-            State::Open => State::HalfClosedLocal,
-            State::HalfClosedRemote => State::Closed,
-            other => other,
-        };
+        self.state = transition(self.state, Event::SendEndStream).unwrap_or(self.state);
     }
 
     pub(crate) fn recv_end_stream(&mut self) {
-        self.state = match self.state {
-            State::Open => State::HalfClosedRemote,
-            State::HalfClosedLocal => State::Closed,
-            other => other,
-        };
+        self.state = transition(self.state, Event::RecvEndStream).unwrap_or(self.state);
     }
 
     /// We have sent END_STREAM (or RST): no more request DATA may be queued.
     #[inline]
     pub(crate) fn local_closed(&self) -> bool {
-        self.state == State::HalfClosedLocal || self.state == State::Closed
+        !self.state.can_send()
     }
 
     /// Peer has sent END_STREAM (or RST): the response body is complete and
     /// further inbound DATA is a protocol error.
     #[inline]
     pub(crate) fn remote_closed(&self) -> bool {
-        self.state == State::HalfClosedRemote || self.state == State::Closed
+        !self.state.can_receive()
     }
 }

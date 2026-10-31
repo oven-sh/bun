@@ -579,7 +579,6 @@ test/js/node/http/node-http-req-complete.test.ts
 test/js/node/http/node-http-req-socket-pause.test.ts
 test/js/node/http/node-http-res-settimeout-unref.test.ts
 test/js/node/http/node-http-server-abort-events.test.ts
-test/js/node/http/node-http-server-close-drain.test.ts
 test/js/node/http/node-http-server-socket-end-drain.test.ts
 test/js/node/http/node-http-server-timeouts.test.ts
 test/js/node/http/node-http-syscall-fault.test.ts
@@ -673,7 +672,6 @@ test/js/node/stream/node-stream-uint8array.test.ts
 test/js/node/stream/pipe-spares-stdio.test.ts
 test/js/node/stream/stream-state-classes.test.ts
 test/js/node/stream/web-stream-state.test.ts
-test/js/node/string-module.test.js
 test/js/node/string_decoder/string-decoder.test.js
 test/js/node/test_runner/node-test.test.ts
 test/js/node/timers.promises/timers.promises.test.ts

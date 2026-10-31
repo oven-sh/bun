@@ -14,4 +14,6 @@ export const proxyFor = b.fn({
   throws: true,
 });
 
+export const tunnelLiveCount = b.fn({ returns: b.u32 });
+
 export const parseURL = b.fn({ args: { href: b.string.loose.utf8 }, returns: b.record(b.string.utf8) });

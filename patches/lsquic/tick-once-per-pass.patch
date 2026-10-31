@@ -1,0 +1,70 @@
+--- a/src/liblsquic/lsquic_engine.c
++++ b/src/liblsquic/lsquic_engine.c
+@@ -2249,6 +2249,43 @@ force_close_conn (lsquic_engine_t *engin
+ }
+ 
+ 
++/* bun: lsquic_engine_packet_in() queues a connection even while the current
++ * pass is ticking it or has already ticked it.  That happens when a callback
++ * runs the application's event loop and a packet is read mid-pass.  Leave those
++ * connections on the queue for the next pass and return the first one this
++ * pass hasn't ticked.  If too many come up in a row, end the pass.  Not
++ * inlined, to keep it out of the tick loop's conn_iter_next_tickable().
++ */
++#if __GNUC__ || __clang__
++__attribute__((noinline))
++#endif
++static lsquic_conn_t *
++conn_iter_skip_ticked (struct lsquic_engine *engine, lsquic_conn_t *conn)
++{
++    lsquic_conn_t *ticked[8];
++    unsigned n_ticked = 0;
++
++    do
++    {
++        ticked[n_ticked++] = conn;
++        if (n_ticked < sizeof(ticked) / sizeof(ticked[0]))
++            conn = lsquic_mh_pop(&engine->conns_tickable);
++        else
++            conn = NULL;
++    }
++    while (conn && (conn->cn_flags & LSCONN_TICKED));
++
++    while (n_ticked > 0)
++    {
++        --n_ticked;
++        lsquic_mh_insert(&engine->conns_tickable, ticked[n_ticked],
++                                        ticked[n_ticked]->cn_last_ticked);
++    }
++
++    return conn;
++}
++
++
+ /* Iterator for tickable connections (those on the Tickable Queue).  Before
+  * a connection is returned, it is removed from the Advisory Tick Time queue
+  * if necessary.
+@@ -2270,6 +2307,9 @@ conn_iter_next_tickable (struct lsquic_e
+     else
+         conn = lsquic_mh_pop(&engine->conns_tickable);
+ 
++    if (conn && (conn->cn_flags & LSCONN_TICKED))   /* bun */
++        conn = conn_iter_skip_ticked(engine, conn);
++
+     if (conn)
+         conn = engine_decref_conn(engine, conn, LSCONN_TICKABLE);
+     if (conn && (conn->cn_flags & LSCONN_ATTQ))
+@@ -3229,6 +3269,13 @@ process_connections (lsquic_engine_t *en
+     while ((conn = next_conn(engine))
+                             || (conn = next_new_full_conn(&new_full_conns)))
+     {
++        /* bun: never tick a connection twice in one pass.  A second tick would
++         * link it on ticked_conns or closed_conns again.  This is a promoted
++         * connection that was also on the Tickable Queue, or one that was
++         * queued again after the tick that closed it.
++         */
++        if (conn->cn_flags & (LSCONN_TICKED|LSCONN_CLOSING))
++            continue;
+         tick_st = conn->cn_if->ci_tick(conn, now);
+ #if LSQUIC_CONN_STATS
+         if (conn == engine->busy.current)

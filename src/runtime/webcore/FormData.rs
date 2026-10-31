@@ -3,7 +3,7 @@
 use bun_core::{self, declare_scope, scoped_log};
 use bun_core::{EncodedSlice, strings};
 use bun_jsc::bindgen::JsHeap;
-use bun_jsc::{AnyPromise, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult};
+use bun_jsc::{DOMFormData, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_semver::{self, SlicedString};
 use core::ffi::c_void;
 
@@ -15,50 +15,7 @@ declare_scope!(FormData, visible);
 
 pub(crate) struct FormData {}
 
-pub(crate) use bun_core::form_data::{AsyncFormData, Encoding};
-
-/// JSC-touching extension on `AsyncFormData` (lives in this crate because it
-/// needs `JSGlobalObject` + `AnyPromise`).
-pub(crate) trait AsyncFormDataExt {
-    fn to_js(&self, global: &JSGlobalObject, data: &[u8], promise: AnyPromise) -> JsResult<()>;
-}
-
-impl AsyncFormDataExt for AsyncFormData {
-    /// Parse errors are routed into the promise rejection; only settlement's own exception escapes.
-    fn to_js(&self, global: &JSGlobalObject, data: &[u8], promise: AnyPromise) -> JsResult<()> {
-        if let Encoding::Multipart(b) = &self.encoding {
-            if b.is_empty() {
-                scoped_log!(
-                    FormData,
-                    "AsnycFormData.toJS -> promise.reject missing boundary"
-                );
-                promise.reject(
-                    global,
-                    global.create_error_instance(format_args!("FormData missing boundary")),
-                )?;
-                return Ok(());
-            }
-        }
-
-        let js_value = match FormData::to_js(global, data, &self.encoding) {
-            Ok(v) => v,
-            Err(crate::Error::JSError) => {
-                promise.reject(global, global.take_error(JsError::Thrown))?;
-                return Ok(());
-            }
-            Err(e) => {
-                scoped_log!(FormData, "AsnycFormData.toJS -> failed ");
-                promise.reject(
-                    global,
-                    global.create_error_instance(format_args!("FormData {}", e.name())),
-                )?;
-                return Ok(());
-            }
-        };
-        promise.resolve(global, js_value)?;
-        Ok(())
-    }
-}
+pub(crate) use bun_core::form_data::Encoding;
 
 /// Raw slice into the input buffer. Not using `bun.Semver.String` because
 /// file bodies are binary data that can contain null bytes, which
@@ -85,19 +42,26 @@ impl Default for Field<'_> {
 }
 
 impl FormData {
+    /// Throws `ERR_FORMDATA_PARSE_ERROR` if `input` can't be parsed.
     pub(crate) fn to_js(
         global: &JSGlobalObject,
         input: &[u8],
         encoding: &Encoding,
-    ) -> crate::Result<JSValue> {
+    ) -> JsResult<JSValue> {
         match encoding {
             Encoding::URLEncoded => {
-                let str = EncodedSlice::utf8(strings::without_utf8_bom(input));
-                // C++ may throw (e.g. string too long) — `create_from_url_query`
-                // wraps the FFI in a validation scope and maps zero → JsError.
-                DOMFormData::create_from_url_query(global, &str).map_err(|_| crate::Error::JSError)
+                DOMFormData::create_from_url_query(global, &EncodedSlice::utf8(input))
             }
-            Encoding::Multipart(boundary) => to_js_from_multipart_data(global, input, boundary),
+            Encoding::Multipart(boundary) => to_js_from_multipart_data(global, input, boundary)
+                .map_err(|err| match err {
+                    crate::Error::JSError => JsError::Thrown,
+                    err => global
+                        .err(
+                            bun_jsc::ErrorCode::FORMDATA_PARSE_ERROR,
+                            format_args!("FormData parse error {}", err.name()),
+                        )
+                        .throw(),
+                }),
         }
     }
 }
@@ -116,11 +80,7 @@ pub(crate) fn from_bytes(
     // ends the parse.
     let global = unsafe { heap.global() };
 
-    match FormData::to_js(global, input, &encoding) {
-        Ok(v) => Ok(v),
-        Err(crate::Error::JSError) => Err(JsError::Thrown),
-        Err(e) => Err(global.throw_error(e, "while parsing FormData")),
-    }
+    FormData::to_js(global, input, &encoding)
 }
 
 pub(crate) fn from_blob(
@@ -200,16 +160,8 @@ pub(crate) fn to_js_from_multipart_data(
                 blob.detach();
                 result
             } else {
-                let value = EncodedSlice::utf8(
-                    // > Each part whose `Content-Disposition` header does not
-                    // > contain a `filename` parameter must be parsed into an
-                    // > entry whose value is the UTF-8 decoded without BOM
-                    // > content of the part. This is done regardless of the
-                    // > presence or the value of a `Content-Type` header and
-                    // > regardless of the presence or the value of a
-                    // > `charset` parameter.
-                    strings::without_utf8_bom(value_str),
-                );
+                // "UTF-8 decode without BOM" skips BOM handling, so a leading U+FEFF is data.
+                let value = EncodedSlice::utf8(value_str);
                 wrap.form.append(wrap.global, &key, &value)
             }
         }
@@ -278,7 +230,7 @@ pub(crate) fn for_each_multipart_entry<C>(
         let mut filename: Option<bun_semver::String> = None;
         let mut header_chunk = header;
         let mut is_file = false;
-        while !header_chunk.is_empty() && (filename.is_none() || name.len() == 0) {
+        while !header_chunk.is_empty() {
             let line_end = strings::index_of(header_chunk, b"\r\n")
                 .ok_or(crate::Error::IsMissingHeaderLineEnd)?;
             let line = &header_chunk[..line_end];

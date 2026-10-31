@@ -98,35 +98,12 @@ unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) {
 }
 
 __attribute__((always_inline)) void us_socket_timeout(struct us_socket_t *s, unsigned int seconds) {
-    if (seconds) {
-        s->timeout = ((unsigned int)s->group->timestamp + ((seconds + 3) >> 2)) % 240;
-    } else {
-        s->timeout = 255;
-    }
+    s->timeout = us_internal_timeout_tick(s->group->loop, seconds);
+    s->low_prio_ticks = 0;
 }
 
 void us_connecting_socket_timeout(struct us_connecting_socket_t *c, unsigned int seconds) {
-    if (seconds) {
-        c->timeout = ((unsigned int)c->group->timestamp + ((seconds + 3) >> 2)) % 240;
-    } else {
-        c->timeout = 255;
-    }
-}
-
-__attribute__((always_inline)) void us_socket_long_timeout(struct us_socket_t *s, unsigned int minutes) {
-    if (minutes) {
-        s->long_timeout = ((unsigned int)s->group->long_timestamp + minutes) % 240;
-    } else {
-        s->long_timeout = 255;
-    }
-}
-
-void us_connecting_socket_long_timeout(struct us_connecting_socket_t *c, unsigned int minutes) {
-    if (minutes) {
-        c->long_timeout = ((unsigned int)c->group->long_timestamp + minutes) % 240;
-    } else {
-        c->long_timeout = 255;
-    }
+    c->timeout = us_internal_timeout_tick(c->loop, seconds);
 }
 
 __attribute__((always_inline)) void us_socket_flush(struct us_socket_t *s) {
@@ -137,20 +114,6 @@ __attribute__((always_inline)) void us_socket_flush(struct us_socket_t *s) {
 
 __attribute__((always_inline)) int us_socket_is_closed(struct us_socket_t *s) {
     return s->flags.is_closed;
-}
-
-int us_socket_is_ssl_handshake_finished(struct us_socket_t *s) {
-    if (s->ssl) {
-        return us_internal_ssl_is_handshake_finished(s);
-    }
-    return 1;
-}
-
-int us_socket_ssl_handshake_callback_has_fired(struct us_socket_t *s) {
-    if (s->ssl) {
-        return us_internal_ssl_handshake_callback_has_fired(s);
-    }
-    return 1;
 }
 
 unsigned int us_socket_ssl_spill_pending(struct us_socket_t *s) {
@@ -177,8 +140,14 @@ __attribute__((always_inline)) int us_socket_is_established(struct us_socket_t *
     return us_internal_poll_type((struct us_poll_t *) s) != POLL_TYPE_SEMI_SOCKET;
 }
 
-int us_socket_ssl_send_rejected(struct us_socket_t *s) {
-    return s->ssl_send_rejected;
+#ifdef _WIN32
+#define US_SEND_ERROR_BASE WSABASEERR
+#else
+#define US_SEND_ERROR_BASE 0
+#endif
+
+int us_socket_rejected_send_error(struct us_socket_t *s) {
+    return s->send_rejected ? US_SEND_ERROR_BASE + s->rejected_send_error : 0;
 }
 
 int us_socket_queued_input(struct us_socket_t *s) {
@@ -267,9 +236,9 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
     }
 
     if (c->addrinfo_req) {
-        /* Invalidate the cache entry for a refused connect (addresses may be
+        /* Invalidate the cache entry for a failed connect (addresses may be
          * stale) and for a resolver failure (never cache a negative result). */
-        Bun__addrinfo_freeRequest(c->addrinfo_req, c->error == ECONNREFUSED || c->error_is_dns);
+        Bun__addrinfo_freeRequest(c->addrinfo_req, c->error != LIBUS_ECANCELED || c->error_is_dns);
         c->addrinfo_req = 0;
     }
     us_dispatch_connecting_error(c, c->error);
@@ -304,6 +273,7 @@ static struct us_socket_t *us_internal_socket_close_and_notify(struct us_socket_
             s->next = 0;
             s->flags.low_prio_state = 0;
             s->group->low_prio_count--;
+            us_internal_disable_sweep_timer(loop);
             /* Mirror the else branch: if this was the last thing keeping the
              * group linked, drop it from the loop now rather than waiting for
              * the next link/unlink to notice. */
@@ -338,6 +308,8 @@ static struct us_socket_t *us_internal_socket_close_and_notify(struct us_socket_
             res = s->ssl ? us_internal_ssl_on_close(s, code, reason)
                          : us_dispatch_close(s, code, reason);
         } else if (!s->connect_state) {
+            /* Before the handler, so a retry from inside it resolves the name again. */
+            us_internal_socket_release_addrinfo(s, connect_error != LIBUS_ECANCELED);
             res = us_dispatch_connect_error(s, connect_error);
         }
         /* A candidate of a us_connecting_socket_t is held through that, which hears
@@ -378,20 +350,24 @@ __attribute__((always_inline)) struct us_socket_t *us_socket_close(struct us_soc
 
 struct us_socket_t *us_socket_close_now(struct us_socket_t *s) {
     /* The graceful close sends what it can and may then wait, for the spill or for the peer. A close defers at most once. */
-    us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
+    /* It ends with a close_notify, which says that the stream is whole. After a write that fell short the owner may hold the rest. */
+    us_socket_close(s, s->ssl && s->flags.last_write_failed ? LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN : LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
     return us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, NULL);
 }
 
-struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned char kind, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR *fds) {
-#if defined(LIBUS_USE_LIBUV) || defined(WIN32)
-    return 0;
-#else
-    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
-        return 0;
+struct us_socket_t *us_socket_close_lingering(struct us_socket_t *s) {
+    /* The graceful TLS close waits for the peer's close_notify in the same way. After the peer's FIN there is nothing to wait for. */
+    if (s->ssl || s->read_eof || us_socket_is_closed(s) || !us_socket_is_established(s)) {
+        return us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
     }
-
-    return us_socket_from_fd(group, kind, NULL, socket_ext_size, fds[0], 0, 0);
-#endif
+    us_internal_socket_raw_shutdown(s);
+    /* Only a read sees the peer's FIN. */
+    us_socket_resume(s);
+    us_socket_timeout(s, LIBUS_LINGER_SECONDS);
+    /* The process doesn't stay alive for it. */
+    us_socket_unref(s);
+    s->lingering = 1;
+    return s;
 }
 
 /* Re-arm writable for a backpressured write without resuming the read side of
@@ -403,22 +379,47 @@ void us_internal_rearm_writable(struct us_socket_t *s) {
                    LIBUS_SOCKET_WRITABLE | ((s->flags.is_paused || s->read_eof) ? 0 : LIBUS_SOCKET_READABLE));
 }
 
+/* loop.c stops polling for writable after an on_writable that left last_write_failed clear. */
+void us_socket_request_writable(struct us_socket_t *s) {
+    if (us_socket_is_closed(s)) return;
+    s->flags.last_write_failed = 1;
+    us_internal_rearm_writable(s);
+}
+
+void us_internal_socket_reject_send(struct us_socket_t *s, int error) {
+    /* A connect in progress reports its own failure. */
+    if (s->send_rejected || !us_socket_is_established(s)) {
+        return;
+    }
+    /* 0 to 2 are close codes. */
+    int code = error - US_SEND_ERROR_BASE;
+    s->send_rejected = 1;
+    s->rejected_send_error = code > 2 && code <= UINT8_MAX ? code : LIBUS_ECONNRESET - US_SEND_ERROR_BASE;
+    us_internal_socket_raw_shutdown(s);
+    us_internal_rearm_writable(s);
+}
+
+struct us_socket_t *us_internal_socket_close_after_rejected_send(struct us_socket_t *s) {
+    /* An owner that already let go reads nothing. */
+    int unread = !s->ssl_close_after_spill && us_socket_queued_input(s) == LIBUS_QUEUED_INPUT_DATA;
+    if (s->ssl) {
+        return us_internal_ssl_close_after_rejected_send(s, unread);
+    }
+    return unread ? s : us_internal_socket_close_raw(s, LIBUS_ECONNRESET, NULL);
+}
+
 /* macOS can report more bytes sent than it was given (golang/go#61060). How many it took is unknown, so nothing
  * may follow them. ECONNABORTED is a peer-gone errno, so it is never retried; the shutdown is for the writers that
- * take any failed send for backpressure. No write may close under its caller: the writable event does. */
+ * take any failed send for backpressure. */
 static ssize_t us_internal_reject_excess_send(struct us_socket_t *s, ssize_t written, size_t length) {
     if (written < 0 || (size_t) written <= length) {
         return written;
     }
-    us_internal_socket_raw_shutdown(s);
-    if (s->ssl) {
-        s->ssl_send_rejected = 1;
-    } else {
-        s->send_rejected = 1;
-    }
-    us_internal_rearm_writable(s);
 #ifdef _WIN32
+    us_internal_socket_reject_send(s, WSAECONNABORTED);
     WSASetLastError(WSAECONNABORTED);
+#else
+    us_internal_socket_reject_send(s, ECONNABORTED);
 #endif
     errno = ECONNABORTED;
     return -1;
@@ -438,6 +439,22 @@ int us_socket_stalled_write_means_peer_gone(struct us_socket_t *s) {
 #endif
 }
 
+int us_socket_delivered_bytes(struct us_socket_t *s, uint64_t *bytes) {
+    if (us_socket_is_closed(s)) {
+        return -1;
+    }
+    return bsd_socket_delivered_bytes(us_poll_fd(&s->p), bytes);
+}
+
+int us_socket_delivered_since(struct us_socket_t *s, uint64_t *mark, uint64_t min_bytes) {
+    uint64_t now;
+    if (us_socket_delivered_bytes(s, &now) != 0 || now < *mark || now - *mark < min_bytes) {
+        return 0;
+    }
+    *mark = now;
+    return 1;
+}
+
 int us_socket_write2(struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length) {
     if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
         return 0;
@@ -454,33 +471,23 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
 }
 
 struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int options, int ipc) {
+    if (bsd_adopt_socket(fd, 0)) {
+        return 0;
+    }
     struct us_poll_t *p1 = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p1, fd, POLL_TYPE_SOCKET);
     int open_paused = (options & LIBUS_SOCKET_OPEN_PAUSED) && !ssl_ctx;
     int rc = us_poll_start_rc(p1, group->loop, (open_paused ? 0 : LIBUS_SOCKET_READABLE) | LIBUS_SOCKET_WRITABLE);
     if (rc != 0) {
+        bsd_disown_socket(fd);
         us_poll_free(p1, group->loop);
         return 0;
     }
 
     struct us_socket_t *s = (struct us_socket_t *) p1;
-    s->group = group;
-    s->kind = kind;
-    s->ssl = NULL;
-    s->timeout = 255;
-    s->long_timeout = 255;
-    s->flags.low_prio_state = 0;
-    s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN) != 0;
+    us_internal_socket_init(s, group, kind, options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     s->flags.is_paused = open_paused;
     s->flags.is_ipc = ipc;
-    s->flags.is_closed = 0;
-    s->flags.adopted = 0;
-    s->flags.last_write_failed = 0;
-    s->unclassified_send_failures = 0;
-    s->read_eof = 0;
-    s->hangup_closes_unsent = 0;
-    s->send_rejected = 0;
-    s->connect_state = NULL;
 
     /* We always use nodelay */
     bsd_socket_nodelay(fd, 1);
@@ -591,10 +598,8 @@ static int us_internal_classify_failed_send(struct us_socket_t *s) {
     }
     return errno;
 #else
-    /* Windows: report the raw (positive) WSA code. The JS layer already
-     * traffics in raw negative WSA values on this platform (see
-     * SocketEmitEndNT / failWrite, which shape unnameable ones as
-     * ECONNRESET), and a real code keeps fatal sends distinguishable from
+    /* Windows: report the raw (positive) WSA code, which SocketGroup::errno
+     * decodes. A real code keeps fatal sends distinguishable from
      * the legacy -1 closed/shutdown sentinel so the h2 parser can latch
      * them (flood tests hung on Windows because a fatal send looked like
      * backpressure). Keep 1 as the floor for a zero/garbage WSA value.
@@ -624,8 +629,7 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
             us_internal_rearm_writable(s);
             return 0;
         }
-        /* Fatal send error: report the code to callers that opt in and stop
-         * polling writable - retrying can never succeed. */
+        /* Only reported: an owner that gives up on its bytes calls us_internal_socket_reject_send. */
         if (fatal_write_error) *fatal_write_error = fatal_send_error;
         return 0;
     }
@@ -761,7 +765,15 @@ void us_internal_socket_raw_shutdown(struct us_socket_t *s) {
      * so far, the app has to track this and call close as needed */
     if (us_internal_socket_can_raw_write(s)) {
         us_internal_poll_set_type(&s->p, POLL_TYPE_SOCKET_SHUT_DOWN);
-        us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
+        int events = us_poll_events(&s->p) & LIBUS_SOCKET_READABLE;
+#ifndef LIBUS_USE_EPOLL
+        /* After read_eof the poll may have no events armed. Arm READABLE so the loop sees the EOF again and closes the socket.
+         * epoll reports the hangup with nothing armed. */
+        if (s->read_eof) {
+            events = LIBUS_SOCKET_READABLE;
+        }
+#endif
+        us_poll_change(&s->p, s->group->loop, events);
         bsd_shutdown_socket(us_poll_fd((struct us_poll_t *) s));
     }
 }
@@ -790,14 +802,7 @@ int us_connecting_socket_get_dns_error(struct us_connecting_socket_t *c) {
     return c->error_is_dns ? c->error : 0;
 }
 
-struct us_socket_t *us_socket_open(struct us_socket_t *s, int is_client, char *ip, int ip_length) {
-    if (s->ssl) {
-        return us_internal_ssl_on_open(s, is_client, ip, ip_length);
-    }
-    return us_dispatch_open(s, is_client, ip, ip_length);
-}
-
-unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const char **dest, int *port, int *is_ipv6)
+unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, int *port)
 {
     // This function is manual inlining + modification of
     //      us_socket_remote_address
@@ -805,24 +810,6 @@ unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const 
     // To get { ip, port, is_ipv6 } for Bun.serve().requestIP()
     struct bsd_addr_t addr;
     if (bsd_remote_addr(us_poll_fd(&s->p), &addr)) {
-        return 0;
-    }
-
-    int length = bsd_addr_get_ip_length(&addr);
-    if (!length) {
-        return 0;
-    }
-
-    memcpy(buf, bsd_addr_get_ip(&addr), length);
-    *port = bsd_addr_get_port(&addr);
-
-    return length;
-}
-
-unsigned int us_get_local_address_info(char *buf, struct us_socket_t *s, const char **dest, int *port, int *is_ipv6)
-{
-    struct bsd_addr_t addr;
-    if (bsd_local_addr(us_poll_fd(&s->p), &addr)) {
         return 0;
     }
 

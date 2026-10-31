@@ -326,7 +326,7 @@ impl SourceProvider for BundlerServices {
             None => written.to_ascii_lowercase(),
         };
         Some(Loader::from_mime_type(MimeType::MimeType::init(
-            &kept, false, None,
+            &kept, false,
         )))
     }
 

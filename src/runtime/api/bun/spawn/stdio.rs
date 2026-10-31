@@ -373,7 +373,7 @@ impl Stdio {
                         .throw_invalid_arguments(format_args!("Failed to create ReadableStream")));
                 };
 
-                if stream.is_disturbed(cx.global()) {
+                if stream.is_disturbed(cx.global()) || stream.is_locked(cx.global()) {
                     return Err(cx
                         .global()
                         .err(
@@ -522,7 +522,7 @@ impl Stdio {
                 )));
             }
 
-            if stream.is_disturbed(cx.global()) {
+            if stream.is_disturbed(cx.global()) || stream.is_locked(cx.global()) {
                 return Err(cx
                     .global()
                     .err(

@@ -144,9 +144,9 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     // listeners, resume(), ref(), an explicit read()) may take the reader back.
     if (stream_reachedEof) return;
     $debug("ref();", reader ? "already has reader" : "getting reader");
+    // Attaching a reader also undoes the pause that disown() left on the source.
     reader ??= native.getReader();
     source.updateRef(forceUnref ? false : true);
-    source?.setFlowing?.(true);
 
     if (needsInternalReadRefresh) {
       needsInternalReadRefresh = false;
@@ -154,18 +154,24 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     }
   }
 
-  function disown() {
-    $debug("unref();");
-    source?.setFlowing?.(false);
+  // Asked when pause() or destroy() is called, because disown() runs a tick later.
+  const isHeldByAnotherReader = () => !reader && native.locked;
 
+  function disown(wasHeldByAnotherReader = false) {
+    $debug("unref();");
+
+    // Only a reader of Bun.stdin.stream() that came after the call keeps the source. Nothing else stops it.
+    if (reader || wasHeldByAnotherReader || !native.locked) source?.setFlowing?.(false);
+    if (wasHeldByAnotherReader) source?.updateRef?.(false);
     if (reader) {
       // releaseLock() rejects any in-flight internalRead() with a TypeError; that
       // rejection is handled there by observing that `reader` was cleared here.
       reader.releaseLock();
       reader = undefined;
       $debug("released reader");
+      // A paused source keeps nothing alive; its ref is for the next reader of Bun.stdin.stream().
+      source?.updateRef?.(!forceUnref);
     }
-    source?.updateRef?.(false);
   }
 
   const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
@@ -309,11 +315,12 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
   stream._readableState.reading = false;
 
   stream.on("pause", () => {
+    const wasHeldByAnotherReader = isHeldByAnotherReader();
     process.nextTick(() => {
       // Only disown if the stream is still paused (not resumed in the meantime)
       if (!stream.readableFlowing) {
         stream._readableState.reading = false;
-        disown();
+        disown(wasHeldByAnotherReader);
       }
     });
   });
@@ -329,12 +336,23 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     }
   });
 
+  // 'close' comes a tick or more after the call, and so does _destroy() while the stream isn't constructed yet.
+  let wasHeldWhenDestroyed: boolean | undefined;
+  const originalDestroy = stream.destroy;
+  stream.destroy = function (err, callback) {
+    if (!this.destroyed) wasHeldWhenDestroyed = isHeldByAnotherReader();
+    return originalDestroy.$call(this, err, callback);
+  };
+
   stream.on("close", () => {
     if (!stream_destroyed) {
       stream_destroyed = true;
+      // Readable.prototype.destroy.call(process.stdin) doesn't pass through the function above.
+      const wasHeldByAnotherReader = wasHeldWhenDestroyed ?? isHeldByAnotherReader();
+      wasHeldWhenDestroyed = undefined;
       process.nextTick(() => {
         stream.destroy();
-        disown();
+        disown(wasHeldByAnotherReader);
       });
     }
   });

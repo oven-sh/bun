@@ -132,13 +132,11 @@ impl Drop for SessionSink {
     }
 }
 
-/// `us_dispatch_new_session` for an HTTP client socket. Runs inside `SSL_read`/`SSL_do_handshake`.
-pub fn on_new_session(socket: &mut bun_uws::us_socket_t, session: *mut SSL_SESSION) {
+/// BoringSSL's new-session callback. Runs inside `SSL_read`/`SSL_do_handshake`.
+extern "C" fn on_new_session(owner: *mut c_void, session: *mut SSL_SESSION) {
     let Some(session) = NonNull::new(session) else {
         return;
     };
-    // SAFETY: `socket` is live for this call.
-    let owner = unsafe { us_socket_session_sink(socket) };
     let Some(owner) = NonNull::new(owner.cast::<SessionSink>()) else {
         return;
     };
@@ -181,6 +179,7 @@ unsafe extern "C" {
     fn us_socket_set_session_sink(
         s: *mut bun_uws::us_socket_t,
         sink: *mut c_void,
+        on_session: Option<extern "C" fn(*mut c_void, *mut SSL_SESSION)>,
         on_free: Option<extern "C" fn(*mut c_void)>,
     );
     fn us_socket_session_sink(s: *mut bun_uws::us_socket_t) -> *mut c_void;
@@ -237,6 +236,7 @@ pub(crate) unsafe fn install(
         us_socket_set_session_sink(
             socket,
             bun_core::heap::into_raw(sink).cast::<c_void>(),
+            Some(on_new_session),
             Some(sink_on_free),
         );
     }

@@ -9,7 +9,7 @@
 //      becomes true and usockets arms WRITABLE).
 //   2. The Writable callback for (1) fires via nextTick; the next buffered
 //      chunk reaches send_data with has_backpressure() true and is queued in
-//      data_frame_queue with its callback.
+//      the stream's queue with its callback.
 //   3. fault.clear() runs (also via nextTick, after (2)); the next I/O poll
 //      delivers the writable event and on_native_writable drains write_buffer
 //      then flush_stream_queue, which invokes the queued callback
@@ -72,7 +72,7 @@ req.write(Buffer.alloc(64, "b"), function destroyCb() {
 });
 
 // (3) Queued after (1)'s deferred callback: by the time this runs the second
-// chunk is in data_frame_queue; clear the fault so the writable event drains.
+// chunk is in the stream's queue; clear the fault so the writable event drains.
 process.nextTick(() => process.nextTick(() => fault.clear()));
 
 await destroyed;

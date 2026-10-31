@@ -225,3 +225,18 @@ describe.each([
     }
   });
 });
+
+test("Bun.serve's Date header timer is not enrolled in fake timers", async () => {
+  using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("hi") });
+
+  jest.useFakeTimers();
+  try {
+    // Accepting the connection arms the internal 1s Date header timer.
+    const res = await fetch(`http://127.0.0.1:${server.port}/`);
+    await res.text();
+
+    expect(jest.getTimerCount()).toBe(0);
+  } finally {
+    jest.useRealTimers();
+  }
+});

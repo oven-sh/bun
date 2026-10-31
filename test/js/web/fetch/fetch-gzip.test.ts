@@ -88,7 +88,7 @@ it("fetch() with a protocol-relative redirect that returns a buffered gzip respo
         });
 
       const { host } = server.url;
-      return Response.redirect(`://${host}/redirect`);
+      return Response.redirect(`//${host}/redirect`);
     },
   });
 
@@ -852,6 +852,39 @@ describe("fetch() decodes multi-member Content-Encoding: gzip", () => {
     }
   });
 
+  // In one read these bodies decode to P1. The result can't depend on where the reads split.
+  it.concurrent.each([
+    ["a gzip member", M2],
+    ["0x1f and no gzip header", Buffer.from([0x1f, 0x00, 0x41])],
+  ])("trailing garbage still ends the body when a later read starts with %s", async (_name, later) => {
+    const first = Buffer.concat([M1, Buffer.from("\r\n")]);
+    const { promise: firstRead, resolve: onFirstRead } = Promise.withResolvers<void>();
+    const server = createNetServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", async () => {
+        socket.write(
+          Buffer.concat([
+            Buffer.from(
+              `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: ${first.length + later.length}\r\nConnection: close\r\n\r\n`,
+            ),
+            first,
+          ]),
+        );
+        await firstRead;
+        socket.end(later);
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const { port } = server.address() as import("node:net").AddressInfo;
+      const res = await fetch(`http://127.0.0.1:${port}/`);
+      onFirstRead();
+      expect(await res.text()).toBe(P1.toString());
+    } finally {
+      server.close();
+    }
+  });
+
   // Last member's ISIZE trailer > 512 KiB (LibdeflateState::shared_buffer) so
   // the libdeflate fast path takes the decompress_to_vec branch, which must
   // also detect unconsumed input and fall through.
@@ -1011,13 +1044,27 @@ describe("Content-Encoding: deflate, zlib-wrapped or raw", () => {
     Buffer.from(Bun.hash.adler32(zlibReading).toString(16).padStart(8, "0"), "hex"),
   ]);
 
+  // zlib never writes a 256-byte window header, so wrap this stream by hand: 08 1d, the data, the Adler-32.
+  // A deflater with a 512-byte window keeps every distance at 250 or less.
+  const wb8 = Buffer.concat([
+    Buffer.from([0x08, 0x1d]),
+    deflateRawSync(plain, { windowBits: 9 }),
+    deflateSync(plain).subarray(-4),
+  ]);
+
+  // syncFlushFirst, raw88 and raw78 each fail exactly one part of the zlib header check.
   const decodes: Record<string, Buffer> = {
     raw: deflateRawSync(plain),
-    raw78: rawStartingWith(0x78, 1000), // 78 e8: the first byte of a zlib stream, but not a zlib header
+    // 00 00: the empty stored block a flush writes before any data. A multiple of 31, but the method is 0.
+    syncFlushFirst: Buffer.concat([stored(0x00, Buffer.alloc(0)), deflateRawSync(plain)]),
+    raw88: rawStartingWith(0x88, 796), // 88 1c: method 8 and a multiple of 31, but the window size is not valid
+    raw78: rawStartingWith(0x78, 1000), // 78 e8: method 8 and a 32K window, but not a multiple of 31
+    wb8,
     wb9: deflateSync(plain, { windowBits: 9 }),
     wb15: deflateSync(plain),
     twoReadings, // fetch() must return the zlib reading
   };
+  // Node or curl accept each of these bodies: https://github.com/oven-sh/bun/issues/44428
   const fails: Record<string, Buffer> = {
     rawPassing1950: rawStartingWith(0x78, 769), // 78 01: raw deflate that starts with a valid zlib header
     lyingWindow,

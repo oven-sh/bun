@@ -89,8 +89,8 @@ declare module "bun" {
   namespace Serve {
     interface NodeHTTPServeOptions<WebSocketData> extends HostnamePortServeOptions<WebSocketData> {
       unix?: string;
+      fd?: number;
       onNodeHTTPRequest(
-        bunServer: Server<WebSocketData>,
         url: string,
         method: string,
         dispatchBits: number,
@@ -1174,6 +1174,8 @@ declare namespace $Node {
     /** -2: shut down, -1: detached, 0: closed, 1: established, 2: connecting. */
     readonly readyState: number;
     readonly bytesWritten: number;
+    /** The bytes that the kernel has not taken yet, sealed TLS records too. */
+    readonly writeQueueSize: number;
     readonly fd: number;
     readonly listener: ListenerHandle | undefined;
     readonly authorized: boolean;
@@ -1266,20 +1268,26 @@ declare namespace $Node {
 
   /** The native `H2FrameParser` of `node:http2`: src/runtime/api/bun/h2_frame_parser.bind.ts, h2_frame_parser.rs. */
   interface H2FrameParser {
-    /** The stream's id, or -1. `undefined` where the session has gone. */
     request(
       streamId: number,
       context: unknown,
       headers: object,
       sensitiveNames: object,
       options?: object,
-    ): number | undefined;
-    setNativeSocket(socket: unknown): void;
+      informational?: boolean,
+    ): undefined;
+    /** Throws what `request()` would throw for these headers. */
+    validateRequest(headers: object): undefined;
+    setNativeSocket(socket: unknown): undefined;
     /** `false`: too many pings wait for their acknowledgement. */
-    ping(payload: ArrayBufferView): boolean;
-    altsvc(origin: string, alt: string, streamId: number): void;
-    origin(origins: string | string[]): void;
-    goaway(code: number, lastStreamId?: number, opaqueData?: ArrayBufferView): void;
+    ping(payload: ArrayBuffer | SharedArrayBuffer | ArrayBufferView): boolean;
+    altsvc(origin: string, alt: string, streamId: number): undefined;
+    origin(origins: string | string[]): undefined;
+    goaway(
+      code: number,
+      lastStreamId: number,
+      opaqueData: ArrayBuffer | SharedArrayBuffer | ArrayBufferView,
+    ): undefined;
     getCurrentState(): {
       effectiveLocalWindowSize: number;
       effectiveRecvDataLength: number;
@@ -1292,14 +1300,14 @@ declare namespace $Node {
       outboundQueueSize: number;
     };
     getFrameCounters(): { framesReceived: number; framesSent: number };
-    settings(settings: object): boolean;
-    setLocalWindowSize(windowSize: number): void;
-    read(data: ArrayBufferView): void;
+    settings(settings: object): undefined;
+    setLocalWindowSize(windowSize: number): undefined;
+    read(data: ArrayBuffer | SharedArrayBuffer | ArrayBufferView): undefined;
     /** How many bytes still wait. */
     flush(): number;
-    detach(): void;
-    rstStream(streamId: number, code: number): true | undefined;
-    /** `false`: there is no such stream. Otherwise what became of the write. */
+    detach(keepOutput?: boolean): undefined;
+    rstStream(streamId: number, code: number): undefined;
+    /** `false`: no such stream can send, and the parser calls `callback`. Otherwise what became of the write. */
     writeStream(
       streamId: number,
       data: string | ArrayBufferView,
@@ -1308,27 +1316,32 @@ declare namespace $Node {
       callback: (error?: Error | null) => void,
       deferCallback?: boolean,
     ): number | false;
-    sendTrailers(streamId: number, headers: object, sensitiveNames: object): void;
-    noTrailers(streamId: number): void;
-    setStreamReading(streamId: number, reading: boolean): void;
+    sendTrailers(streamId: number, headers: object, sensitiveNames: object): undefined;
+    noTrailers(streamId: number): undefined;
+    setStreamReading(streamId: number, reading: boolean): undefined;
     getStreamContext(streamId: number): unknown;
-    setStreamContext(streamId: number, context: unknown): void;
-    getEndAfterHeaders(streamId: number): boolean;
-    getStreamState(streamId: number): {
-      localWindowSize: number;
-      state: number;
-      localClose: number;
-      remoteClose: number;
-      sumDependencyWeight: number;
-      weight: number;
-    };
+    setStreamContext(streamId: number, context: unknown): undefined;
+    /** `undefined`: there is no such stream. */
+    getStreamState(streamId: number):
+      | {
+          localWindowSize: number;
+          state: number;
+          localClose: number;
+          remoteClose: number;
+          sumDependencyWeight: number;
+          weight: number;
+        }
+      | undefined;
+    hasOpenStreams(): boolean;
+    hasRejectedSend(): boolean;
+    isStreamClosed(streamId: number): boolean;
+    releaseStream(streamId: number): boolean;
     bufferSize(): number;
-    setNextStreamID(id: number): void;
-    /** Calls `callback` with the context of every stream that has one. */
-    forEachStream(callback: (stream: never) => void, thisValue?: unknown): void;
-    emitErrorToAllStreams(code: number): void;
-    emitAbortToAllStreams(): void;
-    /** -1 when the ids have run out. */
+    setNextStreamID(id: number): undefined;
+    /** `closed`: the closed streams. Otherwise those whose close was not delivered yet. Only streams with a context. */
+    forEachStream(callback: (stream: never, isClosed: boolean) => void, closed?: boolean): undefined;
+    emitErrorToAllStreams(code: number): undefined;
+    /** -1: the ids have run out. 0: the peer's limit of concurrent streams is reached. */
     getNextStream(): number;
     /** The promised id, or -1. */
     pushPromise(streamId: number, promisedId: number, headers: object, sensitiveNames: object): number;
@@ -1372,6 +1385,8 @@ declare namespace $Node {
   /** The native `SecureContext`, an SSL_CTX: src/runtime/api/bun/SecureContext.bind.ts, SecureContext.rs. */
   interface NativeSecureContext {
     addCACert(pem: string | ArrayBufferView): void;
+    getTicketKeys(): ArrayBuffer | ArrayBufferView;
+    setTicketKeys(keys: ArrayBuffer | SharedArrayBuffer | ArrayBufferView): void;
   }
   interface NativeSecureContextConstructor {
     new (options?: object): NativeSecureContext;
@@ -1476,7 +1491,6 @@ interface $BunModules {
   "internal/html": $ModuleValue<typeof import("./internal/html")>;
   "internal/http": $ModuleValue<typeof import("./internal/http")>;
   "internal/http/FakeSocket": $ModuleValue<typeof import("./internal/http/FakeSocket")>;
-  "internal/http1_server_fallback": $ModuleValue<typeof import("./internal/http1_server_fallback")>;
   "internal/inspector/cdp": $ModuleValue<typeof import("./internal/inspector/cdp")>;
   "internal/linkedlist": $ModuleValue<typeof import("./internal/linkedlist")>;
   "internal/net/isIP": $ModuleValue<typeof import("./internal/net/isIP")>;
@@ -2363,16 +2377,14 @@ declare namespace $Node {
     [name: string]: string | string[] | undefined;
   }
 
-  /** What `ServerResponse` calls on the object that puts its bytes on the wire: a `NodeHTTPResponse`, or the stand-in of `internal/http1_server_fallback`. */
+  /** What `ServerResponse` calls on the object that puts its bytes on the wire. */
   interface HttpResponseHandle {
     /** `NodeHTTPResponseFlags` */
     readonly flags: number;
     readonly finished: boolean;
-    readonly aborted: boolean;
     readonly bufferedAmount: number;
     get onwritable(): HttpDrainCallback | undefined;
     set onwritable(callback: HttpDrainCallback | null | undefined);
-    cork(callback: () => void): void;
     writeContinue(): void;
     writeInformational(chunk: HttpChunk, encoding?: string | null): void;
     writeHead(
@@ -2389,6 +2401,18 @@ declare namespace $Node {
       headers: string[],
       chunk: HttpChunk | null | undefined,
       encoding: string | null | undefined,
+      strictContentLength: number | undefined,
+      autoHeaderBits: number,
+      keepAliveTimeoutSecs: number,
+    ): number;
+    /** The head and the first chunk. The answer is that of `write()`. */
+    writeHeadAndWrite(
+      statusCode: number,
+      statusMessage: string | undefined,
+      headers: string[],
+      chunk: HttpChunk | null | undefined,
+      encoding: string | null | undefined,
+      callback: HttpDrainCallback | null | undefined,
       strictContentLength: number | undefined,
       autoHeaderBits: number,
       keepAliveTimeoutSecs: number,
@@ -2411,12 +2435,7 @@ declare namespace $Node {
       callback: HttpDrainCallback | null | undefined,
       strictContentLength: number | undefined,
     ): number;
-    end(
-      chunk: HttpChunk | null | undefined,
-      encoding: string | null | undefined,
-      callback: undefined,
-      strictContentLength: number | undefined,
-    ): number;
+    end(chunk?: HttpChunk | null, encoding?: string | null, callback?: undefined, strictContentLength?: number): number;
     flushHeaders(): void;
     abort(): void;
   }
@@ -2425,16 +2444,11 @@ declare namespace $Node {
   interface NodeHTTPResponse extends HttpResponseHandle {
     /** `NodeHTTPBodyReadState` */
     readonly hasBody: number;
-    readonly upgraded: boolean;
     /** `event` is a `NodeHTTPResponseAbortEvent`. */
     ondata: ((chunk: Buffer | undefined, isLast: boolean, event: number) => void) | undefined;
     onabort: ((event: number) => void) | undefined;
-    getBytesWritten(): number;
-    ref(): void;
-    unref(): void;
     pause(): boolean;
     resume(): boolean;
-    pauseReads(): void;
     notifyWhenReadParsed(): boolean;
     takeRequestTrailers(lenient: boolean): string[] | undefined;
     takeRawHeaders(headers: IncomingHttpHeaders | null): string[] | undefined;
@@ -2445,40 +2459,26 @@ declare namespace $Node {
 
   /** The native class `NodeHTTPServerSocket` (src/jsc/bindings/node/JSNodeHTTPServerSocket.cpp): one connection. */
   interface NodeHTTPServerSocket {
-    onclose: (() => void) | undefined;
-    ondrain: (() => void) | undefined;
-    ondata: ((chunk: Buffer | undefined, last: boolean) => void) | undefined;
+    /** With the socket: the connection is open, and it's the socket's from here on. */
+    onclose: ((left?: HttpServerSocket) => void) | undefined;
     duplex: HttpServerSocket | null;
-    readonly bytesWritten: number;
     readonly closed: boolean;
     readonly response: NodeHTTPResponse | null;
-    readonly remoteAddress: SocketAddressInfo | null;
-    readonly localAddress: SocketAddressInfo | null;
-    readonly secureEstablished: boolean;
-    readonly servername: string | null;
-    readonly authorizationError: string | null;
-    readonly peerCertVerified: boolean;
-    readonly hasQueuedTunnelReads: boolean;
-    readonly closedWithUnsentData: boolean | undefined;
     readonly closeError: (Error & { errno: number; code: string }) | undefined;
     readonly peerEnded: boolean;
     /** The FIN of `end()` has left, rather than waiting for queued bytes. */
     readonly finSent: boolean;
-    /** No member of the native class. The server asks for it where it reports a dropped connection. */
-    readonly localPort?: number;
     close(): void;
-    reset(): void;
-    /** Whether the kernel took all of it. */
-    write(data: HttpChunk | undefined, encoding?: string | null): boolean | number;
-    end(destroySoon?: boolean): void;
-    upgradeToTunnel(hasBody: boolean, response: NodeHTTPResponse): void;
-    readStop(): void;
-    readStart(): void;
+    leaveHttp(resumes: boolean): boolean;
+    leaveHttpAfterBody(): void;
+    setRawReads(enabled: boolean): void;
     setResponseTrailers(trailers: string): void;
     isRequestTimedOut(headersTimeout: number, requestTimeout: number): boolean;
-    startPipelinedResponse(response: HttpResponseHandle, isAncient: boolean, connectionClose: boolean): boolean;
+    startRawResponse(response: NodeHTTPResponse, connectionClose: boolean): boolean;
     stopParsing(): void;
-    closeWhenDrained(): void;
+    detachParser(): void;
+    /** Whether the connection ended in the middle of a message. */
+    finishParsing(): boolean;
     closeIfIdle(): boolean;
   }
 
@@ -2817,7 +2817,7 @@ declare namespace $Bindgen {
     destroy(error?: unknown): void;
     sendHeaders(kind: number, headers: unknown, flags: number): boolean;
     stopSending(code: bigint | number): void;
-    resetStream(code: bigint | number): void;
+    resetStream(code: bigint | number): boolean;
     abortForDestroy(stopCode: bigint | number | undefined, resetCode: bigint | number | undefined): void;
     setPriority(packed: number): void;
     getPriority(): number;

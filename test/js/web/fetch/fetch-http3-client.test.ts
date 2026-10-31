@@ -1,10 +1,10 @@
 import { gunzipSync, gzipSync, type Server } from "bun";
 import { fetchH3Internals } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir, tls } from "harness";
+import { bunEnv, bunExe, expiredTls, isDebug, isLinux, tempDir, tls } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { join } from "node:path";
-import { listen } from "node:quic";
+import { listen, QuicError } from "node:quic";
 
 // In-process server with `http1: false` so the build under test binds UDP only.
 // A fetch that silently fell back to HTTP/1.1 would get ECONNREFUSED, which
@@ -272,6 +272,11 @@ describe("fetch protocol: http3", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("x-head")).toBe("1");
     expect(await res.text()).toBe("");
+  });
+
+  test("TRACE has a body", async () => {
+    const res = await fetch(`${base}/hello`, { ...h3, method: "TRACE" });
+    expect({ status: res.status, text: await res.text() }).toEqual({ status: 200, text: "hello over h3" });
   });
 
   test.each([
@@ -901,6 +906,48 @@ describe("interim responses ahead of the final response", () => {
   });
 });
 
+// A response `:status` is three digits from 100 to 999, and never 101, which
+// HTTP/3 doesn't have (RFC 9114 section 4.5). The origin answers every request
+// with one header block that ends the stream.
+describe("response :status", () => {
+  async function probe(status: string) {
+    let requests = 0;
+    const origin = await listen(
+      async (session: any) => {
+        session.onstream = (stream: any) => stream.closed.catch(() => {});
+        await session.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+        transportParams: { maxIdleTimeout: 5 },
+        onheaders(this: any) {
+          requests++;
+          this.sendHeaders({ ":status": status }, { terminal: true });
+        },
+      },
+    );
+    try {
+      const result = await fetch(`https://127.0.0.1:${origin.address!.port}/`, h3).then(
+        res => res.status,
+        e => e.code,
+      );
+      return { result, requests };
+    } finally {
+      // Not close(): it waits for the session that fetch() keeps in its pool.
+      await origin.destroy();
+    }
+  }
+
+  // Treated as interim, a lone 101 ends the stream with no final response and the request is retried.
+  test.each(["101", "99", "1000", "+200", "2_00"])("%j fails the request without a retry", async status => {
+    expect(await probe(status)).toEqual({ result: "HTTP3ProtocolError", requests: 1 });
+  });
+
+  test("999 is delivered", async () => {
+    expect(await probe("999")).toEqual({ result: 999, requests: 1 });
+  });
+});
+
 // QPACK carries a field value verbatim, so a server can send the optional
 // whitespace that the HTTP/1.1 parser strips (RFC 9110 section 5.5). The
 // client decodes through the same header-set callback as the server listener.
@@ -1056,6 +1103,203 @@ test("retries on a fresh session when a pooled session is stale (port reuse)", a
     expect(await fetch(`https://127.0.0.1:${port}/`, h3).then(r => r.text())).toBe("b");
   } finally {
     void b.stop(true);
+  }
+});
+
+// fetch() pauses a body nobody reads by holding the stream's flow-control window
+// (6 MiB). It keeps reading the stream, because data left in lsquic uses up the
+// connection's window (15 MiB) and is dropped with the connection.
+describe("a response body that isn't read yet", () => {
+  const MiB = 1024 * 1024;
+  const turn = () => new Promise(resolve => setImmediate(resolve));
+
+  // Enough to pause the client, and within the stream window, so the server can send it all.
+  const body = Buffer.alloc(2 * MiB, "abcdefghijklmnop");
+  // Stored blocks: about as many bytes on the wire, and the decoder still runs.
+  const gzipped = gzipSync(body, { level: 0 });
+  const streamed = (bytes: Uint8Array, headers?: HeadersInit) =>
+    new Response(
+      new ReadableStream({
+        start(ctrl) {
+          ctrl.enqueue(bytes);
+          ctrl.close();
+        },
+      }),
+      { headers },
+    );
+
+  describe.each([
+    ["content-length", () => new Response(body)],
+    ["no content-length", () => streamed(body)],
+    ["gzip", () => streamed(gzipped, { "content-encoding": "gzip" })],
+  ] as const)("arrives whole after its server is gone (%s)", (_, respond) => {
+    test.each([
+      ["res.bytes()", (res: Response) => res.bytes()],
+      ["a streaming reader", async (res: Response) => Buffer.concat(await Array.fromAsync(res.body!))],
+    ] as const)("%s", async (_, consume) => {
+      const { streams } = liveCounts();
+      let res: Response;
+      {
+        await using server = Bun.serve({ port: 0, tls, http3: true, http1: false, fetch: respond });
+        res = await fetch(`https://127.0.0.1:${server.port}/`, h3);
+        // A graceful stop closes the connection once the client has acknowledged the response.
+        void server.stop();
+        // Wait until the client has read the stream to its end.
+        while (liveCounts().streams > streams) await turn();
+      }
+      const received = await consume(res);
+      expect({ length: received.length, sha: Bun.SHA256.hash(received, "hex") }).toEqual({
+        length: body.length,
+        sha: Bun.SHA256.hash(body, "hex"),
+      });
+    });
+  });
+
+  // Moves 16.5 MiB, which takes a debug build longer than the default timeout.
+  test.skipIf(isDebug)("leaves the connection's flow-control window to other requests", async () => {
+    const large = Buffer.alloc(5.5 * MiB, "abcdefghijklmnop");
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      routes: { "/large": () => new Response(large), "/hello": () => new Response("hello") },
+    });
+    const { streams } = liveCounts();
+    const held = await Promise.all([0, 1, 2].map(() => fetch(`https://127.0.0.1:${server.port}/large`, h3)));
+    while (liveCounts().streams > streams) await turn();
+    const sibling = await fetch(`https://127.0.0.1:${server.port}/hello`, h3).then(r => r.text());
+    const lengths = await Promise.all(held.map(async res => (await res.bytes()).length));
+    expect({ sibling, lengths }).toEqual({ sibling: "hello", lengths: [large.length, large.length, large.length] });
+  });
+});
+
+// Only a FIN completes an HTTP/3 message. A response stream that goes away
+// without one after the headers carries a truncated body.
+describe("a response stream that ends without a FIN", () => {
+  // The origin answers 200 with "partial". It runs `end` once the client, which
+  // has that chunk by then, requests /release.
+  async function readBodyFromOriginThat(end: (stream: any, session: any) => void) {
+    const { promise: released, resolve: release } = Promise.withResolvers<void>();
+    const origin = await listen(
+      async (session: any) => {
+        session.onstream = (stream: any) => stream.closed.catch(() => {});
+        await session.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+        transportParams: { maxIdleTimeout: 5 },
+        async onheaders(this: any, headers: Record<string, string>) {
+          this.sendHeaders({ ":status": "200" });
+          if (headers[":path"] === "/release") {
+            this.writer.endSync();
+            release();
+            return;
+          }
+          this.writer.writeSync(new TextEncoder().encode("partial"));
+          await released;
+          end(this, this.session);
+        },
+      },
+    );
+    try {
+      const base = `https://127.0.0.1:${origin.address!.port}`;
+      const res = await fetch(`${base}/`, h3);
+      const reader = res.body!.getReader();
+      const first = await reader.read();
+      // Not awaited: CONNECTION_CLOSE can take this response with it.
+      fetch(`${base}/release`, h3)
+        .then(r => r.text())
+        .catch(() => {});
+      const rest = await reader.read().then(
+        ({ done }) => (done ? "done" : "chunk"),
+        (e: Error & { code?: string }) => e.code,
+      );
+      return { status: res.status, first: new TextDecoder().decode(first.value), rest };
+    } finally {
+      // Not close(), which waits for the session that fetch() keeps in its pool.
+      await origin.destroy();
+    }
+  }
+
+  test("rejects the body read with HTTP3StreamReset after RESET_STREAM", async () => {
+    const result = await readBodyFromOriginThat(stream =>
+      stream.destroy(new QuicError("body failed", { errorCode: 0x102 })),
+    );
+    expect(result).toEqual({ status: 200, first: "partial", rest: "HTTP3StreamReset" });
+  });
+
+  test("rejects the body read with ECONNRESET after CONNECTION_CLOSE", async () => {
+    const result = await readBodyFromOriginThat((_stream, session) =>
+      session.close({ code: 0x100, type: "application" }),
+    );
+    expect(result).toEqual({ status: 200, first: "partial", rest: "ECONNRESET" });
+  });
+});
+
+// fetch() follows a redirect from inside lsquic's callback for the connection
+// that delivered it. The request it queues on another origin's pooled
+// connection has to go out right away, not with that connection's next packet
+// or alarm.
+test("follows a redirect onto another origin's idle pooled connection right away", async () => {
+  const get = (url: string) => fetch(url, h3).then(r => r.text());
+
+  // A node:quic server, for its session's packet counters.
+  let pooled: { stats: { pktSent: bigint; pktRecv: bigint } } | undefined;
+  const target = await listen(
+    async (session: any) => {
+      pooled = session;
+      session.onstream = (stream: any) => stream.closed.catch(() => {});
+      await session.closed.catch(() => {});
+    },
+    {
+      sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+      transportParams: { maxIdleTimeout: 30 },
+      onheaders(this: any) {
+        this.sendHeaders({ ":status": "200" });
+        this.writer.writeSync(new TextEncoder().encode("target"));
+        this.writer.endSync();
+      },
+    },
+  );
+  const redirectServed = Promise.withResolvers<void>();
+  using origin = Bun.serve({
+    port: 0,
+    tls,
+    http3: true,
+    http1: false,
+    routes: {
+      "/redirect": () => {
+        redirectServed.resolve();
+        return Response.redirect(`https://127.0.0.1:${target.address!.port}/`, 302);
+      },
+      "/marker": () => new Response("marker"),
+    },
+  });
+  const marker = `https://127.0.0.1:${origin.port}/marker`;
+  try {
+    expect(await get(`https://127.0.0.1:${target.address!.port}/`)).toBe("target");
+    // Any packet on the pooled connection gets it ticked, which would hide the
+    // bug. Wait until it's been quiet for 20 requests to `origin`.
+    for (let quiet = 0, last = -1n, requests = 0; quiet < 20 && requests < 60; requests++) {
+      const packets = pooled!.stats.pktSent + pooled!.stats.pktRecv;
+      quiet = packets === last ? quiet + 1 : 0;
+      last = packets;
+      expect(await get(marker)).toBe("marker");
+    }
+
+    const events: string[] = [];
+    const redirected = get(`https://127.0.0.1:${origin.port}/redirect`).then(body => events.push(body));
+    // The redirected request takes one round trip. Five sequential requests
+    // that start after the redirect was served take five.
+    await redirectServed.promise;
+    for (let i = 0; i < 5; i++) await get(marker);
+    events.push("five requests later");
+    await redirected;
+    expect(events).toEqual(["target", "five requests later"]);
+  } finally {
+    // Not close(), which waits for the session that fetch() keeps in its pool.
+    await target.destroy();
   }
 });
 
@@ -1506,6 +1750,108 @@ describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
     expect(exitCode).toBe(0);
   });
 
+  // RFC 7838 section 2.4: a client falls back to the origin when the alternative
+  // fails. The origin advertises a UDP peer that fails every handshake at once,
+  // with a Version Negotiation packet that offers a version nobody speaks.
+  // `dials` counts the QUIC connections the client opened to it.
+  describe("falls back to TCP when the alternative's handshake fails", () => {
+    async function run(requests: string) {
+      const fixture = `
+        const dials = new Set();
+        const alt = await Bun.udpSocket({
+          hostname: "127.0.0.1",
+          socket: {
+            data(socket, m, port, address) {
+              if (!(m[0] & 0x80)) return;
+              const dcid = m.subarray(6, 6 + m[5]);
+              const scid = m.subarray(7 + m[5], 7 + m[5] + m[6 + m[5]]);
+              dials.add(scid.toString("hex"));
+              const reply = [[0x80, 0, 0, 0, 0, scid.length], scid, [dcid.length], dcid, [0x0a, 0x0a, 0x0a, 0x0a]];
+              socket.send(Buffer.concat(reply.map(part => Buffer.from(part))), port, address);
+            },
+          },
+        });
+        const hits = [];
+        using origin = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          tls: ${JSON.stringify(tls)},
+          async fetch(req) {
+            hits.push([req.method, new URL(req.url).pathname, await req.text()].join(" ").trim());
+            return new Response("origin", { headers: { "alt-svc": 'h3=":' + alt.port + '"; ma=3600' } });
+          },
+        });
+        const send = (path, init) =>
+          fetch("https://127.0.0.1:" + origin.port + path, { tls: { rejectUnauthorized: false }, ...init }).then(
+            r => r.text(),
+            e => e.code,
+          );
+        const results = [await send("/learn")];
+        ${requests}
+        console.log(JSON.stringify({ results, hits: hits.sort(), dials: dials.size }));
+        alt.close();
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT: "1" },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return JSON.parse(stdout);
+    }
+
+    test.concurrent("and doesn't dial it again for the next request", async () => {
+      expect(await run(`results.push(await send("/1"), await send("/2"));`)).toEqual({
+        results: ["origin", "origin", "origin"],
+        hits: ["GET /1", "GET /2", "GET /learn"],
+        dials: 1,
+      });
+    });
+
+    test.concurrent("with every request queued on the connection", async () => {
+      expect(await run(`results.push(...(await Promise.all([send("/a"), send("/b"), send("/c")])));`)).toEqual({
+        results: ["origin", "origin", "origin", "origin"],
+        hits: ["GET /a", "GET /b", "GET /c", "GET /learn"],
+        dials: 1,
+      });
+    });
+
+    test.concurrent("with a streamed request body", async () => {
+      const requests = `
+        const body = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("streamed"));
+            controller.close();
+          },
+        });
+        results.push(await send("/upload", { method: "POST", body }));
+      `;
+      expect(await run(requests)).toEqual({
+        results: ["origin", "origin"],
+        hits: ["GET /learn", "POST /upload streamed"],
+        dials: 1,
+      });
+    });
+
+    test.concurrent('but not for protocol: "http3"', async () => {
+      const requests = `
+        results.push(
+          await fetch("https://127.0.0.1:" + alt.port + "/", { protocol: "http3", tls: { rejectUnauthorized: false } }).then(
+            r => r.text(),
+            e => e.code,
+          ),
+        );
+      `;
+      expect(await run(requests)).toEqual({
+        results: ["origin", "HTTP3HandshakeFailed"],
+        hits: ["GET /learn"],
+        dials: 2,
+      });
+    });
+  });
+
   test("Alt-Svc on a proxy's CONNECT reply is not applied to the tunneled origin", async () => {
     const proxyFixture = `
       import { fetchH3Internals } from "bun:internal-for-testing";
@@ -1567,72 +1913,95 @@ describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
   });
 });
 
-// The HTTP/3 client cannot apply per-request TLS trust configuration (custom
-// ca / client cert+key / serverName): the QUIC context is created without it.
-// Such requests must be refused on the forced-h3 path and kept on TCP+TLS on
-// the Alt-Svc upgrade path, never connected with the options dropped.
-test("custom TLS trust options are rejected on protocol: http3 and excluded from Alt-Svc h3 upgrade", async () => {
-  // protocol: "http3" + a custom CA must reject up front (the CA cannot be
-  // honoured over QUIC), even though the connection would otherwise succeed
-  // with rejectUnauthorized: false.
-  await expect(
-    fetch(`${base}/hello`, {
-      protocol: "http3",
-      tls: { ca: tls.cert, rejectUnauthorized: false },
-    } as any),
-  ).rejects.toThrow();
+// The harness certificate is self-signed with SAN 127.0.0.1 and localhost, so it's its own CA.
+describe("per-request tls options over http3", () => {
+  const attempt = (url: string, options: object) =>
+    fetch(url, { protocol: "http3", tls: options } as RequestInit).then(
+      res => res.text(),
+      e => e.code,
+    );
 
-  // Same for an mTLS client certificate, which the h3 path would never present.
-  await expect(
-    fetch(`${base}/hello`, {
-      protocol: "http3",
-      tls: { cert: tls.cert, key: tls.key, rejectUnauthorized: false },
-    } as any),
-  ).rejects.toThrow();
-
-  // The plain h3 request shape (no trust customization) still works, so the
-  // rejections above are about the TLS options, not h3 being broken.
-  const ok = await fetch(`${base}/hello`, h3);
-  expect(await ok.text()).toBe("hello over h3");
-
-  // Alt-Svc path: with the experimental flag on, a request that carries a
-  // custom CA must keep using HTTP/1.1 over TCP (where the CA is applied)
-  // instead of upgrading onto a QUIC session that ignores it.
-  const fixture = `
-    import { fetchH3Internals } from "bun:internal-for-testing";
-    const { liveCounts } = fetchH3Internals;
-    const tlsOptions = ${JSON.stringify(tls)};
-    using server = Bun.serve({
-      port: 0,
-      tls: tlsOptions,
-      http3: true,
-      fetch: () => new Response("ok"),
+  test("verifies the server against tls.ca", async () => {
+    expect({
+      rightCA: await attempt(`${base}/hello`, { ca: tls.cert }),
+      wrongCA: await attempt(`${base}/hello`, { ca: expiredTls.cert }),
+      defaultStore: await attempt(`${base}/hello`, {}),
+      // Not pooled with the connections above, or with the unverified ones of other tests.
+      rightCAAgain: await attempt(`${base}/hello`, { ca: tls.cert }),
+    }).toEqual({
+      rightCA: "hello over h3",
+      wrongCA: "HTTP3HandshakeFailed",
+      defaultStore: "HTTP3HandshakeFailed",
+      rightCAAgain: "hello over h3",
     });
-    const url = "https://127.0.0.1:" + server.port + "/";
-    const opts = { tls: { ca: tlsOptions.cert, rejectUnauthorized: false } };
-    {
-      const r = await fetch(url, opts);
-      await r.text();
-      console.log("first alt-svc=%s sessions=%d", r.headers.get("alt-svc") ?? "", liveCounts().sessions);
-    }
-    {
-      const r = await fetch(url, opts);
-      await r.text();
-      console.log("second status=%d sessions=%d", r.status, liveCounts().sessions);
-    }
-  `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", fixture],
-    env: { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT: "1" },
-    stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  // Server still advertises Alt-Svc, but with a custom CA both fetches must
-  // stay off QUIC: the live h3 session count stays at 0 after the second fetch.
-  expect(stdout).toMatch(/^first alt-svc=h3=":\d+"; ma=\d+ sessions=0\n/);
-  expect(stdout).toMatch(/second status=200 sessions=0\n$/);
-  expect(exitCode).toBe(0);
+
+  test("verifies the certificate against tls.serverName", async () => {
+    expect({
+      inTheCertificate: await attempt(`${base}/hello`, { ca: tls.cert, serverName: "localhost" }),
+      notInTheCertificate: await attempt(`${base}/hello`, { ca: tls.cert, serverName: "example.com" }),
+    }).toEqual({ inTheCertificate: "hello over h3", notInTheCertificate: "HTTP3HandshakeFailed" });
+  });
+
+  test("presents the client certificate", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls: { ...tls, requestCert: true, rejectUnauthorized: true, ca: tls.cert },
+      http3: true,
+      http1: false,
+      fetch: () => new Response("mutual"),
+    });
+    const url = `https://127.0.0.1:${server.port}/`;
+    expect(await attempt(url, { ca: tls.cert, cert: tls.cert, key: tls.key })).toBe("mutual");
+    expect(await attempt(url, { ca: tls.cert })).not.toBe("mutual");
+  });
+
+  test("connections with the same tls options share one SSL_CTX", async () => {
+    const fixture = `
+      import { fetchH3Internals, sslCtxLiveCount } from "bun:internal-for-testing";
+      const tls = ${JSON.stringify(tls)};
+      const servers = Array.from({ length: 4 }, () =>
+        Bun.serve({ port: 0, tls, http3: true, http1: false, fetch: () => new Response("ok") }),
+      );
+      const counts = new Set();
+      for (const server of servers) {
+        await fetch("https://127.0.0.1:" + server.port + "/", { protocol: "http3", tls: { ca: tls.cert } }).then(r => r.text());
+        counts.add(sslCtxLiveCount());
+      }
+      console.log(fetchH3Internals.liveCounts().sessions, counts.size);
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "4 1\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("refuses maxVersion below TLS 1.3", async () => {
+    expect(await attempt(`${base}/hello`, { ca: tls.cert, maxVersion: 0x0303 })).toBe("HTTP3Unsupported");
+  });
+
+  test("verifies against tls.ca after an Alt-Svc upgrade", async () => {
+    const fixture = `
+      import { fetchH3Internals } from "bun:internal-for-testing";
+      const tls = ${JSON.stringify(tls)};
+      using server = Bun.serve({ port: 0, tls, http3: true, fetch: () => new Response("ok") });
+      const sessions = [];
+      for (let i = 0; i < 2; i++) {
+        await fetch("https://127.0.0.1:" + server.port + "/", { tls: { ca: tls.cert } }).then(r => r.text());
+        sessions.push(fetchH3Internals.liveCounts().sessions);
+      }
+      console.log(sessions.join(","));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT: "1" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "0,1\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 });
 
 // https://github.com/oven-sh/bun/issues/32234
@@ -1673,7 +2042,7 @@ test("protocol: http3 is refused once tls.DEFAULT_CIPHERS is assigned, as it is 
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  // The HTTP/3 client has one context, which takes no option. QUIC is TLS 1.3, so the list would not apply to it.
+  // QUIC is TLS 1.3, so the list would not apply to it.
   expect(JSON.parse(stdout)).toEqual({ nothing: "ok", option: "HTTP3Unsupported", assigned: "HTTP3Unsupported" });
   expect(exitCode).toBe(0);
 });

@@ -1,6 +1,6 @@
 import * as vercelFetch from "@vercel/fetch";
 import * as iso from "isomorphic-fetch";
-import fetch2, { fetch, Headers, Request, Response } from "node-fetch";
+import fetch2, { AbortError, fetch, FetchError, Headers, Request, Response } from "node-fetch";
 import assert from "node:assert";
 import { constants, createPrivateKey } from "node:crypto";
 import { once } from "node:events";
@@ -12,6 +12,7 @@ import tls from "node:tls";
 import * as stream from "stream";
 
 import { afterEach, describe, expect, test } from "bun:test";
+import { deadPort } from "../../bun/http/proxy-stress-helpers";
 
 const originalResponse = globalThis.Response;
 const originalRequest = globalThis.Request;
@@ -412,6 +413,90 @@ test.each([true, false])(
   },
 );
 
+// Like form-data: an old-style Stream that sends its data once, when it's piped.
+function streamThatSendsWhenPiped(...chunks) {
+  const source = new stream.Stream();
+  source.pipe = function (destination, options) {
+    stream.Stream.prototype.pipe.call(this, destination, options);
+    for (const chunk of chunks) this.emit("data", Buffer.from(chunk));
+    this.emit("end");
+    return destination;
+  };
+  return source;
+}
+
+test("node-fetch Request reads an old-style Stream body", async () => {
+  const request = new Request("http://example.test/", {
+    method: "POST",
+    body: streamThatSendsWhenPiped("hello ", "world"),
+  });
+  expect(await request.text()).toBe("hello world");
+});
+
+test("node-fetch fetch() uploads the old-style Stream body of a Request", async () => {
+  using server = serveRequestBody();
+  const request = new Request(server.url, { method: "POST", body: streamThatSendsWhenPiped("hello ", "world") });
+  expect(await (await fetch2(request)).text()).toBe("hello world");
+});
+
+test("node-fetch Request rejects the body read when its old-style Stream body fails", async () => {
+  const legacy = new stream.Stream();
+  const error = new Error("integrity check failed");
+  legacy.pipe = function (destination, options) {
+    stream.Stream.prototype.pipe.call(this, destination, options);
+    this.emit("error", error);
+    return destination;
+  };
+  const request = new Request("http://example.test/", { method: "POST", body: legacy });
+  expect(await request.text().catch(e => e)).toBe(error);
+});
+
+test("node-fetch Request leaves an old-style Stream body unread until the body is used", async () => {
+  using server = serveRequestBody();
+  const init = { method: "POST", body: streamThatSendsWhenPiped("hello ", "world") };
+  expect(new Request(server.url, init).method).toBe("POST");
+  expect(await (await fetch2(server.url, init)).text()).toBe("hello world");
+});
+
+describe("node-fetch keeps the members of an init whose body or tls it replaces", () => {
+  const members = { method: "PUT", headers: { "x-from": "init" } };
+  const shapes = [
+    ["inherited", extra => Object.assign(Object.create(members), extra)],
+    [
+      "non-enumerable",
+      extra => {
+        const init = { ...extra };
+        for (const name in members) Object.defineProperty(init, name, { value: members[name], enumerable: false });
+        return init;
+      },
+    ],
+  ];
+  const echo = () =>
+    Bun.serve({
+      port: 0,
+      fetch: async req => Response.json([req.method, req.headers.get("x-from"), await req.text()]),
+    });
+
+  test.each(shapes)("%s: fetch() with an old-style Stream body", async (_, shape) => {
+    using server = echo();
+    const init = shape({ body: streamThatSendsWhenPiped("hello") });
+    expect(await (await fetch2(server.url, init)).json()).toEqual(["PUT", "init", "hello"]);
+  });
+
+  test.each(shapes)("%s: Request with an old-style Stream body", async (_, shape) => {
+    const request = new Request("http://example.test/", shape({ body: streamThatSendsWhenPiped("hello") }));
+    expect([request.method, request.headers.get("x-from"), await request.text()]).toEqual(["PUT", "init", "hello"]);
+  });
+
+  test.each(shapes)("%s: fetch() with an agent that has TLS options", async (_, shape) => {
+    using server = echo();
+    const agent = new https.Agent({ rejectUnauthorized: false });
+    const init = shape({ agent, body: "hello" });
+    expect(await (await fetch2(server.url, init)).json()).toEqual(["PUT", "init", "hello"]);
+    agent.destroy();
+  });
+});
+
 test("node-fetch fetch() rejects for a Writable request body", async () => {
   using server = serveRequestBody();
   const response = fetch2(server.url, { method: "POST", body: discard() });
@@ -421,6 +506,170 @@ test("node-fetch fetch() rejects for a Writable request body", async () => {
 test("node-fetch json() resolves null for a body that is the JSON text null", async () => {
   using server = Bun.serve({ port: 0, fetch: () => new Response("null") });
   expect(await (await fetch2(server.url)).json()).toBeNull();
+});
+
+test('node-fetch Response.type is "default" for an HTTP error status', async () => {
+  expect(new Response("x", { status: 404 }).type).toBe("default");
+  expect(new Response("x", { status: 500 }).type).toBe("default");
+  expect(new Response("x").type).toBe("default");
+
+  using server = Bun.serve({ port: 0, fetch: () => new Response("missing", { status: 404 }) });
+  const response = await fetch2(server.url);
+  expect(response.status).toBe(404);
+  expect(response.type).toBe("default");
+});
+
+test("node-fetch Response.json(), Response.redirect() and Response.error() return a node-fetch Response", async () => {
+  const json = Response.json({ a: 1 }, { status: 201 });
+  expect(json).toBeInstanceOf(Response);
+  expect(json.status).toBe(201);
+  expect((await json.buffer()).toString()).toBe('{"a":1}');
+  expect(Response.json({ a: 1 }).body).toBeInstanceOf(stream.Readable);
+
+  const redirect = Response.redirect("http://example.test/next", 301);
+  expect(redirect).toBeInstanceOf(Response);
+  expect(redirect.status).toBe(301);
+  expect(redirect.type).toBe("default");
+  expect(redirect.headers.raw()).toEqual({ location: ["http://example.test/next"] });
+  expect(Response.redirect("http://example.test/next").status).toBe(302);
+
+  const error = Response.error();
+  expect(error).toBeInstanceOf(Response);
+  expect(error.status).toBe(0);
+  expect(error.type).toBe("error");
+});
+
+test("node-fetch fetch() rejects with AbortError when the signal aborts", async () => {
+  const gate = Promise.withResolvers();
+  using server = Bun.serve({ port: 0, fetch: () => gate.promise.then(() => new Response("late")) });
+  const controller = new AbortController();
+  const pending = fetch2(server.url, { signal: controller.signal });
+  controller.abort();
+  const error = await pending.catch(e => e);
+  gate.resolve();
+  expect(error).toBeInstanceOf(AbortError);
+  expect({ name: error.name, type: error.type, message: error.message }).toEqual({
+    name: "AbortError",
+    type: "aborted",
+    message: "The operation was aborted.",
+  });
+
+  const alreadyAborted = await fetch2(server.url, { signal: AbortSignal.abort() }).catch(e => e);
+  expect(alreadyAborted).toBeInstanceOf(AbortError);
+});
+
+test("node-fetch fetch() rejects with the signal's reason when it isn't the default AbortError", async () => {
+  using server = Bun.serve({ port: 0, fetch: () => new Response("unreached") });
+  const reason = new Error("custom reason");
+  expect(await fetch2(server.url, { signal: AbortSignal.abort(reason) }).catch(e => e)).toBe(reason);
+
+  const timeout = new DOMException("The operation timed out.", "TimeoutError");
+  expect(await fetch2(server.url, { signal: AbortSignal.abort(timeout) }).catch(e => e)).toBe(timeout);
+});
+
+test("node-fetch fetch() rejects with a system FetchError when the connection is refused", async () => {
+  using dead = await deadPort();
+  const url = `http://127.0.0.1:${dead.port}/`;
+  const error = await fetch2(url).catch(e => e);
+  expect(error).toBeInstanceOf(FetchError);
+  expect({
+    name: error.name,
+    type: error.type,
+    code: error.code,
+    errno: error.errno,
+    erroredSysCall: error.erroredSysCall,
+    message: error.message,
+  }).toEqual({
+    name: "FetchError",
+    type: "system",
+    code: "ECONNREFUSED",
+    errno: "ECONNREFUSED",
+    erroredSysCall: "connect",
+    message: `request to ${url} failed, reason: ECONNREFUSED: Unable to connect. Is the computer able to access the url?`,
+  });
+});
+
+test("node-fetch fetch() rejects with a no-redirect, max-redirect or invalid-redirect FetchError", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch: req =>
+      req.url.endsWith("/invalid")
+        ? new Response(null, { status: 302, headers: { location: "http://[::1" } })
+        : Response.redirect(req.url, 302),
+  });
+  const url = server.url.href;
+  const invalidRedirect = await fetch2(url + "invalid").catch(e => e);
+  expect(invalidRedirect).toBeInstanceOf(FetchError);
+  expect({ type: invalidRedirect.type, code: invalidRedirect.code }).toEqual({
+    type: "invalid-redirect",
+    code: undefined,
+  });
+
+  const noRedirect = await fetch2(url, { redirect: "error" }).catch(e => e);
+  expect(noRedirect).toBeInstanceOf(FetchError);
+  expect({ type: noRedirect.type, code: noRedirect.code, message: noRedirect.message }).toEqual({
+    type: "no-redirect",
+    code: undefined,
+    message: `uri requested responds with a redirect, redirect mode is set to error: ${url}`,
+  });
+
+  const maxRedirect = await fetch2(url).catch(e => e);
+  expect(maxRedirect).toBeInstanceOf(FetchError);
+  expect({ type: maxRedirect.type, message: maxRedirect.message }).toEqual({
+    type: "max-redirect",
+    message: `maximum redirect reached at: ${url}`,
+  });
+});
+
+test("node-fetch fetch() still rejects with a TypeError for a bad argument", async () => {
+  using server = Bun.serve({ port: 0, fetch: () => new Response("unreached") });
+  const invalidUrl = await fetch2("/relative").catch(e => e);
+  expect(invalidUrl).toBeInstanceOf(TypeError);
+  expect(invalidUrl.code).toBe("ERR_INVALID_URL");
+
+  const badHeader = await fetch2(server.url, { headers: { "a b": "c" } }).catch(e => e);
+  expect(badHeader).toBeInstanceOf(TypeError);
+});
+
+test("node-fetch fetch() rejects with the error of a request body stream that fails", async () => {
+  using server = Bun.serve({ port: 0, fetch: async req => new Response(await req.text()) });
+  const error = Object.assign(new Error("ENOENT: no such file or directory, open '/missing'"), {
+    errno: -2,
+    code: "ENOENT",
+    syscall: "open",
+    path: "/missing",
+  });
+  const body = new stream.Readable({
+    read() {
+      this.destroy(error);
+    },
+  });
+  expect(await fetch2(server.url, { method: "POST", body }).catch(e => e)).toBe(error);
+});
+
+test("node-fetch FetchError and AbortError have node-fetch's name, type, code and errno", () => {
+  const error = new FetchError("request to http://example.test/ failed", "system", {
+    code: "ECONNRESET",
+    syscall: "read",
+  });
+  expect(error).toBeInstanceOf(Error);
+  expect(error.name).toBe("FetchError");
+  expect(String(error)).toBe("FetchError: request to http://example.test/ failed");
+  expect(Object.prototype.toString.call(error)).toBe("[object FetchError]");
+  expect(error.type).toBe("system");
+  expect(error.code).toBe("ECONNRESET");
+  expect(error.errno).toBe("ECONNRESET");
+  expect(error.erroredSysCall).toBe("read");
+
+  const withoutSystemError = new FetchError("invalid json", "invalid-json");
+  expect(withoutSystemError.name).toBe("FetchError");
+  expect(Object.keys(withoutSystemError)).toEqual(["type"]);
+
+  const aborted = new AbortError("The operation was aborted.");
+  expect(aborted).toBeInstanceOf(Error);
+  expect(aborted).toBeInstanceOf(DOMException);
+  expect(aborted.name).toBe("AbortError");
+  expect(aborted.type).toBe("aborted");
 });
 
 test("node-fetch request body streams properly", async () => {

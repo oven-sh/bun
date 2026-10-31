@@ -296,7 +296,7 @@ impl DevServer {
         }
         self.next_bundle.route_queue.clear_retaining_capacity();
         if let Some(server) = server.as_mut() {
-            server.on_static_request_complete();
+            server.on_request_complete();
         }
         // TODO: allow recovery from this state
         Ok(())

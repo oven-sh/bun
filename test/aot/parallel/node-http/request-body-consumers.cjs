@@ -136,6 +136,8 @@ const server = http.createServer((req, res) => {
     res.end("ok");
   });
 });
+// What a server does to a connection as it accepts it comes ahead of the client's 'connect' or behind it.
+server.on("connection", () => (lines = []));
 server.listen(0, "127.0.0.1", async () => {
   for (const spy of ["none", "resume of the connection", "net.Socket.prototype.resume", "Duplex.prototype.resume"]) {
     const restore =

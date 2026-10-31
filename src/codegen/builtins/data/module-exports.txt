@@ -7,8 +7,8 @@ node:_http_agent Agent default globalAgent shouldUseEnvProxy
 node:_http_client ClientRequest default
 node:_http_common CRLF HTTPParser MAX_HEADER_PAIRS _checkInvalidHeaderChar _checkIsHttpToken calculateLenientFlags chunkExpression continueExpression default freeParser isLenient kIncomingMessage kSkipPendingData methods parsers prepareError validateHeaderName validateHeaderValue
 node:_http_incoming IncomingMessage default kReqShouldKeepAlive readStart readStop
-node:_http_outgoing FakeSocket OutgoingMessage default kErrored kHighWaterMark kOutHeaders kRejectNonStandardBodyWrites kSocket kUniqueHeaders parseUniqueHeadersOption validateHeaderName validateHeaderValue
-node:_http_server Server ServerResponse default kConnectionsCheckingInterval
+node:_http_outgoing OutgoingMessage default kErrored kHighWaterMark kOutHeaders kRejectNonStandardBodyWrites kSocket kUniqueHeaders parseUniqueHeadersOption validateHeaderName validateHeaderValue
+node:_http_server Server ServerResponse _connectionListener default httpServerPreClose kConnectionsCheckingInterval setupConnectionsTracking storeHTTPOptions
 node:_stream_duplex=function default from fromWeb toWeb
 node:_stream_passthrough=function default
 node:_stream_readable=function ReadableState _fromList default from fromWeb toWeb wrap
@@ -34,7 +34,7 @@ node:domain _stack active create createDomain default
 node:events=function EventEmitter EventEmitterAsyncResource addAbortListener captureRejectionSymbol captureRejections default defaultMaxListeners errorMonitor getEventListeners getMaxListeners init listenerCount on once prototype setMaxListeners usingDomains
 node:fs Dir Dirent F_OK FileReadStream FileWriteStream R_OK ReadStream Stats Utf8Stream W_OK WriteStream X_OK _toUnixTimestamp access accessSync appendFile appendFileSync chmod chmodSync chown chownSync close closeSync constants copyFile copyFileSync cp cpSync createReadStream createWriteStream default exists existsSync fchmod fchmodSync fchown fchownSync fdatasync fdatasyncSync fstat fstatSync fsync fsyncSync ftruncate ftruncateSync futimes futimesSync glob globSync lchmod lchmodSync lchown lchownSync link linkSync lstat lstatSync lutimes lutimesSync mkdir mkdirSync mkdtemp mkdtempDisposableSync mkdtempSync open openAsBlob openSync opendir opendirSync promises read readFile readFileSync readSync readdir readdirSync readlink readlinkSync readv readvSync realpath realpathSync rename renameSync rm rmSync rmdir rmdirSync stat statSync statfs statfsSync symlink symlinkSync truncate truncateSync unlink unlinkSync unwatchFile utimes utimesSync watch watchFile write writeFile writeFileSync writeSync writev writevSync
 node:fs/promises access appendFile chmod chown close constants copyFile cp default exists fchmod fchown fdatasync fstat fsync ftruncate futimes glob lchmod lchown link lstat lutimes mkdir mkdtemp mkdtempDisposable open opendir read readFile readdir readlink readv realpath rename rm rmdir stat statfs symlink truncate unlink utimes watch write writeFile writev
-node:http Agent ClientRequest CloseEvent IncomingMessage METHODS MessageEvent OutgoingMessage STATUS_CODES Server ServerResponse WebSocket createServer default get globalAgent maxHeaderSize request setGlobalProxyFromEnv setMaxIdleHTTPParsers validateHeaderName validateHeaderValue
+node:http Agent ClientRequest CloseEvent IncomingMessage METHODS MessageEvent OutgoingMessage STATUS_CODES Server ServerResponse WebSocket _connectionListener createServer default get globalAgent maxHeaderSize request setGlobalProxyFromEnv setMaxIdleHTTPParsers validateHeaderName validateHeaderValue
 node:http2 ClientHttp2Session Http2ServerRequest Http2ServerResponse connect constants createSecureServer createServer default getDefaultSettings getPackedSettings getUnpackedSettings performServerHandshake sensitiveHeaders
 node:https Agent Server createServer default get globalAgent request
 node:inspector Session close console default open url waitForDebugger

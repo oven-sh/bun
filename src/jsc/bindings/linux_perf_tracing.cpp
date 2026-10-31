@@ -39,15 +39,6 @@ int Bun__linux_trace_init()
     return (trace_fd != -1) ? 1 : 0;
 }
 
-// Close the trace file descriptor
-void Bun__linux_trace_close()
-{
-    if (trace_fd != -1) {
-        close(trace_fd);
-        trace_fd = -1;
-    }
-}
-
 // Write a trace event to the trace marker
 // Format: "C|PID|EventName|DurationInNs"
 int Bun__linux_trace_emit(const char* event_name, int64_t duration_ns)

@@ -13,14 +13,16 @@
 //! allocates one of these and one `SSL_CTX` total — `tls.ts` no longer hashes
 //! in JS.
 
+use crate::api::SSLContextCache::SSLContextCache;
 use crate::crypto::boringssl_jsc::err_to_js;
+use crate::socket::SSLConfig;
+use crate::socket::ssl_config::ParsedTls;
 use crate::socket::uws_jsc::create_bun_socket_error_to_js;
-use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl_sys as boringssl;
 use bun_core::EncodedSlice;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsClass as _;
-use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
+use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_uws as uws;
 use core::cell::Cell;
@@ -54,11 +56,31 @@ impl SecureContext {
         SecureContext::create(global, &config)
     }
 
+    /// The `SSL_CTX` of `options.secureContext`. `None` if `options` isn't an object or names none.
+    pub(crate) fn ctx_from_options(
+        global: &JSGlobalObject,
+        options: JSValue,
+    ) -> JsResult<Option<boringssl::OwnedSslCtx>> {
+        if !options.is_object() {
+            return Ok(None);
+        }
+        let Some(value) = options.get_truthy(global, "secureContext")? else {
+            return Ok(None);
+        };
+        match value.as_class_ref::<SecureContext>() {
+            Some(context) => Ok(Some(context.ctx.clone())),
+            None => Err(global.throw_invalid_argument_type_value(
+                b"secureContext",
+                b"SecureContext",
+                value,
+            )),
+        }
+    }
+
     fn config_from_js(global: &JSGlobalObject, options: JSValue) -> JsResult<SSLConfig> {
-        // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
-        let vm = global.bun_vm().as_mut();
+        let vm = global.bun_vm();
         // Only a server reads `rejectUnauthorized` back from a context (`server_ctx_rejects_unauthorized`).
-        Ok(SSLConfig::from_js(vm, global, options, true)?.unwrap_or_else(SSLConfig::zero))
+        Ok(ParsedTls::from_js(vm, global, options, true)?.or_defaults(vm, true))
     }
 
     /// `SecureContext.parsePkcs12(pfx, passphrase)` - parses a PKCS#12 blob
@@ -270,19 +292,7 @@ impl SecureContext {
         d: [u8; 32],
     ) -> JsResult<SecureContext> {
         let mut err = uws::create_bun_socket_error_t::none;
-        // Note: spec is `global.bunVM().rareData().sslCtxCache()`. In the
-        // Rust crate split, `bun_jsc::RareData::ssl_ctx_cache()` returns an
-        // opaque cycle-break stub; the concrete per-VM `SSLContextCache` lives
-        // on this crate's `RuntimeState` (one per JS thread, same lifetime as
-        // `RareData`). Reach it via the thread-local — same instance
-        // `Bun__RareData__sslCtxCache` hands out over FFI.
-        let state = crate::jsc_hooks::runtime_state();
-        debug_assert!(!state.is_null(), "RuntimeState not installed");
-        // SAFETY: `state` is the boxed per-thread `RuntimeState` installed by
-        // `init_runtime_state`; the embedded `ssl_ctx_cache` has a stable
-        // address for the VM's lifetime and is only touched from the JS thread.
-        let cache = unsafe { &mut (*state).ssl_ctx_cache };
-        let Some(ctx) = cache.get_or_create_digest(ctx_opts, d, &mut err) else {
+        let Some(ctx) = SSLContextCache::get_or_create_digest(ctx_opts, d, &mut err) else {
             // `err` is only set for the input-validation paths (bad PEM, missing
             // file, …). When BoringSSL itself fails (e.g. unsupported curve) the
             // enum is still `.none`; surface the library error stack instead of
@@ -324,33 +334,29 @@ impl SecureContext {
     /// `secureContext.context.addCACert(pem)` — appends the certificates in
     /// the given PEM string or buffer to this context's trust store, the way
     /// Node's SecureContext exposes it.
-    pub(crate) fn add_ca_cert(&self, cx: &mut JsScope<'_>, cert: JsLocal<'_>) -> JsResult<()> {
+    pub(crate) fn add_ca_cert<'a>(
+        &self,
+        cx: &mut JsScope<'a>,
+        cert: JsLocal<'a>,
+    ) -> bindgen::Result<'a, ()> {
+        let ctx = self.own_ctx(&cx.heap)?;
         let global = cx.global();
-        if self.shared {
-            return Err(global.throw(format_args!(
-                "cannot mutate a shared SecureContext; use tls.createSecureContext()"
-            )));
-        }
         let pem = cert.to_js().to_utf8(global)?;
         let bytes = pem.slice();
         if bytes.is_empty() {
-            return Err(
-                global.throw_invalid_arguments(format_args!("addCACert requires a certificate"))
-            );
+            return Err(global
+                .throw_invalid_arguments(format_args!("addCACert requires a certificate"))
+                .into());
         }
         // The C side wants a NUL-terminated PEM document.
         let mut owned = bytes.to_vec();
         owned.push(0);
-        // SAFETY: `self.ctx` is the live SSL_CTX this object owns a reference
+        // SAFETY: `ctx` is the live SSL_CTX this object owns a reference
         // to, and `owned` is a NUL-terminated buffer valid for the call.
-        let ok = unsafe {
-            c::us_ssl_ctx_add_ca_cert(
-                self.ctx.as_ptr(),
-                owned.as_ptr().cast::<core::ffi::c_char>(),
-            )
-        };
+        let ok =
+            unsafe { c::us_ssl_ctx_add_ca_cert(ctx, owned.as_ptr().cast::<core::ffi::c_char>()) };
         if ok == 0 {
-            return Err(global.throw(format_args!("Invalid CA certificate")));
+            return Err(global.throw(format_args!("Invalid CA certificate")).into());
         }
         // Its trust set changed, so it stops sharing sessions with same-option contexts.
         let mut folded = [0u8; 32];
@@ -359,15 +365,66 @@ impl SecureContext {
         hasher.update(bytes);
         hasher.r#final(&mut folded);
         self.digest.set(folded);
-        // SAFETY: `self.ctx` is live; the call copies the 32 bytes.
+        // SAFETY: `ctx` is live; the call copies the 32 bytes.
         unsafe {
-            boringssl::SSL_CTX_set_session_id_context(
-                self.ctx.as_ptr(),
-                folded.as_ptr(),
-                folded.len(),
-            );
+            boringssl::SSL_CTX_set_session_id_context(ctx, folded.as_ptr(), folded.len());
         }
         Ok(())
+    }
+
+    /// The `SSL_CTX` for a member that changes it. A digest-interned one also serves other consumers, so it's refused.
+    fn own_ctx<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, *mut boringssl::SSL_CTX> {
+        if self.shared {
+            return Err(heap.error(format_args!(
+                "cannot mutate a shared SecureContext; use tls.createSecureContext()"
+            )));
+        }
+        Ok(self.ctx.as_ptr())
+    }
+
+    /// `secureContext.context.getTicketKeys()`, for `tls.Server#getTicketKeys()`.
+    pub(crate) fn get_ticket_keys<'a>(
+        &self,
+        heap: &JsHeap<'a>,
+    ) -> bindgen::Result<'a, JsLocal<'a, BufferSource>> {
+        let mut keys = [0u8; TICKET_KEYS_LEN];
+        // SAFETY: `self.ctx` is live and `keys` has the length BoringSSL requires.
+        let ok = unsafe {
+            boringssl::SSL_CTX_get_tlsext_ticket_keys(
+                self.ctx.as_ptr(),
+                keys.as_mut_ptr().cast(),
+                keys.len(),
+            )
+        };
+        // Setting the keys stops BoringSSL's 48-hour rotation, so a copy given to another server stays valid as in Node.
+        if ok != 1 || (!self.shared && !self.apply_ticket_keys(&keys)) {
+            return Err(heap.error(format_args!("Failed to get the session ticket keys")));
+        }
+        heap.create_buffer(&keys)
+    }
+
+    /// `secureContext.context.setTicketKeys(keys)`, for `tls.Server#setTicketKeys()` and the `ticketKeys` option.
+    pub(crate) fn set_ticket_keys<'a>(
+        &self,
+        heap: &JsHeap<'a>,
+        keys: &[u8],
+    ) -> bindgen::Result<'a, ()> {
+        self.own_ctx(heap)?;
+        if !self.apply_ticket_keys(keys) {
+            return Err(heap.error(format_args!("Failed to set the session ticket keys")));
+        }
+        Ok(())
+    }
+
+    fn apply_ticket_keys(&self, keys: &[u8]) -> bool {
+        // SAFETY: `self.ctx` is live; the call copies `keys` and rejects any length but 48.
+        unsafe {
+            boringssl::SSL_CTX_set_tlsext_ticket_keys(
+                self.ctx.as_ptr(),
+                keys.as_ptr().cast(),
+                keys.len(),
+            ) == 1
+        }
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
@@ -376,6 +433,8 @@ impl SecureContext {
 }
 
 const SSL_CTX_BASE_COST: usize = 50 * 1024;
+/// A 16-byte name, a 16-byte HMAC key and a 16-byte AES key.
+const TICKET_KEYS_LEN: usize = 48;
 
 use bun_uws_sys::socket_context::c;
 

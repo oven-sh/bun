@@ -1,5 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { isBroken, isMacOS, tempDir } from "harness";
+import { isBroken, isMacOS, tempDir, tls as tlsCert } from "harness";
+import { once } from "node:events";
+import net from "node:net";
+import tls from "node:tls";
 import { routes, static_responses } from "./bun-serve-static-helpers";
 
 describe.todoIf(isBroken && isMacOS)("static", () => {
@@ -375,5 +378,125 @@ test("HEAD for a static route with an S3 file body reports the same Content-Leng
   }).toEqual({
     head: { status: 200, contentLength: "0" },
     get: { status: 200, contentLength: "0", body: "" },
+  });
+});
+
+test("an in-memory Blob route is served like new Response(blob)", async () => {
+  const blobs = {
+    typed: new Blob(["<p>hi</p>"], { type: "text/html" }),
+    untyped: new Blob(["plain bytes"]),
+    empty: new Blob([]),
+    file: new File(["file bytes"], "a.txt", { type: "text/plain" }),
+    slice: new Blob(["0123456789"], { type: "text/plain" }).slice(2, 5, "text/plain"),
+  };
+  const routes: Record<string, Blob | Response | { GET: Blob }> = {};
+  for (const [name, blob] of Object.entries(blobs)) {
+    routes[`/blob/${name}`] = blob;
+    routes[`/method/${name}`] = { GET: blob };
+    routes[`/response/${name}`] = new Response(blob);
+  }
+  using server = Bun.serve({ port: 0, routes, fetch: () => new Response("fallback", { status: 404 }) });
+
+  const probe = async (path: string, method: string) => {
+    const res = await fetch(new URL(path, server.url), { method });
+    const { date, ...headers } = res.headers.toJSON();
+    return { status: res.status, headers, body: await res.text() };
+  };
+  for (const name of Object.keys(blobs)) {
+    for (const method of ["GET", "HEAD"]) {
+      expect({ name, method, ...(await probe(`/blob/${name}`, method)) }).toEqual({
+        name,
+        method,
+        ...(await probe(`/response/${name}`, method)),
+      });
+    }
+    expect({ name, ...(await probe(`/method/${name}`, "GET")) }).toEqual({
+      name,
+      ...(await probe(`/response/${name}`, "GET")),
+    });
+  }
+  expect(await probe("/blob/slice", "GET")).toEqual({
+    status: 200,
+    headers: { "content-type": "text/plain;charset=utf-8", "content-length": "3", "etag": '"2e0b86a10afe759b"' },
+    body: "234",
+  });
+  // The route doesn't consume the Blob.
+  expect(await blobs.typed.text()).toBe("<p>hi</p>");
+});
+
+describe.each(["http", "https"])("a static or file route with a Connection header, over %s", protocol => {
+  let dir: ReturnType<typeof tempDir>;
+  beforeAll(() => {
+    // Linux sends a file of 1 MB or more with sendfile().
+    dir = tempDir("static-connection-close", { "a.txt": "file-body", "big.txt": Buffer.alloc(4 << 20, "x") });
+  });
+  afterAll(() => dir[Symbol.dispose]());
+
+  // Sends `request` and a request for /second in one write, then reads until the server closes the socket.
+  async function pipeline(route: (init: ResponseInit) => Response, connection: string, request: string) {
+    const ran: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: protocol === "https" ? tlsCert : undefined,
+      idleTimeout: 0,
+      routes: { "/r": route({ headers: { Connection: connection } }) },
+      fetch(req) {
+        ran.push(new URL(req.url).pathname);
+        return new Response("fallback", { headers: { Connection: "close" } });
+      },
+    });
+    const socket =
+      protocol === "https"
+        ? tls.connect({ host: "127.0.0.1", port: server.port, ca: tlsCert.cert, servername: "localhost" })
+        : net.connect(server.port, "127.0.0.1");
+    let raw = "";
+    socket.on("data", chunk => (raw += chunk.toString("latin1")));
+    socket.write(`${request} /r HTTP/1.1\r\nHost: x\r\n\r\nGET /second HTTP/1.1\r\nHost: x\r\n\r\n`);
+    await once(socket, "close");
+    return {
+      lines: raw.match(/HTTP\/1\.1 \d+|^Connection: .*$/gm),
+      bytes: raw.length - raw.indexOf("\r\n\r\n") - 4,
+      ran,
+    };
+  }
+
+  const text = (init: ResponseInit) => new Response("static", init);
+  const file = (init: ResponseInit) => new Response(Bun.file(`${dir}/a.txt`), init);
+
+  test.each<[string, (init: ResponseInit) => Response, string, number, number]>([
+    ["static GET", text, "GET", 200, 6],
+    ["static HEAD", text, "HEAD", 200, 0],
+    ["static GET with a 4 MB body", init => new Response(Buffer.alloc(4 << 20, "y"), init), "GET", 200, 4 << 20],
+    ["static 204", init => new Response(null, { ...init, status: 204 }), "GET", 204, 0],
+    ["Bun.file GET", file, "GET", 200, 9],
+    ["Bun.file HEAD", file, "HEAD", 200, 0],
+    ["Bun.file GET of a 4 MB file", init => new Response(Bun.file(`${dir}/big.txt`), init), "GET", 200, 4 << 20],
+  ])("%s closes the connection after Connection: close", async (_name, route, method, status, bytes) => {
+    expect(await pipeline(route, "close", method)).toEqual({
+      lines: [`HTTP/1.1 ${status}`, "Connection: close"],
+      bytes,
+      ran: [],
+    });
+  });
+
+  test("finds the close option in a list, in any case", async () => {
+    const lines = ["HTTP/1.1 200", "Connection: keep-alive, Close"];
+    expect({
+      static: await pipeline(text, "keep-alive, Close", "GET"),
+      file: await pipeline(file, "keep-alive, Close", "GET"),
+    }).toEqual({ static: { lines, bytes: 6, ran: [] }, file: { lines, bytes: 9, ran: [] } });
+  });
+
+  test("keeps the connection open after Connection: keep-alive", async () => {
+    const expected = {
+      lines: ["HTTP/1.1 200", "Connection: keep-alive", "HTTP/1.1 200", "Connection: close"],
+      bytes: expect.any(Number),
+      ran: ["/second"],
+    };
+    expect({
+      static: await pipeline(text, "keep-alive", "GET"),
+      file: await pipeline(file, "keep-alive", "GET"),
+    }).toEqual({ static: expected, file: expected });
   });
 });

@@ -590,10 +590,6 @@ impl SystemErrnoInit for u32 {
 impl SystemErrno {
     pub(crate) const MAX: usize = 138;
 
-    /// Windows' libuv-mapped errno set spells this `ENOTSUP`; alias the POSIX
-    /// `EOPNOTSUPP` name so cross-platform `match` arms compile unchanged.
-    pub const EOPNOTSUPP: SystemErrno = SystemErrno::ENOTSUP;
-
     #[inline]
     pub const fn to_e(self) -> E {
         // SystemErrno and E share identical #[repr(u16)] discriminant sets.

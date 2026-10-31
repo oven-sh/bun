@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_common.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 e9bcb64b690623cf8e8b8ce199a3326e23a7430bdeed5fd855a1902f2798e2d8.
+// Written against that file with the SHA-256 1dd10190f02729fc74566c3328a01d6738fd628dae45459823472c568f445add.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // This is a port of Node.js's lib/_http_common.js
@@ -7,6 +7,7 @@
 const { checkIsHttpToken } = require("internal/validators");
 const FreeList = require("internal/freelist");
 const http = require("internal/http");
+const { drainMicrotasks } = http;
 // A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
 const kIncomingMessage: typeof http.kIncomingMessage = http.kIncomingMessage;
 const kSkipPendingData: typeof http.kSkipPendingData = http.kSkipPendingData;
@@ -127,6 +128,13 @@ const MAX_HEADER_PAIRS = 2000;
 // across multiple TCP packets or too large to be
 // processed in a single run. This method is also
 // called to process trailing HTTP headers.
+// Node makes kOnHeaders and kOnBody with MakeCallback(), which runs the ticks and microtasks when the read came from the handle. Its other callbacks skip them.
+function runTaskQueues(parser: $Node.HTTPParser) {
+  // What the socket held did not come from the handle. A tick could hand the parser the rest of it, or the end, in the middle of this read.
+  const socket = parser.socket!;
+  if (parser._consumed && socket.readableLength === 0 && !socket._readableState.ended) drainMicrotasks();
+}
+
 function parserOnHeaders(this: $Node.HTTPParser, headers: string[], url: string) {
   // Once we exceeded headers limit - stop collecting them
   const capacity = this.maxHeaderPairs - this._headers.length;
@@ -136,6 +144,7 @@ function parserOnHeaders(this: $Node.HTTPParser, headers: string[], url: string)
     this._headers.push(...headers.slice(0, capacity));
   }
   this._url += url;
+  runTaskQueues(this);
 }
 
 // `headers` and `url` are set only if .onHeaders() has not been called for
@@ -203,13 +212,12 @@ function parserOnBody(this: $Node.HTTPParser, b: Buffer) {
   const stream = this.incoming;
 
   // If the stream has already been removed, then drop it.
-  if (stream === null || stream[kSkipPendingData]) return;
-
-  // Pretend this was the result of a stream._read call.
-  if (!stream._dumped) {
+  if (stream !== null && !stream[kSkipPendingData] && !stream._dumped && !stream.destroyed) {
+    // Pretend this was the result of a stream._read call.
     const ret = stream.push(b);
     if (!ret) readStop(this.socket);
   }
+  runTaskQueues(this);
 }
 
 function parserOnMessageComplete(this: $Node.HTTPParser) {
@@ -226,6 +234,10 @@ function parserOnMessageComplete(this: $Node.HTTPParser) {
       parser._headers = [];
       parser._url = "";
     }
+
+    // JS feeds this parser, so user frames can be on the stack and no queue has run. A read that the 'request' listener scheduled counts as begun.
+    const state = stream._readableState;
+    if (!parser._consumed && (state.resumeScheduled || state.readableListening)) stream._consuming = true;
 
     // For emit end event
     stream.push(null);

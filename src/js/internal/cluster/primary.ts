@@ -10,12 +10,7 @@ const onInternalMessage: (
   worker: ClusterWorker,
   callback: (this: ClusterWorker, message, handle: unknown) => void,
 ) => void = $bindgen("node_cluster_binding.bind.ts", "onInternalMessagePrimary");
-const validateFd: (fd: number, wantDgram: boolean) => number = $bindgen(
-  "node_cluster_binding.bind.ts",
-  "clusterValidateFd",
-);
-const isDgramSocketFd: (fd: number) => boolean = $bindgen("udp_socket.bind.ts", "dgramIsFdAdopted");
-const { UV_EEXIST, UV_EINVAL, UV_ENOBUFS } = process.binding("uv");
+const { UV_EINVAL, UV_ENOBUFS } = process.binding("uv");
 
 let child_process: $BunModules["node:child_process"] | undefined;
 let RoundRobinHandle: $BunModules["internal/cluster/RoundRobinHandle"] | undefined;
@@ -236,6 +231,7 @@ cluster.disconnect = function (cb) {
 };
 
 const methodMessageMapping = {
+  __proto__: null,
   close,
   exitedAfterDisconnect,
   listening,
@@ -246,9 +242,16 @@ const methodMessageMapping = {
 function onmessage(this: ClusterWorker, message, _handle: unknown) {
   const worker = this;
 
-  const fn: ((worker: ClusterWorker, message) => void) | undefined = methodMessageMapping[message.act];
+  // child.ts only writes strings, numbers, booleans and null outside `data`. Drop anything else, so that no coercion of a field can throw.
+  for (const name of ObjectKeys(message)) {
+    const value = message[name];
+    const type = typeof value;
+    if (name !== "data" && value !== null && type !== "string" && type !== "number" && type !== "boolean") {
+      message[name] = undefined;
+    }
+  }
 
-  if (typeof fn === "function") fn(worker, message);
+  methodMessageMapping[message.act]?.(worker, message);
 }
 
 function online(worker: ClusterWorker) {
@@ -262,19 +265,6 @@ function exitedAfterDisconnect(worker: ClusterWorker, message) {
   send(worker, { ack: message.seq });
 }
 
-// A handle closes its fd when its last worker is removed, so a second handle for the same fd
-// would close it while the first handle still uses it.
-function isFdInUse(fd: number, isUdp: boolean) {
-  // SharedHandle rejects a number that isn't a valid fd.
-  if ((fd | 0) !== fd) return false;
-  if (isUdp && isDgramSocketFd(fd)) return true;
-  let inUse = false;
-  handles.forEach(handle => {
-    if (handle.fd === fd) inUse = true;
-  });
-  return inUse;
-}
-
 function queryServer(worker: ClusterWorker, message) {
   // Stop processing if worker already disconnecting
   if (worker.exitedAfterDisconnect) return;
@@ -282,16 +272,17 @@ function queryServer(worker: ClusterWorker, message) {
   RoundRobinHandle ??= require("internal/cluster/RoundRobinHandle");
   SharedHandle ??= require("internal/cluster/SharedHandle");
 
+  // Port 0 of an http worker is a port of its own, as when http workers bound theirs without asking.
   const key =
     `${message.address}:${message.port}:${message.addressType}:${message.fd}` +
-    (message.port === 0 ? `:${message.index}` : "");
+    (message.port === 0 ? `:${message.index}:${message.isHttp === true}` : "");
   const cachedHandle = handles.get(key);
   let handle: Handle | undefined;
   if (cachedHandle && !cachedHandle.has(worker)) handle = cachedHandle;
 
   const kSharedOnlyHint =
-    "TLS and non-TLS cluster workers cannot share the same address:port under SCHED_RR " +
-    "(Bun's TLS accept is native and cannot adopt round-robin connection fds)";
+    "http, https and TLS cluster workers cannot share the same address:port with a net worker under SCHED_RR " +
+    "(their accept is native and cannot adopt round-robin connection fds)";
   if (handle !== undefined && message.sharedOnly === true && handle instanceof RoundRobinHandle) {
     send(worker, { errno: UV_EINVAL, key, ack: message.seq, data: handle.data, bunHint: kSharedOnlyHint }, null);
     return;
@@ -312,8 +303,13 @@ function queryServer(worker: ClusterWorker, message) {
   if (handle === undefined) {
     let address = message.address;
 
-    // Find shortest path for unix sockets because of the ~100 byte limit
-    if (message.port < 0 && typeof address === "string" && process.platform !== "win32") {
+    // Find shortest path for unix sockets because of the ~100 byte limit. An abstract name (leading NUL) isn't a path.
+    if (
+      message.port < 0 &&
+      typeof address === "string" &&
+      process.platform !== "win32" &&
+      address.charCodeAt(0) !== 0
+    ) {
       address = require("node:path").relative(process.cwd(), address);
 
       if (message.address.length < address.length) address = message.address;
@@ -328,16 +324,6 @@ function queryServer(worker: ClusterWorker, message) {
       error.syscall = "write";
       worker.emit("error", error);
       return;
-    }
-    const fd = message.fd;
-    if (typeof fd === "number" && fd >= 0) {
-      const isUdp = message.addressType === "udp4" || message.addressType === "udp6";
-      if (isFdInUse(fd, isUdp)) {
-        // Like node, report a wrong fd type before reporting that the fd is in use.
-        const errno = validateFd(fd, isUdp) || UV_EEXIST;
-        send(worker, { errno, key, ack: message.seq, data: cachedHandle ? cachedHandle.data : message.data }, null);
-        return;
-      }
     }
     if (
       schedulingPolicy !== SCHED_RR ||
@@ -411,7 +397,6 @@ function send(worker: ClusterWorker, message: object, handle?: object | null, cb
 Worker.prototype.disconnect = function (this: ClusterWorker) {
   this.exitedAfterDisconnect = true;
   send(this, { act: "disconnect" });
-  this.process.disconnect!();
   removeHandlesForWorker(this, false);
   removeWorker(this);
   return this;

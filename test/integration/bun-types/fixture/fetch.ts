@@ -387,3 +387,13 @@ if (typeof process !== "undefined") {
   // @ts-expect-error crl takes PEM contents
   fetch("https://example.com", { tls: { crl: 1 } });
 }
+
+// clone() returns the global Response / Request, with and without lib.dom
+{
+  const response: Response = new Response("hello").clone();
+  response.textStream();
+  response.headers.toJSON();
+
+  const request: Request = new Request("https://example.com").clone();
+  request.textStream();
+}

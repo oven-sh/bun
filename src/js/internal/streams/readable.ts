@@ -41,7 +41,6 @@ const TypedArrayPrototypeSet = Uint8Array.prototype.set;
 const { errorOrDestroy } = destroyImpl;
 const nop = () => {};
 const { emit } = shared.originals.eventEmitter!;
-const kAutoDestroyed: typeof shared.kAutoDestroyed = shared.kAutoDestroyed;
 
 // The bits of ReadableState[kState].
 const enum Flag {
@@ -1238,9 +1237,6 @@ internals.readableMethods = {
 };
 internals.finishResume = finishResume;
 internals.finishReadOfNothing = finishReadOfNothing;
-internals.readMoreLater = maybeReadMore;
-internals.readMoreOnNextTick = maybeReadMore_;
-internals.emitReadableNow = emitReadable_;
 
 Readable.prototype.pause = function (this: $Node.Readable) {
   const state: ReadableState = this._readableState;
@@ -1789,14 +1785,12 @@ const finishEnd = function endReadableNT(state: ReadableState, stream: $Node.Rea
           (wState.finished || wState.writable === false));
 
     if (autoDestroy) {
-      stream[kAutoDestroyed] = true; // workaround for node:http Server not using node:net Server
       stream.destroy();
     }
   }
 };
 
 internals.endOnNextTick = endReadableNT;
-internals.finishEnd = finishEnd;
 
 function endWritableNT(stream: $Node.Duplex) {
   const writable = stream.writable && !stream.writableEnded && !stream.destroyed;

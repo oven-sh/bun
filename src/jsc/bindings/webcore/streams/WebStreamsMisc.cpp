@@ -16,6 +16,7 @@
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/JSArrayBufferViewInlines.h>
 #include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/JSDataView.h>
 #include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSTypedArrays.h>
@@ -236,6 +237,61 @@ JSUint8Array* cloneAsUint8Array(JSGlobalObject* globalObject, JSArrayBufferView*
     RELEASE_AND_RETURN(scope, JSUint8Array::create(globalObject, globalObject->typedArrayStructure(TypeUint8, false), WTF::move(cloned), 0, byteLength));
 }
 
+JSValue copyByteChunk(JSGlobalObject* globalObject, JSValue chunk)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(chunk)) {
+        if (view->isShared() || view->isResizableOrGrowableShared() || view->isDetached())
+            return chunk;
+        size_t byteLength = view->byteLength();
+        RefPtr<ArrayBuffer> copy = ArrayBuffer::tryCreate(view->span());
+        if (!copy) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
+        // Reuse the structure so a Buffer stays a Buffer, unless it has own properties, which a new cell has no storage for.
+        TypedArrayType type = typedArrayType(view->type());
+        Structure* structure = view->structure();
+        bool reuseStructure = !structure->outOfLineCapacity() && !structure->isDictionary();
+        if (!reuseStructure)
+            structure = globalObject->typedArrayStructure(type, false);
+        JSArrayBufferView* result = nullptr;
+        switch (type) {
+#define COPY_TYPED_ARRAY(name)                                                                                               \
+    case Type##name:                                                                                                         \
+        result = JS##name##Array::create(globalObject, structure, WTF::move(copy), 0, byteLength / elementSize(Type##name)); \
+        break;
+            FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(COPY_TYPED_ARRAY)
+#undef COPY_TYPED_ARRAY
+        case TypeDataView:
+            result = JSDataView::create(globalObject, structure, WTF::move(copy), 0, byteLength);
+            break;
+        case NotTypedArray:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!reuseStructure) {
+            JSValue prototype = view->getPrototypeDirect();
+            if (prototype != result->getPrototypeDirect())
+                result->setPrototypeDirect(vm, prototype);
+        }
+        return result;
+    }
+    if (auto* jsBuffer = dynamicDowncast<JSArrayBuffer>(chunk)) {
+        ArrayBuffer* buffer = jsBuffer->impl();
+        if (buffer->isShared() || buffer->isResizableOrGrowableShared() || buffer->isDetached())
+            return chunk;
+        RefPtr<ArrayBuffer> copy = ArrayBuffer::tryCreate(buffer->span());
+        if (!copy) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
+        return JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), WTF::move(copy));
+    }
+    return chunk;
+}
+
 // spec CanCopyDataBlockBytes(toBuffer, toIndex, fromBuffer, fromIndex, count). Non-throwing leaf.
 bool canCopyDataBlockBytes(JSC::ArrayBuffer& toBuffer, size_t toIndex, JSC::ArrayBuffer& fromBuffer, size_t fromIndex, size_t count)
 {
@@ -418,17 +474,6 @@ JSPromise* invokeCallbackReturningPromiseFast(JSGlobalObject* globalObject, JSOb
         RETURN_IF_EXCEPTION(scope, nullptr);
         RELEASE_AND_RETURN(scope, promiseResolvedWithFast(globalObject, result));
     });
-}
-
-// Shared [bound-convention] wrapper: target(contextCell, ...callArgs).
-JSC::JSBoundFunction* createStreamsBoundHandler(JSGlobalObject* globalObject, JSFunction* target, JSCell* context)
-{
-    auto& vm = getVM(globalObject);
-    MarkedArgumentBuffer boundArgs;
-    boundArgs.append(context);
-    ASSERT(!boundArgs.hasOverflowed());
-    return JSBoundFunction::create(vm, globalObject, target, jsUndefined(), ArgList(boundArgs), 1, nullptr,
-        makeSource("streamsBoundHandler"_s, SourceOrigin(), SourceTaintedOrigin::Untainted));
 }
 
 JSPromise* promiseFulfilledWith(JSGlobalObject* globalObject, JSValue value)

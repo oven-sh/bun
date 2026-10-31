@@ -95,21 +95,21 @@ test("the internal own keys of the request, the response and the socket of a ser
     const socket = request.socket;
     expectInternalKeys(request, []);
     expectInternalKeys(response, ["fakeSocket"]);
-    expectInternalKeys(socket, []);
+    expectInternalKeys(socket, ["keepAliveTimeoutSet"]);
     expect(response.socket).toBe(socket);
     socket.setTimeout(60_000);
     response.setHeader("x-a", "1");
     response.write("a");
     for await (const _chunk of request);
-    expectInternalKeys(request, ["kAutoDestroyed"]);
+    expectInternalKeys(request, []);
     expectInternalKeys(response, ["fakeSocket"]);
-    expectInternalKeys(socket, ["socketTimeoutTimer"]);
+    expectInternalKeys(socket, ["keepAliveTimeoutSet"]);
     const finished = once(response, "finish");
     response.end("b");
     await finished;
-    expectInternalKeys(request, ["kAutoDestroyed"]);
+    expectInternalKeys(request, []);
     expectInternalKeys(response, ["fakeSocket"]);
-    expectInternalKeys(socket, ["socketTimeoutTimer", "keepAliveTimeoutSet"]);
+    expectInternalKeys(socket, ["keepAliveTimeoutSet"]);
   });
   expect(text).toBe("ab");
 });
@@ -127,7 +127,7 @@ test("the internal own keys of the request and the response of a client", async 
   expect(text).toBe("ok");
   await closed;
   expectInternalKeys(request, []);
-  expectInternalKeys(response, ["kAutoDestroyed"]);
+  expectInternalKeys(response, []);
 });
 
 test("the internal own keys of a readable stream that destroyed itself", async () => {
@@ -136,7 +136,7 @@ test("the internal own keys of a readable stream that destroyed itself", async (
   expectInternalKeys(stream, []);
   for await (const _chunk of stream);
   expect(stream.destroyed).toBe(true);
-  expectInternalKeys(stream, ["kAutoDestroyed"]);
+  expectInternalKeys(stream, []);
 });
 
 test("a Proxy of the response answers the request", async () => {

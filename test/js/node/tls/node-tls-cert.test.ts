@@ -993,3 +993,57 @@ describe("expired or not-yet-valid CA in the trust set", () => {
     expect(() => tls.createSecureContext({ ca: [F.root, pem] })).toThrow();
   });
 });
+
+describe("CA with an iPAddress name constraint", () => {
+  // Every *-ca.pem is the same CA name and key with a different nameConstraints extension, so each one anchors both leaves.
+  const read = (name: string) => readFileSync(join(import.meta.dir, "fixtures", "ip-name-constraints", name), "utf8");
+  const permitted = ["permitted subtree violation", "PERMITTED_VIOLATION"] as const;
+  const excluded = ["excluded subtree violation", "EXCLUDED_VIOLATION"] as const;
+
+  it.each([
+    ["ipv4-any", "ipv4", undefined],
+    ["ipv4-subnet", "ipv4", undefined],
+    ["ipv4-outside", "ipv4", permitted],
+    ["ipv4-excluded", "ipv4", excluded],
+    ["ipv4-excluded-other", "ipv4", undefined],
+    ["ipv6-any", "ipv6", undefined],
+    ["ipv6-subnet", "ipv6", undefined],
+    ["ipv6-outside", "ipv6", permitted],
+    ["ipv6-excluded", "ipv6", excluded],
+    ["ipv6-excluded-other", "ipv6", undefined],
+    ["dual-stack", "ipv4", undefined],
+    ["dual-stack", "ipv6", undefined],
+    ["ipv4-any", "ipv6", permitted],
+    ["ipv6-any", "ipv4", permitted],
+  ] as const)("%s CA, leaf with an %s address", async (authority, family, violation) => {
+    const ca = read(`${authority}-ca.pem`);
+    using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { key: read("leaf-key.pem"), cert: read(`${family}-cert.pem`) },
+      fetch: () => new Response("verified"),
+    });
+
+    // Both leaves also name DNS:localhost, so only the chain check can fail.
+    const socket = tls.connect({ host: "127.0.0.1", port: server.port, servername: "localhost", ca });
+    try {
+      const connected = once(socket, "secureConnect");
+      if (violation) {
+        await expect(connected).rejects.toMatchObject({ code: "UNSPECIFIED", message: violation[0] });
+      } else {
+        await connected;
+        expect(socket.authorized).toBe(true);
+      }
+    } finally {
+      socket.destroy();
+    }
+
+    if (family !== "ipv4") return;
+    const response = fetch(`https://127.0.0.1:${server.port}/`, { keepalive: false, tls: { ca } });
+    if (violation) {
+      await expect(response).rejects.toMatchObject({ code: violation[1] });
+    } else {
+      expect(await (await response).text()).toBe("verified");
+    }
+  });
+});

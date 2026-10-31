@@ -264,11 +264,12 @@ export default b.declarations(
     writes: externalState,
     implementation: b.hostCall,
   }),
+  // Answers the handle of the native source that the stream holds, if it has one that nothing has read from.
   b.static(cpp("streams/BunStreamConsumers.cpp", "jsFunctionTransferToNativeReadableStream"), {
     args: { stream: b.any.optional },
-    returns: b.undefined,
-    capability: "none",
-    uses: { stream: b.inspected },
+    returns: b.any,
+    capability: "heap",
+    uses: { stream: b.handedOver },
     writes: externalState,
     implementation: b.hostCall,
   }),

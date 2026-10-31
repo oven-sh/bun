@@ -141,6 +141,13 @@ impl ZStream {
         }
     }
 
+    /// `inflateReset` zeroes it, so an owner that decodes one member after another into one buffer puts the sum back.
+    #[inline]
+    pub fn set_total_out(&mut self, total_out: uLong) {
+        // SAFETY: see `set_input`.
+        unsafe { (*self.as_ptr()).total_out = total_out };
+    }
+
     /// Point `next_out`/`avail_out` at the next output window.
     #[inline]
     pub fn set_output(&mut self, next_out: *mut u8, avail_out: uInt) {

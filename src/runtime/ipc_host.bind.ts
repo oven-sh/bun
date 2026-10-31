@@ -9,6 +9,8 @@ export const emitProcessErrorEvent = b.fn({
   capability: "js",
 });
 
+export const emitProcessDisconnectEvent = b.fn({ export: "Bun__IPC__emitProcessDisconnectEvent", capability: "js" });
+
 /** Only `null` is this process. */
 export const MessageTarget = b.union({
   subprocess: Subprocess,

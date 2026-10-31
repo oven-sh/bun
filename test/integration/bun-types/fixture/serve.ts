@@ -1,11 +1,33 @@
 // This file is merely types only, you (probably) want to put the tests in ./serve-types.test.ts instead
 
+import type { HTMLBundle } from "bun";
 import { expectType } from "./utilities";
+
+// A method key takes every static route value except `false`.
+declare const appHtml: HTMLBundle;
+Bun.serve({
+  routes: {
+    "/assets/*": { GET: { dir: "./public" } },
+    "/file": { POST: Bun.file("./a.txt"), GET: new Response("ok") },
+    "/app": { GET: appHtml },
+    // @ts-expect-error
+    "/nope": { POST: false },
+  },
+});
 
 Bun.serve({
   routes: {
     "/:id/:test": req => {
       expectType(req.params).is<{ id: string; test: string }>();
+    },
+    "/orgs/:orgId/repos/:repoId/settings": req => {
+      expectType(req.params).is<{ orgId: string; repoId: string }>();
+    },
+    "/files:batchGet/:id": req => {
+      expectType(req.params).is<{ id: string }>();
+    },
+    "/static/*": req => {
+      expectType(req.params).is<{}>();
     },
   },
   fetch: () => new Response("hello"),
@@ -85,6 +107,19 @@ const s4 = Bun.serve({
   },
 });
 
+// idleTimeout applies to a unix socket listener too
+Bun.serve({
+  unix: "/tmp/bun-types-fixture.sock",
+  idleTimeout: 0,
+  fetch: () => new Response("ok"),
+});
+
+Bun.serve({
+  port: 0,
+  idleTimeout: 30,
+  fetch: () => new Response("ok"),
+});
+
 Bun.serve({
   tls: [
     { key: "key", cert: "cert", ca: "ca", requestCert: true, crl: Bun.file("crl.pem") },
@@ -92,3 +127,16 @@ Bun.serve({
   ],
   fetch: () => new Response(),
 });
+
+Bun.serve({
+  routes: {
+    "/on-disk.txt": Bun.file("on-disk.txt"),
+    "/in-memory.txt": new Blob(["in memory"], { type: "text/plain" }),
+  },
+});
+
+const embeddedRoutes: Record<string, Blob> = {};
+Bun.embeddedFiles.forEach((blob, i) => {
+  embeddedRoutes[`/embedded/${i}`] = blob;
+});
+Bun.serve({ routes: embeddedRoutes });

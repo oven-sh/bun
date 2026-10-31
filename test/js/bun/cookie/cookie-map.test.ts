@@ -203,6 +203,19 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`[]`);
   });
 
+  test("keeps a '%' that isn't followed by two hex digits in a cookie value", () => {
+    const map = new Bun.CookieMap("a=50%-off; b=caf%C3%A9; c=x%zz; d=100%25; e=abc%; f=x%2; g=a%25b%zz");
+    expect(Object.fromEntries(map)).toEqual({
+      a: "50%-off",
+      b: "café",
+      c: "x%zz",
+      d: "100%",
+      e: "abc%",
+      f: "x%2",
+      g: "a%b%zz",
+    });
+  });
+
   test("can create CookieMap from object", () => {
     const map = new Bun.CookieMap({
       name: "value",

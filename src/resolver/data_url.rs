@@ -129,6 +129,25 @@ impl PercentEncoding {
     }
 }
 
+/// TAB, LF, FF, CR, SPACE (https://infra.spec.whatwg.org/#ascii-whitespace)
+const ASCII_WHITESPACE: &[u8] = b"\t\n\x0C\r ";
+
+/// Data: URL processor step 11: `;`, optional spaces, case-insensitive `base64`.
+fn strip_base64_marker(mime_type: &[u8]) -> Option<&[u8]> {
+    const MARKER: &[u8] = b"base64";
+    let (rest, marker) = mime_type.split_at(mime_type.len().checked_sub(MARKER.len())?);
+    if !strings::eql_case_insensitive_ascii_check_length(marker, MARKER) {
+        return None;
+    }
+    strings::trim_right(rest, b" ").strip_suffix(b";")
+}
+
+/// The `Content-Type` to expose and the decoded body, from [`DataURL::process_for_fetch`].
+pub struct FetchDataURL {
+    pub mime_type: Vec<u8>,
+    pub body: Vec<u8>,
+}
+
 // `mime_type`/`data` are slices into the caller-provided `url` string.
 // Classified as BORROW_PARAM — struct gets a lifetime parameter.
 pub struct DataURL<'a> {
@@ -146,18 +165,19 @@ impl<'a> DataURL<'a> {
         Ok(Some(Self::parse_without_check(url)?))
     }
 
+    /// https://fetch.spec.whatwg.org/#data-url-processor
     pub fn parse_without_check(url: &'a [u8]) -> Result<DataURL<'a>, ParseDataURLError> {
         let comma =
             strings::index_of_char(url, b',').ok_or(ParseDataURLError::InvalidDataURL)? as usize;
 
         let mut parsed = DataURL {
-            mime_type: &url[b"data:".len()..comma],
+            mime_type: strings::trim(&url[b"data:".len()..comma], ASCII_WHITESPACE),
             data: &url[comma + 1..url.len()],
             is_base64: false,
         };
 
-        if parsed.mime_type.ends_with(b";base64") {
-            parsed.mime_type = &parsed.mime_type[0..(parsed.mime_type.len() - b";base64".len())];
+        if let Some(mime_type) = strip_base64_marker(parsed.mime_type) {
+            parsed.mime_type = mime_type;
             parsed.is_base64 = true;
         }
 
@@ -165,24 +185,51 @@ impl<'a> DataURL<'a> {
     }
 
     pub fn decode_mime_type(&self) -> bun_http_types::MimeType::MimeType {
-        bun_http_types::MimeType::MimeType::init(self.mime_type, false, None)
+        bun_http_types::MimeType::MimeType::init(self.mime_type, false)
     }
 
     /// Decodes the data from the data URL. Always returns an owned slice.
     pub fn decode_data(&self) -> Result<Vec<u8>, DecodeDataError> {
+        // `import` and the bundler also take the URL-safe alphabet.
+        self.decode_data_with(|base64| {
+            let decoded = bun_base64::decode_alloc(base64).ok()?;
+            (decoded.len() == bun_base64::decode_len(base64)).then_some(decoded)
+        })
+    }
+
+    fn decode_data_with(
+        &self,
+        decode_base64: impl FnOnce(&[u8]) -> Option<Vec<u8>>,
+    ) -> Result<Vec<u8>, DecodeDataError> {
         let percent_decoded_owned: Option<Vec<u8>> = PercentEncoding::decode_unstrict(self.data)?;
         let percent_decoded: &[u8] = percent_decoded_owned.as_deref().unwrap_or(self.data);
 
         if self.is_base64 {
-            let decoded = bun_base64::decode_alloc(percent_decoded)
-                .map_err(|_| DecodeDataError::Base64DecodeError)?;
-            if decoded.len() != bun_base64::decode_len(percent_decoded) {
-                return Err(DecodeDataError::Base64DecodeError);
-            }
-            return Ok(decoded);
+            return decode_base64(percent_decoded).ok_or(DecodeDataError::Base64DecodeError);
         }
 
         Ok(percent_decoded.to_vec())
+    }
+
+    /// https://fetch.spec.whatwg.org/#data-url-processor; `input` is the serialized URL without its fragment.
+    pub fn process_for_fetch(input: &[u8]) -> Option<FetchDataURL> {
+        let parsed = DataURL::parse(input).ok()??;
+        let body = parsed
+            .decode_data_with(|base64| bun_base64::decode_forgiving_alloc(base64).ok())
+            .ok()?;
+
+        let mut mime_type = parsed.mime_type;
+        let mime_type_buf;
+        if mime_type.first() == Some(&b';') {
+            mime_type_buf = [b"text/plain".as_slice(), mime_type].concat();
+            mime_type = &mime_type_buf;
+        }
+
+        Some(FetchDataURL {
+            mime_type: bun_http_types::MimeType::serialize_mime_type(mime_type)
+                .unwrap_or_else(|| b"text/plain;charset=US-ASCII".to_vec()),
+            body,
+        })
     }
 
     /// Returns the shorter of either a base64-encoded or percent-escaped data URL
@@ -356,6 +403,39 @@ mod tests {
         assert!(url.starts_with(b"data:application/octet-stream;base64,"));
         let parsed = round_trip(b"application/octet-stream", text);
         assert!(parsed.is_base64);
+    }
+
+    #[test]
+    fn base64_marker_is_case_insensitive_and_space_tolerant() {
+        for url in [
+            &b"data:text/plain;base64,aGk="[..],
+            b"data:text/plain;BASE64,aGk=",
+            b"data:text/plain;Base64,aGk=",
+            b"data:text/plain; base64,aGk=",
+            b"data:text/plain;base64 ,aGk=",
+            b"data: text/plain;  bAsE64  ,aGk=",
+        ] {
+            let parsed = DataURL::parse(url).unwrap().unwrap();
+            assert!(parsed.is_base64, "{}", String::from_utf8_lossy(url));
+            assert_eq!(parsed.mime_type, b"text/plain");
+            assert_eq!(parsed.decode_data().unwrap(), b"hi");
+        }
+
+        let parsed = DataURL::parse(b"data:;base64,aGk=").unwrap().unwrap();
+        assert!(parsed.is_base64);
+        assert_eq!(parsed.mime_type, b"");
+
+        for url in [
+            &b"data:text/plain;base64x,aGk="[..],
+            b"data:text/plain;charset=base64,aGk=",
+            b"data:text/plain base64,aGk=",
+            b"data:base64,aGk=",
+            b"data:text/plain;base 64,aGk=",
+        ] {
+            let parsed = DataURL::parse(url).unwrap().unwrap();
+            assert!(!parsed.is_base64, "{}", String::from_utf8_lossy(url));
+            assert_eq!(parsed.decode_data().unwrap(), b"aGk=");
+        }
     }
 
     #[test]

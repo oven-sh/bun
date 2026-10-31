@@ -1,0 +1,25 @@
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -4558,15 +4558,16 @@ lsquic_stream_force_reset_ext (struct lsquic_stream *stream,
+         return;
+     /* bun: stream_reset clears every queued sending flag; a STOP_SENDING
+      * the application queued just before the reset (Node's shutdown_stream
+-     * emits both frames) must still reach the wire. */
+-    const enum stream_q_flags had_ss =
+-                            stream->sm_qflags & SMQF_SEND_STOP_SENDING;
++     * emits both frames) must still reach the wire.  So must a
++     * MAX_STREAM_DATA: the read side stays open, sf_recv_off has already
++     * moved, and no later read queues the frame again. */
++    const enum stream_q_flags kept = stream->sm_qflags
++                        & (SMQF_SEND_STOP_SENDING|SMQF_SEND_MAX_STREAM_DATA);
+     if (!(stream->stream_flags & STREAM_RST_SENT)
+                                 && !(stream->sm_qflags & SMQF_SEND_RST))
+         stream_reset(stream, error_code, 0);
+-    if (had_ss)
+-        stream->sm_qflags |= SMQF_SEND_STOP_SENDING;
+-    else if (stream->error_code == 0)
++    stream->sm_qflags |= kept;
++    if (!(kept & SMQF_SEND_STOP_SENDING) && stream->error_code == 0)
+         stream->error_code = error_code;
+     /* Only end the read side when the peer has already FIN'd or RST'd it —
+      * Node's resetStream resets the write side only; the read side stays

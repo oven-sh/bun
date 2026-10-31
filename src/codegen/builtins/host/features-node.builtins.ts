@@ -95,13 +95,7 @@ export default b.declarations(
   extendAll(["NodeFs", "FsStats"], "%StatWatcher%"),
   extendAll(["NodeFs"], "%FSWatcher%"),
 
-  extendAll(
-    ["HttpParser"],
-    "node:_http_common",
-    "node:_http_client",
-    "node:_http_server",
-    "internal/http1_server_fallback",
-  ),
+  extendAll(["HttpParser"], "node:_http_common", "node:_http_client", "node:_http_server"),
 
   extendAll(["StringDecoder", "Buffer"], "node:string_decoder"),
 
@@ -111,8 +105,8 @@ export default b.declarations(
       "Bindgen",
       "node_cluster_binding.bind.ts",
       "channelIgnoreOneDisconnectEventListener",
+      "clusterAdoptFd",
       "clusterCloseHandle",
-      "clusterValidateFd",
       "onInternalMessageChild",
       "onInternalMessagePrimary",
       "setRef",
@@ -129,14 +123,18 @@ export default b.declarations(
     ...nativeBindings(
       "Bindgen",
       "node_http_binding.bind.ts",
-      "getBunServerOpenCount",
+      "closedWithAllDataSent",
+      "httpConnectionOf",
       "insecureHTTPParser",
       "getMaxHTTPHeaderSize",
       "sendWebSocketFrame",
+      "setBunServerSocketHandlers",
       "setMaxHTTPHeaderSize",
-      "upgradeNodeHTTPResponseToWebSocket",
+      "setServerAppFlags",
+      "setServerCustomOptions",
+      "setServerMaxHeadersCount",
+      "upgradeSocketToWebSocket",
     ),
-    ...nativeBindings("Bindgen", "node_http_binding.bind.ts", "getBunServerAllClosedPromise"),
   ),
 
   extendAll(
@@ -230,6 +228,7 @@ export default b.declarations(
   extendAll(
     ["Undici", "TlsSockets", "X509", "Tls", "Buffer"],
     ...nativeBindings("Cpp", "Undici.cpp", "createUndiciInternalBinding"),
+    ...nativeBindings("Bindgen", "ReadableStream.bind.ts", "isDecodedBody"),
   ),
 
   extendAll(["NodeEvents"], "node:events"),

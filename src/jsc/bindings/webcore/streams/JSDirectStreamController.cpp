@@ -487,7 +487,6 @@ static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirect
         return emptyString();
 
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // Pure-string rope: the ONLY arm of the direct Text sink that strips a leading BOM.
     if (hasString && !hasBuffer) {
         String rope = accumulator.tryRopeString();
         if (rope.isNull()) [[unlikely]] {
@@ -553,7 +552,7 @@ static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirect
         throwOutOfMemoryError(globalObject, scope);
         return String();
     }
-    return text;
+    return Bun::WebStreams::withoutUTF8BOM(text);
 }
 
 static JSValue endTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)
@@ -563,8 +562,7 @@ static JSValue endTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectSt
         return jsEmptyString(vm);
     controller->m_calledDone = true;
     String result = finishTextSink(vm, globalObject, controller);
-    // The accumulated payload must not stay alive on the controller (it lives as long
-    // as the stream); the result string owns everything it needs.
+    // The controller lives as long as the stream, so it must not keep the accumulated chunks alive.
     {
         Locker locker { controller->cellLock() };
         controller->m_textAccumulator.reset(locker);

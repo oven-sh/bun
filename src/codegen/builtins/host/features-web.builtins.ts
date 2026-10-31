@@ -193,7 +193,7 @@ export default b.declarations(
     ["InternalForTesting", "HttpClient"],
     ...nativeBindings("Bindgen", "headers_jsc.bind.ts", "h2LiveCounts"),
     ...nativeBindings("Bindgen", "headers_jsc.bind.ts", "h3LiveCounts"),
-    ...nativeBindings("Bindgen", "proxy_testing.bind.ts", "noProxyMatches", "parseURL", "proxyFor"),
+    ...nativeBindings("Bindgen", "proxy_testing.bind.ts", "noProxyMatches", "parseURL", "proxyFor", "tunnelLiveCount"),
   ),
   extendAll(["InternalForTesting", "WebStreams"], ...nativeBindings("Bindgen", "ByteStream.bind.ts", "cancelOnDrain")),
 );

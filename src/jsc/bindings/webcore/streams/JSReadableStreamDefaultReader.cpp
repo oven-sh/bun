@@ -192,6 +192,7 @@ static double drainQueueEntriesInto(JSC::VM& vm, JSGlobalObject* globalObject, J
     double size = isByte ? byteController->m_queue.totalSize() : defaultController->m_queue.totalSize();
     size_t queueLength = isByte ? byteController->m_queue.size() : defaultController->m_queue.size();
     // [[queueTotalSize]] is deliberately NOT decremented while draining (see above).
+    const bool copiesChunks = !isByte && teeBranchCopiesChunks(defaultController);
     for (unsigned i = 0; i < queueLength; ++i) {
         JSValue chunk;
         if (isByte) {
@@ -210,10 +211,16 @@ static double drainQueueEntriesInto(JSC::VM& vm, JSGlobalObject* globalObject, J
             chunk = JSUint8Array::create(globalObject, globalObject->typedArrayStructure(TypeUint8, resizable), WTF::move(buffer), byteOffset, byteLength);
             RETURN_IF_EXCEPTION(scope, size);
         } else {
-            WTF::Locker locker { defaultController->cellLock() };
-            auto& entry = defaultController->m_queue.first();
-            chunk = entry.value.get();
-            defaultController->m_queue.removeFirst(locker);
+            {
+                WTF::Locker locker { defaultController->cellLock() };
+                auto& entry = defaultController->m_queue.first();
+                chunk = entry.value.get();
+                defaultController->m_queue.removeFirst(locker);
+            }
+            if (copiesChunks) [[unlikely]] {
+                chunk = copyByteChunk(globalObject, chunk);
+                RETURN_IF_EXCEPTION(scope, size);
+            }
         }
         into->putDirectIndex(globalObject, base + i, chunk);
         RETURN_IF_EXCEPTION(scope, size);

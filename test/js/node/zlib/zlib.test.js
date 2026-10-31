@@ -106,6 +106,28 @@ describe("zlib", () => {
     expect(() => gunzipSync(data, { library: "zlib" })).toThrow(new Error("incorrect header check"));
   });
 
+  describe.each(["zlib", "libdeflate"])("gunzipSync with %s", library => {
+    // The middle member is bigger than the output buffer sized from the last member's ISIZE.
+    const members = ["hello ", Buffer.alloc(100_000, "a").toString(), " world"];
+
+    it("decodes every member of a concatenated gzip stream", () => {
+      const compressed = Buffer.concat(members.map(member => gzipSync(member)));
+      expect(Buffer.from(gunzipSync(compressed, { library })).toString()).toBe(members.join(""));
+    });
+
+    it("ignores bytes after the last member that don't start another one", () => {
+      const compressed = Buffer.concat([gzipSync("hello"), Buffer.from("\0\0junk\x1f")]);
+      expect(Buffer.from(gunzipSync(compressed, { library })).toString()).toBe("hello");
+    });
+
+    it("throws when a later member is cut short", () => {
+      const compressed = Buffer.concat([gzipSync("hello "), gzipSync("world").subarray(0, 12)]);
+      expect(() => gunzipSync(compressed, { library })).toThrow(
+        library === "zlib" ? "Zlib returned an error" : "libdeflate returned an error: bad data",
+      );
+    });
+  });
+
   it("flush() takes a numeric string or a BigInt, and any kind after end()", async () => {
     for (const kind of ["2", 2n]) {
       const gzip = zlib.createGzip();

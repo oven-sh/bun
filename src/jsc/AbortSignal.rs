@@ -118,6 +118,7 @@ impl AbortSignal {
             return Some(AbortReason::Common(match reason {
                 1 => CommonAbortReason::Timeout,
                 2 => CommonAbortReason::UserAbort,
+                4 => CommonAbortReason::RequestBodyTooLarge,
                 _ => CommonAbortReason::ConnectionClosed,
             }));
         }
@@ -436,15 +437,6 @@ extern "C" fn AbortSignal__Timeout__create(
     milliseconds: u64,
 ) -> *mut Timeout {
     Timeout::init(vm, signal_, milliseconds)
-}
-
-/// # Safety
-/// `this` must be a live boxed `Timeout` returned from `AbortSignal__Timeout__create`;
-/// `vm` must be the live per-thread `VirtualMachine`.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn AbortSignal__Timeout__run(this: *mut Timeout, vm: *mut VirtualMachine) {
-    // SAFETY: C++ caller passes a live boxed Timeout and the live per-thread VM.
-    unsafe { Timeout::run(this, vm) }
 }
 
 /// # Safety

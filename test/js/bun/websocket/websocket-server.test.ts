@@ -3863,3 +3863,58 @@ describe.concurrent.each([
     await client.closed;
   });
 });
+
+// In a child, under `bun test`: expect().resolves is what runs the event loop from inside a handler.
+it("stop(true) survives a close handler that terminates the other sockets and runs the event loop", async () => {
+  using dir = tempDir("ws-stop-nested-tick", {
+    "stop.test.js": /* js */ `
+      import { expect, test } from "bun:test";
+
+      test("stop(true)", async () => {
+        const count = 6;
+        const sockets = [];
+        const stopped = Promise.withResolvers();
+        let ranLoop = false;
+        const server = Bun.serve({
+          hostname: "127.0.0.1",
+          port: 0,
+          idleTimeout: 0,
+          fetch(request, server) {
+            return server.upgrade(request) ? undefined : new Response("no upgrade", { status: 400 });
+          },
+          websocket: {
+            open(ws) {
+              // From a timer, so that no tick of the socket loop is on the stack.
+              if (sockets.push(ws) === count) setTimeout(() => stopped.resolve(server.stop(true)), 1);
+            },
+            message() {},
+            close() {
+              if (ranLoop) return;
+              ranLoop = true;
+              for (const ws of sockets) ws.terminate();
+              expect(new Promise(resolve => setTimeout(resolve, 400, 1))).resolves.toBe(1);
+            },
+          },
+        });
+        const clients = [];
+        for (let i = 0; i < count; i++) {
+          const client = new WebSocket("ws://127.0.0.1:" + server.port);
+          client.onerror = () => {};
+          clients.push(client);
+        }
+        await stopped.promise;
+        expect(ranLoop).toBe(true);
+      });
+    `,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "test", "stop.test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 1 pass");
+  expect(exitCode).toBe(0);
+});

@@ -1,8 +1,16 @@
 const rss = process.memoryUsage.rss;
 let existingPromise = null;
 const server = Bun.serve({
+  hostname: "127.0.0.1",
   port: 0,
   async fetch(req) {
+    // Routed by method so the GET handler never touches req.url.
+    if (req.method === "POST") {
+      Bun.gc(true);
+      Bun.shrink();
+      await new Promise(resolve => setImmediate(resolve));
+      return new Response(rss().toString());
+    }
     if (!existingPromise) {
       existingPromise = Bun.sleep(0);
     }
@@ -11,17 +19,8 @@ const server = Bun.serve({
     if (existingPromise === waitedUpon) {
       existingPromise = null;
     }
-    return new Response(rss().toString());
+    return new Response("ok");
   },
 });
 
-setInterval(() => {
-  console.log("RSS", (rss() / 1024 / 1024) | 0);
-}, 1000);
-console.log("Server started on", server.url.href);
-
-if (process.channel) {
-  process.send({
-    url: server.url.href,
-  });
-}
+process.send?.({ url: server.url.href });

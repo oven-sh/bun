@@ -526,3 +526,73 @@ describe.skipIf(!isASAN || isWindows)("terminating a worker while a request body
     expect(exitCode).toBe(0);
   });
 });
+
+// When body bytes and the failure after them reach the JS thread together, one task delivers the bytes and a second
+// task, which owns the fetch's ref, rejects the next read. Here the thread ends between the two tasks.
+describe.skipIf(!isASAN)("ending a thread between a fetch body's last chunk and its error", () => {
+  const fixture = `
+    const { Worker, isMainThread, parentPort, workerData } = require("node:worker_threads");
+    const [clientThread, end] = isMainThread ? process.argv.slice(2) : workerData.argv;
+    const closed = isMainThread ? new Int32Array(new SharedArrayBuffer(4)) : workerData.closed;
+    const peer = isMainThread ? new Worker(__filename, { workerData: { argv: [clientThread, end], closed } }) : parentPort;
+
+    function serve() {
+      const server = require("node:net").createServer(socket => {
+        socket.on("error", () => {});
+        socket.once("data", () => socket.write("HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n"));
+        peer.once("message", () => {
+          socket.on("close", () => {
+            Atomics.store(closed, 0, 1);
+            Atomics.notify(closed, 0);
+          });
+          socket.end("5\\r\\nhello\\r\\n");
+        });
+      });
+      server.listen(0, "127.0.0.1", () => peer.postMessage(server.address().port));
+      if (!isMainThread) return;
+      peer.on("message", message => message === "terminate" && peer.terminate());
+      peer.on("exit", code => {
+        console.log("worker exit code:", code);
+        server.close();
+      });
+    }
+
+    async function client() {
+      const port = await new Promise(resolve => peer.once("message", resolve));
+      const reader = (await fetch("http://127.0.0.1:" + port)).body.getReader();
+      const read = reader.read();
+      peer.postMessage("reading");
+      // Block until the connection is gone, so the HTTP thread reports the chunk and the failure before this thread runs again.
+      Atomics.wait(closed, 0, 0);
+      require("node:fs").writeSync(1, "read: " + Buffer.from((await read).value) + "\\n");
+      if (end === "exit") process.exit(0);
+      peer.postMessage("terminate");
+      Atomics.wait(closed, 0, 1);
+    }
+
+    if ((clientThread === "main") === isMainThread) client();
+    else serve();
+  `;
+
+  test.concurrent.each([
+    ["process.exit() on the main thread", "main", "exit", "read: hello\n"],
+    ["process.exit() in a worker", "worker", "exit", "read: hello\nworker exit code: 0\n"],
+    ["worker.terminate()", "worker", "terminate", "read: hello\nworker exit code: 1\n"],
+  ])("releases the fetch after %s", async (_, clientThread, end, expected) => {
+    using dir = tempDir("fetch-teardown-before-body-error", { "fixture.js": fixture });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "fixture.js"), clientThread, end],
+      env: {
+        ...bunEnv,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dirname, "../../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: expected, stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+});

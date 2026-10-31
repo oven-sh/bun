@@ -5,8 +5,9 @@ export default b.module({ rustPath: "crate::server::node_http_response" });
 
 const eventHandler = { getter: b.any, setter: { capability: "js" }, passThis: true } as const;
 const head = {
-  statusCode: b.i32.validateInteger(100, 999).default(200),
-  statusMessage: b.string.loose.utf8.nullable,
+  /** `ServerResponse` has checked the range. */
+  statusCode: b.u16.default(200),
+  statusMessage: b.string.loose.nullable,
   /** The flat `[name, value, ...]` array, which C++ reads in place. */
   headers: b.any,
 };
@@ -34,14 +35,11 @@ export const NodeHTTPResponse = b.class({
   internalFields: ["onAborted", "onWritable", "onData", "pendingWriteBuffer"],
   proto: {
     abort: { capability: "js" },
-    aborted: { getter: b.bool, pure: true },
     bufferedAmount: { getter: b.u64, pure: true },
-    cork: { ...method, args: { callback: b.callable } },
     end: { ...method, ...body, returns: b.any.returning("number", "undefined"), passThis: true, length: 2 },
     finished: { getter: b.bool, pure: true },
     flags: { getter: b.i32, pure: true },
     flushHeaders: {},
-    getBytesWritten: { returns: b.usize },
     hasBody: { getter: b.i32, pure: true },
     headersObject: { returns: b.any.returning("object", "undefined"), capability: "js" },
     notifyWhenReadParsed: { returns: b.bool },
@@ -49,8 +47,6 @@ export const NodeHTTPResponse = b.class({
     ondata: eventHandler,
     onwritable: eventHandler,
     pause: { returns: b.bool },
-    pauseReads: {},
-    ref: { rustName: "js_ref" },
     resume: { returns: b.bool },
     takeRawHeaders: { ...method, args: { headers: b.any }, returns: b.any.returning("Array", "undefined") },
     takeRequestTrailers: {
@@ -59,8 +55,6 @@ export const NodeHTTPResponse = b.class({
       returns: b.any.returning("Array", "undefined"),
       length: 0,
     },
-    unref: { rustName: "js_unref" },
-    upgraded: { getter: b.bool, pure: true },
     write: { ...method, ...body, returns: b.any.returning("number"), length: 3 },
     writeContinue: { capability: "js", throws: true },
     writeHead: { args: { ...head, ...autoHeaders }, capability: "js", throws: true, length: 3 },
@@ -71,6 +65,12 @@ export const NodeHTTPResponse = b.class({
       returns: b.any.returning("number", "undefined"),
       passThis: true,
       length: 8,
+    },
+    writeHeadAndWrite: {
+      ...method,
+      args: { ...head, ...chunk, callback: b.callable.optional, strictContentLength, ...autoHeaders },
+      expected: body.expected,
+      length: 9,
     },
     writeInformational: {
       args: chunk,

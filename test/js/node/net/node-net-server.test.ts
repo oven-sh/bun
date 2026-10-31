@@ -1,8 +1,9 @@
-import { realpathSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { AddressInfo, createServer, Server, Socket } from "net";
+import { closeSync, existsSync, openSync, realpathSync } from "fs";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { AddressInfo, BlockList, connect, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
+import { getSystemErrorName } from "node:util";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -64,6 +65,212 @@ describe("net.createServer listen", () => {
         done();
       }),
     );
+  });
+
+  // A kernel booted with ipv6.disable=1 fails socket(AF_INET6) with EAFNOSUPPORT. A seccomp filter does the same here.
+  it.skipIf(process.platform !== "linux" || (process.arch !== "x64" && process.arch !== "arm64"))(
+    "should fall back to 0.0.0.0 when no host is given and the kernel has no IPv6",
+    async () => {
+      using dir = tempDir("net-listen-no-ipv6", {
+        "deny-socket.c": `
+          typedef unsigned short u16; typedef unsigned char u8; typedef unsigned int u32;
+          struct sock_filter { u16 code; u8 jt; u8 jf; u32 k; };
+          struct sock_fprog { u16 len; struct sock_filter *filter; };
+          int prctl(int option, ...);
+          #if defined(__x86_64__)
+          #define NR_SOCKET 41
+          #else
+          #define NR_SOCKET 198
+          #endif
+          /* Every later socket(family, ...) fails with err. Filters stack, so this can run twice. */
+          int deny_socket_family(int family, int err) {
+            struct sock_filter f[] = {
+              { 0x20, 0, 0, 0 },                          /* A = nr                   (BPF_LD|BPF_W|BPF_ABS)  */
+              { 0x15, 0, 3, NR_SOCKET },                  /* if nr != socket: allow   (BPF_JMP|BPF_JEQ|BPF_K) */
+              { 0x20, 0, 0, 16 },                         /* A = args[0] (family)                             */
+              { 0x15, 0, 1, (u32)family },                /* if A != family: allow                            */
+              { 0x06, 0, 0, 0x00050000 | (u32)err },      /* SECCOMP_RET_ERRNO | err  (BPF_RET|BPF_K)         */
+              { 0x06, 0, 0, 0x7fff0000 },                 /* SECCOMP_RET_ALLOW                                */
+            };
+            struct sock_fprog prog = { sizeof(f) / sizeof(f[0]), f };
+            if (prctl(38 /* PR_SET_NO_NEW_PRIVS */, 1, 0, 0, 0) != 0) return -1;
+            if (prctl(22 /* PR_SET_SECCOMP */, 2 /* SECCOMP_MODE_FILTER */, &prog) != 0) return -2;
+            return 0;
+          }
+        `,
+        "fixture.ts": `
+          import { cc } from "bun:ffi";
+          import { once } from "node:events";
+          import { createServer, type AddressInfo } from "node:net";
+          import { join } from "node:path";
+
+          const { symbols } = cc({
+            source: join(import.meta.dir, "deny-socket.c"),
+            symbols: { deny_socket_family: { args: ["i32", "i32"], returns: "i32" } },
+          });
+          const AF_UNIX = 1, AF_INET6 = 10, EMFILE = 24, EAFNOSUPPORT = 97;
+          const result: Record<string, unknown> = { seccomp: symbols.deny_socket_family(AF_INET6, EAFNOSUPPORT) };
+          if (result.seccomp !== 0) {
+            console.log(JSON.stringify(result));
+            process.exit(0);
+          }
+          const listenError = async (...args: any[]) => {
+            const server = createServer().listen(...args);
+            try {
+              await once(server, "listening");
+            } catch (err: any) {
+              return { code: err.code, syscall: err.syscall, address: err.address, message: err.message };
+            }
+            const listening = server.address();
+            server.close();
+            return { listening };
+          };
+
+          const noHost = createServer().listen(0);
+          await once(noHost, "listening");
+          const { address, family, port } = noHost.address() as AddressInfo;
+          result.noHost = { address, family };
+          const busy = await listenError(port);
+          result.noHostPortBusy = { ...busy, message: busy.message.replace(String(port), "PORT") };
+          noHost.close();
+
+          result.explicitIPv6 = await listenError(0, "::");
+          try {
+            Bun.listen({ hostname: "::", port: 0, socket: { data() {} } }).stop();
+            result.bunListen = "listening";
+          } catch (e: any) {
+            result.bunListen = { code: e.code, syscall: e.syscall, errno: typeof e.errno };
+          }
+
+          result.seccompUnix = symbols.deny_socket_family(AF_UNIX, EMFILE);
+          const { code, syscall } = await listenError(join(import.meta.dir, "listen.sock"));
+          result.unix = { code, syscall };
+          console.log(JSON.stringify(result));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const result = JSON.parse(stdout);
+      if (result.seccomp !== 0) {
+        console.warn("SKIP net listen without IPv6: seccomp filter not permitted here (" + result.seccomp + ")");
+        return;
+      }
+      expect(result).toEqual({
+        seccomp: 0,
+        noHost: { address: "0.0.0.0", family: "IPv4" },
+        noHostPortBusy: {
+          code: "EADDRINUSE",
+          syscall: "listen",
+          address: "0.0.0.0",
+          message: "listen EADDRINUSE: address already in use 0.0.0.0:PORT",
+        },
+        explicitIPv6: {
+          code: "EAFNOSUPPORT",
+          syscall: "listen",
+          address: "::",
+          message: "listen EAFNOSUPPORT: address family not supported ::",
+        },
+        bunListen: { code: "EAFNOSUPPORT", syscall: "listen", errno: "number" },
+        seccompUnix: 0,
+        unix: { code: "EMFILE", syscall: "listen" },
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it.skipIf(isWindows)("a listen() error has the properties Node gives it", async () => {
+    using dir = tempDir("net-listen-error", { "file.txt": "" });
+    async function listenError(...args: unknown[]) {
+      const [err] = await once(createServer().listen(...(args as [])), "error");
+      return { message: err.message, ...err };
+    }
+    const { UV_EACCES, UV_EADDRINUSE, UV_EADDRNOTAVAIL, UV_EINVAL } = (process as any).binding("uv");
+    const missing = join(String(dir), "missing", "a.sock");
+    const tooLong = join(String(dir), Buffer.alloc(200, "a").toString() + ".sock");
+    const busy = join(String(dir), "a.sock");
+    await using occupant = createServer();
+    await once(occupant.listen(busy), "listening");
+    const fd = openSync(join(String(dir), "file.txt"), "r");
+    try {
+      expect({
+        missing: await listenError(missing),
+        tooLong: await listenError(tooLong),
+        busy: await listenError(busy),
+        notASocket: await listenError({ fd }),
+        notLocal: await listenError(0, "192.0.2.1"),
+      }).toEqual({
+        missing: {
+          message: `listen EACCES: permission denied ${missing}`,
+          code: "EACCES",
+          errno: UV_EACCES,
+          syscall: "listen",
+          address: missing,
+          port: -1,
+        },
+        tooLong: {
+          message: `listen EINVAL: invalid argument ${tooLong}`,
+          code: "EINVAL",
+          errno: UV_EINVAL,
+          syscall: "listen",
+          address: tooLong,
+          port: -1,
+        },
+        busy: {
+          message: `listen EADDRINUSE: address already in use ${busy}`,
+          code: "EADDRINUSE",
+          errno: UV_EADDRINUSE,
+          syscall: "listen",
+          address: busy,
+          port: -1,
+        },
+        notASocket: {
+          message: "listen EINVAL: invalid argument",
+          code: "EINVAL",
+          errno: UV_EINVAL,
+          syscall: "listen",
+          address: null,
+        },
+        notLocal: {
+          message: "listen EADDRNOTAVAIL: address not available 192.0.2.1",
+          code: "EADDRNOTAVAIL",
+          errno: UV_EADDRNOTAVAIL,
+          syscall: "listen",
+          address: "192.0.2.1",
+        },
+      });
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  // Metro calls listen(port, host, undefined, cb).
+  it.each([
+    ["port, host, undefined, cb", (cb: () => void) => [0, "127.0.0.1", undefined, cb], "127.0.0.1"],
+    ["port, host, null, cb", (cb: () => void) => [0, "127.0.0.1", null, cb], "127.0.0.1"],
+    [
+      "port, host, undefined, undefined, cb",
+      (cb: () => void) => [0, "127.0.0.1", undefined, undefined, cb],
+      "127.0.0.1",
+    ],
+    ["port, undefined, undefined, cb", (cb: () => void) => [0, undefined, undefined, cb], "::"],
+    ["port, undefined, backlog, cb", (cb: () => void) => [0, undefined, 511, cb], "::"],
+    ["port, host, backlog, cb", (cb: () => void) => [0, "127.0.0.1", 511, cb], "127.0.0.1"],
+    ["port, backlog, cb", (cb: () => void) => [0, 511, cb], "::"],
+    ["options, backlog, cb", (cb: () => void) => [{ port: 0, host: "127.0.0.1" }, 511, cb], "127.0.0.1"],
+  ])("listen(%s) calls the callback", async (_name, args, address) => {
+    await using server = createServer();
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    server.on("error", reject);
+    (server.listen as any)(...args(resolve));
+    await promise;
+    expect((server.address() as AddressInfo).address).toBe(address);
   });
 
   it("should call listening", done => {
@@ -177,6 +384,34 @@ describe("net.createServer listen", () => {
     );
   });
 
+  it.skipIf(isWindows)("emits EINVAL for a unix socket path with a null byte", async () => {
+    using dir = tempDir("net-listen-nul", {});
+    const path = join(String(dir), "nul\0byte.sock");
+    const server: Server = createServer();
+    const listened = Promise.withResolvers<NodeJS.ErrnoException | null>();
+    server.on("error", listened.resolve);
+    server.listen(path, () => listened.resolve(null));
+    const listenError = await listened.promise;
+    server.close();
+    expect({ code: listenError?.code, syscall: listenError?.syscall }).toEqual({ code: "EINVAL", syscall: "listen" });
+    expect(existsSync(join(String(dir), "nul"))).toBe(false);
+
+    // A server at the truncated path must not be reachable through the longer one.
+    const truncated: Server = createServer().listen(join(String(dir), "nul"));
+    await once(truncated, "listening");
+    const connected = Promise.withResolvers<NodeJS.ErrnoException | null>();
+    const socket = new Socket();
+    socket.on("error", connected.resolve);
+    socket.connect(path, () => connected.resolve(null));
+    const connectError = await connected.promise;
+    socket.destroy();
+    truncated.close();
+    expect({ code: connectError?.code, syscall: connectError?.syscall }).toEqual({
+      code: "EINVAL",
+      syscall: "connect",
+    });
+  });
+
   it("should bind IPv4 0.0.0.0 when listen on 0.0.0.0, issue#7355", done => {
     const { mustCall } = createCallCheckCtx(done);
 
@@ -257,6 +492,46 @@ describe("net.createServer listen", () => {
     occupant.close();
     await once(occupant, "close");
     expect(order).toEqual(["error:EADDRINUSE", "nextTick"]);
+  });
+
+  it("a listen() error has Node's negative errno", async () => {
+    const occupant: Server = createServer();
+    occupant.listen(0);
+    await once(occupant, "listening");
+    const { port } = occupant.address() as AddressInfo;
+
+    const server: Server = createServer();
+    server.listen(port);
+    const [err] = (await once(server, "error")) as [NodeJS.ErrnoException];
+    occupant.close();
+    await once(occupant, "close");
+    const { code, syscall, errno } = err;
+    expect({
+      code,
+      syscall,
+      errno: typeof errno === "number" && errno < 0 ? getSystemErrorName(errno) : errno,
+    }).toEqual({
+      code: "EADDRINUSE",
+      syscall: "listen",
+      errno: "EADDRINUSE",
+    });
+  });
+
+  // "localhost" usually resolves to both ::1 and 127.0.0.1.
+  it("reports EADDRINUSE when another server holds the port on localhost", async () => {
+    const occupant: Server = createServer();
+    occupant.listen(0, "localhost");
+    await once(occupant, "listening");
+    const { port } = occupant.address() as AddressInfo;
+
+    const server: Server = createServer();
+    const { promise, resolve } = Promise.withResolvers<string | undefined>();
+    server.on("error", (err: NodeJS.ErrnoException) => resolve(err.code));
+    server.listen(port, "localhost", () => resolve("listening on " + (server.address() as AddressInfo).address));
+    const result = await promise;
+    server.close();
+    occupant.close();
+    expect(result).toBe("EADDRINUSE");
   });
 
   // How vite, get-port and friends probe for a free port: listen, then close()
@@ -492,6 +767,40 @@ describe("net.createServer events", () => {
       });
   });
 
+  it("getConnections() counts open connections after close()", async () => {
+    const getConnections = (server: Server) =>
+      new Promise<number>((resolve, reject) =>
+        server.getConnections((err, count) => (err ? reject(err) : resolve(count))),
+      );
+    const accepted: Socket[] = [];
+    const server = createServer(socket => accepted.push(socket));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const clients = [new Socket().connect(port, "127.0.0.1"), new Socket().connect(port, "127.0.0.1")];
+    try {
+      while (accepted.length < 2) await once(server, "connection");
+
+      let sync = true;
+      const deferred = new Promise<boolean>(resolve => server.getConnections(() => resolve(!sync)));
+      sync = false;
+      expect(await deferred).toBe(true);
+
+      const closed = once(server, "close");
+      server.close();
+      expect(await getConnections(server)).toBe(2);
+
+      accepted[0].destroy();
+      await once(accepted[0], "close");
+      expect(await getConnections(server)).toBe(1);
+
+      accepted[1].destroy();
+      await closed;
+      expect(await getConnections(server)).toBe(0);
+    } finally {
+      for (const socket of clients) socket.destroy();
+    }
+  });
+
   it("should error on an invalid port", () => {
     const server = createServer();
 
@@ -499,6 +808,12 @@ describe("net.createServer events", () => {
       expect.objectContaining({
         code: "ERR_SOCKET_BAD_PORT",
       }),
+    );
+  });
+
+  it.each(["", " ", "\t"])("should error on the blank port %j", port => {
+    expect(() => createServer().listen(port)).toThrow(
+      expect.objectContaining({ name: "RangeError", code: "ERR_SOCKET_BAD_PORT" }),
     );
   });
 
@@ -592,6 +907,61 @@ describe("net.createServer events", () => {
       }).catch(closeAndFail);
     });
   });
+
+  // Windows still reports a fatal flush as a drain.
+  it.skipIf(isWindows)(
+    "fails a write made in the 'connection' listener when the peer resets before it's flushed",
+    async () => {
+      using dir = tempDir("net-open-flush-reset", {
+        "client.js": `
+        const s = require("node:net").connect(Number(process.env.RESET_PORT), "127.0.0.1");
+        s.on("error", () => {});
+        s.once("data", () => {
+          s.resetAndDestroy();
+          require("node:fs").writeFileSync(process.env.RESET_MARKER, "");
+        });
+      `,
+      });
+      const marker = join(String(dir), "reset");
+
+      let sawReset = false;
+      let writeFailed: boolean | undefined;
+      let finished = false;
+      const errors: (string | undefined)[] = [];
+      const closed = Promise.withResolvers<boolean>();
+      const server = createServer(c => {
+        c.on("error", (err: NodeJS.ErrnoException) => errors.push(err.code));
+        c.on("finish", () => (finished = true));
+        c.on("close", closed.resolve);
+        // More than the kernel's send buffer, so the first send is short.
+        c.write(Buffer.alloc(16 * 1024 * 1024, "x"), err => (writeFailed = err != null));
+        c.end();
+        // The rest is flushed when this listener returns. Return only after the peer's reset.
+        const deadline = performance.now() + 10_000;
+        while (!(sawReset = existsSync(marker)) && performance.now() < deadline) {}
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+
+      try {
+        await using client = Bun.spawn({
+          cmd: [bunExe(), join(String(dir), "client.js")],
+          env: { ...bunEnv, RESET_PORT: String((server.address() as AddressInfo).port), RESET_MARKER: marker },
+          stdio: ["ignore", "inherit", "inherit"],
+        });
+        expect({ hadError: await closed.promise, sawReset, writeFailed, finished }).toEqual({
+          hadError: true,
+          sawReset: true,
+          writeFailed: true,
+          finished: false,
+        });
+        expect(errors).toBeOneOf([["ECONNRESET"], ["EPIPE"]]);
+        expect(await client.exited).toBe(0);
+      } finally {
+        server.close();
+      }
+    },
+  );
 
   it("#8374", async () => {
     const server = createServer();
@@ -748,6 +1118,44 @@ describe("accepted socket event-loop hold matches Node (per-connection KeepAlive
 // dropped the Listener's KeepAlive but the uv handle still pinned
 // uv_loop_alive and the process never exited. TCP and unix-socket listeners go
 // through usockets, which unrefs its uv handles up front.
+it("closes a peer on options.blockList without an event, like Node", async () => {
+  const blockList = new BlockList();
+  blockList.addAddress("127.0.0.1");
+  const events: string[] = [];
+  const server = createServer({ blockList }, () => events.push("connection"));
+  server.on("drop", () => events.push("drop"));
+  try {
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = connect((server.address() as AddressInfo).port, "127.0.0.1").resume();
+    await once(client, "close");
+    expect(events).toEqual([]);
+  } finally {
+    server.close();
+  }
+});
+
+it("createServer() stores keepAliveInitialDelay in seconds, like Node", () => {
+  const stored = (options?: { keepAliveInitialDelay: number }) => (createServer(options) as any).keepAliveInitialDelay;
+  expect([stored({ keepAliveInitialDelay: 2500 }), stored({ keepAliveInitialDelay: -1 }), stored()]).toEqual([2, 0, 0]);
+});
+
+it.each([1000, 2147483000, 2147484000, 3e9, 2 ** 32, 3e12, 1e13])(
+  "a server with keepAlive and a keepAliveInitialDelay of %d ms takes connections",
+  async keepAliveInitialDelay => {
+    const server = createServer({ keepAlive: true, keepAliveInitialDelay }, socket => socket.end("hi"));
+    try {
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+      let received = "";
+      client.on("data", chunk => (received += chunk));
+      await once(client, "close");
+      expect(received).toBe("hi");
+    } finally {
+      server.close();
+    }
+  },
+);
+
 it("server.unref() on a pipe/unix-socket listener lets the process exit", async () => {
   // The child exits without close() (natural exit is the observable), so the
   // unix socket file must live in a tempDir the parent disposes.

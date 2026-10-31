@@ -252,6 +252,37 @@ test.concurrent("POST of a Bun.file() large enough for sendfile through a TLS pr
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "200 true\n", stderr: "", exitCode: 0 });
 });
 
+test.concurrent("re-sends a Bun.file() body through a CONNECT tunnel when the origin redirects to https", async () => {
+  const content = Buffer.alloc(2_000_000, "abcdefgh");
+  using dir = tempDir("proxy-sendfile-redirect", { "body.bin": content });
+  using origin = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      await req.arrayBuffer();
+      return new Response(null, { status: 307, headers: { Location: `https://127.0.0.1:${httpsServer.port}/` } });
+    },
+  });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const file = Bun.file("body.bin");
+      const res = await fetch("http://127.0.0.1:${origin.port}/", { method: "POST", body: file, tls: { ca: ${JSON.stringify(tlsCert.cert)} } });
+      console.log(res.status, res.url, (await res.text()) === (await file.text()));`,
+    ],
+    env: { ...bunEnv, ...proxyFreeEnv, http_proxy: httpProxyServer.url, https_proxy: httpProxyServer.url },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: `200 https://127.0.0.1:${httpsServer.port}/ true\n`,
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 for (const server_tls of [false, true]) {
   describe.concurrent(`proxy can handle redirects with ${server_tls ? "TLS" : "non-TLS"} server`, () => {
     test("with empty body #12007", async () => {

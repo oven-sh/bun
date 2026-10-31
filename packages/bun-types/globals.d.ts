@@ -1944,6 +1944,7 @@ declare var Response: Bun.__internal.UseLibDomIfAvailable<
      *
      * @param body Value to serialize with `JSON.stringify`
      * @param init Options for the response
+     * @throws {TypeError} If `JSON.stringify(body)` returns `undefined`, as it does for `undefined`, a symbol or a function
      * @link https://github.com/whatwg/fetch/issues/1389
      */
     json(body?: any, init?: ResponseInit | number): Response;
@@ -2098,6 +2099,10 @@ interface BunFetchRequestInit extends RequestInit {
    * `BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT` if set. Omit to use the
    * default (h2 is offered iff the flag is on). `"h2"`, `"h3"` and `"h1"`
    * are aliases.
+   *
+   * Without this option, a request the server refuses over HTTP/2 with
+   * `HTTP_1_1_REQUIRED` before sending a response is sent again over
+   * HTTP/1.1, unless its body is a stream.
    *
    * Requires `https`. Not part of the Fetch API specification.
    * @experimental

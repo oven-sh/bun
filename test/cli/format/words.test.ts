@@ -82,7 +82,7 @@ describe.concurrent("bun fmt --check", () => {
     });
   });
 
-  test("--log-level", async () => {
+  test("--log-level silent and error print nothing", async () => {
     const files = { "a.js": ugly, "b.js": formatted };
     const [silent, error, warn] = await Promise.all(
       ["silent", "error", "warn"].map(level => format(files, ["--check", "--log-level", level])),
@@ -132,27 +132,27 @@ describe.concurrent("bun fmt --check", () => {
 
 describe.concurrent("bun fmt", () => {
   test("errors start with `error:`, with a .prettierrc too", async () => {
-    const [missing, ofPrettier] = await Promise.all([
+    const [missing, withPrettier] = await Promise.all([
       format({ "a.js": formatted }, ["nothing.js"]),
       format({ "a.js": formatted, ".prettierrc": "{}\n" }, ["nothing.js"]),
     ]);
     expect(missing.stderr).toStartWith('error: No files matching the pattern were found: "nothing.js".\n');
     expect(missing.exitCode).toBe(2);
-    expect(ofPrettier.stderr).toStartWith('error: No files matching the pattern were found: "nothing.js".\n');
-    expect(ofPrettier.exitCode).toBe(2);
+    expect(withPrettier.stderr).toStartWith('error: No files matching the pattern were found: "nothing.js".\n');
+    expect(withPrettier.exitCode).toBe(2);
   });
 
   test("errors and warnings about flags get the same prefixes", async () => {
     const flags = ["--plugin", "prettier-plugin-x"];
-    const [refused, allowed, ofPrettier] = await Promise.all([
+    const [rejected, allowed, withPrettier] = await Promise.all([
       format({ "a.js": formatted }, flags),
       format({ "a.js": formatted }, [...flags, "--allow-unsupported"]),
       format({ "a.js": formatted, ".prettierrc": "{}\n" }, flags),
     ]);
-    expect(refused.stderr).toStartWith("error: bun fmt does not include the plugin prettier-plugin-x\n");
+    expect(rejected.stderr).toStartWith("error: bun fmt does not include the plugin prettier-plugin-x\n");
     expect(allowed.stderr).toStartWith("warn: --plugin has no effect ");
-    expect(ofPrettier.stderr).toStartWith("error: bun fmt does not include the plugin prettier-plugin-x\n");
-    expect([refused.exitCode, allowed.exitCode, ofPrettier.exitCode]).toEqual([2, 0, 2]);
+    expect(withPrettier.stderr).toStartWith("error: bun fmt does not include the plugin prettier-plugin-x\n");
+    expect([rejected.exitCode, allowed.exitCode, withPrettier.exitCode]).toEqual([2, 0, 2]);
   });
 
   test("lists the files it writes and counts them", async () => {

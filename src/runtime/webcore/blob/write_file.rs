@@ -45,11 +45,6 @@ pub(crate) type WriteFileOnWriteFileCallback =
 /// The completion token a `WriteFile` keeps across its async I/O.
 pub(crate) type WriteFileTask = bun_jsc::Completion<WriteFile>;
 
-// SAFETY: the two blobs are native values holding store refs (atomic counts);
-// io-loop registration state and an opaque completion ctx that only the
-// JS-thread completion dereferences — nothing used off-thread is thread-affine.
-unsafe impl Send for WriteFile {}
-
 impl bun_jsc::JobContext for WriteFile {
     const CANCELLABLE: bool = cfg!(not(windows));
     type OffThread = Self;
@@ -263,7 +258,12 @@ impl WriteFile {
     /// See `ReadFile::fail_cancelled`.
     #[cfg(not(windows))]
     fn fail_cancelled(&mut self) {
-        let err = sys::Error::from_code(sys::E::ECANCELED, sys::Tag::write);
+        self.fail_wait(&sys::Error::from_code(sys::E::ECANCELED, sys::Tag::write));
+    }
+
+    /// See `ReadFile::fail_wait`.
+    #[cfg(not(windows))]
+    fn fail_wait(&mut self, err: &sys::Error) {
         self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
         self.system_error = Some(err.to_system_error().into());
         self.state
@@ -274,6 +274,10 @@ impl WriteFile {
     /// `self` again.
     #[cfg(not(windows))]
     pub(crate) fn wait_for_writable(&mut self) {
+        if let Err(err) = io::IoRequestLoop::ensure_init() {
+            self.fail_wait(&err);
+            return self.on_finish();
+        }
         if !self.io_parking.park() {
             self.fail_cancelled();
             return self.on_finish();

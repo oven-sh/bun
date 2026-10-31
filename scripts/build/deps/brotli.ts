@@ -10,7 +10,7 @@
 
 import type { Dependency, DirectBuild } from "../source.ts";
 
-const BROTLI_COMMIT = "028fb5a23661f123017c060daa546b55cf4bde29"; // v1.2.0
+const BROTLI_COMMIT = "db24a98aed38a16de78cc05ca15cdd8dc2a0d92d"; // v1.2.1
 
 // prettier-ignore
 const SOURCES = [

@@ -11,8 +11,8 @@ pub struct DotNotation {
     allow_protected_class_property_access: bool,
 }
 
-/// `symbol.escapedName === value`, for a symbol that is named `name`: TypeScript puts one more `_`
-/// before a name that starts with two.
+/// `symbol.escapedName === value`, for a symbol named `name`. TypeScript adds one more `_` in front of a name that
+/// starts with two.
 fn escaped_name_is(name: &[u8], value: &[u8]) -> bool {
     match name.starts_with(b"__") {
         true => value.split_first() == Some((&b'_', name)),
@@ -20,7 +20,7 @@ fn escaped_name_is(name: &[u8], value: &[u8]) -> bool {
     }
 }
 
-/// tsgolint's `getStaticPropertyName`: of a string literal, or of a template without substitutions.
+/// tsgolint's `getStaticPropertyName`, for a string literal or a template without substitutions.
 fn get_static_property_name(index: Expr<'_>) -> Option<Name<'_>> {
     match index.kind() {
         ExprKind::Template(template) => template.as_static(),
@@ -29,7 +29,7 @@ fn get_static_property_name(index: Expr<'_>) -> Option<Name<'_>> {
 }
 
 impl DotNotation {
-    /// Whether what the types say about `obj[index]`, which is `node`, allows the brackets.
+    /// True if the types allow the brackets in `obj[index]`, which is `node`.
     fn is_allowed_by_types<'a>(
         &self,
         (node, obj, index): (Expr<'a>, Expr<'a>, Expr<'a>),
@@ -37,7 +37,7 @@ impl DotNotation {
     ) -> bool {
         let is_oxlint = obj.file().language().is_oxlint;
         let property_symbol = index.ts_symbol().or_else(|| {
-            // tsgolint compares with the name as it is written, also that of a template.
+            // tsgolint compares with the name as written, and also handles a template.
             let value = if is_oxlint { get_static_property_name(index)? } else { index.as_string()? };
             let properties = obj.ty().get_non_nullable_type().get_properties();
             properties.iter().find(|property| match is_oxlint {
@@ -45,9 +45,9 @@ impl DotNotation {
                 false => escaped_name_is(property.escaped_name(), value.bytes()),
             })
         });
-        // tsgolint finds nothing for what nothing declares: the `a` of a `Record<"a" | "b", T>`.
+        // tsgolint doesn't find a symbol that has no declaration, like the `a` of a `Record<"a" | "b", T>`.
         let property_symbol = property_symbol.filter(|it| !is_oxlint || it.declarations().next().is_some());
-        // Of a getter and a setter tsgolint asks the one that is used.
+        // Between a getter and a setter, tsgolint picks the one the access uses.
         let is_updated = matches!(node.parent(), Node::Expr(parent) if matches!(
             parent.kind(),
             ExprKind::Unary { op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, .. }
@@ -67,7 +67,7 @@ impl DotNotation {
             used.or_else(|| symbol.declarations().next())
         });
         let (is_private, is_protected) = match declaration {
-            // tsgolint's `ast.HasModifier`: wherever it is among the modifiers.
+            // tsgolint's `ast.HasModifier`, which finds the modifier at any position.
             Some(declaration) if is_oxlint => (
                 declaration.has_modifier(ModifierFlags::PRIVATE),
                 declaration.has_modifier(ModifierFlags::PROTECTED),
@@ -90,9 +90,9 @@ impl DotNotation {
         {
             return true;
         }
-        // With `noPropertyAccessFromIndexSignature` tsgolint 7.0 asks for no index signature: `(a as any)["b"]`.
+        // With `noPropertyAccessFromIndexSignature` tsgolint 7.0 doesn't require an index signature: `(a as any)["b"]`.
         let file = obj.file();
-        let needs_no_index_signature = || {
+        let skips_index_signature_check = || {
             let options = file.type_checker().compiler_options();
             file.language().is_oxlint
                 && is_compiler_option_enabled(options, CompilerOption::NoPropertyAccessFromIndexSignature)
@@ -100,15 +100,15 @@ impl DotNotation {
         if property_symbol.is_some() || !allow_index_signature_property_access {
             return false;
         }
-        if needs_no_index_signature() {
+        if skips_index_signature_check() {
             return true;
         }
         let mut index_infos = obj.ty().get_non_nullable_type().get_index_infos();
         if !is_oxlint {
             return index_infos.any(|info| info.key_type().has_flags(TypeFlags::STRING_LIKE));
         }
-        // tsgolint's `getIndexTypeOfType` with the type of the argument, then with its base type: the
-        // index signature with that very key type.
+        // tsgolint's `getIndexTypeOfType` with the argument's type, then with its base type. It only finds the index
+        // signature with exactly that key type.
         let key_type = index.ty();
         let base_key_type = key_type.get_base_type_of_literal_type();
         index_infos.any(|info| info.key_type() == key_type || info.key_type() == base_key_type)
@@ -118,7 +118,7 @@ impl DotNotation {
         let ExprKind::Index { obj, index, .. } = node.kind() else {
             return;
         };
-        // The base rule reports nothing else.
+        // The base rule doesn't report anything else.
         if !matches!(
             index.with_jsdoc_cast().tag(),
             ExprTag::String | ExprTag::Template | ExprTag::True | ExprTag::False | ExprTag::Null
@@ -147,7 +147,7 @@ impl Rule for DotNotation {
         .exprs(&[ExprTag::Index, ExprTag::Dot])
         .stmts(&[StmtTag::Interface])
         .classes();
-    /// Whether an access that an index signature allows can be written with brackets.
+    /// True if an access that goes through an index signature may use brackets.
     type State<'a> = bool;
 
     fn new(options: &Options) -> Self {

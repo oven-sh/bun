@@ -1,5 +1,5 @@
-//! What is in a paragraph and is not CommonMark's or GFM's as `bun_md` reads them: links that are not marked as such as micromark finds
-//! them, math. And how micromark and mdast write down a title and a text with NUL in it.
+//! Paragraph content that isn't CommonMark's or GFM's as `bun_md` parses them: autolink literals as micromark finds
+//! them, and math. Also how micromark and mdast record a title and a text with NUL in it.
 
 use super::strings::{CharacterClass, classify, unescape};
 use crate::text::first_char;
@@ -19,7 +19,7 @@ fn skip_spaces(bytes: &[u8], mut index: usize) -> usize {
     index
 }
 
-/// A title without the indentation of its lines.
+/// A title without its lines' indentation.
 pub(crate) fn push_title(raw: &[u8], out: &mut Vec<u8>) {
     if !bun_core::strings::contains_char(raw, b'\n') {
         return unescape(raw, out);
@@ -53,7 +53,7 @@ fn is_whitespace_at(bytes: &[u8], index: usize) -> bool {
     class_at(bytes, index) == CharacterClass::Whitespace
 }
 
-/// `tokenizeTrail`: whether what is at `index` is punctuation at the end of a link, which is not part of it.
+/// `tokenizeTrail`: true if the text at `index` is punctuation at the end of a link, which isn't part of it.
 fn is_trail(bytes: &[u8], mut index: usize) -> bool {
     loop {
         match bytes.get(index) {
@@ -84,7 +84,7 @@ fn is_trail(bytes: &[u8], mut index: usize) -> bool {
     }
 }
 
-/// `tokenizeDomain`: where the domain at `start` ends.
+/// `tokenizeDomain`: the end of the domain at `start`.
 fn parse_domain(bytes: &[u8], start: usize) -> Option<usize> {
     let (mut in_last, mut in_last_but_one, mut has_data) = (false, false, false);
     let mut index = start;
@@ -116,7 +116,7 @@ fn parse_domain(bytes: &[u8], start: usize) -> Option<usize> {
     (!in_last && !in_last_but_one && has_data).then_some(index)
 }
 
-/// `tokenizePath`: where the path at `start` ends.
+/// `tokenizePath`: the end of the path at `start`.
 fn parse_path(bytes: &[u8], start: usize) -> usize {
     let (mut open, mut close) = (0, 0);
     let mut index = start;
@@ -201,7 +201,7 @@ pub(crate) fn parse_protocol_literal(bytes: &[u8], start: usize) -> Option<usize
     Some(parse_path(bytes, parse_domain(bytes, after)?))
 }
 
-/// `bytes` with `nul` in the place of each NUL.
+/// `bytes` with each NUL replaced by `nul`.
 pub(crate) fn push_without_nul(bytes: &[u8], nul: &[u8], out: &mut Vec<u8>) {
     for (index, part) in bun_core::strings::split(bytes, b"\0").enumerate() {
         if index > 0 {
@@ -234,7 +234,7 @@ pub(crate) fn has_html_comment(html: &[u8]) -> bool {
     false
 }
 
-/// remark-math 3: where the `$ .. $` or `$$ .. $$` at `start` ends.
+/// remark-math 3: the end of the `$ .. $` or `$$ .. $$` at `start`.
 pub(crate) fn find_math_end(bytes: &[u8], start: usize) -> Option<usize> {
     let is_double = bytes.get(start + 1) == Some(&b'$');
     let mut index = start + 1 + usize::from(is_double);
@@ -258,7 +258,7 @@ pub(crate) fn find_math_end(bytes: &[u8], start: usize) -> Option<usize> {
     None
 }
 
-/// Where the run of exactly `size` times `marker` ends that closes code or math whose content starts at `from`.
+/// The end of the run of exactly `size` `marker`s that closes code or math whose content starts at `from`.
 pub(crate) fn find_closing_run(
     bytes: &[u8],
     mut from: usize,

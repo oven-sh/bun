@@ -11,7 +11,7 @@ use bun_ast::{self as ast, Expr, G, Ref, Stmt, StmtOrExpr, b::B};
 use bun_collections::HashMap;
 use bun_wyhash::Wyhash;
 
-use crate::parse::parse_entry::ParsedOnly;
+use crate::parse::parse_entry::{ParsedOnly, parse_only_text};
 
 /// Which of the functions that may start at one place: JavaScriptCore's `OrderFunctionKind`.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -90,21 +90,12 @@ impl FunctionIdentities {
         {
             return None;
         }
-        let arena = bun_alloc::Arena::new();
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
-        let _ast_scope = ast_memory_allocator.enter();
-        let source = bun_ast::Source::init_path_string(&b"chunk.js"[..], text);
-        let mut options = crate::ParserOptions::init(Default::default(), bun_ast::Loader::Js);
-        options.features.no_macros = true;
-        options.features.top_level_await = kind == Text::Module;
-        options.jsc_builtin_syntax = kind == Text::Builtin;
-        options.suppress_warnings_about_weird_code = true;
-        let define = crate::Define::default();
-        let mut log = bun_ast::Log::init();
-        let parser = crate::Parser::init(options, &mut log, &source, &define, &arena).ok()?;
-        let mut identities = parser
-            .parse_only(|parsed| Walker::run(parsed, kind, chunk_paths))
-            .ok()?;
+        let mut identities = parse_only_text(
+            text,
+            kind == Text::Module,
+            kind == Text::Builtin,
+            |parsed| Walker::run(parsed, kind, chunk_paths),
+        )?;
         if let Some(first_non_ascii) = first_non_ascii {
             starts_in_code_units(&mut identities.functions, text, first_non_ascii as usize);
         }
@@ -705,7 +696,7 @@ impl<'p, 'a> Walker<'p, 'a> {
             if string.is_utf8() {
                 self.bytes(string.slice8());
             } else {
-                self.bytes(bytemuck::cast_slice::<u16, u8>(string.slice16()));
+                self.bytes(bun_core::slice_as_bytes(string.slice16()));
             }
             part = string.next.as_deref();
         }
@@ -888,7 +879,7 @@ impl<'p, 'a> Walker<'p, 'a> {
                 if name.is_utf8() {
                     constructor.update(name.slice8());
                 } else {
-                    constructor.update(bytemuck::cast_slice::<u16, u8>(name.slice16()));
+                    constructor.update(bun_core::slice_as_bytes(name.slice16()));
                 }
             }
             if let Some(block) = block {

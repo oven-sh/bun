@@ -1,5 +1,5 @@
-//! The type at every expression and declaration name of a file: the content TypeScript's test
-//! harness writes into `.types` baselines (`typeWriterWalker`, `GetTypeAtLocation`).
+//! Prints the type at every expression and declaration name in a file. This is what TypeScript's
+//! test harness writes into `.types` baselines (`typeWriterWalker`, `GetTypeAtLocation`).
 
 use super::enclosing_declaration::Enclosing;
 use super::services::visited::VisitedKind;
@@ -15,10 +15,10 @@ pub struct TypeAtLocation {
     pub type_text: String,
 }
 
-/// State carried from node to node during the type walk of a file.
+/// State carried from node to node during a file's type walk.
 struct TypeWalk {
-    /// The last type printed for an expression, and its text. The parentheses around an expression
-    /// and the name of a property access reuse it.
+    /// The last type printed for each expression, and its text. The parentheses around an
+    /// expression and a property access's name reuse it.
     text_of_expr: Vec<Option<(TypeId, String)>>,
 }
 
@@ -42,33 +42,6 @@ impl Checker<'_, '_> {
         results
     }
 
-    /// The position and the kind of each node of `file` whose type is the error type: the walk of
-    /// `types_at_locations` without the printing. TypeScript produces the error type only where it
-    /// reports an error or receives an error type as input, so in a file without errors each of
-    /// these is a bug. Empty for a file whose semantic errors are not reported, or only partly
-    /// reported. The file must have been checked.
-    pub fn error_types_at_locations(&mut self, file: FileId) -> Vec<(u32, String)> {
-        if !self.reports_semantic_errors(file) || self.is_plain_js(file) {
-            return Vec::new();
-        }
-        if self.is_flow_analysis_left_disabled(file) {
-            self.disable_flow_analysis(file);
-        }
-        let mut found = Vec::new();
-        for node in self.visited_nodes(file) {
-            if self.is_omitted_from_types(file, node.kind) {
-                continue;
-            }
-            let ty = self.get_type_of_written_node(file, node);
-            if self.is_error_type(ty) && !self.is_error_type_printed_as_any(file, node.node) {
-                found.push((node.start, format!("{:?}", node.kind)));
-            }
-        }
-        self.rechecked_exprs.clear();
-        self.rechecked_members.clear();
-        found
-    }
-
     /// `writeTypeOrSymbol`, in the walk for types.
     fn write_type_of_visited_node(
         &mut self,
@@ -87,7 +60,7 @@ impl Checker<'_, '_> {
         } else {
             self.type_text_of_visited_node(file, node, ty, walk)
         };
-        // The other `NonNullExpression`s of a run of `!`, which have the same type: the outermost first.
+        // The other `NonNullExpression`s in a run of `!` have the same type. They're listed outermost first.
         let inside = match node.kind {
             VisitedKind::Expression(e) => non_null_ends_in(self.hir(file), e),
             _ => &[],
@@ -116,8 +89,8 @@ impl Checker<'_, '_> {
             _ => None,
         };
         if let Some(index) = repeated
-            && let Some((written, text)) = &walk.text_of_expr[index]
-            && *written == ty
+            && let Some((printed_type, text)) = &walk.text_of_expr[index]
+            && *printed_type == ty
         {
             return text.clone();
         }
@@ -145,8 +118,8 @@ impl Checker<'_, '_> {
         text
     }
 
-    /// `getTypeOfNode`, preceded by the special case of `writeTypeOrSymbol` for the node after the
-    /// `extends` of a class.
+    /// `getTypeOfNode`, preceded by `writeTypeOrSymbol`'s special case for the node after a class's
+    /// `extends`.
     fn get_type_of_written_node(&mut self, file: FileId, node: VisitedNode) -> TypeId {
         let hir = self.hir(file);
         if let VisitedKind::Expression(_)
@@ -154,9 +127,9 @@ impl Checker<'_, '_> {
         | VisitedKind::AccessName(_) = node.kind
             && !hir.is_in_with(node.start)
         {
-            // `IsExpressionWithTypeArgumentsInClassExtendsClause(node.Parent)`: the base type, unless it is `any` or there is none.
+            // `IsExpressionWithTypeArgumentsInClassExtendsClause(node.Parent)`: the base type, unless it's `any` or missing.
             let parent = hir.parent(node.node);
-            // The base expressions of a class after the first are not wrapped in an
+            // A class's base expressions after the first aren't wrapped in an
             // `ExpressionWithTypeArguments`.
             if matches!(parent.part(), Some(Part::Base | Part::Extends)) {
                 let class = self.class_sym(file, hir.class_of(parent.row()));
@@ -171,7 +144,7 @@ impl Checker<'_, '_> {
         self.get_type_of_visited_node(file, node.kind, node.start)
     }
 
-    /// Whether `writeTypeOrSymbol` omits the node from the type walk.
+    /// True if `writeTypeOrSymbol` skips the node in the type walk.
     fn is_omitted_from_types(&self, file: FileId, kind: VisitedKind) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match kind {
@@ -185,27 +158,26 @@ impl Checker<'_, '_> {
                 ExprKind::AsConst(_) => hir.is_js,
                 _ => false,
             },
-            // `GetMeaningFromDeclaration(node.Parent)` lacks `SemanticMeaningValue`. The name of a
-            // type alias is printed anyway, and that of a namespace if it is
+            // `GetMeaningFromDeclaration(node.Parent)` lacks `SemanticMeaningValue`. A type alias's
+            // name is printed anyway, and so is a namespace's if it's
             // `ModuleInstanceStateInstantiated`.
             VisitedKind::DeclarationName(Decl::Interface(_) | Decl::TypeParam(_), _) => true,
             VisitedKind::DeclarationName(Decl::Module(m), _) => {
                 matches!(hir[m].name, ModuleName::Ident(_))
                     && bound.module_instance_state[m.idx()] != ModuleInstanceState::Instantiated
             }
-            // `IsPartOfTypeNode`: `const` is a type reference, and a `TypePredicate` a type node.
+            // `IsPartOfTypeNode`: `const` is a type reference, and a `TypePredicate` is a type node.
             VisitedKind::ConstOfAsConst(_) | VisitedKind::TypePredicateParameter(_) => true,
-            // `isPartOfTypeNodeInParent`: of `A.B.C` only `C` and the whole name are direct
-            // children of a type node.
-            // In a heritage clause the same applies to the property accesses
+            // `isPartOfTypeNodeInParent`: in `A.B.C`, only `C` and the whole name are direct children
+            // of a type node. In a heritage clause the same applies to the property accesses
             // (`isPartOfTypeExpressionWithTypeArguments`).
             VisitedKind::TypeReferenceName(node, index)
             | VisitedKind::HeritageClauseName(node, index)
             | VisitedKind::HeritageClausePropertyAccess(node, index) => {
                 !matches!(hir[node].kind, TypeNodeKind::Ref { name, .. } if index as usize + 1 != name.len())
             }
-            // The `b` of `typeof import("m").a.b` is not: `isPartOfTypeNodeInParent` excludes an
-            // `ImportType` with `IsTypeOf`.
+            // The `b` of `typeof import("m").a.b` isn't skipped, because `isPartOfTypeNodeInParent`
+            // excludes an `ImportType` with `IsTypeOf`.
             VisitedKind::ImportTypeQualifierName(node, index) => {
                 matches!(hir[node].kind, TypeNodeKind::Import { name, is_typeof: false, .. }
                     if index as usize + 1 == name.len())
@@ -214,13 +186,13 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// The exceptions of `writeTypeOrSymbol`: whether the error type of the node is printed as
-    /// `any` even in a test without errors.
+    /// `writeTypeOrSymbol`'s exceptions. True if the node's error type is printed as `any` even in a
+    /// test without errors.
     fn is_error_type_printed_as_any(&self, file: FileId, node: Node) -> bool {
         let hir = self.hir(file);
         let parent = hir.parent(node);
         match hir.kind(parent) {
-            // `IsBindingElement`, `IsPropertyAccessOrQualifiedName`, `IsMetaProperty`, of `node.Parent`; the names of specifiers
+            // `IsBindingElement`, `IsPropertyAccessOrQualifiedName` and `IsMetaProperty` of `node.Parent`, and specifier names
             // (`isImportStatementName`, `isExportStatementName`)
             Kind::BindingElement
             | Kind::PropertyAccessExpression
@@ -243,7 +215,7 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// Whether `flowAnalysisDisabled` is still set after `file` has been checked. `checkBlock` resets it at the end of a function
+    /// True if `flowAnalysisDisabled` is still set after `file` has been checked. `checkBlock` resets it at the end of a function
     /// or module block, so it only stays set for a reference outside any such block.
     fn is_flow_analysis_left_disabled(&mut self, file: FileId) -> bool {
         if !self.bound(file).can_reach_flow_depth_limit() {
@@ -263,7 +235,7 @@ impl Checker<'_, '_> {
         decl: Decl,
     ) -> Option<ResolutionMode> {
         let (hir, files) = (self.hir(file), self.files());
-        let written = match decl {
+        let declared_mode = match decl {
             Decl::ImportDefault(import) | Decl::ImportNamespace(import) => hir[import].mode,
             Decl::ImportSpec(spec) => hir[hir[spec].import].mode,
             Decl::ExportSpec(spec) => {
@@ -283,11 +255,11 @@ impl Checker<'_, '_> {
             }
             _ => return None,
         };
-        Some(files.mode_of_import(file, written))
+        Some(files.mode_of_import(file, declared_mode))
     }
 }
 
-/// Placeholder printed for a node whose type is the error type: `error` (`IntrinsicName()`) if the
-/// test has no errors, or else `any` (`typeWriterWalker.hadErrorBaseline`). The caller that has the
-/// report of the test replaces it.
+/// Placeholder printed for a node whose type is the error type. The caller that has the test's
+/// report replaces it with `error` (`IntrinsicName()`) if the test has no errors, or else with `any`
+/// (`typeWriterWalker.hadErrorBaseline`).
 pub const ERROR_TYPE_TEXT: &str = "\u{1}error";

@@ -1,10 +1,10 @@
-//! The half of oxlint's `utils/react.rs` that is about components, on the handles. Each function has the name that it
-//! has there. What is about the names and the attributes of JSX elements is in [`jsx`](crate::jsx).
+//! The half of oxlint's `utils/react.rs` that deals with components, ported to this linter's AST handles. Each function
+//! keeps oxlint's name. JSX element names and attributes are in [`jsx`](crate::jsx).
 //!
 //! | oxc | here |
 //! |---|---|
 //! | `AstKind::Class` | `Node::Class`. The `Expr` or the `Stmt` above it is the same node there |
-//! | `AstKind::Function`, `AstKind::ArrowFunctionExpression` | `Node::Func`: [`as_function`]. The same holds for what is above it |
+//! | `AstKind::Function`, `AstKind::ArrowFunctionExpression` | `Node::Func`: [`as_function`]. The same goes for the node above it |
 //! | `AstKind::ObjectProperty`, `MethodDefinition`, `PropertyDefinition` | [`as_object_property`], [`as_method_definition`], [`as_property_definition`] |
 //! | `ctx.nodes().ancestors(id)` from each of many nodes | [`AncestorWalk`], `bun_lint::utils::ancestor_memo::AncestorMemo` |
 
@@ -23,12 +23,12 @@ use smallvec::{SmallVec, smallvec};
 use std::hash::Hash;
 use std::ops::ControlFlow;
 
-/// `ctx.source_type().is_jsx()`: oxlint reads JSX in every file of JavaScript and in `.tsx`.
+/// `ctx.source_type().is_jsx()`: oxlint parses JSX in every JavaScript file and in `.tsx`.
 pub(crate) fn is_jsx(file: &File) -> bool {
     file.is_javascript() || file.path().ends_with(b".tsx")
 }
 
-/// Blanks with a line break in them, which React leaves out.
+/// Whitespace that contains a line break, which React drops.
 pub(crate) fn is_padding_spaces(child: Child) -> bool {
     matches!(child, Child::Text(text) if strings::is_all_unicode_whitespace(text) && strings::contains_char(text, b'\n'))
 }
@@ -76,7 +76,7 @@ pub(crate) fn is_es6_component(node: Node) -> bool {
         if class.extends().is_some_and(|it| is_pragma_member_or_identifier(it, &["Component", "PureComponent"])))
 }
 
-/// `memo`: of the rule, for this question only.
+/// `memo`: the rule's own cache, used only for this lookup.
 pub(crate) fn get_parent_component<'a>(
     node: Node<'a>,
     memo: &mut AncestorMemo<'a, Node<'a>>,
@@ -86,7 +86,7 @@ pub(crate) fn get_parent_component<'a>(
     })
 }
 
-/// The callee of `this.setState(..)`
+/// Returns the callee of `this.setState(..)`.
 pub(crate) fn callee_of_this_set_state(call: Expr<'_>) -> Option<Expr<'_>> {
     let member = as_member_expression(call.as_call()?.callee())?;
     (static_property_name(member)?.is("setState")
@@ -96,29 +96,29 @@ pub(crate) fn callee_of_this_set_state(call: Expr<'_>) -> Option<Expr<'_>> {
     .then_some(member)
 }
 
-/// For [`function_count_before_lifecycle_component`], with the same names each time.
+/// The cache for [`function_count_before_lifecycle_component`]. Always pass the same names with it.
 #[derive(Default)]
 pub(crate) struct LifecycleWalk<'a> {
-    /// The method with one of the names around a node, and how many functions are between the two.
+    /// The enclosing method with one of the names, and the number of functions between the node and it.
     methods: FxHashMap<Node<'a>, Option<(u32, Node<'a>)>>,
     components: AncestorMemo<'a, ()>,
 }
 
-/// How many functions are between `node` and the method of a component around it that has one of these names. The
-/// parent of `node` is not looked at.
+/// Returns how many functions are between `node` and the enclosing component method that has one of these names.
+/// `node`'s parent isn't checked.
 pub(crate) fn function_count_before_lifecycle_component<'a>(
     node: Expr<'a>,
     lifecycle_method_names: &[&str],
     walk: &mut LifecycleWalk<'a>,
 ) -> Option<u32> {
-    // Otherwise oxlint has a node between it and its parent.
+    // In these cases oxlint has a node between it and its parent.
     let from = if node.is_parenthesized() || node.is_chain_root() {
         Node::Expr(node)
     } else {
         node.parent()
     };
     let (mut child, mut function_count, mut steps) = (from, 0, 0);
-    // With how many functions there are up to there.
+    // The nodes passed on the way up, each with the number of functions up to it.
     let mut passed = Vec::new();
     let found = loop {
         if matches!(child, Node::File(_)) {
@@ -163,8 +163,8 @@ fn is_lifecycle_component_method(node: Node, lifecycle_method_names: &[&str]) ->
         .is_some_and(|name| name.is_any(lifecycle_method_names))
 }
 
-/// `settings.react[key]`, if it is an array.
-fn components_of_settings<'a>(file: &'a File<'a>, key: &[u8]) -> &'a [Json] {
+/// `settings.react[key]`, if it's an array.
+fn components_from_settings<'a>(file: &'a File<'a>, key: &[u8]) -> &'a [Json] {
     file.settings()
         .get(b"react")
         .and_then(|it| it.get(key)?.as_array())
@@ -173,15 +173,15 @@ fn components_of_settings<'a>(file: &'a File<'a>, key: &[u8]) -> &'a [Json] {
 
 /// `settings.react.linkComponents`, for [`get_component_attrs_by_name`]
 pub(crate) fn link_components<'a>(file: &'a File<'a>) -> &'a [Json] {
-    components_of_settings(file, b"linkComponents")
+    components_from_settings(file, b"linkComponents")
 }
 
 /// `settings.react.formComponents`, for [`get_component_attrs_by_name`]
 pub(crate) fn form_components<'a>(file: &'a File<'a>) -> &'a [Json] {
-    components_of_settings(file, b"formComponents")
+    components_from_settings(file, b"formComponents")
 }
 
-/// The attributes of a component of the settings that have a URL.
+/// The attributes of a component from the settings that hold a URL.
 #[derive(Copy, Clone)]
 pub(crate) enum ComponentAttrs<'a> {
     One(&'a [u8]),
@@ -210,14 +210,14 @@ pub(crate) fn get_component_attrs_by_name<'a>(
         if item.get(b"name")?.as_str()? != name {
             return None;
         }
-        let of = |key: &[u8]| item.get(key);
-        let shared = || of(b"formAttribute").or_else(|| of(b"linkAttribute"));
-        (of(b"attribute")
+        let field = |key: &[u8]| item.get(key);
+        let shared = || field(b"formAttribute").or_else(|| field(b"linkAttribute"));
+        (field(b"attribute")
             .or_else(shared)
             .and_then(Json::as_str)
             .map(ComponentAttrs::One))
         .or_else(|| {
-            of(b"attributes")
+            field(b"attributes")
                 .or_else(shared)
                 .and_then(Json::as_array)
                 .map(ComponentAttrs::Many)
@@ -225,7 +225,7 @@ pub(crate) fn get_component_attrs_by_name<'a>(
     })
 }
 
-/// `ctx.settings().react.version`: major, minor and patch. `None` also for what oxlint refuses.
+/// `ctx.settings().react.version`: major, minor and patch. Also `None` for a version that oxlint rejects.
 pub(crate) fn react_version(file: &File) -> Option<(u32, u32, u32)> {
     let version = file.settings().get(b"react")?.get(b"version")?.as_str()?;
     let mut parts = strings::split(version, b".")
@@ -253,8 +253,8 @@ pub(crate) fn is_react_function_call(call: Call, expected_call: &str) -> bool {
             .is_none_or(|object| get_inner_expression(object).is_ident("React"))
 }
 
-/// Of `ast_util.rs`: the `a.b` that `a.b.c[d].e` starts with. `assignment`: what is assigned to, where the parentheses
-/// around it are not nodes for oxlint either.
+/// From `ast_util.rs`: returns the `a.b` at the start of `a.b.c[d].e`. `assignment` is an assignment target, so the
+/// parentheses around it aren't nodes for oxlint either.
 pub(crate) fn get_outer_member_expression(assignment: Expr<'_>) -> Option<Expr<'_>> {
     let mut member =
         Some(assignment).filter(|it| matches!(it.tag(), ExprTag::Dot | ExprTag::Index))?;
@@ -272,10 +272,10 @@ pub(crate) fn is_state_member_expression(expression: Expr) -> bool {
 
 /// `settings.react.componentWrapperFunctions`, for [`is_hoc_call`]
 pub(crate) fn component_wrapper_functions<'a>(file: &'a File<'a>) -> &'a [Json] {
-    components_of_settings(file, b"componentWrapperFunctions")
+    components_from_settings(file, b"componentWrapperFunctions")
 }
 
-/// `callee_name`: see [`callee_name`]. So it is `memo` for `React.memo(..)`.
+/// `callee_name`: see [`callee_name`]. For `React.memo(..)` it's `memo`.
 pub(crate) fn is_hoc_call(callee_name: &[u8], component_wrapper_functions: &[Json]) -> bool {
     matches!(callee_name, b"memo" | b"forwardRef")
         || component_wrapper_functions
@@ -283,7 +283,7 @@ pub(crate) fn is_hoc_call(callee_name: &[u8], component_wrapper_functions: &[Jso
             .any(|it| it.as_str() == Some(callee_name))
 }
 
-/// What a function can return.
+/// The kinds of values a function can return.
 #[derive(Copy, Clone, Default)]
 pub(crate) struct FunctionReturns(u8);
 
@@ -302,29 +302,29 @@ impl FunctionReturns {
 
 pub(crate) type Variables<'a> = SmallVec<[Symbol<'a>; 4]>;
 
-/// A variable on the way through those that are declared with each other.
+/// A stack entry of the depth-first search in [`VariableFlags::of_variable`].
 struct Visited<'a> {
     variable: Symbol<'a>,
     flags: u8,
-    /// The variables that it is declared with and that have not been looked at.
+    /// The variables in its initializer that haven't been visited yet.
     rest: Variables<'a>,
     index: usize,
-    /// The least index of a variable that is known to be declared with it, by way of others.
+    /// The lowest index of a variable it's known to reach (Tarjan's lowlink).
     low: usize,
 }
 
-/// Flags of the variables of a file, where a variable has those of its declaration and those of the variables that it
-/// is declared with: `const a = b || c`. One of these is for one meaning of the flags.
+/// Per-variable flags for a file. A variable has its own declaration's flags plus those of the variables in its
+/// initializer: `const a = b || c`. Use a separate instance for each meaning of the flags.
 #[derive(Default)]
-pub(crate) struct FlagsOfVariables<'a> {
+pub(crate) struct VariableFlags<'a> {
     known: IdMap<Symbol<'a>, u8>,
 }
 
-impl<'a> FlagsOfVariables<'a> {
-    /// `declared_with`: the flags of the declaration of a variable alone, and the variables that it is declared with.
+impl<'a> VariableFlags<'a> {
+    /// `declared_with`: returns the flags of a variable's declaration by itself, and the variables in its initializer.
     ///
-    /// Each variable is looked at once, whatever is asked: those that are declared with each other in a circle have the
-    /// same flags, which are found as the strongly connected components of a graph are.
+    /// Each variable is visited once, no matter how many lookups there are. Variables that are initialized from each
+    /// other in a cycle share the same flags, so they're found like a graph's strongly connected components.
     pub(crate) fn of_variable(
         &mut self,
         variable: Symbol<'a>,
@@ -345,7 +345,7 @@ impl<'a> FlagsOfVariables<'a> {
             index: 0,
             low: 0,
         }];
-        // Those whose circle is not closed.
+        // The variables whose component isn't complete yet.
         let mut open = vec![variable];
         let mut indices: IdMap<Symbol<'a>, usize> = IdMap::new();
         indices.insert(variable, 0);
@@ -391,7 +391,8 @@ impl<'a> FlagsOfVariables<'a> {
     }
 }
 
-/// `FunctionReturns::add_expression`, but for the variables that `expression` can be, which are added to `variables`.
+/// `FunctionReturns::add_expression`, except that the variables `expression` can evaluate to are added to `variables`
+/// instead of being followed.
 fn add_expression<'a>(expression: Expr<'a>, variables: &mut Variables<'a>) -> u8 {
     let mut returns = 0;
     let mut pending: SmallVec<[Expr<'a>; 8]> = smallvec![expression];
@@ -421,10 +422,10 @@ fn add_expression<'a>(expression: Expr<'a>, variables: &mut Variables<'a>) -> u8
     returns
 }
 
-/// What the variables of a file can be, for [`function_returns`].
+/// Caches what a file's variables can evaluate to, for [`function_returns`].
 #[derive(Default)]
 pub(crate) struct Returns<'a> {
-    of_variables: FlagsOfVariables<'a>,
+    variable_flags: VariableFlags<'a>,
 }
 
 impl<'a> Returns<'a> {
@@ -432,7 +433,7 @@ impl<'a> Returns<'a> {
         let mut variables = Variables::new();
         returns.0 |= add_expression(expression, &mut variables);
         for variable in variables {
-            returns.0 |= self.of_variables.of_variable(variable, |variable| {
+            returns.0 |= self.variable_flags.of_variable(variable, |variable| {
                 let mut variables = Variables::new();
                 let declarator = variable.declarations().next().and_then(Declaration::node);
                 let returns = match declarator {
@@ -447,8 +448,8 @@ impl<'a> Returns<'a> {
     }
 }
 
-/// Also `arrow_function_returns`. What the `return` statements that can be reached return, where oxlint goes by its
-/// control flow graph, in which what follows a loop can always be reached.
+/// Also `arrow_function_returns`. Collects what the reachable `return` statements return. oxlint uses its control flow
+/// graph, where the code after a loop is always reachable.
 pub(crate) fn function_returns<'a>(function: Func<'a>, known: &mut Returns<'a>) -> FunctionReturns {
     let mut returns = FunctionReturns::default();
     match function.body() {
@@ -484,7 +485,7 @@ pub(crate) fn expression_returns<'a>(
     })
 }
 
-/// The function that returns JSX in `memo(forwardRef(() => () => <a />))`.
+/// Returns the function that returns JSX in `memo(forwardRef(() => () => <a />))`.
 pub(crate) fn find_innermost_function_with_jsx<'a>(
     expr: Expr<'a>,
     component_wrapper_functions: &[Json],
@@ -519,8 +520,8 @@ pub(crate) fn find_innermost_function_with_jsx<'a>(
     }
 }
 
-/// The functions that have JSX or a call of `createElement` in their body, not in a function in it: for which oxlint's
-/// `function_contains_jsx` and `arrow_function_body_contains_jsx` hold.
+/// The functions with JSX or a `createElement` call directly in their body, not in a nested function. Those are the
+/// ones for which oxlint's `function_contains_jsx` and `arrow_function_body_contains_jsx` return true.
 pub(crate) struct FunctionsWithJsx<'a> {
     functions: IdSet<Func<'a>>,
 }
@@ -528,18 +529,18 @@ pub(crate) struct FunctionsWithJsx<'a> {
 impl<'a> FunctionsWithJsx<'a> {
     pub(crate) fn new(file: &'a File<'a>) -> Self {
         let mut functions = IdSet::new();
-        // The function around something. `None` in a parameter, which is in the body of no function.
-        let mut around: AncestorMemo<'a, Option<Func<'a>>> = AncestorMemo::default();
+        // Caches a node's enclosing function. `None` inside a parameter, which isn't in any function's body.
+        let mut enclosing_function: AncestorMemo<'a, Option<Func<'a>>> = AncestorMemo::default();
         let mut add = |e: Expr<'a>| {
             let is_in_body = |child: Node<'a>| !matches!(child, Node::Param(_));
-            let function = around.find(Node::Expr(e), |child, parent| {
+            let function = enclosing_function.find(Node::Expr(e), |child, parent| {
                 as_function(parent).map(|it| is_in_body(child).then_some(it))
             });
             if let Some(function) = function.flatten() {
                 functions.insert(function);
             }
         };
-        // What is in an element is where the element is.
+        // A nested element is in the same function as its parent element.
         let is_child =
             |e: &Expr<'a>| matches!(e.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Jsx);
         file.exprs_of_kind(ExprTag::Jsx)
@@ -559,14 +560,14 @@ impl<'a> FunctionsWithJsx<'a> {
     }
 }
 
-/// How far up it goes before it looks at what is known: see `AncestorMemo`.
+/// How many steps a walk takes before it starts consulting the cache. See `AncestorMemo`.
 const PLAIN_STEPS: usize = 32;
 
-/// A walk up from a node that carries a state, until an ancestor decides, from each of many nodes. To walk up from each
-/// link of `a, a, ..` or `a + a + ..` takes quadratic time. With this, all the walks of a file together take time in
-/// proportion to the number of walks and of nodes, as long as they get to a node in few different states.
+/// A stateful walk from a node up to the ancestor that decides the answer, for use from many nodes. Walking up from
+/// every link of `a, a, ..` or `a + a + ..` takes quadratic time. With this cache, all of a file's walks together take
+/// time proportional to the number of walks plus nodes, as long as each node is reached in only a few different states.
 ///
-/// One of these is for one question.
+/// Use a separate instance for each question.
 pub(crate) struct AncestorWalk<'a, S, T> {
     known: FxHashMap<(Node<'a>, S), T>,
 }
@@ -580,9 +581,9 @@ impl<S, T> Default for AncestorWalk<'_, S, T> {
 }
 
 impl<'a, S: Copy + Eq + Hash, T: Copy + Default> AncestorWalk<'a, S, T> {
-    /// `step(child, parent, state)` is called with `node` and its parent, then with the parent and its parent, and so
-    /// on, up to the file as `parent`. It says the answer, or the state to go on with. Without an answer it is the
-    /// default. What it says may depend on nothing but its arguments.
+    /// Calls `step(child, parent, state)` with `node` and its parent, then with the parent and its parent, and so on
+    /// until `parent` is the file. `step` returns either the answer or the state to continue with. If no call gives an
+    /// answer, the result is the default. `step`'s result must depend only on its arguments.
     pub(crate) fn run(
         &mut self,
         node: Node<'a>,

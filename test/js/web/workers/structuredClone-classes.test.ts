@@ -1,6 +1,7 @@
 import { structuredCloneAdvanced } from "bun:internal-for-testing";
 import { deserialize, serialize } from "bun:jsc";
 import { bunEnv, bunExe } from "harness";
+import { SocketAddress } from "node:net";
 
 enum TransferMode {
   no = 0,
@@ -134,3 +135,15 @@ for (const testType of testTypes) {
     }
   }
 }
+
+test("the prototype of a native class is cloned as an ordinary object", () => {
+  expect(structuredClone(SocketAddress.prototype)).toEqual({});
+});
+
+test("an S3 file is serialized as a Blob", () => {
+  const file = new Bun.S3Client({ accessKeyId: "test", secretAccessKey: "test", bucket: "bucket" }).file("key.txt");
+  const blobTag = new Uint8Array(serialize(new Blob(["x"])))[4];
+  expect(new Uint8Array(serialize(file))[4]).toBe(blobTag);
+  // Like any Blob, another process gets a plain object in its place.
+  expect(Object.getPrototypeOf(structuredCloneAdvanced(file, [], true, false, "default"))).toBe(Object.prototype);
+});

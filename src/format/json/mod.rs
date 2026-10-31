@@ -1,12 +1,11 @@
-//! JSON, the way Prettier formats it.
+//! JSON, formatted the way Prettier does.
 //!
-//! Prettier has four parsers for it. All take what Babel's expression parser takes, as long as it
-//! is made of objects, arrays, literals, `NaN`, `Infinity`, `undefined`, signs and templates
-//! without substitutions.
+//! Prettier has four parsers for it. All accept what Babel's expression parser accepts, as long as it's made of
+//! objects, arrays, literals, `NaN`, `Infinity`, `undefined`, signs and templates without substitutions.
 //!
-//! - `json`, `jsonc` and `json5` are printed by the printer for JavaScript: an object or an array
-//!   is on one line if it fits, comments are kept.
-//! - `json-stringify` is printed like `JSON.stringify(value, null, 2)` does. It has no comments.
+//! - `json`, `jsonc` and `json5` go through the JavaScript printer: an object or an array is on one line if it fits,
+//!   and comments are kept.
+//! - `json-stringify` prints like `JSON.stringify(value, null, 2)`. It doesn't allow comments.
 
 mod comments;
 mod document;
@@ -25,11 +24,11 @@ use bun_lint::paths::file_name;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Parser {
-    /// Names are quoted, there are no trailing commas.
+    /// Names are quoted, and there are no trailing commas.
     Json,
-    /// Names are quoted. Nothing but comments is a document too.
+    /// Names are quoted. A document with only comments is valid too.
     Jsonc,
-    /// Names and strings are quoted as `quoteProps` and `singleQuote` say.
+    /// Names and strings are quoted according to `quoteProps` and `singleQuote`.
     Json5,
     /// `package.json`, `package-lock.json`, `composer.json`
     JsonStringify,
@@ -48,7 +47,7 @@ impl Parser {
     }
 }
 
-/// The parser that Prettier infers from the name of a file. `None` if it is not JSON.
+/// The parser that Prettier infers from a file name. `None` if it isn't JSON.
 pub fn parser_for_path(path: &[u8]) -> Option<Parser> {
     let basename = file_name(path).to_ascii_lowercase();
     let basename = &basename[..];
@@ -58,8 +57,8 @@ pub fn parser_for_path(path: &[u8]) -> Option<Parser> {
     ) {
         return Some(Parser::JsonStringify);
     }
-    // Prettier compares the name in lower case with the extensions as they are, so those with an
-    // upper case letter (`.4DForm`, `.4DProject`, `.JSON-tmLanguage`) never match.
+    // Prettier compares the lowercased name with the extensions as listed, so the ones with an uppercase letter
+    // (`.4DForm`, `.4DProject`, `.JSON-tmLanguage`) never match.
     const FILENAMES: [&[u8]; 15] = [
         b".all-contributorsrc",
         b".arcconfig",
@@ -125,7 +124,7 @@ pub fn parser_for_path(path: &[u8]) -> Option<Parser> {
         .map(|(_, parser)| *parser)
 }
 
-/// What the options and the parser come down to.
+/// The settings derived from the options and the parser.
 struct Config {
     parser: Parser,
     flavor: Flavor,
@@ -138,21 +137,20 @@ struct Config {
     preserves_wrap: bool,
     trailing_comma: bool,
     quote_properties: QuoteProperties,
-    /// The quotes of all strings. `None`: those that take fewer escapes.
+    /// The quotes for all strings. `None` picks whichever needs fewer escapes.
     string_quote: Option<QuoteStyle>,
-    /// The quotes of a string that has as many of one kind in it as of the other.
+    /// The quotes for a string that contains as many of one kind as of the other.
     preferred_quote: QuoteStyle,
-    /// The quotes of a name that is written without.
+    /// The quotes added to a name that has none.
     name_quote: QuoteStyle,
-    /// The number of columns that all lines are indented by: what is formatted is a part of a
-    /// document.
+    /// How many columns all lines are indented by, when formatting part of a document.
     alignment: u32,
 }
 
 impl Config {
     fn new(parser: Parser, options: &FormatOptions, text: &[u8]) -> Config {
-        // Prettier's `printString`. `json5` with `quoteProps: "preserve"` is how JSON with trailing
-        // commas was asked for before there was `jsonc`.
+        // Prettier's `printString`. `json5` with `quoteProps: "preserve"` is how people asked for JSON with trailing
+        // commas before `jsonc` existed.
         let is_double = parser != Parser::Json5
             || (options.quote_properties == QuoteProperties::Preserve
                 && options.quote_style.is_double());
@@ -185,7 +183,7 @@ impl Config {
     }
 }
 
-/// Everything that is allocated to format a document. It is reused for the next one.
+/// Everything that's allocated to format a document. It's reused for the next one.
 #[derive(Default)]
 pub struct Scratch {
     tree: parser::Tree,
@@ -195,7 +193,7 @@ pub struct Scratch {
     storage: crate::ir::formatter::Storage,
     propagate: crate::ir::document::PropagateBuffers,
     printer: crate::ir::printer::PrinterBuffers,
-    /// The text with `\n` for every line break, if it has others.
+    /// The text with every line break replaced by `\n`, if it has other kinds.
     normalized: Vec<u8>,
 }
 
@@ -214,7 +212,7 @@ pub fn format(
         None => (&[][..], text),
     };
 
-    // For Prettier, every `json` document has a pragma and none has one that says to ignore it.
+    // To Prettier, every `json` document has a pragma and none has an ignore pragma.
     let mut with_pragma = Vec::new();
     let mut text = text;
     if parser != Parser::Json
@@ -227,7 +225,7 @@ pub fn format(
             return Ok(());
         }
         let is_whole = options.range_start.unwrap_or(0) == 0 && options.range_end.is_none();
-        // What writes `json-stringify` cannot write a comment.
+        // The `json-stringify` printer can't print a comment.
         if options.insert_pragma
             && !options.require_pragma
             && is_whole
@@ -260,7 +258,7 @@ pub fn format(
             out,
         )
     } else {
-        // It stays, even if nothing but white space follows, which is nothing.
+        // The BOM stays, even if only whitespace follows, which formats to nothing.
         out.extend_from_slice(bom);
         format_normalized(
             if has_carriage_return {
@@ -297,7 +295,7 @@ fn format_normalized(
         ..
     } = scratch;
     parser::parse(text, config, tree)?;
-    // With this parser a comment is a syntax error, so there is none that would have to move with a member.
+    // With this parser a comment is a syntax error, so no comment would have to move with a member.
     if config.is_stringify()
         && tree.comments.is_empty()
         && let Some(how) = &options.sort_package_json
@@ -305,7 +303,7 @@ fn format_normalized(
     {
         sort_package_json::sort(text, tree, how);
     }
-    // The writer does not mark a line break in a string. See `FormatOptions::is_in_markdown`.
+    // The writer doesn't mark a line break in a string. See `FormatOptions::is_in_markdown`.
     let has_marks = options.is_in_markdown && bun_core::strings::contains(text, b"\\\n");
     if tree.comments.is_empty() && !has_marks {
         if !tree.nodes.is_empty() {
@@ -313,7 +311,7 @@ fn format_normalized(
         }
         return Ok(());
     }
-    // Only `jsonc` takes a document that is nothing but comments.
+    // Only `jsonc` accepts a document that's only comments.
     if !tree.comments.is_empty()
         && (config.is_stringify() || (tree.nodes.is_empty() && config.parser != Parser::Jsonc))
     {
@@ -325,7 +323,7 @@ fn format_normalized(
     comments::attach(text, tree, attached);
     let root = document::build(text, tree, attached, config, document_frames, storage);
     crate::ir::document::propagate_expand(root, storage, propagate);
-    // The line breaks of `config`: those of the options, or of the text if they leave it to that.
+    // `config`'s line ending: the one from the options, or the text's if the options leave it to that.
     let mut printer_options = options.clone();
     printer_options.line_ending = match config.line_ending {
         b"\r\n" => crate::options::LineEnding::Crlf,

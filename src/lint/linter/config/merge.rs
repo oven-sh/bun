@@ -1,4 +1,4 @@
-//! How ESLint merges two configuration objects: `flat-config-schema.js`.
+//! How ESLint merges two config objects: `flat-config-schema.js`.
 
 use crate::context::Severity;
 use crate::linter::resolved::severity_of;
@@ -24,7 +24,7 @@ pub(crate) fn deep_merge(first: &mut Entries, second: &[(Vec<u8>, Json)]) {
     }
 }
 
-/// `deep_merge` of two values of which either can be missing.
+/// `deep_merge` for two values, either of which can be missing.
 pub(crate) fn deep_merge_into(first: &mut Json, second: &Json) {
     let Json::Object(second) = second else {
         return;
@@ -37,21 +37,21 @@ pub(crate) fn deep_merge_into(first: &mut Json, second: &Json) {
     }
 }
 
-/// An entry of `rules`, normalized: the severity, and what follows it.
+/// A normalized `rules` entry: the severity and the options after it.
 #[derive(Clone, Debug)]
 pub(crate) struct RuleSetting {
     pub(crate) id: Box<[u8]>,
-    /// The plugin that ESLint takes the rule from, as it is written. Empty for a rule of ESLint
-    /// itself, and for the names that only oxlint has.
+    /// The plugin that ESLint takes the rule from, as written. Empty for ESLint's own rules and for names that only
+    /// oxlint has.
     pub(crate) plugin: Box<[u8]>,
-    /// The plugin that the name as it is written is of, by any of its names, if it is one that is implemented here. Not for
-    /// a rule of a JavaScript plugin.
-    pub(crate) written_for: Option<Plugin>,
+    /// The built-in plugin that the written name belongs to, under any of the plugin's aliases. `None` for a JavaScript
+    /// plugin's rule.
+    pub(crate) builtin_plugin: Option<Plugin>,
     pub(crate) severity: Severity,
     pub(crate) options: Vec<Json>,
-    /// It has no options of its own, so it keeps those of the setting that it overrides.
+    /// It has no options, so it keeps those of the setting it overrides.
     pub(crate) has_only_severity: bool,
-    /// It says nothing about a rule that something is said about before it.
+    /// It's ignored if an earlier setting already covers the rule.
     pub(crate) yields: bool,
     /// The rule's default options with no config file: `$defaultOptions` in `bun lint`'s default config. Options from a later
     /// setting are merged over them, the way ESLint merges options over a rule's `meta.defaultOptions`. Empty with a config file.
@@ -68,7 +68,7 @@ impl RuleSetting {
         Some(RuleSetting {
             id: id.into(),
             plugin: Box::default(),
-            written_for: None,
+            builtin_plugin: None,
             severity: severity_of(value.first()?)?,
             options: value[1..].to_vec(),
             has_only_severity: value.len() == 1,
@@ -78,18 +78,18 @@ impl RuleSetting {
     }
 }
 
-/// The `merge` of `rulesSchema`. `keeps_options`: a setting that is only a severity keeps the
-/// options of the one before it, as in ESLint. In oxlint it resets them.
+/// `rulesSchema`'s `merge`. With `keeps_options`, a setting that's only a severity keeps the previous setting's
+/// options, as in ESLint. In oxlint it resets them.
 pub(crate) fn merge_rules(
     first: &mut Vec<RuleSetting>,
     second: &[RuleSetting],
     keeps_options: bool,
 ) {
     for setting in second {
-        // A rule of a plugin in JavaScript and one that is built in can have one name: `n/..` with oxlint, for which the second is
-        // `node/..`.
+        // A JavaScript plugin's rule and a built-in rule can share a name: `n/..` with oxlint, which calls the built-in
+        // one `node/..`.
         let is_same = |it: &&mut RuleSetting| {
-            it.id == setting.id && it.written_for.is_some() == setting.written_for.is_some()
+            it.id == setting.id && it.builtin_plugin.is_some() == setting.builtin_plugin.is_some()
         };
         match first.iter_mut().find(is_same) {
             Some(_) if setting.yields => {}

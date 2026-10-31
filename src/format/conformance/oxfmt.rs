@@ -1,5 +1,5 @@
-//! The fixtures of oxc's formatter. Next to each input are `<input>.snap`, what oxfmt prints, and
-//! `<input>.prettier.snap`, what Prettier prints, each for the same sets of options:
+//! Fixtures of oxc's formatter. Each input has two snapshots next to it: `<input>.snap` (oxfmt's output) and
+//! `<input>.prettier.snap` (Prettier's output). Both list one output per set of options:
 //!
 //! ```text
 //! ------------------
@@ -17,7 +17,7 @@ const OUTPUT: &[u8] = b"==================== Output ====================\n";
 const SECOND_PASS: &[u8] = b"---------- Not idempotent (second pass) ----------";
 const END: &[u8] = b"===================== End =====================\n";
 
-/// The outputs in a snapshot, each with the line that says the options.
+/// Returns each output in a snapshot, paired with its options line.
 fn parse(text: &[u8]) -> Vec<(&[u8], Vec<u8>)> {
     let body = strings::last_index_of(text, OUTPUT).map_or(text, |at| &text[at + OUTPUT.len()..]);
     let body = body.strip_suffix(END).unwrap_or(body);
@@ -31,9 +31,9 @@ fn parse(text: &[u8]) -> Vec<(&[u8], Vec<u8>)> {
     };
     let headers: Vec<usize> = (0..lines.len()).filter(|&at| is_header(at)).collect();
     let outputs = headers.iter().enumerate().map(|(i, &at)| {
-        // The line break at the end of the output is followed by one more.
+        // Each output's final line break is followed by one more.
         let end = headers.get(i + 1).map_or(lines.len() - 1, |&next| next);
-        // What oxfmt makes of its own output, where that is something else, is not compared.
+        // When oxfmt isn't idempotent, the snapshot also has its second pass. That part isn't compared.
         let end = (at + 3..end)
             .find(|&line| lines[line] == SECOND_PASS)
             .unwrap_or(end);
@@ -42,9 +42,9 @@ fn parse(text: &[u8]) -> Vec<(&[u8], Vec<u8>)> {
     outputs.collect()
 }
 
-/// `{ printWidth: 80, semi: false }`. `None` if there is an option that is not one of Prettier's.
+/// Parses `{ printWidth: 80, semi: false }`. Returns `None` if an option isn't one of Prettier's.
 fn options_of(line: &[u8], flavor: &[u8]) -> Option<FormatOptions> {
-    // `bun fmt` does not format HTML in templates and in blocks of code by itself yet. Here it is judged.
+    // `bun fmt` doesn't format HTML in templates and code blocks by default yet, but these tests expect it.
     let mut options = FormatOptions {
         embedded_html: true,
         ..FormatOptions::default()
@@ -52,19 +52,19 @@ fn options_of(line: &[u8], flavor: &[u8]) -> Option<FormatOptions> {
     options.set(b"flavor", flavor).ok()?;
     for option in strings::split(strings::trim(line, b"{} "), b", ") {
         let (name, value) = strings::split_once(option, b": ")?;
-        // Prettier passes over an option that it does not know.
+        // Prettier ignores unknown options.
         if name.starts_with(b"jsdoc") && flavor == b"prettier" {
             continue;
         }
-        // Which JSON it is.
+        // `variant` selects the JSON dialect.
         let name = if name == b"variant" { b"parser" } else { name };
         options.set(name, strings::trim(value, b"\"")).ok()?;
     }
     Some(options)
 }
 
-/// Prints `FAIL <judge> <input> <options>` for each output that is not the expected one, and how
-/// many are, as Prettier prints them and, in the flavor of oxfmt, as oxfmt prints them.
+/// Prints `FAIL <judge> <input> <options>` for each unexpected output, then the pass counts against Prettier's
+/// snapshots and, with the oxfmt flavor, against oxfmt's.
 pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
     let (mut as_prettier, mut as_oxfmt, mut other_options) =
         (Count::default(), Count::default(), 0);
@@ -74,7 +74,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
         .step_by(flags.every)
     {
         let name = &snapshot[..snapshot.len() - b".prettier.snap".len()];
-        let (Some(input), true) = (bundle.read(name), flags.wants(name)) else {
+        let (Some(input), true) = (bundle.read(name), flags.matches_filter(name)) else {
             continue;
         };
         let judges = [
@@ -92,7 +92,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                     Err(Failure::SyntaxError) => b"<SyntaxError>".to_vec(),
                     Err(Failure::Other) => b"<the formatter failed>".to_vec(),
                 };
-                // The library that writes oxfmt's snapshots makes `\n` of every `\r\n`.
+                // The library that writes oxfmt's snapshots turns every `\r\n` into `\n`.
                 let actual = if flavor == b"oxfmt" {
                     strings::replace_owned(&actual, b"\r\n", b"\n")
                 } else {

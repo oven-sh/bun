@@ -204,7 +204,10 @@ test("the native query handle throws when run() misses an argument", async () =>
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({
     stdout:
-      JSON.stringify(["connection must be a PostgresSQLConnection", "Expected query to be a Query for 'run'."]) + "\n",
+      JSON.stringify([
+        "connection must be an instance of PostgresSQLConnection",
+        "Expected query to be a Query for 'run'.",
+      ]) + "\n",
     stderr: expect.any(String),
     exitCode: 0,
   });

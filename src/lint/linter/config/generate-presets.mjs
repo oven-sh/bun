@@ -25,7 +25,7 @@ const serialize = ({ name, ...config }) => {
     config.languageOptions = { ...config.languageOptions, parser: "typescript-eslint/parser" };
   return config;
 };
-// Objects that several configurations start with are written once, and referred to by name.
+// Objects that several configs start with are written once and referred to by name.
 const shared = new Map();
 for (const file of readdirSync(join(pluginDir, "dist/configs/flat"))
   .filter(file => file.endsWith(".js"))

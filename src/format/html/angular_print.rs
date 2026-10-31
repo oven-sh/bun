@@ -95,7 +95,7 @@ impl Printer<'_, '_, '_, '_, '_> {
                 self.out.token(";");
                 self.out.line();
             }
-            // One string to Prettier, with the line breaks in it.
+            // Prettier prints it as one string, line breaks included.
             let expression = self.tree[parameter].value.trim_ascii();
             self.with_cursor_marks(Target::Node(parameter), |printer| {
                 printer.out.string(expression);

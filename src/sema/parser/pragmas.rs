@@ -1,5 +1,7 @@
 //! The pragmas in the comments before the first token: `/// <reference .. />`, `// @ts-check` and
-//! `// @ts-nocheck`, `/* @jsx h */` and similar.
+//! `// @ts-nocheck`, `/* @jsx h */` and similar. For `bun compile`, the JSX pragmas in all comments.
+
+mod code_pragmas;
 
 use bun_sema::atom::Atom;
 use bun_sema::hir::{
@@ -7,12 +9,12 @@ use bun_sema::hir::{
 };
 
 /// `getCommentPragmas` and `processPragmasIntoFields`. `leading`: the comments before the first
-/// token. False: TypeScript reports an error about one of them. With `recovers` the error is among
-/// the diagnostics of the file instead.
+/// token. `error_kind`: the kind of the diagnostic for TypeScript's error about one of them, `None` for none and a false result. `compiles`: the JSX pragmas are those `bun run` reads.
 pub(crate) fn process_pragmas_into_fields(
     text: &[u8],
     leading: &[(u32, u32)],
-    recovers: bool,
+    error_kind: Option<DiagnosticKind>,
+    compiles: bool,
     intern: &mut dyn FnMut(&[u8]) -> Atom,
     file: &mut FileBuilder,
 ) -> bool {
@@ -20,16 +22,19 @@ pub(crate) fn process_pragmas_into_fields(
         let comment = &text[start as usize..end as usize];
         match comment.get(..2) {
             Some(b"//") => {
-                if !single_line_pragma(comment, start as usize, recovers, intern, file) {
+                if !single_line_pragma(comment, start as usize, error_kind, intern, file) {
                     return false;
                 }
             }
             // Only read for files that can contain JSX.
-            Some(b"/*") if file.kind == FileKind::Tsx => {
+            Some(b"/*") if file.kind == FileKind::Tsx && !compiles => {
                 multi_line_pragmas(comment, intern, &mut file.jsx_pragmas);
             }
             _ => {}
         }
+    }
+    if file.kind == FileKind::Tsx && compiles {
+        file.jsx_pragmas = code_pragmas::code_jsx_pragmas(text, &file.comments, intern);
     }
     true
 }
@@ -39,7 +44,7 @@ pub(crate) fn process_pragmas_into_fields(
 fn single_line_pragma(
     text: &[u8],
     comment_pos: usize,
-    recovers: bool,
+    error_kind: Option<DiagnosticKind>,
     intern: &mut dyn FnMut(&[u8]) -> Atom,
     file: &mut FileBuilder,
 ) -> bool {
@@ -48,7 +53,7 @@ fn single_line_pragma(
     if triple_slash {
         pos += 1;
     }
-    pos = skip_blanks(text, pos);
+    pos = skip_spaces_and_tabs(text, pos);
     if text.get(pos) == Some(&b'@') {
         // "_last_ of either nocheck or check in a file is the "winner""
         let name = extract_name(text, pos + 1);
@@ -73,20 +78,19 @@ fn single_line_pragma(
         b"resolution-mode",
         b"no-default-lib",
     ];
-    // `PragmaArgument.TextRange`, relative to the comment. The last of two arguments with the same
-    // name wins.
+    // `PragmaArgument.TextRange`, relative to the comment. If a name is repeated, the last argument wins.
     let mut args: [Option<(usize, usize)>; 5] = [None; 5];
     loop {
-        pos = skip_blanks(text, pos);
+        pos = skip_spaces_and_tabs(text, pos);
         let name = extract_name(text, pos);
         if name.is_empty() {
             break;
         }
-        pos = skip_blanks(text, pos + name.len());
+        pos = skip_spaces_and_tabs(text, pos + name.len());
         if text.get(pos) != Some(&b'=') {
             break;
         }
-        pos = skip_blanks(text, pos + 1);
+        pos = skip_spaces_and_tabs(text, pos + 1);
         let Some(value) = extract_quoted_string(text, pos) else {
             break;
         };
@@ -105,11 +109,7 @@ fn single_line_pragma(
         (None, None, Some(path)) => (ReferenceKind::Path, path),
         (None, None, None) => {
             let at = (comment_pos as u32, (comment_pos + text.len()) as u32);
-            if recovers {
-                let error = Diagnostic::new(DiagnosticKind::Parse, at, 1084, &[]);
-                file.diagnostics.push(error);
-            }
-            return recovers;
+            return report(file, error_kind, at, 1084);
         }
     };
     // `parseResolutionMode`
@@ -117,11 +117,11 @@ fn single_line_pragma(
         Some((from, to)) => match &text[from..to] {
             b"import" => ResolutionMode::Import,
             b"require" => ResolutionMode::Require,
-            _ if !recovers => return false,
             _ => {
                 let at = ((comment_pos + from) as u32, (comment_pos + to) as u32);
-                let error = Diagnostic::new(DiagnosticKind::Parse, at, 1453, &[]);
-                file.diagnostics.push(error);
+                if !report(file, error_kind, at, 1453) {
+                    return false;
+                }
                 ResolutionMode::None
             }
         },
@@ -133,7 +133,21 @@ fn single_line_pragma(
     true
 }
 
-/// `extractPragmas` for the `/* */` comment `text`. The last of two identical pragmas wins
+/// See `error_kind` of [`process_pragmas_into_fields`].
+fn report(
+    file: &mut FileBuilder,
+    error_kind: Option<DiagnosticKind>,
+    at: (u32, u32),
+    code: u32,
+) -> bool {
+    let Some(kind) = error_kind else {
+        return false;
+    };
+    file.diagnostics.push(Diagnostic::new(kind, at, code, &[]));
+    true
+}
+
+/// `extractPragmas` for the `/* */` comment `text`. If a pragma is repeated, the last one wins
 /// (`GetPragmaFromSourceFile`).
 fn multi_line_pragmas(
     text: &[u8],
@@ -150,14 +164,14 @@ fn multi_line_pragmas(
         pos += found;
         // "the '@' must be immediately followed by a non-whitespace pragma name, and the remainder of the line is consumed as that
         // pragma's arguments"
-        let name_end = skip_non_blanks(text, pos + 1);
+        let name_end = skip_non_whitespace(text, pos + 1);
         if name_end == pos + 1 {
             pos += 1;
             continue;
         }
         let name = &text[pos + 1..name_end];
-        let start = skip_blanks(text, name_end);
-        let argument = &text[start..skip_non_blanks(text, start)];
+        let start = skip_spaces_and_tabs(text, name_end);
+        let argument = &text[start..skip_non_whitespace(text, start)];
         let is = |it: &[u8]| !argument.is_empty() && name.eq_ignore_ascii_case(it);
         if is(b"jsx") {
             pragmas.factory = intern(argument);
@@ -177,14 +191,14 @@ fn multi_line_pragmas(
     }
 }
 
-fn skip_blanks(text: &[u8], mut pos: usize) -> usize {
+fn skip_spaces_and_tabs(text: &[u8], mut pos: usize) -> usize {
     while pos < text.len() && matches!(text[pos], b' ' | b'\t') {
         pos += 1;
     }
     pos
 }
 
-fn skip_non_blanks(text: &[u8], mut pos: usize) -> usize {
+fn skip_non_whitespace(text: &[u8], mut pos: usize) -> usize {
     while pos < text.len() && !matches!(text[pos], b' ' | b'\t' | b'\r' | b'\n') {
         pos += 1;
     }

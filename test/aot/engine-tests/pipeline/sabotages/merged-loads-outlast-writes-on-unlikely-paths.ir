@@ -1,0 +1,6 @@
+# sabotage=MergedLoadsOutlastWritesOnUnlikelyPaths: the check in the compiled code stops the run
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: check=MovedLoads sabotage=MergedLoadsOutlastWritesOnUnlikelyPaths
+# CHECK: AOT claim check: LoadMayMove
+# PROGRAM-OF: merged-loads-outlast-writes-on-unlikely-paths-left-alone.ir

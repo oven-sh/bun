@@ -26,7 +26,8 @@ import {
   verify,
 } from "crypto";
 import fs from "fs";
-import { bunEnv, bunExe, isASAN, isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { totalmem } from "node:os";
 import { createContext, runInContext, runInThisContext, Script } from "node:vm";
 import path from "path";
 
@@ -477,6 +478,23 @@ describe("crypto.KeyObjects", () => {
       expect(jwt).toEqual(info.jwk);
     });
 
+    test(`${keyType} keys from a private jwk need the x that belongs to d`, () => {
+      const x = Buffer.from(info.jwk.x, "base64url");
+      const withX = (x?: string) => ({ key: { ...info.jwk, x }, format: "jwk" }) as const;
+      expect(createPrivateKey(withX(x.toString("base64"))).export({ format: "jwk" })).toEqual(info.jwk);
+      const { d, ...publicJwk } = info.jwk;
+      expect(createPublicKey(withX(x.toString("base64"))).export({ format: "jwk" })).toEqual(publicJwk);
+      expect(createPublicKey({ key: publicJwk, format: "jwk" }).export({ format: "jwk" })).toEqual(publicJwk);
+      x[0] ^= 1;
+      for (const wrong of [x.toString("base64url"), x.subarray(1).toString("base64url"), undefined]) {
+        for (const create of [createPrivateKey, createPublicKey]) {
+          expect(() => create(withX(wrong))).toThrow(
+            expect.objectContaining({ code: "ERR_CRYPTO_INVALID_JWK", message: "Invalid JWK OKP key" }),
+          );
+        }
+      }
+    });
+
     [
       ["public", info.public],
       ["private", info.private],
@@ -620,6 +638,15 @@ describe("crypto.KeyObjects", () => {
     });
   });
 
+  test("createPrivateKey rejects an EC JWK whose d doesn't match its public point", () => {
+    const a = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey.export({ format: "jwk" });
+    const b = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey.export({ format: "jwk" });
+    expect(createPrivateKey({ key: a, format: "jwk" }).export({ format: "jwk" })).toEqual(a);
+    expect(() => createPrivateKey({ key: { ...a, d: b.d }, format: "jwk" })).toThrow(
+      expect.objectContaining({ code: "ERR_CRYPTO_INVALID_JWK" }),
+    );
+  });
+
   test("private encrypted should work", async () => {
     // Reading an encrypted key without a passphrase should fail.
     expect(() => createPrivateKey(privateEncryptedPem)).toThrow();
@@ -658,6 +685,51 @@ describe("crypto.KeyObjects", () => {
     expect(privateKey.type).toBe("private");
     expect(privateKey.asymmetricKeyType).toBe("rsa");
     expect(privateKey.symmetricKeySize).toBe(undefined);
+  });
+
+  // The child never writes to the 2 GiB buffer, so its pages are never committed. The memory gate is for builds
+  // without the length check, which copy the buffer twice.
+  test.skipIf(totalmem() < 10 * 1024 ** 3)("a passphrase of 2 ** 31 bytes throws ERR_OUT_OF_RANGE", async () => {
+    const fixture = `
+      import crypto from "node:crypto";
+
+      const passphrase = Buffer.alloc(2 ** 31);
+      const ec = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey;
+      const pkcs8 = { type: "pkcs8", format: "pem", cipher: "aes-256-cbc", passphrase };
+
+      const cases = {
+        "generateKeyPairSync": () => crypto.generateKeyPairSync("ec", { namedCurve: "P-256", privateKeyEncoding: pkcs8 }),
+        "export pkcs8 pem": () => ec.export(pkcs8),
+        "export sec1 pem": () => ec.export({ ...pkcs8, type: "sec1" }),
+        "createPrivateKey": () => crypto.createPrivateKey({ key: ${JSON.stringify(privateEncryptedPem)}, passphrase }),
+      };
+      for (const [name, run] of Object.entries(cases)) {
+        try {
+          run();
+          console.log(name + ": did not throw");
+        } catch (e) {
+          console.log(name + ": " + e.name + " [" + e.code + "]: " + e.message);
+        }
+      }
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+      stdout: [
+        "generateKeyPairSync: RangeError [ERR_OUT_OF_RANGE]: passphrase is too big",
+        "export pkcs8 pem: RangeError [ERR_OUT_OF_RANGE]: passphrase is too big",
+        "export sec1 pem: RangeError [ERR_OUT_OF_RANGE]: passphrase is too big",
+        "createPrivateKey: RangeError [ERR_OUT_OF_RANGE]: passphrase is too big",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   [2048, 4096].forEach(suffix => {
@@ -1921,4 +1993,51 @@ describe.skipIf(!isASAN)("async crypto jobs: process.exit() in the callback leak
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
     });
   }
+});
+
+test("worker.terminate() during createPrivateKey from an EC JWK doesn't crash", async () => {
+  const rounds = isDebug || isASAN ? 2 : 6;
+  using dir = tempDir("ec-jwk-terminate", {
+    "main.mjs": `
+      import { createPrivateKey, generateKeyPairSync } from "node:crypto";
+
+      if (Bun.isMainThread) {
+        for (let round = 0; round < ${rounds}; round++) {
+          const workers = Array.from({ length: 4 }, () => new Worker(import.meta.url));
+          await Promise.all(
+            workers.map(
+              worker =>
+                new Promise((resolve, reject) => {
+                  worker.onmessage = resolve;
+                  worker.onerror = event => reject(event.error ?? new Error(event.message));
+                }),
+            ),
+          );
+          const closed = Promise.all(
+            workers.map(worker => new Promise(resolve => worker.addEventListener("close", resolve, { once: true }))),
+          );
+          for (const worker of workers) worker.terminate();
+          await closed;
+        }
+        console.log("survived");
+      } else {
+        const jwk = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ format: "jwk" });
+        // Leading zero bytes don't change the scalar, but they make decoding "d" dominate each import.
+        jwk.d = Buffer.concat([Buffer.alloc(768 * 1024), Buffer.from(jwk.d, "base64url")]).toString("base64url");
+        createPrivateKey({ key: jwk, format: "jwk" });
+        postMessage("busy");
+        for (;;) createPrivateKey({ key: jwk, format: "jwk" });
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "survived\n", stderr: "", exitCode: 0 });
 });

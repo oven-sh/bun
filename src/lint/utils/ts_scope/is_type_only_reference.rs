@@ -1,5 +1,5 @@
-//! typescript-eslint's `util/isTypeOnlyReference.ts`, and the questions it asks of
-//! `@typescript-eslint/scope-manager`.
+//! typescript-eslint's `util/isTypeOnlyReference.ts`, and the `@typescript-eslint/scope-manager`
+//! queries it uses.
 
 use super::{reference_contains_type_predicate, reference_contains_type_query};
 use crate::semantic::{Declaration, DeclarationKind, DeclarationKinds, Reference, Symbol};
@@ -20,7 +20,7 @@ pub fn is_variable_declarator_definition(declaration: Declaration) -> bool {
     declaration.kind() == Some(DeclarationKind::Variable)
 }
 
-/// typescript-eslint's `isTypeOnlyReference`: a use of `variable` that does not need its value at
+/// typescript-eslint's `isTypeOnlyReference`: a use of `variable` that doesn't need its value at
 /// run time.
 #[inline(always)]
 pub fn is_type_only_reference(variable: Symbol, reference: Reference) -> bool {

@@ -15,28 +15,27 @@ use bun_core::strings;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 
-/// eslint-utils' `getStaticValue`: the value of `expr`, if it is known without running the
-/// program. `None` is upstream's `null`, `Some(StaticValue::Null)` its `{ value: null }`.
+/// eslint-utils' `getStaticValue`: `expr`'s value, if it's known without running the program. `None` is upstream's
+/// `null`, and `Some(StaticValue::Null)` is its `{ value: null }`.
 ///
-/// With a `scope`, identifiers are resolved: the global variables of the standard library that
-/// the file does not shadow (`undefined`, `Number`, `Symbol.iterator`, ..), and variables that
-/// are declared once with an initializer and never written again. Which scope it is makes no
-/// difference, an identifier is looked up from where it is written. Without one, an identifier has no static
-/// value.
+/// With a `scope`, identifiers are resolved: the standard library's global variables that the file doesn't shadow
+/// (`undefined`, `Number`, `Symbol.iterator`, ..), and variables that are declared once with an initializer and never
+/// written again. It doesn't matter which scope is passed, because an identifier is looked up from its own position.
+/// Without a scope, an identifier has no static value.
 ///
-/// Only the functions that upstream calls are called: `"a".repeat(2)` has no static value. What
-/// upstream computes and this cannot (a `bigint` beyond 128 bits, `new Date(0)`,
-/// `"é".normalize()`, a string of more than a megabyte, ..) has none either.
+/// It only calls the functions that upstream calls, so `"a".repeat(2)` has no static value. Values that upstream
+/// computes and this can't (a `bigint` beyond 128 bits, `new Date(0)`, `"é".normalize()`, a string of more than a
+/// megabyte, ..) have none either.
 ///
-/// Upstream's `optional`, which tells that the value is the `undefined` of a `?.` that cut the
-/// evaluation short, is only used inside: no rule reads it.
+/// Upstream's `optional`, which marks the value as the `undefined` of a `?.` that short-circuited, is only used
+/// internally. No rule reads it.
 pub fn get_static_value<'a>(expr: Expr<'a>, scope: Option<Scope<'a>>) -> Option<StaticValue<'a>> {
     match expr.tag() {
         // ESTree has a pattern there, which has no value.
         ExprTag::Array | ExprTag::Object | ExprTag::Assign if is_assignment_target(expr) => {
             return None;
         }
-        // `JSXText`, and the name of an element.
+        // `JSXText`, and an element's name.
         ExprTag::String | ExprTag::Ident | ExprTag::Dot
             if matches!(
                 expr.parent().as_expr().map(Expr::kind),
@@ -55,9 +54,9 @@ pub fn get_static_value<'a>(expr: Expr<'a>, scope: Option<Scope<'a>>) -> Option<
 }
 
 struct Evaluator<'a> {
-    /// Whether identifiers are resolved.
+    /// True if identifiers are resolved.
     resolves: bool,
-    /// The variables that are being evaluated.
+    /// The variables currently being evaluated.
     symbols: SmallVec<[Symbol<'a>; 4]>,
 }
 
@@ -71,8 +70,8 @@ impl<'a> Evaluator<'a> {
         Ok(self.eval_link(e)?.0)
     }
 
-    /// The object of a member access or the callee of a call. ESTree has a `ChainExpression`
-    /// around an optional chain in parentheses, where `optional` ends.
+    /// Evaluates the object of a member access or the callee of a call. ESTree wraps a parenthesized optional chain in
+    /// a `ChainExpression`, which is where `optional` ends.
     fn eval_object(&mut self, e: Expr<'a>) -> Eval<Link<'a>> {
         let (value, is_optional) = self.eval_link(e)?;
         Ok((value, is_optional && !e.is_parenthesized()))
@@ -108,7 +107,7 @@ impl<'a> Evaluator<'a> {
                     parse_bigint_digits(&digits)?.ok_or(Stop::Abort)?,
                 ))
             }
-            // The parser has validated it.
+            // The parser has already validated it.
             ExprKind::Regex(regex) => Ok(StaticValue::Regex {
                 pattern: Cow::Borrowed(regex.pattern()),
                 flags: sorted_flags(regex.flags()).ok_or(Stop::NotStatic)?,
@@ -177,8 +176,7 @@ impl<'a> Evaluator<'a> {
         }
     }
 
-    /// Upstream's `getElementValues`: the elements of an array literal, or the arguments of a
-    /// call.
+    /// Upstream's `getElementValues`: the elements of an array literal or the arguments of a call.
     fn elements(&mut self, list: List<'a, Expr<'a>>) -> Eval<Vec<StaticValue<'a>>> {
         let mut values = Vec::with_capacity(list.len());
         for element in list {
@@ -235,8 +233,8 @@ impl<'a> Evaluator<'a> {
         result
     }
 
-    /// Upstream's `hasMutationInProperty`: whether a property of the variable is assigned to, or a
-    /// method that changes an array is called on it.
+    /// Upstream's `hasMutationInProperty`: true if a property of the variable is assigned to, or a mutating array
+    /// method is called on it.
     fn has_mutation_in_property(&mut self, symbol: Symbol<'a>) -> Eval<bool> {
         for reference in symbol.references() {
             let Some(mut node) = reference.expr() else {
@@ -300,7 +298,7 @@ impl<'a> Evaluator<'a> {
         }
     }
 
-    /// Upstream's `getStaticPropertyNameValue` for a property of an object literal.
+    /// Upstream's `getStaticPropertyNameValue` for an object literal's property.
     fn key_name(&mut self, key: Key<'a>) -> Eval<PropertyKey<'a>> {
         match key.kind() {
             KeyKind::Computed(e) => self.eval(e)?.to_property_key(),
@@ -326,7 +324,7 @@ impl<'a> Evaluator<'a> {
     fn call(&mut self, e: Expr<'a>, call_: Call<'a>) -> Eval<Link<'a>> {
         let callee = call_.callee();
         let args = self.elements(call_.args())?;
-        // ESTree has a `ChainExpression` around the callee of `(a?.b)()`, which is then not a member access.
+        // ESTree wraps the callee of `(a?.b)()` in a `ChainExpression`, so it isn't a member access.
         let is_chain = callee.is_parenthesized() && callee.chain() != Chain::No;
         let (function, this) = match callee.object() {
             Some(obj) if !is_chain => {

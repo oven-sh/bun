@@ -39,7 +39,7 @@ RefPtr<CryptoKeyRSA> CryptoKeyRSA::importJwk(CryptoAlgorithmIdentifier algorithm
 {
     if (keyData.kty != "RSA"_s)
         return nullptr;
-    if (keyData.key_ops && ((keyData.usages & usages) != usages))
+    if (!jwkKeyOpsAllow(keyData, usages))
         return nullptr;
     if (keyData.ext && !keyData.ext.value() && extractable)
         return nullptr;
@@ -176,8 +176,7 @@ JsonWebKey CryptoKeyRSA::exportJwk() const
 
 bool CryptoKeyRSA::isValidRSAAlgorithm(CryptoAlgorithmIdentifier algorithm)
 {
-    return algorithm == CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5
-        || algorithm == CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5
+    return algorithm == CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5
         || algorithm == CryptoAlgorithmIdentifier::RSA_PSS
         || algorithm == CryptoAlgorithmIdentifier::RSA_OAEP;
 }

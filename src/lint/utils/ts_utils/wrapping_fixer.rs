@@ -14,15 +14,14 @@ use std::borrow::Cow;
 pub struct WrappingFixerParams<'a, 'i, W> {
     /// The expression to replace.
     pub node: Expr<'a>,
-    /// Upstream's `innerNode`: the descendants of `node` to keep. Empty stands for `node` itself.
+    /// Upstream's `innerNode`: the descendants of `node` to keep. Empty means `node` itself.
     pub inner_nodes: &'i [Expr<'a>],
-    /// Given the code of each of the inner nodes, in parentheses where it needs them, returns the
-    /// code to put in the place of `node`.
+    /// Receives each inner node's code, parenthesized where necessary, and returns the code that replaces `node`.
     pub wrap: W,
 }
 
-/// The code of the inner nodes of a wrapping fixer. With `is_in_chain_expression`, `node` is the call
-/// or the member access in the `ChainExpression` that has the same range.
+/// The code of a wrapping fixer's inner nodes. With `is_in_chain_expression`, `node` is the call or member access
+/// inside the `ChainExpression` that has the same range.
 fn inner_codes<'a>(
     node: Expr<'a>,
     inner_nodes: &[Expr<'a>],
@@ -67,8 +66,8 @@ where
         inner_nodes,
         wrap,
     } = params;
-    // Its parent is the `ChainExpression`, which is neither an arrow function, nor a weak parent,
-    // nor an expression statement, nor has it a left.
+    // Its parent is the `ChainExpression`, which isn't an arrow function, a weak parent or an expression statement, and
+    // has no left side.
     let is_in_chain_expression = is_chain_element && node.is_chain_root();
     let codes = inner_codes(node, inner_nodes, is_in_chain_expression);
     let codes: SmallVec<[&[u8]; 2]> = codes.iter().map(|code| &**code).collect();
@@ -85,8 +84,8 @@ where
     fixer.replace(node, code)
 }
 
-/// typescript-eslint's `getWrappingFixer`: replaces `node` by what `wrap` makes of the code of the
-/// inner nodes, and adds parentheses, and a `;` before, where the result needs them.
+/// typescript-eslint's `getWrappingFixer`: replaces `node` with what `wrap` returns for the inner nodes' code, and adds
+/// parentheses, and a `;` before, where the result needs them.
 ///
 /// ```ignore
 /// cx.report(node, MESSAGE).fix(|fixer| {
@@ -98,10 +97,9 @@ where
 /// });
 /// ```
 ///
-/// A `node` that is all of an optional chain stands for the `ChainExpression`. Where upstream
-/// passes the `CallExpression` or the `MemberExpression` in it, which is what a listener for those
-/// gets, use [`get_wrapping_fixer_for_chain_element`]. Without `wrap`:
-/// [`get_wrapping_fixer_without_wrap`].
+/// A `node` that's a whole optional chain represents the `ChainExpression`. Where upstream passes the `CallExpression`
+/// or `MemberExpression` inside it, which is what a listener for those receives, use
+/// [`get_wrapping_fixer_for_chain_element`]. Without `wrap`, use [`get_wrapping_fixer_without_wrap`].
 pub fn get_wrapping_fixer<'a, 't, W, T>(
     fixer: Fixer<'a>,
     params: WrappingFixerParams<'a, '_, W>,
@@ -113,10 +111,9 @@ where
     wrapping_fix(fixer, params, false)
 }
 
-/// typescript-eslint's `getWrappingFixer` for a `node` that upstream gets from a listener for
-/// `CallExpression` or `MemberExpression`, or by `skipChainExpression`. If it is all of an optional
-/// chain, its parent in ESTree is the `ChainExpression`, and nothing is added around the result of
-/// `wrap`.
+/// typescript-eslint's `getWrappingFixer` for a `node` that upstream gets from a listener for `CallExpression` or
+/// `MemberExpression`, or from `skipChainExpression`. If it's a whole optional chain, its ESTree parent is the
+/// `ChainExpression`, so nothing is added around the result of `wrap`.
 pub fn get_wrapping_fixer_for_chain_element<'a, 't, W, T>(
     fixer: Fixer<'a>,
     params: WrappingFixerParams<'a, '_, W>,
@@ -128,8 +125,8 @@ where
     wrapping_fix(fixer, params, true)
 }
 
-/// typescript-eslint's `getWrappingFixer` without `wrap`: replaces `node` by the code of the inner
-/// nodes, each in parentheses unless it is a [strong precedence node](is_strong_precedence_node).
+/// typescript-eslint's `getWrappingFixer` without `wrap`: replaces `node` with the inner nodes' code, each
+/// parenthesized unless it's a [strong precedence node](is_strong_precedence_node).
 pub fn get_wrapping_fixer_without_wrap<'a>(
     fixer: Fixer<'a>,
     node: Expr<'a>,
@@ -142,8 +139,8 @@ pub fn get_wrapping_fixer_without_wrap<'a>(
     fixer.replace(node, code)
 }
 
-/// typescript-eslint's `getMovedNodeCode`: the code of `node_to_move`, in parentheses if it may
-/// need them in the place of `destination_node`. Each is an expression or a type.
+/// typescript-eslint's `getMovedNodeCode`: `node_to_move`'s code, parenthesized if it may need that in
+/// `destination_node`'s position. Each is an expression or a type.
 pub fn get_moved_node_code<'a>(
     destination_node: impl Into<Node<'a>>,
     node_to_move: impl Into<Node<'a>>,
@@ -156,12 +153,11 @@ pub fn get_moved_node_code<'a>(
     }
 }
 
-/// typescript-eslint's `isStrongPrecedenceNode`: whether the node keeps its meaning whatever is
-/// written around it. A literal, an identifier, an array, an object, a member access, a call, a
-/// `new`, a tagged template, `f<T>`, or a type reference.
+/// typescript-eslint's `isStrongPrecedenceNode`: true if the node keeps its meaning no matter what surrounds it. It's a
+/// literal, an identifier, an array, an object, a member access, a call, a `new`, a tagged template, `f<T>`, or a type
+/// reference.
 ///
-/// All of an optional chain is a `ChainExpression`, which is not one. Nor are `this` and a
-/// template.
+/// A whole optional chain is a `ChainExpression`, which doesn't qualify. Neither do `this` and a template.
 #[inline]
 pub fn is_strong_precedence_node<'a>(node: impl Into<Node<'a>>) -> bool {
     has_strong_precedence(node.into())
@@ -193,14 +189,12 @@ fn has_strong_precedence(node: Node<'_>) -> bool {
     }
 }
 
-/// typescript-eslint's `isWeakPrecedenceParent`: whether the parent of the node could take what
-/// replaces the node apart. The parent is a unary, a binary, a logical or a conditional expression
-/// or an `await`, or the node is the object of a member access, the callee of a call or of a `new`,
-/// or the tag of a template.
+/// typescript-eslint's `isWeakPrecedenceParent`: true if the node's parent could split up whatever replaces the node.
+/// The parent is a unary, binary, logical or conditional expression or an `await`, or the node is the object of a
+/// member access, the callee of a call or a `new`, or the tag of a template.
 ///
-/// An expression that is all of an optional chain stands for the `ChainExpression`. The parent of
-/// the `CallExpression` or the `MemberExpression` in it is that, which is not weak: for such a
-/// node, upstream's answer is `false`.
+/// An expression that's a whole optional chain represents the `ChainExpression`. That's the parent of the
+/// `CallExpression` or `MemberExpression` inside it, and it isn't weak, so for such a node upstream returns `false`.
 pub fn is_weak_precedence_parent<'a>(node: impl Into<Node<'a>>) -> bool {
     let Node::Expr(node) = node.into() else {
         return false;
@@ -221,8 +215,8 @@ pub fn is_weak_precedence_parent<'a>(node: impl Into<Node<'a>>) -> bool {
     }
 }
 
-/// typescript-eslint's `isMissingSemicolonBefore`: whether `node` is at the start of an expression
-/// statement in a block, and the statement before that does not end with a `;`.
+/// typescript-eslint's `isMissingSemicolonBefore`: true if `node` is at the start of an expression statement in a
+/// block, and the previous statement doesn't end with a `;`.
 pub fn is_missing_semicolon_before(node: Expr<'_>) -> bool {
     let mut node = node;
     loop {
@@ -235,7 +229,7 @@ pub fn is_missing_semicolon_before(node: Expr<'_>) -> bool {
             Node::Expr(parent) => parent,
             _ => return false,
         };
-        // The parent of `parent` is a `ChainExpression`, which `parent` is not the left of.
+        // `parent`'s parent is a `ChainExpression`, and `parent` isn't its left side.
         if !is_left_hand_side(node) || parent.is_chain_root() {
             return false;
         }
@@ -243,7 +237,7 @@ pub fn is_missing_semicolon_before(node: Expr<'_>) -> bool {
     }
 }
 
-/// The statement before `statement` in the `Program` or the `BlockStatement` it is directly in.
+/// The statement before `statement` in the `Program` or `BlockStatement` that directly contains it.
 fn previous_statement_in_block(statement: Stmt<'_>) -> Option<Stmt<'_>> {
     let siblings = match statement.parent() {
         Node::File(file) => file.body(),
@@ -264,9 +258,9 @@ fn previous_statement_in_block(statement: Stmt<'_>) -> Option<Stmt<'_>> {
     None
 }
 
-/// typescript-eslint's `isLeftHandSide`: whether `node` is the operand of `++` or `--`, the left of
-/// a binary, a logical or an assignment expression, the test of a conditional expression, the
-/// callee of a call or the tag of a template.
+/// typescript-eslint's `isLeftHandSide`: true if `node` is the operand of `++` or `--`, the left side of a binary,
+/// logical or assignment expression, the test of a conditional expression, the callee of a call or the tag of a
+/// template.
 pub fn is_left_hand_side(node: Expr<'_>) -> bool {
     let Node::Expr(parent) = node.parent() else {
         return false;
@@ -286,8 +280,8 @@ pub fn is_left_hand_side(node: Expr<'_>) -> bool {
     }
 }
 
-/// typescript-eslint's `isObjectExpressionInOneLineReturn`: `node` is the body of an arrow function
-/// and `inner_node` is an object literal, which would be taken for a block there.
+/// typescript-eslint's `isObjectExpressionInOneLineReturn`: `node` is an arrow function's body and `inner_node` is an
+/// object literal, which would parse as a block there.
 fn is_object_expression_in_one_line_return(node: Expr<'_>, inner_node: Expr<'_>) -> bool {
     matches!(inner_node.tag(), ExprTag::Object)
         && matches!(

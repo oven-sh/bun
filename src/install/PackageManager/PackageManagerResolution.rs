@@ -78,6 +78,7 @@ impl PackageManager {
         );
         debug_assert!((package_id as usize) < self.lockfile.packages.len());
         // debug_assert!(self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize] == invalid_package_id);
+        self.lockfile.take_refreshing(dependency_id);
         let buffers = &mut self.lockfile.buffers;
         buffers.resolutions.as_mut_slice()[dependency_id as usize] = package_id;
         let string_buf = buffers.string_bytes.as_slice();

@@ -25,3 +25,15 @@ extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
 extern "C" fn Bun__outOfMemory() -> ! {
     bun_core::out_of_memory()
 }
+
+/// Called by `uWS::Loop::create` when it can't create a thread's event loop.
+/// Running out of file descriptors isn't a bug in Bun, so print an error instead of a crash report.
+#[cfg(unix)]
+#[unsafe(no_mangle)]
+extern "C" fn Bun__loopInitFailed(err: core::ffi::c_int) -> ! {
+    match err {
+        libc::EMFILE => bun_crash_handler::handle_root_error("ProcessFdQuotaExceeded"),
+        libc::ENFILE => bun_crash_handler::handle_root_error("SystemFdQuotaExceeded"),
+        _ => bun_core::output::panic(format_args!("failed to create the event loop: errno {err}")),
+    }
+}

@@ -515,7 +515,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         self.maybe_finished();
     }
 
+    #[inline(never)]
     fn maybe_finished(&mut self) {
+        bun_removable_features::removable_definition!(Install, Self::maybe_finished);
         if !self.has_called_process_exit || self.remaining_fds != 0 {
             return;
         }
@@ -1055,7 +1057,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             }
             Status::Signaled(signal) => {
                 self.print_output();
-                let signal_code = bun_sys::SignalCode::from(signal);
+                let signal_code = bun_sys::SignalCode(signal);
 
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" terminated by {}<r>",

@@ -1,4 +1,5 @@
 #include "BunPlugin.h"
+#include "BunCompiledModules.h"
 
 #include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/ExceptionScope.h"
@@ -22,7 +23,6 @@
 #include <JavaScriptCore/JavaScript.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/RegExpObject.h>
-#include <JavaScriptCore/RegularExpression.h>
 #include <JavaScriptCore/SourceOrigin.h>
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/SubspaceInlines.h>
@@ -36,13 +36,14 @@
 
 namespace Zig {
 
+static bool isValidNamespaceCharacter(char16_t c)
+{
+    return isASCIIAlphanumeric(c) || c == '_' || c == '-' || c == '/' || c == '@';
+}
+
 static bool isValidNamespaceString(String& namespaceString)
 {
-    static JSC::Yarr::RegularExpression* namespaceRegex = nullptr;
-    if (!namespaceRegex) {
-        namespaceRegex = new JSC::Yarr::RegularExpression("^([/@a-zA-Z0-9_\\-]+)$"_s);
-    }
-    return namespaceRegex->match(namespaceString) > -1;
+    return !namespaceString.isEmpty() && namespaceString.containsOnly<isValidNamespaceCharacter>();
 }
 
 static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin)
@@ -91,9 +92,18 @@ static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject*
         return {};
     }
 
+    if (namespaceString.isEmpty() || namespaceString == "file"_s) {
+        String compiled = Bun::firstCompiledModuleMatching(globalObject, filter->regExp());
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!compiled.isNull()) {
+            throwException(globalObject, scope, createError(globalObject, makeString("A runtime plugin can't load \""_s, compiled, "\" because it was already compiled into this executable"_s)));
+            return {};
+        }
+    }
+
     plugin.append(vm, filter->regExp(), func.getObject(), namespaceString);
 
-    return JSValue::encode(callframe->thisValue());
+    return JSValue::encode(callframe->thisValue().toThis(globalObject, JSC::ECMAMode::strict()));
 }
 
 static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
@@ -137,6 +147,11 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
         return {};
     }
 
+    if (Bun::isCompiledModule(moduleId)) {
+        throwException(globalObject, scope, createTypeError(globalObject, "module() cannot replace a module that was compiled ahead of time"_s));
+        return {};
+    }
+
     Zig::GlobalObject* global = defaultGlobalObject(globalObject);
 
     if (global->onLoadPlugins.virtualModules == nullptr) {
@@ -145,6 +160,9 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
     auto* virtualModules = global->onLoadPlugins.virtualModules;
 
     virtualModules->set(moduleId, JSC::Strong<JSC::JSObject> { vm, uncheckedDowncast<JSC::JSObject>(functionValue) });
+#if ENABLE(AOT)
+    JSC::AOT::didChangePlugins(global);
+#endif
 
     auto* requireMap = global->requireMap();
     RETURN_IF_EXCEPTION(scope, {});
@@ -157,8 +175,10 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
         global->moduleLoader()->removeEntry(idIdent); // takes the loader's cellLock itself
     }
 
-    return JSValue::encode(callframe->thisValue());
+    return JSValue::encode(callframe->thisValue().toThis(globalObject, JSC::ECMAMode::strict()));
 }
+
+extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_getter_main(JSC::JSGlobalObject*);
 
 static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin)
 {
@@ -206,9 +226,27 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
         return {};
     }
 
-    plugin.append(vm, filter->regExp(), uncheckedDowncast<JSObject>(func), namespaceString);
+    if (Bun::compiledModulesRunInPlaceOfFiles() && (namespaceString.isEmpty() || namespaceString == "file"_s)) {
+        JSValue main = JSValue::decode(BunObject_getter_main(defaultGlobalObject(globalObject)));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (main.isString()) {
+            String path = main.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto matchResult = filter->regExp()->match(globalObject, path, 0);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (matchResult) {
+                throwException(globalObject, scope, createError(globalObject, makeString("A runtime plugin can't resolve the entry point \""_s, path, "\" because it was already compiled into this executable"_s)));
+                return {};
+            }
+        }
+    }
 
-    return JSValue::encode(callframe->thisValue());
+    plugin.append(vm, filter->regExp(), uncheckedDowncast<JSObject>(func), namespaceString);
+#if ENABLE(AOT)
+    JSC::AOT::didChangePlugins(defaultGlobalObject(globalObject));
+#endif
+
+    return JSValue::encode(callframe->thisValue().toThis(globalObject, JSC::ECMAMode::strict()));
 }
 
 static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginGlobal(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target)
@@ -300,7 +338,7 @@ static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObje
 
     JSObject* builderObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
 
-    builderObject->putDirect(vm, Identifier::fromString(vm, "target"_s), jsString(vm, String("bun"_s)), 0);
+    Bun::putDirectNamed(vm, builderObject, "target"_s, jsString(vm, String("bun"_s)));
     builderObject->putDirectNativeFunction(
         vm,
         globalObject,
@@ -382,6 +420,15 @@ JSC::JSObject* BunPlugin::Group::find(JSC::JSGlobalObject* globalObject, String&
     return nullptr;
 }
 
+// fileSystemPath() returns null if a percent escape in the specifier doesn't decode to UTF-8. Retry with every "%" escaped.
+static String relativeSpecifierToFileSystemPath(const URL& base, const String& specifier)
+{
+    String path = URL(base, specifier).fileSystemPath();
+    if (path.isNull()) [[unlikely]]
+        path = URL(base, makeStringByReplacingAll(specifier, "%"_s, "%25"_s)).fileSystemPath();
+    return path;
+}
+
 void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mockObject)
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(mockObject->globalObject());
@@ -403,6 +450,8 @@ public:
     // The factory's promise is pending and will patch the already-loaded module when it settles.
     bool hasPendingPatch { false };
     bool hasCalledModuleMock = false;
+    // The mock waited for the first load by compiled code, and a require() behind it had left a module object in require.cache by then.
+    bool keepsModuleObject { false };
 
     static JSModuleMock* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* callback, JSC::JSString* specifier);
     static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
@@ -495,6 +544,8 @@ JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
 
 struct LoadedModule {
     JSC::JSModuleNamespaceObject* esmNamespace { nullptr };
+    // The file was compiled ahead of time. Its exports are variables of the program, whether or not it has run.
+    std::optional<JSC::AOT::ModuleID> compiledModule;
     Bun::JSCommonJSModule* commonJSModule { nullptr };
     // In the registry / require.cache with nothing to patch: removed so the next import loads the mock.
     bool staleESMEntry { false };
@@ -524,6 +575,10 @@ static void findLoadedESModule(Zig::GlobalObject* globalObject, JSC::JSString* s
         bool linked = true;
         if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(mod))
             linked = cyclic->status() >= JSC::CyclicModuleRecord::Status::Linked;
+        if (JSC::AOT::isCompiledModuleRecord(mod)) {
+            loaded.staleESMEntry = false;
+            return;
+        }
         if (linked) {
             loaded.esmNamespace = mod->getModuleNamespace(globalObject);
             RETURN_IF_EXCEPTION(scope, );
@@ -557,6 +612,11 @@ static LoadedModule findLoadedModule(Zig::GlobalObject* globalObject, JSC::JSStr
     RETURN_IF_EXCEPTION(scope, {});
     findLoadedCommonJSModule(globalObject, specifierString, loaded);
     RETURN_IF_EXCEPTION(scope, {});
+#if ENABLE(AOT)
+    auto specifier = specifierString->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    loaded.compiledModule = JSC::AOT::formThatMockFinds(globalObject, specifier, Bun::moduleThatMockReplaces(specifier));
+#endif
     return loaded;
 }
 
@@ -565,7 +625,7 @@ static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, const L
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (auto* moduleNamespaceObject = loaded.esmNamespace) {
+    if (loaded.esmNamespace || loaded.compiledModule) {
         JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
         // Via the method table so a module namespace object (`() => import("./mocked")`) lists its exports.
         exports->methodTable()->getOwnPropertyNames(exports, globalObject, names, DontEnumPropertiesMode::Exclude);
@@ -584,10 +644,31 @@ static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, const L
             throwOutOfMemoryError(globalObject, scope);
             return;
         }
-        for (size_t i = 0; i < names.size(); ++i) {
-            moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
+#if ENABLE(AOT)
+        if (loaded.compiledModule) {
+            JSC::AOT::willMockModule(globalObject, *loaded.compiledModule, exports);
             RETURN_IF_EXCEPTION(scope, );
         }
+#endif
+        for (size_t i = 0; i < names.size(); ++i) {
+            if (auto* moduleNamespaceObject = loaded.esmNamespace) {
+                moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
+                RETURN_IF_EXCEPTION(scope, );
+            }
+#if ENABLE(AOT)
+            // Code outside the image has imported the loader's module, compiled code imports the image's: a module of native code may be loaded as both.
+            if (loaded.compiledModule) {
+                JSC::AOT::mockExport(globalObject, *loaded.compiledModule, names[i].impl(), values.at(i));
+                RETURN_IF_EXCEPTION(scope, );
+            }
+#endif
+        }
+#if ENABLE(AOT)
+        if (loaded.compiledModule) {
+            JSC::AOT::didMockModule(globalObject, *loaded.compiledModule);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+#endif
     }
 
     if (auto* moduleObject = loaded.commonJSModule) {
@@ -595,6 +676,54 @@ static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, const L
         moduleObject->hasEvaluated = true;
     }
 }
+
+// Under `bun test` a mock that is made while nothing is loaded stores nothing: what require() answers behind it stays in the module object.
+static void keepModuleObjectLeftBehindMock(const JSModuleMock* mock, LoadedModule& loaded)
+{
+    if (mock->keepsModuleObject)
+        loaded.commonJSModule = nullptr;
+}
+
+static void patchLoadedModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, LoadedModule& loaded, JSC::JSPromise*& pendingFactory)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue exportsValue = mock->executeOnce(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+
+    if (auto* promise = dynamicDowncast<JSC::JSPromise>(exportsValue)) {
+        switch (promise->status()) {
+        case JSC::JSPromise::Status::Rejected: {
+            promise->markAsHandled();
+            scope.throwException(globalObject, promise->result());
+            return;
+        }
+        case JSC::JSPromise::Status::Fulfilled: {
+            exportsValue = promise->result();
+            break;
+        }
+        case JSC::JSPromise::Status::Pending: {
+            pendingFactory = promise;
+            break;
+        }
+        }
+    }
+
+    // The factory may have require()d the module itself: `() => ({ ...require("./m"), extra })`.
+    findLoadedCommonJSModule(globalObject, mock->specifier.get(), loaded);
+    RETURN_IF_EXCEPTION(scope, );
+    keepModuleObjectLeftBehindMock(mock, loaded);
+
+    if (pendingFactory)
+        return;
+    if (!exportsValue.isObject()) {
+        throwFactoryMustReturnObject(globalObject, scope);
+        return;
+    }
+    RELEASE_AND_RETURN(scope, overrideLoadedModuleExports(globalObject, loaded, exportsValue.getObject()));
+}
+
+static JSC::JSPromise* patchWhenFactorySettles(Zig::GlobalObject*, JSModuleMock*, JSC::JSPromise*);
 
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsModuleMock);
 extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attribute__((minsize)), (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
@@ -640,9 +769,10 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
         const URL& url = sourceOrigin.url();
 
         if (specifier.startsWith("file:"_s)) {
-            URL fileURL = URL(url, specifier);
-            if (fileURL.isValid()) {
-                specifier = fileURL.fileSystemPath();
+            // fileSystemPath() returns null if the percent-decoded path isn't valid UTF-8.
+            String path = URL(url, specifier).fileSystemPath();
+            if (!path.isNull()) {
+                specifier = WTF::move(path);
                 specifierString = jsString(vm, specifier);
                 globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
                 return;
@@ -674,7 +804,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
                     globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
 
                     if (relativeURL.protocolIsFile())
-                        specifier = relativeURL.fileSystemPath();
+                        specifier = relativeSpecifierToFileSystemPath(url, specifier);
                     else
                         specifier = relativeURL.string();
 
@@ -687,6 +817,13 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
     resolveSpecifier();
     RETURN_IF_EXCEPTION(scope, {});
 
+#if ENABLE(AOT)
+    if (auto compiledModule = JSC::AOT::formThatMockFinds(globalObject, specifier, Bun::moduleThatMockReplaces(specifier)); compiledModule && !JSC::AOT::mayBeMocked(globalObject, *compiledModule)) {
+        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, makeString("mock(module, fn) cannot replace a module that was compiled ahead of time: \""_s, specifier, "\""_s)));
+        return {};
+    }
+#endif
+
     JSC::JSObject* callback = callbackValue.getObject();
 
     JSModuleMock* mock = JSModuleMock::create(vm, globalObject->mockModule.mockModuleStructure.getInitializedOnMainThread(globalObject), callback, specifierString);
@@ -694,41 +831,28 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
     LoadedModule loaded = findLoadedModule(globalObject, specifierString);
     RETURN_IF_EXCEPTION(scope, {});
 
+#if ENABLE(AOT)
+    // As under `bun run`, the factory waits for the first import of a module that has not loaded.
+    if (loaded.compiledModule && !loaded.esmNamespace && !loaded.commonJSModule && !JSC::AOT::hasBegunToLoad(globalObject, *loaded.compiledModule)) {
+        auto& waiting = globalObject->onLoadPlugins.compiledMocksToRun;
+        auto wait = [&](JSC::AOT::ModuleID form) {
+            uint32_t module = form.index();
+            waiting.removeAllMatching([&](const auto& entry) { return entry.first == module; });
+            waiting.append({ module, JSC::Strong<JSC::JSObject> { vm, mock } });
+            JSC::AOT::deferMock(globalObject, form);
+        };
+        wait(*loaded.compiledModule);
+        for (JSC::AOT::ModuleID form : JSC::AOT::formsThatAttributesAskFor(globalObject, specifier))
+            wait(form);
+        globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock);
+        return JSValue::encode(jsUndefined());
+    }
+#endif
+
     JSC::JSPromise* pendingFactory = nullptr;
-    if (loaded.esmNamespace || loaded.commonJSModule) {
-        JSValue exportsValue = mock->executeOnce(globalObject);
+    if (loaded.esmNamespace || loaded.compiledModule || loaded.commonJSModule) {
+        patchLoadedModule(globalObject, mock, loaded, pendingFactory);
         RETURN_IF_EXCEPTION(scope, {});
-
-        if (auto* promise = dynamicDowncast<JSC::JSPromise>(exportsValue)) {
-            switch (promise->status()) {
-            case JSC::JSPromise::Status::Rejected: {
-                promise->markAsHandled();
-                scope.throwException(globalObject, promise->result());
-                return {};
-            }
-            case JSC::JSPromise::Status::Fulfilled: {
-                exportsValue = promise->result();
-                break;
-            }
-            case JSC::JSPromise::Status::Pending: {
-                pendingFactory = promise;
-                break;
-            }
-            }
-        }
-
-        // The factory may have require()d the module itself: `() => ({ ...require("./m"), extra })`.
-        findLoadedCommonJSModule(globalObject, specifierString, loaded);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        if (!pendingFactory) {
-            if (!exportsValue.isObject()) {
-                throwFactoryMustReturnObject(globalObject, scope);
-                return {};
-            }
-            overrideLoadedModuleExports(globalObject, loaded, exportsValue.getObject());
-            RETURN_IF_EXCEPTION(scope, {});
-        }
     }
 
     if (loaded.staleESMEntry) {
@@ -746,11 +870,17 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
     if (!pendingFactory)
         return JSValue::encode(jsUndefined());
 
+    RELEASE_AND_RETURN(scope, JSValue::encode(patchWhenFactorySettles(globalObject, mock, pendingFactory)));
+}
+
+static JSC::JSPromise* patchWhenFactorySettles(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSC::JSPromise* pendingFactory)
+{
+    auto& vm = JSC::getVM(globalObject);
     JSC::JSPromise* patched = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     pendingFactory->performPromiseThenWithContext(vm, globalObject, globalObject->thenable(jsFunctionMockModuleFactoryResolve), globalObject->thenable(jsFunctionMockModuleFactoryReject), patched, mock);
     mock->hasPendingPatch = true;
 
-    return JSValue::encode(patched);
+    return patched;
 }
 
 static bool isRegisteredModuleMock(Zig::GlobalObject* globalObject, JSModuleMock* mock, const String& specifier)
@@ -781,6 +911,39 @@ static void unregisterModuleMock(Zig::GlobalObject* globalObject, JSModuleMock* 
 }
 
 // Mocks replaced or cleared while their factory was pending are no longer in the map.
+#if ENABLE(AOT)
+void runCompiledMock(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID module)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& waiting = globalObject->onLoadPlugins.compiledMocksToRun;
+    size_t index = waiting.findIf([&](const auto& entry) { return entry.first == module.index(); });
+    if (index == notFound)
+        return;
+    auto* mock = uncheckedDowncast<JSModuleMock>(waiting[index].second.get());
+    waiting.removeAt(index);
+    if (!mock)
+        return;
+    LoadedModule loaded = findLoadedModule(globalObject, mock->specifier.get());
+    RETURN_IF_EXCEPTION(scope, );
+    loaded.compiledModule = module;
+    // Nothing was loaded when the mock was made. Since then the host has answered a require(): of a name that the build does not know, or from code outside the image.
+    mock->keepsModuleObject = !!loaded.commonJSModule;
+    JSC::JSPromise* pendingFactory = nullptr;
+    patchLoadedModule(globalObject, mock, loaded, pendingFactory);
+    if (scope.exception()) [[unlikely]] {
+        // The next load asks the mock again.
+        waiting.append({ module.index(), JSC::Strong<JSC::JSObject> { vm, mock } });
+        return;
+    }
+    if (!pendingFactory)
+        return;
+    JSC::JSPromise* patched = patchWhenFactorySettles(globalObject, mock, pendingFactory);
+    RETURN_IF_EXCEPTION(scope, );
+    globalObject->onLoadPlugins.factoriesOfCompiledMocks.append(JSC::Strong<JSC::JSPromise> { vm, patched });
+}
+#endif
+
 template<typename Functor>
 static void forEachPendingModulePatch(Zig::GlobalObject* globalObject, const Functor& functor)
 {
@@ -841,9 +1004,12 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, const B
 
     JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
     const auto& builtinNames = WebCore::builtinNames(vm);
+    // `pathString` can borrow the caller's bytes, and `args.path` outlives this call, so give it a copy.
+    auto* pathJS = Bun::toJS(globalObject, *path);
+    RETURN_IF_EXCEPTION(scope, {});
     paramsObject->putDirect(
         vm, builtinNames.pathPublicName(),
-        jsString(vm, pathString));
+        pathJS);
     arguments.append(paramsObject);
 
     auto result = AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
@@ -874,13 +1040,16 @@ std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path
 {
     ASSERT(virtualModules);
 
+    if (path.isNull()) [[unlikely]]
+        return std::nullopt;
+
     if (this->mustDoExpensiveRelativeLookup) {
         String joinedPath = path;
 
         if (path.startsWith("./"_s) || path.startsWith(".."_s)) {
             auto url = WTF::URL::fileURLWithFileSystemPath(from);
             ASSERT(url.isValid());
-            joinedPath = URL(url, path).fileSystemPath();
+            joinedPath = relativeSpecifierToFileSystemPath(url, path);
         }
 
         return virtualModules->contains(joinedPath) ? std::optional<String> { joinedPath } : std::nullopt;
@@ -1009,8 +1178,10 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionMockModuleFactoryResolve, (JSC::JSGlobalObjec
         Zig::throwFactoryMustReturnObject(globalObject, scope);
     } else {
         Zig::LoadedModule loaded = Zig::findLoadedModule(globalObject, mock->specifier.get());
-        if (!scope.exception()) [[likely]]
+        if (!scope.exception()) [[likely]] {
+            Zig::keepModuleObjectLeftBehindMock(mock, loaded);
             Zig::overrideLoadedModuleExports(globalObject, loaded, exportsValue.getObject());
+        }
     }
     if (scope.exception()) [[unlikely]] {
         Zig::unregisterModuleMock(globalObject, mock, specifier);
@@ -1142,11 +1313,20 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * global
     Zig::GlobalObject* global = static_cast<Zig::GlobalObject*>(globalObject);
     global->onLoadPlugins.clear();
     global->onResolvePlugins.clear();
+#if ENABLE(AOT)
+    JSC::AOT::didChangePlugins(global);
+#endif
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
 BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPlugin, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Plugin, jsFunctionBunPlugin);
+    if (JSC::JSValue error = Bun::errorIfUnseenCodeIsRefused(globalObject, "Bun.plugin"_s)) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+        JSC::throwException(globalObject, scope, error);
+        return {};
+    }
     return Bun::setupBunPlugin(globalObject, callframe, BunPluginTargetBun);
 }

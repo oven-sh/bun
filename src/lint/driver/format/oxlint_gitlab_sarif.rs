@@ -1,9 +1,9 @@
-//! `gitlab` and `sarif`: the bytes of oxlint, but for the words of the messages. Neither
-//! ends with a line break.
+//! `gitlab` and `sarif`. The output matches oxlint's byte for byte, except for the message texts. Neither ends with a
+//! newline.
 
 use super::Meta;
 use super::info::{Info, Source};
-use super::oxlint::{is_error, number, page_of, plugin};
+use super::oxlint::{docs_page, is_error, number, plugin};
 use super::oxlint_fixes::FIXES;
 use crate::paths;
 use crate::print_config::{object, text, write_indented};
@@ -13,7 +13,7 @@ use bun_lint::linter::{LintMessage, oxlint_category};
 use bun_lint::options::Json;
 use bun_lint::rule::Plugin;
 
-/// Of oxlint, whose output this is with a configuration of it.
+/// The oxlint version to report. With an oxlint config, this output claims to be oxlint's.
 const VERSION: &[u8] = b"1.87.0";
 
 fn for_each(results: &[FileResult], meta: &Meta, mut print: impl FnMut(&LintMessage, Info)) {
@@ -25,8 +25,8 @@ fn for_each(results: &[FileResult], meta: &Meta, mut print: impl FnMut(&LintMess
     }
 }
 
-/// SipHash-1-3 with the key 0, 0: `DefaultHasher::new()` of the Rust that oxlint is built with. What that of another Rust
-/// computes is not promised to be the same.
+/// SipHash-1-3 with the key 0, 0, which is `DefaultHasher::new()` in the Rust that oxlint is built with. Another Rust
+/// version's `DefaultHasher` isn't guaranteed to match.
 fn hash(bytes: &[u8]) -> u64 {
     fn round(v: &mut [u64; 4]) {
         v[0] = v[0].wrapping_add(v[1]);
@@ -70,7 +70,7 @@ fn hash(bytes: &[u8]) -> u64 {
 
 /// GitLab's Code Quality report.
 pub(super) fn write_gitlab(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
-    // From the root of the repository to the working directory.
+    // The path from the repository root to the working directory.
     let prefix = paths::ancestors(meta.cwd)
         .find(|it| bun_sys::exists(&paths::join(it, b".git")))
         .and_then(|it| paths::inside(it, meta.cwd))
@@ -78,7 +78,7 @@ pub(super) fn write_gitlab(out: &mut Vec<u8>, results: &[FileResult], meta: &Met
     let mut all = Vec::new();
     for_each(results, meta, |_, info| {
         let severity: &[u8] = if info.is_error { b"critical" } else { b"major" };
-        // What `Hash` gives a hasher: a `usize` as it is in memory, a `String` with 0xFF after it.
+        // The bytes that `Hash` feeds a hasher: a `usize` as it is in memory, a `String` followed by 0xFF.
         let fingerprint = hash(
             &[
                 &(info.start.line as u64).to_le_bytes()[..],
@@ -122,7 +122,7 @@ pub(super) fn write_gitlab(out: &mut Vec<u8>, results: &[FileResult], meta: &Met
     write_indented(out, &Json::Array(all), 0);
 }
 
-/// What `oxlint --rules -f json` has as the `fix` of a rule. `scope`: its plugin as oxlint calls it there.
+/// Returns a rule's `fix` from `oxlint --rules -f json`. `scope` is oxlint's name for its plugin there.
 fn fix_of(scope: &[u8], name: &[u8]) -> &'static str {
     let has = |lists: &[(&str, &str)]| {
         (lists.iter().filter(|it| it.0.as_bytes() == scope))
@@ -131,17 +131,18 @@ fn fix_of(scope: &[u8], name: &[u8]) -> &'static str {
     FIXES.iter().find(|it| has(it.1)).map_or("none", |it| it.0)
 }
 
-/// What `rules` has about the rule that is reported as `code`. oxlint looks for a rule that is `plugin(name)` with the name
-/// that the plugin has in `--rules`: it finds none of `jsx-a11y(..)`, `react-perf(..)`, `next(..)`, `react-hooks(..)`.
+/// Returns the `rules` entry for the rule reported as `code`. oxlint looks for a rule that matches `plugin(name)`,
+/// using the plugin's name from `--rules`, so it never finds `jsx-a11y(..)`, `react-perf(..)`, `next(..)` or
+/// `react-hooks(..)`.
 fn rule_descriptor(code: &[u8]) -> Option<Json> {
     let (scope, rest) = strings::split_once_char(code, b'(')?;
     let name = rest.strip_suffix(b")")?;
-    let of = Plugin::of_oxlint_prefix(scope)?;
+    let of = Plugin::from_oxlint_prefix(scope)?;
     if plugin(of.prefix().as_bytes()) != scope {
         return None;
     }
     let category = oxlint_category(of, std::str::from_utf8(name).ok()?)?;
-    let url = page_of(of, name)?;
+    let url = docs_page(of, name)?;
     Some(object(vec![
         (b"id", text(code)),
         (b"name", text(name)),
@@ -157,7 +158,7 @@ fn rule_descriptor(code: &[u8]) -> Option<Json> {
     ]))
 }
 
-/// The descriptor of what is not a rule.
+/// A descriptor for something that isn't a rule.
 fn own_descriptor(id: &[u8], name: &[u8], short: &[u8], full: &[u8]) -> Json {
     object(vec![
         (b"id", text(id)),
@@ -170,13 +171,13 @@ fn own_descriptor(id: &[u8], name: &[u8], short: &[u8], full: &[u8]) -> Json {
 /// SARIF 2.1.0. The columns are bytes, whatever `columnKind` says.
 pub(super) fn write_sarif(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     let mut rules = Vec::new();
-    // Each `ruleId` so far, and where in `rules` it is described, if it is.
+    // Each `ruleId` seen so far, and its index in `rules` if it's described there.
     let mut rule_ids: Vec<(Vec<u8>, Option<usize>)> = Vec::new();
     let mut uris: Vec<Vec<u8>> = Vec::new();
     let (mut all, mut notifications) = (Vec::new(), Vec::new());
     let (mut is_successful, mut has_regions) = (true, false);
     for_each(results, meta, |problem, info| {
-        // Also of a problem without a place, where `info` has neither.
+        // A problem without a location gets its level and message too. In oxlint's `Info` it has neither.
         let level = text(if is_error(problem) {
             b"error"
         } else {
@@ -184,8 +185,8 @@ pub(super) fn write_sarif(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta
         });
         let message = object(vec![(b"text", text(&problem.message))]);
         let has_file = !info.filename.is_empty();
-        let is_of_rule = info.code.is_some();
-        if !is_of_rule && !has_file {
+        let has_rule_code = info.code.is_some();
+        if !has_rule_code && !has_file {
             is_successful &= !is_error(problem);
             notifications.push(object(vec![
                 (
@@ -197,11 +198,11 @@ pub(super) fn write_sarif(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta
             ]));
             return;
         }
-        // A syntax error, a comment that disables nothing.
+        // For example a syntax error, or a disable comment that disables nothing.
         let id = info.code.unwrap_or_else(|| b"OXL0001".to_vec());
         let known = rule_ids.iter().find(|it| it.0 == id).map(|it| it.1);
         let rule = known.unwrap_or_else(|| {
-            let descriptor = match is_of_rule {
+            let descriptor = match has_rule_code {
                 true => rule_descriptor(&id),
                 false => Some(own_descriptor(
                     &id,
@@ -223,7 +224,7 @@ pub(super) fn write_sarif(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta
         }
         result.extend([(&b"level"[..], level), (b"message", message)]);
         if has_file {
-            // The problems of a file follow each other.
+            // A file's problems are consecutive.
             if uris.last().is_none_or(|it| it.as_slice() != info.filename) {
                 uris.push(info.filename.to_vec());
             }
@@ -234,7 +235,7 @@ pub(super) fn write_sarif(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta
                     (b"index", number(uris.len() - 1)),
                 ]),
             )];
-            // Not of a problem without a place.
+            // A problem without a location has no region.
             if info.start.line > 0 {
                 has_regions = true;
                 physical.push((

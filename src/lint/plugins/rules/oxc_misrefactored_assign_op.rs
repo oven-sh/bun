@@ -6,9 +6,9 @@ use bun_lint::rule::Plugin;
 /// Checks for `a op= a op b` or `a op= b op a` patterns.
 pub struct MisrefactoredAssignOp;
 
-const MISREFACTORED_ASSIGN_OP: Message =
-    Message::new("", "Misrefactored assign op. Variable appears on both sides of an assignment operation");
-const DID_YOU_MEAN: Message = Message::new("", "Did you mean `{{suggestion}}`?");
+const MISREFACTORED_ASSIGN_OP: &Message =
+    &Message::new("", "Misrefactored assign op. Variable appears on both sides of an assignment operation");
+const DID_YOU_MEAN: &Message = &Message::new("", "Did you mean `{{suggestion}}`?");
 
 impl Rule for MisrefactoredAssignOp {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "misrefactored-assign-op", Kind::Problem).has_suggestions();
@@ -23,7 +23,7 @@ impl Rule for MisrefactoredAssignOp {
         let Some((Some(op), target, value)) = e.as_assign() else {
             return;
         };
-        // `a &&= a && b` has no binary expression on the right for oxlint.
+        // In oxlint's AST the right side of `a &&= a && b` isn't a binary expression.
         if value.binary_op() != Some(op) || matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish) || value.is_parenthesized() {
             return;
         }

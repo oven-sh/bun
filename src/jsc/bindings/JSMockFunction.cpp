@@ -25,6 +25,7 @@
 #include <JavaScriptCore/DateInstance.h>
 #include <JavaScriptCore/JSModuleEnvironment.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
+#include "JavaScriptCore/AOTHost.h"
 #include "BunPlugin.h"
 #include "AsyncContextFrame.h"
 #include "ErrorCode.h"
@@ -292,7 +293,17 @@ public:
     {
         auto scope = DECLARE_THROW_SCOPE(vm);
         WTF::String nameToUse;
-        if (auto* fn = dynamicDowncast<JSFunction>(value)) {
+#if ENABLE(AOT)
+        if (JSObject* callee = value.getObject(); callee && JSC::AOT::CompiledCallee::isCompiledCallee(callee)) {
+            nameToUse = JSC::AOT::closureDeclaredName(callee);
+            JSValue lengthJSValue = callee->get(global, vm.propertyNames->length);
+            RETURN_IF_EXCEPTION(scope, );
+            if (lengthJSValue.isNumber()) {
+                this->putDirect(vm, vm.propertyNames->length, (lengthJSValue), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
+            }
+        } else
+#endif
+            if (auto* fn = dynamicDowncast<JSFunction>(value)) {
             nameToUse = fn->name(vm);
             JSValue lengthJSValue = fn->get(global, vm.propertyNames->length);
             RETURN_IF_EXCEPTION(scope, );
@@ -377,11 +388,18 @@ public:
         if (!target)
             return;
 
+        JSC::AllowLazyMaterializationOfImmutableProperties throughLock(this->vm());
         if (attributes & SpyAttributeESModuleNamespace) {
             if (auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target)) {
                 moduleNamespaceObject->overrideExportValue(globalObject, identifier, implValue);
                 RETURN_IF_EXCEPTION(scope, );
             }
+#if ENABLE(AOT)
+            else if (JSC::AOT::isModuleNamespace(target)) {
+                JSC::AOT::tryReplaceExport(target, identifier.impl(), implValue);
+                RETURN_IF_EXCEPTION(scope, );
+            }
+#endif
         } else if (auto index = parseIndex(identifier)) {
             // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
             target->putDirectIndex(globalObject, *index, implValue, attributes, PutDirectIndexLikePutDirect);
@@ -991,7 +1009,7 @@ void JSMockFunctionPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* g
     Bun::reifyStaticPropertyTable(vm, JSMockFunction::info(), JSMockFunctionPrototypeTableValues, *this);
     Bun::putToStringTagWithoutTransition(vm, this, info());
 
-    this->putDirect(vm, Identifier::fromString(vm, "_isMockFunction"_s), jsBoolean(true), 0);
+    Bun::putDirectNamed(vm, this, "_isMockFunction"_s, jsBoolean(true));
 
     // Support `using spy = spyOn(...)` — auto-restores when leaving scope.
     JSValue restoreFn = this->getDirect(vm, Identifier::fromString(vm, "mockRestore"_s));
@@ -1444,6 +1462,22 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double JSMock__getCurrentUnixTimeMs()
     return WTF::WallTime::now().secondsSinceEpoch().milliseconds();
 }
 
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSMock__toThisStrict(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue thisValue)
+{
+    return JSValue::encode(JSValue::decode(thisValue).toThis(globalObject, ECMAMode::strict()));
+}
+
+// `target` is whatever `globalThis.setTimeout` is set to, so it can be any object. It's fine if it rejects the marker.
+extern "C" [[ZIG_EXPORT(check_slow)]] void JSMock__defineFakeTimersMarker(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedTarget)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSObject* target = asObject(JSValue::decode(encodedTarget));
+    target->createDataProperty(globalObject, Identifier::fromString(vm, "clock"_s), jsBoolean(true), false);
+    RETURN_IF_EXCEPTION(scope, );
+}
+
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsNow, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     return JSValue::encode(jsNumber(globalObject->jsDateNow()));
@@ -1474,7 +1508,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
     // from this value instead of the activation-time clock.
     Bun__FakeTimers__setSystemTime(globalObject, ms);
 
-    return JSValue::encode(callframe->thisValue());
+    return JSValue::encode(callframe->thisValue().toThis(globalObject, ECMAMode::strict()));
 }
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsRestoreAllMocks, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
@@ -1528,9 +1562,46 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
     if (object->type() == JSC::JSType::GlobalProxyType)
         object = uncheckedDowncast<JSC::JSGlobalProxy>(object)->target();
 
+    // A WebAssembly GC object's Structure can't change, so the direct stores below would abort.
+    if (object->type() == JSC::JSType::WebAssemblyGCObjectType) {
+        throwTypeError(globalObject, scope, "spyOn(target, prop) does not support WebAssembly GC objects"_s);
+        return {};
+    }
+
     JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::HasProperty);
     bool hasValue = object->getPropertySlot(globalObject, propertyKey, slot);
     RETURN_IF_EXCEPTION(scope, {});
+
+#if ENABLE(AOT)
+    // The lock of a built-in object lists the members that a program could change. A member that the language makes read-only and not configurable is not listed, and putDirect asks no attribute.
+    constexpr unsigned fixedByLanguage = PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
+    bool isFixedMemberOfLockedObject = object->structure()->mayHaveImmutableProperties() && hasValue && slot.slotBase() == object && (slot.attributes() & fixedByLanguage) == fixedByLanguage;
+    if (vm.hasCompiledCode() && (object->structure()->isImmutableProperty(propertyKey.uid()) || isFixedMemberOfLockedObject)) {
+        String message = JSC::AOT::refusedSpyMessage(globalObject, object, propertyKey.uid());
+        if (message.isNull())
+            message = makeString("Cannot spy on '"_s, String(propertyKey.uid()), "' because this property of a built-in object is read-only in a compiled executable. Spy on a function of your own that calls it (https://bun.com/docs/compiler/compatibility#built-in-objects-are-read-only)"_s);
+        throwTypeError(globalObject, scope, message);
+        return {};
+    }
+
+#endif
+
+    // True if the object is a module namespace object. Its exports are replaced in the module that declares them.
+    auto replaceExport = [&](JSValue replacement) {
+        if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
+            moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, replacement);
+            return true;
+        }
+#if ENABLE(AOT)
+        if (JSC::AOT::isModuleNamespace(object)) {
+            // A name that the module does not export stays out of it, and the caller gets its mock all the same: JSModuleNamespaceObject::overrideExportValue() answers false above, and nobody asks.
+            if (hasValue && !JSC::AOT::tryReplaceExport(object, propertyKey.uid(), replacement))
+                throwTypeError(globalObject, scope, makeString("Cannot spy on '"_s, String(propertyKey.uid()), "' because module exports can't be replaced in a compiled executable"_s));
+            return true;
+        }
+#endif
+        return false;
+    };
 
     // easymode: regular property or missing property
     if (!hasValue || slot.isValue()) {
@@ -1563,8 +1634,9 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
             mock->copyNameAndLength(vm, globalObject, value);
             RETURN_IF_EXCEPTION(scope, {});
 
-            if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
-                moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
+            JSC::AllowLazyMaterializationOfImmutableProperties throughLock(vm);
+            if (replaceExport(mock)) {
+                RETURN_IF_EXCEPTION(scope, {});
                 mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
             } else if (auto index = parseIndex(propertyKey)) {
                 // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
@@ -1579,7 +1651,11 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
         } else {
             // JSFunction::getOwnPropertySlot serves `prototype` straight from property storage, ignoring
             // the Accessor attribute, so a GetterSetter installed here would escape to script as a raw cell.
-            if (propertyKey == vm.propertyNames->prototype && object->inherits<JSC::JSFunction>()) {
+            bool isFunction = object->inherits<JSC::JSFunction>();
+#if ENABLE(AOT)
+            isFunction |= JSC::AOT::CompiledCallee::isCompiledCallee(object);
+#endif
+            if (propertyKey == vm.propertyNames->prototype && isFunction) {
                 throwVMError(globalObject, scope, "Cannot spy on the `prototype` property because it is not a function"_s);
                 return {};
             }
@@ -1589,9 +1665,15 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
 
             attributes |= PropertyAttribute::Accessor;
 
-            if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
-                moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
+            JSC::AllowLazyMaterializationOfImmutableProperties throughLock(vm);
+            if (replaceExport(mock)) {
+                RETURN_IF_EXCEPTION(scope, {});
                 mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
+#if ENABLE(AOT)
+                // Nothing was replaced, so there is nothing to put back. A CommonJS file takes a name that it is handed: `undefined` put "back" would be an export that later imports find.
+                if (!hasValue && JSC::AOT::isModuleNamespace(object))
+                    mock->spyTarget.clear();
+#endif
             } else {
                 object->putDirectAccessor(globalObject, propertyKey, JSC::GetterSetter::create(vm, globalObject, mock, mock), attributes);
             }

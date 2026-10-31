@@ -99,7 +99,7 @@ const flat = {
 
 describe.concurrent("bun lint --doctor", () => {
   test(
-    "with an eslint.config.js",
+    "prints a report for a project with an eslint.config.js",
     async () => {
       const { stdout, stderr, exitCode, isUntouched } = await doctor(flat);
       expect(stderr).toBe("");
@@ -189,7 +189,7 @@ Not checked:    other tools' configs, CI files, Git hooks
   );
 
   test(
-    "with an .oxlintrc.json",
+    "prints a report for a project with an .oxlintrc.json",
     async () => {
       const { stdout, stderr, exitCode, isUntouched } = await doctor({
         ...plugin("eslint-plugin-first", ["a", "b"]),
@@ -274,7 +274,7 @@ Not checked:    other tools' configs, CI files, Git hooks
   });
 
   test(
-    "with an .eslintrc.json",
+    "prints a report for a project with an .eslintrc.json",
     async () => {
       const { stdout, exitCode } = await doctor(
         {
@@ -649,7 +649,7 @@ Also packages/a/eslint.config.js
     expect(exitCode).toBe(0);
   });
 
-  test("without a config file", async () => {
+  test("without a config file, lists Bun's default rules and suggests --init", async () => {
     const { stdout, stderr, exitCode, isUntouched } = await doctor({
       "package.json": dependencies("typescript"),
       "a.ts": "var a = 1;\n",
@@ -671,7 +671,7 @@ Also packages/a/eslint.config.js
       { "eslint.config.js": "export default [{ rules: {} }];\n" },
       "Using ../eslint.config.js (ESLint flat config)\nUsing ../bunfig.toml ([lint])\n\n",
     ],
-  ])("says which bunfig.toml it reads, and not to add a section: %j", async (config, start) => {
+  ])("prints which bunfig.toml it reads and doesn't suggest --init: %j", async (config, start) => {
     using dir = tempDir("bun-lint-doctor", {
       ...config,
       "package.json": `{ "type": "module" }`,

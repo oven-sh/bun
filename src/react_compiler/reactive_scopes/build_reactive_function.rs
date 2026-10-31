@@ -490,6 +490,7 @@ impl<'a, 'b> Driver<'a, 'b> {
                         reactive_cases.push(ReactiveSwitchCase {
                             test: case.test.clone(),
                             block: Some(consequent),
+                            loc: case.loc,
                         });
                     }
                     reactive_cases.reverse();
@@ -905,7 +906,16 @@ impl<'a, 'b> Driver<'a, 'b> {
                             block_value.push(stmt);
                         }
                         GotoVariant::Try => {
-                            // noop
+                            // The `try` terminal visits the target. This check isn't in upstream. It catches
+                            // a pass that removed the terminal without merging the target, which drops code.
+                            if !self.cx.is_scheduled(*goto_block) {
+                                return Err(cold_invariant(
+                                    "Expected the fallthrough of a try to be scheduled",
+                                    Some(format!("bb{} is not scheduled", goto_block.0)),
+                                    None,
+                                )
+                                .into());
+                            }
                         }
                     }
                 }
@@ -920,6 +930,8 @@ impl<'a, 'b> Driver<'a, 'b> {
                     block: try_block,
                     handler_binding,
                     handler,
+                    handler_loc,
+                    handler_body_loc,
                     fallthrough,
                     id,
                     loc,
@@ -944,6 +956,8 @@ impl<'a, 'b> Driver<'a, 'b> {
                             block: try_body,
                             handler_binding: handler_binding.clone(),
                             handler: handler_body,
+                            handler_loc: *handler_loc,
+                            handler_body_loc: *handler_body_loc,
                             id: *id,
                             loc: *loc,
                         },

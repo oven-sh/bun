@@ -379,28 +379,10 @@ impl CopyFile {
             // TODO: this should use non-blocking I/O.
             let written: isize = match USE {
                 TryWith::CopyFileRange => {
-                    // SAFETY: raw copy_file_range(2); both fds owned by caller, null offsets.
-                    unsafe {
-                        linux::copy_file_range(
-                            src_fd.native(),
-                            core::ptr::null_mut(),
-                            dest_fd.native(),
-                            core::ptr::null_mut(),
-                            remain,
-                            0,
-                        )
-                    }
+                    linux::copy_file_range(src_fd.native(), None, dest_fd.native(), None, remain, 0)
                 }
                 TryWith::Sendfile => {
-                    // SAFETY: raw sendfile(2); both fds owned by caller, null offset.
-                    unsafe {
-                        linux::sendfile(
-                            dest_fd.native(),
-                            src_fd.native(),
-                            core::ptr::null_mut(),
-                            remain,
-                        )
-                    }
+                    linux::sendfile(dest_fd.native(), src_fd.native(), None, remain)
                 }
                 TryWith::Splice => {
                     // SAFETY: raw splice(2); both fds owned by caller, null offsets.

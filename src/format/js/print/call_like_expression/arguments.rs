@@ -34,8 +34,8 @@ impl<'a> FormatArguments<'a> {
         FormatArguments { args, parent }
     }
 
-    /// `e`: the call or the `new` expression that `call` is.
-    pub(crate) fn of_call(e: Expr<'a>, call: Call<'a>) -> Self {
+    /// `e` is the call or `new` expression that `call` belongs to.
+    pub(crate) fn from_call(e: Expr<'a>, call: Call<'a>) -> Self {
         FormatArguments {
             args: call.args(),
             parent: match e.tag() {
@@ -64,7 +64,7 @@ fn is_function_like(e: Expr<'_>) -> bool {
     e.as_fn().is_some()
 }
 
-/// The set of kinds of expressions that `tag` is the only one in.
+/// Returns a bit set that contains only `tag`.
 const fn kind(tag: ExprTag) -> u64 {
     1 << tag as u8
 }
@@ -87,9 +87,10 @@ impl<'a> Format<'a> for FormatArguments<'a> {
             len => len - 1,
         };
 
-        // Most arguments are of none of the kinds that it takes for a layout other than the plain one.
+        // The bit set of argument kinds seen. Most calls have none of the kinds that can trigger a layout other than
+        // the plain one.
         let mut has = 0;
-        // An empty line between two arguments is kept, which takes breaking them all.
+        // An empty line between two arguments is kept, which requires breaking all of them.
         let mut has_empty_line = false;
         let mut previous_end = None;
         for (index, argument) in self.iter().enumerate() {
@@ -161,7 +162,7 @@ impl<'a> Format<'a> for FormatArguments<'a> {
                 ]
             );
         } else {
-            // Whether the group breaks is known when its content is written.
+            // Whether the group breaks is only known once its content is written.
             let start = f.reserve_tag();
             write!(
                 f,
@@ -181,13 +182,13 @@ impl<'a> Format<'a> for FormatArguments<'a> {
     }
 }
 
-/// oxfmt goes by the line breaks between two arguments, wherever the comma is. Prettier goes by the
-/// line after the argument.
+/// oxfmt counts the line breaks between two arguments, wherever the comma is. Prettier checks the line after the
+/// argument.
 fn counts_line_breaks_between_arguments(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// Whether the arguments break because of what is between the one at `index` and the next.
+/// True if the arguments break because there's an empty line between the one at `index` and the next.
 fn is_followed_by_empty_line<'a>(
     args: List<'a, Expr<'a>>,
     index: usize,
@@ -200,7 +201,7 @@ fn is_followed_by_empty_line<'a>(
     }
 }
 
-/// The same for an argument that ends at `end` and is followed by `next`.
+/// Same, for an argument that ends at `end` and is followed by `next`.
 #[inline]
 fn is_empty_line_between<'a>(end: u32, next: Expr<'a>, f: &Formatter<'a>) -> bool {
     match counts_line_breaks_between_arguments(f) {
@@ -214,7 +215,7 @@ fn is_empty_line_between<'a>(end: u32, next: Expr<'a>, f: &Formatter<'a>) -> boo
     }
 }
 
-/// Whether there is an empty line after the argument at `index`, which has been written.
+/// True if there's an empty line after the argument at `index`, which has already been written.
 fn is_empty_line_kept_after<'a>(args: List<'a, Expr<'a>>, index: usize, f: &Formatter<'a>) -> bool {
     match (counts_line_breaks_between_arguments(f), args.get(index + 1)) {
         (true, Some(next)) => {
@@ -253,10 +254,10 @@ fn is_function_composition_args<'a>(args: List<'a, Expr<'a>>, f: &Formatter<'a>)
     false
 }
 
-/// An argument that has been formatted, with the comma after it.
+/// A formatted argument, including the comma after it.
 type FormattedArgument = Option<FormatElement>;
 
-/// Each argument on its own line.
+/// Writes each argument on its own line.
 fn format_all_elements_broken_out<'a>(
     node: &FormatArguments<'a>,
     elements: &[FormattedArgument],
@@ -288,8 +289,8 @@ fn format_all_elements_broken_out<'a>(
     );
 }
 
-/// Prettier's `allArgsBrokenOut` has `line`, not `softline`, behind the `(` and before the `)`. They are line breaks
-/// either way, until `removeLines` makes blanks of them: `prettier-plugin-svelte` does, in the head of a block.
+/// Prettier's `allArgsBrokenOut` has `line`, not `softline`, after the `(` and before the `)`. Both break here, but
+/// `removeLines` turns a `line` into a space, which `prettier-plugin-svelte` does in the head of a block.
 fn has_lines_in_parentheses(expand: bool, f: &Formatter<'_>) -> bool {
     expand && !f.options().flavor.is_oxfmt()
 }
@@ -327,12 +328,12 @@ fn as_expression(argument: Expr<'_>) -> Option<Expr<'_>> {
     (!matches!(argument.kind(), ExprKind::Spread(_))).then_some(argument)
 }
 
-/// Whether `e` is a template that is written as the language in it.
+/// True if `e` is a template that's formatted as its embedded language.
 pub(super) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    has_embed_label_of_other_than_html(e, f) || crate::html::in_js::label(e, f).is_some()
+    has_non_html_embed_label(e, f) || crate::html::in_js::label(e, f).is_some()
 }
 
-fn has_embed_label_of_other_than_html<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+fn has_non_html_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     crate::css::embed::has_embed_label(e, f)
         || crate::graphql::embed::has_embed_label(e, f)
         || crate::markdown::embed::has_embed_label(e, f)
@@ -340,7 +341,7 @@ fn has_embed_label_of_other_than_html<'a>(e: Expr<'a>, f: &Formatter<'a>) -> boo
 
 /// `label?.embed && label?.hug !== false`
 fn has_embed_label_with_hug<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    has_embed_label_of_other_than_html(e, f)
+    has_non_html_embed_label(e, f)
         || crate::html::in_js::label(e, f) == Some(crate::html::in_js::Label::Embed)
 }
 
@@ -349,7 +350,7 @@ fn arguments_grouped_layout<'a>(
     args: List<'a, Expr<'a>>,
     f: &Formatter<'a>,
 ) -> Option<GroupedCallArgumentLayout> {
-    // What is written as it is has no label. oxfmt does not look.
+    // An ignored template is copied verbatim, so it has no label. oxfmt doesn't check that.
     if args.len() == 1
         && args.first().is_some_and(|only| {
             has_embed_label_with_hug(only, f)
@@ -379,8 +380,8 @@ fn arguments_grouped_layout<'a>(
     }
 }
 
-/// `setTimeout((() => { a(); }), 1)`, as minifiers write it: oxfmt looks for the `,` right behind the function, finds a `)`,
-/// and puts each argument on a line of its own. The parentheses go, so the second time it does not.
+/// `setTimeout((() => { a(); }), 1)`, as minifiers write it: oxfmt looks for the `,` right after the function, finds a
+/// `)`, and puts each argument on its own line. The parentheses are removed, so a second run doesn't do that.
 fn function_in_parentheses_is_not_hugged(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
@@ -409,14 +410,14 @@ fn should_group_first_argument<'a>(first: Expr<'a>, second: Expr<'a>, f: &Format
     is_hopefully_short_call_argument(second, f)
 }
 
-/// `a(function (/* comment */) { c; }, b)` is `a(function (/* comment */) {⏎  c;⏎}, b)` for oxfmt. For Prettier the function
-/// has a comment, so each argument is on its own line.
+/// `a(function (/* comment */) { c; }, b)` is `a(function (/* comment */) {⏎  c;⏎}, b)` for oxfmt. For Prettier the
+/// function has a comment, so each argument is on its own line.
 fn only_comments_around_first_argument_count(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// oxfmt goes by where the comments are: before `first`, between it and the comma, or between it and `second` at the end of a
-/// line. A comment in `first` does not count: `a(function (/* comment */) {}, b)`.
+/// oxfmt checks where the comments are: before `first`, between it and the comma, or between it and `second` at the end
+/// of a line. A comment in `first` doesn't count: `a(function (/* comment */) {}, b)`.
 fn has_comment_around_first_argument_for_oxfmt<'a>(
     first: Expr<'a>,
     second: Expr<'a>,
@@ -437,7 +438,7 @@ fn should_group_last_argument_impl<'a>(
 ) -> bool {
     let args_len = args.len();
 
-    // Not if the one before is of the same kind.
+    // Don't group if the previous argument is of the same kind.
     if let Some(penultimate) = penultimate
         && !is_cast_target(penultimate, f)
         && matches!(
@@ -566,13 +567,13 @@ fn can_group_arrow_function_expression_argument<'a>(
     mut arrow_function: Func<'a>,
     f: &Formatter<'a>,
 ) -> bool {
-    // It is the body of another one.
+    // True once `arrow_function` is the body of another arrow function.
     let mut is_arrow_recursion = false;
     loop {
         let FnBody::Expr(expression) = arrow_function.body() else {
             return true;
         };
-        // The parentheses of a type cast are a node for Prettier, which is not one of these.
+        // Type cast parentheses are a node for Prettier, and it isn't one of the kinds below.
         if is_cast_target(expression, f) {
             return false;
         }
@@ -594,8 +595,8 @@ fn can_group_arrow_function_expression_argument<'a>(
 }
 
 /// `new A(b, function (c, d) {})`: for Prettier the parameters can break while the function is hugged. For oxfmt they
-/// cannot, as in a call.
-fn new_is_a_call_like_another(f: &Formatter<'_>) -> bool {
+/// can't, as in a call.
+fn treats_new_like_call(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -608,7 +609,7 @@ fn write_grouped_arguments<'a>(
     let last_index = node.len().saturating_sub(1);
     // Prettier's `shouldExpandParameters` in `printFunction`. Not for `new A(function () {})`.
     let is_call = matches!(node.parent, AstNodes::CallExpression(_))
-        || (matches!(node.parent, AstNodes::NewExpression(_)) && new_is_a_call_like_another(f));
+        || (matches!(node.parent, AstNodes::NewExpression(_)) && treats_new_like_call(f));
     let expands_parameters_of = |function: Func<'a>| {
         is_call && (last_index != 0 || has_only_simple_parameters(function, false))
     };
@@ -640,7 +641,7 @@ fn write_grouped_arguments<'a>(
             Some(function)
                 if is_grouped_argument
                     && function.is_arrow()
-                    && !is_written_the_same_when_grouped(function, f) =>
+                    && !is_printed_the_same_when_grouped(function, f) =>
             {
                 Some(ExprOptions::Arrow(FormatJsArrowFunctionExpressionOptions {
                     cache_mode: FunctionCacheMode::Cache,
@@ -666,7 +667,7 @@ fn write_grouped_arguments<'a>(
         elements.push(interned);
     }
 
-    // If an argument that is not grouped breaks, they are all on lines of their own.
+    // If a non-grouped argument breaks, every argument goes on its own line.
     if non_grouped_breaks {
         return format_all_elements_broken_out(node, &elements, true, f);
     }
@@ -684,8 +685,8 @@ fn write_grouped_arguments<'a>(
         &format_with(|f| format_all_elements_broken_out(node, &elements, true, f)),
     );
 
-    // A function that is grouped is formatted again, without the soft line breaks in its
-    // signature. Its body is taken from the cache, so that this is not quadratic for nested calls.
+    // A grouped function is formatted again, without the soft line breaks in its signature. Its body is taken from the
+    // cache, so this isn't quadratic for nested calls.
     let mut grouped = elements;
     if has_cached {
         let grouped_index = if group_layout.is_grouped_first() {
@@ -697,8 +698,8 @@ fn write_grouped_arguments<'a>(
             return;
         };
 
-        // Of an arrow function that is the last argument, a body that is an arrow function is
-        // written like the argument itself.
+        // If the last argument is an arrow function whose body is also an arrow function, the body is written like the
+        // argument itself.
         let mut next = argument.as_fn();
         while let Some(function) = next {
             next = match function.body() {
@@ -706,7 +707,7 @@ fn write_grouped_arguments<'a>(
                 _ => None,
             };
             if !has_signature_without_soft_lines(function) {
-                // Prettier's `printArrowFunctionSignature` gives up whatever the function is in.
+                // Prettier's `printArrowFunctionSignature` gives up no matter where the function is.
                 let return_type = (function.return_type())
                     .filter(|_| !f.options().flavor.is_oxfmt())
                     .and_then(|it| f.context().get_cached_element(&it.span()));
@@ -715,13 +716,13 @@ fn write_grouped_arguments<'a>(
                 }
                 continue;
             }
-            // If the signature breaks even without soft line breaks, grouping is not a good fit.
+            // If the signature breaks even without soft line breaks, grouping isn't a good fit.
             let params = FormatFormalParameters(function).span();
             let has_parameters = !function.params().is_empty() || function.this_param().is_some();
             if !remove_soft_lines_of_cached_element(params, f)
                 || (!has_parameters
                     && flattens_type_parameters_without_parameters(f)
-                    // What an arrow function keeps its `<T>()` under.
+                    // The key under which an arrow function caches its `<T>()`.
                     && !remove_soft_lines_of_cached_element(Span::new(params.start, params.start + 1), f))
             {
                 return format_all_elements_broken_out(node, &grouped, true, f);
@@ -738,14 +739,14 @@ fn write_grouped_arguments<'a>(
                 expands_parameters: argument.as_fn().is_some_and(expands_parameters_of),
             }),
         };
-        // An arrow chain, for one, is written differently when it is grouped.
+        // An arrow chain, for one, is written differently when it's grouped.
         grouped_breaks = element.is_some_and(|element| element.will_break(f));
         if let Some(slot) = grouped.get_mut(grouped_index) {
             *slot = element;
         }
     }
 
-    // The grouped argument is expanded, the others are on the line.
+    // The grouped argument is expanded and the others stay on one line.
     let middle_variant = entry(
         f,
         &format_args!(
@@ -768,7 +769,7 @@ fn write_grouped_arguments<'a>(
         ),
     );
 
-    // If the grouped argument breaks, it is known not to fit on one line.
+    // If the grouped argument breaks, it's known not to fit on one line.
     let element = if grouped_breaks {
         write!(f, expand_parent());
         f.best_fitting_of(&[middle_variant, most_expanded])
@@ -795,9 +796,9 @@ fn write_grouped_arguments<'a>(
     f.write_element(element);
 }
 
-/// `() => {}`, without comments: there is no signature to keep on one line, and only a body that is
-/// an expression depends on where the arrow function is.
-fn is_written_the_same_when_grouped<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> bool {
+/// `() => {}`, without comments: there's no signature to keep on one line, and only an expression body depends on the
+/// arrow function's position.
+fn is_printed_the_same_when_grouped<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> bool {
     f.is_quiet()
         && matches!(arrow.body(), FnBody::Block(_))
         && arrow.params().is_empty()
@@ -806,8 +807,7 @@ fn is_written_the_same_when_grouped<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> b
         && arrow.return_type().is_none()
 }
 
-/// Takes the soft line breaks out of what is cached under `key`. Returns whether it is on one line
-/// then.
+/// Removes the soft line breaks from the element cached under `key`. Returns false if it still breaks.
 fn remove_soft_lines_of_cached_element(key: Span, f: &mut Formatter<'_>) -> bool {
     let Some(cached_element) = f.context().get_cached_element(&key) else {
         return true;
@@ -835,26 +835,26 @@ fn remove_soft_lines_of_cached_element(key: Span, f: &mut Formatter<'_>) -> bool
 ///                     .d();
 /// ```
 ///
-/// oxfmt on the left, Prettier on the right, which only looks at the last call of a chain.
+/// oxfmt is on the left. Prettier, on the right, only looks at the last call of a chain.
 fn hugs_lone_template_in_member_chain(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// oxfmt, like Prettier 3.8, keeps the type parameters of `a(<T>() => {})` on one line while it is
+/// oxfmt, like Prettier 3.8, keeps the type parameters of `a(<T>() => {})` on one line while it's
 /// hugged, as it does if there are parameters.
 fn flattens_type_parameters_without_parameters(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// Whether the signature of a function that is a grouped argument is kept on one line. Prettier's
+/// True if the signature of a function that's a grouped argument is kept on one line. Prettier's
 /// `printFunctionParameters` with `shouldExpandParameters`.
 fn has_signature_without_soft_lines(function: Func<'_>) -> bool {
     // `decorator("name")((props: {..}) => {..})` stays hugged even if its signature breaks.
     if matches!(function.owner(), Node::Expr(argument) if is_decorated_function(argument)) {
         return false;
     }
-    // Without parameters, the type parameters and the comments in `()` break as they do anywhere
-    // else. Only the return type of an arrow function does not, which is what is cached for it.
+    // Without parameters, the type parameters and the comments in `()` break as they do anywhere else. Only an arrow
+    // function's return type doesn't, and that's what is cached for it.
     function.is_arrow() || !function.params().is_empty() || function.this_param().is_some()
 }
 
@@ -874,7 +874,7 @@ impl<'a> Format<'a> for FormatGroupedFirstArgument<'a> {
                 }),
             )
             .fmt(f),
-            // It has been formatted and cached.
+            // It's already formatted and cached.
             None => self.argument.fmt(f),
         }
     }
@@ -882,7 +882,7 @@ impl<'a> Format<'a> for FormatGroupedFirstArgument<'a> {
 
 struct FormatGroupedLastArgument<'a> {
     argument: Expr<'a>,
-    /// It is a function expression whose parameters stay on one line.
+    /// It's a function expression whose parameters stay on one line.
     expands_parameters: bool,
 }
 

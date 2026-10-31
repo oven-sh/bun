@@ -1,5 +1,7 @@
 #![allow(non_camel_case_types)]
 
+use crate::postgres::AnyPostgresError;
+
 pub type int4 = u32;
 pub type Int4 = int4;
 pub(crate) type PostgresInt32 = int4;
@@ -8,10 +10,11 @@ pub(crate) type PostgresInt64 = int8;
 pub type short = u16;
 pub(crate) type PostgresShort = u16;
 
-pub(crate) fn int32<T>(value: T) -> [u8; 4]
-where
-    int4: TryFrom<T>,
-{
-    let v: int4 = int4::try_from(value).ok().expect("@intCast");
-    v.swap_bytes().to_ne_bytes()
+/// The length of a message or of a parameter, as the Int32 that goes on the wire.
+pub(crate) fn int32(length: usize) -> Result<[u8; 4], AnyPostgresError> {
+    if length > i32::MAX as usize {
+        bun_core::hint::cold();
+        return Err(AnyPostgresError::InvalidMessageLength);
+    }
+    Ok((length as int4).to_be_bytes())
 }

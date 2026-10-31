@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "path";
 import { minimalFramework, tempDirWithBakeDeps } from "../bake-harness";
 
@@ -456,6 +456,55 @@ export default function () {
     expect(exitCode).toBe(1);
   });
 
+  test("builds a framework without server components and keeps its client entry point", async () => {
+    using dir = tempDir("bake-production-custom-framework", {
+      "client.ts": `console.log("client loaded");`,
+      "server.ts": `
+        export function render(req, meta) {
+          return new Response(String(meta.pageModule.default()));
+        }
+        export async function prerender(meta) {
+          const scripts = meta.modules.map(m => '<script type="module" src="' + m + '"></script>').join("");
+          return { files: { "index.html": "<body>" + meta.pageModule.default() + scripts + "</body>" } };
+        }
+      `,
+      "routes/index.ts": `export default () => "homepage";`,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
+      `,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
+      .cwd(String(dir))
+      .env(bunEnv)
+      .throws(false);
+    const html = await Bun.file(path.join(String(dir), "dist", "index.html"))
+      .text()
+      .catch(() => stderr.toString());
+    expect(html).toContain("homepage");
+    const script = html.match(/<script type="module" src="\/([^"]*_bun[^"]*\.js)"><\/script>/);
+    expect(script).toBeTruthy();
+    expect(existsSync(path.join(String(dir), "dist", script![1]))).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  test("fails the build for a route file with an invalid name", async () => {
+    using dir = tempDir("bake-production-invalid-route", {
+      "app.ts": `export default { app: { framework: ${JSON.stringify(minimalFramework)} } };`,
+      "routes/index.ts": `export default () => new Response("index");`,
+      "routes/[oops.ts": `export default () => new Response("oops");`,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
+      .cwd(String(dir))
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).toContain('"routes/[oops.ts" is not a valid route');
+    expect(existsSync(path.join(String(dir), "dist"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
   test("handles build with no pages directory without crashing", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-no-pages", {
       "app.ts": `export default { app: { framework: "react" } };`,
@@ -779,5 +828,49 @@ export default function IndexPage() {
       .catch(() => buildProc.stderr.toString());
     expect(indexHtml).toContain("readyState=<!-- -->" + WebSocket.CONNECTING);
     expect(buildProc.exitCode).toBe(0);
+  });
+
+  // A debug build with BUN_JSC_validateExceptionChecks=1 aborts on the first JSC call with an unchecked exception.
+  // Windows resolves the import()'s absolute path as a relative path.
+  test.skipIf(isWindows)("the module loader hooks check for exceptions", async () => {
+    using dir = tempDir("bake-production-exception-checks", {
+      "server.ts": `
+        export async function prerender(meta) {
+          return { files: { "/index.html": await meta.pageModule.default(meta.params) } };
+        }
+        export function getParams() {
+          return [{ slug: "first" }];
+        }
+      `,
+      "extra/banner.mjs": `export const banner = "read from disk";`,
+      // The specifier is computed, so the import() is resolved at runtime and loads a file outside the bundle.
+      "routes/index.ts": `
+        import { join } from "node:path";
+        export default async () => (await import(join(import.meta.dir, "../extra/banner.mjs"))).banner;
+      `,
+      "routes/posts/[slug].ts": `export default params => "post " + params.slug;`,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
+      `,
+      "unresolved.ts": `
+        import "./does-not-exist";
+        export default {};
+      `,
+    });
+    const env = { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" };
+
+    const built = await Bun.$`${bunExe()} build --app ./app.ts`.cwd(String(dir)).env(env).throws(false);
+    const read = (file: string) =>
+      Bun.file(path.join(String(dir), "dist", file))
+        .text()
+        .catch(() => built.stderr.toString());
+    expect(await read("index.html")).toBe("read from disk");
+    expect(await read("posts/first/index.html")).toBe("post first");
+    expect(built.exitCode).toBe(0);
+
+    const unresolved = await Bun.$`${bunExe()} build --app ./unresolved.ts`.cwd(String(dir)).env(env).throws(false);
+    expect(unresolved.stderr.toString()).toContain("Cannot find module './does-not-exist'");
+    expect(unresolved.exitCode).toBe(1);
   });
 });

@@ -17,13 +17,28 @@ const toStringTag = Symbol.toStringTag;
 const isTypedArray = ArrayBuffer.isView;
 const isInteger = Number.isInteger;
 
-let internalFieldTuple;
+type SQLQueryBinding = string | bigint | ArrayBufferView | ArrayBufferLike | number | boolean | null;
+type SQLQueryBindings = SQLQueryBinding | Record<string, SQLQueryBinding>;
 
-function initializeSQL() {
-  ({ 0: SQL, 1: internalFieldTuple } = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor"));
+interface Changes {
+  changes: number;
+  lastInsertRowid: number | bigint;
 }
 
-function createChangesObject() {
+interface DatabaseOptions {
+  readonly?: boolean;
+  create?: boolean;
+  readwrite?: boolean;
+  safeIntegers?: boolean;
+  strict?: boolean;
+}
+
+const { 0: SQL, 1: internalFieldTuple }: { 0: CppSQL; 1: $Node.SQLChangesTuple } = $cpp(
+  "JSSQLStatement.cpp",
+  "createJSSQLStatementConstructor",
+);
+
+function createChangesObject(): Changes {
   return {
     changes: $getInternalField(internalFieldTuple, 0),
     lastInsertRowid: $getInternalField(internalFieldTuple, 1),
@@ -102,66 +117,10 @@ const constants = {
   SQLITE_FCNTL_RESET_CACHE: 42,
 };
 
-// This is interface is the JS equivalent of what JSSQLStatement.cpp defines
-interface CppSQLStatement {
-  run: (...args: TODO[]) => TODO;
-  get: (...args: TODO[]) => TODO;
-  all: (...args: TODO[]) => TODO;
-  iterate: (...args: TODO[]) => TODO;
-  // The next row of the run `runCount`, or null after the last one.
-  iterateNext: (runCount: number) => TODO;
-  iterateEnd: (runCount: number) => void;
-  runCount: number;
-  as: (...args: TODO[]) => TODO;
-  values: (...args: TODO[]) => TODO;
-  raw: (...args: TODO[]) => TODO;
-  finalize: (...args: TODO[]) => TODO;
-  toString: (...args: TODO[]) => TODO;
-  isFinalized: boolean;
-  readonly: boolean;
-  columns: string[];
-  columnsCount: number;
-  paramsCount: number;
-  columnTypes: SqliteTypes.Statement["columnTypes"];
-  declaredTypes: (string | null)[];
-  safeIntegers: boolean;
-  // For the SQLite adapter of Bun.sql: makes the key of a row object from the name of a column.
-  $setColumnNameTransform(transform: ((name: string) => string) | null | undefined): void;
-}
-
-interface CppSQL {
-  open(filename: string, flags: number): TODO;
-  handleNumber(handle: TODO): number;
-  isInTransaction(handle: TODO): boolean;
-  loadExtension(handle: TODO, name: string, entryPoint: string): void;
-  serialize(handle: TODO, name: string): Buffer;
-  deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, deserializeFlags: number): TODO;
-  fcntl(handle: TODO, zDbName: string | null, op: number, arg: TODO): number;
-  close(handle: TODO, throwOnError: boolean): void;
-  setCustomSQLite(path: string): boolean;
-  run(handle: TODO, internalFlags: number, internalFieldTuple: TODO, query: string, params: TODO[]): void;
-  // With `step`: an aggregate, and `functionOrStart` is its `start`.
-  defineFunction(
-    handle: TODO,
-    name: string,
-    argumentCount: number,
-    flags: number,
-    safeIntegers: boolean,
-    functionOrStart: TODO,
-    step?: Function,
-    inverse?: Function,
-    result?: Function,
-  ): void;
-  updateHook(handle: TODO, operation: UpdateHook): TODO;
-  setUpdateHook(handle: TODO, operation: UpdateHook, hook: TODO, database: Database, internalFlags: number): void;
-  prepare(
-    handle: TODO,
-    query: string,
-    params: TODO[] | undefined,
-    flags: number,
-    internalFlags: number,
-  ): CppSQLStatement;
-}
+// What JSSQLStatement.cpp defines.
+type CppSQLStatement<Row> = $Node.SQLStatement<Row>;
+type CppSQL = $Node.SQLStatementConstructor;
+type UserFunction = (...args: any[]) => unknown;
 
 interface TransactionFunction<A extends any[], T> {
   (...args: A): T;
@@ -170,8 +129,6 @@ interface TransactionFunction<A extends any[], T> {
   exclusive: (...args: A) => T;
 }
 
-let SQL: CppSQL;
-
 function booleanOption(options, key: string, fallback = false): boolean {
   const value = options[key];
   if (value === undefined) return fallback;
@@ -179,14 +136,14 @@ function booleanOption(options, key: string, fallback = false): boolean {
   return value;
 }
 
-function functionOption(options, key: string): Function | undefined {
+function functionOption(options, key: string): UserFunction | undefined {
   const value = options[key];
   if (value == null) return undefined;
   if (typeof value !== "function") throw new TypeError(`Expected the "${key}" option to be a function`);
   return value;
 }
 
-function parameterCount(fn: Function): number {
+function parameterCount(fn: UserFunction): number {
   const length = fn.length;
   if (!isInteger(length) || length < 0) throw new TypeError("Expected function.length to be a positive integer");
   return length;
@@ -196,10 +153,24 @@ function parameterCount(fn: Function): number {
 function functionFlags(options): number {
   return (booleanOption(options, "deterministic") ? 0x800 : 0) | (booleanOption(options, "directOnly") ? 0x80000 : 0);
 }
-let controllers: WeakMap<Database, any> | undefined;
+interface TransactionStatements {
+  begin: Statement;
+  commit: Statement;
+  rollback: Statement;
+  savepoint: Statement;
+  release: Statement;
+  rollbackTo: Statement;
+}
+interface TransactionController {
+  default: TransactionStatements;
+  deferred: TransactionStatements;
+  immediate: TransactionStatements;
+  exclusive: TransactionStatements;
+}
+let controllers: WeakMap<Database, TransactionController> | undefined;
 
-class Statement<ReturnType = unknown, ParamsType extends SqliteTypes.SQLQueryBindings[] = any[]> {
-  constructor(raw: CppSQLStatement) {
+class Statement<ReturnType = unknown, ParamsType extends SQLQueryBindings[] = any[]> {
+  constructor(raw: CppSQLStatement<ReturnType>) {
     this.#raw = raw;
 
     switch (raw.paramsCount) {
@@ -224,14 +195,14 @@ class Statement<ReturnType = unknown, ParamsType extends SqliteTypes.SQLQueryBin
     }
   }
 
-  #raw: CppSQLStatement;
+  #raw: CppSQLStatement<ReturnType>;
 
-  get: SqliteTypes.Statement<ReturnType, ParamsType>["get"];
-  all: SqliteTypes.Statement<ReturnType, ParamsType>["all"];
-  iterate: SqliteTypes.Statement<ReturnType, ParamsType>["iterate"];
-  values: SqliteTypes.Statement<ReturnType, ParamsType>["values"];
-  raw: SqliteTypes.Statement<ReturnType, ParamsType>["raw"];
-  run: SqliteTypes.Statement<ReturnType, ParamsType>["run"];
+  get: (...params: ParamsType) => ReturnType | null;
+  all: (...params: ParamsType) => ReturnType[];
+  iterate: (...params: ParamsType) => IterableIterator<ReturnType>;
+  values: (...params: ParamsType) => $Node.SQLValue[][];
+  raw: (...params: ParamsType) => (Uint8Array | null)[][];
+  run: (...params: ParamsType) => Changes;
   get isFinalized() {
     return this.#raw.isFinalized;
   }
@@ -302,15 +273,15 @@ class Statement<ReturnType = unknown, ParamsType extends SqliteTypes.SQLQueryBin
   }
 
   // The native methods take the array of arguments: SQLiteBinder::bind decides what they are.
-  #get(...args) {
+  #get(...args: ParamsType) {
     return this.#raw.get(args);
   }
 
-  #all(...args) {
+  #all(...args: ParamsType) {
     return this.#raw.all(args);
   }
 
-  *#iterate(...args) {
+  *#iterate(...args: ParamsType | []) {
     const raw = this.#raw;
     let row = raw.iterate(args);
     const run = raw.runCount;
@@ -321,15 +292,15 @@ class Statement<ReturnType = unknown, ParamsType extends SqliteTypes.SQLQueryBin
     }
   }
 
-  #values(...args) {
+  #values(...args: ParamsType) {
     return this.#raw.values(args);
   }
 
-  #rawValues(...args) {
+  #rawValues(...args: ParamsType) {
     return this.#raw.raw(args);
   }
 
-  #run(...args) {
+  #run(...args: ParamsType) {
     this.#raw.run(internalFieldTuple, args);
     return createChangesObject();
   }
@@ -358,7 +329,7 @@ class Statement<ReturnType = unknown, ParamsType extends SqliteTypes.SQLQueryBin
     return this.#raw.readonly;
   }
 
-  finalize(...args) {
+  finalize(...args: []) {
     return this.#raw.finalize(...args);
   }
 
@@ -380,7 +351,7 @@ class Database implements SqliteTypes.Database {
 
   constructor(
     filenameGiven: string | undefined | NodeJS.TypedArray | Buffer<ArrayBufferLike>,
-    options?: SqliteTypes.DatabaseOptions | number,
+    options?: DatabaseOptions | number,
   ) {
     if (typeof filenameGiven === "undefined") {
     } else if (typeof filenameGiven !== "string") {
@@ -400,7 +371,7 @@ class Database implements SqliteTypes.Database {
           }
         }
 
-        this.#handle = Database.#deserialize(filenameGiven, deserializeFlags);
+        this.#handle = SQL.deserialize(filenameGiven, deserializeFlags);
         this.filename = ":memory:";
 
         return;
@@ -443,16 +414,12 @@ class Database implements SqliteTypes.Database {
       throw new Error("Cannot open an anonymous database in read-only mode.");
     }
 
-    if (!SQL) {
-      initializeSQL();
-    }
-
     this.#handle = SQL.open(anonymous ? ":memory:" : filename, flags);
     this.filename = filename;
   }
 
   #internalFlags = 0;
-  #handle;
+  #handle: $Node.SQLDatabase;
   #queryCache: Map<string, Statement> = new Map();
   filename;
   get handle() {
@@ -473,14 +440,6 @@ class Database implements SqliteTypes.Database {
 
   serialize(optionalName?: string) {
     return SQL.serialize(this.#handle, optionalName || "main");
-  }
-
-  static #deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, deserializeFlags: number) {
-    if (!SQL) {
-      initializeSQL();
-    }
-
-    return SQL.deserialize(serialized, deserializeFlags);
   }
 
   static deserialize(
@@ -508,10 +467,6 @@ class Database implements SqliteTypes.Database {
   }
 
   static setCustomSQLite(path) {
-    if (!SQL) {
-      initializeSQL();
-    }
-
     return SQL.setCustomSQLite(path);
   }
 
@@ -596,7 +551,7 @@ class Database implements SqliteTypes.Database {
     SQL.setUpdateHook(this.#handle, UpdateHook.SQLITE_DELETE, hook, this, this.#internalFlags);
   }
 
-  prepare<ReturnType, ParamsType extends SqliteTypes.SQLQueryBindings | SqliteTypes.SQLQueryBindings[]>(
+  prepare<ReturnType, ParamsType extends SQLQueryBindings | SQLQueryBindings[]>(
     query: string,
     params?: ParamsType,
     flags: number = 0,
@@ -628,7 +583,7 @@ class Database implements SqliteTypes.Database {
     }
 
     const cache = this.#queryCache;
-    let stmt = cache.$get(query);
+    let stmt: Statement<any> | undefined = cache.$get(query);
     if (stmt !== undefined) {
       // LRU: re-insert so the most recently used key is last
       cache.$delete(query);
@@ -642,7 +597,7 @@ class Database implements SqliteTypes.Database {
     // A compiled statement is several times the size of its text.
     if (max > 0 && query.length <= 64 * 1024) {
       // evicted statements stay usable; close() still finalizes them via kOwnedByDatabaseFlag
-      if (cache.$size >= max) cache.$delete(cache.$keys().next().value);
+      if (cache.$size >= max) cache.$delete(cache.$keys().next().value!);
       cache.$set(query, stmt);
     }
     return stmt;
@@ -685,7 +640,7 @@ Database.prototype.exec = Database.prototype.run;
 Database.prototype[Symbol.for("sqlite-type")] = "bun:sqlite";
 
 // Return the database's cached transaction controller, or create a new one
-const getController = (db, _self) => {
+const getController = (db: Database, _self: unknown): TransactionController => {
   let controller = (controllers ||= new WeakMap()).get(db);
   if (!controller) {
     const shared = {
@@ -709,7 +664,7 @@ const getController = (db, _self) => {
   return controller;
 };
 
-function undoTransaction(db, undo, after, rollback) {
+function undoTransaction(db: Database, undo: Statement, after: Statement, rollback: Statement) {
   if (db.inTransaction) {
     undo.run();
     if (undo !== rollback) after.run();
@@ -717,9 +672,13 @@ function undoTransaction(db, undo, after, rollback) {
 }
 
 // Return a new transaction function by wrapping the given function
-const wrapTransaction = (fn, db, { begin, commit, rollback, savepoint, release, rollbackTo }) =>
-  function transaction(this, ...args) {
-    let before, after, undo;
+const wrapTransaction = <A extends any[], T>(
+  fn: (...args: A) => T,
+  db: Database,
+  { begin, commit, rollback, savepoint, release, rollbackTo }: TransactionStatements,
+) =>
+  function transaction(this: unknown, ...args: A) {
+    let before: Statement, after: Statement, undo: Statement;
     if (db.inTransaction) {
       before = savepoint;
       after = release;

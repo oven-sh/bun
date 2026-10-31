@@ -46,7 +46,11 @@ impl PropertyRule {
 
             dest.write_str("initial-value:")?;
             dest.whitespace()?;
-            initial_value.to_css(dest)?;
+            // Printed without the targets: they lower `light-dark()` to `var()`, not valid here.
+            let targets = core::mem::take(&mut dest.targets);
+            let result = initial_value.to_css(dest);
+            dest.targets = targets;
+            result?;
 
             if !dest.minify {
                 dest.write_char(b';')?;
@@ -80,8 +84,8 @@ impl PropertyRule {
         input: &mut css::Parser,
         loc: Location,
     ) -> css::Result<PropertyRule> {
-        use css::css_parser::{ParserOpts, RuleBodyParser};
-        use css::{ParserError, ParserInput, TokenList};
+        use css::css_parser::RuleBodyParser;
+        use css::{Delimiters, ParserError};
         let mut p = PropertyRuleDeclarationParser {
             syntax: None,
             inherits: None,
@@ -108,38 +112,17 @@ impl PropertyRule {
             None => return Err(input.new_custom_error(ParserError::at_rule_body_invalid)),
         };
 
-        // SAFETY: `Tokenizer<'a>` owns `arena: &'a Bump`; the arena outlives
-        // the sub-`ParserInput` constructed below. `'static` is the crate-wide
-        // erasure (PORTING.md §AST crates).
-        let bump: &'static bun_alloc::Arena =
-            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(input.arena()) };
-
         // `initial-value` is required unless the syntax is a universal definition.
-        let initial_value = match syntax {
-            SyntaxString::Universal => {
-                if let Some(val) = p.initial_value {
-                    let mut i = ParserInput::new(val, bump);
-                    let mut p2 = css::Parser::new(&mut i, None, ParserOpts::default(), None);
-
-                    if p2.is_exhausted() {
-                        Some(ParsedComponent::TokenList(TokenList {
-                            v: Default::default(),
-                        }))
-                    } else {
-                        Some(syntax.parse_value(&mut p2)?)
-                    }
-                } else {
-                    None
-                }
+        let initial_value = match p.initial_value {
+            Some(start) => {
+                input.reset(&start);
+                let value =
+                    input.parse_until_before(Delimiters::SEMICOLON, |i| syntax.parse_value(i))?;
+                while input.next().is_ok() {}
+                Some(value)
             }
-            _ => {
-                let Some(val) = p.initial_value else {
-                    return Err(input.new_custom_error(ParserError::at_rule_body_invalid));
-                };
-                let mut i = ParserInput::new(val, bump);
-                let mut p2 = css::Parser::new(&mut i, None, ParserOpts::default(), None);
-                Some(syntax.parse_value(&mut p2)?)
-            }
+            None if matches!(syntax, SyntaxString::Universal) => None,
+            None => return Err(input.new_custom_error(ParserError::at_rule_body_invalid)),
         };
 
         Ok(PropertyRule {
@@ -152,13 +135,11 @@ impl PropertyRule {
     }
 }
 
-// Borrows the parser input buffer for `initial_value` (arena-backed in the
-// CSS crate). Kept as `&'static [u8]` per the rules/mod.rs lifetime-erasure
-// note; TODO(refactor): re-thread `'i`.
 pub(crate) struct PropertyRuleDeclarationParser {
     pub syntax: Option<SyntaxString>,
     pub inherits: Option<bool>,
-    pub initial_value: Option<&'static [u8]>,
+    /// Where the value starts. It is read once the whole body has given the `syntax`.
+    pub initial_value: Option<css::ParserState>,
 }
 
 // Parser trait impls for `@property` rule bodies.
@@ -166,14 +147,14 @@ const _: () = {
     use css::css_parser::{
         AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,
     };
-    use css::{BasicParseErrorKind, Maybe, Parser, ParserError, ParserState, Result};
+    use css::{Parser, ParserError, Result};
 
     impl DeclarationParser for PropertyRuleDeclarationParser {
         type Declaration = ();
 
         fn parse_value(
             this: &mut Self,
-            name: &[u8],
+            name: &'static [u8],
             input: &mut Parser,
         ) -> Result<Self::Declaration> {
             crate::match_ignore_ascii_case! { name, {
@@ -182,7 +163,7 @@ const _: () = {
                 },
                 b"inherits" => {
                     let location = input.current_source_location();
-                    let ident = input.expect_ident_cloned()?;
+                    let ident = input.expect_ident()?;
                     this.inherits = Some(crate::match_ignore_ascii_case! { ident, {
                         b"true" => true,
                         b"false" => false,
@@ -190,11 +171,8 @@ const _: () = {
                     }});
                 },
                 b"initial-value" => {
-                    // Buffer the value into a string. We will parse it later.
-                    let start = input.position();
+                    this.initial_value = Some(input.state());
                     while input.next().is_ok() {}
-                    let initial_value = input.slice_from_cloned(start);
-                    this.initial_value = Some(initial_value);
                 },
                 _ => return Err(input.new_custom_error(ParserError::invalid_declaration)),
             }}
@@ -216,52 +194,10 @@ const _: () = {
     impl AtRuleParser for PropertyRuleDeclarationParser {
         type Prelude = ();
         type AtRule = ();
-
-        fn parse_prelude(
-            _this: &mut Self,
-            name: &[u8],
-            input: &mut Parser,
-        ) -> Result<Self::Prelude> {
-            Err(
-                input.new_error(BasicParseErrorKind::at_rule_invalid(std::ptr::from_ref::<
-                    [u8],
-                >(name))),
-            )
-        }
-
-        fn parse_block(
-            _this: &mut Self,
-            _prelude: Self::Prelude,
-            _start: &ParserState,
-            input: &mut Parser,
-        ) -> Result<Self::AtRule> {
-            Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid))
-        }
-
-        fn rule_without_block(
-            _this: &mut Self,
-            _prelude: Self::Prelude,
-            _start: &ParserState,
-        ) -> Maybe<Self::AtRule, ()> {
-            Err(())
-        }
     }
 
     impl QualifiedRuleParser for PropertyRuleDeclarationParser {
         type Prelude = ();
         type QualifiedRule = ();
-
-        fn parse_prelude(_this: &mut Self, input: &mut Parser) -> Result<Self::Prelude> {
-            Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
-        }
-
-        fn parse_block(
-            _this: &mut Self,
-            _prelude: Self::Prelude,
-            _start: &ParserState,
-            input: &mut Parser,
-        ) -> Result<Self::QualifiedRule> {
-            Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
-        }
     }
 };

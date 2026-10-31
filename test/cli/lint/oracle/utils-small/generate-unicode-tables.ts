@@ -1,14 +1,14 @@
-// Generates the Unicode table of src/lint/utils/string_utils.rs from the ICU of the runtime that runs it:
+// Generates the Unicode table in src/lint/utils/string_utils.rs from the ICU data of the runtime that runs it:
 //   bun generate-unicode-tables.ts
-// The classes of grapheme segmentation (Grapheme_Cluster_Break, Extended_Pictographic,
-// Indic_Conjunct_Break) are not reachable from JavaScript, so each code point is classified by where `Intl.Segmenter` breaks
+// JavaScript can't read the grapheme segmentation properties (Grapheme_Cluster_Break, Extended_Pictographic,
+// Indic_Conjunct_Break), so each code point is classified by where `Intl.Segmenter` breaks
 // around it in a few contexts.
 const segmenter = new Intl.Segmenter("en-US");
 const MAX = 0x10ffff;
 
 const [A, EXT, ZWJ, PICT, L, V, T, RI, KA, VIRAMA] = ["a", "̀", "‍", "\u{1f600}", "ᄀ", "ᅡ", "ᆨ", "\u{1f1e6}", "क", "्"];
-// Each probe: what is before the code point, what is after, and whether the break in question is the one before the last
-// character of the whole (true) or the one before the code point (false).
+// Each probe is the text before the code point, the text after it, and which break to test: the one before the probe's
+// last character (true) or the one before the code point (false).
 const PROBES: [string, string, boolean][] = [
   [A, "", false], // 0
   ["", A, true], // 1
@@ -28,7 +28,26 @@ const PROBES: [string, string, boolean][] = [
   [KA, VIRAMA + KA, true], // 15
 ];
 
-export const CLASSES = ["Other", "CR", "LF", "Control", "Extend", "ExtendConjunct", "Linker", "ZWJ", "RegionalIndicator", "Prepend", "SpacingMark", "L", "V", "T", "LV", "LVT", "Pictographic", "Consonant"];
+export const CLASSES = [
+  "Other",
+  "CR",
+  "LF",
+  "Control",
+  "Extend",
+  "ExtendConjunct",
+  "Linker",
+  "ZWJ",
+  "RegionalIndicator",
+  "Prepend",
+  "SpacingMark",
+  "L",
+  "V",
+  "T",
+  "LV",
+  "LVT",
+  "Pictographic",
+  "Consonant",
+];
 
 export function classify(): Uint8Array {
   const classes = new Uint8Array(MAX + 1);
@@ -64,13 +83,18 @@ export function classify(): Uint8Array {
         if (!b[4]) name = "ZWJ";
         else if (!b[3]) name = conjunct === "Linker" ? "Linker" : conjunct === "Extend" ? "ExtendConjunct" : "Extend";
         else name = "SpacingMark";
-        if ((name === "ZWJ" && conjunct !== "Extend") || (name === "SpacingMark" && conjunct !== "None")) throw new Error(`U+${c.toString(16)}: ${name} with InCB=${conjunct}`);
+        if ((name === "ZWJ" && conjunct !== "Extend") || (name === "SpacingMark" && conjunct !== "None"))
+          throw new Error(`U+${c.toString(16)}: ${name} with InCB=${conjunct}`);
       } else if (!b[1]) name = "Prepend";
       else {
         const hangul = [b[5], b[6], b[7], b[8], b[9], b[10]].map(it => (it ? "0" : "1")).join("");
-        const found = { "110100": "L", "011110": "V", "001011": "T", "011100": "LV", "001100": "LVT", "000000": "" }[hangul];
+        const found = { "110100": "L", "011110": "V", "001011": "T", "011100": "LV", "001100": "LVT", "000000": "" }[
+          hangul
+        ];
         if (found === undefined) throw new Error(`U+${c.toString(16)}: ${hangul}`);
-        const all = [found, !b[11] && "RegionalIndicator", !b[12] && "Pictographic", !b[13] && "Consonant"].filter(Boolean);
+        const all = [found, !b[11] && "RegionalIndicator", !b[12] && "Pictographic", !b[13] && "Consonant"].filter(
+          Boolean,
+        );
         if (all.length > 1) throw new Error(`U+${c.toString(16)}: ${all}`);
         name = (all[0] as string) ?? "Other";
       }
@@ -85,7 +109,7 @@ function rows(values: number[], format: (n: number) => string): string {
   let line = "   ";
   for (const value of values) {
     const item = ` ${format(value)},`;
-    if (line.length + item.length > 100) (out += line + "\n"), (line = "   ");
+    if (line.length + item.length > 100) ((out += line + "\n"), (line = "   "));
     line += item;
   }
   return out + line + "\n";
@@ -94,12 +118,12 @@ const hex = (n: number) => "0x" + n.toString(16).toUpperCase();
 
 if (import.meta.main) {
   const classes = classify();
-  // Hangul syllables are computed.
+  // The table skips Hangul syllables, whose class is computed.
   const runs: number[] = [];
   let previous = -1;
   for (let c = 0; c <= MAX; c++) {
     const cls = c >= 0xac00 && c <= 0xd7a3 ? 0 : classes[c];
-    if (cls !== previous) runs.push(c * 32 + cls), (previous = cls);
+    if (cls !== previous) (runs.push(c * 32 + cls), (previous = cls));
   }
   for (let c = 0xac00; c <= 0xd7a3; c++) {
     if (CLASSES[classes[c]] !== ((c - 0xac00) % 28 === 0 ? "LV" : "LVT")) throw new Error("Hangul");

@@ -10,6 +10,17 @@ function enableEcho(terminal: Bun.Terminal) {
 }
 
 describe("Bun.Terminal", () => {
+  test("[Symbol.asyncDispose] is named [Symbol.asyncDispose], and is writable, configurable and not enumerable", () => {
+    const { value, ...attributes } = Object.getOwnPropertyDescriptor(Bun.Terminal.prototype, Symbol.asyncDispose)!;
+    expect({ name: value.name, length: value.length, ...attributes }).toEqual({
+      name: "[Symbol.asyncDispose]",
+      length: 0,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+  });
+
   describe("constructor", () => {
     test("creates a PTY with default options", async () => {
       await using terminal = new Bun.Terminal({});

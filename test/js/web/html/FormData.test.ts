@@ -379,6 +379,65 @@ describe("FormData", () => {
     }
   });
 
+  it("rejects a URL-encoded name that is too long to decode", async () => {
+    const { setSyntheticAllocationLimitForTesting } = require("bun:internal-for-testing");
+    const body = Buffer.alloc(600_000, "é");
+    const headers = { "content-type": "application/x-www-form-urlencoded" };
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(body);
+        controller.close();
+      },
+    });
+    // With a 1 MiB limit the decoder is capped at 524288 UTF-8 bytes.
+    const originalLimit = setSyntheticAllocationLimitForTesting(1024 * 1024);
+    try {
+      // @ts-expect-error - FormData.from is a Bun extension
+      expect(() => FormData.from(body)).toThrow("Out of memory");
+      await expect(new Response(body, { headers }).formData()).rejects.toThrow("Out of memory");
+      await expect(new Response(stream, { headers }).formData()).rejects.toThrow("Out of memory");
+      await expect(new Blob([body], { type: headers["content-type"] }).formData()).rejects.toThrow("Out of memory");
+    } finally {
+      setSyntheticAllocationLimitForTesting(originalLimit);
+    }
+  });
+
+  it("throws when the entry list can't grow", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          // With a 64 KiB limit the list is capped at 2730 entries.
+          const form = FormData.from(Buffer.alloc(5460, "a&").toString());
+          const part = '--b\\r\\nContent-Disposition: form-data; name="a"\\r\\n\\r\\n\\r\\n';
+          const multipart = Buffer.from(part.repeat(2731) + "--b--\\r\\n");
+          for (const grow of [
+            () => form.append("a", ""),
+            () => form.set("b", new Blob([])),
+            () => FormData.from(multipart, "b"),
+          ]) {
+            try {
+              grow();
+              console.log("no error");
+            } catch (e) {
+              console.log(e.name, e.message);
+            }
+          }
+        `,
+      ],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "RangeError Out of memory\n".repeat(3),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("should throw on bad boundary", async () => {
     const response = new Response('foo\r\nContent-Disposition: form-data; name="foo"\r\n\r\nbar\r\n', {
       headers: {

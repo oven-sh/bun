@@ -1,4 +1,4 @@
-//! A whole comment.
+//! Formats a whole JSDoc comment.
 
 use super::imports::process_import_tags;
 use super::line_buffer::LineBuffer;
@@ -14,9 +14,9 @@ use bun_lint::ast::jsdoc::{JSDoc, JSDocTag};
 use std::borrow::Cow;
 
 pub(crate) enum FormattedJsdoc {
-    /// Nothing is left of it.
+    /// The comment ends up empty.
     Empty,
-    /// What is between `/** ` and ` */`.
+    /// The text between `/** ` and ` */`.
     SingleLine(Vec<u8>),
     /// The lines, without the ` * ` before each.
     MultiLine(Vec<u8>),
@@ -25,7 +25,7 @@ pub(crate) enum FormattedJsdoc {
 /// ` * `
 const LINE_PREFIX_LEN: usize = 3;
 
-/// What formatting a comment goes by, and the lines so far.
+/// The settings for formatting a comment, plus the lines produced so far.
 pub(super) struct JsdocFormatter<'o> {
     pub(super) options: &'o JsdocOptions,
     pub(super) format_options: &'o FormatOptions,
@@ -35,7 +35,7 @@ pub(super) struct JsdocFormatter<'o> {
 }
 
 impl JsdocFormatter<'_> {
-    /// `doc`: a comment of `file`. `None`: it stays as it is.
+    /// `doc` is a comment in `file`. Returns `None` if the comment should stay as it is.
     fn format<'a>(mut self, doc: JSDoc<'a>, file: &'a File<'a>) -> Option<FormattedJsdoc> {
         let content = file.slice(doc.comment_span());
         let description = doc.comment().parsed_preserving_whitespace();
@@ -44,7 +44,7 @@ impl JsdocFormatter<'_> {
         }
         let sorted_tags = sort_tags_by_groups(doc.tags());
 
-        // The description and the `@description` tags are one.
+        // Merge the description and the `@description` tags.
         let mut merged_description = strings::trim_unicode_whitespace(&description).to_vec();
         let mut effective_tags: Vec<(JSDocTag<'a>, &'a [u8])> =
             Vec::with_capacity(sorted_tags.len());
@@ -104,7 +104,7 @@ impl JsdocFormatter<'_> {
 
         for (tag_index, &(tag, normalized_kind)) in effective_tags.iter().enumerate() {
             if parsed_import_indices.contains(&tag_index) {
-                // All of them are where the first is.
+                // All imports are emitted where the first one was.
                 if let Some(import_lines) = import_lines.take() {
                     if !self.content_lines.is_empty() && !self.content_lines.last_is_empty() {
                         self.content_lines.push_empty();
@@ -143,7 +143,7 @@ impl JsdocFormatter<'_> {
                         && !is_group_head(prev)
                         && !matches!(prev, b"import" | b"template")
                 };
-                // What is behind a tag that is not known stays, an empty line too.
+                // Whatever follows an unknown tag is kept, including an empty line.
                 let should_separate = should_separate
                     || (prev_tag_had_trailing_blank && has_prev && !is_known_tag(prev));
                 if should_separate && !self.content_lines.last_is_empty() {
@@ -214,16 +214,16 @@ impl JsdocFormatter<'_> {
                 == Some(first);
             return (!is_unchanged).then(|| FormattedJsdoc::SingleLine(first.to_vec()));
         }
-        let mut whole = b"/**".to_vec();
+        let mut full_comment = b"/**".to_vec();
         for line in std::iter::once(first).chain(lines) {
-            whole.extend_from_slice(if line.is_empty() { b"\n *" } else { b"\n * " });
-            whole.extend_from_slice(line);
+            full_comment.extend_from_slice(if line.is_empty() { b"\n *" } else { b"\n * " });
+            full_comment.extend_from_slice(line);
         }
-        whole.extend_from_slice(b"\n */");
-        (whole != content).then(|| FormattedJsdoc::MultiLine(all.to_vec()))
+        full_comment.extend_from_slice(b"\n */");
+        (full_comment != content).then(|| FormattedJsdoc::MultiLine(all.to_vec()))
     }
 
-    /// Pushes a description with `indent` before each line that is not empty.
+    /// Pushes a description with `indent` before each non-empty line.
     pub(super) fn push_indented_desc(&mut self, indent: &[u8], description: &[u8]) {
         if description.is_empty() {
             return;
@@ -240,16 +240,16 @@ impl JsdocFormatter<'_> {
         }
     }
 
-    /// What the lines of a description are indented by after the first. It does not depend on `useTabs`.
+    /// The indentation of a description's lines after the first. It doesn't depend on `useTabs`.
     pub(super) const CONTINUATION_INDENT: &'static [u8] = b"  ";
 
-    /// How wide a description can be that is indented by [`Self::CONTINUATION_INDENT`].
+    /// Returns the maximum width of a description that's indented by [`Self::CONTINUATION_INDENT`].
     pub(super) fn indented_width(&self) -> usize {
         self.wrap_width
             .saturating_sub(Self::CONTINUATION_INDENT.len())
     }
 
-    /// What code is indented by.
+    /// Returns the indentation for code.
     pub(super) fn code_indent(&self) -> &'static [u8] {
         if matches!(self.format_options.indent_style, IndentStyle::Tab) {
             return b"\t";
@@ -268,7 +268,8 @@ impl JsdocFormatter<'_> {
         self.format_options.quote_style
     }
 
-    /// `wrap_text`: a description in lines of at most `max_width` columns, the first `tag_string_length` less.
+    /// `wrap_text`: wraps a description into lines of at most `max_width` columns. The first line gets
+    /// `tag_string_length` fewer.
     pub(super) fn wrap_text(
         &self,
         text: &[u8],
@@ -286,7 +287,7 @@ impl JsdocFormatter<'_> {
     }
 }
 
-/// Tags whose descriptions do not get a capital letter.
+/// Tags whose descriptions aren't capitalized.
 fn should_skip_capitalize(kind: &[u8]) -> bool {
     matches!(
         kind,
@@ -303,7 +304,7 @@ fn should_skip_capitalize(kind: &[u8]) -> bool {
     )
 }
 
-/// Tags whose descriptions are not formatted.
+/// Tags whose descriptions aren't formatted.
 pub(super) fn should_skip_description_formatting(kind: &[u8]) -> bool {
     should_preserve_description_verbatim(kind) || matches!(kind, b"deprecated" | b"internal")
 }
@@ -413,7 +414,7 @@ fn is_tags_group_condition(kind: &[u8]) -> bool {
     )
 }
 
-/// Tags without a type whose first word is a name, which gets no capital letter.
+/// Tags without a type whose first word is a name, which isn't capitalized.
 pub(super) fn is_named_generic_tag(kind: &[u8]) -> bool {
     matches!(
         kind,
@@ -439,8 +440,8 @@ pub(super) fn is_named_generic_tag(kind: &[u8]) -> bool {
     )
 }
 
-/// The tags, each with the name that stands for its kind, sorted. `@typedef` and `@callback` start a group,
-/// and the groups stay in their order.
+/// Returns the tags sorted, each paired with its canonical kind. `@typedef` and `@callback` start a group, and the
+/// groups keep their order.
 fn sort_tags_by_groups<'a>(
     tags: impl ExactSizeIterator<Item = JSDocTag<'a>>,
 ) -> Vec<(JSDocTag<'a>, &'a [u8])> {
@@ -465,7 +466,7 @@ fn sort_tags_by_groups<'a>(
     sorted
 }
 
-/// `TAGS_DESCRIPTION_NEEDED`: tags that go away if nothing follows them.
+/// `TAGS_DESCRIPTION_NEEDED`: tags that are removed if nothing follows them.
 fn should_remove_empty_tag(kind: &[u8]) -> bool {
     matches!(
         kind,
@@ -481,7 +482,7 @@ fn should_remove_empty_tag(kind: &[u8]) -> bool {
     )
 }
 
-/// Whether an odd number of backslashes is before `pos`.
+/// True if an odd number of backslashes comes before `pos`.
 fn is_escaped(bytes: &[u8], pos: usize) -> bool {
     bytes[..pos]
         .iter()
@@ -492,7 +493,7 @@ fn is_escaped(bytes: &[u8], pos: usize) -> bool {
         != 0
 }
 
-/// The value of `@default`: what looks like JSON gets its spaces and the quotes of `quote_style`.
+/// Formats the value of `@default`. A value that looks like JSON gets normalized spacing and `quote_style` quotes.
 pub(super) fn format_default_value(value: &[u8], quote_style: QuoteStyle) -> Cow<'_, [u8]> {
     let trimmed = strings::trim_unicode_whitespace(value);
     let (target_quote, other_quote) = match quote_style {
@@ -502,7 +503,7 @@ pub(super) fn format_default_value(value: &[u8], quote_style: QuoteStyle) -> Cow
     let len = trimmed.len();
     match trimmed.first() {
         Some(b'{' | b'[') => {}
-        // A string, and maybe a description behind it.
+        // A string, possibly followed by a description.
         Some(&quote @ (b'"' | b'\'')) => {
             let mut i = 1;
             while i < len && trimmed[i] != quote {
@@ -526,7 +527,7 @@ pub(super) fn format_default_value(value: &[u8], quote_style: QuoteStyle) -> Cow
         _ => return Cow::Borrowed(trimmed),
     }
     let mut result = Vec::with_capacity(len + 16);
-    // The quote that the string that this is in has been opened with.
+    // The opening quote of the string we're inside, if any.
     let mut in_quote = None;
     for (i, &byte) in trimmed.iter().enumerate() {
         let next = trimmed.get(i + 1).copied();
@@ -577,7 +578,7 @@ pub(super) fn format_default_value(value: &[u8], quote_style: QuoteStyle) -> Cow
     Cow::Owned(result)
 }
 
-/// `desc` without "Default is .." at its end, which is made anew from `[name=value]`.
+/// Returns `desc` without the "Default is .." at its end, which is regenerated from `[name=value]`.
 pub(super) fn strip_default_is_suffix(desc: &[u8]) -> &[u8] {
     let before = |pos: usize| {
         let before = strings::trim_unicode_whitespace_end(&desc[..pos]);
@@ -609,8 +610,8 @@ pub(super) fn strip_default_is_suffix(desc: &[u8]) -> &[u8] {
     desc
 }
 
-/// The comment `doc` of `file`, formatted. `None`: it stays as it is. `available_width`: the width of a line
-/// without the indentation of the comment.
+/// Formats the comment `doc` of `file`. Returns `None` if it should stay as it is. `available_width` is the line width
+/// minus the comment's indentation.
 pub(crate) fn format_jsdoc_comment<'a>(
     doc: JSDoc<'a>,
     file: &'a File<'a>,

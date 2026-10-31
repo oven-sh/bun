@@ -146,57 +146,40 @@ pub(super) fn origin_forbidden(resp: AnyResponse) {
 
 /// `extern "C"` trampoline: recovers `&mut DevServer` from user-data and wraps
 /// the raw `uws_res` as `AnyResponse`, then calls the handler for `ID`.
-#[allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "the SAFETY note above the match covers the eight identical call-scoped reborrows"
-)]
 pub(super) extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
     res: *mut bun_uws_sys::uws_res,
     req: *mut bun_uws_sys::Request,
     ud: *mut c_void,
 ) {
-    // SAFETY: `ud`/`req`/`res` were registered by `set_routes` and outlive the
-    // route; uWS guarantees they are non-null in handler callbacks. `dev` is
-    // re-derived per statement so no `&mut DevServer` spans the guard reads.
-    let dev = ud.cast::<DevServer>();
-    let req = req.cast::<Request>();
+    // SAFETY: `ud` is the `DevServer` that `set_routes` registered; the server clears
+    // the routes before it drops it. uWS passes a non-null `Request*` that is valid
+    // for the callback and that nothing else uses meanwhile. Every handler below takes
+    // `&mut DevServer`, so this asks for no more exclusivity than they do.
+    let (dev, req) = unsafe { (&mut *ud.cast::<DevServer>(), &mut *req) };
     let resp = if SSL {
         AnyResponse::SSL(res.cast::<bun_uws_sys::response::TLSResponse>())
     } else {
         AnyResponse::TCP(res.cast::<bun_uws_sys::response::TCPResponse>())
     };
-    // SAFETY: uWS passes a non-null `Request*` valid for the callback; shared,
-    // call-scoped reborrow.
-    if !is_allowed_dev_host(unsafe { &*dev }, unsafe { &*req }) {
+    if !is_allowed_dev_host(dev, req) {
         return host_forbidden(resp);
     }
-    // SAFETY: as above.
     if matches!(ID, DevHandlerId::ReportError | DevHandlerId::UnrefSourceMap)
-        && !is_allowed_dev_origin(unsafe { &*req })
+        && !is_allowed_dev_origin(req)
     {
         return origin_forbidden(resp);
     }
-    // SAFETY: as above — the exclusive borrow is consumed by the single handler
-    // call; nothing else stores or re-derives this `Request` pointer.
     match ID {
-        DevHandlerId::JsRequest => on_js_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp),
-        DevHandlerId::AssetRequest => {
-            on_asset_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp)
-        }
-        DevHandlerId::SrcRequest => {
-            on_src_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp)
-        }
-        DevHandlerId::ReportError => {
-            on_report_error_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp)
-        }
-        DevHandlerId::UnrefSourceMap => {
-            on_unref_source_map_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp)
-        }
-        DevHandlerId::NotFound => on_not_found(unsafe { &mut *dev }, unsafe { &mut *req }, resp),
+        DevHandlerId::JsRequest => on_js_request(dev, req, resp),
+        DevHandlerId::AssetRequest => on_asset_request(dev, req, resp),
+        DevHandlerId::SrcRequest => on_src_request(dev, req, resp),
+        DevHandlerId::ReportError => on_report_error_request(dev, req, resp),
+        DevHandlerId::UnrefSourceMap => on_unref_source_map_request(dev, req, resp),
+        DevHandlerId::NotFound => on_not_found(dev, req, resp),
         DevHandlerId::Request => {
             // The catch-all route can reach a framework request handler; this
             // trampoline folds what bundling for it left pending.
-            crate::dispatch::fold(on_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp));
+            crate::dispatch::fold(on_request(dev, req, resp));
         }
     }
 }
@@ -257,7 +240,7 @@ fn on_not_found_corked(resp: AnyResponse) {
     resp.end(b"Not Found", false);
 }
 
-fn on_outdated_js_corked(resp: AnyResponse) {
+pub(super) fn on_outdated_js_corked(resp: AnyResponse) {
     // Send a payload to instantly reload the page. This only happens when the
     // client bundle is invalidated while the page is loading, aka when you
     // perform many file updates that cannot be hot-updated.
@@ -281,31 +264,21 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         return not_found(resp);
     }
     let hex = &route_id[route_id.len() - min_len..][..::core::mem::size_of::<u64>() * 2];
-    let Some(id) = parse_hex_to_int::<u64>(hex) else {
+    let Some(id) = parse_hex_to_u64(hex) else {
         return not_found(resp);
     };
 
     if is_map {
         let source_id = source_map_store::SourceId(id);
-        // Note: `render_json` needs `&mut DevServer` while `entry` borrows
-        // `dev.source_maps.entries[_]`. The entry is read-only (`&self`) and
-        // `render_json` does not touch `source_maps.entries`, so erase the
-        // entry borrow to a raw pointer and reborrow `dev` for the call.
         let Some(entry) = dev
             .source_maps
             .entries
-            .get_mut(&source_map_store::Key::init(id))
+            .get(&source_map_store::Key::init(id))
         else {
             return not_found(resp);
         };
-        let entry_ptr: *const source_map_store::Entry = &raw const *entry;
-        // SAFETY: `entry_ptr` points into `dev.source_maps.entries` storage,
-        // which is not reallocated by `render_json`.
         let json_bytes =
-            match unsafe { &*entry_ptr }.render_json(dev, source_id.kind(), bake::Side::Client) {
-                Ok(b) => b,
-                Err(e) => bun_core::handle_oom(Err(e)),
-            };
+            bun_core::handle_oom(entry.render_json(source_id.kind(), bake::Side::Client));
         let response = StaticRoute::init_from_any_blob(
             crate::webcore::blob::Any::from_array_list(json_bytes),
             crate::server::static_route::InitFromBytesOptions {
@@ -318,23 +291,18 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         return;
     }
 
-    let route_bundle_index =
-        route_bundle::Index::init(u32::try_from(id & 0xFFFFFFFF).expect("int cast"));
-    let generation: u32 = u32::try_from(id >> 32).expect("int cast");
+    let index = id as u32;
+    let generation = (id >> 32) as u32;
 
-    if route_bundle_index.get() as usize >= dev.route_bundles.len() {
+    // Check the range first because `Index::init` asserts on `u32::MAX`, which the URL can contain.
+    if index as usize >= dev.route_bundles.len() {
         return not_found(resp);
     }
+    let route_bundle_index = route_bundle::Index::init(index);
 
-    let route_bundle = &dev.route_bundles[route_bundle_index.get() as usize];
-    if route_bundle.client_script_generation != generation
-        || route_bundle.server_state != route_bundle::State::Loaded
-    {
-        return resp.corked(move || on_outdated_js_corked(resp));
-    }
-
-    dev.on_js_request_with_bundle(
+    dev.serve_client_script(
         route_bundle_index,
+        generation,
         resp,
         Method::which(req.method()).unwrap_or(Method::POST),
     );
@@ -346,7 +314,7 @@ fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         return not_found(resp);
     }
     let hex = &param[..::core::mem::size_of::<u64>() * 2];
-    let Some(hash) = parse_hex_to_int::<u64>(hex) else {
+    let Some(hash) = parse_hex_to_u64(hex) else {
         return not_found(resp);
     };
     debug_log!("onAssetRequest {} {}", hash, bstr::BStr::new(param));
@@ -357,7 +325,7 @@ fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     StaticRoute::on(asset.this_ptr(), resp);
 }
 
-pub(super) use bun_core::fmt::parse_hex_to_int;
+pub(super) use bun_core::fmt::parse_hex_to_u64;
 
 fn on_src_request(_dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     if req.header(b"open-in-editor").is_none() {
@@ -376,12 +344,12 @@ fn on_src_request(_dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
 
 fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) -> JsResult<()> {
     let mut params: router::MatchedParams = Default::default();
-    if let Some(route_index) = dev.router.match_slow(req.url(), &mut params) {
+    let pathname = extract_pathname_from_url(req.url());
+    if let Some(route_index) = dev.router.match_slow(pathname, &mut params) {
         let route_bundle_index = dev
             .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
             .expect("oom");
         let mut ctx = RequestEnsureRouteBundledCtx {
-            dev: std::ptr::from_mut::<DevServer>(dev),
             req: ReqOrSaved::Req(req),
             resp,
             kind: deferred_request::HandlerKind::ServerHandler,
@@ -509,27 +477,19 @@ impl UnrefSourceMapRequest {
     }
 }
 
-// TODO: this is shitty
+/// Returns the pathname of a URL or HTTP request target, without the query string or hash.
+/// Returns a target that doesn't have a path (`CONNECT host:port`, `OPTIONS *`) unchanged.
 pub(super) fn extract_pathname_from_url(url: &[u8]) -> &[u8] {
-    // Extract pathname from URL (remove protocol, host, query, hash)
-    let mut pathname = if let Some(proto_end) = strings::index_of(url, b"://") {
-        &url[proto_end + 3..]
-    } else {
+    let pathname = if url.first() == Some(&b'/') {
         url
+    } else if let Some(scheme_end) = strings::index_of(url, b"://") {
+        let after_scheme = &url[scheme_end + b"://".len()..];
+        match strings::index_of_any(after_scheme, b"/?#") {
+            Some(path_start) if after_scheme[path_start] == b'/' => &after_scheme[path_start..],
+            _ => b"/",
+        }
+    } else {
+        return url;
     };
-
-    if let Some(path_start) = strings::index_of_char(pathname, b'/') {
-        let path_with_query = &pathname[path_start as usize..];
-        // Remove query string and hash
-        let query_index = strings::index_of_char(path_with_query, b'?')
-            .map(|i| i as usize)
-            .unwrap_or(path_with_query.len());
-        let hash_index = strings::index_of_char(path_with_query, b'#')
-            .map(|i| i as usize)
-            .unwrap_or(path_with_query.len());
-        let end = query_index.min(hash_index);
-        pathname = &path_with_query[..end];
-    }
-
-    pathname
+    &pathname[..strings::index_of_any(pathname, b"?#").unwrap_or(pathname.len())]
 }

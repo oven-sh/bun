@@ -1,9 +1,10 @@
-//! What the printers of all languages ask of a text: the strings and regular expressions of
-//! JavaScript, for bytes, and Prettier's `src/utilities/`.
+//! Text helpers shared by every language's printer: byte-slice versions of JavaScript's string and
+//! regular expression operations, and Prettier's `src/utilities/`.
 //!
-//! An index is an offset in bytes. Where Prettier goes backwards from the index of a character, the
-//! functions here take the offset behind it: `hasNewline(text, index, { backwards: true })`, which
-//! starts at `index - 1`, is `has_newline_backwards(text, index)`.
+//! An index is a byte offset. Where Prettier scans backwards from a character's index, these
+//! functions take the offset just after that character:
+//! `hasNewline(text, index, { backwards: true })`, which starts at `index - 1`, is
+//! `has_newline_backwards(text, index)`.
 
 use bun_core::strings;
 
@@ -17,14 +18,14 @@ pub(crate) fn starts_with_white_space(text: &[u8]) -> bool {
     strings::js_whitespace_len(text) > 0
 }
 
-/// The number of bytes of `text` that are before its first character that `\s` does not match.
+/// Length in bytes of the leading part of `text` that `\s` matches.
 #[inline]
 pub(crate) fn leading_white_space_len(text: &[u8]) -> usize {
     text.len() - strings::trim_js_whitespace_start(text).len()
 }
 
-/// A set of bytes, for the ends of tokens: they are a few bytes away, and there are more kinds of them
-/// than the vectorized search takes at once.
+/// A set of bytes, used to find where a token ends. The end is only a few bytes away, and there are
+/// more terminators than the vectorized search accepts.
 pub(crate) struct ByteSet(bun_collections::ByteSet);
 
 impl ByteSet {
@@ -32,7 +33,7 @@ impl ByteSet {
         ByteSet(bun_collections::ByteSet::of(bytes))
     }
 
-    /// The index of the first byte of `text` from `from` on that is in the set.
+    /// Index of the first byte at or after `from` that's in the set.
     #[inline]
     pub(crate) fn find(&self, text: &[u8], from: usize) -> Option<usize> {
         let rest = text.get(from..)?;
@@ -103,27 +104,27 @@ pub(crate) fn skip_trailing_comment(text: &[u8], at: usize) -> usize {
     }
 }
 
-/// `hasNewline`: nothing but blanks is between `at` and the end of the line.
+/// `hasNewline`: only spaces and tabs are between `at` and the end of the line.
 #[inline]
 pub(crate) fn has_newline(text: &[u8], at: usize) -> bool {
     let line_end = skip_spaces(text, at);
     skip_newline(text, line_end) != line_end
 }
 
-/// `hasNewline(.., { backwards: true })`: nothing but blanks is between the start of the line and
-/// `end`. Not on the first line.
+/// `hasNewline(.., { backwards: true })`: only spaces and tabs are between the start of the line
+/// and `end`. False on the first line.
 #[inline]
 pub(crate) fn has_newline_backwards(text: &[u8], end: usize) -> bool {
     let line_start = skip_spaces_backwards(text, end);
     skip_newline_backwards(text, line_start) != line_start
 }
 
-/// `isNextLineEmpty`: whether the line after the one that `at` is on is empty. Commas, semicolons
-/// and comments after `at` are passed over.
+/// `isNextLineEmpty`: true if the line after `at`'s line is empty. Commas, semicolons and comments
+/// after `at` are skipped.
 #[inline]
 pub(crate) fn is_next_line_empty(text: &[u8], at: usize) -> bool {
     match text.get(at..).unwrap_or_default() {
-        // Nearly always the line ends here, or something else follows on it.
+        // Fast paths: the line nearly always ends here or has more code on it.
         [b'\n', ..] => has_newline(text, at + 1),
         [b',', b' ', next, ..]
             if !matches!(
@@ -133,11 +134,11 @@ pub(crate) fn is_next_line_empty(text: &[u8], at: usize) -> bool {
         {
             false
         }
-        _ => is_line_after_the_rest_of_the_line_empty(text, at),
+        _ => is_next_line_empty_slow(text, at),
     }
 }
 
-fn is_line_after_the_rest_of_the_line_empty(text: &[u8], mut at: usize) -> bool {
+fn is_next_line_empty_slow(text: &[u8], mut at: usize) -> bool {
     loop {
         let line_end = skip(text, at, |byte| matches!(byte, b',' | b';' | b' ' | b'\t'));
         let next = skip_spaces(text, skip_inline_comment(text, line_end));
@@ -156,14 +157,15 @@ pub(crate) fn is_previous_line_empty(text: &[u8], at: usize) -> bool {
     has_newline_backwards(text, skip_newline_backwards(text, line_start))
 }
 
-/// What `printLeadingComment` asks: whether the line after the one that ends at `at`, but for blanks,
-/// is empty.
+/// The check in `printLeadingComment`: true if the line that ends at `at`, ignoring spaces and
+/// tabs, is followed by an empty line.
 #[inline]
 pub(crate) fn is_followed_by_empty_line(text: &[u8], at: usize) -> bool {
     has_newline(text, skip_newline(text, skip_spaces(text, at)))
 }
 
-/// `makeString`: `content`, which is what is between quotes of either kind, in `quote`.
+/// `makeString`: writes `content`, the text between a string's quotes of either kind, wrapped in
+/// `quote`.
 pub(crate) fn make_string(content: &[u8], quote: u8, out: &mut Vec<u8>) {
     let other = if quote == b'"' { b'\'' } else { b'"' };
     out.push(quote);
@@ -171,7 +173,7 @@ pub(crate) fn make_string(content: &[u8], quote: u8, out: &mut Vec<u8>) {
     while let Some(byte) = bytes.next() {
         match byte {
             b'\\' => match bytes.next() {
-                // It does not have to be escaped any more.
+                // The other quote no longer needs escaping.
                 Some(escaped) if escaped == other => out.push(escaped),
                 Some(escaped) => out.extend([b'\\', escaped]),
                 None => out.push(b'\\'),
@@ -183,10 +185,9 @@ pub(crate) fn make_string(content: &[u8], quote: u8, out: &mut Vec<u8>) {
     out.push(quote);
 }
 
-/// `/^\s*#[^\S\n]*@(?:a|b)\s*?(?:\n|$)/`: what YAML and GraphQL have for `hasPragma` and
-/// `hasIgnorePragma`.
+/// `/^\s*#[^\S\n]*@(?:a|b)\s*?(?:\n|$)/`: YAML's and GraphQL's `hasPragma` and `hasIgnorePragma`.
 pub(crate) fn has_pragma_in_hash_comment(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
-    fn without_blanks(mut text: &[u8]) -> &[u8] {
+    fn trim_inline_whitespace_start(mut text: &[u8]) -> &[u8] {
         while !text.starts_with(b"\n")
             && let len @ 1.. = strings::js_whitespace_len(text)
         {
@@ -197,16 +198,16 @@ pub(crate) fn has_pragma_in_hash_comment(text: &[u8], pragmas: [&[u8]; 2]) -> bo
     let Some(comment) = strings::trim_js_whitespace_start(text).strip_prefix(b"#") else {
         return false;
     };
-    let Some(name) = without_blanks(comment).strip_prefix(b"@") else {
+    let Some(name) = trim_inline_whitespace_start(comment).strip_prefix(b"@") else {
         return false;
     };
     pragmas.iter().any(|pragma| {
         name.strip_prefix(*pragma)
-            .is_some_and(|rest| matches!(without_blanks(rest), [] | [b'\n', ..]))
+            .is_some_and(|rest| matches!(trim_inline_whitespace_start(rest), [] | [b'\n', ..]))
     })
 }
 
-/// The first character of `text` and how many bytes it has. Bytes that are not UTF-8 are U+FFFD.
+/// The first character of `text` and its length in bytes. Invalid UTF-8 decodes as U+FFFD.
 pub(crate) fn first_char(text: &[u8]) -> Option<(char, usize)> {
     match text.first() {
         None => None,

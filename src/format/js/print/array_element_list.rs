@@ -20,7 +20,7 @@ impl<'a> ArrayElementList<'a> {
 impl<'a> Format<'a> for ArrayElementList<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         if !can_concisely_print_array_list(self.elements, f) {
-            // One per line, if they do not fit on one line.
+            // One per line if they don't all fit on one line.
             return write_array_node(
                 self.elements.len(),
                 self.elements
@@ -32,8 +32,8 @@ impl<'a> Format<'a> for ArrayElementList<'a> {
 
         // As many on each line as fit.
         let trailing_separator = FormatTrailingCommas::ES5.trailing_separator(f.options());
-        // A comment on a line of its own after the last element is written after the fill: what forces
-        // a line break in an item of a fill puts the item on a line of its own.
+        // A comment on its own line after the last element is written after the fill, because a forced line break
+        // inside a fill item would put that item on its own line.
         let last_with_own_line_comment = self.elements.last().filter(|last| {
             !f.is_quiet()
                 && (f.comments().of_node(last.as_ast_nodes()).trailing.first())
@@ -54,7 +54,7 @@ impl<'a> Format<'a> for ArrayElementList<'a> {
                         write!(f, empty_line());
                     } else if !f.is_quiet()
                         && (f.comments().of_node(element.as_ast_nodes()).leading.iter()).any(
-                            |comment| match block_comment_that_ends_line_starts_one(f) {
+                            |comment| match block_comment_that_ends_line_starts_line(f) {
                                 true => comment.has_newline_after(),
                                 false => comment.is_line(),
                             },
@@ -79,13 +79,13 @@ impl<'a> Format<'a> for ArrayElementList<'a> {
     }
 }
 
-/// `[1,⏎/* comment */⏎2]`: for oxfmt the comment stays on its line, for Prettier it is behind the `1,`.
-fn block_comment_that_ends_line_starts_one(f: &Formatter<'_>) -> bool {
+/// `[1,⏎/* comment */⏎2]`: for oxfmt the comment stays on its own line, and for Prettier it goes after the `1,`.
+fn block_comment_that_ends_line_starts_line(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// Prettier's `isConciselyPrintedArray`: all elements are numbers, with or without a sign, and none is followed by a line
-/// comment on its line.
+/// Prettier's `isConciselyPrintedArray`: all elements are numbers, with or without a sign, and none is followed by a
+/// line comment on its line.
 pub(crate) fn can_concisely_print_array_list<'a>(
     list: List<'a, Expr<'a>>,
     f: &Formatter<'a>,
@@ -103,12 +103,12 @@ pub(crate) fn can_concisely_print_array_list<'a>(
                 }
                 _ => false,
             };
-            is_number && !has_line_comment_behind_code(element, f)
+            is_number && !has_line_comment_after_code(element, f)
         })
 }
 
-/// Whether a line comment trails `element` on its line. For oxfmt also one that leads it: `[ // comment⏎1, 2]`.
-fn has_line_comment_behind_code<'a>(element: Expr<'a>, f: &Formatter<'a>) -> bool {
+/// True if a line comment trails `element` on its line. For oxfmt, also if one leads it: `[ // comment⏎1, 2]`.
+fn has_line_comment_after_code<'a>(element: Expr<'a>, f: &Formatter<'a>) -> bool {
     if f.is_quiet() {
         return false;
     }

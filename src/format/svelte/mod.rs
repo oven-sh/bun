@@ -21,7 +21,7 @@ use crate::range::{Offsets, write_with_line_ending};
 use crate::stack::Stack;
 use crate::syntax_error::{BeforeNormalizing, Message, SyntaxError};
 
-/// Everything that is allocated to format a text and can be used again for the next one.
+/// Allocations made while formatting one file that can be reused for the next.
 #[derive(Default)]
 pub struct Scratch {
     document: crate::Scratch,
@@ -29,23 +29,23 @@ pub struct Scratch {
     unformatted: Vec<Unformatted>,
 }
 
-/// What is in a `<script>` or a `<style>` cannot be parsed, and has stayed as it is.
+/// The content of a `<script>` or `<style>` that couldn't be parsed and was left unformatted.
 #[derive(Debug, Clone)]
 pub struct Unformatted {
-    /// What is wrong with it.
+    /// The error message.
     pub message: Vec<u8>,
-    /// At which byte of the component, not counting a byte order mark.
+    /// Byte offset in the component, not counting a byte order mark.
     pub at: u32,
 }
 
 impl Scratch {
-    /// What has stayed as it is in the component that has been formatted last, from the first to the last.
+    /// The parts of the most recently formatted component that were left unformatted, in source order.
     pub fn unformatted(&self) -> &[Unformatted] {
         &self.unformatted
     }
 }
 
-/// What parses the JavaScript in a component.
+/// The parsers for the JavaScript in a component.
 #[derive(Copy, Clone)]
 struct Parsers<'p> {
     program: Parse<'p>,
@@ -53,7 +53,7 @@ struct Parsers<'p> {
 }
 
 impl<'p> Parsers<'p> {
-    /// `parse_javascript`: in the place of `options.parse_javascript`.
+    /// `parse_javascript` is used instead of `options.parse_javascript`.
     fn new(
         parse_javascript: Option<JavaScriptParser<'p>>,
         options: &FormatOptions,
@@ -64,7 +64,7 @@ impl<'p> Parsers<'p> {
         })
     }
 
-    /// The tree of `text`. `Err(None)`: an expression in it is nested too deeply.
+    /// Parses `text`. Returns `Err(None)` if an expression in it is nested too deeply.
     fn tree_of<'a>(self, text: &'a [u8]) -> Result<ast::Tree<'a>, Option<SyntaxError>> {
         let mut tree = Err(None);
         (self.parts)(text, &mut |parse_part| {
@@ -78,11 +78,15 @@ impl<'p> Parsers<'p> {
             };
             let parsed = parser::parse(text, &mut js);
             tree = parsed.map_err(|error| {
-                // What was expected is not there because of the `as`: `{a as b}`, `{(a as b)}`.
+                // The expected token is missing because the expression was cut off at the `as`: `{a as b}`,
+                // `{(a as b)}`.
                 let word = js.stopped_at.and_then(|it| {
                     let between = text.get(it..error.1 as usize)?;
-                    let blanks = text[it..].len() - text[it..].trim_ascii_start().len();
-                    between.trim_ascii().is_empty().then_some(it + blanks)
+                    let leading_whitespace = text[it..].len() - text[it..].trim_ascii_start().len();
+                    between
+                        .trim_ascii()
+                        .is_empty()
+                        .then_some(it + leading_whitespace)
                 });
                 let typescript_at = (js.typescript_at)
                     .filter(|&it| it == error.1 as usize)
@@ -98,7 +102,7 @@ impl<'p> Parsers<'p> {
     }
 }
 
-/// Appends the formatted text to `out`. `parse_javascript`: in the place of `options.parse_javascript`.
+/// Appends the formatted text to `out`. `parse_javascript` is used instead of `options.parse_javascript`.
 pub fn format(
     path: &[u8],
     original: &[u8],
@@ -111,25 +115,25 @@ pub fn format(
     let Some(parsers) = Parsers::new(parse_javascript, options) else {
         return Err(FormatError::SyntaxError);
     };
-    let without_mark = original.strip_prefix(crate::text::BOM).unwrap_or(original);
-    let first = original.len() - without_mark.len();
+    let without_bom = original.strip_prefix(crate::text::BOM).unwrap_or(original);
+    let first = original.len() - without_bom.len();
     let range = Offsets::new(original, first, options);
-    if (range.start >= range.end && !without_mark.is_empty())
-        || (options.require_pragma && !print::has_pragma(without_mark))
+    if (range.start >= range.end && !without_bom.is_empty())
+        || (options.require_pragma && !print::has_pragma(without_bom))
     {
         out.extend_from_slice(original);
         return Ok(());
     }
-    let normalized = bun_core::strings::crlf_as_lf(without_mark);
+    let normalized = bun_core::strings::crlf_as_lf(without_bom);
     let text = trimmed(&normalized);
-    // Where the byte at `at` of `text` is in the file.
+    // Maps an offset in `text` to an offset in the file.
     let in_file = |SyntaxError(message, at): SyntaxError| {
         let before = (normalized.len() - trimmed_start(&normalized).len()) as u32;
-        SyntaxError(message, before + at).before_normalizing_end_of_line(without_mark)
+        SyntaxError(message, before + at).before_normalizing_end_of_line(without_bom)
     };
-    let refuse = |error: SyntaxError| FormatError::SyntaxErrorAt(in_file(error));
+    let to_format_error = |error: SyntaxError| FormatError::SyntaxErrorAt(in_file(error));
     let mut tree = (parsers.tree_of(text))
-        .map_err(|error| error.map_or(FormatError::NestedTooDeeply, refuse))?;
+        .map_err(|error| error.map_or(FormatError::NestedTooDeeply, to_format_error))?;
     // Prettier's `isSourceElement` accepts nothing in a component, as in HTML, so a range leaves the text unchanged.
     // Prettier itself prints the text that the plugin parsed, where `<script ✂prettier:content✂="..">{}</script>`
     // replaces each script.
@@ -146,10 +150,10 @@ pub fn format(
         ..options.clone()
     };
     let svelte = options.svelte;
-    let is_typescript = tree.says_typescript;
-    let how = (parsers.program, is_typescript);
-    let sorted =
-        (options.tailwind.as_deref()).and_then(|it| tailwind::sort(&mut tree, text, it, how));
+    let is_typescript = tree.uses_typescript;
+    let program_parser = (parsers.program, is_typescript);
+    let sorted = (options.tailwind.as_deref())
+        .and_then(|it| tailwind::sort(&mut tree, text, it, program_parser));
     let text = sorted.as_deref().unwrap_or(text);
     let stack = Stack::for_tree();
     let mut expand =
@@ -159,15 +163,16 @@ pub fn format(
     if stack.ran_out() {
         return Err(FormatError::NestedTooDeeply);
     }
-    // Without `embed` the plugin knows names and nothing else of JavaScript, and throws for a script and for a style sheet.
+    // Without `embed`, the only JavaScript the plugin can print is an identifier, and it throws for a script or a
+    // style sheet.
     if options.embedded_language_formatting == EmbeddedLanguageFormatting::Off
-        && !document.replace_code_by_names()
+        && !document.replace_identifier_code_with_text()
     {
         let error = SyntaxError(Message::NeedsEmbeddedFormatting, 0);
         return Err(FormatError::SyntaxErrorAt(error));
     }
     let (stack, unformatted) = (Stack::new(), Default::default());
-    let how = code::How {
+    let settings = code::CodeSettings {
         options: &host,
         is_typescript,
         indents_script_and_style: svelte.indents_script_and_style,
@@ -182,7 +187,7 @@ pub fn format(
     let root = crate::ir::run::write_with(context, text, &mut scratch.document, |f| {
         let mut writer = Writer::new(f, Some(0), true);
         let mut write = doc::Write {
-            code: &mut |code, out| code::write_code(code, out, &how),
+            code: &mut |code, out| code::write_code(code, out, &settings),
             stack: &stack,
         };
         doc::write(document, &mut writer, &mut write);
@@ -191,15 +196,15 @@ pub fn format(
     if stack.ran_out() {
         return Err(FormatError::NestedTooDeeply);
     }
-    // Scripts are written first, wherever they are.
+    // Scripts are written first, wherever they are in the source.
     let mut unformatted = unformatted.take();
     crate::sort::sort_by_key(&mut unformatted, |it| it.1);
     let before = (normalized.len() - trimmed_start(&normalized).len()) as u32;
-    let mut places = BeforeNormalizing::new(without_mark);
+    let mut offsets = BeforeNormalizing::new(without_bom);
     scratch
         .unformatted
         .extend(unformatted.into_iter().map(|(message, at)| {
-            let at = places.place_of(before + at);
+            let at = offsets.original_offset_of(before + at);
             Unformatted { message, at }
         }));
     if original.starts_with(crate::text::BOM) {
@@ -208,13 +213,14 @@ pub fn format(
     crate::ir::run::print(root, text, &host, &mut scratch.document, out)
 }
 
-/// Without the white space of HTML at its start. The plugin takes off all that is white space to JavaScript, a no-break
-/// space too, which is text to Svelte.
+/// Strips leading HTML whitespace. The plugin strips everything that JavaScript counts as whitespace, including a
+/// no-break space, which Svelte treats as text.
 fn trimmed_start(text: &[u8]) -> &[u8] {
     text.trim_ascii_start()
 }
 
-/// At the end a no-break space is nothing to Svelte, which has `trimEnd()`. It would be text before a `<style>`.
+/// Also strips the end. Svelte calls `trimEnd()`, so it drops a trailing no-break space. That space would be text if
+/// it ended up before a `<style>`.
 fn trimmed(text: &[u8]) -> &[u8] {
     bun_core::strings::trim_js_whitespace_end(trimmed_start(text))
 }
@@ -223,8 +229,8 @@ fn prepared(text: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     bun_core::strings::crlf_as_lf(text.strip_prefix(crate::text::BOM).unwrap_or(text))
 }
 
-/// `--debug-check`: whether `after`, which `before` has been formatted to, has all that is in `before` and nothing else. See
-/// `verify.rs`.
+/// For `--debug-check`. True if `after`, the formatted form of `before`, has the same content as `before`, with
+/// nothing lost or added. See `verify.rs`.
 #[optimize(size)]
 pub fn has_same_content(
     before: &[u8],
@@ -236,22 +242,22 @@ pub fn has_same_content(
         return false;
     };
     let before = prepared(before);
-    // The comment that is put in front of it.
+    // `insertPragma` adds this comment at the top.
     let before = match options.insert_pragma && !print::has_pragma(&before) {
         true => [b"<!-- @format -->\n", &before[..]].concat(),
         false => before.into_owned(),
     };
     let sensitivity = options.html_whitespace_sensitivity;
-    let is_kept_in =
+    let matches_input =
         |after: &[u8]| verify::has_same_content(&before, &prepared(after), parsers, sensitivity);
-    if is_kept_in(after) {
+    if matches_input(after) {
         return true;
     }
     if options.sort_imports.is_none() && options.jsdoc.is_none() && options.tailwind.is_none() {
         return false;
     }
-    // Two imports of a module can become one, words of a JSDoc comment others, and a class that is there twice is there
-    // once. The rest is compared without that.
+    // These options change the content: two imports of one module can merge, words in a JSDoc comment can change, and
+    // a duplicate class is dropped. So check the output of a run without them instead.
     let plain = FormatOptions {
         sort_imports: None,
         jsdoc: None,
@@ -269,5 +275,5 @@ pub fn has_same_content(
         &mut formatted,
     )
     .is_ok()
-        && is_kept_in(&formatted)
+        && matches_input(&formatted)
 }

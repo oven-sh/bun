@@ -64,7 +64,7 @@ static constexpr size_t kNodeSqliteLimitCount = 11;
 //                 deletes the orphaned handle on its next entry point
 //   inUse       — a sqlite3session_changeset/patchset is on the C stack for
 //                 this handle (it re-enters the authorizer via its internal
-//                 SAVEPOINT/SELECT). session.close()/Symbol.dispose refuse
+//                 SAVEPOINT/SELECT). session.close()/Symbol.dispose throw
 //                 while set. The BusyScope taken before inUse is set means
 //                 deleteTrackedSessions()/sweepOrphanedSessions() are never
 //                 reached while any record is inUse; the sweep loops ASSERT
@@ -131,7 +131,9 @@ public:
     bool open(JSC::JSGlobalObject*, JSC::ThrowScope&);
     // The database reads as closed from here on. finishDeferredClose() takes
     // the connection down: at once, or when the outermost BusyScope unwinds.
-    void closeInternal();
+    // mayCallScript is false when this is called from the GC, at process exit
+    // or for a disposed graph. This cell can already be dead in those cases.
+    void closeInternal(bool mayCallScript = true);
 
     sqlite3* connection() const { return m_db; }
     bool isOpen() const { return m_db != nullptr; }
@@ -139,7 +141,11 @@ public:
     // close() and deserialize() finalize the StatementSyncs of this connection, as Node does. Not
     // sqlite3_next_stmt(), which also returns the private statements of virtual table modules (FTS5).
     void trackStatement(JSStatementSync&);
-    void finalizeStatements();
+    void finalizeStatements(bool mayCallScript = true);
+    // ~JSStatementSync() queues a statement here if its commit would call the authorizer.
+    // The next outermost BusyScope finalizes it, or whatever closes the connection does.
+    void orphanStatement(sqlite3_stmt* stmt) { m_orphanedStatements.append(stmt); }
+    void finalizeOrphanedStatements();
     bool allowLoadExtension() const { return m_config.allowExtension; }
     bool enableLoadExtensionIsOn() const { return m_enableLoadExtension; }
     void setEnableLoadExtension(bool v) { m_enableLoadExtension = v; }
@@ -191,7 +197,9 @@ public:
                 // the depth bump so re-entrant calls from UDF/authorizer
                 // callbacks are skipped by the m_busyDepth guard.
                 db->sweepOrphanedSessions();
-                ++db->m_busyDepth;
+                // This can run a callback that closes the database, so callers check that it's open after this.
+                if (++db->m_busyDepth == 1 && !db->m_orphanedStatements.isEmpty()) [[unlikely]]
+                    db->finalizeOrphanedStatements();
             }
         }
         ~BusyScope()
@@ -205,7 +213,7 @@ public:
         BusyScope(BusyScope&&) = delete;
         BusyScope& operator=(BusyScope&&) = delete;
     };
-    void finishDeferredClose();
+    void finishDeferredClose(bool mayCallScript = true);
 
 private:
     JSDatabaseSync(JSC::VM& vm, JSC::Structure* structure)
@@ -224,6 +232,7 @@ private:
     // Not roots. A cell on the list has not run its destructor: a statement's
     // unlinks it, and the database's unlinks whatever is left.
     WTF::SentinelLinkedList<JSStatementSync, WTF::BasicRawSentinelNode<JSStatementSync>> m_statements;
+    WTF::Vector<sqlite3_stmt*> m_orphanedStatements;
     // Sessions must be deleted before sqlite3_close_v2() to avoid
     // use-after-free inside the preupdate hook; track them through shared
     // records (not JS objects) so close() can sweep regardless of GC
@@ -326,7 +335,7 @@ public:
     // close() / deserialize() finalized it, or a close() is waiting for the
     // outermost BusyScope to do so.
     bool isFinalized() const;
-    void finalizeStatement();
+    void finalizeStatement(bool mayCallScript = true);
 
     bool useBigInts() const { return m_useBigInts; }
     bool returnArrays() const { return m_returnArrays; }
@@ -339,11 +348,13 @@ public:
     // so a live StatementSyncIterator can detect that its cursor position
     // has been invalidated by another call on the same statement.
     unsigned resetGeneration() const { return m_resetGeneration; }
-    void bumpResetGeneration() { ++m_resetGeneration; }
+    // Resets the statement under a SteppingScope. If a parked iterator stopped a
+    // write on a row, the reset commits it, and the commit can run JS.
+    void reset();
 
-    // True while a sqlite3_step on this statement is on the C stack. A UDF
-    // that re-enters run()/get()/all()/iterate() on the same statement would
-    // sqlite3_reset a running VDBE and segfault; REQUIRE_STMT_IDLE checks
+    // True while a sqlite3_step or sqlite3_reset on this statement is on the C
+    // stack. A UDF that re-enters run()/get()/all()/iterate() on the same statement
+    // would sqlite3_reset a running VDBE and segfault; REQUIRE_STMT_IDLE checks
     // this. Not sqlite3_stmt_busy(): that also reports a parked iterator
     // (stepped, yielded SQLITE_ROW, returned to JS), which is safe to reset.
     bool isStepping() const { return m_steppingDepth > 0; }

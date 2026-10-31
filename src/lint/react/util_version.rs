@@ -1,7 +1,6 @@
 //! `lib/util/version.js` of eslint-plugin-react.
 //!
-//! What `semver.coerce` returns has no prerelease, so `testReactVersion(context, range)` is a
-//! comparison of tuples:
+//! `semver.coerce` never returns a prerelease, so `testReactVersion(context, range)` is a tuple comparison:
 //!
 //! | upstream | here, with `let version = get_react_version_from_context(file);` |
 //! |---|---|
@@ -11,9 +10,9 @@
 //! | `"^0.14.10"` | `((0, 14, 10)..(0, 15, 0)).contains(&version)` |
 //! | `"999.999.999"` | `version == ULTIMATE_LATEST_SEMVER` |
 //!
-//! Upstream keeps what it has detected, and a default that it could not read, for the whole
-//! process: the first file decides for all. Here each file is on its own. Its warnings on the
-//! console are not printed.
+//! Upstream caches the detected version, and a default that it couldn't read, for the whole
+//! process, so the first file decides for all of them. Here each file is resolved independently.
+//! Upstream's console warnings aren't printed.
 
 use bun_core::strings;
 use bun_lint::prelude::*;
@@ -37,7 +36,7 @@ pub(crate) fn string_of(value: &Json) -> Vec<u8> {
         Json::Bool(it) => it.to_string().into_bytes(),
         Json::Number(it) => text::number_to_string(*it),
         Json::String(it) => it.clone(),
-        // In an array `null` is nothing.
+        // In an array, `null` becomes an empty string.
         Json::Array(all) => {
             let parts = all.iter().map(|it| match it {
                 Json::Null => Vec::new(),
@@ -49,7 +48,7 @@ pub(crate) fn string_of(value: &Json) -> Vec<u8> {
     }
 }
 
-/// `String(value)`, if `value` is truthy and no object, which is no version.
+/// `String(value)`, if `value` is truthy and isn't an object. An object is never a version.
 fn truthy_text(value: &Json) -> Option<Vec<u8>> {
     match value {
         Json::Array(_) => Some(string_of(value)),
@@ -64,7 +63,7 @@ fn name_in(package_json: &Json) -> Option<&[u8]> {
     package_json.get(b"name").and_then(Json::as_str)
 }
 
-/// `detectReactVersion`, `detectFlowVersion`: the version of the `package` that is installed for
+/// `detectReactVersion` and `detectFlowVersion`: the version of `package` that's installed for
 /// `file`.
 fn detect_version<'a>(file: &'a File<'a>, package: &[u8]) -> Option<&'a [u8]> {
     let modules = file.modules()?;
@@ -73,9 +72,9 @@ fn detect_version<'a>(file: &'a File<'a>, package: &[u8]) -> Option<&'a [u8]> {
         let slash = strings::last_index_of_char(directory, b'/');
         let end = slash.max(strings::last_index_of_char(directory, b'\\'))?;
         directory = directory.get(..end)?;
-        // The closest `package.json`, which is that of the project if there is no such package.
+        // This finds the closest `package.json`, which is the project's own if the package isn't installed.
         let path = [directory, b"/node_modules/", package, b"/package.json"].concat();
-        // `"react": "npm:@preact/compat"` installs a package of another name there.
+        // `"react": "npm:@preact/compat"` installs a package with a different name there.
         let project = || modules.package_json(&[directory, b"/package.json"].concat());
         if let Some(found) = modules.package_json(&path)
             && (name_in(found) == Some(package) || name_in(found) != project().and_then(name_in))
@@ -85,16 +84,16 @@ fn detect_version<'a>(file: &'a File<'a>, package: &[u8]) -> Option<&'a [u8]> {
     }
 }
 
-/// `String(settings.react[key])`, if that is truthy.
+/// `String(settings.react[key])`, if it's truthy.
 fn setting(file: &File, key: &[u8]) -> Option<Vec<u8>> {
     let value = file.settings().get(b"react")?.get(key)?;
     truthy_text(value)
 }
 
-/// `defaultVersion`, as `readDefaultReactVersionFromContext` leaves it.
+/// `defaultVersion`, as `readDefaultReactVersionFromContext` sets it.
 fn default_version(file: &File) -> Version {
-    let written = setting(file, b"defaultVersion");
-    (written.and_then(|it| convert_conf_ver_to_semver(&it))).unwrap_or(ULTIMATE_LATEST_SEMVER)
+    let configured = setting(file, b"defaultVersion");
+    (configured.and_then(|it| convert_conf_ver_to_semver(&it))).unwrap_or(ULTIMATE_LATEST_SEMVER)
 }
 
 pub(crate) fn get_react_version_from_context<'a>(file: &'a File<'a>) -> Version {
@@ -106,7 +105,7 @@ pub(crate) fn get_react_version_from_context<'a>(file: &'a File<'a>) -> Version 
     version.unwrap_or_else(|| default_version(file))
 }
 
-/// `getFlowVersionFromContext`. `None`: there is no `settings.react.flowVersion`, and upstream
+/// `getFlowVersionFromContext`. `None` if there's no `settings.react.flowVersion`, where upstream
 /// throws.
 pub(crate) fn get_flow_version_from_context<'a>(file: &'a File<'a>) -> Option<Version> {
     let version = match setting(file, b"flowVersion")? {

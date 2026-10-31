@@ -5,12 +5,12 @@ use bun_lint::rule::Plugin;
 
 /// Enforce that heading elements have content that is accessible to screen readers.
 pub struct HeadingHasContent {
-    /// Besides `h1` to `h6`.
+    /// In addition to `h1` to `h6`.
     components: Vec<String>,
 }
 
-const HEADING_HAS_CONTENT: Message =
-    Message::new("", "Headings must have content and the content must be accessible by a screen reader.");
+const HEADING_HAS_CONTENT: &Message =
+    &Message::new("", "Headings must have content and the content must be accessible by a screen reader.");
 
 impl Rule for HeadingHasContent {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "heading-has-content", Kind::Problem);

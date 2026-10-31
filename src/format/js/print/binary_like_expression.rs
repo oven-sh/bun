@@ -38,7 +38,7 @@ impl<'a> BinaryLikeExpression<'a> {
         self.expr.ast_parent()
     }
 
-    /// Whether it is the condition of `parent`: `if (a + b) {}`, `switch (a + b) {}`.
+    /// True if it's the condition of `parent`: `if (a + b) {}`, `switch (a + b) {}`.
     fn is_inside_condition(&self, parent: AstNodes<'a>) -> bool {
         match parent {
             AstNodes::IfStatement(statement)
@@ -55,17 +55,17 @@ impl<'a> BinaryLikeExpression<'a> {
         }
     }
 
-    /// Whether the left side is written as part of the same chain: `a + b` in `a + b + c`.
+    /// Returns the left side if it's printed as part of the same chain: the `a + b` in `a + b + c`.
     fn can_flatten(&self, f: &Formatter<'a>) -> Option<BinaryLikeExpression<'a>> {
         BinaryLikeExpression::new(self.left).filter(|left| {
             should_flatten(self.operator, left.operator) && !is_cast_target(left.expr, f)
         })
     }
 
-    /// Whether the right side is a logical expression with the same operator: `a && (b && c)`.
-    /// Prettier rebalances the tree after parsing: to it, that is `(a && b) && c`.
+    /// Returns the right side if it's a logical expression with the same operator: `a && (b && c)`. Prettier rebalances
+    /// the tree after parsing, so it sees `(a && b) && c`.
     fn right_with_same_operator(&self, f: &Formatter<'a>) -> Option<BinaryLikeExpression<'a>> {
-        match self.is_logical() && !is_tree_as_it_is_parsed(f) {
+        match self.is_logical() && !skips_logical_rebalancing(f) {
             true => BinaryLikeExpression::new(self.right)
                 .filter(|right| right.operator == self.operator && !is_cast_target(right.expr, f)),
             false => None,
@@ -84,7 +84,7 @@ impl<'a> BinaryLikeExpression<'a> {
         is_inlined_operand(last.right) && !is_cast_target_that_hides_its_kind(last.right, f)
     }
 
-    /// Whether `parent` indents it already.
+    /// True if `parent` already indents it.
     fn should_not_indent_if_parent_indents(&self, parent: AstNodes<'a>, f: &Formatter<'a>) -> bool {
         match parent {
             AstNodes::Program(_) => match f.options().in_html.root {
@@ -92,7 +92,7 @@ impl<'a> BinaryLikeExpression<'a> {
                 HtmlRoot::NgAction | HtmlRoot::NgDirective | HtmlRoot::NgInterpolation => false,
                 // A `File`.
                 HtmlRoot::SvelteExpression => false,
-                // The same for `__ng_binding`, and `JsExpressionRoot`.
+                // Same for `__ng_binding`, and `JsExpressionRoot`.
                 _ => self.operator != BinOp::BitOr,
             },
             AstNodes::ReturnStatement(_)
@@ -147,8 +147,8 @@ impl<'a> Format<'a> for BinaryLikeExpression<'a> {
         if self.operator != BinOp::BitOr || f.options().in_html.root != HtmlRoot::VueExpression {
             return self.write(f);
         }
-        // Prettier's `isVueFilterSequenceExpression`: nothing is around it but the same, up to the root. What is
-        // around this one is being written.
+        // Prettier's `isVueFilterSequenceExpression`: every ancestor up to the root is also a `|` expression. The
+        // ancestors are being written right now, so the flag in the context holds their answer.
         let is_filter_sequence = match self.parent() {
             AstNodes::Program(_) => true,
             AstNodes::BinaryExpression(parent) if parent.binary_op() == Some(BinOp::BitOr) => {
@@ -165,30 +165,30 @@ impl<'a> Format<'a> for BinaryLikeExpression<'a> {
     }
 }
 
-/// `const a = /** @type {T} */ (⏎b ||⏎c⏎)`: oxfmt looks at what the cast is in, and does not indent `c`.
-fn parentheses_of_cast_are_a_node(f: &Formatter<'_>) -> bool {
+/// `const a = /** @type {T} */ (⏎b ||⏎c⏎)`: oxfmt looks at the cast's parent, and doesn't indent `c`.
+fn cast_parentheses_are_a_node(f: &Formatter<'_>) -> bool {
     !f.options().flavor.is_oxfmt()
 }
 
 impl<'a> BinaryLikeExpression<'a> {
     fn write(&self, f: &mut Formatter<'a>) {
         let parent = self.parent();
-        // For Prettier it is in a `ParenthesizedExpression` then, which is none of what is asked for.
-        let is_in_type_cast = parentheses_of_cast_are_a_node(f) && is_cast_target(self.expr, f);
+        // In that case its parent is a `ParenthesizedExpression` for Prettier, which matches none of the checks below.
+        let is_in_type_cast = cast_parentheses_are_a_node(f) && is_cast_target(self.expr, f);
 
         // A condition has its own indentation and group.
         if !is_in_type_cast && self.is_inside_condition(parent) {
-            let place = ChainPlace {
+            let position = ChainPosition {
                 inside_condition: true,
                 is_nested: false,
             };
-            return format_flattened_logical_expression(*self, place, f);
+            return format_flattened_logical_expression(*self, position, f);
         }
 
-        // Where it is in parentheses: `(a + b)()`, `!(a + b)`, `(a + b).c`.
+        // Positions where it gets parentheses: `(a + b)()`, `!(a + b)`, `(a + b).c`.
         let is_inside_parenthesis = match parent {
             AstNodes::StaticMemberExpression(_) | AstNodes::PrivateFieldExpression(_) => true,
-            // It writes the parentheses and indents an argument with comments.
+            // A unary expression prints the parentheses itself and indents an argument with comments.
             AstNodes::UnaryExpression(_) => !has_comments(self.expr, f),
             _ => parent.is_call_like_callee(self.expr),
         };
@@ -196,7 +196,7 @@ impl<'a> BinaryLikeExpression<'a> {
             return write!(
                 f,
                 group(&soft_block_indent(&format_with(|f| {
-                    format_flattened_logical_expression(*self, ChainPlace::default(), f)
+                    format_flattened_logical_expression(*self, ChainPosition::default(), f)
                 })))
             );
         }
@@ -206,7 +206,7 @@ impl<'a> BinaryLikeExpression<'a> {
                 f,
                 group(&format_with(|f| format_flattened_logical_expression(
                     *self,
-                    ChainPlace::default(),
+                    ChainPosition::default(),
                     f
                 )))
             );
@@ -215,7 +215,7 @@ impl<'a> BinaryLikeExpression<'a> {
         let inline_logical_expression = self.should_inline_logical_expression(f);
         let should_indent_if_inlines =
             !is_in_type_cast && should_indent_if_parent_inlines(parent, f);
-        let parts = split_into_left_and_right_sides(*self, ChainPlace::default(), f);
+        let parts = split_into_left_and_right_sides(*self, ChainPosition::default(), f);
         let flattened = parts.len() > 2 || self.right_with_same_operator(f).is_some();
 
         if (inline_logical_expression && !flattened)
@@ -232,7 +232,7 @@ impl<'a> BinaryLikeExpression<'a> {
         let Some((first, rest)) = parts.split_first() else {
             return;
         };
-        // A JSX element at the end has a group of its own, so that it does not break the chain.
+        // A JSX element at the end gets its own group, so it doesn't break the chain.
         let jsx_element = rest
             .last()
             .and_then(|part| part.only_last_operand())
@@ -298,14 +298,14 @@ enum BinaryLeftOrRightSide<'a> {
         /// The chain is the condition of an `if`, a `while`, a `do`-`while` or a `switch`.
         inside_condition: bool,
         operands: Operands,
-        /// Prettier's `isNested`: `parent` is written as a part of a longer chain and not as a node of its own, so the chain
-        /// writes its comments.
+        /// Prettier's `isNested`: `parent` is written as part of a longer chain instead of as a separate node, so the
+        /// chain writes its comments.
         is_nested: bool,
     },
 }
 
-/// Which operands of a right side that is a logical expression with the same operator, as in
-/// `a && (b && c)`, are written. Any other right side is its own last operand.
+/// Selects which operands to write when the right side is a logical expression with the same operator, as in
+/// `a && (b && c)`. Any other right side is its own last operand.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum Operands {
     All,
@@ -313,9 +313,9 @@ enum Operands {
     Last,
 }
 
-/// Where a chain is. By default it is not in a condition, and is a node of its own.
+/// A chain's position. By default it isn't in a condition and is a separate node.
 #[derive(Debug, Copy, Clone, Default)]
-struct ChainPlace {
+struct ChainPosition {
     /// See [`BinaryLeftOrRightSide::Right::inside_condition`].
     inside_condition: bool,
     /// See [`BinaryLeftOrRightSide::Right::is_nested`], for the whole chain.
@@ -325,19 +325,19 @@ struct ChainPlace {
 /// Writes all operands of a chain one after the other.
 fn format_flattened_logical_expression<'a>(
     binary: BinaryLikeExpression<'a>,
-    place: ChainPlace,
+    position: ChainPosition,
     f: &mut Formatter<'a>,
 ) {
-    // `a && ((b && ((c && ..) && d)) && e)`: it is not written by way of `Expr`.
+    // `a && ((b && ((c && ..) && d)) && e)`: this bypasses `Expr`'s `Format` impl, which does the stack check.
     if !f.context_mut().has_stack_left() {
         return;
     }
-    let parts = split_into_left_and_right_sides(binary, place, f);
+    let parts = split_into_left_and_right_sides(binary, position, f);
     f.join().entries(parts.iter());
 }
 
-/// `(/* comment */ a + b) + c`: writes the leading comments of the expressions of `chain` that are not written as nodes of
-/// their own.
+/// `(/* comment */ a + b) + c`: writes the leading comments of the expressions in `chain` that aren't written as
+/// separate nodes.
 fn write_leading_comments_of_nested<'a>(
     chain: BinaryLikeExpression<'a>,
     is_chain_nested: bool,
@@ -364,7 +364,9 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let (mut binary_like_expression, inside_parenthesis, operands, is_nested) = match *self {
             Self::Left { parent, .. }
-                if f.is_quiet() && is_one_text(parent.left) && f.is_at_start_of_group() =>
+                if f.is_quiet()
+                    && prints_as_single_text(parent.left)
+                    && f.is_at_start_of_group() =>
             {
                 return write!(f, parent.left);
             }
@@ -406,11 +408,11 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
                     .filter(|left| left.operator == operator && !is_cast_target(left.expr, f))
                 {
                     Some(left_logical_child) => {
-                        let place = ChainPlace {
+                        let position = ChainPosition {
                             inside_condition: inside_parenthesis,
                             is_nested: true,
                         };
-                        format_flattened_logical_expression(left_logical_child, place, f);
+                        format_flattened_logical_expression(left_logical_child, position, f);
                     }
                     None => right_logical.left.fmt(f),
                 }
@@ -445,7 +447,7 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
             }
         });
 
-        // Both are logical expressions, or both are binary expressions, or both are pipes of Angular.
+        // Both are logical expressions, or both are binary expressions, or both are Angular pipes.
         let is_pipe = is_angular_pipe(binary_like_expression.operator, f);
         let is_same_kind = |other: Expr<'a>| match other.binary_op() {
             None | Some(BinOp::Comma) => false,
@@ -454,7 +456,7 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
                     && is_angular_pipe(operator, f) == is_pipe
             }
         };
-        // For Prettier what is in the parentheses of a type cast is in a `ParenthesizedExpression`.
+        // For Prettier the content of type cast parentheses is inside a `ParenthesizedExpression`.
         let is_operand_of_same_kind = |operand: Expr<'a>| {
             is_same_kind(operand) && !is_cast_target_that_hides_its_kind(operand, f)
         };
@@ -472,7 +474,7 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
         //       b || // comment
         //       c;
         //
-        // Without a group of its own, the line break is in the group that the comment is in.
+        // Without its own group, the line break belongs to the same group as the comment.
         match should_group {
             true => write!(
                 f,
@@ -487,31 +489,31 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
     }
 }
 
-/// Whether `operator`, which is being written, is the `|` before a filter of Vue: a line is broken before it.
+/// True if `operator`, which is being written, is the `|` before a Vue filter. The line breaks before it.
 fn is_before_vue_filter(operator: BinOp, f: &Formatter<'_>) -> bool {
     operator == BinOp::BitOr && f.context().is_vue_filter_sequence.get()
 }
 
-/// Prettier rebalances the trees of its parsers for JavaScript, not the tree of its parser for Angular.
-fn is_tree_as_it_is_parsed(f: &Formatter<'_>) -> bool {
+/// Prettier rebalances the trees from its JavaScript parsers, but not the tree from its Angular parser.
+fn skips_logical_rebalancing(f: &Formatter<'_>) -> bool {
     f.options().in_html.root.is_angular()
 }
 
-/// Whether an expression with `operator` is Prettier's `NGPipeExpression`. Angular has no bitwise operators: `a | b: c : d`
-/// is parsed as `a | b(c, d)`.
+/// True if an expression with `operator` is Prettier's `NGPipeExpression`. Angular has no bitwise operators:
+/// `a | b: c : d` is parsed as `a | b(c, d)`.
 #[inline]
 pub(crate) fn is_angular_pipe(operator: BinOp, f: &Formatter<'_>) -> bool {
     operator == BinOp::BitOr && f.options().in_html.root.is_angular()
 }
 
-/// Whether `e`, which is in an expression of Angular, is one of the `arguments` of an `NGPipeExpression`.
+/// True if `e`, which is in an Angular expression, is one of the `arguments` of an `NGPipeExpression`.
 pub(crate) fn is_argument_of_angular_pipe(e: Expr<'_>) -> bool {
     matches!(e.parent(), Node::Expr(call) if call.tag() == ExprTag::Call
         && call.callee() != Some(e)
         && matches!(call.parent(), Node::Expr(pipe) if pipe.binary_op() == Some(BinOp::BitOr) && pipe.right() == Some(call)))
 }
 
-/// `| b: c : d`. `right`: `b(c, d)`.
+/// `| b: c : d`. `right` is `b(c, d)`.
 fn write_name_and_arguments_of_angular_pipe<'a>(right: Expr<'a>, f: &mut Formatter<'a>) {
     let call = right.as_call();
     let name = call.map_or(right, Call::callee);
@@ -540,8 +542,8 @@ fn write_name_and_arguments_of_angular_pipe<'a>(right: Expr<'a>, f: &mut Formatt
     write!(f, group(&indent(&arguments)));
 }
 
-/// To TypeScript, `a < b >` at the end of a line is `a` with a type argument, and the next line another statement. Prettier
-/// breaks the line there.
+/// To TypeScript, `a < b >` at the end of a line is `a` with a type argument, and the next line another statement.
+/// Prettier breaks the line there.
 fn would_end_type_arguments<'a>(binary: BinaryLikeExpression<'a>, f: &Formatter<'a>) -> bool {
     binary.operator == BinOp::Gt
         && binary.left.binary_op() == Some(BinOp::Lt)
@@ -550,10 +552,11 @@ fn would_end_type_arguments<'a>(binary: BinaryLikeExpression<'a>, f: &Formatter<
         && f.options().experimental_operator_position.is_end()
 }
 
-/// The leading comments of the operand that `right` starts with. `right` is what follows `operator` in the tree.
+/// Returns the leading comments of the operand that `right` starts with. `right` is what follows `operator` in the
+/// tree.
 ///
-/// `a && (b && c)`: in the tree that Prettier has rebalanced, `b` follows the first `&&`, and the comments that lead `b && c`
-/// here lead `b`.
+/// `a && (b && c)`: in the tree that Prettier has rebalanced, `b` follows the first `&&`, and the comments that lead
+/// `b && c` here lead `b`.
 fn leading_comments_of_operand<'a>(
     operator: BinOp,
     right: Expr<'a>,
@@ -566,7 +569,7 @@ fn leading_comments_of_operand<'a>(
         let starts_with = BinaryLikeExpression::new(operand).filter(|it| {
             it.is_logical()
                 && it.operator == operator
-                && !is_tree_as_it_is_parsed(f)
+                && !skips_logical_rebalancing(f)
                 && !is_cast_target(it.expr, f)
         });
         match starts_with {
@@ -587,8 +590,8 @@ fn operand_has_leading_own_line_comment<'a>(right: Expr<'a>, f: &Formatter<'a>) 
     (comments_of_expression(right, f).leading.iter()).any(|comment| comment.has_newline_after())
 }
 
-/// Writes `operator` and what is around it. `right`: what follows it in the tree. `is_inlined`: the operand after it stays
-/// on the line of the operator.
+/// Writes `operator` and the whitespace and comments around it. `right` is what follows it in the tree. `is_inlined`
+/// means the operand after it stays on the operator's line.
 fn write_operator<'a>(operator: BinOp, right: Expr<'a>, is_inlined: bool, f: &mut Formatter<'a>) {
     if is_inlined {
         return write!(f, [operator_after_space(operator), space()]);
@@ -620,7 +623,7 @@ fn write_operator<'a>(operator: BinOp, right: Expr<'a>, is_inlined: bool, f: &mu
         && !(leading_comments.iter().copied().flatten())
             .any(|comment| comment.looks_like_type_cast());
     if has_comment_before_operator {
-        // Prettier writes a space here. It is seen before a line comment that trails the left side, and it is one more
+        // Prettier prints a space here. It shows up before a line comment that trails the left side, and it's one more
         // column that has to fit.
         let space = writes_space_before_comments_before_operator(f).then_some(" ");
         write!(f, [space, soft_line_break_or_space()]);
@@ -670,7 +673,7 @@ fn operator_after_space(operator: BinOp) -> &'static str {
     }
 }
 
-/// Whether `right`, the right side of a logical expression, stays on the line of the operator.
+/// True if `right`, the right side of a logical expression, stays on the operator's line.
 fn is_inlined_operand(right: Expr<'_>) -> bool {
     match right.tag() {
         ExprTag::Object | ExprTag::Array => match right.kind() {
@@ -683,8 +686,8 @@ fn is_inlined_operand(right: Expr<'_>) -> bool {
     }
 }
 
-/// Whether all that is written for `e` is text on one line.
-fn is_one_text(e: Expr<'_>) -> bool {
+/// True if `e` is printed as a single text on one line.
+fn prints_as_single_text(e: Expr<'_>) -> bool {
     matches!(
         e.tag(),
         ExprTag::Ident
@@ -697,7 +700,7 @@ fn is_one_text(e: Expr<'_>) -> bool {
 }
 
 impl<'a> BinaryLeftOrRightSide<'a> {
-    /// The operand that is written last.
+    /// Returns the operand that's written last.
     fn last_operand(&self, f: &Formatter<'a>) -> Expr<'a> {
         match *self {
             BinaryLeftOrRightSide::Left { parent, .. } => parent.left,
@@ -736,7 +739,7 @@ impl<'a> BinaryLeftOrRightSide<'a> {
         self.with_operands(Operands::Last)
     }
 
-    /// `None` if there is only one.
+    /// Returns `None` if there's only one.
     fn without_last_operand(&self, f: &Formatter<'a>) -> Option<Self> {
         match self {
             BinaryLeftOrRightSide::Right { parent, .. }
@@ -749,17 +752,17 @@ impl<'a> BinaryLeftOrRightSide<'a> {
     }
 }
 
-/// The operands of a chain, in order: the leftmost that is not part of the chain, and then the
+/// Returns the operands of a chain in order: first the leftmost operand, which isn't itself part of the chain, then the
 /// right side of each expression on the way up.
 fn split_into_left_and_right_sides<'a>(
     binary: BinaryLikeExpression<'a>,
-    place: ChainPlace,
+    position: ChainPosition,
     f: &Formatter<'a>,
 ) -> SmallVec<[BinaryLeftOrRightSide<'a>; 4]> {
-    let ChainPlace {
+    let ChainPosition {
         inside_condition,
         is_nested,
-    } = place;
+    } = position;
     let mut items = SmallVec::new();
     let mut current = binary;
     loop {
@@ -790,12 +793,12 @@ fn split_into_left_and_right_sides<'a>(
 /// };                    };
 /// ```
 ///
-/// Prettier on the left, oxfmt on the right, as both write the key of `["b" + "c"]: 1`.
+/// Prettier is on the left and oxfmt on the right. Both print the key of `["b" + "c"]: 1` like the right one.
 fn key_of_method_is_indented(f: &Formatter<'_>) -> bool {
     !f.options().flavor.is_oxfmt()
 }
 
-/// Whether `parent` writes it on the line of its operator, so that it has to indent itself.
+/// True if `parent` keeps it on its operator's line, so it has to indent itself.
 fn should_indent_if_parent_inlines(parent: AstNodes<'_>, f: &Formatter<'_>) -> bool {
     match parent {
         AstNodes::ObjectProperty(property) => {
@@ -811,7 +814,7 @@ fn should_indent_if_parent_inlines(parent: AstNodes<'_>, f: &Formatter<'_>) -> b
     }
 }
 
-/// Prettier's `shouldFlatten`: whether `a op b parent_op c` is written as one chain.
+/// Prettier's `shouldFlatten`: true if `a op b parent_op c` is printed as one chain.
 pub(crate) fn should_flatten(parent_operator: BinOp, operator: BinOp) -> bool {
     let precedence = operator.precedence();
     if parent_operator.precedence() != precedence {

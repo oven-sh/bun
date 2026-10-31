@@ -1,4 +1,4 @@
-//! A node of the virtual ESTree: what it is, and where it is.
+//! A node of the virtual ESTree: its type and its range.
 
 use super::{Dialect, NodeType};
 use crate::ast::{
@@ -10,24 +10,23 @@ use crate::span::Span;
 use crate::tokens::skip_trivia;
 use bun_sema::hir::{ModifierId, PropId};
 
-/// A node of the ESTree that ESLint's parser would make of the file.
+/// A node of the ESTree that ESLint's parser would produce for the file.
 ///
-/// There is no such tree. A `VNode` is a node of [`crate::ast`] and which [`Part`] of it is meant,
-/// and everything about it is computed from that when it is asked for. Two are equal if they are
-/// the same node of the ESTree.
+/// That tree is never built. A `VNode` is a [`crate::ast`] node plus the [`Part`] of it that's meant, and everything
+/// about it is computed from those on demand. Two `VNode`s are equal if they're the same ESTree node.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub(crate) struct VNode<'a> {
     pub(super) base: Node<'a>,
     pub(super) part: Part,
 }
 
-/// Which of the ESTree nodes that are made of one node of [`crate::ast`].
+/// Selects one of the ESTree nodes that are made from a single [`crate::ast`] node.
 ///
-/// Each ESTree node has exactly one `(Node, Part)`. The functions of [`VNode`] that make one from a
-/// handle see to that: a function expression is `(Func, Main)`, never `(Expr, Main)`.
+/// Each ESTree node has exactly one `(Node, Part)`. The [`VNode`] functions that build one from a handle guarantee
+/// that: a function expression is `(Func, Main)`, never `(Expr, Main)`.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub(super) enum Part {
-    /// The node that is the closest to what the handle stands for.
+    /// The node that's closest to what the handle represents.
     Main,
     /// `Stmt`: the `ExportNamedDeclaration` or `ExportDefaultDeclaration` around a declaration.
     Export,
@@ -41,7 +40,7 @@ pub(super) enum Part {
     Heritage,
     /// The name of a declaration, a label, the parameter of a type predicate.
     Name,
-    /// The name of a member or a property that is not an expression.
+    /// The key of a member or a property, if it isn't an expression.
     Key,
     /// The `TemplateElement` of `` [`a`] ``.
     KeyQuasi,
@@ -79,7 +78,7 @@ pub(super) enum Part {
     Rest,
     Named,
     Optional,
-    /// `TypeNode`: what is in a `TSLiteralType`, and what is after its `-`.
+    /// `TypeNode`: the literal in a `TSLiteralType`, and the operand of its `-`.
     Literal,
     LiteralArgument,
     /// `TypeNode`: the `symbol` of `unique symbol`.
@@ -101,16 +100,15 @@ pub(super) enum Part {
     /// `Expr`: of a JSX element or fragment.
     Opening,
     Closing,
-    /// `Expr`: the `TSNonNullExpression` at this index of those in `x!!!`, the innermost first.
+    /// `Expr`: the `TSNonNullExpression` at this index among those in `x!!!`, innermost first.
     NonNull(u32),
-    /// `Expr`: the `JSXText` that starts here and has no expression of its own.
+    /// `Expr`: the `JSXText` that starts at this offset and doesn't have its own `Expr`.
     Whitespace(u32),
     /// The `TemplateElement` at this index.
     Quasi(u32),
-    /// The `Decorator` that is this modifier.
+    /// The `Decorator` for the modifier with this ID.
     Decorator(u32),
-    /// `Stmt`: the `ImportAttribute` that is this `Prop`, and its key. `TypeNode`: the same as a
-    /// `Property`.
+    /// `Stmt`: the `ImportAttribute` for the `Prop` with this ID, and its key. `TypeNode`: the same, as a `Property`.
     Attribute(u32),
     AttributeKey(u32),
     /// The `TSQualifiedName` from the first name to the one at this index.
@@ -121,7 +119,7 @@ pub(super) enum Part {
     NamePart(u32),
 }
 
-/// A node without children that is made of a token.
+/// A node without children that's made from a token.
 #[derive(Copy, Clone)]
 pub(super) enum Leaf<'a> {
     Identifier(&'a [u8]),
@@ -193,13 +191,12 @@ impl<'a> VNode<'a> {
         }
     }
 
-    /// The same node of [`crate::ast`], another part.
+    /// Returns another part of the same [`crate::ast`] node.
     #[inline]
     pub(super) fn with(self, part: Part) -> VNode<'a> {
         VNode { part, ..self }
     }
 
-    /// The root.
     #[inline]
     pub(crate) fn program(file: &'a File<'a>) -> VNode<'a> {
         VNode::new(file, Part::Main)
@@ -215,15 +212,15 @@ impl<'a> VNode<'a> {
         Dialect::of(self.file())
     }
 
-    /// What is where `e` is written, with all that ESTree has around it. `None` for a hole.
-    pub(super) fn of_expr(e: Expr<'a>) -> Option<VNode<'a>> {
+    /// Returns the node for `e`, including every wrapper node that ESTree puts around it. `None` for a hole.
+    pub(super) fn from_expr(e: Expr<'a>) -> Option<VNode<'a>> {
         match e.jsx_container_span() {
             Some(_) => Some(VNode::new(e, Part::Container)),
             None => VNode::in_container(e),
         }
     }
 
-    /// `e` without the braces of JSX.
+    /// Returns the node for `e` without the JSX braces.
     pub(super) fn in_container(e: Expr<'a>) -> Option<VNode<'a>> {
         match e.tag() {
             ExprTag::Missing => None,
@@ -244,7 +241,7 @@ impl<'a> VNode<'a> {
         }
     }
 
-    /// Whether `statement` is a declaration after `export`.
+    /// True if `statement` is a declaration after `export`.
     pub(super) fn is_exported_declaration(statement: Stmt<'a>) -> bool {
         matches!(
             statement.kind(),
@@ -264,7 +261,7 @@ impl<'a> VNode<'a> {
             == Some(Flags::EXPORT)
     }
 
-    pub(super) fn of_stmt(statement: Stmt<'a>) -> VNode<'a> {
+    pub(super) fn from_stmt(statement: Stmt<'a>) -> VNode<'a> {
         match VNode::is_exported_declaration(statement) {
             true => VNode::new(statement, Part::Export),
             false => VNode::main_of_stmt(statement),
@@ -279,16 +276,16 @@ impl<'a> VNode<'a> {
         }
     }
 
-    /// What is in the head of a `for`.
-    pub(super) fn of_for_head(head: Stmt<'a>) -> Option<VNode<'a>> {
+    /// Returns the node for a statement in the head of a `for`.
+    pub(super) fn from_for_head(head: Stmt<'a>) -> Option<VNode<'a>> {
         match head.kind() {
-            StmtKind::Expr(e) => VNode::of_expr(e),
+            StmtKind::Expr(e) => VNode::from_expr(e),
             _ => Some(VNode::new(head, Part::Main)),
         }
     }
 
     #[inline]
-    pub(super) fn of_type(ty: TypeNode<'a>) -> VNode<'a> {
+    pub(super) fn from_type(ty: TypeNode<'a>) -> VNode<'a> {
         VNode::new(ty, Part::Main)
     }
 
@@ -297,7 +294,7 @@ impl<'a> VNode<'a> {
         VNode::new(ty, Part::Annotation)
     }
 
-    pub(super) fn of_pat(pat: Pat<'a>) -> Option<VNode<'a>> {
+    pub(super) fn from_pat(pat: Pat<'a>) -> Option<VNode<'a>> {
         (!matches!(pat.kind(), PatKind::Missing)).then(|| VNode::new(pat, Part::Main))
     }
 
@@ -305,7 +302,7 @@ impl<'a> VNode<'a> {
         param.modifiers().iter().any(|it| it.decorator().is_none())
     }
 
-    pub(super) fn of_param(param: Param<'a>) -> VNode<'a> {
+    pub(super) fn from_param(param: Param<'a>) -> VNode<'a> {
         match VNode::has_keywords(param) {
             true => VNode::new(param, Part::Main),
             false => VNode::inner_of_param(param),
@@ -319,7 +316,7 @@ impl<'a> VNode<'a> {
         }
     }
 
-    pub(super) fn of_pat_elem(element: PatElem<'a>) -> Option<VNode<'a>> {
+    pub(super) fn from_pat_elem(element: PatElem<'a>) -> Option<VNode<'a>> {
         let pat = element.pat()?;
         Some(match element.is_rest() || element.default().is_some() {
             true => VNode::new(element, Part::Main),
@@ -327,34 +324,34 @@ impl<'a> VNode<'a> {
         })
     }
 
-    pub(super) fn of_tuple_elem(element: TupleElem<'a>) -> VNode<'a> {
+    pub(super) fn from_tuple_elem(element: TupleElem<'a>) -> VNode<'a> {
         match element.is_rest() {
             true => VNode::new(element, Part::Rest),
             false => VNode::in_rest(element),
         }
     }
 
-    /// `element` without its `...`.
+    /// Returns the node for `element` without its `...`.
     pub(super) fn in_rest(element: TupleElem<'a>) -> VNode<'a> {
         if element.name().is_some() {
             VNode::new(element, Part::Named)
         } else if element.is_optional() {
             VNode::new(element, Part::Optional)
         } else {
-            VNode::of_type(element.ty())
+            VNode::from_type(element.ty())
         }
     }
 
-    /// The `key` of `owner`.
-    pub(super) fn of_key(owner: impl Into<Node<'a>>, key: Key<'a>) -> Option<VNode<'a>> {
+    /// Returns the `key` of `owner`.
+    pub(super) fn from_key(owner: impl Into<Node<'a>>, key: Key<'a>) -> Option<VNode<'a>> {
         match key.kind() {
-            KeyKind::Computed(e) => VNode::of_expr(e),
+            KeyKind::Computed(e) => VNode::from_expr(e),
             _ => Some(VNode::new(owner, Part::Key)),
         }
     }
 
-    /// `A.B.C` in `owner`, which has `len` names: the whole of it.
-    pub(super) fn of_entity_name(
+    /// Returns the node for the whole `A.B.C` in `owner`, which has `len` names.
+    pub(super) fn from_entity_name(
         owner: impl Into<Node<'a>>,
         len: usize,
         is_member: bool,
@@ -408,12 +405,12 @@ impl<'a> VNode<'a> {
         }
     }
 
-    /// The `n`th of the namespaces of `namespace A.B.C`, counted from 0.
+    /// Returns the `n`th namespace of `namespace A.B.C`, counting from 0.
     pub(super) fn nested_module(module: Module<'a>, n: u32) -> Option<Module<'a>> {
         (0..n).try_fold(module, |at, _| at.nested())
     }
 
-    /// The qualified name that the parts `NamePart`, `Qualified` and `MemberName` of it are of.
+    /// Returns the qualified name that this node's `NamePart`, `Qualified` and `MemberName` parts belong to.
     pub(super) fn entity_name(self) -> Option<EntityName<'a>> {
         match self.base {
             Node::Type(ty) => match ty.kind() {
@@ -431,7 +428,7 @@ impl<'a> VNode<'a> {
         }
     }
 
-    /// The span of the name at `i` of the qualified name in it.
+    /// Returns the span of the name at index `i` of this node's qualified name.
     fn name_part_span(self, i: u32) -> Option<Span> {
         match self.base.as_stmt().map(Stmt::kind) {
             Some(StmtKind::Module(module)) => Some(VNode::nested_module(module, i)?.name_span()),
@@ -439,7 +436,7 @@ impl<'a> VNode<'a> {
         }
     }
 
-    /// Whether `ty` is an element of the `extends` of an interface or the `implements` of a class.
+    /// True if `ty` is an element of an interface's `extends` or a class's `implements`.
     pub(super) fn is_heritage(ty: TypeNode<'a>) -> bool {
         if !matches!(ty.kind(), TypeKind::Ref { .. } | TypeKind::Heritage { .. }) {
             return false;
@@ -454,7 +451,7 @@ impl<'a> VNode<'a> {
         }
     }
 
-    /// Whether the type `ty` is where ESTree has a `TSTypeAnnotation` around it.
+    /// True if ESTree wraps the type `ty` in a `TSTypeAnnotation`.
     pub(super) fn is_annotated(ty: TypeNode<'a>) -> bool {
         match ty.parent() {
             Node::Param(_) | Node::VarDecl(_) | Node::Member(_) | Node::Func(_) => true,
@@ -463,7 +460,7 @@ impl<'a> VNode<'a> {
         }
     }
 
-    /// The token that it is, if it is one.
+    /// Returns the token, if this node is made from a single token.
     pub(super) fn leaf(self) -> Option<(Leaf<'a>, Span)> {
         let file = self.file();
         let string =
@@ -641,7 +638,7 @@ impl<'a> VNode<'a> {
     }
 }
 
-// ───────────────────────────── what it is ─────────────────────────────
+// ───────────────────────────── type ─────────────────────────────
 
 impl<'a> VNode<'a> {
     /// ESTree's `type`.
@@ -835,7 +832,7 @@ fn expr_type(e: Expr, part: Part) -> NodeType {
     }
 }
 
-/// Whether the `Assign` `e` is a default: in what is assigned to, or in `{ a = 1 }`.
+/// True if the `Assign` `e` is a default value: in an assignment target, or in `{ a = 1 }`.
 pub(super) fn is_assignment_pattern(e: Expr) -> bool {
     matches!(e.parent(), Node::Prop(prop) if prop.kind() == PropKind::Shorthand)
         || e.is_assignment_target()
@@ -921,7 +918,7 @@ fn type_type(ty: TypeNode, part: Part) -> NodeType {
         _ => {}
     }
     match ty.kind() {
-        // There is no such node. A file with one of these has errors.
+        // ESTree has no such node. A file with one of these has errors.
         TypeKind::Error | TypeKind::Heritage { .. } => TSAnyKeyword,
         TypeKind::Keyword(keyword) => match keyword {
             Keyword::Any => TSAnyKeyword,
@@ -994,10 +991,11 @@ fn member_type(member: Member) -> NodeType {
     }
 }
 
-// ───────────────────────────── where it is ─────────────────────────────
+// ───────────────────────────── range ─────────────────────────────
 
 impl<'a> VNode<'a> {
-    /// [`VNode::node_type`] and [`VNode::span`], for less than the two: a token is looked at once.
+    /// Returns [`VNode::node_type`] and [`VNode::span`]. Cheaper than calling both, because a token is only looked up
+    /// once.
     pub(crate) fn type_and_span(self) -> (NodeType, Span) {
         match self.part {
             Part::Main => None,
@@ -1019,17 +1017,17 @@ impl<'a> VNode<'a> {
         self.span_of_part().unwrap_or_else(|| self.base.span())
     }
 
-    /// `None`: that of the node of [`crate::ast`].
+    /// `None` means the span of the [`crate::ast`] node.
     fn span_of_part(self) -> Option<Span> {
         let file = self.file();
         let through = |i: u32| Some(self.name_part_span(0)?.to(self.name_part_span(i)?));
         match (self.base, self.part) {
             (Node::File(file), _) => Some(match Dialect::of(file) {
                 Dialect::TypeScript => file.program_span(),
-                // ESLint takes a byte order mark off the text.
+                // ESLint strips a byte order mark from the text.
                 Dialect::Espree => {
                     let whole = Span::new(if file.has_bom() { 3 } else { 0 }, file.span().end);
-                    // That of espree 9 is from the first token to the last.
+                    // In espree 9 the range goes from the first token to the last.
                     let tokens = (file.language().eslint_8.as_ref())
                         .and_then(|_| Some((file.first_token(whole)?, file.last_token(whole)?)));
                     tokens.map_or(whole, |(first, last)| first.span().to(last.span()))

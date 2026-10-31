@@ -27,7 +27,7 @@
 //!
 //! ESLint keeps reports that start at the same position in traversal order.
 //! [`Report::listened_on`](crate::context::Report::listened_on) and
-//! [`Report::on_exit`](crate::context::Report::on_exit) say which node the upstream rule listens on.
+//! [`Report::on_exit`](crate::context::Report::on_exit) record which node the upstream rule listens on.
 
 use crate::ast::File;
 use crate::options::Json;
@@ -49,7 +49,7 @@ pub trait Language: Sync {
 
     /// ESLint's `validateLanguageOptions`, called once per config. `name` is one of [`Language::names`] and `options`
     /// is `languageOptions`. The result is passed to [`Language::parse`].
-    fn configure(&self, name: &[u8], options: &Json) -> Result<Configured, Refusal>;
+    fn configure(&self, name: &[u8], options: &Json) -> Result<Configured, Rejection>;
 
     /// `text` has no byte order mark, and spans are offsets into it. If this returns `Err`, no rule runs.
     fn parse(&self, text: &[u8], configured: &Configured) -> Result<Parsed, Vec<SyntaxError>>;
@@ -59,11 +59,11 @@ pub trait Language: Sync {
 pub type Configured = Arc<dyn Any + Send + Sync>;
 
 /// Why a language rejected its `languageOptions`.
-pub enum Refusal {
+pub enum Rejection {
     /// The message of the error that `validateLanguageOptions` throws. It ends the run.
     Invalid(Vec<u8>),
     /// The options need something that only the package supports, so these files are handed to `eslint`.
-    OnlyThePackage,
+    NeedsPackage,
 }
 
 pub struct Parsed {
@@ -83,8 +83,8 @@ pub struct Comment {
     pub value: Span,
 }
 
-/// The text of a comment that the source interrupts. In Markdown, every further line of a comment in a block quote starts
-/// with `> `, which isn't part of the comment.
+/// The text of a comment that isn't contiguous in the source. In Markdown, every further line of a comment in a block
+/// quote starts with `> `, which isn't part of the comment.
 pub struct JoinedComment {
     /// [`Comment::value`]
     value: Span,
@@ -95,7 +95,7 @@ pub struct JoinedComment {
 }
 
 impl JoinedComment {
-    /// `text` is the text of the file.
+    /// `text` is the file's text.
     pub fn new(text: &[u8], value: Span, gaps: Vec<Span>) -> JoinedComment {
         let mut joined = Vec::with_capacity(value.len() as usize);
         let mut from = value.start;
@@ -129,14 +129,15 @@ impl JoinedComment {
         &self.text
     }
 
-    /// The index into [`JoinedComment::text`] of `offset`, which is an offset into the source and not in a gap.
+    /// Converts `offset`, a source offset that isn't in a gap, to an index into [`JoinedComment::text`].
     pub(crate) fn index_of(&self, offset: u32) -> usize {
         let before = self.gaps.iter().take_while(|gap| gap.end <= offset);
         let skipped: u32 = before.map(|gap| gap.len()).sum();
         offset.saturating_sub(self.value.start + skipped) as usize
     }
 
-    /// Where `part` of [`JoinedComment::text`] is in the source. An end of `part` that is at a gap maps to the end of the gap.
+    /// Maps `part`, a range of [`JoinedComment::text`], back to the source. An endpoint that falls on a gap maps to the
+    /// gap's end.
     pub fn span_of(&self, part: std::ops::Range<usize>) -> Span {
         let offset_of = |index: usize| {
             let start = self.value.start + index as u32;

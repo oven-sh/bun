@@ -1,3 +1,4 @@
+import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
@@ -1118,5 +1119,17 @@ describe("Bun.wrapAnsi", () => {
       expect(stdout).toBe("match\n");
       expect(exitCode).toBe(0);
     });
+  });
+
+  test("throws when the output exceeds the string length limit", () => {
+    // Each of the 64 rows reopens the hyperlink.
+    const input = `\x1b]8;;http://example.com/${Buffer.alloc(100_000, "a")}\x07` + Buffer.alloc(64 * 2, "a ");
+    const originalLimit = setSyntheticAllocationLimitForTesting(1024 * 1024);
+    try {
+      expect(() => Bun.wrapAnsi(input, 1).length).toThrow("Out of memory");
+      expect(() => Bun.wrapAnsi(input + "\u2603", 1).length).toThrow("Out of memory");
+    } finally {
+      setSyntheticAllocationLimitForTesting(originalLimit);
+    }
   });
 });

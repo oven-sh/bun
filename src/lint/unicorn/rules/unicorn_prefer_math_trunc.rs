@@ -5,16 +5,16 @@ use bun_lint::rule::Plugin;
 /// Enforce the use of `Math.trunc` instead of bitwise operators.
 pub struct PreferMathTrunc;
 
-const PREFER_MATH_TRUNC: Message = Message::new("", "Prefer `Math.trunc()` over instead of `{{bad_op}} 0`.");
+const PREFER_MATH_TRUNC: &Message = &Message::new("", "Prefer `Math.trunc()` over instead of `{{bad_op}} 0`.");
 
 const OPERATORS: [BinOp; 4] = [BinOp::BitOr, BinOp::Shr, BinOp::Shl, BinOp::BitXor];
 
-/// The `a` of `~a`.
+/// The `a` in `~a`.
 fn bitwise_not_argument(e: Expr<'_>) -> Option<Expr<'_>> {
     e.operand().filter(|_| e.unary_op() == Some(UnOp::BitNot))
 }
 
-/// `is_assignment`: `x |= 0` becomes `x = Math.trunc(x)`. Otherwise `x | 0` and `~~x` become `Math.trunc(x)`.
+/// With `is_assignment`, `x |= 0` becomes `x = Math.trunc(x)`. Otherwise `x | 0` and `~~x` become `Math.trunc(x)`.
 fn report<'a>(e: Expr<'a>, bad_op: &'static str, argument: Span, is_assignment: bool, cx: &Cx<'a, PreferMathTrunc>) {
     cx.report(e, PREFER_MATH_TRUNC).data("bad_op", bad_op).suggest(PREFER_MATH_TRUNC, |fixer| {
         if is_assignment && e.left().is_none_or(target_may_have_side_effects) {
@@ -30,7 +30,7 @@ fn report<'a>(e: Expr<'a>, bad_op: &'static str, argument: Span, is_assignment: 
     });
 }
 
-/// Whether finding out what is assigned to can have side effects, so that it must not be written twice.
+/// True if evaluating the assignment target can have side effects, so it must not be written twice.
 fn target_may_have_side_effects(target: Expr) -> bool {
     match target.kind() {
         ExprKind::Ident(_) => false,

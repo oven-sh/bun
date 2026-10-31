@@ -1,10 +1,11 @@
-//! The named character references of XHTML, which JSX text and attribute strings may contain.
+//! XHTML's named character references, which JSX text and attribute strings may contain.
 
 use bun_ast::lexer_tables::JSX_ENTITY;
 
-/// typescript-estree's `unescapeStringLiteralText`: `text` with `&name;`, `&#10;` and `&#xA;`
-/// replaced by what they stand for. What is not a known reference stays as it is. `is_espree`:
-/// acorn-jsx's `jsx_readEntity`: ten characters after the `&` at most, and `String.fromCharCode`.
+/// typescript-estree's `unescapeStringLiteralText`: decodes `&name;`, `&#10;` and `&#xA;` in `text`
+/// and leaves unknown references unchanged. With `is_espree` it follows acorn-jsx's
+/// `jsx_readEntity` instead, which reads at most ten characters after the `&` and decodes with
+/// `String.fromCharCode`.
 pub(super) fn unescape(text: &[u8], is_espree: bool) -> std::borrow::Cow<'_, [u8]> {
     use bun_core::strings::{index_of_char_usize, push_codepoint_wtf8_joined};
     let Some(first) = index_of_char_usize(text, b'&') else {
@@ -24,7 +25,7 @@ pub(super) fn unescape(text: &[u8], is_espree: bool) -> std::borrow::Cow<'_, [u8
             _ => None,
         };
         rest = match decoded {
-            // Two halves make a pair, as in a string of JavaScript.
+            // Two surrogate halves join into a pair, as in a JavaScript string.
             Some((c, tail)) => {
                 push_codepoint_wtf8_joined(&mut out, c);
                 tail
@@ -41,7 +42,7 @@ pub(super) fn unescape(text: &[u8], is_espree: bool) -> std::borrow::Cow<'_, [u8
     out.into()
 }
 
-/// What `&item;` stands for.
+/// The code point that `&item;` decodes to.
 fn code_point(item: &[u8], is_espree: bool) -> Option<u32> {
     let digits = |digits: &[u8], radix: u32| {
         let is_digit = |b: &u8| (*b as char).is_digit(radix);

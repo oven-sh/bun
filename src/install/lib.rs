@@ -78,7 +78,7 @@ pub mod config_version;
 pub mod dependency;
 pub mod hosted_git_info;
 pub mod integrity;
-pub mod padding_checker;
+mod padding_checker;
 pub mod postinstall_optimizer;
 
 /// `ExternalSlice<T>` and `VersionedURLType<I>` live in `bun_install_types`
@@ -825,7 +825,7 @@ impl RunCommand {
         // stale value.
         env_loader.map.put(
             b"npm_config_local_prefix",
-            bun_fs::FileSystem::instance().top_level_dir(),
+            bun_fs::FileSystem::get().top_level_dir(),
         )?;
 
         // `npm_package_*` is set per package. See `spawn_package_lifecycle_scripts`.

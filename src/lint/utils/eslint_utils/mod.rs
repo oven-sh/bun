@@ -1,7 +1,7 @@
 //! `@eslint-community/eslint-utils`, which typescript-eslint re-exports as `ASTUtils` and from
 //! `@typescript-eslint/utils/ast-utils`.
 //!
-//! What `getStaticValue` needs of JavaScript's numbers is of use on its own: [`js_number`].
+//! The number conversions that `getStaticValue` needs are useful on their own: [`js_number`].
 //!
 //! | JavaScript | [`js_number`] |
 //! | --- | --- |
@@ -10,17 +10,17 @@
 //! | `parseInt(s, radix)`, `parseFloat(s)` | `parse_int`, `parse_float` |
 //! | `n \| 0`, `n >>> 0` | `to_int32`, `to_uint32` |
 //!
-//! What is known to differ from upstream:
-//! - [`get_static_value`] has no value for what [`StaticValue`] does not represent: `Date`, typed
-//!   arrays, a `bigint` beyond 128 bits, an object with a prototype or a conversion of its own.
-//! - `class A implements b.c` and `interface A extends b.c` have no member access here, so
-//!   [`has_side_effect`] sees no getter in them and [`ReferenceTracker`] does not follow them.
-//! - `x as const` is no reference to a global `const`.
+//! Known differences from upstream:
+//! - [`get_static_value`] has no value for anything [`StaticValue`] doesn't represent: `Date`, typed arrays, a `bigint`
+//!   beyond 128 bits, an object with its own prototype or conversion method.
+//! - `class A implements b.c` and `interface A extends b.c` have no member access here, so [`has_side_effect`] sees no
+//!   getter in them and [`ReferenceTracker`] doesn't follow them.
+//! - `x as const` isn't a reference to a global `const`.
 //!
-//! No function takes a `sourceCode`: every handle knows its file.
+//! No function takes a `sourceCode`, because every handle knows its file.
 //!
 //! The token predicates take `&Token`, which is what `Iterator::find` and `Iterator::filter` pass:
-//! `file.tokens_after(node).find(is_comma_token)`. For a token at hand it is `is_comma_token(&token)`.
+//! `file.tokens_after(node).find(is_comma_token)`. With a token in hand, call `is_comma_token(&token)`.
 
 mod builtins;
 mod calls;

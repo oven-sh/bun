@@ -1,0 +1,13 @@
+import { check } from "../src/show";
+import { toJSONer, primitive, compareByN, HotA } from "fake-shapes/hot";
+import { HotB } from "../src/hot";
+import { Vec2, Temperature } from "fake-typed";
+import { Square } from "../src/models";
+const F = "44";
+const mine = { n: 3, toJSON() { return { from: "test", inner: toJSONer }; }, [Symbol.toPrimitive]() { return 11; } };
+check(F, "JSON calls back into three layers, in a loop", () => { let total = 0; let last = ""; for (let i = 0; i < 200; i++) { last = JSON.stringify([toJSONer, mine, new Square("s", i % 3), new Vec2(i, 1), { t: new Temperature(i) }]); total += last.length; const v = new Vec2(i, i); total += v.x; } return [total, last]; });
+check(F, "conversions by native code", () => { let s = 0; let t = ""; for (let i = 0; i < 200; i++) { s += +primitive + +(mine as any) + Number(new Temperature(i)) + Math.max(primitive, i % 9) + [primitive, mine].indexOf(mine); t = `${primitive}${new Vec2(i, 0)}` + String(new Square("q", 1)); } return [s, t]; });
+check(F, "sorts, maps, reduces with comparators of other layers", () => { const l = Array.from({ length: 60 }, (_, i) => (i % 2 ? new HotA((i * 7) % 13) : new HotB((i * 5) % 11))); return [l.slice().sort(compareByN).map(x => x.n).join(""), l.slice().sort((a, b) => compareByN(b, a) || a.value() - b.value()).map(x => x.value()).slice(0, 8), l.map(x => x.value()).reduce((a, b) => a + b), l.filter(x => x instanceof HotA).length, l.findLast(x => x.n === 0)?.kind, Array.from(new Set(l.map(x => x.kind))), l.toSorted(compareByN)[0]!.n, new Map(l.map(x => [x.n, x])).size]; });
+check(F, "replace, split, matchAll with callbacks", () => { let out = ""; for (let i = 0; i < 100; i++) out = "a1b22c333".replace(/\d+/g, m => String(new HotA(m.length).value() + new HotB(i % 2).value())); return [out, "x-y".split("-").map(s => new Square(s, 1).describe()), [..."a1b2".matchAll(/\d/g)].map(m => new Vec2(+m[0], 0).x)]; });
+check(F, "promises, timers and microtasks with closures of three layers", async () => { const log: unknown[] = []; await Promise.all([Promise.resolve(1).then(n => log.push(new HotA(n).value())), Promise.resolve(2).then(n => log.push(new HotB(n).value())), new Promise<void>(r => setTimeout(() => { log.push(compareByN(new HotA(1), new HotB(3))); r(); }, 1)), new Promise<void>(r => queueMicrotask(() => { log.push(String(new Vec2(1, 1))); r(); }))]); return log; });
+check(F, "finalizers and weak references", async () => { let called = 0; const registry = new FinalizationRegistry<number>(n => { called += new HotA(n).value(); }); (() => { for (let i = 0; i < 50; i++) registry.register(new HotB(i), 1); })(); Bun.gc(true); await new Promise(r => setTimeout(r, 5)); Bun.gc(true); await new Promise(r => setTimeout(r, 5)); return called >= 0; });

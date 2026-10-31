@@ -9,6 +9,7 @@ use bun_uws_sys as uws;
 use bun_wyhash::Wyhash;
 
 use bun_http_types::Method as http_method;
+use bun_removable_features::{Feature, is_removed};
 use bun_url::URL;
 pub(crate) use http_method::{Method, Optional as MethodOptional};
 
@@ -272,7 +273,7 @@ impl ServerConfig {
         &mut self,
     ) -> Result<ServerConfig, crate::Error> {
         // The sole caller is
-        // `self.config = self.config.clone_for_reloading_static_routes()?;`.
+        // `*config = config.clone_for_reloading_static_routes()?;`.
         // Move every owning field into `that` and leave the Copy scalars in
         // place on `self` (idle_timeout, development, reuse_port, http1/http3,
         // etc. retained; resources gone), ensuring the assignment-drop of the
@@ -578,10 +579,10 @@ fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<J
 impl ServerConfig {
     pub(crate) fn from_js(
         global: &JSGlobalObject,
-        arguments: &mut bun_jsc::call_frame::ArgumentsSlice,
+        arg: JSValue,
         opts: FromJSOptions,
     ) -> JsResult<ServerConfig> {
-        let vm = arguments.vm;
+        let vm = global.bun_vm();
         let env = vm.env_loader();
         // `bun bake` sets this for its own `Bun.serve()`, with a framework or for the `.tsx` pages
         // of the default one. Taken first: it is for this one call, even when an option throws.
@@ -610,7 +611,7 @@ impl ServerConfig {
             args.development = DevelopmentOption::Production;
         }
 
-        if arguments.vm.transpiler.options.production {
+        if vm.transpiler.options.production {
             args.development = DevelopmentOption::Production;
         }
 
@@ -626,22 +627,18 @@ impl ServerConfig {
                 }
             }
 
-            if let Some(port) = arguments.vm.transpiler.options.transform_options.port {
+            if let Some(port) = vm.transpiler.options.transform_options.port {
                 break 'brk port;
             }
 
             3000
         };
 
-        if let Some(origin) = &arguments.vm.transpiler.options.transform_options.origin {
+        if let Some(origin) = &vm.transpiler.options.transform_options.origin {
             args.base_uri = Box::<[u8]>::from(origin.as_ref());
         }
 
         // NOTE: SSLConfig drops automatically when `args` drops on error path.
-
-        let Some(arg) = arguments.next() else {
-            return Err(global.throw_invalid_arguments(format_args!("Bun.serve expects an object")));
-        };
 
         if !arg.is_object() {
             return Err(global.throw_invalid_arguments(format_args!("Bun.serve expects an object")));
@@ -714,6 +711,7 @@ impl ServerConfig {
                 framework_router_list: Vec::new(),
                 user_routes: &mut args.static_routes,
                 global,
+                may_start_development_server: opts.may_start_development_server,
             };
             let init_ctx = &mut init_ctx_;
 
@@ -891,9 +889,10 @@ impl ServerConfig {
 
             // When HTML bundles are provided, ensure DevServer options are ready
             // The presence of these options causes Bun.serve to initialize things.
-            if !init_ctx.dedupe_html_bundle_map.is_empty()
+            if (!init_ctx.dedupe_html_bundle_map.is_empty()
                 || !init_ctx.framework_router_list.is_empty()
-                || bake_pages
+                || bake_pages)
+                && (!is_removed(Feature::Bundler) || !args.development.is_hmr_enabled())
             {
                 if args.development.is_hmr_enabled() {
                     use bun_options_types::schema::api::DotEnvBehavior;
@@ -1089,6 +1088,11 @@ impl ServerConfig {
                 if let Some(bake_args_js) = arg.get_truthy(global, "app")? {
                     if !bun_core::FeatureFlags::bake() {
                         break 'brk;
+                    }
+                    if is_removed(Feature::Bundler) {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "app: the bundler and the dev server were removed by --trim because your code never calls Bun.build or imports an HTML file"
+                        )));
                     }
                     if args.bake.is_some() {
                         // "app" is likely to be removed in favor of the HTML loader.
@@ -1425,6 +1429,7 @@ impl ServerConfig {
 #[derive(Clone, Copy)]
 pub(crate) struct FromJSOptions {
     pub(crate) allow_bake_config: bool,
+    pub(crate) may_start_development_server: bool,
     pub(crate) is_fetch_required: bool,
     /// What the running server keeps answering with when a `reload()` config
     /// names no handler, as `on_reload_from_zig` applies it: `fetch` stays

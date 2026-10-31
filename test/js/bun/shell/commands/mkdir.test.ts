@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 // A relative operand was joined onto the cwd in a fixed 4096-byte buffer, so an
@@ -75,3 +75,36 @@ test("operands longer than the path buffers are reported, not a crash", async ()
   });
   expect(exitCode).toBe(0);
 });
+
+// Each failing operand queues two writes, so 32,768 of them would overflow a 16-bit counter.
+// Skipped on debug builds, which need 10 to 20 seconds for that many thread-pool tasks.
+test.skipIf(isDebug)(
+  "mkdir reports all 32,768 failing operands and the commands after it still print their output",
+  async () => {
+    using dir = tempDir("mkdir-output-root", {});
+    // The shell expands 15 brace groups to 32,768 operands. Each one fails because "nope" doesn't exist.
+    const failingOperands = "nope/" + Buffer.alloc(15 * 5, "{0,1}").toString();
+    const fixture = /* ts */ `
+    import { $ } from "bun";
+    const result = await $\`mkdir ${failingOperands} || echo AFTER-1; echo AFTER-2 | cat; echo AFTER-3\`.nothrow();
+    console.log("EXIT:" + result.exitCode);
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const reported = stderr.split("\n").flatMap(line => /nope[\\/](\d+)/.exec(line)?.[1] ?? []);
+    expect({
+      operands: new Set(reported).size,
+      stdout: stdout.split("\n").filter(Boolean),
+    }).toEqual({
+      operands: 32768,
+      stdout: ["AFTER-1", "AFTER-2", "AFTER-3", "EXIT:0"],
+    });
+    expect(exitCode).toBe(0);
+  },
+);

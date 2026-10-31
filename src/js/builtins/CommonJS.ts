@@ -18,13 +18,15 @@ export function require(this: JSCommonJSModule, _id: string) {
 }
 
 // overridableRequire can be overridden by setting `Module.prototype.require`
+// Like Node, `this` is only used as the parent module and can be any value, even null.
 $overriddenName = "require";
 $visibility = "Private";
 export function overridableRequire(this: JSCommonJSModule, originalId: string, options?: { paths?: string[] }) {
-  const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined, this, options);
+  // `filename` can be a user getter, so read it once, before the module is added to the require map.
+  const parentFilename = this?.filename;
+  const id = $resolveSync(originalId, parentFilename, false, false, options ? options.paths : undefined, this, options);
   // The global require cache, or the one of the Bun.ModuleGraph this module belongs to.
-  // (`this` need not be a module: Module.prototype.require.call({ filename }, id).)
-  const requireMap: RequireMap = this.$requireMap || $requireMap;
+  const requireMap: RequireMap = this?.$requireMap || $requireMap;
   if (id.startsWith("node:")) {
     if (id !== originalId) {
       // A terrible special case where Node.js allows non-prefixed built-ins to
@@ -39,7 +41,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
       }
     }
 
-    return this.$requireNativeModule(id);
+    return $requireNativeModule(id);
   } else {
     const existing = requireMap.$get(id);
     if (existing) {
@@ -70,13 +72,20 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
 
   // A resolved id may carry a `?query` suffix (part of the module cache key);
   // match the native-addon extension against the path portion only.
+  // An addon that was compiled into an executable is a module of it, loaded like its other modules: the body of that module calls `process.dlopen`.
   const queryIndex = id.indexOf("?");
-  if (queryIndex === -1 ? id.endsWith(".node") : id.endsWith(".node", queryIndex)) {
+  if ((queryIndex === -1 ? id.endsWith(".node") : id.endsWith(".node", queryIndex)) && !$isHiddenFromRequireCache(id)) {
     return $internalRequire(id, this, requireMap);
   }
 
   if (id === "bun:test") {
-    return Bun.jest(this.filename);
+    // Not `Bun.jest`: every executable with a computed `require()` holds this function, and naming it would keep the test runner in all of them.
+    const requireTestModule: (filename: string) => object = $newCppFunction(
+      "JSCommonJSModule.cpp",
+      "jsFunctionRequireTestModule",
+      1,
+    );
+    return requireTestModule(parentFilename);
   }
 
   // To handle import/export cycles, we need to create a module object and put
@@ -95,9 +104,10 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   if (IS_BUN_DEVELOPMENT) {
     $assert(mod.id === id);
     try {
-      out = this.$require(
+      out = $requireCommonJS(
         id,
         mod,
+        parentFilename,
         // did they pass a { type } object?
         $argumentCount(),
         // the object containing a "type" attribute, if they passed one
@@ -109,7 +119,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
       throw E;
     }
   } else {
-    out = this.$require(id, mod, $argumentCount(), $argument(1));
+    out = $requireCommonJS(id, mod, parentFilename, $argumentCount(), $argument(1));
   }
 
   // -1 means we need to lookup the module from the ESM registry.
@@ -155,6 +165,14 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   return mod.exports;
 }
 
+// Called by native code with a `module.children` value that script has read or assigned.
+$visibility = "Private";
+export function pushObservableChild(children: JSCommonJSModule[] | undefined, child: JSCommonJSModule) {
+  if (children && children.indexOf(child) === -1) {
+    children.push(child);
+  }
+}
+
 $visibility = "Private";
 export function requireResolve(this: JSCommonJSModule, id: string, options: { paths?: string[] } = {}) {
   // Only `options.paths` extraction happens here; builtin bypass and paths
@@ -180,7 +198,10 @@ export function internalRequire(id: string, parent: JSCommonJSModule, requireMap
   $assert(filename.endsWith(".node"));
 
   const module = $createCommonJSModule(id, {}, true, requireMap === $requireMap ? parent : undefined);
-  process.dlopen(module, filename);
+  // Resolving the name has thrown in an executable that refuses native addons.
+  if (CAN_LOAD_CODE_AT_RUN_TIME) {
+    process.dlopen(module, filename);
+  }
   $requireMap.$set(id, module);
   if (requireMap !== $requireMap) requireMap.$set(id, module);
   return module.exports;
@@ -200,7 +221,7 @@ export function loadEsmIntoCjs(resolvedSpecifier: string, requirer?: JSCommonJSM
 // `requirer`: the module whose require() this is. The ES module is loaded by the loader of the
 // Bun.ModuleGraph that module belongs to, or the global object's.
 $visibility = "Private";
-export function requireESM(this, resolved: string, requirer?: JSCommonJSModule) {
+export function requireESM(this: void, resolved: string, requirer?: JSCommonJSModule) {
   // `$esmLoadSync` answers from the registry for a record that is already
   // Evaluated, or still Evaluating because this require() sits inside its own
   // evaluation (a require cycle), before it loads anything.
@@ -244,7 +265,6 @@ $visibility = "Private";
 // `requireMap`: the global require cache, or a Bun.ModuleGraph's together with one of
 // the graph's modules (`owner`, which names the loader whose ES modules it also lists).
 export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSModule) {
-  var moduleMap = new Map();
   var inner = {
     [Symbol.for("nodejs.util.inspect.custom")]() {
       return { ...proxy };
@@ -258,11 +278,26 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
   // $requireMap.
   const isBuiltinKey = (key: string | symbol) =>
     typeof key === "string" && (key.startsWith("node:") || key.startsWith("bun:"));
-  const hasKey = (key: string) => requireMap.$has(key) || (!isBuiltinKey(key) && $esmRegistryHasEvaluated(key, owner));
+  // An executable that `bun build --compile --aot` made never lists its own files, which run once: the cache holds the files that were loaded from outside of the executable, as in a bundled executable.
+  const hidesFiles = $isHiddenFromRequireCache();
+  const isHidden = (key: string | symbol) => hidesFiles && $isHiddenFromRequireCache(key);
+  // A test run that is compiled in place shows its files, as plain does.
+  const listsCompiledFiles = $requireCacheCompiledEntry() === true;
+  const isRequiredCompiledBuiltin = (key: string) =>
+    listsCompiledFiles && $requireCacheCompiledEntry(key, owner, true) === true;
+  const hasKey = (key: string) =>
+    !isHidden(key) &&
+    (requireMap.$has(key) ||
+      (isBuiltinKey(key) ? isRequiredCompiledBuiltin(key) : $esmRegistryHasEvaluated(key, owner)));
   var proxy = new Proxy(inner, {
     get(_target, key: string) {
+      if (isHidden(key)) return undefined;
       const entry = requireMap.$get(key);
       if (entry) return entry;
+      if (listsCompiledFiles) {
+        const compiled = $requireCacheCompiledEntry(key, owner);
+        if (compiled) return compiled;
+      }
 
       if (!isBuiltinKey(key)) {
         const namespace = $esmNamespaceForCjs(key, owner);
@@ -276,6 +311,7 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
       return inner[key];
     },
     set(_target, key: string, value) {
+      $requireCacheWillSet(key, value, owner);
       requireMap.$set(key, value);
       return true;
     },
@@ -285,7 +321,8 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
     },
 
     deleteProperty(_target, key: string) {
-      moduleMap.$delete(key);
+      if (isHidden(key)) return true;
+      $requireCacheDidDelete(key, owner);
       requireMap.$delete(key);
       $esmRegistryDelete(key, owner);
       $evictIsolationSourceProviderCache(key);
@@ -295,11 +332,16 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
     ownKeys(_target) {
       var array = [...requireMap.$keys()];
       for (const key of $esmRegistryEvaluatedKeys(owner)) {
-        if (!isBuiltinKey(key) && !requireMap.$has(key)) {
+        if ((!isBuiltinKey(key) || isRequiredCompiledBuiltin(key)) && !requireMap.$has(key)) {
           $arrayPush(array, key);
         }
       }
-      return array;
+      if (!hidesFiles) return array;
+      var shown: string[] = [];
+      for (var index = 0; index < array.length; index++) {
+        if (!isHidden(array[index])) $arrayPush(shown, array[index]);
+      }
+      return shown;
     },
 
     // In Node, require.cache has a null prototype

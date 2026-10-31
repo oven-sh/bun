@@ -4,12 +4,12 @@ use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
 /// Disallow unsupported ECMAScript built-ins, or Node.js built-in APIs, on the specified version.
-pub struct UnsupportedBuiltins<const OF_NODE: bool = false>(Builtins);
+pub struct UnsupportedBuiltins<const NODE_BUILTINS: bool = false>(Builtins);
 
-impl<const OF_NODE: bool> Rule for UnsupportedBuiltins<OF_NODE> {
+impl<const NODE_BUILTINS: bool> Rule for UnsupportedBuiltins<NODE_BUILTINS> {
     const META: Meta = Meta::plugin(
         Plugin::Node,
-        if OF_NODE { "no-unsupported-features/node-builtins" } else { "no-unsupported-features/es-builtins" },
+        if NODE_BUILTINS { "no-unsupported-features/node-builtins" } else { "no-unsupported-features/es-builtins" },
         Kind::Problem,
     )
     .recommended()
@@ -18,7 +18,7 @@ impl<const OF_NODE: bool> Rule for UnsupportedBuiltins<OF_NODE> {
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
-        UnsupportedBuiltins(match OF_NODE {
+        UnsupportedBuiltins(match NODE_BUILTINS {
             true => Builtins::new(options, data::NODE_GLOBALS, data::NODE_MODULES, data::NODE_IMPORT_META),
             false => Builtins::new(options, data::ES_GLOBALS, Part::EMPTY, Part::EMPTY),
         })

@@ -1,23 +1,23 @@
-// What the compiler's own fixtures expect: the printed errors (`## Error`) and the logged ones (`## Logs`) of the
-// `.expect.md` files, read back into reasons, descriptions and places.
+// Extracts what the compiler's own fixtures expect. Parses the printed errors (`## Error`) and the logged ones
+// (`## Logs`) in the `.expect.md` files back into reasons, descriptions and locations.
 //
 //   bun frames.ts <fixtures> <out.jsonl>
 //
-// One line for each `.expect.md` that has errors (`Expected` below). A code frame of @babel/code-frame says where a place
-// starts (`file:line:column`, the column from 0) and, with its `^`, where it ends:
+// Writes one line for each `.expect.md` that has errors (`Expected` below). A @babel/code-frame code frame has a
+// location's start (`file:line:column`, with 0-based columns), and its `^` marks show the end:
 //
-//   > 4 |   const value = ref.current;          one line: as many `^` as there are UTF-16 units, but one for none
+//   > 4 |   const value = ref.current;          one line: one `^` per UTF-16 unit, but also one for an empty span
 //       |                 ^^^^^^^^^^^ message
 //
-//   >  7 |   const object = useMemo(() => {     more lines: the `^` of the last line are one more than its end column
+//   >  7 |   const object = useMemo(() => {     several lines: the last line has one more `^` than its end column
 //        |                          ^^^^^^^
 //   >  8 |     return identity({
-//        …                                     eleven lines or more: the middle is left out
+//        …                                     eleven lines or more: the middle is omitted
 //   > 18 |   }, [x.a.b?.c.d?.e]);
 //        | ^^^^ message
 //
-// The fixtures are compiled with the pragmas of their first line and with every function compiled, which a linter does not
-// do: so this says where a diagnostic is and what it says, not whether a linter has it.
+// The fixtures are compiled with the pragmas on their first line, and every function is compiled. A linter does
+// neither, so this tells you a diagnostic's location and text, not whether a linter reports it.
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -25,16 +25,16 @@ import { JsonlWriter, options, table } from "./shared.ts";
 
 export type Place = {
   kind: "error";
-  /** Lines from 1, columns from 0 in UTF-16 units, the end is exclusive: as in Babel's `loc`. */
+  /** 1-based lines, 0-based columns in UTF-16 units, exclusive end, as in Babel's `loc`. */
   line: number;
   column: number;
   endLine: number;
   endColumn: number;
-  /** Offsets in bytes of UTF-8 in the input. */
+  /** UTF-8 byte offsets into the input. */
   start: number;
   end: number;
   message: string | null;
-  /** One `^` on one line: the place may be empty. */
+  /** Set for a single `^` on one line, because the span may be empty. */
   maybeEmpty?: true;
   abbreviated?: true;
 };
@@ -42,18 +42,18 @@ export type Hint = { kind: "hint"; message: string };
 export type ExpectedError = {
   /** `Error`, `Todo`, `Invariant`, `Compilation Skipped`. */
   heading: string | null;
-  /** Only a logged error says it. */
+  /** Only logged errors have one. */
   category: string | null;
   reason: string;
-  /** Without the full stop that the printer appends. */
+  /** Without the period that the printer appends. */
   description: string | null;
   details: (Place | Hint)[];
 };
 export type Expected = {
   path: string;
-  /** The first line of the input if it is a comment with `@`. */
+  /** The input's first line, if it's a comment with an `@`. */
   pragma: string | null;
-  /** `Found N errors`. Null: the section is not the compiler's list of errors; `other` is its text. */
+  /** The N in `Found N errors`. Null if the section isn't the compiler's error list. `other` then has its text. */
   found: number | null;
   other?: string;
   errors: ExpectedError[];
@@ -75,18 +75,18 @@ export class Source {
     for (const match of text.matchAll(/\r\n|[\n\r\u2028\u2029]/g)) this.#starts.push(match.index + match[0].length);
     this.lines = text.split(/\r\n|[\n\r\u2028\u2029]/);
   }
-  /** The index in UTF-16 units of an offset in bytes. */
+  /** Converts a byte offset to a UTF-16 index. */
   index(offset: number): number {
     return Buffer.from(this.#text).subarray(0, offset).toString().length;
   }
-  /** The line from 1 and the column from 0 in UTF-16 units of an offset in bytes. */
+  /** Converts a byte offset to a 1-based line and a 0-based column in UTF-16 units. */
   position(offset: number): { line: number; column: number } {
     const index = this.index(offset);
     let line = this.#starts.length;
     while (line > 1 && this.#starts[line - 1] > index) line--;
     return { line, column: index - this.#starts[line - 1] };
   }
-  /** The offset in bytes of a line from 1 and a column from 0 in UTF-16 units. */
+  /** Converts a 1-based line and a 0-based column in UTF-16 units to a byte offset. */
   offset(line: number, column: number): number {
     const start = this.#starts[line - 1];
     if (start === undefined) return -1;
@@ -152,7 +152,7 @@ function frame(
   return place;
 }
 
-/** Paragraphs: what blank lines separate. */
+/** Splits `text` into paragraphs at blank lines. */
 function paragraphs(text: string): string[][] {
   const found: string[][] = [];
   let current: string[] = [];
@@ -169,8 +169,8 @@ function paragraphs(text: string): string[][] {
 }
 
 /**
- * The errors that `text` prints, one after the other. `firstColumn`: what `file:line:column` counts columns from, which is 1 in
- * the messages of the ESLint plugin.
+ * Parses the errors printed in `text`. `firstColumn` is the number of the first column in `file:line:column`, which is
+ * 1 in the ESLint plugin's messages.
  */
 export function printed(path: string, source: Source, text: string, firstColumn: 0 | 1 = 0): ExpectedError[] {
   const errors: ExpectedError[] = [];
@@ -265,7 +265,7 @@ function logged(path: string, source: Source, text: string): ExpectedError[] {
   return errors;
 }
 
-/** The text in the fence that follows `## <title>`. The last section goes on to the last fence of the file. */
+/** Returns the text in the code fence after `## <title>`. The last section extends to the file's last fence. */
 function section(markdown: string, title: string): string | null {
   const at = markdown.indexOf(`\n## ${title}\n`);
   if (at < 0) return null;

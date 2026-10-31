@@ -4,8 +4,7 @@ use super::is_type_flag_set;
 use crate::types::tsutils::union_constituents;
 use crate::types::{ObjectFlags, Type, TypeFlags};
 
-/// `isNullableType(type)`: it is, or as a union has, `any`, `unknown`, `null`, `undefined` or
-/// `void`.
+/// `isNullableType(type)`: true if it is, or as a union contains, `any`, `unknown`, `null`, `undefined` or `void`.
 pub fn is_nullable_type(ty: Type) -> bool {
     is_type_flag_set(
         ty,
@@ -17,8 +16,7 @@ pub fn is_nullable_type(ty: Type) -> bool {
     )
 }
 
-/// `isTypeArrayTypeOrUnionOfArrayTypes(type, checker)`: an array type, or a union of nothing but
-/// array types.
+/// `isTypeArrayTypeOrUnionOfArrayTypes(type, checker)`: an array type, or a union of only array types.
 pub fn is_type_array_type_or_union_of_array_types(ty: Type) -> bool {
     union_constituents(ty).iter().all(|t| t.is_array_type())
 }
@@ -29,15 +27,13 @@ pub fn is_type_unknown_type(ty: Type) -> bool {
     is_type_flag_set(ty, TypeFlags::UNKNOWN)
 }
 
-/// `isTypeReferenceType(type)`: a reference to a generic class or interface, an array or a tuple
-/// type.
+/// `isTypeReferenceType(type)`: a reference to a generic class or interface, an array or a tuple type.
 pub fn is_type_reference_type(ty: Type) -> bool {
     ty.flags().intersects(TypeFlags::OBJECT_FLAGS_TYPE)
         && ty.object_flags().intersects(ObjectFlags::REFERENCE)
 }
 
-/// `isTypeAnyType(type)`: `any`, which the error type is too. A type that the checker gave up on
-/// is not.
+/// `isTypeAnyType(type)`: `any`, which includes the error type but not a type the checker gave up on.
 pub fn is_type_any_type(ty: Type) -> bool {
     is_type_flag_set(ty, TypeFlags::ANY) && !ty.is_unresolved()
 }
@@ -60,8 +56,8 @@ pub fn is_type_unknown_array_type(ty: Type) -> bool {
             .is_some_and(is_type_unknown_type)
 }
 
-/// `typeIsOrHasBaseType(type, parentType)`: whether the type, or one of the types that it directly
-/// extends, has the name of `parent_type`.
+/// `typeIsOrHasBaseType(type, parentType)`: true if the type, or one of the types it directly extends, has the same
+/// name as `parent_type`.
 pub fn type_is_or_has_base_type<'a>(ty: Type<'a>, parent_type: Type<'a>) -> bool {
     let (Some(symbol), Some(parent_symbol)) = (ty.get_symbol(), parent_type.get_symbol()) else {
         return false;

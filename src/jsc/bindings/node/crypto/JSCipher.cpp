@@ -71,6 +71,7 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
     VM& vm = lexicalGlobalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
     JSValue optionsValue = callFrame->argument(0);
     JSValue bufferValue = callFrame->argument(1);
@@ -115,7 +116,8 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
             // detach a borrowed label buffer, so copy the bytes instead of holding a view.
             auto view = getArrayBufferOrView2(lexicalGlobalObject, scope, oaepLabelValue, "options.oaepLabel"_s, encodingValue);
             RETURN_IF_EXCEPTION(scope, {});
-            oaepLabel = WTF::Vector<uint8_t>(std::span<const uint8_t> { view->data(), view->size() });
+            oaepLabel = copyArgumentBytes(lexicalGlobalObject, scope, std::span { view->data(), view->size() }, "oaepLabel"_s);
+            if (!oaepLabel) return {};
         }
     }
 

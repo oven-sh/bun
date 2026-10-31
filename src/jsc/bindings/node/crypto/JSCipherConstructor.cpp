@@ -156,7 +156,7 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
         ivLen = ivView->byteLength();
     }
 
-    MarkPopErrorOnReturn popError;
+    ClearErrorOnReturn clearErrorOnReturn;
 
     Cipher cipher = Cipher::FromName(cipherString);
     if (!cipher) {

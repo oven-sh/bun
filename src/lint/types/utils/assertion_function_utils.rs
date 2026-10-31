@@ -3,11 +3,11 @@
 use crate::ast::{Expr, ExprKind};
 use crate::types::{Type, TypePredicate, TypePredicateKind};
 
-/// The argument of the call `node` that the type predicate of the called function is about, with
-/// that predicate. Nothing is known about what follows a spread argument.
+/// Returns the argument of the call `node` that the callee's type predicate refers to, along with the predicate.
+/// Arguments after a spread are ignored, since their positions are unknown.
 ///
-/// `wraps_around`: a predicate about a name that is no parameter has the index -1 upstream, which
-/// `checkableArguments.at(-1)` takes for the last argument and `checkableArguments[-1]` for none.
+/// `wraps_around`: upstream gives a predicate about a name that isn't a parameter the index -1.
+/// `checkableArguments.at(-1)` turns that into the last argument, `checkableArguments[-1]` into none.
 fn find_asserted_argument(
     node: Expr<'_>,
     wraps_around: bool,
@@ -22,13 +22,13 @@ fn find_asserted_argument(
         return None;
     }
     let type_predicate = node.resolved_signature()?.get_type_predicate()?;
-    let is_about_a_name = matches!(
+    let is_identifier_predicate = matches!(
         type_predicate.kind(),
         TypePredicateKind::Identifier | TypePredicateKind::AssertsIdentifier
     );
     let parameter_index = match type_predicate.parameter_index() {
         Some(parameter_index) => parameter_index,
-        None if wraps_around && is_about_a_name => checkable_arguments - 1,
+        None if wraps_around && is_identifier_predicate => checkable_arguments - 1,
         None => return None,
     };
     let argument = arguments
@@ -37,8 +37,8 @@ fn find_asserted_argument(
     Some((argument, type_predicate))
 }
 
-/// `findTruthinessAssertedArgument(services, node)`: if the call `node` calls a function that
-/// `asserts x`, the argument that is `x`.
+/// `findTruthinessAssertedArgument(services, node)`: if the call `node` calls a function that `asserts x`, returns the
+/// argument passed as `x`.
 pub fn find_truthiness_asserted_argument(node: Expr<'_>) -> Option<Expr<'_>> {
     let (argument, type_predicate) = find_asserted_argument(node, true)?;
     let asserts_truthiness = type_predicate.kind() == TypePredicateKind::AssertsIdentifier
@@ -46,7 +46,7 @@ pub fn find_truthiness_asserted_argument(node: Expr<'_>) -> Option<Expr<'_>> {
     asserts_truthiness.then_some(argument)
 }
 
-/// What [`find_type_guard_asserted_argument`] returns.
+/// The result of [`find_type_guard_asserted_argument`].
 #[derive(Copy, Clone, Debug)]
 pub struct TypeGuardAssertedArgument<'a> {
     pub argument: Expr<'a>,
@@ -56,8 +56,8 @@ pub struct TypeGuardAssertedArgument<'a> {
     pub ty: Type<'a>,
 }
 
-/// `findTypeGuardAssertedArgument(services, node)`: if the call `node` calls a function whose
-/// return type is `x is T` or `asserts x is T`, the argument that is `x`.
+/// `findTypeGuardAssertedArgument(services, node)`: if the call `node` calls a function whose return type is `x is T`
+/// or `asserts x is T`, returns the argument passed as `x`.
 pub fn find_type_guard_asserted_argument(node: Expr<'_>) -> Option<TypeGuardAssertedArgument<'_>> {
     let (argument, type_predicate) = find_asserted_argument(node, false)?;
     let asserts = match type_predicate.kind() {

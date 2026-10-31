@@ -43,7 +43,7 @@ pub(crate) fn strip_html_comments(value: &[u8]) -> Cow<'_, [u8]> {
     for (start, end) in html_comments(value) {
         stripped.reserve(value.len());
         stripped.extend_from_slice(&value[from..start]);
-        push_blanks(&value[start..end], true, &mut stripped);
+        push_as_spaces(&value[start..end], true, &mut stripped);
         from = end;
     }
     if from == 0 {
@@ -100,7 +100,7 @@ fn tag_name_len(text: &[u8]) -> usize {
 /// they scan the rest of the input from every `<`.
 pub(crate) fn tags(html: &[u8], pattern: TagPattern) -> impl Iterator<Item = Tag> {
     // Opening quotes from which the scan is already known to find no closing `>`.
-    let mut hopeless: FxHashSet<usize> = FxHashSet::default();
+    let mut dead_end_quotes: FxHashSet<usize> = FxHashSet::default();
     // For `'` and for `"`, the offset after which that quote doesn't appear again.
     let mut no_quote_from = [html.len(); 2];
     // A range that's known to have no `>` and no quote in it.
@@ -120,7 +120,7 @@ pub(crate) fn tags(html: &[u8], pattern: TagPattern) -> impl Iterator<Item = Tag
             let at = plain.1;
             let quote = match html.get(at) {
                 Some(b'>') => break Some(at),
-                Some(&quote) if !hopeless.contains(&at) => quote,
+                Some(&quote) if !dead_end_quotes.contains(&at) => quote,
                 _ => break None,
             };
             seen.push(at);
@@ -138,7 +138,7 @@ pub(crate) fn tags(html: &[u8], pattern: TagPattern) -> impl Iterator<Item = Tag
             }
         };
         if found.is_none() {
-            hopeless.extend(&seen);
+            dead_end_quotes.extend(&seen);
         }
         found
     };
@@ -248,7 +248,7 @@ pub(crate) fn html_headings(html: &[u8], depths: (u8, u8)) -> impl Iterator<Item
 }
 
 /// Appends one space for each UTF-16 code unit of `text`.
-pub(crate) fn push_blanks(text: &[u8], keeps_line_breaks: bool, out: &mut Vec<u8>) {
+pub(crate) fn push_as_spaces(text: &[u8], keeps_line_breaks: bool, out: &mut Vec<u8>) {
     for (_, c) in strings::wtf8_codepoints(text) {
         match c {
             0x0A | 0x0D if keeps_line_breaks => out.push(c as u8),

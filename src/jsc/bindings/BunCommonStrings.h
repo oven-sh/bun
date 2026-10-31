@@ -116,8 +116,6 @@
     macro(lax, "lax") \
     macro(mockResultIncomplete, "incomplete") \
     macro(none, "none") \
-    macro(protocolHttp, "http") \
-    macro(protocolHttps, "https") \
     macro(quicDatagramAbandoned, "abandoned") \
     macro(quicDatagramAcknowledged, "acknowledged") \
     macro(quicDatagramLost, "lost") \

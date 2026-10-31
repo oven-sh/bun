@@ -1,24 +1,25 @@
-//! A text as JavaScriptCore reads it: Latin-1 or UTF-16.
+//! Text in the form that JavaScriptCore reads: Latin-1 or UTF-16.
 
 use super::wtf8;
 use bun_core::strings;
 use bun_yarr::{NO_MATCH, Text};
 use smallvec::SmallVec;
 
-/// UTF-8 or WTF-8, and its UTF-16 form unless it is ASCII, which is Latin-1 as it is. Made once for all searches in a text.
+/// UTF-8 or WTF-8 text, plus its UTF-16 form unless it's ASCII, which is already Latin-1. Built
+/// once for all searches in a text.
 pub(super) struct Subject<'t> {
     bytes: &'t [u8],
     is_ascii: bool,
     units: SmallVec<[u16; 128]>,
-    /// Where each of `units` starts in `bytes`, and the length of `bytes`. Empty if nobody is going to ask.
+    /// The start of each of `units` in `bytes`, then the length of `bytes`. Empty if `with_offsets` was false.
     offsets: SmallVec<[u32; 128]>,
 }
 
 impl<'t> Subject<'t> {
-    /// What a string of JavaScriptCore can have.
+    /// The maximum length of a JavaScriptCore string.
     const MAX_LEN: usize = i32::MAX as usize;
 
-    /// `with_offsets`: for [`Subject::index_of`] and [`Subject::to_offsets`].
+    /// `with_offsets` is needed for [`Subject::index_of`] and [`Subject::to_offsets`].
     #[inline]
     pub(super) fn new(bytes: &'t [u8], with_offsets: bool) -> Self {
         let mut subject = Subject {
@@ -35,7 +36,7 @@ impl<'t> Subject<'t> {
         subject
     }
 
-    /// `first`: where the first byte is that is not ASCII.
+    /// `first` is the offset of the first non-ASCII byte.
     #[cold]
     fn transcode(&mut self, first: usize, with_offsets: bool) {
         let bytes = self.bytes;
@@ -88,7 +89,8 @@ impl<'t> Subject<'t> {
         }
     }
 
-    /// Where the code point starts that the byte offset `offset` is in the middle of. `offset` itself if it is not.
+    /// If the byte offset `offset` is in the middle of a code point, returns that code point's
+    /// start. Otherwise returns `offset`.
     #[inline]
     pub(super) fn code_point_start(&self, offset: usize) -> usize {
         if self.is_ascii {
@@ -97,7 +99,7 @@ impl<'t> Subject<'t> {
         wtf8::code_point_start(self.bytes, offset)
     }
 
-    /// The index in [`Subject::text`] of what starts at the byte offset `offset`, or after it.
+    /// The index in [`Subject::text`] of the unit that starts at or after the byte offset `offset`.
     #[inline]
     pub(super) fn index_of(&self, offset: usize) -> u32 {
         if self.is_ascii {
@@ -107,7 +109,7 @@ impl<'t> Subject<'t> {
             .partition_point(|start| (*start as usize) < offset) as u32
     }
 
-    /// Whether the index `index` in [`Subject::text`] is between the halves of a surrogate pair.
+    /// True if `index` in [`Subject::text`] is between the halves of a surrogate pair.
     #[inline]
     pub(super) fn splits_pair(&self, index: u32) -> bool {
         let Some(before) = (index as usize).checked_sub(1).filter(|_| !self.is_ascii) else {
@@ -119,7 +121,7 @@ impl<'t> Subject<'t> {
         )
     }
 
-    /// Makes byte offsets of indices in [`Subject::text`].
+    /// Converts indices in [`Subject::text`] to byte offsets.
     #[inline]
     pub(super) fn to_offsets(&self, indices: &mut [u32]) {
         if self.is_ascii {

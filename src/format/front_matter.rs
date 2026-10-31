@@ -1,18 +1,17 @@
-//! Front matter, which style sheets, Markdown and HTML can start with: Prettier's
-//! `src/main/front-matter/parse.js`.
+//! Front matter at the start of style sheets, Markdown and HTML: Prettier's `src/main/front-matter/parse.js`.
 
-/// `---`, a language, lines, `---`, with ranges in the text that it is at the start of.
+/// `---`, a language, lines, `---`. The ranges are offsets into the text that starts with it.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct FrontMatter {
-    /// Where it ends: behind the closing delimiter.
+    /// The offset just after the closing delimiter.
     pub(crate) end: usize,
-    /// What is behind the opening delimiter, without the white space around it.
+    /// The text after the opening delimiter, with surrounding whitespace trimmed.
     pub(crate) explicit_language: (usize, usize),
     pub(crate) value: (usize, usize),
 }
 
-/// Whether a line of `raw`, which is front matter, has `---` behind white space. Formatted, that can be at the start of the
-/// line, where it ends the front matter. Prettier formats it. Here it stays as it is.
+/// True if a line of the front matter `raw` has `---` after whitespace. Formatting could move that `---` to the start
+/// of the line, where it would end the front matter. Prettier formats it anyway. Here it's kept verbatim.
 pub(crate) fn has_indented_delimiter(raw: &[u8]) -> bool {
     use bun_core::strings;
     strings::contains(raw, b" ---")
@@ -25,11 +24,11 @@ pub(crate) fn has_indented_delimiter(raw: &[u8]) -> bool {
 /// block scalar, and so part of a value. Prettier trims them.
 pub(crate) fn trim_end_to_last_line(text: &[u8]) -> &[u8] {
     let end = bun_core::strings::trim_js_whitespace_end(text).len();
-    let blanks = text[end..]
+    let spaces_and_tabs = text[end..]
         .iter()
         .take_while(|byte| matches!(byte, b' ' | b'\t'))
         .count();
-    &text[..end + blanks]
+    &text[..end + spaces_and_tabs]
 }
 
 /// A delimiter is exactly three characters: `----` is a thematic break in Markdown. Prettier and oxfmt treat its first

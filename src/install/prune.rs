@@ -274,27 +274,19 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
     let quiet = manager.options.log_level == LogLevel::Silent;
     let dry_run = manager.options.dry_run;
 
-    let configured_linker = manager.options.node_linker;
-    let loaded = {
-        let load = manager.load_lockfile_from_cwd::<false>();
-        match &load {
-            LoadResult::NotFound => Err(None),
-            LoadResult::Err(cause) => Err(Some(cause.value.name())),
-            LoadResult::Ok(_) => Ok(load.node_linker(configured_linker)),
-        }
-    };
-    let linker = match loaded {
-        Ok(linker) => linker,
-        Err(None) => {
+    let load = manager.load_lockfile_from_cwd::<false>();
+    let linker = match &load {
+        LoadResult::Ok(_) => load.node_linker(&manager.lockfile, manager.options.node_linker),
+        LoadResult::NotFound => {
             if !quiet {
                 Output::err_generic("missing lockfile, nothing to prune", ());
                 bun_core::note!("run 'bun install' first");
             }
             Global::exit(1);
         }
-        Err(Some(name)) => {
+        LoadResult::Err(cause) => {
             if !quiet {
-                Output::err_generic("failed to load lockfile: {s}", (name,));
+                Output::err_generic("failed to load lockfile: {s}", (cause.value.name(),));
                 print_log_errors(manager.log_mut());
             }
             Global::exit(1);
@@ -818,9 +810,11 @@ fn with_install_features<T>(
 }
 
 /// The tree the lockfile saves (`Lockfile::resolve`), held while `manager.lockfile` carries the install tree.
+/// Hoisting can change what a peer resolves to, so what the dependencies resolve to is held too.
 struct SavedTree {
     trees: tree::List,
     hoisted_dependencies: Vec<DependencyID>,
+    resolutions: Vec<PackageID>,
 }
 
 /// Replaces the tree in `manager.lockfile` with the one that an install of every workspace uses
@@ -842,6 +836,7 @@ fn hoist_tree(
     let saved = SavedTree {
         trees: core::mem::take(&mut manager.lockfile.buffers.trees),
         hoisted_dependencies: core::mem::take(&mut manager.lockfile.buffers.hoisted_dependencies),
+        resolutions: manager.lockfile.buffers.resolutions.clone(),
     };
     let pm: *mut PackageManager = manager;
     // SAFETY: same split as `PackageManager::load_lockfile_from_cwd` — `lockfile` is its own `Box`
@@ -871,6 +866,7 @@ fn hoist_tree(
 fn restore_tree(lockfile: &mut Lockfile, saved: SavedTree) {
     lockfile.buffers.trees = saved.trees;
     lockfile.buffers.hoisted_dependencies = saved.hoisted_dependencies;
+    lockfile.buffers.resolutions = saved.resolutions;
 }
 
 /// Runs `f` while `manager.lockfile` holds the install tree with every row (see
@@ -1744,8 +1740,6 @@ pub(crate) fn remove_copies_of_the_older_layout(
         return;
     };
     places.sort_unstable_by_key(|&(key, _)| key);
-    // Hoisting can change what a peer resolves to, so the resolutions are restored afterwards.
-    let resolutions = manager.lockfile.buffers.resolutions.clone();
     if let Ok(saved) = hoist_tree(
         manager,
         false,
@@ -1756,7 +1750,6 @@ pub(crate) fn remove_copies_of_the_older_layout(
         remove_from_older_places(manager, &places, cache);
         restore_tree(&mut manager.lockfile, saved);
     }
-    manager.lockfile.buffers.resolutions = resolutions;
 }
 
 /// Returns true if `node_modules/<alias>` may have shipped inside the package's own tarball, so it
@@ -1904,7 +1897,7 @@ fn links_package(
         ResolutionTag::Workspace => res.workspace().slice(buf).into(),
         ResolutionTag::Symlink => match res.symlink().slice(buf) {
             path if crate::dependency::is_link_path(path) => path.into(),
-            name => join(&manager.global_link_dir_path, name),
+            name => join(manager.global_link_dir_path, name),
         },
         _ => {
             let Some(found) = store_link_target(entry.dir, entry.name) else {

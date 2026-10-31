@@ -1,4 +1,4 @@
-//! GraphQL in the templates of JavaScript: Prettier's `language-js/embed/graphql.js`.
+//! GraphQL in JavaScript templates: Prettier's `language-js/embed/graphql.js`.
 
 use super::comments::{self, Attached};
 use super::parser::{self, Tree};
@@ -12,19 +12,20 @@ fn is_identifier(e: Expr<'_>, names: &[&[u8]]) -> bool {
     matches!(e.kind(), ExprKind::Ident(_)) && names.contains(&e.text())
 }
 
-/// The nodes whose leading comments can name the language of the template `e`: the template itself, and an expression
-/// statement or an `as const` directly around it.
+/// Returns the nodes whose leading comments can specify the language of the template `e`: the template itself, and an
+/// expression statement or an `as const` directly around it.
 fn nodes_with_language_comment<'a>(e: Expr<'a>, parent: AstNodes<'a>) -> [Option<AstNodes<'a>>; 2] {
-    let parent_counts = match parent {
+    let includes_parent = match parent {
         AstNodes::ExpressionStatement(_) => true,
         AstNodes::TSAsExpression(cast) => matches!(cast.kind(), ExprKind::AsConst(_)),
         _ => false,
     };
-    [Some(e.as_ast_nodes()), parent_counts.then_some(parent)]
+    [Some(e.as_ast_nodes()), includes_parent.then_some(parent)]
 }
 
-/// Whether a comment could name the language of the template `e`. A quick check before the embedded languages are tried.
-pub(crate) fn is_behind_comment<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+/// True if a comment could specify the language of the template `e`. A cheap check before trying each embedded
+/// language.
+pub(crate) fn may_have_language_comment<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     (nodes_with_language_comment(e, e.ast_parent())
         .into_iter()
         .flatten())
@@ -44,7 +45,7 @@ pub(crate) fn has_language_comment<'a>(
     })
 }
 
-/// Prettier's `isEmbedGraphQL`. `e`: a template.
+/// Prettier's `isEmbedGraphQL`. `e` is a template.
 pub(crate) fn is_embed_graphql<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let parent = e.ast_parent();
     let is_marked = match parent {
@@ -93,17 +94,17 @@ fn lines(text: &[u8]) -> impl DoubleEndedIterator<Item = &[u8]> + Clone {
         .into_iter()
 }
 
-/// `None`: Prettier leaves the template as it is.
+/// Returns `None` if Prettier leaves the template as it is.
 fn parse_part<'a>(template: Template<'a>, index: usize) -> Option<Part<'a>> {
     let raw = template.raw(index);
-    let is_as_written = bun_core::strings::index_of_any(raw, b"\\\r").is_none();
-    let text = if is_as_written {
+    let raw_equals_cooked = bun_core::strings::index_of_any(raw, b"\\\r").is_none();
+    let text = if raw_equals_cooked {
         raw
     } else {
         template.cooked(index)?.bytes()
     };
-    // Half of a surrogate pair, which an escape can stand for, is no character of GraphQL.
-    if !is_as_written && std::str::from_utf8(text).is_err() {
+    // An escape can produce a lone surrogate, which isn't a valid GraphQL character.
+    if !raw_equals_cooked && std::str::from_utf8(text).is_err() {
         return None;
     }
     let is_last = index + 1 == template.quasi_count();
@@ -166,8 +167,8 @@ fn parse<'a>(template: Template<'a>) -> Option<SmallVec<[Part<'a>; 2]>> {
         .collect()
 }
 
-/// Whether `e` is a template, with or without a tag, that is written as GraphQL and is more than ` `` `:
-/// for Prettier, its document has the label `embed`.
+/// True if `e` is a template, tagged or not, that's formatted as GraphQL and isn't just ` `` `. In Prettier, its
+/// document then has the label `embed`.
 pub(crate) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let quasi = match e.kind() {
         ExprKind::TaggedTemplate(call) => call.template(),
@@ -178,11 +179,11 @@ pub(crate) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         return false;
     };
     is_candidate(quasi, template, f)
-        && (crate::css::embed::tag_alone_decides_what_is_around_a_template(f)
+        && (crate::css::embed::tag_alone_decides_template_layout(f)
             || (!is_blank_template(template) && parse(template).is_some()))
 }
 
-/// The line breaks between what Prettier's `printEmbedGraphQL` joins.
+/// The line breaks between the parts that Prettier's `printEmbedGraphQL` joins.
 #[derive(Default)]
 struct Separator {
     is_needed: bool,
@@ -206,7 +207,7 @@ impl Separator {
     }
 }
 
-/// Writes the template `e` as GraphQL, if that is what Prettier takes it for. Returns whether it has.
+/// Writes the template `e` as GraphQL if Prettier treats it as GraphQL. Returns true if it did.
 pub(crate) fn write_template<'a>(
     e: Expr<'a>,
     template: Template<'a>,

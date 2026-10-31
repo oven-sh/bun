@@ -2,7 +2,7 @@ import { RedisClient, SQL } from "bun";
 import { timerInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { setSystemTime } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, tempDir } from "harness";
 import { spawnSync as childProcessSpawnSync } from "node:child_process";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
@@ -194,6 +194,46 @@ describe("getTimerCount", () => {
   });
   test("throws error if fake timers not active", () => {
     expect(() => vi.getTimerCount()).toThrow("Fake timers are not active");
+  });
+
+  // Only Linux applies `ulimit -s` to the main thread's stack.
+  test.skipIf(!isLinux)("walks a deep timer heap without overflowing the stack", async () => {
+    // Debug builds need 0.1 ms to create a timer, and their bigger frames overflow sooner.
+    const N = isDebug ? 5_000 : 10_000;
+    const script = `
+      import { jest } from "bun:test";
+      jest.useFakeTimers();
+      // Decreasing deadlines link the timers into a single chain of child nodes.
+      // Bun.sleep() timers fire without calling into JS.
+      const sleeps = [];
+      for (let i = 0; i < ${N}; i++) sleeps.push(Bun.sleep(${N} - i));
+      let pending, left;
+      // At the deepest JS frame, native code has about 128 KB of stack to work with.
+      (function dive() {
+        try {
+          dive();
+        } catch {
+          pending ??= jest.getTimerCount();
+          left ??= jest.runOnlyPendingTimers().getTimerCount();
+        }
+      })();
+      jest.useRealTimers();
+      await Promise.all(sleeps);
+      console.log("pending", pending, "left", left);
+    `;
+    await using proc = Bun.spawn({
+      // JavaScriptCore caps JS frames at 5 MB of stack. With a smaller stack,
+      // the recursion above reaches the real end of the stack.
+      cmd: ["sh", "-c", 'ulimit -s 4096 && exec "$0" -e "$1"', bunExe(), script],
+      // The environment also lives on that stack, and JavaScriptCore doesn't account for it.
+      env: Object.fromEntries(Object.entries(bunEnv).filter(([name]) => /^BUN_|SAN_OPTIONS$/.test(name))),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(`pending ${N} left 0\n`);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });
 describe("clearAllTimers", () => {
@@ -738,6 +778,100 @@ describe("Date.now() mocking", () => {
     expect(capturedTime).toBe(start + 500);
     expect(Date.now()).toBe(start + 500);
   });
+});
+
+describe("timer controls called from inside a timer callback", () => {
+  const T0 = 1_000_000;
+
+  test("runOnlyPendingTimers() in a setInterval callback doesn't move the clock backwards", () => {
+    vi.useFakeTimers({ now: T0 });
+    const seen: [string, number, number][] = [];
+    let n = 0;
+    const interval = setInterval(() => {
+      n++;
+      seen.push(["interval " + n, Date.now() - T0, performance.now()]);
+      vi.runOnlyPendingTimers();
+    }, 1);
+    setTimeout(() => seen.push(["timeout", Date.now() - T0, performance.now()]), 10);
+    vi.advanceTimersByTime(10);
+    // Tick 1 fires the 10 ms timeout. Tick 2 was due at 2, so it fires late at 10.
+    expect(seen).toEqual([
+      ["interval 1", 1, 1],
+      ["timeout", 10, 10],
+      ["interval 2", 10, 10],
+    ]);
+    expect(Date.now() - T0).toBe(10);
+    clearInterval(interval);
+    vi.useRealTimers();
+  });
+
+  test("a nested advanceTimersByTime() in a setTimeout callback doesn't move the clock backwards", () => {
+    vi.useFakeTimers({ now: T0 });
+    setTimeout(() => vi.advanceTimersByTime(100), 5);
+    vi.advanceTimersByTime(10);
+    expect(Date.now() - T0).toBe(105);
+    expect(performance.now()).toBe(105);
+    vi.useRealTimers();
+  });
+});
+
+test("useRealTimers() called from a timer callback isn't undone when the advance completes", () => {
+  const realBefore = performance.now();
+  vi.useFakeTimers({ now: 0 });
+  setTimeout(() => vi.useRealTimers(), 10);
+  vi.advanceTimersByTime(100);
+  expect(vi.isFakeTimers()).toBe(false);
+  expect(Date.now()).toBeGreaterThan(1e12);
+  expect(performance.now()).toBeGreaterThanOrEqual(realBefore);
+});
+
+test("workers with fake timers don't share a clock", async () => {
+  // Each worker sets its own system time, runs its pending timers and then checks Date.now().
+  const workerSrc = /* js */ `
+    const { jest } = Bun.jest(__filename);
+    const { parentPort, workerData } = require("worker_threads");
+    const { now, target } = workerData;
+    const mismatches = [];
+    for (let r = 0; r < 400; r++) {
+      jest.useFakeTimers({ now });
+      let n = 0;
+      setTimeout(() => n++, 1000);
+      const iv = setInterval(() => { if (n++ > 3) clearInterval(iv); }, 100);
+      jest.setSystemTime(target);
+      jest.runOnlyPendingTimers();
+      const after = Date.now();
+      if (after !== target + 1000) mismatches.push({ round: r, after, expected: target + 1000 });
+      jest.useRealTimers();
+    }
+    parentPort.postMessage(mismatches);
+  `;
+  const mainSrc = /* js */ `
+    const { Worker } = require("worker_threads");
+    const results = {};
+    const configs = [{ now: 0, target: 1e12 }, { now: 2 ** 40, target: 0 }];
+    let done = 0;
+    for (const workerData of configs) {
+      const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true, workerData });
+      w.on("error", err => { console.error(err); process.exit(1); });
+      w.on("message", mismatches => {
+        results[workerData.now] = mismatches;
+        if (++done === configs.length) {
+          console.log(JSON.stringify(results));
+          process.exit(0);
+        }
+      });
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", mainSrc],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ "0": [], [2 ** 40]: [] });
+  expect(exitCode).toBe(0);
 });
 
 describe("performance.now() mocking", () => {

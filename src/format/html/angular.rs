@@ -1,8 +1,8 @@
-//! The expressions of Angular: Prettier's `language-html/embed/angular-*.js`, its parsers `__ng_*`, and what
-//! `language-js/print/angular.js` prints for the nodes that are no expressions of JavaScript.
+//! Angular expressions: Prettier's `language-html/embed/angular-*.js`, its `__ng_*` parsers, and what
+//! `language-js/print/angular.js` prints for the nodes that aren't JavaScript expressions.
 //!
-//! An expression is checked by a parser that accepts what Angular accepts, which makes TypeScript of it: `parser`. That is
-//! parsed and written by the formatter for JavaScript, which knows from `InHtml::root` that `a | b(c)` is a pipe.
+//! An expression is first checked by `parser`, which accepts what Angular accepts and translates it to TypeScript. The
+//! JavaScript formatter then parses and writes that. It knows from `InHtml::root` that `a | b(c)` is a pipe.
 
 mod lexer;
 mod microsyntax;
@@ -24,14 +24,14 @@ use parser::{Code, Expression, Parser};
 /// The `//` comment at the end of an expression.
 #[derive(Copy, Clone)]
 struct LineComment<'c> {
-    /// From the `//`, without white space at the end.
+    /// Starts at the `//`. Trailing whitespace is trimmed.
     text: &'c [u8],
-    /// How many line breaks are before it, of which the second ends an empty line.
+    /// The number of line breaks before it, up to 2. Two means there's an empty line before it.
     lines_before: u8,
 }
 
 impl<'c> LineComment<'c> {
-    /// `start`: where it starts in `code`.
+    /// `start` is its offset in `code`.
     fn new(code: &'c [u8], start: usize) -> Self {
         // `hasNewline(text, start, { backwards: true })`, `isPreviousLineEmpty(text, start)`
         let mut before = &code[..start];
@@ -87,7 +87,7 @@ fn is_plain_microsyntax_key(name: &[u8]) -> bool {
             .all(|group| matches!(*group, [b'-', start, part] if is_start(start) && is_part(part)))
 }
 
-/// The `key.name` of a node in the body of an `NGMicrosyntax`. `None`: it has no `key`.
+/// Returns the `key.name` of a node in the body of an `NGMicrosyntax`, or `None` if it has no `key`.
 fn key_name(part: &Part) -> Option<&[u8]> {
     match part {
         Part::Key(_) | Part::Expression { .. } => None,
@@ -102,7 +102,7 @@ fn is_ng_for_of(part: &Part, index: usize) -> bool {
     index == 1 && matches!(part, Part::KeyedExpression { key, .. } if key == b"of")
 }
 
-/// Whether there is nothing but what is white space to Angular in `code`.
+/// True if `code` has only what Angular considers whitespace.
 fn is_blank(mut code: &[u8]) -> bool {
     loop {
         code = match code {
@@ -113,8 +113,8 @@ fn is_blank(mut code: &[u8]) -> bool {
     }
 }
 
-/// What `text.split(/\{\{(.+?)\}\}/s)` returns: a text, and then, any number of times, what is between `{{` and `}}` and
-/// a text.
+/// `text.split(/\{\{(.+?)\}\}/s)`: returns a text, followed any number of times by the contents of a `{{ }}` and
+/// another text.
 fn split_at_interpolations(mut text: &[u8]) -> Vec<&[u8]> {
     let mut parts = Vec::new();
     while let Some(start) = strings::index_of(text, b"{{")
@@ -132,7 +132,7 @@ fn split_at_interpolations(mut text: &[u8]) -> Vec<&[u8]> {
 }
 
 impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
-    /// Writes what `write` writes the way `formatAttributeValue` returns it.
+    /// Runs `write` and wraps its output the way `formatAttributeValue` does.
     fn write_hugged(
         &mut self,
         should_hug: Option<bool>,
@@ -150,8 +150,8 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         }
     }
 
-    /// Writes `expression`, or `ignored` in its place, and what `write_rest` writes, the way `formatAttributeValue` returns
-    /// it.
+    /// Writes `expression`, or `ignored` instead of it, followed by the output of `write_rest`, wrapped the way
+    /// `formatAttributeValue` does.
     fn write_expression(
         &mut self,
         expression: &Expression,
@@ -161,28 +161,30 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         write_rest: &dyn for<'b> Fn(&mut Formatter<'b>),
     ) -> bool {
         match &expression.code {
-            Code::TypeScript { code, shown } => {
+            Code::TypeScript { code, display_code } => {
                 let expression = AngularExpression {
                     code,
-                    shown: shown.as_deref(),
+                    display_code: display_code.as_deref(),
                     ignored,
                 };
                 self.out.foreign(|f| {
                     js::write_angular_expression(f, &expression, in_html, hug, write_rest)
                 })
             }
-            // Nothing that `shouldHugJsExpression` hugs.
-            Code::Printed(printed) => self.write_hugged(hug.of_other_kinds(), |printer| {
-                printer.out.foreign(|f| {
-                    js::write_string(ignored.unwrap_or(printed), f);
-                    write_rest(f);
-                });
-                true
-            }),
+            // `shouldHugJsExpression` never hugs this.
+            Code::Printed(printed) => {
+                self.write_hugged(hug.should_hug_non_expression(), |printer| {
+                    printer.out.foreign(|f| {
+                        js::write_string(ignored.unwrap_or(printed), f);
+                        write_rest(f);
+                    });
+                    true
+                })
+            }
         }
     }
 
-    /// Writes an expression that is a part of what is written.
+    /// Writes an expression that's only a part of the output.
     fn write_part(&mut self, expression: &Expression, in_html: InHtml) -> bool {
         self.write_expression(expression, None, in_html, Hug::Bare, &|_| {})
     }
@@ -201,7 +203,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             return false;
         };
         let comment = comment_start.map(|start| LineComment::new(code, start));
-        // The comment is in the `NGEmptyExpression`, which does not print it.
+        // The comment is attached to the `NGEmptyExpression`, which doesn't print it.
         if expressions.is_empty() && comment.is_some() {
             return false;
         }
@@ -216,7 +218,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             });
         }
         // An `NGEmptyExpression` or an `NGChainedExpression`.
-        self.write_hugged(hug.of_other_kinds(), |printer| {
+        self.write_hugged(hug.should_hug_non_expression(), |printer| {
             if !is_action {
                 return true;
             }
@@ -251,7 +253,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         })
     }
 
-    /// An `NGMicrosyntaxKey`.
+    /// Writes an `NGMicrosyntaxKey`.
     fn write_microsyntax_key(&mut self, name: &[u8]) {
         match is_plain_microsyntax_key(name) {
             true => self.out.text(name),
@@ -259,7 +261,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         }
     }
 
-    /// An `NGMicrosyntaxExpression`.
+    /// Writes an `NGMicrosyntaxExpression`.
     fn write_microsyntax_expression(
         &mut self,
         expression: &Expression,
@@ -281,7 +283,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             return false;
         };
         if let [Part::Expression { expression, alias }] = &body[..] {
-            // To the formatter for JavaScript, the only expression of an `NGMicrosyntax` is what a binding is.
+            // The JavaScript formatter treats the only expression of an `NGMicrosyntax` like a binding.
             let in_html = InHtml {
                 root: HtmlRoot::NgBinding,
                 ..in_html
@@ -297,7 +299,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 }
             });
         }
-        // `isNgForOfTrack` reads the name of the key of the second node.
+        // `isNgForOfTrack` reads the key's name on the second node and throws if there's no key.
         let has_no_key = |part: &Part| key_name(part).is_none();
         if body.get(1).is_some_and(has_no_key)
             && body
@@ -307,7 +309,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         {
             return false;
         }
-        self.write_hugged(hug.of_other_kinds(), |printer| {
+        self.write_hugged(hug.should_hug_non_expression(), |printer| {
             let mut is_written = true;
             for (index, part) in body.iter().enumerate() {
                 if is_ng_for_of(part, index) {
@@ -379,7 +381,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         })
     }
 
-    /// `formatAttributeValue(code, textToDoc, { parser: "__ng_.." })`. Returns whether it has been written.
+    /// `formatAttributeValue(code, textToDoc, { parser: "__ng_.." })`. Returns true if it was written.
     pub(crate) fn write_angular_expression(
         &mut self,
         code: &[u8],
@@ -400,7 +402,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             // `getTextValueParts`
             let value = strings::trim_js_whitespace(value);
             if parent.has(Flags::IS_WHITESPACE_SENSITIVE) {
-                // All that is between the parts of the `fill` is forced line breaks, so it is as good as an array.
+                // All separators in the `fill` are forced line breaks, so a plain array prints the same.
                 if parent.has(Flags::IS_INDENTATION_SENSITIVE) {
                     printer.out.text(value);
                     return true;
@@ -446,8 +448,8 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 self.out.text(part);
                 continue;
             }
-            // Two `line`s with an `NGEmptyExpression` between them, which is nothing. Where Prettier asks whether something
-            // fits, they are one blank.
+            // Two `line`s with an `NGEmptyExpression`, which prints nothing, between them. When Prettier measures
+            // whether something fits, they count as a single space.
             if is_blank(part) {
                 self.out.start_group();
                 self.out.token("{{");
@@ -480,8 +482,8 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         true
     }
 
-    /// The printers of `embed/angular-attributes.js`. `value`: without the entities for quotes. Returns whether the
-    /// attribute has been written.
+    /// The printers in `embed/angular-attributes.js`. `value` has the quote entities decoded. Returns true if the
+    /// attribute was written.
     pub(crate) fn embed_angular_attribute(
         &mut self,
         element: Id,

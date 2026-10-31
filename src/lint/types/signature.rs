@@ -124,8 +124,8 @@ impl<'a> Signature<'a> {
         self.file.query(|q| q.signature_info(self.id))
     }
 
-    /// `signature.parameters`, `signature.getParameters()`. The `this` parameter is not one.
-    /// The type of one is [`TsSymbol::get_type`], already instantiated.
+    /// `signature.parameters`, `signature.getParameters()`. The `this` parameter isn't included. A parameter's type is
+    /// [`TsSymbol::get_type`], already instantiated.
     pub fn parameters(self) -> SymbolList<'a> {
         SymbolList::new(self.file, self.info().parameters)
     }
@@ -136,8 +136,7 @@ impl<'a> Signature<'a> {
         self.parameters()
     }
 
-    /// `signature.typeParameters`, `signature.getTypeParameters()`. Empty where TypeScript has
-    /// `undefined`.
+    /// `signature.typeParameters`, `signature.getTypeParameters()`. Empty where TypeScript has `undefined`.
     pub fn type_parameters(self) -> TypeList<'a> {
         TypeList::new(self.file, self.info().type_parameters)
     }
@@ -175,7 +174,7 @@ impl<'a> Signature<'a> {
         })
     }
 
-    /// `signature.getJsDocTags()`, the text of the `deprecated` one.
+    /// The text of the `deprecated` tag in `signature.getJsDocTags()`.
     pub fn deprecation(self) -> Option<&'a [u8]> {
         self.file.query(|q| q.deprecation_of_signature(self.id))
     }

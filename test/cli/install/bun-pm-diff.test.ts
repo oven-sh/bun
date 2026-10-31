@@ -777,6 +777,12 @@ diffme@1.0.0 → diffme@2.0.0
     expect(hits.some(h => h.endsWith(" /@priv/diffme"))).toBe(true);
   });
 
+  test("treats a name longer than the path buffer as a registry package", async () => {
+    const { stderr, exitCode } = await diff([Buffer.alloc(5000, "x") + "@1.0.0", "2.0.0"]);
+    expect(stderr).toContain("404");
+    expect(exitCode).toBe(1);
+  });
+
   test("errors: unknown package, no matching version; a third argument is a file filter", async () => {
     const unknown = await diff(["nope-nope@1.0.0", "2.0.0"]);
     expect(unknown.exitCode).toBe(1);

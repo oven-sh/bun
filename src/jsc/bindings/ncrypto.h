@@ -419,7 +419,7 @@ private:
 
 class Ec final {
 public:
-    static int GetCurveIdFromName(const char* name);
+    static int GetCurveIdFromName(WTF::StringView name);
 };
 
 // A managed pointer to a buffer of data. When destroyed the underlying
@@ -813,6 +813,8 @@ public:
 
     int id() const;
     int base_id() const;
+    bool hasSmallOrderEdDsaPoint(
+        const Buffer<const unsigned char>& signature) const;
     size_t size() const;
 
     size_t rawPublicKeySize() const;

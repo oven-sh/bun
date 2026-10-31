@@ -1,11 +1,13 @@
-//! What acorn cannot read in an edition of the language that is older than the code.
+//! acorn's errors for syntax that's newer than the configured ECMAScript edition.
 //!
-//! ESLint 8 has a file read as ES5 unless `parserOptions.ecmaVersion` or an environment says otherwise, and then `let a` is a syntax
-//! error. So it is with `languageOptions.ecmaVersion: 5` since. The parser here always reads the latest edition. For each thing that an edition has brought, here is where acorn stumbles
-//! without it, and over what: mostly over a token that it has no use for, as it takes `let`, `async` and `of` for names, and `=>`,
-//! `**`, `?.` and `??` for two tokens each.
+//! ESLint 8 parses a file as ES5 unless `parserOptions.ecmaVersion` or an environment sets a later edition, so `let a`
+//! is a syntax error by default. Later versions do the same with `languageOptions.ecmaVersion: 5`. Our parser always
+//! parses the latest edition. For each feature an edition added, this file reproduces where acorn fails without it and
+//! with which message. Mostly that's an unexpected token, because acorn then reads `let`, `async` and `of` as
+//! identifiers, and `=>`, `**`, `?.` and `??` as two tokens each.
 //!
-//! An edition is what acorn calls it: 3, 5, 6 for ES2015, up to 15 for ES2024, the last that espree 9 knows, and 17 for ES2026.
+//! Editions use acorn's numbers: 3, 5, 6 for ES2015, up to 15 for ES2024 (the last one espree 9 supports) and 17 for
+//! ES2026.
 
 use super::{Checks, is_module_syntax};
 use crate::ast::{
@@ -21,13 +23,13 @@ use crate::regex;
 use crate::tokens::skip_trivia;
 use bun_core::strings;
 
-/// `reservedWords[3]`, each between spaces.
+/// `reservedWords[3]`, with a space on both sides of each word.
 const RESERVED_IN_ES3: &[u8] = b" abstract boolean byte char class double enum export extends final float goto implements import int interface long native package private protected public short static super synchronized throws transient volatile ";
 
-/// `keywords[5]`, each between spaces.
-const KEYWORDS_OF_ES5: &[u8] = b" break case catch continue debugger default do else finally for function if return switch throw try var while with null true false instanceof typeof void delete new in this ";
+/// `keywords[5]`, with a space on both sides of each word.
+const ES5_KEYWORDS: &[u8] = b" break case catch continue debugger default do else finally for function if return switch throw try var while with null true false instanceof typeof void delete new in this ";
 
-/// The environments that the `/* eslint-env */` comments of `file` name.
+/// The environments listed in `file`'s `/* eslint-env */` comments.
 fn environments_in_comments<'a>(file: &'a File<'a>) -> Vec<&'a [u8]> {
     if !strings::contains(file.text(), b"eslint-env") {
         return Vec::new();
@@ -39,14 +41,14 @@ fn environments_in_comments<'a>(file: &'a File<'a>) -> Vec<&'a [u8]> {
         .collect()
 }
 
-/// What espree throws about `parserOptions`, before it reads the file.
-pub(crate) fn refused_options<'a>(file: &'a File<'a>) -> Option<Vec<u8>> {
+/// The error espree throws for invalid `parserOptions`, before it reads the file.
+pub(crate) fn invalid_parser_options<'a>(file: &'a File<'a>) -> Option<Vec<u8>> {
     let eslint_8 = file.language().eslint_8.as_deref()?;
     eslint_8.edition(&environments_in_comments(file)).err()
 }
 
-/// Whether acorn reads `pat` as an expression first: among the parameters of an arrow function, and after a `let` that it takes
-/// for a name.
+/// True if acorn first parses `pat` as an expression. That's the case in an arrow function's parameters, and after a
+/// `let` that it reads as an identifier.
 fn is_read_as_expression(pat: Pat) -> bool {
     let found = Node::Pat(pat).ancestors().find_map(|it| match it {
         Node::Param(param) => Some(param.func().is_some_and(Func::is_arrow)),
@@ -60,7 +62,7 @@ fn is_read_as_expression(pat: Pat) -> bool {
     found == Some(true)
 }
 
-/// The statement that is an expression and that starts with `it`.
+/// The expression statement that starts with `it`, if any.
 fn statement_starting_with<'a>(it: Expr<'a>) -> Option<Stmt<'a>> {
     let start = it.span().start;
     let found = Node::Expr(it).ancestors().find_map(|node| match node {
@@ -75,14 +77,14 @@ fn statement_starting_with<'a>(it: Expr<'a>) -> Option<Stmt<'a>> {
     found.flatten()
 }
 
-/// What acorn says about the first thing in `written`, a string literal, that it only reads in an edition after `edition`.
-fn newer_in_string(written: &[u8], edition: u32) -> Option<&'static str> {
-    let mut rest = written;
+/// acorn's message for the first thing in the string literal `source` that needs an edition later than `edition`.
+fn newer_in_string(source: &[u8], edition: u32) -> Option<&'static str> {
+    let mut rest = source;
     loop {
         let at = rest.iter().position(|it| matches!(it, b'\\' | 0xE2))?;
         rest = match rest.get(at..)? {
             [b'\\', b'u', b'{', ..] if edition < 6 => return Some("Unexpected token"),
-            // After a backslash, a separator continues the line.
+            // A line separator after a backslash is a line continuation.
             [b'\\', 0xE2, 0x80, 0xA8 | 0xA9, after @ ..] | [b'\\', _, after @ ..] => after,
             [0xE2, 0x80, 0xA8 | 0xA9, ..] if edition < 10 => {
                 return Some("Unterminated string constant");
@@ -94,7 +96,7 @@ fn newer_in_string(written: &[u8], edition: u32) -> Option<&'static str> {
 }
 
 impl<'a> Checks<'a, '_> {
-    /// The errors of acorn for what is newer than the edition that the configuration asks for.
+    /// Reports acorn's errors for syntax newer than the configured edition.
     pub(super) fn editions(&mut self) {
         let (file, language) = (self.file, self.file.language());
         let edition = match language.eslint_8.as_deref() {
@@ -106,7 +108,7 @@ impl<'a> Checks<'a, '_> {
                 year => year.saturating_sub(2009),
             }),
         };
-        // What is wrong with the options is said without a look at the file: `refused_options`.
+        // Invalid options are reported by `invalid_parser_options`, without looking at the file.
         let Ok(edition) = edition else {
             return;
         };
@@ -125,11 +127,11 @@ impl<'a> Checks<'a, '_> {
         self.newer_literals(edition);
         self.newer_module_syntax(edition);
         if edition == 3 {
-            self.words_of_es3();
+            self.es3_reserved_words();
         }
     }
 
-    /// The tokenizer makes three tokens of `...` before ES2015.
+    /// Before ES2015 the tokenizer reads `...` as three tokens.
     fn dots(&mut self, at: u32, edition: u32) {
         match edition < 6 {
             true => self.fail(at, "Unexpected token ."),
@@ -141,7 +143,7 @@ impl<'a> Checks<'a, '_> {
         !(self.tops.outward(node)).any(|it| matches!(it, Node::Func(_)))
     }
 
-    /// Whether the token before the one at `close`, which closes a list, is a comma.
+    /// True if the token before `close`, the closing token of a list, is a comma.
     fn has_comma_before(&self, close: u32) -> bool {
         self.token_at(self.before_token(close)) == b","
     }
@@ -160,14 +162,14 @@ impl<'a> Checks<'a, '_> {
                 it.span_without_export().start,
             );
             match kind {
-                // Names, which nothing can follow.
+                // acorn reads these as identifiers and fails at the next token.
                 Some(VarKind::Using) => self.unexpected(self.after_token(start)),
                 Some(VarKind::AwaitUsing) => {
                     self.unexpected(self.after_token(self.after_token(start)))
                 }
                 Some(VarKind::Const) if edition == 5 => self.reserved(start),
                 Some(VarKind::Const) if edition == 3 => self.unexpected(self.after_token(start)),
-                Some(VarKind::Let) if edition < 6 => self.let_as_a_name(it, start, edition),
+                Some(VarKind::Let) if edition < 6 => self.let_as_identifier(it, start, edition),
                 _ => {}
             }
         }
@@ -182,8 +184,8 @@ impl<'a> Checks<'a, '_> {
         }
     }
 
-    /// `it`: a declaration with `let`, which is at `start`.
-    fn let_as_a_name(&mut self, it: Stmt<'a>, start: u32, edition: u32) {
+    /// `it` is a `let` declaration whose `let` is at `start`.
+    fn let_as_identifier(&mut self, it: Stmt<'a>, start: u32, edition: u32) {
         if edition >= 5 && self.is_strict(Node::Stmt(it)) {
             return self.reserved(start);
         }
@@ -192,7 +194,7 @@ impl<'a> Checks<'a, '_> {
         let is_on_next_line =
             between.is_some_and(|it| strings::index_of_any(it, b"\n\r").is_some());
         let is_in_head = matches!(it.parent(), Node::Stmt(parent) if parent.is_loop());
-        // `let[a] = b` assigns, and a line break ends the statement that is the name.
+        // `let[a] = b` is an assignment, and after a line break `let` is a complete expression statement.
         if self.token_at(next) != b"[" && (is_in_head || !is_on_next_line) {
             self.unexpected(next);
         }
@@ -243,7 +245,8 @@ impl<'a> Checks<'a, '_> {
         }
     }
 
-    /// Before ES2015 a list or an object cannot be assigned to. `noticed`: where what makes `target` a target is.
+    /// Before ES2015 an array or object literal can't be assigned to. `noticed` is the offset of the token that makes
+    /// `target` a target.
     fn pattern_as_target(&mut self, target: Expr<'a>, noticed: u32) {
         if matches!(target.kind(), ExprKind::Array(_) | ExprKind::Object(_)) {
             self.when_read_to(noticed, |checks| {
@@ -254,7 +257,7 @@ impl<'a> Checks<'a, '_> {
 
     // ───────────────────────────── functions ─────────────────────────────
 
-    /// `async`, `function*`, `=>`, and what parameters can be
+    /// `async`, `function*`, `=>`, and newer parameter syntax
     fn newer_functions(&mut self, edition: u32) {
         if edition >= 9 {
             return;
@@ -290,17 +293,17 @@ impl<'a> Checks<'a, '_> {
             return;
         }
         let (start, params, close) = (it.estree_span().start, it.params(), it.close_paren());
-        let is_a_name = |it: Param<'a>| {
+        let is_plain_identifier = |it: Param<'a>| {
             it.default().is_none() && !it.is_rest() && matches!(it.pat().kind(), PatKind::Ident(_))
         };
         match (params.first(), close) {
-            // `async` is a name, which no other can follow.
+            // `async` is an identifier, and another identifier can't follow it.
             (Some(first), None) if it.is_async() => self.unexpected(first.span().start),
-            // `async(a)` is a call.
+            // `async(a)` is parsed as a call.
             _ if it.is_async() && edition >= 6 => self.unexpected(arrow.start),
             (None, Some(close)) if !it.is_async() => self.unexpected(close),
             // `a = > b`
-            (Some(only), _) if !it.is_async() && params.len() == 1 && is_a_name(only) => {
+            (Some(only), _) if !it.is_async() && params.len() == 1 && is_plain_identifier(only) => {
                 self.unexpected(arrow.start + 1)
             }
             _ => self.when_read_to(arrow.start, |checks| {
@@ -327,7 +330,7 @@ impl<'a> Checks<'a, '_> {
             } else if param.is_rest() && !matches!(param.pat().kind(), PatKind::Ident(_)) {
                 self.unexpected(param.pat().span().start);
             }
-            // That of an arrow function is an assignment.
+            // An arrow function's default is parsed as an assignment.
             if edition < 6
                 && !it.is_arrow()
                 && let Some(default) = param.default()
@@ -337,7 +340,7 @@ impl<'a> Checks<'a, '_> {
         }
     }
 
-    /// `async a() {}`, `*a() {}`. `key`: where the name starts.
+    /// `async a() {}`, `*a() {}`. `key` is the start of the name.
     fn method(&mut self, func: Option<Func<'a>>, key: u32, edition: u32) {
         let Some(func) = func else {
             return;
@@ -372,7 +375,7 @@ impl<'a> Checks<'a, '_> {
                 if key.is_private() {
                     self.fail(span.start, "Unexpected character '#'");
                 }
-                // The parameters of a method are expected.
+                // acorn expects a method's parameters after the key.
                 if member.kind() == MemberKind::Property {
                     self.unexpected(span.end);
                 }
@@ -416,7 +419,7 @@ impl<'a> Checks<'a, '_> {
         }
     }
 
-    /// What `var`, a parameter and `catch` can declare
+    /// Destructuring patterns in `var`, parameters and `catch`
     fn newer_patterns(&mut self, edition: u32) {
         let file = self.file;
         if edition >= 9 {
@@ -458,7 +461,7 @@ impl<'a> Checks<'a, '_> {
 
     // ───────────────────────────── expressions ─────────────────────────────
 
-    /// `**`, `??`, `?.`, `&&=`, and patterns that are assigned to
+    /// `**`, `??`, `?.`, `&&=`, and destructuring assignment
     fn newer_operators(&mut self, edition: u32) {
         let (file, text) = (self.file, self.file.text());
         if edition >= 12 {
@@ -470,7 +473,7 @@ impl<'a> Checks<'a, '_> {
             else {
                 continue;
             };
-            // How much of the operator is a token of its own.
+            // How many bytes of the operator acorn reads as the first token.
             let read = match op {
                 Some(BinOp::Pow) => (edition < 7).then_some(1),
                 Some(BinOp::Nullish) if edition < 11 => Some(1),
@@ -589,7 +592,7 @@ impl<'a> Checks<'a, '_> {
                     _ if edition >= 16 => {}
                     _ if edition >= 11 => self.second_argument_of_import(it, text),
                     None => self.unexpected(start),
-                    // It is taken for a declaration.
+                    // acorn parses it as an import declaration.
                     Some(statement) if !matches!(statement.parent(), Node::File(_)) => self.fail(
                         start,
                         "'import' and 'export' may only appear at the top level",
@@ -604,20 +607,20 @@ impl<'a> Checks<'a, '_> {
         }
     }
 
-    /// `import(a, b)` came with ES2025.
+    /// ES2025 added `import(a, b)`.
     fn second_argument_of_import(&mut self, it: Expr<'a>, text: &[u8]) {
         let ExprKind::ImportCall { args } = it.kind() else {
             return;
         };
-        let mut written = args.iter().filter(|it| !it.is_missing());
-        let Some(first) = written.next() else {
+        let mut provided = args.iter().filter(|it| !it.is_missing());
+        let Some(first) = provided.next() else {
             return;
         };
         let comma = skip_trivia(text, first.outer_span().end);
         if text.get(comma as usize) != Some(&b',') {
             return;
         }
-        match written.next() {
+        match provided.next() {
             Some(_) => self.unexpected(comma),
             None => self.fail(comma, "Trailing comma is not allowed in import()"),
         }
@@ -633,13 +636,13 @@ impl<'a> Checks<'a, '_> {
         }
         for tag in [ExprTag::Number, ExprTag::BigInt] {
             for it in file.exprs_of_kind(tag) {
-                let written = file.slice(it.span());
+                let source = file.slice(it.span());
                 let has_newer_prefix =
-                    edition < 6 && matches!(written, [b'0', b'b' | b'B' | b'o' | b'O', ..]);
-                // Where the number ends for the tokenizer.
-                let end = match strings::index_of_char_usize(written, b'_') {
+                    edition < 6 && matches!(source, [b'0', b'b' | b'B' | b'o' | b'O', ..]);
+                // Where the tokenizer thinks the number ends.
+                let end = match strings::index_of_char_usize(source, b'_') {
                     _ if has_newer_prefix => Some(1),
-                    None if edition < 11 && written.ends_with(b"n") => Some(written.len() - 1),
+                    None if edition < 11 && source.ends_with(b"n") => Some(source.len() - 1),
                     separator => separator,
                 };
                 if let Some(end) = end {
@@ -658,11 +661,11 @@ impl<'a> Checks<'a, '_> {
             return;
         }
         for it in file.exprs_of_kind(ExprTag::String) {
-            let written = file.slice(it.span());
-            if !matches!(written.first(), Some(b'"' | b'\'')) {
+            let source = file.slice(it.span());
+            if !matches!(source.first(), Some(b'"' | b'\'')) {
                 continue;
             }
-            if let Some(message) = newer_in_string(written, edition) {
+            if let Some(message) = newer_in_string(source, edition) {
                 self.fail(it.span().start, message);
             }
         }
@@ -687,7 +690,7 @@ impl<'a> Checks<'a, '_> {
                 self.fail(at, "Invalid regular expression flag");
             } else if let Err(error) = regex::validate_pattern(
                 pattern,
-                regex::Mode::of_flags(flags),
+                regex::Mode::from_flags(flags),
                 regex::Options::ecma_version(year),
                 &mut regex::Ignore,
             ) {
@@ -705,7 +708,7 @@ impl<'a> Checks<'a, '_> {
 
     // ───────────────────────────── modules ─────────────────────────────
 
-    /// `export * as a`, names in quotes, `with { type: "json" }`
+    /// `export * as a`, string names, `with { type: "json" }`
     fn newer_module_syntax(&mut self, edition: u32) {
         let file = self.file;
         if file.language().source_type != SourceType::Module {
@@ -728,7 +731,7 @@ impl<'a> Checks<'a, '_> {
             for name in names.iter().filter(|it| edition < 13 && it.is_string()) {
                 self.unexpected(name.start());
             }
-            // They came with ES2025.
+            // ES2025 added import attributes.
             if let Some(attributes) = it.import_attributes().filter(|_| edition < 16) {
                 self.unexpected(attributes.keyword_span().start);
             }
@@ -738,18 +741,18 @@ impl<'a> Checks<'a, '_> {
     // ───────────────────────────── ES3 ─────────────────────────────
 
     /// `checkUnreserved` for the word at `at`.
-    fn word_of_es3(&mut self, at: u32) {
+    fn check_es3_word(&mut self, at: u32) {
         let word = self.token_at(at);
         let spaced = [b" ", word, b" "].concat();
-        if strings::contains(KEYWORDS_OF_ES5, &spaced) {
+        if strings::contains(ES5_KEYWORDS, &spaced) {
             self.fail(at, [b"Unexpected keyword '", word, b"'"].concat());
         } else if strings::contains(RESERVED_IN_ES3, &spaced) {
             self.reserved(at);
         }
     }
 
-    /// In ES3 more words are reserved, also as the names of properties, and no comma can end an object literal.
-    fn words_of_es3(&mut self) {
+    /// ES3 reserves more words, even as property names, and doesn't allow a trailing comma in an object literal.
+    fn es3_reserved_words(&mut self) {
         let file = self.file;
         for it in file.exprs_of_kind(ExprTag::Object) {
             let close = it.span().end.saturating_sub(1);
@@ -761,28 +764,28 @@ impl<'a> Checks<'a, '_> {
             return;
         }
         for it in file.exprs_of_kind(ExprTag::Ident) {
-            self.word_of_es3(it.span().start);
+            self.check_es3_word(it.span().start);
         }
         for it in file.exprs_of_kind(ExprTag::Dot) {
             if let Some(name) = it.member_name_start() {
-                self.word_of_es3(name);
+                self.check_es3_word(name);
             }
         }
         for &id in file.pats_of(PatTag::Ident) {
-            self.word_of_es3(Pat::from_raw(file, id).span().start);
+            self.check_es3_word(Pat::from_raw(file, id).span().start);
         }
         for name in file.funcs().filter_map(Func::name) {
-            self.word_of_es3(name.start());
+            self.check_es3_word(name.start());
         }
         for it in file.stmts_of_kind(StmtTag::Labeled) {
-            self.word_of_es3(it.span().start);
+            self.check_es3_word(it.span().start);
         }
         file.every_prop(|prop| {
             if let Some(key) = prop.key()
                 && matches!(key.kind(), KeyKind::Ident(_))
                 && !prop.is_jsx_attribute()
             {
-                self.word_of_es3(key.span(file).start);
+                self.check_es3_word(key.span(file).start);
             }
         });
     }

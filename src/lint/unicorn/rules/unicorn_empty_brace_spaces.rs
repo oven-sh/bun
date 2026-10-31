@@ -4,7 +4,7 @@ use bun_lint::rule::Plugin;
 /// Enforce no spaces between braces.
 pub struct EmptyBraceSpaces;
 
-const EMPTY_BRACE_SPACES: Message = Message::new("", "No spaces inside empty pair of braces allowed");
+const EMPTY_BRACE_SPACES: &Message = &Message::new("", "No spaces inside empty pair of braces allowed");
 
 impl Rule for EmptyBraceSpaces {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "empty-brace-spaces", Kind::Suggestion).fixable(Fixable::Code);
@@ -50,7 +50,7 @@ impl Rule for EmptyBraceSpaces {
     }
 }
 
-/// `braces`: from the `{` to the `}`, with nothing but whitespace and comments in between. `span`: what is reported.
+/// `braces` spans from the `{` to the `}`, with only whitespace and comments in between. `span` is what's reported.
 #[inline(never)]
 fn check(braces: Span, span: Span, replacement: &'static str, cx: &Cx<EmptyBraceSpaces>) {
     if braces.len() > 2 && cx.file().comments_in(span).next().is_none() {

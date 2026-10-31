@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { createSecretKey, type webcrypto } from "node:crypto";
+import { createCipheriv, createSecretKey, type webcrypto } from "node:crypto";
 
 type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
 type HmacImportParams = webcrypto.HmacImportParams;
@@ -344,6 +344,97 @@ describe("oversized inputs", () => {
         "small round-trip": "ok",
       });
     }
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("oversized outputs", () => {
+  // The output can be larger than the input because of a tag, padding, 8 bytes for AES-KW, or base64 for a JWK.
+  // The synthetic limit lowers the cap to 1 MiB.
+  it.concurrent("rejects an output over the buffer limit and accepts one at the limit", async () => {
+    const script = `
+      import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+      const limit = 1024 * 1024;
+      setSyntheticAllocationLimitForTesting(limit);
+      const { subtle } = crypto;
+
+      const gcmKey = await subtle.importKey("raw", new Uint8Array(32).fill(1), "AES-GCM", false, ["encrypt", "decrypt"]);
+      const cbcKey = await subtle.importKey("raw", new Uint8Array(32).fill(2), "AES-CBC", false, ["encrypt"]);
+      const chachaKey = await subtle.importKey("raw-secret", new Uint8Array(32).fill(3), "ChaCha20-Poly1305", false, ["encrypt"]);
+      const kek = await subtle.importKey("raw", new Uint8Array(32).fill(4), "AES-KW", false, ["wrapKey"]);
+      const ctrKey = await subtle.importKey("raw", new Uint8Array(32).fill(5), "AES-CTR", false, ["encrypt"]);
+      const cfbKey = await subtle.importKey("raw", new Uint8Array(32).fill(6), "AES-CFB-8", false, ["encrypt"]);
+      const iv12 = new Uint8Array(12);
+      const iv16 = new Uint8Array(16);
+
+      const results = {};
+      const record = async (label, promise) => {
+        try {
+          results[label] = (await promise).byteLength;
+        } catch (e) {
+          results[label] = e.name;
+        }
+      };
+      const hmac = size => subtle.importKey("raw", new Uint8Array(size), { name: "HMAC", hash: "SHA-256" }, true, ["sign"]);
+      const wrap = async (format, size) => subtle.wrapKey(format, await hmac(size), kek, "AES-KW");
+      const exportJwk = async size => {
+        try {
+          results["HMAC jwk export " + (size * 4 > limit * 3 ? "over" : "at") + " limit"] = (await subtle.exportKey("jwk", await hmac(size))).k.length;
+        } catch (e) {
+          results["HMAC jwk export over limit"] = e.name;
+        }
+      };
+
+      await record("AES-GCM at limit", subtle.encrypt({ name: "AES-GCM", iv: iv12 }, gcmKey, new Uint8Array(limit - 16)));
+      await record("AES-GCM over limit", subtle.encrypt({ name: "AES-GCM", iv: iv12 }, gcmKey, new Uint8Array(limit - 15)));
+      await record("ChaCha20-Poly1305 at limit", subtle.encrypt({ name: "ChaCha20-Poly1305", iv: iv12 }, chachaKey, new Uint8Array(limit - 16)));
+      await record("ChaCha20-Poly1305 over limit", subtle.encrypt({ name: "ChaCha20-Poly1305", iv: iv12 }, chachaKey, new Uint8Array(limit - 15)));
+      await record("AES-CBC at limit", subtle.encrypt({ name: "AES-CBC", iv: iv16 }, cbcKey, new Uint8Array(limit - 1)));
+      await record("AES-CBC over limit", subtle.encrypt({ name: "AES-CBC", iv: iv16 }, cbcKey, new Uint8Array(limit)));
+      await record("AES-CTR at limit", subtle.encrypt({ name: "AES-CTR", counter: iv16, length: 64 }, ctrKey, new Uint8Array(limit)));
+      await record("AES-CTR over limit", subtle.encrypt({ name: "AES-CTR", counter: iv16, length: 64 }, ctrKey, new Uint8Array(limit + 1)));
+      await record("AES-CFB-8 at limit", subtle.encrypt({ name: "AES-CFB-8", iv: iv16 }, cfbKey, new Uint8Array(limit)));
+      await record("AES-CFB-8 over limit", subtle.encrypt({ name: "AES-CFB-8", iv: iv16 }, cfbKey, new Uint8Array(limit + 1)));
+      await record("AES-KW at limit", wrap("raw", limit - 8));
+      await record("AES-KW over limit", wrap("raw", limit));
+      // base64url encodes 3 bytes as 4 characters, so a 768 KiB key encodes to exactly 1 MiB.
+      await exportJwk((limit / 4) * 3);
+      await exportJwk((limit / 4) * 3 + 3);
+      await record("AES-KW jwk over limit", wrap("jwk", (limit / 4) * 3));
+
+      // The process is still usable after a rejection.
+      const small = await subtle.encrypt({ name: "AES-GCM", iv: iv12 }, gcmKey, new Uint8Array(16).fill(5));
+      const roundTrip = new Uint8Array(await subtle.decrypt({ name: "AES-GCM", iv: iv12 }, gcmKey, small));
+      results["small round-trip"] = roundTrip.every(b => b === 5) ? "ok" : "mismatch";
+
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "AES-GCM at limit": 1024 * 1024,
+      "AES-GCM over limit": "OperationError",
+      "ChaCha20-Poly1305 at limit": 1024 * 1024,
+      "ChaCha20-Poly1305 over limit": "OperationError",
+      "AES-CBC at limit": 1024 * 1024,
+      "AES-CBC over limit": "OperationError",
+      "AES-CTR at limit": 1024 * 1024,
+      "AES-CTR over limit": "OperationError",
+      "AES-CFB-8 at limit": 1024 * 1024,
+      "AES-CFB-8 over limit": "OperationError",
+      "AES-KW at limit": 1024 * 1024,
+      "AES-KW over limit": "OperationError",
+      "HMAC jwk export at limit": 1024 * 1024,
+      "HMAC jwk export over limit": "OperationError",
+      "AES-KW jwk over limit": "OperationError",
+      "small round-trip": "ok",
+    });
     expect(exitCode).toBe(0);
   });
 });
@@ -1123,7 +1214,7 @@ describe("X25519 JWK import", () => {
   const x25519Public: JsonWebKey = {
     kty: "OKP",
     crv: "X25519",
-    x: "hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr06uFD1q1y5Go",
+    x: "hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr066SpjqqbTmo",
   };
   const x25519Private: JsonWebKey = {
     ...x25519Public,
@@ -1466,5 +1557,113 @@ describe("exception scope discipline", () => {
       uncheckedScopes: [],
       exitCode: 0,
     });
+  });
+});
+
+describe("JWK import validation", () => {
+  const rejection = (promise: Promise<unknown>) =>
+    promise.then(
+      () => "resolved",
+      e => e.name,
+    );
+
+  it.each([
+    ["Ed25519", "sign", "K1wIouqnuiA04b3WrMa-xKIKIpfHetNZRv3h9fBf768", "wVK6M3SMhQh3NK-7GRrSV-BVWQx1FO5pW8hhQeu_NdA"],
+    [
+      "X25519",
+      "deriveBits",
+      "aSb8Q-RndwfNnPeOYGYPDUN3uhAPnMLzXyfi-mqfhig",
+      "mL_IWm55RrALUGRfJYzw40gEYWMvtRkesP9mj8o8Omc",
+    ],
+  ] as const)("%s private keys need the matching x", async (name, usage, x, d) => {
+    const importJwk = (members: JsonWebKey) =>
+      crypto.subtle.importKey("jwk", { kty: "OKP", crv: name, x, d, ...members }, name, true, [usage]);
+
+    // Node decodes both like Buffer.from(encoded, "base64"): either alphabet, skipping what is in neither.
+    const standard = (encoded: string) => Buffer.from(encoded, "base64url").toString("base64");
+    const wrapped = (encoded: string) => encoded.slice(0, 10) + "\n" + encoded.slice(10);
+    for (const spelled of [{}, { x: standard(x), d: standard(d) }, { x: wrapped(x), d: wrapped(d) }]) {
+      expect(await crypto.subtle.exportKey("jwk", await importJwk(spelled))).toMatchObject({ x, d });
+    }
+
+    expect({
+      otherKey: await rejection(importJwk({ x: d })),
+      missing: await rejection(importJwk({ x: undefined })),
+      notBase64: await rejection(importJwk({ x: "!!" })),
+      shortX: await rejection(importJwk({ x: x.slice(4) })),
+      shortD: await rejection(importJwk({ d: "AA" })),
+    }).toEqual({
+      otherKey: "DataError",
+      missing: "DataError",
+      notBase64: "DataError",
+      shortX: "DataError",
+      shortD: "DataError",
+    });
+  });
+
+  it("rejects a repeated key_ops entry for every key type", async () => {
+    const pair = async (algorithm: any, usages: KeyUsage[]) =>
+      crypto.subtle.exportKey(
+        "jwk",
+        ((await crypto.subtle.generateKey(algorithm, true, usages)) as CryptoKeyPair).publicKey,
+      );
+    const rsa = {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 1024,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    };
+    const ec = { name: "ECDSA", namedCurve: "P-256" };
+    const cases: [any, JsonWebKey, KeyUsage][] = [
+      ["AES-GCM", { kty: "oct", k: Buffer.alloc(16).toString("base64url") }, "encrypt"],
+      [rsa, await pair(rsa, ["sign", "verify"]), "verify"],
+      [ec, await pair(ec, ["sign", "verify"]), "verify"],
+      ["Ed25519", await pair("Ed25519", ["sign", "verify"]), "verify"],
+    ];
+    for (const [algorithm, jwk, usage] of cases) {
+      const importWith = (key_ops: string[]) =>
+        crypto.subtle.importKey("jwk", { ...jwk, key_ops }, algorithm, true, [usage]);
+      expect({
+        algorithm,
+        once: await rejection(importWith([usage])),
+        twice: await rejection(importWith([usage, usage])),
+      }).toEqual({ algorithm, once: "resolved", twice: "DataError" });
+    }
+  });
+
+  it("reports the modulus length in bits", async () => {
+    const n = Buffer.alloc(256);
+    n[0] = 0x40;
+    n[255] = 1;
+    const key = await crypto.subtle.importKey(
+      "jwk",
+      { kty: "RSA", n: n.toString("base64url"), e: "AQAB" },
+      { name: "RSA-OAEP", hash: "SHA-256" },
+      true,
+      ["encrypt"],
+    );
+    expect((key.algorithm as RsaHashedKeyAlgorithm).modulusLength).toBe(2047);
+  });
+});
+
+describe("AES-CTR", () => {
+  // 2^64 blocks are left before these counters wrap, which does not fit the size_t it was counted in.
+  it.each([
+    ["ffffffffffffffff0000000000000000", 128],
+    ["7fffffffffffffff0000000000000000", 127],
+    ["aabbccddffffffff0000000000000000", 96],
+    ["aabbccddeeff00010000000000000000", 65],
+  ])("counter %s with length %d", async (counter, length) => {
+    const rawKey = Buffer.alloc(16, 7);
+    const data = Buffer.alloc(40, 1);
+    const key = await crypto.subtle.importKey("raw", rawKey, "AES-CTR", false, ["encrypt"]);
+    const encrypted = await crypto.subtle.encrypt(
+      { name: "AES-CTR", counter: Buffer.from(counter, "hex"), length },
+      key,
+      data,
+    );
+    expect(Buffer.from(encrypted).toString("hex")).toBe(
+      createCipheriv("aes-128-ctr", rawKey, Buffer.from(counter, "hex")).update(data).toString("hex"),
+    );
   });
 });

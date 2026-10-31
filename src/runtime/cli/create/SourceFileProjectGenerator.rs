@@ -165,7 +165,10 @@ fn string_with_replacements(
     input
 }
 
-fn print_and_run_bun(argv: &mut [&[u8]], failure: &str) -> Result<(), crate::Error> {
+fn print_and_run_bun(argv: &mut Vec<&[u8]>, failure: &str) -> Result<(), crate::Error> {
+    if let Some(flag) = Global::ca_store_flag() {
+        argv.insert(1, flag.as_bytes());
+    }
     Output::command_out(Output::CommandArgv::List(argv));
     Output::flush();
     run_bun(argv, failure)

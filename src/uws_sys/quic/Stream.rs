@@ -20,8 +20,11 @@ unsafe extern "C" {
     safe fn us_quic_stream_shutdown(s: &mut Stream);
     safe fn us_quic_stream_close(s: &mut Stream);
     safe fn us_quic_stream_reset(s: &mut Stream);
+    safe fn us_quic_stream_reset_code(s: &mut Stream) -> u64;
+    safe fn us_quic_stream_refused_by_goaway(s: &mut Stream) -> c_int;
     safe fn us_quic_stream_header_count(s: &mut Stream) -> c_uint;
     safe fn us_quic_stream_header(s: &mut Stream, i: c_uint) -> *const Header;
+    safe fn us_quic_stream_headers_too_large(s: &mut Stream) -> c_int;
     safe fn us_quic_stream_ext(s: &mut Stream) -> *mut c_void;
     fn us_quic_stream_write(s: *mut Stream, data: *const u8, len: c_uint) -> c_int;
     safe fn us_quic_stream_want_write(s: &mut Stream, want: c_int);
@@ -56,6 +59,16 @@ impl Stream {
         us_quic_stream_reset(self)
     }
 
+    /// The code of the last RESET_STREAM or STOP_SENDING on the stream, 0 without one.
+    pub fn reset_code(&mut self) -> u64 {
+        us_quic_stream_reset_code(self)
+    }
+
+    /// The server did not process a request above the id in its GOAWAY (RFC 9114 §5.2).
+    pub fn refused_by_goaway(&mut self) -> bool {
+        us_quic_stream_refused_by_goaway(self) != 0
+    }
+
     pub fn header_count(&mut self) -> c_uint {
         us_quic_stream_header_count(self)
     }
@@ -63,6 +76,10 @@ impl Stream {
     pub fn header(&mut self, i: c_uint) -> Option<&Header> {
         // SAFETY: self is a valid us_quic_stream_t; returned header borrowed from stream's header block.
         unsafe { us_quic_stream_header(self, i).as_ref() }
+    }
+
+    pub fn headers_too_large(&mut self) -> bool {
+        us_quic_stream_headers_too_large(self) != 0
     }
 
     pub fn ext<T>(&mut self) -> &mut Option<NonNull<T>> {

@@ -11,8 +11,9 @@ use crate::{format_args, write};
 /// );
 /// ```
 ///
-/// Prettier on the left: what does not fit behind `return` has one expression on each line. oxfmt on the right.
-fn sequence_after_return_is_a_group_of_its_own(f: &Formatter<'_>) -> bool {
+/// Prettier is on the left: a sequence that doesn't fit after `return` gets one expression per line. oxfmt is on the
+/// right.
+fn sequence_after_return_gets_its_own_group(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -24,7 +25,7 @@ pub(crate) fn write_sequence_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) 
         return;
     };
 
-    // Where it is not in parentheses, what follows the first expression is indented.
+    // Outside parentheses, everything after the first expression is indented.
     if matches!(parent, AstNodes::ForStatement(_))
         || matches!(parent, AstNodes::ExpressionStatement(statement) if !statement.is_arrow_function_body())
     {
@@ -50,13 +51,13 @@ pub(crate) fn write_sequence_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) 
             .entries(all.iter());
     });
     match parent {
-        // Whether it breaks is decided at the `(`.
+        // The `(` decides whether it breaks.
         AstNodes::ExpressionStatement(_) => write!(f, group(&soft_block_indent(&format_inner))),
-        // It is in parentheses of its own, unless the statement writes parentheses around a comment and what follows it.
+        // It gets its own parentheses, unless the statement already wraps a comment and what follows it in parentheses.
         AstNodes::ReturnStatement(_) | AstNodes::ThrowStatement(_)
             if !is_cast_target(e, f) && !has_argument_leading_comments(e, f) =>
         {
-            match sequence_after_return_is_a_group_of_its_own(f) {
+            match sequence_after_return_gets_its_own_group(f) {
                 true => write!(f, group(&soft_block_indent(&group(&format_inner)))),
                 false => write!(f, group(&soft_block_indent(&format_inner))),
             }

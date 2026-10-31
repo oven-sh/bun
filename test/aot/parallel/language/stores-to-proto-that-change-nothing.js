@@ -1,0 +1,21 @@
+// A store to `__proto__` that changes nothing is no change: the setter leaves an object as it is where the value is neither an object nor null, or is what lies above the object already. So it throws nothing on a built-in object that the executable keeps as it is, nor on a frozen list, by name, by a key that is put together, or by Reflect.set.
+"use strict";
+const attempt = (name, run) => { try { run(); console.log(name, "no error"); } catch (e) { console.log(name, e.name, e.message); } };
+attempt("locked, the same", () => { Array.prototype.__proto__ = Object.prototype; });
+attempt("locked, a number", () => { Array.prototype.__proto__ = 1; });
+attempt("frozen array, a number", () => { Object.freeze([1]).__proto__ = 30.5; });
+attempt("frozen array, the same", () => { Object.freeze([1]).__proto__ = Array.prototype; });
+attempt("frozen array, another", () => { Object.freeze([1]).__proto__ = {}; });
+attempt("frozen array, by key", () => { const k = ["__pro", "to__"].join(""); Object.freeze([1])[k] = 30.5; });
+attempt("frozen array, Reflect.set", () => { console.log(Reflect.set(Object.freeze([1]), "__proto__", 30.5)); });
+attempt("Math, a number", () => { Math.__proto__ = 1; });
+attempt("Math, the same", () => { Math.__proto__ = Object.prototype; });
+attempt("Object.prototype, null", () => { Object.prototype.__proto__ = null; });
+attempt("Object.prototype, a number", () => { Object.prototype.__proto__ = 1; });
+attempt("function of the engine, the same", () => { Math.max.__proto__ = Function.prototype; });
+attempt("function of the engine, a number", () => { Math.max.__proto__ = 1; });
+attempt("frozen list of a class below Array, a number", () => { class Stack extends Array {} Object.freeze(new Stack(1, 2)).__proto__ = 2; });
+attempt("frozen list, null", () => { Object.freeze([1]).__proto__ = null; });
+attempt("frozen list without Object.prototype above it", () => { const list = [1]; Object.setPrototypeOf(list, null); Object.freeze(list).__proto__ = 1; });
+attempt("frozen list under an object with a property of that name", () => { const list = [1]; Object.setPrototypeOf(list, Object.create(Array.prototype, { ["__proto__"]: { value: 1, writable: true } })); Object.freeze(list).__proto__ = 1; });
+attempt("sloppy", () => { console.log(new Function("list", "list.__proto__ = 5; return Object.getPrototypeOf(list) === Array.prototype")(Object.freeze([1]))); });

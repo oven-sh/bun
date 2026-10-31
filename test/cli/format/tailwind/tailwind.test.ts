@@ -1,8 +1,9 @@
-// oxfmt's `sortTailwindcss`. cases.json: the inputs of oxfmt's apps/oxfmt/test/api/sort_tailwindcss.test.ts (MIT: see LICENSE) and
-// some more, with what oxfmt 0.72 prints for them with tailwindcss 4.3.3. order.json: the classes in them that Tailwind knows, in
-// its order. Both are made by test/cli/format/oracle/tailwind/make-fixtures.ts.
+// Tests for oxfmt's `sortTailwindcss`. cases.json has the inputs from oxfmt's
+// apps/oxfmt/test/api/sort_tailwindcss.test.ts (MIT: see LICENSE) plus some more, with oxfmt 0.72's output for them
+// with tailwindcss 4.3.3. order.json has the classes in them that Tailwind knows, in Tailwind's order.
+// test/cli/format/oracle/tailwind/make-fixtures.ts generates both.
 //
-// The order comes from the package `tailwindcss` of the project. Here that is a stand-in, which knows what is in order.json.
+// The order comes from the project's `tailwindcss` package. Here that's a stub that knows the classes in order.json.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { chmodSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -14,7 +15,7 @@ import order from "./order.json";
 afterAll(endChildren);
 
 const getClassOrder = `classes => classes.map(name => [name, order.includes(name) ? BigInt(sign * order.indexOf(name)) : null])`;
-/** Tailwind CSS 4, as far as it is asked. A style sheet with `reversed` in it turns the order around. */
+/** A stub of the parts of Tailwind CSS 4 that get called. A style sheet that contains `reversed` reverses the order. */
 const version4 = {
   "node_modules/tailwindcss/package.json": JSON.stringify({ name: "tailwindcss", version: "4.0.0", main: "index.js" }),
   "node_modules/tailwindcss/theme.css": "",
@@ -25,7 +26,7 @@ exports.__unstable__loadDesignSystem = async css => {
 };
 `,
 };
-/** Tailwind CSS 3. A configuration with `reversed` in it turns the order around, the classes in its `own` come last. */
+/** A stub of Tailwind CSS 3. A configuration with `reversed` reverses the order, and classes in its `own` come last. */
 const version3 = {
   "node_modules/tailwindcss/package.json": JSON.stringify({ name: "tailwindcss", version: "3.0.0", main: "index.js" }),
   "node_modules/tailwindcss/index.js": "",
@@ -60,7 +61,7 @@ async function format(files: Record<string, string>, names: string[], flags: str
 describe.concurrent("sortTailwindcss", () => {
   // One run for all the cases with the same options.
   for (const [options, group] of Map.groupBy(cases, it => JSON.stringify(it.options))) {
-    test(`as oxfmt: ${options}`, async () => {
+    test(`matches oxfmt: ${options}`, async () => {
       const names = group.map((it, index) => `${index}/${it.filename}`);
       const files = Object.fromEntries(group.map((it, index) => [names[index], it.input]));
       const result = await format({ ...version4, ".oxfmtrc.json": options, ...files }, names);
@@ -80,9 +81,9 @@ describe.concurrent("sortTailwindcss", () => {
 
   const listed = (root: string) => readdirSync(root, { recursive: true, encoding: "utf8" }).sort();
 
-  describe("Handlebars: classes that oxfmt joins with what is next to them, or loses", () => {
-    // The template, what Bun makes of it, and what oxfmt 0.72 makes of it. It takes the blank at the end of a string away
-    // whatever follows, moves a class that touches what is before or behind the mustache, and loses a no-break space.
+  describe("Handlebars: classes that oxfmt joins with adjacent text, or loses", () => {
+    // Each row is the template, Bun's output and oxfmt 0.72's output. oxfmt removes the space at the end of a string
+    // whatever follows, moves a class that touches the text before or after the mustache, and loses a no-break space.
     const rows = [
       [
         '<a class={{concat "p-4 flex" x " m-2 flex "}}></a>\n',
@@ -110,22 +111,22 @@ describe.concurrent("sortTailwindcss", () => {
         `<a class="{{if a 'flex p-4'}}x"></a>`,
       ],
       ['<a class="p-4 \u00a0 flex m-2"></a>\n', '<a class="\u00a0 m-2 flex p-4"></a>', '<a class="m-2 flex p-4"></a>'],
-      // With white space in between nothing touches.
+      // With whitespace in between, nothing touches.
       ['<a class="x {{if a "p-4 flex"}} y"></a>\n', `<a class="x {{if a 'flex p-4'}} y"></a>`, null],
     ] as const;
     const names = rows.map((_, index) => `${index}.hbs`);
     const files = Object.fromEntries(rows.map((row, index) => [names[index], row[0]]));
     const project = { ...version4, ".oxfmtrc.json": '{ "sortTailwindcss": {} }' };
 
-    test("stay apart", async () => {
-      for (const [, after, ofOxfmt] of rows) expect(after).not.toBe(ofOxfmt);
+    test("stay separate", async () => {
+      for (const [, after, byOxfmt] of rows) expect(after).not.toBe(byOxfmt);
       const result = await format({ ...project, ...files }, names);
       expect(result.stderr).toBe("");
       expect(result.files).toEqual(rows.map(row => row[1]));
       expect(result.exitCode).toBe(0);
     });
 
-    test("--debug-check compares what would be written, and has nothing to say about it", async () => {
+    test("pass --debug-check, which compares what would be written", async () => {
       const result = await format({ ...project, ...files }, names, ["--debug-check"]);
       expect(result.stderr).toBe("");
       expect(result.files).toEqual(rows.map(row => row[0]));
@@ -133,16 +134,16 @@ describe.concurrent("sortTailwindcss", () => {
     });
   });
 
-  test("nothing is written into the project, not even while Tailwind is asked", async () => {
-    // The stand-in looks around when it is loaded, and refuses to answer if there is a file that the test has not made.
-    const looksAround = `const { readdirSync } = require("node:fs");
+  test("writes nothing into the project, not even while Tailwind is running", async () => {
+    // When it's loaded, the stub lists the project and throws if there's a file that the test didn't create.
+    const checkFiles = `const { readdirSync } = require("node:fs");
 const now = readdirSync(require("node:path").join(__dirname, "../.."), { recursive: true, encoding: "utf8" }).sort();
 const before = JSON.parse(process.env.FILES_OF_THE_TEST);
 if (now.join() !== before.join()) throw new Error("There is " + now.filter(it => !before.includes(it)).join(", "));
 `;
     using dir = tempDir("bun-format-tailwind", {
       ...version4,
-      "node_modules/tailwindcss/index.js": looksAround + version4["node_modules/tailwindcss/index.js"],
+      "node_modules/tailwindcss/index.js": checkFiles + version4["node_modules/tailwindcss/index.js"],
       ".oxfmtrc.json": '{ "sortTailwindcss": {} }\n',
       "a.jsx": input,
     });
@@ -161,8 +162,8 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     expect(exitCode).toBe(0);
   });
 
-  // Nix, a layer of an image that belongs to root, a sandbox. Nothing is closed to root.
-  test.skipIf(isWindows || process.getuid?.() === 0)("the packages can be read-only", async () => {
+  // As with Nix, an image layer owned by root, or a sandbox. Skipped as root, which can write anywhere.
+  test.skipIf(isWindows || process.getuid?.() === 0)("works with read-only packages", async () => {
     using dir = tempDir("bun-format-tailwind", {
       ...version4,
       ".oxfmtrc.json": '{ "sortTailwindcss": {} }\n',
@@ -177,26 +178,26 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     }
   });
 
-  test("`stylesheet` is what Tailwind CSS 4 is loaded with, from the directory of the configuration file", async () => {
+  test("loads Tailwind CSS 4 with `stylesheet`, relative to the configuration file's directory", async () => {
     const config = JSON.stringify({ sortTailwindcss: { stylesheet: "./css/app.css" } });
     const files = { ...version4, ".oxfmtrc.json": config, "css/app.css": "/* reversed */\n", "src/a.jsx": sorted };
     const result = await format(files, ["src/a.jsx"]);
     expect(result).toMatchObject({ stderr: "", files: [reversed], exitCode: 0 });
   });
 
-  test("Tailwind CSS 3 is loaded with `config`, or with the nearest tailwind.config.*", async () => {
+  test("loads Tailwind CSS 3 with `config`, or with the nearest tailwind.config.*", async () => {
     const files = { ...version3, "other.js": "module.exports = { reversed: true };\n", "src/a.jsx": input };
     const nearest = { ".oxfmtrc.json": '{ "sortTailwindcss": true }', "tailwind.config.ts": "export default {};\n" };
     expect(await format({ ...files, ...nearest }, ["src/a.jsx"])).toMatchObject({ stderr: "", files: [sorted] });
-    const named = { ".oxfmtrc.json": '{ "sortTailwindcss": { "config": "other.js" } }' };
-    expect(await format({ ...files, ...named, "src/a.jsx": sorted }, ["src/a.jsx"])).toMatchObject({
+    const explicit = { ".oxfmtrc.json": '{ "sortTailwindcss": { "config": "other.js" } }' };
+    expect(await format({ ...files, ...explicit, "src/a.jsx": sorted }, ["src/a.jsx"])).toMatchObject({
       stderr: "",
       files: [reversed],
     });
   });
 
-  // As for prettier-plugin-tailwindcss 0.8.1 with Prettier 3.9.9.
-  test("`process.cwd()` in a tailwind.config.js is where the command runs", async () => {
+  // Same as prettier-plugin-tailwindcss 0.8.1 with Prettier 3.9.9.
+  test("`process.cwd()` in a tailwind.config.js is the directory where the command runs", async () => {
     using dir = tempDir("bun-format-tailwind", {
       ...version3,
       ".oxfmtrc.json": '{ "sortTailwindcss": true }',
@@ -205,14 +206,14 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       "sub/b.jsx": sorted,
     });
     const below = await formatIn(join(String(dir), "sub"), ["a.jsx"], ["a.jsx"]);
-    const beside = await formatIn(String(dir), ["sub/b.jsx"], ["sub/b.jsx"]);
-    expect([below, beside]).toMatchObject([
+    const fromRoot = await formatIn(String(dir), ["sub/b.jsx"], ["sub/b.jsx"]);
+    expect([below, fromRoot]).toMatchObject([
       { stderr: "", files: [reversed] },
       { stderr: "", files: [sorted] },
     ]);
   });
 
-  test("each package of a workspace has its own Tailwind CSS", async () => {
+  test("each workspace package uses its own Tailwind CSS", async () => {
     const inPackage = (files: Record<string, string>, directory: string) =>
       Object.fromEntries(Object.entries(files).map(([name, text]) => [`${directory}/${name}`, text]));
     const result = await format(
@@ -230,7 +231,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
   });
 
   test.each([".pnpm", ".bun"])(
-    "a package that only another package of the workspace depends on is found in %s",
+    "finds the package in %s if only another package in the workspace depends on it",
     async store => {
       const hoisted = Object.fromEntries(
         Object.entries(version4).map(([name, text]) => [
@@ -243,8 +244,8 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     },
   );
 
-  // oxfmt 0.72 sorts them in the order of the Tailwind CSS that it brings along.
-  test("without the package the classes stay as they are, the rest is formatted, and nothing is said", async () => {
+  // oxfmt 0.72 sorts them in the order of its bundled Tailwind CSS.
+  test("without the package, silently leaves the classes unsorted and formats the rest", async () => {
     using dir = tempDir("bun-format-tailwind", {
       "package.json": "{}",
       ".oxfmtrc.json": '{ "sortTailwindcss": {} }',
@@ -270,7 +271,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
         'export const Done = () => <div className="p-4 flex">hi</div>;\n',
       ],
     });
-    // What has been written is what --check wants.
+    // The written files pass --check.
     expect(await formatIn(String(dir), [], list)).toEqual({
       stdout: "",
       stderr: "",
@@ -307,11 +308,11 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     expect(await format(files, names)).toMatchObject(expected);
     expect(await format(files, names, ["--allow-unsupported"])).toMatchObject(expected);
     expect(await format(files, names, ["--threads=1"])).toMatchObject(expected);
-    // As without the option.
+    // Same as without the option.
     expect(await format({ ...files, ".oxfmtrc.json": "{}" }, names)).toMatchObject(expected);
   });
 
-  test("a workspace without the package beside one that has it", async () => {
+  test("a workspace without the package next to one that has it", async () => {
     const inWeb = Object.entries(version4).map(([name, text]) => [`web/${name}`, text]);
     const files = {
       ".oxfmtrc.json": '{ "sortTailwindcss": true }',
@@ -326,21 +327,21 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     });
   });
 
-  // oxfmt 0.72 exits with 0. For a package that cannot be loaded it asks the Tailwind CSS that it brings along. For a file that
-  // is not there it leaves the classes as they are, and says so only of `config`.
+  // oxfmt 0.72 exits with 0. If the package can't be loaded, it falls back to its bundled Tailwind CSS. If a file is
+  // missing, it leaves the classes unsorted, and only reports that for `config`.
   test.each<[string, Record<string, string>, RegExp]>([
     [
-      "the package cannot be loaded",
+      "the package can't be loaded",
       { ...version4, "node_modules/tailwindcss/index.js": 'throw new Error("It is broken.");\n' },
       /^error: sortTailwindcss: \S+node_modules\/tailwindcss: It is broken\.$/m,
     ],
     [
-      "`stylesheet` names no file",
+      "`stylesheet` doesn't exist",
       { ...version4, ".oxfmtrc.json": '{ "sortTailwindcss": { "stylesheet": "./none.css" } }' },
       /^error: sortTailwindcss: \S+\/none\.css: ENOENT/m,
     ],
     [
-      "`config` names no file",
+      "`config` doesn't exist",
       { ...version3, ".oxfmtrc.json": '{ "sortTailwindcss": { "config": "./none.js" } }' },
       /^error: sortTailwindcss: \S+\/none\.js: Cannot find module/m,
     ],
@@ -349,22 +350,22 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       { ...version4, ".oxfmtrc.json": '{ "sortTailwindcss": { "config": "./a.js" } }', "a.js": "" },
       /^error: sortTailwindcss: \S+\/a\.js: `config` only works with Tailwind CSS 3, and \S+ is another version$/m,
     ],
-  ])("with the package it is still an error if %s", async (_, files, said) => {
+  ])("with the package, it's still an error if %s", async (_, files, message) => {
     const all = { ".oxfmtrc.json": '{ "sortTailwindcss": true }', ...files, "a.jsx": `${input}a  ;\n` };
     const result = await format(all, ["a.jsx"]);
-    expect(result.stderr).toMatch(said);
+    expect(result.stderr).toMatch(message);
     expect(result.stderr).toContain(`error: a.jsx: ${unknown} It was not formatted.\n`);
     expect(result).toMatchObject({ files: [`${input}a  ;\n`], exitCode: 2 });
   });
 
-  test("classes that Tailwind does not know come first, in the order in which they are written", async () => {
+  test("classes that Tailwind doesn't know come first, in their original order", async () => {
     const files = { ...version4, ".oxfmtrc.json": '{ "sortTailwindcss": true }' };
     const result = await format({ ...files, "a.jsx": '<a className="p-4 card flex big" />;\n' }, ["a.jsx"]);
     expect(result).toMatchObject({ stderr: "", files: ['<a className="card big flex p-4" />;\n'], exitCode: 0 });
   });
 
-  // oxfmt 0.72 does not read such a file. The order is the one that it has for the same text in UTF-8.
-  test("a file that is not UTF-8 is formatted as without the option: its bytes stay", async () => {
+  // oxfmt 0.72 can't read such a file. The expected order is the one it produces for the same text in UTF-8.
+  test("sorts classes in a file that isn't UTF-8 and preserves its bytes", async () => {
     const files = {
       "latin1.jsx": `<a className="p-4 content-['caf\xE9'] flex m-2"   />;\n`,
       "two.jsx": `<a className="p-4 content-['caf\xE8'] flex content-['caf\xE9'] m-2"   />;\n`,
@@ -406,7 +407,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     expect(exitCode).toBe(0);
   });
 
-  test("a file with a class that Tailwind says nothing about is named, and left as it is", async () => {
+  test("reports a file with a class that Tailwind returns no answer for, and leaves it unchanged", async () => {
     const entry = "node_modules/tailwindcss/index.js";
     using dir = tempDir("bun-format-tailwind", {
       ...version4,
@@ -431,9 +432,9 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     expect(piped).toMatchObject({ stdout: "", stderr: `error: d.jsx: ${unknown}\n`, exitCode: 2 });
   });
 
-  // There oxfmt 0.72 sorts in the order of the Tailwind CSS that it brings along, whatever that of the project says.
+  // oxfmt 0.72 uses the order of its bundled Tailwind CSS there, regardless of the project's.
   test.skipIf(!isLinux)(
-    "a Tailwind CSS in a directory whose name is not UTF-8 cannot be asked, and that is said",
+    "reports an error for a Tailwind CSS in a directory whose name isn't UTF-8, which can't be loaded",
     async () => {
       using dir = tempDir("bun-format-tailwind", {
         ...version4,
@@ -457,8 +458,8 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     },
   );
 
-  // An editor in a repository whose root has no packages.
-  test("a text from stdin, for a file of a project below the working directory", async () => {
+  // This is what an editor does in a repository whose root has no packages.
+  test("stdin for a file in a project below the working directory", async () => {
     const inWeb = Object.entries(version4).map(([name, text]) => [`web/${name}`, text]);
     const files = { "web/.oxfmtrc.json": '{ "sortTailwindcss": true }', ...Object.fromEntries(inWeb) };
     using dir = tempDir("bun-format-tailwind", files);
@@ -466,8 +467,8 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     expect(result).toMatchObject({ stderr: "", stdout: sorted, exitCode: 0 });
   });
 
-  // What an editor runs.
-  test("without the package, a text from stdin is formatted but for its classes, as a file is", async () => {
+  // This is what an editor runs.
+  test("without the package, stdin is formatted except for its classes, like a file", async () => {
     using dir = tempDir("bun-format-tailwind", { ".oxfmtrc.json": '{ "sortTailwindcss": true }' });
     const from = ["--stdin-filepath", "a.jsx"];
     expect(await formatIn(String(dir), [], from, `${input}a  ;\n`)).toMatchObject({
@@ -475,7 +476,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       stderr: "",
       exitCode: 0,
     });
-    // oxfmt has no --check for it.
+    // oxfmt has no --check for stdin.
     using plain = tempDir("bun-format-tailwind", {});
     const check = ["--sort-tailwindcss", "--check", ...from];
     expect(await formatIn(String(plain), [], check, `${input}a;\n`)).toMatchObject({
@@ -485,7 +486,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     });
   });
 
-  test("every run that comes across classes asks Tailwind, once, and leaves nothing behind", async () => {
+  test("every run that finds classes loads Tailwind once and leaves nothing behind", async () => {
     const entry = "node_modules/tailwindcss/index.js";
     const counts = `require("node:fs").appendFileSync(__dirname + "/loaded.txt", "x");\n`;
     using dir = tempDir("bun-format-tailwind", {
@@ -504,7 +505,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       stderr: "",
       files: [sorted, "xx", sorted],
     });
-    // Nothing is asked for a file without classes.
+    // Tailwind isn't loaded for a file without classes.
     write("c.js", "c  ;\n");
     expect(await formatIn(String(dir), ["c.js", names[1]], ["c.js"])).toMatchObject({
       stderr: "",
@@ -519,7 +520,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     expect(readdirSync(join(String(dir), "node_modules"))).toEqual(["tailwindcss"]);
   });
 
-  test("a Tailwind that cannot be asked takes only its own files with it, in the first run as in the next", async () => {
+  test("a Tailwind that can't be loaded only fails its own files, on the first run and on later ones", async () => {
     const files = {
       ...version3,
       ".oxfmtrc.json": '{ "sortTailwindcss": true }',
@@ -530,7 +531,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       "three/tailwind.config.js": 'throw new Error("It has no such plugin.");\n',
       "three/a.jsx": '<a className="p-4 flex" />;\na  ;\n',
       "four/a.jsx": '<a className="p-4 flex" />;\n',
-      // More of them. Nothing but the order of the classes could change in their files.
+      // More configs that fail. Only the class order could change in their files.
       ...Object.fromEntries(
         ["z", "c", "x", "b", "y", "a"].flatMap(name => [
           [`${name}/tailwind.config.js`, 'throw new Error("Nor has it this one.");\n'],
@@ -580,15 +581,15 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     }
   });
 
-  test("nothing is run for files without classes", async () => {
+  test("doesn't run anything for files without classes", async () => {
     const files = { ".oxfmtrc.json": '{ "sortTailwindcss": true }', "a.jsx": '<a className="one" b="c d" />;\n' };
     expect(await format(files, ["a.jsx"])).toMatchObject({ stderr: "", exitCode: 0 });
   });
 
-  // What is expected is what Prettier 3.9.9 does with prettier-plugin-tailwindcss 0.8.1 and tailwindcss 4.3.3.
+  // The expected results come from Prettier 3.9.9 with prettier-plugin-tailwindcss 0.8.1 and tailwindcss 4.3.3.
   describe("prettier-plugin-tailwindcss in a Prettier config", () => {
     const plugin = "prettier-plugin-tailwindcss";
-    /** The plugin as far as a configuration can look at it. Nothing of it runs. */
+    /** A stub of the parts of the plugin that a configuration can see. None of it runs. */
     const installed = {
       [`node_modules/${plugin}/package.json`]: JSON.stringify({ name: plugin, type: "module", exports: "./index.mjs" }),
       [`node_modules/${plugin}/index.mjs`]:
@@ -618,7 +619,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
         { ".prettierrc": `{ "overrides": [{ "files": "*.jsx", "options": { "plugins": ["${plugin}"] } }] }` },
       ],
       ["--plugin", {}, ["--plugin", plugin]],
-      ["--plugin beside a config", { ".prettierrc": "{}" }, [`--plugin=${plugin}`]],
+      ["--plugin next to a config", { ".prettierrc": "{}" }, [`--plugin=${plugin}`]],
       ["package.json", { "package.json": `{ "prettier": { "plugins": ["${plugin}"] } }` }],
       ["YAML", { ".prettierrc.yaml": `plugins:\n  - ${plugin}\n` }],
       ["TOML", { ".prettierrc.toml": `plugins = ["${plugin}"]\n` }],
@@ -633,12 +634,12 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
           ...shared("a.js", `module.exports = { plugins: [require.resolve("${plugin}")] };`),
         },
       ],
-    ])("is named by %s", async (_, files, flags = []) => {
+    ])("is recognized when it's specified by %s", async (_, files, flags = []) => {
       const result = await format({ ...project, ...files, "a.jsx": input }, ["a.jsx"], flags);
       expect(result).toMatchObject({ stderr: "", files: [sorted], exitCode: 0 });
     });
 
-    test("counts for the files whose list of plugins has it", async () => {
+    test("applies to the files whose plugin list includes it", async () => {
       const overrides = [
         { files: "off/**", options: { plugins: [] } },
         { files: "*.tsx", options: { tailwindPreserveDuplicates: true } },
@@ -654,7 +655,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     });
 
     test.each<[object, string, string]>([
-      // No function takes classes unless the config says so.
+      // No function's arguments are sorted unless the config lists it.
       [{}, 'cn("p-4 flex");\nclsx("p-4 flex");\ntwMerge("p-4 flex");\ntw`p-4 flex`;\n', ""],
       [
         { tailwindFunctions: ["cn"] },
@@ -678,12 +679,12 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
         '<a className="  flex   p-4  " />;\n',
       ],
       [{ tailwindPreserveDuplicates: true }, '<a className="p-4 flex p-4" />;\n', '<a className="flex p-4 p-4" />;\n'],
-    ])("has its options and its defaults: %j", async (options, before, after) => {
+    ])("supports its options and defaults: %j", async (options, before, after) => {
       const result = await format({ ...project, ...config(options), "a.jsx": before }, ["a.jsx"]);
       expect(result).toMatchObject({ stderr: "", files: [after || before], exitCode: 0 });
     });
 
-    // The plugin says the same, behind the directory of the config and without the `warn:`.
+    // The plugin prints the same text, after the config's directory and without the `warn:`.
     const deprecated = (name: string) =>
       `warn: Deprecated: Use the \`tailwindStylesheet\` option for v4 projects instead of \`${name}\`.\n`;
     const both =
@@ -702,31 +703,31 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       expect(result).toMatchObject({ stderr, files: [reversed], exitCode: 0 });
     });
 
-    test.each(["tailwindStylesheet", "tailwindEntryPoint", "tailwindConfig"])("an empty %s is none", async name => {
+    test.each(["tailwindStylesheet", "tailwindEntryPoint", "tailwindConfig"])("an empty %s is ignored", async name => {
       const result = await format({ ...project, ...config({ [name]: "" }), "a.jsx": input }, ["a.jsx"]);
       expect(result).toMatchObject({ stderr: "", files: [sorted], exitCode: 0 });
     });
 
-    test("a path is relative to the working directory if the config is the one that --config names", async () => {
+    test("a path is relative to the working directory if the config is passed to --config", async () => {
       const files = {
         "config/.prettierrc": config({ tailwindStylesheet: "./app.css" })[".prettierrc"],
         "a.jsx": sorted,
       };
       const flags = ["--config", "config/.prettierrc"];
-      const beside = await format({ ...project, ...files, "app.css": "/* reversed */\n" }, ["a.jsx"], flags);
-      expect(beside).toMatchObject({ stderr: "", files: [reversed], exitCode: 0 });
+      const inCwd = await format({ ...project, ...files, "app.css": "/* reversed */\n" }, ["a.jsx"], flags);
+      expect(inCwd).toMatchObject({ stderr: "", files: [reversed], exitCode: 0 });
       const elsewhere = await format({ ...project, ...files, "config/app.css": "/* reversed */\n" }, ["a.jsx"], flags);
       expect(elsewhere).toMatchObject({ files: [sorted], exitCode: 2 });
       expect(elsewhere.stderr).toContain("app.css");
     });
 
-    test("tailwindConfig is what Tailwind CSS 3 is loaded with", async () => {
+    test("loads Tailwind CSS 3 with tailwindConfig", async () => {
       const files = { ...version3, ...installed, ...config({ tailwindConfig: "./other.js" }), "src/a.jsx": sorted };
       const result = await format({ ...files, "other.js": "module.exports = { reversed: true };\n" }, ["src/a.jsx"]);
       expect(result).toMatchObject({ stderr: "", files: [reversed], exitCode: 0 });
     });
 
-    test("tailwindPackageName is what Tailwind CSS is called", async () => {
+    test("tailwindPackageName sets the Tailwind CSS package name", async () => {
       const renamed = Object.fromEntries(
         Object.entries(version4).map(([name, text]) => [name.replace("/tailwindcss/", "/@acme/tw/"), text]),
       );
@@ -768,14 +769,14 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
         { tailwindPreserveDuplicates: null },
         "Invalid tailwindPreserveDuplicates value. Expected true or false, but received null.",
       ],
-    ])("a value of the wrong type is refused: %j", async (options, refusal) => {
+    ])("rejects a value of the wrong type: %j", async (options, message) => {
       const result = await format({ ...project, ...config(options), "a.jsx": input }, ["a.jsx"]);
-      expect(result.stderr).toBe(`error: ${refusal}\n`);
+      expect(result.stderr).toBe(`error: ${message}\n`);
       expect(result.files).toEqual([input]);
       expect(result.exitCode).not.toBe(0);
     });
 
-    test("without it its options are unknown, and with it an option that it does not have is", async () => {
+    test("without it its options are unknown, and with it so is an option it doesn't have", async () => {
       const options = { tailwindFunctions: ["cn"], tailwindConfig: "./x.js", tailwindPreserveWhitespace: true };
       const without = await format({ ...project, ".prettierrc": JSON.stringify(options), "a.jsx": input }, ["a.jsx"]);
       expect(without).toMatchObject({
@@ -794,13 +795,13 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       });
     });
 
-    test("another plugin beside it is still refused, by its name", async () => {
+    test("another plugin next to it is still rejected by name", async () => {
       const files = { ".prettierrc": JSON.stringify({ plugins: [plugin, "prettier-plugin-other"] }), "a.jsx": input };
       const result = await format({ ...project, ...files }, ["a.jsx"], ["--log-level=log", "--check"]);
       expect(result.stderr).toContain("plugins that bun fmt does not include: prettier-plugin-other\n");
-      // That it has no effect is said in a run that goes on without it.
+      // "has no effect" is only printed in a run that continues without the plugin.
       expect(result.stderr).not.toContain("has no effect");
-      // Nothing is said about files that have not been looked at.
+      // Nothing is printed about files that weren't checked.
       expect(result.stdout).toBe("Checking formatting...\n");
       expect(result.files).toEqual([input]);
       expect(result.exitCode).toBe(2);
@@ -808,11 +809,11 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
 
     const names = { tailwindFunctions: ["cn", "/^tw/"], tailwindAttributes: ["mine", "/^data-cls/"] };
 
-    test("where classes are is what it says, not oxfmt", async () => {
-      // The lines of a file, before and after.
+    test("finds classes where the plugin does, not where oxfmt does", async () => {
+      // Each file's lines, before and after.
       const rows: Record<string, [string, string][]> = {
         "a.jsx": [
-          // However deep in an argument or in the value of an attribute.
+          // At any depth in an argument or an attribute value.
           ['cn(other("p-4 flex"));', 'cn(other("flex p-4"));'],
           ['<a className={other("p-4 flex")} />;', '<a className={other("flex p-4")} />;'],
           ['cn(a === "p-4 flex" && "flex m-2");', 'cn(a === "flex p-4" && "m-2 flex");'],
@@ -833,20 +834,21 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
             '<a data-cls-x="p-4 flex" mine="p-4 flex" a:className="p-4 flex" />;',
             '<a data-cls-x="flex p-4" mine="flex p-4" a:className="p-4 flex" />;',
           ],
-          // To Babel a call in an optional chain is another kind of node.
+          // In Babel's tree, a call in an optional chain is a different kind of node.
           ['cn?.("p-4 flex");', ""],
           ['cn?.x.y("p-4 flex");', ""],
-          // What is added to stays apart, up to the innermost function.
+          // An operand of `+` keeps the space that separates it from the other operand. The search for a `+` stops at
+          // the innermost function.
           ['cn(a + (b ? " p-4 flex " : c));', 'cn(a + (b ? " flex p-4" : c));'],
           ['cn("x " + cn(" p-4 flex "));', 'cn("x " + cn("flex p-4"));'],
           ['"x " + cn` p-4 flex ` + " y";', '"x " + cn` flex p-4 ` + " y";'],
-          // Of the texts of a template it looks at the wrong ends, which leaves more blanks than are needed.
+          // It looks at the wrong ends of a template's text parts, which leaves more spaces than needed.
           ['cn(`x ${" p-4 flex "} y`);', 'cn(`x ${" flex p-4 "} y`);'],
           ['cn(`${" p-4 flex "}`);', 'cn(`${" flex p-4 "}`);'],
           ['cn(` ${" p-4 flex "} `);', 'cn(` ${"flex p-4"} `);'],
           ["cn(`p-4 flex${a}m-2 p-1`);", ""],
           ["cn(` p-4 flex ${a} p-1 m-2 `);", "cn(`flex p-4 ${a} m-2 p-1`);"],
-          // A list that was on several lines does not keep the element open.
+          // A class list that spanned several lines doesn't keep the element expanded.
           ['<a\n  className="\n    p-4\n    flex\n  "\n/>;', '<a className="flex p-4" />;'],
         ],
         "a.tsx": [
@@ -855,7 +857,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
           ['(cn?.x)("p-4 flex");', ""],
           ['cn!("p-4 flex");', ""],
           ['cn<string>("p-4 flex" as string);', 'cn<string>("flex p-4" as string);'],
-          // In this tree it does not find the texts of a template.
+          // In this tree it doesn't find a template's text parts.
           ['cn(`x ${" p-4 flex "} y`);', 'cn(`x ${"flex p-4"} y`);'],
           ['cn(`${" p-4 flex "}`);', 'cn(`${"flex p-4"}`);'],
           ['cn(`x${`p-4 flex ${" p-1 m-2 "} p-2 m-3`}y`);', 'cn(`x${`flex p-4 ${"m-2 p-1"} m-3 p-2`}y`);'],
@@ -890,8 +892,8 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       expect(result.exitCode).toBe(0);
     });
 
-    test("a class stays apart from the text of a template that it touches", async () => {
-      // The code, what Bun makes of it, and what the plugin makes of it: one class of `x` and `flex`.
+    test("keeps a class separate from the template text next to it", async () => {
+      // Each row is the code, Bun's output and the plugin's output, which joins `x` and `flex` into one class.
       const rows: Record<string, [string, string, string][]> = {
         "a.tsx": [
           [
@@ -930,7 +932,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       expect(result.exitCode).toBe(0);
     });
 
-    test("with @prettier/plugin-oxc before it, it looks at the tree of that, and behind that it does nothing", async () => {
+    test("listed after @prettier/plugin-oxc it uses that plugin's tree, and listed before it, it does nothing", async () => {
       const code = 'cn?.("p-4 flex");\ncn(`x ${" p-4 flex "} y`);\n';
       const sortedCode = 'cn?.("flex p-4");\ncn(`x ${" flex p-4 "} y`);\n';
       const inVue = (text: string, lang = "") => `<script${lang}>\n${text}</script>\n`;
@@ -940,7 +942,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
           { ...project, ".prettierrc": JSON.stringify({ plugins, tailwindFunctions: ["cn"] }), ...files },
           Object.keys(files),
         );
-      // It does not read the JavaScript in HTML.
+      // @prettier/plugin-oxc doesn't parse the JavaScript in HTML.
       const byBabel = inVue('cn?.("p-4 flex");\ncn(`x ${" flex p-4 "} y`);\n');
       expect(await run(["@prettier/plugin-oxc", plugin])).toMatchObject({
         stderr: "",
@@ -952,7 +954,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       });
     });
 
-    test("in Angular it looks at the texts of a template as they are written", async () => {
+    test("in Angular it looks at a template's text parts as written", async () => {
       const before = "<a [ngClass]=\"`x${a ? ' p-4 flex' : ''}`\" [class]=\"`x ${a ? ' p-4 flex ' : ''} y`\"></a>\n";
       const after =
         "<a\n  [ngClass]=\"`x${a ? ' flex p-4' : ''}`\"\n  [class]=\"`x ${a ? ' flex p-4 ' : ''} y`\"\n></a>\n";
@@ -960,8 +962,8 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       expect(result).toMatchObject({ stderr: "", files: [after], exitCode: 0 });
     });
 
-    describe("the Tailwind CSS that it brings along", () => {
-      /** Its `createSorter`, which knows what is in order.json. A file with `reversed` in it turns the order around. */
+    describe("its bundled Tailwind CSS", () => {
+      /** A stub of its `createSorter` that knows the classes in order.json. A file with `reversed` reverses the order. */
       const withSorter = {
         ...installed,
         [`node_modules/${plugin}/package.json`]: JSON.stringify({
@@ -984,14 +986,14 @@ export async function createSorter({ configPath, stylesheetPath }) {
       const flipped = "module.exports = { reversed: true };\n";
 
       test.each<[string, Record<string, string>, string]>([
-        ["there is no tailwindcss", config({}), sorted],
+        ["tailwindcss isn't installed", config({}), sorted],
         [
-          "there is no tailwindcss, with the nearest tailwind.config.js",
+          "tailwindcss isn't installed, with the nearest tailwind.config.js",
           { ...config({}), "tailwind.config.js": flipped },
           reversed,
         ],
         [
-          "there is no tailwindcss, with a style sheet",
+          "tailwindcss isn't installed, with a style sheet",
           { ...config({ tailwindStylesheet: "a.css" }), "a.css": "/* reversed */" },
           reversed,
         ],
@@ -1005,7 +1007,7 @@ export async function createSorter({ configPath, stylesheetPath }) {
           { ...version3, ...config({ tailwindStylesheet: "a.css" }), "a.css": "/* reversed */" },
           reversed,
         ],
-      ])("is asked if %s", async (_, files, expected) => {
+      ])("is used if %s", async (_, files, expected) => {
         const before = '<a className="flex x p-4 m-2 x flex" />;\n';
         const result = await format({ ...withSorter, ...files, "src/a.jsx": before }, ["src/a.jsx"]);
         expect(result).toMatchObject({ stderr: "", files: [expected.replace('"', '"x x ')], exitCode: 0 });
@@ -1015,7 +1017,7 @@ export async function createSorter({ configPath, stylesheetPath }) {
         [config({})],
         [config({ tailwindStylesheet: "a.css" })],
         [config({ tailwindPackageName: "@acme/tw" })],
-      ])("without it and without the package, classes stay as they are: %#", async files => {
+      ])("without it and without the package, classes stay unsorted: %#", async files => {
         const result = await format({ ...files, "a.jsx": `${input}a  ;\n` }, ["a.jsx"]);
         expect(result).toMatchObject({ stderr: "", files: [`${input}a;\n`], exitCode: 0 });
       });
@@ -1035,17 +1037,17 @@ export async function createSorter({ configPath, stylesheetPath }) {
             `  Run bun add -d ${plugin}, which brings its own`,
           ],
         ],
-      ])("has to be installed for that: %#", async (files, said) => {
+      ])("has to be installed for a mismatched option and version: %#", async (files, lines) => {
         const result = await format({ ...files, "a.jsx": input }, ["a.jsx"]);
-        for (const line of said)
+        for (const line of lines)
           expect(result.stderr).toContain(line.startsWith(" ") ? `\n${line}\n` : `error: sortTailwindcss: ${line}`);
         expect(result.files).toEqual([input]);
         expect(result.exitCode).toBe(2);
       });
     });
 
-    // Each stream has what Prettier's has.
-    test("--check says on standard output that an error occurred, and on standard error what it is", async () => {
+    // Each stream gets the same text as in Prettier.
+    test("--check prints that an error occurred to stdout and the error itself to stderr", async () => {
       const files = { ...config({}), "tailwind.config.js": 'throw new Error("boom");\n', "a.jsx": input };
       using dir = tempDir("bun-format-tailwind", { ...version3, ...installed, ...files });
       const result = await formatIn(String(dir), [], ["--log-level=log", "--check", "a.jsx"]);
@@ -1061,7 +1063,7 @@ export async function createSorter({ configPath, stylesheetPath }) {
       expect(result.exitCode).toBe(2);
     });
 
-    test("a flag or [fmt] counts for more", async () => {
+    test("a flag or [fmt] takes precedence", async () => {
       const files = { ...config({}), "bunfig.toml": '[fmt.sortTailwindcss]\nfunctions = ["mine"]\n' };
       const result = await format({ ...project, ...files, "a.jsx": 'mine("p-4 flex");\n' }, ["a.jsx"]);
       expect(result).toMatchObject({ stderr: "", files: ['mine("flex p-4");\n'], exitCode: 0 });

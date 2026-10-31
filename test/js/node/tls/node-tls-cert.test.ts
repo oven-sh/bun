@@ -473,6 +473,26 @@ it("Fail to find CA for server.", async () => {
   }
 });
 
+it("Fail to find CA for server, which also sent a certificate with a blocked public key.", async () => {
+  try {
+    await connect({
+      client: {
+        checkServerIdentity,
+      },
+      server: {
+        key: serverTls.key,
+        cert:
+          serverTls.cert +
+          "\n" +
+          readFileSync(join(import.meta.dir, "fixtures", "blocked-public-key-cert.pem"), "utf8"),
+      },
+    });
+    expect.unreachable();
+  } catch (err: any) {
+    expect(err.code).toBe("CERT_REVOKED");
+  }
+});
+
 it("Server sent their CA, but CA cannot be trusted if it is not locally known.", async () => {
   try {
     await connect({

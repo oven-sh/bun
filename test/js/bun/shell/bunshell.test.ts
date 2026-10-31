@@ -536,6 +536,22 @@ describe("bunshell", () => {
     expect(await file.text()).toEqual(thisFileText);
   });
 
+  test("redirect stdin from a ReadableStream throws", async () => {
+    for (const cmd of ["cat", "echo", "true && cat", `${BUN} -e "process.stdin.pipe(process.stdout)"`]) {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("hello from a stream\n"));
+          controller.close();
+        },
+      });
+      expect(async () => await $`${{ raw: cmd }} < ${stream}`.env(bunEnv).quiet()).toThrow(
+        "ReadableStream is not supported as a shell redirect yet",
+      );
+    }
+    const stream = new Response("hello from a stream\n").body!;
+    expect(await $`cat < ${await new Response(stream).blob()}`.text()).toBe("hello from a stream\n");
+  });
+
   // TODO This sometimes fails
   test("redirect stderr", async () => {
     const buffer = Buffer.alloc(128, 0);
@@ -1235,6 +1251,13 @@ booga"
       const { stdout } = await $`{echo,a,b,c} {d,e,f}`;
       expect(stdout.toString()).toEqual("a b c d e f\n");
     });
+
+    test("a word with more than 65535 tokens fails", async () => {
+      const word = "{" + Array(32768).fill("a").join(",") + "}";
+      const { stderr, exitCode } = await $`echo ${{ raw: word }}`.quiet().nothrow();
+      expect(stderr.toString()).toBe("bun: unexpected token while expanding braces\n");
+      expect(exitCode).toBe(1);
+    });
   });
 
   describe("variables", () => {
@@ -1584,6 +1607,25 @@ describe("deno_task", () => {
     TestBuilder.command`echo $(echo 1)`.stdout("1\n").runAsTest("nested echo cmd subst");
     TestBuilder.command`echo $(echo 1 && echo 2)`.stdout("1 2\n").runAsTest("nested echo cmd subst with conditional");
     // TODO Sleep tests
+
+    describe("drops NUL bytes from the output", () => {
+      TestBuilder.command`echo "$(echo -e 'a\0b\0c')" $(echo -e 'a\0b c\0d')`
+        .stdout("abc ab cd\n")
+        .runAsTest("passed to echo");
+
+      TestBuilder.command`${BUN} run ./code.ts x $(echo -e '\0') y "$(echo -e '\0')" z`
+        .ensureTempDir()
+        .file("code.ts", `console.log(JSON.stringify(process.argv.slice(2)))`)
+        .stdout(out => expect(JSON.parse(out)).toEqual(["x", "y", "", "z"]))
+        .runAsTest("skips an unquoted NUL and passes a quoted NUL as an empty argument");
+
+      TestBuilder.command`${BUN} exec ${`echo hi > "$(echo -e 'f\\0zz')"; touch t1zzz; [[ -f $(echo -e 't1\\0zzz') ]] && echo yes || echo no`}`
+        .ensureTempDir()
+        .stdout("yes\n")
+        .fileEquals("fzz", "hi\n")
+        .doesNotExist("f")
+        .runAsTest("used as a redirect target or in a file test");
+    });
   });
 
   describe("shell variables", async () => {
@@ -3405,6 +3447,91 @@ test.skipIf(isWindows)(
   },
 );
 
+test("a builtin stops writing to a redirect target that was resized to 0", async () => {
+  const ab = new ArrayBuffer(1 << 20, { maxByteLength: 1 << 21 });
+  const buffer = new Uint8Array(ab);
+  // .then() starts the interpreter. `yes` writes its first batch and queues the next one.
+  const running = $`yes > ${buffer}`
+    .env(bunEnv)
+    .quiet()
+    .nothrow()
+    .then(o => o);
+  await Promise.resolve();
+  ab.resize(0);
+
+  const result = await running;
+  expect(result.stderr.toString()).toBe("yes: ENOSPC\n");
+  expect(result.exitCode).toBe(1);
+});
+
+describe.each(["> ", "2>&1 "])("an external command with a `%s${buf}` redirect", redirect => {
+  test.skipIf(isWindows)("drops the output that arrives after the target was resized to 0", async () => {
+    const ab = new ArrayBuffer(1 << 20, { maxByteLength: 1 << 21 });
+    const buffer = new Uint8Array(ab);
+    const gate = Promise.withResolvers<void>();
+    const childWaiting = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      async fetch() {
+        childWaiting.resolve();
+        await gate.promise;
+        return new Response("ok");
+      },
+    });
+    // The second write waits for the fetch, so it arrives after the resize.
+    const childCode = `
+      const chunk = Buffer.alloc(1 << 16, 0x41);
+      process.stdout.write(chunk);
+      await fetch(${JSON.stringify(String(server.url))});
+      process.stdout.write(chunk);
+    `;
+    const running = $`${BUN} -e ${childCode} ${{ raw: redirect }}${buffer}`
+      .env(bunEnv)
+      .quiet()
+      .nothrow()
+      .then(o => o);
+
+    await Promise.race([
+      childWaiting.promise,
+      running.then(r => {
+        throw new Error(`command settled before the child connected (exit ${r.exitCode}): ${r.stderr}`);
+      }),
+    ]);
+    ab.resize(0);
+    gate.resolve();
+
+    const result = await running;
+    expect(result.stderr.toString()).toBe("");
+    expect(result.exitCode).toBe(0);
+  });
+});
+
+test("a builtin stops writing to a redirect target whose WebAssembly.Memory grew", async () => {
+  // Without fast memory, grow() moves the block. Without the Gigacage, the old block is unmapped.
+  const child = `
+    const mem = new WebAssembly.Memory({ initial: 128, maximum: 132 });
+    const target = new Uint8Array(mem.buffer);
+    const running = Bun.$\`yes > \${target}\`.quiet().nothrow().then(o => o);
+    await Promise.resolve();
+    const wroteBeforeGrow = target[0] === 0x79 && target[1] === 0x0a;
+    mem.grow(4);
+    const result = await running;
+    console.log(JSON.stringify({ wroteBeforeGrow, exitCode: result.exitCode, stderr: result.stderr.toString() }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [BUN, "-e", child],
+    env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", Malloc: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({
+    stdout: JSON.stringify({ wroteBeforeGrow: true, exitCode: 1, stderr: "yes: ENOSPC\n" }),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("stdin redirect from a Uint8Array sends the bytes captured when the command starts", async () => {
   // `< ${buf}` snapshots the buffer's contents when the command starts and
   // streams them to the child's stdin across multiple event-loop turns.
@@ -3564,6 +3691,37 @@ test("cd treats interpolated arguments starting with tilde or dash as literal di
   }
 });
 
+test.each([
+  ["ASCII", "a\0b"],
+  ["Latin-1", "caf\xe9\0b"],
+  ["UTF-16", "\u4e2d\0b"],
+])(".cwd() and .env() reject a %s string with a NUL byte", (_, value) => {
+  const error = (name: string) => ({
+    code: "ERR_INVALID_ARG_VALUE",
+    message: `The shell ${name} must be a string without null bytes. Received ${JSON.stringify(value)}`,
+  });
+  expect(() => $`true`.cwd(value)).toThrow(error("cwd"));
+  expect(() => $`true`.env({ [value]: "1" })).toThrow(error("env key"));
+  expect(() => $`true`.env({ X: value })).toThrow(error("env value"));
+  expect(() => new $.Shell().cwd(value)`true`).toThrow(error("cwd"));
+});
+
+test(".env() rejects a NUL byte at any offset in an ASCII string and copies clean strings unchanged", async () => {
+  const env: Record<string, string> = { LATIN1: "caf\xe9", UTF16: "\u4e2d", EMPTY: "" };
+  const error = expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" });
+  for (const length of [1, 7, 8, 9, 17, 33, 129, 200]) {
+    const clean = Buffer.alloc(length, "\x01a~\x7f").latin1Slice();
+    env["V" + length] = clean;
+    for (const at of length > 33 ? [0, 64, length - 9, length - 1] : Array(length).keys()) {
+      const value = clean.slice(0, at) + "\0" + clean.slice(at + 1);
+      expect(() => $`true`.env({ X: value })).toThrow(error);
+      expect(() => $`true`.env({ [value]: "1" })).toThrow(error);
+    }
+  }
+  const raw = `echo "[$${Object.keys(env).join("][$")}]"`;
+  expect(await $`${{ raw }}`.env(env).text()).toBe(`[${Object.values(env).join("][")}]\n`);
+});
+
 describe("literal digits after an interpolated value", () => {
   TestBuilder.command`echo ${"a b"}0`
     .stdout("a b0\n")
@@ -3606,4 +3764,63 @@ test.skipIf(isWindows)("external command resolution uses the PATH from the shell
     expect(stdout.toString()).toBe("from-onlyintool\n");
     expect(exitCode).toBe(0);
   }
+});
+
+// Windows joins each file operand onto the shell's cwd in one path buffer. POSIX passes operands to the *at() syscalls.
+test.if(isWindows)("operands longer than the path buffer fail with ENAMETOOLONG", async () => {
+  using dir = tempDir("shell-long-operand", { "in.txt": "content\n" });
+  const script = `
+    import { $ } from "bun";
+    $.nothrow();
+    $.cwd(process.env.SHELL_CWD);
+    const long = Buffer.alloc(100_000, "a").toString();
+    // Too long as written, but normalizes to a short name inside the cwd.
+    const collapsing = Buffer.alloc(100_000, "a/../").toString();
+    const show = buf => buf.toString().replaceAll(long, "<long>").replaceAll(collapsing, "<collapsing>");
+    const run = async promise => {
+      const { exitCode, stdout, stderr } = await promise.quiet();
+      return { exitCode, stdout: show(stdout), stderr: show(stderr) };
+    };
+    console.log(
+      JSON.stringify({
+        cat: await run($\`cat \${long}\`),
+        redirect: await run($\`echo hi > \${long}\`),
+        isFile: await run($\`[[ -f \${long} ]]\`),
+        rootedCat: await run($\`cat \${"/" + long}\`),
+        rootedLs: await run($\`ls \${"/" + long}\`),
+        rootedMvTarget: await run($\`mv in.txt \${"/" + long}\`),
+        rootedRedirect: await run($\`echo hi > \${"/" + long}\`),
+        rootedIsDir: await run($\`[[ -d \${"/" + long} ]]\`),
+        collapsingCat: await run($\`cat \${collapsing + "in.txt"}\`),
+        collapsingIsFile: await run($\`[[ -f \${collapsing + "in.txt"} ]]\`),
+        collapsingRedirect: await run($\`echo hi > \${collapsing + "out.txt"}\`),
+      }),
+    );
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, SHELL_CWD: String(dir) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const failed = (stderr: string) => ({ exitCode: 1, stdout: "", stderr });
+  const succeeded = (stdout: string) => ({ exitCode: 0, stdout, stderr: "" });
+  expect(JSON.parse(stdout)).toEqual({
+    cat: failed("cat: <long>: File name too long\n"),
+    redirect: failed("bun: File name too long: <long>"),
+    isFile: failed(""),
+    rootedCat: failed("cat: /<long>: File name too long\n"),
+    rootedLs: failed("ls: /<long>: File name too long\n"),
+    rootedMvTarget: failed("mv: /<long>: File name too long\n"),
+    rootedRedirect: failed("bun: File name too long: /<long>"),
+    rootedIsDir: failed(""),
+    collapsingCat: succeeded("content\n"),
+    collapsingIsFile: succeeded(""),
+    collapsingRedirect: succeeded(""),
+  });
+  expect(await Bun.file(join(String(dir), "in.txt")).text()).toBe("content\n");
+  expect(await Bun.file(join(String(dir), "out.txt")).text()).toBe("hi\n");
+  expect(exitCode).toBe(0);
 });

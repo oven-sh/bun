@@ -1,4 +1,4 @@
-//! ESTree's `Literal`s that are a string or a number, wherever they are.
+//! Finds every ESTree `Literal` that's a string or a number, wherever it appears.
 
 use crate::ast::{
     ExprTag, File, Handle, ImportAttributes, Key, KeyKind, Node, PatTag, StmtKind, StmtTag, TypeTag,
@@ -7,9 +7,9 @@ use crate::span::{Span, Spanned};
 use crate::tokens::skip_trivia;
 use bun_sema::hir::{Flags, NameKind};
 
-/// A string in quotes or a number: what ESLint calls a listener for `Literal` with.
+/// A quoted string or a number. ESLint calls `Literal` listeners with these.
 ///
-/// Only some of them are expressions here. The others are part of the node that has them.
+/// Only some of them are expressions in our tree. The others are part of the node that owns them.
 #[derive(Copy, Clone)]
 pub struct Literal<'a> {
     span: Span,
@@ -17,12 +17,12 @@ pub struct Literal<'a> {
 }
 
 impl<'a> Literal<'a> {
-    /// The expression or the type that the literal is. Otherwise what it is a part of:
+    /// The literal itself, if it's an expression or a type. Otherwise the node it's part of:
     /// - the [`Prop`](crate::ast::Prop), [`Member`](crate::ast::Member), [`PatProp`](crate::ast::PatProp) or
     ///   [`EnumMember`](crate::ast::EnumMember) that it is the key of, with or without brackets,
     /// - the [`ImportSpec`](crate::ast::ImportSpec) or [`ExportSpec`](crate::ast::ExportSpec) that it is a name of,
-    /// - the statement that it is the module specifier of, the `"a"` of `export * as "a"` or of `declare module "a"`, or a key
-    ///   of `with { "a": "b" }`,
+    /// - the statement that it is the module specifier of, the `"a"` in `export * as "a"` or `declare module "a"`, or a
+    ///   key in `with { "a": "b" }`,
     /// - the `import("a")` type.
     #[inline]
     pub fn owner(self) -> Node<'a> {
@@ -57,7 +57,7 @@ pub(crate) struct RawLiteral {
     sort: Sort,
 }
 
-/// Which vector of the HIR the owner of a literal is in.
+/// The HIR vector that a literal's owner is in.
 #[derive(Copy, Clone)]
 enum Sort {
     Expr,
@@ -112,7 +112,7 @@ impl RawLiteral {
     }
 }
 
-// Nearly every key is a plain name. These tell from what the HIR has, before a `Key` is made.
+// Almost every key is a plain identifier. These helpers rule that out from the raw HIR, before a `Key` is built.
 impl File<'_> {
     #[inline]
     fn is_quote_at(&self, pos: u32) -> bool {
@@ -124,26 +124,29 @@ impl File<'_> {
         (self.text().get(pos as usize)).is_some_and(u8::is_ascii_digit)
     }
 
-    /// Whether a key that is written so, at `pos`, can be a `KeyKind::String` or a `KeyKind::ComputedString`.
+    /// True if a key of kind `key_kind` at `pos` can be a `KeyKind::String` or a `KeyKind::ComputedString`.
     #[inline]
-    fn can_be_string_key(&self, written: NameKind, pos: u32) -> bool {
-        match written {
+    fn can_be_string_key(&self, key_kind: NameKind, pos: u32) -> bool {
+        match key_kind {
             NameKind::StringLiteral | NameKind::ComputedString => true,
             NameKind::Identifier => self.is_quote_at(pos),
             NameKind::NumericLiteral | NameKind::ComputedNumber | NameKind::Jsx => false,
         }
     }
 
-    /// The same for `KeyKind::Number` and `KeyKind::ComputedNumber`. The HIR does not tell a `bigint`.
+    /// The same for `KeyKind::Number` and `KeyKind::ComputedNumber`. The HIR has no kind for a `bigint` key, so this
+    /// also checks for a digit.
     #[inline]
-    fn can_be_number_key(&self, written: NameKind, pos: u32) -> bool {
-        matches!(written, NameKind::NumericLiteral | NameKind::ComputedNumber)
-            || self.is_digit_at(pos)
+    fn can_be_number_key(&self, key_kind: NameKind, pos: u32) -> bool {
+        matches!(
+            key_kind,
+            NameKind::NumericLiteral | NameKind::ComputedNumber
+        ) || self.is_digit_at(pos)
     }
 }
 
 impl<'a> File<'a> {
-    /// They are looked for once for all rules.
+    /// Computed once and shared by all rules.
     #[inline(never)]
     fn string_literals(&'a self) -> &'a [RawLiteral] {
         self.by_kind().string_literals.get_or_init(|| {
@@ -179,7 +182,7 @@ impl<'a> File<'a> {
 
     fn find_string_literals(&'a self, mut visit: impl FnMut(Literal<'a>)) {
         let hir = &self.hir;
-        // What may be a name as well as a string.
+        // Visits a name that may be either an identifier or a string.
         let mut name = |span: Span, owner: Node<'a>| {
             if self.is_quote_at(span.start) {
                 visit(Literal { span, owner });
@@ -192,7 +195,7 @@ impl<'a> File<'a> {
                 name(key.inner_span(self), owner);
             }
         };
-        // For assertions: what `key` passes on and `name` takes.
+        // Only for assertions: true for the keys that `key` and `name` together would visit.
         let is_string = |key: Option<Key<'a>>| {
             key.is_some_and(|key| {
                 matches!(key.kind(), KeyKind::String(_) | KeyKind::ComputedString(_))
@@ -288,12 +291,12 @@ impl<'a> File<'a> {
             }
         });
         self.every_export_spec(|it| {
-            // Two nodes for ESLint, also where it is written once: `export { "a" } from "b"`.
-            for written in [it.local(), it.exported()] {
-                if written.is_string() {
-                    name(written.span(), Node::ExportSpec(it));
+            // ESLint has two nodes even if the name is written once: `export { "a" } from "b"`.
+            for specifier_name in [it.local(), it.exported()] {
+                if specifier_name.is_string() {
+                    name(specifier_name.span(), Node::ExportSpec(it));
                 } else {
-                    debug_assert!(!self.is_quote_at(written.span().start));
+                    debug_assert!(!self.is_quote_at(specifier_name.span().start));
                 }
             }
         });
@@ -307,7 +310,7 @@ impl<'a> File<'a> {
 
     fn find_number_literals(&'a self, mut visit: impl FnMut(Literal<'a>)) {
         let hir = &self.hir;
-        // For assertions.
+        // Only for assertions.
         let is_number = |key: Option<Key<'a>>| {
             key.is_some_and(|key| {
                 matches!(key.kind(), KeyKind::Number(_) | KeyKind::ComputedNumber(_))
@@ -364,7 +367,7 @@ impl<'a> File<'a> {
             });
         }
         self.every_type_of(&[TypeTag::NumberLit, TypeTag::BigIntLit], |ty| {
-            // `-1` is a `UnaryExpression` there.
+            // In ESTree `-1` is a `UnaryExpression`.
             let span = match ty.text().starts_with(b"-") {
                 true => Span::new(skip_trivia(self.text(), ty.span().start + 1), ty.span().end),
                 false => ty.span(),

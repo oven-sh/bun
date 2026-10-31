@@ -357,7 +357,7 @@ ws.terminate(); // no Close frame
 - `0`, `1005` and `1006` send a Close frame with no code, so you can forward the code from a `close` handler to another socket.
 - The reason is truncated to 123 bytes of UTF-8.
 
-When the client violates the protocol, Bun sends a Close frame with `1002` (protocol error), `1007` (invalid UTF-8 or compressed data) or `1009` (message too big). The `close` handler receives `1006`, with a description of the problem as the reason.
+When the client violates the protocol, Bun sends a Close frame with `1002` (protocol error), `1007` (invalid UTF-8 or compressed data) or `1009` (message too big). If a buffer for a message cannot be allocated, Bun sends `1011` and closes that connection only. The `close` handler receives `1006`, with a description of the problem as the reason.
 
 `server.stop()` doesn't close open WebSockets. `server.stop(true)` closes each one with `1001`.
 

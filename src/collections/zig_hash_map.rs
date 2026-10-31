@@ -494,6 +494,17 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
             .map(|(k, v)| crate::hash_map::KV { key: k, value: v })
     }
 
+    /// std `retain`. Calls `keep` exactly once per entry.
+    pub fn retain(&mut self, mut keep: impl FnMut(&K, &mut V) -> bool) {
+        for idx in 0..self.slots.len() {
+            if let Some((key, value)) = &mut self.slots[idx]
+                && !keep(key, value)
+            {
+                let _ = self.remove_by_index(idx);
+            }
+        }
+    }
+
     /// std `entry` API. `VacantEntry::insert` does a second probe (re-runs
     /// `get_or_put_slot`); acceptable for the few callers that use it.
     pub fn entry(&mut self, key: K) -> MapEntry<'_, K, V, C> {
@@ -678,5 +689,47 @@ impl<'a, K, V, C: HashContext<K>> VacantEntry<'a, K, V, C> {
         debug_assert!(!found);
         self.map.slots[idx] = Some((self.key, value));
         &mut self.map.slots[idx].as_mut().unwrap().1
+    }
+}
+
+#[cfg(test)]
+mod retain_tests {
+    use super::*;
+
+    /// `keep` is shown each entry once, and the entries it accepts are still found by key.
+    fn check(keys: &[u64], rejected: &[u64]) {
+        // The home slot is `key & 7`, so the keys choose the runs.
+        let mut map: HashMap<u64, u32, IdentityContext<u64>> = HashMap::new();
+        for &key in keys {
+            map.insert(key, 0);
+        }
+        assert_eq!(map.capacity(), 8);
+        map.retain(|key, shown| {
+            *shown += 1;
+            !rejected.contains(key)
+        });
+        let mut left: Vec<(u64, u32)> = map.iter().map(|(key, shown)| (*key, *shown)).collect();
+        left.sort_unstable();
+        let mut expected: Vec<(u64, u32)> = (keys.iter().filter(|key| !rejected.contains(key)))
+            .map(|&key| (key, 1))
+            .collect();
+        expected.sort_unstable();
+        assert_eq!(left, expected);
+        assert_eq!(map.len(), expected.len());
+        for (key, _) in expected {
+            assert_eq!(map.get(&key), Some(&1));
+        }
+    }
+
+    #[test]
+    fn retain_shows_each_entry_once() {
+        // 2 and 10 share home slot 2: 10 is in slot 3, behind the rejected entry.
+        check(&[2, 10, 3], &[2]);
+        check(&[2, 10, 3], &[2, 10]);
+        // The run wraps: 6 in slot 6, 14 in slot 7, 22 in slot 0.
+        check(&[6, 14, 22], &[6]);
+        check(&[6, 14, 22], &[14]);
+        check(&[6, 14, 22, 30, 7, 15], &[6, 30]);
+        check(&[2, 10, 3], &[]);
     }
 }

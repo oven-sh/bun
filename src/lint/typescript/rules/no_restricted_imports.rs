@@ -7,8 +7,8 @@ use bun_lint_eslint::rules::no_restricted_imports::{
 /// Disallow specified modules when loaded by `import`.
 pub struct NoRestrictedImports {
     base: Restrictions,
-    /// What `allowTypeImports` is set for. A type-only import of one of these is not checked at
-    /// all, not even against the restrictions that do not set it.
+    /// The paths that set `allowTypeImports`. A type-only import of one of these isn't checked at all, not even against
+    /// restrictions that don't set it.
     allowed_type_import_paths: Vec<Box<[u8]>>,
     allowed_type_import_matchers: Vec<IgnoreRules>,
     allowed_type_import_regexes: Vec<Regex>,
@@ -83,7 +83,7 @@ impl Rule for NoRestrictedImports {
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        // In oxlint `allowTypeImports` is about the restriction that it is set for, as in ESLint's rule.
+        // In oxlint `allowTypeImports` only applies to the restriction that sets it, as in ESLint's rule.
         if cx.language().is_oxlint {
             self.base.check(cx, statement, Dialect::TypeScript);
             return;

@@ -1,6 +1,7 @@
 // https://github.com/oven-sh/bun/issues/15734
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { writeFileSync } from "fs";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { join, sep } from "path";
 
 // `bun build --compile` copies + rewrites the whole bun binary (~1GB under
@@ -346,6 +347,39 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
       expect(stderr).toContain("collides");
       expect(stderr).toContain("config.json");
       expect(code).not.toBe(0);
+    },
+    TIMEOUT,
+  );
+
+  // macOS and Windows reject these file names.
+  test.skipIf(!isLinux)(
+    "embeds assets whose file names aren't valid UTF-8",
+    async () => {
+      using dir = tempDir("bunfs-invalid-utf8", {
+        "index.ts": `for (const file of Bun.embeddedFiles) console.log(await Bun.file("/$bunfs/root/" + file.name).text());`,
+        "a/.keep": "",
+        "b/.keep": "",
+      });
+      const write = (folder: string, name: Buffer) =>
+        writeFileSync(Buffer.concat([Buffer.from(join(String(dir), folder) + sep), name, Buffer.from(".png")]), folder);
+      write("a", Buffer.alloc(100, 0xe9));
+      write("b", Buffer.from([0xe8]));
+      write("b", Buffer.from([0xe9]));
+
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", `"$0" build --compile ./index.ts ./a/*.png --outfile app`, bunExe()],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "inherit",
+      });
+      expect(await proc.exited).toBe(0);
+      expect(await run(String(dir))).toEqual({ stdout: "a\n", stderr: "", code: 0 });
+
+      // Both names are stored as U+FFFD.
+      // expect().rejects would wait in a nested event loop tick, which can drop the concurrent tests' pipe events.
+      const error = await compile(String(dir), ["--asset", "./b"]).catch(error => error);
+      expect(error?.message).toContain("collides");
     },
     TIMEOUT,
   );

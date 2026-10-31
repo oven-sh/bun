@@ -1,6 +1,6 @@
-//! A file of Flow. Its HIR has the nodes of TypeScript: `flow.rs` of `bun_sema_parser` says which
-//! stand for what. This tells them apart, from the nodes and from the tokens at the positions that
-//! they record.
+//! Flow files. Their HIR reuses TypeScript's nodes, and `flow.rs` in `bun_sema_parser` documents
+//! which node represents which Flow syntax. The accessors here distinguish them using the nodes and
+//! the tokens at the positions they record.
 //!
 //! Everything here is only meaningful if [`File::is_flow`].
 
@@ -13,7 +13,7 @@ use crate::tokens::{next_token, token_len};
 use bun_sema::hir;
 
 impl File<'_> {
-    /// The file is parsed as Flow.
+    /// True if the file is parsed as Flow.
     #[inline]
     pub fn is_flow(&self) -> bool {
         self.is_flow
@@ -33,7 +33,7 @@ impl Expr<'_> {
         self.file.is_flow && self.is_angle_bracket_assertion()
     }
 
-    /// Whether a `<` follows: `R<> { }` has type arguments, of which there are none.
+    /// True if a `<` follows. `R<> { }` has a type argument list, but it's empty.
     pub fn is_before_flow_type_arguments(self) -> bool {
         self.file
             .slice(next_token(self.file.text(), self.outer_span().end))
@@ -42,7 +42,7 @@ impl Expr<'_> {
 }
 
 impl Modifier<'_> {
-    /// The keyword or the sign as it is written: `static`, `proto`, `+`, `opaque`.
+    /// The keyword or sign in the source: `static`, `proto`, `+`, `opaque`.
     pub fn token_span(self) -> Span {
         self.file
             .flow_token_span_at(self.try_raw().map_or(0, |raw| raw.pos))
@@ -116,7 +116,7 @@ impl<'a> TupleElem<'a> {
         }
         let text = self.file.text();
         let first = self.file.flow_token_span_at(raw.start);
-        // The label is followed by the `?` or the `:`.
+        // A `?` or `:` follows the label.
         let after = self.file.slice(next_token(text, first.end));
         if raw.has_dots || after == b":" || after == b"?" {
             let start = if raw.has_dots {
@@ -170,7 +170,7 @@ impl<'a> Member<'a> {
 }
 
 impl<'a> Interface<'a> {
-    /// Of `opaque type A: B = C`: the `C`. The bounds are [`Interface::extends`].
+    /// The `C` of `opaque type A: B = C`. The bounds are in [`Interface::extends`].
     pub fn flow_opaque_type(self) -> Option<TypeNode<'a>> {
         let file = self.stmt().file();
         List::ids(
@@ -182,7 +182,7 @@ impl<'a> Interface<'a> {
 }
 
 impl<'a> Class<'a> {
-    /// Of `declare class A mixins B, C`: `B` and `C`.
+    /// The `B` and `C` of `declare class A mixins B, C`.
     pub fn flow_mixins(self) -> List<'a, TypeNode<'a>> {
         let list = self
             .try_raw()

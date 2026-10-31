@@ -13,8 +13,8 @@ pub struct PreferImportingVitestGlobals;
 
 const VITEST_GLOBAL_BITS: [u32; 17] = jest::mention_bits(VITEST_GLOBALS);
 
-const PREFER_IMPORTING_VITEST_GLOBALS: Message =
-    Message::new("", "Do not use Vitest global functions");
+const PREFER_IMPORTING_VITEST_GLOBALS: &Message =
+    &Message::new("", "Do not use Vitest global functions");
 
 const VITEST_GLOBALS: [&str; 17] = [
     "afterAll",
@@ -61,7 +61,7 @@ impl Rule for PreferImportingVitestGlobals {
 
 fn run_once(cx: &Cx<'_, PreferImportingVitestGlobals>) {
     let file = cx.file();
-    // What nothing declares, in the order in which oxlint has it. References in types count too.
+    // The undeclared globals, in oxlint's order. References in types count too.
     // oxlint also reports a name that's imported from another package, and its fix declares it twice.
     let mut missing_globals: SmallVec<[&str; 8]> = VITEST_GLOBALS
         .into_iter()
@@ -82,7 +82,7 @@ fn run_once(cx: &Cx<'_, PreferImportingVitestGlobals>) {
     let mut globals_spans: Vec<Span> = Vec::new();
     for name in &missing_globals {
         for reference in file.unresolved_references_to(name.as_bytes()) {
-            // What is called, also where it is an argument.
+            // Labels the callee, even if the reference is one of the call's arguments.
             if let Some(call_expr) = reference
                 .expr()
                 .and_then(parent_expression)
@@ -121,7 +121,7 @@ fn run_once(cx: &Cx<'_, PreferImportingVitestGlobals>) {
         .fix(|fixer| build_fix(file, &globals_imports(), fixer));
 }
 
-/// The calls of the global `require` with one argument, which is a string that names Vitest.
+/// Calls to the global `require` whose only argument is a string naming Vitest.
 fn vitest_requires<'a>(file: &'a File<'a>) -> impl Iterator<Item = (Expr<'a>, Name<'a>)> {
     file.unresolved_references_to(b"require")
         .filter_map(Reference::expr)
@@ -140,14 +140,14 @@ fn build_fix<'a>(file: &'a File<'a>, globals_imports: &str, fixer: Fixer<'a>) ->
     let vitest_esm_import = import_entries(file)
         .find(|it| is_vitest_import_source(it.declaration.spec().bytes()) && !it.is_type());
     match vitest_esm_import.map(|it| (it, it.import_name)) {
-        // `import { .. } from "vitest"`: after the last name.
+        // `import { .. } from "vitest"`: insert after the last name.
         Some((entry, ImportImportName::Name(_))) => {
             let statement_span = entry.declaration.stmt().span();
             let mut source = file.slice(statement_span);
             while let Some(close_brace_pos) = strings::last_index_of_char(source, b'}') {
                 source = source.get(..close_brace_pos).unwrap_or_default();
                 if file
-                    .comment_around(statement_span.start + close_brace_pos as u32)
+                    .comment_containing(statement_span.start + close_brace_pos as u32)
                     .is_some()
                 {
                     continue;

@@ -193,6 +193,16 @@ extern "C" void WebWorker__parentContextWillDestroy(WorkerMessagingProxy* proxy)
     proxy->parentContextWillDestroy();
 }
 
+extern "C" void WebWorker__postOutOfMemoryError(WorkerMessagingProxy* proxy)
+{
+    proxy->postOutOfMemoryErrorToWorkerObject();
+}
+
+extern "C" void WebWorker__postFailedToStartError(WorkerMessagingProxy* proxy)
+{
+    proxy->postFailedToStartErrorToWorkerObject();
+}
+
 // An uncaught error inside the worker: dispatch 'error' on the worker's own global scope, then report
 // it to the Worker object.
 extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, WorkerMessagingProxy* proxy, BunString message, JSC::EncodedJSValue errorValue)
@@ -236,7 +246,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
         if (!hadMessage)
             return JSC::JSValue::encode(jsUndefined());
         auto* result = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), 1);
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "message"_s), message);
+        Bun::putDirectNamed(vm, result, "message"_s, message);
         return JSC::JSValue::encode(result);
     } else if (dynamicDowncast<JSBroadcastChannel>(port)) {
         // TODO: support broadcast channels
@@ -299,7 +309,6 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     auto* proxy = WebWorker__getMessagingProxy(globalObject->bunVM());
     if (proxy) {
         auto& options = proxy->options();
-        auto ports = MessagePort::entanglePorts(*globalObject->scriptExecutionContext(), WTF::move(options.dataMessagePorts));
         RefPtr<WebCore::SerializedScriptValue> serialized = WTF::move(options.workerDataAndEnvironmentData);
         // `workerDataAndEnvironmentData` is moved-from on the first call. If
         // this binding is created twice (lazy-init re-entry), `serialized` is
@@ -308,6 +317,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
         // deserialize on second call (workerData stays jsUndefined), and use a
         // checked cast so a non-Array deserialize result doesn't trap.
         if (serialized) {
+            auto ports = MessagePort::entanglePorts(*globalObject->scriptExecutionContext(), WTF::move(options.dataMessagePorts));
             JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTF::move(ports));
             RETURN_IF_EXCEPTION(scope, {});
             // Should always be set to an Array of length 2 in the constructor in JSWorker.cpp
@@ -383,6 +393,11 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     return array;
 }
 
+JSValue createNodeWorkerConstructor(Zig::GlobalObject* globalObject)
+{
+    return JSWorker::getConstructor(globalObject->vm(), globalObject);
+}
+
 // worker_threads (worker side): { stdin?, stdout, stderr } ports from the parent Worker.
 // process.stdin/stdout/stderr are created over them on first access (BunProcess.cpp).
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSetNodeWorkerStdioPorts, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -397,7 +412,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetNodeWorkerStdioPorts, (JSGlobalObject * le
 // port), as Node runs its worker bootstrap before user code. Throws like require() would.
 extern "C" void Bun__Worker__loadNodeWorkerThreadsModule(Zig::GlobalObject* globalObject)
 {
-    globalObject->internalModuleRegistry()->requireId(globalObject, globalObject->vm(), Bun::InternalModuleRegistry::Field::NodeWorkerThreads);
+    BUN_REQUIRE_INTERNAL_MODULE(globalObject, NodeWorkerThreads, "native:Cpp:Worker.cpp:createNodeWorkerConstructor");
 }
 
 // worker_threads (worker side): register the transferred port as this thread's parentPort.

@@ -8,7 +8,7 @@ pub struct SpecOnly {
     allowed_methods: Vec<String>,
 }
 
-const SPEC_ONLY: Message = Message::new("", "Avoid using non-standard `Promise.{{prop_name}}` method.");
+const SPEC_ONLY: &Message = &Message::new("", "Avoid using non-standard `Promise.{{prop_name}}` method.");
 
 impl Rule for SpecOnly {
     const META: Meta = Meta::oxlint(Plugin::Promise, "spec-only", Kind::Suggestion);
@@ -31,7 +31,7 @@ impl Rule for SpecOnly {
         }
         let prop_name = match (static_property_name(member_expr), member_expr.index()) {
             (Some(name), _) => name.bytes(),
-            // The name of `Promise[/a/]` is `/a/`.
+            // For `Promise[/a/]` oxlint uses `/a/` as the name.
             (None, Some(index)) if index.tag() == ExprTag::Regex && !index.is_parenthesized() => index.text(),
             _ => return,
         };

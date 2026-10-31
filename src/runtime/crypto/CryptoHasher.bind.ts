@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import * as table from "../../codegen/builtins/lib.ts";
 
 export default b.module({ rustPath: "crate::crypto::crypto_hasher" });
 
@@ -12,13 +13,22 @@ export const DigestOutput = b.union({
   into: b.bufferSource.allowShared,
 });
 
+/** A string for an encoding, the buffer that was given, or else a new one of the class. */
+const digestIn = (newBuffer: "Buffer" | "Uint8Array") =>
+  b.any.returning(
+    { type: "Primitive", primitive: "String" },
+    { type: "Operand", operand: "output" },
+    { type: "Instance", class: newBuffer, isOfClassItself: true },
+  );
+
 const method = { capability: "heap", throws: true } as const;
+const uses = { output: [...table.handedOver, table.writesContents()] };
 const update = { ...method, returns: b.self, passThis: true, mutates: true } as const;
-const digest = { ...method, args: { output: DigestOutput.nullable }, returns: b.any, mutates: true } as const;
+const digestOf = (newBuffer: "Buffer" | "Uint8Array") =>
+  ({ ...method, args: { output: DigestOutput.nullable }, returns: digestIn(newBuffer), mutates: true, uses }) as const;
 
 export const CryptoHasher = b.class({
   rustPath: "crate::crypto::crypto_hasher::CryptoHasher",
-  configurable: false,
   construct: {
     ...method,
     args: { algorithm: b.string.utf8, hmacKey: b.bytes({ from: ["string", "buffer"] }).nullable },
@@ -28,7 +38,7 @@ export const CryptoHasher = b.class({
     algorithm: { ...method, getter: b.string, cache: true },
     byteLength: { ...method, getter: b.u32 },
     copy: { ...method, returns: b.self },
-    digest,
+    digest: digestOf("Buffer"),
     update: [
       {
         ...update,
@@ -41,25 +51,29 @@ export const CryptoHasher = b.class({
   },
   static: {
     algorithms: { getter: b.array(b.string.utf8) },
-    hash: { ...method, args: { algorithm: b.string, input, output: DigestOutput.optional }, returns: b.any },
+    hash: {
+      ...method,
+      args: { algorithm: b.string, input, output: DigestOutput.optional },
+      returns: digestIn("Buffer"),
+      uses,
+    },
   },
 });
 
-const hash = { ...method, args: { input, output: DigestOutput.optional }, returns: b.any } as const;
+const hash = { ...method, args: { input, output: DigestOutput.optional }, returns: digestIn("Uint8Array") } as const;
 
 const staticHasher = (name: string) =>
   b.class({
     rustPath: `crate::crypto::crypto_hasher::${name}`,
-    configurable: false,
     construct: {},
     proto: {
       byteLength: { getter: b.u32 },
-      digest,
+      digest: digestOf("Uint8Array"),
       update: { ...update, args: { input } },
     },
     static: {
       byteLength: { getter: b.u32, rustName: "static_byte_length" },
-      hash: { ...hash, length: 2 },
+      hash: { ...hash, uses, length: 2 },
     },
   });
 

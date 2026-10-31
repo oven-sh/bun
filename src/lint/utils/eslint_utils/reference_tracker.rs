@@ -9,22 +9,22 @@ use crate::span::Span;
 use crate::utils::estree_compat::{Target, TargetKind, is_sequence_root};
 use smallvec::SmallVec;
 
-/// What a [`ReferenceTracker`] follows: which uses of an object to report, and the same for its
-/// properties. A [`TraceMap`] is one. A table that is too large to be written as `TraceMap`s, or
-/// that has a map among its own members, can be another.
+/// The input of a [`ReferenceTracker`]: which uses of an object to report, and the same for its properties.
+/// [`TraceMap`] implements it. So can a table that's too large to write as `TraceMap`s, or that contains itself among
+/// its members.
 pub trait Trace<'m> {
-    /// What is at `[READ]`, `[CALL]` or `[CONSTRUCT]`. It comes back as [`TrackedReference::info`].
+    /// The value at `[READ]`, `[CALL]` or `[CONSTRUCT]`. It's returned as [`TrackedReference::info`].
     fn info(&self, kind: ReferenceKind) -> Option<u16>;
 
-    /// `[ESM]: true`: the module is an ES module, whose `default` export is not the module itself.
+    /// `[ESM]: true`: the module is an ES module, whose `default` export isn't the module itself.
     fn is_esm(&self) -> bool {
         false
     }
 
-    /// The properties, by their position: the name, and what to report of the property.
+    /// The property at `index`: its name, and what to report for it.
     fn member(&self, index: usize) -> Option<(&'m str, &'m dyn Trace<'m>)>;
 
-    /// The property `name`, with the name as the map has it.
+    /// The property `name`, with the name as spelled in the map.
     fn get(&self, name: &[u8]) -> Option<(&'m str, &'m dyn Trace<'m>)>;
 }
 
@@ -34,7 +34,7 @@ impl<'m> dyn Trace<'m> + 'm {
     }
 }
 
-/// eslint-utils' `TraceMap`, where `true` is at `[READ]`, `[CALL]` and `[CONSTRUCT]`: `T` is `()`.
+/// eslint-utils' `TraceMap`. If upstream has `true` at `[READ]`, `[CALL]` and `[CONSTRUCT]`, `T` is `()`.
 ///
 /// It can be a constant:
 /// ```ignore
@@ -44,7 +44,7 @@ impl<'m> dyn Trace<'m> + 'm {
 ///     ("RegExp", TraceMap::EMPTY.call(()).construct(())),
 /// ]);
 /// ```
-/// or be made from options:
+/// or be built from options:
 /// ```ignore
 /// let members: Vec<_> = names.iter().map(|name| (name.as_str(), TraceMap::EMPTY.call(()))).collect();
 /// let map = TraceMap::new(&members);
@@ -57,7 +57,7 @@ pub struct TraceMap<'m, T> {
     pub call: Option<T>,
     /// `[CONSTRUCT]`
     pub construct: Option<T>,
-    /// `[ESM]: true`: the module is an ES module, whose `default` export is not the module itself.
+    /// `[ESM]: true`: the module is an ES module, whose `default` export isn't the module itself.
     pub esm: bool,
     /// The properties, by name.
     pub members: &'m [(&'m str, TraceMap<'m, T>)],
@@ -135,19 +135,18 @@ pub enum ReferenceKind {
     Construct,
 }
 
-/// eslint-utils' `TrackedReferences`: one use of something that a [`TraceMap`] asks for.
+/// eslint-utils' `TrackedReferences`: one use of something that a [`TraceMap`] lists.
 #[derive(Clone, Debug)]
 pub struct TrackedReference<'a, 'm> {
     /// - `Call`, `Construct`: the call or the `new` expression.
-    /// - `Read`: the identifier or the member access. In a destructuring pattern the `PatProp` or
-    ///   the `Prop`. Of a module the `require()` call, the `Stmt` of the import or the export, the
-    ///   `ImportSpec` or the `ExportSpec`.
+    /// - `Read`: the identifier or the member access. In a destructuring pattern, the `PatProp` or the `Prop`. For a
+    ///   module, the `require()` call, the import's or export's `Stmt`, the `ImportSpec` or the `ExportSpec`.
     ///
-    /// Where upstream has an identifier that is no node here, it is what the identifier is part of,
-    /// and `span` is that of the identifier: the `Stmt` of the import for the
-    /// `ImportDefaultSpecifier`, [`Reference::node`] for a name in a type.
+    /// Where upstream has an identifier that isn't a node here, this is the node that contains the identifier, and
+    /// `span` is the identifier's span: the import's `Stmt` for the `ImportDefaultSpecifier`, [`Reference::node`] for a
+    /// name in a type.
     pub node: Node<'a>,
-    /// The range of the node that upstream reports.
+    /// The span of the node that upstream reports.
     pub span: Span,
     /// The names in the trace map that lead here: `["Object", "assign"]`.
     pub path: SmallVec<[&'m str; 4]>,
@@ -157,7 +156,7 @@ pub struct TrackedReference<'a, 'm> {
 }
 
 impl<'a> TrackedReference<'a, '_> {
-    /// `node`, if it is an expression.
+    /// `node`, if it's an expression.
     #[inline]
     pub fn expr(&self) -> Option<Expr<'a>> {
         self.node.as_expr()
@@ -169,19 +168,19 @@ impl<'a> TrackedReference<'a, '_> {
     }
 }
 
-/// eslint-utils' `ReferenceTrackerOptions["mode"]`: how an `import` of a CommonJS module, one
-/// whose trace map has no `[ESM]`, is understood.
+/// eslint-utils' `ReferenceTrackerOptions["mode"]`: how to interpret an `import` of a CommonJS module, which is one
+/// whose trace map has no `[ESM]`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub enum Mode {
     /// The module is the `default` export.
     #[default]
     Strict,
-    /// Its properties are named exports as well.
+    /// Its properties are also named exports.
     Legacy,
 }
 
-/// eslint-utils' `ReferenceTracker`: finds the uses of global variables and of modules, through
-/// aliases, destructuring and the global object.
+/// eslint-utils' `ReferenceTracker`: finds the uses of global variables and modules, through aliases, destructuring and
+/// the global object.
 ///
 /// `new ReferenceTracker(sourceCode.getScope(program))` is `ReferenceTracker::new(file)`.
 #[derive(Copy, Clone)]
@@ -190,10 +189,10 @@ pub struct ReferenceTracker<'a> {
     mode: Mode,
 }
 
-/// What the option `globalObjectNames` is by default.
+/// The default of the `globalObjectNames` option.
 const GLOBAL_OBJECT_NAMES: [&str; 4] = ["global", "globalThis", "self", "window"];
 
-/// A trace map, or what `import` makes of that of a CommonJS module.
+/// A trace map, or the shape `import` gives a CommonJS module's trace map.
 #[derive(Copy, Clone)]
 enum View<'m> {
     Map(&'m dyn Trace<'m>),
@@ -204,7 +203,7 @@ enum View<'m> {
 }
 
 impl<'m> View<'m> {
-    /// What is at `[READ]`, `[CALL]` or `[CONSTRUCT]`.
+    /// The value at `[READ]`, `[CALL]` or `[CONSTRUCT]`.
     fn info(self, kind: ReferenceKind) -> Option<u16> {
         match self {
             View::Map(map) | View::DefaultAndMembers(map) => map.info(kind),
@@ -228,7 +227,7 @@ impl<'m> View<'m> {
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Variable<'a> {
     Symbol(Symbol<'a>),
-    /// One that the file does not declare.
+    /// A variable that the file doesn't declare.
     Global(Name<'a>),
 }
 
@@ -255,7 +254,7 @@ impl<'a> ReferenceTracker<'a> {
         }
     }
 
-    /// The option `mode`.
+    /// The `mode` option.
     pub fn with_mode(self, mode: Mode) -> Self {
         ReferenceTracker { mode, ..self }
     }
@@ -268,9 +267,9 @@ impl<'a> ReferenceTracker<'a> {
         }
     }
 
-    /// eslint-utils' `iterateGlobalReferences`: the uses of the global variables that are the
-    /// members of `map`, as themselves or as properties of the global object. A variable that the
-    /// file declares or assigns to is left out, and so is one that is not configured to exist.
+    /// eslint-utils' `iterateGlobalReferences`: the uses of the global variables listed as `map`'s members, directly or
+    /// as properties of the global object. It skips a variable that the file declares or assigns to, and one that isn't
+    /// configured to exist.
     pub fn iterate_global_references<'m>(
         &self,
         map: &'m dyn Trace<'m>,
@@ -294,8 +293,8 @@ impl<'a> ReferenceTracker<'a> {
         walk.found
     }
 
-    /// eslint-utils' `iterateCjsReferences`: the uses of the modules that are the members of
-    /// `map`, where they are loaded by `require()`.
+    /// eslint-utils' `iterateCjsReferences`: the uses of the modules listed as `map`'s members, where they're loaded
+    /// with `require()`.
     pub fn iterate_cjs_references<'m>(
         &self,
         map: &'m dyn Trace<'m>,
@@ -324,8 +323,8 @@ impl<'a> ReferenceTracker<'a> {
         walk.found
     }
 
-    /// eslint-utils' `iterateEsmReferences`: the uses of the modules that are the members of
-    /// `map`, where they are loaded by `import` or `export .. from`.
+    /// eslint-utils' `iterateEsmReferences`: the uses of the modules listed as `map`'s members, where they're loaded
+    /// with `import` or `export .. from`.
     pub fn iterate_esm_references<'m>(
         &self,
         map: &'m dyn Trace<'m>,
@@ -406,7 +405,7 @@ impl<'a> ReferenceTracker<'a> {
                 _ => {}
             }
             if !module.is_esm() {
-                // The `default` that stands for the module itself is not part of the path.
+                // The `default` that represents the module itself isn't part of the path.
                 let mut at = 0;
                 walk.found.retain_mut(|found| {
                     at += 1;
@@ -423,8 +422,7 @@ impl<'a> ReferenceTracker<'a> {
         walk.found
     }
 
-    /// eslint-utils' `iteratePropertyReferences`: the uses of the value of `expr` that `map` asks
-    /// for.
+    /// eslint-utils' `iteratePropertyReferences`: the uses of `expr`'s value that `map` lists.
     pub fn iterate_property_references<'m>(
         &self,
         expr: Expr<'a>,
@@ -436,8 +434,7 @@ impl<'a> ReferenceTracker<'a> {
     }
 }
 
-/// Upstream's `isPassThrough`: the parent, if it has the value of `e`, as `a || e` and `c ? a : e`
-/// have.
+/// Upstream's `isPassThrough`: returns the parent if it evaluates to `e`'s value, like `a || e` and `c ? a : e`.
 fn pass_through_parent(e: Expr<'_>) -> Option<Expr<'_>> {
     let parent = e.parent().as_expr()?;
     let passes = match parent.kind() {
@@ -461,8 +458,8 @@ fn pass_through_parent(e: Expr<'_>) -> Option<Expr<'_>> {
     passes.then_some(parent)
 }
 
-/// Whether `member`, a `Dot` or an `Index`, is a `MemberExpression` of ESTree: not the
-/// `JSXMemberExpression` of `<a.b />`, nor the `TSQualifiedName` of `typeof a.b` in a type.
+/// True if `member`, a `Dot` or an `Index`, is an ESTree `MemberExpression`, not the `JSXMemberExpression` in `<a.b />`
+/// or the `TSQualifiedName` in the type `typeof a.b`.
 fn is_member_expression(member: Expr<'_>) -> bool {
     let mut whole = member;
     loop {
@@ -481,7 +478,7 @@ fn is_member_expression(member: Expr<'_>) -> bool {
 }
 
 impl<'a, 'm> Walk<'a, 'm> {
-    /// Reports that `node` reads what `map` is for, at `span`, if `map` asks for that.
+    /// Reports at `span` that `node` reads the value `map` describes, if `map` has a `[READ]`.
     fn report_at(&mut self, node: Node<'a>, span: Span, path: &Path<'m>, map: View<'m>) {
         if let Some(info) = map.info(ReferenceKind::Read) {
             self.found.push(TrackedReference {
@@ -494,7 +491,7 @@ impl<'a, 'm> Walk<'a, 'm> {
         }
     }
 
-    /// Reports `node`, if `map` asks for this kind of use.
+    /// Reports `node`, if `map` lists this kind of use.
     fn report(&mut self, node: Node<'a>, path: &Path<'m>, kind: ReferenceKind, map: View<'m>) {
         if let Some(info) = map.info(kind) {
             self.found.push(TrackedReference {
@@ -507,8 +504,8 @@ impl<'a, 'm> Walk<'a, 'm> {
         }
     }
 
-    /// The global variable `name`, unless upstream's `isModifiedGlobal` holds. `None` as well if
-    /// nothing refers to it.
+    /// The global variable `name`, unless upstream's `isModifiedGlobal` is true for it. Also `None` if nothing refers
+    /// to it.
     fn unmodified_global(&self, name: &str) -> Option<Variable<'a>> {
         self.file.find_name(name)?;
         let name = name.as_bytes();
@@ -574,7 +571,7 @@ impl<'a, 'm> Walk<'a, 'm> {
                 ExprKind::New(call) if call.callee() == node => {
                     self.report(parent.into(), path, ReferenceKind::Construct, map);
                 }
-                // Also the default value in a destructuring assignment, after which nothing follows.
+                // Also the default value in a destructuring assignment, which isn't followed any further.
                 ExprKind::Assign { target, value, .. } if value == node => {
                     self.lhs_references(Target::Expr(target), path, map);
                     self.property_references(parent, path, map);

@@ -62,7 +62,7 @@ const prettier = {
 };
 
 describe.concurrent("bun fmt --doctor", () => {
-  test("with a .prettierrc", async () => {
+  test("reports a project with a .prettierrc", async () => {
     const { stdout, stderr, exitCode, isUntouched } = await doctor(prettier);
     expect(stderr).toBe("");
     expect(stdout).toBe(`Using .prettierrc (Prettier config)
@@ -126,7 +126,7 @@ Not checked:    other tools' configs, CI files, Git hooks
     expect(exitCode).toBe(0);
   });
 
-  test("the plugin that sorts classes is built in", async () => {
+  test("lists prettier-plugin-tailwindcss as built in", async () => {
     const { stdout, exitCode } = await doctor({
       ...installed("tailwindcss"),
       "package.json": dependencies("prettier", "prettier-plugin-tailwindcss", "tailwindcss"),
@@ -145,10 +145,10 @@ Not checked:    other tools' configs, CI files, Git hooks
     expect(exitCode).toBe(0);
   });
 
-  test("says that classes are not sorted where sortTailwindcss is on and tailwindcss is not installed", async () => {
+  test("notes that classes aren't sorted when sortTailwindcss is on but tailwindcss isn't installed", async () => {
     const inWeb = Object.entries(installed("tailwindcss")).map(([name, text]) => [`web/${name}`, text]);
     const files = { ".oxfmtrc.json": '{ "sortTailwindcss": {} }\n', "web/a.js": ugly, "api/a.js": ugly };
-    const named = JSON.stringify({ plugins: ["prettier-plugin-tailwindcss"], tailwindPackageName: "@acme/tw" });
+    const renamed = JSON.stringify({ plugins: ["prettier-plugin-tailwindcss"], tailwindPackageName: "@acme/tw" });
     const notes = async (files: Record<string, string>) =>
       (await doctor(files)).stdout.split("\n").filter(line => line.startsWith("note: "));
     expect(
@@ -157,7 +157,7 @@ Not checked:    other tools' configs, CI files, Git hooks
         notes({ ...files, ...Object.fromEntries(inWeb) }),
         notes({ ...files, ...installed("tailwindcss") }),
         notes({ ...files, ".oxfmtrc.json": "{}\n" }),
-        notes({ ".prettierrc": named, "a.js": ugly }),
+        notes({ ".prettierrc": renamed, "a.js": ugly }),
       ]),
     ).toEqual([
       ["note: Tailwind CSS classes are not sorted (tailwindcss is not installed)"],
@@ -193,7 +193,7 @@ Not checked:    other tools' configs, CI files, Git hooks
       expect(exitCode).toBe(0);
     });
 
-    test.each(["--range-start=1", "--range-end=2", "--cursor-offset=1"])("also with %s", async flag => {
+    test.each(["--range-start=1", "--range-end=2", "--cursor-offset=1"])("is built in with %s", async flag => {
       const { stdout, exitCode } = await doctor(project("4.1.1"), [flag]);
       expect(stdout).toContain("    3 files are formatted natively\n\nBuilt-in plugins: prettier-plugin-svelte\n");
       expect(stdout).toContain("You can remove: prettier, prettier-plugin-svelte\n");
@@ -203,7 +203,7 @@ Not checked:    other tools' configs, CI files, Git hooks
     test.each([
       ["svelte = false in [fmt]", { "bunfig.toml": "[fmt]\nsvelte = false\n" }, []],
       ["--no-svelte", {}, ["--no-svelte"]],
-    ])("says that the files are left alone: %s", async (_, files, args) => {
+    ])("notes that Svelte files aren't formatted: %s", async (_, files, args) => {
       const { stdout, exitCode } = await doctor({ ...project("3.4.0"), ...files }, args);
       expect(stdout).toBe(`Using .prettierrc.json (Prettier config)
 ${"bunfig.toml" in files ? "Using bunfig.toml ([fmt])\n" : ""}
@@ -218,7 +218,7 @@ note: Svelte files are not formatted (svelte = false)
     });
 
     test.each(["file-override", "prefer-file"])(
-      "they are not left alone with --config-precedence=%s",
+      "still formats Svelte files with --config-precedence=%s",
       async precedence => {
         const files = { ...project("4.1.1"), "bunfig.toml": "[fmt]\nsvelte = false\n" };
         const { stdout, exitCode } = await doctor(files, [`--config-precedence=${precedence}`]);
@@ -236,7 +236,7 @@ Not checked:    other tools' configs, CI files, Git hooks
       },
     );
 
-    test("says that some files are left alone if only an override turns it off", async () => {
+    test("notes that some Svelte files aren't formatted if only an override turns it off", async () => {
       const { stdout, exitCode } = await doctor({
         ...project("4.1.1"),
         "old/b.svelte": "<p>b</p>\n",
@@ -257,7 +257,7 @@ note: Some Svelte files are not formatted (svelte = false in an override)
       expect(exitCode).toBe(0);
     });
 
-    test("says so with every --config-precedence, unless a config file counts for more", async () => {
+    test("prints the override note with every --config-precedence unless a config file wins", async () => {
       const note = "note: Some Svelte files are not formatted (svelte = false in an override)\n";
       const files = {
         "a.svelte": "<p>a</p>\n",
@@ -265,11 +265,11 @@ note: Some Svelte files are not formatted (svelte = false in an override)
         "bunfig.toml": '[[fmt.overrides]]\nfiles = "old/**"\noptions = { svelte = false }\n',
       };
       const inFile = { ...files, ".oxfmtrc.json": '{ "svelte": true }\n' };
-      const says = async (project: Record<string, string>, precedence: string) =>
+      const printsNote = async (project: Record<string, string>, precedence: string) =>
         (await doctor(project, [`--config-precedence=${precedence}`])).stdout.endsWith(note);
       const precedences = ["cli-override", "file-override", "prefer-file"];
-      expect(await Promise.all(precedences.map(it => says(files, it)))).toEqual([true, true, true]);
-      expect(await Promise.all(precedences.map(it => says(inFile, it)))).toEqual([true, false, false]);
+      expect(await Promise.all(precedences.map(it => printsNote(files, it)))).toEqual([true, true, true]);
+      expect(await Promise.all(precedences.map(it => printsNote(inFile, it)))).toEqual([true, false, false]);
     });
   });
 
@@ -364,7 +364,7 @@ Still needed:   prettier, prettier-plugin-astro (some files go to them)
     expect(exitCode).toBe(0);
   });
 
-  test("Prettier is not removable while files are skipped because of a plugin", async () => {
+  test("Prettier isn't removable while files are skipped because of a plugin", async () => {
     const { stdout, exitCode } = await doctor({
       "package.json": dependencies("prettier", "prettier-plugin-css-order", "prettier-plugin-other"),
       ".prettierrc": JSON.stringify({ plugins: ["prettier-plugin-css-order"] }),
@@ -495,7 +495,7 @@ Still needed:   oxfmt (shared-config needs it)
 `);
   });
 
-  test("with an .oxfmtrc.json", async () => {
+  test("reports a project with an .oxfmtrc.json", async () => {
     const { stdout, exitCode, isUntouched } = await doctor({
       "package.json": dependencies("oxfmt"),
       ".oxfmtrc.json": JSON.stringify({ semi: false }),
@@ -512,7 +512,7 @@ Not checked:    other tools' configs, CI files, Git hooks
     expect(exitCode).toBe(0);
   });
 
-  test("with only [fmt] in bunfig.toml, says so, and not to add the section", async () => {
+  test("with only [fmt] in bunfig.toml, reports it and doesn't suggest --init", async () => {
     const { stdout, stderr, exitCode } = await doctor({ "a.js": ugly, "bunfig.toml": "[fmt]\nsemi = false\n" });
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout: "Using bunfig.toml ([fmt], on top of Prettier's defaults)\n\n    2 files are formatted natively\n",
@@ -521,7 +521,7 @@ Not checked:    other tools' configs, CI files, Git hooks
     });
   });
 
-  test("without a config file", async () => {
+  test("without a config file, suggests --init", async () => {
     const { stdout, stderr, exitCode, isUntouched } = await doctor({ "a.js": ugly });
     expect(stderr).toBe("");
     expect(stdout).toBe(`No Prettier or oxfmt config found. Bun formats like Prettier by default.

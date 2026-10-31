@@ -427,6 +427,8 @@ pub enum Terminal {
         block: BlockId,
         handler_binding: Option<Place>,
         handler: BlockId,
+        handler_loc: Option<SourceLocation>,
+        handler_body_loc: Option<SourceLocation>,
         fallthrough: BlockId,
         id: EvaluationOrder,
         loc: Option<SourceLocation>,
@@ -551,6 +553,7 @@ pub enum GotoVariant {
 pub struct Case {
     pub test: Option<Place>,
     pub block: BlockId,
+    pub loc: Option<SourceLocation>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

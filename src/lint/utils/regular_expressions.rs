@@ -13,9 +13,9 @@ pub enum UnicodeFlag {
     V,
 }
 
-/// ESLint's `isValidWithUnicodeFlag`. Whether `pattern` is valid with the flag `u` or `v`. It is not
-/// if `ecma_version`, which is `file.language().ecma_version`, does not have the flag. Upstream's
-/// default for `flag` is `u`.
+/// ESLint's `isValidWithUnicodeFlag`: true if `pattern` is valid with the flag `u` or `v`. It's false if
+/// `ecma_version`, which is `file.language().ecma_version`, doesn't have the flag. Upstream's default for `flag` is
+/// `u`.
 pub fn is_valid_with_unicode_flag(ecma_version: u32, pattern: &[u8], flag: UnicodeFlag) -> bool {
     let (first_version, mode) = match flag {
         UnicodeFlag::U => (

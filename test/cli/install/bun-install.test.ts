@@ -13,6 +13,7 @@ import {
   isLinux,
   isWindows,
   joinP,
+  MAX_PATH_BYTES,
   normalizeBunSnapshot,
   readdirSorted,
   runBunInstall,
@@ -13780,6 +13781,26 @@ describe.concurrent.skipIf(isWindows)("file: dependency whose package.json path 
     expect(err).toContain("error: ENAMETOOLONG");
     expect(exitCode).toBe(1);
   });
+
+  it("fails when the absolute path fits and the path relative to the project does not", async () => {
+    using dir = tempDir("file-dep-relative-path-overflow", {
+      "package.json": JSON.stringify({
+        name: "my-app",
+        dependencies: { dep: "file:/" + Buffer.alloc(PATH_BUFFER_BYTES - 2, "d").toString() },
+      }),
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).toContain('error: Dependency "dep" has an unsafe folder path');
+    expect(exitCode).toBe(1);
+  });
 });
 
 // The tarball form of the above. A `file:` tarball path is read relative to the
@@ -17665,3 +17686,57 @@ describe.concurrent.each(["hoisted", "isolated"])(
     });
   },
 );
+
+// `overrides` and `resolutions` values are passed to the resolver unchanged.
+it.concurrent.each(["resolutions", "overrides"])(
+  'fails with ENAMETOOLONG for a file: path in root package.json "%s" that is longer than the path buffer',
+  async field => {
+    using dir = tempDir("override-file-dep-too-long", {
+      "package.json": JSON.stringify({
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: { dep: "1.0.0" },
+        [field]: { dep: "file:./" + Buffer.alloc(MAX_PATH_BYTES + 1000, "a").toString() },
+      }),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).toContain("error: ENAMETOOLONG");
+    expect(err).toContain("failed to resolve");
+    expect(exitCode).toBe(1);
+  },
+);
+
+it.concurrent("doesn't install a bun.lock folder package whose path is longer than the path buffer", async () => {
+  using dir = tempDir("lockfile-folder-too-long", {
+    "package.json": JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { okpkg: "file:./okpkg" } }),
+    "okpkg/package.json": JSON.stringify({ name: "okpkg", version: "1.0.0" }),
+    "bun.lock": JSON.stringify({
+      lockfileVersion: 1,
+      configVersion: 1,
+      workspaces: { "": { name: "foo", dependencies: { okpkg: "file:./okpkg" } } },
+      packages: { okpkg: [`okpkg@file:${Buffer.alloc(MAX_PATH_BYTES + 1000, "a").toString()}`, {}] },
+    }),
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--linker", "hoisted"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(err).toContain("ENAMETOOLONG: folder path for package okpkg is too long");
+  expect(out).not.toContain("1 package installed");
+  expect(exitCode).toBe(1);
+});

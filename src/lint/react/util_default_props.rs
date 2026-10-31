@@ -1,7 +1,6 @@
-//! `lib/util/defaultProps.js` of eslint-plugin-react: the visitor that finds the `defaultProps` of
-//! the components.
+//! `lib/util/defaultProps.js` of eslint-plugin-react: the visitor that finds the components' `defaultProps`.
 //!
-//! What it finds is in `Component::default_props` after `Components::finish`, not before.
+//! The results are in `Component::default_props`, but only after `Components::finish`.
 
 use crate::util_ast::{Property, find_return_statement, get_property_name};
 use crate::util_component_util::{get_parent_es6_component, is_es5_component};
@@ -16,7 +15,7 @@ use bun_lint::utils::estree_parent;
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 
-/// What `addDefaultPropsToComponent` is given: the `name` and the `node` of each. `None`:
+/// The argument of `addDefaultPropsToComponent`: each default's `name` and `node`. `None` is
 /// `"unresolved"`.
 type DefaultPropsList<'a> = Option<Vec<(&'a [u8], Node<'a>)>>;
 
@@ -33,7 +32,7 @@ fn properties_of_object_expression(node: Expr<'_>) -> Option<List<'_, Prop<'_>>>
     }
 }
 
-/// `returnStatement.argument`. Upstream throws where there is none.
+/// `returnStatement.argument`. Upstream throws if there is none.
 fn argument_of(return_statement: Stmt<'_>) -> Option<Expr<'_>> {
     match return_statement.kind() {
         StmtKind::Return(argument) => argument,
@@ -41,8 +40,8 @@ fn argument_of(return_statement: Stmt<'_>) -> Option<Expr<'_>> {
     }
 }
 
-/// `resolveNodeValue`, for a node that is reached from above. `None` also for the specifier of an
-/// import, which is no expression.
+/// `resolveNodeValue`, for a node as its parent sees it. Also `None` for an import specifier, which
+/// isn't an expression.
 fn resolve_node_value(mut node: Expr<'_>) -> Option<Expr<'_>> {
     loop {
         if let Some(name) = node.as_ident() {
@@ -74,7 +73,7 @@ fn get_default_props_from_object_expression<'a>(
     let default_props = properties.iter().filter_map(|default_prop| {
         let file = default_prop.file();
         let mut name = file.slice(default_prop.key()?.inner_span(file));
-        // `QUOTES_REGEX`: one at the start, one at the end, whatever is between them.
+        // `QUOTES_REGEX`: one quote at the start and one at the end, whatever is between them.
         if let [first, rest @ ..] = name
             && is_quote(first)
         {
@@ -91,7 +90,7 @@ fn get_default_props_from_object_expression<'a>(
 }
 
 /// `components.get(componentUtil.getParentES6Component(context, node))`
-fn get_es6_component_around<'a>(
+fn get_enclosing_es6_component<'a>(
     node: Member<'a>,
     components: &Components<'a>,
 ) -> Option<ComponentId> {
@@ -101,7 +100,7 @@ fn get_es6_component_around<'a>(
 
 #[derive(Default)]
 struct DefaultPropsInstructions<'a> {
-    /// `component.defaultProps` of those that have one. `None`: `"unresolved"`.
+    /// `component.defaultProps`, for the components that have one. `None` is `"unresolved"`.
     default_props: FxHashMap<ComponentId, Option<DeclaredPropTypes<'a>>>,
 }
 
@@ -132,7 +131,7 @@ impl<'a> DefaultPropsInstructions<'a> {
             return;
         };
         let node = components.component(component).node;
-        // For a component that is banned it is the component around it.
+        // For a banned component, `set` returns the enclosing component.
         let Some(updated) = components.set(node) else {
             return;
         };
@@ -142,7 +141,7 @@ impl<'a> DefaultPropsInstructions<'a> {
         };
         let mut new_default_props = defaults.flatten().unwrap_or_default();
         for (name, node) in default_props {
-            // `Object.assign` calls the setter: it becomes no property.
+            // `Object.assign` calls the `__proto__` setter, so no property is created.
             if name == b"__proto__" {
                 continue;
             }
@@ -156,13 +155,13 @@ impl<'a> DefaultPropsInstructions<'a> {
         self.default_props.insert(updated, Some(new_default_props));
     }
 
-    /// `MemberExpression(node)`, for one that `isDefaultPropsDeclaration`.
+    /// `MemberExpression(node)`, for a node that passes `isDefaultPropsDeclaration`.
     fn member_expression(&mut self, node: Expr<'a>, components: &mut Components<'a>) {
         // find component this defaultProps belongs to
         let Some(component) = components.get_related_component(node) else {
             return;
         };
-        // The whole of an optional chain is in a `ChainExpression`.
+        // A whole optional chain's parent is a `ChainExpression`.
         if node.is_chain_root() {
             return;
         }
@@ -199,13 +198,13 @@ impl<'a> DefaultPropsInstructions<'a> {
         }
     }
 
-    /// `MethodDefinition(node)`, for one that is static and `isDefaultPropsDeclaration`.
+    /// `MethodDefinition(node)`, for a static one that passes `isDefaultPropsDeclaration`.
     fn method_definition(&mut self, node: Member<'a>, components: &mut Components<'a>) {
         if node.kind() != MemberKind::Getter || node.flags().contains(Flags::ABSTRACT) {
             return;
         }
         // find component this propTypes/defaultProps belongs to
-        let Some(component) = get_es6_component_around(node, components) else {
+        let Some(component) = get_enclosing_es6_component(node, components) else {
             return;
         };
         let Some(return_statement) = find_return_statement(Node::Member(node)) else {
@@ -222,7 +221,7 @@ impl<'a> DefaultPropsInstructions<'a> {
         );
     }
 
-    /// `"ClassProperty, PropertyDefinition"(node)`, for one that is static and
+    /// `"ClassProperty, PropertyDefinition"(node)`, for a static one that passes
     /// `isDefaultPropsDeclaration`.
     fn property_definition(&mut self, node: Member<'a>, components: &mut Components<'a>) {
         let value = node.init();
@@ -230,7 +229,7 @@ impl<'a> DefaultPropsInstructions<'a> {
             return;
         };
         // find component this propTypes/defaultProps belongs to
-        let Some(component) = get_es6_component_around(node, components) else {
+        let Some(component) = get_enclosing_es6_component(node, components) else {
             return;
         };
         let expression = resolve_node_value(value);
@@ -279,7 +278,7 @@ impl<'a> DefaultPropsInstructions<'a> {
 
 impl<'a> Instructions<'a> for DefaultPropsInstructions<'a> {
     fn nodes(&self, file: &'a File<'a>, add: &mut dyn FnMut(Node<'a>, Visit)) {
-        // The `name` of a `PrivateIdentifier` is without the `#`.
+        // A `PrivateIdentifier`'s `name` has no `#`.
         const NAMES: [&str; 4] = [
             "defaultProps",
             "getDefaultProps",
@@ -336,7 +335,7 @@ impl<'a> Instructions<'a> for DefaultPropsInstructions<'a> {
     fn program_exit(&mut self, components: &mut Components<'a>) {
         #[expect(
             clippy::iter_over_hash_type,
-            reason = "each is written to its own component"
+            reason = "each entry updates its own component, so order doesn't matter"
         )]
         for (component, default_props) in self.default_props.drain() {
             let default_props = match default_props {

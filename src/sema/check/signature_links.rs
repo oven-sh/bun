@@ -1,6 +1,5 @@
-//! Caches the parts of a signature that tsgo stores in fields of the signature: `Signature.resolvedReturnType` and
-//! `resolvedTypePredicate`, which it assigns on first use, and `parameters`, `typeParameters` and `thisParameter`,
-//! which it sets when it creates the signature.
+//! Caches the parts of a signature that tsgo stores in fields of the signature and assigns on first use:
+//! `Signature.resolvedReturnType` and `resolvedTypePredicate`.
 //!
 //! Here a signature is a declaration plus a mapper, and each part is derived from them on every read. Deriving a part
 //! reads the signature's record, finds the function in its file, looks up an entry in a per-node table, and
@@ -17,11 +16,7 @@
 //! - A type predicate follows the same rule. Its type is `instantiate(declared, mapper)`, where `declared` is the type
 //!   of a type node that passes `is_type_node_settled`, or the type in a `Program::type_predicates_from_body` entry
 //!   whose function isn't being analyzed. No mapper may be active.
-//! - Parameters are cached once they're in the signature's record or in `Program::sig_params`, which never replaces the
-//!   first list stored for a signature (`cached_sig_params`). Type parameters are cached once they're in
-//!   `Program::sig_type_params`.
-//! - A fact (`fact`) is a function of the signature's interning key and the program, and computing it resolves nothing.
-//! - Return types and type predicates aren't read while `index_infos_in_instantiation` is non-empty.
+//! - Nothing is read while `index_infos_in_instantiation` is non-empty.
 //!
 //! A cache hit skips the work that `instantiate` does before it looks anything up. See `links`.
 
@@ -29,37 +24,20 @@ use super::decl::Predicate;
 use super::*;
 use crate::table::{Id, Packed};
 
-/// Flags in the low bits of the `FACTS` cell.
-pub(super) mod fact {
-    /// `len(signature.typeParameters) == 0`. Only set for a function that doesn't adopt type parameters from a
-    /// contextual signature.
-    pub(in super::super) const HAS_NO_TYPE_PARAMETERS: u32 = 1;
-    /// `signature.thisParameter == nil`. Only set for a function that doesn't adopt a `this` parameter from a
-    /// contextual signature.
-    pub(in super::super) const HAS_NO_THIS_PARAMETER: u32 = 1 << 1;
-    /// Number of flags.
-    pub(super) const BITS: u32 = 2;
-}
-
 /// A `Packed` type, or 0 if the return type isn't cached.
 const RETURN_TYPE: usize = 0;
 /// 0 if the type predicate isn't cached, 1 if the signature doesn't have one, otherwise 2 + its index in
 /// `SignatureLinks::type_predicates`.
 const TYPE_PREDICATE: usize = 1;
-/// The `fact` flags in the low bits. The bits above them are 0 if the type parameters aren't cached, otherwise 1 +
-/// their index in `SignatureLinks::type_parameters`.
-const FACTS: usize = 2;
-/// 0 if the parameters aren't cached, otherwise 1 + their index in `SignatureLinks::parameters`.
-const PARAMETERS: usize = 3;
 
-type Row = [u32; 4];
+type Row = [u32; 2];
 
 /// Number of published signatures per page.
 const PAGE: usize = 64;
 
 /// See the module docs.
 #[derive(Default)]
-pub(super) struct SignatureLinks<'p> {
+pub(super) struct SignatureLinks {
     /// Rows of task-local signatures, indexed by `local_number`.
     own: Vec<Row>,
     /// Indexed by a published signature's number divided by `PAGE`. Each entry is 1 + the page's index in `published`,
@@ -67,11 +45,23 @@ pub(super) struct SignatureLinks<'p> {
     pages: Vec<u32>,
     published: Vec<[Row; PAGE]>,
     type_predicates: Vec<Predicate>,
-    parameters: Vec<&'p [SigParam]>,
-    type_parameters: Vec<&'p [TypeId]>,
 }
 
-impl<'p> SignatureLinks<'p> {
+impl SignatureLinks {
+    /// Resets it to `SignatureLinks::default()` but keeps the allocations.
+    pub(super) fn clear(&mut self) {
+        let SignatureLinks {
+            own,
+            pages,
+            published,
+            type_predicates,
+        } = self;
+        own.clear();
+        pages.clear();
+        published.clear();
+        type_predicates.clear();
+    }
+
     #[inline]
     fn cell(&self, sig: SigId, at: usize) -> u32 {
         match sig.local_number() {
@@ -89,62 +79,24 @@ impl<'p> SignatureLinks<'p> {
         let Some(index) = sig.local_number() else {
             let page = sig.0 as usize / PAGE;
             if page >= self.pages.len() {
+                cold_path();
                 self.pages.resize(page + 1, 0);
             }
             if self.pages[page] == 0 {
-                self.published.push([[0; 4]; PAGE]);
+                cold_path();
+                self.published.push([[0; 2]; PAGE]);
                 self.pages[page] = self.published.len() as u32;
             }
             return &mut self.published[self.pages[page] as usize - 1][sig.0 as usize % PAGE][at];
         };
         if index as usize >= self.own.len() {
-            self.own.resize(index as usize + 1, [0; 4]);
+            cold_path();
+            self.own.resize(index as usize + 1, [0; 2]);
         }
         &mut self.own[index as usize][at]
     }
 
-    #[inline]
-    pub(super) fn has(&self, sig: SigId, fact: u32) -> bool {
-        self.cell(sig, FACTS) & fact != 0
-    }
-
-    pub(super) fn add_fact(&mut self, sig: SigId, fact: u32) {
-        *self.cell_mut(sig, FACTS) |= fact;
-    }
-
-    #[inline]
-    pub(super) fn type_parameters(&self, sig: SigId) -> Option<&'p [TypeId]> {
-        match self.cell(sig, FACTS) >> fact::BITS {
-            0 => None,
-            at => Some(self.type_parameters[at as usize - 1]),
-        }
-    }
-
-    pub(super) fn keep_type_parameters(&mut self, sig: SigId, type_parameters: &'p [TypeId]) {
-        if self.cell(sig, FACTS) >> fact::BITS == 0 {
-            self.type_parameters.push(type_parameters);
-            let place = self.type_parameters.len() as u32;
-            *self.cell_mut(sig, FACTS) |= place << fact::BITS;
-        }
-    }
-
-    #[inline]
-    pub(super) fn parameters(&self, sig: SigId) -> Option<&'p [SigParam]> {
-        match self.cell(sig, PARAMETERS) {
-            0 => None,
-            at => Some(self.parameters[at as usize - 1]),
-        }
-    }
-
-    pub(super) fn keep_parameters(&mut self, sig: SigId, parameters: &'p [SigParam]) {
-        if self.cell(sig, PARAMETERS) == 0 {
-            self.parameters.push(parameters);
-            let place = self.parameters.len() as u32;
-            *self.cell_mut(sig, PARAMETERS) = place;
-        }
-    }
-
-    fn keep_return_type(&mut self, sig: SigId, ty: TypeId, _: Stored) {
+    fn cache_return_type(&mut self, sig: SigId, ty: TypeId, _: Stored) {
         *self.cell_mut(sig, RETURN_TYPE) = ty.pack();
     }
 
@@ -158,7 +110,7 @@ impl<'p> SignatureLinks<'p> {
         }
     }
 
-    fn keep_type_predicate(&mut self, sig: SigId, predicate: Option<Predicate>, _: Stored) {
+    fn cache_type_predicate(&mut self, sig: SigId, predicate: Option<Predicate>, _: Stored) {
         let raw = match predicate {
             None => 1,
             Some(predicate) => {
@@ -170,7 +122,7 @@ impl<'p> SignatureLinks<'p> {
     }
 }
 
-/// Tells where `derive_return_type` reads a signature's return type from.
+/// Where `derive_return_type` reads a signature's return type from.
 enum ReturnTypeSource {
     /// `Program::resolved_return_types`
     Signature,
@@ -183,14 +135,14 @@ enum ReturnTypeSource {
 impl<'p, 's> Checker<'p, 's> {
     /// Returns `signature.resolvedReturnType` if it's cached and safe to read now.
     #[inline]
-    pub(super) fn kept_return_type(&mut self, sig: SigId) -> Option<TypeId> {
+    pub(super) fn cached_return_type(&mut self, sig: SigId) -> Option<TypeId> {
         let raw = self.signature_links.cell(sig, RETURN_TYPE);
         if raw == 0 || !self.index_infos_in_instantiation.is_empty() {
             return None;
         }
-        let kept = TypeId::unpack(raw);
+        let return_type = TypeId::unpack(raw);
 
-        Some(kept)
+        Some(return_type)
     }
 
     fn return_type_source(&self, sig: SigId) -> ReturnTypeSource {
@@ -216,7 +168,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `sig_return` on a cache miss.
     #[inline(never)]
-    pub(super) fn derive_and_keep_return_type(&mut self, sig: SigId) -> TypeId {
+    pub(super) fn derive_and_cache_return_type(&mut self, sig: SigId) -> TypeId {
         let source = self.return_type_source(sig);
         if matches!(source, ReturnTypeSource::Other) {
             return self.derive_return_type(sig);
@@ -238,25 +190,25 @@ impl<'p, 's> Checker<'p, 's> {
             },
         );
         if let Some(stored) = stored {
-            self.signature_links.keep_return_type(sig, ty, stored);
+            self.signature_links.cache_return_type(sig, ty, stored);
         }
         ty
     }
 
     /// Returns `signature.resolvedTypePredicate` if it's cached and safe to read now.
     #[inline]
-    pub(super) fn kept_type_predicate(&mut self, sig: SigId) -> Option<Option<Predicate>> {
-        let kept = self.signature_links.type_predicate(sig)?;
+    pub(super) fn cached_type_predicate(&mut self, sig: SigId) -> Option<Option<Predicate>> {
+        let predicate_entry = self.signature_links.type_predicate(sig)?;
         if !self.index_infos_in_instantiation.is_empty() {
             return None;
         }
 
-        Some(kept)
+        Some(predicate_entry)
     }
 
     /// `sig_predicate` on a cache miss.
     #[inline(never)]
-    pub(super) fn derive_and_keep_type_predicate(&mut self, sig: SigId) -> Option<Predicate> {
+    pub(super) fn derive_and_cache_type_predicate(&mut self, sig: SigId) -> Option<Predicate> {
         // Every other kind of signature forwards to another signature, doesn't have a predicate, or combines several
         // predicates.
         let SigData::Decl { file, func, .. } = *self.types().sig(sig) else {
@@ -267,7 +219,7 @@ impl<'p, 's> Checker<'p, 's> {
             |c, _| c.is_type_predicate_settled(file, func),
         );
         if let Some(stored) = stored {
-            (self.signature_links).keep_type_predicate(sig, predicate, stored);
+            (self.signature_links).cache_type_predicate(sig, predicate, stored);
         }
         predicate
     }
@@ -294,26 +246,17 @@ impl<'p, 's> Checker<'p, 's> {
 
 #[cfg(test)]
 mod tests {
-    use super::{PAGE, SignatureLinks, fact};
+    use super::{PAGE, SignatureLinks};
     use crate::atom::known;
     use crate::check::decl::Predicate;
     use crate::check::task::Stored;
     use crate::local::LOCAL;
-    use crate::types::{SigId, SigParam, TypeId};
+    use crate::types::{SigId, TypeId};
 
     #[test]
-    fn a_row_for_each_signature() {
+    fn each_signature_has_its_own_row() {
         let page = PAGE as u32;
         let sigs = [0, page - 1, page, 5 * page, LOCAL, LOCAL | 1, LOCAL | 1000].map(SigId);
-        let parameters = [SigParam {
-            name: known::value,
-            ty: TypeId(1),
-            optional: false,
-            rest: false,
-            is_required_rest: false,
-            declaration: None,
-        }];
-        let type_parameters = [TypeId(2)];
         let mut links = SignatureLinks::default();
         let predicate = |at: usize| Predicate {
             param: Some(at),
@@ -324,39 +267,30 @@ mod tests {
         for sig in sigs {
             assert_eq!(links.cell(sig, super::RETURN_TYPE), 0);
             assert_eq!(links.type_predicate(sig), None);
-            assert!(!links.has(sig, fact::HAS_NO_TYPE_PARAMETERS));
         }
         for (at, sig) in sigs.into_iter().enumerate() {
-            links.keep_return_type(sig, TypeId(at as u32), Stored::new());
-            let kept = (at % 2 == 0).then(|| predicate(at));
-            links.keep_type_predicate(sig, kept, Stored::new());
-            links.add_fact(sig, fact::HAS_NO_THIS_PARAMETER);
-            links.keep_parameters(sig, &parameters[..at % 2]);
-            // A second call doesn't replace the first list.
-            links.keep_parameters(sig, &parameters[..]);
-            if at % 3 == 0 {
-                links.keep_type_parameters(sig, &type_parameters[..at % 2]);
-                links.keep_type_parameters(sig, &type_parameters[..]);
-            }
+            links.cache_return_type(sig, TypeId(at as u32), Stored::new());
+            let expected_predicate = (at % 2 == 0).then(|| predicate(at));
+            links.cache_type_predicate(sig, expected_predicate, Stored::new());
         }
         for (at, sig) in sigs.into_iter().enumerate() {
             assert_eq!(links.cell(sig, super::RETURN_TYPE), at as u32 + 1);
-            let kept = (at % 2 == 0).then(|| predicate(at));
-            assert_eq!(links.type_predicate(sig), Some(kept));
-            assert!(links.has(sig, fact::HAS_NO_THIS_PARAMETER));
-            assert!(!links.has(sig, fact::HAS_NO_TYPE_PARAMETERS));
-            assert_eq!(links.parameters(sig), Some(&parameters[..at % 2]));
-            let kept = (at % 3 == 0).then_some(&type_parameters[..at % 2]);
-            assert_eq!(links.type_parameters(sig), kept);
+            let expected_predicate = (at % 2 == 0).then(|| predicate(at));
+            assert_eq!(links.type_predicate(sig), Some(expected_predicate));
         }
         for other in [1, page + 1, 6 * page, LOCAL | 2, LOCAL | 1001].map(SigId) {
             assert_eq!(links.cell(other, super::RETURN_TYPE), 0);
             assert_eq!(links.type_predicate(other), None);
-            assert!(!links.has(other, fact::HAS_NO_THIS_PARAMETER));
-            assert_eq!(links.parameters(other), None);
-            assert_eq!(links.type_parameters(other), None);
         }
         // Only pages with a cached row are allocated.
         assert_eq!(links.published.len(), 3);
+        links.clear();
+        for sig in sigs {
+            assert_eq!(links.cell(sig, super::RETURN_TYPE), 0);
+            assert_eq!(links.type_predicate(sig), None);
+        }
+        // A row added after `clear` starts empty.
+        links.cache_type_predicate(sigs[0], None, Stored::new());
+        assert_eq!(links.cell(sigs[0], super::RETURN_TYPE), 0);
     }
 }

@@ -269,6 +269,8 @@ public:
         bool isConstructor = false;
         bool isGlobalCode = false;
         bool isAsync = false;
+        // Printed as "name (url)" or "<anonymous> (url)", not as a bare "url".
+        bool isFunction = false;
     };
 
     WTF::StringView stack;
@@ -417,6 +419,8 @@ public:
             frame.isConstructor = true;
             functionName = functionName.substring(4);
         }
+
+        frame.isFunction = !functionName.isEmpty();
 
         if (functionName == "<anonymous>"_s) {
             functionName = StringView();
@@ -653,6 +657,8 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
                             current.code_type = ZigStackFrameCodeConstructor;
                         } else if (frame.isGlobalCode) {
                             current.code_type = ZigStackFrameCodeGlobal;
+                        } else if (frame.isFunction) {
+                            current.code_type = ZigStackFrameCodeFunction;
                         }
 
                         except.stack.frames_len += 1;

@@ -71,8 +71,12 @@ function warnOnDeactivatedColors(env: Record<string, string | undefined>) {
   }
 
   if (name !== "") {
-    process.emitWarning(`The '${name}' env is ignored due to the 'FORCE_COLOR' env being set.`, "Warning");
+    // A log through a `Console` gets here, also in a program that has replaced `process`. Then the warning waits.
+    const current = globalThis.process;
+    const emitWarning: ((warning: string, type: string) => void) | undefined = current?.emitWarning;
+    if (!$isCallable(emitWarning)) return;
     warned = true;
+    emitWarning.$call(current, `The '${name}' env is ignored due to the 'FORCE_COLOR' env being set.`, "Warning");
   }
 }
 

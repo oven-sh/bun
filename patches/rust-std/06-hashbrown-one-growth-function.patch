@@ -1,0 +1,44 @@
+`RawTableInner::reserve_rehash_inner` is not inlined into each table type's `reserve_rehash`: one growth function, which reaches the hasher through the pointer it already takes.
+
+diff --git a/hashbrown-0.15.5/src/raw/mod.rs b/hashbrown-0.15.5/src/raw/mod.rs
+index 183aef1..bde136c 100644
+--- a/hashbrown-0.15.5/src/raw/mod.rs
++++ b/hashbrown-0.15.5/src/raw/mod.rs
+@@ -2622,8 +2622,7 @@ impl RawTableInner {
+     /// * The [`RawTableInner`] must have properly initialized control bytes.
+     ///
+     /// [`undefined behavior`]: https://doc.rust-lang.org/reference/behavior-considered-undefined.html
+-    #[allow(clippy::inline_always)]
+-    #[inline(always)]
++    #[inline(never)]
+     unsafe fn reserve_rehash_inner<A>(
+         &mut self,
+         alloc: &A,
+diff --git a/hashbrown-0.16.1/src/raw/mod.rs b/hashbrown-0.16.1/src/raw/mod.rs
+index 29bfa36..cd51a08 100644
+--- a/hashbrown-0.16.1/src/raw/mod.rs
++++ b/hashbrown-0.16.1/src/raw/mod.rs
+@@ -2776,8 +2776,7 @@ impl RawTableInner {
+     /// * The [`RawTableInner`] must have properly initialized control bytes.
+     ///
+     /// [`undefined behavior`]: https://doc.rust-lang.org/reference/behavior-considered-undefined.html
+-    #[allow(clippy::inline_always)]
+-    #[inline(always)]
++    #[inline(never)]
+     unsafe fn reserve_rehash_inner<A>(
+         &mut self,
+         alloc: &A,
+diff --git a/hashbrown-0.17.1/src/raw.rs b/hashbrown-0.17.1/src/raw.rs
+index 053d547..0d94f74 100644
+--- a/hashbrown-0.17.1/src/raw.rs
++++ b/hashbrown-0.17.1/src/raw.rs
+@@ -2734,8 +2734,7 @@ impl RawTableInner {
+     /// * The [`RawTableInner`] must have properly initialized control bytes.
+     ///
+     /// [`undefined behavior`]: https://doc.rust-lang.org/reference/behavior-considered-undefined.html
+-    #[expect(clippy::inline_always)]
+-    #[inline(always)]
++    #[inline(never)]
+     unsafe fn reserve_rehash_inner<A>(
+         &mut self,
+         alloc: &A,

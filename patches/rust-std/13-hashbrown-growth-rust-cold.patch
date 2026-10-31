@@ -1,0 +1,71 @@
+`RawTable::reserve_rehash` uses the `rust-cold` calling convention.
+
+diff -ru a/hashbrown-0.17.1/src/lib.rs b/hashbrown-0.17.1/src/lib.rs
+--- a/hashbrown-0.17.1/src/lib.rs
++++ b/hashbrown-0.17.1/src/lib.rs
+@@ -10,6 +10,7 @@
+ //! [CppCon talk]: https://www.youtube.com/watch?v=ncHmEUmJZf4
+ 
+ #![cfg_attr(not(doc), no_std)]
++#![feature(rust_cold_cc)]
+ #![cfg_attr(
+     feature = "nightly",
+     feature(
+diff -ru a/hashbrown-0.17.1/src/raw.rs b/hashbrown-0.17.1/src/raw.rs
+--- a/hashbrown-0.17.1/src/raw.rs
++++ b/hashbrown-0.17.1/src/raw.rs
+@@ -945,7 +945,7 @@
+     /// [`undefined behavior`]: https://doc.rust-lang.org/reference/behavior-considered-undefined.html
+     #[cold]
+     #[inline(never)]
+-    unsafe fn reserve_rehash(
++    unsafe extern "rust-cold" fn reserve_rehash(
+         &mut self,
+         additional: usize,
+         hasher: impl Fn(&T) -> u64,
+diff -ru a/hashbrown-0.16.1/src/lib.rs b/hashbrown-0.16.1/src/lib.rs
+--- a/hashbrown-0.16.1/src/lib.rs
++++ b/hashbrown-0.16.1/src/lib.rs
+@@ -10,6 +10,7 @@
+ //! [CppCon talk]: https://www.youtube.com/watch?v=ncHmEUmJZf4
+ 
+ #![no_std]
++#![feature(rust_cold_cc)]
+ #![cfg_attr(
+     feature = "nightly",
+     feature(
+diff -ru a/hashbrown-0.16.1/src/raw/mod.rs b/hashbrown-0.16.1/src/raw/mod.rs
+--- a/hashbrown-0.16.1/src/raw/mod.rs
++++ b/hashbrown-0.16.1/src/raw/mod.rs
+@@ -996,7 +996,7 @@
+     /// [`undefined behavior`]: https://doc.rust-lang.org/reference/behavior-considered-undefined.html
+     #[cold]
+     #[inline(never)]
+-    unsafe fn reserve_rehash(
++    unsafe extern "rust-cold" fn reserve_rehash(
+         &mut self,
+         additional: usize,
+         hasher: impl Fn(&T) -> u64,
+diff -ru a/hashbrown-0.15.5/src/lib.rs b/hashbrown-0.15.5/src/lib.rs
+--- a/hashbrown-0.15.5/src/lib.rs
++++ b/hashbrown-0.15.5/src/lib.rs
+@@ -10,6 +10,7 @@
+ //! [CppCon talk]: https://www.youtube.com/watch?v=ncHmEUmJZf4
+ 
+ #![no_std]
++#![feature(rust_cold_cc)]
+ #![cfg_attr(
+     feature = "nightly",
+     feature(
+diff -ru a/hashbrown-0.15.5/src/raw/mod.rs b/hashbrown-0.15.5/src/raw/mod.rs
+--- a/hashbrown-0.15.5/src/raw/mod.rs
++++ b/hashbrown-0.15.5/src/raw/mod.rs
+@@ -974,7 +974,7 @@
+     /// [`undefined behavior`]: https://doc.rust-lang.org/reference/behavior-considered-undefined.html
+     #[cold]
+     #[inline(never)]
+-    unsafe fn reserve_rehash(
++    unsafe extern "rust-cold" fn reserve_rehash(
+         &mut self,
+         additional: usize,
+         hasher: impl Fn(&T) -> u64,

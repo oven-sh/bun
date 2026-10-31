@@ -1,0 +1,46 @@
+`<[u8]>::to_ascii_uppercase`, `to_ascii_lowercase` and the chunked halves of `eq_ignore_ascii_case` and `is_ascii` are not inlined.
+
+diff --git a/library/alloc/src/slice.rs b/library/alloc/src/slice.rs
+index 93b2fbc..a5f7c2e 100644
+--- a/library/alloc/src/slice.rs
++++ b/library/alloc/src/slice.rs
+@@ -667,7 +667,7 @@ impl [u8] {
+     #[must_use = "this returns the uppercase bytes as a new Vec, \
+                   without modifying the original"]
+     #[stable(feature = "ascii_methods_on_intrinsics", since = "1.23.0")]
+-    #[inline]
++    #[inline(never)] // allocates and walks the slice: one copy, called
+     pub fn to_ascii_uppercase(&self) -> Vec<u8> {
+         self.iter().map(|b| b.to_ascii_uppercase()).collect()
+     }
+@@ -686,7 +686,7 @@ impl [u8] {
+     #[must_use = "this returns the lowercase bytes as a new Vec, \
+                   without modifying the original"]
+     #[stable(feature = "ascii_methods_on_intrinsics", since = "1.23.0")]
+-    #[inline]
++    #[inline(never)] // allocates and walks the slice: one copy, called
+     pub fn to_ascii_lowercase(&self) -> Vec<u8> {
+         self.iter().map(|b| b.to_ascii_lowercase()).collect()
+     }
+diff --git a/library/core/src/slice/ascii.rs b/library/core/src/slice/ascii.rs
+index e083a7f..1280564 100644
+--- a/library/core/src/slice/ascii.rs
++++ b/library/core/src/slice/ascii.rs
+@@ -121,7 +121,7 @@ impl [u8] {
+         all(target_arch = "x86_64", target_feature = "sse2"),
+         all(target_arch = "aarch64", target_feature = "neon")
+     ))]
+-    #[inline]
++    #[inline(never)] // at least N bytes of work: one copy, called
+     const fn eq_ignore_ascii_case_chunks<const N: usize>(&self, other: &[u8]) -> bool {
+         // FIXME(const-hack): The while-loops that follow should be replaced by
+         // for-loops when available in const.
+@@ -702,7 +702,7 @@ const fn is_ascii(s: &[u8]) -> bool {
+ const SSE2_CHUNK_SIZE: usize = 64;
+ 
+ #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+-#[inline]
++#[inline(never)] // at least SSE2_CHUNK_SIZE bytes of work: one copy, called
+ fn is_ascii_sse2(bytes: &[u8]) -> bool {
+     use crate::arch::x86_64::{__m128i, _mm_loadu_si128, _mm_movemask_epi8, _mm_or_si128};
+ 

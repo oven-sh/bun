@@ -1,0 +1,69 @@
+`Vec::reserve` passed the element's size and alignment to the growth function at every call site. A cold function per element type holds them.
+
+diff --git a/library/alloc/src/raw_vec/mod.rs b/library/alloc/src/raw_vec/mod.rs
+index ffc9205..6e8d486 100644
+--- a/library/alloc/src/raw_vec/mod.rs
++++ b/library/alloc/src/raw_vec/mod.rs
+@@ -346,8 +346,18 @@ impl<T, A: Allocator> RawVec<T, A> {
+     #[cfg(not(no_global_oom_handling))]
+     #[inline]
+     pub(crate) fn reserve(&mut self, len: usize, additional: usize) {
+-        // SAFETY: All calls on self.inner pass T::LAYOUT as the elem_layout
+-        unsafe { self.inner.reserve(len, additional, T::LAYOUT) }
++        // The element layout is a constant of `T`: one out-of-line function per layout holds it,
++        // instead of every call site loading it into two registers for the path that reallocates.
++        #[cold]
++        #[inline(never)]
++        fn grow<T, A: Allocator>(slf: &mut RawVecInner<A>, len: usize, additional: usize) {
++            // SAFETY: All calls on self.inner pass T::LAYOUT as the elem_layout
++            unsafe { slf.do_reserve_and_handle(len, additional, T::LAYOUT) }
++        }
++
++        if self.inner.needs_to_grow(len, additional, T::LAYOUT) {
++            grow::<T, A>(&mut self.inner, len, additional);
++        }
+     }
+ 
+     /// The same as `reserve`, but returns on errors instead of panicking or aborting.
+@@ -671,28 +681,27 @@ impl<A: Allocator> RawVecInner<A> {
+         // Therefore, we move all the resizing and error-handling logic from grow_amortized and
+         // handle_reserve behind a call, while making sure that this function is likely to be
+         // inlined as just a comparison and a call if the comparison fails.
+-        #[cold]
+-        unsafe fn do_reserve_and_handle<A: Allocator>(
+-            slf: &mut RawVecInner<A>,
+-            len: usize,
+-            additional: usize,
+-            elem_layout: Layout,
+-        ) {
+-            // SAFETY: Precondition passed to caller
+-            if let Err(err) = unsafe { slf.grow_amortized(len, additional, elem_layout) } {
+-                handle_error(err);
+-            }
+-        }
+-
+         if self.needs_to_grow(len, additional, elem_layout) {
+             // SAFETY: `needs_to_grow` ensures that `len + additional` is greater than
+             // the current capacity, with the other preconditions upheld by our caller.
+             unsafe {
+-                do_reserve_and_handle(self, len, additional, elem_layout);
++                self.do_reserve_and_handle(len, additional, elem_layout);
+             }
+         }
+     }
+ 
++    /// # Safety
++    /// As for `reserve`; `len + additional` must be greater than the current capacity.
++    #[cfg(not(no_global_oom_handling))]
++    #[cold]
++    #[inline(never)]
++    unsafe fn do_reserve_and_handle(&mut self, len: usize, additional: usize, elem_layout: Layout) {
++        // SAFETY: Precondition passed to caller
++        if let Err(err) = unsafe { self.grow_amortized(len, additional, elem_layout) } {
++            handle_error(err);
++        }
++    }
++
+     /// # Safety
+     /// - `elem_layout` must be valid for `self`, i.e. it must be the same `elem_layout` used to
+     ///   initially construct `self`

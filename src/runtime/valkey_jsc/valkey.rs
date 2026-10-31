@@ -22,6 +22,8 @@ bun_output::define_scoped_log!(debug, Redis, visible);
 pub(crate) struct ConnectionFlags {
     pub(crate) is_manually_closed: bool,
     pub(crate) is_selecting_db_internal: bool,
+    /// `start()` ran for the open socket.
+    pub(crate) started: bool,
     pub(crate) enable_offline_queue: bool,
     pub(crate) enable_auto_reconnect: bool,
     /// Set from the close that schedules a retry until the next accepted HELLO
@@ -52,6 +54,7 @@ impl Default for ConnectionFlags {
         Self {
             is_manually_closed: false,
             is_selecting_db_internal: false,
+            started: false,
             enable_offline_queue: true,
             enable_auto_reconnect: true,
             is_reconnecting: false,
@@ -1297,6 +1300,7 @@ impl ValkeyClient {
         // after a previous connection exhausted retries (#29925).
         self.flags.failed = false;
         self.flags.is_selecting_db_internal = false;
+        self.flags.started = false;
         if matches!(self.socket, AnySocket::SocketTcp(_)) {
             // if is tcp, we need to start the connection process
             // if is tls, we need to wait for the handshake to complete
@@ -1305,8 +1309,12 @@ impl ValkeyClient {
         Ok(())
     }
 
-    /// Start the connection process
+    /// Start the connection process. Once for each socket: a TLS 1.2 server
+    /// can renegotiate, which ends in another handshake event.
     pub(crate) fn start(&mut self) -> JsResult<()> {
+        if core::mem::replace(&mut self.flags.started, true) {
+            return Ok(());
+        }
         self.authenticate()?;
         let _ = self.flush_data();
         Ok(())

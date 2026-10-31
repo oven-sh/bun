@@ -286,12 +286,6 @@ impl PartialEq for CodePath<'_> {
     }
 }
 impl Eq for CodePath<'_> {}
-impl std::hash::Hash for CodePath<'_> {
-    #[inline]
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
-    }
-}
 /// ESLint's `codePath.id`: `s1`
 impl std::fmt::Display for CodePath<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -510,12 +504,6 @@ impl crate::types::Indexed for Segment<'_> {
     #[inline]
     fn index(self) -> u32 {
         self.id
-    }
-}
-impl std::hash::Hash for Segment<'_> {
-    #[inline]
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
     }
 }
 /// ESLint's `segment.id`: `s1_2`

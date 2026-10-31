@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""paths-to-read-site.py [ts|js|calls] [<shift>]: each row has ONE READ SITE of its own, `read$(o)`, which is handed a literal A in plain sight, and a literal B, whose members have the same names in ANOTHER ORDER, OF OTHER KINDS, with one more and one fewer, by ONE ROAD that a flow analysis has to model or to give up on. If the analysis misses the road, the site is compiled for A alone. Untyped JavaScript: every line must be as plain Bun's."""
+"""paths-to-read-site.py [ts|js|calls] [<shift>]: Each row has its own read site, `read$(o)`, which visibly receives a
+literal A, and a literal B with the same member names in another order and of other types, which reaches the site by
+one hidden path.
+"""
 import sys
 ts = len(sys.argv) > 1 and sys.argv[1] == 'ts'
 calls = len(sys.argv) > 1 and sys.argv[1] == 'calls'

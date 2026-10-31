@@ -75,7 +75,6 @@ fn cause_of(cause: EngineCause) -> UnseenCodeCause {
         EngineCause::RunsUnseenCode => UnseenCodeCause::RunsUnseenCode,
         EngineCause::RunsMachineCode => UnseenCodeCause::RunsMachineCode,
         EngineCause::OptionAdmitsCode => UnseenCodeCause::OptionAdmitsCode,
-        EngineCause::LimitReached => UnseenCodeCause::FlowGaveUp,
         EngineCause::FlowResultDisabled => UnseenCodeCause::FlowResultDisabled,
     }
 }

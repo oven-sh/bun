@@ -3513,7 +3513,7 @@ void us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
     SSL_CTX_set_tlsext_servername_callback(default_ctx, sni_cb);
   }
 
-  struct sni_node_t *node = us_malloc(sizeof(struct sni_node_t));
+  struct sni_node_t *node = us_xmalloc(sizeof(struct sni_node_t));
   node->ctx = ctx;
   SSL_CTX_up_ref(ctx);
 

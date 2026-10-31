@@ -1291,6 +1291,8 @@ fn convert_template_contents(
         E::TemplateContents::Cooked(s) => {
             let cooked = if s.is_utf16 {
                 arena_utf8_from_utf16(s.slice16(), loc)?
+            } else if s.next.is_some() {
+                arena_str_from_rope(s)
             } else {
                 StoreStr::new(s.slice8())
             };
@@ -1317,6 +1319,18 @@ fn arena_utf8_from_utf16(
         buf.extend_from_slice(c.encode_utf8(&mut tmp).as_bytes());
     }
     Ok(StoreStr::new(buf.leak()))
+}
+
+/// The parser joins constant strings into a rope: `"a" + "b"`, `` `${x}a` + "b" ``.
+fn arena_str_from_rope(s: &E::EString) -> StoreStr {
+    let mut buf: HirVec<u8> = AstAlloc::vec_with_capacity(s.len());
+    let mut cur = Some(s);
+    while let Some(seg) = cur {
+        debug_assert!(!seg.is_utf16);
+        buf.extend_from_slice(seg.slice8());
+        cur = seg.next.as_ref().map(|r| r.get());
+    }
+    StoreStr::new(buf.leak())
 }
 
 // =============================================================================
@@ -1497,16 +1511,8 @@ fn convert_js_string(s: StoreRef<E::EString>) -> JsString {
     if s.get().next.is_none() {
         return JsString::new(s);
     }
-    // Roped literal (rare; only from parser-level constant folding): flatten so
-    // every HIR consumer can ignore ropes.
-    let mut joined: Vec<u8> = Vec::with_capacity(s.get().len());
-    let mut cur = Some(s.get());
-    while let Some(seg) = cur {
-        debug_assert!(!seg.is_utf16);
-        joined.extend_from_slice(seg.slice8());
-        cur = seg.next.as_ref().map(|r| r.get());
-    }
-    JsString::from_wtf8_bytes(&joined)
+    // Flatten, so every HIR consumer can ignore ropes.
+    JsString::from_wtf8_bytes(arena_str_from_rope(s.get()).slice())
 }
 
 fn unsupported_node(node_type: &'static str, loc: Option<SourceLocation>) -> InstructionValue {

@@ -32,8 +32,11 @@ console.log(t, i.a, u, u2);
 // CHECK-NEXT: v10 = Convert v9 declared={type=builtin(Console) flags=[IsExpected]}
 // CHECK-NEXT: v11 = PropGet v10 key="log"
 // CHECK-NEXT: v12 = Convert v11 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v13 = PropGet v3 key="a"
-// CHECK-NEXT: v14 = Call v12, v10, v1, v13, v5, v7 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v15 = Undefined
-// CHECK-NEXT: Return v15
+// CHECK-NEXT: v13 = Integer integer=1
+// CHECK-NEXT: v14 = PropGet v3 key="a"
+// CHECK-NEXT: v15 = String string="u"
+// CHECK-NEXT: v16 = String string="u2"
+// CHECK-NEXT: v17 = Call v12, v10, v13, v14, v15, v16 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v18 = Undefined
+// CHECK-NEXT: Return v18
 // CHECK-NEXT: }

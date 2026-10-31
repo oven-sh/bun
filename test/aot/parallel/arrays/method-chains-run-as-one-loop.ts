@@ -8,10 +8,12 @@
 // IR= 0 countThatPass NewArray(Like|WithCapacity)
 // IR= 0 countAfterTwoStages NewArray(Like|WithCapacity)
 // IR= 0 searches NewArray(Like|WithCapacity)
-// IR= 2 numbers NewArray(Like|WithCapacity)
+// IR= 1 numbers NewArray(Like|WithCapacity)
 // IR= 0 sumOfNumbers NewArray(Like|WithCapacity)
 // IR= 1 partOfTheList NewArray(Like|WithCapacity)
-// IR= 4 partOfTheList LoopHint
+// The loop of the program, and for each of its three chains the two loops that the text of the traversal has, one in the other: none for `slice`, none for a second method. Counted by
+// place, since a loop has a copy for what comes back from a rare path, and without the polls that stand under the handler in front of a loop and on its rare paths.
+// IR@= 7 partOfTheList LoopHint( \[leavesOwedError\])? @
 interface Sale {
   customer: number;
   kind: string;

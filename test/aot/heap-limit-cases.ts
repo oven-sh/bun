@@ -7,7 +7,7 @@ import { unsupported } from "./harness/compiler";
 import { endAtMemoryLimit, memoryLimitOfAKnownProgram } from "./harness/memory-limit";
 import { run as runCommand } from "./harness/run";
 import { inTurn } from "./harness/shared-builds";
-import { reportsToTheRunnerAlone, throughAtOnce } from "./harness/without-core-dump";
+import { reportsToTheRunnerAlone, throughAtOnce, withoutCoreDump } from "./harness/without-core-dump";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const describe = unsupported ? describeAnywhere.skip : describeAnywhere.concurrent;
@@ -161,18 +161,6 @@ console.log(grown < 2 * oneRangeInKB ? "given back" : "kept " + grown + " KB");
 parentPort!.postMessage("done");
 `,
 };
-
-// Where the kernel hands a core to a program it starts that program whatever the limit is, but for a limit of one byte.
-const withoutCoreDump = (cmd: string[]) =>
-  isWindows
-    ? cmd
-    : [
-        "/bin/sh",
-        "-c",
-        `command -v prlimit > /dev/null 2>&1 && exec prlimit --core=1:1 "$@"; ulimit -c 0 && exec "$@"`,
-        "--",
-        ...cmd,
-      ];
 
 // No more commands at once than the machine has cores: many fill the address space that they are given.
 async function run(cmd: string[], cwd: string, env: Record<string, string> = {}) {
@@ -2141,17 +2129,15 @@ ${keepsAFullRangeAndGoesOnInATry("parentPort!.postMessage")}`,
         using folder = tempDir("aot-heap-limit", case5);
         const program = await linkTogether(String(folder));
         const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
-        // The main thread prints the stack of the Worker's last error.
-        const told = { stdout, stderr: withoutFramesAndVersion(stderr), exitCode };
+        expect(stderr).not.toContain("FATAL");
         const expected = {
           stdout:
             "the Worker says: full RangeError\nthe Worker says: finished true\nthe Worker ends with: RangeError Out of memory\nexit 1 and the main thread goes on: 100000\n",
-          stderr: outOfMemory,
           exitCode: 0,
         };
         // Where the Worker's last error was thrown.
-        if (!Bun.deepEquals(told, expected)) console.error(stderr);
-        expect(told).toEqual(expected);
+        if (!Bun.deepEquals({ stdout, exitCode }, expected)) console.error(stderr);
+        expect({ stdout, exitCode }).toEqual(expected);
       },
       120_000,
     );

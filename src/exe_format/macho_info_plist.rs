@@ -91,6 +91,9 @@ pub fn write(macho: &mut [u8], plist: &[u8]) -> Result<(), MachoError> {
     let section_at = match replaced {
         Some(index) => {
             if let Some(old) = find(macho) {
+                if old.start < old_commands_end {
+                    return Err(MachoError::InvalidObject);
+                }
                 macho[old].fill(0);
             }
             sections_at + index * SECTION_SIZE
@@ -378,6 +381,16 @@ mod tests {
             assert!(!remove_written(&mut linked));
             assert!(linked == before);
         }
+
+        let mut over_commands = written.clone();
+        let moved = at(0, u64::from(text_at), S_ZEROFILL);
+        write_struct(&mut over_commands[section_at..], &moved);
+        let before = over_commands.clone();
+        assert_eq!(
+            write(&mut over_commands, PLIST),
+            Err(MachoError::InvalidObject)
+        );
+        assert!(over_commands == before);
     }
 
     #[test]

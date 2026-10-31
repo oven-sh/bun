@@ -2,7 +2,8 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir, type DirectoryTree } from "harness";
 import { realpathSync } from "node:fs";
 import { delimiter, join, relative, sep } from "node:path";
-import { describe, test } from "../with-compiler";
+import { eachRow, gap } from "../supported";
+import { describe } from "../with-compiler";
 import { packageFiles, testResolution, type Pin, type ResolutionCase } from "./resolution-cases";
 
 type Answer = string | null | [onImport: string | null, onRequire: string | null];
@@ -165,15 +166,32 @@ const cases: ResolutionCase[] = [
 
 describe("code resolution", () => testResolution(cases));
 
-test("a computed specifier finds what a package in NODE_PATH exports", async () => {
+const noFolderIsListed =
+  "bun run loads the file. The compiler lists no folder for a key with a star or for a folder key of a package in NODE_PATH, so an executable does not hold the file.";
+
+eachRow<[prefix: string, suffix: string, found: string[]]>([
+  ["pkg/al", "", ["global/pkg/lib/target.js"]],
+  ["pk", "/alias", ["global/pkg/lib/target.js"]],
+  ["pkg/pl", "", ["global/pkg/plain.js"]],
+  gap(noFolderIsListed, ["pkg/icons/", "", ["global/pkg/dist/icons/x.js"]]),
+  gap(noFolderIsListed, ["pkg/d/", "", ["global/pkg/dist/d/y.js"]]),
+])("a computed specifier from %j to %j finds what a package in NODE_PATH exports", async (prefix, suffix, found) => {
   using tree = tempDir("aot-node-path-exports", {
-    "global/pkg/package.json": JSON.stringify({ exports: { "./alias": "./lib/target.js" } }),
-    ...emptyFiles(["global/pkg/lib/target.js", "global/pkg/plain.js", "app/importer.js"]),
+    "global/pkg/package.json": JSON.stringify({
+      exports: { "./alias": "./lib/target.js", "./icons/*": "./dist/icons/*", "./d/": "./dist/d/" },
+    }),
+    ...emptyFiles([
+      "global/pkg/lib/target.js",
+      "global/pkg/plain.js",
+      "global/pkg/dist/icons/x.js",
+      "global/pkg/dist/d/y.js",
+      "app/importer.js",
+    ]),
   });
   const root = realpathSync(String(tree));
+  const request = [join(root, "app", "importer.js"), prefix, suffix].map(text => JSON.stringify(text)).join(", ");
   const script = `import { resolveComputedSpecifier } from "bun:internal-for-testing";
-const importer = ${JSON.stringify(join(root, "app", "importer.js"))};
-console.log(JSON.stringify(["pkg/al", "pk", "pkg/pl"].map(prefix => resolveComputedSpecifier(importer, prefix, prefix === "pk" ? "/alias" : ""))));`;
+console.log(JSON.stringify(resolveComputedSpecifier(${request})));`;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--no-install", "-e", script],
     cwd: root,
@@ -182,10 +200,8 @@ console.log(JSON.stringify(["pkg/al", "pk", "pkg/pl"].map(prefix => resolveCompu
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({ exitCode: 0, stderr: "" });
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
 
-  const found = (JSON.parse(stdout) as { candidates: string[] }[]).map(answer =>
-    answer.candidates.map(path => relative(root, path).replaceAll(sep, "/")),
-  );
-  expect(found).toEqual([["global/pkg/lib/target.js"], ["global/pkg/lib/target.js"], ["global/pkg/plain.js"]]);
+  const { candidates } = JSON.parse(stdout) as { candidates: string[] };
+  expect(candidates.map(path => relative(root, path).replaceAll(sep, "/"))).toEqual(found);
 });

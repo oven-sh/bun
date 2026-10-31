@@ -221,19 +221,14 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
             }
         }
         for node_path in &resolver.code_options().node_paths {
+            self.walk_below(node_path, b"", SpecifierForm::Path)?;
             // The folder has the written name: in a `NODE_PATH` entry a version is a part of it.
             let manifest = Some(join_unrooted(node_path, name))
                 .filter(|package_directory| resolver.is_dir(package_directory))
                 .and_then(|package_directory| resolver.code_manifest(&package_directory));
-            if let Some(manifest) = manifest
-                && let Some(exports) = &manifest.exports
-            {
-                self.without_charge(|search| {
-                    search.add_exported_candidates(manifest, exports, name)
-                })?;
+            if let Some(exports) = manifest.and_then(|manifest| manifest.exports.as_ref()) {
+                self.try_exact_exported_keys(exports, name)?;
             }
-            // The plain lookup still finds a file that "exports" does not name.
-            self.walk_below(node_path, b"", SpecifierForm::Path)?;
         }
         Ok(())
     }
@@ -260,43 +255,43 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
             let Some(node_modules) = resolver.find_node_modules(ancestor) else {
                 continue;
             };
-            self.add_exporting_packages_by_start_of_name(&node_modules)?;
+            for name in self.list_installed_names(&node_modules) {
+                let manifest = resolver.code_manifest(&join_unrooted(&node_modules, &name));
+                if let Some(manifest) = manifest
+                    && let Some(exports) = &manifest.exports
+                {
+                    self.try_specifier(&name)?;
+                    self.add_exported_candidates(manifest, exports, &name)?;
+                }
+            }
             // It comes to the folder of each package, which is its name, and finds nothing in one that has `exports`.
             self.walk_below(&node_modules, b"", SpecifierForm::Path)?;
         }
         for node_path in &resolver.code_options().node_paths {
-            self.without_charge(|search| {
-                search.add_exporting_packages_by_start_of_name(node_path)
-            })?;
             self.walk_below(node_path, b"", SpecifierForm::Path)?;
+            // After the walk: it ends the search in a folder where more packages start with the prefix than the limit allows, and then no manifest is read.
+            for name in self.list_installed_names(node_path) {
+                let manifest = resolver.code_manifest(&join_unrooted(node_path, &name));
+                if let Some(exports) = manifest.and_then(|manifest| manifest.exports.as_ref()) {
+                    self.try_exact_exported_keys(exports, &name)?;
+                }
+            }
         }
         Ok(())
     }
 
-    /// Runs `pass` and gives back what it took of the limit, because the walk that follows lists the same folders.
-    fn without_charge(
+    /// Tries the keys of "exports" of a package in a `NODE_PATH` entry that name one subpath each. A key with a star or a key of a folder lists no folder here: of its files, only those that the walk lists are found.
+    fn try_exact_exported_keys(
         &mut self,
-        pass: impl FnOnce(&mut Self) -> Result<(), ComputedUnknown>,
+        exports: &ExportsEntry<'h>,
+        name: &[u8],
     ) -> Result<(), ComputedUnknown> {
-        let visited = (self.visited_files, self.visited_directories);
-        pass(self)?;
-        (self.visited_files, self.visited_directories) = visited;
-        Ok(())
-    }
-
-    fn add_exporting_packages_by_start_of_name(
-        &mut self,
-        folder: &[u8],
-    ) -> Result<(), ComputedUnknown> {
-        let resolver = self.resolver;
-        for name in self.list_installed_names(folder) {
-            let manifest = resolver.code_manifest(&join_unrooted(folder, &name));
-            if let Some(manifest) = manifest
-                && let Some(exports) = &manifest.exports
-            {
-                self.try_specifier(&name)?;
-                self.add_exported_candidates(manifest, exports, &name)?;
-            }
+        let ExportsEntry::Map(map) = *exports else {
+            return Ok(());
+        };
+        let subpath_keys = map.entries.iter().filter(|it| it.0.starts_with(b"./"));
+        for &(key, _) in subpath_keys.filter(|it| !strings::contains_char(it.0, b'*')) {
+            self.try_exported_specifier(&[name, &key[1..]].concat())?;
         }
         Ok(())
     }

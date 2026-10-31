@@ -501,65 +501,106 @@ fn packages_in_node_path_are_listed() {
     );
 }
 
+fn node_path_candidates(host: &MemoryHost, limit: u32, prefix: &str, suffix: &str) -> String {
+    let options = CodeOptions {
+        node_paths: vec![b"/global".to_vec()],
+        max_computed_candidates: limit,
+        ..CodeOptions::bun_run(b"/p")
+    };
+    let pattern = ComputedPattern {
+        importer: "/p/main.ts",
+        prefix,
+        suffix,
+        kind: Import,
+    };
+    resolve_computed_with(host, &options, pattern)
+}
+
 #[test]
 #[cfg_attr(miri, ignore)]
-fn exported_subpaths_of_packages_in_node_path_are_listed() {
+fn exact_exported_subpaths_of_packages_in_node_path_are_listed() {
     let host = MemoryHost::new(&[
         ("/p/main.ts", ""),
         (
             "/global/pkg/package.json",
-            r#"{ "exports": { "./alias": "./lib/target.js" } }"#,
+            r#"{ "exports": { ".": "./lib/root.js", "./alias": "./lib/target.js" } }"#,
         ),
+        ("/global/pkg/lib/root.js", ""),
         ("/global/pkg/lib/target.js", ""),
         ("/global/pkg/plain.js", ""),
     ])
     .node_path("/global");
-    let with_node_path = CodeOptions {
-        node_paths: vec![b"/global".to_vec()],
-        ..CodeOptions::bun_run(b"/p")
-    };
-    let candidates = |prefix, suffix| {
-        let pattern = ComputedPattern {
-            importer: "/p/main.ts",
-            prefix,
-            suffix,
-            kind: Import,
-        };
-        resolve_computed_with(&host, &with_node_path, pattern)
-    };
+    let candidates = |prefix, suffix| node_path_candidates(&host, 1024, prefix, suffix);
     assert_eq!(candidates("pkg/al", ""), "/global/pkg/lib/target.js");
     assert_eq!(candidates("pk", "/alias"), "/global/pkg/lib/target.js");
+    assert_eq!(candidates("pk", "g"), "/global/pkg/lib/root.js");
     assert_eq!(candidates("pkg/pl", ""), "/global/pkg/plain.js");
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn exported_subpaths_in_node_path_take_nothing_of_the_limit_of_the_walk() {
+fn exports_of_package_in_node_path_list_no_folder() {
     let host = MemoryHost::new(&[
         ("/p/main.ts", ""),
         (
             "/global/pkg/package.json",
-            r#"{ "exports": { "./*": "./*" } }"#,
+            r#"{ "exports": { "./*": "./*", "./icons/": "./icons/" } }"#,
         ),
         ("/global/pkg/a.js", ""),
         ("/global/pkg/b.js", ""),
         ("/global/pkg/c.js", ""),
+        ("/global/pkg/icons/x.js", ""),
+        ("/global/pkg/icons/y.js", ""),
     ])
     .node_path("/global");
-    let pattern = ComputedPattern {
-        importer: "/p/main.ts",
-        prefix: "pkg/",
-        suffix: "",
-        kind: Import,
-    };
-    // The walk alone visits four files, and so does the pass over "exports".
-    let options = CodeOptions {
-        node_paths: vec![b"/global".to_vec()],
-        max_computed_candidates: 5,
-        ..CodeOptions::bun_run(b"/p")
-    };
+    // The walk lists the two files of `icons`. The package has more files than the limit.
     assert_eq!(
-        resolve_computed_with(&host, &options, pattern),
-        "/global/pkg/a.js, /global/pkg/b.js, /global/pkg/c.js, /global/pkg/package.json"
+        node_path_candidates(&host, 2, "pkg/icons/", ""),
+        "/global/pkg/icons/x.js, /global/pkg/icons/y.js"
+    );
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn package_in_node_modules_and_in_node_path_counts_once() {
+    let host = MemoryHost::new(&[
+        ("/p/main.ts", ""),
+        (
+            "/p/node_modules/pkg/package.json",
+            r#"{ "exports": { "./icons/*": "./dist/icons/*" } }"#,
+        ),
+        ("/p/node_modules/pkg/dist/icons/x.js", ""),
+        ("/p/node_modules/pkg/dist/icons/y.js", ""),
+    ])
+    .link("/global/pkg", "/p/node_modules/pkg")
+    .node_path("/global");
+    assert_eq!(
+        node_path_candidates(&host, 2, "pkg/icons/", ""),
+        "/p/node_modules/pkg/dist/icons/x.js, /p/node_modules/pkg/dist/icons/y.js"
+    );
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn walk_over_node_path_ends_search_before_manifests_are_read() {
+    let manifest = r#"{ "exports": { "./alias": "./target.js" } }"#;
+    let host = MemoryHost::new(&[
+        ("/p/main.ts", ""),
+        ("/global/pka/package.json", manifest),
+        ("/global/pka/target.js", ""),
+        ("/global/pkb/package.json", manifest),
+        ("/global/pkb/target.js", ""),
+        ("/global/pkc/package.json", manifest),
+        ("/global/pkc/target.js", ""),
+    ])
+    .node_path("/global");
+    assert_eq!(
+        node_path_candidates(&host, 2, "pk", "/alias"),
+        "All(TooManyCandidates)"
+    );
+    assert_eq!(host.reads("/global/pka/package.json"), 0);
+    assert_eq!(
+        node_path_candidates(&host, 8, "pk", "/alias"),
+        "/global/pka/target.js, /global/pkb/target.js, /global/pkc/target.js"
     );
 }

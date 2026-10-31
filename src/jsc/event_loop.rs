@@ -73,7 +73,7 @@ pub struct EventLoop {
     /// Tasks that asked to run on the *next* loop iteration — after I/O and
     /// timers have had a turn — rather than in the current drain, which runs
     /// until the queue is empty (a task that re-posts itself there never lets
-    /// the loop poll). Promoted into `tasks` by `auto_tick`, like immediates.
+    /// the loop poll). Promoted into `tasks` before the loop polls, like immediates.
     pub yield_tasks: Vec<Task>,
 
     pub concurrent_tasks: ConcurrentQueue,
@@ -1061,7 +1061,7 @@ impl EventLoop {
         self.yield_tasks.push(task);
     }
 
-    /// `auto_tick`, before it polls: last iteration's yielded tasks become
+    /// Before the loop polls: last iteration's yielded tasks become
     /// runnable. Returns whether there are any, so the poll does not block.
     pub fn promote_yield_tasks(&mut self) -> bool {
         if self.yield_tasks.is_empty() {
@@ -1389,6 +1389,14 @@ impl EventLoop {
     pub fn tick_possibly_forever(&mut self) {
         let loop_ptr = self.usockets_loop();
 
+        // An earlier poll can have taken the wakeup of work that is already here.
+        self.tick_concurrent();
+        let _ = self.promote_yield_tasks();
+        // Report, run what the listeners queued, then report what that rejected.
+        let _ = self.global_ref().handle_rejected_promises();
+        let _ = self.drain_microtasks();
+        let _ = self.global_ref().handle_rejected_promises();
+
         #[cfg(unix)]
         {
             let pending_unref = self.vm_ref().take_pending_unref();
@@ -1406,19 +1414,23 @@ impl EventLoop {
         }
 
         self.process_gc_timer();
-        // `tick()` below can start work (e.g. a --hot reload) whose only wake
-        // source is a cross-thread `wakeup()`; bound the park, same as the GC
-        // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
-        // SAFETY: as above.
-        unsafe {
-            (*loop_ptr).tick_with_timeout(
-                Some(&bun_core::Timespec { sec: 1, nsec: 0 }),
-                uws::NOW_NS_UNKNOWN,
-            )
-        };
+        if self.has_pending_tasks() || self.vm_ref().is_event_loop_alive() {
+            // Still a poll: a yielded task runs after I/O had its turn.
+            // SAFETY: as above.
+            unsafe { (*loop_ptr).tick_without_idle() };
+        } else {
+            // Bounded: the watcher loop of `bun run` watches the entry point again on each
+            // return. libuv's `tick_with_timeout` ignores the argument.
+            // SAFETY: as above.
+            unsafe {
+                (*loop_ptr).tick_with_timeout(
+                    Some(&bun_core::Timespec { sec: 1, nsec: 0 }),
+                    uws::NOW_NS_UNKNOWN,
+                )
+            };
+        }
 
         self.vm_ref().as_mut().on_after_event_loop();
-        self.tick_concurrent();
         self.tick();
     }
 

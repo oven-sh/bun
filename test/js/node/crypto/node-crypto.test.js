@@ -797,11 +797,19 @@ describe("DiffieHellman", () => {
     expect(Object.getPrototypeOf(alice)).toBe(MyDH.prototype);
     expect(alice).toBeInstanceOf(crypto.DiffieHellman);
 
-    expect(alice.verifyError).toBe(bob.verifyError);
+    expect(alice.verifyError).toBe(crypto.createDiffieHellman(bob.getPrime(), bob.getGenerator()).verifyError);
     alice.generateKeys();
     bob.generateKeys();
     expect(alice.publicKeyHex()).toBe(alice.getPublicKey("hex"));
     expect(alice.computeSecret(bob.getPublicKey())).toEqual(bob.computeSecret(alice.getPublicKey()));
+  });
+
+  it("getDiffieHellman does not check the built-in groups", () => {
+    expect(
+      ["modp5", "modp14", "modp15", "modp16", "modp17", "modp18"].map(
+        name => crypto.getDiffieHellman(name).verifyError,
+      ),
+    ).toEqual([0, 0, 0, 0, 0, 0]);
   });
 });
 
@@ -1109,11 +1117,7 @@ it("verifyError should not be on the prototype of DiffieHellman and DiffieHellma
   const dhg = crypto.createDiffieHellmanGroup("modp5");
   expect("verifyError" in crypto.DiffieHellmanGroup.prototype).toBeFalse();
   expect("verifyError" in dhg).toBeTrue();
-
-  // boringssl seems to set DH_NOT_SUITABLE_GENERATOR for both
-  // DH_GENERATOR_2 and DH_GENERATOR_5 if not using
-  // DH_generate_parameters_ex
-  expect(dhg.verifyError).toBe(8);
+  expect(dhg.verifyError).toBe(0);
 });
 it("cipher.setAAD should not throw if encoding or plaintextLength is undefined #18700", () => {
   const key = crypto.randomBytes(32);

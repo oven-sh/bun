@@ -7,6 +7,7 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isLinux,
   isMacOS,
   isWindows,
   tempDir,
@@ -449,6 +450,158 @@ const IS_UV_FS_COPYFILE_DISABLED =
 
   it("Bun.write(Bun.stderr, Bun.file(path))", async () => {
     await Bun.write(Bun.stderr, Bun.file(path.join(import.meta.dir, "hello-world.txt")));
+  });
+
+  // copy_file_range(2) and sendfile(2) reject a destination whose open file
+  // description has O_APPEND (EBADF / EINVAL). `>> log`, a GNU make recipe
+  // redirected to a file and fs.openSync(p, "a") all hand Bun such a
+  // destination. Windows copies a disk file by path (uv_fs_copyfile), which
+  // does not append to an fd destination.
+  describe.skipIf(isWindows)("Bun.write(dest, Bun.file(src)) with an O_APPEND destination", () => {
+    it("appends a file to stdout redirected with >>", async () => {
+      using dir = tempDir("bun-write-stdout-append-cfr", {
+        "src.txt": "file-content\n",
+        "log.txt": "header\n",
+      });
+      const src = join(String(dir), "src.txt");
+      const log = join(String(dir), "log.txt");
+      const script = `process.stderr.write(String(await Bun.write(Bun.stdout, Bun.file(${JSON.stringify(src)}))))`;
+
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", `"$BUN" -e ${JSON.stringify(script)} >> ${JSON.stringify(log)}`],
+        env: { ...bunEnv, BUN: bunExe() },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, resolved: stderr, content: fs.readFileSync(log, "utf8") }).toEqual({
+        stdout: "",
+        resolved: "13",
+        content: "header\nfile-content\n",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    it("appends to an fd opened with 'a' and 'a+'", async () => {
+      // Above 64 KiB, so the read/write loop takes more than one step.
+      const body = Buffer.alloc(100_000, "S").toString();
+      using dir = tempDir("bun-write-fd-append-cfr", { "src.txt": body, "log.txt": "header\n" });
+      const src = join(String(dir), "src.txt");
+      const log = join(String(dir), "log.txt");
+      const written = [];
+      for (const flag of ["a", "a+"]) {
+        const fd = fs.openSync(log, flag);
+        try {
+          written.push(await Bun.write(Bun.file(fd), Bun.file(src)));
+        } finally {
+          fs.closeSync(fd);
+        }
+      }
+
+      const content = fs.readFileSync(log, "utf8");
+      expect({ written, size: content.length, intact: content === "header\n" + body + body }).toEqual({
+        written: [100_000, 100_000],
+        size: 7 + 200_000,
+        intact: true,
+      });
+    });
+
+    // copy_file_range also reports a destination that is not writable as
+    // EBADF. That stays an error, and nothing is read from the source fd.
+    it.skipIf(!isLinux)("rejects a destination fd that is not writable and leaves the source fd unread", async () => {
+      using dir = tempDir("bun-write-fd-not-writable", {
+        "src.txt": "payload\n",
+        "log.txt": "header\n",
+        "write.mjs": `
+          import fs from "node:fs";
+          const results = [];
+          for (const flags of [fs.constants.O_RDONLY, fs.constants.O_RDONLY | fs.constants.O_APPEND]) {
+            const src = fs.openSync("src.txt", "r");
+            const dest = fs.openSync("log.txt", flags);
+            const code = await Bun.write(Bun.file(dest), Bun.file(src)).then(() => "resolved", e => e.code);
+            results.push({ code, unread: fs.readSync(src, Buffer.alloc(64)) });
+            fs.closeSync(dest);
+            fs.closeSync(src);
+          }
+          console.log(JSON.stringify(results));
+        `,
+      });
+      // In a child: another test in this process can switch the kernel copy off.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "write.mjs"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({
+        results: stdout.trim(),
+        stderr,
+        content: fs.readFileSync(join(String(dir), "log.txt"), "utf8"),
+      }).toEqual({
+        results: JSON.stringify([
+          { code: "EBADF", unread: 8 },
+          { code: "EBADF", unread: 8 },
+        ]),
+        stderr: "",
+        content: "header\n",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // GNU make 4.0 to 4.3 sets O_APPEND on a recipe's stdout when it is a
+    // terminal. The description is shared with the parent shell, so Bun must
+    // not clear the flag. Then fd 1 becomes a log opened for append, as in a
+    // process that detaches from its terminal: the copy must land at the end.
+    it.skipIf(!isLinux)("keeps O_APPEND on a tty description and on a log that takes its place", async () => {
+      using dir = tempDir("bun-write-tty-append-flag", {
+        "src.txt": "payload\n",
+        "log.txt": "header-header\n",
+        "write.mjs": `
+          import fs from "node:fs";
+          const flags = () => /^flags:\\s*(\\d+)/m.exec(fs.readFileSync("/proc/self/fdinfo/1", "utf8"))[1];
+          const stdout = Bun.stdout;
+          const before = flags();
+          await Bun.write(stdout, Bun.file("src.txt"));
+          process.stderr.write("before=" + before + " after=" + flags() + "\\n");
+
+          fs.closeSync(1);
+          const fd = fs.openSync("log.txt", "a");
+          const written = await Bun.write(stdout, Bun.file("src.txt"));
+          process.stderr.write(JSON.stringify({ fd, written }) + "\\n");
+        `,
+      });
+      let output = "";
+      const { promise: ptyClosed, resolve } = Promise.withResolvers();
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", `exec 1>>/dev/tty; exec "$BUN" write.mjs`],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN: bunExe() },
+        terminal: {
+          data(_, chunk) {
+            output += chunk.toString();
+          },
+          exit: () => resolve(),
+        },
+      });
+      const exitCode = await proc.exited;
+      await ptyClosed;
+
+      const [, before] = /before=(\d+) after=\d+/.exec(output) ?? [];
+      expect({
+        output: output.replace(/\r/g, ""),
+        appendBefore: Number(`0o${before}`) & 0o2000,
+        log: fs.readFileSync(join(String(dir), "log.txt"), "utf8"),
+      }).toEqual({
+        output: `payload\nbefore=${before} after=${before}\n{"fd":1,"written":8}\n`,
+        appendBefore: 0o2000,
+        log: "header-header\npayload\n",
+      });
+      expect(exitCode).toBe(0);
+    });
   });
 
   // macOS fcopyfile(COPYFILE_DATA) rewrites dst from offset 0, and the

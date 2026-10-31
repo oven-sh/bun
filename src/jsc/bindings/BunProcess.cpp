@@ -3172,8 +3172,19 @@ enum class BunProcessStdinFdType : int32_t {
     file = 0,
     pipe = 1,
     socket = 2,
+    unknown = 3,
 };
 extern "C" BunProcessStdinFdType Bun__Process__getStdinFdType(void*, int fd);
+
+// bun_stdio_tty is from the start of the process. POSIX asks for the type again, and a terminal is never of an unknown type.
+static bool isStdioTerminal(int fd, BunProcessStdinFdType fdType)
+{
+#if !OS(WINDOWS)
+    if (fdType == BunProcessStdinFdType::unknown)
+        return false;
+#endif
+    return bun_stdio_tty[fd];
+}
 
 extern "C" void Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 // node:worker_threads worker: process.stdout/stderr forward to the parent Worker's
@@ -3211,8 +3222,8 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     JSC::MarkedArgumentBuffer args;
     args.append(processObject);
     args.append(JSC::jsNumber(fd));
-    args.append(jsBoolean(bun_stdio_tty[fd]));
     BunProcessStdinFdType fdType = Bun__Process__getStdinFdType(Bun::vm(vm), fd);
+    args.append(jsBoolean(isStdioTerminal(fd, fdType)));
     args.append(jsNumber(static_cast<int32_t>(fdType)));
 
     JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
@@ -3355,8 +3366,8 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     JSC::MarkedArgumentBuffer args;
     args.append(processObject);
     args.append(JSC::jsNumber(STDIN_FILENO));
-    args.append(jsBoolean(bun_stdio_tty[STDIN_FILENO]));
     BunProcessStdinFdType fdType = Bun__Process__getStdinFdType(Bun::vm(vm), STDIN_FILENO);
+    args.append(jsBoolean(isStdioTerminal(STDIN_FILENO, fdType)));
     args.append(jsNumber(static_cast<int32_t>(fdType)));
     JSC::CallData callData = JSC::getCallData(getStdinStream);
 

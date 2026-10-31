@@ -28,9 +28,11 @@ const enum BunProcessStdinFdType {
   file = 0,
   pipe = 1,
   socket = 2,
+  // libuv's UV_UNKNOWN_HANDLE: a closed fd, or one that is no file, pipe, socket or terminal.
+  unknown = 3,
 }
 
-/** `process.stdout` and `process.stderr`: a `tty.WriteStream` or an `fs.WriteStream`. */
+/** `process.stdout` and `process.stderr`: a `tty.WriteStream`, an `fs.WriteStream`, or a `Writable` that discards. */
 interface StdioWriteStream extends $Node.Writable {
   readable: boolean;
   fd: number;
@@ -42,7 +44,7 @@ interface StdioWriteStream extends $Node.Writable {
   [Symbol.asyncIterator]?(): AsyncGenerator<never, void, unknown>;
 }
 
-/** `process.stdin`: a `tty.ReadStream` or an `fs.ReadStream`. */
+/** `process.stdin`: a `tty.ReadStream`, an `fs.ReadStream`, or a `Readable` that has ended. */
 interface StdinStream extends $Node.Readable {
   fd: number;
   ref?(): this;
@@ -69,6 +71,14 @@ export function getStdioWriteStream(
       stream._refreshSize();
     });
     stream._type = "tty";
+  } else if (fdType === BunProcessStdinFdType.unknown) {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/bootstrap/switches/is_main_thread.js#L94-L103
+    const Writable = require("internal/streams/writable");
+    stream = new Writable({
+      write(_chunk, _encoding, callback) {
+        callback();
+      },
+    }) as StdioWriteStream;
   } else {
     const fs = require("node:fs");
     stream = new fs.WriteStream(null, { autoClose: false, fd, $fastPath: true });
@@ -109,7 +119,7 @@ export function getStdioWriteStream(
   stream._isStdio = true;
   stream.fd = fd;
 
-  // This is undefined if a FileSink couldn't be opened for the fd. The stream then writes through node:fs.
+  // This is undefined if no FileSink was opened for the fd. The stream then writes through node:fs, or discards.
   const underlyingSink = stream[require("internal/fs/streams").kWriteStreamFastPath];
   return [stream, underlyingSink];
 }
@@ -130,6 +140,14 @@ export function getNodeWorkerStdioStream(process: NodeJS.Process, fd: number, po
 
 export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boolean, fdType: BunProcessStdinFdType) {
   $assert(fd === 0);
+
+  if (!isTTY && fdType === BunProcessStdinFdType.unknown) {
+    // Node's getStdin() default branch. The native stream would throw EISDIR on first read.
+    const stream = require("internal/worker/stdio").makeEndedReadable() as StdinStream;
+    stream.fd = fd;
+    return stream;
+  }
+
   const native: ReadableStream<Uint8Array> = Bun.stdin.stream();
   const source: $Bindgen.FileInternalReadableStreamSource = native.$bunNativePtr;
 

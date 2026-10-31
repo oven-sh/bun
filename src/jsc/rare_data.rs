@@ -196,8 +196,7 @@ impl CleanupHook {
 pub struct RareData {
     /// Erased `*mut webcore::blob::Store` (intrusive-refcounted on the runtime
     /// side). Constructed via `__bun_stdio_blob_store_new`; high tier casts back.
-    /// `mode` is cached so [`Bun__Process__getStdinFdType`] doesn't have to
-    /// re-stat.
+    /// `mode` is cached so [`Bun__Process__getStdinFdType`] doesn't have to re-stat a store that it has just made.
     pub stderr_store: Option<NonNull<c_void>>,
     pub(crate) stderr_mode: Mode,
     pub stdin_store: Option<NonNull<c_void>>,
@@ -1027,6 +1026,8 @@ enum StdinFdType {
     File = 0,
     Pipe = 1,
     Socket = 2,
+    /// libuv's `UV_UNKNOWN_HANDLE`: a closed descriptor, or one that is no file, pipe, socket or terminal.
+    Unknown = 3,
 }
 
 #[unsafe(no_mangle)]
@@ -1034,20 +1035,34 @@ extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> Stdi
     let rare = vm.as_mut().rare_data();
     // The store is type-erased here, so `stderr/stdout/stdin()` cache `mode`
     // alongside the pointer.
-    let mode = match fd {
+    let (made_store, cached_mode) = match fd {
         0 => {
+            let made_store = rare.stdin_store.is_none();
             rare.stdin();
-            rare.stdin_mode
+            (made_store, rare.stdin_mode)
         }
         1 => {
+            let made_store = rare.stdout_store.is_none();
             rare.stdout();
-            rare.stdout_mode
+            (made_store, rare.stdout_mode)
         }
         2 => {
+            let made_store = rare.stderr_store.is_none();
             rare.stderr();
-            rare.stderr_mode
+            (made_store, rare.stderr_mode)
         }
         _ => unreachable!(),
+    };
+    // POSIX asks again unless this call read the mode: the program may have closed the descriptor since, and 0 is a failed `fstat`. On Windows libuv keeps it open.
+    let mode = if cfg!(windows) || (made_store && cached_mode != 0) {
+        cached_mode
+    } else {
+        match syscall::fstat(Fd::from_uv(fd)) {
+            Ok(stat) => stat.st_mode as Mode,
+            Err(err) if err.get_errno() == syscall::E::EBADF => return StdinFdType::Unknown,
+            // Only EBADF says that the descriptor is closed. Where a sandbox denies `fstat`, output must still reach it.
+            Err(_) => return StdinFdType::File,
+        }
     };
     // `kind_from_mode` uses hard-coded u32 octal masks so it works on
     // Windows where libc::S_IFSOCK is undefined and on macOS where the libc
@@ -1055,7 +1070,10 @@ extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> Stdi
     match bun_sys::kind_from_mode(mode) {
         bun_sys::FileKind::NamedPipe => StdinFdType::Pipe,
         bun_sys::FileKind::UnixDomainSocket => StdinFdType::Socket,
-        _ => StdinFdType::File,
+        bun_sys::FileKind::File | bun_sys::FileKind::CharacterDevice => StdinFdType::File,
+        // Windows: a mode of 0 is any failed `fstat`, which is no reason to discard output.
+        _ if cfg!(windows) && fd != 0 => StdinFdType::File,
+        _ => StdinFdType::Unknown,
     }
 }
 

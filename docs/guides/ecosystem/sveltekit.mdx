@@ -4,14 +4,14 @@ sidebarTitle: "SvelteKit with Bun"
 mode: center
 ---
 
-Use `sv create my-app` to create a SvelteKit project with the Svelte CLI. Answer the prompts to select a template and set up your development environment.
+Use the [Svelte CLI](https://svelte.dev/docs/cli/overview) to scaffold a new SvelteKit project.
 
 ```sh terminal icon="terminal"
-bunx sv create my-app
+bunx sv create my-app --template demo --types ts --add sveltekit-adapter="adapter:bun" --install bun
 ```
 
 ```txt
-┌  Welcome to the Svelte CLI! (v0.5.7)
+┌  Welcome to the Svelte CLI! (v1.1.x)
 │
 ◇  Which template would you like?
 │  SvelteKit demo
@@ -22,7 +22,7 @@ bunx sv create my-app
 ◆  Project created
 │
 ◇  What would you like to add to your project?
-│  none
+│  sveltekit-adapter
 │
 ◇  Which package manager do you want to install dependencies with?
 │  bun
@@ -46,14 +46,14 @@ bunx sv create my-app
 
 ---
 
-Once the project is initialized, `cd` into the new project. The dependencies are already installed, so you don't need to run `bun install`.
-
-Then start the development server with `bun --bun run dev`.
-
-To run the dev server with Node.js instead of Bun, omit the `--bun` flag.
-
+To start the development server:
 ```sh terminal icon="terminal"
 cd my-app
+
+# via node runtime
+bun run dev
+
+# via bun runtime
 bun --bun run dev
 ```
 
@@ -82,39 +82,10 @@ Edit and save `src/routes/+page.svelte` and the dev server hot-reloads your chan
 
 ---
 
-To build for production, you need a SvelteKit adapter. We recommend `svelte-adapter-bun`; install it with `bun add -D svelte-adapter-bun`.
-
-Then make the following changes to your `vite.config.ts` (or `vite.config.js`). If your project configures SvelteKit in a `svelte.config.js` instead, swap the adapter import there.
-
-```ts vite.config.ts icon="/icons/typescript.svg"
-import adapter from "@sveltejs/adapter-auto"; // [!code --]
-import adapter from "svelte-adapter-bun"; // [!code ++]
-import { sveltekit } from "@sveltejs/kit/vite";
-import { defineConfig } from "vite";
-
-export default defineConfig({
-  plugins: [
-    sveltekit({
-      compilerOptions: {
-        // Force runes mode for the project, except for libraries. Can be removed in svelte 6.
-        runes: ({ filename }) => (filename.split(/[/\\]/).includes("node_modules") ? undefined : true),
-      },
-
-      // adapter-auto only supports some environments, see https://svelte.dev/docs/kit/adapter-auto for a list.
-      // If your environment is not supported, or you settled on a specific environment, switch out the adapter.
-      // See https://svelte.dev/docs/kit/adapters for more information about adapters.
-      adapter: adapter(),
-    }),
-  ],
-});
-```
-
----
-
 To build a production bundle:
 
 ```sh terminal icon="terminal"
-bun --bun run build
+bun run --bun build
 ```
 
 ```txt
@@ -131,18 +102,22 @@ bun --bun run build
 
   Run npm run preview to preview your production build locally.
 
-  > Using svelte-adapter-bun
+  > Using @sveltejs/adapter-bun
     ✔ done
 ```
 
 ---
 
-Then start the production server with `bun ./build/index.js`. It listens on port `3000` by default; set the `PORT` environment variable to change it.
+Then start the production server with `bun ./build`. It listens on port `3000` by default; set the `PORT` environment variable to change it.
 
 ```sh terminal icon="terminal"
-bun ./build/index.js
+bun ./build
 ```
 
 ```txt
 Listening on http://0.0.0.0:3000/
 ```
+
+---
+
+For more information, see the [Svelte documentation](https://svelte.dev/docs/kit/adapter-bun).

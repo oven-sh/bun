@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""external-sources-of-typed-objects.py <part 1..17>: EVERY DOOR x EVERY KIND x { any, typed }. A kind is a way in which typed code makes an object: a literal, a record with optional members, an instance, an instance of an heir, a class, a closure, a tuple, an array.
-A door is something that JavaScript lets anybody do to an object: integrity levels, defineProperty, descriptors, delete, queries, Reflect, prototypes, copies, Proxy, identity and collections, conversions, array methods, methods and accessors patched.
-Each is done through a reference of type `any` and, where TypeScript lets it, through the typed one. A case prints one line: what the door answered, what typed readers see afterwards, the own properties with their attributes, what typed stores do, and all of that again;
-`!TypeError` stands where something threw. Every case has types and names of its own, so that what the compiler sees of one case says nothing about another. Prints the part-th program of 120 cases; without a part, the names of all cases, a line each."""
+"""external-sources-of-typed-objects.py <part 1..17>: Every entry path x every kind of object x { any, typed }. A kind
+is a way typed code creates an object: a literal, a record with optional members, an instance, a subclass instance, a
+class, a function ..
+"""
 import sys, json
 
 # The kinds of objects of the matrix. Every case has types and names of its own (suffix n), so that what the checker sees of one case says nothing of another.

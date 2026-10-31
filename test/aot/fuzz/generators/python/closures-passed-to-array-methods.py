@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""closures-passed-to-array-methods.py <seed> [ts|js]: a closure written at the call of an array method may stay in the caller's frame, and is copied to the heap only where the method turns out not to be the built-in one. WHOEVER GETS A FRAME's CLOSURE UNCOPIED HOLDS A DANGLING CELL. Sites `x.map(f)`, filter, flatMap, find, findLast, reduce, reduceRight, sort-likes .. with the closure written at the site, in cold text, ALSO ONE THAT KEEPS ITSELF BY ITS OWN NAME ON THE PASSING ROAD, capturing values of every kind (numbers, strings, objects, this, parameters, nothing, many), in plain | async | generator functions, methods, arrows, under try, in loops, in tail position and not, with a second argument; RECEIVERS: arrays as made (the passing road), heirs of Array with and without an override, arrays with an own method, plain objects with the method, a getter that yields the method, a proxy, null. THE OVERRIDES KEEP WHAT THEY ARE HANDED: in a global list, in an object, in a Map, in a closure of their own, in a promise's reaction, by returning it, by throwing it; they call it at once, twice, not at all; they call the site again. THEN THE STACK IS TRODDEN DOWN (a deep recursion that writes many locals), the heap is collected, and every kept closure is called, compared with itself and asked for its name and length. As plain Bun."""
+"""closures-passed-to-array-methods.py <seed> [ts|js]: A closure written as an argument of an array method may stay in
+the caller's frame and is only copied to the heap if the method turns out not to be the built-in. These programs let
+the closure escape in every way.
+"""
 import random, sys
 seed = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 TS = (sys.argv[2] if len(sys.argv) > 2 else 'js') == 'ts'

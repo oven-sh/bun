@@ -5,6 +5,7 @@ use core::hash::Hash;
 use std::collections::hash_map::Entry;
 use std::sync::Arc;
 
+use bun_sema::erasure::PackedTypeRanges;
 use bun_sema::program::FileId;
 use rustc_hash::FxHashMap;
 
@@ -27,7 +28,8 @@ pub struct ModuleFragment {
     pub body: Option<FunctionId>,
     pub data: Option<DataId>,
     pub positions: SourcePositions,
-    pub function_text: Vec<u8>,
+    /// What is cut out of the source to get the text of its functions. None: the program holds no such text.
+    pub types_in_function_text: Option<PackedTypeRanges>,
 }
 
 pub struct Fragment {

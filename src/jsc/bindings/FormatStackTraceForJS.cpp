@@ -354,7 +354,7 @@ WTF::String formatStackTrace(
                     previousCompiledModule = position->source;
                     previousCompiledFrame = i;
                 } else
-                    sourceURLs[i] = Zig::sourceURL(*position);
+                    sourceURLs[i] = Zig::sourceURL(frame.compiledFrame(), *position);
             }
             continue;
         }

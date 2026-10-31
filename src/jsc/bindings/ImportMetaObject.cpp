@@ -201,7 +201,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
 }
 
 // require() hands a native addon to process.dlopen without asking the module loader, and it answers a module that has run from its cache.
-static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC::JSValue resolvedPath)
+static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC::JSValue resolvedPath, JSC::JSValue from)
 {
     if (!Bun::hasCompiledModules()) [[likely]]
         return;
@@ -209,6 +209,9 @@ static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC:
     auto resolved = resolvedPath.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, );
     if (auto module = Bun::compiledModuleForPath(resolved)) {
+        WTF::String pathOfAsker = from.isString() ? from.toWTFString(globalObject) : WTF::String();
+        RETURN_IF_EXCEPTION(scope, );
+        JSC::AOT::AskerOfModule asker(globalObject, pathOfAsker);
         scope.release();
         JSC::AOT::willAnswerWithModule(globalObject, *module);
         return;
@@ -292,7 +295,12 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     if (!prefixed.isNull()) {
                         return JSValue::encode(jsString(vm, prefixed));
                     }
-                    throwIfResolvedFileIsRefused(lexicalGlobalObject, string);
+                    // In an ahead-of-time executable Module._resolveFilename() answers, as require.resolve() does, with where the file lay when the program was built.
+                    if (Bun::hasCompiledModules()) [[unlikely]] {
+                        if (WTF::String known = Bun::pathInExecutable(str.data); !known.isNull() && Bun::compiledModuleForPath(known))
+                            string = jsString(vm, known);
+                    }
+                    throwIfResolvedFileIsRefused(lexicalGlobalObject, string, from);
                     RETURN_IF_EXCEPTION(scope, {});
                     return JSC::JSValue::encode(string);
                 }
@@ -350,7 +358,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                 }
 
                 if (!isRequireDotResolve) {
-                    throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result));
+                    throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result), from);
                     if (scope.exception()) [[unlikely]]
                         result = {};
                 }
@@ -383,7 +391,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     }
 
     if (!isESM && !isRequireDotResolve) {
-        throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result));
+        throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result), from);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -613,6 +621,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
         auto name = asString(bunMain)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         isMain = URL::fileURLWithFileSystemPath(name.data).string() == thisObject->url;
+        // `Bun.main = require.resolve("./other.cjs")` stores where the file lay when the program was built.
+        if (String known = isMain ? String() : Bun::pathInExecutable(name.data); !known.isNull())
+            isMain = URL::fileURLWithFileSystemPath(known).string() == thisObject->url;
     }
 
     return JSValue::encode(jsBoolean(isMain));

@@ -325,12 +325,12 @@ function f13 name="makeCell" module=m0 position=1243 flags=[IsChecked, HasExplic
 # CHECK-NEXT: Branch v27 -> taken b8(), notTaken b9()
 # CHECK-NEXT: b8():
 # CHECK-NEXT: v28: "label" = String string="label"
-# CHECK-NEXT: v29: Array<string> = NewArray v28 contents=string
+# CHECK-NEXT: v29: Array<"label"|"x"|"y"|"z", Contiguous> = NewArray v28 contents="label"|"x"|"y"|"z" arrayStorage=Contiguous
 # CHECK-NEXT: Jump -> next b10(v29)
 # CHECK-NEXT: b9() frequency=Rare:
 # CHECK-NEXT: v30: Array<string> = CallBuiltin -, v0 overload=ObjectKeys/0 accessSite=30
 # CHECK-NEXT: Jump -> next b10(v30)
-# CHECK-NEXT: b10(v31: Array<string>):
+# CHECK-NEXT: b10(v31: Array<string> ~ Array<"label"|"x"|"y"|"z", Contiguous>):
 # CHECK-NEXT: v32: Array<"label"|"x"|"y"|"z", proven, pristine[Storage, Names, Dense]> = AssumeType v31 provenType=Array<"label"|"x"|"y"|"z", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v33: string = CallBuiltin v32 overload=ArrayPrototypeJoin/0 accessSite=32
 # CHECK-NEXT: StringBuilderAppend v15, v33

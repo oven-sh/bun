@@ -79,6 +79,42 @@ function readChunks(path: string): Chunk[] {
   return chunks.sort((a, b) => a.address - b.address);
 }
 
+const isArchive = (path: string) => /\.(lib|rlib|a)$/i.test(path) && existsSync(path);
+const spell = (path: string) => path.replaceAll("\\", "/").toLowerCase();
+
+/**
+ * The members that the link took out of the archives among its `inputs`, by the name its map of chunks gives them. Left out: a name
+ * that two members have, and one that is also a file among the inputs.
+ */
+export function findLinkedMembers(
+  chunkMap: string,
+  inputs: readonly string[],
+): [name: string, member: ArchiveMember][] {
+  const members = new Map<string, ArchiveMember[]>();
+  for (const archive of inputs.filter(isArchive))
+    for (const [name, list] of readArchive(archive)) members.set(name, [...(members.get(name) ?? []), ...list]);
+  const namedByLink = new Set(inputs.map(spell));
+  const linked = new Set(readChunks(chunkMap).map(chunk => chunk.object));
+  return [...linked].flatMap((name): [string, ArchiveMember][] => {
+    const list = members.get(name);
+    return list?.length === 1 && !namedByLink.has(spell(name)) ? [[name, list[0]!]] : [];
+  });
+}
+
+/** A name that the link's map of symbols puts in one of `objects`, by their file names, and of which `isInObjects` says no. */
+export function findNameMissingFromObjects(
+  symbolMap: string,
+  objects: ReadonlySet<string>,
+  isInObjects: (name: string) => boolean,
+): { name: string; object: string } | undefined {
+  for (const line of readFileSync(symbolMap, "latin1").split("\n")) {
+    const symbol = /^ [0-9a-f]{4}:[0-9a-f]{8} +(\S+) +[0-9a-f]{16} +(.*?)\s*$/.exec(line);
+    if (symbol === null || isInObjects(symbol[1]!)) continue;
+    if (objects.has(basename(symbol[2]!.replaceAll("\\", "/")))) return { name: symbol[1]!, object: symbol[2]! };
+  }
+  return undefined;
+}
+
 interface MapSymbol {
   name: string;
   address: number;
@@ -142,6 +178,48 @@ function exportedAddresses(executable: string): number[] {
   return addresses;
 }
 
+export interface UnwindRecord {
+  function: number;
+  record: number;
+}
+
+const exceptionDirectory = 3;
+const chainedUnwindInformation = 4;
+
+/**
+ * What the exception directory of the image says: where each function starts and where its unwind record lies. On x64 a record may
+ * go on in the record of another entry, which the function then needs too. On arm64 a record may be packed into the entry itself.
+ */
+export function readUnwindRecords(executable: string, image: LinkedImage = peImage(executable)): UnwindRecord[] {
+  const fd = openSync(executable, "r");
+  const pe = readAt(fd, 0x3c, 4).readUInt32LE(0);
+  const directory = readAt(fd, pe + 24 + 112 + 8 * exceptionDirectory, 8);
+  closeSync(fd);
+  const entries = image.bytes(directory.readUInt32LE(0), directory.readUInt32LE(4)) ?? Buffer.alloc(0);
+  const records: UnwindRecord[] = [];
+  if (image.isArm64) {
+    for (let at = 0; at + 8 <= entries.length; at += 8) {
+      const record = entries.readUInt32LE(at + 4);
+      if ((record & 3) === 0) records.push({ function: entries.readUInt32LE(at), record });
+    }
+    return records;
+  }
+  for (let at = 0; at + 12 <= entries.length; at += 12) {
+    const start = entries.readUInt32LE(at);
+    const chain: number[] = [];
+    for (let record = entries.readUInt32LE(at + 8); !chain.includes(record);) {
+      chain.push(record);
+      records.push({ function: start, record });
+      const head = image.bytes(record, 4);
+      if (head === undefined || ((head[0]! >> 3) & chainedUnwindInformation) === 0) break;
+      const next = image.bytes(record + 4 + 2 * ((head[2]! + 1) & ~1) + 8, 4);
+      if (next === undefined) break;
+      record = next.readUInt32LE(0);
+    }
+  }
+  return records;
+}
+
 export function sectionInFile(executable: string, name: string): { offset: number; size: number } | undefined {
   const fd = openSync(executable, "r");
   const pe = readAt(fd, 0x3c, 4).readUInt32LE(0);
@@ -201,7 +279,7 @@ interface Connections {
 
 function findArchiveMembers(link: CoffLink, symbols: MapSymbol[]): Map<string, ArchiveMember[]> {
   const members = new Map<string, ArchiveMember[]>();
-  const archives = new Set(link.inputs.filter(path => /\.(lib|rlib|a)$/i.test(path) && existsSync(path)));
+  const archives = new Set(link.inputs.filter(isArchive));
   const stems = new Set(
     [...archives].map(path =>
       basename(path)
@@ -233,7 +311,6 @@ function openObjects(
   files: Map<string, number>,
 ): InputObjects {
   // The map of chunks names a member of an archive as it names a file. Where an archive has such a member, a file of that name was linked only if the link names it.
-  const spell = (path: string) => path.replaceAll("\\", "/").toLowerCase();
   const namedByLink = new Set(inputs.map(spell));
   const fdOf = (path: string) => {
     let fd = files.get(path);
@@ -543,6 +620,14 @@ function connectDuplicateSections(
   }
 }
 
+function connectUnwindRecords(records: UnwindRecord[], placedNodes: PlacedNodes, successors: Set<number>[]): void {
+  for (const { function: start, record } of records) {
+    const from = nodeAt(placedNodes, start);
+    const to = nodeAt(placedNodes, record);
+    if (from >= 0 && to >= 0) successors[from]!.add(to);
+  }
+}
+
 function findUnreadChunks(
   chunks: Chunk[],
   unreadReasons: Map<string, UnreadReason>,
@@ -633,6 +718,7 @@ function createReading(link: CoffLink, files: Map<string, number>): GraphReading
   const connections = connectSections(chunks, inputs.objects, ties, knownToLinker);
   const { successors, unplaced, unplacedNodes, symbolsOutsideGraph } = connections;
   connectDuplicateSections(count, ties.placed, unplaced, successors);
+  connectUnwindRecords(readUnwindRecords(link.executable, image), placedNodes, successors);
   const unreadChunks = findUnreadChunks(chunks, inputs.unreadReasons);
   const roots = new Set([...connections.roots, ...unreadChunks.nodes]);
   const entryNode = nodeAt(placedNodes, entry);

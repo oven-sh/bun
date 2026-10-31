@@ -74,7 +74,7 @@ export const ui = { Button };
 // CHECK-NEXT: v5 = PropGet v0 key="props"
 // CHECK-NEXT: v6 = PropGet v5 key="label"
 // CHECK-NEXT: v7 = Call v2, -, v3, v4, v6 calleeName="h"
-// CHECK-NEXT: Return v7
+// CHECK-NEXT: ReturnCall v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Frag"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_7]] site=[[w_8]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=[[w_9]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_10]]] {
@@ -99,5 +99,5 @@ export const ui = { Button };
 // CHECK-NEXT: v4 = Null
 // CHECK-NEXT: v5 = PropGet v0 key="children"
 // CHECK-NEXT: v6 = Call v2, -, v3, v4, v5 calleeName="h"
-// CHECK-NEXT: Return v6
+// CHECK-NEXT: ReturnCall v6
 // CHECK-NEXT: }

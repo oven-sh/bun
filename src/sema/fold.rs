@@ -23,11 +23,12 @@ pub(crate) use evaluate::is_exact_power;
 use evaluate::{Evaluator, Value};
 pub use inputs::{
     Define, DefinePath, DefineRoot, DefineValue, FoldInputs, FoldOptions, RuntimeValueKind,
+    StoredByMocks,
 };
 pub use removed_by_bun_run::is_removed_where_never_run;
 pub(crate) use string_affixes::{
-    PathBelowFolder, find_path_joining_function, trim_lead_surrogate_at_end,
-    trim_trail_surrogate_at_start,
+    PathBelowFolder, find_export_of_module, find_members_below_module, trim_lead_surrogate_at_end,
+    trim_to_last_segment, trim_trail_surrogate_at_start,
 };
 
 use crate::atom::{Atom, Interner};

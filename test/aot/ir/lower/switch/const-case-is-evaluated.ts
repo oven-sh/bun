@@ -11,8 +11,6 @@
 
 declare function use(value: unknown): void;
 
-const A = 1;
-
 export function constant(x: unknown) {
   switch (x) {
     case A:
@@ -23,3 +21,5 @@ export function constant(x: unknown) {
       break;
   }
 }
+
+const A = 1;

@@ -394,6 +394,14 @@ pub enum ModuleDetection {
 }
 
 impl Options {
+    /// TS6307, TS6059 and the error about a changed common source directory hold the files of the program against the root
+    /// files.
+    pub fn reports_files_outside_its_roots(&self) -> bool {
+        self.composite
+            || !self.root_dir.is_empty()
+            || (!self.no_emit && !(self.out_dir.is_empty() && self.declaration_dir.is_empty()))
+    }
+
     /// `getParseFileRedirect`: if the file at `path` is a source of a referenced project, returns
     /// the `OutputDts` that's read instead.
     pub fn parse_file_redirect(&self, path: &[u8]) -> Option<&[u8]> {
@@ -626,11 +634,16 @@ pub struct ParseOptions {
     pub keeps_library_text: bool,
     /// `Options::keeps_comments`
     pub keeps_comments: bool,
+    /// Text that is not UTF-8 is read as `bun run` reads it, not as TypeScript does. A build sets it for a file that it reads for
+    /// its types alone, so that this file and a compiled one agree on what a string literal says.
+    pub reads_as_bun_run: bool,
     pub bind: crate::bind::BindOptions,
 }
 
 #[derive(Default, Clone, Debug)]
 pub struct Options {
+    /// `bun test --aot` and `bun check`, which go by what `bun test` allows and not by what `bun build` refuses.
+    pub allows_es_module_mark: bool,
     /// The directory of `tsconfig.json`. Absolute, no trailing slash.
     pub base_dir: Vec<u8>,
     /// `compilerOptions.paths`: a pattern with at most one `*`, and the substitutions to try for
@@ -766,6 +779,9 @@ pub struct Options {
     /// and the files only they bring in, aren't the project's sources: nothing is emitted for them, so `rootDir` and
     /// `composite` don't apply to them. `None`: all of them belong to it.
     pub own_roots: Option<usize>,
+    /// Root files that nothing outside them can see unless it names them. They keep their numbers and are read when a file
+    /// names them.
+    pub roots_read_when_named: FxHashSet<Vec<u8>>,
     /// A root file, a script, whose global declarations and ambient modules count only where no other file declares the name.
     pub declarations_of_last_resort: Vec<u8>,
     /// Where `/// <reference types>` and an entry of `types` are looked up that are found nowhere else. It is none of `typeRoots`.
@@ -888,6 +904,7 @@ impl Options {
             keeps_library_text: self.lib_replacement
                 || !(self.skip_lib_check || self.skip_default_lib_check),
             keeps_comments: self.keeps_comments,
+            reads_as_bun_run: false,
             bind: crate::bind::BindOptions {
                 emit_standard_class_fields: self.emit_standard_class_fields,
                 before_es2020: is_before(ScriptTarget::ES2020),

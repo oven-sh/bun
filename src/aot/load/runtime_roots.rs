@@ -38,6 +38,11 @@ fn exists_on(function: RuntimeFunction, platform: Platforms) -> bool {
 pub(crate) struct FurtherLibraryCode<'a> {
     pub lacked_before: &'a RuntimeUses,
     pub serves_unseen_code: bool,
+    /// `AotOptions::imports_are_in_other_images`: the first of those images holds all of Bun's own code, so this program holds what its files call by name and no more.
+    pub is_served_by_other_images: bool,
+    /// `AotOptions::is_part_of_test_files`, over other images. A test file runs once: a copy of a built-in function that is compiled for its callers here costs more than it saves.
+    /// So it calls the built-in functions of the first image through the objects of the realm, and holds only those that no object holds.
+    pub holds_test_files_alone: bool,
 }
 
 pub(crate) fn collect_runtime_roots(
@@ -53,6 +58,16 @@ pub(crate) fn collect_runtime_roots(
     let mut asks = Asks::default();
     let mut guessed = Asks::default();
     for &file in application.compiled_files() {
+        if further.is_served_by_other_images {
+            if let Some(source) = parsed_source(application, file) {
+                let uses = source.builtins.uses();
+                match further.holds_test_files_alone {
+                    true => asks.functions.extend(uses.functions_held_with_caller()),
+                    false => asks.functions.extend(&uses.functions),
+                }
+            }
+            continue;
+        }
         if let Some(compiled) = application.compiled(file) {
             host_loaded.extend(compiled.implied_answers.iter().filter_map(implied_module));
             imports_uncompiled_code |= compiled.code_answers.iter().any(is_uncompiled_code);
@@ -66,14 +81,20 @@ pub(crate) fn collect_runtime_roots(
             guessed.add(source.builtins.guessed_uses());
         }
     }
-    named.extend(find_library_modules_that_unknown_names_may_stand_for(
-        application,
-    ));
+    if !further.is_served_by_other_images {
+        named.extend(find_library_modules_that_unknown_names_may_stand_for(
+            application,
+        ));
+    }
+    if further.is_served_by_other_images {
+        functions.extend(&asks.functions);
+    }
     named.shared_sort_unstable_by_key(|module| module.registry_id());
     named.dedup();
     asks.modules_read_whole.extend(&named);
     host_loaded.extend(named.iter().copied());
-    let loads_by_unknown_path = loads_by_unknown_path(application);
+    let loads_by_unknown_path =
+        !further.is_served_by_other_images && loads_by_unknown_path(application);
     host_loaded.extend(&further.lacked_before.modules);
     functions.extend(&further.lacked_before.functions);
     asks.add(further.lacked_before);
@@ -82,7 +103,7 @@ pub(crate) fn collect_runtime_roots(
     let holds_guessed_code = further.serves_unseen_code
         || imports_uncompiled_code
         || asks.has_module_of_host()
-        || mentions_worker_constructor(application);
+        || (!further.is_served_by_other_images && mentions_worker_constructor(application));
     let keeps_code_without_names = holds_guessed_code || loads_by_unknown_path;
     let guessed = match holds_guessed_code {
         true => guessed.finish(),
@@ -155,6 +176,7 @@ impl Asks {
             modules_read_whole: self.modules_read_whole.into(),
             exports_read: self.exports_read.into(),
             functions: self.functions.into(),
+            linked_functions: Box::default(),
         }
     }
 }
@@ -245,6 +267,8 @@ mod tests {
             let further = FurtherLibraryCode {
                 lacked_before: &RuntimeUses::default(),
                 serves_unseen_code: false,
+                is_served_by_other_images: false,
+                holds_test_files_alone: false,
             };
             collect_runtime_roots(input.files, runtime_modules, input.platform, further)
         })
@@ -286,7 +310,7 @@ mod tests {
     #[test]
     fn startup_modules_are_roots_of_a_program_that_names_code_of_the_host() {
         let runtime = runtime_modules();
-        let roots = collect_roots_of("process.stdout.write('a line');", &runtime);
+        let roots = collect_roots_of("process.openStdin();", &runtime);
         assert!(roots.keeps_code_without_names);
         for &module in STARTUP_MODULES {
             assert!(roots.host_loaded_modules.contains(&module), "{module:?}");
@@ -337,7 +361,7 @@ mod tests {
     #[test]
     fn implied_module_is_host_loaded_and_roots_are_unique_and_readable() {
         let runtime = runtime_modules();
-        let roots = collect_roots_of("process.stdout.write('a');", &runtime);
+        let roots = collect_roots_of("process.openStdin();", &runtime);
         assert!(has_module_root(&runtime, &roots, RuntimeModule::NodeTty));
         assert!(roots.host_loaded_modules.contains(&RuntimeModule::NodeTty));
         assert!(roots.modules_named_at_run_time.is_empty());
@@ -350,7 +374,7 @@ mod tests {
             assert!(!earlier.contains(path), "{name} is listed twice");
         }
 
-        let roots = collect_roots_of("export const text = 'process.stdout';", &runtime);
+        let roots = collect_roots_of("export const text = 'process.openStdin';", &runtime);
         assert!(!has_module_root(&runtime, &roots, RuntimeModule::NodeTty));
         assert!(!roots.host_loaded_modules.contains(&RuntimeModule::NodeTty));
     }
@@ -358,7 +382,7 @@ mod tests {
     #[test]
     fn only_a_module_whose_name_the_program_writes_is_named_at_run_time() {
         let runtime = runtime_modules();
-        let loads = "process.stdout.write(typeof require(process.argv[2]));";
+        let loads = "process.openStdin(typeof require(process.argv[2]));";
         let roots = collect_roots_of(loads, &runtime);
         assert!(roots.host_loaded_modules.contains(&RuntimeModule::NodeTty));
         assert!(roots.modules_named_at_run_time.is_empty());

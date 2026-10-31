@@ -1,12 +1,13 @@
 use bun_aot_interface as interface;
 use bun_aot_interface::Opaque;
 use bun_ast::Log;
-use bun_options_types::aot_options::{ExplainSet, ReportDetail};
+use bun_options_types::aot_options::{ExplainSet, ReplacedByTests, ReportDetail};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::NamedValues;
 use bun_sema::hir_from_data::DataValue;
 use bun_sema::program::Files;
 use bun_sema::session::Arena;
+use bun_sema::util::SharedSort;
 use bun_trim::UsedFeatures;
 
 use crate::builtins::unlinked_files::UnlinkedFiles;
@@ -27,10 +28,24 @@ fn wrap_statistics(statistics: Statistics) -> interface::statistics::Statistics 
 fn wrap_compilation(compilation: Compilation) -> interface::Compilation {
     let wrap_engine = |engine| interface::engine::EngineResult(Opaque::new(engine));
     let (summary, further) = (compilation.summary, compilation.further_programs);
-    let has_compiled_code_of_workers = compilation.started_workers.code == CodeOfWorkers::Compiled;
+    // Where no file names a constructor and flow finds no start without a name, a constructor is at most within reach of an object
+    // that has escaped, which starts nothing.
+    let starts_workers_from_unseen_code = compilation.started_workers.code == CodeOfWorkers::Unseen;
+    let mut replaced_builtins = compilation.replaced_builtins;
+    replaced_builtins.builtins.shared_sort_unstable();
+    replaced_builtins.builtins.dedup();
+    replaced_builtins
+        .names_added_to_builtins
+        .shared_sort_unstable();
+    replaced_builtins.names_added_to_builtins.dedup();
     interface::Compilation {
-        starts_workers_from_unseen_code: !has_compiled_code_of_workers,
+        replaced_builtins,
+        starts_workers_from_unseen_code,
         names_of_worker_files: compilation.started_workers.names,
+        root_folders_spelled: compilation.started_workers.root_folders_spelled,
+        holds_source_paths: compilation.holds_source_paths,
+        imports_file_with_query: compilation.started_workers.imports_file_with_query,
+        program_files: compilation.started_workers.program_files,
         engine: wrap_engine(compilation.engine),
         further_programs: further.into_iter().map(wrap_engine).collect(),
         summary: interface::compile::ProgramSummary {
@@ -151,5 +166,29 @@ interface::define_linked_functions! {
 
     fn bun_aot_unlinked_named_values<'a, 's>(files: &'a Files<'s>, atoms: &Interner<'s>) -> Box<dyn NamedValues + 'a> {
         Box::new(UnlinkedFiles::new(files, atoms))
+    }
+
+    fn bun_aot_find_what_tests_replace(files: &[Vec<u8>], threads: usize, resolve: &mut dyn FnMut(&[u8], &[u8], bool) -> Option<Vec<u8>>) -> ReplacedByTests {
+        crate::load::replaced_by_tests::find_what_tests_replace(files, threads, resolve)
+    }
+
+    fn bun_aot_everything_that_tests_replace() -> ReplacedByTests {
+        crate::load::replaced_by_tests::everything_that_tests_replace()
+    }
+
+    fn bun_aot_library_modules_that_programs_load() -> Vec<&'static [u8]> {
+        crate::load::runtime_modules::library_modules_that_programs_load()
+    }
+
+    fn bun_aot_builtins_that_load_library_modules() -> Vec<String> {
+        crate::load::runtime_modules::builtins_that_load_library_modules()
+    }
+
+    fn bun_aot_library_modules_spelled_in(text: &[u8]) -> Option<Vec<&'static [u8]>> {
+        crate::load::runtime_modules::library_modules_spelled_in(text)
+    }
+
+    fn bun_aot_builtins_that_load_library_modules_spelled_in(text: &[u8]) -> Option<Vec<String>> {
+        crate::load::runtime_modules::builtins_that_load_library_modules_spelled_in(text)
     }
 }

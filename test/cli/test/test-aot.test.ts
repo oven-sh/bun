@@ -16,7 +16,7 @@ const theReportOfAThrownErrorNamesTheSameLineAndAnotherColumnUnderAot =
   /^ +\^\n(error: thrown in a test\n +at <anonymous> \(<dir>[\\/]a\.test\.ts:\d+):\d+\)/m;
 
 async function runTests(cwd: string, aot: boolean, args: string[] = [], builds = true) {
-  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...(aot ? ["--debug-aot"] : []), ...args], cwd, {
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...(aot ? ["--aot"] : []), ...args], cwd, {
     ...bunEnv,
     ...(aot ? { BUN_AOT_VERBOSE: "1" } : {}),
   });
@@ -302,7 +302,7 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(stderr).toContain(" 1 pass");
   });
 
-  test.concurrent.each([["--watch"], ["--hot"], ["--rerun-each", "2"]])("%s is not supported", async (...flags) => {
+  test.concurrent.each([["--watch"], ["--hot"]])("%s is not supported", async (...flags) => {
     using dir = tempDir("test-aot", {
       "a.test.ts": `import { expect, test } from "bun:test";\ntest("runs", () => { expect(1).toBe(1); });`,
     });
@@ -318,14 +318,17 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(exitCode).toBe(1);
   });
 
-  test.concurrent("rerunEach in bunfig.toml is not supported", async () => {
+  test.concurrent.each([
+    ["--rerun-each", {}, ["--rerun-each", "2"]],
+    ["rerunEach in bunfig.toml", { "bunfig.toml": `[test]\nrerunEach = 2\n` }, []],
+  ])("%s runs the file again", async (_what, files, flags) => {
     using dir = tempDir("test-aot", {
-      "bunfig.toml": `[test]\nrerunEach = 2\n`,
+      ...files,
       "a.test.ts": `import { expect, test } from "bun:test";\ntest("runs", () => { expect(1).toBe(1); });`,
     });
-    const { stderr, exitCode } = await runTests(String(dir), true, ["a.test.ts"], false);
-    expect(stderr).toContain(`error: --aot does not support --rerun-each (or "rerunEach" in bunfig.toml): `);
-    expect(exitCode).toBe(1);
+    const { stderr, exitCode } = await runTests(String(dir), true, [...flags, "a.test.ts"]);
+    expect(stderr).toContain(" 2 pass");
+    expect(exitCode).toBe(0);
   });
 
   test.concurrent.each([

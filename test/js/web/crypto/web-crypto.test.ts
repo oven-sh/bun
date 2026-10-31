@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { createSecretKey, type webcrypto } from "node:crypto";
+import { createCipheriv, createSecretKey, type webcrypto } from "node:crypto";
 
 type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
 type HmacImportParams = webcrypto.HmacImportParams;
@@ -1557,5 +1557,79 @@ describe("exception scope discipline", () => {
       uncheckedScopes: [],
       exitCode: 0,
     });
+  });
+});
+
+describe("JWK import validation", () => {
+  const rejection = (promise: Promise<unknown>) =>
+    promise.then(
+      () => "resolved",
+      e => e.name,
+    );
+
+  it("rejects a repeated key_ops entry for every key type", async () => {
+    const pair = async (algorithm: any, usages: KeyUsage[]) =>
+      crypto.subtle.exportKey(
+        "jwk",
+        ((await crypto.subtle.generateKey(algorithm, true, usages)) as CryptoKeyPair).publicKey,
+      );
+    const rsa = {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 1024,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    };
+    const ec = { name: "ECDSA", namedCurve: "P-256" };
+    const cases: [any, JsonWebKey, KeyUsage][] = [
+      ["AES-GCM", { kty: "oct", k: Buffer.alloc(16).toString("base64url") }, "encrypt"],
+      [rsa, await pair(rsa, ["sign", "verify"]), "verify"],
+      [ec, await pair(ec, ["sign", "verify"]), "verify"],
+      ["Ed25519", await pair("Ed25519", ["sign", "verify"]), "verify"],
+    ];
+    for (const [algorithm, jwk, usage] of cases) {
+      const importWith = (key_ops: string[]) =>
+        crypto.subtle.importKey("jwk", { ...jwk, key_ops }, algorithm, true, [usage]);
+      expect({
+        algorithm,
+        once: await rejection(importWith([usage])),
+        twice: await rejection(importWith([usage, usage])),
+      }).toEqual({ algorithm, once: "resolved", twice: "DataError" });
+    }
+  });
+
+  it("reports the modulus length in bits", async () => {
+    const n = Buffer.alloc(256);
+    n[0] = 0x40;
+    n[255] = 1;
+    const key = await crypto.subtle.importKey(
+      "jwk",
+      { kty: "RSA", n: n.toString("base64url"), e: "AQAB" },
+      { name: "RSA-OAEP", hash: "SHA-256" },
+      true,
+      ["encrypt"],
+    );
+    expect((key.algorithm as RsaHashedKeyAlgorithm).modulusLength).toBe(2047);
+  });
+});
+
+describe("AES-CTR", () => {
+  // 2^64 blocks are left before these counters wrap, which does not fit the size_t it was counted in.
+  it.each([
+    ["ffffffffffffffff0000000000000000", 128],
+    ["7fffffffffffffff0000000000000000", 127],
+    ["aabbccddffffffff0000000000000000", 96],
+    ["aabbccddeeff00010000000000000000", 65],
+  ])("counter %s with length %d", async (counter, length) => {
+    const rawKey = Buffer.alloc(16, 7);
+    const data = Buffer.alloc(40, 1);
+    const key = await crypto.subtle.importKey("raw", rawKey, "AES-CTR", false, ["encrypt"]);
+    const encrypted = await crypto.subtle.encrypt(
+      { name: "AES-CTR", counter: Buffer.from(counter, "hex"), length },
+      key,
+      data,
+    );
+    expect(Buffer.from(encrypted).toString("hex")).toBe(
+      createCipheriv("aes-128-ctr", rawKey, Buffer.from(counter, "hex")).update(data).toString("hex"),
+    );
   });
 });

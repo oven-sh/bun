@@ -1,8 +1,5 @@
-// Arrays that start as `[]` and grow. A program has 2 to 5 makers. Each maker writes `[]` at one or two places (a local, a property, a
-// class field, a default parameter, an element of another array) and fills it in one of a dozen ways. How many elements a call adds
-// follows a schedule: always the same, rising, falling, none and then many, or a jump after some hundred calls. The kind of element can
-// change half way. After the fill the array is cut, emptied and filled again, frozen, sorted, given holes, or kept for later. Each maker
-// runs up to some thousand times, with collections in between, and the program prints a digest of every array at fixed points.
+// Arrays that start as `[]` and grow. Two to five factories each write `[]` in one or two places and fill it in one of
+// a dozen ways; the number of elements per call follows a schedule (constant, rising, falling, none and then many).
 import type { Random } from "./random";
 
 export function generate(random: Random, typed: boolean): string {
@@ -44,7 +41,7 @@ export function generate(random: Random, typed: boolean): string {
     `call === ${random.below(calls)} ? ${random.pick([5000, 20000])} : 2`,
   ];
 
-  // Each way fills `list` with `count` elements; `item(i)` makes one.
+  // Each way fills `list` with `count` elements; `item(i)` creates one.
   const fills = [
     "for (let i = 0; i < count; i++) list.push(item(i));",
     "for (let i = 0; i < count; i++) list[i] = item(i);",

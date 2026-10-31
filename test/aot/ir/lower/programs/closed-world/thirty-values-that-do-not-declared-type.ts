@@ -50,7 +50,7 @@ class Cat extends Animal { lives: string = "nine"; meow(): string { return this.
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="isDog"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_4]] site=[[w_5]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=[[w_6]]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_4]] site=[[w_5]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=[[w_6]]}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_4]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -72,7 +72,7 @@ class Cat extends Animal { lives: string = "nine"; meow(): string { return this.
 // CHECK-NEXT: Return v6
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="rest"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasRestParameter, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<number> site=[[w_11]] flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=number site=[[w_12]]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasRestParameter, IsChecked] thisType={type=anything} parameters=[{type=Array<number> site=[[w_11]] flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=number site=[[w_12]]}] {
 // CHECK-NEXT: b0(v0: Array<number>):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

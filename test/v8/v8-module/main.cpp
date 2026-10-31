@@ -3056,7 +3056,9 @@ new_backing_store_at_depth(int depth, void *data, size_t length,
 // the object with this addon's operator delete, because V8 defines
 // BackingStore::operator delete inline. The process dies here if the runtime
 // took the object from an allocator that this addon's operator delete does not
-// free to.
+// free to. MSVC without inlining (`node-gyp --debug`) is the exception:
+// BackingStore is dllimport there, so the addon imports that operator from the
+// runtime.
 void test_v8_backing_store_deleted_by_addon(
     const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();

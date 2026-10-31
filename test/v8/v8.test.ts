@@ -726,8 +726,8 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
   });
 
   describe("ArrayBuffer::NewBackingStore", () => {
-    // These addon functions delete a BackingStore, which an addon built with `node-gyp --debug` cannot do on
-    // Windows (see "BackingStore" below).
+    // These addon functions delete a BackingStore, which an addon built with `node-gyp --debug` cannot do under
+    // Bun on Windows yet (see "BackingStore" below).
     const withDebugAddon = !isWindows;
 
     it("calls the deleter once, when the addon destroys the store", async () => {
@@ -823,8 +823,9 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
 
   describe("BackingStore", () => {
     it("is deleted by the addon that owns it", async () => {
-      // On Windows `node-gyp --debug` links the debug C runtime, whose operator delete only takes blocks from its
-      // own operator new, so an addon built that way cannot delete a BackingStore under node either.
+      // TODO: an addon built with `node-gyp --debug` on Windows (MSVC /Ob0) imports V8's inline
+      // BackingStore::operator delete (??3BackingStore@v8@@SAXPEAX@Z) from the host. node.exe exports it and Bun
+      // does not yet, so the debug addon cannot delete a BackingStore under Bun.
       const output = await checkSameOutput("test_v8_backing_store_deleted_by_addon", undefined, undefined, !isWindows);
       expect(output.split(/\r?\n/)).toEqual([
         "made.stores = 480",

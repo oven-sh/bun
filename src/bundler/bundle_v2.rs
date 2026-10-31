@@ -144,6 +144,8 @@ pub struct BundleV2<'a> {
     /// dense and this is probed once per import in `on_parse_task_complete`
     /// (the main-thread parse-phase throughput limiter).
     pub(crate) requested_exports: Vec<Option<RequestedExports>>,
+    /// Dev server: lets a barrel find the requests under another source index of its path.
+    pub(crate) sources_by_path: crate::barrel_imports::SourcesByPath,
 }
 
 bun_core::declare_scope!(Bundle, visible);
@@ -385,6 +387,15 @@ pub mod bv2_impl {
                 match self {
                     Side::Client => Graph::Client,
                     Side::Server => Graph::Server,
+                }
+            }
+        }
+        impl Graph {
+            /// The dev server keeps the server and SSR copies of a file in one graph.
+            pub fn side(self) -> Side {
+                match self {
+                    Graph::Client => Side::Client,
+                    Graph::Server | Graph::Ssr => Side::Server,
                 }
             }
         }
@@ -3268,6 +3279,7 @@ pub mod bv2_impl {
                 asynchronous: false,
                 has_any_top_level_await_modules: false,
                 requested_exports: Vec::new(),
+                sources_by_path: Default::default(),
             });
             if let Some(bo) = bake_options {
                 // SAFETY: `bo.client_transpiler` is the caller's live, write-capable
@@ -5814,6 +5826,8 @@ pub mod bv2_impl {
                     .current_bundle_start_data()
                     .cast::<DevServerInput>()
             };
+
+            barrel_imports::persist_requests_of_tracked_barrels(self, dev_server)?;
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 

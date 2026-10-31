@@ -2500,6 +2500,49 @@ test("a top-level await rejecting while the loop is alive fails the worker then"
   expect(exitCode).toBe(0);
 });
 
+// Nothing is left to run after these callbacks, so no later loop turn reports the rejection.
+describe.concurrent.each([
+  ["the last timer callback", `setTimeout(() => { Promise.reject(new Error("boom")); });`],
+  ["the last immediate", `setImmediate(() => { Promise.reject(new Error("boom")); });`],
+  ["a 'beforeExit' listener", `process.once("beforeExit", () => { Promise.reject(new Error("boom")); });`],
+])("an unhandled rejection in %s of a worker", (_label, reject) => {
+  async function run(workerSrc: string) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("worker_threads");
+         const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true });
+         w.on("message", m => console.log(m));
+         w.on("error", e => console.log("error: " + e.message));
+         w.on("exit", () => console.log("exit"));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { stdout, exitCode };
+  }
+
+  test("is the worker's 'error'", async () => {
+    expect(await run(reject)).toEqual({ stdout: "error: boom\nexit\n", exitCode: 0 });
+  });
+
+  test("reaches an 'unhandledRejection' listener, and what it schedules runs", async () => {
+    expect(
+      await run(
+        `const { parentPort } = require("worker_threads");
+         process.on("unhandledRejection", e => {
+           parentPort.postMessage("unhandledRejection " + e.message);
+           setTimeout(() => parentPort.postMessage("scheduled"));
+         });
+         ${reject}`,
+      ),
+    ).toEqual({ stdout: "unhandledRejection boom\nscheduled\nexit\n", exitCode: 0 });
+  });
+});
+
 // Static imports that are still being read/transpiled are loading, not a
 // top-level await: message delivery waits for the graph to execute.
 test("a file worker's static imports load before it counts as started", async () => {

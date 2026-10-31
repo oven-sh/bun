@@ -397,6 +397,8 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportPkcs8(CryptoAlgorithmIdentifier i
     }
 
     EC_KEY_set_asn1_flag(ecKey, OPENSSL_EC_NAMED_CURVE);
+    // BoringSSL sets this on a key that came without its optional public key, and would export it without one.
+    EC_KEY_set_enc_flags(ecKey, EC_KEY_get_enc_flags(ecKey) & ~EC_PKEY_NO_PUBKEY);
 
     return adoptRef(new CryptoKeyEC(identifier, curve, CryptoKeyType::Private, WTF::move(pkey), extractable, usages));
 }

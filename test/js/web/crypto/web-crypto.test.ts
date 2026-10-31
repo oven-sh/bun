@@ -1192,6 +1192,27 @@ describe("SubtleCrypto.deriveBits length", () => {
     });
   });
 
+  it("takes the length as an [EnforceRange] unsigned long", async () => {
+    const key = await crypto.subtle.importKey("raw", enc.encode("secret"), "HKDF", false, ["deriveBits"]);
+    const hkdf = { name: "HKDF", hash: "SHA-256", salt: enc.encode("salt"), info: enc.encode("info") };
+    const results: Record<string, string> = {};
+    for (const length of [16, 16.9, "16", NaN, -1, 2 ** 32, 2 ** 32 + 16, Infinity, "x", {}]) {
+      results[Bun.inspect(length)] = await probe(crypto.subtle.deriveBits(hkdf, key, length as number));
+    }
+    expect(results).toEqual({
+      "16": "f6d2",
+      "16.9": "f6d2",
+      '"16"': "f6d2",
+      NaN: "TypeError",
+      "-1": "TypeError",
+      "4294967296": "TypeError",
+      "4294967312": "TypeError",
+      Infinity: "TypeError",
+      '"x"': "TypeError",
+      "{}": "TypeError",
+    });
+  });
+
   // deriveKey(derivedKeyType: HKDF) has no inherent key length, so the entire shared
   // secret must become the imported HKDF key; a derivedKeyType with a concrete length
   // (AES-GCM 256) must still flow that length through.
@@ -1303,6 +1324,24 @@ describe("OKP spki/pkcs8 cross-curve import", () => {
   });
 });
 
+it.each([
+  ["ECDSA", "sign"],
+  ["ECDH", "deriveBits"],
+] as const)("%s: a pkcs8 key without its optional public key is exported with it", async (name, usage) => {
+  const algorithm = { name, namedCurve: "P-256" };
+  const { privateKey } = await crypto.subtle.generateKey(algorithm, true, [usage]);
+  const { d } = await crypto.subtle.exportKey("jwk", privateKey);
+  // A PrivateKeyInfo whose ECPrivateKey (RFC 5915) is only the version and the private key.
+  const withoutPublicKey = Buffer.concat([
+    Buffer.from("3041020100301306072a8648ce3d020106082a8648ce3d030107042730250201010420", "hex"),
+    Buffer.from(d!, "base64url"),
+  ]);
+  const imported = await crypto.subtle.importKey("pkcs8", withoutPublicKey, algorithm, true, [usage]);
+  expect(Buffer.from(await crypto.subtle.exportKey("pkcs8", imported))).toEqual(
+    Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey)),
+  );
+});
+
 // importKey's empty-usages guard got Node's message; the same predicate in
 // generateKey, deriveKey's inner import and unwrapKey's inner import still
 // carried the empty-message SyntaxError.
@@ -1338,6 +1377,22 @@ describe("empty usages on a private or secret key", () => {
       deriveKey: "SyntaxError: Usages cannot be empty when importing a secret key.",
       unwrapKey: "SyntaxError: Usages cannot be empty when importing a secret key.",
     });
+  });
+
+  it("the SyntaxError is a DOMException", async () => {
+    const errors = await Promise.all(
+      [
+        crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, []),
+        crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["sign"]),
+        crypto.subtle.importKey("raw", new Uint8Array(16), "AES-GCM", false, ["sign"]),
+        (async () => createSecretKey(new Uint8Array(16)).toCryptoKey("AES-GCM", false, []))(),
+        (async () => createSecretKey(new Uint8Array(16)).toCryptoKey("AES-GCM", false, ["sign"]))(),
+      ].map(promise => promise.catch(e => e)),
+    );
+    for (const error of errors) {
+      expect(error).toBeInstanceOf(DOMException);
+      expect({ name: error.name, code: error.code }).toEqual({ name: "SyntaxError", code: DOMException.SYNTAX_ERR });
+    }
   });
 });
 

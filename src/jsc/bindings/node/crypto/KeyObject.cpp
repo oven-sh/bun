@@ -26,6 +26,7 @@
 #include "JSDOMConvertStrings.h"
 #include "JSDOMConvertUnion.h"
 #include "JSDOMConvertEnumeration.h"
+#include "JSDOMException.h"
 #include "JSDOMExceptionHandling.h"
 #include "OpenSSLUtilities.h"
 #include "CryptoGenKeyPair.h"
@@ -967,6 +968,11 @@ JSValue KeyObject::toCryptoKey(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
     auto usagesBitmap = WebCore::SubtleCrypto::toCryptoKeyUsageBitmap(keyUsages);
 
     auto throwDOMException = [&](WebCore::ExceptionCode code, const String& message) -> JSValue {
+        // createDOMException() turns this code into JavaScript's own SyntaxError.
+        if (code == WebCore::SyntaxError) {
+            throwException(lexicalGlobalObject, scope, WebCore::toJSNewlyCreated(lexicalGlobalObject, globalObject, WebCore::DOMException::create(code, message)));
+            return {};
+        }
         WebCore::propagateException(*lexicalGlobalObject, scope, WebCore::Exception { code, message });
         return {};
     };

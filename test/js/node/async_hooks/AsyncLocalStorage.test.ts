@@ -1981,6 +1981,64 @@ describe("an uncaughtException handler reads the store of a callback that native
     });
   });
 
+  // node:http2 reports after the store of its handler is put back (Handlers::call_handler), because that store is the
+  // one of the session. Until the parser holds the frame of each stream, ping and settings() call, what it must not
+  // do is read the store of connect() or listen() for a callback that was made in none.
+  test.concurrent(
+    "node:http2: a callback made in no store reads none, on a session opened inside a store",
+    async () => {
+      const names = [
+        "client settings() callback",
+        "client ping() callback",
+        "client 'response' listener",
+        "server settings() callback",
+        "server ping() callback",
+      ];
+      expect(
+        await script(`
+        const { AsyncLocalStorage } = require("node:async_hooks");
+        const http2 = require("node:http2");
+        const als = new AsyncLocalStorage();
+        const names = ${JSON.stringify(names)};
+        const seen = {};
+        process.on("uncaughtException", error => {
+          seen[error.message] = String(als.getStore());
+          if (Object.keys(seen).length < names.length) return;
+          console.log(JSON.stringify(seen));
+          process.exit(0);
+        });
+        const thrower = name => () => { throw new Error(name); };
+        const swallow = () => {};
+        const server = http2.createServer((request, response) => response.end("ok"));
+        server.on("session", session => {
+          session.on("error", swallow);
+          als.exit(() => {
+            session.settings({ enablePush: false }, thrower("server settings() callback"));
+            session.ping(thrower("server ping() callback"));
+          });
+        });
+        als.run("listen()", () => server.listen(0, "127.0.0.1", () => {
+          const client = als.run("connect()", () => http2.connect("http://127.0.0.1:" + server.address().port));
+          client.on("error", swallow);
+          client.once("connect", () => als.exit(() => {
+            client.settings({ enablePush: false }, thrower("client settings() callback"));
+            client.ping(thrower("client ping() callback"));
+            const stream = client.request({ ":path": "/" });
+            stream.on("error", swallow);
+            stream.once("response", thrower("client 'response' listener"));
+            stream.resume();
+            stream.end();
+          }));
+        }));
+      `),
+      ).toEqual({
+        stdout: Object.fromEntries(names.map(name => [name, "undefined"])),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
   // The runner of `bun test` takes the report, and starts the next hook or test from inside it.
   test.concurrent(
     "under `bun test`, the store of a callback that fails does not reach the hooks and tests that follow",
@@ -2029,9 +2087,36 @@ describe("an uncaughtException handler reads the store of a callback that native
             after(name + " callback calls done(error)");
           }
         `,
+        // The dispatcher of the callback entered the context of the graph. After dispose() that context calls nobody.
+        "dispose.test.ts": `
+          import { afterEach, test } from "bun:test";
+          import crypto from "node:crypto";
+          const graph = new Bun.ModuleGraph({});
+          let disposed = false;
+          afterEach(() => {
+            console.log("dispose> afterEach 1");
+            if (disposed) return;
+            disposed = true;
+            graph.dispose();
+          });
+          afterEach(() => console.log("dispose> afterEach 2"));
+          test("a callback of a Bun.ModuleGraph throws, and a hook disposes the graph", async () => {
+            await new Promise<void>(resolve =>
+              graph.run(() =>
+                crypto.randomBytes(8, () => {
+                  resolve();
+                  throw new Error("thrown by a callback of the graph");
+                }),
+              ),
+            );
+          });
+          test("the test after the dispose()", () => {
+            console.log("dispose> the test after");
+          });
+        `,
       });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "probe.test.ts"],
+        cmd: [bunExe(), "test", "probe.test.ts", "dispose.test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -2059,6 +2144,14 @@ describe("an uncaughtException handler reads the store of a callback that native
           expect(stderr).toContain("(pass) the test after " + name + kind);
         }
       }
+      // Both hooks of both tests run, and the test after the dispose() does.
+      expect(stdout.split("\n").filter(line => line.startsWith("dispose> "))).toEqual([
+        "dispose> afterEach 1",
+        "dispose> afterEach 2",
+        "dispose> the test after",
+        "dispose> afterEach 1",
+        "dispose> afterEach 2",
+      ]);
       expect(exitCode).toBe(1);
     },
   );
@@ -2090,17 +2183,20 @@ describe("an uncaughtException handler reads the store of a callback that native
             w.on("exit", code => resolve({ ...seen, code }));
           });
         (async () => {
-          const [listener, noHandler, captureExits] = await Promise.all([
+          const [listener, listenerThrows, noHandler, captureExits] = await Promise.all([
             worker('process.on("uncaughtException", () => say("listener"));'),
+            worker('process.on("uncaughtException", error => { say("listener of " + error.message); throw new Error("thrown by the listener"); });'),
             worker('process.on("exit", code => say("exit listener, code " + code));'),
             worker('process.on("exit", code => say("exit listener, code " + code)); process.setUncaughtExceptionCaptureCallback(() => { say("capture callback"); process.exit(42); });'),
           ]);
-          console.log(JSON.stringify({ listener, noHandler, captureExits }));
+          console.log(JSON.stringify({ listener, listenerThrows, noHandler, captureExits }));
         })();
       `),
     ).toEqual({
       stdout: {
         listener: { messages: ["listener in callback", "nextTick of the callback in callback"], errors: [], code: 0 },
+        // What the listener throws ends the worker. The listener does not get it as a second uncaught exception.
+        listenerThrows: { messages: ["listener of thrown in callback"], errors: ["thrown by the listener"], code: 1 },
         noHandler: { messages: ["exit listener, code 1 in callback"], errors: ["thrown"], code: 1 },
         captureExits: {
           messages: ["capture callback in callback", "exit listener, code 42 in callback"],

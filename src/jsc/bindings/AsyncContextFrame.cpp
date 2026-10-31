@@ -92,20 +92,27 @@ AsyncContextScope::~AsyncContextScope()
         setCurrentAsyncContext(m_globalObject, m_previous);
 }
 
-// For the test runner, which starts the next hook or test from inside the report of an uncaught error. The async
-// context of the callback that failed can still be current there (AsyncContextFrame::CallScope). These two leave it
-// for that step: `saved` holds the current async context and the one a microtask checkpoint resets it to.
-extern "C" void AsyncContextFrame__leaveForTestStep(JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue* saved)
+// VirtualMachine::entered_context: makes `context` the one native code entered, and returns the one to put back.
+extern "C" uint32_t Bun__VirtualMachine__replaceEnteredContext(void* bunVM, uint32_t context);
+
+// For the test runner, which starts the next hook or test from inside the report of an uncaught error. The callback
+// that failed can still be current there: its async context (AsyncContextFrame::CallScope), and the context its
+// dispatcher entered, which is a stopped one once a hook disposes that Bun.ModuleGraph. These two make that step the
+// realm's, in no async context. `saved` holds the async context and the one a microtask checkpoint resets it to.
+// The entered context is returned.
+extern "C" uint32_t AsyncContextFrame__leaveForTestStep(JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue* saved)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     saved[0] = JSValue::encode(globalObject->m_asyncContextData.get()->getInternalField(0));
     saved[1] = JSValue::encode(Bun::moduleGraphAsyncContextAtEventLoop(globalObject));
     setCurrentAsyncContext(globalObject, jsUndefined());
+    return Bun__VirtualMachine__replaceEnteredContext(globalObject->bunVM(), globalObject->scriptExecutionContext()->identifier());
 }
 
-extern "C" void AsyncContextFrame__returnFromTestStep(JSGlobalObject* lexicalGlobalObject, const JSC::EncodedJSValue* saved)
+extern "C" void AsyncContextFrame__returnFromTestStep(JSGlobalObject* lexicalGlobalObject, const JSC::EncodedJSValue* saved, uint32_t enteredContext)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    Bun__VirtualMachine__replaceEnteredContext(globalObject->bunVM(), enteredContext);
     globalObject->m_asyncContextData.get()->putInternalField(globalObject->vm(), 0, JSValue::decode(saved[0]));
     Bun::noteEnteredFromEventLoop(globalObject, JSValue::decode(saved[1]));
 }

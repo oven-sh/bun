@@ -563,29 +563,42 @@ pub(crate) mod on_unhandled_rejection {
     use super::*;
 
     unsafe extern "C" {
-        safe fn AsyncContextFrame__leaveForTestStep(global: &JSGlobalObject, saved: &mut [JSValue; 2]);
-        safe fn AsyncContextFrame__returnFromTestStep(global: &JSGlobalObject, saved: &[JSValue; 2]);
+        safe fn AsyncContextFrame__leaveForTestStep(
+            global: &JSGlobalObject,
+            saved: &mut [JSValue; 2],
+        ) -> u32;
+        safe fn AsyncContextFrame__returnFromTestStep(
+            global: &JSGlobalObject,
+            saved: &[JSValue; 2],
+            entered_context: u32,
+        );
     }
 
-    /// No async context is current while this is alive. The report of an uncaught error can come
-    /// from inside the callback that threw, and `BunTest::run` starts the next hook or test from it.
-    struct OutsideAsyncContext<'a> {
+    /// While this is alive, the script that runs is the realm's and no async context is current.
+    /// The report of an uncaught error can come from inside the callback that threw, and
+    /// `BunTest::run` starts the next hook or test from it.
+    struct OutsideOfCallback<'a> {
         global: &'a JSGlobalObject,
         /// On the stack, so that the collector sees them.
         saved: [JSValue; 2],
+        entered_context: u32,
     }
 
-    impl<'a> OutsideAsyncContext<'a> {
+    impl<'a> OutsideOfCallback<'a> {
         fn enter(global: &'a JSGlobalObject) -> Self {
             let mut saved = [JSValue::UNDEFINED; 2];
-            AsyncContextFrame__leaveForTestStep(global, &mut saved);
-            Self { global, saved }
+            let entered_context = AsyncContextFrame__leaveForTestStep(global, &mut saved);
+            Self {
+                global,
+                saved,
+                entered_context,
+            }
         }
     }
 
-    impl Drop for OutsideAsyncContext<'_> {
+    impl Drop for OutsideOfCallback<'_> {
         fn drop(&mut self) {
-            AsyncContextFrame__returnFromTestStep(self.global, &self.saved);
+            AsyncContextFrame__returnFromTestStep(self.global, &self.saved, self.entered_context);
         }
     }
 
@@ -595,7 +608,7 @@ pub(crate) mod on_unhandled_rejection {
         rejection: JSValue,
     ) {
         if let Some(buntest_strong) = bun_test::clone_active_strong() {
-            let _outside = OutsideAsyncContext::enter(global_object);
+            let _outside = OutsideOfCallback::enter(global_object);
             // `buntest_strong` released by Rc drop.
             // SAFETY: single-threaded JS VM; `buntest_strong` is the only handle
             // dereferenced for this scope and is dropped before `BunTest::run`

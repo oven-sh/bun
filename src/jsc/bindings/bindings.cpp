@@ -3355,6 +3355,8 @@ static NEVER_INLINE JSC::EncodedJSValue reportThrowOfCallee(JSC::JSGlobalObject*
     if (!scope.tryClearException())
         return {};
     Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+    // The report also deals with what its handlers throw: that is not the caller's to report a second time.
+    scope.assertNoExceptionExceptTermination();
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }

@@ -8,6 +8,7 @@
 //   - `Bun.build` says where the programs that do not build are wrong
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
 import { readFileSync, rmSync } from "node:fs";
 import { SourceMap } from "node:module";
 import { join } from "node:path";
@@ -1263,6 +1264,60 @@ describe.concurrent("a loaded file with its own source map", () => {
         "an empty URL": loaded("empty-url.js"),
       },
       stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Opening a FIFO to read it waits for a writer, and this one has none: a load that waited for one would never end.
+  test.skipIf(isWindows)("a FIFO in place of the source map is not read, and the module loads", async () => {
+    using dir = tempDir("own-source-map-fifo", {
+      ...withMap("usable.js"),
+      ...withUrl("fifo.js", "fifo.js.map"),
+      "main.cjs": `
+        ${firstFrame}
+        console.log(JSON.stringify(["usable.js", "fifo.js"].map(file => firstFrame(require("./" + file).boom))));
+      `,
+    });
+    mkfifo(join(String(dir), "fifo.js.map"));
+    const loaded = (file: string) => `at boom (<dir>/${file}:${transpiled.cjs.boom})`;
+    const [withTheFlag, without] = await Promise.all([
+      run(String(dir), ["--enable-source-maps", "main.cjs"]),
+      run(String(dir), ["main.cjs"]),
+    ]);
+    expect([printed(withTheFlag), printed(without)]).toEqual([
+      { stdout: [`at boom (<dir>/usable.ts:${inOriginal.boom})`, loaded("fifo.js")], stderr: "", exitCode: 0 },
+      { stdout: [loaded("usable.js"), loaded("fifo.js")], stderr: "", exitCode: 0 },
+    ]);
+  });
+
+  // `main.cjs` writes `lib.js` and its source map anew once, and `--hot` then loads both files again.
+  test("--hot reads the source map again when it loads the file again", async () => {
+    const changed = withMap("lib.js", "cjs", "second.ts", "exports.changed = true;\n");
+    using dir = tempDir("own-source-map-hot", {
+      ...withMap("lib.js", "cjs", "first.ts"),
+      "main.cjs": `
+        ${firstFrame}
+        const fs = require("node:fs");
+        globalThis.loads = (globalThis.loads ?? 0) + 1;
+        const { boom } = require("./lib.js");
+        // --hot can load lib.js while it is empty, between the two steps of the write below. It then loads it again.
+        if (boom) {
+          console.log(firstFrame(boom));
+          if (globalThis.loads > 1) process.exit(0);
+          fs.writeFileSync("./lib.js.map", ${JSON.stringify(changed["lib.js.map"])});
+          fs.writeFileSync("./lib.js", ${JSON.stringify(changed["lib.js"])});
+        }
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--hot", "--enable-source-maps", "main.cjs"]);
+    expect({
+      stdout: stdout.split("\n"),
+      // A debug build says when it loads again.
+      stderr: stderr.split("\n").filter(line => line && !line.startsWith("DEBUG: ")),
+      exitCode,
+    }).toEqual({
+      stdout: [`at boom (<dir>/first.ts:${inOriginal.boom})`, `at boom (<dir>/second.ts:${inOriginal.boom})`, ""],
+      stderr: [],
       exitCode: 0,
     });
   });

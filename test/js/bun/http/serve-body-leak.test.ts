@@ -147,7 +147,24 @@ describe.each([false, true])("request body leak (http2: %p)", http2 => {
     fixture = Bun.spawn(
       [bunExe(), "--smol", join(import.meta.dirname, "body-leak-test-fixture.ts"), ...(http2 ? ["--http2"] : [])],
       {
-        env: bunEnv,
+        env: {
+          ...bunEnv,
+          // Under ASAN, freed memory stays resident: the quarantine pins up to
+          // 256 MB of freed blocks, and the allocator hands free pages back to
+          // the OS at most every 5 s. With no leak at all, RSS then jittered by
+          // 60-90 MB between two samples taken 2000 requests apart, over the
+          // 64 MB allowance below. Make the fixture free memory eagerly so its
+          // RSS tracks live memory. A retained 64 KB chunk per request still
+          // measures ~120 MB, a retained body over 1 GB. Inert off ASAN.
+          ASAN_OPTIONS: [
+            bunEnv.ASAN_OPTIONS,
+            "quarantine_size_mb=0",
+            "thread_local_quarantine_size_kb=0",
+            "allocator_release_to_os_interval_ms=0",
+          ]
+            .filter(Boolean)
+            .join(":"),
+        },
         stdout: "inherit",
         stderr: "inherit",
         stdin: "ignore",

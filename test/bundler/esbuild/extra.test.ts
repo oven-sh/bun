@@ -611,7 +611,6 @@ describe("bundler", () => {
     run: true,
   });
   itBundled("extra/DefineExports1", {
-    todo: true,
     files: {
       "in.js": `if (exports.x !== void 0) throw 'fail'; this;`,
     },
@@ -619,7 +618,6 @@ describe("bundler", () => {
     run: true,
   });
   itBundled("extra/DefineExports2", {
-    todo: true,
     files: {
       "in.js": `if (exports.foo !== void 0) throw 'fail'; this;`,
     },
@@ -663,7 +661,6 @@ describe("bundler", () => {
     run: true,
   });
   itBundled("extra/DefineExportsArray2", {
-    todo: true,
     files: {
       "in.js": `if (exports.foo !== void 0) throw 'fail'; this`,
     },

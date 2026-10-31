@@ -2378,6 +2378,15 @@ impl<'a> LinkerContext<'a> {
             ..Default::default()
         }];
 
+        debug_assert!(
+            flags.wrap != WrapKind::Cjs
+                || ast.commonjs_named_exports.count() == 0
+                || ast
+                    .flags
+                    .intersects(AstFlags::USES_EXPORTS_REF | AstFlags::USES_MODULE_REF),
+            "the wrapper prints `exports.x` for a lifted export and has no `exports` parameter"
+        );
+
         let print_options = js_printer::Options {
             bundling: true,
             // TODO: IIFE

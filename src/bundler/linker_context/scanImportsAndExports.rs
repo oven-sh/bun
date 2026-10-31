@@ -111,6 +111,8 @@ pub(crate) fn scan_imports_and_exports(
     let exports_refs: *mut [Ref] = ast.exports_ref;
     let module_refs: *mut [Ref] = ast.module_ref;
     let wrapper_refs: *mut [Ref] = ast.wrapper_ref;
+    let commonjs_named_exports: *mut [bun_ast::ast_result::CommonJSNamedExports] =
+        ast.commonjs_named_exports;
     let parts_list: *mut [PartList] = ast.parts;
     // Element is a *mutable* nullable
     // pointer (`BundledAst.css: Option<*mut BundlerStyleSheet>`).
@@ -621,9 +623,15 @@ pub(crate) fn scan_imports_and_exports(
                     col!(flags)[source_index] = flag;
                 }
 
-                let is_lifted_commonjs = col_ref!(ast_flags_list)[source_index]
-                    .contains(AstFlags::COMMONJS_LIFTED_TO_ESM);
-                if is_lifted_commonjs && flag.wrap == WrapKind::Cjs {
+                let ast_flags = col_ref!(ast_flags_list)[source_index];
+                let is_lifted_commonjs = ast_flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM);
+                let wrapper_has_exports =
+                    ast_flags.intersects(AstFlags::USES_EXPORTS_REF | AstFlags::USES_MODULE_REF);
+                if flag.wrap == WrapKind::Cjs
+                    && (is_lifted_commonjs
+                        || (!wrapper_has_exports
+                            && col_ref!(commonjs_named_exports)[source_index].count() > 0))
+                {
                     // The wrapper prints `exports.x = ...` again, so it takes `exports`.
                     col!(ast_flags_list)[source_index].insert(AstFlags::USES_EXPORTS_REF);
                 } else if is_lifted_commonjs && export_kind != ExportsKind::Cjs {

@@ -1385,7 +1385,7 @@ console.log("survived", require("./late.js"));`,
       filenameOfTheCommonJSEntry: syntaxError("Unexpected keyword 'export'"),
       filenameOfAnImportedCommonJSFile: syntaxError("Unexpected keyword 'export'"),
       mainModuleAsReceiver: { a: 1 },
-      emptyFilenameAfterChdir: { filename: "", sameModule: true },
+      emptyFilenameAfterChdir: { sameModule: true, inAnotherDirectory: "sub" },
       dynamicImportFollowsTheFilename: "sub dep",
       wrapAssigned: { a: 1 },
       // Text that a replaced Module.wrapper goes around is compiled as it is.

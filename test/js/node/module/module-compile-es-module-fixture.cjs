@@ -240,10 +240,18 @@ if (isBun) {
     }
   });
 }
+// process.chdir() to the same directory keeps the name. In another directory the empty filename is another module.
 rows.emptyFilenameAfterChdir = attempt(() => {
-  process.chdir(process.cwd());
-  const exports = exportsOf("export const filename = import.meta.filename;", "");
-  return { filename: relative(exports.filename), sameModule: exports === ofEmptyFilename };
+  const text = "export const filename = import.meta.filename;";
+  const before = process.cwd();
+  process.chdir(before);
+  const sameModule = exportsOf(text, "") === ofEmptyFilename;
+  try {
+    process.chdir(here("sub"));
+    return { sameModule, inAnotherDirectory: relative(exportsOf(text, "").filename) };
+  } finally {
+    process.chdir(before);
+  }
 });
 
 // Node.js stops looking for ES modules for good once Module.wrap or Module.wrapper is assigned, so these rows are

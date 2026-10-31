@@ -975,10 +975,11 @@ static NEVER_INLINE EncodedJSValue compileAsESModuleAfterCommonJSThrew(Zig::Glob
             return rethrow();
     }
 
-    // The module gets the name that Node gives it: path.resolve(filename), the path of pathToFileURL(filename). Where
-    // that gives no name (the working directory is gone, on Windows a root is too long), the CommonJS error stays.
-    // The loader then spells the name as it does where it loads that name: a standalone executable has a spelling of
-    // its own for its files.
+    // The module gets the name path.resolve(filename). That is the path of Node's pathToFileURL(filename), but for a
+    // separator at the end of filename: the resolver reads the name of a module without one, so the name has none.
+    // Where there is no name (the working directory is gone, on Windows a root is too long), the CommonJS error
+    // stays. The loader then spells the name as it does where it loads that name: a standalone executable has a
+    // spelling of its own for its files.
     JSModuleLoader* loader = graph ? graph->loader() : globalObject->moduleLoader();
     JSValue resolved = Bun::pathResolve(globalObject, jsString(vm, filenameString));
     if (scope.exception()) [[unlikely]] {

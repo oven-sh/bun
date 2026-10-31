@@ -862,6 +862,30 @@ fn jsdoc_keeps_early_errors_of_code() {
     }
 }
 
+/// `@import x y` reads `y * @returns` as its module specifier. The decorator stays in the comment.
+#[test]
+fn jsdoc_import_tag_without_a_module_specifier_leaves_no_statement() {
+    let texts = [
+        "/**\n * @param {Object} token @import lexical token\n * @returns {Object} node\n */\nfunction f(token) { return token; }\nmodule.exports = { f };",
+        "/**\n * @import lexical token\n * @param {Object} token\n */\nexport function f(token) { return token; }\nexport const g = 1;",
+    ];
+    for text in texts {
+        parsed("a.js", text, |_, hir| {
+            let kinds: Vec<StmtKind> = hir.ids(hir.body).map(|it| hir[it].kind).collect();
+            let is_expression = |kind: &StmtKind| matches!(kind, StmtKind::Expr(_));
+            assert_eq!(kinds.len(), 3, "{text}: {kinds:?}");
+            assert!(matches!(kinds[0], StmtKind::Import(_)), "{text}: {kinds:?}");
+            assert!(matches!(kinds[1], StmtKind::Fn(_)), "{text}: {kinds:?}");
+            assert_eq!(
+                kinds.iter().filter(|kind| is_expression(kind)).count(),
+                usize::from(text.contains("module.exports")),
+                "{text}: {kinds:?}"
+            );
+            assert_eq!(hir.stray_decorators.len(), 1, "{text}");
+        });
+    }
+}
+
 #[test]
 fn every_javascript_program() {
     for_each_program(&JAVASCRIPT_EXTENSIONS, |w, path, text| {

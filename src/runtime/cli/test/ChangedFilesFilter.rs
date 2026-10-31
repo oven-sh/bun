@@ -7,6 +7,7 @@
 //!    graph (transitive imports) without linking or emitting code.
 //! 3. Starting from each changed file that appears in the graph, walk the
 //!    reverse import edges to find every test entry point that can reach it.
+//!    The graph can hold a file more than once. Every source of a changed file starts the walk.
 //!
 //! Only those test entry points are returned.
 
@@ -192,10 +193,11 @@ pub(crate) fn filter<'a>(
     let sources = bundle.graph.input_files.items_source();
     let import_records = bundle.graph.ast.items_import_records();
 
-    // Map absolute source path -> source index for paths that participate in
-    // the graph. This lets us look up changed-file paths quickly.
+    // Absolute source path -> first source index of that path. The keys borrow from `sources`.
     let mut path_to_index: StringHashMap<u32> = StringHashMap::new();
     path_to_index.reserve(sources.len());
+    // (first, later) source of one path: the scan holds a file once per target.
+    let mut copies: Vec<(u32, u32)> = Vec::new();
 
     // Reverse graph: for each source index, the list of source indexes that
     // import it. Built once, then used for a backward BFS from every changed
@@ -211,7 +213,7 @@ pub(crate) fn filter<'a>(
         if index.is_runtime() {
             continue;
         }
-        let path_text: &[u8] = source.path.text;
+        let path_text: &'static [u8] = source.path.text;
         if path_text.is_empty() {
             continue;
         }
@@ -222,7 +224,12 @@ pub(crate) fn filter<'a>(
         }
         // All scanned entry points are absolute, and the resolver emits
         // absolute file paths as well.
-        path_to_index.put_assume_capacity(path_text, u32::try_from(idx).unwrap());
+        let hash = path_to_index.hash_key(path_text);
+        if let Some(&first) = path_to_index.get_hashed(hash, path_text) {
+            copies.push((first, index.get()));
+            continue;
+        }
+        bun_core::handle_oom(path_to_index.put_static_key_hashed(hash, path_text, index.get()));
         // Copy out of the bundler's arena so the caller can use these paths
         // after the BundleV2 heap is gone.
         graph_files.push(Box::<[u8]>::from(path_text));
@@ -239,6 +246,23 @@ pub(crate) fn filter<'a>(
                 continue;
             }
             importers[dep.get() as usize].push(importer);
+        }
+    }
+    for (stand_in, page) in bundle.graph.html_import_pages() {
+        // Only an HTML import, or a script that re-exports one, loads the page: `with { type: "text" }` reads the file.
+        let imports_the_page = |record: &bun_ast::ImportRecord| {
+            record.source_index.get() == stand_in
+                && record.loader.is_none_or(|loader| {
+                    loader == bun_ast::Loader::Html || loader.is_javascript_like()
+                })
+        };
+        // An HTML import's record points at a stand-in without import records: link its importer to the page.
+        for i in 0..importers[stand_in as usize].len() {
+            let importer = importers[stand_in as usize][i];
+            let records = import_records[importer as usize].as_slice();
+            if records.iter().any(imports_the_page) {
+                importers[page as usize].push(importer);
+            }
         }
     }
 
@@ -264,7 +288,15 @@ pub(crate) fn filter<'a>(
                 }
             }
         }
+        for &(first, later) in &copies {
+            if affected.is_set(first as usize) {
+                affected.set(later as usize);
+                queue.push(later);
+            }
+        }
     }
+    // Path text is only valid for the bundle pass: drop the borrowed keys before the teardown.
+    drop(path_to_index);
 
     while let Some(idx) = queue.pop() {
         for &importer in &importers[idx as usize] {
@@ -273,6 +305,12 @@ pub(crate) fn filter<'a>(
             }
             affected.set(importer as usize);
             queue.push(importer);
+        }
+    }
+    for &(first, later) in &copies {
+        // A test file maps to the first source of its path, and any source of that path selects it.
+        if affected.is_set(later as usize) {
+            affected.set(first as usize);
         }
     }
 

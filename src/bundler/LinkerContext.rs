@@ -4003,6 +4003,19 @@ impl<'a> LinkerContext<'a> {
                                 ..Default::default()
                             };
                         }
+
+                        // Depend on the part that declares the exports object that this read prints
+                        let deps = self.top_level_symbols_to_parts(
+                            next_tracker.source_index.get(),
+                            next_tracker.import_ref,
+                        );
+                        re_exports.reserve(deps.len());
+                        for &dep in deps {
+                            re_exports.push(Dependency {
+                                part_index: dep,
+                                source_index: bun_ast::Index::init(next_tracker.source_index.get()),
+                            });
+                        }
                     }
                 }
                 ImportTrackerStatus::NoMatch => {
@@ -4551,6 +4564,22 @@ impl<'a> LinkerContext<'a> {
                             alias: result.alias,
                             ..Default::default()
                         }));
+                    // Bound to itself: the entry only gives `re_exports` to the parts that read the item.
+                    if !re_exports.is_empty() {
+                        imports_to_bind
+                            .put(
+                                import_ref,
+                                crate::ImportData {
+                                    re_exports,
+                                    data: ImportTracker {
+                                        source_index: crate::Index::init(source_index),
+                                        import_ref,
+                                        ..Default::default()
+                                    },
+                                },
+                            )
+                            .expect("unreachable");
+                    }
                 }
                 MatchImportKind::Cycle => {
                     let source = self.get_source(source_index);

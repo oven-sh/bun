@@ -254,6 +254,7 @@ _What happens_:
 - Handles re-exports by tracing through export chains
 - Creates dependency relationships between parts of different files
 - Handles CommonJS compatibility for import/export objects
+- Turns an import of a name that exists only at run time (the file re-exports a CommonJS or external module with `export *`, `exports_kind = .esm_with_dynamic_fallback`) into a property read of that file's exports object, and adds the part that declares the object to the import's `re_exports`. Steps 5 and 6 give that dependency to each part that prints the read. Without it, a `"sideEffects": false` barrel is dropped and the read throws a `ReferenceError`.
 - Creates wrapper parts for modules that need runtime wrappers
 
 _Import matching algorithm_:

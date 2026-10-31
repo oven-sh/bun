@@ -1292,18 +1292,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                     bytecode_index,
                     module_info_index,
                     side: Some(side),
-                    entry_point_index: if output_kind == options::OutputKind::EntryPoint {
-                        Some(
-                            chunk.entry_point.source_index()
-                                - (if let Some(fw) = c.framework {
-                                    if fw.server_components.is_some() { 3 } else { 1 }
-                                } else {
-                                    1
-                                }) as u32,
-                        )
-                    } else {
-                        None
-                    },
+                    entry_point_index: None,
                     referenced_css_chunks: match &chunk.content {
                         // `output_file::Index` is `#[repr(transparent)]` over u32.
                         crate::chunk::Content::Javascript(js) => js

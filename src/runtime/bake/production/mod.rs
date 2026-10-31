@@ -270,6 +270,15 @@ fn write_sourcemap_to_disk(
     let source_map_index = file.source_map_index;
     debug_assert!(bundled_outputs[source_map_index as usize].output_kind == OutputKind::Sourcemap);
 
+    source_maps.put(
+        &module_map_key(file),
+        OutputFileIndex::init(source_map_index),
+    )?;
+    Ok(())
+}
+
+/// The key of a server output file in the module map: `bake:/` and its path in the build.
+fn module_map_key(file: &OutputFile) -> Vec<u8> {
     let without_prefix = if strings::has_prefix(&file.dest_path, b"./")
         || (cfg!(windows) && strings::has_prefix(&file.dest_path, b".\\"))
     {
@@ -280,8 +289,7 @@ fn write_sourcemap_to_disk(
 
     let mut key = Vec::with_capacity(6 + without_prefix.len());
     write!(&mut key, "bake:/{}", BStr::new(without_prefix)).expect("infallible: in-memory write");
-    source_maps.put(&key, OutputFileIndex::init(source_map_index))?;
-    Ok(())
+    key
 }
 
 fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<()> {
@@ -623,7 +631,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         // valid inputs, and any `BuildFailed` indicates a bug upstream
         // (in the bundler), not a user-facing diagnostic to swallow.
         BundleV2::generate_from_bake_production_cli(
-            &entry_points,
+            &mut entry_points,
             server_transpiler,
             bun_bundler::bundle_v2::BakeOptions {
                 framework: bundler_framework,
@@ -641,6 +649,69 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         return Ok(());
     }
 
+    // Only these have to be modules: the framework entry points, each page, the layouts above it.
+    let mut loaded = AutoBitSet::init_empty(entry_points.files.count())?;
+    for router_type in router.types.iter() {
+        loaded.set(router_type.server_file.get() as usize);
+        if let Some(client_file) = router_type.client_file {
+            loaded.set(client_file.get() as usize);
+        }
+    }
+    for route in router.routes.iter() {
+        for file in router.page_files(route) {
+            loaded.set(file.get() as usize);
+        }
+    }
+    let mut not_modules: usize = 0;
+    let mut client_components: usize = 0;
+    for (id, (input, output)) in entry_points.files.iter().enumerate() {
+        let output = output
+            .unwrap()
+            .map(|index| &bundled_outputs_list[index.get() as usize]);
+        log!(
+            "entry point side={} src={} dest={}\n",
+            side_name(input.side),
+            BStr::new(input.abs_path()),
+            BStr::new(output.map_or(&b"none"[..], |file| &file.dest_path)),
+        );
+        if !loaded.is_set(id) {
+            continue;
+        }
+        let path = bun_core::fmt::quote(resolve_path::relative(cwd, input.abs_path()));
+        match output {
+            // Only a "use client" file has its entry point output on the other side.
+            Some(file) if file.side != Some(input.side) => {
+                bun_core::err_generic!(
+                    "{} is a client component, so the server cannot load it",
+                    path
+                );
+                client_components += 1;
+            }
+            Some(file) if file.loader.is_javascript_like() => {}
+            _ => {
+                bun_core::err_generic!(
+                    "{} was not bundled to a JavaScript module, so the {} cannot load it",
+                    path,
+                    side_name(input.side),
+                );
+                not_modules += 1;
+            }
+        }
+    }
+    if not_modules > 0 {
+        bun_core::note!(
+            "Pages, the layouts above them and the framework entry points are loaded as modules."
+        );
+    }
+    if client_components > 0 {
+        bun_core::note!(
+            "\"use client\" is not supported yet in a route file in a production build. Put the client component in a file of its own and import it from the route file."
+        );
+    }
+    if not_modules + client_components > 0 {
+        Global::crash();
+    }
+
     bun_core::pretty_errorln!("Rendering routes");
     Output::flush();
 
@@ -655,20 +726,16 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // Index all bundled outputs.
     // Client files go to disk.
     // Server files get loaded in memory.
-    // Populate indexes in `entry_points` to be looked up during prerendering
-    let mut module_keys: Vec<BunString> = vec![BunString::DEAD; entry_points.files.count()];
     let mut output_module_map: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
     let mut source_maps: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
     {
-        let output_indexes = entry_points.files.values_mut();
         for (i, file) in bundled_outputs_list.iter().enumerate() {
             log!(
-                "src_index={:?} side={} src={} dest={} - {:?}\n",
+                "src_index={:?} side={} src={} dest={}\n",
                 file.source_index,
                 file.side.map(side_name).unwrap_or("null"),
                 BStr::new(&file.src_path.text),
                 BStr::new(&file.dest_path),
-                file.entry_point_index,
             );
             if file.loader.is_css() {
                 if css_chunks_count == 0 {
@@ -677,13 +744,6 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                     css_chunks_first = css_chunks_first.min(i);
                 }
                 css_chunks_count += 1;
-            }
-
-            if let Some(entry_point) = file.entry_point_index {
-                if (entry_point as usize) < output_indexes.len() {
-                    output_indexes[entry_point as usize] =
-                        OutputFileIndex::init(u32::try_from(i).expect("int cast"));
-                }
             }
 
             // The output file which contains the runtime (Index.runtime, contains
@@ -732,34 +792,14 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
 
                     match file.output_kind {
                         OutputKind::EntryPoint | OutputKind::Chunk => {
-                            let without_prefix = if strings::has_prefix(&file.dest_path, b"./")
-                                || (cfg!(windows) && strings::has_prefix(&file.dest_path, b".\\"))
-                            {
-                                &file.dest_path[2..]
-                            } else {
-                                &file.dest_path[..]
-                            };
-
-                            if let Some(entry_point_index) = file.entry_point_index {
-                                if (entry_point_index as usize) < module_keys.len() {
-                                    let str = BunString::create_format(format_args!(
-                                        "bake:/{}",
-                                        BStr::new(without_prefix)
-                                    ));
-                                    module_keys[entry_point_index as usize] =
-                                        str.thread_isolated_copy();
-                                }
-                            }
+                            let key = module_map_key(file);
 
                             log!(
-                                "  adding module map entry: output_module_map(bake:/{}) = {}\n",
-                                BStr::new(without_prefix),
+                                "  adding module map entry: output_module_map({}) = {}\n",
+                                BStr::new(&key),
                                 i
                             );
 
-                            let mut key = Vec::with_capacity(6 + without_prefix.len());
-                            write!(&mut key, "bake:/{}", BStr::new(without_prefix))
-                                .expect("infallible: in-memory write");
                             output_module_map.put(
                                 &key,
                                 OutputFileIndex::init(u32::try_from(i).expect("int cast")),
@@ -809,7 +849,6 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         pt.vm,
         entry_points,
         bundled_outputs_list,
-        module_keys,
         &output_module_map,
         source_maps,
     )?;
@@ -992,36 +1031,12 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         let styles = JSValue::create_empty_array(global, css_chunks_count).map_err(js_err)?;
         let file_list = JSValue::create_empty_array(global, file_count as usize).map_err(js_err)?;
 
-        next = route.parent;
-        file_count = 1;
         let mut css_file_count: u32 = 0;
-        file_list
-            .put_index(
-                global,
-                0,
-                pt.preload_bundled_module(main_file_route_index)
-                    .map_err(js_err)?,
-            )
-            .map_err(js_err)?;
-        for r#ref in pt
-            .output_file(main_file_route_index)
-            .referenced_css_chunks
-            .iter()
-        {
-            styles
-                .put_index(
-                    global,
-                    css_file_count,
-                    css_chunk_js_strings[r#ref.get() as usize - css_chunks_first].value(),
-                )
-                .map_err(js_err)?;
-            css_file_count += 1;
-        }
-        if let Some(file) = route.file_layout {
+        for (file_index, file) in router.page_files(route).enumerate() {
             file_list
                 .put_index(
                     global,
-                    file_count,
+                    u32::try_from(file_index).expect("int cast"),
                     pt.preload_bundled_module(file).map_err(js_err)?,
                 )
                 .map_err(js_err)?;
@@ -1035,32 +1050,6 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                     .map_err(js_err)?;
                 css_file_count += 1;
             }
-            file_count += 1;
-        }
-
-        while let Some(parent_index) = next {
-            let parent = router.route_ptr(parent_index);
-            if let Some(file) = parent.file_layout {
-                file_list
-                    .put_index(
-                        global,
-                        file_count,
-                        pt.preload_bundled_module(file).map_err(js_err)?,
-                    )
-                    .map_err(js_err)?;
-                for r#ref in pt.output_file(file).referenced_css_chunks.iter() {
-                    styles
-                        .put_index(
-                            global,
-                            css_file_count,
-                            css_chunk_js_strings[r#ref.get() as usize - css_chunks_first].value(),
-                        )
-                        .map_err(js_err)?;
-                    css_file_count += 1;
-                }
-                file_count += 1;
-            }
-            next = parent.parent;
         }
 
         // Init the items

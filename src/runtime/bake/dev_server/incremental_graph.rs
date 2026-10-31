@@ -1353,8 +1353,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             if failed {
                 continue;
             }
-            // The imports of a stylesheet are on the client graph: a css file of the server graph has none.
-            let crosses = matches!(SIDE, Side::Server) && file.kind == FileKind::Css;
+            // The client graph has the imports of a stylesheet and of a client component, as in `trace_imports`.
+            let crosses = matches!(SIDE, Side::Server)
+                && (file.kind == FileKind::Css || file.is_client_component_boundary);
             if crosses
                 && twin.is_some_and(|twin| {
                     twin_graph.reaches_unrepaired_failure(self, twin, unrepaired)

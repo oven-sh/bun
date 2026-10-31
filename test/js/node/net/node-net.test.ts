@@ -2939,6 +2939,34 @@ it.skipIf(isWindows)("a write after the peer reset the connection fails with a w
   }
 });
 
+it("a plain socket has none of TLSSocket's property names", async () => {
+  const tlsOnly = [
+    "encrypted",
+    "authorized",
+    "authorizationError",
+    "servername",
+    "_requestCert",
+    "_rejectUnauthorized",
+  ];
+  const accepted = Promise.withResolvers<string[]>();
+  const server = createServer(socket => {
+    accepted.resolve(tlsOnly.filter(name => name in socket));
+    socket.end();
+  });
+  try {
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    const client = connect({ port, host: "127.0.0.1", servername: "example.com" });
+    const closed = once(client.resume(), "close");
+    await once(client, "connect");
+    const connected = tlsOnly.filter(name => name in client);
+    expect({ connected, accepted: await accepted.promise }).toEqual({ connected: [], accepted: [] });
+    await closed;
+  } finally {
+    server.close();
+  }
+});
+
 // Node hands a write that fails at once to the stream inside write() itself,
 // so write() returns false and the socket is errored in the same call. The
 // stream runs the write callbacks and destroys the socket on the next tick.

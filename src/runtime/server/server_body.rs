@@ -3165,12 +3165,7 @@ where
             callback.call(
                 &global,
                 JSValue::UNDEFINED,
-                &[
-                    JSValue::from(is_ssl),
-                    node_socket,
-                    error_code_value,
-                    raw_packet_value,
-                ],
+                &[node_socket, error_code_value, raw_packet_value],
             )?;
         }
         Ok(())

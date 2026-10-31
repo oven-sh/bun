@@ -281,6 +281,27 @@ console.log("after");
     ).toEqual({ stdout: "beforeExit\nlistener\nafter\n", stderr: "", exitCode: 0, signalCode: null });
   });
 
+  test("'beforeExit' does not fire again for a rejection that a listener takes", async () => {
+    expect(
+      await run(
+        {
+          "a.mjs": `let fired = 0;
+process.on("unhandledRejection", error => console.log("listener", error.message));
+process.on("beforeExit", () => { Promise.reject(new Error("in beforeExit " + ++fired)); });
+process.on("exit", code => console.log("exit", code, fired));
+${dead}
+`,
+        },
+        ["a.mjs"],
+      ),
+    ).toEqual({
+      stdout: "listener in beforeExit 1\nexit 13 1\n",
+      stderr: warning("a.mjs", 5, dead),
+      exitCode: 13,
+      signalCode: null,
+    });
+  });
+
   test("a rejection in a 'beforeExit' listener gives the error and code 1, without a warning", async () => {
     const result = await run(
       { "a.mjs": `process.on("beforeExit", () => { Promise.reject(new Error("in beforeExit")); });\n${dead}\n` },

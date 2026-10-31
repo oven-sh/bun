@@ -25,7 +25,7 @@ async function run(files: Record<string, string>, args: string[]) {
   return {
     stdout: stdout.replace(/^bun test v.*\n/, ""),
     located: lines.filter(line => line.includes("Detected unsettled top-level await")),
-    summary: lines.filter(line => /^ *\d+ (pass|fail|error)$|^Bailed out/.test(line)).map(line => line.trim()),
+    summary: lines.filter(line => /^ *\d+ (pass|fail|errors?)$|^Bailed out/.test(line)).map(line => line.trim()),
     exitCode,
     signalCode: proc.signalCode,
   };
@@ -46,6 +46,51 @@ for (const isolate of [[], ["--isolate"]]) {
     },
   );
 }
+
+// Unref'd work can settle the await of a file after the file failed. The file is over by then: the rest of it does
+// not run under a later file.
+for (const isolate of [[], ["--isolate"]]) {
+  test.concurrent(`a file that failed does not go on under a later file (${isolate[0] ?? "one global"})`, async () => {
+    const a = `import { beforeEach, test } from "bun:test";
+await new Promise(resolve => setTimeout(resolve, 20).unref());
+console.log("a goes on");
+beforeEach(() => console.log("a hook of a"));
+test("late", () => {});
+`;
+    const b = `import { test } from "bun:test";
+test("runs while the timer of a fires", async () => {
+  await new Promise(resolve => setTimeout(resolve, 200));
+});
+`;
+    expect(await run({ "a.test.ts": a, "b.test.ts": b }, [...isolate, "./a.test.ts", "./b.test.ts"])).toEqual({
+      stdout: "",
+      located: ["error: Detected unsettled top-level await at file://<dir>/a.test.ts:2"],
+      summary: ["1 pass", "1 fail", "1 error"],
+      exitCode: 1,
+      signalCode: null,
+    });
+  });
+}
+
+// The module that was given up on has failed for good, so a later file that imports it fails with the same error.
+test.concurrent("a later file that imports the module that was given up on fails too", async () => {
+  const setup = `await new Promise(resolve => setTimeout(resolve, 20).unref());
+console.log("setup goes on");
+`;
+  const importer = `import "./setup.ts";\n${passing}`;
+  expect(
+    await run({ "a.test.ts": importer, "b.test.ts": importer, "setup.ts": setup }, ["./a.test.ts", "./b.test.ts"]),
+  ).toEqual({
+    stdout: "",
+    located: [
+      "error: Detected unsettled top-level await at file://<dir>/setup.ts:1",
+      "error: Detected unsettled top-level await at file://<dir>/setup.ts:1",
+    ],
+    summary: ["0 pass", "2 fail", "2 errors"],
+    exitCode: 1,
+    signalCode: null,
+  });
+});
 
 test.concurrent("names the module that is suspended", async () => {
   expect(

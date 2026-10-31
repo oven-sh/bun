@@ -5158,6 +5158,8 @@ impl TestCommand {
                                 "{}",
                                 bstr::BStr::new(&report)
                             ));
+                            // Unref'd work can settle that await while a later file runs. The rest of this file does not run then.
+                            vm.reject_unsettled_module_graph(&root, result);
                         }
                         vm.unhandled_rejection(global, result, promise_js);
                     } else {

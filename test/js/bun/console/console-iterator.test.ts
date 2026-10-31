@@ -116,3 +116,23 @@ for (const how of ["await", "then"]) {
     });
   });
 }
+
+// The ref that the second loop takes is the one that the first loop dropped. A program that unref'd stdin itself keeps it unref'd.
+it("a loop over the console does not ref a stdin that the program unref'd", async () => {
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.stdin.unref();
+       (async () => { for await (const line of console) console.log("line", line); })();
+       console.log("started");`,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  // Nothing is written to stdin, and it stays open: the process ends by itself.
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "started\n", stderr: "", exitCode: 0 });
+});

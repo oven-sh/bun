@@ -1211,6 +1211,26 @@ describe.concurrent("module link error", () => {
     },
   );
 
+  it("an import() that a test hands to expect().rejects has the location", async () => {
+    const files = {
+      ...basic,
+      "rejects.test.ts": [
+        `import { expect, test } from "bun:test";`,
+        `test("rejects", async () => {`,
+        `  await expect(import("./index.ts")).rejects.toThrow("Export named 'a' not found in module");`,
+        `  const error = await import("./index.ts").catch(error => error);`,
+        `  console.log(JSON.stringify({ message: error.message, line: error.line, column: error.column, sourceURL: error.sourceURL }));`,
+        `});`,
+        ``,
+      ].join("\n"),
+    };
+    const { printed, exitCode } = await runJSON(files, ["test", "./rejects.test.ts"]);
+    expect({ printed, exitCode }).toEqual({
+      printed: { message, line: 7, column: 10, sourceURL: "<dir>/index.ts" },
+      exitCode: 0,
+    });
+  });
+
   // Left as on main by design: the tests of this block also pass without the change.
   describe("is left as it is", () => {
     const modules: { module: string; args: string[]; files: Files; error: string; env?: typeof bunEnv }[] = [
@@ -1309,32 +1329,6 @@ describe.concurrent("module link error", () => {
           calls: ["<dir>/require.cjs"],
         },
         stderr: "",
-        exitCode: 0,
-      });
-    });
-
-    // expect() waits for the import() under the frame of the test, so the error has that frame.
-    it("when a test waits for the import() in expect().rejects", async () => {
-      const files = {
-        ...basic,
-        "rejects.test.ts": [
-          `import { expect, test } from "bun:test";`,
-          `test("rejects", async () => {`,
-          `  await expect(import("./index.ts")).rejects.toThrow("Export named 'a' not found in module");`,
-          `  const error = await import("./index.ts").catch(error => error);`,
-          `  console.log(JSON.stringify({ message: error.message, line: error.line, column: error.column, sourceURL: error.sourceURL }));`,
-          `});`,
-          ``,
-        ].join("\n"),
-      };
-      const { printed, exitCode } = await runJSON(files, ["test", "./rejects.test.ts"]);
-      expect({ printed, exitCode }).toEqual({
-        printed: {
-          message,
-          line: 3,
-          column: 46,
-          sourceURL: "<dir>/rejects.test.ts",
-        },
         exitCode: 0,
       });
     });

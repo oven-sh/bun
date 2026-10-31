@@ -66,6 +66,7 @@ export const jscNames = {
     "set",
     "size",
     "then",
+    "values",
   ],
 };
 

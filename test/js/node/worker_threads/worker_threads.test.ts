@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir, tls, tmpdirSync, unprivilegedSpawnOptions } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -732,6 +732,102 @@ describe("error event", () => {
     const [err] = await once(worker, "error");
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/MessagePort \[EventTarget\] \{.*\}/s);
+  });
+
+  // A module that resolves and then fails to load rejects with a BuildMessage, and the parent gets an
+  // error built from its text. That error is a SyntaxError, as in Node, only for a diagnostic of the
+  // parser: those have a position. Any other is an Error. Node gives Error (with a code) for a file it
+  // cannot read, and TypeError (ERR_INVALID_URL) for the data: URL.
+  test.concurrent.each([
+    [
+      "is an Error for a data: URL that cannot be decoded",
+      `await import("data:text/javascript;base64,!!!");`,
+      Error,
+      `Base64DecodeError decoding data "data:text/javascript;base64,!!!"`,
+    ],
+    [
+      "is a SyntaxError for a module with one parse error",
+      `await import("data:text/javascript,var foo bar;");`,
+      SyntaxError,
+      `Expected ";" but found "bar"`,
+    ],
+    // The position of this diagnostic has no line.
+    ["is a SyntaxError for a parse error with no line", `(a, ...b);`, SyntaxError, `Unexpected "..."`],
+  ])("%s", async (_, source, constructor, message) => {
+    const [err] = await once(new Worker(source, { eval: true }), "error");
+    expect(err.constructor).toBe(constructor);
+    expect({ name: err.name, message: err.message }).toEqual({ name: constructor.name, message });
+  });
+
+  test.concurrent("is an Error for a module that was deleted after it resolved", async () => {
+    using dir = tempDir("worker-deleted-module", { "gone.cjs": `module.exports = 1;` });
+    const gone = join(String(dir), "gone.cjs");
+    const source = `const gone = require.resolve(${JSON.stringify(gone)}); require("node:fs").unlinkSync(gone); require(gone);`;
+    const [err] = await once(new Worker(source, { eval: true }), "error");
+    expect(err.constructor).toBe(Error);
+    expect({ name: err.name, message: err.message }).toEqual({ name: "Error", message: `ENOENT reading "${gone}"` });
+  });
+
+  // Node: SyntaxError. A module with two or more parse errors rejects with an AggregateError of
+  // BuildMessages, which is not converted: the parent gets Error, `2 errors building "blob:<uuid>"`.
+  // Once that is fixed this test fails: change `test.failing` to `test`.
+  test.failing("is a SyntaxError for a module with two parse errors", async () => {
+    const [err] = await once(new Worker(`export {`, { eval: true }), "error");
+    expect(err.constructor).toBe(SyntaxError);
+  });
+
+  // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+  test.serial.skipIf(isWindows)("is an Error for a module that cannot be read", async () => {
+    const entries = ["unreadable.cjs", "requires-unreadable.cjs", "imports-unreadable.mjs"];
+    using dir = tempDir("worker-unreadable-module", {
+      "unreadable.cjs": `module.exports = 1;`,
+      "requires-unreadable.cjs": `require("./unreadable.cjs");`,
+      "imports-unreadable.mjs": `import "./unreadable.cjs";`,
+      "main.cjs": `
+        const { Worker } = require("node:worker_threads");
+        const { once } = require("node:events");
+        const { join } = require("node:path");
+        (async () => {
+          for (const entry of ${JSON.stringify(entries)}) {
+            const [err] = await once(new Worker(join(__dirname, entry)), "error");
+            console.log(entry, err.constructor === Error, err.name, err.message);
+          }
+        })();`,
+    });
+    const unreadable = join(String(dir), "unreadable.cjs");
+    using unprivileged = unprivilegedSpawnOptions(String(dir));
+    fs.chmodSync(unreadable, 0o000);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      ...unprivileged,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ lines: stdout.trim().split("\n"), stderr }).toEqual({
+      lines: entries.map(entry => `${entry} true Error EACCES reading "${unreadable}"`),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("has the same class in the output of a parent with no listener", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `new (require("node:worker_threads").Worker)('await import("data:text/javascript;base64,!!!");', { eval: true });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(`\nerror: Base64DecodeError decoding data "data:text/javascript;base64,!!!"\n`);
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
   });
 });
 

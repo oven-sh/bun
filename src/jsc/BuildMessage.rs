@@ -161,6 +161,11 @@ impl BuildMessage {
         BuildMessage::generate_position_object(&self.msg, cx.global())
     }
 
+    /// Every parser diagnostic has a position (some with `line: -1`). A failed read has none.
+    pub fn has_position(&self) -> bool {
+        self.msg.data.location.is_some()
+    }
+
     pub fn get_message(&self) -> &[u8] {
         &self.msg.data.text
     }

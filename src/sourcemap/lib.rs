@@ -169,29 +169,14 @@ impl LineColumnOffset {
 
             this.columns = this.columns.add_scalar((i - offset) as i32);
 
-            let iter = strings::CodepointIterator::init(input);
-            let mut cursor = strings::Cursor {
-                i,
-                ..Default::default()
-            };
-            let _ = iter.next(&mut cursor);
+            let step = strings::wtf8_step(&input[i as usize..]);
+            offset = i + step.len as u32;
 
-            // Given a null byte, cursor.width becomes 0
-            // This can lead to integer overflow, crashes, or hangs.
-            // https://github.com/oven-sh/bun/issues/10624
-            if cursor.width == 0 {
-                this.columns = this.columns.add_scalar(1);
-                offset = i + 1;
-                continue;
-            }
-
-            offset = i + cursor.width as u32;
-
-            match cursor.c {
+            match step.code_point {
                 // '\r' | '\n' | U+2028 | U+2029
                 0x0D | 0x0A | 0x2028 | 0x2029 => {
                     // Handle Windows-specific "\r\n" newlines
-                    if cursor.c == 0x0D
+                    if step.code_point == 0x0D
                         && input.len() > (i as usize) + 1
                         && input[(i as usize) + 1] == b'\n'
                     {

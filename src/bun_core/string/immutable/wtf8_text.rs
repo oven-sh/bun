@@ -31,6 +31,69 @@ pub fn wtf8_codepoint_at(text: &[u8], at: usize) -> (u32, usize) {
     (UNICODE_REPLACEMENT, 1)
 }
 
+/// What [`wtf8_step`] found.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Wtf8Step {
+    /// U+FFFD if `replaced`.
+    pub code_point: u32,
+    /// The bytes to go on by: 1 or more.
+    pub len: usize,
+    /// The bytes are no sequence of WTF-8.
+    pub replaced: bool,
+}
+
+/// The code point that non-empty `text` starts with. Ill-formed bytes are one U+FFFD per maximal subpart, as `TextDecoder` reads them.
+#[inline(always)]
+pub fn wtf8_step(text: &[u8]) -> Wtf8Step {
+    // Decodes in place: this is the head of the loop that prints every string, and `wtf8_codepoint_at` copies the bytes first.
+    debug_assert!(!text.is_empty());
+    // `byte ^ 0x80` is under 0x40 for a continuation byte, and is then the six bits it carries.
+    let (code_point, len) = match *text {
+        [b0 @ ..=0x7F, ..] => (u32::from(b0), 1),
+        [b0 @ 0xC2..=0xDF, b1, ..] if b1 ^ 0x80 < 0x40 => {
+            ((u32::from(b0) & 0x1F) << 6 | u32::from(b1 ^ 0x80), 2)
+        }
+        [b0 @ 0xE0..=0xEF, b1, b2, ..] => {
+            let (x1, x2) = (u32::from(b1 ^ 0x80), u32::from(b2 ^ 0x80));
+            let cp = (u32::from(b0) & 0x0F) << 12 | x1 << 6 | x2;
+            // Under U+0800 is an overlong form. Half of a surrogate pair is a sequence here.
+            if (x1 | x2) >= 0x40 || cp < 0x800 {
+                return wtf8_step_replaced(text);
+            }
+            (cp, 3)
+        }
+        [b0 @ 0xF0..=0xF4, b1, b2, b3, ..] => {
+            let (x1, x2, x3) = (
+                u32::from(b1 ^ 0x80),
+                u32::from(b2 ^ 0x80),
+                u32::from(b3 ^ 0x80),
+            );
+            let cp = (u32::from(b0) & 0x07) << 18 | x1 << 12 | x2 << 6 | x3;
+            if (x1 | x2 | x3) >= 0x40 || !(0x1_0000..=0x10_FFFF).contains(&cp) {
+                return wtf8_step_replaced(text);
+            }
+            (cp, 4)
+        }
+        _ => return wtf8_step_replaced(text),
+    };
+    Wtf8Step {
+        code_point,
+        len,
+        replaced: false,
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn wtf8_step_replaced(text: &[u8]) -> Wtf8Step {
+    let cut = (text.utf8_chunks().next()).map_or(1, |chunk| chunk.invalid().len());
+    Wtf8Step {
+        code_point: UNICODE_REPLACEMENT,
+        len: cut.max(1),
+        replaced: true,
+    }
+}
+
 /// The code points of `text`, each with the offset in bytes where it starts: `[...text]`. See
 /// [`wtf8_codepoint_at`].
 #[inline]
@@ -235,10 +298,7 @@ impl Iterator for Wtf8DecodedUnits<'_> {
         let (cp, size) = match wtf8_codepoint_at(rest, 0) {
             (_, 0) => return None,
             // U+FFFD itself has three bytes.
-            (UNICODE_REPLACEMENT, 1) => {
-                let cut = rest.utf8_chunks().next().map_or(1, |it| it.invalid().len());
-                (UNICODE_REPLACEMENT, cut.max(1))
-            }
+            (UNICODE_REPLACEMENT, 1) => (UNICODE_REPLACEMENT, wtf8_step_replaced(rest).len),
             found => found,
         };
         self.at += size;
@@ -306,6 +366,34 @@ mod tests {
         }
         assert_eq!(wtf8_codepoint_at(b"a", 1), (u32::MAX, 0));
         assert_eq!(wtf8_codepoint_at(b"a", 9), (u32::MAX, 0));
+    }
+
+    #[test]
+    fn wtf8_step_is_one_replacement_for_the_start_of_a_sequence_that_does_not_go_on() {
+        let steps: &[(&[u8], u32, usize, bool)] = &[
+            (b"a\xFF", 0x61, 1, false),
+            (b"\xC3\xA9", 0xE9, 2, false),
+            (b"\xEF\xBF\xBD", 0xFFFD, 3, false),
+            (b"\xED\xA0\x80", 0xD800, 3, false),
+            (b"\xF0\x9F\x98\x80", 0x1F600, 4, false),
+            (b"\xE9 a", 0xFFFD, 1, true),
+            (b"\xE2\x82a", 0xFFFD, 2, true),
+            (b"\xF0\x9F\x98a", 0xFFFD, 3, true),
+            (b"\xF0\x9F\x98", 0xFFFD, 3, true),
+            (b"\xED\xA0a", 0xFFFD, 1, true),
+            (b"\xC0\xAF", 0xFFFD, 1, true),
+            (b"\xF4\x90\x80\x80", 0xFFFD, 1, true),
+            (b"\x80", 0xFFFD, 1, true),
+            (b"\xFF", 0xFFFD, 1, true),
+        ];
+        for &(text, code_point, len, replaced) in steps {
+            let step = Wtf8Step {
+                code_point,
+                len,
+                replaced,
+            };
+            assert_eq!(wtf8_step(text), step, "{text:x?}");
+        }
     }
 
     #[test]

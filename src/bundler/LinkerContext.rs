@@ -3032,14 +3032,7 @@ impl<'a> LinkerContext<'a> {
         // via .url kind import records. Follow all import records for HTML files
         // so these assets are marked live and included in the manifest.
         if self.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html {
-            for record in ctx.import_records[source_index as usize].iter() {
-                if record.source_index.is_valid() {
-                    let other = record.source_index.get();
-                    if !self.graph.files_live.is_set(other as usize) {
-                        ctx.worklist.push(TreeShakeWork::File(other));
-                    }
-                }
-            }
+            self.mark_html_imports_live(ctx, source_index);
             return;
         }
 
@@ -3137,6 +3130,41 @@ impl<'a> LinkerContext<'a> {
                         source_index,
                     });
                 }
+            }
+        }
+    }
+
+    /// Queues what the tags of an HTML file use, and reports a stylesheet link that would put a script in the page. Cold: pages are few, and `mark_file_live_step` runs for every file.
+    #[cold]
+    #[inline(never)]
+    fn mark_html_imports_live(
+        &self,
+        ctx: &mut TreeShakeCtx<'a, '_>,
+        source_index: crate::IndexInt,
+    ) {
+        let input_files = &self.parse_graph().input_files;
+        let (loaders, flags) = (input_files.items_loader(), input_files.items_flags());
+        for record in ctx.import_records[source_index as usize].iter() {
+            if !record.source_index.is_valid() {
+                continue;
+            }
+            let other = record.source_index.get();
+            if let Some(loader) = Self::html_import_mismatch(
+                record.kind,
+                loaders[other as usize],
+                flags[other as usize].is_taken_by_plugin(),
+            ) {
+                let sources = input_files.items_source();
+                Self::add_html_import_mismatch_error(
+                    self.log_disjoint(),
+                    &sources[source_index as usize],
+                    record,
+                    sources[other as usize].path.pretty,
+                    loader,
+                );
+            }
+            if !self.graph.files_live.is_set(other as usize) {
+                ctx.worklist.push(TreeShakeWork::File(other));
             }
         }
     }
@@ -3344,6 +3372,69 @@ impl<'a> LinkerContext<'a> {
         } else {
             ScanCssImportsResult::Ok
         }
+    }
+
+    /// The loader of the script that a tag of an HTML file would put in the page, for a target that Bun loads with `loader`. `by_plugin`: an `onLoad` plugin took the target, so the loader is not the choice of Bun.
+    pub(crate) fn html_import_mismatch(
+        kind: ImportKind,
+        loader: Loader,
+        by_plugin: bool,
+    ) -> Option<Loader> {
+        match kind {
+            // `<link rel="stylesheet">` and `<link as="style">`
+            ImportKind::At => {
+                let adds_scripts = loader.is_javascript_like() || loader == Loader::Html;
+                (adds_scripts && !by_plugin).then_some(loader)
+            }
+            // `<script src>`. Also `<link as="worker">`, which this rule does not judge.
+            ImportKind::Stmt => None,
+            // The asset tags, which this rule does not judge.
+            ImportKind::Url => None,
+            // The HTML scanner makes none of these.
+            ImportKind::EntryPointRun
+            | ImportKind::EntryPointBuild
+            | ImportKind::Require
+            | ImportKind::Dynamic
+            | ImportKind::RequireResolve
+            | ImportKind::AtConditional
+            | ImportKind::Composes
+            | ImportKind::HtmlManifest
+            | ImportKind::Internal => None,
+        }
+    }
+
+    /// Reports what [`Self::html_import_mismatch`] found for `record` of the HTML file `page`. `target` is the pretty path of the file that the tag resolves to.
+    #[cold]
+    pub(crate) fn add_html_import_mismatch_error(
+        log: &mut Log,
+        page: &Source,
+        record: &ImportRecord,
+        target: &[u8],
+        loader: Loader,
+    ) {
+        const REMEDY: &str = "Link a CSS file, or use <script src> for a script.";
+        let loader = <&'static str>::from(loader);
+        let href = record.original_path;
+        // The HTML scanner replaces a rooted or a bare href with an absolute path, which is not the text of the attribute.
+        let note = if bun_paths::is_absolute(href) {
+            bun_ast::alloc_print(format_args!(
+                "A stylesheet link resolves to this file, and the \"{loader}\" loader loads it. {REMEDY}",
+            ))
+        } else {
+            bun_ast::alloc_print(format_args!(
+                "The stylesheet link \"{}\" resolves to this file, and the \"{loader}\" loader loads it. {REMEDY}",
+                bstr::BStr::new(href),
+            ))
+        };
+        log.add_range_error_fmt_with_notes(
+            Some(page),
+            record.range,
+            Box::new([bun_ast::range_data(None, Range::NONE, note)]),
+            format_args!(
+                "Cannot use {} as a stylesheet",
+                bun_core::fmt::quote(target),
+            ),
+        );
     }
 
     /// Creates the synthetic wrapper part (CommonJS or ESM) for a wrapped

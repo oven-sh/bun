@@ -1,4 +1,7 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -1117,5 +1120,478 @@ body {
         tail: "</body></html>",
       });
     },
+  });
+
+  // A stylesheet link must not put a script in the page. Bun reports the link and does not replace it with a <script>.
+  itBundled("html/stylesheet-link-to-package-script", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<!doctype html><html><head><link rel="stylesheet" href="p"></head><body></body></html>`,
+      "/node_modules/p/package.json": `{"name":"p","main":"./main"}`,
+      "/node_modules/p/main.js": `console.log("is-main-js");`,
+    },
+    entryPoints: ["/index.html"],
+    bundleErrors: {
+      "/index.html": ['Cannot use "node_modules/p/main.js" as a stylesheet'],
+    },
+  });
+
+  itBundled("html/stylesheet-link-to-scripts-and-pages", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="./before.js"></script>
+    <link rel="stylesheet" href="./before.js">
+    <link rel="stylesheet" href="./script.js">
+    <link rel="stylesheet" href="./typed.ts">
+    <link rel="stylesheet" href="./other.html">
+    <link rel="preload" as="style" href="./preloaded.js">
+    <script src="./script.js"></script>
+  </head>
+  <body></body>
+</html>`,
+      "/before.js": `console.log("before");`,
+      "/script.js": `import "./typed.ts";\nconsole.log("script");`,
+      "/typed.ts": `console.log("typed" as string);`,
+      "/other.html": `<!DOCTYPE html><html><head><script src="./other.js"></script></head><body></body></html>`,
+      "/other.js": `console.log("other");`,
+      "/preloaded.js": `console.log("preloaded");`,
+    },
+    entryPoints: ["/index.html"],
+    bundleErrors: {
+      "/index.html": [
+        // A `<script src>` of the same file, before or after the link, does not make the link valid.
+        'Cannot use "before.js" as a stylesheet',
+        'Cannot use "script.js" as a stylesheet',
+        // Nor does an import of the file by the page's script.
+        'Cannot use "typed.ts" as a stylesheet',
+        'Cannot use "other.html" as a stylesheet',
+        'Cannot use "preloaded.js" as a stylesheet',
+      ],
+    },
+  });
+
+  itBundled("html/stylesheet-link-to-package-css", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<!doctype html><html><head><link rel="stylesheet" href="p"></head><body></body></html>`,
+      "/node_modules/p/package.json": `{"name":"p","main":"./main.css"}`,
+      "/node_modules/p/main.css": `.from-package { color: blue; }`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const href = html.match(/<link rel="stylesheet" crossorigin href="(\.\/index-[a-z0-9]+\.css)">/)?.[1];
+      expect(href).toBeString();
+      expect(api.readFile("out/" + href)).toContain(".from-package");
+    },
+  });
+
+  // The loader that an `onLoad` plugin returns is the user's choice. A plugin can make a stylesheet of any file.
+  itBundled("html/stylesheet-link-loaded-as-css-by-plugin", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./theme.scss">
+    <link rel="stylesheet" href="./generated.js">
+  </head>
+  <body></body>
+</html>`,
+      "/theme.scss": `$color: red;`,
+      "/generated.js": `not a script`,
+    },
+    entryPoints: ["/index.html"],
+    plugins(builder) {
+      builder.onLoad({ filter: /theme\.scss$/ }, () => ({ contents: `.from-scss { color: red; }`, loader: "css" }));
+      builder.onLoad({ filter: /generated\.js$/ }, () => ({ contents: `.from-js { color: green; }`, loader: "css" }));
+    },
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const href = html.match(/<link rel="stylesheet" crossorigin href="(\.\/index-[a-z0-9]+\.css)">/)?.[1];
+      expect(href).toBeString();
+      const css = api.readFile("out/" + href);
+      expect(css).toContain(".from-scss");
+      expect(css).toContain(".from-js");
+    },
+  });
+
+  // A plugin can also make a script of a stylesheet, to add the styles at run time. That page builds.
+  // The check leaves each file alone whose contents an `onLoad` plugin returns, with or without a `loader`.
+  itBundled("html/stylesheet-link-loaded-as-script-by-plugin", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./styles.css">
+    <link rel="stylesheet" href="./theme.js">
+  </head>
+  <body></body>
+</html>`,
+      "/styles.css": `body { color: red; }`,
+      "/theme.js": `console.log("theme-on-disk");`,
+    },
+    entryPoints: ["/index.html"],
+    plugins(builder) {
+      builder.onLoad({ filter: /styles\.css$/ }, () => ({
+        contents: `console.log("styles-from-plugin");`,
+        loader: "js",
+      }));
+      builder.onLoad({ filter: /theme\.js$/ }, () => ({ contents: `console.log("theme-from-plugin");` }));
+    },
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const src = html.match(/<script type="module" crossorigin src="(\.\/index-[a-z0-9]+\.js)"><\/script>/)?.[1];
+      expect(src).toBeString();
+      expect(html).not.toContain("<link");
+      const script = api.readFile("out/" + src);
+      expect(script).toContain("styles-from-plugin");
+      expect(script).toContain("theme-from-plugin");
+      expect(script).not.toContain("theme-on-disk");
+    },
+  });
+
+  // An `onLoad` plugin that returns nothing did not load the file. Bun loads it as a script by itself.
+  itBundled("html/stylesheet-link-to-script-that-plugin-declines", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<!doctype html><html><head><link rel="stylesheet" href="./theme.js"></head><body></body></html>`,
+      "/theme.js": `console.log("theme");`,
+    },
+    entryPoints: ["/index.html"],
+    plugins(builder) {
+      builder.onLoad({ filter: /theme\.js$/ }, () => undefined);
+    },
+    bundleErrors: {
+      "/index.html": ['Cannot use "theme.js" as a stylesheet'],
+    },
+  });
+
+  // A script that only imports CSS is still a script. Load it with <script type="module" src> to keep the styles.
+  itBundled("html/stylesheet-link-to-script-that-imports-css", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<!doctype html><html><head><link rel="stylesheet" href="./styles.js"></head><body></body></html>`,
+      "/styles.js": `import "./a.css";`,
+      "/a.css": `body { color: red; }`,
+    },
+    entryPoints: ["/index.html"],
+    bundleErrors: {
+      "/index.html": ['Cannot use "styles.js" as a stylesheet'],
+    },
+  });
+
+  // The check is about scripts and pages only. It does not decide what a link to a data file becomes.
+  itBundled("html/stylesheet-link-to-data-files", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./data.json">
+    <link rel="stylesheet" href="./notes.txt">
+    <link rel="stylesheet" href="./doc.md">
+    <link rel="stylesheet" href="./conf.toml">
+    <link rel="stylesheet" href="./data.yaml">
+    <link rel="preload" as="style" href="./preloaded.json">
+  </head>
+  <body></body>
+</html>`,
+      "/data.json": `{ "marker": "json-data-marker" }`,
+      "/notes.txt": `text-data-marker`,
+      "/doc.md": `# md-data-marker`,
+      "/conf.toml": `marker = "toml-data-marker"`,
+      "/data.yaml": `marker: yaml-data-marker`,
+      "/preloaded.json": `{ "marker": "preloaded-data-marker" }`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const src = html.match(/<script type="module" crossorigin src="(\.\/index-[a-z0-9]+\.js)"><\/script>/)?.[1];
+      expect(src).toBeString();
+      expect(api.readFile("out/" + src)).not.toContain("-data-marker");
+    },
+  });
+
+  // An `onResolve` plugin picks the file, not the loader. Bun loads these two files as scripts by itself.
+  itBundled("html/stylesheet-link-resolved-to-script-by-plugin", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="virtual:theme">
+    <link rel="stylesheet" href="./declined.js">
+  </head>
+  <body></body>
+</html>`,
+      "/theme.js": `console.log("theme");`,
+      "/declined.js": `console.log("declined");`,
+    },
+    entryPoints: ["/index.html"],
+    plugins(builder) {
+      builder.onResolve({ filter: /^virtual:theme$/ }, args => ({ path: join(dirname(args.importer), "theme.js") }));
+      builder.onResolve({ filter: /declined\.js$/ }, () => undefined);
+    },
+    bundleErrors: {
+      "/index.html": ['Cannot use "theme.js" as a stylesheet', 'Cannot use "declined.js" as a stylesheet'],
+    },
+  });
+
+  // A page that is not an entry point goes through the same check.
+  itBundled("html/stylesheet-link-to-script-in-page-imported-by-script", {
+    outdir: "out/",
+    target: "browser",
+    files: {
+      "/entry.js": `import "./page.html";`,
+      "/page.html": `<!doctype html><html><head><link rel="stylesheet" href="./theme.js"></head><body></body></html>`,
+      "/theme.js": `console.log("theme");`,
+    },
+    entryPoints: ["/entry.js"],
+    bundleErrors: {
+      "/page.html": ['Cannot use "theme.js" as a stylesheet'],
+    },
+  });
+
+  itBundled("html/stylesheet-link-to-script-in-page-imported-by-server", {
+    outdir: "out/",
+    target: "bun",
+    files: {
+      "/server.ts": `import page from "./page.html";\nconsole.log(page);`,
+      "/page.html": `<!doctype html><html><head><link rel="stylesheet" href="./theme.js"></head><body></body></html>`,
+      "/theme.js": `console.log("theme");`,
+    },
+    entryPoints: ["/server.ts"],
+    bundleErrors: {
+      "/page.html": ['Cannot use "theme.js" as a stylesheet'],
+    },
+  });
+
+  // The ways to keep such a link: mark the file external, or load it with a loader that is not a script.
+  itBundled("html/stylesheet-link-to-external-script", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./theme.js">
+    <link rel="stylesheet" href="p">
+    <link rel="stylesheet" href="virtual:theme">
+  </head>
+  <body></body>
+</html>`,
+      "/theme.js": `console.log("theme-marker");`,
+      "/node_modules/p/package.json": `{"name":"p","main":"./main"}`,
+      "/node_modules/p/main.js": `console.log("package-marker");`,
+    },
+    entryPoints: ["/index.html"],
+    external: ["./theme.js", "p"],
+    plugins(builder) {
+      builder.onResolve({ filter: /^virtual:theme$/ }, args => ({ path: args.path, external: true }));
+    },
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      expect(html).toContain(`<link rel="stylesheet" href="./theme.js">`);
+      expect(html).toContain(`<link rel="stylesheet" href="p">`);
+      expect(html).toContain(`<link rel="stylesheet" href="virtual:theme">`);
+      const src = html.match(/<script type="module" crossorigin src="(\.\/index-[a-z0-9]+\.js)"><\/script>/)?.[1];
+      expect(src).toBeString();
+      expect(api.readFile("out/" + src)).not.toContain("-marker");
+    },
+  });
+
+  itBundled("html/stylesheet-link-to-script-with-packages-external", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<!doctype html><html><head><link rel="stylesheet" href="p"></head><body></body></html>`,
+      "/node_modules/p/package.json": `{"name":"p","main":"./main"}`,
+      "/node_modules/p/main.js": `console.log("package-marker");`,
+    },
+    entryPoints: ["/index.html"],
+    packages: "external",
+    onAfterBundle(api) {
+      expect(api.readFile("out/index.html")).toContain(`<link rel="stylesheet" href="p">`);
+    },
+  });
+
+  itBundled("html/stylesheet-link-to-script-with-file-loader", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<!doctype html><html><head><link rel="stylesheet" href="./theme.js"></head><body></body></html>`,
+      "/theme.js": `console.log("theme-marker");`,
+    },
+    entryPoints: ["/index.html"],
+    loader: { ".js": "file" },
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const href = html.match(/<link rel="stylesheet" href="(\.\/theme-[a-z0-9]+\.js)">/)?.[1];
+      expect(href).toBeString();
+      expect(api.readFile("out/" + href)).toBe(`console.log("theme-marker");`);
+    },
+  });
+});
+
+describe("a stylesheet link to a script", () => {
+  const page = (href: string) =>
+    `<!doctype html><html><head><link rel="stylesheet" href="${href}"></head><body></body></html>`;
+  const note = (href: string) =>
+    `The stylesheet link "${href}" resolves to this file, and the "jsx" loader loads it. Link a CSS file, or use <script src> for a script.`;
+  const files = {
+    "index.html": page("./theme.js"),
+    "theme.js": `console.log("theme");`,
+    "server.ts": `import page from "./index.html";\nconsole.log(page);`,
+  };
+
+  // Each command prints the file, the link and the loader, writes nothing and exits with code 1.
+  test.concurrent.each([
+    { args: ["build", "./index.html", "--outdir", "out"], output: "out" },
+    { args: ["build", "--target=bun", "./server.ts", "--outdir", "out"], output: "out" },
+    { args: ["build", "--compile", "./server.ts", "--outfile", "app"], output: "app" },
+    // `--aot` checks the program as `bun build --compile` does before it runs it. The program does not run.
+    { args: ["--aot", "./server.ts"], output: "out" },
+  ])("bun $args fails", async ({ args, output }) => {
+    using dir = tempDir("html-stylesheet-link-cli", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({
+      stdout,
+      stderr: normalizeBunSnapshot(stderr, String(dir)),
+      wroteOutput: existsSync(join(String(dir), output)) || existsSync(join(String(dir), output + ".exe")),
+      exitCode,
+    }).toEqual({
+      stdout: "",
+      stderr: [
+        'error: Cannot use "theme.js" as a stylesheet',
+        "    at <dir>/index.html",
+        "",
+        "note: " + note("./theme.js"),
+      ].join("\n"),
+      wroteOutput: false,
+      exitCode: 1,
+    });
+  });
+
+  const failed = (build: Bun.BuildOutput) => ({
+    success: build.success,
+    outputs: build.outputs,
+    errors: build.logs.map(log => ({ message: log.message, notes: log.notes.map(note => note.message) })),
+  });
+
+  // The note quotes the href as the page wrote it, or no href. The HTML scanner replaces a rooted href and a bare href with an absolute path.
+  const noteWithoutHref = `A stylesheet link resolves to this file, and the "jsx" loader loads it. Link a CSS file, or use <script src> for a script.`;
+  test.concurrent.each([
+    { href: "./theme.js", page: "app/index.html", script: "app/theme.js", entry: "./index.html", file: "theme.js" },
+    { href: "/theme.js", page: "app/index.html", script: "app/theme.js", entry: "./index.html", file: "theme.js" },
+    {
+      href: "theme.js",
+      page: "app/src/index.html",
+      script: "app/src/theme.js",
+      entry: "./src/index.html",
+      file: "src/theme.js",
+    },
+    // The name of the page's directory starts with the name of the working directory.
+    {
+      href: "theme.js",
+      page: "app-v2/index.html",
+      script: "app-v2/theme.js",
+      entry: "../app-v2/index.html",
+      file: "../app-v2/theme.js",
+    },
+  ])("Bun.build names the link $href of $page", async ({ href, page: pagePath, script, entry, file }) => {
+    using dir = tempDir("html-stylesheet-link-href", {
+      "app/package.json": `{}`,
+      [pagePath]: page(href),
+      [script]: files["theme.js"],
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const build = await Bun.build({ entrypoints: [${JSON.stringify(entry)}], throw: false });
+         console.log(JSON.stringify(build.logs.map(log => ({ message: log.message, notes: log.notes.map(note => note.message) }))));`,
+      ],
+      env: bunEnv,
+      cwd: join(String(dir), "app"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const logs = stdout === "" ? null : JSON.parse(stdout);
+    expect({ logs, stderr, exitCode }).toEqual({
+      logs: [{ message: `Cannot use "${file}" as a stylesheet`, notes: [expect.any(String)] }],
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(href.startsWith("./") ? [note(href)] : [noteWithoutHref, note(href)]).toContain(logs[0].notes[0]);
+  });
+
+  test.concurrent("Bun.build with compile and target browser fails", async () => {
+    using dir = tempDir("html-stylesheet-link-standalone", files);
+    const build = await Bun.build({
+      entrypoints: [join(String(dir), "index.html")],
+      compile: true,
+      target: "browser",
+      throw: false,
+    });
+    expect(failed(build)).toEqual({
+      success: false,
+      outputs: [],
+      errors: [
+        { message: expect.stringMatching(/^Cannot use ".*theme\.js" as a stylesheet$/), notes: [note("./theme.js")] },
+      ],
+    });
+  });
+
+  test.concurrent("Bun.build with in-memory files fails", async () => {
+    const build = await Bun.build({
+      entrypoints: ["/html-stylesheet-link-in-memory/index.html"],
+      files: {
+        "/html-stylesheet-link-in-memory/index.html": files["index.html"],
+        "/html-stylesheet-link-in-memory/theme.js": files["theme.js"],
+      },
+      throw: false,
+    });
+    expect(failed(build)).toEqual({
+      success: false,
+      outputs: [],
+      errors: [
+        { message: expect.stringMatching(/^Cannot use ".*theme\.js" as a stylesheet$/), notes: [note("./theme.js")] },
+      ],
+    });
+  });
+
+  // Not fixed yet. The asset tags and `<link as="worker">` also lose the tag and put a script target in the page's script.
+  test.todo("an asset tag or a worker link to a script does not put the script in the page", async () => {
+    using dir = tempDir("html-tag-to-script", {
+      "index.html": `<!doctype html><html><head><link rel="icon" href="./icon.ts"><link rel="preload" as="worker" href="./worker.js"></head><body><img src="./pixel.js"></body></html>`,
+      "icon.ts": `console.log("icon-marker" as string);`,
+      "worker.js": `console.log("worker-marker");`,
+      "pixel.js": `console.log("pixel-marker");`,
+    });
+    const build = await Bun.build({ entrypoints: [join(String(dir), "index.html")], throw: false });
+    // A fix can copy the files or fail the build. In both cases no script that the page loads holds a marker.
+    const html = (await build.outputs.find(output => output.path.endsWith(".html"))?.text()) ?? "";
+    const loaded = [...html.matchAll(/<script[^>]*\ssrc="\.\/([^"]+)"/g)].map(match => match[1]);
+    const scripts = await Promise.all(
+      build.outputs.filter(output => loaded.some(name => output.path.endsWith(name))).map(output => output.text()),
+    );
+    expect(scripts.join("\n")).not.toContain("-marker");
   });
 });

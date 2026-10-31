@@ -152,6 +152,16 @@ bitflags::bitflags! {
         const IS_EXPORT_STAR_TARGET = 1 << 1;
         /// `source.contents` is what an `onLoad` plugin returned, not what is in the file.
         const IS_LOADED_BY_PLUGIN = 1 << 2;
+        /// An `onLoad` plugin threw for this file, so its loader is still the loader of its path.
+        const PLUGIN_FAILED_TO_LOAD = 1 << 3;
+    }
+}
+
+impl InputFileFlags {
+    /// An `onLoad` plugin took this file: it returned the contents, or it threw.
+    #[inline]
+    pub(crate) fn is_taken_by_plugin(self) -> bool {
+        self.intersects(Self::IS_LOADED_BY_PLUGIN.union(Self::PLUGIN_FAILED_TO_LOAD))
     }
 }
 

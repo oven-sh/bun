@@ -4,7 +4,7 @@ use crate::generated_bindgen::node_path::ParsedPath;
 use crate::jsc::bindgen::{self, JsHeap, JsLatin1, JsLocal, JsScope};
 use crate::jsc::rare_data::PathBuf as RarePathBuf;
 use crate::jsc::{JSString, SysErrorJsc as _};
-use crate::node::validators::{validate_object, validate_string};
+use crate::node::validators::{throw_err_invalid_arg_type, validate_object};
 use bun_collections::smallvec::SmallVec;
 use bun_core::Utf8Bytes;
 use bun_node_path::{
@@ -16,8 +16,9 @@ use bun_node_path::{
     join_posix_t, join_windows_t, normalize_buf_len, normalize_posix_latin1, normalize_posix_t,
     normalize_windows_t, parse_posix_latin1, parse_posix_t, parse_windows_t, path_size,
     relative_buf_len, relative_posix_latin1, relative_posix_t, relative_windows_t,
-    resolve_absolute_posix_latin1, resolve_buf_len, resolve_posix_t, resolve_windows_t,
-    to_namespaced_path_buf_len, to_namespaced_path_windows_t,
+    resolve_absolute_posix_latin1, resolve_buf_len, resolve_posix_t,
+    resolve_windows_stops_in_paths_t, resolve_windows_t, to_namespaced_path_buf_len,
+    to_namespaced_path_windows_t,
 };
 use bun_paths::MAX_PATH_BYTES;
 
@@ -878,6 +879,16 @@ fn resolve_untidy_posix<'a>(heap: &JsHeap<'a>, joined: &[u8]) -> Text<'a> {
     ))
 }
 
+/// Throws `ERR_INVALID_ARG_TYPE` for the argument of `resolve` at `index`, which is not a string.
+#[cold]
+fn throw_path_not_a_string(
+    global: &crate::jsc::JSGlobalObject,
+    value: crate::jsc::JSValue,
+    index: usize,
+) -> crate::jsc::JsError {
+    throw_err_invalid_arg_type(global, format_args!("paths[{}]", index), "string", value)
+}
+
 #[inline(never)]
 fn resolve_utf8<'a, const WINDOWS: bool, R: Resolved<'a>>(
     heap: &JsHeap<'a>,
@@ -887,10 +898,17 @@ fn resolve_utf8<'a, const WINDOWS: bool, R: Resolved<'a>>(
     let global = unsafe { heap.global() };
     // From the last to the first that is absolute.
     let mut views: SmallVec<[crate::jsc::JSStringView<'a>; FEW]> = SmallVec::new();
+    // The last argument of `path.win32.resolve` that is not a string, and its index.
+    let mut not_a_string: Option<(usize, JsLocal<'a>)> = None;
     for (index, path) in paths.iter().enumerate().rev() {
-        validate_string(global, path.to_js(), format_args!("paths[{}]", index))?;
+        // A String object arrives as a string.
         let Some(path) = path.as_string() else {
-            unreachable!("a String object arrives as a string");
+            if WINDOWS {
+                // The walk over the arguments after this one tells if Node reads it.
+                not_a_string = Some((index, *path));
+                break;
+            }
+            return Err(throw_path_not_a_string(global, path.to_js(), index).into());
         };
         let view = path.view(heap)?;
         if view.is_empty() {
@@ -920,6 +938,12 @@ fn resolve_utf8<'a, const WINDOWS: bool, R: Resolved<'a>>(
     let buf_len = resolve_buf_len(WINDOWS, &parts);
     let mut scratch = PathScratch::new(heap, buf_len * 2);
     let (buf, buf2) = scratch.slice().split_at_mut(buf_len);
+    // Node validates an argument of `path.win32.resolve` only when its walk reads it.
+    if let Some((index, value)) = not_a_string
+        && !resolve_windows_stops_in_paths_t(&parts, buf2)
+    {
+        return Err(throw_path_not_a_string(global, value.to_js(), index).into());
+    }
     match if WINDOWS {
         resolve_windows_t(&parts, buf, buf2)
     } else {

@@ -2042,7 +2042,22 @@ describe("DONT_CONTEXTIFY", () => {
   test("basic usage still works", () => {
     const ctx = createContext(constants.DONT_CONTEXTIFY);
     expect(runInContext("globalThis", ctx)).toBe(ctx);
+    expect(runInContext("this", ctx)).toBe(ctx);
     expect(typeof ctx.Array).toBe("function");
+
+    class ReturnValue {
+      constructor(value: unknown) {
+        return value as any;
+      }
+    }
+    class Stamp extends ReturnValue {
+      #tag = "ok";
+      static read(value: object) {
+        return #tag in value ? (value as Stamp).#tag : "MISSING";
+      }
+    }
+    new Stamp(ctx);
+    expect(Stamp.read(runInContext("this", ctx))).toBe("ok");
 
     runInContext("globalThis.fromInside = 123", ctx);
     expect(ctx.fromInside).toBe(123);

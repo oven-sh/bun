@@ -292,7 +292,6 @@ pub fn remove_source_provider_source_map(
         .remove_source_provider(opaque_source_provider, slice.slice());
 }
 
-/// May run on the heap collector thread, like `Bun__remapStackFramePositions`.
 // HOST_EXPORT(Bun__VM__noteGeneratedSourceMap, c)
 pub fn note_generated_source_map(
     vm: &mut VirtualMachine,

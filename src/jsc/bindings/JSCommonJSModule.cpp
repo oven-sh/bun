@@ -210,8 +210,7 @@ enum class CommonJSText : bool {
     GivenToCompile,
 };
 
-// The table of source maps has the source map of a module when Bun transpiles the module. It learns here of the
-// source map that text for Module.prototype._compile names: JavaScriptCore has parsed the text, and has not run it.
+// The table of source maps learns of a module's own map when Bun transpiles the module, and text for Module.prototype._compile is not transpiled.
 static void putSourceMapOfCompiledText(Zig::GlobalObject* globalObject, JSC::SourceProvider& provider)
 {
     const String& sourceMappingURL = provider.sourceMappingURLDirective();

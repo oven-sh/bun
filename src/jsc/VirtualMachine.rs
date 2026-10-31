@@ -4433,8 +4433,7 @@ impl VirtualMachine {
         this: &VirtualMachine,
         support: SourceMapsSupport,
     ) {
-        // `put_mappings` reads the setting when a module is transpiled, and `bun test --isolate` does not transpile
-        // a module again that an earlier file loaded. It does after the setting changes.
+        // `bun test --isolate` does not transpile again a module that an earlier file loaded, and `put_mappings` read the setting then.
         if this.source_mappings.set_source_maps_support(support)
             && this.use_isolation_source_provider_cache()
         {
@@ -6988,8 +6987,7 @@ impl VirtualMachine {
                 } else {
                     None
                 };
-                // The position is in what the loaded file was made from, and nothing has that text: the lines to
-                // show are the loaded file's, as in Node.js.
+                // Nothing has the text of the original source: as in Node.js, the lines to show are the loaded file's.
                 let loaded = if enable_source_code_preview.get() && external_code.is_none() {
                     loaded
                 } else {

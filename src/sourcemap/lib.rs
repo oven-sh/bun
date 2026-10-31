@@ -107,14 +107,9 @@ pub struct ParseUrl {
 /// Whose rules [`parse_json`] and [`parse_url`] read a source map by.
 #[derive(Clone, Copy)]
 pub enum ParsePolicy<'a> {
-    /// A map that Bun wrote, for a file that starts with `// @bun`: `sourcesContent` has an entry for each source,
-    /// and a source is named as the map writes it.
+    /// A map that Bun wrote, for a file that starts with `// @bun`: `sourcesContent` has an entry for each source.
     Bun,
-    /// The map that a loaded file's `sourceMappingURL` comment names, read as Node.js reads it for
-    /// `--enable-source-maps`: `version` is not looked at, `sourcesContent` can be missing, and `sourceRoot` goes
-    /// before each source with nothing between them. `resolve_source` turns the result into the name to show, and
-    /// an empty name is a source that no stack frame is renamed to.
-    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L285-L337
+    /// The map that a loaded file's `sourceMappingURL` comment names, read as Node.js reads it: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L285-L337
     Node {
         resolve_source: &'a dyn Fn(&[u8]) -> Box<[u8]>,
     },
@@ -887,9 +882,7 @@ pub fn parse_url(
     parse_json(json_bytes, hint, policy)
 }
 
-/// The JSON of a `data:` URL as Node.js takes it. The media type is `application/json` in those letters, the data
-/// is base64 if the last parameter says so, and it ends at a second comma: JSON with a comma in it is cut there.
-/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L298-L319
+/// The JSON of a `data:` URL as Node.js takes it, which ends at a second comma: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L298-L319
 pub fn json_of_data_url_for_node<'a>(
     arena: &'a bun_alloc::Arena,
     url: &'a [u8],

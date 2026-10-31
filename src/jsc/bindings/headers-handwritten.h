@@ -424,11 +424,9 @@ typedef struct BunSourceMapsSupport {
 } BunSourceMapsSupport;
 extern "C" BunSourceMapsSupport Bun__VM__sourceMapsSupport(void* bunVM);
 extern "C" void Bun__VM__setSourceMapsSupport(void* bunVM, BunSourceMapsSupport);
-// Text that eval() or the Function constructor was given names itself `sourceURL` and names `sourceMappingURL` as its
-// source map. `sourceID` is the ID of its source provider. This can be called on the heap collector thread.
+// Can be called on the heap collector thread. `sourceID` is the ID of the source provider of the text.
 extern "C" void Bun__VM__noteGeneratedSourceMap(void* bunVM, const BunString* sourceURL, const BunString* sourceMappingURL, uintptr_t sourceID);
-// Module.prototype._compile was given `path` and text that names `sourceMappingURL` as its source map. Frames of the
-// text name `sourceURL`, and its first line runs behind `firstLineColumn` columns of wrapper.
+// Frames of the text name `sourceURL`, Module.prototype._compile was given `path`, and the first line runs behind `firstLineColumn` columns of wrapper.
 extern "C" void Bun__VM__putSourceMapOfCompiledText(void* bunVM, const BunString* sourceURL, const BunString* path, const BunString* sourceMappingURL, int32_t firstLineColumn);
 
 // Used in process.version
@@ -510,9 +508,7 @@ bool Bun__deepMatch(
 enum class BunPositionSpace : uint8_t {
     // The file that was loaded.
     Loaded = 0,
-    // What the loaded file was made from, for a file with a source map of its own, while
-    // process.sourceMapsEnabled is on. Otherwise the same as Loaded. What Node maps, `Error.stack` and a printed
-    // error, reads this one.
+    // What the loaded file was made from. The same as Loaded unless the file has its own source map and the switch is on.
     Original = 1,
 };
 extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t, BunPositionSpace);

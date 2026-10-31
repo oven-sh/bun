@@ -463,8 +463,7 @@ void GeneratedCodeSourceMaps::note(const JSC::StackFrame& frame) const
     if (sourceMappingURL.isEmpty() || sourceURL.isEmpty())
         return;
 
-    // A function that the Function constructor made is its own top-level executable. node:vm and
-    // Module.prototype._compile make a program, and a module is a module.
+    // A function that the Function constructor made is its own top-level executable. node:vm and Module.prototype._compile make a program.
     JSC::ScriptExecutable* topLevelExecutable = codeBlock->ownerExecutable()->topLevelExecutable();
     if (!topLevelExecutable->isEvalExecutable() && !topLevelExecutable->isFunctionExecutable())
         return;

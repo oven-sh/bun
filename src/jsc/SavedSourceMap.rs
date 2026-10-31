@@ -19,17 +19,14 @@ use bun_wyhash::hash;
 pub struct SavedSourceMap {
     /// Only accessed between [`Self::lock`] and [`Self::unlock`].
     map: HashTable,
-    /// The keys in `map` of the source maps of generated code, oldest first. A key can be here after something
-    /// else took its place in `map`. Only accessed between [`Self::lock`] and [`Self::unlock`].
+    /// Keys in `map` of generated code's source maps, oldest first. A key can outlive its entry. Locked like `map`.
     generated_code: VecDeque<u64>,
     mutex: Mutex,
     /// A [`SourceMapsSupport`] as the bits of one word, so a reader on another thread never sees two calls mixed.
     source_maps_support: AtomicU8,
 }
 
-/// How many texts of generated code have their source map in the table at a time. A reader of a stack puts the
-/// source map of each frame there before it looks up any position, so this is more than the texts of one stack.
-/// What is forgotten is put there again by the next reader of such a frame.
+/// Must exceed the generated texts of one stack: a reader notes all frames, then looks them up. A dropped text is noted again.
 const MAX_GENERATED_CODE_SOURCE_MAPS: usize = 128;
 
 /// What `module.getSourceMapsSupport()` answers. `BunSourceMapsSupport` in headers-handwritten.h mirrors it.
@@ -91,12 +88,7 @@ impl SavedSourceMap {
 }
 
 impl SourceMapsSupport {
-    /// Whether the own source map of the module at `path` is applied. Node.js asks when the module loads, and
-    /// again each time it looks for the map of a stack frame. A module is in `node_modules` if its path has a
-    /// directory of that name.
-    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L159-L169
-    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L382-L384
-    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util.js#L541-L545
+    /// Node.js asks this when a module loads and again at each lookup: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L159-L169
     fn applies_to(self, path: &[u8]) -> bool {
         self.enabled && self.includes(path)
     }
@@ -107,16 +99,13 @@ impl SourceMapsSupport {
     }
 }
 
-/// Which file a reader of a stack position wants the position in. `BunPositionSpace` in headers-handwritten.h
-/// mirrors it.
+/// The file that a reader of a stack position wants the position in. `BunPositionSpace` in headers-handwritten.h mirrors it.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PositionSpace {
     /// The file that was loaded. A `CallSite`, coverage, an inline snapshot and a profile are about that file.
     Loaded = 0,
-    /// What the loaded file was made from, for a file that names a source map of its own, while
-    /// `process.sourceMapsEnabled` is on. Otherwise the same as `Loaded`. `Error.stack` and a printed error read
-    /// this one, as in Node.js.
+    /// What the loaded file was made from. The same as `Loaded` unless the file has its own source map and the switch is on.
     Original = 1,
 }
 
@@ -139,14 +128,12 @@ impl SavedSourceMap {
 /// handle inside it borrowed) is a registered lazy external source provider.
 /// `ParsedSourceMap` is materialized lazily from such a provider for sources
 /// that ship their own external `.map`.
-/// `ChainedSourceMap` is a text with the source map that it names for itself:
-/// a runtime-transpiled module, see [`SavedSourceMap::put_mappings`], or text
-/// that JavaScriptCore compiled as it was given.
+/// `ChainedSourceMap` is a text with the source map that it names for itself, see [`SavedSourceMap::put_mappings`].
 pub(crate) type Value = TaggedPtrUnion<ValueTypes>;
 
 /// Local type-list marker so `TypeList`/`UnionMember` impls satisfy orphan
 /// rules — `bun_ptr::impl_tagged_ptr_union!` would impl on a tuple of foreign
-/// types (all three members live in `bun_sourcemap`), which the coherence
+/// types (three of the four members live in `bun_sourcemap`), which the coherence
 /// checker rejects from this crate. Tags are `1024 - i`.
 pub(crate) struct ValueTypes;
 
@@ -164,16 +151,12 @@ impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for ChainedSourceMap {
     const TAG: TagType = 1021;
 }
 
-/// A text that names a source map of its own, put in the table while `process.sourceMapsEnabled` was on. Two
-/// maps in a row: `loaded` goes from what runs to the text that was loaded, and `text` from there to what that
-/// was made from.
+/// Two maps in a row: `loaded` goes from what runs to the text that was loaded, and `text` from there to what that was made from.
 pub struct ChainedSourceMap {
     loaded: LoadedText,
-    /// The text's own source map as it was when the text loaded. Node.js reads the map of a module then too, so
-    /// what the file at that path becomes later does not change a stack trace.
+    /// The text's own source map as it was at load. As in Node.js, what the map file becomes later changes no stack trace.
     text: OwnSourceMapText,
-    /// The file that a relative `sources` entry of the map is beside: the map file, or the module for a `data:` URL.
-    /// Generated code can name itself with a URL that is no file, and then this is that URL.
+    /// What a relative entry of `sources` is beside: the map file, or for a `data:` URL the text, whose name can be a URL.
     sources_relative_to: Box<[u8]>,
     /// `text` parsed, by the first reader that asks for an original position. `None`: `text` is no usable map.
     original: OnceLock<Option<Arc<ParsedSourceMap>>>,
@@ -183,11 +166,9 @@ pub struct ChainedSourceMap {
 enum LoadedText {
     /// A module that Bun transpiled: the printer's blob, in the shell that `get_with_content` hands out.
     Printed(Arc<ParsedSourceMap>),
-    /// What `Module.prototype._compile` was given. JavaScriptCore runs it as it is, behind `first_line_column`
-    /// columns of CommonJS wrapper on its first line. Node.js compiles such text with no wrapper in front of it.
+    /// What `Module.prototype._compile` was given. It runs behind `first_line_column` columns of CommonJS wrapper on its first line.
     Compiled { first_line_column: i32 },
-    /// What `eval()` or the `Function` constructor was given, which runs as it is. `source` is the ID of its
-    /// JavaScriptCore source provider, which tells this text from another that names itself with the same URL.
+    /// What `eval()` or the `Function` constructor was given. `source` is its JavaScriptCore source provider's ID: texts can share a URL.
     Generated { source: AtomicUsize },
 }
 
@@ -249,8 +230,7 @@ impl ChainedSourceMap {
         }
     }
 
-    /// `line` and `column` are where a `CallSite` has a frame of this text: in the loaded file for a module that Bun
-    /// transpiled, and where it runs for other text. `None`: the text's own map has nothing there.
+    /// `line` and `column` are as a `CallSite` has them: in the loaded file for a module that Bun printed, in what runs for other text.
     fn original_position_of_call_site(
         &self,
         line: Ordinal,
@@ -260,8 +240,6 @@ impl ChainedSourceMap {
         self.original_position(line, column)
     }
 
-    /// Whether this is the source map of the generated code with the source provider `source`, which names
-    /// `source_mapping_url`.
     fn is_of_generated_code(&self, source: usize, source_mapping_url: &bun_core::String) -> bool {
         let LoadedText::Generated { source: noted } = &self.loaded else {
             return false;
@@ -364,10 +342,7 @@ impl ChainedSourceMap {
     }
 }
 
-/// The name Node.js shows for `source`, a `sources` entry after its `sourceRoot`, in a map that is beside `base`:
-/// a path for what resolves to a file, and the URL for anything else.
-/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L325-L337
-/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/prepare_stack_trace.js#L96-L98
+/// The name Node.js shows for `source`, a `sources` entry after its `sourceRoot`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L325-L337
 fn shown_source_name(base: &bun_core::String, source: &[u8]) -> Box<[u8]> {
     if bun_paths::is_absolute(source) {
         return resolved_absolute_source(source);
@@ -403,8 +378,7 @@ fn resolved_absolute_source(source: &[u8]) -> Box<[u8]> {
     Box::from(normalized.unwrap_or(source))
 }
 
-/// The scheme of `name` if Node.js takes `name` for a URL and not for a path: `/^\w+:\/\//`.
-/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L43
+/// The scheme of `name` if Node.js takes `name` for a URL and not for a path: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L43
 pub fn url_scheme(name: &[u8]) -> Option<&[u8]> {
     let scheme = &name[..bun_core::strings::index_of(name, b"://")?];
     let is_word = |byte: &u8| byte.is_ascii_alphanumeric() || *byte == b'_';
@@ -458,10 +432,7 @@ fn read_own_source_map(
     )
 }
 
-/// What the `sourceMappingURL` comment of the module at `path` names with `url`, read now, and the file that its
-/// relative `sources` are beside. Node.js reads a `data:` URL and a path, which it takes as a URL relative to the
-/// module. It does not read `file:`, `http:` or any other URL with a scheme. Nothing is reported: Node.js is silent too.
-/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L237-L255
+/// Like Node.js, this reads a `data:` URL or a path, which is a URL relative to the module, and reports nothing: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L237-L255
 fn read_source_map_named(
     path: &[u8],
     url: &[u8],
@@ -493,10 +464,9 @@ fn read_source_map_named(
 
 impl SavedSourceMap {
     /// Releases whatever ownership a table value carries: the table's strong
-    /// ref for a `ParsedSourceMap` or a `ChainedSourceMap`, the blob for an
-    /// `InternalSourceMap`, or the box for an `AnySourceProvider` (whose
-    /// provider FFI handle is borrowed and stays with its owner; see
-    /// [`Self::put_source_provider`]).
+    /// ref for a `ParsedSourceMap` or a `ChainedSourceMap`, the blob for an `InternalSourceMap`, or
+    /// the box for an `AnySourceProvider` (whose provider FFI handle is
+    /// borrowed and stays with its owner; see [`Self::put_source_provider`]).
     ///
     /// # Safety
     /// `value` must have been stored in the table by us, be live, and not be
@@ -517,7 +487,7 @@ impl SavedSourceMap {
             // SAFETY: the box was allocated by `put_source_provider`.
             unsafe { bun_core::heap::destroy(provider) };
         } else if let Some(chained) = value.get::<ChainedSourceMap>() {
-            // SAFETY: per fn contract — `put_mappings` stored it with `Arc::into_raw`.
+            // SAFETY: per fn contract — `put_mappings` or `put_unprinted` stored it with `Arc::into_raw`.
             unsafe { Arc::decrement_strong_count(chained.cast_const()) };
         }
     }
@@ -616,8 +586,6 @@ impl Drop for SavedSourceMap {
 
 impl SavedSourceMap {
     /// `source_mapping_url` is `Ast::source_mapping_url` of `source`, from the parse or from the transpiler cache.
-    /// While `process.sourceMapsEnabled` is on, the source map that the URL names is read here and kept with
-    /// `mappings`, so that [`PositionSpace::Original`] readers can go on from the loaded file to what it was made from.
     pub fn put_mappings(
         &mut self,
         source: &bun_ast::Source,
@@ -691,11 +659,7 @@ impl SavedSourceMap {
         }
     }
 
-    /// `Module.prototype._compile` gave JavaScriptCore text that Bun's transpiler did not print, so
-    /// [`Self::put_mappings`] did not see it. Frames of the text name `url`, `path` is the file name that
-    /// `_compile` was given, and `source_mapping_url` is the URL of the text's `sourceMappingURL` comment. Node.js
-    /// reads the map when it compiles the text, as for any module, and finds it under both names.
-    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L1806-L1811
+    /// Frames name `url`, and `_compile` was given `path`. Node.js finds the map under both: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L1806-L1811
     pub fn put_source_map_of_compiled_text(
         &mut self,
         url: &[u8],
@@ -721,18 +685,7 @@ impl SavedSourceMap {
         self.put_unprinted(url, record);
     }
 
-    /// Text that `eval()` or the `Function` constructor was given names itself `url` and names
-    /// `source_mapping_url` as its source map. `source` is the ID of its JavaScriptCore source provider. Nothing
-    /// runs when JavaScriptCore compiles such text, so a reader of stack frames says this for each frame of such
-    /// text, and then asks for the [`PositionSpace::Original`] position under `url`. A name has the source map
-    /// of one text at a time: the text of the frame that a reader came to last.
-    ///
-    /// No file is read here: this can run on the heap collector thread, with the world stopped. Node.js also
-    /// reads a file that such text names. Here only a `data:` URL is the source map of generated code.
-    ///
-    /// Node.js v26.3.0 keeps the source map of generated code whenever source maps are on. Its `generatedCode`
-    /// option, which says whether it does, is not read. Here the option is what it says.
-    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L206-L227
+    /// Can run on the heap collector thread: no file is read, only a `data:` URL. Node.js v26.3.0 reads a file too, and does not read `generatedCode`.
     pub fn note_generated_source_map(
         &mut self,
         url: &[u8],
@@ -743,8 +696,7 @@ impl SavedSourceMap {
         if !support.enabled || !support.generated_code {
             return;
         }
-        // A frame of a builtin module has such a name, and Node.js has no source map for one.
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L377-L380
+        // Node.js has no source map for a builtin module: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L377-L380
         if url.starts_with(b"node:") || url.starts_with(b"bun:") {
             return;
         }
@@ -770,8 +722,7 @@ impl SavedSourceMap {
         if !bun_core::strings::has_prefix_case_insensitive(source_mapping_url.slice(), b"data:") {
             return;
         }
-        // Node.js resolves a relative source of generated code against the URL that the code names itself with.
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L105-L121
+        // As in Node.js, a name with no scheme is a path: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L105-L121
         let sources_relative_to: Box<[u8]> = match url_scheme(url) {
             Some(_) => Box::from(url),
             None => resolved_path(url).into_boxed_slice(),
@@ -792,8 +743,6 @@ impl SavedSourceMap {
         );
     }
 
-    /// Puts the source map of text that Bun did not print in the table under `url`, unless what has that name
-    /// keeps it: see [`ChainedSourceMap::yields_to`].
     fn put_unprinted(&mut self, url: &[u8], record: Arc<ChainedSourceMap>) {
         use bun_collections::zig_hash_map::MapEntry as Entry;
 
@@ -826,8 +775,7 @@ impl SavedSourceMap {
         self.unlock();
     }
 
-    /// Takes the source map of generated code that has been in the table for the longest time out of it. The
-    /// table is locked.
+    /// The caller has locked the table.
     fn forget_oldest_generated_code(&mut self) {
         let Some(oldest) = self.generated_code.pop_front() else {
             return;
@@ -1017,10 +965,7 @@ impl SavedSourceMap {
         chained
     }
 
-    /// A handle to the `ChainedSourceMap` that `value` is, if it is one. The handle outlives the lock.
-    ///
-    /// # Safety
-    /// The table is locked, and `value` is in it.
+    /// SAFETY: the table is locked, and `value` is in it.
     unsafe fn chained_in(value: Value) -> Option<Arc<ChainedSourceMap>> {
         let chained = value.get::<ChainedSourceMap>()?;
         // SAFETY: it was stored with `Arc::into_raw`, and it is live while locked. The count goes up for the

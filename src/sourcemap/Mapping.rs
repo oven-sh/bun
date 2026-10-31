@@ -303,8 +303,7 @@ pub struct Lookup {
     /// Owned by default_allocator always
     /// use `get_source_code` to access this as a Slice
     pub prefetched_source_code: Option<Box<[u8]>>,
-    /// Where the position is in the file that was loaded, when `mapping` is from that file's own source map and so
-    /// is a position in what the file was made from.
+    /// Where the position is in the file that was loaded, when `mapping` is from that file's own source map.
     pub loaded: Option<LineColumnOffset>,
 }
 

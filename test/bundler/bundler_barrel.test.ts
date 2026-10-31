@@ -2271,6 +2271,78 @@ describe("bundler", () => {
     },
   });
 
+  // The barrel itself is not wrapped (only its targets are lazily loaded), so
+  // the awaits are printed at the top level of the chunk.
+  itBundled("barrel/UnwrappedBarrelAwaitsAsyncExportStarTargets", {
+    files: {
+      "/main.js": /* js */ `
+        import { a, b } from './barrel.js'
+        import { load } from './lazy.js'
+        console.log(a, b, typeof (await load()).a)
+      `,
+      "/lazy.js": /* js */ `
+        export async function load() {
+          await import('./b.js')
+          return import('./a.js')
+        }
+      `,
+      "/barrel.js": /* js */ `
+        export * from './a.js'
+        export * from './b.js'
+      `,
+      "/a.js": /* js */ `export const a = await Promise.resolve('A')`,
+      "/b.js": /* js */ `export const b = await Promise.resolve('B')`,
+    },
+    format: "esm",
+    target: "bun",
+    outdir: "/out",
+    run: {
+      stdout: "A B string",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out/main.js");
+      expect(out).not.toContain("init_barrel");
+      expect(out).toMatch(/^await init_a\(\);\nawait init_b\(\);$/m);
+    },
+  });
+
+  // An import cycle through the barrel: the `export *` target is async and
+  // the barrel's own flag may or may not be set, depending on which file the
+  // linker visits first. Either way the bundle has to load and run.
+  itBundled("barrel/ExportStarInCycleWithAsyncTargetLoads", {
+    files: {
+      "/main.js": /* js */ `
+        import { a } from './alpha.js'
+        import { load } from './lazy.js'
+        const X = await load()
+        console.log('ok', a, X.x, X.c)
+      `,
+      "/lazy.js": /* js */ `export function load() { return import('./xray.js') }`,
+      "/xray.js": /* js */ `
+        export * from './charlie.js'
+        export const x = 'X'
+      `,
+      "/charlie.js": /* js */ `
+        import './xray.js'
+        import { a } from './alpha.js'
+        export const c = 'C'
+        export function getA() { return a }
+      `,
+      "/alpha.js": /* js */ `
+        import { c } from './charlie.js'
+        import { b } from './bravo.js'
+        export const a = 'A' + b + c
+      `,
+      "/bravo.js": /* js */ `export const b = await Promise.resolve('B')`,
+    },
+    format: "esm",
+    target: "bun",
+    outdir: "/out",
+    run: {
+      stdout: "ok ABC X C",
+    },
+  });
+
   // An `export *` target with its own sync `__esm` wrapper (it is lazily
   // loaded too) keeps a plain init call.
   itBundled("barrel/ExportStarSyncTargetIsNotAwaited", {

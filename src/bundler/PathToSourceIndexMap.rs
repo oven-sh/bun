@@ -61,7 +61,7 @@ impl PathToSourceIndexMap {
         self.map.get_or_put(text.as_ref())
     }
 
-    pub fn remove(&mut self, text: impl AsRef<[u8]>) -> bool {
+    pub(crate) fn remove(&mut self, text: impl AsRef<[u8]>) -> bool {
         self.map.remove(text.as_ref()).is_some()
     }
 }

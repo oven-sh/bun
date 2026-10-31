@@ -2977,7 +2977,7 @@ bool ECKeyPointer::setPublicKeyRaw(const BignumPointer& x,
 
 bool ECKeyPointer::setPrivateKey(const BignumPointer& priv)
 {
-    if (!key_) return false;
+    if (!key_ || !priv) return false;
     return EC_KEY_set_private_key(key_.get(), priv.get()) == 1;
 }
 
@@ -3385,6 +3385,9 @@ bool Rsa::setPrivateKey(BignumPointer&& d,
     BignumPointer&& dq,
     BignumPointer&& qi)
 {
+    // RSA_set0_key accepts a null d once n and e are set, which would leave a "private" key without one.
+    if (!d || !q || !p || !dp || !dq || !qi) return false;
+
     if (!RSA_set0_key(const_cast<RSA*>(rsa_), nullptr, nullptr, d.get())) {
         return false;
     }

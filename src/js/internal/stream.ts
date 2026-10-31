@@ -106,7 +106,7 @@ Stream.Stream = Stream;
 Stream._isArrayBufferView = isArrayBufferView;
 Stream._isUint8Array = isUint8Array;
 Stream._uint8ArrayToBuffer = function _uint8ArrayToBuffer(chunk) {
-  return new $Buffer(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+  return new $Buffer.$FastBuffer(chunk.buffer, chunk.byteOffset, chunk.byteLength);
 };
 
 export default Stream;

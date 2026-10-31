@@ -61,6 +61,10 @@ bench("new Buffer(Uint8Array(0))", () => {
   return new Buffer(empty);
 });
 
+bench("new Buffer(16)", () => {
+  return new Buffer(16);
+});
+
 bench(`new Buffer(${N})`, () => {
   return new Buffer(N);
 });

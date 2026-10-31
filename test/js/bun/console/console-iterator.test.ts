@@ -74,3 +74,45 @@ it("can use the console iterator more than once", async () => {
   expect(await stdout.text()).toBe('["hello","world"]["another"]');
   proc.kill(0);
 });
+
+// The reader of the first loop releases its lock on stdin, which unrefs it. The second loop has to ref it again,
+// or nothing keeps the process alive while it waits for input.
+for (const how of ["await", "then"]) {
+  it(`waits for the input of a second loop over the console (${how})`, async () => {
+    await using proc = spawn({
+      cmd: [bunExe(), import.meta.dir + "/" + "console-iterator-twice-fixture.ts", how],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const stderr = proc.stderr.text();
+    const output = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+
+    proc.stdin.write("hello\nbreak\n");
+    proc.stdin.flush();
+    // The first loop is through once its lines are printed. Only then does the input of the second loop arrive.
+    let first = "";
+    while (first.length < '["hello"]'.length) {
+      const { value, done } = await output.read();
+      if (done) break;
+      first += decoder.decode(value, { stream: true });
+    }
+    proc.stdin.write("another\nbreak\n");
+    await proc.stdin.end();
+
+    let second = "";
+    for (;;) {
+      const { value, done } = await output.read();
+      if (done) break;
+      second += decoder.decode(value, { stream: true });
+    }
+    expect({ first, second, stderr: await stderr, exitCode: await proc.exited }).toEqual({
+      first: '["hello"]',
+      second: '["another"]',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+}

@@ -167,6 +167,7 @@ mod drain_result {
 // the microtask queue through it is interior mutation invisible to Rust.
 unsafe extern "C" {
     safe fn JSC__JSGlobalObject__drainMicrotasks(global: &JSGlobalObject) -> u8;
+    safe fn Bun__hasJobsForCheckpoint(global: &JSGlobalObject) -> bool;
     safe fn Bun__noteEntryEvaluation(global: &JSGlobalObject);
 }
 
@@ -183,6 +184,12 @@ impl JSGlobalObject {
             drain_result::STOPPED => Err(Stopped),
             _ => unreachable!(),
         }
+    }
+
+    /// Whether the next checkpoint has something to run: a scheduled tick, a queued microtask, or a rejection that is still to be reported to its listeners.
+    #[inline]
+    pub fn has_jobs_for_checkpoint(&self) -> bool {
+        Bun__hasJobsForCheckpoint(self)
     }
 }
 
@@ -214,6 +221,37 @@ impl Stopped {
             }
         }
     }
+}
+
+/// Why a wait returned with its promise still pending.
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unsettled {
+    /// This VM no longer runs script.
+    #[error(transparent)]
+    Stopped(Stopped),
+    /// Nothing is queued and nothing refs the loop, so nothing is left to settle the promise. Unref'd work does not count: the run loop ends on the same sum, so the wait ends where a `then()` on the same promise would never be called.
+    #[error("A promise never settled, and nothing is left to wait for.")]
+    Idle,
+}
+
+impl Unsettled {
+    /// Cross into a `JsResult` function: the VM's termination for `Stopped`, an `Error` for `Idle`.
+    #[cold]
+    pub fn throw(self, global: &JSGlobalObject) -> crate::JsError {
+        match self {
+            Unsettled::Stopped(stopped) => stopped.throw(global),
+            Unsettled::Idle => global.throw(format_args!("{self}")),
+        }
+    }
+}
+
+/// What a wait does once nothing is left that could settle its promise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WhenIdle {
+    /// Return [`Unsettled::Idle`]: for a wait that nothing else drives the loop beneath.
+    GiveUp,
+    /// Keep polling: for a wait beneath a driver that keeps the loop turning (a test, script that called in), where unref'd work settles promises.
+    KeepWaiting,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1209,26 +1247,48 @@ impl EventLoop {
     /// terminated mid-wait), or because a termination is pending beneath this wait
     /// (a nested wait under a `node:vm` run whose deadline fired: it must unwind to
     /// that run, not tick on over it). Nothing is thrown for it; a caller inside a
-    /// `JsResult` function crosses explicitly with [`jsc::Stopped::throw`] (which, with
+    /// `JsResult` function crosses explicitly with [`Unsettled::throw`] (which, with
     /// the termination already pending, is just `Thrown`).
-    pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
+    /// Under [`WhenIdle::GiveUp`] it also returns `Err` once nothing is left that could settle the promise: [`Unsettled::Idle`].
+    pub fn wait_for_promise(
+        &mut self,
+        promise: jsc::AnyPromise,
+        when_idle: WhenIdle,
+    ) -> Result<(), Unsettled> {
         let jsc_vm = self.vm_ref().jsc_vm();
         if promise.status() != PromiseStatus::Pending {
             return Ok(());
         }
+        let stopped = |this: &Self| {
+            jsc_vm.execution_forbidden()
+                || !this.vm_ref().script_allowed()
+                || this.global_ref().has_pending_termination_exception()
+        };
         while promise.status() == PromiseStatus::Pending {
-            if jsc_vm.execution_forbidden()
-                || !self.vm_ref().script_allowed()
-                || self.global_ref().has_pending_termination_exception()
-            {
-                return Err(jsc::Stopped);
+            if stopped(self) {
+                return Err(Unsettled::Stopped(Stopped));
             }
             self.tick();
             if promise.status() == PromiseStatus::Pending {
+                if when_idle == WhenIdle::GiveUp && self.is_idle() {
+                    // A task of that tick can have requested the stop, and a stop is never idle.
+                    return Err(if stopped(self) {
+                        Unsettled::Stopped(Stopped)
+                    } else {
+                        Unsettled::Idle
+                    });
+                }
                 self.auto_tick();
             }
         }
         Ok(())
+    }
+
+    /// Nothing is queued, nothing refs the loop, and the next checkpoint has nothing to run.
+    #[inline]
+    fn is_idle(&self) -> bool {
+        // A tick ends by calling 'unhandledRejection' listeners, with no checkpoint behind them: what they queued runs in the next tick.
+        !self.vm_ref().has_pending_loop_work() && !self.global_ref().has_jobs_for_checkpoint()
     }
 
     pub fn wakeup(&self) {

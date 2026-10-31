@@ -867,6 +867,9 @@ impl ExitHandler {
 
 pub const MAIN_FILE_NAME: &[u8] = b"bun:main";
 
+/// How much of a source line an error or a warning shows: nobody wants 100 KB of minified code in a terminal.
+pub(crate) const MAX_SOURCE_LINE_LENGTH: usize = 1024;
+
 /// Instead of storing timestamp as a i128, we store it as a u64.
 /// We subtract the timestamp from Jan 1, 2000 (Y2K)
 pub(crate) const ORIGIN_RELATIVE_EPOCH: i128 = 946_684_800 * 1_000_000_000;
@@ -1815,20 +1818,25 @@ impl VirtualMachine {
         }
     }
 
-    pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
+    /// Something is queued or refs the loop, immediates aside.
+    #[inline]
+    fn has_pending_loop_work_excluding_immediates(&self) -> bool {
         let el = self.event_loop_shared();
         let active = self
             .platform_loop_opt()
             .map(|h| h.is_active())
             .unwrap_or(false);
-        self.unhandled_error_counter == 0
-            && ((active as usize)
-                + self.active_tasks
-                + el.tasks.readable_length()
-                + el.yield_tasks.len()
-                + (el.has_concurrent_tasks() as usize)
-                + (el.has_pending_refs() as usize)
-                > 0)
+        (active as usize)
+            + self.active_tasks
+            + el.tasks.readable_length()
+            + el.yield_tasks.len()
+            + (el.has_concurrent_tasks() as usize)
+            + (el.has_pending_refs() as usize)
+            > 0
+    }
+
+    pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
+        self.unhandled_error_counter == 0 && self.has_pending_loop_work_excluding_immediates()
     }
 
     pub fn is_event_loop_alive(&self) -> bool {
@@ -1836,6 +1844,14 @@ impl VirtualMachine {
         self.is_event_loop_alive_excluding_immediates()
             || !el.immediate_tasks.is_empty()
             || !el.next_immediate_tasks.is_empty()
+    }
+
+    /// [`is_event_loop_alive`](Self::is_event_loop_alive) without its error-counter term: an uncaught error ends the run loop, not a wait, and under `bun test` the counter outlives the file that raised it.
+    pub(crate) fn has_pending_loop_work(&self) -> bool {
+        let el = self.event_loop_shared();
+        !el.immediate_tasks.is_empty()
+            || !el.next_immediate_tasks.is_empty()
+            || self.has_pending_loop_work_excluding_immediates()
     }
 
     pub fn wakeup(&mut self) {
@@ -2907,7 +2923,7 @@ pub struct RuntimeHooks {
     pub generate_entry_point: fn(vm: &VirtualMachine, watch: bool, entry_path: &[u8]) -> bool,
     /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
     /// preload promise if any, else null. Errors propagate
-    /// (resolver failures / `ModuleNotFound`).
+    /// (resolver failures / `ModuleNotFound` / `UnsettledPreload`).
     pub load_preloads:
         unsafe fn(vm: *mut VirtualMachine) -> crate::CrateResult<*mut JSInternalPromise>,
     /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
@@ -3556,8 +3572,12 @@ impl VirtualMachine {
     /// `promise` settles. Thin forwarder; body lives in
     /// [`crate::event_loop::EventLoop::wait_for_promise`].
     #[inline]
-    pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
-        self.event_loop_mut().wait_for_promise(promise)
+    pub fn wait_for_promise(
+        &mut self,
+        promise: jsc::AnyPromise,
+        when_idle: jsc::WhenIdle,
+    ) -> Result<(), jsc::Unsettled> {
+        self.event_loop_mut().wait_for_promise(promise, when_idle)
     }
 
     /// `eventLoop().autoTick()` — dispatched through the runtime hook
@@ -3804,7 +3824,7 @@ impl VirtualMachine {
     }
 
     /// `loadEntryPoint(entry_path)` — `reload_entry_point` + spin until the
-    /// returned promise settles.
+    /// returned promise settles or nothing is left that could settle it.
     pub fn load_entry_point(
         &mut self,
         entry_path: Option<&[u8]>,
@@ -3835,7 +3855,9 @@ impl VirtualMachine {
             if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected {
                 return Ok(promise);
             }
-            let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+            // `Idle` leaves it pending: an unsettled top-level await, for the caller to report after its run loop and 'beforeExit'.
+            let _ =
+                self.wait_for_promise(jsc::AnyPromise::Internal(promise), jsc::WhenIdle::GiveUp);
         }
 
         Ok(self.pending_internal_promise().unwrap_or(promise))
@@ -5998,7 +6020,7 @@ impl VirtualMachine {
         Ok(promise)
     }
 
-    /// Loads a test-file entry point and waits for the load promise to settle.
+    /// Loads a test-file entry point and waits for the load promise to settle, or until nothing is left that could settle it.
     pub fn load_entry_point_for_test_runner(
         &mut self,
         entry_path: &[u8],
@@ -6029,7 +6051,9 @@ impl VirtualMachine {
             if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected {
                 return Ok(promise);
             }
-            let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+            // `Idle` leaves it pending: the caller fails the file and goes on to the next.
+            let _ =
+                self.wait_for_promise(jsc::AnyPromise::Internal(promise), jsc::WhenIdle::GiveUp);
         }
 
         // Pre-arm the waker so this settled-promise tick cannot park (#36450).
@@ -6298,7 +6322,11 @@ impl VirtualMachine {
         let path_str = bun_core::StringView::from_bytes(entry_path);
         let promise =
             jsc::JSModuleLoader::load_and_evaluate_module_ptr(self.global, &path_str)?.as_ptr();
-        let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+        // A macro can run on a VM whose script is on the stack above this wait.
+        let _ = self.wait_for_promise(
+            jsc::AnyPromise::Internal(promise),
+            jsc::WhenIdle::KeepWaiting,
+        );
         Some(promise)
     }
 
@@ -6696,6 +6724,41 @@ impl VirtualMachine {
         self.remap_stack_frames_mutex.unlock();
     }
 
+    /// The text of module `source_url` as its author wrote it, or empty if there is none to show; the caller resets the parser arena after use when `must_reset_parser_arena_later` comes back set.
+    pub(crate) fn source_text_for_display(
+        &mut self,
+        global: &JSGlobalObject,
+        source_url: &bun_core::String,
+        must_reset_parser_arena_later: &mut bool,
+    ) -> bun_core::Utf8Bytes<'static> {
+        // What lies on the disk under the name of a module that is compiled into an executable is not what runs.
+        let path = source_url.to_utf8();
+        if crate::compiled_program::is_compiled_module(path.slice()) {
+            if !crate::compiled_program::runs_in_place() {
+                return bun_core::Utf8Bytes::EMPTY;
+            }
+            let text = bun_sys::File::read_from(bun_sys::Fd::cwd(), path.slice());
+            return bun_core::Utf8Bytes::Owned(text.unwrap_or_default());
+        }
+        let mut log = bun_ast::Log::default();
+        let Ok(original_source) = bun_removable_features::call_removable_or!(
+            RuntimeTranspiler,
+            ReturnDefault,
+            { return bun_core::Utf8Bytes::EMPTY },
+            VirtualMachine::fetch_without_on_load_plugins,
+            self,
+            global,
+            source_url,
+            &bun_core::String::EMPTY,
+            &mut log,
+            FetchFlags::PrintSource,
+        ) else {
+            return bun_core::Utf8Bytes::EMPTY;
+        };
+        *must_reset_parser_arena_later = true;
+        original_source.source_code.into_utf8()
+    }
+
     /// Fills `exception` from `error_instance`, remapping stack frames through source maps.
     /// `source_code` receives the text that `exception`'s source lines borrow.
     pub(crate) fn remap_zig_exception<'a>(
@@ -6926,33 +6989,12 @@ impl VirtualMachine {
                     // Avoid printing "export default 'native'"
                     break 'code bun_core::Utf8Bytes::EMPTY;
                 }
-                // What lies on the disk under the name of a module that is compiled into an executable is not what runs.
-                let top_path = frames[top].source_url.to_utf8();
-                if crate::compiled_program::is_compiled_module(top_path.slice()) {
-                    if !crate::compiled_program::runs_in_place() {
-                        break 'code bun_core::Utf8Bytes::EMPTY;
-                    }
-                    let text = bun_sys::File::read_from(bun_sys::Fd::cwd(), top_path.slice());
-                    break 'code bun_core::Utf8Bytes::Owned(text.unwrap_or_default());
-                }
-                let mut log = bun_ast::Log::default();
-                let Ok(original_source) = bun_removable_features::call_removable_or!(
-                    RuntimeTranspiler,
-                    ReturnDefault,
-                    { break 'code bun_core::Utf8Bytes::EMPTY },
-                    VirtualMachine::fetch_without_on_load_plugins,
-                    self,
+                // If the source is gone, the frames still get remapped below.
+                self.source_text_for_display(
                     global,
                     &frames[top].source_url,
-                    &bun_core::String::EMPTY,
-                    &mut log,
-                    FetchFlags::PrintSource,
-                ) else {
-                    // Source is gone; the frames still get remapped below.
-                    break 'code bun_core::Utf8Bytes::EMPTY;
-                };
-                *must_reset_parser_arena_later = true;
-                original_source.source_code.into_utf8()
+                    must_reset_parser_arena_later,
+                )
             };
             *source_code = code;
             let code: &'a [u8] = source_code.slice();
@@ -7257,11 +7299,8 @@ impl VirtualMachine {
             bun_core::fmt::digit_count(n) as u64
         }
 
-        // This is a longer number than necessary because we don't handle this
-        // case very well — at the very least, we shouldn't dump 100 KB of
-        // minified code into your terminal.
         const MAX_LINE_LENGTH_WITH_DIVOT: usize = 512;
-        const MAX_LINE_LENGTH: usize = 1024;
+        const MAX_LINE_LENGTH: usize = MAX_SOURCE_LINE_LENGTH;
 
         // SAFETY: `source_lines_numbers[..source_lines_len]` is the
         // caller-owned buffer (see ZigStackTrace contract).

@@ -76,6 +76,94 @@ describe("bundler", () => {
     },
     run: { stdout: "true true true" },
   });
+  // A top-level await that nothing can settle ends the executable like Node: a warning and exit code 13, once
+  // what keeps the event loop alive is done. https://github.com/oven-sh/bun/issues/14951
+  const unsettled =
+    /^Warning: Detected unsettled top-level await at file:\/\/\S+\/out:\d+\r?\nawait new Promise\(\(\) => \{\}\);\r?\n\^$/;
+  itBundled("compile/UnsettledTopLevelAwait", {
+    compile: true,
+    files: {
+      "/entry.mjs": /* js */ `
+        console.log("before");
+        await new Promise(() => {});
+        console.log("after");
+      `,
+    },
+    run: { stdout: "before", stderr: unsettled, exitCode: 13 },
+  });
+  itBundled("compile/UnsettledTopLevelAwaitBehindATimer", {
+    compile: true,
+    files: {
+      "/entry.mjs": /* js */ `
+        console.log("before");
+        setTimeout(() => console.log("timer"), 50);
+        await new Promise(() => {});
+        console.log("after");
+      `,
+    },
+    run: { stdout: "before\ntimer", stderr: unsettled, exitCode: 13 },
+  });
+  itBundled("compile/TopLevelAwaitThatATimerSettles", {
+    compile: true,
+    files: {
+      "/entry.mjs": /* js */ `
+        console.log("before");
+        await new Promise(resolve => setTimeout(resolve, 50));
+        console.log("after");
+      `,
+    },
+    run: { stdout: "before\nafter", stderr: "" },
+  });
+  // The same in an ahead-of-time executable. It has no record of where a module is suspended, so the warning has no
+  // line, and it names the entry point for an await in a module that the entry point imports.
+  itBundled("compile/aot/UnsettledTopLevelAwait", {
+    target: "bun",
+    compile: { aot: true },
+    files: {
+      "/entry.mjs": /* js */ `
+        console.log("before");
+        setTimeout(() => console.log("timer"), 50);
+        await new Promise(() => {});
+        console.log("after");
+      `,
+    },
+    run: {
+      stdout: "before\ntimer",
+      stderr: /^Warning: Detected unsettled top-level await at file:\/\/\S+\/entry\.mjs$/,
+      exitCode: 13,
+    },
+  });
+  itBundled("compile/aot/UnsettledTopLevelAwaitInAnImport", {
+    target: "bun",
+    compile: { aot: true },
+    files: {
+      "/entry.mjs": /* js */ `
+        import "./dependency.mjs";
+        console.log("after");
+      `,
+      "/dependency.mjs": /* js */ `
+        console.log("before");
+        await new Promise(() => {});
+      `,
+    },
+    run: {
+      stdout: "before",
+      stderr: /^Warning: Detected unsettled top-level await in file:\/\/\S+\/entry\.mjs or a module that it imports$/,
+      exitCode: 13,
+    },
+  });
+  itBundled("compile/aot/TopLevelAwaitThatATimerSettles", {
+    target: "bun",
+    compile: { aot: true },
+    files: {
+      "/entry.mjs": /* js */ `
+        console.log("before");
+        await new Promise(resolve => setTimeout(resolve, 50));
+        console.log("after");
+      `,
+    },
+    run: { stdout: "before\nafter", stderr: "" },
+  });
   itBundled("compile/HelloWorldWithProcessVersionsBun", {
     compile: true,
     files: {

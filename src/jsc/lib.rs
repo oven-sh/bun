@@ -1172,6 +1172,8 @@ pub use self::runtime_transpiler_store::RuntimeTranspilerStore;
 pub mod web_worker;
 pub use self::web_worker::WebWorker;
 
+mod unsettled_top_level_await;
+
 // LAYERING: `Jest`/`TestScope`/`Expect`/`Snapshot` live in
 // `bun_runtime::test_runner` — a forward-dep on `bun_runtime`, which itself
 // depends on `bun_jsc`, so aliasing them here would be a hard cycle. Callers
@@ -1189,7 +1191,7 @@ pub mod job;
 pub use self::event_loop::{
     AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask,
     DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, MiniEventLoop,
-    PosixSignalTask, Stopped, Task, WorkPool, WorkPoolTask,
+    PosixSignalTask, Stopped, Task, Unsettled, WhenIdle, WorkPool, WorkPoolTask,
 };
 pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread, Protected};
 #[cfg(unix)]

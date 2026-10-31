@@ -503,7 +503,7 @@ impl Expect {
             global_this
                 .bun_vm()
                 .as_mut()
-                .wait_for_promise(promise)
+                .wait_for_promise(promise, bun_jsc::WhenIdle::KeepWaiting)
                 .map_err(|stopped| stopped.throw(global_this))?;
 
                     let new_value = promise.result(vm);
@@ -830,7 +830,7 @@ impl Expect {
                 scope.apply(vm);
                 return Err(err);
             }
-            let waited = vm.wait_for_promise(promise);
+            let waited = vm.wait_for_promise(promise, bun_jsc::WhenIdle::KeepWaiting);
             scope.apply(vm);
             waited.map_err(|stopped| stopped.throw(global_this))?;
             match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
@@ -1365,7 +1365,7 @@ impl Expect {
             global_this
                 .bun_vm()
                 .as_mut()
-                .wait_for_promise(promise)
+                .wait_for_promise(promise, bun_jsc::WhenIdle::KeepWaiting)
                 .map_err(|stopped| stopped.throw(global_this))?;
 
             result = promise.result(vm);

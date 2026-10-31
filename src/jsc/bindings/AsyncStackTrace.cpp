@@ -177,23 +177,6 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return nullptr;
     };
 
-    auto computeBytecodeIndex = [&](JSC::CodeBlock* codeBlock, JSC::JSAsyncFunctionGenerator* generator) -> JSC::BytecodeIndex {
-        JSC::BytecodeIndex bytecodeIndex(0);
-        JSC::JSValue stateValue = generator->internalField(JSC::JSAsyncFunctionGenerator::Field::State).get();
-        if (stateValue.isInt32()) {
-            int32_t state = stateValue.asInt32();
-            size_t numberOfJumpTables = codeBlock->numberOfUnlinkedSwitchJumpTables();
-            if (state > 0 && numberOfJumpTables > 0) {
-                size_t lastTableIndex = numberOfJumpTables - 1;
-                const JSC::UnlinkedSimpleJumpTable& jumpTable = codeBlock->unlinkedSwitchJumpTable(lastTableIndex);
-                int32_t offset = jumpTable.offsetForValue(state);
-                if (offset)
-                    bytecodeIndex = JSC::BytecodeIndex(offset);
-            }
-        }
-        return bytecodeIndex;
-    };
-
     auto appendFrame = [&](JSC::JSAsyncFunctionGenerator* generator) {
         JSC::JSFunction* asyncFunction = nullptr;
         if (!dynamicCastValue(generator->next(), &asyncFunction))
@@ -204,7 +187,7 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         if (!executable)
             return;
         if (JSC::CodeBlock* codeBlock = executable->codeBlockForCall()) {
-            JSC::BytecodeIndex bytecodeIndex = computeBytecodeIndex(codeBlock, generator);
+            JSC::BytecodeIndex bytecodeIndex = Bun::bytecodeIndexOfSuspension(codeBlock, generator->internalField(JSC::JSAsyncFunctionGenerator::Field::State).get());
             results.append(JSC::StackFrame(vm, owner, asyncFunction, codeBlock, bytecodeIndex, /* isAsyncFrame */ true));
         } else {
             results.append(JSC::StackFrame(vm, owner, asyncFunction, /* isAsyncFrame */ true));
@@ -219,6 +202,23 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
             break;
         gen = getAwaitingGenerator(returnPromise);
     }
+}
+
+JSC::BytecodeIndex Bun::bytecodeIndexOfSuspension(JSC::CodeBlock* codeBlock, JSC::JSValue stateValue)
+{
+    JSC::BytecodeIndex bytecodeIndex(0);
+    if (stateValue.isInt32()) {
+        int32_t state = stateValue.asInt32();
+        size_t numberOfJumpTables = codeBlock->numberOfUnlinkedSwitchJumpTables();
+        if (state > 0 && numberOfJumpTables > 0) {
+            size_t lastTableIndex = numberOfJumpTables - 1;
+            const JSC::UnlinkedSimpleJumpTable& jumpTable = codeBlock->unlinkedSwitchJumpTable(lastTableIndex);
+            int32_t offset = jumpTable.offsetForValue(state);
+            if (offset)
+                bytecodeIndex = JSC::BytecodeIndex(offset);
+        }
+    }
+    return bytecodeIndex;
 }
 
 extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue errorValue, JSC::JSPromise* promise)

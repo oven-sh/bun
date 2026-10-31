@@ -17,7 +17,10 @@ if (Bun.isMainThread) {
   await run("a name", { name: "the name" });
   await run("a module", { type: "module" });
   await run("smol", { smol: true });
+  // A worker made with ref: false keeps no process alive, so an interval does while this waits for it.
+  const whileItRuns = setInterval(() => {}, 1000);
   await run("no ref", { ref: false });
+  clearInterval(whileItRuns);
   await run("env", { env: { GIVEN: "given" } });
   await run("argv", { argv: ["a", "b"] });
   await run("everything", { name: "n", type: "module", smol: true, env: { GIVEN: "g" }, argv: ["x"] });

@@ -944,6 +944,20 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(1);
     });
 
+    // Serial: on a build that polls for ever here, the runner ends the child of a serial test that times out.
+    test.serial(
+      "-e with a top-level await that nothing can settle writes to stderr and exits with code 1",
+      async () => {
+        const { stdout, stderr, exitCode } = await runReplWith([
+          "-e",
+          "console.log('before'); await new Promise(() => {})",
+        ]);
+        expect(stdout).toBe("before\n");
+        expect(stderr).toMatch(/^error: A promise never settled, and nothing is left to wait for\.\n/);
+        expect(exitCode).toBe(1);
+      },
+    );
+
     test("-e preserves process.exitCode set by the script", async () => {
       const { stdout, stderr, exitCode } = await runReplWith(["-e", "process.exitCode = 42"]);
       expect(stdout).toBe("");

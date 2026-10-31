@@ -758,6 +758,7 @@ fn generate_entry_point(_vm: &VirtualMachine, watch: bool, entry_path: &[u8]) ->
 /// Error mapping: resolver `Failure` returns the resolver error,
 /// `Pending`/`NotFound` returns `error.ModuleNotFound`,
 /// `JSModuleLoader.import` throwing returns a rejected promise.
+/// A preload that nothing can settle anymore returns `error.UnsettledPreload`.
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.
@@ -894,9 +895,29 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         let _protected = JSValue::from_cell(promise).protected();
 
         // ── wait ────────────────────────────────────────────────────────
+        // Under --watch and --hot the wait polls on, as the wait for the entry point does there.
+        // SAFETY: per fn contract.
+        let when_idle = if unsafe { &*vm }.is_watcher_enabled() {
+            bun_jsc::WhenIdle::KeepWaiting
+        } else {
+            bun_jsc::WhenIdle::GiveUp
+        };
         // SAFETY: per fn contract — short-lived `&mut *vm`; `promise` is a live
         // protected JSC heap cell.
-        let _ = unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise)) };
+        let waited = unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise), when_idle) };
+        if waited == Err(bun_jsc::Unsettled::Idle) {
+            // Nothing is left that could settle this preload, so nothing behind it can load: an error, like a preload that is not found.
+            // SAFETY: per fn contract.
+            let report = unsafe {
+                (*vm).describe_unsettled_module_graph(module_name.to_utf8().slice(), b"")
+            };
+            // SAFETY: `vm.log` was set to a fresh leaked `Box<Log>` by `VirtualMachine::init`.
+            if let Some(log) = unsafe { &*vm }.log {
+                // SAFETY: `log` is the unique per-VM `Box<Log>`.
+                unsafe { &mut *log.as_ptr() }.add_error(None, bun_ast::Loc::EMPTY, report);
+            }
+            return Err(bun_jsc::CrateError::UnsettledPreload);
+        }
 
         // SAFETY: `promise` is a live (still-protected) JSC heap cell.
         if unsafe { &*promise }.status() == PromiseStatus::Rejected {

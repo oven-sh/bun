@@ -3050,7 +3050,10 @@ impl RunCommand {
         // `read_to_end_into` is the cursor-relative streaming reader
         // (stdin is a pipe/tty, not seekable; `read_to_end` would `pread(0)`).
         let mut list: Vec<u8> = Vec::new();
-        if bun_sys::File::stdin().read_to_end_into(&mut list).is_err() {
+        if bun_sys::File::borrow(&Fd::stdin())
+            .read_to_end_into(&mut list)
+            .is_err()
+        {
             return Ok(false);
         }
         ctx.runtime_options.eval.script = list.leak();

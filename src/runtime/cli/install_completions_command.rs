@@ -186,7 +186,8 @@ impl InstallCompletionsCommand {
 
         let mut cwd_buf = bun_paths::path_buffer_pool::get();
 
-        let stdout = File::stdout();
+        let stdout_fd = bun_sys::Fd::stdout();
+        let stdout = File::borrow(&stdout_fd);
 
         let shell = env_var::SHELL
             .platform_get()
@@ -199,7 +200,7 @@ impl InstallCompletionsCommand {
                 if fail_exit_code == 1 && !bun_sys::isatty(stdout.handle) {
                     let completions = shell.completions();
                     if !completions.is_empty() {
-                        return Self::write_and_exit(&stdout, completions);
+                        return Self::write_and_exit(stdout, completions);
                     }
                 }
 
@@ -241,7 +242,7 @@ impl InstallCompletionsCommand {
             if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false)
                 && !bun_sys::isatty(stdout.handle)
             {
-                return Self::write_and_exit(&stdout, shell.completions());
+                return Self::write_and_exit(stdout, shell.completions());
             }
 
             let mut completions_dir: &[u8];

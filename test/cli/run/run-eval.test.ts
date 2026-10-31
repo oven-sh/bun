@@ -348,3 +348,32 @@ test("uncaught error from a CommonJS-sniffed stdin entry reports and exits 1", a
   expect(stdout).toBe("");
   expect(exitCode).toBe(1);
 });
+
+// `bun run -` reads the script from fd 0 and must leave it open: it is the stdin of the script.
+test.concurrent.skipIf(isWindows)("bun run - leaves fd 0 open", async () => {
+  using dir = tempDir("run-stdin-fd0", {
+    "script.js": `
+      const fs = require("node:fs");
+      let fd0;
+      try {
+        const stdin = fs.fstatSync(0);
+        const script = fs.statSync(process.argv[2]);
+        fd0 = stdin.dev === script.dev && stdin.ino === script.ino ? "the script" : "another descriptor";
+      } catch (e) {
+        fd0 = e.code;
+      }
+      console.log("fd 0 is " + fd0);
+    `,
+  });
+  const script = join(String(dir), "script.js");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "-", script],
+    env: bunEnv,
+    stdin: Bun.file(script),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "fd 0 is the script\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});

@@ -996,11 +996,6 @@ impl Fd {
     }
 
     /// Whether this is the process's stdin/stdout/stderr.
-    #[cfg(not(windows))]
-    #[inline]
-    pub const fn is_stdio(self) -> bool {
-        matches!(self.0, 0..=2)
-    }
     #[cfg(windows)]
     pub fn is_stdio(self) -> bool {
         // Cache check first (matches `to_uv_index`): the cache reflects what the

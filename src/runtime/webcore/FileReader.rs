@@ -96,6 +96,9 @@ pub(crate) enum Lazy {
 
 pub(crate) struct OpenedFileBlob {
     pub(crate) fd: Fd,
+    /// `fd` is the descriptor that the caller named (its stdin, stdout or stderr), not one opened here: the reader leaves it open.
+    #[cfg(not(windows))]
+    pub(crate) borrowed: bool,
     pub(crate) pollable: bool,
     pub(crate) nonblocking: bool,
     #[cfg(not(windows))]
@@ -106,6 +109,8 @@ impl Default for OpenedFileBlob {
     fn default() -> Self {
         Self {
             fd: Fd::INVALID,
+            #[cfg(not(windows))]
+            borrowed: false,
             pollable: false,
             nonblocking: true,
             #[cfg(not(windows))]
@@ -201,14 +206,18 @@ impl Lazy {
             let stat: sys::Stat = match sys::fstat(fd) {
                 Ok(result) => result,
                 Err(err) => {
-                    fd.close();
+                    if !is_callers_fd(file, fd) {
+                        fd.close();
+                    }
                     return Err(err);
                 }
             };
 
             let mode = stat.st_mode as _;
             if sys::S::ISDIR(mode) {
-                aio::Closer::close(fd, ());
+                if !is_callers_fd(file, fd) {
+                    aio::Closer::close(fd, ());
+                }
                 return Err(sys::Error::from_code(sys::Errno::EISDIR, sys::Tag::fstat));
             }
 
@@ -244,9 +253,19 @@ impl Lazy {
         }
 
         this.fd = fd;
+        #[cfg(not(windows))]
+        {
+            this.borrowed = is_callers_fd(file, fd);
+        }
 
         Ok(this)
     }
+}
+
+/// Whether `fd` is the descriptor that `file` names, and not one that `open_file_blob` opened for the reader.
+#[cfg(not(windows))]
+fn is_callers_fd(file: &blob::store::File, fd: Fd) -> bool {
+    matches!(&file.pathlike, PathOrFileDescriptor::Fd(pl_fd) if *pl_fd == fd)
 }
 
 // BufferedReader vtable parent: wires the
@@ -341,6 +360,9 @@ impl FileReader {
                                     .flags
                                     .set(PosixFlags::NONBLOCKING, opened.nonblocking);
                                 self.reader().flags.set(PosixFlags::POLLABLE, pollable);
+                                self.reader()
+                                    .flags
+                                    .set(PosixFlags::BORROWED_FD, opened.borrowed);
                             }
                             #[cfg(windows)]
                             {

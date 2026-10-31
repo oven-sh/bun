@@ -700,6 +700,35 @@ describe.concurrent("Bun REPL", () => {
     });
   });
 
+  // The REPL reads fd 0 itself, and must leave it open: the line that it has just read looks at fd 0.
+  describe.skipIf(isWindows)("stdin", () => {
+    test("fd 0 is open while a line runs", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        `(() => { try { require("node:fs").fstatSync(0); return "open"; } catch (e) { return e.code; } })()`,
+        // A closed fd 0 would be the number of the next descriptor.
+        `require("node:fs").openSync(process.execPath, "r") > 2`,
+        ".exit",
+      ]);
+      expect(outputs).toEqual(['"open"', "true"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    // The program closes fd 0 and opens a file there: the REPL reads its next line from that file.
+    test("an fd 0 that the program reopened is read and left open", async () => {
+      using dir = tempDir("repl-reopened-stdin", {
+        "next-line.txt": `require("node:fs").fstatSync(0).ino === require("node:fs").statSync("next-line.txt").ino\n`,
+      });
+      const { outputs, stderr, exitCode } = await runRepl(
+        [`(require("node:fs").closeSync(0), require("node:fs").openSync("next-line.txt", "r"))`],
+        { cwd: String(dir) },
+      );
+      expect(outputs).toEqual(["0", "true"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("global objects", () => {
     test("has Bun, console, Buffer, process and the CommonJS module globals", async () => {
       const { outputs, stderr, exitCode } = await runRepl([

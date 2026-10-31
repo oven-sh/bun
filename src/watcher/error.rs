@@ -1,7 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
-    #[error("KQueueError")]
-    KQueueError,
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
     #[cfg(windows)]
@@ -13,7 +11,6 @@ impl Error {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
-            Self::KQueueError => "KQueueError",
             Self::Sys(e) => <&'static str>::from(e),
             #[cfg(windows)]
             Self::Windows(e) => <&'static str>::from(e),

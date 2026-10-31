@@ -118,6 +118,7 @@ fn call_exit_handler(
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 pub struct Process {
     pub pid: PidT,
+    /// `Fd::INVALID.native()` when the child has no pidfd.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) pidfd: PidFdType,
     pub status: Status,
@@ -287,7 +288,7 @@ impl Process {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             pid: posix.pid,
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            pidfd: posix.pidfd.unwrap_or(0),
+            pidfd: posix.pidfd.unwrap_or(Fd::INVALID.native()),
             js_poster: event_loop.js_poster(),
             event_loop,
             poller: Poller::Detached,
@@ -478,6 +479,15 @@ impl Process {
                 self.ref_();
                 WaiterThread::append(self);
                 return Ok(());
+            }
+
+            // A child that was reaped before `pidfd_open` ran has no pidfd (a process that ignores SIGCHLD).
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if self.pidfd == Fd::INVALID.native() {
+                return Err(bun_sys::Error::from_code(
+                    bun_sys::E::ESRCH,
+                    bun_sys::Tag::pidfd_open,
+                ));
             }
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -694,7 +704,7 @@ impl Process {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             use bun_sys::FdExt as _;
-            if self.pidfd != Fd::INVALID.native() && self.pidfd > 0 {
+            if self.pidfd != Fd::INVALID.native() {
                 Fd::from_native(self.pidfd).close();
                 self.pidfd = Fd::INVALID.native();
             }

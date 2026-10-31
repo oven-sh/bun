@@ -8786,6 +8786,88 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         1 problem"
       `);
     });
+
+    /** Lints input.js as standard input next to `others`, with a config that turns on the rule of their plugin.mjs. */
+    async function lintInput(others: Record<string, string>) {
+      using dir = tempDir("bun-lint-stdin-fd0", {
+        ".oxlintrc.json": JSON.stringify({
+          categories: { correctness: "off" },
+          jsPlugins: ["./plugin.mjs"],
+          rules: { "view/fd0": "error" },
+        }),
+        "input.js": "a;\n",
+        ...others,
+      });
+      await using proc = spawn({
+        cmd: [...command, "--stdin", "-f", "unix"],
+        env,
+        cwd: String(dir),
+        stdin: Bun.file(join(String(dir), "input.js")),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    // The rule runs in the linter itself, after it has read the text from fd 0. A JSON config starts no other process.
+    test.skipIf(isWindows)("leaves fd 0 open", async () => {
+      const { stdout, stderr, exitCode } = await lintInput({
+        "plugin.mjs": `
+          import fs from "node:fs";
+          function fd0() {
+            try {
+              const stdin = fs.fstatSync(0);
+              const input = fs.statSync("input.js");
+              return stdin.dev === input.dev && stdin.ino === input.ino ? "the input" : "another descriptor";
+            } catch (e) {
+              return e.code;
+            }
+          }
+          const create = context => ({ Program: node => context.report({ node, message: "fd 0 is " + fd0() }) });
+          export default { meta: { name: "view" }, rules: { fd0: { create } } };
+        `,
+      });
+      expect({ stdout, stderr }).toEqual({
+        stdout: "<text>:1:1: fd 0 is the input [Error/view(fd0)]\n\n1 problem\n",
+        stderr: "",
+      });
+      expect(exitCode).toBe(1);
+    });
+
+    // The plugin is loaded before the text is read. It closes fd 0 and opens a file there, which the linter then reads.
+    test.skipIf(isWindows)("reads an fd 0 that a plugin reopened and leaves it open", async () => {
+      const { stdout, stderr, exitCode } = await lintInput({
+        "plugin.mjs": `
+          import fs from "node:fs";
+          fs.closeSync(0);
+          const reopened = fs.openSync("reopened.js", "r");
+          function fd0() {
+            try {
+              const stdin = fs.fstatSync(0);
+              const file = fs.statSync("reopened.js");
+              return stdin.dev === file.dev && stdin.ino === file.ino ? "the reopened file" : "another descriptor";
+            } catch (e) {
+              return e.code;
+            }
+          }
+          const create = context => ({
+            Program: node =>
+              context.report({
+                node,
+                message: "fd " + reopened + " gave " + JSON.stringify(context.sourceCode.text) + " and is " + fd0(),
+              }),
+          });
+          export default { meta: { name: "view" }, rules: { fd0: { create } } };
+        `,
+        "reopened.js": "b;\n",
+      });
+      expect({ stdout, stderr }).toEqual({
+        stdout: '<text>:1:1: fd 0 gave "b;\\n" and is the reopened file [Error/view(fd0)]\n\n1 problem\n',
+        stderr: "",
+      });
+      expect(exitCode).toBe(1);
+    });
   });
 
   describe("formats", () => {
@@ -12009,6 +12091,27 @@ describe.concurrent("what bun lint gets from the Bun process", () => {
     const all = { "eslint.config.mjs": config, "a.js": "debugger;\n" };
     const result = await bun(all, ["lint", "-f", "unix", "a.js"], { THE_RULE: "no-debugger" });
     expect(result.stdout).toStartWith("<dir>/a.js:1:1: Unexpected 'debugger' statement.");
+  });
+
+  // That process reads its program from fd 0, a pipe, and leaves it open. The config file runs after that.
+  test.skipIf(isWindows)("fd 0 stays open in the process that runs the config file", async () => {
+    const config = `
+      const fs = require("node:fs");
+      let fd0;
+      try {
+        // The event loop's kqueue also reports as a FIFO, but it can't be read. The pipe is at its end: a read gives 0.
+        fd0 = fs.fstatSync(0).isFIFO() && fs.readSync(0, Buffer.alloc(1)) === 0 ? "the pipe" : "another descriptor";
+      } catch (e) {
+        fd0 = e.code;
+      }
+      const message = "fd 0 is " + fd0;
+      module.exports = [{ rules: { "no-restricted-syntax": ["error", { selector: "Program", message }] } }];
+    `;
+    const result = await bun({ "eslint.config.js": config, "a.js": "a;\n" }, ["lint", "-f", "unix", "a.js"]);
+    expect(result).toEqual({
+      stdout: "<dir>/a.js:1:1: fd 0 is the pipe [Error/no-restricted-syntax]\n\n1 problem",
+      exitCode: 1,
+    });
   });
 
   test("ignores the project's bunfig.toml settings for other commands", async () => {

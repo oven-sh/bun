@@ -2330,7 +2330,7 @@ pub mod parse_worker {
             matches!(task.contents_or_fd, ContentsOrFd::Fd { file, .. } if !file.is_valid());
         let will_close_file_descriptor = opened_own_fd
             && entry.fd.is_valid()
-            && entry.fd.stdio_tag().is_none()
+            && (cfg!(not(windows)) || entry.fd.stdio_tag().is_none())
             && worker_ctx.bun_watcher.is_none();
         if will_close_file_descriptor {
             let _ = entry.close_fd();
@@ -2343,7 +2343,8 @@ pub mod parse_worker {
                 file: entry.fd,
                 dir: Fd::INVALID,
             };
-            task.opened_own_fd = opened_own_fd && entry.fd.stdio_tag().is_none();
+            task.opened_own_fd =
+                opened_own_fd && (cfg!(not(windows)) || entry.fd.stdio_tag().is_none());
         }
         *step = Step::Parse;
 

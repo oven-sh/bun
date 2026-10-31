@@ -2072,9 +2072,8 @@ describe.skipIf(!isPosix)("stdio source fds that are also slot numbers", () => {
 });
 
 // A descriptor gets the lowest free number, which is 0, 1 or 2 once user code has closed one of
-// them. bun never closes its own descriptor at such a number, and a child that inherits the slot
-// gets that descriptor as its stdio. So a socketpair, memfd, pidfd or eventfd that bun creates
-// (a "pipe" slot, a Blob stdin, the exit watcher) must not take one.
+// them. A child that inherits the slot gets that descriptor as its stdio. So a socketpair, memfd,
+// pidfd or eventfd that bun creates (a "pipe" slot, a Blob stdin, the exit watcher) must not take one.
 describe.skipIf(!isPosix)("a spawn while fd 0, 1 or 2 is closed", () => {
   const prelude = `
     const fs = require("node:fs");
@@ -2325,6 +2324,48 @@ describe.skipIf(!isPosix)("a spawn while fd 0, 1 or 2 is closed", () => {
       const line = (stdout + "\n" + stderr).match(/^REPORT (.*)$/m)?.[1];
       expect({ report: line ? JSON.parse(line) : { stdout, stderr }, exitCode }).toEqual({
         report: { atTheLimit: true, outcome: "exit 0" },
+        exitCode: 0,
+      });
+    },
+  );
+
+  // The waiter thread that BUN_FEATURE_FLAG_FORCE_WAITER_THREAD forces has no pidfd.
+  it.concurrent.skipIf(!isLinux || Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD)).each([0, 1, 2])(
+    "at the descriptor limit the pidfd that stays at the closed fd %d is closed when the child has exited",
+    async fd => {
+      // The pidfd cannot move, as above. bun opened it, so bun closes it whatever its number is.
+      const fixture = `
+        ${prelude}
+        const spawnTrue = () => Bun.spawn({ cmd: ["true"], stdio: [nul, nul, nul] });
+        // Once while numbers are free: a debug build reads a builtin module from disk on first use.
+        await spawnTrue().exited;
+        at(nul);
+        const held = [];
+        for (;;) {
+          try {
+            held.push(fs.openSync("/dev/null", "r"));
+          } catch {
+            break;
+          }
+        }
+        fs.closeSync(${fd});
+        const proc = spawnTrue();
+        const link = at(${fd});
+        const exitCode = await proc.exited;
+        const after = at(${fd});
+        // LeakSanitizer opens /proc files when the process exits, and aborts when it cannot.
+        for (const fd of held) fs.closeSync(fd);
+        report(${fd === 2 ? 1 : 2}, { during: link.includes("pidfd") ? "pidfd" : link, exitCode, after });
+      `;
+      await using proc = spawn({
+        cmd: ["sh", "-c", 'ulimit -n 64 && exec "$@"', "sh", bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const line = (stdout + "\n" + stderr).match(/^REPORT (.*)$/m)?.[1];
+      expect({ report: line ? JSON.parse(line) : { stdout, stderr }, exitCode }).toEqual({
+        report: { during: "pidfd", exitCode: 0, after: "closed" },
         exitCode: 0,
       });
     },

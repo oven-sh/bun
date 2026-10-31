@@ -1,9 +1,6 @@
 //! `bun.sys.File` — high-level file handle.
 //!
-//! Owns the descriptor; closes it on Drop (skipping `Fd::INVALID` and stdio
-//! so `File::stdin()`/`stdout()`/`stderr()` and default-constructed handles
-//! are safe to drop). Use [`File::into_raw`] to hand the fd off,
-//! [`File::borrow`] for a non-owning `&File` view of someone else's fd.
+//! Owns the descriptor and closes it on Drop, whatever its number: POSIX skips only `Fd::INVALID`, Windows also skips the process's stdio handles. Use [`File::into_raw`] to hand the fd off, and [`File::borrow`] for a non-owning `&File` view of someone else's fd, such as the process's stdio.
 //! All methods preserve OS errno via [`crate::Maybe`].
 
 use super::*;
@@ -16,7 +13,13 @@ pub struct File {
 impl Drop for File {
     #[inline]
     fn drop(&mut self) {
-        if self.handle != Fd::INVALID && !self.handle.is_stdio() {
+        #[cfg(all(unix, debug_assertions))]
+        crate::fd::startup_stdio::assert_not_closing(self.handle);
+        if self.handle != Fd::INVALID {
+            #[cfg(windows)]
+            if self.handle.is_stdio() {
+                return;
+            }
             let _ = close(self.handle);
         }
     }
@@ -59,19 +62,6 @@ impl File {
     pub fn borrow(fd: &Fd) -> &File {
         // SAFETY: `File` is `#[repr(transparent)]` over `Fd`.
         unsafe { &*(core::ptr::from_ref(fd).cast::<File>()) }
-    }
-    /// `bun.sys.File.from(.stdin())` — wrap the cached stdin fd. Do not close.
-    #[inline]
-    pub fn stdin() -> Self {
-        Self {
-            handle: Fd::stdin(),
-        }
-    }
-    #[inline]
-    pub fn stdout() -> Self {
-        Self {
-            handle: Fd::stdout(),
-        }
     }
 
     pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Self> {
@@ -310,7 +300,13 @@ impl File {
     /// observable. Skips the same sentinels as `Drop`.
     pub fn close(self) -> Maybe<()> {
         let fd = self.into_raw();
-        if fd == Fd::INVALID || fd.is_stdio() {
+        #[cfg(all(unix, debug_assertions))]
+        crate::fd::startup_stdio::assert_not_closing(fd);
+        if fd == Fd::INVALID {
+            return Ok(());
+        }
+        #[cfg(windows)]
+        if fd.is_stdio() {
             return Ok(());
         }
         close(fd)
@@ -449,16 +445,15 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn dropping_stdio_is_safe() {
+    fn borrowed_stdio_stays_open() {
         let _g = FD_TEST_LOCK.lock();
-        // `File::stdin()` / `stdout()` wrap process-shared descriptors that
-        // the caller does not own. Dropping the wrapper must not tear down the
-        // test harness's output.
-        for _ in 0..16 {
-            let _ = File::stdin();
-            let _ = File::stdout();
+        let stdout = Fd::stdout();
+        {
+            let view: &File = File::borrow(&stdout);
+            assert_eq!(view.fd(), stdout);
+            assert!(view.stat().is_ok());
         }
-        assert!(fstat(Fd::stdout()).is_ok());
+        assert!(fstat(stdout).is_ok());
     }
 
     #[test]

@@ -9,8 +9,8 @@ import path from "node:path";
 // printer stays, and that imports `_Unwind_Backtrace` from libgcc_s.so.1. musl and FreeBSD link libgcc_s only if it is
 // needed, so `verify-binary` fails there, far from the line that caused it.
 //
-// Print with `bun_core::Output`, or `bun_sys::File::stdout().write_all(..)` where that is not set up. End the process
-// with `bun_core::Global::exit` or `std::process::abort`.
+// Print with `bun_core::Output`, or `bun_sys::File::borrow(&Fd::stdout()).write_all(..)` where that is not set up. End
+// the process with `bun_core::Global::exit` or `std::process::abort`.
 test("Rust sources linked into Bun do not use the streams of the standard library", async () => {
   const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
   const banned =

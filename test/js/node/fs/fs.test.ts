@@ -13,6 +13,7 @@ import {
   isMacOS,
   isPosix,
   isWindows,
+  libcPathForDlopen,
   tempDir,
   tempDirWithFiles,
   tmpdirSync,
@@ -7634,6 +7635,414 @@ describe("fs.close on stdio descriptors", () => {
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe("EBADF");
     expect(exitCode).toBe(0);
+  });
+
+  // The kernel gives a new descriptor the lowest free number, which is N once fd N is closed.
+  describe("a descriptor opened while fd 0, 1 or 2 is closed is closed again by", () => {
+    // Not concurrent: a debug build needs about a second for each, and several times that next to other processes.
+    it.skipIf(isWindows).each([
+      ["node:fs sync operations", 11],
+      ["node:fs callback and promise operations", 12],
+      ["the module loader and Bun APIs", 14],
+      ["a stream and a writer, on the work pool", 2],
+    ])("%s", async (family, operations) => {
+      using dir = tempDir("fs-closed-stdio-slot", {});
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dir, "fs-closed-stdio-slot-fixture.js"), String(dir), family],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const written = join(String(dir), "result.json");
+      const result = existsSync(written) ? readFileSync(written, "utf8") : "";
+      const closedAgain = (fd: number) => ({ operations, leftOpen: {}, nextOpenSync: fd, secondCloseSync: "EBADF" });
+      // stderr is not compared: a build with assertions prints a stack trace for a close that fails with EBADF.
+      expect({ result: result && JSON.parse(result), stdout, exitCode }, stderr).toEqual({
+        result: { "fd 0": closedAgain(0), "fd 1": closedAgain(1), "fd 2": closedAgain(2) },
+        stdout: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  it.concurrent.skipIf(isWindows)("closeSync(2) allows redirect after a module was loaded", async () => {
+    using dir = tempDir("fs-close-stdio-redirect", {
+      "redirect-fixture.cjs": `
+        const fs = require("node:fs");
+        require("./loaded-before-close.cjs");
+        fs.writeSync(2, "PRE.");
+        fs.closeSync(2);
+        // The module loader opens this file on fd 2.
+        require("./loaded-after-close.cjs");
+        const fd = fs.openSync(process.argv[2], "w");
+        fs.writeSync(1, String(fd));
+        fs.writeSync(2, "POST.");
+      `,
+      "loaded-before-close.cjs": `module.exports = 1;`,
+      "loaded-after-close.cjs": `module.exports = 2;`,
+    });
+    const redirected = join(String(dir), "redirected.txt");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "redirect-fixture.cjs"), redirected],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      stdout,
+      stderr,
+      redirected: existsSync(redirected) && readFileSync(redirected, "utf8"),
+      exitCode,
+    }).toEqual({ stdout: "2", stderr: "PRE.", redirected: "POST.", exitCode: 0 });
+  });
+
+  // No fs.close() here: a file stream over a descriptor closes it at its end, as in node.
+  it.concurrent.skipIf(isWindows)("console.log does not reach a file written after a stream closed fd 1", async () => {
+    using dir = tempDir("fs-close-stdio-stream", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("node:fs");
+          const out = fs.createWriteStream(null, { fd: 1 });
+          out.end("report done\\n");
+          await new Promise((resolve, reject) => out.on("error", reject).on("close", resolve));
+          fs.writeFileSync("data.json", JSON.stringify({ ok: true }));
+          console.log("cleanup finished");
+        `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const written = join(String(dir), "data.json");
+    expect({ stdout, stderr, written: existsSync(written) && readFileSync(written, "utf8"), exitCode }).toEqual({
+      stdout: "report done\n",
+      stderr: "",
+      written: `{"ok":true}`,
+      exitCode: 0,
+    });
+  });
+
+  describe.skipIf(isWindows)("an operation that opens its own descriptor on a closed fd 0, 1 or 2", () => {
+    // Defines state(fd) in the child: "open", or the error code of fstat(), which is EBADF for a closed descriptor.
+    const state = `
+      const fs = require("node:fs");
+      const state = fd => {
+        try {
+          fs.fstatSync(fd);
+          return "open";
+        } catch (e) {
+          return e.code;
+        }
+      };
+    `;
+    async function run(dir: string, script: string, stdin: "ignore" | number = "ignore") {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", state + script],
+        env: bunEnv,
+        cwd: dir,
+        stdin,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    // usockets closes the socket that it was given with close(2): no close of node:fs or bun_sys made fd 0 free.
+    it.concurrent("closes it after Bun.listen({ fd: 0 }).stop() closed fd 0", async () => {
+      using dir = tempDir("fs-close-stdio-listen", {
+        "data.txt": "hello\n",
+        "loaded-before-close.cjs": "module.exports = 1;",
+        "loaded-after-close.cjs": "module.exports = 2;",
+      });
+      using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+      const result = await run(
+        String(dir),
+        `
+          // Each operation runs once before the close: its first use can open a descriptor that stays open.
+          fs.readFileSync("data.txt");
+          require("./loaded-before-close.cjs");
+          await Bun.file("data.txt").text();
+          const result = { listening: state(0) };
+          Bun.listen({ fd: 0, socket: { data() {} } }).stop();
+          result.stopped = state(0);
+          fs.readFileSync("data.txt");
+          result.afterReadFileSync = state(0);
+          require("./loaded-after-close.cjs");
+          result.afterRequire = state(0);
+          await Bun.file("data.txt").text();
+          result.afterBunFileText = state(0);
+          result.nextOpenSync = fs.openSync("data.txt", "r");
+          console.log(JSON.stringify(result));
+        `,
+        // The listening socket is fd 0 of the child.
+        (listener as typeof listener & { fd: number }).fd,
+      );
+      expect(result).toEqual({
+        stdout:
+          JSON.stringify({
+            listening: "open",
+            stopped: "EBADF",
+            afterReadFileSync: "EBADF",
+            afterRequire: "EBADF",
+            afterBunFileText: "EBADF",
+            nextOpenSync: 0,
+          }) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it.concurrent("closes it after close() from bun:ffi closed fd 1", async () => {
+      using dir = tempDir("fs-close-stdio-ffi", {
+        "data.txt": "hello\n",
+        "loaded-before-close.cjs": "module.exports = 1;",
+        "loaded-after-close.cjs": "module.exports = 2;",
+      });
+      const result = await run(
+        String(dir),
+        `
+          const libc = require("bun:ffi").dlopen(${JSON.stringify(libcPathForDlopen())}, {
+            close: { args: ["int"], returns: "int" },
+          });
+          fs.readFileSync("data.txt");
+          require("./loaded-before-close.cjs");
+          await Bun.file("data.txt").text();
+          const result = { close: libc.symbols.close(1), closed: state(1) };
+          // Unloaded, so that LeakSanitizer has nothing of dlopen() to look up when the child exits.
+          libc.close();
+          fs.readFileSync("data.txt");
+          result.afterReadFileSync = state(1);
+          require("./loaded-after-close.cjs");
+          result.afterRequire = state(1);
+          await Bun.file("data.txt").text();
+          result.afterBunFileText = state(1);
+          result.nextOpenSync = fs.openSync("data.txt", "r");
+          fs.writeSync(2, JSON.stringify(result));
+        `,
+      );
+      expect(result).toEqual({
+        stdout: "",
+        stderr: JSON.stringify({
+          close: 0,
+          closed: "EBADF",
+          afterReadFileSync: "EBADF",
+          afterRequire: "EBADF",
+          afterBunFileText: "EBADF",
+          nextOpenSync: 1,
+        }),
+        exitCode: 0,
+      });
+    });
+
+    it.concurrent("closes it when it fails", async () => {
+      using dir = tempDir("fs-close-stdio-errors", {
+        "directory/file.txt": "",
+        "syntax-error-before-close.cjs": "module.exports = ;",
+        "syntax-error-after-close.cjs": "module.exports = ;",
+      });
+      const result = await run(
+        String(dir),
+        `
+          const failure = fn => {
+            try {
+              fn();
+              return "no error";
+            } catch (e) {
+              return e.code ?? "threw";
+            }
+          };
+          const operations = {
+            "fs.readFileSync of a directory": () => fs.readFileSync("directory"),
+            "require() of a file with a syntax error": run => require("./syntax-error-" + run + ".cjs"),
+          };
+          for (const operation of Object.values(operations)) failure(() => operation("before-close"));
+          fs.closeSync(0);
+          const result = {};
+          for (const [name, operation] of Object.entries(operations)) {
+            result[name] = [failure(() => operation("after-close")), state(0)];
+            // Each operation starts with fd 0 free, also when the one before it left a descriptor there.
+            if (state(0) === "open") fs.closeSync(0);
+          }
+          console.log(JSON.stringify(result));
+        `,
+      );
+      expect(result).toEqual({
+        stdout:
+          JSON.stringify({
+            "fs.readFileSync of a directory": ["EISDIR", "EBADF"],
+            "require() of a file with a syntax error": ["threw", "EBADF"],
+          }) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // Linux only: on macOS close() waits for a read() that another thread has in progress on the descriptor.
+    it.concurrent.skipIf(!isLinux)(
+      "fails with EBADF when the program closes that number again, and the next one closes it",
+      async () => {
+        using dir = tempDir("fs-close-stdio-twice", { "data.txt": "hello\n" });
+        mkfifo(join(String(dir), "fifo"));
+        const { stdout, stderr, exitCode } = await run(
+          String(dir),
+          `
+            const readFile = path =>
+              new Promise(resolve => fs.readFile(path, (err, data) => resolve(err ? err.code : "" + data)));
+            await readFile("data.txt");
+            // With a writer open, fs.readFile gets its descriptor at once and waits in read().
+            const writer = fs.openSync("fifo", fs.constants.O_RDWR | fs.constants.O_NONBLOCK);
+            // JavaScriptCore opens /proc/self/statm when a collection is due, which would take fd 0 from fs.readFile.
+            Bun.gc(true);
+            fs.closeSync(0);
+            // The first exception in a build with assertions loads libgcc_s, which would take fd 0 from fs.readFile.
+            const result = { closed: state(0) };
+            const read = readFile("fifo");
+            const deadline = Date.now() + 10_000;
+            while (state(0) !== "open" && Date.now() < deadline) await Bun.sleep(1);
+            result.whileReading = state(0);
+            fs.closeSync(0);
+            fs.writeSync(writer, "payload");
+            fs.closeSync(writer);
+            result.read = await read;
+            result.afterwards = state(0);
+            // fd 0 is free once more, so the next fs.readFile gets its descriptor there too.
+            result.nextRead = await readFile("data.txt");
+            result.afterNextRead = state(0);
+            console.log(JSON.stringify(result));
+          `,
+        );
+        // stderr is not compared: a build with assertions prints a stack trace for a close that fails with EBADF.
+        expect({ stdout, exitCode }, stderr).toEqual({
+          stdout:
+            JSON.stringify({
+              closed: "EBADF",
+              whileReading: "open",
+              read: "EBADF",
+              afterwards: "EBADF",
+              nextRead: "hello\n",
+              afterNextRead: "EBADF",
+            }) + "\n",
+          exitCode: 0,
+        });
+      },
+    );
+  });
+
+  // Bun.stdin.stream() and process.stdin read fd 0 itself, so they must not close a number the program has reused.
+  describe.skipIf(isWindows)("a stream over stdin leaves fd 0 as the program left it", () => {
+    // A debug build reads builtin modules from disk on first use: that must not happen while fd 0 is free.
+    const warmUp = `
+      const fs = require("node:fs");
+      let threw;
+      for await (const _ of Bun.file(process.execPath).slice(0, 1).stream());
+      for (let i = 0; i < 8; i++) await fs.promises.stat(".");
+    `;
+    // A stream closes its descriptor on the work pool, which the stat calls go through: such a close has run by then.
+    const report = `
+      for (let i = 0; i < 8; i++) await fs.promises.stat(".");
+      let fd0;
+      try {
+        const stat = fs.fstatSync(0);
+        fd0 = stat.isDirectory() ? "directory" : stat.isFile() ? "file" : "other";
+      } catch (e) {
+        fd0 = e.code;
+      }
+      console.log(JSON.stringify({ threw, fd0, nextOpenSync: fs.openSync(process.execPath, "r") }));
+      process.exit(0);
+    `;
+    async function run(script: string, input?: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", warmUp + script + report],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      // Only a child that reads its stdin gets input: the others close fd 0 first, and the write would race that.
+      if (input !== undefined) {
+        proc.stdin.write(input);
+        await proc.stdin.flush();
+      }
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // Without a report the child did not reach its end: show what it printed.
+      return stdout.startsWith("{") ? { ...JSON.parse(stdout), stderr, exitCode } : { stdout, stderr, exitCode };
+    }
+
+    it.concurrent("reopened while the stream is open", async () => {
+      const result = await run(
+        `
+        const reader = Bun.stdin.stream().getReader();
+        await reader.read();
+        fs.closeSync(0);
+        const reopened = fs.openSync(process.execPath, "r");
+        await reader.cancel();
+        if (reopened !== 0) throw new Error("the reopened descriptor is " + reopened);
+      `,
+        "a\n",
+      );
+      expect(result).toEqual({ fd0: "file", nextOpenSync: expect.any(Number), stderr: "", exitCode: 0 });
+      expect(result.nextOpenSync).toBeGreaterThan(2);
+    });
+
+    it.concurrent.each([
+      ["Bun.stdin.stream()", `for await (const _ of Bun.stdin.stream());`],
+      [
+        "process.stdin",
+        `await new Promise((resolve, reject) => process.stdin.on("error", reject).on("close", resolve).resume());`,
+      ],
+    ])("reopened, and %s reads it to its end", async (_, read) => {
+      const result = await run(`
+        fs.closeSync(0);
+        const reopened = fs.openSync(${JSON.stringify(import.meta.path)}, "r");
+        ${read}
+        if (reopened !== 0) throw new Error("the reopened descriptor is " + reopened);
+      `);
+      expect(result).toEqual({ fd0: "file", nextOpenSync: expect.any(Number), stderr: "", exitCode: 0 });
+      expect(result.nextOpenSync).toBeGreaterThan(2);
+    });
+
+    it.concurrent("reopened as a directory", async () => {
+      const result = await run(`
+        fs.closeSync(0);
+        const reopened = fs.openSync(${JSON.stringify(import.meta.dir)}, "r");
+        try {
+          for await (const _ of Bun.stdin.stream());
+        } catch (e) {
+          threw = e.code;
+        }
+        if (reopened !== 0) throw new Error("the reopened descriptor is " + reopened);
+      `);
+      expect(result).toEqual({
+        threw: "EISDIR",
+        fd0: "directory",
+        nextOpenSync: expect.any(Number),
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(result.nextOpenSync).toBeGreaterThan(2);
+    });
+
+    // A close of the closed fd 0 only shows on stderr, and only in a build with assertions.
+    it.concurrent("closed", async () => {
+      expect(
+        await run(`
+          fs.closeSync(0);
+          try {
+            for await (const _ of Bun.stdin.stream());
+          } catch (e) {
+            threw = e.code;
+          }
+        `),
+      ).toEqual({ threw: "EBADF", fd0: "EBADF", nextOpenSync: 0, stderr: "", exitCode: 0 });
+    });
   });
 });
 

@@ -61,6 +61,92 @@ test.concurrent("reading a file stdin to the end leaves fd 0 open", async () => 
   expect(exitCode).toBe(0);
 });
 
+// On POSIX a stream over stdin reads the process's own fd 0, not a duplicate, so reaching its end must not close it.
+describe.skipIf(isWindows)("a stream that reads stdin to its end leaves fd 0 open", () => {
+  const script = (readToEnd: string) => `
+    const fs = require("node:fs");
+    const identity = fd => {
+      const stat = fs.fstatSync(fd);
+      return stat.dev + ":" + stat.ino;
+    };
+    const before = [identity(0), identity(1)];
+    const state = fd => {
+      try {
+        return identity(fd) === before[fd] ? "unchanged" : "another descriptor";
+      } catch (e) {
+        return e.code;
+      }
+    };
+    const stat = fs.fstatSync(0);
+    const stdin = stat.isFIFO() ? "pipe" : stat.isSocket() ? "socket" : stat.isFile() ? "file" : "other";
+    const chunks = [];
+    ${readToEnd}
+    const read = Buffer.concat(chunks).toString();
+    // A stream that closes its descriptor does so on the work pool, which each of these calls goes through.
+    for (let i = 0; i < 8; i++) await fs.promises.stat(".");
+    const fd0 = state(0);
+    const fd1 = state(1);
+    // A closed fd 0 is the number that the next descriptor gets.
+    const next = fs.openSync(process.execPath, "r");
+    console.log(JSON.stringify({ stdin, read, fd0, fd1, nextOpenSync: next > 2 ? "above fd 2" : next }));
+  `;
+
+  async function expectLeftOpen(proc: Bun.ReadableSubprocess, stdin: "pipe" | "socket" | "file") {
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const report = { stdin, read: "abc\n", fd0: "unchanged", fd1: "unchanged", nextOpenSync: "above fd 2" };
+    expect({ stdout, stderr }).toEqual({ stdout: JSON.stringify(report) + "\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  }
+
+  describe.each([
+    ["Bun.stdin.stream()", `for await (const chunk of Bun.stdin.stream()) chunks.push(chunk);`],
+    [
+      "process.stdin",
+      `await new Promise((resolve, reject) =>
+        process.stdin.on("data", chunk => chunks.push(chunk)).on("error", reject).on("close", resolve),
+      );`,
+    ],
+  ])("%s", (_, readToEnd) => {
+    // The "|" of a shell is an anonymous pipe.
+    test.concurrent("over a pipe", async () => {
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", 'echo abc | "$0" -e "$1"', bunExe(), script(readToEnd)],
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      await expectLeftOpen(proc, "pipe");
+    });
+
+    // For "pipe", Bun.spawn gives the child a socket.
+    test.concurrent("over a socket", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script(readToEnd)],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      proc.stdin.write("abc\n");
+      await proc.stdin.end();
+      await expectLeftOpen(proc, "socket");
+    });
+
+    test.concurrent("over a file", async () => {
+      using dir = tempDir("stdin-to-its-end", { "stdin.txt": "abc\n" });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script(readToEnd)],
+        env: bunEnv,
+        stdin: Bun.file(`${dir}/stdin.txt`),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      await expectLeftOpen(proc, "file");
+    });
+  });
+});
+
 test.concurrent("stdin with 'readable' event handler should receive data when paused", async () => {
   const proc = Bun.spawn({
     cmd: [

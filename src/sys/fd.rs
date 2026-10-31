@@ -36,7 +36,7 @@ pub enum MakeLibUvOwnedError {
 // `use bun_sys::FdExt;` at call sites; or call `bun_sys::close(fd)` directly.
 // ──────────────────────────────────────────────────────────────────────────
 pub trait FdExt: Copy + Sized {
-    /// fd function will NOT CLOSE stdin/stdout/stderr.
+    /// The owner's close. POSIX closes any number, fd 0-2 included. Windows will NOT CLOSE stdin/stdout/stderr.
     /// Expects a VALID file descriptor object.
     ///
     /// Do not use fd on JS-provided file descriptors (e.g. in `fs.closeSync`).
@@ -46,7 +46,7 @@ pub trait FdExt: Copy + Sized {
     /// closing something completely unrelated; fd would cause weird behavior
     /// as you see EBADF errors in unrelated places.
     fn close(self);
-    /// fd function will NOT CLOSE stdin/stdout/stderr.
+    /// The owner's close, as `.close()`, but EBADF is returned to the caller.
     /// Prefer asserting that EBADF does not happen with `.close()`.
     fn close_allowing_bad_file_descriptor(
         self,
@@ -70,13 +70,17 @@ pub trait FdExt: Copy + Sized {
 impl FdExt for Fd {
     fn close(self) {
         let err = self.close_allowing_bad_file_descriptor(None);
-        debug_assert!(err.is_none()); // use after close!
+        // EBADF is a use after close, except on POSIX fd 0, 1 or 2: the program can close that number again while Bun owns a descriptor there, as in Node.
+        debug_assert!(err.is_none() || (cfg!(unix) && self.stdio_tag().is_some()));
     }
 
     fn close_allowing_bad_file_descriptor(
         self,
         return_address: Option<usize>,
     ) -> Option<sys::Error> {
+        #[cfg(all(unix, debug_assertions))]
+        startup_stdio::assert_not_closing(self);
+        #[cfg(windows)]
         if self.stdio_tag().is_some() {
             log!("close({}) SKIPPED", self);
             return None;
@@ -86,6 +90,8 @@ impl FdExt for Fd {
 
     fn close_allowing_standard_io(self, return_address: Option<usize>) -> Option<sys::Error> {
         debug_assert!(self.is_valid()); // probably a UAF
+        #[cfg(all(unix, debug_assertions))]
+        startup_stdio::mark_released(self);
 
         // Format the file descriptor for logging BEFORE closing it.
         // Otherwise the file descriptor is always invalid after closing it.
@@ -268,6 +274,52 @@ impl FdExt for Fd {
     fn delete_tree(self, subpath: &[u8]) -> sys::Maybe<()> {
         // Non-owning view: `self` is the caller's fd; we must not close it.
         sys::Dir::borrow(&self).delete_tree(subpath)
+    }
+}
+
+/// Debug builds: an internal close must not be handed fd 0, 1 or 2 while it is the descriptor the process started with.
+#[cfg(all(unix, debug_assertions))]
+pub mod startup_stdio {
+    use bun_core::Fd;
+    use core::sync::atomic::{AtomicU8, Ordering};
+    use std::sync::OnceLock;
+
+    /// `(st_dev, st_ino)` of fd 0, 1 and 2. Unset in a process that never calls [`record`]: nothing is checked there.
+    static IDENTITY: OnceLock<[Option<(u64, u64)>; 3]> = OnceLock::new();
+    /// Bit `n`: fd `n` was closed since, so the number names another file or none.
+    static RELEASED: AtomicU8 = AtomicU8::new(0);
+
+    fn identity(fd: Fd) -> Option<(u64, u64)> {
+        let stat = crate::fstat(fd).ok()?;
+        Some((stat.st_dev as u64, stat.st_ino as u64))
+    }
+
+    /// Call once fd 0, 1 and 2 are open and before the first thread starts.
+    pub fn record() {
+        let _ = IDENTITY.set([Fd::stdin(), Fd::stdout(), Fd::stderr()].map(identity));
+    }
+
+    /// Call before the close(2): once it returns, another thread's open can be given the number.
+    pub(crate) fn mark_released(fd: Fd) {
+        if let n @ 0..=2 = fd.native() {
+            RELEASED.fetch_or(1 << n, Ordering::SeqCst);
+        }
+    }
+
+    /// A false alarm takes a close outside bun_sys and then an owned descriptor on the same file (`/dev/null`, a shared tty).
+    pub(crate) fn assert_not_closing(fd: Fd) {
+        let n @ 0..=2 = fd.native() else { return };
+        let Some(startup) = IDENTITY.get() else {
+            return;
+        };
+        if RELEASED.load(Ordering::SeqCst) & (1 << n) != 0 {
+            return;
+        }
+        let now = identity(fd);
+        if now.is_some() && now == startup[n as usize] {
+            panic!("internal close of a descriptor the process started with");
+        }
+        mark_released(fd);
     }
 }
 

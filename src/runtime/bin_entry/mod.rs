@@ -214,6 +214,8 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     output::stdio::init();
     let _flush = output::flush_guard();
     // After stdio::init (fd 0 is open even if we were exec'd with it closed), before any thread.
+    #[cfg(all(unix, debug_assertions))]
+    bun_sys::fd::startup_stdio::record();
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pregrow_fd_table();
 

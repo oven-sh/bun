@@ -1,0 +1,11 @@
+const out = typeof print === "function" ? print : console.log; const s = v => JSON.stringify(v);
+const G = "😀"; const S = "prefix  " + G + " suffix";
+const t = (label, src, fl) => { try { const m = new RegExp(src, fl).exec(S); out(label.padEnd(38) + s(m && [m.index, m[0]])); } catch (e) { out(label.padEnd(38) + "THREW " + e.message.slice(0,20)); } };
+t("x{0}: \\s😀x{0}|\\s{0,2}\\n", "\\s" + G + "x{0}|\\s{0,2}\\n", "iv");
+t("neg-la ^: |\\s{0,2}(?!(?:..)^)\\n", "\\s" + G + "|\\s{0,2}(?!(?:..)^)\\n", "iv");
+t("neg-la ^ only: |(?!(?:..)^)\\n", "\\s" + G + "|(?!(?:..)^)\\n", "iv");
+t("neg-la .{0}^: |\\s{0,2}(?!.{0}^)\\n", "\\s" + G + "|\\s{0,2}(?!.{0}^)\\n", "iv");
+t("neg-la ^ bare: |\\s{0,2}(?!^)\\n", "\\s" + G + "|\\s{0,2}(?!^)\\n", "iv");
+t("neg-la ß{0}: |\\s{0,2}(?!ß{0}q)\\n", "\\s" + G + "|\\s{0,2}(?!ß{0}q)\\n", "iv");
+t("setop: |\\s{0,2}(?![[xz0]&&[b-d]])\\n", "\\s" + G + "|\\s{0,2}(?![[xz0]&&[b-d]])\\n", "iv");
+t("la-in-la: |\\s{0,2}(?!ß(?=\\wt))\\n", "\\s" + G + "|\\s{0,2}(?!ß(?=\\wt))\\n", "iv");

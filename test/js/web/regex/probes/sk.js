@@ -1,0 +1,15 @@
+const out = typeof print === "function" ? print : console.log; const s = v => JSON.stringify(v);
+const G = "😀";
+const t = (label, src, fl, str) => { try { const m = new RegExp(src, fl).exec(str); out(label.padEnd(30) + s(m && [m.index, m[0]])); } catch (e) { out(label.padEnd(30) + "THREW"); } };
+const S = "prefix  " + G + " suffix";
+t("full 7022", "\\s" + G + "x{0}|\\s{0,2}(?!ß{0}(?=[\\w\\sc\\d]\\t)|.{0}(?:..{1,3})^|[[xz0]&&[b-d]])\\n", "iv", S);
+t("A \\s😀|\\s{0,2}\\n", "\\s" + G + "|\\s{0,2}\\n", "iv", S);
+t("B \\s😀|\\n", "\\s" + G + "|\\n", "iv", S);
+t("C \\s😀", "\\s" + G, "iv", S);
+t("D \\s😀|q", "\\s" + G + "|q", "iv", S);
+t("E \\s😀|\\s\\n", "\\s" + G + "|\\s\\n", "iv", S);
+t("F \\s😀|(?!x)\\n", "\\s" + G + "|(?!x)\\n", "iv", S);
+t("G \\s😀|\\s{0,2}q", "\\s" + G + "|\\s{0,2}q", "iv", S);
+t("H  😀|\\s{0,2}\\n", " " + G + "|\\s{0,2}\\n", "iv", S);
+t("I \\s😀|\\s{0,2}\\n /v", "\\s" + G + "|\\s{0,2}\\n", "v", S);
+t("J \\s😀|\\s{0,2}\\n /iu", "\\s" + G + "|\\s{0,2}\\n", "iu", S);

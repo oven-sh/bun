@@ -352,9 +352,8 @@ describe("pending streaming compilation keeps the process alive", () => {
       stderr: "pipe",
     });
 
-    // stderr is drained concurrently (debug builds write benign warnings there).
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, exitCode, stderr: exitCode === 0 ? "" : stderr };
+    return { stdout, stderr, exitCode };
   }
 
   test.concurrent.each([
@@ -368,7 +367,7 @@ describe("pending streaming compilation keeps the process alive", () => {
     ["compileStreaming", "buffered", "await"],
     ["instantiateStreaming", "stream", "await"],
   ] as const)("%s settles with a %s response body (%s)", async (api, body, how) => {
-    expect(await run(api, body, how, "valid")).toEqual({ stdout: "settled\n", exitCode: 0, stderr: "" });
+    expect(await run(api, body, how, "valid")).toEqual({ stdout: "settled\n", stderr: "", exitCode: 0 });
   });
 
   // A compilation that fails releases the event loop too: the rejection arrives and the process ends by itself.
@@ -381,8 +380,8 @@ describe("pending streaming compilation keeps the process alive", () => {
   ] as const)("%s rejects with a %s response body of a module that is %s", async (api, body, module) => {
     expect(await run(api, body, "then", module)).toEqual({
       stdout: "rejected: CompileError\n",
-      exitCode: 0,
       stderr: "",
+      exitCode: 0,
     });
   });
 });

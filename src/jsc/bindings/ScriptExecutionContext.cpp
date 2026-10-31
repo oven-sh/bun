@@ -58,7 +58,7 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* g
     addToContextsMap();
 }
 
-ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* globalObject, ScriptExecutionContextIdentifier identifier)
+ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* globalObject, ScriptExecutionContextIdentifier identifier, ScriptExecutionContext* predecessor)
     : m_vm(vm)
     , m_globalObject(globalObject)
     , m_bunVM(WebCore::clientData(*vm)->bunVM)
@@ -67,7 +67,10 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* g
     , m_contextThreadUID(Thread::currentSingleton().uid())
     , m_bunContext(Bun__VirtualMachine__rootContext(m_bunVM))
 {
-    addToContextsMap();
+    if (predecessor) [[unlikely]]
+        takeOverIdentifierOf(*predecessor);
+    else
+        addToContextsMap();
 }
 
 ScriptExecutionContext::ScriptExecutionContext(ScriptExecutionContext& parent)
@@ -420,12 +423,21 @@ extern "C" ScriptExecutionContextIdentifier Zig__GlobalObject__contextIdentifier
     return globalObject->scriptExecutionContext()->identifier();
 }
 
-void ScriptExecutionContext::regenerateIdentifier()
+void ScriptExecutionContext::takeOverIdentifierOf(ScriptExecutionContext& predecessor)
 {
+    ASSERT(predecessor.isContextThread());
+    ASSERT(!predecessor.m_parent);
+    ASSERT(predecessor.m_vmHandle == m_vmHandle);
 
-    m_identifier = ++lastUniqueIdentifier;
-
-    addToContextsMap();
+    // One critical section: a lookup from another thread finds `predecessor` or this context, never neither.
+    Locker locker { allScriptExecutionContextsMapLock };
+    auto& contexts = allScriptExecutionContextsMap();
+    auto entry = contexts.find(m_identifier);
+    RELEASE_ASSERT(entry != contexts.end() && entry->value == &predecessor);
+    // Before the add(), which can rehash the table under `entry`.
+    entry->value = this;
+    predecessor.m_identifier = generateIdentifier();
+    contexts.add(predecessor.m_identifier, &predecessor);
 }
 
 void ScriptExecutionContext::addToContextsMap()
@@ -437,6 +449,7 @@ void ScriptExecutionContext::addToContextsMap()
 
 void ScriptExecutionContext::removeFromContextsMap()
 {
+    ASSERT_WITH_MESSAGE(m_identifier != INITIAL_IDENTIFIER_INTERNAL || !m_vm || WebCore::clientData(*m_vm)->isStoppingOrStopped(*m_vm), "Other threads post to the main identifier for as long as its VM runs");
     Locker locker { allScriptExecutionContextsMapLock };
     ASSERT(allScriptExecutionContextsMap().contains(m_identifier));
     allScriptExecutionContextsMap().remove(m_identifier);

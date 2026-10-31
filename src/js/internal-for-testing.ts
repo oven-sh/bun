@@ -939,6 +939,18 @@ export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
 export const spawnThreadsForTesting: (iterations: number, fd: number, parallelism: number, detach?: boolean) => number =
   $newCppFunction("InternalForTesting.cpp", "jsFunction_spawnThreadsForTesting", 4);
 
+// A thread looks the calling global's context identifier up without pause until stopContextLookups(), which counts its misses.
+export const startContextLookups: () => void = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_startContextLookupsForTesting",
+  0,
+);
+export const stopContextLookups: () => { lookups: number; misses: number } | undefined = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_stopContextLookupsForTesting",
+  0,
+);
+
 // True when the installed watcher registered a real OS source (a PSI trigger
 // on Linux). The watcher installs silently without one when the kernel
 // refuses the trigger, so isMemoryPressureWatcherInstalled() cannot tell.

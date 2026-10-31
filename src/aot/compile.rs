@@ -822,7 +822,13 @@ fn reads_main_module(found: &FlowFindings<'_>, lets_process_out_of_sight: bool) 
     if has_followed_nothing(found) {
         return true;
     }
-    (found.unseen_code.is_empty() || lets_process_out_of_sight)
+    let runs_unseen_code = found.unseen_code.iter().any(|record| {
+        !matches!(
+            record.cause,
+            UnseenCodeCause::LoadsModuleByName | UnseenCodeCause::RunsMachineCode
+        )
+    });
+    (!runs_unseen_code || lets_process_out_of_sight)
         && found.builtins_used.iter().any(|record| {
             record.uses.contains(BuiltinUse::READ)
                 && matches!(
@@ -1855,6 +1861,7 @@ fn add_program(first: &mut Compilation, program: Compilation) {
     (all.names_added_to_builtins).extend(further.names_added_to_builtins);
     (all.parameters_that_start_workers).extend(further.parameters_that_start_workers);
     all.stores_loader_functions |= further.stores_loader_functions;
+    all.evicts_any_module |= further.evicts_any_module;
 }
 
 fn compile_written_entry_points(

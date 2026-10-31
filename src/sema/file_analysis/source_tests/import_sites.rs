@@ -205,6 +205,17 @@ const MADE_REQUIRES: &[(&str, &str, &[&str])] = &[
         r#"import { createRequire } from "node:module"; import.meta.url = other; createRequire(import.meta.url)("a");"#,
         &[],
     ),
+    // What is made is asked for on the way to what it is made of.
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; const load = createRequire(load("url").fileURLToPath(import.meta.url)); load("a");"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"const load = require("module").createRequire(load("path").join(__dirname, "lib", "index.js")); load("a");"#,
+        &["module"],
+    ),
     (
         "a.mts",
         r#"import { createRequire } from "node:module"; const meta = import.meta; createRequire(import.meta.url)("a");"#,

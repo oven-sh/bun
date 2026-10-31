@@ -660,6 +660,11 @@ impl ModuleGraph {
         self.plan.reaches_entries_of_cache
     }
 
+    /// `delete require.cache[path]` under a key that nobody spells: whichever file the path names, in this program or in one that is built above it.
+    pub fn may_evict_every_module(&self) -> bool {
+        self.plan.may_evict_every_module
+    }
+
     pub fn may_be_evicted(&self, module: ModuleRef) -> bool {
         self.plan.may_evict_every_module || self.plan.has(&self.plan.may_be_evicted, module)
     }

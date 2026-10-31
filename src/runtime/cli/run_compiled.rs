@@ -255,6 +255,8 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
             parameters_that_start_workers,
             stores_loader_functions: outcome.replaced_builtins.stores_loader_functions
                 || told.is_some_and(|told| told.stores_loader_functions),
+            evicts_any_module: outcome.replaced_builtins.evicts_any_module
+                || told.is_some_and(|told| told.evicts_any_module),
             ..told.cloned().unwrap_or_default()
         };
         let after_graph = check_result.get_or_insert_default();

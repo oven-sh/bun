@@ -426,15 +426,6 @@ const aotTestsThatAskTheSystem = [
   "aot/parallel/errors/",
   "aot/parallel/async/",
   "aot/parallel/strings/",
-  // What --trim cuts out of the executable of the platform, and the options of the command line.
-  "bundler/bundler_compile_aot.",
-  "bundler/compile-aot-",
-  "bundler/compile-trim-",
-  "bundler/trim-runtime-icu/",
-  "cli/aot-",
-  "cli/crash-if-interpreter-is-used.",
-  "cli/inspect/compile-aot-",
-  "cli/test/test-aot.",
 ];
 // Alpine as well. CI can count instructions (perf_event_open) on Alpine x64 alone, and these tests skip themselves where they
 // cannot count. The last one names the host's own --target, which ends in -musl there.
@@ -454,7 +445,6 @@ const aotTestsThatAskAlpine = [
 // holds other code.
 const aotTestsThatAskWindows = [
   "aot/engine/ir-",
-  "cli/compile/",
   "aot/the-table-of-section-headers-has-room-on-windows",
   "aot/first-reads-by-name-avoid-the-lookup-of-the-runtime",
   "aot/one-line-changes-little-1",
@@ -470,9 +460,6 @@ const aotTestsThatAskWindows = [
 // verdict. There every test runs but those that feed it nothing new: they compile one text again and again with a line or a flag
 // changed and compare what comes out, or read a number or a list off a report.
 const aotTestsThatFeedNothingNew = [
-  // Scripts of the build and the linkers of the system: the compiler does not run.
-  "internal/builtins-table/",
-  "internal/trim/",
   "aot/static-modules-one-odd-file",
   "aot/one-line-changes-little-",
   "aot/tools/same-code-",
@@ -532,13 +519,15 @@ const distroOfAotTest = (path: string) =>
     ? "ubuntu"
     : "debian";
 const sharesAotTests = linuxDistro === "debian" || linuxDistro === "ubuntu";
+// Only these are split across the lanes. Every other test runs on every lane.
+const isSplitAcrossLanes = /^(?:aot|bundler\/trim-by-use)\//;
 // The second build of a program, with its types erased, asks the compiler, and is the same text again.
 const flagsOfAotDriver = (execPath: string) =>
   isCI && (hasSanitizer(execPath) || linuxDistro !== distroOfAotTest("aot/parallel/")) ? ["--no-erased"] : [];
 function runsOnThisLane(testPath: string, execPath: string) {
   const path = testPath.replaceAll("\\", "/");
   const beginsWithOneOf = (beginnings: string[]) => beginnings.some(beginning => path.startsWith(beginning));
-  if (!isOfAotCompiler.test(path)) return true;
+  if (!isSplitAcrossLanes.test(path)) return true;
   if (hasSanitizer(execPath)) return !beginsWithOneOf(aotTestsThatFeedNothingNew);
   return (
     linuxDistro === distroOfAotTest(path) ||

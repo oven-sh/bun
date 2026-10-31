@@ -7,7 +7,7 @@ use crate::bind::{
     Binding, BindingInitializer, BindingStability, Bound, CodeUnit, CommonJsVariable, Decl,
     FnOwner, InitialState, Parent, PatParent, SymbolId, has_mapped_arguments,
 };
-use crate::fold::{Decisions, find_export_of_module};
+use crate::fold::Decisions;
 use crate::hir::{
     BinOp, Branches, Call, Chain, ExprId, ExprKind, File, Flags, FnBody, FnId, FnKind, IdList,
     MemberKey, NodeData, PatKind, StmtKind, UnOp,
@@ -178,6 +178,23 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
         None
     }
 
+    // `fileURLToPath` for `require("url").fileURLToPath`. A request in `e` is a step: the `require` that it calls may be made of what is asked for here.
+    fn find_export_read_off_module(
+        self,
+        e: ExprId,
+        left: StepsLeft,
+        modules: [Atom; 2],
+    ) -> Option<Atom> {
+        let (specifier, face, names) = self.find_names_read_off_module(e, left)?;
+        let (&export, before) = names.split_first()?;
+        let is_export = match *before {
+            [] => true,
+            [first] => face == ModuleFace::Namespace && first == known::default,
+            _ => false,
+        };
+        (is_export && modules.contains(&specifier)).then_some(export)
+    }
+
     fn is_create_require(self, e: ExprId, left: StepsLeft) -> bool {
         let Some((specifier, face, names)) = self.find_names_read_off_module(e, left) else {
             return false;
@@ -286,25 +303,28 @@ pub fn may_require_get_members(hir: &File<'_>, bound: &Bound<'_>) -> bool {
 
 // Also in a variable: `const __filename = fileURLToPath(import.meta.url)`, as an ES module makes itself the name that a CommonJS file has.
 pub(crate) fn names_own_file(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
-    names_own_file_behind(hir, bound, e, LONGEST_CHAIN_OF_BINDINGS)
+    let text = Text::of(hir, bound, None);
+    names_own_file_behind(text, e, LONGEST_CHAIN_OF_BINDINGS, StepsLeft::ALL)
 }
 
 // Two variables may name each other: `const a = fileURLToPath(b), b = new URL(a)`.
 fn names_own_file_behind(
-    hir: &File<'_>,
-    bound: &Bound<'_>,
+    text: Text<'_, '_, '_, '_>,
     e: ExprId,
     conversions_left: usize,
+    left: StepsLeft,
 ) -> bool {
-    settled_chain(hir, bound, e).any(|e| is_written_as_own_file(hir, bound, e, conversions_left))
+    settled_chain(text.hir, text.bound, e)
+        .any(|e| is_written_as_own_file(text, e, conversions_left, left))
 }
 
 fn is_written_as_own_file(
-    hir: &File<'_>,
-    bound: &Bound<'_>,
+    text: Text<'_, '_, '_, '_>,
     e: ExprId,
     conversions_left: usize,
+    left: StepsLeft,
 ) -> bool {
+    let Text { hir, bound, .. } = text;
     if is_free_common_js(hir, bound, e, CommonJsVariable::Filename) {
         return !may_be_modified(hir, bound, CommonJsVariable::Filename);
     }
@@ -320,9 +340,8 @@ fn is_written_as_own_file(
     // `fileURLToPath(import.meta.url)`, `new URL(import.meta.url)`
     let (call, is_conversion) = match expr_kind(hir, e) {
         Some(ExprKind::Call(call)) => {
-            let is_url_module = |name: Atom| name == known::url || name == known::node_url;
-            let callee = hir[call].callee;
-            let export = find_export_of_module(hir, bound, callee, &|_| None, &is_url_module);
+            let modules = [known::url, known::node_url];
+            let export = text.find_export_read_off_module(hir[call].callee, left, modules);
             (hir[call], export == Some(known::fileURLToPath))
         }
         Some(ExprKind::New(call)) => {
@@ -333,18 +352,18 @@ fn is_written_as_own_file(
     };
     is_conversion
         && call.args.len() == 1
-        && names_own_file_behind(hir, bound, hir.id_at(call.args, 0), conversions_left)
+        && names_own_file_behind(text, hir.id_at(call.args, 0), conversions_left, left)
 }
 
 fn is_made_for_own_file(text: Text<'_, '_, '_, '_>, e: ExprId, left: StepsLeft) -> bool {
-    let Text { hir, bound, .. } = text;
+    let hir = text.hir;
     let Some(ExprKind::Call(call)) = expr_kind(hir, hir.skip_type_assertions(e)) else {
         return false;
     };
     let mut arguments = hir.ids(hir[call].args);
     arguments
         .next()
-        .is_some_and(|base| names_own_file(hir, bound, base))
+        .is_some_and(|base| names_own_file_behind(text, base, LONGEST_CHAIN_OF_BINDINGS, left))
         && text.is_create_require(hir[call].callee, left)
 }
 

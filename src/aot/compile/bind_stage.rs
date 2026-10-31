@@ -300,6 +300,7 @@ impl Build<'_> {
                         ));
                 graph.set_asks_loader_functions(asks_loader_functions);
                 self.replaced_builtins.stores_loader_functions |= asks_loader_functions;
+                self.replaced_builtins.evicts_any_module |= graph.may_evict_every_module();
                 if !reached.found_by_name.is_empty() {
                     self.started_workers.root_folders_spelled = find_root_folders_spelled(
                         view.files(),

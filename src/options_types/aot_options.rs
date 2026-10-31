@@ -243,7 +243,8 @@ pub struct ReplacedByTests {
     pub spy_may_meet_module_that_no_file_spells: bool,
     /// `delete require.cache[require.resolve("./a")]`: the files that load again.
     pub evicted_modules: Vec<Vec<u8>>,
-    /// Such a file that no file spells.
+    /// Such a file that no file spells. It goes the other way too, as `stores_loader_functions` does: import-fresh, decache and proxyquire are packages, and the path that
+    /// they are handed may name a file of a program above theirs.
     pub evicts_any_module: bool,
     /// `try { require("./a") } catch {}`: a CommonJS file whose body throws is out of the table too, and the next `require()` runs it again.
     /// Which kind of file a path names shows in the build that holds the file.

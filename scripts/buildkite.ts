@@ -43,12 +43,19 @@ interface SecretOptions {
   required?: boolean;
 }
 
+/**
+ * The secrets fetched so far, so that each is fetched once. They are not kept
+ * in process.env: every child process inherits that, the tests that
+ * scripts/runner.node.ts starts included.
+ */
+let fetchedSecrets: Map<string, string> | undefined;
+
 export function getSecret(name: string, options?: SecretOptions & { required?: true }): string;
 
 export function getSecret(name: string, options: SecretOptions): string | undefined;
 
 export function getSecret(name: string, { required = true }: SecretOptions = {}): string | undefined {
-  const value = process.env[name];
+  const value = process.env[name] || fetchedSecrets?.get(name);
   if (value) {
     return value;
   }
@@ -69,7 +76,7 @@ export function getSecret(name: string, { required = true }: SecretOptions = {})
       throw new Error(`Secret not found: ${name} (hint: go to ${hint} and create a secret)`);
     }
 
-    process.env[name] = secret;
+    (fetchedSecrets ??= new Map()).set(name, secret);
     return secret;
   }
 
@@ -294,9 +301,10 @@ function getGithubToken(): string | undefined {
     return cachedToken || undefined;
   }
 
-  const token = output(["gh", "auth", "token"])?.trim() ?? "";
-
-  process.env.GITHUB_TOKEN = token;
+  const token = output(["gh", "auth", "token"])?.trim();
+  if (token) {
+    (fetchedSecrets ??= new Map()).set("GITHUB_TOKEN", token);
+  }
   return token || undefined;
 }
 
@@ -422,42 +430,66 @@ export async function getLastSuccessfulBuild(): Promise<BuildkiteBuild | undefin
   return undefined;
 }
 
-/** The fields of GitHub's "list pull request files" response that are read here. */
-interface GithubPullRequestFile {
-  filename: string;
-  status: string;
+/**
+ * What `git <args>` prints in the checkout. It throws what git says when git
+ * fails. output() keeps at most 1 MiB, which the diff of a pull request with
+ * about 16,000 files fills.
+ */
+function git(...args: string[]): string {
+  const { error, status, stdout, stderr } = spawnSync("git", args, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (error || status !== 0) {
+    throw new Error(`git ${args.join(" ")}: ${error?.message ?? (stderr.trim() || `exit code ${status}`)}`);
+  }
+  return stdout;
 }
 
 /**
  * The files of the pull request this Buildkite build is for, and the ones
- * among them that it adds; none when the build is not for a pull request.
+ * among them that it adds: what differs between HEAD and the commit where the
+ * pull request left its base branch. None when the build is not for a pull
+ * request, or when the checkout cannot tell.
+ *
+ * Only the pipeline step (.buildkite/ci.ts) calls this, once per build. Its
+ * clone is made for the job and has the whole history, so its base branch is
+ * current. The build's other jobs read the list that the step stores in the
+ * meta-data. Nothing asks GitHub for the list: CI shares the hourly quota of
+ * its token with everything else the account does, and the quota runs out.
  */
-export async function getPullRequestFiles(): Promise<{ allFiles: string[]; newFiles: string[] }> {
+export function getPullRequestFiles(): { allFiles: string[]; newFiles: string[] } {
   const allFiles: string[] = [];
   const newFiles: string[] = [];
   if (!isPullRequest()) {
     return { allFiles, newFiles };
   }
-  const perPage = 50;
   const pullRequest = process.env.BUILDKITE_PULL_REQUEST;
-  for (let page = 1; page <= 10; page++) {
-    const response = await fetch(
-      `https://api.github.com/repos/oven-sh/bun/pulls/${pullRequest}/files?per_page=${perPage}&page=${page}`,
-      { headers: { Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}` } },
-    );
-    const files = (await response.json()) as GithubPullRequestFile[] | Record<string, unknown>;
-    if (!response.ok || !Array.isArray(files)) {
-      throw new Error(`GitHub API ${response.status} ${response.statusText} on page ${page}: ${JSON.stringify(files)}`);
+  let diff: string;
+  try {
+    // The merge base that a shallow clone gives can be older than the real one.
+    if (git("rev-parse", "--is-shallow-repository").trim() !== "false") {
+      throw new Error("the checkout is a shallow clone");
     }
-    console.log(`-> page ${page}, found ${files.length} items`);
-    for (const { filename, status } of files) {
-      allFiles.push(filename);
-      if (status === "added") {
-        newFiles.push(filename);
-      }
-    }
-    if (files.length < perPage) {
-      break;
+    const mergeBase = git("merge-base", `refs/remotes/origin/${getTargetBranch()}`, "HEAD").trim();
+    // No rename detection: a moved file is a removed one and an added one, and
+    // the pipeline step decides on both paths. Detection by similarity also
+    // reads file contents, which a clone made with --filter=blob:none has to
+    // download.
+    diff = git("diff", "--name-status", "--no-renames", "-z", mergeBase, "HEAD");
+    console.log(`-> git diff ${mergeBase} HEAD`);
+  } catch (error) {
+    console.error(`- PR ${pullRequest}, no file list: ${error instanceof Error ? error.message : error}`);
+    return { allFiles, newFiles };
+  }
+  // A status, NUL, a path, NUL, and so on.
+  const fields = diff.split("\0");
+  for (let i = 0; i + 1 < fields.length; i += 2) {
+    const filename = fields[i + 1]!; // i + 1 < fields.length
+    allFiles.push(filename);
+    if (fields[i] === "A") {
+      newFiles.push(filename);
     }
   }
   console.log(`- PR ${pullRequest}, ${allFiles.length} files, ${newFiles.length} new files`);

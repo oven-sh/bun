@@ -487,10 +487,8 @@ NQ_SET(max_datagram_frame_size, unsigned short)
 NQ_SET(max_h3_header_pairs, unsigned short)
 NQ_SET(max_h3_header_bytes, unsigned)
 NQ_SET(allow_migration, int)
-NQ_SET(scid_len, unsigned)
 NQ_SET(silent_close, int)
 NQ_SET(cc_algo, unsigned)
-NQ_SET(delay_onclose, int)
 
 #define NQ_GET(f, ty) \
     ty us_nq_settings_get_##f(const struct lsquic_engine_settings *s) { return s->es_##f; }

@@ -96,6 +96,40 @@ const dir = String(
         controller.enqueue(new TextEncoder().encode("<div>x"));
         return registered.promise;
       }
+      // A body that has delivered a part and never ends: nothing else settles a read that waits on
+      // the pending output of a rewrite of it.
+      const part = new TextEncoder().encode("<b>x");
+      const neverEnds = {
+        stream: () => new ReadableStream({ start: controller => void controller.enqueue(part) }),
+        iterator: () => (async function* () { yield part; await new Promise(() => {}); })(),
+      };
+      const heardIfSettled = (what, promise) =>
+        void promise.then(() => control.heard.push(what + " fulfilled"), () => control.heard.push(what + " rejected"));
+      // read: text, json, bytes, arrayBuffer, blob or formData. Resolves once the rewrite has the part.
+      export function readRewriteThatNeverEnds(read, input) {
+        const seen = Promise.withResolvers();
+        const output = new HTMLRewriter()
+          .on("b", { element: () => void seen.resolve() })
+          .transform(new Response(neverEnds[input](), { headers: { "content-type": "application/x-www-form-urlencoded" } }));
+        heardIfSettled(read, output[read]());
+        return seen.promise;
+      }
+      // The function that waits keeps the output Response, and through it the rewrite.
+      export function awaitRewriteThatNeverEnds() {
+        const seen = Promise.withResolvers();
+        (async () => {
+          const output = new HTMLRewriter().on("b", { element: () => void seen.resolve() }).transform(new Response(neverEnds.stream()));
+          control.heard.push((await output.text()) + output.status);
+        })();
+        return seen.promise;
+      }
+      // Controls: the body read with no rewrite, and a rewrite read through a reader.
+      export function readBodyThatNeverEnds() {
+        heardIfSettled("text", new Response(neverEnds.stream()).text());
+      }
+      export async function readRewriteThroughAReader() {
+        await new HTMLRewriter().on("b", { element() {} }).transform(new Response(neverEnds.stream())).body.getReader().read();
+      }
     `,
   }),
 );
@@ -414,6 +448,33 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
       graph.dispose();
     })();
     expect(await lifetimes.stillAlive("graph")).toEqual([]);
+  });
+
+  // What such a read waits on was a GC root until the rewrite ended, and nothing ends the rewrite
+  // of a stream that its graph no longer feeds.
+  test("a read that waits on the pending output of an HTMLRewriter when its graph is disposed goes with the graph", async () => {
+    const lifetimes = new Lifetimes();
+    const state = control();
+    const graphs: string[] = [];
+    await (async () => {
+      const disposedWhile = async (name: string, start: (io: any) => unknown) => {
+        graphs.push(name);
+        const graph = lifetimes.track(name, new ModuleGraph({ globals: { control: state } }));
+        const io = await graph.import(file("io.mjs"));
+        await graph.run(() => start(io));
+        graph.dispose();
+      };
+      for (const input of ["stream", "iterator"])
+        for (const read of ["text", "json", "bytes", "arrayBuffer", "blob", "formData"])
+          await disposedWhile(`${read}() over ${input === "stream" ? "a stream" : "an async iterator"}`, io =>
+            io.readRewriteThatNeverEnds(read, input),
+          );
+      await disposedWhile("text() awaited by a function that keeps the output", io => io.awaitRewriteThatNeverEnds());
+      await disposedWhile("control: text() of the body itself", io => io.readBodyThatNeverEnds());
+      await disposedWhile("control: the output read through a reader", io => io.readRewriteThroughAReader());
+    })();
+    expect(await lifetimes.stillAlive(...graphs)).toEqual([]);
+    expect(state.heard).toEqual([]);
   });
 
   // Nothing settles the promise that tells a server is closed once its graph is disposed, and its reactions reach the server.

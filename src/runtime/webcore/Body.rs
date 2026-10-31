@@ -190,6 +190,7 @@ impl Body {
 // ────────────────────────────────────────────────────────────────────────────
 
 pub struct PendingValue {
+    /// A GC root. `None` when `producer` holds it: [`streams::SourceHandle::hold_read_promise`].
     pub(crate) promise: Option<JSValue>,
     pub(crate) readable: webcore::readable_stream::Strong,
     // writable: webcore::Sink
@@ -433,8 +434,11 @@ impl PendingValue {
         {
             let promise = JSPromise::create(global_this);
             let promise_value = promise.to_js();
-            self.promise = Some(promise_value);
-            promise_value.protect();
+            // As above: no root on a promise whose producer the collector can take unsettled.
+            if !self.producer.hold_read_promise(promise_value) {
+                self.promise = Some(promise_value);
+                promise_value.protect();
+            }
 
             if let Some(on_start_buffering) = self.on_start_buffering.take() {
                 // Last use of `self`: the producer may settle the body (and so
@@ -462,6 +466,14 @@ pub(crate) enum Action {
 impl Action {
     pub(crate) fn is_none(&self) -> bool {
         matches!(self, Action::None)
+    }
+
+    /// Frees the decoder that a `formData()` read still owns when it was never settled.
+    #[cold]
+    fn release(&mut self) {
+        if let Action::GetFormData(form_data) = self {
+            *form_data = None;
+        }
     }
 }
 
@@ -1089,6 +1101,8 @@ impl Value {
             }
 
             if let Some(promise_) = locked.promise.take() {
+                // Adopt the outstanding protect(); Drop unprotects on all paths.
+                let _unprotect = jsc::js_value::Protected::adopt(promise_);
                 let promise = promise_.as_any_promise().unwrap();
 
                 match &mut locked.action {
@@ -1177,7 +1191,6 @@ impl Value {
                         promise.resolve(cx.global(), blob.to_js(cx.global()))?;
                     }
                 }
-                promise_.unprotect();
             }
         }
         Ok(())
@@ -1404,6 +1417,8 @@ impl Value {
                 locked.deinit = true;
                 locked.readable.deinit();
                 locked.readable = Default::default();
+                // `Response::destroy` frees the body without dropping it.
+                locked.action.release();
             }
             return;
         }

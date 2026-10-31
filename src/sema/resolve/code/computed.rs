@@ -222,6 +222,13 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
         }
         for node_path in &resolver.code_options().node_paths {
             self.walk_below(node_path, b"", SpecifierForm::Path)?;
+            // The folder has the written name: in a `NODE_PATH` entry a version is a part of it.
+            let manifest = Some(join_unrooted(node_path, name))
+                .filter(|package_directory| resolver.is_dir(package_directory))
+                .and_then(|package_directory| resolver.code_manifest(&package_directory));
+            if let Some(exports) = manifest.and_then(|manifest| manifest.exports.as_ref()) {
+                self.try_exact_exported_keys(exports, name)?;
+            }
         }
         Ok(())
     }
@@ -262,6 +269,29 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
         }
         for node_path in &resolver.code_options().node_paths {
             self.walk_below(node_path, b"", SpecifierForm::Path)?;
+            // After the walk: it ends the search in a folder where more packages start with the prefix than the limit allows, and then no manifest is read.
+            for name in self.list_installed_names(node_path) {
+                let manifest = resolver.code_manifest(&join_unrooted(node_path, &name));
+                if let Some(exports) = manifest.and_then(|manifest| manifest.exports.as_ref()) {
+                    self.try_exact_exported_keys(exports, &name)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Tries the keys of "exports" of a package in a `NODE_PATH` entry that name one subpath each. A key with a star or a key of a folder lists no folder here: of its files, only those that the walk lists are found.
+    fn try_exact_exported_keys(
+        &mut self,
+        exports: &ExportsEntry<'h>,
+        name: &[u8],
+    ) -> Result<(), ComputedUnknown> {
+        let ExportsEntry::Map(map) = *exports else {
+            return Ok(());
+        };
+        let subpath_keys = map.entries.iter().filter(|it| it.0.starts_with(b"./"));
+        for &(key, _) in subpath_keys.filter(|it| !strings::contains_char(it.0, b'*')) {
+            self.try_exported_specifier(&[name, &key[1..]].concat())?;
         }
         Ok(())
     }

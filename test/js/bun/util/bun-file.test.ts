@@ -198,3 +198,16 @@ test.concurrent.each([
   expect(Number(live)).toBeWithin(1, 50);
   expect(exitCode).toBe(0);
 });
+
+test("a negative slice of a Bun.file whose size is not known yet counts from the end of the file", async () => {
+  using dir = tempDir("bun-file-negative-slice", { "a.txt": "hello world\n" });
+  const path = join(String(dir), "a.txt");
+  // Each Bun.file() starts with an unknown size.
+  expect(await Bun.file(path).slice(-5).text()).toBe("orld\n");
+  expect(await Bun.file(path).slice(-5, -1).text()).toBe("orld");
+  expect(await Bun.file(path).slice(0, -6).text()).toBe("hello");
+  expect(await Bun.file(path).slice(-100).text()).toBe("hello world\n");
+  const file = Bun.file(path);
+  expect(file.size).toBe(12);
+  expect(await file.slice(-5).text()).toBe("orld\n");
+});

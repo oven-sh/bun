@@ -1475,6 +1475,11 @@ describe("Bun.Image", () => {
           image().jpeg({ quality: 10 }),
         ),
         webp: await same(image().webp({ lossless: true }).webp({ quality: 50 }), image().webp({ lossless: true })),
+        // Lossless WebP ignores quality: the last call turns it off to show the quality that was kept.
+        webpQuality: await same(
+          image().webp({ lossless: true }).webp({ quality: 50 }).webp({ lossless: false }),
+          image().webp({ quality: 50 }),
+        ),
         png: await same(
           image().png({ palette: true, colors: 4 }).png({ dither: true }),
           image().png({ palette: true, colors: 4, dither: true }),
@@ -1494,6 +1499,7 @@ describe("Bun.Image", () => {
         replace: true,
         undefinedNamesNothing: true,
         webp: true,
+        webpQuality: true,
         png: true,
         acrossAnotherFormat: true,
         progressiveOff: true,

@@ -6787,6 +6787,7 @@ class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase)
   declare insecureHTTPParser: boolean | undefined;
   declare httpValidation: "insecure" | "relaxed" | "strict" | undefined;
   declare joinDuplicateHeaders: boolean | undefined;
+  declare requireHostHeader: boolean | undefined;
   timeout = 0;
   [kSessions]: Set<ServerHttp2Session> = new SafeSet();
   constructor(options?, onRequestHandler?: RequestHandler) {
@@ -6808,6 +6809,9 @@ class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase)
       this.requestTimeout = http1Options.requestTimeout ?? 300000;
       this.maxHeadersCount = http1Options.maxHeadersCount ?? null;
       this.maxRequestsPerSocket = http1Options.maxRequestsPerSocket ?? 0;
+      const requireHostHeader = http1Options.requireHostHeader;
+      if (requireHostHeader !== undefined) validateBoolean(requireHostHeader, "options.requireHostHeader");
+      this.requireHostHeader = requireHostHeader ?? true;
       const joinDuplicateHeaders = http1Options.joinDuplicateHeaders;
       if (joinDuplicateHeaders !== undefined) validateBoolean(joinDuplicateHeaders, "options.joinDuplicateHeaders");
       this.joinDuplicateHeaders = joinDuplicateHeaders;

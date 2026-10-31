@@ -345,6 +345,15 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
   return handle;
 }
 
+// Node's hasRequestHeader(req, 4, "host"): the raw field names decide, so a request that gets the 400 builds no header object.
+function hasHostHeader(rawHeaders: string[]) {
+  for (let i = 0, length = rawHeaders.length; i < length; i += 2) {
+    const name = rawHeaders[i];
+    if (name.length === 4 && (name === "Host" || name.toLowerCase() === "host")) return true;
+  }
+  return false;
+}
+
 // HTTP/1.1 fallback for Http2SecureServer `allowHTTP1: true`: parse the TLS socket and emit
 // 'request' with http.IncomingMessage/ServerResponse, like Node's httpConnectionListener routing.
 function connectionListenerHTTP1(server, socket, options) {
@@ -531,13 +540,16 @@ function connectionListenerHTTP1(server, socket, options) {
     // outgoing side is backed up, so pipelined requests cannot flood it.
     maybePauseFallbackReads(socket);
 
+    const isHttp11 = versionMajor === 1 && versionMinor === 1;
+    // Like Node's parserOnIncoming: a request without Host gets the 400 before the request count and the Expect routing.
+    if (isHttp11 && server.requireHostHeader && !hasHostHeader(rawHeaders)) {
+      res.writeHead(400, ["Connection", "close"]);
+      res.end();
+      return 0;
+    }
+
     // Like Node's parserOnIncoming: upgrades (handed off above) are not counted, and the socket is never closed here.
-    if (
-      versionMajor === 1 &&
-      versionMinor === 1 &&
-      typeof maxRequestsPerSocket === "number" &&
-      maxRequestsPerSocket > 0
-    ) {
+    if (isHttp11 && typeof maxRequestsPerSocket === "number" && maxRequestsPerSocket > 0) {
       requestsCount++;
       res.maxRequestsOnConnectionReached = maxRequestsPerSocket <= requestsCount;
       if (maxRequestsPerSocket < requestsCount) {

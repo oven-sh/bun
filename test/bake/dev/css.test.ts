@@ -1238,6 +1238,315 @@ devTest("css file with an @import that an onResolve plugin answers fails its pag
     }
   },
 });
+devTest("an open page gets the stylesheet that imports a repaired css file in the hot update that removes the error", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./stylesheet-plugin.ts"]
+    `,
+    // "dep.css" is the text of "dep.txt": a write of "dep.txt" breaks or repairs the stylesheet, and no bundle follows.
+    "stylesheet-plugin.ts": `
+      export default {
+        name: "stylesheet-plugin",
+        setup(build) {
+          build.onLoad({ filter: /dep\\.css$/ }, async ({ path }) => ({
+            contents: await Bun.file(path.replace(/css$/, "txt")).text(),
+            loader: "css",
+          }));
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ styles: ["main.css"] }),
+    "main.css": `@import "./dep.css";\n.main-v1 { color: red; }`,
+    "other.html": emptyHtmlFile({ scripts: ["other.ts"] }),
+    "other.ts": `import "./dep.css";`,
+    "dep.css": ``,
+    "dep.txt": `.dep-v1 { color: red; }`,
+  },
+  async test(dev) {
+    // A save of "other.ts" starts a bundle only after a request for its page has bundled it.
+    expect(await linkedStylesheets(dev, "/other")).toEqual({ status: 200, sheets: [".dep-v1"] });
+    await using c = await dev.client("/index");
+    await c.style(".dep-v1").color.expect.toBe("red");
+
+    // "dep.css" stops building while the page is open: the save of "main.css" builds it without its import.
+    await Bun.write(dev.join("dep.txt"), `.dep-v2 { color: red; }}`);
+    await dev.write("main.css", `@import "./dep.css";\n.main-v2 { color: red; }`, {
+      errors: ["dep.css:1:25: error: Unexpected end of input"],
+    });
+    await c.style(".main-v2").color.expect.toBe("red");
+    await c.style(".dep-v1").notFound();
+
+    // No bundle follows the repair. The script of the other page is the only file that is saved.
+    await Bun.write(dev.join("dep.txt"), `.dep-v3 { color: red; }`);
+    // The socket of the harness now gets what the socket of a page gets: errors and hot updates.
+    dev.socket!.send("sreh");
+    // The kind of each of those frames, then the class names in it.
+    const frames: string[] = [];
+    dev.on("hmr", (frame: Uint8Array) => {
+      const kind = String.fromCharCode(frame[0]);
+      if (kind !== "e" && kind !== "u") return;
+      frames.push([kind, ...(new TextDecoder().decode(frame).match(/\.[a-z]+-v\d/g) ?? []).sort()].join(" "));
+    });
+    // The save resolves once the open page has taken the hot update and shows no error. A page that reloads fails it.
+    await dev.writeNoChanges("other.ts");
+    await c.style(".dep-v3").color.expect.toBe("red");
+    // One build removed the error and sent two stylesheets: the one of "dep.css", and the one of "main.css".
+    expect(frames).toEqual(["e", "u .dep-v3 .dep-v3 .main-v2"]);
+  },
+});
+devTest("css file with an @import that is not css does not bundle the stylesheet that imports it while it fails", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./flip-plugin.ts"]
+    `,
+    // "flip.css" is a script or a stylesheet, as "flip.txt" says. The plugin counts its loads of "member.css".
+    "flip-plugin.ts": `
+      import { join } from "node:path";
+      export default {
+        name: "flip-plugin",
+        setup(build) {
+          build.onLoad({ filter: /flip\\.css$/ }, async () => {
+            const text = await Bun.file(join(import.meta.dir, "flip.txt")).text();
+            if (text.includes("as javascript")) return { contents: "export {};", loader: "js" };
+            return { contents: text, loader: "css" };
+          });
+          build.onLoad({ filter: /member\\.css$/ }, () => {
+            globalThis.memberLoads = (globalThis.memberLoads ?? 0) + 1;
+            return { contents: ".member-v1 { color: red; }", loader: "css" };
+          });
+        },
+      };
+    `,
+    // "/member-loads" answers how many times the plugin loaded "member.css".
+    "bun.app.ts": `
+      import html from "./index.html";
+      export default {
+        static: { "/": html },
+        fetch(req) {
+          if (new URL(req.url).pathname === "/member-loads") return Response.json(globalThis.memberLoads ?? 0);
+          return new Response("Not Found", { status: 404 });
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ styles: ["main.css"], scripts: ["app.ts"] }),
+    "app.ts": `import "./dep.css";`,
+    "main.css": `@import "./dep.css";\n@import "./member.css";\n.main-v1 { color: red; }`,
+    // This file parses. Its @import is not css, which the bundler reports when it links the bundle.
+    "dep.css": `@import "./flip.css";\n.dep-v1 { color: red; }`,
+    "flip.css": ``,
+    "flip.txt": `/* as javascript */`,
+    "member.css": ``,
+  },
+  // The harness does not write a "bun.app.ts" of its own for "index.html".
+  htmlFiles: [],
+  async test(dev) {
+    const memberLoads = () => dev.fetch("/member-loads").json();
+    expect(await linkedStylesheets(dev, "/")).toEqual({ status: 500, sheets: [] });
+    expect(await memberLoads()).toBe(1);
+    // Each save bundles "dep.css" again, and its @import is still a script: "main.css" stays out of the bundle.
+    for (const save of [1, 2, 3]) {
+      await dev.write("app.ts", `import "./dep.css";\nconsole.log(${save});`, { errors: null });
+      expect({ save, loads: await memberLoads() }).toEqual({ save, loads: 1 });
+    }
+    // No watcher event reaches "dep.css": the plugin reads "flip.txt" when the script is bundled.
+    await Bun.write(dev.join("flip.txt"), `.flip-v1 { color: red; }`);
+    await dev.write("app.ts", `import "./dep.css";\nconsole.log(4);`, { errors: null });
+    expect(await linkedStylesheets(dev, "/")).toEqual({
+      status: 200,
+      sheets: [".flip-v1 .dep-v1", ".flip-v1 .dep-v1 .member-v1 .main-v1"],
+    });
+    expect(await memberLoads()).toBe(2);
+    // "dep.css" builds now: a save of the script does not bundle "main.css" again.
+    await dev.write("app.ts", `import "./dep.css";\nconsole.log(5);`, { errors: null });
+    expect(await memberLoads()).toBe(2);
+  },
+});
+// A server file of a framework route: it imports stylesheets and links those that the dev server lists for the route.
+const frameworkStylesheetRoute = (...imports: string[]) => `
+  ${imports.map(file => `import ${JSON.stringify(file)};`).join("\n")}
+  export default (req, meta) =>
+    new Response(meta.styles.map(href => '<link rel="stylesheet" href="' + href + '">').join(""), {
+      headers: { "content-type": "text/html" },
+    });
+`;
+// The text of a stylesheet whose name ends in "dep.css" is the ".txt" file next to it, which no bundle reads.
+const frameworkStylesheetPlugin = `
+  import { readFileSync } from "node:fs";
+  export default [
+    {
+      name: "stylesheet-from-text-file",
+      setup(build) {
+        build.onLoad({ filter: /dep\\.css$/ }, args => ({
+          contents: readFileSync(args.path.replace(/css$/, "txt"), "utf8"),
+          loader: "css",
+        }));
+      },
+    },
+  ];
+`;
+devTest("css root that a framework route imports is bundled again by the bundle that repairs its @import", {
+  framework: minimalFramework,
+  pluginFile: frameworkStylesheetPlugin,
+  files: {
+    // "<dir>.ts" imports "main.css", and "<dir>-other.ts" imports the "dep.css" that "main.css" imports.
+    ...Object.fromEntries(
+      ["save", "request", "member"].flatMap(dir => [
+        [`routes/${dir}.ts`, frameworkStylesheetRoute(`../${dir}/main.css`)],
+        [`routes/${dir}-other.ts`, frameworkStylesheetRoute(`../${dir}/dep.css`)],
+        [`${dir}/main.css`, `@import "./dep.css";\n.main-v1 { color: red; }`],
+        [`${dir}/dep.css`, `/* the plugin answers with dep.txt */`],
+        [`${dir}/dep.txt`, `.dep-v1 { color: red; }}`],
+      ]),
+    ),
+    // This "main.css" has a second import, which stays broken after the first one is repaired.
+    "member/main.css": `@import "./dep.css";\n@import "./second-dep.css";\n.main-v1 { color: red; }`,
+    "member/second-dep.css": `/* the plugin answers with second-dep.txt */`,
+    "member/second-dep.txt": `.second-v1 { color: red; }}`,
+    "routes/member-late.ts": frameworkStylesheetRoute("../member/second-dep.css"),
+    // Not requested until the end: its error page lists every failure that is on record then.
+    "routes/broken.ts": `import "./missing";\nexport default () => new Response("");`,
+  },
+  async test(dev) {
+    const load = async (page: string) => ({ page, ...(await linkedStylesheets(dev, `/${page}`)) });
+    // The server graph holds the failure of "dep.css": server files are its importers.
+    expect(await load("save")).toEqual({ page: "save", status: 500, sheets: [] });
+    expect(await load("save-other")).toEqual({ page: "save-other", status: 500, sheets: [] });
+    // No bundle follows this write. The save of "save-other.ts" parses "dep.css" again.
+    await Bun.write(dev.join("save/dep.txt"), `.dep-v2 { color: red; }`);
+    await dev.writeNoChanges("routes/save-other.ts");
+    expect(await load("save-other")).toEqual({ page: "save-other", status: 200, sheets: [".dep-v2"] });
+    // "main.css" was not an input of that bundle.
+    expect(await load("save")).toEqual({ page: "save", status: 200, sheets: [".dep-v2 .main-v1"] });
+
+    // Here the bundle that parses "dep.css" again is the first request of the other route.
+    expect(await load("request")).toEqual({ page: "request", status: 500, sheets: [] });
+    await Bun.write(dev.join("request/dep.txt"), `.dep-v2 { color: red; }`);
+    expect(await load("request-other")).toEqual({ page: "request-other", status: 200, sheets: [".dep-v2"] });
+    expect(await load("request")).toEqual({ page: "request", status: 200, sheets: [".dep-v2 .main-v1"] });
+
+    expect(await load("member")).toEqual({ page: "member", status: 500, sheets: [] });
+    await Bun.write(dev.join("member/dep.txt"), `.dep-v2 { color: red; }`);
+    // "second-dep.css" is still broken, and this route does not import it.
+    expect(await load("member-other")).toEqual({ page: "member-other", status: 200, sheets: [".dep-v2"] });
+    await Bun.write(dev.join("member/second-dep.txt"), `.second-v2 { color: red; }`);
+    expect(await load("member-late")).toEqual({ page: "member-late", status: 200, sheets: [".second-v2"] });
+    expect(await load("member")).toEqual({ page: "member", status: 200, sheets: [".dep-v2 .second-v2 .main-v1"] });
+
+    // Each repair dropped its failure: the error page of this route lists only the failure of its own bundle.
+    await using _client = await dev.client("/broken", {
+      errors: [`routes/broken.ts:1:8: error: Could not resolve: "./missing"`],
+    });
+  },
+});
+devTest("css file that did not build under a framework route is repaired by a bundle without that route", {
+  framework: minimalFramework,
+  pluginFile: frameworkStylesheetPlugin,
+  // A request for a failed route answers with the recorded failure. It does not bundle the route again.
+  env: { BUN_ASSUME_PERFECT_INCREMENTAL: "1" },
+  files: {
+    "routes/index.ts": frameworkStylesheetRoute("../main.css"),
+    "routes/second.ts": frameworkStylesheetRoute("../dep.css"),
+    "main.css": `@import "./dep.css";\n.main-v1 { color: red; }`,
+    "dep.css": `/* the plugin answers with dep.txt */`,
+    "dep.txt": `.dep-v1 { color: red; }}`,
+    // Only a server file imports this stylesheet, and a save repairs it.
+    "routes/alone.ts": frameworkStylesheetRoute("../alone.css"),
+    "alone.css": `.alone-v1 { color: red; }}`,
+  },
+  async test(dev) {
+    const load = async (page: string) => ({ page, ...(await linkedStylesheets(dev, `/${page}`)) });
+    for (const page of ["", "second", "alone"]) {
+      expect(await load(page)).toEqual({ page, status: 500, sheets: [] });
+    }
+    // The save of "main.css" parses "dep.css" as its @import. No server file is an input of that bundle.
+    await Bun.write(dev.join("dep.txt"), `.dep-v2 { color: red; }`);
+    await dev.write("main.css", `@import "./dep.css";\n.main-v2 { color: red; }`, { errors: null });
+    expect(await load("")).toEqual({ page: "", status: 200, sheets: [".dep-v2 .main-v2"] });
+    expect(await load("second")).toEqual({ page: "second", status: 200, sheets: [".dep-v2"] });
+    // The save bundles "alone.css" as a file of the server graph.
+    await dev.write("alone.css", `.alone-v2 { color: red; }`, { errors: null });
+    expect(await load("alone")).toEqual({ page: "alone", status: 200, sheets: [".alone-v2"] });
+  },
+});
+devTest("css file that two framework routes import comes back for both when either of its importers is saved", {
+  framework: minimalFramework,
+  pluginFile: frameworkStylesheetPlugin,
+  files: {
+    // The server graph holds the importer of each stylesheet.
+    "routes/index.ts": frameworkStylesheetRoute("../main.css"),
+    "routes/second.ts": frameworkStylesheetRoute("../dep.css"),
+    "main.css": `@import "./dep.css";\n.main-v1 { color: red; }`,
+    "dep.css": ``,
+    "dep.txt": `.dep-v1 { color: red; }`,
+  },
+  async test(dev) {
+    expect(await linkedStylesheets(dev, "/")).toEqual({ status: 200, sheets: [".dep-v1 .main-v1"] });
+    expect(await linkedStylesheets(dev, "/second")).toEqual({ status: 200, sheets: [".dep-v1"] });
+    for (const [version, saved] of [
+      [2, "routes/second.ts"],
+      [4, "main.css"],
+    ] as const) {
+      // A save bundles the two stylesheets for the browser, so the client graph holds this failure of "dep.css".
+      await Bun.write(dev.join("dep.txt"), `.dep-v${version} { color: red; }}`);
+      await dev.write("dep.css", `/* saved */`, { errors: null });
+      // No file event follows this write. The next bundle has "dep.css" as an import of the saved file only.
+      await Bun.write(dev.join("dep.txt"), `.dep-v${version + 1} { color: red; }`);
+      await dev.writeNoChanges(saved);
+      expect({ saved, ...(await linkedStylesheets(dev, "/second")) }).toEqual({
+        saved,
+        status: 200,
+        sheets: [`.dep-v${version + 1}`],
+      });
+      expect({ saved, ...(await linkedStylesheets(dev, "/")) }).toEqual({
+        saved,
+        status: 200,
+        sheets: [`.dep-v${version + 1} .main-v1`],
+      });
+    }
+  },
+});
+devTest("css file repaired with no file event comes back in a plugin stylesheet that a framework route imports", {
+  framework: minimalFramework,
+  // "plugin-<name>.css" is "<name>.css" in the namespace of the plugin. "main" names how many times the plugin built it.
+  pluginFile: `
+    import { join } from "node:path";
+    let builds = 0;
+    export default [
+      {
+        name: "namespace-root-plugin",
+        setup(build) {
+          build.onResolve({ filter: /^plugin-/ }, args => ({
+            path: args.path.slice("plugin-".length),
+            namespace: "virtual",
+          }));
+          build.onLoad({ filter: /\\.css$/, namespace: "virtual" }, async args => {
+            if (args.path === "dep.css") {
+              return { contents: await Bun.file(join(import.meta.dir, "data", "dep.txt")).text(), loader: "css" };
+            }
+            return { contents: '@import "plugin-dep.css";\\n.main-v' + ++builds + " { color: red; }", loader: "css" };
+          });
+        },
+      },
+    ];
+  `,
+  files: {
+    // The server graph holds the only importer of "main", a stylesheet with no file.
+    "routes/index.ts": frameworkStylesheetRoute("plugin-main.css"),
+    "routes/second.ts": frameworkStylesheetRoute("plugin-dep.css"),
+    "data/dep.txt": `.dep-v1 { color: red; }}`,
+  },
+  async test(dev) {
+    expect(await linkedStylesheets(dev, "/")).toEqual({ status: 500, sheets: [] });
+    expect(await linkedStylesheets(dev, "/second")).toEqual({ status: 500, sheets: [] });
+    await Bun.write(dev.join("data/dep.txt"), `.dep-v2 { color: red; }`);
+    await dev.writeNoChanges("routes/second.ts");
+    expect(await linkedStylesheets(dev, "/second")).toEqual({ status: 200, sheets: [".dep-v2"] });
+    // The bundle that built "dep" also built "main", once, through the route that imports it.
+    expect(await linkedStylesheets(dev, "/")).toEqual({ status: 200, sheets: [".dep-v2 .main-v2"] });
+  },
+});
 devTest("css import before create", {
   files: {
     "index.html": emptyHtmlFile({

@@ -1613,6 +1613,30 @@ test("--parallel: a worker waits for its file's event loop to run dry under BUN_
   expect(exitCode).toBe(0);
 });
 
+// On Windows a frame that is still in flight to the coordinator counts as work, and work before the wait ends means a second 'beforeExit'.
+test("--parallel: a file with nothing left to do gets one 'beforeExit' under BUN_TEST_DRAIN_EVENT_LOOP", async () => {
+  const fixture = (name: string, tests: number) => `
+    import { test } from "bun:test";
+    let dispatched = 0;
+    // console.log writes at once. On Windows process.stdout.write to a pipe is itself work of the file.
+    process.on("beforeExit", () => console.log("beforeExit of ${name} #" + ++dispatched));
+    for (let i = 0; i < ${tests}; i++) test("${name} " + i, () => {});`;
+  // The result frames of the fifty tests queue behind the one that is in flight.
+  using dir = tempDir("parallel-drain-before-exit", { "a.test.js": fixture("a", 1), "b.test.js": fixture("b", 50) });
+  await using proc = Bun.spawn({
+    // Huge scale-up delay: one worker runs both files.
+    cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=1000000"],
+    env: { ...bunEnv, BUN_TEST_DRAIN_EVENT_LOOP: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect((stdout + stderr).match(/^beforeExit of \w #\d+$/gm)).toEqual(["beforeExit of a #1", "beforeExit of b #1"]);
+  expect(stderr).toContain("51 pass");
+  expect(exitCode).toBe(0);
+});
+
 test("--parallel: the channel to the coordinator does not keep a worker's event loop alive", async () => {
   const fixture = (name: string) => `
     import { test } from "bun:test";

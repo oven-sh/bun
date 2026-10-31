@@ -3160,6 +3160,15 @@ pub mod formatter {
         }
     }
 
+    /// One past the last index of JSX children: an arguments object can claim a `length` past the index space.
+    #[inline(always)]
+    fn jsx_children_index_end(length: u64) -> u32 {
+        length.min(u64::from(u32::MAX)) as u32
+    }
+
+    /// JSX children with more holes than this print each run of holes as one line, not one line for each hole.
+    const JSX_CHILDREN_MAX_HOLE_LINES: u64 = 1 << 16;
+
     fn get_object_name(
         global_this: &JSGlobalObject,
         value: JSValue,
@@ -4969,7 +4978,7 @@ pub mod formatter {
             Ok(())
         }
 
-        // JSX printing is large (≈230 LOC) and entirely self-contained string
+        // JSX printing is large string
         // formatting over `value.get("type"/"key"/"props"/"children")`
         // (covered by `test/js/bun/util/inspect.test.js` snapshots).
         #[inline(never)]
@@ -5242,38 +5251,33 @@ pub mod formatter {
                                             );
                                             let _ind = defer_decrement!(self.indent);
 
-                                            let mut j: usize = 0;
-                                            while (j as u64) < length {
-                                                let child = children.get_index(
-                                                    self.global_this,
-                                                    u32::try_from(j).expect("int cast"),
-                                                )?;
-                                                if writer.failed {
-                                                    self.failed = true;
+                                            if writer.failed {
+                                                self.failed = true;
+                                            }
+                                            let mut j: u32 = 0;
+                                            while j < jsx_children_index_end(length) {
+                                                let child = self.jsx_child_at(children, j)?;
+                                                if child.is_empty() {
+                                                    break;
                                                 }
-                                                self.format::<C>(
-                                                    Tag::get_advanced(
-                                                        child,
-                                                        self.global_this,
-                                                        self.tag_opts(),
-                                                    )?,
+                                                self.print_jsx_child::<C>(
                                                     writer_,
+                                                    u64::from(j),
                                                     child,
-                                                    self.global_this,
                                                 )?;
-                                                writer = WrappedWriter {
-                                                    ctx: writer_,
-                                                    failed: false,
-                                                    estimated_line_length: &mut self
-                                                        .estimated_line_length,
-                                                };
-                                                if (j as u64) + 1 < length {
-                                                    writer.write_all(b"\n");
-                                                    write_indent_n(self.indent, writer.ctx)
-                                                        .expect("unreachable");
-                                                }
                                                 j += 1;
                                             }
+                                            if u64::from(j) < length {
+                                                self.print_jsx_children_from_hole::<C>(
+                                                    writer_, children, j, length,
+                                                )?;
+                                            }
+                                            writer = WrappedWriter {
+                                                ctx: writer_,
+                                                failed: false,
+                                                estimated_line_length: &mut self
+                                                    .estimated_line_length,
+                                            };
                                         }
                                         writer.write_all(b"\n");
                                         write_indent_n(self.indent, writer.ctx)
@@ -5307,6 +5311,119 @@ pub mod formatter {
             writer.write_all(b" />");
             if writer.failed {
                 self.failed = true;
+            }
+            Ok(())
+        }
+
+        /// The children of a JSX element take one line each. The caller indents the first line.
+        fn start_jsx_child_line(&mut self, writer_: &mut dyn bun_io::Write, index: u64) {
+            if index == 0 {
+                return;
+            }
+            let mut writer = WrappedWriter {
+                ctx: writer_,
+                failed: false,
+                estimated_line_length: &mut self.estimated_line_length,
+            };
+            writer.write_all(b"\n");
+            writer.write_indent(self.indent);
+            if writer.failed {
+                self.failed = true;
+            }
+        }
+
+        // Out of line: the direct call makes the frame of `print_jsx` 16 bytes larger, and nested elements repeat that frame.
+        #[inline(never)]
+        fn jsx_child_at(&self, children: JSValue, index: u32) -> JsResult<JSValue> {
+            children.get_direct_index(self.global_this, index)
+        }
+
+        #[inline(always)]
+        fn print_jsx_child<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            index: u64,
+            child: JSValue,
+        ) -> JsResult<()> {
+            self.start_jsx_child_line(writer_, index);
+            let tag = Tag::get_advanced(child, self.global_this, self.tag_opts())?;
+            self.format::<C>(tag, writer_, child, self.global_this)
+        }
+
+        /// The holes at `start..end` of JSX children, in the words of `print_array`.
+        fn print_jsx_hole_run<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            start: u64,
+            end: u64,
+        ) {
+            self.start_jsx_child_line(writer_, start);
+            let mut writer = WrappedWriter {
+                ctx: writer_,
+                failed: false,
+                estimated_line_length: &mut self.estimated_line_length,
+            };
+            let count = end - start;
+            if count == 1 {
+                writer.pretty::<C>(
+                    "empty item".len(),
+                    format_args!("{}empty item{}", pfmt!("<r><d>", C), pfmt!("<r>", C)),
+                );
+            } else {
+                writer.add_for_new_line(bun_core::fmt::digit_count(count));
+                writer.pretty::<C>(
+                    " x empty items".len(),
+                    format_args!(
+                        "{}{} x empty items{}",
+                        pfmt!("<r><d>", C),
+                        count,
+                        pfmt!("<r>", C)
+                    ),
+                );
+            }
+            if writer.failed {
+                self.failed = true;
+            }
+        }
+
+        /// The JSX children from their first hole, at `from`, to `length`.
+        #[cold]
+        #[inline(never)]
+        fn print_jsx_children_from_hole<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            children: JSValue,
+            from: u32,
+            length: u64,
+        ) -> JsResult<()> {
+            let end = jsx_children_index_end(length);
+            let held = children.present_index_count_in(from..end) as u64;
+            let holes = (length - u64::from(from)).saturating_sub(held);
+            if holes <= JSX_CHILDREN_MAX_HOLE_LINES && u64::from(end) == length {
+                // A line for each index: a hole prints what the prototype chain holds, or `undefined`.
+                for index in from..end {
+                    let child = children.get_index(self.global_this, index)?;
+                    self.print_jsx_child::<C>(writer_, u64::from(index), child)?;
+                }
+                return Ok(());
+            }
+            // Every index below `next` is printed: as a child, or as one of a run of holes.
+            let mut next = u64::from(from);
+            for index in children.present_indexes_in(from..end) {
+                // Printing an earlier child can delete this one. It is then one more hole.
+                let child = self.jsx_child_at(children, index)?;
+                if child.is_empty() {
+                    continue;
+                }
+                let index = u64::from(index);
+                if index > next {
+                    self.print_jsx_hole_run::<C>(writer_, next, index);
+                }
+                self.print_jsx_child::<C>(writer_, index, child)?;
+                next = index + 1;
+            }
+            if length > next {
+                self.print_jsx_hole_run::<C>(writer_, next, length);
             }
             Ok(())
         }

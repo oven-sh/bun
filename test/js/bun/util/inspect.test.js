@@ -1,3 +1,4 @@
+import { jscDescribe } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import {
   bunEnv,
@@ -1396,6 +1397,364 @@ it("object property enumeration scales linearly with property count", () => {
     // Per-property cost must stay roughly constant as n grows 10x. The previous
     // Vector-based visited-property dedup was O(n^2), giving a ~9x ratio here.
     expect(l.ms / 30000 / (s.ms / 3000)).toBeLessThan(3);
+  });
+});
+
+// The children of a React element print one per line, and so does each hole of a list. A list
+// with more than 65,536 holes is walked by the indexes it holds, and each run of its holes is
+// one line: an array's `length` can be 2^32 - 1 with no elements at all, and an arguments object
+// can claim any `length`.
+describe("Bun.inspect JSX children with holes", () => {
+  const element = children => ({
+    $$typeof: Symbol.for("react.element"),
+    type: "div",
+    key: null,
+    ref: null,
+    props: { children },
+  });
+  // The text of a <div> whose children print as `lines`.
+  const div = (...lines) => "<div>\n" + lines.map(line => `  ${line}\n`).join("") + "</div>";
+  // An array of `length` that holds only `items`.
+  const sparse = (length, items) => Object.assign(Array(length), items);
+  // The most holes that print a line each.
+  const maxHoleLines = 65_536;
+  // A length that leaves more holes than that in a list with a few children.
+  const long = 70_000;
+  // The text, or its size when it has a line for each hole of a long list.
+  const short = text => (text.length < 10_000 ? text : `${text.length} characters`);
+  const inspect = (children, options) => short(Bun.inspect(element(children), options));
+  // How JSC stores the indexes of `list`. The walk reads each kind of storage in its own way.
+  const storage = list => /(?:Non)?ArrayWith\w+|NonArray/.exec(jscDescribe(list))[0];
+
+  it.each([
+    [
+      "a hole in the middle",
+      () => sparse(long, { 0: "a", 2: "b" }),
+      "ArrayWithContiguous",
+      ["a", "empty item", "b", "69997 x empty items"],
+    ],
+    [
+      "a hole at the start",
+      () => sparse(long, { 1: "a" }),
+      "ArrayWithContiguous",
+      ["empty item", "a", "69998 x empty items"],
+    ],
+    ["nothing but holes", () => Array(long), "ArrayWithUndecided", ["70000 x empty items"]],
+    [
+      "runs of holes at the start and in the middle",
+      () => sparse(long, { 2: "a", 6: "b" }),
+      "ArrayWithContiguous",
+      ["2 x empty items", "a", "3 x empty items", "b", "69993 x empty items"],
+    ],
+    [
+      "undefined next to a hole",
+      () => sparse(long, { 0: undefined, 2: null, 3: undefined }),
+      "ArrayWithContiguous",
+      ["undefined", "empty item", "null", "undefined", "69996 x empty items"],
+    ],
+    [
+      "integers",
+      () => Object.assign([1, , 3], { length: long }),
+      "ArrayWithInt32",
+      ["1", "empty item", "3", "69997 x empty items"],
+    ],
+    [
+      "doubles",
+      () => Object.assign([1.5, , 2.5], { length: long }),
+      "ArrayWithDouble",
+      ["1.5", "empty item", "2.5", "69997 x empty items"],
+    ],
+    [
+      "an index far from the others",
+      () => Object.assign(["a", , "c"], { 100_000: "far" }),
+      "ArrayWithArrayStorage",
+      ["a", "empty item", "c", "99997 x empty items", "far"],
+    ],
+    [
+      "a frozen array",
+      () => Object.freeze(sparse(long, { 0: "a", 2: "b" })),
+      "ArrayWithArrayStorage",
+      ["a", "empty item", "b", "69997 x empty items"],
+    ],
+    [
+      "a frozen array that was filled out of order",
+      () => Object.freeze(sparse(long, { 5: "f", 2: "c", 9: "j", 0: "a" })),
+      "ArrayWithArrayStorage",
+      ["a", "empty item", "c", "2 x empty items", "f", "3 x empty items", "j", "69990 x empty items"],
+    ],
+    [
+      "an index that is not enumerable",
+      () => Object.defineProperty(sparse(long, { 0: "a", 2: "c" }), 2, { value: "hidden", enumerable: false }),
+      "ArrayWithArrayStorage",
+      ["a", "empty item", "hidden", "69997 x empty items"],
+    ],
+    [
+      "an index with a getter",
+      () => Object.defineProperty(sparse(long, { 0: "a", 2: "c" }), 2, { get: () => "got", enumerable: true }),
+      "ArrayWithArrayStorage",
+      ["a", "empty item", "got", "69997 x empty items"],
+    ],
+  ])("more than 65,536 holes: %s", (_, make, kind, lines) => {
+    const children = make();
+    expect({ storage: storage(children), text: inspect(children) }).toEqual({ storage: kind, text: div(...lines) });
+  });
+
+  // A list with fewer holes prints as it always has.
+  it.each([
+    ["a hole in the middle", () => ["a", , "b"], ["a", "undefined", "b"]],
+    ["nothing but holes", () => Array(3), ["undefined", "undefined", "undefined"]],
+    ["a frozen array", () => Object.freeze(["a", , "b"]), ["a", "undefined", "b"]],
+    [
+      "an index far from the others",
+      () => Object.assign(["a", , "c"], { 6: "far" }),
+      ["a", "undefined", "c", "undefined", "undefined", "undefined", "far"],
+    ],
+  ])("a line for each hole: %s", (_, children, lines) => {
+    expect(inspect(children())).toBe(div(...lines));
+  });
+
+  it("65,536 holes print a line each, and with one more each run of holes is one line", () => {
+    const line = "  undefined\n";
+    expect(Bun.inspect(element(sparse(maxHoleLines + 2, { 0: "a", [maxHoleLines + 1]: "z" })))).toBe(
+      "<div>\n  a\n" + Buffer.alloc(maxHoleLines * line.length, line).toString() + "  z\n</div>",
+    );
+    expect(inspect(sparse(maxHoleLines + 3, { 0: "a", [maxHoleLines + 2]: "z" }))).toBe(
+      div("a", "65537 x empty items", "z"),
+    );
+  });
+
+  it("a subclass of Array", () => {
+    class Kids extends Array {}
+    Kids.prototype[1] = "inherited";
+    const kids = Kids.of("a", "b", "c");
+    delete kids[1];
+    expect(inspect(kids)).toBe(div("a", "inherited", "c"));
+    // The walk by the indexes that the list holds does not read its prototype.
+    kids.length = long;
+    expect(inspect(kids)).toBe(div("a", "empty item", "c", "69997 x empty items"));
+  });
+
+  // JSC has three kinds of arguments objects. A sloppy function's arguments live outside the
+  // regular indexed storage: in the object (DirectArguments), or in the scope when a closure
+  // captures a parameter (ScopedArguments). A strict function's are a copy (ClonedArguments).
+  // This file is a module, so its functions are strict. The body of a `new Function` is sloppy.
+  const argumentsKinds = [
+    ["a sloppy function", new Function("return arguments")],
+    ["a sloppy function with a captured parameter", new Function("a", "const f = () => a; return arguments")],
+    [
+      "a strict function",
+      function () {
+        return arguments;
+      },
+    ],
+  ];
+  // Only the arguments object of a sloppy function has `callee` as a data property.
+  const isSloppyArguments = a => "value" in Object.getOwnPropertyDescriptor(a, "callee");
+
+  it.each(argumentsKinds)("the arguments of %s", (kind, args) => {
+    expect(isSloppyArguments(args())).toBe(kind !== "a strict function");
+    let a = args("a", "b", "c", "d");
+    delete a[1];
+    delete a[2];
+    expect(inspect(a)).toBe(div("a", "undefined", "undefined", "d"));
+    // `length` is an ordinary property. It can be more or less than what the object holds.
+    a.length = long;
+    expect(inspect(a)).toBe(div("a", "2 x empty items", "d", "69996 x empty items"));
+    // A deleted argument that is assigned again lives in the regular indexed storage.
+    a[2] = "again";
+    expect(inspect(a)).toBe(div("a", "empty item", "again", "d", "69996 x empty items"));
+    // An argument with a redefined descriptor is both in its slot and in that storage.
+    a = args("a", "b", "c");
+    delete a[0];
+    Object.defineProperty(a, 2, { enumerable: false });
+    a.length = long;
+    expect(inspect(a)).toBe(div("empty item", "b", "c", "69997 x empty items"));
+    a = args("a", "b", "c");
+    delete a[1];
+    a[long + 10] = "past the length";
+    a.length = long;
+    expect(inspect(a)).toBe(div("a", "empty item", "c", "69997 x empty items"));
+  });
+
+  // The vector of an arguments object can hold elements past its `length`.
+  it.each([
+    ["the vector", () => {}, "NonArrayWithContiguous"],
+    ["the vector, beside a map of far indexes", a => (a[1_000_000] = "far"), "NonArrayWithArrayStorage"],
+  ])("the arguments of a strict function that hold more in %s than their length says", (_, change, kind) => {
+    const a = argumentsKinds[2][1]("a");
+    const last = long + 10;
+    for (let i = 1; i <= last; i++) a[i] = i;
+    change(a);
+    for (let i = 1; i < last; i++) delete a[i];
+    a.length = long;
+    expect({ storage: storage(a), text: inspect(a) }).toEqual({ storage: kind, text: div("a", "69999 x empty items") });
+  });
+
+  // A child that prints as `text` and changes the list while it prints.
+  const hook = (text, change) => ({ [Bun.inspect.custom]: () => (change(), text) });
+
+  // The indexes are taken once, at the first hole. After that a child prints the value its index
+  // holds when its turn comes, and a hole that gets filled is still a hole.
+  it.each([
+    [
+      "freezes the list",
+      list => Object.freeze(list),
+      ["a", "empty item", "hook", "d", "empty item", "f", "69994 x empty items"],
+    ],
+    [
+      "deletes a later child",
+      list => delete list[3],
+      ["a", "empty item", "hook", "2 x empty items", "f", "69994 x empty items"],
+    ],
+    ["truncates the list", list => (list.length = 3), ["a", "empty item", "hook", "69997 x empty items"]],
+    [
+      "replaces a later child",
+      list => (list[3] = "new"),
+      ["a", "empty item", "hook", "new", "empty item", "f", "69994 x empty items"],
+    ],
+    [
+      "fills a later hole",
+      list => (list[4] = "filled"),
+      ["a", "empty item", "hook", "d", "empty item", "f", "69994 x empty items"],
+    ],
+  ])("a child after the first hole that %s while it prints", (_, change, lines) => {
+    const list = sparse(long, { 0: "a", 3: "d", 5: "f" });
+    list[2] = hook("hook", () => change(list));
+    expect(inspect(list)).toBe(div(...lines));
+  });
+
+  it("a child before the first hole that changes the list while it prints", () => {
+    const list = sparse(long, { 2: "c", 3: "d" });
+    list[0] = hook("hook", () => {
+      list[1] = "filled";
+      delete list[2];
+    });
+    expect(inspect(list)).toBe(div("hook", "filled", "empty item", "d", "69996 x empty items"));
+  });
+
+  it.each([3, long])("an error that a getter throws after the first hole, in a list of %d", length => {
+    const list = sparse(length, { 0: "a" });
+    Object.defineProperty(list, 2, {
+      get() {
+        throw new Error("from the getter");
+      },
+      enumerable: true,
+    });
+    expect(() => Bun.inspect(element(list))).toThrow("from the getter");
+  });
+
+  it("nested elements, a React 19 element and a fragment", () => {
+    expect(inspect(sparse(long, { 0: "a", 2: element(sparse(long, { 1: "b" })) }))).toBe(
+      "<div>\n  a\n  empty item\n  <div>\n    empty item\n    b\n    69998 x empty items\n  </div>\n  69997 x empty items\n</div>",
+    );
+    const children = sparse(long, { 0: "a", 2: "b" });
+    const react19 = { $$typeof: Symbol.for("react.transitional.element"), type: "p", key: null, props: { children } };
+    expect(short(Bun.inspect(react19))).toBe("<p>\n  a\n  empty item\n  b\n  69997 x empty items\n</p>");
+    const fragment = {
+      $$typeof: Symbol.for("react.element"),
+      type: Symbol.for("react.fragment"),
+      key: null,
+      props: { children },
+    };
+    expect(short(Bun.inspect(fragment))).toBe("<>\n  a\n  empty item\n  b\n  69997 x empty items\n</>");
+  });
+
+  it("the style that a hole has in an array", () => {
+    const dim = text => `\x1b[0m\x1b[2m${text}\x1b[0m`;
+    expect(Bun.inspect([, "a"], { colors: true })).toContain(dim("empty item"));
+    expect(inspect(sparse(long, { 1: "a" }), { colors: true })).toBe(
+      `\x1b[0m<\x1b[32mdiv\x1b[0m>\n  ${dim("empty item")}\n  a\n  ${dim("69998 x empty items")}\n</\x1b[0m\x1b[32mdiv\x1b[0m>`,
+    );
+  });
+
+  it("no children on a single line", () => {
+    expect(inspect(sparse(long, { 0: "a" }), { compact: true })).toBe("<div />");
+  });
+
+  // Each in a child. A walk by `length` writes until the cap on the output ends the child.
+  async function inspectInChild(code) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const element = ${element};\n${code}`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      maxBuffer: 64 * 1024,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  it.concurrent("an array with a huge length", async () => {
+    const result = await inspectInChild(`
+      const far = ["a"];
+      far[4294967294] = "x";
+      console.log(element(far));
+      console.log(Bun.inspect(element(far)));
+      console.log(element(new Array(2 ** 32 - 1)));
+    `);
+    expect(result).toEqual({
+      stdout:
+        div("a", "4294967293 x empty items", "x") +
+        "\n" +
+        div("a", "4294967293 x empty items", "x") +
+        "\n" +
+        div("4294967295 x empty items") +
+        "\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // An index on Array.prototype moves every array of the process to another kind of storage.
+  it.concurrent("an array while Array.prototype holds an index", async () => {
+    const result = await inspectInChild(`
+      let calls = 0;
+      Object.defineProperty(Array.prototype, 1, { get: () => (calls++, "inherited") });
+      const far = ["a", , "c"];
+      far[100_000] = "far";
+      console.log(element(far));
+      console.log(calls);
+    `);
+    expect(result).toEqual({
+      stdout: div("a", "empty item", "c", "99997 x empty items", "far") + "\n0\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // The `length` of an arguments object can exceed 2^32 - 1, the number of indexes there are.
+  it.concurrent("an arguments object with a huge length, and with none", async () => {
+    const result = await inspectInChild(`
+      const kinds = [
+        new Function("return arguments"),
+        new Function("a", "const f = () => a; return arguments"),
+        class { static strict() { return arguments; } }.strict,
+      ];
+      for (const args of kinds) {
+        const a = args(1, 2, 3);
+        a.length = 2 ** 33;
+        console.log(element(a));
+        a[4294967294] = "last";
+        console.log(Bun.inspect(element(a)));
+        // Without a \`length\` the walk still ends. This test does not pin what it prints.
+        delete a.length;
+        console.log(typeof Bun.inspect(element(a)));
+      }
+    `);
+    const perKind =
+      div(1, 2, 3, "8589934589 x empty items") +
+      "\n" +
+      div(1, 2, 3, "4294967291 x empty items", "last", "4294967297 x empty items") +
+      "\n" +
+      "string\n";
+    expect(result).toEqual({
+      stdout: perKind + perKind + perKind,
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 });
 

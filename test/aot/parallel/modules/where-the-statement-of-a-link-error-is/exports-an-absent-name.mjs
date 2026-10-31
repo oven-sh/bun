@@ -1,1 +1,1 @@
-export { present, absent } from "./names.mjs";
+export { present, absent } from "./names.cjs";

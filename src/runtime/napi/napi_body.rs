@@ -3760,6 +3760,26 @@ mod v8_api {
         pub(super) fn _ZNK2v814CpuProfileNode8GetChildEi() -> *mut c_void;
         pub(super) fn _ZN2v83Map3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_() -> *mut c_void;
         pub(super) fn _ZN2v83Map6DeleteENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE() -> *mut c_void;
+        pub(super) fn _ZN2v811ArrayBuffer15NewBackingStoreEPvmPFvS1_mS1_ES1_() -> *mut c_void;
+        pub(super) fn _ZN2v811ArrayBuffer6DetachEv() -> *mut c_void;
+        pub(super) fn _ZNK2v811ArrayBuffer10ByteLengthEv() -> *mut c_void;
+        pub(super) fn _ZNK2v811ArrayBuffer4DataEv() -> *mut c_void;
+        pub(super) fn _ZNK2v817SharedArrayBuffer10ByteLengthEv() -> *mut c_void;
+        pub(super) fn _ZNK2v817SharedArrayBuffer4DataEv() -> *mut c_void;
+        pub(super) fn _ZN2v812BackingStoreD1Ev() -> *mut c_void;
+        pub(super) fn _ZN2v813CFunctionInfoC2ERKNS_9CTypeInfoEjPS2_NS0_19Int64RepresentationE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v89CFunctionC1EPKvPKNS_13CFunctionInfoE() -> *mut c_void;
+        pub(super) fn _ZN2v86Object19GetOwnPropertyNamesENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZN2v86Object19GetOwnPropertyNamesENS_5LocalINS_7ContextEEENS_14PropertyFilterENS_17KeyConversionModeE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v86Object5CloneEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value11NumberValueENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value12BooleanValueEPNS_7IsolateE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value10IsExternalEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value13IsArrayBufferEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value17IsArrayBufferViewEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value19IsSharedArrayBufferEv() -> *mut c_void;
         // NOTE: return type omitted to match the `uv_functions_to_export` declarations
         // below (avoids `clashing_extern_declarations`); only the symbol address is used.
         pub(super) fn uv_os_getpid();
@@ -5213,6 +5233,24 @@ pub(crate) fn fix_dead_code_elimination() {
             _ZNK2v814CpuProfileNode8GetChildEi,
             _ZN2v83Map3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_,
             _ZN2v83Map6DeleteENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE,
+            _ZN2v811ArrayBuffer15NewBackingStoreEPvmPFvS1_mS1_ES1_,
+            _ZN2v811ArrayBuffer6DetachEv,
+            _ZNK2v811ArrayBuffer10ByteLengthEv,
+            _ZNK2v811ArrayBuffer4DataEv,
+            _ZNK2v817SharedArrayBuffer10ByteLengthEv,
+            _ZNK2v817SharedArrayBuffer4DataEv,
+            _ZN2v812BackingStoreD1Ev,
+            _ZN2v813CFunctionInfoC2ERKNS_9CTypeInfoEjPS2_NS0_19Int64RepresentationE,
+            _ZN2v89CFunctionC1EPKvPKNS_13CFunctionInfoE,
+            _ZN2v86Object19GetOwnPropertyNamesENS_5LocalINS_7ContextEEE,
+            _ZN2v86Object19GetOwnPropertyNamesENS_5LocalINS_7ContextEEENS_14PropertyFilterENS_17KeyConversionModeE,
+            _ZN2v86Object5CloneEv,
+            _ZNK2v85Value11NumberValueENS_5LocalINS_7ContextEEE,
+            _ZNK2v85Value12BooleanValueEPNS_7IsolateE,
+            _ZNK2v85Value10IsExternalEv,
+            _ZNK2v85Value13IsArrayBufferEv,
+            _ZNK2v85Value17IsArrayBufferViewEv,
+            _ZNK2v85Value19IsSharedArrayBufferEv,
         );
         // Data symbol: keep_symbols! only takes function paths.
         ::core::hint::black_box(&raw const _ZN2v88Function19kLineOffsetNotFoundE);

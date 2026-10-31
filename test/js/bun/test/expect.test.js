@@ -1923,6 +1923,162 @@ describe("expect()", () => {
     expect({ x: detached() }).not.toEqual({ x: new ArrayBuffer(0) });
   });
 
+  // A DataView keeps its bytes in an internal slot and has no own properties.
+  describe("DataViews", () => {
+    const buffer = (/** @type {number[]} */ ...bytes) => new Uint8Array(bytes).buffer;
+    const view = (/** @type {number[]} */ ...bytes) => new DataView(buffer(...bytes));
+    /** @extends {DataView<ArrayBuffer>} */
+    class SubView extends DataView {}
+    const sharedView = (/** @type {number[]} */ ...bytes) => {
+      const shared = new SharedArrayBuffer(bytes.length);
+      new Uint8Array(shared).set(bytes);
+      return new DataView(shared);
+    };
+    const detachedView = () => {
+      const detached = new ArrayBuffer(4);
+      const dataView = new DataView(detached);
+      detached.transfer();
+      return dataView;
+    };
+    // A fixed-length view whose end is past the end of its shrunk buffer.
+    const outOfBoundsView = () => {
+      const resizable = new ArrayBuffer(8, { maxByteLength: 16 });
+      const dataView = new DataView(resizable, 0, 8);
+      resizable.resize(4);
+      return dataView;
+    };
+
+    // Jest 30 and Vitest compare the bytes in toStrictEqual() only. Bun compares
+    // them in toEqual() too, as it does for an ArrayBuffer.
+    /** @type {("toEqual" | "toStrictEqual")[]} */
+    const matchers = isBun ? ["toEqual", "toStrictEqual"] : ["toStrictEqual"];
+
+    describe.each(matchers)("%s()", matcher => {
+      const equal = (/** @type {unknown} */ a, /** @type {unknown} */ b) => expect(a)[matcher](b);
+      const notEqual = (/** @type {unknown} */ a, /** @type {unknown} */ b) => expect(a).not[matcher](b);
+      // A failed matcher names itself in its message. Jest throws a TypeError when it prints a DataView.
+      const failure = isBun ? matcher : undefined;
+
+      test.each([
+        ["different bytes", () => view(1, 2), () => view(3, 4)],
+        ["a different last byte", () => view(1, 2, 3), () => view(1, 2, 4)],
+        ["different lengths", () => view(1, 2), () => new DataView(new ArrayBuffer(9))],
+        ["an empty view and a view of one byte", () => view(), () => view(0)],
+        ["different windows of equal buffers", () => new DataView(buffer(9, 1, 2, 9), 1, 2), () => view(9, 1)],
+        ["different bytes in a SharedArrayBuffer", () => sharedView(1, 2), () => view(3, 4)],
+        [
+          "different bytes with an equal own property",
+          () => Object.assign(view(1, 2), { x: 1 }),
+          () => Object.assign(view(3, 4), { x: 1 }),
+        ],
+        ["different bytes in two subclass instances", () => new SubView(buffer(1, 2)), () => new SubView(buffer(3, 4))],
+      ])("rejects %s", (_, a, b) => {
+        notEqual(a(), b());
+        notEqual(b(), a());
+        expect(() => equal(a(), b())).toThrow(failure);
+        notEqual({ nested: [a()] }, { nested: [b()] });
+        notEqual(new Map([["key", a()]]), new Map([["key", b()]]));
+        notEqual(new Map([[a(), "value"]]), new Map([[b(), "value"]]));
+        notEqual(new Set([a()]), new Set([b()]));
+      });
+
+      test.each([
+        ["equal bytes", () => view(1, 2), () => view(1, 2)],
+        ["two empty views", () => view(), () => new DataView(new ArrayBuffer(2), 2)],
+        ["equal windows of different buffers", () => new DataView(buffer(9, 1, 2, 9), 1, 2), () => view(1, 2)],
+        ["equal bytes in a SharedArrayBuffer", () => sharedView(1, 2), () => view(1, 2)],
+        [
+          "equal bytes with an equal own property",
+          () => Object.assign(view(1, 2), { x: 1 }),
+          () => Object.assign(view(1, 2), { x: 1 }),
+        ],
+        ["equal bytes in two subclass instances", () => new SubView(buffer(1, 2)), () => new SubView(buffer(1, 2))],
+      ])("accepts %s", (_, a, b) => {
+        equal(a(), b());
+        equal(b(), a());
+        expect(() => notEqual(a(), b())).toThrow(failure);
+        equal({ nested: [a()] }, { nested: [b()] });
+      });
+
+      // Two DataViews with different bytes used to match as keys, so the wrong values were compared.
+      test("pairs the DataView keys of a Map and the DataView members of a Set by their bytes", () => {
+        const map = (/** @type {[DataView, string][]} */ ...entries) => new Map(entries);
+        equal(map([view(1), "a"], [view(2), "b"]), map([view(1), "a"], [view(2), "b"]));
+        equal(map([view(1), "a"], [view(2), "b"]), map([view(2), "b"], [view(1), "a"]));
+        notEqual(map([view(1), "a"], [view(2), "b"]), map([view(1), "b"], [view(2), "a"]));
+        equal(new Set([view(1), view(2)]), new Set([view(2), view(1)]));
+        notEqual(new Set([view(1), view(2)]), new Set([view(1), view(3)]));
+      });
+
+      test("reads the bytes when the matcher runs", () => {
+        const received = view(1, 2);
+        const expectation = expect(received);
+        received.setUint8(0, 9);
+        expectation[matcher](view(9, 2));
+        expectation.not[matcher](view(1, 2));
+      });
+
+      test.each([
+        ["a Uint8Array", () => new Uint8Array([1, 2])],
+        ["an ArrayBuffer", () => buffer(1, 2)],
+        ["an object literal", () => ({})],
+      ])("rejects a DataView against %s", (_, other) => {
+        notEqual(view(1, 2), other());
+        notEqual(other(), view(1, 2));
+      });
+
+      if (isBun) {
+        // Jest's toStrictEqual() stops at the bytes. Bun also compares the own properties, as node:assert does.
+        test("compares own properties when the bytes are equal", () => {
+          notEqual(Object.assign(view(1, 2), { x: 1 }), view(1, 2));
+          notEqual(view(1, 2), Object.assign(view(1, 2), { x: 1 }));
+          notEqual(Object.assign(view(1, 2), { x: 1 }), Object.assign(view(1, 2), { x: 2 }));
+        });
+
+        // Jest throws a TypeError for such a view. Bun reports not equal, as it does for a detached ArrayBuffer.
+        test.each([
+          ["a detached", detachedView],
+          ["an out-of-bounds", outOfBoundsView],
+        ])("rejects %s view without a TypeError", (_, unreadable) => {
+          notEqual(unreadable(), view());
+          notEqual(view(), unreadable());
+          notEqual(unreadable(), unreadable());
+          notEqual({ nested: unreadable() }, { nested: view() });
+          expect(() => equal(unreadable(), view())).toThrow(matcher);
+          const same = unreadable();
+          equal(same, same);
+        });
+      }
+    });
+
+    test("only toStrictEqual() compares the class and the undefined properties", () => {
+      expect(new SubView(buffer(1, 2))).toEqual(view(1, 2));
+      expect(new SubView(buffer(1, 2))).not.toStrictEqual(view(1, 2));
+      expect(view(1, 2)).not.toStrictEqual(new SubView(buffer(1, 2)));
+      expect(Object.assign(view(1, 2), { x: undefined })).toEqual(view(1, 2));
+      if (isBun) expect(Object.assign(view(1, 2), { x: undefined })).not.toStrictEqual(view(1, 2));
+    });
+
+    if (isBun) {
+      test("the other matchers that compare like toEqual() read the bytes too", () => {
+        expect([view(1, 2)]).toContainEqual(view(1, 2));
+        expect([view(1, 2)]).not.toContainEqual(view(3, 4));
+        expect({ a: view(1, 2) }).toHaveProperty("a", view(1, 2));
+        expect({ a: view(1, 2) }).not.toHaveProperty("a", view(3, 4));
+        const fn = mock(() => view(5, 6));
+        fn(view(1, 2));
+        expect(fn).toHaveBeenCalledWith(view(1, 2));
+        expect(fn).not.toHaveBeenCalledWith(view(3, 4));
+        expect(fn).toHaveReturnedWith(view(5, 6));
+        expect(fn).not.toHaveReturnedWith(view(7, 8));
+        expect({ a: view(1, 2), b: 1 }).toEqual(expect.objectContaining({ a: view(1, 2) }));
+        expect({ a: view(1, 2), b: 1 }).not.toEqual(expect.objectContaining({ a: view(3, 4) }));
+        expect([view(1, 2), view(5)]).toEqual(expect.arrayContaining([view(1, 2)]));
+        expect([view(1, 2), view(5)]).not.toEqual(expect.arrayContaining([view(3, 4)]));
+      });
+    }
+  });
+
   test("symbol based keys in arrays are processed correctly", () => {
     const mySymbol = Symbol("test");
 

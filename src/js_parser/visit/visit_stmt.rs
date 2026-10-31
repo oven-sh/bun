@@ -540,47 +540,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     data.default_name = p.create_default_name(expr.loc);
                 }
 
-                let should_emit_temp_var = p.options.features.react_fast_refresh
-                    && match expr.data {
-                        js_ast::ExprData::EArrow(_) => true,
-                        js_ast::ExprData::ECall(call) => match call.target.data {
-                            js_ast::ExprData::EIdentifier(id) => {
-                                id.ref_ == p.react_refresh.latest_signature_ref
-                            }
-                            _ => false,
-                        },
-                        _ => false,
-                    };
-                if should_emit_temp_var {
-                    // declare a temporary ref for this
-                    let temp_id = p.generate_temp_ref(Some(b"default_export"));
-                    VecExt::append(&mut p.cur_scope().generated, temp_id);
-
-                    let value_expr = *expr;
-                    stmts.push(Stmt::alloc(
-                        S::Local {
-                            kind: S::Kind::KConst,
-                            decls: G::DeclList::from_slice(&[G::Decl {
-                                binding: Binding::alloc(
-                                    p.arena,
-                                    B::Identifier { r#ref: temp_id },
-                                    stmt.loc,
-                                ),
-                                value: Some(value_expr),
-                            }]),
-                            ..Default::default()
-                        },
-                        stmt.loc,
-                    ));
-
-                    *expr = Expr::init_identifier(temp_id, stmt.loc);
-
-                    p.emit_react_refresh_register(
-                        stmts,
-                        b"default",
-                        temp_id,
-                        ReactRefreshExportKind::Default,
-                    )?;
+                if p.options.features.react_fast_refresh {
+                    p.register_react_refresh_default_export(stmts, expr, stmt.loc)?;
                 }
 
                 if p.options.features.server_components.wraps_exports() {
@@ -1320,39 +1281,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmts.push(*stmt);
 
         if p.options.features.react_fast_refresh && p.current_scope == p.module_scope {
-            for decl in data.decls.slice() {
-                'try_register: {
-                    let Some(val) = decl.value else {
-                        break 'try_register;
-                    };
-                    match val.data {
-                        // Assigning a component to a local.
-                        js_ast::ExprData::EArrow(_) | js_ast::ExprData::EFunction(_) => {}
-
-                        // A wrapped component.
-                        js_ast::ExprData::ECall(call) => match call.target.data {
-                            js_ast::ExprData::EIdentifier(id) => {
-                                if id.ref_ != p.react_refresh.latest_signature_ref {
-                                    break 'try_register;
-                                }
-                            }
-                            _ => break 'try_register,
-                        },
-                        _ => break 'try_register,
-                    }
-                    let id = match decl.binding.data {
-                        js_ast::binding::Data::BIdentifier(b) => b.r#ref,
-                        _ => break 'try_register,
-                    };
-                    let original_name = p.symbols[id.inner_index() as usize].original_name.slice();
-                    p.handle_react_refresh_register(
-                        stmts,
-                        original_name,
-                        id,
-                        ReactRefreshExportKind::Named,
-                    )?;
-                }
-            }
+            p.register_react_refresh_decls(stmts, data.decls.slice_mut())?;
         }
 
         if data.is_export && p.options.features.server_components.wraps_exports() {

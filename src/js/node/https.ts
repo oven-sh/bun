@@ -12,6 +12,7 @@ const {
   kWaitForProxyTunnel,
   kPerRequestCheckServerIdentity,
   isTlsSymbol,
+  httpServerParts,
 } = require("internal/http");
 const { validateHeaderValue } = require("node:_http_common");
 const { isAnyArrayBuffer, isDataView } = require("node:util/types");
@@ -20,6 +21,9 @@ const ArrayPrototypeShift = Array.prototype.shift;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypeMap = Array.prototype.map;
 const ObjectAssign = Object.assign;
+const ObjectDefineProperties = Object.defineProperties;
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
+const ReflectDefineProperty = Reflect.defineProperty;
 const ArrayPrototypeUnshift = Array.prototype.unshift;
 const JSONStringify = JSON.stringify;
 const WeakMapPrototypeGet = WeakMap.prototype.get;
@@ -583,6 +587,7 @@ const { shouldUseEnvProxy } = require("node:_http_agent");
 // https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L82-L97
 function Server(options, requestListener): void {
   if (!(this instanceof Server)) return new Server(options, requestListener);
+  if (!serverClassLinked) linkServerClass();
   if (typeof options === "function") {
     requestListener = options;
     options = {};
@@ -597,7 +602,7 @@ function Server(options, requestListener): void {
     // ALPN requests are always answered with http/1.1.
     options.ALPNProtocols = ["http/1.1"];
   }
-  http.Server.$call(this, options, requestListener);
+  httpServerParts.initHttpServer!.$call(this, options, requestListener);
   const optionsALPNProtocols = options.ALPNProtocols;
   if (optionsALPNProtocols) {
     require("node:tls").convertALPNProtocols(optionsALPNProtocols, this);
@@ -612,9 +617,25 @@ function Server(options, requestListener): void {
   }
   return this;
 }
-$toClass(Server, "Server", http.Server);
+// https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L115-L122, with the tls.Server link deferred to first use.
+$toClass(Server, "Server", require("node:events"));
+ObjectDefineProperties(Server.prototype, httpServerParts.serverPrototypeDescriptors!);
 // A listener of this class speaks TLS whatever its options hold.
 Server.prototype[isTlsSymbol] = true;
+
+let serverClassLinked = false;
+function linkServerClass() {
+  const TLSServer = require("node:tls").Server;
+  ObjectSetPrototypeOf(Server.prototype, TLSServer.prototype);
+  ObjectSetPrototypeOf(Server, TLSServer);
+  serverClassLinked = true;
+}
+
+// Replaces the accessor with a data property. On a frozen `exports` defineProperty returns false and the accessor stays.
+function materializeServerExport(value) {
+  ReflectDefineProperty(https, "Server", { value, writable: true, configurable: true });
+  return value;
+}
 
 function createServer(options, requestListener) {
   return new Server(options, requestListener);
@@ -628,7 +649,13 @@ var https = {
     timeout: 5000,
     proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
   }),
-  Server,
+  get Server() {
+    if (!serverClassLinked) linkServerClass();
+    return materializeServerExport(Server);
+  },
+  set Server(value) {
+    materializeServerExport(value);
+  },
   createServer,
   get,
   request,

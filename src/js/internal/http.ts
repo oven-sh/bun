@@ -69,6 +69,12 @@ const http1ServerPipeline: {
   kMustCloseConnection?: symbol;
 } = {};
 
+// Filled by node:_http_server at module initialization. node:https builds https.Server from these.
+const httpServerParts: {
+  initHttpServer?: (this: unknown, options: unknown, callback: unknown) => unknown;
+  serverPrototypeDescriptors?: PropertyDescriptorMap;
+} = {};
+
 export const enum NodeHTTPResponseAbortEvent {
   none = 0,
   abort = 1,
@@ -555,6 +561,7 @@ export {
   hasServerResponseFinished,
   headerStateSymbol,
   http1ServerPipeline,
+  httpServerParts,
   isTlsSymbol,
   kAbortController,
   kCloseCallback,

@@ -40,6 +40,38 @@ test("spyOn", () => {
   expect(spyFixture.iSpy).toHaveBeenCalled();
 });
 
+// fs.ReadStream and https.Server are accessors on their module until the first read, which replaces them with the
+// class. spyOn reads them, so the spy lands on the class.
+test.concurrent.each([
+  ["node:fs", "ReadStream"],
+  ["node:https", "Server"],
+])("spyOn works on the lazy export %s.%s before its first read", async (modulePath, name) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+const { spyOn } = require("bun:test");
+const mod = require(${JSON.stringify(modulePath)});
+const spy = spyOn(mod, ${JSON.stringify(name)});
+const { value } = Object.getOwnPropertyDescriptor(mod, ${JSON.stringify(name)});
+const spied = [value === spy, typeof spy.mock.calls, spy.getMockName()];
+spy.mockRestore();
+console.log(JSON.stringify({ spied, restored: [typeof mod[${JSON.stringify(name)}], mod[${JSON.stringify(name)}].name] }));
+`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({
+    stdout: JSON.stringify({ spied: [true, "object", name], restored: ["function", name] }),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("mocking a module that points to a file which does not resolve successfully still works", async () => {
   mock.module("i-never-existed-and-i-never-will", () => {
     return {

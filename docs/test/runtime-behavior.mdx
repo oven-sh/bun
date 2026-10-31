@@ -89,6 +89,8 @@ test("test without timeout", async () => {
 
 `bun test` tracks unhandled promise rejections and errors that occur between tests. If any occur, `bun test` exits with a non-zero code even when no test failed. In both examples below the error happens while the file is being loaded, so the file's tests are not run at all.
 
+With [`--parallel`](/test/parallel), the error count in the summary also includes each worker process that was killed or exited with a non-zero code outside a test file.
+
 This helps catch errors in asynchronous code that might otherwise go unnoticed:
 
 ```ts title="test.ts" icon="/icons/typescript.svg"

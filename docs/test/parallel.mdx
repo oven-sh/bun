@@ -59,7 +59,9 @@ Flags that affect how tests execute (`--timeout`, `--preload`, `--define`, `--co
 
 The coordinator merges coverage, JUnit XML and snapshot writes, so `--parallel --coverage --reporter=junit --reporter-outfile=junit.xml` produces one report.
 
-If a worker crashes (a test calls `process.exit`), the coordinator reports the file that worker was running as failed, and a replacement worker picks up the remaining files. A crash from a fatal signal aborts the whole run, so later passing files can't mask it. With a single effective worker (`--parallel=1`, or a suite with one test file), `bun test` runs the files in the main process, so `process.exit` ends the run with that exit code.
+If a worker crashes (a test calls `process.exit`), the coordinator reports the file that worker was running as failed, and a replacement worker picks up the remaining files. A crash from a fatal signal while a file is running, or while a worker starts, aborts the whole run, so later passing files can't mask it. With a single effective worker (`--parallel=1`, or a suite with one test file), `bun test` runs the files in the main process, so `process.exit` ends the run with that exit code.
+
+A worker can also be killed or exit with a non-zero code outside a test file: between two files, or while it shuts down after its last one. The coordinator then prints an error line, counts one error in the summary and exits with code `1`. It does not abort the run, so the other workers finish their files. Coverage, snapshot writes and the failure recap from that worker can be incomplete.
 
 ### When `--parallel` helps, and when it doesn't
 

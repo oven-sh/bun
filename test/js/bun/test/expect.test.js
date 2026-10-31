@@ -3797,6 +3797,97 @@ describe("expect()", () => {
     });
   });
 
+  describe("toBeCloseTo()", () => {
+    // Bun and Jest print "Expected: <value>" in a failure. Vitest words it differently.
+    const failure = isVitest ? /to (not )?be close to/ : /Expected: /;
+
+    test.each([
+      [0, 0],
+      [0, 0.001],
+      [1.23, 1.229],
+      [1.23, 1.226],
+      [1.23, 1.225],
+      [1.23, 1.234],
+      [Infinity, Infinity],
+      [-Infinity, -Infinity],
+    ])("expect(%p).toBeCloseTo(%p)", (a, b) => {
+      expect(a).toBeCloseTo(b);
+      expect(b).toBeCloseTo(a);
+      expect(() => expect(a).not.toBeCloseTo(b)).toThrow(failure);
+      expect(() => expect(b).not.toBeCloseTo(a)).toThrow(failure);
+    });
+
+    test.each([
+      [0, 0.1, 0],
+      [0, 0.0001, 3],
+      [0, 0.000_004, 5],
+      [2.000_000_2, 2, 5],
+      [Infinity, Infinity, 0],
+      [Infinity, Infinity, Infinity],
+      [-Infinity, -Infinity, -Infinity],
+      [-Infinity, -Infinity, NaN],
+    ])("expect(%p).toBeCloseTo(%p, %p)", (a, b, precision) => {
+      expect(a).toBeCloseTo(b, precision);
+      expect(b).toBeCloseTo(a, precision);
+      expect(() => expect(a).not.toBeCloseTo(b, precision)).toThrow(failure);
+      expect(() => expect(b).not.toBeCloseTo(a, precision)).toThrow(failure);
+    });
+
+    test.each([
+      [0, 0.01],
+      [1, 1.23],
+      [1.23, 1.224_999_9],
+      [NaN, NaN],
+      [Infinity, 1.23],
+      [-Infinity, -1.23],
+      [Infinity, -Infinity],
+    ])("expect(%p).not.toBeCloseTo(%p)", (a, b) => {
+      expect(a).not.toBeCloseTo(b);
+      expect(b).not.toBeCloseTo(a);
+      expect(() => expect(a).toBeCloseTo(b)).toThrow(failure);
+      expect(() => expect(b).toBeCloseTo(a)).toThrow(failure);
+    });
+
+    test.each([
+      [3.141_592e-7, 3e-7, 8],
+      [56_789, 51_234, -4],
+      [1, 1, Infinity],
+      [Infinity, -Infinity, -Infinity],
+    ])("expect(%p).not.toBeCloseTo(%p, %p)", (a, b, precision) => {
+      expect(a).not.toBeCloseTo(b, precision);
+      expect(b).not.toBeCloseTo(a, precision);
+      expect(() => expect(a).toBeCloseTo(b, precision)).toThrow(failure);
+      expect(() => expect(b).toBeCloseTo(a, precision)).toThrow(failure);
+    });
+
+    test("resolves and rejects", async () => {
+      await expect(Promise.resolve(Infinity)).resolves.toBeCloseTo(Infinity);
+      await expect(Promise.resolve(Infinity)).resolves.not.toBeCloseTo(-Infinity);
+      await expect(Promise.reject(-Infinity)).rejects.toBeCloseTo(-Infinity);
+      await expect(Promise.reject(-Infinity)).rejects.not.toBeCloseTo(Infinity);
+
+      // A failing matcher either throws or returns a promise that rejects.
+      const fails = (/** @type {() => unknown} */ assertion) =>
+        expect((async () => assertion())()).rejects.toThrow(failure);
+      await fails(() => expect(Promise.resolve(Infinity)).resolves.toBeCloseTo(-Infinity));
+      await fails(() => expect(Promise.resolve(Infinity)).resolves.not.toBeCloseTo(Infinity));
+      await fails(() => expect(Promise.reject(-Infinity)).rejects.toBeCloseTo(Infinity));
+      await fails(() => expect(Promise.reject(-Infinity)).rejects.not.toBeCloseTo(-Infinity));
+    });
+
+    if (isBun) {
+      test("a .not failure for equal infinities reports a difference of 0", () => {
+        let message;
+        try {
+          expect(Infinity).not.toBeCloseTo(Infinity);
+        } catch (e) {
+          message = Bun.stripANSI(ANY(e).message);
+        }
+        expect(message).toEndWith("\nReceived difference: 0\n");
+      });
+    }
+  });
+
   describe("toMatch()", () => {
     const tests = [
       {

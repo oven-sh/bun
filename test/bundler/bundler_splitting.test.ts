@@ -4964,6 +4964,32 @@ describe("bundler", () => {
     external: ["pkx"],
     run: { file: "/check.js", stdout: `{"a":1,"helper":"pkx"} helperhelper` },
   });
+  // A relative path prints as written. The code of pages/a.js is in a shared
+  // chunk in "/out", which imports "./ext.js" from there. The output of
+  // pages/a.js in "/out/pages" does not name a second file with the same path.
+  itBundled("splitting/EntryPointRelativeExternalExportStarOfSharedChunk", {
+    files: {
+      "/src/pages/a.js": `export * from "./ext.js"; export const own = 1;`,
+      "/src/pages/ext.js": `export const a = 1;`,
+      "/src/b.js": `import { own } from "./pages/a.js"; console.log(own);`,
+    },
+    runtimeFiles: {
+      "/out/ext.js": `export const a = 1;`,
+      "/check.js": /* js */ `
+        import * as a from "./out/pages/a.js";
+        console.log(a.own);
+      `,
+    },
+    entryPoints: ["/src/pages/a.js", "/src/b.js"],
+    outputPaths: ["/out/pages/a.js", "/out/b.js"],
+    splitting: true,
+    outdir: "/out",
+    external: ["{{root}}/src/pages/ext.js"],
+    onAfterBundle(api) {
+      expect(api.readFile("/out/pages/a.js")).not.toContain("ext.js");
+    },
+    run: { file: "/check.js", stdout: "1" },
+  });
 
   // Chunks are printed with placeholders where they refer to other chunks and
   // assets; the placeholders are replaced once every output path is known.

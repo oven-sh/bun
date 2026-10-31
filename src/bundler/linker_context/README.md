@@ -983,7 +983,7 @@ The tail also re-exports an external module that the entry point reaches through
 Two statements stay out of the tail:
 
 - The statement of an entry point that has a CommonJS wrapper. The namespace of that chunk is its default export alone.
-- A statement with a relative path in a file of another directory than the entry point. The path names a file beside the file that has the statement.
+- A statement with a relative path, when a chunk other than the entry point's prints its import, or when nothing prints its import and its file is in another directory than the entry point. A relative path prints as written. It names the same file only in the chunk that has the import, or from the directory of the statement's file.
 
 **Example: Complex Module Transformation**
 

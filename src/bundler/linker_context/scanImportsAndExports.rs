@@ -532,13 +532,14 @@ pub(crate) fn scan_imports_and_exports(
                             exports_kind,
                             named_exports,
                             ast_flags: ast_flags_list,
-                            lists_external_stars: false,
+                            entry_point_kinds,
+                            lists_external_stars: output_format.keep_es6_import_export_syntax(),
+                            root_is_entry_point: false,
                             external_stars: ArrayHashMap::new(),
                         });
                     }
                     let ctx = export_star_ctx.as_mut().unwrap();
-                    ctx.lists_external_stars = output_format.keep_es6_import_export_syntax()
-                        && col_ref!(entry_point_kinds)[id].is_entry_point();
+                    ctx.root_is_entry_point = col_ref!(entry_point_kinds)[id].is_entry_point();
                     ctx.add_exports(resolved_exports, id, source_index);
                     if !ctx.external_stars.is_empty() {
                         this.external_export_stars
@@ -1609,9 +1610,11 @@ struct ExportStarContext<'a> {
     imports_to_bind: *mut [RefImportData],
     export_star_records: *mut [bun_alloc::AstVec<u32>],
     ast_flags: *mut [AstFlags],
-    /// `add_exports` fills `external_stars`: its root is an entry point of ES module output.
+    entry_point_kinds: *mut [EntryPoint::Kind],
+    /// `add_exports` fills `external_stars`: the output is ES modules.
     lists_external_stars: bool,
-    /// The external `export *` statements reached from the root, in source order.
+    root_is_entry_point: bool,
+    /// The external `export *` statements reached from the root, in source order. A root that is not an entry point lists those of entry points only.
     external_stars: ArrayHashMap<ExternalExportStar, ()>,
 }
 
@@ -1653,21 +1656,21 @@ impl<'a> ExportStarContext<'a> {
             if other_id >= col_ref!(self.named_exports).len() {
                 // this AST was empty or it wasn't a JS AST
                 if self.lists_external_stars
+                    && (self.root_is_entry_point
+                        || col_ref!(self.entry_point_kinds)[source_index as usize].is_entry_point())
                     && !record.source_index.is_valid()
                     && !record.path.is_disabled
                     && !record.flags.contains(ImportRecordFlags::IS_UNUSED)
                     && !col_ref!(self.ast_flags)[source_index as usize]
                         .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
                 {
-                    self.external_stars
-                        .put(
-                            ExternalExportStar {
-                                source_index,
-                                import_record_index: import_id,
-                            },
-                            (),
-                        )
-                        .expect("oom");
+                    bun_core::handle_oom(self.external_stars.put(
+                        ExternalExportStar {
+                            source_index,
+                            import_record_index: import_id,
+                        },
+                        (),
+                    ));
                 }
                 continue;
             }

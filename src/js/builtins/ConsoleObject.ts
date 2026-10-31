@@ -146,7 +146,6 @@ export function write(this: Console & { $writer: $Node.FileSink | undefined }, i
 export function createConsoleConstructor(console: Console) {
   const { inspect, formatWithOptions } = require("node:util");
   require("node:buffer");
-  const { isMapIterator, isSetIterator } = require("node:util/types");
 
   const { validateObject, validateInteger, validateArray, validateOneOf } = require("internal/validators");
   const kMaxGroupIndentation = 1000;
@@ -168,6 +167,20 @@ export function createConsoleConstructor(console: Console) {
   const internalGetStringWidth: (input: string, options?: unknown) => number = $newCppFunction(
     "stringWidth.cpp",
     "jsFunctionBunStringWidth",
+    1,
+  );
+  // For a Map or Set iterator, without running or advancing it.
+  const previewEntries: (iterator: object) => [entries: unknown[], isKeyValue: boolean, length: number] =
+    $newCppFunction("UtilInspect.cpp", "jsFunctionPreviewEntries", 2);
+  // previewEntries() throws on anything but what these two accept, so a script must not be able to replace them.
+  const isMapIterator: (value: unknown) => boolean = $newCppFunction(
+    "NodeUtilTypesModule.cpp",
+    "jsFunctionIsMapIterator",
+    1,
+  );
+  const isSetIterator: (value: unknown) => boolean = $newCppFunction(
+    "NodeUtilTypesModule.cpp",
+    "jsFunctionIsSetIterator",
     1,
   );
 
@@ -748,6 +761,11 @@ export function createConsoleConstructor(console: Console) {
       const mapIter = isMapIterator(tabularData);
       let isKeyValue = false;
       let i = 0;
+      if (mapIter) {
+        const res = previewEntries(tabularData);
+        tabularData = res[0];
+        isKeyValue = res[1];
+      }
 
       if (isKeyValue || $isMap(tabularData)) {
         const keys: string[] = [];
@@ -770,7 +788,7 @@ export function createConsoleConstructor(console: Console) {
       }
 
       const setIter = isSetIterator(tabularData);
-      // if (setIter) tabularData = previewEntries(tabularData);
+      if (setIter) tabularData = previewEntries(tabularData)[0];
 
       const setlike = setIter || mapIter || $isSet(tabularData);
       if (setlike) {

@@ -469,6 +469,8 @@ export const notCalled: Record<string, string> = {
   ),
   "native:NewCppFunction:NodeTLS.cpp:parseCACertificates": ofOneModule("node:tls"),
   "native:NewCppFunction:UtilInspect.cpp:jsFunctionGetOwnNonIndexProperties": ofOneModule("internal/util/inspect"),
+  "native:NewCppFunction:UtilInspect.cpp:jsFunctionPreviewEntries":
+    "only internal/util/inspect and the function that makes console.Console hold it, and hand it to nobody",
   "%NpmJscNpmManifestTestHelpers%.parseManifest": "it reads a manifest that `bun install` has stored",
   "node:module.findSourceMap": "it answers undefined for every file that was tried",
   "Bun.secrets.delete": "it writes to the store of secrets of the operating system",

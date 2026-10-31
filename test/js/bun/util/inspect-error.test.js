@@ -591,6 +591,17 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
   });
 });
 
+// The members are read from the collection of the iterator. The printer does
+// not call next(), so the iterator in `errors` keeps them.
+test("AggregateError whose errors is a Set iterator: the members are printed and the iterator keeps them", () => {
+  const members = new Set([new Error("first member"), new TypeError("second member")]).values();
+  const error = Object.assign(new AggregateError([], "outer message"), { errors: members });
+  const text = Bun.inspect(error);
+  expect(text).toContain("error: first member");
+  expect(text).toContain("TypeError: second member");
+  expect(Array.from(members, member => member.message)).toEqual(["first member", "second member"]);
+});
+
 describe("an error with a circular reference to itself", () => {
   // Drops the source preview, stack frames, blank lines and the version line.
   function rendered(text) {

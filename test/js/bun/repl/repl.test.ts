@@ -789,6 +789,22 @@ describe.concurrent("Bun REPL", () => {
     });
   });
 
+  describe("iterators", () => {
+    // The REPL prints what a line evaluated to, and that print must not use an iterator up.
+    test("the echo of a Map or Set iterator leaves its entries", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "const entries = new Map([[1, 2]]).entries()",
+        "entries.next().value",
+        "const values = new Set(['a']).values()",
+        "values.next().value",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["MapIterator { \n  [ 1, 2 ],\n}", "[ 1, 2 ]", 'SetIterator { \n  "a",\n}', '"a"']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("multiline input", () => {
     test("keeps reading lines until the input is complete", async () => {
       const { outputs, stderr, exitCode } = await runRepl([

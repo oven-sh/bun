@@ -670,12 +670,15 @@ impl<'a> TablePrinter<'a> {
     ) -> JsResult<Self> {
         bun_removable_features::removable_definition!(ConsoleTable, Self::init);
         let _ = level;
+        let jstype = tabular_data.js_type();
         Ok(TablePrinter {
             global_object,
             tabular_data,
             properties,
-            is_iterable: tabular_data.is_iterable(global_object)?,
-            jstype: tabular_data.js_type(),
+            // No `Symbol.iterator` lookup on a Map or Set iterator: it is not run.
+            is_iterable: formatter::is_map_or_set_iterator(jstype)
+                || tabular_data.is_iterable(global_object)?,
+            jstype,
             value_formatter: {
                 // `Formatter` has a `Drop` impl, so struct-update
                 // from a temporary is rejected (E0509).
@@ -968,7 +971,8 @@ impl<'a> TablePrinter<'a> {
                     }
                     ctx.idx += 1;
                 }
-                tabular_data.for_each_with_context(
+                formatter::for_each_listed(
+                    tabular_data,
                     global_object,
                     (&raw mut ctx).cast::<c_void>(),
                     callback::<ENABLE_ANSI_COLORS>,
@@ -1883,6 +1887,8 @@ pub mod formatter {
                     | Tag::Object
                     | Tag::Map
                     | Tag::Set
+                    | Tag::MapIterator
+                    | Tag::SetIterator
                     | Tag::Error
                     | Tag::Class
                     | Tag::Event
@@ -3187,6 +3193,42 @@ pub mod formatter {
             max_depth: u32,
             colors: bool,
         ) -> JSValue;
+
+        /// C++ helper (`UtilInspect.cpp`): `callback` gets what a Map or Set iterator has left. The iterator is not run.
+        safe fn Bun__inspect__forEachRemainingEntry(
+            iterator: JSValue,
+            global: &JSGlobalObject,
+            ctx: *mut c_void,
+            callback: jsc::ForEachCallback,
+        );
+    }
+
+    pub(crate) fn for_each_remaining_entry(
+        iterator: JSValue,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        callback: jsc::ForEachCallback,
+    ) -> JsResult<()> {
+        jsc::host_fn::from_js_host_call_generic(global, || {
+            Bun__inspect__forEachRemainingEntry(iterator, global, ctx, callback)
+        })
+    }
+
+    pub(crate) fn is_map_or_set_iterator(js_type: jsc::JSType) -> bool {
+        matches!(js_type, jsc::JSType::MapIterator | jsc::JSType::SetIterator)
+    }
+
+    /// `JSValue::for_each` for a printer: a Map or Set iterator is read, not run, so the print does not use it up.
+    pub(crate) fn for_each_listed(
+        value: JSValue,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        callback: jsc::ForEachCallback,
+    ) -> JsResult<()> {
+        if is_map_or_set_iterator(value.js_type()) {
+            return for_each_remaining_entry(value, global, ctx, callback);
+        }
+        value.for_each(global, ctx, callback)
     }
 
     // ───────────────────────────────────────────────────────────────────────
@@ -4666,7 +4708,8 @@ pub mod formatter {
                         writer: writer_,
                         count: 0,
                     };
-                    value.for_each(
+                    for_each_remaining_entry(
+                        value,
                         global_this,
                         (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, true, true>::for_each,
@@ -4675,8 +4718,7 @@ pub mod formatter {
                     if iter.formatter.failed {
                         return Ok(());
                     }
-                    // Only the MapIterator case writes a trailing space.
-                    if count > 0 && label == "MapIterator" {
+                    if count > 0 {
                         let _ = writer_.write_all(b" ");
                     }
                 } else {
@@ -4685,7 +4727,8 @@ pub mod formatter {
                         writer: writer_,
                         count: 0,
                     };
-                    value.for_each(
+                    for_each_remaining_entry(
+                        value,
                         global_this,
                         (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, true, false>::for_each,

@@ -40,9 +40,7 @@ const {
   TypedArrayPrototypeGetSymbolToStringTag,
 } = primordials;
 
-const ArrayFrom = Array.from;
 const ArrayPrototypeFilter = Array.prototype.filter;
-const ArrayPrototypeFlat = Array.prototype.flat;
 const ArrayPrototypeForEach = Array.prototype.forEach;
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeIndexOf: (this: ArrayLike<unknown>, searchElement?: unknown, fromIndex?: number) => number =
@@ -63,8 +61,6 @@ const ErrorPrototypeToString = Error.prototype.toString;
 const FunctionPrototypeToString = Function.prototype.toString;
 const JSONStringify = JSON.stringify;
 const MapPrototypeEntries = Map.prototype.entries;
-const MapPrototypeValues = Map.prototype.values;
-const MapPrototypeKeys = Map.prototype.keys;
 const MathFloor = Math.floor;
 const MathMax = Math.max;
 const MathRound = Math.round;
@@ -98,7 +94,6 @@ const RegExpPrototypeSymbolReplace = RegExp.prototype[Symbol.replace] as (
 ) => string;
 const RegExpPrototypeSymbolSplit = RegExp.prototype[Symbol.split];
 const RegExpPrototypeToString = RegExp.prototype.toString;
-const SetPrototypeEntries = Set.prototype.entries;
 const SetPrototypeValues = Set.prototype.values;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt as (this: string, index?: number) => number;
 const StringPrototypeIncludes = String.prototype.includes;
@@ -171,7 +166,7 @@ const {
   isTypedArray,
 } = require("node:util/types");
 
-// previewEntries() reads internal fields of whatever these two accept, so a script must not be able to replace them.
+// previewEntries() throws on anything but what these two accept, so a script must not be able to replace them.
 const isMapIterator = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsMapIterator", 1);
 const isSetIterator = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsSetIterator", 1);
 
@@ -2372,9 +2367,16 @@ function formatMap(value, ctx: Context, ignored: object, recurseTimes: number) {
   return output;
 }
 
-function formatSetIterInner(ctx: Context, recurseTimes: number, entries: unknown[], state: number) {
+// `length` counts every entry there is. `entries` can stop at maxArrayLength of them.
+function formatSetIterInner(
+  ctx: Context,
+  recurseTimes: number,
+  entries: unknown[],
+  state: number,
+  length = entries.length,
+) {
   const maxArrayLength = MathMax(ctx.maxArrayLength, 0);
-  const maxLength = $min(maxArrayLength, entries.length);
+  const maxLength = $min(maxArrayLength, length);
   const output = new Array<string>(maxLength);
   ctx.indentationLvl += 2;
   for (let i = 0; i < maxLength; i++) {
@@ -2387,17 +2389,22 @@ function formatSetIterInner(ctx: Context, recurseTimes: number, entries: unknown
     // output is not sorted anyway.
     ArrayPrototypeSort.$call(output);
   }
-  const remaining = entries.length - maxLength;
+  const remaining = length - maxLength;
   if (remaining > 0) {
     ArrayPrototypePush.$call(output, remainingText(remaining));
   }
   return output;
 }
 
-function formatMapIterInner(ctx: Context, recurseTimes: number, entries: unknown[], state: number) {
+// Entries exist as [key1, val1, key2, val2, ...]. `len` counts every pair there is.
+function formatMapIterInner(
+  ctx: Context,
+  recurseTimes: number,
+  entries: unknown[],
+  state: number,
+  len = entries.length / 2,
+) {
   const maxArrayLength = MathMax(ctx.maxArrayLength, 0);
-  // Entries exist as [key1, val1, key2, val2, ...]
-  const len = entries.length / 2;
   const remaining = len - maxArrayLength;
   const maxLength = $min(maxArrayLength, len);
   const output = new Array<string>(maxLength);
@@ -2445,15 +2452,15 @@ function formatWeakMap(ctx: Context, value: object, recurseTimes: number) {
 }
 
 function formatIterator(braces: Braces, ctx: Context, value: object, recurseTimes: number) {
-  const { 0: entries, 1: isKeyValue } = previewEntries(value, true);
+  const { 0: entries, 1: isKeyValue, 2: length } = previewEntries(value, true, MathMax(ctx.maxArrayLength, 0));
   if (isKeyValue) {
     // TODO(bun): JSC can also differ between the keys and values iterator, maybe we should also distinguish those in the future?
     // Mark entry iterators as such.
     braces[0] = RegExpPrototypeSymbolReplace.$call(/ Iterator] {$/, braces[0], " Entries] {");
-    return formatMapIterInner(ctx, recurseTimes, entries, kMapEntries);
+    return formatMapIterInner(ctx, recurseTimes, entries, kMapEntries, length);
   }
 
-  return formatSetIterInner(ctx, recurseTimes, entries, kIterator);
+  return formatSetIterInner(ctx, recurseTimes, entries, kIterator, length);
 }
 
 function formatPromise(ctx: Context, value, recurseTimes: number) {
@@ -2926,30 +2933,17 @@ function getProxyDetails(proxy: unknown, withHandler = true) {
   if (withHandler) return [target, handler];
   else return target;
 }
+type IteratorPreview = [entries: unknown[], isKeyValue: boolean, length: number];
+// (iterator, limit) => [flat entries (at most `limit`), isKeyValue, entries left]
+const previewIteratorEntries: (iterator: object, limit?: number) => IteratorPreview = $newCppFunction(
+  "UtilInspect.cpp",
+  "jsFunctionPreviewEntries",
+  2,
+);
 function previewEntries(val: object): unknown[];
-function previewEntries(val: object, isIterator: true): [entries: unknown[], isKeyValue: boolean];
-function previewEntries(val, isIterator = false) {
-  if (isIterator) {
-    // the Map or Set instance this iterator belongs to
-    const iteratedObject = $getInternalField(val, 1 /*iteratorFieldIteratedObject*/);
-    // for Maps: 0 = keys, 1 = values,      2 = entries
-    // for Sets:           1 = keys|values, 2 = entries
-    const kind = $getInternalField(val, 3 /*iteratorFieldKind*/);
-    const isEntries = kind === 2;
-    // TODO(bun): improve performance by not using Array.from and instead using the iterator directly to only get the first
-    // few entries which will actually be displayed (this requires changing some logic in the call sites of this function)
-    if ($isMap(iteratedObject)) {
-      if (isEntries) return [ArrayPrototypeFlat.$call(ArrayFrom(iteratedObject)), true];
-      else if (kind === 1) return [ArrayFrom(MapPrototypeValues.$call(iteratedObject)), false];
-      else return [ArrayFrom(MapPrototypeKeys.$call(iteratedObject)), false];
-    } else if ($isSet(iteratedObject)) {
-      if (isEntries) return [ArrayPrototypeFlat.$call(ArrayFrom(SetPrototypeEntries.$call(iteratedObject))), true];
-      else return [ArrayFrom(iteratedObject), false];
-    }
-    // TODO(bun): This function is currently only called for Map and Set iterators
-    // perhaps we should add support for other iterators in the future? (e.g. ArrayIterator and StringIterator)
-    else throw new Error("previewEntries(): Invalid iterator received");
-  }
+function previewEntries(val: object, isIterator: true, limit?: number): IteratorPreview;
+function previewEntries(val, isIterator = false, limit?: number) {
+  if (isIterator) return previewIteratorEntries(val, limit);
   // TODO(bun): are there any JSC APIs for viewing the contents of these in JS?
   if (isWeakMap(val)) return [];
   if (isWeakSet(val)) return [];

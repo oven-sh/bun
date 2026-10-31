@@ -218,6 +218,7 @@ export default b.declarations(
     ...nativeBindings("NewCppFunction", "JSEventTargetNode.cpp", "jsFunctionNodeEventsGetEventListeners"),
     ...nativeBindings("NewCppFunction", "NodeUtilTypesModule.cpp", "jsFunctionIsError"),
     ...nativeBindings("NewCppFunction", "UtilInspect.cpp", "jsFunctionGetOwnNonIndexProperties"),
+    ...nativeBindings("NewCppFunction", "UtilInspect.cpp", "jsFunctionPreviewEntries"),
   ),
 
   extendAll(["NodeSmallModules"], "node:util/types", "node:constants"),

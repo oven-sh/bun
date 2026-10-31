@@ -45,6 +45,17 @@ describe("jest-each", () => {
   it.each([undefined, null, NaN, Infinity])("stringify %#: %j", (arg, cb) => {
     cb();
   });
+
+  // The title is formatted before the body runs, and that must not use a row's iterator up.
+  it.each([
+    [new Set([1, 2, 3]).values(), 3],
+    [new Map([["a", 1]]).entries(), 1],
+  ])("a Map or Set iterator in the title keeps its entries: %p, %i", (iterator, count) => {
+    expect([...iterator]).toHaveLength(count);
+  });
+  it.each([{ held: new Set([1, 2]).keys() }])("a Set iterator under $held keeps its entries", ({ held }) => {
+    expect([...held]).toEqual([1, 2]);
+  });
 });
 
 describe.each(["some", "cool", "strings"])("works with describe: %s", s => {

@@ -132,6 +132,42 @@ MapIterator {
   },
 }
 MapIterator { } MapIterator { }
+MapIterator { 
+  [ "key", {
+      a: [],
+      str: "123123132",
+      nr: 3453,
+    } ],
+  [ "key_2", {
+      b: "test",
+    } ],
+}
+SetIterator { 
+  [ 1, 1 ],
+  [ "123", "123" ],
+  [
+    {
+      a: [],
+      str: "123123132",
+      nr: 3453,
+    }, {
+      a: [],
+      str: "123123132",
+      nr: 3453,
+    }
+  ],
+}
+MapIterator { 
+  [ "key_2", {
+      b: "test",
+    } ],
+}
+MapIterator { 
+  [ "key_2", {
+      b: "test",
+    } ],
+}
+false
 NestedClass {
   a: 1,
   b: 2,

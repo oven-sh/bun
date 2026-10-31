@@ -2276,6 +2276,20 @@ void wrapped_buffer_create_keeping_store(
       ArrayBuffer::New(info.GetIsolate(), kept_wrapped_store));
 }
 
+// wrapped_buffer_keep_store(buffer): the addon keeps the std::shared_ptr that
+// ArrayBuffer::GetBackingStore() returns for the buffer.
+void wrapped_buffer_keep_store(const FunctionCallbackInfo<Value> &info) {
+  kept_wrapped_store = info[0].As<ArrayBuffer>()->GetBackingStore();
+}
+
+// wrapped_buffer_create_from_kept_store(): an ArrayBuffer made from the store
+// that the addon kept.
+void wrapped_buffer_create_from_kept_store(
+    const FunctionCallbackInfo<Value> &info) {
+  info.GetReturnValue().Set(
+      ArrayBuffer::New(info.GetIsolate(), kept_wrapped_store));
+}
+
 // wrapped_kept_store_has_memory(slot): whether BackingStore::Data() of the
 // store that the addon kept is the memory of the slot.
 void wrapped_kept_store_has_memory(const FunctionCallbackInfo<Value> &info) {
@@ -3408,6 +3422,10 @@ void initialize(Local<Object> exports, Local<Value> module,
                   wrapped_buffer_create_without_memory);
   NODE_SET_METHOD(exports, "wrapped_buffer_create_keeping_store",
                   wrapped_buffer_create_keeping_store);
+  NODE_SET_METHOD(exports, "wrapped_buffer_keep_store",
+                  wrapped_buffer_keep_store);
+  NODE_SET_METHOD(exports, "wrapped_buffer_create_from_kept_store",
+                  wrapped_buffer_create_from_kept_store);
   NODE_SET_METHOD(exports, "wrapped_kept_store_has_memory",
                   wrapped_kept_store_has_memory);
   NODE_SET_METHOD(exports, "wrapped_kept_store_release",

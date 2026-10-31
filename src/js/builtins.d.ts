@@ -449,8 +449,6 @@ declare const $LoaderLabelToId: Record<import("bun").Loader, number>;
 // not a builtin, but a build-time macro of our own
 /** Returns a not implemented error that points to a github issue. */
 declare function notImplementedIssue(issueNumber: number, description: string): Error;
-/** Return a function that throws a not implemented error that points to a github issue */
-declare function notImplementedIssueFn(issueNumber: number, description: string): (...args: any[]) => never;
 
 declare type JSCSourceCodeObject = unique symbol;
 

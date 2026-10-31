@@ -267,8 +267,6 @@ declare global {
       [kClientRequestStatistics]?: object;
     }
 
-    type ClientRequestConstructor = typeof ClientRequest;
-
     interface IncomingMessage {
       /** Of a response: the domain that was active when its request was made. */
       domain?: Domain;

@@ -3,6 +3,7 @@
 #include "MessagePortPipe.h"
 #include "ScriptExecutionContext.h"
 #include <wtf/Locker.h>
+#include <wtf/MathExtras.h>
 
 namespace WebCore {
 
@@ -72,7 +73,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
     // messages one at a time, but without a separate posted task per
     // message. The per-invocation limit is a fixed count (not "whatever was
     // queued when the drain began", which a sender on another thread can make
-    // arbitrarily large); the rest continues after the loop has polled.
+    // arbitrarily large); the rest continues after the loop has polled, unless the port closed itself (closeGrant).
     //
     // Messages move inbox -> `draining` a small batch per lock acquisition and are
     // popped from `draining` one at a time (still under the lock, but without a
@@ -119,6 +120,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
 
     static constexpr size_t takeAtOnce = 64;
     ScriptExecutionContextIdentifier rescheduleCtx = 0;
+    MessagePort::DispatchScope dispatchScope { *port };
     while (true) {
         std::optional<MessageWithMessagePorts> message;
         {
@@ -127,7 +129,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
             // may have closed or transferred this port. A same-context
             // detach+re-attach restores ctxId but installs a different
             // MessagePort, so compare port identity too — dispatching to
-            // the stale (now m_isDetached) `port` would silently drop.
+            // the stale (now detached) `port` would silently drop.
             // The new owner's attach() scheduled its own drain, and detach()
             // already returned anything we had taken to the inbox.
             if (s.ctxId != expectedCtx || s.port.get() != port)
@@ -138,6 +140,9 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
                 break;
             }
             if (s.draining.isEmpty()) {
+                // The port closed itself in this drain and gets no later one (node: processing_limit).
+                if (s.closeGrant) [[unlikely]]
+                    limit = std::max<size_t>(limit, std::exchange(s.closeGrant, 0));
                 if (!limit) {
                     // Yield to the rest of the event loop; DrainScheduled stays
                     // set so concurrent sends don't double-schedule.
@@ -176,11 +181,19 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
 
     // Budget spent with messages left. We are on `context`'s thread: continue on
     // its next loop iteration (after I/O and timers), not in this drain.
-    if (rescheduleCtx) {
+    if (rescheduleCtx && port->isOpen()) {
         context->postTaskAfterYield([pipe = Ref { *this }, side, rescheduleCtx](ScriptExecutionContext&) {
             pipe->drainAndDispatch(side, rescheduleCtx);
         });
     }
+}
+
+void MessagePortPipe::grantQueuedToDrain(uint8_t side)
+{
+    ASSERT(side < 2);
+    auto& s = m_sides[side];
+    Locker locker { s.lock };
+    s.closeGrant = clampTo<uint32_t>(s.inbox.size());
 }
 
 std::optional<MessageWithMessagePorts> MessagePortPipe::takeOne(uint8_t side)

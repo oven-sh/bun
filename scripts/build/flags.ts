@@ -2089,11 +2089,11 @@ export function computeHardeningFlags(cfg: Config): string[] {
   if (!cfg.hardened) return [];
   return [
     ...hardeningFlags.filter(flag => (cfg.release && !cfg.asan) || !flag.startsWith("-D_FORTIFY_SOURCE")),
-    ...(signsReturnAddresses(cfg) ? ["-mbranch-protection=pac-ret"] : []),
+    ...(signsReturnAddresses(cfg) ? ["-mbranch-protection=pac-ret+bti"] : []),
   ];
 }
 
-/** `SIGNED_RETURN_ADDRESSES` in oven-sh/WebKit's .github/scripts/lanes.mjs: arm64's "lto-hardened", which has no compiler. */
+/** `SIGNED_RETURN_ADDRESSES` and `LANDING_PADS` in oven-sh/WebKit's .github/scripts/lanes.mjs: arm64's "lto-hardened", which has no compiler. */
 export function signsReturnAddresses(cfg: Pick<Config, "hardened" | "arm64" | "linux" | "aot">): boolean {
   return cfg.hardened && cfg.linux && cfg.arm64 && !cfg.aot;
 }

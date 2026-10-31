@@ -34,18 +34,13 @@ impl Script {
     pub(crate) fn init(
         interp: &Interpreter,
         shell: *mut ShellExecEnv,
-        node: *const ast::Script,
+        node: &ast::Script,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
         let id = interp.alloc_node(Node::Script(Script {
             base: Base::new(parent, shell),
-            // SAFETY: `node` is non-null and points into the AST arena
-            // (`ShellArgs::__arena`), which the interpreter holds for its
-            // entire lifetime — strictly outliving every state node (the
-            // BackRef invariant). Callers pass `&raw const` only to escape
-            // borrowck across the `&Interpreter` reborrow.
-            node: unsafe { bun_ptr::BackRef::from_raw(node as *mut ast::Script) },
+            node: bun_ptr::BackRef::new(node),
             io,
             state: ScriptState::default(),
         }));
@@ -140,8 +135,8 @@ impl Script {
     }
 
     #[inline]
-    fn stmt_at(interp: &Interpreter, this: NodeId, idx: usize) -> *const ast::Stmt {
+    fn stmt_at(interp: &Interpreter, this: NodeId, idx: usize) -> &ast::Stmt {
         let me = interp.as_script(this);
-        &raw const me.node.stmts[idx]
+        &me.node.stmts[idx]
     }
 }

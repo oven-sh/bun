@@ -11,7 +11,7 @@ pub struct NoImportModuleExports {
     exceptions: Vec<Glob>,
 }
 
-const NO_IMPORT: Message = Message::new(
+const NO_IMPORT: &Message = &Message::new(
     "",
     "Cannot use import declarations in modules that export using CommonJS \
      (module.exports = 'foo' or exports.bar = 'hi')",

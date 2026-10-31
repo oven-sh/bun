@@ -6,9 +6,9 @@ use bun_lint::rule::Plugin;
 /// This rule checks for double comparisons in logical expressions.
 pub struct DoubleComparisons;
 
-const DOUBLE_COMPARISONS: Message = Message::new("", "Unexpected double comparisons.");
-const SIMPLIFY: Message =
-    Message::new("", "This logical expression can be simplified. Try using the `{{operator}}` operator instead.");
+const DOUBLE_COMPARISONS: &Message = &Message::new("", "Unexpected double comparisons.");
+const SIMPLIFY: &Message =
+    &Message::new("", "This logical expression can be simplified. Try using the `{{operator}}` operator instead.");
 
 impl Rule for DoubleComparisons {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "double-comparisons", Kind::Problem).has_suggestions();

@@ -21,15 +21,10 @@ use bun_sema::hir::{
 
 mod runtime_text;
 
+// The fields are laid out as declared: small ones that most accesses touch first, where x86-64 reaches them with a
+// one-byte offset.
+#[repr(C)]
 pub(crate) struct Lexer<'a> {
-    pub(crate) src: &'a [u8],
-    /// Computed for the whole text, even while `src` is cut short.
-    stops: ScannerStops<'a>,
-    pub(crate) token: T,
-    /// A line break precedes the token.
-    pub(crate) newline_before: bool,
-    /// The name or keyword has a Unicode escape, or the template piece has an invalid escape.
-    pub(crate) has_escape: bool,
     /// The start of the token.
     pub(crate) start: u32,
     /// The end of the token.
@@ -38,12 +33,48 @@ pub(crate) struct Lexer<'a> {
     pub(crate) full_start: u32,
     /// The text of a name, keyword or bigint, or the value of a string or template piece.
     pub(crate) atom: Atom,
-    pub(crate) number: f64,
-    /// The start of the last string whose contents are only printable ASCII, with no backslash.
-    plain_string: u32,
+    /// See `Parser::finish_node`. A node that starts after this offset can't affect any pending comment.
+    pub(crate) max_relevant_node_start: u32,
+    pub(crate) token: T,
+    /// A line break precedes the token.
+    pub(crate) newline_before: bool,
+    /// The name or keyword has a Unicode escape, or the template piece has an invalid escape.
+    pub(crate) has_escape: bool,
     pub(crate) rejection: Option<Rejection>,
+    pub(crate) number: f64,
+    pub(crate) stack_check: bun_core::StackCheck,
+    pub(crate) src: &'a [u8],
+    /// Every scanned private name that wasn't declared by a class that has ended since, for
+    /// `hir::rare::ODD_PRIVATE_NAME`. `Atom::NONE` marks one after `super.`.
+    pub(crate) private_names: Vec<Atom>,
+    /// `hir::File::comment_directives`
+    pub(crate) comment_directives: Vec<CommentDirective>,
+    /// The comments before the first token.
+    pub(crate) leading_comments: Vec<(u32, u32)>,
+    /// `hir::File::comments`
+    pub(crate) comments: Vec<Comment>,
+    /// Errors that TypeScript's scanner reports about syntax ECMAScript allows outside strict mode: the message code,
+    /// start and end. Only filled in with `is_ecmascript`. Otherwise the text is rejected.
+    pub(crate) flagged: Vec<(u32, u32, u32)>,
+    /// The errors that [`Lexer::error`] reported and the parser hasn't taken yet (`Parser::take_scanner_errors`), in
+    /// the order they were reported.
+    pub(crate) errors: Vec<Diagnostic>,
+    /// `hir::File::jsdoc_asterisks`, in scan order: unsorted, and possibly with duplicates.
+    pub(crate) jsdoc_asterisks: Vec<u32>,
+    /// For each of `errors`, where the scan that reported it began. See [`Lexer::error`].
+    origins: Vec<u32>,
+    /// Scratch space for decoding values that have escapes.
+    buffer: Vec<u8>,
+    /// Only filled in if `records_html_opens` is set.
+    pub(crate) html_opens: HtmlOpens,
+    /// Computed for the whole text, even while `src` is cut short.
+    stops: ScannerStops<'a>,
+    pub(crate) atoms: &'a dyn Intern,
+    pub(crate) names: &'a mut Names,
     /// Where the text was rejected, and by which line of this crate.
     pub(crate) rejected_at: (u32, &'static core::panic::Location<'static>),
+    /// The start of the last string whose contents are only printable ASCII, with no backslash.
+    plain_string: u32,
     /// `full_start` at that point.
     pub(crate) rejected_after: u32,
     /// `</` is one token.
@@ -62,45 +93,17 @@ pub(crate) struct Lexer<'a> {
     pub(crate) is_oxc: bool,
     /// Records `<!--` positions in `html_opens`. The caller may reparse a text that has one as a script.
     pub(crate) records_html_opens: bool,
-    /// Only filled in if `records_html_opens` is set.
-    pub(crate) html_opens: HtmlOpens,
-    /// Every scanned private name that wasn't declared by a class that has ended since, for
-    /// `hir::rare::ODD_PRIVATE_NAME`. `Atom::NONE` marks one after `super.`.
-    pub(crate) private_names: Vec<Atom>,
-    pub(crate) atoms: &'a dyn Intern,
-    pub(crate) names: &'a mut Names,
-    /// `hir::File::comment_directives`
-    pub(crate) comment_directives: Vec<CommentDirective>,
-    /// The comments before the first token.
-    pub(crate) leading_comments: Vec<(u32, u32)>,
-    /// `hir::File::comments`
-    pub(crate) comments: Vec<Comment>,
     /// While scanning the comments between two tokens: true if a line break was seen since the last comment, or since
     /// the previous token if there was no comment yet.
     newline_since_comment: bool,
     /// `Options::attach_comments`
     pub(crate) attach_comments: bool,
-    /// See `Parser::finish_node`. A node that starts after this offset can't affect any pending comment.
-    pub(crate) max_relevant_node_start: u32,
-    /// Errors that TypeScript's scanner reports about syntax ECMAScript allows outside strict mode: the message code,
-    /// start and end. Only filled in with `is_ecmascript`. Otherwise the text is rejected.
-    pub(crate) flagged: Vec<(u32, u32, u32)>,
     /// `hir::rare::LEGACY_OCTAL`
     pub(crate) has_legacy_octal: bool,
     /// `Options::recovers`
     pub(crate) recovers: bool,
-    /// The errors that [`Lexer::error`] reported and the parser hasn't taken yet (`Parser::take_scanner_errors`), in
-    /// the order they were reported.
-    pub(crate) errors: Vec<Diagnostic>,
     /// `skipJSDocLeadingAsterisks`: the lexer is inside a type in a JSDoc comment.
     pub(crate) skips_jsdoc_asterisks: bool,
-    /// `hir::File::jsdoc_asterisks`, in scan order: unsorted, and possibly with duplicates.
-    pub(crate) jsdoc_asterisks: Vec<u32>,
-    /// For each of `errors`, where the scan that reported it began. See [`Lexer::error`].
-    origins: Vec<u32>,
-    /// Scratch space for decoding values that have escapes.
-    buffer: Vec<u8>,
-    pub(crate) stack_check: bun_core::StackCheck,
 }
 
 /// Outside a script: the position of the first `<!--` that was scanned as `<`, and of the first one preceded only by

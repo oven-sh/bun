@@ -947,10 +947,16 @@ impl<'p, 's> Atoms<'p, 's> {
             .or_else(|| self.own.find_atom(spread, text))
     }
 
+    #[cold]
+    #[inline(never)]
+    fn own_bytes(&self, atom: Atom) -> &'p [u8] {
+        self.own.atom_bytes(atom)
+    }
+
     #[inline]
     pub fn bytes(&self, atom: Atom) -> &'p [u8] {
         if atom.is_own() {
-            self.own.atom_bytes(atom)
+            self.own_bytes(atom)
         } else {
             self.published.bytes(atom)
         }

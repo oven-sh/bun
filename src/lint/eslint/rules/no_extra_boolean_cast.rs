@@ -9,9 +9,9 @@ pub struct NoExtraBooleanCast {
     enforce_for_inner_expressions: bool,
 }
 
-const UNEXPECTED_CALL: Message = Message::new("unexpectedCall", "Redundant Boolean call.");
-const UNEXPECTED_NEGATION: Message =
-    Message::new("unexpectedNegation", "Redundant double negation.");
+const UNEXPECTED_CALL: &Message = &Message::new("unexpectedCall", "Redundant Boolean call.");
+const UNEXPECTED_NEGATION: &Message =
+    &Message::new("unexpectedNegation", "Redundant double negation.");
 
 /// True if the callee is the global `Boolean`.
 fn calls_boolean(call: Call) -> bool {

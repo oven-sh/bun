@@ -1376,7 +1376,7 @@ function f12 name="literalDoubles" module=m0 position=5590 flags=[IsChecked, Has
     v1 = Convert v0 declared={type=undefined|null|Array<number> site=w32 flags=[OmitsNull, OmitsUndefined]}
     Return v1
 }
-function f13 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f13 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -1948,7 +1948,7 @@ function f19 name="includes" module=m2 position=2203 kind=Method role=Library fl
     v119 = Convert v118 declared={type=boolean site=w198}
     Return v119
 }
-runtimefunction id=69 function=f13
+runtimefunction id=68 function=f13
 runtimefunction id=131087 function=f19
 runtimefunction id=131088 function=f17
 # -- generated: show joinValues joinStrings joinNumbers around pushAll pushNumbers

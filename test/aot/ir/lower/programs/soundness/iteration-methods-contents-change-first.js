@@ -515,7 +515,7 @@ main();
 // CHECK-NEXT: Return v18
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.asyncIterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] captures=[{type=env [[L_10]] flags=[IsFromCompiler]}, {type=undefined|null|[[L_9]] flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|[[L_11]] flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] captures=[{type=env [[L_10]] flags=[IsFromCompiler]}, {type=undefined|null|[[L_9]] flags=[IsExpected] variableName="r"}] thisType={type=anything} results=[{type=undefined|null|[[L_11]] flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: env [[L_10]], v1: undefined|null|[[L_9]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

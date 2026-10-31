@@ -394,6 +394,12 @@ public:
                 moduleNamespaceObject->overrideExportValue(globalObject, identifier, implValue);
                 RETURN_IF_EXCEPTION(scope, );
             }
+#if ENABLE(AOT)
+            else if (JSC::AOT::isModuleNamespace(target)) {
+                JSC::AOT::tryReplaceExport(target, identifier.impl(), implValue);
+                RETURN_IF_EXCEPTION(scope, );
+            }
+#endif
         } else if (auto index = parseIndex(identifier)) {
             // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
             target->putDirectIndex(globalObject, *index, implValue, attributes, PutDirectIndexLikePutDirect);
@@ -1003,7 +1009,7 @@ void JSMockFunctionPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* g
     Bun::reifyStaticPropertyTable(vm, JSMockFunction::info(), JSMockFunctionPrototypeTableValues, *this);
     Bun::putToStringTagWithoutTransition(vm, this, info());
 
-    this->putDirect(vm, Identifier::fromString(vm, "_isMockFunction"_s), jsBoolean(true), 0);
+    Bun::putDirectNamed(vm, this, "_isMockFunction"_s, jsBoolean(true));
 
     // Support `using spy = spyOn(...)` — auto-restores when leaving scope.
     JSValue restoreFn = this->getDirect(vm, Identifier::fromString(vm, "mockRestore"_s));
@@ -1571,15 +1577,31 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
     constexpr unsigned fixedByLanguage = PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
     bool isFixedMemberOfLockedObject = object->structure()->mayHaveImmutableProperties() && hasValue && slot.slotBase() == object && (slot.attributes() & fixedByLanguage) == fixedByLanguage;
     if (vm.hasCompiledCode() && (object->structure()->isImmutableProperty(propertyKey.uid()) || isFixedMemberOfLockedObject)) {
-        throwTypeError(globalObject, scope, makeString("Cannot spy on '"_s, String(propertyKey.uid()), "' because this property of a built-in object is read-only in a compiled executable"_s));
+        String message = JSC::AOT::refusedSpyMessage(globalObject, object, propertyKey.uid());
+        if (message.isNull())
+            message = makeString("Cannot spy on '"_s, String(propertyKey.uid()), "' because this property of a built-in object is read-only in a compiled executable. Spy on a function of your own that calls it (https://bun.com/docs/compiler/compatibility#built-in-objects-are-read-only)"_s);
+        throwTypeError(globalObject, scope, message);
         return {};
     }
 
-    if (JSC::AOT::isModuleNamespace(object)) {
-        throwTypeError(globalObject, scope, makeString("Cannot spy on '"_s, String(propertyKey.uid()), "' because module exports can't be replaced in a compiled executable"_s));
-        return {};
-    }
 #endif
+
+    // True if the object is a module namespace object. Its exports are replaced in the module that declares them.
+    auto replaceExport = [&](JSValue replacement) {
+        if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
+            moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, replacement);
+            return true;
+        }
+#if ENABLE(AOT)
+        if (JSC::AOT::isModuleNamespace(object)) {
+            // A name that the module does not export stays out of it, and the caller gets its mock all the same: JSModuleNamespaceObject::overrideExportValue() answers false above, and nobody asks.
+            if (hasValue && !JSC::AOT::tryReplaceExport(object, propertyKey.uid(), replacement))
+                throwTypeError(globalObject, scope, makeString("Cannot spy on '"_s, String(propertyKey.uid()), "' because module exports can't be replaced in a compiled executable"_s));
+            return true;
+        }
+#endif
+        return false;
+    };
 
     // easymode: regular property or missing property
     if (!hasValue || slot.isValue()) {
@@ -1613,8 +1635,8 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
             RETURN_IF_EXCEPTION(scope, {});
 
             JSC::AllowLazyMaterializationOfImmutableProperties throughLock(vm);
-            if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
-                moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
+            if (replaceExport(mock)) {
+                RETURN_IF_EXCEPTION(scope, {});
                 mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
             } else if (auto index = parseIndex(propertyKey)) {
                 // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
@@ -1644,9 +1666,14 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
             attributes |= PropertyAttribute::Accessor;
 
             JSC::AllowLazyMaterializationOfImmutableProperties throughLock(vm);
-            if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
-                moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
+            if (replaceExport(mock)) {
+                RETURN_IF_EXCEPTION(scope, {});
                 mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
+#if ENABLE(AOT)
+                // Nothing was replaced, so there is nothing to put back. A CommonJS file takes a name that it is handed: `undefined` put "back" would be an export that later imports find.
+                if (!hasValue && JSC::AOT::isModuleNamespace(object))
+                    mock->spyTarget.clear();
+#endif
             } else {
                 object->putDirectAccessor(globalObject, propertyKey, JSC::GetterSetter::create(vm, globalObject, mock, mock), attributes);
             }

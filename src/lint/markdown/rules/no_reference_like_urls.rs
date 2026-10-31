@@ -3,7 +3,7 @@ use crate::prelude::*;
 /// Disallow URLs that match defined reference identifiers
 pub struct NoReferenceLikeUrls;
 
-const REFERENCE_LIKE_URL: Message = Message::new(
+const REFERENCE_LIKE_URL: &Message = &Message::new(
     "referenceLikeUrl",
     "Unexpected resource {{type}} ('{{prefix}}[text](url)') with URL that matches a definition identifier. Use '[text][id]' syntax instead.",
 );

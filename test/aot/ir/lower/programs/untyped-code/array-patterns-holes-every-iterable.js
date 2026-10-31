@@ -130,7 +130,7 @@ row("hot, then it throws", () => { function f(a) { let s = 0; try { for (const x
 // CHECK-NEXT: Return v14
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="done"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=env [[L_10]] flags=[IsFromCompiler]}, {type=undefined|null|Array flags=[IsExpected]}] thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=env [[L_10]] flags=[IsFromCompiler]}, {type=undefined|null|Array flags=[IsExpected] variableName="log"}] thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: env [[L_10]], v1: undefined|null|Array):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

@@ -259,7 +259,7 @@ attempt("a Map that grows", () => {
 // CHECK-NEXT: Return v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="fallback"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=undefined|null|Array<number> flags=[IsExpected]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=undefined|null|Array<number> flags=[IsExpected] variableName="list"}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: undefined|null|Array<number>):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -272,7 +272,7 @@ attempt("a Map that grows", () => {
 // CHECK-NEXT: ReturnCall v6 casts=[{declared={type=number flags=[IsExpected]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=3 captures=[{type=undefined|null|Array<number> flags=[IsExpected]}] thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string|symbol flags=[IsExpected]}, {type=anything}] results=[{type=true flags=[IsExpected]}] functionTypes={{*}}[[f_4]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=3 captures=[{type=undefined|null|Array<number> flags=[IsExpected] variableName="list"}] thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string|symbol flags=[IsExpected]}, {type=anything}] results=[{type=true flags=[IsExpected]}] functionTypes={{*}}[[f_4]]] {
 // CHECK-NEXT: b0(v0: undefined|null|Array<number>, v1: anything, v2: undefined|null|string|symbol, v3: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

@@ -1,5 +1,8 @@
 {
   "extends": "../../tsconfig.json",
+  // The builds of test/aot/transpiler-parity take these files as entry points. Without this each would read every file of test/tsconfig.json.
+  "files": [],
+  "include": [],
   "compilerOptions": {
     "jsx": "react-jsx"
   }

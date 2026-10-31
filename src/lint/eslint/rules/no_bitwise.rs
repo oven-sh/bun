@@ -7,7 +7,7 @@ pub struct NoBitwise {
     int32_hint: bool,
 }
 
-const UNEXPECTED: Message = Message::new("unexpected", "Unexpected use of '{{operator}}'.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "Unexpected use of '{{operator}}'.");
 
 const BITWISE_OPERATORS: [&str; 13] =
     ["^", "|", "&", "<<", ">>", ">>>", "^=", "|=", "&=", "<<=", ">>=", ">>>=", "~"];

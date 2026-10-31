@@ -1145,6 +1145,23 @@ impl<'a> Resolver<'a> {
         )
     }
 
+    /// Code from disk that names a package which the disk does not hold gets the one that the executable holds.
+    fn resolve_package_of_program_for_code_from_disk(
+        &self,
+        specifier: &[u8],
+        kind: ast::ImportKind,
+    ) -> Option<&'static [u8]> {
+        let graph = self.standalone_module_graph?;
+        if !graph.compiled_program()?.allows_code_from_disk {
+            return None;
+        }
+        let public_root = graph.base_public_path_with_default_suffix();
+        match self.resolve_embedded_package(public_root, specifier, kind) {
+            PackageLookup::Found(file_name) => Some(file_name),
+            PackageLookup::Hidden | PackageLookup::Unknown => None,
+        }
+    }
+
     /// The module of the executable that a bare `specifier` names from `source_dir`: an entry point, by the name of its package.
     pub fn resolve_embedded_package(
         &self,
@@ -1182,6 +1199,18 @@ impl<'a> Resolver<'a> {
         let public_root = graph.base_public_path_with_default_suffix();
         let program = graph.compiled_program()?;
         let entry_point = program.resolve_entry_point(public_root, specifier, &search)?;
+        Some(entry_point.module_path)
+    }
+
+    /// The module of `CompiledProgram::entry_point_from_working_directory`.
+    pub fn resolve_embedded_entry_point_from_working_directory(
+        &self,
+        specifier: &[u8],
+    ) -> Option<&'static [u8]> {
+        let graph = self.standalone_module_graph?;
+        let public_root = graph.base_public_path_with_default_suffix();
+        let program = graph.compiled_program()?;
+        let entry_point = program.entry_point_from_working_directory(public_root, specifier)?;
         Some(entry_point.module_path)
     }
 
@@ -1490,9 +1519,15 @@ impl<'a> Resolver<'a> {
             if let Some(graph) = self.standalone_module_graph {
                 let specifier_is_embedded_path =
                     ::bun_options_types::standalone_path::is_bun_standalone_file_path(import_path);
-                let embedded = match self.resolve_embedded_module(source_dir, import_path, kind) {
-                    Some(file_name) => PackageLookup::Found(file_name),
-                    None => self.resolve_embedded_package(source_dir, import_path, kind),
+                let program = graph.compiled_program();
+                let is_left_outside =
+                    program.is_some_and(|program| program.leaves_outside(source_dir, import_path));
+                let embedded = match is_left_outside {
+                    true => PackageLookup::Unknown,
+                    false => match self.resolve_embedded_module(source_dir, import_path, kind) {
+                        Some(file_name) => PackageLookup::Found(file_name),
+                        None => self.resolve_embedded_package(source_dir, import_path, kind),
+                    },
                 };
                 if embedded == PackageLookup::Hidden {
                     self.extension_order = original_order;
@@ -1518,9 +1553,13 @@ impl<'a> Resolver<'a> {
                         self.extension_order = original_order;
                         return ResultUnion::NotFound;
                     }
-                    let top_level_dir = Fs::FileSystem::instance().top_level_dir();
+                    let top_level_dir = Fs::FileSystem::get().top_level_dir();
+                    let root_on_disk = graph.root_on_disk();
                     let mut directories = graph
-                        .directories_of_importer(source_dir, top_level_dir)
+                        .directories_of_importer(
+                            source_dir,
+                            root_on_disk.as_deref().unwrap_or(top_level_dir),
+                        )
                         .into_iter();
                     if let Some(directory) = directories
                         .find(|directory| self.read_dir_info_ignore_error(directory).is_some())
@@ -1545,7 +1584,7 @@ impl<'a> Resolver<'a> {
                 //     let _ = self.flush_debug_logs(FlushMode::Fail);
                 // }
                 // return ResultUnion::Failure(crate::Error::MissingResolveDir);
-                break 'brk Fs::FileSystem::instance().top_level_dir();
+                break 'brk Fs::FileSystem::get().top_level_dir();
             }
 
             // This can also be hit if you use plugins with non-file namespaces,
@@ -1557,7 +1596,7 @@ impl<'a> Resolver<'a> {
                 //     let _ = self.flush_debug_logs(FlushMode::Fail);
                 // }
                 // return ResultUnion::Failure(crate::Error::InvalidResolveDir);
-                break 'brk Fs::FileSystem::instance().top_level_dir();
+                break 'brk Fs::FileSystem::get().top_level_dir();
             }
 
             break 'brk match source_dir_resolver.resolve_cwd(source_dir) {
@@ -1637,6 +1676,18 @@ impl<'a> Resolver<'a> {
                         self.extension_order = original_order;
                         return ResultUnion::Failure(err);
                     }
+                    // The name of a package leads to a file on disk. Where that file was compiled, the module of the executable answers.
+                    let found = result.path().map(|path| path.text());
+                    let found =
+                        found.and_then(|path| self.resolve_embedded_module(b"", path, kind));
+                    if let Some(module) = found {
+                        result.path_pair = PathPair {
+                            primary: Path::init(module),
+                            secondary: None,
+                        };
+                        result.module_type = options::ModuleType::Esm;
+                        result.flags |= ResultFlags::IS_STANDALONE_MODULE;
+                    }
                 }
 
                 let _ = self.flush_debug_logs(FlushMode::Success);
@@ -1670,7 +1721,19 @@ impl<'a> Resolver<'a> {
             }
             ResultUnion::Failure(e) => {
                 let _ = self.flush_debug_logs(FlushMode::Fail);
-                ResultUnion::Failure(e)
+                match self.resolve_package_of_program_for_code_from_disk(import_path, kind) {
+                    Some(file_name) => ResultUnion::Success(Result {
+                        import_kind: kind,
+                        path_pair: PathPair {
+                            primary: Path::init(file_name),
+                            secondary: None,
+                        },
+                        module_type: options::ModuleType::Esm,
+                        flags: ResultFlags::IS_STANDALONE_MODULE,
+                        ..Default::default()
+                    }),
+                    None => ResultUnion::Failure(e),
+                }
             }
             ResultUnion::Pending(pending) => {
                 let _ = self.flush_debug_logs(FlushMode::Fail);
@@ -1678,7 +1741,19 @@ impl<'a> Resolver<'a> {
             }
             ResultUnion::NotFound => {
                 let _ = self.flush_debug_logs(FlushMode::Fail);
-                ResultUnion::NotFound
+                match self.resolve_package_of_program_for_code_from_disk(import_path, kind) {
+                    Some(file_name) => ResultUnion::Success(Result {
+                        import_kind: kind,
+                        path_pair: PathPair {
+                            primary: Path::init(file_name),
+                            secondary: None,
+                        },
+                        module_type: options::ModuleType::Esm,
+                        flags: ResultFlags::IS_STANDALONE_MODULE,
+                        ..Default::default()
+                    }),
+                    None => ResultUnion::NotFound,
+                }
             }
         };
 
@@ -1750,10 +1825,9 @@ impl<'a> Resolver<'a> {
             return Ok(());
         }
 
-        let mut iter = result.path_pair.iter();
         let mut module_type = result.module_type;
         let mut is_primary = true;
-        while let Some(path) = iter.next() {
+        for path in result.path_pair.iter_mut() {
             let name = path.name();
             let primary = core::mem::take(&mut is_primary);
             let Ok(Some(dir)) = self.read_dir_info(name.dir) else {
@@ -5185,7 +5259,7 @@ impl<'a> Resolver<'a> {
     /// only. Skip it, like esbuild's `matchTSConfigPaths` (which checks `.d.ts` only).
     /// This looks at the tsconfig text, not the `*` expansion: `"@/*": ["./src/*"]`
     /// must still resolve `import "@/env.d.ts"`.
-    fn is_type_only_tsconfig_path(&mut self, substitution: &[u8]) -> bool {
+    pub(crate) fn is_type_only_tsconfig_path(&mut self, substitution: &[u8]) -> bool {
         const DECLARATION_EXTS: [&[u8]; 3] = [b".d.ts", b".d.mts", b".d.cts"];
         let Some(ext) = DECLARATION_EXTS.iter().find(|ext| {
             substitution

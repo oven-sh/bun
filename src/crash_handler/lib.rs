@@ -1287,6 +1287,7 @@ mod draft {
                     Output::flush();
 
                     bun_removable_features::removable_body!(HotReload, Abort, {
+                        IS_RELOADING_PROCESS.store(true, Ordering::Relaxed);
                         bun_core::reload_process(false, true);
                     });
                 }
@@ -1731,6 +1732,14 @@ mod draft {
     #[unsafe(no_mangle)]
     extern "C" fn CrashHandler__isCrashSignal(signal: c_int) -> bool {
         bun_core::CRASH_HANDLER_SIGNALS.contains(&signal)
+    }
+
+    static IS_RELOADING_PROCESS: AtomicBool = AtomicBool::new(false);
+
+    /// On Linux, `execve` must not wait for a lock that the crashed thread may hold.
+    #[unsafe(no_mangle)]
+    extern "C" fn CrashHandler__isReloadingProcess() -> bool {
+        IS_RELOADING_PROCESS.load(Ordering::Relaxed)
     }
 
     #[cfg(unix)]
@@ -2334,7 +2343,8 @@ mod draft {
 
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     unsafe extern "C" {
-        fn gnu_get_libc_version() -> *const c_char;
+        /// Returns a static NUL-terminated string.
+        safe fn gnu_get_libc_version() -> *const c_char;
     }
 
     // Only populated after JSC::VM::tryCreate. C++ writes this as a plain
@@ -2376,8 +2386,7 @@ mod draft {
                 let platform = bun_analytics::GenerateHeader::generate_platform::for_os();
                 #[cfg(all(target_os = "linux", target_env = "gnu"))]
                 {
-                    // SAFETY: gnu_get_libc_version returns a static NUL-terminated string or null
-                    let version = unsafe { gnu_get_libc_version() };
+                    let version = gnu_get_libc_version();
                     let version_bytes: &[u8] = if version.is_null() {
                         b""
                     } else {

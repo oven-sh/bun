@@ -125,14 +125,18 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v8: f4 = NewClass v7, v4, v6 layout=L1
 # CHECK-NEXT: v9: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v9)
-# CHECK-NEXT: b1(v10: int[0, 9999] ~ 0) frequency=Rare:
-# CHECK-NEXT: LoopHint
+# CHECK-NEXT: b1(v10: int[0, 9999] ~ 0) frequency=Unlikely:
+# CHECK-NEXT: v11: boolean = ShouldFailPrediction
+# CHECK-NEXT: Branch v11 -> taken b3(), notTaken b2()
+# CHECK-NEXT: b2() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3() frequency=Rare:
 # CHECK-NEXT: v12: int[1, 10000] ~ 1 = Increment v10
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v14: 10000 = Integer integer=10000
 # CHECK-NEXT: v15: boolean = Less v12, v14
-# CHECK-NEXT: Branch v15 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b2():
+# CHECK-NEXT: Branch v15 -> taken b1(| 0), notTaken b4()
+# CHECK-NEXT: b4():
 # CHECK-NEXT: v16: undefined = Undefined
 # CHECK-NEXT: Return v16
 # CHECK-NEXT: }
@@ -150,17 +154,16 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: b0(v0: function, v1: anything, v2: boolean):
 # CHECK-NEXT: v3: f4 = AssumeType v1 provenType=f4
 # CHECK-NEXT: v4: object = GetConstructPrototype v3 layout=L0
-# CHECK-NEXT: v5: object ~ L0|L1 = NewObject v4 layout=L0 allocationSite=5 allocationClass=0
-# CHECK-NEXT: v6: L0|L1 = AssumeType v5 provenType=L0|L1
-# CHECK-NEXT: v7: L0|L1 ~ L1 = Upcast v6 castType=object
-# CHECK-NEXT: v8: L1 = AssumeType v7 provenType=L1
+# CHECK-NEXT: v5: object ~ L1 = NewObject v4 layout=L0 allocationSite=5 allocationClass=0
+# CHECK-NEXT: v6: L0|L1 ~ L1 = AssumeType v5 provenType=L0|L1
+# CHECK-NEXT: v7: L1 = AssumeType v6 provenType=L1
 # CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v9: f5 = NewClosure function=f5 allocationSite=6
-# CHECK-NEXT: PutSlot v8, -, v9 key="step" receivers=[L1] level=Proven accessSite=6
+# CHECK-NEXT: v8: f5 = NewClosure function=f5 allocationSite=6
+# CHECK-NEXT: PutSlot v7, -, v8 key="step" receivers=[L1] level=Proven accessSite=6
 # CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: Return v8
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Walker"
 # CHECK: module=m0 position=243 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] captures=[{type=f2}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers takesNewTarget=true} {

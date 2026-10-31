@@ -3580,12 +3580,18 @@ extern "C" uint32_t JSC__JSString__firstCharacters(const JSC::JSString* string, 
     return count;
 }
 
-// `length` is at least 2.
-extern "C" JSC::EncodedJSValue JSC__JSString__createUninitializedLatin1(JSC::JSGlobalObject* globalObject, uint32_t length, Latin1Character** characters)
+extern "C" JSC::EncodedJSValue JSC__JSString__singleLatin1Character(JSC::JSGlobalObject* globalObject, uint8_t character)
+{
+    return JSC::JSValue::encode(JSC::jsSingleCharacterString(JSC::getVM(globalObject), Latin1Character { character }));
+}
+
+// `length` is at least 2. Empty when the characters cannot be allocated.
+extern "C" JSC::EncodedJSValue JSC__JSString__tryCreateUninitializedLatin1(JSC::JSGlobalObject* globalObject, uint32_t length, Latin1Character** characters)
 {
     std::span<Latin1Character> buffer;
     auto text = WTF::StringImpl::tryCreateUninitialized(length, buffer);
-    RELEASE_ASSERT(text);
+    if (!text) [[unlikely]]
+        return {};
     *characters = buffer.data();
     return JSC::JSValue::encode(JSC::jsNontrivialString(JSC::getVM(globalObject), WTF::String(text.releaseNonNull())));
 }
@@ -4693,6 +4699,9 @@ JSC::EncodedJSValue JSC__JSValue__createObject2(JSC::JSGlobalObject* globalObjec
         return JSValue::encode(JSValue::decode(JSC::JSValue::ValueDeleted));
     }
 
+    if (auto* name = JSC::AOT::PropertyWalk::tryFindName(vm, { byteCast<Latin1Character>(arg1), arg2 }))
+        return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigationUnsafe(vm, globalObject, object, JSC::PropertyName(name)));
+
     // Since Identifier might not ref the string, we need to ensure it doesn't get deref'd until this function returns
     const auto propertyString = String(StringImpl::createWithoutCopying({ byteCast<Latin1Character>(arg1), arg2 }));
     const auto identifier = JSC::Identifier::fromString(vm, propertyString);
@@ -5622,8 +5631,11 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
     bool listsCompiledObject = false;
     auto canWalkQuickly = [&](JSC::JSObject* walkedObject) {
         listsCompiledObject = false;
+        // The prototype of a compiled class gets its members when somebody first looks at them, and is an ordinary object from then on. It is judged as that object.
+        JSC::AOT::PropertyWalk::materializeLazyProperties(vm, walkedObject);
+        structure = walkedObject->structure();
         if (!JSC::AOT::PropertyWalk::isCompiledObject(walkedObject))
-            return canPerformFastPropertyEnumerationForIterationBun(walkedObject->structure());
+            return canPerformFastPropertyEnumerationForIterationBun(structure);
         propertiesOfCompiledObject.shrink(0);
         valuesOfCompiledObject.clear();
         bool hasUnderscoreProto = false;

@@ -493,7 +493,13 @@ unsafe fn init_runtime_state(
                     // `apply_standalone_runtime_flags` can set
                     // `resolver.opts.load_tsconfig_json = false`, defeating
                     // `compile.autoloadTsconfig: false`.
-                    if opts.graph.is_some() {
+                    // Code from disk is transpiled by the tsconfig.json that lies there, as under `bun run`.
+                    let reads_tsconfig = opts.graph.is_none_or(|graph| {
+                        graph
+                            .compiled_program()
+                            .is_some_and(|program| program.allows_code_from_disk)
+                    });
+                    if !reads_tsconfig {
                         t.configure_linker_with_auto_jsx(false);
                     } else {
                         t.configure_linker();
@@ -1367,18 +1373,11 @@ fn body_mixin_get_blob(
     global: &JSGlobalObject,
 ) -> bun_jsc::JsResult<Option<JSValue>> {
     use crate::webcore::body::BodyMixin as _;
-    if let Some(resp) = value.as_::<crate::webcore::Response>() {
-        // SAFETY: `as_` returned the live payload of a JS-heap
-        // `Response` cell pinned by `value` for the duration of this call.
-        return Ok(Some(
-            unsafe { &mut *resp }.get_blob_without_call_frame(global)?,
-        ));
+    if let Some(resp) = value.as_class_ref::<crate::webcore::Response>() {
+        return Ok(Some(resp.get_blob_without_call_frame(global)?));
     }
-    if let Some(req) = value.as_::<crate::webcore::Request>() {
-        // SAFETY: see above.
-        return Ok(Some(
-            unsafe { &mut *req }.get_blob_without_call_frame(global)?,
-        ));
+    if let Some(req) = value.as_class_ref::<crate::webcore::Request>() {
+        return Ok(Some(req.get_blob_without_call_frame(global)?));
     }
     Ok(None)
 }
@@ -1686,6 +1685,10 @@ unsafe fn cancel_timers(vm: *mut VirtualMachine, only: Option<bun_jsc::ContextId
         unsafe {
             crate::node::node_fs_stat_watcher::StatWatcherScheduler::shutdown_for_exit(vm);
         }
+        // The realm is going (the VM's end, or the end of a test file under `--isolate`), and its
+        // connections are closed.
+        // SAFETY: `state` is the live boxed per-thread `RuntimeState`.
+        unsafe { (*state).sql_rare.forget_callbacks() };
     }
     if let Some(context) = only {
         // A graph's context keeps the set of its own live timers.
@@ -1999,35 +2002,24 @@ fn console_print_runtime_object_inner<const C: bool>(
     }
     let global = formatter.global_this;
 
-    // SAFETY: `as_` returns a non-null `*mut T` only when `value` wraps a
-    // live `T` cell; conservative stack scan keeps `value` alive for the
-    // duration of each branch.
-    if let Some(response) = value.as_::<Response>() {
+    if let Some(response) = value.as_class_ref::<Response>() {
         let mut w = AsFmt::new(writer_);
-        // SAFETY: `as_` returned a non-null `*mut Response` to the live native
-        // wrapper backing `value`; `value` is on-stack so GC keeps it alive.
-        let result = unsafe { &mut *response }.write_format::<_, _, C>(formatter, &mut w);
+        let result = response.write_format::<_, _, C>(formatter, &mut w);
         return rethrow_pending(global, result.is_err());
     }
-    if let Some(request) = value.as_::<Request>() {
+    if let Some(request) = value.as_class_ref::<Request>() {
         let mut w = AsFmt::new(writer_);
-        // SAFETY: `as_` returned a non-null `*mut Request` to the live native
-        // wrapper backing `value`; `value` is on-stack so GC keeps it alive.
-        let result = unsafe { &mut *request }.write_format::<_, _, C>(value, formatter, &mut w);
+        let result = request.write_format::<_, _, C>(value, formatter, &mut w);
         return rethrow_pending(global, result.is_err());
     }
-    if let Some(build) = value.as_::<BuildArtifact>() {
+    if let Some(build) = value.as_class_ref::<BuildArtifact>() {
         let mut w = AsFmt::new(writer_);
-        // SAFETY: `as_` returned a non-null `*mut BuildArtifact` to the live
-        // native wrapper backing `value`; GC keeps it alive (see above).
-        let result = unsafe { &*build }.write_format::<_, _, C>(value, formatter, &mut w);
+        let result = build.write_format::<_, _, C>(value, formatter, &mut w);
         return rethrow_pending(global, result.is_err());
     }
-    if let Some(blob) = value.as_::<Blob>() {
+    if let Some(blob) = value.as_class_ref::<Blob>() {
         let mut w = AsFmt::new(writer_);
-        // SAFETY: `as_` returned a non-null `*mut Blob` to the live native
-        // wrapper backing `value`; GC keeps it alive (see above).
-        let result = unsafe { &mut *blob }.write_format::<_, _, C>(formatter, &mut w);
+        let result = blob.write_format::<_, _, C>(formatter, &mut w);
         return rethrow_pending(global, result.is_err());
     }
     if let Some(s3client) = value.as_class_ref::<S3Client>() {
@@ -3798,11 +3790,13 @@ fn __bun_fetch_builtin_module(
     // ── Standalone-module-graph probe ───────────────────────────────────
     // `files.get` (no virtual-root prefix check), not `find_ref`.
     // The loader of its extension reads an asset of a compiled program: `Graph::find_at_source_path`, `Graph::find_asset_under_root`.
+    // Of an entry point of a compiled program the graph holds the name and no text. The engine answers for it, and leaves it to this loader once a test has taken it out of `require.cache`: then it is read from disk.
     if let Some(file) = bun_standalone_graph::Graph::get_ref().and_then(|graph| {
         graph
             .files
             .get(spec)
             .filter(|file| !graph.is_asset_of_compiled_program(spec, file))
+            .filter(|_| !bun_jsc::compiled_program::is_compiled_module(spec))
     }) {
         use bun_standalone_graph::StandaloneModuleGraph::ModuleFormat;
 
@@ -4016,7 +4010,7 @@ struct LoaderResult<'a> {
 ///
 /// # Safety
 /// `jsc_vm` is the live per-thread VM; the returned borrows live as long as
-/// the input `specifier_str` / the VM's resolver caches.
+/// the input `specifier_str` / the VM's resolver caches / its `module_loader.eval_source`.
 unsafe fn get_loader_and_virtual_source<'a>(
     specifier_str: &'a [u8],
     jsc_vm: *mut VirtualMachine,
@@ -4048,9 +4042,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
             && specifier.ends_with(STDIN)
             && bun_paths::resolve_path::is_sep_any(specifier[specifier.len() - STDIN.len() - 1]);
         if is_eval || is_stdin {
-            // SAFETY: `eval_source` is heap-owned by the VM (`Box<Source>`); it
-            // outlives the synchronous transpile this borrow feeds into.
-            virtual_source = Some(unsafe { &*std::ptr::from_ref::<bun_ast::Source>(eval_source) });
+            virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
         }
     }
@@ -4745,6 +4737,63 @@ fn transpile_error_value(
             to_jsc_fetch_error(&err),
         )),
     }
+}
+
+/// What `bun test --coverage` runs of the file at `path` with the text `source`: what the transpiler prints. Its source map is saved as for a
+/// file that is loaded.
+pub(crate) fn transpile_as_loaded(
+    global: &JSGlobalObject,
+    path: &[u8],
+    source: &[u8],
+) -> Option<ResolvedSource> {
+    let jsc_vm: *mut VirtualMachine = global.bun_vm_ptr();
+    let virtual_source = bun_ast::Source::init_path_string(path, source);
+    let mut log = bun_ast::Log::init();
+    let fs_path = Fs::Path::init(path);
+    // SAFETY: `jsc_vm` is the live per-thread VM.
+    let loaders = unsafe { &(*jsc_vm).transpiler.options.loaders };
+    let loader = loaders.get(fs_path.name().ext).copied()?;
+    if !loader.is_java_script_like() {
+        return None;
+    }
+    let _reset_arena = ArenaResetGuard::new(jsc_vm);
+    let printer_ptr: *mut bun_js_printer::BufferPrinter = TRANSPILE_PRINTER.with(|cell| {
+        let mut p = cell.get();
+        if p.is_null() {
+            let writer = bun_js_printer::BufferWriter::init();
+            let bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
+            p = bun_core::heap::into_raw(bp);
+            cell.set(p);
+        }
+        p
+    });
+    let mut extra = TranspileExtra {
+        path: fs_path,
+        loader,
+        module_type: ModuleType::Unknown,
+        source_code_printer: printer_ptr,
+        promise_ptr: ptr::null_mut(),
+    };
+    let specifier = bun_core::StringView::from_bytes(path);
+    let args = TranspileArgs {
+        specifier: path,
+        referrer: b"",
+        input_specifier: &specifier,
+        log: &raw mut log,
+        virtual_source: Some(&virtual_source),
+        global_object: global,
+        flags: FetchFlags::Transpile,
+        extra: &raw mut extra,
+    };
+    transpile_source_code_inner::<false>(jsc_vm, &args).ok()
+}
+
+/// BunCompiledModules.cpp. The executable of a compiled program holds the file as it is, so the loader of its kind can read it.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__compiledProgramHoldsFileAsItIs(path: &bun_core::String) -> bool {
+    let path = path.to_utf8();
+    bun_standalone_graph::Graph::get_ref()
+        .is_some_and(|graph| graph.find_asset_under_root(path.slice()).is_some())
 }
 
 /// Transpiles plugin-provided source through the per-thread

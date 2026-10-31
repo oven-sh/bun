@@ -29,6 +29,8 @@ const programs: { path: string; builds: number; flags?: string[] }[] = [
   { path: "repeated-builds/methods-reassigned-by-class.ts", builds: 3 },
   // Steps of the flow analysis ran side by side, and one of them opened a phase of the type table while another held an arena of it: 5 builds of 200 aborted.
   { path: "parallel/relational-summaries/accessors-arrive-on-chain-in-every-way.js", builds: 3 },
+  // Calls inlined into a hot loop: with 16 threads 3 builds of 8 differed from the build with one thread.
+  { path: "repeated-builds/optional-field-hot-loop.ts", builds: 9 },
 ];
 
 const root = String(tempDir("aot-repeated-builds", {}));

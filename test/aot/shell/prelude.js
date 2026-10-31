@@ -8,7 +8,8 @@ const partOf = (name, members) => Object.setPrototypeOf(members, new Proxy({}, {
     quit();
 } }));
 provide("performance", partOf("performance", { now: () => preciseTime() * 1000 }));
-provide("console", partOf("console", { log: (...values) => print(values.map(value => Object.is(value, -0) ? "-0" : String(value)).join(" ")) }));
+// `console` stays the engine's own object, which prints through the shell: compiled code tells it from the program's objects by identity.
+try { partOf("console", console); } catch { }
 // Compiled code takes a global of Bun that the program never stores to for present, so `typeof process` or `typeof Bun` is no test for the shell: without these the program reads a null pointer.
 provide("process", partOf("process", { argv: ["jsc", "program"] }));
 // Compiled code calls Bun.gc as the native function that it is in Bun, so it is one here.

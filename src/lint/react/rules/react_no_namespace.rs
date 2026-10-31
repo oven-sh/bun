@@ -9,12 +9,12 @@ use std::cell::OnceCell;
 /// Enforce that namespaces are not used in React elements
 pub struct NoNamespace;
 
-const NO_NAMESPACE: Message = Message::new(
+const NO_NAMESPACE: &Message = &Message::new(
     "noNamespace",
     "React component {{name}} must not be in a namespace, as React does not support them",
 );
-const OXLINT: Message =
-    Message::new("", "React component {{component_name}} must not be in a namespace, as React does not support them.");
+const OXLINT: &Message =
+    &Message::new("", "React component {{component_name}} must not be in a namespace, as React does not support them.");
 
 impl Rule for NoNamespace {
     const META: Meta = Meta::plugin(Plugin::React, "no-namespace", Kind::None);

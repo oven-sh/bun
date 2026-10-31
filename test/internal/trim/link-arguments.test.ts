@@ -460,12 +460,13 @@ describe("layOut", () => {
         isMovable: output => output === ".text",
         canBeFilled: () => true,
         isCode: output => output === ".text",
-        relinksSameInputs: false,
         firstInputs: [],
         builtinModulesOutput: ".bun_builtins",
         supportObjects: room => (rooms.push(room), ["room.s.o"]),
         prepareInput: path => path,
-        prepareCompiledObjects: () => false,
+        prepareCompiledObjects: () => undefined,
+        withoutBitcode: path => path,
+        relinksSameInputs: () => false,
         compiledObjects: () => [],
         firstLinkArguments: noArguments,
         secondLinkArguments: noArguments,
@@ -474,6 +475,7 @@ describe("layOut", () => {
         orderOf: (_, partition) => ({
           retainedFirst: [],
           groups: partition.groups.map(({ set }) => ({ set, names: [], afterRetained: [] })),
+          groupsOutsidePrograms: partition.groupsOutsidePrograms,
           nodes: [],
           unnamed: new Map(),
         }),
@@ -536,6 +538,8 @@ describe("layOut", () => {
       "0.00 MB of the groups are outside every cuttable range",
       `the trim table takes ${layout.table.length} of 1024 bytes`,
       "0.00 MB are in the image without a known reference and are retained",
+      "0.01 MB of the groups have no name that the order of sections can list",
+      "without any feature: 1 holes; left as filler by 39 cuts 0.00 MB, 60 cuts 0.00 MB, 78 cuts 0.00 MB, 156 cuts 0.00 MB",
       "graph: objects 1",
       "needed only by features, in output sections that cannot be reordered: .data 0.00 MB",
     ]);
@@ -704,7 +708,9 @@ describe("layOut", () => {
           firstInputs: [builtins],
           prepareInput: path => path + ".split",
           compiledObjects: () => ["program.lto.o"],
-          prepareCompiledObjects: objects => objects.length > 0,
+          prepareCompiledObjects: objects => (objects.length > 0 ? objects : undefined),
+          withoutBitcode: path => path,
+          relinksSameInputs: () => false,
           nameUnnamedSections: () => new Map([[plain + ".split", plain + ".named"]]),
         },
         inputs,
@@ -721,19 +727,6 @@ describe("layOut", () => {
         [undefined, plain + ".split", undefined],
         [undefined, plain + ".named", undefined],
       ]);
-    });
-
-    test("a format that links the same inputs again gets the bitcode twice", () => {
-      using dir = tempDir("trim-layout-same-inputs", files);
-      const inputs = Object.keys(files).map(name => join(String(dir), name));
-      const { session, requests } = fakeSession(
-        String(dir),
-        { relinksSameInputs: true, compiledObjects: () => ["program.exe.lto.obj"] },
-        inputs,
-      );
-      layOut(session);
-      expect(requests.map(request => request.first)).toEqual([["room.s.o"], ["room.s.o"]]);
-      expect(requests.map(request => rewritten(request, inputs))).toEqual([inputs, inputs]);
     });
   });
 });

@@ -1,4 +1,5 @@
 // Flags: --aot-heat=everything-is-cold --aot-disable=flow-results
+// STATISTIC: EngineRuns = 2
 // Erased types: not built: number-literal-stays-numeric is built so
 import "../../fixtures/jsc-shell-functions.ts";
 import "./number-literal-stays-numeric/program.ts";

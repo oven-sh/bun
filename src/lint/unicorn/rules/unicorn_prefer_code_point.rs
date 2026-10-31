@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Prefer `String#codePointAt` over `String#charCodeAt` and `String.fromCodePoint` over `String.fromCharCode`.
 pub struct PreferCodePoint;
 
-const PREFER_CODE_POINT: Message = Message::new("", "Prefer `{{good_method}}` over `{{bad_method}}`");
+const PREFER_CODE_POINT: &Message = &Message::new("", "Prefer `{{good_method}}` over `{{bad_method}}`");
 
 impl Rule for PreferCodePoint {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-code-point", Kind::Suggestion).fixable(Fixable::Code);

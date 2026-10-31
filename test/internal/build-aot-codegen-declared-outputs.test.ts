@@ -9,7 +9,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { bunExe, bunRun, tempDir } from "harness";
-import { existsSync, readdirSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 
 import {
@@ -17,16 +17,13 @@ import {
   builtinUsesJson,
   emitAotCodegen,
   emitAotSchema,
-  emitAotSchemaUseCheck,
   emitBuiltinSources,
   emitBuiltinsTable,
   emitRemovableFeatures,
   engineFunctionsJson,
-  registerAotRules,
   removableFeaturesJson,
   schemaHashHeader,
   schemaRustFiles,
-  schemaUseCheckStamp,
   type EngineSources,
 } from "../../scripts/build/aot.ts";
 import { registerCodegenRules, type CodegenOutputs } from "../../scripts/build/codegen.ts";
@@ -94,7 +91,6 @@ function configure(buildDir: string): Configured {
   const n = new Ninja({ buildDir });
   registerDirStamps(n, cfg);
   registerCodegenRules(n, cfg);
-  registerAotRules(n, cfg);
   const o: CodegenOutputs = {
     all: [],
     generatedTypes: [],
@@ -189,7 +185,6 @@ function engineAt(javaScriptCore: string | undefined): EngineSources {
     ],
     schemaGeneratedDirectory: javaScriptCore === undefined ? undefined : "/fake/build/DerivedSources/aot",
     schemaOutputs: javaScriptCore === undefined ? [] : ["/fake/build/DerivedSources/aot/AOTSchemaOperations.h"],
-    schemaUsers: ["/fake/engine/aot/ir/AOTProgram.cpp"],
     directory: "/fake/engine/aot",
     builtinsGeneratedDirectory: "/fake/engine/aot/builtins/generated",
     builtinTableInputs: ["/fake/engine/aot/builtins/array.def"],
@@ -204,7 +199,6 @@ const prebuilt = engineAt(undefined);
 function noSources(lists: Partial<Sources> = {}): Sources {
   return sourceLists({
     removableFeatures: [],
-    aotRust: [],
     builtinsTableCodegen: [],
     bindgen: [],
     js: [],
@@ -294,49 +288,6 @@ describe("emitAotSchema", () => {
     expect(edgeArgs(n, rust[0])).toContain(prebuilt.schemaGenerator);
     expect(edgeArgs(n, rust[0])).not.toContain("--engine-out");
   });
-});
-
-describe("emitAotSchemaUseCheck", () => {
-  test("is a step of CI's graphs with a checkout of the engine, and of no other", () => {
-    using dir = tempDir("build-aot-schema-uses", {});
-    for (const [ci, engine, isThere] of [
-      [true, checkout, true],
-      [false, checkout, false],
-      [true, prebuilt, false],
-    ] as const) {
-      const { cfg, n, o, dirStamp } = configure(String(dir));
-      emitAotSchemaUseCheck({ n, cfg: { ...cfg, ci }, sources: noSources(), o, dirStamp, engine });
-      expect({ ci, engine: engine.javaScriptCore, all: o.all }).toEqual({
-        ci,
-        engine: engine.javaScriptCore,
-        all: isThere ? [schemaUseCheckStamp(cfg)] : [],
-      });
-      if (isThere)
-        expect(edgeInputs(n, schemaUseCheckStamp(cfg))).toEqual(
-          expect.arrayContaining([...checkout.schemaUsers, ...checkout.schemaOutputs].map(p => n.rel(p))),
-        );
-    }
-  });
-
-  const webkit = process.env.BUN_WEBKIT_PATH ?? resolve(import.meta.dirname, "..", "..", "vendor", "WebKit");
-  const javaScriptCore = resolve(webkit, "Source", "JavaScriptCore");
-
-  // CI links a prebuilt engine, which brings none of its C++: .github/workflows/lint.yml fetches it for this test.
-  test.skipIf(process.env.BUN_WEBKIT_PATH === undefined && !existsSync(resolve(javaScriptCore, "b3", "B3Limits.h")))(
-    "its command finds a use for every name of the schema, in a checkout of the engine and in this tree",
-    async () => {
-      using dir = tempDir("build-aot-schema-uses-run", {});
-      const { cfg, n, o, dirStamp } = configure(String(dir));
-      const engine = {
-        ...engineAt(javaScriptCore),
-        schema: resolve(javaScriptCore, "aot", "ir", "AOTSchema.def"),
-        schemaGenerator: resolve(javaScriptCore, "aot", "ir", "generator", "index.ts"),
-      };
-      emitAotSchemaUseCheck({ n, cfg: { ...cfg, ci: true }, sources: noSources(), o, dirStamp, engine });
-      expect(await bunRun(edgeArgs(n, schemaUseCheckStamp(cfg)).split(" "))).toSpawn("");
-    },
-    generatorTimeout,
-  );
 });
 
 describe("emitBuiltinsTable", () => {
@@ -468,7 +419,7 @@ describe("emitAotCodegen", () => {
 
     emitAotCodegen({ n, cfg, sources: noSources(), o, dirStamp, engine: checkout });
 
-    const steps = readManifest(n.toString()).edges.filter(edge => /^(codegen_bun|aot_check)$/.test(edge.rule));
+    const steps = readManifest(n.toString()).edges.filter(edge => edge.rule === "codegen_bun");
     expect(steps[0].outputs).toContain(n.rel(removableFeaturesJson(cfg)));
     expect(o.all.filter((path, index) => o.all.indexOf(path) !== index)).toEqual([]);
     for (const path of [
@@ -481,7 +432,6 @@ describe("emitAotCodegen", () => {
 
   test.each([
     ["emitAotSchema", emitAotSchema],
-    ["emitAotSchemaUseCheck", emitAotSchemaUseCheck],
     ["emitBuiltinsTable", emitBuiltinsTable],
     ["emitBuiltinSources", emitBuiltinSources],
   ] as const)("%s throws without an engine", (name, emit) => {

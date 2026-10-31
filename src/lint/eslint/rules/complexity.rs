@@ -11,7 +11,7 @@ pub struct Complexity {
     is_modified: bool,
 }
 
-const COMPLEX: Message = Message::new(
+const COMPLEX: &Message = &Message::new(
     "complex",
     "{{name}} has a complexity of {{complexity}}. Maximum allowed is {{max}}.",
 );

@@ -428,7 +428,7 @@ function f119 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="switched"
-# CHECK: module=m0 position=3159 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type="a"|"b"|"c" site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=3159 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type="a"|"b"|"c" site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type="first"|"neither"|"second" site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: "a"|"b"|"c"):
 # CHECK-NEXT: v1: "a"|"b"|"c" ~ "a"|"b" = Expect v0 expectedType=undefined|null|"a"|"b"
 # CHECK-NEXT: SwitchString v1 strings=["a", "b"] -> case b1(), case b2(), otherwise b3()
@@ -455,21 +455,20 @@ function f119 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="gives"
-# CHECK: module=m0 position=3688 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=1|string}] results=[{type=undefined|null|"amd-module"|"reference" site=w4 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: 1|string):
-# CHECK-NEXT: v1: 1|string ~ "amd-module"|"reference" = Expect v0 expectedType=undefined|null|"amd-module"|"reference"
-# CHECK-NEXT: Return v1
+# CHECK: module=m0 position=3688 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=1|"nothing"}] results=[{type=undefined|null|"amd-module"|"reference" site=w4 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: 1|"nothing"):
+# CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="exhaustive"
-# CHECK: module=m0 position=5958 role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"a"|"b" site=w5 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|string site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f122 fallback=f124} {
+# CHECK: module=m0 position=5958 role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"a"|"b" site=w5 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|"first"|"second" site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f122 fallback=f124} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|"a"|"b"):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|"a"|"b"
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v2: undefined|string = CallDirect function=f127
+# CHECK-NEXT: v2: undefined|"first"|"second" = CallDirect function=f127
 # CHECK-NEXT: ReturnCall v2 requirement=Allowed
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v3: undefined|string = CallDirect v0 function=f124
+# CHECK-NEXT: v3: undefined|"first"|"second" = CallDirect v0 function=f124
 # CHECK-NEXT: ReturnCall v3 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function f32 module=
@@ -484,17 +483,15 @@ function f119 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK: m0 position=3367 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=string site=w48 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f95] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "a" = String string="a"
-# CHECK-NEXT: v1: string = CallDirect v0 function=f1 accessSite=9
+# CHECK-NEXT: v1: "first"|"neither"|"second" = CallDirect v0 function=f1 accessSite=9
 # CHECK-NEXT: v2: " " = String string=" "
-# CHECK-NEXT: v3: string = Add v1, v2
-# CHECK-NEXT: v4: "b" = String string="b"
-# CHECK-NEXT: v5: string = CallDirect v4 function=f1 accessSite=10
-# CHECK-NEXT: v6: " " = String string=" "
-# CHECK-NEXT: v7: string = Strcat v3, v5, v6
-# CHECK-NEXT: v8: "c" = String string="c"
-# CHECK-NEXT: v9: string = CallDirect v8 function=f1 accessSite=11
-# CHECK-NEXT: v10: string = Add v7, v9
-# CHECK-NEXT: Return v10
+# CHECK-NEXT: v3: "b" = String string="b"
+# CHECK-NEXT: v4: "first"|"neither"|"second" = CallDirect v3 function=f1 accessSite=10
+# CHECK-NEXT: v5: " " = String string=" "
+# CHECK-NEXT: v6: "c" = String string="c"
+# CHECK-NEXT: v7: "first"|"neither"|"second" = CallDirect v6 function=f1 accessSite=11
+# CHECK-NEXT: v8: string = Strcat v1, v2, v4, v5, v7
+# CHECK-NEXT: Return v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="widen"
 # CHECK: module=m0 position=3930 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=1|"a"|"c"}] results=[{type=1|"a"|"c"}] functionTypes=[f97] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -506,7 +503,7 @@ function f119 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "first " = String string="first "
 # CHECK-NEXT: v1: "c" = String string="c"
-# CHECK-NEXT: v2: undefined|string = CallDirect v1 function=f4 accessSite=21
+# CHECK-NEXT: v2: undefined|"first"|"second" = CallDirect v1 function=f4 accessSite=21
 # CHECK-NEXT: v3: string = Add v0, v2
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
@@ -516,14 +513,14 @@ function f119 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="exhaustive"
-# CHECK: module=m0 position=5958 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"a"|"b" site=w5}] results=[{type=undefined|string site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4 parameterMap=[{original=0}]}
+# CHECK: module=m0 position=5958 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"a"|"b" site=w5}] results=[{type=undefined|"first"|"second" site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4 parameterMap=[{original=0}]}
 # CHECK-LABEL: function {{*}}name="takes"
 # CHECK: module=m0 position=3631 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"a"|"b" site=w2 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w3 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{original=0}]} creator=Version{provenVersion=f121} {
 # CHECK-NEXT: b0(v0: anything) frequency=Unlikely:
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="exhaustive"
-# CHECK: module=m0 position=5958 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"a"|"b" site=w5 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|string site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{original=0}]} creator=Version{provenVersion=f122} {
+# CHECK: module=m0 position=5958 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"a"|"b" site=w5 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|"first"|"second" site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{original=0}]} creator=Version{provenVersion=f122} {
 # CHECK-NEXT: b0(v0: anything) frequency=Unlikely:
 # CHECK-NEXT: v1: "a"|"c" = AssumeType v0 provenType="a"|"c"
 # CHECK-NEXT: SwitchString v1 strings=["a"] -> case b1(), otherwise b2()
@@ -535,7 +532,7 @@ function f119 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="exhaustive"
-# CHECK: module=m0 position=5958 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} results=[{type=undefined|string site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4} {
+# CHECK: module=m0 position=5958 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} results=[{type=undefined|"first"|"second" site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4} {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v1: "first" = String string="first"
 # CHECK-NEXT: Return v1

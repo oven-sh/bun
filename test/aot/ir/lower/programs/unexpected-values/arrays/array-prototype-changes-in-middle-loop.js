@@ -198,7 +198,7 @@ for (const key in inTheCallback) trial("push inside " + key, "push", replacement
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Reflect.set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=undefined|null|number|string|symbol flags=[IsExpected]}, {type=undefined|null|[[f_3]]|[[f_1]] flags=[IsExpected]}] thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_4]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=undefined|null|number|string|symbol flags=[IsExpected] variableName="key"}, {type=undefined|null|[[f_3]]|[[f_1]] flags=[IsExpected] variableName="value"}] thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_4]]] {
 // CHECK-NEXT: b0(v0: undefined|null|number|string|symbol, v1: undefined|null|[[f_3]]|[[f_1]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -209,7 +209,7 @@ for (const key in inTheCallback) trial("push inside " + key, "push", replacement
 // CHECK-NEXT: ReturnCall v5 casts=[{declared={type=boolean flags=[IsExpected]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Object.defineProperty"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=undefined|null|number|string|symbol flags=[IsExpected]}, {type=undefined|null|[[f_3]]|[[f_1]] flags=[IsExpected]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_5]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=undefined|null|number|string|symbol flags=[IsExpected] variableName="key"}, {type=undefined|null|[[f_3]]|[[f_1]] flags=[IsExpected] variableName="value"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_5]]] {
 // CHECK-NEXT: b0(v0: undefined|null|number|string|symbol, v1: undefined|null|[[f_3]]|[[f_1]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

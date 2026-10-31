@@ -753,8 +753,7 @@ if (!isMainThread && _isNodeWorker) {
 }
 function applyWorkerProcessOverrides() {
   const proc: any = process;
-  // node defaults debugPort to 9229 in workers (still settable). Per-object property:
-  // the static accessor's setter writes a process-global shared across threads.
+  // node gives a worker's debugPort no setter: it starts at 9229, and an assignment stores any value.
   try {
     Object.defineProperty(proc, "debugPort", { value: 9229, writable: true, configurable: true, enumerable: true });
   } catch {}

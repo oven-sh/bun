@@ -17,8 +17,9 @@ class JSMockFunction;
 // Wrapper to scope a bunch of GlobalObject properties related to mocks
 class JSMockModule final {
 public:
-    static uint64_t s_nextInvocationId;
-    static uint64_t nextInvocationId() { return ++s_nextInvocationId; }
+    // `mock.invocationCallOrder` counts across the mocks of one global, from 1.
+    uint64_t m_nextInvocationId { 0 };
+    uint64_t nextInvocationId() { return ++m_nextInvocationId; }
 
 #define FOR_EACH_JSMOCKMODULE_GC_MEMBER(V)           \
     V(Structure, mockFunctionStructure)              \

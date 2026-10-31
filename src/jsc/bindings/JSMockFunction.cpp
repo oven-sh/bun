@@ -109,8 +109,6 @@ JSC_DECLARE_HOST_FUNCTION(jsMockFunctionMockRejectedValueOnce);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionWithImplementationCleanup);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionWithImplementation);
 
-uint64_t JSMockModule::s_nextInvocationId = 0;
-
 // This is taken from JSWeakSet
 // We only want to hold onto the list of active spies which haven't already been collected
 // So we use a WeakSet
@@ -890,7 +888,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
         fn->contexts.set(vm, fn, contexts);
     }
 
-    auto invocationId = JSMockModule::nextInvocationId();
+    auto invocationId = globalObject->mockModule.nextInvocationId();
     JSC::JSArray* invocationCallOrder = fn->invocationCallOrder.get();
     if (invocationCallOrder) {
         invocationCallOrder->push(globalObject, jsNumber(invocationId));

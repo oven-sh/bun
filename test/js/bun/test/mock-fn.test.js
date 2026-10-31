@@ -820,6 +820,36 @@ describe("mock()", () => {
     expect(fn1.mock.invocationCallOrder).toEqual([first, first + 3]);
     expect(fn2.mock.invocationCallOrder).toEqual([first + 1, first + 2]);
   });
+  if (isBun) {
+    // A Worker is another global: its mocks count from 1, on their own.
+    test("invocationCallOrder does not count the mock calls of a Worker", async () => {
+      const fn = jest.fn();
+      fn();
+      const source = `
+        import { mock } from "bun:test";
+        const fn = mock(() => {});
+        fn();
+        fn();
+        fn();
+        postMessage(fn.mock.invocationCallOrder);
+      `;
+      const worker = new Worker(URL.createObjectURL(new Blob([source], { type: "application/typescript" })));
+      try {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        worker.onmessage = event => resolve(event.data);
+        worker.onerror = reject;
+        const ofWorker = await promise;
+        fn();
+        const first = fn.mock.invocationCallOrder[0];
+        expect({ ofWorker, ofMain: fn.mock.invocationCallOrder }).toEqual({
+          ofWorker: [1, 2, 3],
+          ofMain: [first, first + 1],
+        });
+      } finally {
+        await worker.terminate();
+      }
+    });
+  }
 
   test("toHaveBeenCalledWith, toHaveBeenLastCalledWith works", () => {
     const fn = jest.fn();

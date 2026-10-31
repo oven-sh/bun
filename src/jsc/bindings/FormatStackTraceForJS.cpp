@@ -6,6 +6,7 @@
 
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
+#include "JavaScriptCore/CyclicModuleRecord.h"
 #include "JavaScriptCore/DeferTermination.h"
 #include "JavaScriptCore/FrameTracers.h"
 #include "JavaScriptCore/TopExceptionScope.h"
@@ -16,6 +17,7 @@
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSCJSValue.h"
+#include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/StackFrame.h"
@@ -712,6 +714,72 @@ void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull s
         lineColumn.column = frame.position.column().oneBasedInt();
         remappedSourceURL = frame.source_url.toWTFString();
     }
+}
+
+static_assert(!static_cast<uint8_t>(JSC::ModuleLinkErrorSite::Import) && static_cast<uint8_t>(JSC::ModuleLinkErrorSite::IndirectExport) == 1, "bun_jsc::module_link_error::Site");
+
+// JavaScriptCore calls this with the error it is about to throw because a statement of `importer` does not link
+// (CyclicModuleRecord.cpp has the default). No code of `importer` is running then, so the error has no frame in it:
+// the stack gets one here, at the statement if it is found in the source.
+extern "C" void Bun__locateModuleLinkError(JSC::JSGlobalObject* lexicalGlobalObject, JSC::AbstractModuleRecord* importer, JSC::ErrorInstance* error, JSC::ModuleLinkErrorSite site, const JSC::Identifier& name)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    if (error->hasMaterializedErrorInfo())
+        return;
+
+    auto* jsModule = dynamicDowncast<JSC::JSModuleRecord>(importer);
+    auto* provider = jsModule ? jsModule->sourceCode().provider() : nullptr;
+    String importerURL = provider ? provider->sourceURL() : String();
+    if (importerURL.isEmpty())
+        importerURL = importer->moduleKey().string();
+    if (importerURL.isEmpty())
+        return;
+
+    JSC::LineColumn position;
+    bool hasPosition = false;
+    // Only a text that Bun read from where the program is stored is the text its URL names. That of a plugin, of a
+    // blob or of a node:vm module is not.
+    if (provider && provider->provenance() == JSC::SourceProvenance::Static) {
+        BunString importerURLString = Bun::toString(importerURL);
+        BunString nameString = Bun::toString(name.string());
+        hasPosition = Bun__positionOfModuleLinkError(Bun::vm(vm), &importerURLString, site, &nameString, &position.line, &position.column);
+    }
+
+    String errorName = error->sanitizedNameString(lexicalGlobalObject);
+    if (!scope.tryClearException()) [[unlikely]]
+        return;
+    String message = error->sanitizedMessageString(lexicalGlobalObject);
+    if (!scope.tryClearException()) [[unlikely]]
+        return;
+    String header = stackTraceHeaderOnly(errorName, message);
+
+    WTF::StringBuilder stack { WTF::OverflowPolicy::RecordOverflow };
+    stack.append(header, "\n    at "_s, importerURL);
+    if (hasPosition)
+        stack.append(':', position.line, ':', position.column);
+    // What called a link that runs synchronously, such as a require() of an ES module.
+    if (auto* callers = error->stackTrace(); callers && !callers->isEmpty()) {
+        OrdinalNumber line;
+        OrdinalNumber column;
+        String sourceURL;
+        stack.append(formatStackTrace(vm, defaultGlobalObject(lexicalGlobalObject), lexicalGlobalObject, emptyString(), emptyString(), line, column, sourceURL, *callers, nullptr));
+        if (!scope.tryClearException()) [[unlikely]]
+            return;
+    }
+
+    String stackString = stack.hasOverflowed() ? header : stack.toString();
+    error->setErrorInfoForEmbedderError(position, WTF::move(importerURL), WTF::move(stackString));
+    error->materializeErrorInfoIfNeeded(vm);
+    // Without this, what prints an error whose stack has no frame left to read (ZigException.cpp) takes `line` and
+    // `column` for a position in the transpiled text, and maps it.
+    if (hasPosition)
+        error->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(position.line), PropertyAttribute::DontEnum | 0);
+    // Error.captureStackTrace() writes a "<parse>" frame for a SyntaxError from these, and maps the line once more.
+    error->setLine(0);
+    error->setColumn(0);
+    error->setSourceURL({});
 }
 
 // ErrorInstance holds a frame's callee and code block weakly. Root them while user JS can run.

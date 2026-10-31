@@ -493,6 +493,12 @@ bool Bun__deepMatch(
 
 extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t);
 
+namespace JSC {
+enum class ModuleLinkErrorSite : uint8_t;
+}
+// `bun_jsc::module_link_error::position`. False: the statement is not to be found in the source of the module.
+extern "C" bool Bun__positionOfModuleLinkError(void* bunVM, const BunString* importerURL, JSC::ModuleLinkErrorSite, const BunString* name, uint32_t* line, uint32_t* column);
+
 namespace Inspector {
 class ScriptArguments;
 }

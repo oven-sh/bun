@@ -5735,6 +5735,12 @@ restart:
         }
     }
 
+    if constexpr (nonIndexedOnly) {
+        // A JSArray keeps every named property but `length` in its Structure.
+        if (hasNoOwnProperty && object->type() == JSC::ArrayType)
+            return;
+    }
+
     JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
 
     {
@@ -5746,7 +5752,8 @@ restart:
 
         while (iterating && !(iterating == globalObject->objectPrototype() || iterating == globalObject->functionPrototype() || (iterating != object && iterating->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(iterating)->target() != globalObject)) && prototypeCount++ < 5) {
             if constexpr (nonIndexedOnly) {
-                iterating->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Include);
+                // Enumerable keys only, as Node lists an array's: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/inspect.js#L1258
+                iterating->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Exclude);
             } else {
                 iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, isOtherGlobal ? DontEnumPropertiesMode::Exclude : DontEnumPropertiesMode::Include);
             }
@@ -5759,12 +5766,6 @@ restart:
                 // ignore constructor
                 if (property == propertyNames->constructor || builtinNames.bunNativePtrPrivateName() == property)
                     continue;
-
-                if constexpr (nonIndexedOnly) {
-                    if (property == propertyNames->length) {
-                        continue;
-                    }
-                }
 
                 JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
                 bool hasProperty = object->getPropertySlot(globalObject, property, slot);

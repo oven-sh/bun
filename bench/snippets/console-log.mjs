@@ -45,4 +45,16 @@ bench("inspect big json object", () => {
   console.error(inspect(json));
 });
 
+class Plain extends Array {}
+const arrays = {
+  "[1, 2, 3]": [1, 2, 3],
+  "[[1], [2], [3]]": [[1], [2], [3]],
+  "an array with a named property": Object.assign([1, 2, 3], { extra: 1 }),
+  "an instance of an Array subclass": Plain.of(1, 2, 3),
+  "the strings of a tagged template": (strings => strings)`a${1}b${2}c`,
+};
+for (const [name, value] of Object.entries(arrays)) {
+  bench(`inspect ${name}`, () => inspect(value));
+}
+
 await run();

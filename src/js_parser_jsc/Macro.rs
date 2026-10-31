@@ -704,9 +704,24 @@ impl<'a> Run<'a> {
     #[cold]
     #[inline(never)]
     fn run_boxed_primitive(&mut self, value: JSValue) -> Result<Expr, MacroError> {
-        let primitive = value.unwrap_boxed_primitive(self.global)?;
-        debug_assert!(!primitive.is_cell());
-        self.run(primitive)
+        match value.unwrap_boxed_primitive(self.global) {
+            Ok(primitive) => {
+                debug_assert!(!primitive.is_cell());
+                self.run(primitive)
+            }
+            // The unwrap calls a user `valueOf`. A throw is taken here: on a bundler thread nothing above
+            // takes an exception that the walk leaves pending, and later macro loads on that VM then fail.
+            Err(thrown @ JsError::Thrown) => {
+                self.global.take_exception(thrown);
+                self.log.add_error(
+                    Some(self.source),
+                    self.caller.loc,
+                    b"A Number object in this macro's result threw while it was converted to a number",
+                );
+                Err(MacroError::MacroFailed)
+            }
+            Err(error) => Err(error.into()),
+        }
     }
 
     // Runtime `tag` param — every call site in `run` already matches once.

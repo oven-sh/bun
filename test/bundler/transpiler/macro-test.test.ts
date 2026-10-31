@@ -780,13 +780,18 @@ test.concurrent("bun build inlines a Number, Boolean or String object as its pri
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toContain(`console.log(false, 5, "a");`);
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Debug builds print "[macro] call <name>" to stdout before the bundle.
+  expect({ bundle: stdout.slice(stdout.indexOf("// entry.ts")), stderr, exitCode }).toEqual({
+    bundle: `// entry.ts\nconsole.log(false, 5, "a");\n`,
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
-// The conversion is ToNumber, so it can throw. The build fails, as it does when toString() of a String object throws.
-test.concurrent("bun build fails when the conversion of a Number object throws", async () => {
+// The conversion is ToNumber, so a valueOf can throw. The build reports it at that call. The exception must not
+// stay pending on the macro VM, where it fails the next macro load: ok() has no error of its own.
+test.concurrent("bun build fails at the call when the conversion of a Number object throws", async () => {
   using dir = tempDir("bundler-macro-boxed-number-throws", {
     "macro.ts": [
       `export function m() {`,
@@ -796,9 +801,12 @@ test.concurrent("bun build fails when the conversion of a Number object throws",
       `  };`,
       `  return number;`,
       `}`,
+      `export function ok() {`,
+      `  return 1;`,
+      `}`,
       ``,
     ].join("\n"),
-    "entry.ts": `import { m } from "./macro.ts" with { type: "macro" };\nconsole.log(m());\n`,
+    "entry.ts": `import { m, ok } from "./macro.ts" with { type: "macro" };\nconsole.log(m());\nconsole.log(ok());\n`,
   });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "build", "./entry.ts"],
@@ -807,10 +815,18 @@ test.concurrent("bun build fails when the conversion of a Number object throws",
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  // Nothing is bundled. Debug builds still print "[macro] call m" to stdout.
-  expect(stdout).not.toContain("console.log(");
-  expect(exitCode).toBe(1);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    bundled: stdout.includes("console.log("),
+    errors: stderr.split(/\r?\n/).filter(line => line.startsWith("error: ")),
+    locations: Array.from(stderr.matchAll(/entry\.ts:\d+:\d+/g), match => match[0]),
+    exitCode,
+  }).toEqual({
+    bundled: false,
+    errors: ["error: A Number object in this macro's result threw while it was converted to a number"],
+    locations: ["entry.ts:2:13"],
+    exitCode: 1,
+  });
 });
 
 // Each parse thread creates a macro VM on its first macro call, and that VM loads the cwd's `.env` files.

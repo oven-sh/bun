@@ -43,8 +43,7 @@ SYSV_ABI JSC::EncodedJSValue S3Error__toErrorInstance(const S3Error* arg0,
         if (scope.exception()) {
             scope.clearException();
         } else {
-            result->putDirect(vm, names.codePublicName(), code,
-                JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum | 0);
+            result->putDirect(vm, names.codePublicName(), code, JSC::PropertyAttribute::DontEnum | 0);
         }
     }
 
@@ -53,8 +52,7 @@ SYSV_ABI JSC::EncodedJSValue S3Error__toErrorInstance(const S3Error* arg0,
         if (scope.exception()) {
             scope.clearException();
         } else {
-            result->putDirect(vm, names.pathPublicName(), path,
-                JSC::PropertyAttribute::DontDelete | 0);
+            result->putDirect(vm, names.pathPublicName(), path, 0);
         }
     }
 

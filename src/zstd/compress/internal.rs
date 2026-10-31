@@ -2773,6 +2773,10 @@ mod tests {
             let common = input.compare_older(IP, index, from);
             assert!(common.is_err_and(|known| known == from));
         }
+        // The first position of the current segment is not looked for in an older one, which there may not be.
+        let alone = two_segments(&[], 0, &[0; 64], DICT_LIMIT, 64)?;
+        let common = alone.compare_rest(IP, DICT_LIMIT, 0)?;
+        assert_eq!((common.len, common.match_is_smaller), (64 - IP, None));
         for len in [0, 1, 8, 15, 16, 17] {
             for (byte, match_byte) in [(1, 2), (0x80, 0x7F)] {
                 for start in [0, OLDER - len - 16, OLDER - len - 15, OLDER - len - 1] {

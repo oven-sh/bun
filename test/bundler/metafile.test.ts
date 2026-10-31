@@ -1,6 +1,8 @@
+import type { BunPlugin } from "bun";
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { statSync } from "node:fs";
+import { basename } from "node:path";
 
 // Type definitions for metafile structure
 interface MetafileImport {
@@ -862,7 +864,7 @@ describe("Bun.build metafile option variants", () => {
 });
 
 // CLI tests for --metafile-md
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isCI, isDebug, isWindows } from "harness";
 
 describe("bun build --metafile-md", () => {
   test("generates markdown metafile with default name", async () => {
@@ -1652,5 +1654,361 @@ describe("metafile outputs[..].bytes is the size of the emitted file", () => {
       json: onDisk(Object.keys(outputs)),
       markdown: onDisk(entryKeys),
     });
+  });
+});
+
+// The scan phase gives a file its source index when the parse result of a file that
+// imports it arrives. The same build numbers its files in another way each time, so
+// no order in the output follows those numbers.
+describe("output order does not follow parse order", () => {
+  /**
+   * A plugin that makes the parse results of `steps` arrive in that order. The file of
+   * a step loads only after the bundler asks for `then` of the step before it. The
+   * bundler asks for a file when it has the parse result of a file that imports it.
+   */
+  function parseInOrder(steps: { file: string; then: string }[]): BunPlugin {
+    const released = steps.map(() => Promise.withResolvers<void>());
+    released[0].resolve();
+    return {
+      name: "parse-in-order",
+      setup(build) {
+        build.onLoad({ filter: /./ }, async ({ path }) => {
+          const name = basename(path);
+          const asked = steps.findIndex(step => step.then === name);
+          if (asked !== -1) released[asked + 1]?.resolve();
+          const step = steps.findIndex(step => step.file === name);
+          if (step !== -1) await released[step].promise;
+          return undefined;
+        });
+      },
+    };
+  }
+
+  const fiveFiles = {
+    "entry.js": `import { a } from "./a.js";\nimport { b } from "./b.js";\nconsole.log(a + b);\n`,
+    "a.js": `import { x } from "./x.js";\nexport const a = x;\n`,
+    "b.js": `import { y } from "./y.js";\nexport const b = y;\n`,
+    "x.js": `export const x = 1;\n`,
+    "y.js": `export const y = 2;\n`,
+  };
+  // Each file comes after the files it imports. esbuild lists them the same way.
+  const fiveFilesInOrder = ["x.js", "a.js", "y.js", "b.js", "entry.js"];
+
+  test.concurrent("each input comes after the inputs it imports", async () => {
+    using dir = tempDir("metafile-order-cli", fiveFiles);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.js", "--outdir=out", "--metafile=meta.json", "--metafile-md=meta.md"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+    const metafile = (await Bun.file(`${dir}/meta.json`).json()) as Metafile;
+    const markdown = await Bun.file(`${dir}/meta.md`).text();
+    expect({
+      inputs: Object.keys(metafile.inputs),
+      inputsOfOutput: Object.keys(metafile.outputs["./entry.js"].inputs),
+      // The report lists the largest module first. Modules of one size keep the order of `inputs`.
+      markdown: [...markdown.matchAll(/^\[MODULE: (\S+)\]$/gm)].map(match => match[1]),
+    }).toEqual({
+      inputs: fiveFilesInOrder,
+      inputsOfOutput: fiveFilesInOrder,
+      markdown: ["entry.js", "x.js", "a.js", "y.js", "b.js"],
+    });
+  });
+
+  test.concurrent("inputs are in one order, whichever import is parsed first", async () => {
+    using dir = tempDir("metafile-order-inputs", fiveFiles);
+
+    async function build(steps: { file: string; then: string }[]) {
+      const result = await Bun.build({
+        entrypoints: [`${dir}/entry.js`],
+        metafile: true,
+        plugins: [parseInOrder(steps)],
+      });
+      return Object.keys((result.metafile as Metafile).inputs).map(key => basename(key));
+    }
+
+    const a = { file: "a.js", then: "x.js" };
+    const b = { file: "b.js", then: "y.js" };
+    expect({ aFirst: await build([a, b]), bFirst: await build([b, a]) }).toEqual({
+      aFirst: fiveFilesInOrder,
+      bFirst: fiveFilesInOrder,
+    });
+  });
+
+  // `shared.js` is one module in the server graph and another one in the browser graph, and
+  // `page.html` is a manifest module and a page. Each pair has one key in `inputs`. That is
+  // a defect of its own. This test holds only the order of the records.
+  test.concurrent("two inputs with one path are in one order, whichever is parsed first", async () => {
+    using dir = tempDir("metafile-order-two-graphs", {
+      "server.js": `import page from "./page.html";\nimport { shared } from "./server-only.js";\nconsole.log(page.index, shared);\n`,
+      "server-only.js": `export { shared } from "./shared.js";\n`,
+      "page.html": `<!DOCTYPE html><html><head></head><body><script type="module" src="./client.js"></script></body></html>`,
+      "client.js": `import { shared } from "./shared.js";\nconsole.log(shared);\n`,
+      "shared.js": `export const shared = "shared";\n`,
+    });
+
+    async function build(first: string, second: string) {
+      const result = await Bun.build({
+        entrypoints: [`${dir}/server.js`],
+        outdir: `${dir}/out`,
+        target: "bun",
+        metafile: { json: "meta.json" } as any,
+        plugins: [parseInOrder([first, second].map(file => ({ file, then: "shared.js" })))],
+      });
+      expect(result.success).toBe(true);
+      return await Bun.file(`${dir}/out/meta.json`).text();
+    }
+
+    const serverFirst = await build("server-only.js", "client.js");
+    const browserFirst = await build("client.js", "server-only.js");
+    expect(browserFirst).toBe(serverFirst);
+
+    // The files that the server entry point reaches come first, then the files of the page.
+    const inputs = serverFirst.slice(0, serverFirst.indexOf(`\n  "outputs"`));
+    expect([...inputs.matchAll(/^    "(.+)": \{$/gm)].map(match => basename(match[1]))).toEqual([
+      "page.html",
+      "shared.js",
+      "server-only.js",
+      "server.js",
+      "shared.js",
+      "client.js",
+      "page.html",
+    ]);
+  });
+
+  test.concurrent("CSS chunks are in entry point order, whichever stylesheet is parsed first", async () => {
+    const names = ["d", "b", "a", "c"];
+    using dir = tempDir(
+      "metafile-order-css-chunks",
+      Object.fromEntries(
+        names.flatMap(name => [
+          [`${name}.js`, `import "./${name}.css";\nconsole.log("${name}");\n`],
+          [`${name}.css`, `.${name} { color: red; }\n`],
+        ]),
+      ),
+    );
+
+    async function build(parsed: string[]) {
+      const result = await Bun.build({
+        entrypoints: names.map(name => `${dir}/${name}.js`),
+        outdir: `${dir}/out`,
+        metafile: true,
+        plugins: [parseInOrder(parsed.map(name => ({ file: `${name}.js`, then: `${name}.css` })))],
+      });
+      return {
+        metafile: Object.keys((result.metafile as Metafile).outputs),
+        artifacts: result.outputs.map(output => basename(output.path)),
+      };
+    }
+
+    const expected = {
+      metafile: ["./d.js", "./b.js", "./a.js", "./c.js", "./d.css", "./b.css", "./a.css", "./c.css"],
+      artifacts: ["d.js", "b.js", "a.js", "c.js", "d.css", "b.css", "a.css", "c.css"],
+    };
+    expect([await build(names), await build(names.toReversed())]).toEqual([expected, expected]);
+  });
+
+  // Ten entry points, because JS chunks leave entry point order past eight.
+  test.concurrent.each([[[]], [["--css-chunking"]]])("CSS entry points are in argv order (flags: %j)", async flags => {
+    const names = ["h", "c", "j", "a", "e", "b", "i", "d", "g", "f"];
+    using dir = tempDir(
+      "metafile-order-css-entries",
+      Object.fromEntries(names.map(name => [`${name}.css`, `.${name} { color: red; }\n`])),
+    );
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...names.map(name => `${name}.css`), "--outdir=out", "--metafile=meta.json", ...flags],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+    const { inputs, outputs } = (await Bun.file(`${dir}/meta.json`).json()) as Metafile;
+    expect({ inputs: Object.keys(inputs), outputs: Object.keys(outputs) }).toEqual({
+      inputs: names.map(name => `${name}.css`),
+      outputs: names.map(name => `./${name}.css`),
+    });
+  });
+
+  // `c.js` and `d.js` print no code, so no output lists them. They are inputs all the same.
+  test.concurrent("inputs that print no code are in the same order as the others", async () => {
+    using dir = tempDir("metafile-order-no-code", {
+      "entry.js": `await import("./a.js");\nawait import("./b.js");\nawait import("./e.js");\n`,
+      "a.js": `import "./c.js";\nimport "./d.js";\nconsole.log("a");\n`,
+      "b.js": `import "./c.js";\nimport "./shared.js";\nconsole.log("b");\n`,
+      "c.js": `export function dead() {}\n`,
+      "d.js": `import "./shared.js";\nexport function dead() {}\n`,
+      "e.js": `import "./d.js";\nconsole.log("e");\n`,
+      "shared.js": `console.log("shared");\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.js", "--splitting", "--outdir=out", "--metafile=meta.json"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+    const { inputs, outputs } = (await Bun.file(`${dir}/meta.json`).json()) as Metafile;
+    const printed = new Set(Object.values(outputs).flatMap(output => Object.keys(output.inputs)));
+    expect({ inputs: Object.keys(inputs), printed: ["c.js", "d.js"].filter(name => printed.has(name)) }).toEqual({
+      inputs: ["c.js", "shared.js", "d.js", "a.js", "b.js", "e.js", "entry.js"],
+      printed: [],
+    });
+  });
+
+  // A chunk hashes the chunks it reaches in chunk order, so the order of the stylesheets
+  // that `client.js` loads with import() is part of the name of its chunk.
+  test.concurrent("a chunk that loads stylesheets with import() has one name in every directory", async () => {
+    const sheets = ["d", "b", "a", "c"];
+    const files = {
+      "page.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./page.css"></head><body><script type="module" src="./client.js"></script></body></html>`,
+      "page.css": `.page { color: red; }\n`,
+      "client.js": sheets
+        .map(name => `document.querySelector("#${name}")?.addEventListener("click", () => import("./${name}.css"));\n`)
+        .join(""),
+      ...Object.fromEntries(sheets.map(name => [`${name}.css`, `.${name} { color: blue; }\n`])),
+    };
+
+    async function build(prefix: string) {
+      using dir = tempDir(prefix, files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "page.html", "--splitting", "--css-chunking", "--outdir=out", "--metafile=meta.json"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const { outputs } = (await Bun.file(`${dir}/meta.json`).json()) as Metafile;
+      return Object.entries(outputs).map(([key, output]) => ({ key, entryPoint: output.entryPoint }));
+    }
+
+    const [first, ...others] = await Promise.all(
+      ["metafile-order-import-css", "metafile-order-import-css-in-a-longer-directory", "css-import"].map(build),
+    );
+    expect(others).toEqual([first, first]);
+    // The stylesheet of the page, then one for each import() in source order.
+    expect(first.filter(({ key }) => key.endsWith(".css")).map(({ entryPoint }) => entryPoint)).toEqual([
+      "page.html",
+      ...sheets.map(name => `${name}.css`),
+    ]);
+  });
+
+  // A server imports a page whose script loads eight modules with import(). Each module has
+  // a stylesheet. With the server and the page that is ten entry points: see the CSS entry
+  // points test.
+  const lazy = ["lazy3", "lazy1", "lazy4", "lazy2", "lazy7", "lazy5", "lazy8", "lazy6"];
+  const serverWithLazyStylesheets = {
+    "server.js": `import page from "./page.html";\nconsole.log(page.index);\n`,
+    "page.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./page.css"></head><body><script type="module" src="./client.js"></script></body></html>`,
+    "page.css": `.page { color: red; }\n`,
+    "client.js": lazy.map(name => `import("./${name}.js");\n`).join(""),
+    ...Object.fromEntries(
+      lazy.flatMap(name => [
+        [`${name}.js`, `import "./${name}.css";\nexport default "${name}";\n`],
+        [`${name}.css`, `.${name} { color: blue; }\n`],
+      ]),
+    ),
+  };
+  const lazyParsedInOrder = (parsed: string[]) =>
+    parseInOrder(parsed.map(name => ({ file: `${name}.js`, then: `${name}.css` })));
+
+  // The manifest of an HTML import is part of the server bundle. It lists the files of
+  // the page in chunk order.
+  test.concurrent(
+    "the manifest of an HTML import is the same bytes, whichever stylesheet is parsed first",
+    async () => {
+      using dir = tempDir("metafile-order-manifest", serverWithLazyStylesheets);
+
+      async function build(parsed: string[]) {
+        const result = await Bun.build({
+          entrypoints: [`${dir}/server.js`],
+          outdir: `${dir}/out`,
+          target: "bun",
+          splitting: true,
+          plugins: [lazyParsedInOrder(parsed)],
+        });
+        expect(result.success).toBe(true);
+        return await Bun.file(`${dir}/out/server.js`).text();
+      }
+
+      const forward = await build(lazy);
+      const backward = await build(lazy.toReversed());
+      expect(backward).toBe(forward);
+
+      const manifest = JSON.parse(JSON.parse('"' + forward.match(/__jsonParse\("(.+?)"\)/s)![1] + '"')) as {
+        files: { input: string; loader: string }[];
+      };
+      expect(manifest.files.filter(file => file.loader === "css").map(file => file.input)).toEqual([
+        "page.html",
+        ...lazy.map(name => `${name}.js`),
+      ]);
+    },
+  );
+
+  // An executable holds its files in chunk order. Not concurrent: two compiles would starve
+  // the tests beside it. Not on a debug build: one compile copies a binary of over 1 GB.
+  test.skipIf(isDebug)(
+    "a compiled executable is the same bytes, whichever stylesheet is parsed first",
+    async () => {
+      using dir = tempDir("metafile-order-compile", serverWithLazyStylesheets);
+
+      async function build(parsed: string[], outdir: string) {
+        const result = await Bun.build({
+          entrypoints: [`${dir}/server.js`],
+          compile: { outfile: `${dir}/${outdir}/app` },
+          target: "bun",
+          splitting: true,
+          plugins: [lazyParsedInOrder(parsed)],
+        });
+        expect(result.success).toBe(true);
+        const hasher = new Bun.CryptoHasher("sha256");
+        for await (const chunk of Bun.file(result.outputs[0].path).stream()) hasher.update(chunk);
+        return hasher.digest("hex");
+      }
+
+      const forward = await build(lazy, "forward");
+      const backward = await build(lazy.toReversed(), "backward");
+      expect(backward).toBe(forward);
+    },
+    isCI ? undefined : 30_000,
+  );
+
+  // Two entry points share a stylesheet only when their stylesheets hold the same modules.
+  // These two hold modules of different graphs that have one path.
+  test.concurrent("a stylesheet in the server graph and in the browser graph is two chunks", async () => {
+    using dir = tempDir("metafile-order-css-two-graphs", {
+      "server.js": `import page from "./page.html";\nimport "./shared.css";\nconsole.log(page.index);\n`,
+      "page.html": `<!DOCTYPE html><html><head></head><body><script type="module" src="./client.js"></script></body></html>`,
+      "client.js": `import "./shared.css";\nconsole.log("client");\n`,
+      "shared.css": `.shared { color: red; }\n`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/server.js`],
+      outdir: `${dir}/out`,
+      target: "bun",
+      metafile: true,
+    });
+    expect(result.success).toBe(true);
+
+    // The server bundle, the script of the page, the page, and one stylesheet for each graph.
+    expect(result.outputs).toHaveLength(5);
+    const stylesheets = Object.entries((result.metafile as Metafile).outputs).filter(([key]) => key.endsWith(".css"));
+    expect(stylesheets.map(([, output]) => basename(output.entryPoint!))).toEqual(["server.js", "page.html"]);
   });
 });

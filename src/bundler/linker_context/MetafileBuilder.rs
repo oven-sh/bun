@@ -243,13 +243,9 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
         }
     }
 
-    // Write inputs
-    let mut source_index: u32 = 0;
-    while (source_index as usize) < sources.len() {
-        // (defer-style increment moved to end of loop body)
-        let si = source_index;
-        source_index += 1;
-        let source_index = si;
+    // Write inputs in `reachable_files` order, as esbuild does: source indices are random.
+    for source_index in c.graph.reachable_files.slice() {
+        let source_index = source_index.get();
 
         if !seen_sources.is_set(source_index as usize) {
             continue;
@@ -419,6 +415,17 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
         }
 
         j.push_static(b"\n    }");
+    }
+
+    if cfg!(debug_assertions) {
+        for source_index in c.graph.reachable_files.slice() {
+            seen_sources.unset(source_index.get() as usize);
+        }
+        debug_assert_eq!(
+            seen_sources.count(),
+            0,
+            "a chunk holds a file that is not in reachable_files"
+        );
     }
 
     j.push_static(b"\n  },\n  \"outputs\": {");

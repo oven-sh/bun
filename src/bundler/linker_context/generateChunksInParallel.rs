@@ -785,12 +785,12 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                                 &source_map_final_rel_path,
                             )
                         } else {
-                            let entry_point_id = chunks[ci].entry_point.entry_point_id();
+                            let entry_point = chunks[ci].entry_point;
                             let mut html_dir: &[u8] = chunks
                                 .iter()
                                 .find(|ch| {
                                     matches!(ch.content, crate::chunk::Content::Html)
-                                        && ch.entry_point.entry_point_id() == entry_point_id
+                                        && ch.entry_point.is_same_entry_point_as(entry_point)
                                 })
                                 .map(|ch| {
                                     path::resolve_path::dirname::<path::platform::Posix>(

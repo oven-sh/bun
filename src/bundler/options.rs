@@ -2388,6 +2388,9 @@ fn path_template_print_tolerates_malformed_brackets() {
 }
 
 impl PathTemplate {
+    /// What separates the directories of `[dir]`. On POSIX `\\` is a legal filename byte.
+    pub(crate) const DIR_SEPARATORS: &'static [u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+
     pub(crate) fn needs(&self, field: PlaceholderField) -> bool {
         path_template_needs(&self.data, field)
     }

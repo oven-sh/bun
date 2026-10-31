@@ -1328,6 +1328,19 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         false
     }
 
+    /// Bundles the importers of `root` again, a css root whose key the bundler cannot enter.
+    #[cold]
+    pub(crate) fn enqueue_importers_of_css_root(
+        &self,
+        root: FileIndex<SIDE>,
+        bv2: &mut bun_bundler::BundleV2<'_>,
+    ) {
+        // A css importer is a holder itself. A failed importer parses `root` when it builds again.
+        self.enqueue_importers(root, bv2, |key, file| {
+            file.kind != FileKind::Css && !file.failed && bun_paths::is_absolute(key)
+        });
+    }
+
     /// Keeps a failed stylesheet that html or a script imports a css root for `invalidate`.
     #[cold]
     fn receive_failed_css_root(&mut self, key: &[u8]) {
@@ -1861,6 +1874,26 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
 
         // Rebuild all dependencies.
+        self.enqueue_importers(index, bv2, |_, _| true);
+
+        // Bust the resolution cache of the dir containing this file.
+        let dirname = bun_paths::dirname(abs_path).unwrap_or(abs_path);
+        let _ = bv2.transpiler.resolver.bust_dir_cache(dirname);
+
+        // Clear the cached entry from the path→source-index maps.
+        for map in bv2.graph.build_graphs.values_mut() {
+            map.remove(abs_path);
+        }
+        Ok(())
+    }
+
+    /// Enqueues the importers of `index` that `rebundle` accepts into the running bundle.
+    fn enqueue_importers(
+        &self,
+        index: FileIndex<SIDE>,
+        bv2: &mut bun_bundler::BundleV2<'_>,
+        rebundle: impl Fn(&[u8], &File) -> bool,
+    ) {
         let mut it = self.edge_lists[index.get() as usize].first_dep;
         while let Some(edge_index) = it {
             let dep = self.edges[edge_index.get() as usize];
@@ -1868,6 +1901,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             debug_assert_eq!(dep.imported.get(), index.get());
             let key = &self.bundled_files.keys()[dep.dependency.get() as usize];
             let file = &self.bundled_files.values()[dep.dependency.get() as usize];
+            if !rebundle(key, file) {
+                continue;
+            }
             let loader = file
                 .html_route_bundle_index
                 .is_some()
@@ -1891,16 +1927,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 }
             }
         }
-
-        // Bust the resolution cache of the dir containing this file.
-        let dirname = bun_paths::dirname(abs_path).unwrap_or(abs_path);
-        let _ = bv2.transpiler.resolver.bust_dir_cache(dirname);
-
-        // Clear the cached entry from the path→source-index maps.
-        for map in bv2.graph.build_graphs.values_mut() {
-            map.remove(abs_path);
-        }
-        Ok(())
     }
 
     /// See `EntryPointList::append_html`.

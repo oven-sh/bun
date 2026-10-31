@@ -1,6 +1,11 @@
 import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
-import { createSocketPair, setSocketOptions, socketFaultInjection } from "bun:internal-for-testing";
+import {
+  createSocketPair,
+  putBoringSSLErrorForTesting,
+  setSocketOptions,
+  socketFaultInjection,
+} from "bun:internal-for-testing";
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test";
 import { generateKeyPairSync } from "crypto";
 import { closeSync, fstatSync, readFileSync } from "fs";
@@ -1211,6 +1216,31 @@ it("getPeerCertificate and exportKeyingMaterial accept undefined for optional ar
     await promise;
     expect(socket.getPeerCertificate(undefined)).toEqual(socket.getPeerCertificate());
     expect(socket.exportKeyingMaterial(8, "label", undefined)).toEqual(socket.exportKeyingMaterial(8, "label"));
+  } finally {
+    socket.end();
+  }
+});
+
+it("exportKeyingMaterial does not report an earlier BoringSSL failure", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, tls, socket: { data() {} } });
+  const socket = await connect({
+    hostname: "127.0.0.1",
+    port: listener.port,
+    tls: { rejectUnauthorized: false },
+    socket: {
+      data() {},
+      handshake: () => resolve(),
+      error: (_, error) => reject(error),
+      close: () => reject(new Error("closed before the handshake")),
+    },
+  });
+  try {
+    await promise;
+    putBoringSSLErrorForTesting();
+    expect(() => socket.exportKeyingMaterial(1_000_000, "label")).toThrow(
+      expect.objectContaining({ message: "OpenSSL OUTPUT_TOO_LARGE via OPENSSL_internal HKDF functions" }),
+    );
   } finally {
     socket.end();
   }

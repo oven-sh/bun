@@ -538,6 +538,26 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       expect(out.match(/ = 1$/gm)).toHaveLength(6);
     });
   });
+
+  describe("CFunctionInfo / CFunction", () => {
+    it("constructors store V8's fields inside the addon's object and FunctionTemplate::New takes the CFunction", async () => {
+      const output = await checkSameOutput("test_v8_function_template_c_function");
+      // the addon prints through the C runtime, which ends lines with \r\n on Windows
+      expect(output.split(/\r?\n/)).toEqual([
+        "type_info->return_info_.type_ == CTypeInfo::Type::kInt32 = 1",
+        "type_info->return_info_.flags_ == CTypeInfo::Flags::kClampBit = 1",
+        "type_info->repr_ == CFunctionInfo::Int64Representation::kBigInt = 1",
+        "type_info->arg_count_ = 3",
+        "type_info->arg_info_ == arg_info = 1",
+        "type_info_storage.guards_intact() = 1",
+        "c_function->address_ == address = 1",
+        "c_function->type_info_ == type_info = 1",
+        "c_function_storage.guards_intact() = 1",
+        "slow callback called with 40 and 2",
+        "add(40, 2) = 42",
+      ]);
+    });
+  });
 });
 
 async function checkSameOutput(testName: string, args?: string, thisValue?: any) {

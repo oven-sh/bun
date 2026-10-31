@@ -415,5 +415,10 @@ module.exports = debugMode => {
         }
       }
     },
+
+    test_v8_function_template_c_function() {
+      const add = nativeModule.create_function_with_c_function();
+      console.log("add(40, 2) =", add(40, 2));
+    },
   };
 };

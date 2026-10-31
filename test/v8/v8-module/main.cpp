@@ -10,6 +10,44 @@
 #include <cstdarg>
 #include <iomanip>
 #include <iostream>
+#include <new>
+
+// Node's header tarball has no v8-fast-api-calls.h. These are that header's
+// classes in V8 14.6, cut down to the two exported constructors and the fields
+// they store, which are public here so that a test can read them back.
+namespace v8 {
+
+class CTypeInfo {
+public:
+  enum class Type : uint8_t { kInt32 = 3, kV8Value = 10 };
+  enum class Flags : uint8_t { kNone = 0, kClampBit = 1 << 2 };
+
+  Type type_;
+  Flags flags_;
+};
+
+class CFunctionInfo {
+public:
+  enum class Int64Representation : uint8_t { kNumber = 0, kBigInt = 1 };
+
+  V8_EXPORT CFunctionInfo(const CTypeInfo &return_info, unsigned int arg_count,
+                          const CTypeInfo *arg_info, Int64Representation repr);
+
+  const CTypeInfo return_info_;
+  const Int64Representation repr_;
+  const unsigned int arg_count_;
+  const CTypeInfo *arg_info_;
+};
+
+class CFunction {
+public:
+  V8_EXPORT CFunction(const void *address, const CFunctionInfo *type_info);
+
+  const void *address_;
+  const CFunctionInfo *type_info_;
+};
+
+} // namespace v8
 
 using namespace v8;
 
@@ -1620,6 +1658,50 @@ void test_v8_bigint(const FunctionCallbackInfo<Value> &info) {
   info.GetReturnValue().Set(big);
 }
 
+// 0, 1 and values that a uint32_t, a double or an int64_t cannot hold.
+static const uint64_t uint64_boundary_values[] = {
+    0,
+    1,
+    uint64_t{1} << 32,
+    (uint64_t{1} << 53) + 1,
+    uint64_t{1} << 63,
+    UINT64_MAX,
+};
+
+static Local<BigInt> log_bigint_from_unsigned(Isolate *isolate,
+                                              uint64_t value) {
+  Local<BigInt> big = BigInt::NewFromUnsigned(isolate, value);
+  std::cout << "NewFromUnsigned(" << value
+            << "): IsBigInt() = " << big->IsBigInt()
+            << ", IsNumber() = " << big->IsNumber() << std::endl;
+  return big;
+}
+
+void create_bigints_from_unsigned(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  constexpr size_t count =
+      sizeof(uint64_boundary_values) / sizeof(uint64_boundary_values[0]);
+  Local<Value> bigints[count];
+  for (size_t i = 0; i < count; i++) {
+    bigints[i] = log_bigint_from_unsigned(isolate, uint64_boundary_values[i]);
+  }
+  // Return them so JS can print the type and the exact value of each.
+  info.GetReturnValue().Set(Array::New(isolate, bigints, count));
+}
+
+// BigInt::NewFromUnsigned returns a Local, not a MaybeLocal, so an addon does
+// not check it.
+void create_bigints_from_unsigned_with_pending_exception(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  isolate->ThrowError(String::NewFromUtf8(isolate, "pending").ToLocalChecked());
+
+  for (uint64_t value : uint64_boundary_values) {
+    log_bigint_from_unsigned(isolate, value);
+  }
+}
+
 void test_v8_string_from_utf8_literal(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
 
@@ -2230,6 +2312,90 @@ void perform_boolean_value(const FunctionCallbackInfo<Value> &info) {
   LOG_EXPR(info[0]->BooleanValue(isolate));
 }
 
+// Room for one T between guard bytes. The bytes of T start out as guard bytes
+// too, so a field that T's constructor does not store shows.
+template <typename T> class GuardedStorage {
+public:
+  GuardedStorage() { memset(bytes_, kGuardByte, sizeof(bytes_)); }
+
+  void *object() { return bytes_ + kGuardSize; }
+
+  bool guards_intact() const {
+    for (size_t i = 0; i < kGuardSize; i++) {
+      if (bytes_[i] != kGuardByte ||
+          bytes_[kGuardSize + sizeof(T) + i] != kGuardByte) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+private:
+  static constexpr size_t kGuardSize = 16;
+  static constexpr unsigned char kGuardByte = 0xa5;
+  static_assert(kGuardSize % alignof(T) == 0);
+
+  alignas(T) unsigned char bytes_[kGuardSize + sizeof(T) + kGuardSize];
+};
+
+// V8's CFunction::Make() constructs CFunctionInfo as the base of a class that
+// holds the argument types, so an addon imports its base object constructor.
+class DerivedFunctionInfo : public CFunctionInfo {
+public:
+  using CFunctionInfo::CFunctionInfo;
+};
+
+static int32_t fast_add(Local<Object> receiver, int32_t a, int32_t b) {
+  return a + b;
+}
+
+static void slow_add(const FunctionCallbackInfo<Value> &info) {
+  double a = info[0].As<Number>()->Value();
+  double b = info[1].As<Number>()->Value();
+  std::cout << "slow callback called with " << a << " and " << b << std::endl;
+  info.GetReturnValue().Set(Number::New(info.GetIsolate(), a + b));
+}
+
+void create_function_with_c_function(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  // static: V8 keeps these pointers for as long as the function exists
+  static const CTypeInfo arg_info[] = {
+      {CTypeInfo::Type::kV8Value, CTypeInfo::Flags::kNone},
+      {CTypeInfo::Type::kInt32, CTypeInfo::Flags::kNone},
+      {CTypeInfo::Type::kInt32, CTypeInfo::Flags::kNone},
+  };
+  static GuardedStorage<DerivedFunctionInfo> type_info_storage;
+  static GuardedStorage<CFunction> c_function_storage;
+
+  // every field gets a value that is neither zero nor the guard byte
+  const CTypeInfo return_info = {CTypeInfo::Type::kInt32,
+                                 CTypeInfo::Flags::kClampBit};
+  const CFunctionInfo *type_info = new (type_info_storage.object())
+      DerivedFunctionInfo(return_info, 3, arg_info,
+                          CFunctionInfo::Int64Representation::kBigInt);
+  LOG_EXPR(type_info->return_info_.type_ == CTypeInfo::Type::kInt32);
+  LOG_EXPR(type_info->return_info_.flags_ == CTypeInfo::Flags::kClampBit);
+  LOG_EXPR(type_info->repr_ == CFunctionInfo::Int64Representation::kBigInt);
+  LOG_EXPR(type_info->arg_count_);
+  LOG_EXPR(type_info->arg_info_ == arg_info);
+  LOG_EXPR(type_info_storage.guards_intact());
+
+  const void *address = reinterpret_cast<const void *>(fast_add);
+  const CFunction *c_function =
+      new (c_function_storage.object()) CFunction(address, type_info);
+  LOG_EXPR(c_function->address_ == address);
+  LOG_EXPR(c_function->type_info_ == type_info);
+  LOG_EXPR(c_function_storage.guards_intact());
+
+  // V8 refuses a CFunction for a function that can be a constructor
+  Local<FunctionTemplate> tmp = FunctionTemplate::New(
+      isolate, slow_add, Local<Value>(), Local<Signature>(), 0,
+      ConstructorBehavior::kThrow, SideEffectType::kHasSideEffect, c_function);
+  info.GetReturnValue().Set(tmp->GetFunction(context).ToLocalChecked());
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -2339,6 +2505,8 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_cpu_profiler_title_api);
   NODE_SET_METHOD(exports, "perform_number_value", perform_number_value);
   NODE_SET_METHOD(exports, "perform_boolean_value", perform_boolean_value);
+  NODE_SET_METHOD(exports, "create_function_with_c_function",
+                  create_function_with_c_function);
 
   // without this, node hits a UAF deleting the Global
   // (Context::GetIsolate was removed in V8 14.6; the module initializer runs

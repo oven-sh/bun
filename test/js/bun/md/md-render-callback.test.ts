@@ -427,6 +427,33 @@ describe("Bun.markdown buffer input", () => {
     expect((input.buffer as ArrayBuffer).detached).toBe(true);
   });
 
+  // A typed array past JSC's 1000-element fastSizeLimit owns its bytes and has
+  // no ArrayBuffer until JS asks for one, so the pin has to adopt one first.
+  // Without it the transfer below re-homes the bytes the parser still reads.
+  // No second thread is involved: the callback runs inside the render.
+  test("a by-length input stays attached while a callback runs and is released after", () => {
+    const body = Buffer.alloc(2048, "world ").toString().trimEnd();
+    const text = `# Hello\n\n${body}\n`;
+    const input = new Uint8Array(Buffer.byteLength(text));
+    new TextEncoder().encodeInto(text, input);
+    let byteLengthDuringRender = -1;
+    const result = Markdown.render(input, {
+      heading: (children: string) => {
+        input.buffer.transfer();
+        byteLengthDuringRender = input.byteLength;
+        return `<h1>${children}</h1>`;
+      },
+      paragraph: (children: string) => `<p>${children}</p>`,
+    });
+    expect({ byteLengthDuringRender, result }).toEqual({
+      byteLengthDuringRender: text.length,
+      result: `<h1>Hello</h1><p>${body}</p>`,
+    });
+
+    input.buffer.transfer();
+    expect(input.byteLength).toBe(0);
+  });
+
   // A pin prevents a detach but not a shrink, and `resize()` unmaps the trimmed pages.
   // The options are read before the bytes, so a getter that shrinks the input leaves nothing to render.
   describe("survives a resizable input that shrinks during the call", () => {

@@ -29,6 +29,21 @@ describe.skipIf(isWindows || isMusl)("@lydell/node-pty", () => {
     });
   });
 
+  // The second entry point of the package: what is written to one end of the pty is read at the other.
+  test.concurrent("open() reads and writes both ends of a pty, and destroy() closes the master", async () => {
+    expect(await run("open")).toEqual({
+      stdout: JSON.stringify({
+        slave: "hello\n",
+        master: "hello\r\nout\r\n",
+        size: [100, 30],
+        closed: ["master", "slave"],
+        masterIsOpen: false,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test.concurrent("pause() and resume() around every chunk lose none of the output", async () => {
     const expected = Buffer.from(Array.from({ length: 20000 }, (_, i) => `${i + 1}\n`).join(""));
     expect(await run("flow")).toEqual({

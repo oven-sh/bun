@@ -128,6 +128,7 @@ NativeFunctionsStatBindTsCreateStatsForIno/0: it is not called: a helper of Bun'
 NativeFunctionsSubprocessBindTsInjectStdioReadError/0: it is not called: it changes how the rest of the process behaves
 NativeFunctionsTrim_testingBindTsReadTrimTable/0: it is not called: it works on files that its operands name outside the folder of the test
 NativeFunctionsTrim_testingBindTsTrimExecutable/0: it is not called: it works on files that its operands name outside the folder of the test
+NativeFunctionsTty_wrapBindTsSetStdinRawMode/1: no set of operands selects it
 NativeFunctionsUdp_socketBindTsConnect/0: it is not called: it asks the name servers about every string that is no address, and waits for them
 NativeFunctionsUdp_socketBindTsDgramAdoptFd/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeFunctionsUdp_socketBindTsDgramBindFd/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
@@ -251,22 +252,5 @@ ScopeFunctionsPrototypeSkipIf/0: it is not called: this realm does not have its 
 ScopeFunctionsPrototypeTodo/0: it is not called: this realm does not have its holder
 ScopeFunctionsPrototypeTodoIf/0: it is not called: this realm does not have its holder
 ShellInterpreterPrototypeRun/0: no set of operands selects it
-TTYPrototypeBytesRead/0: no set of operands selects it
-TTYPrototypeBytesWritten/0: no set of operands selects it
-TTYPrototypeClose/0: no set of operands selects it
-TTYPrototypeFd/0: no set of operands selects it
-TTYPrototypeGetAsyncId/0: no set of operands selects it
-TTYPrototypeGetWindowSize/0: no set of operands selects it
-TTYPrototypeHasRef/0: no set of operands selects it
-TTYPrototypeOnread/0: no set of operands selects it
-TTYPrototypeOnread/1: no set of operands selects it
-TTYPrototypeReadStart/0: no set of operands selects it
-TTYPrototypeReadStop/0: no set of operands selects it
-TTYPrototypeRef/0: no set of operands selects it
-TTYPrototypeSetBlocking/0: no set of operands selects it
-TTYPrototypeSetRawMode/0: no set of operands selects it
-TTYPrototypeSetRawMode/1: no set of operands selects it
-TTYPrototypeUnref/0: no set of operands selects it
-TTYPrototypeWriteBuffer/0: no set of operands selects it
 Worker/1: it is not called: it starts a thread or opens a connection
 Worker/2: it is not called: it starts a thread or opens a connection

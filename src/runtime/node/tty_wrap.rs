@@ -58,7 +58,7 @@ pub(crate) struct TTY {
     /// One ref is the JS wrapper's, released in `finalize`. One is the reader's, released by its last callback.
     ref_count: bun_ptr::RefCount<TTY>,
 
-    /// The fd JS passed in. `setRawMode`/`getWindowSize` act on it.
+    /// The fd JS passed in. Writes and `getWindowSize` act on it.
     fd: Fd,
 
     /// What the reader polls and closes: on POSIX a nonblocking reopen of the terminal or a dup of `fd`, on Windows `fd` as a `uv_tty_t` of this handle's own.
@@ -67,7 +67,7 @@ pub(crate) struct TTY {
     reader: JsCell<BufferedReader>,
     event_loop_handle: EventLoopHandle,
     global_this: bun_ptr::BackRef<JSGlobalObject>,
-    /// Strong while reading. On Windows strong until `close()`: there the reader's handle is the caller's fd.
+    /// Strong while reading, and while the handle holds the snapshot of the process: `close()` or the end of the context puts the terminal back, not the collector. On Windows strong until `close()`: there the reader's handle is the caller's fd.
     this_value: JsCell<JsRef>,
     bytes_read: Cell<u64>,
     bytes_written: Cell<u64>,
@@ -75,9 +75,13 @@ pub(crate) struct TTY {
     /// The `nread` of a done/error reported while the reader was borrowed.
     parked_finish: Cell<Option<i32>>,
 
-    /// Per-handle raw-mode state (libuv keeps it on each `uv_tty_t`), so one handle leaving raw mode never disturbs another on the same terminal.
+    /// The raw-mode fields of libuv's `uv_tty_t`: `setRawMode(false)` writes back what this handle saw when it left normal mode. What `close()` writes is libuv's too: see `close_internal`.
     #[cfg(unix)]
     tty_state: Cell<bun_core::tty::State>,
+
+    /// A descriptor of the terminal that the handle makes when it first leaves normal mode, and closes with itself. The mode is set and put back through it, as libuv does through the descriptor that it reopened: the caller's can close or change under the handle.
+    #[cfg(unix)]
+    termios_fd: Cell<Fd>,
 
     /// Armed while open: the handle closes when the context that opened it stops (a `Bun.ModuleGraph`, or the thread's VM).
     abort_handle: jsc::AbortHandle,
@@ -258,6 +262,8 @@ impl TTY {
             parked_finish: Cell::new(None),
             #[cfg(unix)]
             tty_state: Cell::new(bun_core::tty::State::new()),
+            #[cfg(unix)]
+            termios_fd: Cell::new(Fd::INVALID),
             abort_handle: jsc::AbortHandle::for_owner::<TTY>(),
         }));
         // SAFETY: the ref `RefCount::init()` took. The wrapper gets it below.
@@ -424,7 +430,7 @@ impl TTY {
             self.with_reader(|r| r.pause());
         }
         #[cfg(unix)]
-        self.this_value.with_mut(|v| v.downgrade());
+        self.downgrade_unless_holder();
         0
     }
 
@@ -470,8 +476,14 @@ impl TTY {
                 return uv_errno(sys::E::EINVAL as u16);
             };
             let mut state = self.tty_state.get();
-            let rc = state.set_mode(self.fd.native(), mode, bun_core::tty::SetAttrWhen::Drain);
+            let fd = self.termios_fd_for(&mut state, mode);
+            // TCSADRAIN for every terminal, a pty master too: libuv's `uv_tty_set_mode()` has no other.
+            let rc = state.set_mode(fd.native(), mode, bun_core::tty::SetAttrWhen::Drain);
             self.tty_state.set(state);
+            if state.holds_reset_snapshot() {
+                let global = self.global();
+                self.this_value.with_mut(|v| v.upgrade(global));
+            }
             -rc
         }
         #[cfg(windows)]
@@ -491,6 +503,44 @@ impl TTY {
                 Err(err) => uv_errno(err.errno),
             }
         }
+    }
+
+    /// The descriptor that the mode is set through. The first step out of normal mode makes it, from the reader's descriptor or from the caller's. With no descriptor free it is the caller's, and the handle then takes no snapshot of the process.
+    #[cfg(unix)]
+    fn termios_fd_for(&self, state: &mut bun_core::tty::State, mode: bun_core::tty::Mode) -> Fd {
+        let own = self.termios_fd.get();
+        if own != Fd::INVALID {
+            return own;
+        }
+        if mode == bun_core::tty::Mode::Normal {
+            return self.fd;
+        }
+        // The reader's descriptor is the handle's own. It is gone after the end of input, and an unpollable handle has none.
+        let read_fd = self.read_fd.get();
+        let source = if read_fd != Fd::INVALID {
+            read_fd
+        } else {
+            self.fd
+        };
+        let Ok(own) = sys::dup_at_least(source, 3) else {
+            return self.fd;
+        };
+        // Only a number that the program has closed can come back: the handle owns it no longer.
+        if own == self.fd {
+            self.update_flags(|f| f.remove(Flags::OWNS_FD));
+        }
+        self.termios_fd.set(own);
+        state.own_descriptor(self.fd.native());
+        own
+    }
+
+    /// Lets the wrapper be collected again, unless the handle holds the snapshot of the process: then `close()` alone lets go of it, as of every handle in Node.
+    fn downgrade_unless_holder(&self) {
+        #[cfg(unix)]
+        if self.tty_state.get().holds_reset_snapshot() {
+            return;
+        }
+        self.this_value.with_mut(|v| v.downgrade());
     }
 
     /// As Node's `TTYWrap::GetWindowSize`: 0 and `size` is [columns, rows], or a negative libuv errno and `size` is left alone.
@@ -614,14 +664,14 @@ impl TTY {
 
     // ── internals ─────────────────────────────────────────────────────────
 
-    /// As libuv's `uv__tty_close()`: restores a terminal the handle left raw and closes the fd libuv would own.
+    /// What `close()` does, and the end of the context that opened the handle: libuv's `uv__tty_close()`, which also closes the caller's fd where libuv would own it.
     fn close_by_owner(&self) {
         if self.flags.get().contains(Flags::CLOSED) {
             return;
         }
-        self.close_internal();
+        // A handle that got no descriptor of its own took no snapshot: it puts back what it saw itself, through the caller's.
         #[cfg(unix)]
-        {
+        if self.termios_fd.get() == Fd::INVALID {
             let mut state = self.tty_state.get();
             let _ = state.set_mode(
                 self.fd.native(),
@@ -629,10 +679,12 @@ impl TTY {
                 bun_core::tty::SetAttrWhen::Now,
             );
             self.tty_state.set(state);
-            if self.flags.get().contains(Flags::OWNS_FD) {
-                // JS may have closed it first: EBADF is not an invariant violation here.
-                let _ = self.fd.close_allowing_bad_file_descriptor(None);
-            }
+        }
+        self.close_internal();
+        #[cfg(unix)]
+        if self.flags.get().contains(Flags::OWNS_FD) {
+            // JS may have closed it first: EBADF is not an invariant violation here.
+            let _ = self.fd.close_allowing_bad_file_descriptor(None);
         }
     }
 
@@ -645,11 +697,25 @@ impl TTY {
             f.remove(Flags::READING);
         });
         self.abort_handle.leave();
+        // libuv's order: the handle that took the snapshot of the process puts the terminal back through its own descriptor, and then that descriptor closes.
+        #[cfg(unix)]
+        {
+            let mut state = self.tty_state.get();
+            state.close(self.termios_fd.get().native());
+            self.tty_state.set(state);
+        }
         if self.flags.get().contains(Flags::READER_STARTED) {
             // `on_reader_done` releases the reader's ref once the poll and fd close.
             self.with_reader(|r| r.close());
         }
         self.read_fd.set(Fd::INVALID);
+        #[cfg(unix)]
+        {
+            let termios_fd = self.termios_fd.replace(Fd::INVALID);
+            if termios_fd != Fd::INVALID {
+                termios_fd.close();
+            }
+        }
         self.this_value.with_mut(|v| v.downgrade());
     }
 
@@ -724,6 +790,8 @@ impl TTY {
             f.insert(Flags::READER_DONE);
             f.remove(Flags::READING);
         });
+        // The number is the reader's to close from here on, and it can be another file's afterwards.
+        self.read_fd.set(Fd::INVALID);
         if self.flags.get().contains(Flags::IN_READER) {
             self.parked_finish.set(Some(nread));
             return;
@@ -736,7 +804,7 @@ impl TTY {
         if !self.flags.get().contains(Flags::CLOSED) {
             self.call_onread(nread, JSValue::UNDEFINED);
         }
-        self.this_value.with_mut(|v| v.downgrade());
+        self.downgrade_unless_holder();
         if self.flags.get().contains(Flags::READER_STARTED) {
             self.deref_();
         }
@@ -747,6 +815,7 @@ impl TTY {
         jsc::mark_binding();
         self.this_value.with_mut(|v| v.finalize());
         self.update_flags(|f| f.insert(Flags::FINALIZED));
+        // No write to the terminal at a time that the collector chose: the handle that holds the snapshot of the process is strong, so it is not the one that is collected.
         self.close_internal();
     }
 

@@ -8,6 +8,8 @@
 //              closes it. It resumes the stream once the stream has read "two".
 //   "write <fill>": the fixture writes 1 MiB of <fill>, repeated, to the stream
 //              while nothing reads the slave, which is more than the pty holds.
+//   "raw":     the fixture puts the stream into raw mode and destroys it. It says
+//              the mode of the pty, read at the slave, before and after.
 import { CString, dlopen, ptr } from "bun:ffi";
 import { closeSync, constants, fstatSync, openSync, writeSync } from "node:fs";
 import { ReadStream } from "node:tty";
@@ -27,6 +29,7 @@ for (const lib of candidates) {
       tcgetattr: { args: ["int", "ptr"], returns: "int" },
       cfmakeraw: { args: ["ptr"], returns: "void" },
       tcsetattr: { args: ["int", "int", "ptr"], returns: "int" },
+      dup: { args: ["int"], returns: "int" },
     }).symbols;
     break;
   } catch (err) {
@@ -83,8 +86,23 @@ stream.on("data", chunk => {
   say("READY");
 });
 
+// `c_lflag` is the fourth field of `struct termios`: of four bytes each on Linux, of eight on macOS.
+function modeOfSlave() {
+  const termios = new Uint8Array(256);
+  if (libc.tcgetattr(slave, ptr(termios)) !== 0) throw new Error("tcgetattr failed");
+  const lflag = new DataView(termios.buffer).getUint32(process.platform === "darwin" ? 24 : 12, true);
+  return lflag & (process.platform === "darwin" ? 0x100 : 0x2) /* ICANON */ ? "cooked" : "raw";
+}
+
 process.stdin.on("data", command => {
-  if (String(command).includes("destroy")) {
+  if (String(command).includes("raw")) {
+    // A second descriptor of the master keeps the pty, so the slave can still say its mode once the stream has closed the first.
+    if (libc.dup(master) < 0) throw new Error("dup failed");
+    stream.setRawMode(true);
+    say("MODE " + modeOfSlave());
+    stream.on("close", () => say("MODE " + modeOfSlave()));
+    stream.destroy();
+  } else if (String(command).includes("destroy")) {
     stream.destroy();
   } else if (String(command).includes("last words")) {
     // The output and the hangup are both there at the next read of the master, which finds the stream paused.

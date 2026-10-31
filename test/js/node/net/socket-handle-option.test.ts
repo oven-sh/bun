@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { once } from "node:events";
-import { Socket } from "node:net";
+import { createServer, Socket, type AddressInfo } from "node:net";
 import { getSystemErrorMap } from "node:util";
 
 // net.Socket over a handle with Node's LibuvStreamWrap surface: readStart() and
@@ -271,12 +271,163 @@ test("a write goes to writeBuffer(null, data), and the number that it answers co
   });
 });
 
+// Node hands a corked batch to the handle in one writev() call. Here it is one writeBuffer() call.
+test("a corked batch is one write, and every callback of it runs", async () => {
+  const handle = mockHandle();
+  const socket = new Socket({ handle, manualStart: true } as never);
+  const results: (Error | null | undefined)[] = [];
+  socket.cork();
+  socket.write("one", err => results.push(err));
+  socket.write(Buffer.from("two"), err => results.push(err));
+  socket.write("dHJl", "base64", err => results.push(err));
+  expect(handle.written).toEqual([]);
+  socket.uncork();
+  await new Promise<void>(resolve => socket.write("", () => resolve()));
+  expect({ written: handle.written, results, bytesWritten: socket.bytesWritten }).toEqual({
+    written: [
+      [null, "onetwotre"],
+      [null, ""],
+    ],
+    results: [null, null, null],
+    bytesWritten: 9,
+  });
+  socket.destroy();
+});
+
+test("readStop() that fails destroys the socket", async () => {
+  const handle = mockHandle({ readStop: () => uvErrno("EBADF") });
+  const socket = new Socket({ handle, manualStart: true, readableHighWaterMark: 0 } as never);
+  socket.on("readable", () => {});
+  const failed = once(socket, "error");
+  await new Promise(resolve => process.nextTick(resolve));
+  // No read() takes the chunk: push() reports backpressure, and that stops the handle.
+  handle.deliver("one");
+  const [err] = await failed;
+  expect({ code: err.code, syscall: err.syscall, destroyed: socket.destroyed }).toEqual({
+    code: "EBADF",
+    syscall: "read",
+    destroyed: true,
+  });
+});
+
+test.each([
+  [false, ["end", "finish", "close"]],
+  [true, ["end", "late write", "finish", "close"]],
+])("the end of input with allowHalfOpen %p", async (allowHalfOpen, expected) => {
+  const handle = mockHandle();
+  const socket = new Socket({ handle, manualStart: true, allowHalfOpen } as never);
+  const events: string[] = [];
+  for (const name of ["end", "finish", "close"]) socket.on(name, () => events.push(name));
+  socket.on("data", () => {});
+  const closed = once(socket, "close");
+  await new Promise(resolve => process.nextTick(resolve));
+  handle.onread!(UV_EOF);
+  if (allowHalfOpen) {
+    await once(socket, "end");
+    // The other half is still open: a write reaches the handle.
+    await new Promise<void>(resolve => socket.write("late", () => resolve()));
+    events.push("late write");
+    socket.end();
+  }
+  await closed;
+  expect({ events, written: handle.written, close: handle.calls.close, handle: socket._handle }).toEqual({
+    events: expected,
+    written: allowHalfOpen ? [[null, "late"]] : [],
+    close: 1,
+    handle: null,
+  });
+});
+
+// The callback's buffer is smaller than a native read, so what is left of a chunk waits for resume().
+// A handle can complete a read after readStop(): that chunk and the end of input wait behind it.
+test("the end of input waits for what a paused onread callback has not taken", async () => {
+  const handle = mockHandle();
+  const events: string[] = [];
+  const socket = new Socket({
+    handle,
+    manualStart: true,
+    onread: {
+      buffer: Buffer.alloc(2),
+      callback(nread: number, buf: Buffer) {
+        events.push("data:" + buf.toString("utf8", 0, nread));
+        return events.length !== 1;
+      },
+    },
+  } as never);
+  // A listener, not a promise: it records 'end' where the event is emitted.
+  socket.on("end", () => events.push("end"));
+  const ended = once(socket, "end");
+  socket.read(0);
+  handle.deliver("abcd");
+  expect({ events: [...events], readStop: handle.calls.readStop }).toEqual({ events: ["data:ab"], readStop: 1 });
+  handle.deliver("ef");
+  handle.onread!(UV_EOF);
+  expect(events).toEqual(["data:ab"]);
+  events.push("resume");
+  socket.resume();
+  await ended;
+  expect(events).toEqual(["data:ab", "resume", "data:cd", "data:ef", "end"]);
+  socket.destroy();
+});
+
+// The socket has no write path of its own for the handle, so after connect() it writes to its peer.
+test("after destroy(), connect() on the same socket writes through the handle that it makes", async () => {
+  const handle = mockHandle();
+  const socket = new Socket({ handle, manualStart: true } as never);
+  await new Promise<void>(resolve => socket.write("to the handle", () => resolve()));
+  socket.destroy();
+  await once(socket, "close");
+
+  const server = createServer(peer => void peer.pipe(peer)).listen(0, "127.0.0.1");
+  try {
+    await once(server, "listening");
+    socket.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    await once(socket, "connect");
+    socket.write("to the peer");
+    const [echo] = await once(socket, "data");
+    expect({ echo: String(echo), written: handle.written, close: handle.calls.close }).toEqual({
+      echo: "to the peer",
+      written: [[null, "to the handle"]],
+      close: 1,
+    });
+  } finally {
+    socket.destroy();
+    server.close();
+  }
+});
+
+// Node's Socket has one _write() for every handle, on the prototype. A subclass can put its own in front.
+test("a write reaches the handle through Socket.prototype._write", async () => {
+  const handle = mockHandle();
+  const socket = new Socket({ handle, manualStart: true } as never);
+  expect([Object.hasOwn(socket, "_write"), Object.hasOwn(socket, "_writev")]).toEqual([false, false]);
+  socket.destroy();
+
+  const seen: string[] = [];
+  class Tap extends Socket {
+    _write(chunk: Buffer | string, encoding: BufferEncoding, callback: (err?: Error | null) => void) {
+      seen.push(String(chunk));
+      return Socket.prototype._write.call(this, chunk, encoding, callback);
+    }
+  }
+  const other = mockHandle();
+  const tap = new Tap({ handle: other, manualStart: true } as never);
+  await new Promise<void>(resolve => tap.write("through the subclass", () => resolve()));
+  expect({ seen, written: other.written }).toEqual({
+    seen: ["through the subclass"],
+    written: [[null, "through the subclass"]],
+  });
+  tap.destroy();
+});
+
 test("destroy() closes the handle once and lets go of it", async () => {
   const handle = mockHandle();
   const socket = new Socket({ handle, manualStart: true } as never);
   socket.on("data", () => {});
   await new Promise(resolve => process.nextTick(resolve));
   socket.destroy();
+  // Inside destroy(), as uv_close() in Node: a terminal is put back by the time it returns.
+  expect(handle.calls.close).toBe(1);
   socket.destroy();
   await once(socket, "close");
   expect({ close: handle.calls.close, handle: socket._handle }).toEqual({ close: 1, handle: null });

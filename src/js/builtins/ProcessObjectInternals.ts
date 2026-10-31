@@ -155,6 +155,9 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
       handle.readStop();
     };
 
+    // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/bootstrap/switches/is_main_thread.js#L248-L249: the `fd` of process.stdin stays, whatever becomes of the handle.
+    stdin.fd = fd;
+
     // stdin starts out paused; tell the handle so nothing reads fd 0 yet.
     readStop();
 

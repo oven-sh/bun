@@ -1,4 +1,4 @@
-use core::ffi::{c_int, c_void};
+use core::ffi::c_int;
 
 /// Terminal size as reported by the tty (`struct winsize` on POSIX).
 #[repr(C)]
@@ -38,15 +38,35 @@ pub enum SetAttrWhen {
 #[derive(Copy, Clone)]
 pub struct State {
     mode: c_int,
+    flags: c_int,
+    caller_fd: c_int,
     #[cfg(unix)]
     orig_termios: libc::termios,
 }
 crate::impl_zeroable!(State);
 
+/// `BunTTYState::OwnsDescriptor`.
+const OWNS_DESCRIPTOR: c_int = 1 << 0;
+/// `BunTTYState::HoldsResetSnapshot`.
+const HOLDS_RESET_SNAPSHOT: c_int = 1 << 1;
+
 impl State {
     #[inline]
     pub fn new() -> Self {
         crate::ffi::zeroed()
+    }
+
+    /// The owner made a descriptor of the terminal that it alone closes, after [`State::close`], and passes that one to [`State::set_mode`]. Only such a state takes the process-wide snapshot, as a `uv_tty_t` does. `caller_fd` is the descriptor that the owner stands for.
+    #[inline]
+    pub fn own_descriptor(&mut self, caller_fd: c_int) {
+        self.flags |= OWNS_DESCRIPTOR;
+        self.caller_fd = caller_fd;
+    }
+
+    /// Whether [`State::close`] writes to the terminal: this state took the process-wide snapshot and has not given it back.
+    #[inline]
+    pub fn holds_reset_snapshot(&self) -> bool {
+        self.flags & HOLDS_RESET_SNAPSHOT != 0
     }
 
     #[inline]
@@ -56,10 +76,17 @@ impl State {
             Bun__ttySetMode(
                 fd,
                 mode as c_int,
-                core::ptr::from_mut(self).cast(),
+                self,
                 (when == SetAttrWhen::Drain) as c_int,
             )
         }
+    }
+
+    /// libuv's `uv__tty_close()`: the handle that took the process-wide snapshot of the terminal writes it back. No other handle writes. It ends the state: `mode` stays, so no `set_mode()` follows.
+    #[inline]
+    pub fn close(&mut self, fd: c_int) {
+        // SAFETY: layout matches C++'s `BunTTYState`; `self` outlives the call.
+        unsafe { Bun__ttyClose(fd, self) }
     }
 }
 
@@ -89,5 +116,6 @@ impl Drop for RawModeGuard {
 }
 
 unsafe extern "C" {
-    unsafe fn Bun__ttySetMode(fd: c_int, mode: c_int, state: *mut c_void, drain: c_int) -> c_int;
+    unsafe fn Bun__ttySetMode(fd: c_int, mode: c_int, state: *mut State, drain: c_int) -> c_int;
+    unsafe fn Bun__ttyClose(fd: c_int, state: *mut State);
 }

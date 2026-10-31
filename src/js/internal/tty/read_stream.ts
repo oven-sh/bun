@@ -3,6 +3,8 @@
 const { ErrnoException } = require("internal/shared");
 const net = require("node:net");
 
+const ObjectDefineProperty = Object.defineProperty;
+
 /** What `new TTY(fd, ctx)` fills in where libuv's `uv_tty_init` would have failed. */
 interface TTYInitContext {
   errno?: number;
@@ -15,7 +17,7 @@ const TTY = $bindgen("tty_wrap.bind.ts", "TTY");
 declare global {
   namespace $Node {
     interface TTYReadStream extends Socket {
-      fd: number;
+      fd: number | null;
       isRaw: boolean;
       isTTY: boolean;
       setRawMode(flag: boolean): this;
@@ -23,7 +25,20 @@ declare global {
   }
 }
 
-// https://github.com/nodejs/node/blob/v26.12.1/lib/tty.js#L57-L80
+// Node puts `fd` on process.stdin alone (lib/internal/bootstrap/switches/is_main_thread.js#L248-L249). Bun's stream always had one: the caller's descriptor while the handle is open, and null from then on, so a closed stream names no descriptor that is another's by now.
+const fdOfOpenHandle: PropertyDescriptor & ThisType<$Node.TTYReadStream> = {
+  enumerable: true,
+  configurable: true,
+  get() {
+    const fd = (this._handle as unknown as $Node.StreamWrapHandle | null)?.fd;
+    return fd! >= 0 ? fd : null;
+  },
+  set(value) {
+    ObjectDefineProperty(this, "fd", { value, writable: true, enumerable: true, configurable: true });
+  },
+};
+
+// https://github.com/nodejs/node/blob/v26.12.1/lib/tty.js#L58-L80
 function ReadStream(this: $Node.TTYReadStream, fd: number, options?: $Node.SocketOptions): void {
   if (!(this instanceof ReadStream)) {
     return new ReadStream(fd, options) as any;
@@ -57,7 +72,7 @@ function ReadStream(this: $Node.TTYReadStream, fd: number, options?: $Node.Socke
     ...options,
   });
 
-  this.fd = fd;
+  ObjectDefineProperty(this, "fd", fdOfOpenHandle);
   this.isRaw = false;
   this.isTTY = true;
 }

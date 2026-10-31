@@ -1,6 +1,9 @@
 // Runs one scenario of node-pty.test.ts and prints its result as one line of JSON.
+import * as pty from "@lydell/node-pty";
 import { spawn } from "@lydell/node-pty";
 import { createHash } from "node:crypto";
+import { fstatSync } from "node:fs";
+import type { ReadStream } from "node:tty";
 
 const scenario = process.argv[2];
 const say = (result: object) => console.log(JSON.stringify(result));
@@ -41,6 +44,49 @@ if (scenario === "shell") {
     setImmediate(() => child.resume());
   });
   child.onExit(exit => say({ bytes, sha256: hash.digest("hex"), exit }));
+} else if (scenario === "open") {
+  // open() has no child: it makes a tty.ReadStream over each end of a new pty. Its types do not declare it.
+  type Opened = { master: ReadStream; slave: ReadStream; fd: number; resize(cols: number, rows: number): void };
+  const term = (pty as unknown as { open(options: { cols: number; rows: number }): Opened }).open({ cols: 80, rows: 24 });
+  const { master, slave } = term;
+  const got = { slave: "", master: "" };
+  const closed: string[] = [];
+  let answered = false;
+  let size: number[] | undefined;
+  slave.on("data", data => {
+    got.slave += data;
+    // The line that was typed at the master is here: answer it from the slave.
+    if (answered || !got.slave.includes("\n")) return;
+    answered = true;
+    slave.write("out\n");
+  });
+  master.on("data", data => {
+    got.master += data;
+    // The echo of the line, then the answer: both ends are done.
+    if (size || !got.master.endsWith("out\r\n")) return;
+    term.resize(100, 30);
+    // What the pty holds now, asked at its other end.
+    size = [0, 0];
+    (slave as ReadStream & { _handle: { getWindowSize(size: number[]): number } })._handle.getWindowSize(size);
+    // An opened terminal has pid -1: destroy() of the terminal would signal every process.
+    slave.destroy();
+    master.destroy();
+  });
+  for (const [name, stream] of [["slave", slave], ["master", master]] as const) {
+    stream.on("close", () => {
+      closed.push(name);
+      if (closed.length < 2) return;
+      // The master has no name to open it by, so the stream owns the descriptor, as in Node.
+      let masterIsOpen = true;
+      try {
+        masterIsOpen = fstatSync(term.fd).isCharacterDevice();
+      } catch {
+        masterIsOpen = false;
+      }
+      say({ ...got, size, closed: closed.sort(), masterIsOpen });
+    });
+  }
+  master.write("hello\n");
 } else {
   throw new Error(`unknown scenario ${scenario}`);
 }

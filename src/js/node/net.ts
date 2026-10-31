@@ -1359,7 +1359,7 @@ const SocketHandlers = {
   binaryType: "buffer",
 } as const satisfies InternalSocketHandler<$Node.Socket>;
 
-// A stream-wrap handle (`tty_wrap.TTY`) has Node's LibuvStreamWrap surface: readStart() and readStop() answer a libuv errno, and reads arrive as onread(nread, buffer).
+// A stream-wrap handle (`tty_wrap.TTY`) has the names of Node's LibuvStreamWrap: readStart() and readStop() answer a libuv errno. Reads arrive as onread(nread, buffer), where Node passes an ArrayBuffer and leaves nread in streamBaseState.
 const UV_EOF = -4095;
 function isStreamWrapHandle(handle: object): handle is $Node.StreamWrapHandle {
   return $isCallable((handle as $Node.StreamWrapHandle).readStart);
@@ -1413,17 +1413,6 @@ function onStreamRead(this: $Node.StreamWrapHandle, nread: number, buffer?: Buff
   }
   if (!deferEndForOnreadTail(self)) finishSocketEnd(self);
 }
-// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/stream_base_commons.js#L93-L143: no request goes in, and a number answers a write that is complete.
-function streamWrapWrite(this: $Node.Socket, chunk: Chunk, encoding: BufferEncoding, callback: WriteCallback) {
-  const handle = this._handle as unknown as $Node.StreamWrapHandle | null;
-  if (!handle) return callback($ERR_SOCKET_CLOSED());
-  // node's _writeGeneric restarts the idle timer on every write.
-  this._unrefTimer();
-  const err = handle.writeBuffer(null, typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk);
-  this[kBytesWritten] = handle.bytesWritten;
-  callback(err ? new ErrnoException(err, "write") : null);
-}
-
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L191-L198; a stopped handle does not hold the loop, a pending write still does.
 function readStop(self: $Node.Socket, handle: SocketHandle | null) {
   if (handle) {
@@ -2499,9 +2488,6 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
   if (handle && isStreamWrapHandle(handle)) {
     handle[owner_symbol] = this;
     handle.onread = onStreamRead;
-    this._write = streamWrapWrite;
-    // Writable hands a corked batch to _write chunk by chunk.
-    this._writev = undefined;
   }
   this[ksocket] = undefined;
   this.server = undefined;
@@ -3010,11 +2996,6 @@ Socket.prototype._destroy = function _destroy(this: $Node.Socket, err: Error | n
     this[kBytesWritten] = this._handle.bytesWritten;
 
     const currentHandle = this._handle;
-    // As for kSyncWriteFd above: a later connect() writes through its own handle.
-    if (isStreamWrapHandle(currentHandle)) {
-      delete (this as { _write?: unknown })._write;
-      delete (this as { _writev?: unknown })._writev;
-    }
     // Ahead of every branch: two of them close the handle a loop turn later, when the flight has left.
     if (typeof this[bunTlsSymbol] === "function" || currentHandle[kAdoptedTLSRaw]) {
       releaseHeldFlight(currentHandle);
@@ -3603,6 +3584,13 @@ Socket.prototype._write = function _write(
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L158-L159
     callback(er);
     return false;
+  }
+  // A stream-wrap handle takes no request and completes the write in writeBuffer(): 0, or a negative libuv errno. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/stream_base_commons.js#L93-L143
+  if (isStreamWrapHandle(socket)) {
+    const err = socket.writeBuffer(null, typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk);
+    this[kBytesWritten] = socket.bytesWritten;
+    callback(err ? new ErrnoException(err, "write") : null);
+    return;
   }
   const res = socket.$write(chunk, encoding);
   this[kBytesWritten] = socket.bytesWritten;

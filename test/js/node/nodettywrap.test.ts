@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, nodeExe, tempDir } from "harness";
 import { closeSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { ReadStream, isatty } from "node:tty";
@@ -76,4 +76,87 @@ test("process.binding('tty_wrap')", () => {
   } finally {
     closeSync(fd);
   }
+});
+
+// Bun's handle has a part of the names of Node's. This is the part that it leaves out, and why.
+// Node must have exactly Bun's names and these, so a new name goes into the handle or into this list.
+const onlyInNode = [
+  // AsyncWrap: Bun has no async id to reset, no provider type and no context frame.
+  "asyncReset",
+  "getAsyncContextFrameForDebuggingOnly",
+  "getProviderType",
+  // StreamBase: net.Socket writes a terminal through writeBuffer() alone, and does not shut one down.
+  "_externalStream",
+  "isStreamBase",
+  "shutdown",
+  "useUserBuffer",
+  "writeAsciiString",
+  "writeLatin1String",
+  "writeQueueSize",
+  "writeUcs2String",
+  "writeUtf8String",
+  "writev",
+  // LibuvStreamWrap, since v26.12: it answers false for what is no TCP socket and no pipe.
+  "hasPendingRead",
+];
+const inBun = [
+  "bytesRead",
+  "bytesWritten",
+  "close",
+  "fd",
+  "getAsyncId",
+  "getWindowSize",
+  "hasRef",
+  "onread",
+  "readStart",
+  "readStop",
+  "ref",
+  "setBlocking",
+  "setRawMode",
+  "unref",
+  "writeBuffer",
+];
+// Not compared: the numbers that lib/tty.js of Node reads from the binding since v26.8. https://github.com/oven-sh/bun/pull/47318 gives them to Bun.
+const modeConstant = /^UV_TTY_MODE_/;
+const namesFixture = `
+  const binding = process.binding("tty_wrap");
+  const members = new Set();
+  for (let proto = binding.TTY.prototype; proto && proto !== Object.prototype; proto = Object.getPrototypeOf(proto)) {
+    for (const name of Object.getOwnPropertyNames(proto)) if (name !== "constructor") members.add(name);
+  }
+  console.log(JSON.stringify({ binding: Object.getOwnPropertyNames(binding).sort(), members: [...members].sort() }));
+`;
+
+// The names of Node change between its versions: Node is asked where it is the version that Bun says it is.
+function nodeOfTheVersionOfBun(): string | null {
+  const node = nodeExe();
+  if (!node) return null;
+  try {
+    const probe = Bun.spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
+    return probe.exitCode === 0 && probe.stdout.toString().trim() === process.versions.node ? node : null;
+  } catch {
+    // A file that cannot be started: a script whose interpreter is gone, a binary of another architecture.
+    return null;
+  }
+}
+
+describe.each([
+  ["bun", bunExe(), inBun],
+  ["node", nodeOfTheVersionOfBun(), [...inBun, ...onlyInNode].sort()],
+] as const)("the names of the tty_wrap binding and of its handle (%s)", (name, runtime, members) => {
+  test.skipIf(!runtime)("are the ones that are listed", async () => {
+    await using proc = Bun.spawn({ cmd: [runtime!, "-e", namesFixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let names: { binding: string[]; members: string[] };
+    try {
+      names = JSON.parse(stdout);
+    } catch {
+      throw new Error(`${name} printed no names: ${JSON.stringify({ stdout, stderr, exitCode })}`);
+    }
+    expect({ binding: names.binding.filter(other => !modeConstant.test(other)), members: names.members }).toEqual({
+      binding: ["TTY", "isTTY"],
+      members: [...members],
+    });
+    expect(exitCode).toBe(0);
+  });
 });

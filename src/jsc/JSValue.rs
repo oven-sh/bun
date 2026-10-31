@@ -2506,6 +2506,18 @@ impl JSValue {
             index => Some(index as u32),
         }
     }
+    /// The same for an arguments object, searched up to `length`. Its arguments can be outside the butterfly.
+    pub(crate) fn next_present_arguments_index(self, start: u32, length: u64) -> Option<u32> {
+        debug_assert!(self.is_cell() && self.js_type().is_arguments());
+        unsafe extern "C" {
+            safe fn Bun__Arguments__nextPresentIndex(this: JSValue, start: u32, length: u64)
+            -> u64;
+        }
+        match Bun__Arguments__nextPresentIndex(self, start, length) {
+            u64::MAX => None,
+            index => Some(index as u32),
+        }
+    }
     /// `JSValue.getNameProperty` — the value's `.name` (function/class
     /// name). Empty for empty/`undefined`/`null`.
     pub fn get_name_property(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {

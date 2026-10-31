@@ -1,0 +1,143 @@
+// Over a hundred places make an error, round after round, and each trace must name its own place: line and column of the innermost frames, in functions called by value and entered from native code.
+const seen = new Map();
+const log = [];
+function placeOf(stack) {
+  const places = [];
+  for (const line of stack.split("\n")) {
+    const found = /(\d+:\d+)\)?$/.exec(line);
+    if (found) places.push(found[1]);
+  }
+  return places.slice(0, 4).join(" ");
+}
+function note(label, stack) {
+  const place = placeOf(stack);
+  if (!seen.has(label)) seen.set(label, place);
+  else if (seen.get(label) !== place) throw new Error(label + ": " + seen.get(label) + " then " + place);
+}
+const makers = [];
+makers.push(function maker0(flag) { if (flag) log.push(0); const made = new Error("0").stack; return made; });
+makers.push(function maker1(flag) { if (flag) log.push(1);  const made = new Error("1").stack; return made; });
+makers.push(function maker2(flag) { if (flag) log.push(2);   const made = new Error("2").stack; return made; });
+makers.push(function maker3(flag) { if (flag) log.push(3);    const made = new Error("3").stack; return made; });
+makers.push(function maker4(flag) { if (flag) log.push(4);     const made = new Error("4").stack; return made; });
+makers.push(function maker5(flag) { if (flag) log.push(5);      const made = new Error("5").stack; return made; });
+makers.push(function maker6(flag) { if (flag) log.push(6);       const made = new Error("6").stack; return made; });
+makers.push(function maker7(flag) { if (flag) log.push(7); const made = new Error("7").stack; return made; });
+makers.push(function maker8(flag) { if (flag) log.push(8);  const made = new Error("8").stack; return made; });
+makers.push(function maker9(flag) { if (flag) log.push(9);   const made = new Error("9").stack; return made; });
+makers.push(function maker10(flag) { if (flag) log.push(10);    const made = new Error("10").stack; return made; });
+makers.push(function maker11(flag) { if (flag) log.push(11);     const made = new Error("11").stack; return made; });
+makers.push(function maker12(flag) { if (flag) log.push(12);      const made = new Error("12").stack; return made; });
+makers.push(function maker13(flag) { if (flag) log.push(13);       const made = new Error("13").stack; return made; });
+makers.push(function maker14(flag) { if (flag) log.push(14); const made = new Error("14").stack; return made; });
+makers.push(function maker15(flag) { if (flag) log.push(15);  const made = new Error("15").stack; return made; });
+makers.push(function maker16(flag) { if (flag) log.push(16);   const made = new Error("16").stack; return made; });
+makers.push(function maker17(flag) { if (flag) log.push(17);    const made = new Error("17").stack; return made; });
+makers.push(function maker18(flag) { if (flag) log.push(18);     const made = new Error("18").stack; return made; });
+makers.push(function maker19(flag) { if (flag) log.push(19);      const made = new Error("19").stack; return made; });
+makers.push(function maker20(flag) { if (flag) log.push(20);       const made = new Error("20").stack; return made; });
+makers.push(function maker21(flag) { if (flag) log.push(21); const made = new Error("21").stack; return made; });
+makers.push(function maker22(flag) { if (flag) log.push(22);  const made = new Error("22").stack; return made; });
+makers.push(function maker23(flag) { if (flag) log.push(23);   const made = new Error("23").stack; return made; });
+makers.push(function maker24(flag) { if (flag) log.push(24);    const made = new Error("24").stack; return made; });
+makers.push(function maker25(flag) { if (flag) log.push(25);     const made = new Error("25").stack; return made; });
+makers.push(function maker26(flag) { if (flag) log.push(26);      const made = new Error("26").stack; return made; });
+makers.push(function maker27(flag) { if (flag) log.push(27);       const made = new Error("27").stack; return made; });
+makers.push(function maker28(flag) { if (flag) log.push(28); const made = new Error("28").stack; return made; });
+makers.push(function maker29(flag) { if (flag) log.push(29);  const made = new Error("29").stack; return made; });
+makers.push(function maker30(flag) { if (flag) log.push(30);   const made = new Error("30").stack; return made; });
+makers.push(function maker31(flag) { if (flag) log.push(31);    const made = new Error("31").stack; return made; });
+makers.push(function maker32(flag) { if (flag) log.push(32);     const made = new Error("32").stack; return made; });
+makers.push(function maker33(flag) { if (flag) log.push(33);      const made = new Error("33").stack; return made; });
+makers.push(function maker34(flag) { if (flag) log.push(34);       const made = new Error("34").stack; return made; });
+makers.push(function maker35(flag) { if (flag) log.push(35); const made = new Error("35").stack; return made; });
+makers.push(function maker36(flag) { if (flag) log.push(36);  const made = new Error("36").stack; return made; });
+makers.push(function maker37(flag) { if (flag) log.push(37);   const made = new Error("37").stack; return made; });
+makers.push(function maker38(flag) { if (flag) log.push(38);    const made = new Error("38").stack; return made; });
+makers.push(function maker39(flag) { if (flag) log.push(39);     const made = new Error("39").stack; return made; });
+makers.push(function maker40(flag) { if (flag) log.push(40);      const made = new Error("40").stack; return made; });
+makers.push(function maker41(flag) { if (flag) log.push(41);       const made = new Error("41").stack; return made; });
+makers.push(function maker42(flag) { if (flag) log.push(42); const made = new Error("42").stack; return made; });
+makers.push(function maker43(flag) { if (flag) log.push(43);  const made = new Error("43").stack; return made; });
+makers.push(function maker44(flag) { if (flag) log.push(44);   const made = new Error("44").stack; return made; });
+makers.push(function maker45(flag) { if (flag) log.push(45);    const made = new Error("45").stack; return made; });
+makers.push(function maker46(flag) { if (flag) log.push(46);     const made = new Error("46").stack; return made; });
+makers.push(function maker47(flag) { if (flag) log.push(47);      const made = new Error("47").stack; return made; });
+makers.push(function maker48(flag) { if (flag) log.push(48);       const made = new Error("48").stack; return made; });
+makers.push(function maker49(flag) { if (flag) log.push(49); const made = new Error("49").stack; return made; });
+makers.push(function maker50(flag) { if (flag) log.push(50);  const made = new Error("50").stack; return made; });
+makers.push(function maker51(flag) { if (flag) log.push(51);   const made = new Error("51").stack; return made; });
+makers.push(function maker52(flag) { if (flag) log.push(52);    const made = new Error("52").stack; return made; });
+makers.push(function maker53(flag) { if (flag) log.push(53);     const made = new Error("53").stack; return made; });
+makers.push(function maker54(flag) { if (flag) log.push(54);      const made = new Error("54").stack; return made; });
+makers.push(function maker55(flag) { if (flag) log.push(55);       const made = new Error("55").stack; return made; });
+makers.push(function maker56(flag) { if (flag) log.push(56); const made = new Error("56").stack; return made; });
+makers.push(function maker57(flag) { if (flag) log.push(57);  const made = new Error("57").stack; return made; });
+makers.push(function maker58(flag) { if (flag) log.push(58);   const made = new Error("58").stack; return made; });
+makers.push(function maker59(flag) { if (flag) log.push(59);    const made = new Error("59").stack; return made; });
+makers.push(function maker60(flag) { if (flag) log.push(60);     const made = new Error("60").stack; return made; });
+makers.push(function maker61(flag) { if (flag) log.push(61);      const made = new Error("61").stack; return made; });
+makers.push(function maker62(flag) { if (flag) log.push(62);       const made = new Error("62").stack; return made; });
+makers.push(function maker63(flag) { if (flag) log.push(63); const made = new Error("63").stack; return made; });
+makers.push(function maker64(flag) { if (flag) log.push(64);  const made = new Error("64").stack; return made; });
+makers.push(function maker65(flag) { if (flag) log.push(65);   const made = new Error("65").stack; return made; });
+makers.push(function maker66(flag) { if (flag) log.push(66);    const made = new Error("66").stack; return made; });
+makers.push(function maker67(flag) { if (flag) log.push(67);     const made = new Error("67").stack; return made; });
+makers.push(function maker68(flag) { if (flag) log.push(68);      const made = new Error("68").stack; return made; });
+makers.push(function maker69(flag) { if (flag) log.push(69);       const made = new Error("69").stack; return made; });
+makers.push(function maker70(flag) { if (flag) log.push(70); const made = new Error("70").stack; return made; });
+makers.push(function maker71(flag) { if (flag) log.push(71);  const made = new Error("71").stack; return made; });
+makers.push(function maker72(flag) { if (flag) log.push(72);   const made = new Error("72").stack; return made; });
+makers.push(function maker73(flag) { if (flag) log.push(73);    const made = new Error("73").stack; return made; });
+makers.push(function maker74(flag) { if (flag) log.push(74);     const made = new Error("74").stack; return made; });
+makers.push(function maker75(flag) { if (flag) log.push(75);      const made = new Error("75").stack; return made; });
+makers.push(function maker76(flag) { if (flag) log.push(76);       const made = new Error("76").stack; return made; });
+makers.push(function maker77(flag) { if (flag) log.push(77); const made = new Error("77").stack; return made; });
+makers.push(function maker78(flag) { if (flag) log.push(78);  const made = new Error("78").stack; return made; });
+makers.push(function maker79(flag) { if (flag) log.push(79);   const made = new Error("79").stack; return made; });
+makers.push(function maker80(flag) { if (flag) log.push(80);    const made = new Error("80").stack; return made; });
+makers.push(function maker81(flag) { if (flag) log.push(81);     const made = new Error("81").stack; return made; });
+makers.push(function maker82(flag) { if (flag) log.push(82);      const made = new Error("82").stack; return made; });
+makers.push(function maker83(flag) { if (flag) log.push(83);       const made = new Error("83").stack; return made; });
+makers.push(function maker84(flag) { if (flag) log.push(84); const made = new Error("84").stack; return made; });
+makers.push(function maker85(flag) { if (flag) log.push(85);  const made = new Error("85").stack; return made; });
+makers.push(function maker86(flag) { if (flag) log.push(86);   const made = new Error("86").stack; return made; });
+makers.push(function maker87(flag) { if (flag) log.push(87);    const made = new Error("87").stack; return made; });
+makers.push(function maker88(flag) { if (flag) log.push(88);     const made = new Error("88").stack; return made; });
+makers.push(function maker89(flag) { if (flag) log.push(89);      const made = new Error("89").stack; return made; });
+makers.push(function maker90(flag) { if (flag) log.push(90);       const made = new Error("90").stack; return made; });
+makers.push(function maker91(flag) { if (flag) log.push(91); const made = new Error("91").stack; return made; });
+makers.push(function maker92(flag) { if (flag) log.push(92);  const made = new Error("92").stack; return made; });
+makers.push(function maker93(flag) { if (flag) log.push(93);   const made = new Error("93").stack; return made; });
+makers.push(function maker94(flag) { if (flag) log.push(94);    const made = new Error("94").stack; return made; });
+makers.push(function maker95(flag) { if (flag) log.push(95);     const made = new Error("95").stack; return made; });
+makers.push(function maker96(flag) { if (flag) log.push(96);      const made = new Error("96").stack; return made; });
+makers.push(function maker97(flag) { if (flag) log.push(97);       const made = new Error("97").stack; return made; });
+makers.push(function maker98(flag) { if (flag) log.push(98); const made = new Error("98").stack; return made; });
+makers.push(function maker99(flag) { if (flag) log.push(99);  const made = new Error("99").stack; return made; });
+makers.push(function maker100(flag) { if (flag) log.push(100);   const made = new Error("100").stack; return made; });
+makers.push(function maker101(flag) { if (flag) log.push(101);    const made = new Error("101").stack; return made; });
+makers.push(function maker102(flag) { if (flag) log.push(102);     const made = new Error("102").stack; return made; });
+makers.push(function maker103(flag) { if (flag) log.push(103);      const made = new Error("103").stack; return made; });
+makers.push(function maker104(flag) { if (flag) log.push(104);       const made = new Error("104").stack; return made; });
+makers.push(function maker105(flag) { if (flag) log.push(105); const made = new Error("105").stack; return made; });
+makers.push(function maker106(flag) { if (flag) log.push(106);  const made = new Error("106").stack; return made; });
+makers.push(function maker107(flag) { if (flag) log.push(107);   const made = new Error("107").stack; return made; });
+makers.push(function maker108(flag) { if (flag) log.push(108);    const made = new Error("108").stack; return made; });
+makers.push(function maker109(flag) { if (flag) log.push(109);     const made = new Error("109").stack; return made; });
+function direct(i) {
+  if (i < 0) log.push(i);
+  const made = makers[i](false);
+  log.length = 0;
+  return made;
+}
+for (let round = 0; round < 5; round++) {
+  for (let i = 0; i < makers.length; i++) {
+    note("direct " + i, direct(i));
+    note("mapped " + i, [i].map(direct)[0]);
+    const held = {};
+    Error.captureStackTrace(held);
+    note("captured", held.stack);
+  }
+}
+console.log(seen.size, log.length, [...seen].filter((_, index) => index % 37 === 0).map(([label, place]) => label + " " + place).join(" | "));

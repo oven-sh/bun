@@ -227,6 +227,15 @@ pub struct RareData {
     pub postgresql_context: crate::postgres::PostgresSQLContext,
 }
 
+impl RareData {
+    /// The functions that the `bun:sql` of a realm handed over are functions of that realm, and
+    /// keep it alive. The next realm that loads `bun:sql` hands over its own.
+    pub fn forget_callbacks(&mut self) {
+        self.mysql_context = Default::default();
+        self.postgresql_context = Default::default();
+    }
+}
+
 /// SQL-specific accessors on [VirtualMachine] for state owned by the
 /// higher-tier bun_runtime::jsc_hooks::RuntimeState.
 pub(crate) trait VirtualMachineSqlExt {

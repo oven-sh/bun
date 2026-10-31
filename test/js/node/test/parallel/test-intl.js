@@ -89,7 +89,8 @@ if (!common.hasIntl) {
   // Check with toLocaleString
   {
     const localeString = dtf.format(date0);
-    assert.strictEqual(localeString, 'Jan 70');
+    // Bun: upstream expects 'Jan 70'. CLDR 49 puts an apostrophe before a two-digit year.
+    assert.match(localeString, /^Jan ’?70$/);
   }
   // Options to request GMT
   const optsGMT = { timeZone: GMT };

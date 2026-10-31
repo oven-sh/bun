@@ -22,12 +22,12 @@ pub struct SortPropTypes {
     check_types: bool,
 }
 
-const REQUIRED_PROPS_FIRST: Message =
-    Message::new("requiredPropsFirst", "Required prop types must be listed before all other prop types");
-const CALLBACK_PROPS_LAST: Message =
-    Message::new("callbackPropsLast", "Callback prop types must be listed after all other prop types");
-const PROPS_NOT_SORTED: Message =
-    Message::new("propsNotSorted", "Prop types declarations should be sorted alphabetically");
+const REQUIRED_PROPS_FIRST: &Message =
+    &Message::new("requiredPropsFirst", "Required prop types must be listed before all other prop types");
+const CALLBACK_PROPS_LAST: &Message =
+    &Message::new("callbackPropsLast", "Callback prop types must be listed after all other prop types");
+const PROPS_NOT_SORTED: &Message =
+    &Message::new("propsNotSorted", "Prop types declarations should be sorted alphabetically");
 
 #[derive(Default)]
 pub struct State<'a> {
@@ -227,7 +227,7 @@ impl SortPropTypes {
 
     fn check_sorted<'a>(&self, declarations: Declarations<'a>, cx: &Cx<'a, Self>) {
         let fix = OnceCell::new();
-        let report = |node: Property<'a>, message: Message| {
+        let report = |node: Property<'a>, message: &'static Message| {
             cx.report(node.node(), message)
                 .fix(|fixer| fix.get_or_init(|| self.fix_prop_types_sort(fixer, declarations)).clone());
         };

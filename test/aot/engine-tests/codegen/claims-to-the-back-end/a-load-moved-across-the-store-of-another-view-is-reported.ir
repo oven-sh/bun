@@ -1,0 +1,6 @@
+# sabotage=VectorTurnsMeetNoOtherAccess: the check in the compiled code stops the run
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: check=MovedLoads sabotage=VectorTurnsMeetNoOtherAccess
+# CHECK: AOT claim check: LoadMayMove
+# PROGRAM-OF: elements-copied-between-views-that-lie-over-each-other-passes.ir

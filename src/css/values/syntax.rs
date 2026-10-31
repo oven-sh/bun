@@ -10,6 +10,7 @@ use crate::values::length::{Length, LengthPercentage};
 use crate::values::number::{CSSInteger, CSSIntegerFns, CSSNumber, CSSNumberFns};
 use crate::values::percentage::Percentage;
 use crate::values::resolution::Resolution;
+use crate::values::string::{CssString, CssStringFns};
 use crate::values::time::Time;
 use crate::values::url::Url;
 
@@ -65,7 +66,7 @@ impl SyntaxString {
     /// Parses a syntax string.
     fn parse_string(input: &[u8]) -> Result<SyntaxString, ()> {
         // https://drafts.css-houdini.org/css-properties-values-api/#parsing-syntax
-        let mut trimmed_input = strings::trim_left(input, SPACE_CHARACTERS);
+        let mut trimmed_input = strings::trim(input, SPACE_CHARACTERS);
         if trimmed_input.is_empty() {
             return Err(());
         }
@@ -97,16 +98,14 @@ impl SyntaxString {
         Ok(SyntaxString::Components(components))
     }
 
-    /// Parses a value according to the syntax grammar.
+    /// Parses a value as the first component that matches all of it, else as tokens.
     pub(crate) fn parse_value(&self, input: &mut css::Parser) -> CssResult<ParsedComponent> {
+        // A value of only white space is empty. `TokenList::parse` would keep it as one token.
+        input.skip_whitespace();
+
         match self {
-            SyntaxString::Universal => Ok(ParsedComponent::TokenList(TokenList::parse(
-                input,
-                &ParserOptions::default(None),
-                0,
-            )?)),
+            SyntaxString::Universal => {}
             SyntaxString::Components(components) => {
-                // Loop through each component, and return the first one that parses successfully.
                 for component in components.iter() {
                     let state = input.state();
                     // PERF: deinit this on error
@@ -153,9 +152,12 @@ impl SyntaxString {
                                 SyntaxComponentKind::CustomIdent => {
                                     ParsedComponent::CustomIdent(CustomIdentFns::parse(i)?)
                                 }
+                                SyntaxComponentKind::String => ParsedComponent::String(
+                                    std::ptr::from_ref::<[u8]>(i.expect_string()?),
+                                ),
                                 SyntaxComponentKind::Literal(value) => {
                                     let location = i.current_source_location();
-                                    let ident = i.expect_ident_cloned()?;
+                                    let ident = i.expect_ident()?;
                                     if !strings::eql(ident, value) {
                                         return Err(location
                                             .new_unexpected_token_error(Token::Ident(ident)));
@@ -170,7 +172,12 @@ impl SyntaxString {
 
                         if let Ok(value) = value_result {
                             match component.multiplier {
-                                Multiplier::None => return Ok(value),
+                                Multiplier::None => {
+                                    if input.is_exhausted() {
+                                        return Ok(value);
+                                    }
+                                    break;
+                                }
                                 Multiplier::Space => {
                                     parsed.push(value);
                                     if input.is_exhausted() {
@@ -206,9 +213,18 @@ impl SyntaxString {
                     input.reset(&state);
                 }
 
-                Err(input.new_error_for_next_token())
+                // An empty value is a missing one, which is an error for a typed syntax.
+                if input.is_exhausted() {
+                    return Err(input.new_error_for_next_token());
+                }
             }
         }
+
+        Ok(ParsedComponent::TokenList(TokenList::parse(
+            input,
+            &ParserOptions::default(None),
+            0,
+        )?))
     }
 }
 
@@ -288,6 +304,8 @@ pub enum SyntaxComponentKind {
     TransformList,
     /// A `<custom-ident>` component.
     CustomIdent,
+    /// A `<string>` component.
+    String,
     /// A literal component.
     // PORTING.md §Forbidden bans laundering a parser-borrowed slice to
     // `&'static`; that would need a `'bump` lifetime threaded through
@@ -323,6 +341,7 @@ impl SyntaxComponentKind {
                 b"transform-function" => SyntaxComponentKind::TransformFunction,
                 b"transform-list" => SyntaxComponentKind::TransformList,
                 b"custom-ident" => SyntaxComponentKind::CustomIdent,
+                b"string" => SyntaxComponentKind::String,
                 _ => return Err(()),
             }};
 
@@ -363,6 +382,7 @@ impl SyntaxComponentKind {
             SyntaxComponentKind::TransformFunction => dest.write_str("<transform-function>"),
             SyntaxComponentKind::TransformList => dest.write_str("<transform-list>"),
             SyntaxComponentKind::CustomIdent => dest.write_str("<custom-ident>"),
+            SyntaxComponentKind::String => dest.write_str("<string>"),
             SyntaxComponentKind::Literal(l) => dest.write_str(&l[..]),
         }
     }
@@ -416,6 +436,8 @@ pub enum ParsedComponent {
     TransformList(TransformList),
     /// A `<custom-ident>` value.
     CustomIdent(CustomIdent),
+    /// A `<string>` value.
+    String(CssString),
     /// A literal value.
     Literal(Ident),
     /// A repeated component value.
@@ -461,6 +483,7 @@ impl ParsedComponent {
             ParsedComponent::TransformFunction(v) => v.to_css(dest),
             ParsedComponent::TransformList(v) => v.to_css(dest),
             ParsedComponent::CustomIdent(v) => CustomIdentFns::to_css(v, dest),
+            ParsedComponent::String(v) => CssStringFns::to_css(v, dest),
             ParsedComponent::Literal(v) => dest.serialize_identifier(v.v()),
             ParsedComponent::Repeated(r) => dest.write_separated(
                 r.components.iter(),
@@ -498,6 +521,7 @@ impl ParsedComponent {
             }
             ParsedComponent::TransformList(v) => ParsedComponent::TransformList(v.deep_clone(bump)),
             ParsedComponent::CustomIdent(v) => ParsedComponent::CustomIdent(*v),
+            ParsedComponent::String(v) => ParsedComponent::String(*v),
             ParsedComponent::Literal(v) => ParsedComponent::Literal(*v),
             ParsedComponent::Repeated(r) => ParsedComponent::Repeated(r.deep_clone(bump)),
             ParsedComponent::TokenList(t) => {

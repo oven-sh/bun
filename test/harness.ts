@@ -15,6 +15,7 @@ import fs, { closeSync, openSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join, sep } from "path";
 import { locksEnvironment } from "./aot/hardened";
+import { ownTemporaryFolder } from "./aot/harness/temporary-folders";
 import "./aot/harness/without-installing-packages";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
@@ -655,7 +656,7 @@ export function tempDirWithFiles(
   basename: string,
   filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
 ): string {
-  const base = fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), basename + "_"));
+  const base = ownTemporaryFolder(fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), basename + "_")));
   makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
   return base;
 }
@@ -1753,7 +1754,7 @@ export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
 }
 
 export function tmpdirSync(pattern: string = "bun.test."): string {
-  return fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), pattern));
+  return ownTemporaryFolder(fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), pattern)));
 }
 
 export async function runBunInstall(

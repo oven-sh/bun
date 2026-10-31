@@ -17,7 +17,7 @@ feature Inspector "the debugger and node:inspector"
   minimum 70000
 
 feature Profilers "the CPU and heap profilers, heap snapshots and code coverage"
-  minimum 30000
+  minimum 14000
 
 feature RegExp "regular expressions"
 

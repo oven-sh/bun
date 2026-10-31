@@ -1,0 +1,27 @@
+# OPTIONS: exclude=EvaluatedText,HostEvaluatedText
+# RUN: valueflow-results
+# CHECK: function f1 reachability=Unreached
+# CHECK-NOT: unseen-code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="helper" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="input" [isFreeName]
+    v4 = Builtin builtin=NodeVMBindingScript
+    v5 = Construct v4, -, v3
+    v6 = Builtin builtin=NodeVMBindingCompileFunction
+    v7 = Call v6, -, v3
+    v8 = Builtin builtin=NodeVMBindingModule
+    v9 = Construct v8, -, v3
+    v10 = Builtin builtin=NodeModulePrototype_compile
+    v11 = Call v10, v2, v3, v3
+    Return
+}
+function f1 name="helper" results=[{type=anything}] {
+    v0 = Integer integer=1
+    Return v0
+}

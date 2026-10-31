@@ -9,7 +9,7 @@ fn create_function(flags: FunctionFlags) -> Function {
     let parameters = [TypeTable::BOOLEAN, TypeTable::BIGINT];
     let captures = [TypeTable::NUMBER, TypeTable::STRING];
     let mut function = function_with_parameters(flags, &parameters);
-    function.captures = captures.map(DeclaredType::from_compiler).to_vec();
+    function.captures = (captures.map(|ty| DeclaredType::from_compiler(ty).into())).to_vec();
     function.this_type = DeclaredType::from_compiler(TypeTable::OBJECT);
     function
 }

@@ -382,7 +382,7 @@ function f13 module=m3 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: manyDoubles
 # CHECK-LABEL: function {{*}}name="manyDoubles"
 # CHECK: role=GenericVersion
-# CHECK-NEXT: instructions: 176, patchpoints: 39, polls: 1
+# CHECK-NEXT: instructions: 179, patchpoints: 39, rare instructions: 76, polls: 1
 # CHECK-NEXT: end of function f17
 # CHECK-LABEL: function {{*}}name="manyDoubles"
 # CHECK: role=Source

@@ -53,7 +53,7 @@ export {}
 // CHECK-NEXT: v5 = NewObject -, v3, v0, v4 layout=[[L_6]] fields=[1, 2, 0]
 // CHECK-NEXT: v6 = FinishObject v5
 // CHECK-NEXT: v7 = Call v1, -, v2, v6 calleeName="h"
-// CHECK-NEXT: Return v7
+// CHECK-NEXT: ReturnCall v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="shown"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_7]]] {

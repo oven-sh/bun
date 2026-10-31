@@ -2255,7 +2255,7 @@ pub mod parse_worker {
     // runWithSourceCode
     // ───────────────────────────────────────────────────────────────────────────
 
-    fn run_with_source_code(
+    pub(crate) fn run_with_source_code(
         task: &mut ParseTask<'static>,
         this: &mut crate::Worker,
         step: &mut Step,

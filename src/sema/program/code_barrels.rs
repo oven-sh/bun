@@ -232,6 +232,8 @@ struct Summary<'a, 's> {
     analysis: &'a FileAnalysis<'s>,
     names: MemberNames,
     uses: ImportUses,
+    /// `CodeOptions::ignores_declared_side_effects`
+    runs_all_that_is_loaded: bool,
 }
 
 impl Summary<'_, '_> {
@@ -402,7 +404,10 @@ impl Summary<'_, '_> {
         for (symbol, imported) in self.bindings_of(import) {
             match (imported, self.find_members_read(symbol)) {
                 (Some(name), _) => names.push(name),
-                (None, Some(members)) if !self.hir[import].is_deferred => {
+                // The bundler loads every file behind `import *`, and leaves out those that nothing is read of only if they may go.
+                (None, Some(members))
+                    if !self.hir[import].is_deferred && !self.runs_all_that_is_loaded =>
+                {
                     names.extend_from_slice(members);
                 }
                 (None, _) => return Asked::All,
@@ -586,6 +591,7 @@ pub(super) fn summarize_requests<'s>(
             finally: context.atoms.intern(b"finally"),
         },
         uses: ImportUses::default(),
+        runs_all_that_is_loaded: context.inputs.code.ignores_declared_side_effects,
     };
     summary.collect_uses(may_be_barrel);
     let mut asked = Vec::with_capacity(target_count);

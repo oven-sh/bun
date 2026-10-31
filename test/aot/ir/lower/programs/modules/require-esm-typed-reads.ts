@@ -149,35 +149,34 @@ export function log(...values: unknown[]) {
 // CHECK-NEXT: RecordRequire module=[[m_8]] referrer=[[m_0]]
 // CHECK-NEXT: v12 = Boolean boolean=true
 // CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|object site=[[w_12]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: v15 = Integer integer=1
-// CHECK-NEXT: v16 = Construct v8, -, v15 calleeName="Box"
-// CHECK-NEXT: v17 = Convert v16 declared={type=undefined|null|[[L_13]] site=[[w_14]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v18 = PropGet v17 key="value"
-// CHECK-NEXT: v19 = GetModuleVariable variable=[[g_10]]
-// CHECK-NEXT: v20 = CheckInitialized v19 name="Box"
-// CHECK-NEXT: v21 = Convert v20 declared={type=undefined|null|[[f_11]] site=[[w_15]]} illTypedCause=Assertion
-// CHECK-NEXT: v22 = Integer integer=2
-// CHECK-NEXT: v23 = Construct v21, -, v22 calleeName="lib.Box"
-// CHECK-NEXT: v24 = Convert v23 declared={type=undefined|null|[[L_13]] site=[[w_16]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v25 = PropGet v24 key="value"
-// CHECK-NEXT: v26 = Add v18, v25
-// CHECK-NEXT: v27 = Builtin builtin=Number
-// CHECK-NEXT: v28 = Integer integer=3
-// CHECK-NEXT: v29 = Construct v8, -, v28 calleeName="Box"
-// CHECK-NEXT: v30 = Convert v29 declared={type=undefined|null|[[L_13]] site=[[w_17]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v31 = GetModuleVariable variable=[[g_10]]
-// CHECK-NEXT: v32 = CheckInitialized v31 name="Box"
-// CHECK-NEXT: v33 = Convert v32 declared={type=undefined|null|[[f_11]] site=[[w_18]]} illTypedCause=Assertion
-// CHECK-NEXT: v34 = InstanceOf v30, v33
-// CHECK-NEXT: v35 = Call v27, -, v34 calleeName="Number"
-// CHECK-NEXT: v36 = Convert v35 declared={type=number site=[[w_19]]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v37 = Add v26, v36
-// CHECK-NEXT: v38 = Convert v37 declared={type=number site=[[w_6]]}
-// CHECK-NEXT: Return v38
+// CHECK-NEXT: v14 = Integer integer=1
+// CHECK-NEXT: v15 = Construct v8, -, v14 calleeName="Box"
+// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|[[L_12]] site=[[w_13]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v17 = PropGet v16 key="value"
+// CHECK-NEXT: v18 = GetModuleVariable variable=[[g_10]]
+// CHECK-NEXT: v19 = CheckInitialized v18 name="Box"
+// CHECK-NEXT: v20 = Convert v19 declared={type=undefined|null|[[f_11]] site=[[w_14]]} illTypedCause=Assertion
+// CHECK-NEXT: v21 = Integer integer=2
+// CHECK-NEXT: v22 = Construct v20, -, v21 calleeName="lib.Box"
+// CHECK-NEXT: v23 = Convert v22 declared={type=undefined|null|[[L_12]] site=[[w_15]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v24 = PropGet v23 key="value"
+// CHECK-NEXT: v25 = Add v17, v24
+// CHECK-NEXT: v26 = Builtin builtin=Number
+// CHECK-NEXT: v27 = Integer integer=3
+// CHECK-NEXT: v28 = Construct v8, -, v27 calleeName="Box"
+// CHECK-NEXT: v29 = Convert v28 declared={type=undefined|null|[[L_12]] site=[[w_16]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v30 = GetModuleVariable variable=[[g_10]]
+// CHECK-NEXT: v31 = CheckInitialized v30 name="Box"
+// CHECK-NEXT: v32 = Convert v31 declared={type=undefined|null|[[f_11]] site=[[w_17]]} illTypedCause=Assertion
+// CHECK-NEXT: v33 = InstanceOf v29, v32
+// CHECK-NEXT: v34 = Call v26, -, v33 calleeName="Number"
+// CHECK-NEXT: v35 = Convert v34 declared={type=number site=[[w_18]]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v36 = Add v25, v35
+// CHECK-NEXT: v37 = Convert v36 declared={type=number site=[[w_6]]}
+// CHECK-NEXT: Return v37
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="asAValue"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_20]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_19]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|string):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -186,7 +185,7 @@ export function log(...values: unknown[]) {
 // CHECK-NEXT: RecordRequire module=[[m_8]] referrer=[[m_0]]
 // CHECK-NEXT: v4 = ModuleNamespace module=[[m_8]]
 // CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|object site=[[w_21]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|object site=[[w_20]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
 // CHECK-NEXT: v7 = ElemGet v6, v0
 // CHECK-NEXT: Return v7
 // CHECK-NEXT: }

@@ -1,6 +1,6 @@
-// What the engine bed is asked before it is used. Its library is a stand-in: a built-in that is written in JavaScript answers
-// undefined there, and which ones those are changes with the engine. Each probe is an expression and the pattern that finds its like
-// in a program; a probe that answers differently compiled and plain puts its pattern on the list of what the bed does not allow.
+// Probes that the engine runner runs before use. Its library is a stand-in: a built-in written in JavaScript returns
+// undefined there, and which ones those are changes with the engine. Each probe is an expression plus a pattern that
+// finds similar code in a program.
 const method = (name: string, expression: string): [string, string] => [`\\.${name}\\(`, expression];
 const call = (name: string, expression: string): [string, string] => [`\\b${name.replace(".", "\\.")}\\(`, expression];
 
@@ -55,7 +55,7 @@ export const probes: [pattern: string, expression: string][] = [
   ["\\bSymbol\\.isConcatSpreadable\\b", "[].concat({ length: 1, 0: 5, [Symbol.isConcatSpreadable]: true })"], ["\\bSymbol\\.toStringTag\\b", 'String({ [Symbol.toStringTag]: "T" })'], ["\\bSuppressedError\\b", "new SuppressedError(1, 2).error"], ["\\bAggregateError\\b", 'new AggregateError([1], "m").errors.length'],
 ];
 
-// Each prints later, so each is a statement that reports by itself.
+// Each prints asynchronously, so each is a statement that reports by itself.
 // prettier-ignore
 export const laterProbes: [pattern: string, statement: string][] = [
   ["\\.then\\(", 'Promise.resolve(1).then(v => report("then " + v))'], ["\\.catch\\(", 'Promise.reject(1).catch(v => report("catch " + v))'], ["\\.finally\\(", 'Promise.resolve(1).finally(() => report("finally"))'],
@@ -65,7 +65,10 @@ export const laterProbes: [pattern: string, statement: string][] = [
   ["\\bfor await\\b", '(async () => { for await (const v of [1, 2]) report("for await " + v); })()'], ["\\basync function\\*|\\basync \\*", '(async () => { async function* g() { yield 1; } for await (const v of g()) report("async generator " + v); })()'], ["\\bPromise\\.withResolvers\\(", '(async () => { const { promise, resolve } = Promise.withResolvers(); resolve(1); report("withResolvers " + (await promise)); })()'],
 ];
 
-/** A program that asks the probes with the given numbers (the later probes count on from the others): each answers with a line that starts with its number. */
+/**
+ * A program that runs the probes with the given numbers (the asynchronous probes are numbered after the others): each
+ * prints a line that starts with its number.
+ */
 export function probeProgram(numbers: number[]): string {
   let text = `function text(v) { if (typeof v === "symbol") return "symbol"; if (typeof v === "bigint") return v + "n"; if (typeof v === "object" && v !== null) { try { return JSON.stringify(v); } catch (e) { return "object"; } } return String(v); }\n`;
   for (const number of numbers) {

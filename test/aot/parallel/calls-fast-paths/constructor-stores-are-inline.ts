@@ -1,5 +1,5 @@
 // A class with many fields that every construction stores to: they lie in the object itself, not in an extension that each construction would have to make and grow.
-// CALLS- Panel CreateTypedFieldOutOfLine
+// CALLS- Panel OutOfLine
 class Panel {
   title: string;
   width = 1;

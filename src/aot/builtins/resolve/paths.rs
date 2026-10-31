@@ -41,7 +41,9 @@ impl Resolver<'_, '_> {
             true => holder_mutability,
             false => holder_mutability.min(location.mutability),
         };
-        if location.holder != Some(object) {
+        if location.holder != Some(object)
+            || self.input.replaced.binary_search(&(found as u32)).is_ok()
+        {
             mutability = mutability.min(Mutability::ConstantUnlessWritten);
         }
         Some(BuiltinPath {

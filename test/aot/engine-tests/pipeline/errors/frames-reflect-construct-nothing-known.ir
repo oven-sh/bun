@@ -133,9 +133,9 @@ function f9 module=m1 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v20: builtin(Proxy) = Builtin builtin=Proxy
 # CHECK-NEXT: v21: L3 = Data data=d1 allocationSite=6
 # CHECK-NEXT: v22: anything ~ object = Construct v20, -, v3, v21 calleeName="Proxy" accessSite=5 callees=[builtin(Proxy)]
-# CHECK-NEXT: v23: anything ~ function = Upcast v22 castType=anything
+# CHECK-NEXT: v23: anything ~ function|f4|f5 = Upcast v22 castType=anything
 # CHECK-NEXT: v24: anything = Call v8, -, v23 calleeName="through" accessSite=6 callees=[f1]
-# CHECK-NEXT: v25: anything ~ undefined|null|function = Upcast v24 castType=anything
+# CHECK-NEXT: v25: anything ~ undefined|null|function|f4|f5 = Upcast v24 castType=anything
 # CHECK-NEXT: v26: Array = Data data=d2 allocationSite=7
 # CHECK-NEXT: v27: Array ~ Array<never> = Upcast v26 castType=Array
 # CHECK-NEXT: v30: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v27 provenType=Array<never, proven, pristine[Storage, Names, Dense]>

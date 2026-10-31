@@ -107,7 +107,7 @@ export const one = 1;
 // CHECK-NEXT: Rethrow v52
 // CHECK-NEXT: }
 // CHECK: function {{*}}
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] length=1 captures=[{type=undefined|null|[[f_4]] flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_6]] flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] length=1 captures=[{type=undefined|null|[[f_4]] flags=[IsExpected] variableName="basename"}] thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_6]] flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[f_4]], v1: undefined|null|number|string|symbol|bigint|[[L_6]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

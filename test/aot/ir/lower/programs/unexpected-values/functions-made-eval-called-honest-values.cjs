@@ -246,7 +246,7 @@ everyCase("after 2000");
 // CHECK-NEXT: Return v29
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="y"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsSloppy, HasExplicitName] captures=[{type=undefined|null|Array flags=[IsExpected]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsSloppy, HasExplicitName] captures=[{type=undefined|null|Array flags=[IsExpected] variableName="log"}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: undefined|null|Array):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

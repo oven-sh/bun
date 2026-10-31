@@ -1965,6 +1965,7 @@ declare namespace $Node {
       errorOnExist: boolean,
       force: boolean,
       mode: number,
+      destinationSeen: boolean,
     ): Promise<void>;
     cpSync(
       source: string,
@@ -1973,6 +1974,7 @@ declare namespace $Node {
       errorOnExist: boolean,
       force: boolean,
       mode: number,
+      destinationSeen: boolean,
     ): void;
     existsSync(path: PathLike): boolean;
     fchmodSync(fd: number, mode: number | string): void;

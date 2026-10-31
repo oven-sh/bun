@@ -50,6 +50,7 @@ static void init_debug_logging() {
 #define _GNU_SOURCE
 #endif
 #include <sys/types.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -929,6 +930,32 @@ int bsd_queued_input(LIBUS_SOCKET_DESCRIPTOR fd) {
         return LIBUS_QUEUED_INPUT_EOF;
     }
     return bsd_would_block() ? LIBUS_QUEUED_INPUT_NONE : LIBUS_QUEUED_INPUT_ERROR;
+}
+
+int bsd_queued_input_len(LIBUS_SOCKET_DESCRIPTOR fd) {
+#ifdef _WIN32
+    u_long queued = 0;
+    if (ioctlsocket(fd, FIONREAD, &queued) != 0) {
+        return 0;
+    }
+    return queued > INT_MAX ? INT_MAX : (int) queued;
+#else
+    int queued = 0;
+    if (ioctl(fd, FIONREAD, &queued) != 0 || queued <= 0) {
+        return 0;
+    }
+#ifdef __linux__
+    /* Linux counts an out-of-band byte of a unix socket, and no read returns one. For TCP it already leaves that byte out. */
+    char byte;
+    int domain = 0;
+    socklen_t domain_length = sizeof(domain);
+    if (recv(fd, &byte, 1, MSG_OOB | MSG_PEEK | MSG_DONTWAIT) == 1 &&
+        getsockopt(fd, SOL_SOCKET, SO_DOMAIN, &domain, &domain_length) == 0 && domain == AF_UNIX) {
+        queued--;
+    }
+#endif
+    return queued;
+#endif
 }
 
 #if !defined(_WIN32)

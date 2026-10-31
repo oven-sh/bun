@@ -633,6 +633,37 @@ it.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || (!isLinux
   192_000,
 );
 
+// The exit handler cancels a stdin stream, which runs cancel(). Nothing else refers to this Subprocess by then, and a
+// collection inside cancel() must not take it away before its exit is reported.
+it.skipIf(isWindows)("onExit runs when the cancel() of the child's stdin stream collects garbage", async () => {
+  let exits = 0;
+  const exitsAfterCancel: number[] = [];
+  for (let i = 0; i < 5; i++) {
+    const { promise: cancelled, resolve } = Promise.withResolvers<void>();
+    spawn({
+      // bun ends it at the timeout, while what it left behind still holds its stdout open. That ends with the shell.
+      cmd: [shellExe(), "-c", "(while kill -0 $$ 2>/dev/null; do sleep 0.01; done) & wait"],
+      stdin: new ReadableStream({
+        pull: () => new Promise(() => {}),
+        cancel() {
+          Bun.gc(true);
+          // The exit is reported when this returns, before the loop gets to the next immediate.
+          setImmediate(resolve);
+        },
+      }),
+      stdout: "pipe",
+      stderr: "ignore",
+      timeout: 40,
+      onExit() {
+        exits++;
+      },
+    });
+    await cancelled;
+    exitsAfterCancel.push(exits);
+  }
+  expect(exitsAfterCancel).toEqual([1, 2, 3, 4, 5]);
+});
+
 describe("spawn unref and kill should not hang", () => {
   const cmd = [shellExe(), "-c", "sleep 0.001"];
 

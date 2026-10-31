@@ -699,6 +699,11 @@ int us_socket_is_closed(us_socket_r s) nonnull_fn_decl;
  * own a socket between loop iterations use this to tell an idle connection
  * from one the peer has already written to or closed. */
 int us_socket_queued_input(us_socket_r s) nonnull_fn_decl;
+/* How many bytes the kernel holds for the next reads of the socket, also
+ * without a trip through the event loop. For a TLS socket these are bytes of
+ * records, not of plaintext. Callers that hold back a close until the loop has
+ * read what is queued now use this to know how much that is. */
+int us_socket_queued_input_len(us_socket_r s) nonnull_fn_decl;
 
 /* TLS sockets only: nothing sets the bit up for a plain one. The kernel rejected a send of TLS records, so the error
  * code of the close that follows stands for the lost records, not for a failed read. */

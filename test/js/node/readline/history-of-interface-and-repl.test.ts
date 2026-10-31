@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { join } from "node:path";
 import { run } from "../../../aot/harness/run";
 
@@ -23,7 +23,12 @@ const expected = [
   'default {"error":null,"history":[".exit","1 + 1"],"printed":["2"]} 1 + 1',
 ];
 
-test.skipIf(process.platform === "win32")("history of a readline interface and of a REPL", async () => {
+// `bun test` gives a test 5 s, and scripts/runner.node.ts gives it 90 s. A debug build needs 3 to 6 s to start and load
+// the readline and REPL stacks, and up to 22 s on a cold start or a loaded machine. It gets the 90 s also without the
+// runner. Every other build keeps the default.
+const timeout = isDebug ? 90_000 : undefined;
+
+test.skipIf(process.platform === "win32")("history of a readline interface and of a REPL", { timeout }, async () => {
   using home = tempDir("history-home", {});
   const { NODE_REPL_HISTORY: _, ...env } = bunEnv;
   const { stdout, stderr, exitCode } = await run(

@@ -34,7 +34,9 @@ def timeout_handler(signum, frame):
         pass
     sys.exit(1)
 
-command = sys.argv[1:]
+# usage: run-with-pty.py <seconds the whole scenario may take> <command...>
+timeout_seconds = int(sys.argv[1])
+command = sys.argv[2:]
 master_fd, slave_fd = pty.openpty()
 pid = os.fork()
 
@@ -50,7 +52,7 @@ if pid == 0:
 else:
     os.close(slave_fd)
     signal.signal(signal.SIGALRM, timeout_handler)
-    signal.alarm(3)  # 3 second timeout
+    signal.alarm(timeout_seconds)
 
     # Send to parent
     waitAndWrite(b'1')

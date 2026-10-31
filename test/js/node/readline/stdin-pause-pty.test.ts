@@ -1,17 +1,25 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows } from "harness";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-test.skipIf(isWindows)("stdin pause should stop reading so child can read from stdin", async () => {
+// `bun test` gives a test 5 s, and scripts/runner.node.ts gives it 90 s. The scenario starts the runtime three times: a
+// debug build needs 4 to 7 s for it, and up to 15 s on a cold start or a loaded machine. It gets the 90 s also without
+// the runner. Every other build keeps the default.
+const timeout = isDebug ? 90_000 : undefined;
+// run-with-pty.py ends the scenario after this many seconds and prints how far it came. This is less than the timeout
+// of the test, so that a scenario that hangs fails with its output and not with a bare timeout.
+const scenarioSeconds = isDebug ? 60 : 3;
+
+test.skipIf(isWindows)("stdin pause should stop reading so child can read from stdin", { timeout }, async () => {
   const script = join(__dirname, "stdin-pause-child-reads.mjs");
   const pty = join(__dirname, "run-with-pty.py");
   const runtime = process.env.TEST_RUNTIME || bunExe();
 
   await using proc = Bun.spawn({
-    cmd: [Bun.which("python3") ?? Bun.which("python") ?? "python", pty, runtime, script],
+    cmd: [Bun.which("python3") ?? Bun.which("python") ?? "python", pty, String(scenarioSeconds), runtime, script],
     env: bunEnv,
     stderr: "pipe",
     stdout: "pipe",

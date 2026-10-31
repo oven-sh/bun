@@ -151,8 +151,38 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
 #endif
 }
 
+#if LIBUS_UDP_RECV_PER_MESSAGE
+/* The batch receive for the arms with no kernel one: one recvmsg(2) per datagram. */
+static int bsd_recvmsg_each(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags, int max_packets) {
+    for (int i = 0; i < max_packets; ++i) {
+        while (1) {
+            ssize_t ret = 0; int unused = 0;
+            if (!US_FAULT_CHECK(US_FAULT_RECVMSG, fd, ret, unused)) {
+                ret = recvmsg(fd, &recvbuf->msgvec[i].msg_hdr, flags);
+            }
+            (void)unused;
+            if (ret < 0) {
+                if (errno == EINTR) continue;
+                if (errno == EAGAIN || errno == EWOULDBLOCK) return i;
+                return (int) ret;
+            }
+            recvbuf->msgvec[i].msg_len = ret;
+            break;
+        }
+    }
+    return max_packets;
+}
+#endif
+
 int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags, int max_packets) {
     if (max_packets > LIBUS_UDP_RECV_COUNT) max_packets = LIBUS_UDP_RECV_COUNT;
+#if LIBUS_UDP_RECV_PER_MESSAGE
+    /* A recvmsg fault rule that names this descriptor gets one recvmsg per
+     * datagram on every platform, so that it can fail a receive mid-batch. */
+    if (US_FAULT_TARGETS(US_FAULT_RECVMSG, fd)) {
+        return bsd_recvmsg_each(fd, recvbuf, flags, max_packets);
+    }
+#endif
 #if defined(_WIN32)
     for (int i = 0; i < LIBUS_UDP_RECV_COUNT; i++) {
         while (1) {
@@ -184,19 +214,7 @@ int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int fl
         }
     }
 
-    for (int i = 0; i < max_packets; ++i) {
-        while (1) {
-            ssize_t ret = recvmsg(fd, &recvbuf->msgvec[i].msg_hdr, flags);
-            if (ret < 0) {
-                if (errno == EINTR) continue;
-                if (errno == EAGAIN || errno == EWOULDBLOCK) return i;
-                return ret;
-            }
-            recvbuf->msgvec[i].msg_len = ret;
-            break;
-        }
-    }
-    return max_packets;
+    return bsd_recvmsg_each(fd, recvbuf, flags, max_packets);
 #else
     while (1) {
         int ret = recvmmsg(fd, (struct mmsghdr *)&recvbuf->msgvec, max_packets, flags, 0);

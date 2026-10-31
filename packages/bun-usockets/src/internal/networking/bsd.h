@@ -131,6 +131,15 @@ ssize_t recvmsg_x(int s, const struct mmsghdr *msgp, u_int cnt, int flags);
 ssize_t sendmsg_x(int s, const struct mmsghdr *msgp, u_int cnt, int flags);
 #endif
 
+/* Builds where bsd_recvmmsg can read a batch with one recvmsg(2) per datagram:
+ * macOS below 15.6, and fault-injection builds (see bsd_recvmsg_each). */
+#if defined(__APPLE__) || \
+    (!defined(_WIN32) && defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION)
+#define LIBUS_UDP_RECV_PER_MESSAGE 1
+#else
+#define LIBUS_UDP_RECV_PER_MESSAGE 0
+#endif
+
 struct udp_recvbuf {
 #if defined(_WIN32)
     char *buf;

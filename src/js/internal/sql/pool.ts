@@ -67,6 +67,10 @@ export type NativeCreateQuery<QueryHandle> = (
   pendingValue: SQLResultArray<unknown>,
   bigint: boolean,
   simple: boolean,
+  /** BEGIN, COMMIT, SAVEPOINT: sent by begin() and savepoint() themselves, without parameters. */
+  internal: boolean,
+  /** BEGIN or SAVEPOINT */
+  transactionStart: boolean,
 ) => QueryHandle;
 
 type OnConnected = (err: Error | null, connection: any) => void;
@@ -595,6 +599,8 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       new SQLResultArray(),
       !!(flags & SQLQueryFlags.bigint),
       !!(flags & SQLQueryFlags.simple),
+      !!(flags & SQLQueryFlags.internal),
+      !!(flags & SQLQueryFlags.transactionStart),
     );
   }
 

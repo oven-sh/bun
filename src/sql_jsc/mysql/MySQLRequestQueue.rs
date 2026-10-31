@@ -86,6 +86,23 @@ impl MySQLRequestQueue {
         self.requests.get().front().map(RefPtr::this_ptr)
     }
 
+    /// The pending requests up to the next internal one: they waited for a start that was refused.
+    pub(crate) fn reject_unwritten_behind_refused_start(&self, error: JSValue) {
+        let unwritten: Vec<RefPtr<JSMySQLQuery>> = self
+            .requests
+            .get()
+            .iter()
+            .skip(self.written.get())
+            .filter(|request| request.is_pending())
+            .take_while(|request| !request.is_internal())
+            .cloned()
+            .collect();
+        for request in unwritten {
+            request.reject_with_js_value(error);
+        }
+        error.ensure_still_alive();
+    }
+
     pub(crate) fn clean(&self, reason: JSValue) {
         // Rejecting runs JS, which can fail the connection again: that call finds an empty queue.
         self.written.set(0);

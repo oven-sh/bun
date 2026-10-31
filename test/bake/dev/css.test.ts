@@ -2154,6 +2154,8 @@ for (const mode of ["0", "1"]) {
         // The bundle of a stylesheet that imports "theme.css" builds the module again for the server.
         await Bun.write(dev.join("theme.server.txt"), `export default { name: "module-v2" };`);
         await dev.write("app.css", `@import "./theme.css";\n.app-v3 { color: red; }`, { errors: null });
+        // The route has no failure now, so a request does not bundle it again: no bundle reads this text.
+        await Bun.write(dev.join("theme.server.txt"), `export default { name: "module-v3" };`);
         expect(await load()).toEqual({ module: "module-v2", status: 200, sheets: [".theme-v1 .app-v3"] });
       },
     },

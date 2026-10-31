@@ -392,6 +392,10 @@ extern "C" JSC::EncodedJSValue Bun__runVirtualModule(
     JSC::JSGlobalObject* global,
     const BunString* specifier);
 
+extern "C" void Bun__watchFileLoadedByPlugin(
+    void* bunVM,
+    const BunString* path);
+
 extern "C" JSC::JSPromise* Bun__transpileFile(
     void* bunVM,
     JSC::JSGlobalObject* global,

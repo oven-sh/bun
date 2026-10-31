@@ -1,19 +1,22 @@
 import { spawn } from "bun";
 import { dlopen } from "bun:ffi";
-import { beforeEach, expect, it } from "bun:test";
+import { afterAll, beforeEach, expect, it } from "bun:test";
 import {
   copyFileSync,
   cpSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
-import { join } from "path";
+import { join, resolve } from "path";
+import { endChildren, spawn as spawnChild } from "../children";
 
 const timeout = isDebug ? Infinity : 10_000;
 const longTimeout = isDebug ? Infinity : 30_000;
@@ -1331,4 +1334,308 @@ it("--hot does not emit beforeExit to the listeners of a failed run", async () =
   writeFileSync(join(String(dir), "main.js"), `console.log("still running");\nprocess.exit();`);
   expect(await stdout("still running")).toBe(true);
   expect(await runner.exited).toBe(0);
+});
+
+// A runtime plugin's onLoad serves the files of the tests below, and Bun watches such a file (#4689). The extension
+// picks the shape of the result. The file holds the default export, or names a way for onLoad to fail.
+const pluginThatServesFiles = `
+  const { readFileSync } = require("node:fs");
+  const { basename } = require("node:path");
+  const result = (file, value) =>
+    file.endsWith(".object")
+      ? { exports: { default: value }, loader: "object" }
+      : { contents: "export default " + JSON.stringify(value) + ";", loader: "js" };
+  Bun.plugin({
+    name: "serves files",
+    setup(build) {
+      build.onLoad({ filter: /\\.(contents|object)(\\?.*)?$/ }, ({ path }) => {
+        const file = path.split("?")[0];
+        if (basename(file).startsWith("pending")) return Bun.file(file).text().then(value => result(file, value));
+        const value = readFileSync(file, "utf8");
+        if (value === "throw") throw new Error("onLoad threw");
+        if (value === "reject") return Promise.reject(new Error("onLoad rejected"));
+        if (value === "number") return 1;
+        if (value === "syntax") return { contents: "export default ;", loader: "js" };
+        return result(file, value);
+      });
+      build.onLoad({ filter: /\\.explicit$/, namespace: "file" }, ({ path }) => result(path, readFileSync(path, "utf8")));
+    },
+  });
+`;
+
+/** A main.js that loads a file with `load`, prints the default export, and exits once that is `last`. */
+const mainThatLoads = (load: string, last = "two") =>
+  `${load}\nconsole.log("value=" + value);\nif (value === ${JSON.stringify(last)}) process.exit(0);\n`;
+
+// The child of each of these tests runs until the test ends it, and a test that runs out of time in a concurrent group
+// ends nothing.
+afterAll(endChildren);
+
+// Windows arms its watch on the watcher thread, so a save right after a child's first line can be lost while several
+// children start.
+const itServed = isWindows ? it : it.concurrent;
+
+const spawnWithPlugin = <Err extends "inherit" | "pipe" = "inherit">(flag: string, cwd: string, stderr?: Err) =>
+  spawnChild({
+    cmd: [bunExe(), flag, "--no-clear-screen", "--preload", "./plugin.js", "main.js"],
+    env: bunEnv,
+    cwd,
+    stdout: "pipe",
+    stderr: (stderr ?? "inherit") as Err,
+    stdin: "ignore",
+  });
+
+/**
+ * `file` holds `first`. Once the first run has printed `printed`, saves "two" to the file and waits for the run that
+ * prints it.
+ */
+async function savesFileThatPluginServes(
+  flag: string,
+  file: string,
+  first: string,
+  load: string,
+  printed: { stdout: string } | { stderr: string },
+) {
+  using dir = tempDir("hot-plugin-serves", {
+    "plugin.js": pluginThatServesFiles,
+    "main.js": mainThatLoads(load),
+    [file]: first,
+  });
+  await using runner = spawnWithPlugin(flag, String(dir), "stderr" in printed ? "pipe" : "inherit");
+  const stdout = follow(runner.stdout);
+  expect(await ("stdout" in printed ? stdout(printed.stdout) : follow(runner.stderr!)(printed.stderr))).toBe(true);
+
+  writeFileSync(join(String(dir), file), "two");
+  expect(await stdout("value=two")).toBe(true);
+  expect(await runner.exited).toBe(0);
+}
+
+for (const flag of ["--hot", "--watch"]) {
+  itServed.each([
+    ["a static import of { contents }", "data.contents", `import value from "./data.contents";`],
+    ["a static import of { exports }", "data.object", `import value from "./data.object";`],
+    ["import() of { contents }", "data.contents", `const { default: value } = await import("./data.contents");`],
+    ["import() of { exports }", "data.object", `const { default: value } = await import("./data.object");`],
+    ["require() of { contents }", "data.contents", `const value = require("./data.contents").default;`],
+    ["require() of { exports }", "data.object", `const value = require("./data.object").default;`],
+  ])(`${flag} reloads when a file that a plugin serves is saved: %s`, (_, file, load) =>
+    savesFileThatPluginServes(flag, file, "one", load, { stdout: "value=one" }),
+  );
+}
+
+itServed.each([
+  ["a pending promise of { contents }", "pending.contents", `import value from "./pending.contents";`],
+  ["a pending promise of { exports }", "pending.object", `import value from "./pending.object";`],
+  ["a key with a query", "data.contents", `import value from "./data.contents?query";`],
+  ["an onLoad that names the file namespace", "data.explicit", `import value from "./data.explicit";`],
+])("--hot reloads when a file that a plugin serves is saved: %s", (_, file, load) =>
+  savesFileThatPluginServes("--hot", file, "one", load, { stdout: "value=one" }),
+);
+
+itServed.each([
+  ["--hot", "throws", "throw", "onLoad threw"],
+  ["--hot", "returns a promise that rejects", "reject", "onLoad rejected"],
+  ["--hot", "returns no object", "number", "onLoad() expects an object returned"],
+  ["--hot", "returns contents that do not parse", "syntax", "Unexpected"],
+  ["--watch", "throws", "throw", "onLoad threw"],
+])("%s reloads when a save fixes a file for which a plugin's onLoad %s", (flag, _, first, error) =>
+  savesFileThatPluginServes(flag, "data.contents", first, `import value from "./data.contents";`, { stderr: error }),
+);
+
+// A slow onLoad is still at work when an editor saves the file. The save inside this onLoad stands for that one.
+itServed("--hot reloads for a save that lands while a plugin's onLoad runs", async () => {
+  using dir = tempDir("hot-plugin-save-in-onload", {
+    "plugin.js": `
+      const { readFileSync, writeFileSync } = require("node:fs");
+      Bun.plugin({
+        name: "saves in onLoad",
+        setup(build) {
+          build.onLoad({ filter: /\\.contents$/ }, ({ path }) => {
+            const value = readFileSync(path, "utf8");
+            if (value === "one") writeFileSync(path, "two");
+            return { contents: "export default " + JSON.stringify(value) + ";", loader: "js" };
+          });
+        },
+      });
+    `,
+    "main.js": mainThatLoads(`import value from "./data.contents";`),
+    "data.contents": "one",
+  });
+  await using runner = spawnWithPlugin("--hot", String(dir));
+  const stdout = follow(runner.stdout);
+  expect(await stdout("value=one")).toBe(true);
+  expect(await stdout("value=two")).toBe(true);
+  expect(await runner.exited).toBe(0);
+});
+
+itServed("--hot keeps watching a file that a plugin serves after a save replaces the file", async () => {
+  using dir = tempDir("hot-plugin-replace", {
+    "plugin.js": pluginThatServesFiles,
+    "main.js": mainThatLoads(`import value from "./data.contents";`, "three"),
+    "data.contents": "one",
+  });
+  await using runner = spawnWithPlugin("--hot", String(dir));
+  const stdout = follow(runner.stdout);
+  expect(await stdout("value=one")).toBe(true);
+  for (const value of ["two", "three"]) {
+    writeHotFileAtomicSync(join(String(dir), "data.contents"), value);
+    expect(await stdout("value=" + value)).toBe(true);
+  }
+  expect(await runner.exited).toBe(0);
+});
+
+// Seen on Linux: "value=two" is printed, and the save after it prints nothing. The watch of a file that a plugin serves
+// is by path, with no descriptor, so it stays on the renamed file. Other platforms were not run.
+it.todo("--hot keeps watching a file that a plugin serves after a save that keeps the old file", async () => {
+  using dir = tempDir("hot-plugin-backup", {
+    "plugin.js": pluginThatServesFiles,
+    "main.js": mainThatLoads(`import value from "./data.contents";`, "three"),
+    "data.contents": "one",
+  });
+  const file = join(String(dir), "data.contents");
+  await using runner = spawnWithPlugin("--hot", String(dir));
+  const stdout = follow(runner.stdout);
+  expect(await stdout("value=one")).toBe(true);
+  renameSync(file, file + "~");
+  writeFileSync(file, "two");
+  expect(await stdout("value=two")).toBe(true);
+  writeFileSync(file, "three");
+  expect(await stdout("value=three")).toBe(true);
+  expect(await runner.exited).toBe(0);
+});
+
+// A plugin can serve a key that is not a file on disk. The watcher does not get such a path: it asserts on "/", and on
+// Windows it warns about a path outside the project directory.
+itServed("--hot does not watch a key of a plugin that is not a file on disk", async () => {
+  using dir = tempDir("hot-plugin-made-up", {
+    "plugin.js": `
+      const { resolve } = require("node:path");
+      Bun.plugin({
+        name: "makes up paths",
+        setup(build) {
+          build.onResolve({ filter: /^made-up\\.contents$/ }, () => ({ path: resolve("/made-up-by-a-plugin/file.contents") }));
+          build.onResolve({ filter: /^root\\.contents$/ }, () => ({ path: "/?root.contents" }));
+          build.onLoad({ filter: /\\.contents$/ }, ({ path }) => ({
+            contents: "export default " + JSON.stringify(path.includes("?") ? "root" : "made up") + ";",
+            loader: "js",
+          }));
+        },
+      });
+    `,
+    "main.js": `
+      import madeUp from "made-up.contents";
+      import root from "root.contents";
+      console.log(madeUp + ", " + root);
+      process.exit(0);
+    `,
+  });
+  await using runner = spawnWithPlugin("--hot", String(dir), "pipe");
+  const [stdout, stderr, exitCode] = await Promise.all([runner.stdout.text(), runner.stderr.text(), runner.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "made up, root\n", stderr: "", exitCode: 0 });
+});
+
+// A key that a plugin spells with ".." and that is not on disk used to add its folder to the watcher under that
+// spelling. On Linux that item then took the folder's events, and a replaced file in it reloaded nothing.
+itServed("--hot reloads a file next to a key of a plugin that is not on disk", async () => {
+  using dir = tempDir("hot-plugin-dot-dot", {
+    "plugin.js": `
+      const { dirname } = require("node:path");
+      Bun.plugin({
+        name: "generates",
+        setup(build) {
+          build.onResolve({ filter: /\\.generated$/ }, ({ path, importer }) => ({ path: dirname(importer) + "/" + path }));
+          build.onLoad({ filter: /\\.generated$/ }, () => ({ contents: "export default 'generated';", loader: "js" }));
+        },
+      });
+    `,
+    "main.js": `import "./pages/home.js";\n`,
+    "pages/home.js": `
+      import { value } from "../shared/on-disk.js";
+      import "../shared/not-on-disk.generated";
+      globalThis.runs = (globalThis.runs ?? 0) + 1;
+      console.log("run " + globalThis.runs + ": value=" + value);
+      if (value === "three") process.exit(0);
+    `,
+    "shared/on-disk.js": `export const value = "one";\n`,
+  });
+  const root = String(dir);
+  const onDisk = join(root, "shared", "on-disk.js");
+  await using runner = spawnWithPlugin("--hot", root);
+  const stdout = follow(runner.stdout);
+  expect(await stdout("run 1: value=one")).toBe(true);
+
+  writeFileSync(join(root, "main.js"), `import "./pages/home.js";\n// saved\n`);
+  expect(await stdout("run 2: value=one")).toBe(true);
+  writeHotFileAtomicSync(onDisk, `export const value = "two";\n`);
+  expect(await stdout("value=two")).toBe(true);
+  writeFileSync(onDisk, `export const value = "three";\n`);
+  expect(await stdout("value=three")).toBe(true);
+  expect(await runner.exited).toBe(0);
+});
+
+/** Linux only. The `paths` that the process has an inotify watch on. A relative path is in `root`. */
+function inotifyWatched(pid: number, root: string, paths: string[]) {
+  const inodes = readdirSync(`/proc/${pid}/fdinfo`).flatMap(fd => {
+    // The process is live, so an fd listed a moment ago can be closed by the time it is read.
+    try {
+      const fdinfo = readFileSync(`/proc/${pid}/fdinfo/${fd}`, "utf8");
+      return [...fdinfo.matchAll(/^inotify .*\bino:([0-9a-f]+)/gm)].map(watch => watch[1]);
+    } catch {
+      return [];
+    }
+  });
+  return paths.filter(path => inodes.includes(statSync(resolve(root, path)).ino.toString(16)));
+}
+
+// Only the file namespace names files on disk. A key that is relative, in node_modules, a directory, or the root
+// directory before a query, is not a file to watch. build.module() reads no file.
+it.skipIf(!isLinux)("--hot watches only the project's files that an onLoad in the file namespace serves", async () => {
+  using dir = tempDir("hot-plugin-watch-set", {
+    "plugin.js": `
+      const { resolve } = require("node:path");
+      const served = { contents: "export default 1;", loader: "js" };
+      Bun.plugin({
+        name: "serves files",
+        setup(build) {
+          build.onLoad({ filter: /\\.served$/ }, () => served);
+          build.onResolve({ filter: /^namespaced\\.key$/ }, () => ({ path: resolve("namespaced.served"), namespace: "other" }));
+          build.onLoad({ filter: /.*/, namespace: "other" }, () => served);
+          build.onResolve({ filter: /^relative\\.key$/ }, () => ({ path: "relative.served" }));
+          build.onResolve({ filter: /^folder\\.key$/ }, () => ({ path: resolve("folder.served") }));
+          build.onResolve({ filter: /^root\\.key$/ }, () => ({ path: "/?root.served" }));
+          build.module(resolve("module.served"), () => ({ exports: { default: 1 }, loader: "object" }));
+        },
+      });
+    `,
+    "main.js": `
+      import "./project.served";
+      import "./node_modules/dependency/dependency.served";
+      import "namespaced.key";
+      import "relative.key";
+      import "folder.key";
+      import "root.key";
+      await import(require("node:path").resolve("module.served"));
+      console.log("loaded");
+    `,
+    "project.served": "",
+    "namespaced.served": "",
+    "relative.served": "",
+    "folder.served/file": "",
+    "module.served": "",
+    "node_modules/dependency/dependency.served": "",
+  });
+  const root = String(dir);
+  await using runner = spawnWithPlugin("--hot", root);
+  expect(await follow(runner.stdout)("loaded")).toBe(true);
+  const paths = [
+    "main.js",
+    "project.served",
+    "namespaced.served",
+    "relative.served",
+    "folder.served",
+    "/",
+    "module.served",
+    "node_modules/dependency/dependency.served",
+  ];
+  expect(inotifyWatched(runner.pid, root, paths)).toEqual(["main.js", "project.served"]);
 });

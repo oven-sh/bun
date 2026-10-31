@@ -262,6 +262,8 @@ describe.concurrent("sourceMappingURL comment of a // @bun file", () => {
   const inString = comment({ ...map, sources: ["in-string.ts"] });
   const own = comment({ ...map, sources: ["own.ts"] });
   const beside = JSON.stringify({ ...map, sources: ["beside.ts"] });
+  // `bun build --sourcemap=external` ends a file with this line and writes the map beside it.
+  const namesMapBeside = "\n//# debugId=0\n";
 
   async function run(files, script, names) {
     using dir = tempDir("sourcemap-comment", { "main.js": script, ...files });
@@ -288,7 +290,6 @@ describe.concurrent("sourceMappingURL comment of a // @bun file", () => {
   `;
 
   test("text in a string or in a block comment is not the comment of the file", async () => {
-    // Each file has a map beside it, as `bun build --sourcemap=external` writes it.
     const tails = {
       "string.js": "export const text = `\n" + inString + "\n`;\n//# debugId=0\n",
       "string-closes-on-comment-line.js": "export const text = `\n" + inString + "\n// `;\n",
@@ -296,7 +297,6 @@ describe.concurrent("sourceMappingURL comment of a // @bun file", () => {
       "string-closes-on-url-line.js": "export const text = `\n" + inString + "`;",
       "minified.js": "var b=`x\n" + inString + "\n// the end`;function u(){return 1}export{b,u};\n\n//# debugId=0\n",
       "block-comment.js": "/*\n" + inString + "\n// */\n",
-      "block-comment-two-stars-ends-file.js": "/**\n" + inString + "\n**/",
       "string-closes-far-after.js":
         "export const text = `\n" + inString + "\n" + Buffer.alloc(4096, "x\n").toString() + "`;\n",
       "continued-string.js": 'export const text = "\\\n' + inString + '\\\n";\n',
@@ -305,7 +305,7 @@ describe.concurrent("sourceMappingURL comment of a // @bun file", () => {
     };
     const files = {};
     for (const [name, tail] of Object.entries(tails)) {
-      files[name] = throwsOnLine3 + tail;
+      files[name] = throwsOnLine3 + tail + namesMapBeside;
       files[name + ".map"] = beside;
     }
 
@@ -323,6 +323,7 @@ describe.concurrent("sourceMappingURL comment of a // @bun file", () => {
     const tails = {
       "string.js": "export const text = `\n" + inString + "\n`;\n",
       "string-closes-on-url-line.js": "export const text = `\n" + inString + "`;",
+      "block-comment-two-stars-ends-file.js": "/**\n" + inString + "\n**/",
       // A library that writes map comments has the start of one in its own code.
       "writer.js": "export const withMap = (code, url) => code + `\n//# sourceMappingURL=` + url;\n",
       "writer-minified.js": "export const withMap=(c,u)=>c+`\n//# sourceMappingURL=`+u;\n",
@@ -394,7 +395,7 @@ describe.concurrent("sourceMappingURL comment of a // @bun file", () => {
     };
     const files = {};
     for (const [name, tail] of Object.entries(tails)) {
-      files[name] = throwsOnLine3 + tail;
+      files[name] = throwsOnLine3 + tail + namesMapBeside;
       files[name + ".map"] = beside;
     }
 

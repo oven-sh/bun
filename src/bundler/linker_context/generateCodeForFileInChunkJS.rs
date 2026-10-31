@@ -190,6 +190,7 @@ pub fn generate_code_for_file_in_chunk_js(
                     contents_is_recycled: source_ref.contents_is_recycled,
                     identifier_name: std::borrow::Cow::Borrowed(&source_ref.identifier_name),
                     index: source_ref.index,
+                    id: source_ref.id,
                 };
                 &source_storage
             } else {

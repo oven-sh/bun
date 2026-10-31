@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync, symlinkSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, symlinkSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import {
   bunExe,
@@ -1001,6 +1001,48 @@ booga"
       })
       .runAsTest("Should work with a different cwd");
 
+    describe("whitespace or an operator ends the word that ** is in", () => {
+      TestBuilder.command`echo ** | cat`
+        .ensureTempDir()
+        .file("only.txt", "")
+        .stdout("only.txt\n")
+        .runAsTest("echo ** | cat");
+
+      TestBuilder.command`echo ** && echo c`
+        .ensureTempDir()
+        .file("only.txt", "")
+        .stdout("only.txt\nc\n")
+        .runAsTest("echo ** && echo c");
+
+      TestBuilder.command`echo ** c`.ensureTempDir().file("only.txt", "").stdout("only.txt c\n").runAsTest("echo ** c");
+
+      // https://github.com/oven-sh/bun/issues/18656
+      TestBuilder.command`echo views/** public/**/*.js .env`
+        .ensureTempDir()
+        .directory("views")
+        .file("views/a.html", "")
+        .directory("public/js")
+        .file("public/js/b.js", "")
+        .file(".env", "")
+        .stdout(out =>
+          expect(out.trim().replaceAll("\\", "/").split(/\s+/)).toEqual(["views/a.html", "public/js/b.js", ".env"]),
+        )
+        .runAsTest("echo views/** public/**/*.js .env");
+
+      // `**` is recursive in Bun Shell. sh, and bash without globstar, read it as `*`.
+      TestBuilder.command`echo src/** dst`
+        .ensureTempDir()
+        .directory("src/nested")
+        .file("src/a.txt", "")
+        .file("src/nested/b.txt", "")
+        .stdout(out => {
+          const words = out.trim().replaceAll("\\", "/").split(/\s+/);
+          expect(words.at(-1)).toBe("dst");
+          expect(words.sort()).toEqual(["dst", "src/a.txt", "src/nested", "src/nested/b.txt"]);
+        })
+        .runAsTest("echo src/** dst");
+    });
+
     describe("interpolated values cannot inject glob syntax", () => {
       // Only `*`/`**` written literally in the template act as glob syntax.
       // Metacharacters arriving via `${...}` interpolation are data and must
@@ -1872,6 +1914,73 @@ describe("deno_task", () => {
       .stdout("1\n")
       .fileEquals("test.txt", "5\n")
       .runAsTest("redirect stderr of subprocess");
+
+    // https://github.com/oven-sh/bun/issues/12602
+    describe("a digit at the end of a word is not an fd number", () => {
+      TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"process.stdout.write(process.argv.at(-1) + ':' + (await Bun.stdin.text()))"} arg1<input.txt`
+        .file("input.txt", "INPUT\n")
+        .stdout("arg1:INPUT\n")
+        .fileEquals("input.txt", "INPUT\n")
+        .runAsTest("arg1<file");
+
+      TestBuilder.command`echo z1>test.txt`.fileEquals("test.txt", "z1\n").runAsTest("echo z1>file");
+      TestBuilder.command`echo z2>test.txt`.fileEquals("test.txt", "z2\n").runAsTest("echo z2>file");
+      TestBuilder.command`echo z0>test.txt`.fileEquals("test.txt", "z0\n").runAsTest("echo z0>file");
+      TestBuilder.command`echo file10>test.txt`.fileEquals("test.txt", "file10\n").runAsTest("echo file10>file");
+      TestBuilder.command`echo a > test.txt && echo z1>>test.txt`
+        .fileEquals("test.txt", "a\nz1\n")
+        .runAsTest("echo z1>>file");
+      TestBuilder.command`echo "z"1>test.txt`.fileEquals("test.txt", "z1\n").runAsTest("after a quoted word");
+      TestBuilder.command`echo $(echo z)1>test.txt`
+        .fileEquals("test.txt", "z1\n")
+        .runAsTest("after a command substitution");
+      TestBuilder.command`echo ${"a b"}2>test.txt`
+        .fileEquals("test.txt", "a b2\n")
+        .runAsTest("after an interpolated string");
+
+      TestBuilder.command`echo z 2>test.txt`
+        .stdout("z\n")
+        .fileEquals("test.txt", "")
+        .runAsTest("a digit that is a word of its own is still an fd number");
+
+      // A tab does not end a word yet, so the `z` word keeps the tab.
+      TestBuilder.command`echo z${{ raw: "\t" }}2>test.txt`
+        .stdout(out => expect(out.trim()).toBe("z"))
+        .fileEquals("test.txt", "")
+        .runAsTest("a digit after a tab is still an fd number");
+    });
+
+    describe("a digit is an fd number only in the direction of that fd", () => {
+      TestBuilder.command`cat 0<test.txt`.file("test.txt", "IN\n").stdout("IN\n").runAsTest("cat 0<file");
+
+      // bash opens the file for reading on fd 1, and echo fails. Bun Shell has no such redirect.
+      TestBuilder.command`echo z 1<test.txt`
+        .file("test.txt", "KEEP\n")
+        .stdout("z 1\n")
+        .fileEquals("test.txt", "KEEP\n")
+        .runAsTest("echo z 1<file");
+
+      // bash opens the file for writing on fd 0 and prints `z`. Bun Shell has no such redirect.
+      TestBuilder.command`echo z 0>test.txt`.fileEquals("test.txt", "z 0\n").runAsTest("echo z 0>file");
+    });
+
+    // https://github.com/oven-sh/bun/issues/10465
+    test.each(["<<", "x<<", "x1<<", "0<<"])(
+      "cat %sEOF: a here-document is an error, and its body does not run",
+      async redirect => {
+        using dir = tempDir("shell-here-document", {});
+        let message: string | undefined;
+        try {
+          await $`${{ raw: `cat ${redirect}EOF\ntouch ran.txt\nEOF` }}`.cwd(String(dir)).quiet();
+        } catch (e) {
+          message = (e as Error).message;
+        }
+        expect({ message, ran: existsSync(join(String(dir), "ran.txt")) }).toEqual({
+          message: 'Here-documents "<<" are not supported yet.',
+          ran: false,
+        });
+      },
+    );
 
     // invalid fd
     // await TestBuilder.command`echo 2 3> test.txt`

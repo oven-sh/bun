@@ -11,9 +11,9 @@ pub struct ExportsStyle {
     allow_batch_assign: bool,
 }
 
-const UNEXPECTED_EXPORTS: Message = Message::new("", "Unexpected access to `exports`.");
-const UNEXPECTED_MODULE_EXPORTS: Message = Message::new("", "Unexpected access to `module.exports`.");
-const UNEXPECTED_ASSIGNMENT: Message = Message::new("", "Unexpected assignment to `exports`.");
+const UNEXPECTED_EXPORTS: &Message = &Message::new("", "Unexpected access to `exports`.");
+const UNEXPECTED_MODULE_EXPORTS: &Message = &Message::new("", "Unexpected access to `module.exports`.");
+const UNEXPECTED_ASSIGNMENT: &Message = &Message::new("", "Unexpected assignment to `exports`.");
 
 impl Rule for ExportsStyle {
     const META: Meta = Meta::oxlint(Plugin::Node, "exports-style", Kind::Suggestion);

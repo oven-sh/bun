@@ -8,7 +8,7 @@ pub struct TextEncodingIdentifierCase {
     with_dash: bool,
 }
 
-const TEXT_ENCODING_IDENTIFIER_CASE: Message = Message::new("", "Prefer `{{good_encoding}}` over `{{bad_encoding}}`.");
+const TEXT_ENCODING_IDENTIFIER_CASE: &Message = &Message::new("", "Prefer `{{good_encoding}}` over `{{bad_encoding}}`.");
 
 impl Rule for TextEncodingIdentifierCase {
     const META: Meta =

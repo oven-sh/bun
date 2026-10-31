@@ -24,15 +24,15 @@ pub struct NoUnnecessaryTypeAssertion {
     types_to_ignore: Vec<Vec<u8>>,
 }
 
-const CONTEXTUALLY_INFERRED_TYPE_ARGUMENTS: Message = Message::new(
+const CONTEXTUALLY_INFERRED_TYPE_ARGUMENTS: &Message = &Message::new(
     "contextuallyInferredTypeArguments",
     "The type arguments for this generic call may be inferred from the assertion. Specify them explicitly instead.",
 );
-const CONTEXTUALLY_UNNECESSARY: Message = Message::new(
+const CONTEXTUALLY_UNNECESSARY: &Message = &Message::new(
     "contextuallyUnnecessary",
     "This assertion is unnecessary since the receiver accepts the original type of the expression.",
 );
-const UNNECESSARY_ASSERTION: Message = Message::new(
+const UNNECESSARY_ASSERTION: &Message = &Message::new(
     "unnecessaryAssertion",
     "This assertion is unnecessary since it does not change the type of the expression.",
 );
@@ -408,7 +408,7 @@ fn tsgolint_is_constrained_to<'a>(source: Type<'a>, target: Type<'a>, seen: &mut
 fn is_double_assertion_unnecessary<'a>(
     assertion: Assertion<'a>,
     contextual_type: Option<Type<'a>>,
-) -> Option<Message> {
+) -> Option<&'static Message> {
     let inner_expression = assertion.expression;
     as_assertion(inner_expression)?;
     let original_type = get_original_expression(assertion).ty();

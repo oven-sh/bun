@@ -13,8 +13,8 @@ pub struct JsxPropsNoSpreading {
     exceptions: Vec<Box<[u8]>>,
 }
 
-const NO_SPREADING: Message = Message::new("noSpreading", "Prop spreading is forbidden");
-const JSX_PROPS_NO_SPREADING: Message = Message::new("", "Prop spreading is forbidden");
+const NO_SPREADING: &Message = &Message::new("noSpreading", "Prop spreading is forbidden");
+const JSX_PROPS_NO_SPREADING: &Message = &Message::new("", "Prop spreading is forbidden");
 
 impl Rule for JsxPropsNoSpreading {
     const META: Meta = Meta::plugin(Plugin::React, "jsx-props-no-spreading", Kind::None);

@@ -1761,6 +1761,8 @@ impl<'a> Repl<'a> {
 
         // Empty / whitespace-only script: nothing to do (matches `node -e ""`)
         if strings::trim(code, b" \t\n\r").is_empty() {
+            // A preload can have left work behind.
+            super::drain_event_loop(vm.as_mut());
             if print_result {
                 if self.use_colors {
                     self.print(format_args!("{}undefined{}\n", Color::DIM, Color::RESET));
@@ -1855,11 +1857,7 @@ impl<'a> Repl<'a> {
         let _prot = actual_result.protected();
 
         // Drain the event loop (timers, I/O, etc.) before printing / exiting
-        vm.as_mut().tick();
-        while vm.is_event_loop_alive() {
-            vm.as_mut().tick();
-            vm.as_mut().auto_tick_active();
-        }
+        super::drain_event_loop(vm.as_mut());
 
         if print_result {
             if actual_result.is_undefined() {

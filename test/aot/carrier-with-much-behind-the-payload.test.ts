@@ -44,9 +44,8 @@ test.skipIf(!isLinux)(
     const ran = await spawn([join(cwd, "long")], cwd);
     expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ stdout: "42\n", exitCode: 0 });
 
-    // The tail was the end of the carrier, and the two executables differ by nothing else in length.
-    const [shortSize, longSize] = [statSync(join(cwd, "short")).size, statSync(join(cwd, "long")).size];
-    expect(longSize - shortSize).toBe(blocks * megabyte);
+    // Where the table of section headers is the end of a carrier it is written anew in its place, and otherwise behind all else: the lengths say nothing.
+    const longSize = statSync(join(cwd, "long")).size;
     const file = openSync(join(cwd, "long"), "r");
     try {
       const marker = blockAt(0).subarray(0, 64);

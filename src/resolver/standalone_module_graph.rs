@@ -141,6 +141,30 @@ pub trait StandaloneModuleGraph: Send + Sync {
             }),
             false => None,
         };
+        // `require(__dirname + "/data.json")`: the path is that of the machine that built the program, a second name for a file that
+        // `--asset` gave the executable. So is `createRequire(__filename)("./data.json")`. The disk wins where it has the path.
+        let file = file.or_else(|| {
+            use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
+            let program = self.compiled_program().filter(|_| !is_left_to_program)?;
+            let public_root = self.base_public_path_with_default_suffix();
+            let mut buffer = bun_paths::path_buffer_pool::get();
+            let on_build_machine = match bun_paths::is_absolute(specifier) {
+                true => specifier,
+                false if crate::compiled_program::is_relative_specifier(specifier) => {
+                    join_abs_string_buf_checked::<platform::Auto>(
+                        source_dir,
+                        &mut buffer[..],
+                        &[specifier],
+                    )?
+                }
+                false => return None,
+            };
+            let path = program.public_path_of_source(public_root, on_build_machine)?;
+            match bun_sys::exists(on_build_machine) {
+                true => None,
+                false => self.resolve(public_root, &path),
+            }
+        });
         let module = file.map(|name| match self.compiled_entry_point(name) {
             Some(entry_point) => entry_point.module_path,
             None => name,
@@ -169,6 +193,9 @@ pub trait StandaloneModuleGraph: Send + Sync {
                     search,
                 )
             };
+            // `require(__dirname + "/a.js")`: the path is that of the machine that built the program, and the module is in the executable.
+            let module =
+                module.or_else(|| resolve_below(program.root_on_build_machine()?.to_vec()));
             let beside_executable =
                 module.or_else(|| resolve_below(self.root_beside_executable()?));
             beside_executable.or_else(|| {
@@ -192,6 +219,9 @@ pub trait StandaloneModuleGraph: Send + Sync {
             return PackageLookup::Unknown;
         };
         let public_root = self.base_public_path_with_default_suffix();
+        // `createRequire(__filename)("a-package")`
+        let known_to_program = program.public_path_of_source(public_root, source_dir);
+        let source_dir = known_to_program.as_deref().unwrap_or(source_dir);
         program.resolve_package(public_root, source_dir, specifier, is_require, search)
     }
     /// `CompiledProgram::root_beside_executable`

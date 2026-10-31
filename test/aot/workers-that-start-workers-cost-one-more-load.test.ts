@@ -3,12 +3,13 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-// The files that Workers start from are entry points of the one program of a test run. The build learns of them from the files it has loaded,
-// and loads all files anew with them. A file that a Worker starts from may start a Worker too, here four in a row, each named in a
+// The files that Workers start from are entry points of the one program of a test run. The build learns of them from the files it has loaded.
+// Without a tsconfig.json the TypeScript entry points are what the program lists for its types, so the build loads all files anew with them.
+// A file that a Worker starts from may start a Worker too, here four in a row, each named in a
 // file that only the one before it imports: the build follows the row at once and loads all files one more time, not four.
+// With a tsconfig.json: a-test-run-that-starts-workers-loads-its-files-once.test.ts.
 const files: Record<string, string> = {
   "package.json": `{ "type": "module" }`,
-  "tsconfig.json": "{}",
   "chain.test.ts": `import { test, expect } from "bun:test";
     import { start } from "./src/start";
     test("a row of Workers", async () => {

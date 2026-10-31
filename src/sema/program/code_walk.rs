@@ -7,12 +7,15 @@ use super::code_barrels::{
     BarrelRequests, NOT_LOADED, erase_imports_not_followed, erase_waiting_sites,
 };
 use super::code_file::{
-    LoadInputs, finish_code_file, fold_code_file_again, is_finished_later, load_code_file,
+    LoadInputs, finish_code_file, fold_code_file_again, import_meta_main, is_finished_later,
+    load_code_file,
 };
+use super::code_finish::find_answers_so_far;
 use super::code_imports::files_of;
 use super::code_load::{CodeEntry, CodeTarget, LoadKey, ParsedCodeFile};
 use super::code_types::predicted_type_files;
 use super::*;
+use crate::file_analysis::FileAnalysis;
 use crate::fold::StoredByMocks;
 use crate::import_sites::{ImportSiteKind, ImportSpecifier};
 use crate::resolve::{
@@ -154,7 +157,7 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             may_load_early: Condvar::new(),
         };
         let mut state = walk.state.lock();
-        for &entry_point in &self.entry_points {
+        for entry_point in self.entry_points() {
             walk.enqueue(&mut state, entry_point);
         }
         drop(state);
@@ -400,6 +403,35 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         !state.found.is_empty()
     }
 
+    /// `CompileInputs::finds_entry_points`. Returns whether the program begins at more files than before.
+    fn begin_at_found_entry_points(&self, state: &mut WalkState<'s, 'r>) -> bool {
+        let context = self.context;
+        let Some(find) = context.inputs.finds_entry_points else {
+            return false;
+        };
+        let found = find(&WalkedCode::new(context, state));
+        let added: Vec<CodeTarget<'r>> = (found.iter())
+            .filter_map(|path| context.add_entry_point(path))
+            .collect();
+        for &entry_point in &added {
+            self.enqueue(state, entry_point);
+        }
+        if added.is_empty() {
+            return false;
+        }
+        // A file is folded with whether the program begins at it, and whether it begins nowhere else.
+        for entry_point in context.entry_points() {
+            let index = state.index_of[&context.canonical_key(entry_point.key)];
+            let parsed = state.files[index as usize].parsed.as_ref();
+            let folded_with = parsed.map(|it| it.code.analyzed.import_meta_main);
+            if folded_with.is_some_and(|known| known != import_meta_main(context, entry_point.key))
+            {
+                forget_parsed_file(state, index);
+            }
+        }
+        true
+    }
+
     /// Returns whether there are files to read. Releases the lock while it asks the host who reads the new files.
     fn queue_found_files<'w>(
         &'w self,
@@ -522,7 +554,8 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                     || forget_files_that_another_loader_reads(context, &mut state));
             let goes_on = learns_from_other_files
                 || finish_files(&mut state)
-                || self.follow_chosen_imports(&mut state);
+                || self.follow_chosen_imports(&mut state)
+                || self.begin_at_found_entry_points(&mut state);
             if !goes_on {
                 state.is_finished = true;
                 self.has_to_read.notify_all();
@@ -886,6 +919,115 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
     }
 }
 
+/// The files that are parsed, each under its place among `WalkState::files`.
+struct WalkedCode<'w, 's, 'r> {
+    session: &'s Session,
+    atoms: Interner<'s>,
+    files: &'w [WalkedFile<'s, 'r>],
+    answers: Vec<OnceLock<(Vec<CodeAnswer<'s>>, Vec<CodeAnswer<'s>>)>>,
+    entry_points: Vec<FileId>,
+    /// In the order that `order_files` gives them.
+    compiled_files: Vec<FileId>,
+}
+
+impl<'w, 's, 'r> WalkedCode<'w, 's, 'r> {
+    fn new(
+        context: &CodeLoadContext<'_, 's, 'r>,
+        state: &'w WalkState<'s, 'r>,
+    ) -> WalkedCode<'w, 's, 'r> {
+        let files = &state.files[..];
+        let entry_points: Vec<u32> = (context.entry_points().iter())
+            .map(|it| state.index_of[&context.canonical_key(it.key)])
+            .collect();
+        let mut compiled_files = Vec::with_capacity(files.len());
+        let mut seen = vec![false; files.len()];
+        let mut stack: Vec<(u32, usize)> = Vec::new();
+        for &root in &entry_points {
+            if !std::mem::replace(&mut seen[root as usize], true) {
+                stack.push((root, 0));
+            }
+            while let Some(top) = stack.last_mut() {
+                let (index, next) = *top;
+                match files[index as usize].targets.get(next) {
+                    Some(&reached) => {
+                        top.1 += 1;
+                        if reached != NOT_LOADED
+                            && !std::mem::replace(&mut seen[reached as usize], true)
+                        {
+                            stack.push((reached, 0));
+                        }
+                    }
+                    None => {
+                        if files[index as usize].parsed.is_some() {
+                            compiled_files.push(FileId(index));
+                        }
+                        stack.pop();
+                    }
+                }
+            }
+        }
+        WalkedCode {
+            session: context.session,
+            atoms: context.atoms,
+            files,
+            answers: files.iter().map(|_| OnceLock::new()).collect(),
+            entry_points: entry_points.into_iter().map(FileId).collect(),
+            compiled_files,
+        }
+    }
+
+    fn parsed(&self, file: FileId) -> &'w ParsedCodeFile<'s, 'r> {
+        let parsed = self.files[file.idx()].parsed.as_deref();
+        parsed.expect("a file without a tree")
+    }
+}
+
+impl<'s> CodeView<'s> for WalkedCode<'_, 's, '_> {
+    fn atoms(&self) -> &Interner<'s> {
+        &self.atoms
+    }
+
+    fn hir(&self, file: FileId) -> &hir::File<'s> {
+        &self.parsed(file).parse.hir
+    }
+
+    fn bound(&self, file: FileId) -> &Bound<'s> {
+        &self.parsed(file).parse.bound
+    }
+
+    fn analysis(&self, file: FileId) -> &FileAnalysis<'s> {
+        &self.parsed(file).code.analyzed.analysis
+    }
+
+    fn answers(&self, file: FileId) -> Option<(&[CodeAnswer<'s>], &[CodeAnswer<'s>])> {
+        let walked = &self.files[file.idx()];
+        let code = &walked.parsed.as_ref()?.code;
+        let (written, implied) = self.answers[file.idx()].get_or_init(|| {
+            let target_files: Vec<Option<FileId>> = (walked.targets.iter())
+                .map(|&target| (target != NOT_LOADED).then_some(FileId(target)))
+                .collect();
+            find_answers_so_far(&self.atoms, self.session.arena(), code, &target_files)
+        });
+        Some((written, implied))
+    }
+
+    fn file_name(&self, file: FileId) -> &[u8] {
+        self.files[file.idx()].target.key.path
+    }
+
+    fn entry_points(&self) -> &[FileId] {
+        &self.entry_points
+    }
+
+    fn compiled_files(&self) -> &[FileId] {
+        &self.compiled_files
+    }
+
+    fn host_payload(&self, file: FileId) -> Option<&(dyn std::any::Any + Send + Sync)> {
+        self.files[file.idx()].parsed.as_ref()?.payload.as_deref()
+    }
+}
+
 fn is_on_cycle(files: &[WalkedFile<'_, '_>], start: u32) -> bool {
     let mut seen = vec![false; files.len()];
     let mut stack = vec![start];
@@ -1144,14 +1286,15 @@ fn order_files<'s, 'r>(
         index_of,
         ..
     } = state;
-    let entry_points = context.entry_points.iter();
-    let entry_points = entry_points.map(|it| index_of[&context.canonical_key(it.key)]);
-    share_modules_among_types(&mut files, entry_points.collect());
-    let mut roots: Vec<u32> = Vec::with_capacity(context.entry_points.len());
+    let entry_points = context.entry_points();
+    let indexes = entry_points.iter();
+    let indexes = indexes.map(|it| index_of[&context.canonical_key(it.key)]);
+    share_modules_among_types(&mut files, indexes.collect());
+    let mut roots: Vec<u32> = Vec::with_capacity(entry_points.len());
     let mut order: Vec<u32> = Vec::with_capacity(files.len());
     let mut seen = vec![false; files.len()];
     let mut stack: Vec<(u32, usize)> = Vec::new();
-    for entry_point in &context.entry_points {
+    for entry_point in &entry_points {
         let root = index_of[&context.canonical_key(entry_point.key)];
         roots.push(root);
         if !std::mem::replace(&mut seen[root as usize], true) {

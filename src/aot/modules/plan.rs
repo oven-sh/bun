@@ -150,6 +150,7 @@ pub(super) struct Plan {
     /// The order numbers no module of the library.
     mocked_runtime_modules: Vec<RuntimeModule>,
     may_mock_every_module: bool,
+    runs_tests: bool,
     /// A test run: `require.cache` lists the files of the program that have run.
     lists_files_in_cache: bool,
     /// `EvictedModules::is_table_reached`
@@ -197,6 +198,7 @@ impl Plan {
             may_be_mocked: vec![false; order.numbers.len()],
             mocked_runtime_modules: Vec::new(),
             may_mock_every_module: false,
+            runs_tests: false,
             lists_files_in_cache: false,
             reaches_entries_of_cache: false,
             may_be_evicted: vec![false; order.numbers.len()],
@@ -242,6 +244,10 @@ impl Plan {
             ModuleRef::Runtime(module) => self.mocked_runtime_modules.push(module),
             _ => self.add(|plan| &mut plan.may_be_mocked, module),
         }
+    }
+
+    pub(super) fn set_runs_tests(&mut self) {
+        self.runs_tests = true;
     }
 
     pub(super) fn set_lists_files_in_cache(&mut self) {
@@ -629,6 +635,10 @@ impl ModuleGraph {
     /// A file has `import * as` of the module.
     pub fn is_imported_as_namespace(&self, module: ModuleRef) -> bool {
         self.plan.has(&self.plan.is_imported_as_namespace, module)
+    }
+
+    pub fn runs_tests(&self) -> bool {
+        self.plan.runs_tests
     }
 
     pub fn lists_files_in_cache(&self) -> bool {

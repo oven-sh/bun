@@ -16,6 +16,7 @@ mod module_list;
 mod module_reach_tests;
 #[cfg(test)]
 mod paths;
+mod pieces_printed_in_place;
 mod program_reach;
 pub(crate) mod removable;
 mod replaced_exports;
@@ -96,7 +97,7 @@ use bun_sema_driver::{
 use bun_sys::{Fd, File};
 use bun_threading::Guarded;
 use bun_trim::Feature;
-use core::cell::{Cell, RefCell};
+use core::cell::{Cell, OnceCell, RefCell};
 use core::fmt;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::collections::VecDeque;
@@ -133,6 +134,8 @@ pub struct Compilation {
     /// `summary.entry_points` lists all of them then, and `engine` is the program of the first.
     pub further_programs: Vec<EngineResult>,
     pub(crate) started_workers: StartedWorkers,
+    /// `Sources::holds_source_paths`
+    pub(crate) holds_source_paths: bool,
     /// What of Bun's own code the programs use, by the word of the engine, and were handed over without.
     library_code_lacked: RuntimeUses,
     /// A program reads `process.mainModule`, by the word of the engine, and none of its files names a way to a module object.
@@ -295,6 +298,10 @@ pub(crate) struct Build<'a> {
     pub(crate) known_worker_files: Option<(bool, Vec<Vec<u8>>)>,
     /// `KnownWorkerFiles::of_the_one_program`, where the load can tell: it then ends ahead of all other stages.
     pub(crate) files_of_the_one_program: Vec<WorkerFile>,
+    /// `KnownWorkerFiles::takes_in`
+    pub(crate) takes_in_worker_files: Option<&'a dyn TakesInWorkerFiles>,
+    /// `KnownWorkerFiles::took_in_too_much`
+    pub(crate) took_in_too_much: bool,
     pub(crate) started_workers: StartedWorkers,
     /// `Compilation::replaced_builtins`, of the programs linked so far.
     pub(crate) replaced_builtins: ReplacedByTests,
@@ -325,6 +332,33 @@ struct KnownWorkerFiles<'a> {
     left_out: &'a [Vec<u8>],
     /// Filled by a build that ends ahead of the engine, which is no failure: one program has to hold these files with all the entry points.
     of_the_one_program: &'a RefCell<Vec<WorkerFile>>,
+    /// `Some`: the load may make such files entry points by itself while it runs. It hands them over and gets the options that the build goes on with.
+    takes_in: Option<&'a dyn TakesInWorkerFiles>,
+    /// Set by a build that ends because its load has made an entry point of a file that the search behind the load does not find. No failure either.
+    took_in_too_much: &'a Cell<bool>,
+}
+
+pub(crate) trait TakesInWorkerFiles {
+    /// The options with the files among the entry points.
+    fn take_in(&self, files: &[WorkerFile]) -> &Options<'_>;
+}
+
+struct OptionsThatGrow<'r, 'o> {
+    options: &'r Options<'o>,
+    /// With the files that were taken in.
+    longer: OnceCell<(Options<'o>, Vec<WorkerFile>)>,
+}
+
+impl TakesInWorkerFiles for OptionsThatGrow<'_, '_> {
+    fn take_in(&self, files: &[WorkerFile]) -> &Options<'_> {
+        let longer = || {
+            (
+                options_with_worker_files(self.options, files),
+                files.to_vec(),
+            )
+        };
+        &self.longer.get_or_init(longer).0
+    }
 }
 
 #[derive(Clone)]
@@ -411,6 +445,8 @@ struct FrontEndOutput {
     folders: Vec<FolderPaths>,
     modules: Option<ListedModules>,
     writes_preload: bool,
+    /// `Sources::holds_source_paths`
+    holds_source_paths: bool,
     held_library_code: HeldLibraryCode,
     names_way_to_module_objects: bool,
     has_commonjs_entry_point: bool,
@@ -1360,20 +1396,48 @@ fn compile_with_options(
     let said_before = (log.msgs.len(), log.warnings, log.errors);
     let mut with_worker_files: Option<Options<'_>> = None;
     let mut left_out = TextsLeftOut::default();
+    let mut load_takes_files_in = true;
     loop {
         let options = with_worker_files.as_ref().unwrap_or(options);
         let splits = with_worker_files.is_none() && can_have_several_programs(options);
         let of_the_one_program = RefCell::new(Vec::new());
+        let grows = OptionsThatGrow {
+            options,
+            longer: OnceCell::new(),
+        };
+        let took_in_too_much = Cell::new(false);
         let known = KnownWorkerFiles {
             splits,
             left_out: &left_out.names,
             of_the_one_program: &of_the_one_program,
+            takes_in: match load_takes_files_in && with_worker_files.is_none() {
+                true => Some(&grows),
+                false => None,
+            },
+            took_in_too_much: &took_in_too_much,
         };
         let compiled = match with_worker_files {
             None => compile_written_entry_points(options, known, provider, log),
             Some(_) => compile_program(options, ProgramPlace::Only, known, provider, log),
         };
+        if took_in_too_much.get() {
+            load_takes_files_in = false;
+            log.msgs.truncate(said_before.0);
+            (log.warnings, log.errors) = (said_before.1, said_before.2);
+            provider.clear_embedded_files();
+            continue;
+        }
         let of_the_one_program = of_the_one_program.into_inner();
+        // What was compiled is what a build with these files among its entry points compiles.
+        let holds_worker_files = with_worker_files.is_some() || grows.longer.get().is_some();
+        let splits = splits && grows.longer.get().is_none();
+        let options = match grows.longer.get() {
+            Some((longer, files)) => {
+                left_out.note_worker_files(files);
+                longer
+            }
+            None => options,
+        };
         let longer = match compiled {
             Ok(compiled) => {
                 let added = add_programs_of_worker_files(
@@ -1395,7 +1459,7 @@ fn compile_with_options(
             Err(_) if !of_the_one_program.is_empty() => {
                 left_out.add_worker_files(options, &of_the_one_program)
             }
-            Err(failure) if with_worker_files.is_none() => return Err(failure),
+            Err(failure) if !holds_worker_files => return Err(failure),
             Err(failure) => {
                 let texts = &options.load.entry_texts;
                 let starts_over = starts_over_without_brought_types(&options.load, &failure);
@@ -1436,10 +1500,14 @@ struct TextsLeftOut {
 impl TextsLeftOut {
     /// The options of the one program that holds the files too.
     fn add_worker_files<'a>(&mut self, options: &Options<'a>, files: &[WorkerFile]) -> Options<'a> {
+        self.note_worker_files(files);
+        options_with_worker_files(options, files)
+    }
+
+    fn note_worker_files(&mut self, files: &[WorkerFile]) {
         let named = files.iter().filter(|file| file.is_named_by_path);
         self.named_by_paths
             .extend(named.map(|file| file.source_path.clone()));
-        options_with_worker_files(options, files)
     }
 
     /// False: the build has failed for another reason. `first`: where the messages of the failed program begin.
@@ -1769,6 +1837,7 @@ fn add_program(first: &mut Compilation, program: Compilation) {
         add_modules(listed, further);
     }
     first.started_workers.add(program.started_workers);
+    first.holds_source_paths |= program.holds_source_paths;
     first.library_code_lacked.add(&program.library_code_lacked);
     first.reads_main_module_without_its_name |= program.reads_main_module_without_its_name;
     first.stores_path_of_main_module |= program.stores_path_of_main_module;
@@ -2020,7 +2089,7 @@ struct CompiledPrograms {
 fn compile_programs<'a>(
     options: &'a Options<'a>,
     programs: Option<ProgramsOfOneLoad<'a>>,
-    known_worker_files: Option<KnownWorkerFiles<'_>>,
+    known_worker_files: Option<KnownWorkerFiles<'a>>,
     provider: &'a dyn SourceProvider,
     log: &mut Log,
 ) -> Result<CompiledPrograms, BuildFailed> {
@@ -2057,6 +2126,7 @@ fn compile_programs<'a>(
     build.programs = programs;
     build.known_worker_files =
         known_worker_files.map(|known| (known.splits, known.left_out.to_vec()));
+    build.takes_in_worker_files = known_worker_files.and_then(|known| known.takes_in);
     let body_placement = match options.aot.ir_output_path {
         Some(_) => BodyPlacement::InProgramBytes,
         None => BodyPlacement::External,
@@ -2068,6 +2138,7 @@ fn compile_programs<'a>(
             if let Some(known) = known_worker_files {
                 let files = core::mem::take(&mut build.files_of_the_one_program);
                 known.of_the_one_program.replace(files);
+                known.took_in_too_much.set(build.took_in_too_much);
             }
             let (is_one_program, brought_bun_types) =
                 (build.is_one_program, build.brings_bun_types);
@@ -2079,12 +2150,19 @@ fn compile_programs<'a>(
             return Err(failure);
         }
     };
+    // Of one program: its load may have gone on with more entry points.
+    let options = match programs {
+        None => build.options,
+        Some(_) => options,
+    };
     engine_options.wait_for_images_below(&options.aot.images_below);
     outputs.shared_sort_by_key(|(place, _)| match *place {
         ProgramPlace::Only => 0,
         ProgramPlace::OneOfSeveral(index) => index,
     });
     if let (Some(known), [(_, output)]) = (known_worker_files, &outputs[..]) {
+        let splits = (build.known_worker_files.as_ref()).is_some_and(|known| known.0);
+        let known = KnownWorkerFiles { splits, ..known };
         let started = &build.started_workers;
         let worker_files = find_files_of_the_one_program(known, started, output);
         if !worker_files.is_empty() {
@@ -2246,6 +2324,7 @@ fn compile_programs<'a>(
                 lacks_replaceable_exports(options, &engine.flow_findings());
             let builtins_found_by_flow = find_replaced_builtins(&engine.flow_findings());
             let names_found_by_flow = find_opened_names(&engine.flow_findings());
+            let holds_source_paths = output.holds_source_paths;
             let (_, summary) = output.into_parts(statistics.clone());
             let compilation = Compilation {
                 replaced_exports,
@@ -2260,6 +2339,7 @@ fn compile_programs<'a>(
                 further_programs: Vec::new(),
                 // Of all that was loaded.
                 started_workers: started_workers.take().unwrap_or_default(),
+                holds_source_paths,
                 replaced_builtins: replaced_builtins.take().unwrap_or_default(),
                 builtins_found_by_flow,
                 names_found_by_flow,
@@ -2409,6 +2489,8 @@ impl<'a> Build<'a> {
             replaced_builtins_spelled: Vec::new(),
             known_worker_files: None,
             files_of_the_one_program: Vec::new(),
+            takes_in_worker_files: None,
+            took_in_too_much: false,
             started_workers: StartedWorkers::default(),
             replaced_builtins: ReplacedByTests::default(),
             brings_bun_types: false,
@@ -2561,6 +2643,20 @@ impl<'a> Build<'a> {
         let runner_of_drops = self.parallel_runner();
         let writes_program_file = self.options.aot.ir_output_path.is_some();
         put_types_cut_from_function_texts_into(&mut program, &output.texts);
+        // A test run quotes from the files, so nothing moves its pieces.
+        if !self.options.load.runs_tests
+            && let Some((module, fault)) = pieces_printed_in_place::find_fault_in_program(&program)
+        {
+            let path = output
+                .texts
+                .get(ModuleId::new(module))
+                .map(|source| &source.path[..]);
+            let mut message = b"the list of what is printed in place of the text of ".to_vec();
+            message.extend_from_slice(path.unwrap_or_default());
+            message.extend_from_slice(format!(": {fault:?}").as_bytes());
+            self.diagnostics.add_fault_of_emitted_program(message);
+            return Err(Stage::LinkAndEmit);
+        }
         let ((), emitted) = run_beside(
             &self.beside_runner(),
             move || {

@@ -2,14 +2,15 @@ mod freeze;
 #[cfg(test)]
 mod tests;
 
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use bun_ast::Loader;
 use bun_builtin_sources::{Archive, BundledName, BundledPositions, Manifest, VIRTUAL_ROOT};
 use bun_sema::bind::SymbolId;
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::{ExprId, FnId};
-use bun_sema::program::{FileId, Files};
+use bun_sema::program::{CodeView, FileId, Files};
 use bun_sema::resolve::HostPayload;
 
 pub(crate) use self::freeze::{
@@ -17,7 +18,7 @@ pub(crate) use self::freeze::{
 };
 use crate::builtins::{ResolvedBuiltins, RuntimeFunction, RuntimeModule, table};
 use crate::diagnostics::FileDiagnostic;
-use crate::load::module_paths::compute_display_path;
+use crate::load::module_paths::{compute_display_path, with_separators_of_host};
 use crate::load::named_loads::NamedModule;
 #[cfg(test)]
 use crate::load::project::ProjectId;
@@ -171,6 +172,13 @@ pub(crate) fn parsed_source<'s>(files: &Files<'s>, file: FileId) -> Option<&'s P
     files.host_payload(file)?.downcast_ref::<ParsedSource>()
 }
 
+pub(crate) fn parsed_source_in<'f>(
+    files: &'f dyn CodeView<'_>,
+    file: FileId,
+) -> Option<&'f ParsedSource> {
+    files.host_payload(file)?.downcast_ref::<ParsedSource>()
+}
+
 pub(crate) fn parsed_source_mut(payload: &mut Option<HostPayload>) -> &mut ParsedSource {
     let payload = payload
         .as_mut()
@@ -225,6 +233,8 @@ pub struct Sources {
     pages: Vec<(FileId, Box<[u8]>)>,
     evaluated_functions: Vec<((FileId, ExprId), FunctionRef)>,
     manifest: &'static Manifest,
+    /// `holds_source_paths`
+    holds_source_paths: Arc<AtomicBool>,
 }
 
 impl Sources {
@@ -269,12 +279,46 @@ impl Sources {
         &entry.public_path[..entry.public_path.len() - entry.query_length]
     }
 
+    /// `?fresh=1`, or nothing.
+    pub fn query(&self, file: FileId) -> &[u8] {
+        let entry = &self.entries[file.idx()];
+        &entry.public_path[entry.public_path.len() - entry.query_length..]
+    }
+
     pub fn has_query(&self, file: FileId) -> bool {
         self.entries[file.idx()].query_length != 0
     }
 
     pub fn diagnostic_path(&self, file: FileId) -> &[u8] {
         &self.entries[file.idx()].diagnostic_path
+    }
+
+    fn find_source_path(&self, file: FileId) -> Option<Vec<u8>> {
+        let entry = &self.entries[file.idx()];
+        let path = with_separators_of_host(&entry.diagnostic_path, cfg!(windows));
+        (*path != *self.public_path_without_query(file)).then_some(path)
+    }
+
+    pub fn has_source_path(&self, file: FileId) -> bool {
+        self.find_source_path(file).is_some()
+    }
+
+    /// What `__filename` holds in an executable: where the file lay when the program was built, as `bun build --compile` has it.
+    /// Nothing where that is the path under which the program knows the file. Whoever asks puts the path into the program.
+    pub fn source_path(&self, file: FileId) -> Option<Vec<u8>> {
+        let path = self.find_source_path(file)?;
+        self.holds_source_paths.store(true, Ordering::Relaxed);
+        Some(path)
+    }
+
+    /// A file asks `require.resolve` under a name that the build does not know: the run time answers with such a path.
+    pub fn note_source_paths_at_run_time(&self) {
+        self.holds_source_paths.store(true, Ordering::Relaxed);
+    }
+
+    /// The program holds the path of a file on the machine that built it, so it may ask for a module by such a path.
+    pub fn holds_source_paths(&self) -> bool {
+        self.holds_source_paths.load(Ordering::Relaxed)
     }
 
     pub fn entry_points(&self) -> &[EntryPoint] {

@@ -633,7 +633,7 @@ console.log("push", String(readPush()));
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] captures=[{type=env [[L_42]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|[[L_2]] site=[[w_85]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked] captures=[{type=env [[L_42]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|[[L_2]] site=[[w_85]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: env [[L_42]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

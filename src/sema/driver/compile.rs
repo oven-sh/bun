@@ -32,7 +32,9 @@ use bun_sema::atom::Interner;
 use bun_sema::check::aot::{DiagnosticClass, Effect, FileOrigin, LeftOutBodies};
 use bun_sema::check::{Checker, Program, Requested};
 use bun_sema::fold::FoldInputs;
-use bun_sema::program::{FileId, FileRole, Files, IN_CONFIGURATION, MainModule, Sym};
+use bun_sema::program::{
+    FileId, FileRole, Files, FindsEntryPoints, IN_CONFIGURATION, MainModule, Sym,
+};
 use bun_sema::resolve::{CodeFailure, CodeOptions};
 use bun_sema::session::SessionSlot;
 use std::cell::UnsafeCell;
@@ -43,6 +45,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub enum EntryPoints<'a> {
     Written(&'a [Vec<u8>]),
     WrittenFor(&'a [Vec<u8>], MainModule),
+    /// `WrittenFor`, and the files that a look at the code of the program names while it is loaded: `CompileInputs::finds_entry_points`.
+    /// The load takes them in where it then ends as a load that was given them all. `Files::entry_points` says whether it has.
+    WrittenAndFound(&'a [Vec<u8>], MainModule, &'a FindsEntryPoints<'a>),
     Resolved(&'a [Vec<u8>]),
     Configured(&'a [Vec<u8>], Option<&'a [u8]>),
     // Under the configuration nearest to the first. The program begins elsewhere.
@@ -266,7 +271,11 @@ pub(crate) struct FileWork<'a, 's> {
     pub requested: &'a (dyn Fn(FileId) -> Requested + Sync),
     pub after_file: Option<&'a (dyn Fn(&mut Checker<'_, 's>, FileId) + Sync)>,
     pub after_commit: &'a (dyn Fn(FileId) + Sync),
+    /// What `after_file` needs of a file and no checker is asked for. Another thread calls it while the file is checked.
+    pub beside_file: Option<&'a (dyn Fn(FileId) + Sync)>,
     pub frees_tree: &'a (dyn Fn(FileId) -> bool + Sync),
+    /// Nobody reads a tree once the files of this pass are final.
+    pub is_last_pass: &'a (dyn Fn() -> bool + Sync),
     pub first_round: u32,
     pub left_out_bodies: Option<&'a LeftOutBodies>,
 }

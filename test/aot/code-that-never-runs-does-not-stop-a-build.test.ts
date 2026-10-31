@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { built, spawned } from "./harness/commands";
 import { run } from "./harness/run";
@@ -34,10 +34,14 @@ test("a file that only require.resolve names is neither bundled nor embedded, wh
   });
   const { executable, stderr } = await build(String(dir));
   expect(stderr).not.toContain("no-such");
-  for (const name of ["index.html", "logo.svg"]) {
-    const { stdout, exitCode } = await spawned([executable, name], String(dir), bunEnv);
-    expect(stdout).toBe("true false\n");
-    expect(exitCode).toBe(0);
+  // require.resolve() says where the file lay when the program was built, as with `bun build --compile`. It is found there as long as it is there, and nowhere else.
+  for (const isOnDisk of [true, false]) {
+    if (!isOnDisk) rmSync(join(String(dir), "pages"), { recursive: true });
+    for (const name of ["index.html", "logo.svg"]) {
+      const { stdout, exitCode } = await spawned([executable, name], String(dir), bunEnv);
+      expect(stdout).toBe(`true ${isOnDisk}\n`);
+      expect(exitCode).toBe(0);
+    }
   }
 }, 60_000);
 

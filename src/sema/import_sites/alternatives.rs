@@ -1277,6 +1277,9 @@ impl Follower<'_, '_, '_> {
         if let Some(values) = self.values_of_conversion(callee, call.args) {
             return Some(values);
         }
+        if let Some(values) = self.values_of_method_of_text(callee, call.args) {
+            return Some(values);
+        }
         if let Some(function) = self.find_path_joining_function(callee) {
             return self.values_of_path_below_folder(call.args, function == known::join);
         }
@@ -1434,6 +1437,68 @@ impl Follower<'_, '_, '_> {
             && !bound.import_meta_may_be_modified()
     }
 
+    /// `" ./a.js ".trim()`, `"./x.js".replace("x", "a")`, `"./".concat("a", ".js")`, `"x./a.js".slice(1)`: what a method of texts makes of
+    /// a text. But for `concat`, of one that is known whole and has ASCII alone: there a place in the text is a byte, and so is a letter.
+    fn values_of_method_of_text(&mut self, callee: ExprId, args: IdList<ExprId>) -> Option<Values> {
+        let &ScanInputs { hir, atoms, .. } = self.inputs;
+        let (object, MemberKey::Name(method)) = hir.member_key(callee)? else {
+            return None;
+        };
+        let method = atoms.bytes(method);
+        let is_known = matches!(
+            method,
+            b"trim"
+                | b"trimStart"
+                | b"trimEnd"
+                | b"toLowerCase"
+                | b"toUpperCase"
+                | b"concat"
+                | b"replace"
+                | b"replaceAll"
+                | b"slice"
+                | b"substring"
+        );
+        if !is_known {
+            return None;
+        }
+        let texts = self.values_of(object)?;
+        if texts.is_empty() || !texts.iter().all(|value| matches!(value, Held::Text(_))) {
+            return None;
+        }
+        let mut given: Vec<Values> = Vec::with_capacity(args.len());
+        for argument in hir.ids(args) {
+            if matches!(expr_kind(hir, argument), None | Some(ExprKind::Spread(_))) {
+                return None;
+            }
+            given.push(self.values_of(argument)?);
+        }
+        if method == b"concat" {
+            let is_joined = |value: &Held| matches!(value, Held::Text(_) | Held::Primitive(_));
+            if !given.iter().flatten().all(is_joined) {
+                return None;
+            }
+            given.insert(0, texts);
+            return self.join_parts(&given);
+        }
+        // One value for each argument: the answers are as many as the texts.
+        let mut arguments: Vec<&Held> = Vec::with_capacity(given.len());
+        for values in &given {
+            let [value] = &values[..] else {
+                return None;
+            };
+            arguments.push(value);
+        }
+        let mut values = Values::new();
+        for text in &texts {
+            let Held::Text(text) = text else {
+                return None;
+            };
+            let made = call_method_of_text(whole_ascii(text)?, method, &arguments)?;
+            add(&mut values, Held::Text(Text::whole(&made)));
+        }
+        Some(values)
+    }
+
     /// What a call makes of the answer of a resolver where it names the same file in another form, or in the same.
     fn values_of_conversion(&mut self, callee: ExprId, args: IdList<ExprId>) -> Option<Values> {
         let &ScanInputs {
@@ -1462,7 +1527,12 @@ impl Follower<'_, '_, '_> {
         }
         let argument = hir.id_at(args, 0);
         if is_free_name(hir, bound, callee, &[known::String]) {
-            return texts_of_answers(&self.values_of(argument)?);
+            let values = self.values_of(argument)?;
+            let is_text = |value: &Held| matches!(value, Held::Text(_));
+            return match values.iter().all(is_text) {
+                true => Some(values),
+                false => texts_of_answers(&values),
+            };
         }
         let of_url = self.find_export_of(callee, &[b"url", b"node:url"]);
         let of_path = || self.find_export_of(callee, &[b"path", b"node:path"]);
@@ -1711,6 +1781,77 @@ fn may_step_back(text: &Text) -> bool {
     known.any(|part| {
         strings::contains_char(part, b'\\') || strings::split(part, b"/").any(|it| it == b"..")
     })
+}
+
+fn whole_ascii(text: &Text) -> Option<&[u8]> {
+    let is_whole = text.end.is_none() && !text.starts_at_own_directory;
+    (is_whole && text.start.is_ascii()).then_some(&text.start[..])
+}
+
+/// As the language has it for a text of ASCII. `None` where the answer hangs on more than is looked at here.
+fn call_method_of_text(text: &[u8], method: &[u8], arguments: &[&Held]) -> Option<Vec<u8>> {
+    let is_space = |byte: &u8| matches!(byte, b'\t' | b'\n' | 0x0b | 0x0c | b'\r' | b' ');
+    let first_kept = || {
+        text.iter()
+            .position(|byte| !is_space(byte))
+            .unwrap_or(text.len())
+    };
+    let end_of_kept = || {
+        text.iter()
+            .rposition(|byte| !is_space(byte))
+            .map_or(0, |last| last + 1)
+    };
+    let text_at = |index: usize| match arguments.get(index) {
+        Some(Held::Text(text)) => whole_ascii(text),
+        _ => None,
+    };
+    // `undefined` stands for an argument that is left out.
+    let place_at = |index: usize, left_out: f64| match arguments.get(index) {
+        None | Some(Held::Primitive(Constant::Undefined)) => Some(left_out),
+        Some(Held::Primitive(Constant::Number(place))) if place.fract() == 0.0 => Some(*place),
+        _ => None,
+    };
+    let length = text.len() as f64;
+    match (method, arguments.len()) {
+        (b"trim", 0) => Some(text[first_kept().min(end_of_kept())..end_of_kept()].to_vec()),
+        (b"trimStart", 0) => Some(text[first_kept()..].to_vec()),
+        (b"trimEnd", 0) => Some(text[..end_of_kept()].to_vec()),
+        (b"toLowerCase", 0) => Some(text.to_ascii_lowercase()),
+        (b"toUpperCase", 0) => Some(text.to_ascii_uppercase()),
+        (b"replace" | b"replaceAll", 2) => {
+            let (pattern, replacement) = (text_at(0)?, text_at(1)?);
+            // `$&` and its like in the replacement stand for parts of the text.
+            if pattern.is_empty() || strings::contains_char(replacement, b'$') {
+                return None;
+            }
+            let mut made = Vec::with_capacity(text.len());
+            let mut rest = text;
+            while let Some(at) = strings::index_of(rest, pattern) {
+                made.extend_from_slice(&rest[..at]);
+                made.extend_from_slice(replacement);
+                rest = &rest[at + pattern.len()..];
+                if method == b"replace" {
+                    break;
+                }
+            }
+            made.extend_from_slice(rest);
+            Some(made)
+        }
+        (b"slice", 0..=2) => {
+            let from_end = |place: f64| match place < 0.0 {
+                true => (length + place).max(0.0),
+                false => place.min(length),
+            };
+            let (start, end) = (from_end(place_at(0, 0.0)?), from_end(place_at(1, length)?));
+            Some(text[start as usize..end.max(start) as usize].to_vec())
+        }
+        (b"substring", 0..=2) => {
+            let within = |place: f64| place.clamp(0.0, length);
+            let (one, other) = (within(place_at(0, 0.0)?), within(place_at(1, length)?));
+            Some(text[one.min(other) as usize..one.max(other) as usize].to_vec())
+        }
+        _ => None,
+    }
 }
 
 fn is_changed_by_trim(text: &Text) -> bool {

@@ -447,7 +447,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f9
 # -- generated: f0 putIntoFull putIntoRoomy putIntoWritten textOf look f6
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 557, patchpoints: 75, rare instructions: 747, polls: 8
+# CHECK-NEXT: instructions: 563, patchpoints: 75, rare instructions: 750, polls: 8
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="putIntoFull"
 # CHECK: role=EntryChecks
@@ -487,7 +487,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f9
 # CHECK-NEXT: end of function f18
 # CHECK-LABEL: function {{*}}name="textOf"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 14, patchpoints: 2, rare instructions: 11
+# CHECK-NEXT: instructions: 15, patchpoints: 2, rare instructions: 11
 # CHECK-NEXT: end of function f4
 # CHECK-LABEL: function {{*}}name="look"
 # CHECK: role=Source

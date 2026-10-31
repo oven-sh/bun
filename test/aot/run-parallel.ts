@@ -485,7 +485,7 @@ async function start(cmd: string[], cwd: string, env: Record<string, string | un
   running.add(pid);
   // A build that is asked to end says what each of its threads is still compiling.
   const answers = cmd[1] === "build" && !isWindows;
-  using held = memory.watch({ pid, leadsAGroup: true }, cmd[1] !== "build");
+  using held = memory.watch({ pid, leadsAGroup: true }, cmd[1] !== "build", answers);
   let ranOver = false;
   const end = (signal: "SIGTERM" | "SIGKILL") => {
     ranOver = true;
@@ -917,11 +917,12 @@ async function run(programs: Program[]): Promise<void> {
     // Nothing starts from it, and its programs may be built again.
     if (build.output.exitCode !== 0) remove();
     if (build.output.overLimit) {
+      const still = build.output.stderr.split("\n").filter(line => line.startsWith("Still "));
       if (programs.length > 1) {
-        console.error(`A build of ${programs.length} programs is made again in parts: ${build.output.overLimit}.`);
+        const notice = `A build of ${programs.length} programs is made again in parts: ${build.output.overLimit}.`;
+        console.error([notice, ...still].join("\n  "));
         return void (await inParts(8));
       }
-      const still = build.output.stderr.split("\n").filter(line => line.startsWith("Still "));
       return fail(
         first,
         "compile",

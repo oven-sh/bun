@@ -629,6 +629,9 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     if mocks_any_module {
         plan.set_every_module_may_be_mocked();
     }
+    if input.runs_tests {
+        plan.set_runs_tests();
+    }
     // `require.main` is what the cache holds under the path in `Bun.main`.
     if input.runs_tests || input.stores_path_of_main_module {
         plan.set_lists_files_in_cache();

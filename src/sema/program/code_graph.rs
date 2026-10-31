@@ -84,6 +84,62 @@ pub struct CompiledModule<'s> {
     pub(super) is_only_imported: bool,
 }
 
+/// The code files of a program: as a load that has ended holds them, or as a load that still finds files has parsed them so far.
+pub trait CodeView<'s>: Sync {
+    fn atoms(&self) -> &Interner<'s>;
+    fn hir(&self, file: FileId) -> &hir::File<'s>;
+    fn bound(&self, file: FileId) -> &Bound<'s>;
+    fn analysis(&self, file: FileId) -> &FileAnalysis<'s>;
+    /// `CompiledModule::code_answers` and `CompiledModule::implied_answers`. `None`: the file is not compiled.
+    fn answers(&self, file: FileId) -> Option<(&[CodeAnswer<'s>], &[CodeAnswer<'s>])>;
+    fn file_name(&self, file: FileId) -> &[u8];
+    fn entry_points(&self) -> &[FileId];
+    fn compiled_files(&self) -> &[FileId];
+    fn host_payload(&self, file: FileId) -> Option<&(dyn Any + Send + Sync)>;
+}
+
+impl<'s> CodeView<'s> for Files<'s> {
+    fn atoms(&self) -> &Interner<'s> {
+        &self.atoms
+    }
+
+    fn hir(&self, file: FileId) -> &hir::File<'s> {
+        Files::hir(self, file)
+    }
+
+    fn bound(&self, file: FileId) -> &Bound<'s> {
+        Files::bound(self, file)
+    }
+
+    fn analysis(&self, file: FileId) -> &FileAnalysis<'s> {
+        Files::analysis(self, file)
+    }
+
+    fn answers(&self, file: FileId) -> Option<(&[CodeAnswer<'s>], &[CodeAnswer<'s>])> {
+        let compiled = self.compiled(file)?;
+        Some((compiled.code_answers, compiled.implied_answers))
+    }
+
+    fn file_name(&self, file: FileId) -> &[u8] {
+        self.module(file).file_name()
+    }
+
+    fn entry_points(&self) -> &[FileId] {
+        Files::entry_points(self)
+    }
+
+    fn compiled_files(&self) -> &[FileId] {
+        Files::compiled_files(self)
+    }
+
+    fn host_payload(&self, file: FileId) -> Option<&(dyn Any + Send + Sync)> {
+        Files::host_payload(self, file)
+    }
+}
+
+/// Looks at the code of a program whose files are all parsed, and answers with the paths of further files that the program begins at.
+pub type FindsEntryPoints<'a> = dyn Fn(&dyn CodeView<'_>) -> Vec<Vec<u8>> + Sync + 'a;
+
 #[derive(Copy, Clone)]
 pub(super) struct ProgramFiles<'s> {
     pub(super) entry_points: &'s [FileId],

@@ -168,6 +168,9 @@ pub struct AotOptions {
     pub imports_are_in_other_images: bool,
     /// `bun test --aot`: a realm that runs the program runs other programs too, each built alone.
     pub shares_realms: bool,
+    /// `bun test --aot --isolate` or `--parallel`: the runner gives each test file a fresh realm of one VM, and each realm runs an instance of the program of its own.
+    /// `Bun.s3` and the environments of native addons are carried from one realm to the next, so a later file may call a function of an earlier one.
+    pub runs_in_several_realms: bool,
     pub images_below: ImagesBelow,
     pub replaced_by_tests: ReplacedByTests,
     /// Only a build of Bun with Fuzzilli looks at it.
@@ -429,6 +432,7 @@ impl Default for AotOptions {
             typescript_drops_absent_exports: false,
             imports_are_in_other_images: false,
             shares_realms: false,
+            runs_in_several_realms: false,
             images_below: ImagesBelow::default(),
             replaced_by_tests: ReplacedByTests::default(),
             preload: None,
@@ -572,6 +576,7 @@ mod tests {
             typescript_drops_absent_exports,
             imports_are_in_other_images,
             shares_realms,
+            runs_in_several_realms,
             images_below,
             replaced_by_tests,
             preload,
@@ -622,6 +627,7 @@ mod tests {
         assert!(!typescript_drops_absent_exports);
         assert!(!imports_are_in_other_images);
         assert!(!shares_realms);
+        assert!(!runs_in_several_realms);
         assert!(images_below.is_empty());
         assert_eq!(replaced_by_tests, ReplacedByTests::default());
         assert!(preload.is_none());

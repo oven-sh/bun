@@ -19,7 +19,7 @@ use bun_js_parser::Runtime::Features;
 use bun_js_parser::{Define, Parser, ParserOptions, Result as Parsed};
 use bun_sema::atom::Interner;
 use bun_sema::bind::Bound;
-use bun_sema::hir::{self, ExprId};
+use bun_sema::hir::{self, ExprId, FnId};
 use bun_sema::util::SharedSort;
 use bun_threading::Guarded;
 use smallvec::{SmallVec, smallvec};
@@ -195,6 +195,9 @@ impl RuntimeTranspiler<'_> {
         let (first_recorded_positions, first_recorded_positions_of_functions) =
             walker.find_first_recorded_positions(parts);
         let quoted_functions = std::mem::take(&mut walker.quoted_functions);
+        let declarations_printed_without_name = request.parsed.map_or_else(Vec::new, |parsed| {
+            walker.find_declarations_printed_without_name(parsed.hir)
+        });
         let mut transpiled = TranspiledFile {
             identifiers: walker.identifiers,
             bindings: walker.bindings,
@@ -208,6 +211,7 @@ impl RuntimeTranspiler<'_> {
             printed_functions: Vec::new(),
             first_recorded_positions,
             first_recorded_positions_of_functions,
+            declarations_printed_without_name,
             rewrites: rewrites.unwrap_or_default(),
         };
         transpiled.printed_functions =
@@ -336,6 +340,8 @@ pub(super) struct TranspiledFile {
     first_recorded_positions: Vec<(u32, u32)>,
     // The `(` of each function that may be constructed, and the first position that it records as strict code and as sloppy code.
     first_recorded_positions_of_functions: Vec<(u32, [Option<u32>; 2])>,
+    // `{ function f() {} }` is printed `{ let f = function() {}; }`: each such declaration.
+    declarations_printed_without_name: Vec<FnId>,
     rewrites: Rewrites,
 }
 
@@ -415,6 +421,11 @@ impl TranspiledFile {
         let positions = &self.first_recorded_positions_of_functions;
         let index = positions.binary_search_by_key(&parameters, |entry| entry.0);
         positions[index.ok()?].1[usize::from(!is_strict)]
+    }
+
+    /// The functions that the file declares and that are anonymous functions in variables in what is printed. In order.
+    pub(super) fn declarations_printed_without_name(&self) -> &[FnId] {
+        &self.declarations_printed_without_name
     }
 
     /// The name in whose place an initializer is printed.
@@ -698,6 +709,31 @@ impl<'a> Walker<'a> {
             .collect();
         positions.sort_unstable();
         (positions, of_functions)
+    }
+
+    /// After `walk`. A declaration and what is printed for it have one `(`.
+    fn find_declarations_printed_without_name(&self, hir: &hir::File<'_>) -> Vec<FnId> {
+        let mut expressions: Vec<u32> = (self.functions.iter())
+            .filter_map(|function| match function {
+                StmtOrExpr::Expr(Expr {
+                    data: ExprData::EFunction(function),
+                    ..
+                }) if function.func.name.is_none() => {
+                    u32::try_from(function.func.open_parens_loc.start).ok()
+                }
+                _ => None,
+            })
+            .collect();
+        expressions.sort_unstable();
+        let mut declarations: Vec<FnId> = (hir.stmts.iter())
+            .filter_map(|statement| match statement.kind {
+                hir::StmtKind::Fn(function) => Some(function),
+                _ => None,
+            })
+            .filter(|&function| expressions.binary_search(&hir[function].anchor).is_ok())
+            .collect();
+        declarations.sort_unstable();
+        declarations
     }
 
     // `is_stable_destructuring_target` of js_printer.

@@ -129,6 +129,32 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Ok((self.list(&list), has_inferred_member))
     }
 
+    /// As `compute_checked_members`, in a list that its caller lets go of.
+    pub(super) fn compute_checked_members_for_now(
+        &mut self,
+        ty: TypeId,
+    ) -> Result<Vec<CheckedMember>, GaveUp> {
+        let ty = self.declared_type_of_this(ty);
+        let shape = self.type_shape(ty)?;
+        if !shape.has_members() {
+            return Ok(Vec::new());
+        }
+        let Some(members) = self.c.members(ty) else {
+            return Ok(Vec::new());
+        };
+        let skips_private_names = receiver_kind(shape) == ReceiverKind::Object;
+        let props = &members.shape().props;
+        let mut list = Vec::with_capacity(props.len());
+        for prop in props.iter() {
+            let is_private = matches!(self.member_name(prop.name), MemberName::Private(_));
+            if is_private && skips_private_names {
+                continue;
+            }
+            list.push(self.checked_member_of_prop(prop, members.mapper));
+        }
+        Ok(list)
+    }
+
     pub(super) fn compute_find_checked_member(
         &mut self,
         receiver: TypeId,

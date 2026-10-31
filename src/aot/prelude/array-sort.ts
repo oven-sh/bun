@@ -331,24 +331,12 @@ function mergeFurtherValueRuns<T>(from: T[], count: number, endOfFirstRun: numbe
   }
 }
 
-// What an array of another kind holds but for holes and undefined, and behind that how many values these are and how often undefined was met.
-function takeDefinedValuesOneByOne<T>(array: T[], length: number): T[] {
-  const from: T[] = $newContiguousArray<T>(length + 2);
-  let count = 0;
-  let undefinedCount = 0;
-  for (let index = 0; index < length; index++) {
-    if (!(index in array)) continue;
-    const value = array[index];
-    if (value === undefined) {
-      undefinedCount++;
-      continue;
-    }
-    $putContiguousIndex(from, count, value);
-    count = (count + 1) | 0;
-  }
-  $putContiguousIndex(from, length, count);
-  $putContiguousIndex(from, length + 1, undefinedCount);
-  return from;
+// The first `count` values of an array that this file made, in one with room for twice as many.
+function moveToLongerArray<T>(from: T[], count: number): T[] {
+  const longer: T[] = $newContiguousArray<T>(count * 2);
+  for (let index = 0; index < count; index = (index + 1) | 0)
+    $putOwnContiguousIndex(longer, index, $getOwnContiguousIndex<T>(from, index));
+  return longer;
 }
 
 // From the first store that the program's array refused on, then undefined as often as it was met, then holes.
@@ -396,9 +384,23 @@ function sortListOfAnyKind<T>(array: T[], length: number, comparator: unknown): 
       count = (count + 1) | 0;
     }
   } else {
-    from = takeDefinedValuesOneByOne<T>(array, length);
-    count = $getContiguousIndex<number>(from, length) | 0;
-    undefinedCount = $getContiguousIndex<number>(from, length + 1) | 0;
+    // Storage for numbers is as long as the list. Any other kind need not be, as behind `a[300_000_000] = 1`: the copy grows with what is found.
+    let capacity = isDoubleArray(array) ? length : 16;
+    from = $newContiguousArray<T>(capacity);
+    for (let index = 0; index < length; index++) {
+      if (!(index in array)) continue;
+      const value = array[index];
+      if (value === undefined) {
+        undefinedCount++;
+        continue;
+      }
+      if (count === capacity) {
+        from = moveToLongerArray<T>(from, count);
+        capacity = count * 2;
+      }
+      $putContiguousIndex(from, count, value);
+      count = (count + 1) | 0;
+    }
   }
   sortValues<T>(from, count, comparator);
   putSortedValues<T>(array, length, from, count, undefinedCount);

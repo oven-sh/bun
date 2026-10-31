@@ -71,7 +71,7 @@ function read(o) { return o.x; }
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="peek"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_4]] flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_4]] flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_4]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -128,7 +128,7 @@ function read(o) { return o.x; }
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="has"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: undefined|null|object):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

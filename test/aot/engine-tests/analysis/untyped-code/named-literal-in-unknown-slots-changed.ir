@@ -315,38 +315,42 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private
 # CHECK-NEXT: v62: buildercursor = StringBuilderReserve v49 size=128
 # CHECK-NEXT: v63: buildercursor = JSONAppendKey v49, v62 string="more"
 # CHECK-NEXT: StringBuilderCommit v49, v63
-# CHECK-NEXT: v65: int[0, 2] = CallDirect v43, v49 function=f10 calledBuiltin=JSONStringify
-# CHECK-NEXT: Switch v65 cases=[1] -> case b8(), otherwise b9()
+# CHECK-NEXT: v65: 1 = Integer integer=1
+# CHECK-NEXT: v66: int[0, 2] = CallDirect v43, v49, v65 function=f10 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v66 cases=[1] -> case b8(), otherwise b9()
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v66: buildercursor = StringBuilderReserve v49 size=128
-# CHECK-NEXT: v67: buildercursor = JSONAppendToken v49, v66 jsonToken=Comma
-# CHECK-NEXT: v68: buildercursor = JSONAppendToken v49, v67 jsonToken=CloseObjectOverComma
-# CHECK-NEXT: StringBuilderCommit v49, v68
-# CHECK-NEXT: v70: string = StringBuilderFinish v49
-# CHECK-NEXT: v71: undefined = CallBuiltin -, v42, v48, v46, v70 overload=ConsoleLog/0 accessSite=38
+# CHECK-NEXT: v67: buildercursor = StringBuilderReserve v49 size=128
+# CHECK-NEXT: v68: buildercursor = JSONAppendToken v49, v67 jsonToken=Comma
+# CHECK-NEXT: v69: buildercursor = JSONAppendToken v49, v68 jsonToken=CloseObjectOverComma
+# CHECK-NEXT: StringBuilderCommit v49, v69
+# CHECK-NEXT: v71: string = StringBuilderFinish v49
+# CHECK-NEXT: v72: undefined = CallBuiltin -, v42, v48, v46, v71 overload=ConsoleLog/0 accessSite=38
 # CHECK-NEXT: Jump -> next b2(v41)
 # CHECK-NEXT: b9() frequency=Rare:
 # CHECK-NEXT: StringBuilderRollBack v49, v61
-# CHECK-NEXT: v73: i32 = StringBuilderCheckpoint v49
-# CHECK-NEXT: v74: buildercursor = StringBuilderReserve v49 size=128
-# CHECK-NEXT: v75: buildercursor = JSONAppendKey v49, v74 string="more"
-# CHECK-NEXT: v76: "more" = String string="more"
-# CHECK-NEXT: StringBuilderCommit v49, v75
-# CHECK-NEXT: v78: boolean = StringBuilderAppendJSON v49, v43, v76, v44 calledBuiltin=JSONStringify
-# CHECK-NEXT: Branch v78 -> taken b10(), notTaken b11()
+# CHECK-NEXT: v74: i32 = StringBuilderCheckpoint v49
+# CHECK-NEXT: v75: buildercursor = StringBuilderReserve v49 size=128
+# CHECK-NEXT: v76: buildercursor = JSONAppendKey v49, v75 string="more"
+# CHECK-NEXT: v77: "more" = String string="more"
+# CHECK-NEXT: StringBuilderCommit v49, v76
+# CHECK-NEXT: v79: 0 = Integer
+# CHECK-NEXT: v80: jsonholders = JSONEnterHolder v49, v79
+# CHECK-NEXT: v81: boolean = StringBuilderAppendJSON v49, v43, v77, v44 calledBuiltin=JSONStringify
+# CHECK-NEXT: JSONLeaveHolder v49, v80
+# CHECK-NEXT: Branch v81 -> taken b10(), notTaken b11()
 # CHECK-NEXT: b10() frequency=Rare:
-# CHECK-NEXT: v79: buildercursor = StringBuilderReserve v49 size=128
-# CHECK-NEXT: v80: buildercursor = JSONAppendToken v49, v79 jsonToken=Comma
-# CHECK-NEXT: Jump -> next b12(v80)
+# CHECK-NEXT: v83: buildercursor = StringBuilderReserve v49 size=128
+# CHECK-NEXT: v84: buildercursor = JSONAppendToken v49, v83 jsonToken=Comma
+# CHECK-NEXT: Jump -> next b12(v84)
 # CHECK-NEXT: b11() frequency=Rare:
-# CHECK-NEXT: StringBuilderRollBack v49, v73
-# CHECK-NEXT: v82: buildercursor = StringBuilderReserve v49 size=128
-# CHECK-NEXT: Jump -> next b12(v82)
-# CHECK-NEXT: b12(v83: buildercursor) frequency=Rare:
-# CHECK-NEXT: v84: buildercursor = JSONAppendToken v49, v83 jsonToken=CloseObjectOverComma
-# CHECK-NEXT: StringBuilderCommit v49, v84
-# CHECK-NEXT: v86: string = StringBuilderFinish v49
-# CHECK-NEXT: Jump -> next b17(v86)
+# CHECK-NEXT: StringBuilderRollBack v49, v74
+# CHECK-NEXT: v86: buildercursor = StringBuilderReserve v49 size=128
+# CHECK-NEXT: Jump -> next b12(v86)
+# CHECK-NEXT: b12(v87: buildercursor) frequency=Rare:
+# CHECK-NEXT: v88: buildercursor = JSONAppendToken v49, v87 jsonToken=CloseObjectOverComma
+# CHECK-NEXT: StringBuilderCommit v49, v88
+# CHECK-NEXT: v90: string = StringBuilderFinish v49
+# CHECK-NEXT: Jump -> next b17(v90)
 # CHECK-NEXT: b13() frequency=Rare:
 # CHECK-NEXT: Jump -> next b16()
 # CHECK-NEXT: b14() frequency=Rare:
@@ -355,27 +359,27 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private
 # CHECK-NEXT: Jump -> next b16()
 # CHECK-NEXT: b16() frequency=Rare:
 # CHECK-NEXT: StringBuilderDiscard v49
-# CHECK-NEXT: v88: undefined = Undefined
-# CHECK-NEXT: v89: undefined|string = CallBuiltin -, v44, v88 overload=JSONStringify/0 accessSite=37
-# CHECK-NEXT: Jump -> next b17(v89)
-# CHECK-NEXT: b17(v90: undefined|string ~ string) frequency=Unlikely:
-# CHECK-NEXT: v91: undefined = CallBuiltin -, v42, v48, v46, v90 overload=ConsoleLog/0 accessSite=38
+# CHECK-NEXT: v92: undefined = Undefined
+# CHECK-NEXT: v93: undefined|string = CallBuiltin -, v44, v92 overload=JSONStringify/0 accessSite=37
+# CHECK-NEXT: Jump -> next b17(v93)
+# CHECK-NEXT: b17(v94: undefined|string ~ string) frequency=Unlikely:
+# CHECK-NEXT: v95: undefined = CallBuiltin -, v42, v48, v46, v94 overload=ConsoleLog/0 accessSite=38
 # CHECK-NEXT: Jump -> next b1(v41)
 # CHECK-NEXT: b18():
-# CHECK-NEXT: v92: L2 = GetSlot v7 key="more" receivers=[L1] level=Proven accessSite=14
-# CHECK-NEXT: v93: int[-2147483643, 2147483647] = GetSlot v92 key="n" receivers=[L2] level=Proven accessSite=15
-# CHECK-NEXT: v94: L2 = GetSlot v12 key="more" receivers=[L1] level=Proven accessSite=16
-# CHECK-NEXT: v95: int[-2147483643, 2147483647] = GetSlot v94 key="n" receivers=[L2] level=Proven accessSite=17
-# CHECK-NEXT: v96: L2 = GetSlot v17 key="more" receivers=[L1] level=Proven accessSite=18
-# CHECK-NEXT: v97: int[-2147483643, 2147483647] = GetSlot v96 key="n" receivers=[L2] level=Proven accessSite=19
-# CHECK-NEXT: v98: L2 = GetSlot v22 key="more" receivers=[L1] level=Proven accessSite=20
-# CHECK-NEXT: v99: int[-2147483643, 2147483647] = GetSlot v98 key="n" receivers=[L2] level=Proven accessSite=21
-# CHECK-NEXT: v100: undefined|"e"|"f"|"g"|"h" = GetSlotOrUndefined v92 key="extra" receivers=[L2] level=Proven accessSite=23
-# CHECK-NEXT: v101: undefined|"e" = AssumeType v100 provenType=undefined|"e"
-# CHECK-NEXT: v102: int|"many" = GetSlot v22 key="count" receivers=[L1] level=Proven accessSite=24
-# CHECK-NEXT: v103: int|"many" ~ int = Expect v102 expectedType=number
-# CHECK-NEXT: v104: string = CallBuiltin -, v103 overload=String/0 accessSite=25
-# CHECK-NEXT: v105: undefined = CallBuiltin -, v93, v95, v97, v99, v101, v104 overload=ConsoleLog/0 accessSite=26
-# CHECK-NEXT: v106: undefined = Undefined
-# CHECK-NEXT: Return v106
+# CHECK-NEXT: v96: L2 = GetSlot v7 key="more" receivers=[L1] level=Proven accessSite=14
+# CHECK-NEXT: v97: int[-2147483643, 2147483647] = GetSlot v96 key="n" receivers=[L2] level=Proven accessSite=15
+# CHECK-NEXT: v98: L2 = GetSlot v12 key="more" receivers=[L1] level=Proven accessSite=16
+# CHECK-NEXT: v99: int[-2147483643, 2147483647] = GetSlot v98 key="n" receivers=[L2] level=Proven accessSite=17
+# CHECK-NEXT: v100: L2 = GetSlot v17 key="more" receivers=[L1] level=Proven accessSite=18
+# CHECK-NEXT: v101: int[-2147483643, 2147483647] = GetSlot v100 key="n" receivers=[L2] level=Proven accessSite=19
+# CHECK-NEXT: v102: L2 = GetSlot v22 key="more" receivers=[L1] level=Proven accessSite=20
+# CHECK-NEXT: v103: int[-2147483643, 2147483647] = GetSlot v102 key="n" receivers=[L2] level=Proven accessSite=21
+# CHECK-NEXT: v104: undefined|"e"|"f"|"g"|"h" = GetSlotOrUndefined v96 key="extra" receivers=[L2] level=Proven accessSite=23
+# CHECK-NEXT: v105: undefined|"e" = AssumeType v104 provenType=undefined|"e"
+# CHECK-NEXT: v106: int|"many" = GetSlot v22 key="count" receivers=[L1] level=Proven accessSite=24
+# CHECK-NEXT: v107: int|"many" ~ int = Expect v106 expectedType=number
+# CHECK-NEXT: v108: string = CallBuiltin -, v107 overload=String/0 accessSite=25
+# CHECK-NEXT: v109: undefined = CallBuiltin -, v97, v99, v101, v103, v105, v108 overload=ConsoleLog/0 accessSite=26
+# CHECK-NEXT: v110: undefined = Undefined
+# CHECK-NEXT: Return v110
 # CHECK-NEXT: }

@@ -4,7 +4,7 @@ use bun_sema::check::aot::{
 };
 use bun_sema::hir::{BinOp, ExprId, ExprKind};
 use bun_sema::types::SigId as SignatureId;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 use smallvec::{SmallVec, smallvec};
 use std::rc::Rc;
 
@@ -254,28 +254,13 @@ impl FileLowering<'_, '_, '_, '_> {
         if self.types.conversions.compared_types.insert(pair, 0) == Some(0) {
             return;
         }
-        let members = (
-            self.queries.checked_members(instance),
-            self.queries.checked_members(base),
-        );
-        let (Ok(members), Ok(base_members)) = members else {
+        let Ok(members) = self.queries.members_typed_otherwise(instance, base) else {
             return;
         };
-        let mut types: FxHashMap<_, CheckerTypeId> = FxHashMap::default();
-        types.reserve(members.len());
-        for member in members {
-            if let (MemberName::String(name), Ok(ty)) = (member.name, member.checked) {
-                types.insert(name, ty);
-            }
-        }
         let mut comparison = Comparison::default();
-        for member in base_members {
-            let (MemberName::String(name), Ok(to)) = (member.name, member.checked) else {
-                continue;
-            };
-            if let Some(&from) = types.get(&name)
-                && from != to
-                && is_read_through(member.kind)
+        for member in members {
+            let (from, to) = (member.checked, member.in_base);
+            if is_read_through(member.kind_in_base)
                 && let Ok(true) = self.queries.is_assignable(from, to)
             {
                 comparison.add_pair(

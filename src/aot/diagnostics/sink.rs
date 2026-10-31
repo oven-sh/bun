@@ -98,6 +98,15 @@ impl Diagnostics {
                 Code::AmbiguousExport,
                 Code::InvalidRegExp,
                 Code::InvalidRegExpFlags,
+                Code::ImportStatementInCommonJs,
+                Code::MacroInExportStar,
+                Code::MacroInExportFrom,
+                Code::UnknownBundleExport,
+                Code::FeatureArgumentCount,
+                Code::FeatureArgumentNotString,
+                Code::FeatureFlagNotAscii,
+                Code::FeatureOutsideCondition,
+                Code::FeatureImportedTwice,
                 // The compiler cannot hold it. Whether the loader can is the loader's to say.
                 Code::NestedTooDeeply,
             ]

@@ -436,6 +436,34 @@ pub(crate) fn log_step_of_build(step: &str) {
     }
 }
 
+/// With `BUN_JSC_logAOTPhaseTimes`: how long after the process that runs the tests began it has come this far. The builders time
+/// themselves. This is for what lies in front of the first build, between two builds, and behind the last one up to the first result.
+pub(crate) fn log_step_of_test_run(step: core::fmt::Arguments<'_>) {
+    if env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true) {
+        let elapsed = bun_core::time::nano_timestamp() - bun_core::start_time();
+        bun_core::print_errorln!(
+            "AOT test run step | {} | at {} ms",
+            step,
+            elapsed / i128::from(bun_core::time::NS_PER_MS),
+        );
+    }
+}
+
+/// The same, the first time that the run reaches the step.
+pub(crate) fn log_first_time_in_test_run(step: &'static str) {
+    static REACHED: Guarded<Vec<&'static str>> = Guarded::new(Vec::new());
+    if env_var::BUN_JSC_logAOTPhaseTimes.get() != Some(true) {
+        return;
+    }
+    let mut reached = REACHED.lock();
+    if reached.contains(&step) {
+        return;
+    }
+    reached.push(step);
+    drop(reached);
+    log_step_of_test_run(format_args!("{step}"));
+}
+
 /// With `BUN_JSC_logAOTPhaseTimes`: what the build of a part took from this process, in one line.
 fn log_cost_of_build() {
     #[cfg(unix)]
@@ -1110,6 +1138,19 @@ pub(crate) enum TestPartKind {
     SharedComputed,
     /// Of what the test files import, the files of packages, with all of Bun's own code unless this Bun holds that compiled.
     SharedPackages,
+}
+
+impl TestPartKind {
+    /// As the build itself says it in `log_cost_of_build`.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            TestPartKind::TestFiles => "test files",
+            TestPartKind::Shared => "what test files share",
+            TestPartKind::SharedLowest { .. } => "the lowest of what test files share",
+            TestPartKind::SharedComputed => "what computed imports reach",
+            TestPartKind::SharedPackages => "the packages that test files share",
+        }
+    }
 }
 
 /// `below`: the numbers, in the process that builds, of the descriptors of the programs that it is built above, the lowest first.

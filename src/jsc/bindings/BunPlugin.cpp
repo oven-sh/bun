@@ -919,7 +919,11 @@ void runCompiledMock(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID module)
     loaded.compiledModule = module;
     JSC::JSPromise* pendingFactory = nullptr;
     patchLoadedModule(globalObject, mock, loaded, pendingFactory);
-    RETURN_IF_EXCEPTION(scope, );
+    if (scope.exception()) [[unlikely]] {
+        // The next load asks the mock again.
+        waiting.append({ module.index(), JSC::Strong<JSC::JSObject> { vm, mock } });
+        return;
+    }
     if (!pendingFactory)
         return;
     JSC::JSPromise* patched = patchWhenFactorySettles(globalObject, mock, pendingFactory);

@@ -14,4 +14,4 @@ if (process.argv.length > 5) {
   });
   console.log(Bun, Object.keys(Bun), { ...Bun }.main);
 }
-console.log(require.main === module, other.isMain(), require.main.filename === __filename);
+console.log(require.main === module, other.isMain(), require.main.filename === module.filename);

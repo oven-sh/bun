@@ -1692,12 +1692,13 @@ runtimefunction id=ObjectsToLocaleString function=f30
 # CHECK-LABEL: function {{*}}name="get"
 # CHECK: module=m0 position=3562 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f8}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f8} creator=Entrypoint{target=f8 arguments=Registers} inlineFrames=[{}, {callee=f8 callPosition=3562 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f8, v1: anything):
-# CHECK-NEXT: v2: int = GetCapture v0 function=f8
-# CHECK-NEXT: v3: fact = Entered function=f8 @3562 tail
-# CHECK-NEXT: v4: Array<int, proven, Double, pristine[Storage, Names, Dense]> = GetModuleVariable fact=v3 variable=g5
-# CHECK-NEXT: v5: int[0, 4294967295] = CallBuiltin v4, v2 overload=ArrayPrototypePush/0 accessSite=107
-# CHECK-NEXT: v6: undefined = Undefined
-# CHECK-NEXT: Return v6
+# CHECK-NEXT: RecordCallee v0
+# CHECK-NEXT: v3: int = GetCapture v0 function=f8
+# CHECK-NEXT: v4: fact = Entered function=f8 @3562 tail
+# CHECK-NEXT: v5: Array<int, proven, Double, pristine[Storage, Names, Dense]> = GetModuleVariable fact=v4 variable=g5
+# CHECK-NEXT: v6: int[0, 4294967295] = CallBuiltin v5, v3 overload=ArrayPrototypePush/0 accessSite=107
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="withLength"
 # CHECK: module=m0 position=967 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 4294967295] site=w0}] results=[{type=Array site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f1 parameterMap=[{original=0}]} {

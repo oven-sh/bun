@@ -93,6 +93,7 @@ pub(crate) fn freeze_sources(
         pages: all.pages,
         evaluated_functions: all.evaluated_functions,
         manifest: input.manifest,
+        holds_source_paths: Default::default(),
     };
     let linkable_files = || file_ids(file_count).filter(|&file| is_linkable(files, file));
     if !are_all_different(linkable_files().map(|file| sources.public_path(file))) {

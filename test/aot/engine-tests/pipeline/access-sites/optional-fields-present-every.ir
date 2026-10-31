@@ -120,17 +120,18 @@ function f3 name="conditional" module=m0 position=3100 flags=[IsChecked, HasExpl
 # CHECK-NEXT: v14: boolean = ShapeTest v13 layouts=[L0]
 # CHECK-NEXT: Branch v14 -> taken b6(), notTaken b8()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v15: int[0, 2] = CallDirect v13, v6 function=f6 calledBuiltin=JSONStringify
-# CHECK-NEXT: Switch v15 cases=[1] -> case b7(), otherwise b8()
+# CHECK-NEXT: v15: 0 = Integer
+# CHECK-NEXT: v16: int[0, 2] = CallDirect v13, v6, v15 function=f6 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v16 cases=[1] -> case b7(), otherwise b8()
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v16: string = StringBuilderFinish v6
+# CHECK-NEXT: v17: string = StringBuilderFinish v6
 # CHECK-NEXT: Jump -> next b9()
 # CHECK-NEXT: b8() frequency=Rare:
 # CHECK-NEXT: StringBuilderDiscard v6
-# CHECK-NEXT: v18: undefined = Undefined
-# CHECK-NEXT: v19: undefined|string = CallBuiltin -, v1, v18 overload=JSONStringify/0 accessSite=8
+# CHECK-NEXT: v19: undefined = Undefined
+# CHECK-NEXT: v20: undefined|string = CallBuiltin -, v1, v19 overload=JSONStringify/0 accessSite=8
 # CHECK-NEXT: Jump -> next b9()
 # CHECK-NEXT: b9():
-# CHECK-NEXT: v20: undefined = Undefined
-# CHECK-NEXT: Return v20
+# CHECK-NEXT: v21: undefined = Undefined
+# CHECK-NEXT: Return v21
 # CHECK-NEXT: }

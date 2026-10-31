@@ -70,7 +70,7 @@ try {
   console.log(error.constructor.name, error.message.split(" (")[0]);
 }
 real.resolve = function whereAmI() {
-  return new Error("here").stack.split("\n").slice(0, 3).join(" | ").replaceAll(__dirname, "");
+  return new Error("here").stack.split("\n").slice(0, 3).join(" | ").replaceAll(module.path, "");
 };
 console.log(path.resolve());
 function importLate() {

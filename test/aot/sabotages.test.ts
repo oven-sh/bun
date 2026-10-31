@@ -152,6 +152,13 @@ describe.skipIf(!listed)("compile/aot/sabotages", () => {
       dirname(path),
       bunEnv,
     );
+    const printed = build.stdout.length + build.stderr.length;
+    expect({ program, flags, printed, isUnderAMegabyte: printed < 2 ** 20 }).toEqual({
+      program,
+      flags,
+      printed,
+      isUnderAMegabyte: true,
+    });
     // The compiler looks its own work over at the end, and what it then refuses to hand on has been noticed too.
     if (build.exitCode && build.stderr.includes("internal compiler error"))
       return { environment: environments[0], how: "the build stops" };

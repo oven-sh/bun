@@ -199,6 +199,15 @@ fn find_names_in<Path: core::ops::Deref<Target = [u8]> + Sync>(
     names
 }
 
+fn keep_paths_for_the_build(paths: Vec<Box<[u8]>>) -> Vec<Interned> {
+    static KEPT: std::sync::OnceLock<Vec<Box<[u8]>>> = std::sync::OnceLock::new();
+    assert!(KEPT.set(paths).is_ok(), "a process builds one part");
+    let kept = KEPT.get().expect("set above");
+    (kept.iter())
+        .map(|path| Interned::from_static(path))
+        .collect()
+}
+
 // A trial. The files with code that the test files import, each once, in the order found. The test files are not among them.
 fn find_files_imported_by<Path: core::ops::Deref<Target = [u8]> + Sync>(
     vm: &mut VirtualMachine,
@@ -4008,9 +4017,7 @@ impl TestCommand {
                 let names_what_is_used =
                     names_what_is_used && run_compiled::packages_are_told_what_is_used();
                 if let Some(above) = files_above.as_ref().filter(|_| names_what_is_used) {
-                    let above: Vec<Interned> = (above.iter().cloned())
-                        .map(|path| Interned::from_static(Box::leak(path)))
-                        .collect();
+                    let above = keep_paths_for_the_build(above.clone());
                     stand_in = Some(make_stand_in_that_names_what_tests_name(
                         vm,
                         &above,
@@ -4032,9 +4039,7 @@ impl TestCommand {
                 entry_points.extend(ctx.preloads.iter().cloned());
                 entry_points = find_lowest_files_reached_from(vm, entry_points, percent);
             } else if builds_what_is_shared {
-                let test_files: Vec<Interned> = (entry_points.into_iter())
-                    .map(|path| Interned::from_static(Box::leak(path)))
-                    .collect();
+                let test_files = keep_paths_for_the_build(entry_points);
                 entry_points = find_files_imported_by(vm, &test_files);
                 if names_what_is_used {
                     stand_in = Some(make_stand_in_that_names_what_tests_name(
@@ -4210,6 +4215,10 @@ impl TestCommand {
         }
 
         let mut all_test_files = scanner.take_found_test_files().expect("oom");
+        run_compiled::log_step_of_test_run(format_args!(
+            "{} test files are found",
+            all_test_files.len()
+        ));
         // Snapshot the count before `test_files` mutably borrows `all_test_files`
         // so the watcher-enable check below can read it without reborrowing.
         let all_test_files_count = all_test_files.len();
@@ -4462,6 +4471,10 @@ impl TestCommand {
 
             if ctx.test_options.parallel > 0 || splits_files {
                 let mut exit_code_left_by_tests = None;
+                run_compiled::log_step_of_test_run(format_args!(
+                    "{} test files are to run",
+                    test_files.len()
+                ));
                 ran_parallel = ParallelRunner::run_as_coordinator(
                     &mut reporter,
                     vm,

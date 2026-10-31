@@ -438,7 +438,7 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: f0 configure
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 565, patchpoints: 50, rare instructions: 716, polls: 3
+# CHECK-NEXT: instructions: 569, patchpoints: 50, rare instructions: 728, polls: 3
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="configure"
 # CHECK: role=Source

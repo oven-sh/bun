@@ -1,5 +1,4 @@
 // `count += isSet ? 1 : 0`, `sum += word & 7`: the loop counts up to a number, and what a turn adds lies between two small integers. The sum is kept as an integer.
-// STATISTIC: CountersConverted >= 24
 function howManyAreOdd(turns) {
   let count = 0;
   for (let i = 0; i < turns; i++) count += (i & 1) === 1 ? 1 : 0;

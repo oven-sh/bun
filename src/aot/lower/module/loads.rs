@@ -1,7 +1,7 @@
 use bun_ast::Target;
 use bun_resolve_builtins::{Alias, Cfg};
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, BindingInitializer, Bound, CommonJsVariable, Decl};
+use bun_sema::bind::{Binding, BindingInitializer, Bound, Decl};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{self, Branches, CallId, Chain, ExprId, ExprKind, IdList, ImportEqualsId};
 use bun_sema::import_sites::{
@@ -304,7 +304,7 @@ pub(crate) fn lower_import_call(
 
             lowering.continue_in(test.other);
             let error = lowering.emit_refusal_of_other_path(test.written, b"ERR_MODULE_NOT_FOUND");
-            let rejected = lowering.emit_settled_promise(BuiltinId::PromiseReject, error);
+            let rejected = lowering.emit_import_rejected_by_loader(error);
             lowering.builder.write_variable(result, rejected);
             lowering.jump(done);
 
@@ -758,7 +758,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let SiteAnswer::Module(module) = site.answer else {
                     unreachable!("find_operation binds import.meta.resolve to one module");
                 };
-                self.emit_resolve_module(site.specifier, module, true)
+                self.emit_resolve_module(site.specifier, None, module, true)
             }
         }
     }
@@ -864,14 +864,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     // Taken out of `require.cache` in a test run, an ES module loads again: the run time says which object answers.
     // So it does behind a mock of an ES module that was required before: `require` then answers what the factory gave, and no longer the namespace object.
     // So it does where the program gets at the entries of `require.cache`: behind `require.cache[path].exports = other`, `require` answers `other`.
-    // So it does for a module of the library that a mock may stand in place of. `require` takes a name that starts with `node:` to the registry, where no mock stands.
+    // So it does for a module of the library, which the first `require` puts into `require.cache`. `require` takes a name that starts with `node:` to the registry.
     fn may_load_again(&self, module: ModuleRef) -> bool {
         let modules = self.file.inputs.modules;
         if let ModuleRef::Runtime(of_library) = module {
-            return modules.may_be_mocked(module)
-                && modules.is_code_of_program(self.current_module())
+            return modules.is_code_of_program(self.current_module())
                 && !table::specifier_of(of_library).starts_with(b"node:")
-                && of_library != RuntimeModule::Bun;
+                && of_library != RuntimeModule::Bun
+                && of_library != RuntimeModule::BunTest;
         }
         let ModuleRef::File(file) = module else {
             return false;
@@ -908,6 +908,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Some((name, alias)) = self.file.builtin_named(written, module) else {
             return emit_require_of_module(self);
         };
+        // `require("bun:sqlite")` leaves an entry in the cache. The call itself leaves none and looks there for no name.
+        if !looks_in_cache && !alias.node_builtin {
+            let name = name.to_vec();
+            let get_builtin_module = self.emit_builtin_itself(BuiltinId::ProcessGetBuiltinModule);
+            let name = self.emit_text(&name);
+            return call::emit_call(self, get_builtin_module, None, &[name]);
+        }
         if !modules.may_entry_in_cache_stand_under(name) {
             return emit_require_of_module(self);
         }
@@ -921,13 +928,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             this.builder.require_dynamic(name, referrer)
         };
         if !looks_in_cache {
-            // A require() of `bun:sqlite` that the host answers finds what the cache holds. The call itself looks there for no name.
-            if !alias.node_builtin && matches!(module, ModuleRef::External { .. }) {
-                let get_builtin_module =
-                    self.emit_builtin_itself(BuiltinId::ProcessGetBuiltinModule);
-                let name = self.emit_text(&name);
-                return call::emit_call(self, get_builtin_module, None, &[name]);
-            }
             return emit_past_cache(self);
         }
         if !alias.node_builtin || !modules.tracks_first_load(self.file.file) {
@@ -1134,35 +1134,45 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     // The build spells a candidate from the folder of the file: "./plugins/a.js".
     fn emit_path_from_own_directory(&mut self, text: ValueId) -> ValueId {
-        let directory = self.get_commonjs_variable(CommonJsVariable::Dirname);
-        let starts_with = self.emit_builtin_itself(BuiltinId::StringPrototypeStartsWith);
-        let is_below = call::emit_call(self, starts_with, Some(text), &[directory]);
-        let is_below = self.builder.to_boolean(is_below);
+        let directories = self.emit_own_directories();
         let spelled = self.builder.create_variable(None);
-        self.builder.write_variable(spelled, text);
-        let below = self.create_block();
-        let done = self.create_block();
-        self.builder
-            .branch(is_below, Edge::to(below), Edge::to(done));
+        let mut done = None;
+        let count = directories.len();
+        for (index, directory) in directories.into_iter().enumerate() {
+            let starts_with = self.emit_builtin_itself(BuiltinId::StringPrototypeStartsWith);
+            let is_below = call::emit_call(self, starts_with, Some(text), &[directory]);
+            let is_below = self.builder.to_boolean(is_below);
+            if index == 0 {
+                self.builder.write_variable(spelled, text);
+            }
+            let below = self.create_block();
+            let done = *done.get_or_insert_with(|| self.create_block());
+            let otherwise = match index + 1 == count {
+                true => done,
+                false => self.create_block(),
+            };
+            self.builder
+                .branch(is_below, Edge::to(below), Edge::to(otherwise));
 
-        self.continue_in(below);
-        let length = PropertyName::Constant(self.file.atom_key(known::length));
-        let length = self.emit_get(directory, length);
-        let slice = self.emit_builtin_itself(BuiltinId::StringPrototypeSlice);
-        let mut rest = call::emit_call(self, slice, Some(text), &[length]);
-        // `path.join` answers `B:\~BUN\root\plugins\a.js` there.
-        let platform = self.file.inputs.options.platform;
-        if platform.contains(Platforms::WINDOWS) {
-            let replace_all = self.emit_builtin_itself(BuiltinId::StringPrototypeReplaceAll);
-            let separators = [self.emit_text(b"\\"), self.emit_text(b"/")];
-            rest = call::emit_call(self, replace_all, Some(rest), &separators);
+            self.continue_in(below);
+            let length = PropertyName::Constant(self.file.atom_key(known::length));
+            let length = self.emit_get(directory, length);
+            let slice = self.emit_builtin_itself(BuiltinId::StringPrototypeSlice);
+            let mut rest = call::emit_call(self, slice, Some(text), &[length]);
+            // `path.join` answers `B:\~BUN\root\plugins\a.js` there.
+            let platform = self.file.inputs.options.platform;
+            if platform.contains(Platforms::WINDOWS) {
+                let replace_all = self.emit_builtin_itself(BuiltinId::StringPrototypeReplaceAll);
+                let separators = [self.emit_text(b"\\"), self.emit_text(b"/")];
+                rest = call::emit_call(self, replace_all, Some(rest), &separators);
+            }
+            let dot = self.emit_text(b".");
+            let from_folder = self.builder.strcat(&[dot, rest]);
+            self.builder.write_variable(spelled, from_folder);
+            self.jump(done);
+
+            self.continue_in(otherwise);
         }
-        let dot = self.emit_text(b".");
-        let from_folder = self.builder.strcat(&[dot, rest]);
-        self.builder.write_variable(spelled, from_folder);
-        self.jump(done);
-
-        self.continue_in(done);
         self.builder.read_variable(spelled)
     }
 
@@ -1183,53 +1193,67 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let is_windows = platform.contains(Platforms::WINDOWS);
         let separator: &[u8] = if is_windows { b"\\" } else { b"/" };
         let bytes = self.file.queries.atom_bytes(written).to_vec();
-        let mut below = bytes.strip_prefix(b".").unwrap_or(&bytes);
-        let mut directory = self.get_commonjs_variable(CommonJsVariable::Dirname);
-        while let Some(rest) = below.strip_prefix(b"/..")
-            && (rest.is_empty() || rest.starts_with(b"/"))
-        {
-            below = rest;
-            let separator = self.emit_text(separator);
-            let last_index_of = self.emit_builtin_itself(BuiltinId::StringPrototypeLastIndexOf);
-            let end = call::emit_call(self, last_index_of, Some(directory), &[separator]);
-            let start = self.builder.integer(0);
-            let slice = self.emit_builtin_itself(BuiltinId::StringPrototypeSlice);
-            directory = call::emit_call(self, slice, Some(directory), &[start, end]);
-        }
-        let below: Vec<u8> = bun_core::strings::split(below, b"/")
-            .collect::<Vec<_>>()
-            .join(separator);
-        let below = self.emit_text(&below);
-        let expected = self.builder.strcat(&[directory, below]);
-        let is_as_written = self.builder.strict_eq(text, expected);
-        let as_written = self.create_block();
-        let other = self.create_unlikely_block();
-        if is_windows {
-            // `path.join(__dirname) + "/a.js"` is `B:\~BUN\root/a.js` there, which names the same file.
-            let spelled_otherwise = self.create_unlikely_block();
-            let spelled_as_text = self.create_unlikely_block();
-            self.builder.branch(
-                is_as_written,
-                Edge::to(as_written),
-                Edge::to(spelled_otherwise),
-            );
+        let directories = self.emit_own_directories();
+        let mut targets = None;
+        let count = directories.len();
+        for (index, mut directory) in directories.into_iter().enumerate() {
+            let mut below = bytes.strip_prefix(b".").unwrap_or(&bytes);
+            while let Some(rest) = below.strip_prefix(b"/..")
+                && (rest.is_empty() || rest.starts_with(b"/"))
+            {
+                below = rest;
+                let separator = self.emit_text(separator);
+                let last_index_of = self.emit_builtin_itself(BuiltinId::StringPrototypeLastIndexOf);
+                let end = call::emit_call(self, last_index_of, Some(directory), &[separator]);
+                let start = self.builder.integer(0);
+                let slice = self.emit_builtin_itself(BuiltinId::StringPrototypeSlice);
+                directory = call::emit_call(self, slice, Some(directory), &[start, end]);
+            }
+            let below: Vec<u8> = bun_core::strings::split(below, b"/")
+                .collect::<Vec<_>>()
+                .join(separator);
+            let below = self.emit_text(&below);
+            let expected = self.builder.strcat(&[directory, below]);
+            let is_as_written = self.builder.strict_eq(text, expected);
+            let (as_written, other) =
+                *targets.get_or_insert_with(|| (self.create_block(), self.create_unlikely_block()));
+            // A path made of `__dirname` begins with another folder than one made of `import.meta.dir`.
+            let otherwise = match index + 1 == count {
+                true => other,
+                false => self.create_unlikely_block(),
+            };
+            if is_windows {
+                // `path.join(__dirname) + "/a.js"` is `B:\~BUN\root/a.js` there, which names the same file.
+                let spelled_otherwise = self.create_unlikely_block();
+                let spelled_as_text = self.create_unlikely_block();
+                self.builder.branch(
+                    is_as_written,
+                    Edge::to(as_written),
+                    Edge::to(spelled_otherwise),
+                );
 
-            self.continue_in(spelled_otherwise);
-            let is_text = self.builder.type_test(text, TypeTable::STRING);
-            self.builder
-                .branch(is_text, Edge::to(spelled_as_text), Edge::to(other));
+                self.continue_in(spelled_otherwise);
+                let is_text = self.builder.type_test(text, TypeTable::STRING);
+                self.builder
+                    .branch(is_text, Edge::to(spelled_as_text), Edge::to(otherwise));
 
-            self.continue_in(spelled_as_text);
-            let replace_all = self.emit_builtin_itself(BuiltinId::StringPrototypeReplaceAll);
-            let separators = [self.emit_text(b"/"), self.emit_text(b"\\")];
-            let with_one_separator = call::emit_call(self, replace_all, Some(text), &separators);
-            let is_same_file = self.builder.strict_eq(with_one_separator, expected);
-            self.builder
-                .branch(is_same_file, Edge::to(as_written), Edge::to(other));
-        } else {
-            self.builder
-                .branch(is_as_written, Edge::to(as_written), Edge::to(other));
+                self.continue_in(spelled_as_text);
+                let replace_all = self.emit_builtin_itself(BuiltinId::StringPrototypeReplaceAll);
+                let separators = [self.emit_text(b"/"), self.emit_text(b"\\")];
+                let with_one_separator =
+                    call::emit_call(self, replace_all, Some(text), &separators);
+                let is_same_file = self.builder.strict_eq(with_one_separator, expected);
+                self.builder
+                    .branch(is_same_file, Edge::to(as_written), Edge::to(otherwise));
+            } else {
+                self.builder
+                    .branch(is_as_written, Edge::to(as_written), Edge::to(otherwise));
+            }
+            if otherwise != other {
+                self.continue_in(otherwise);
+            }
         }
+        let (as_written, other) = targets.expect("a file has a folder");
         let written = self.file.intern_atom(written);
         Some(PathTest {
             as_written,
@@ -1390,7 +1414,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             ComputedLoad::Import => self.emit_import_through_face(spelled.module, None),
             ComputedLoad::Resolve => {
-                self.emit_resolve_of_name(spelled.spelling, spelled.module, false)
+                self.emit_resolve_of_name(spelled.spelling, None, spelled.module, false)
             }
         }
     }
@@ -1416,12 +1440,32 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let done = self.create_block();
         for spelled in candidates.spelled_modules {
             let answer_for_candidate =
-                self.emit_resolve_of_name(spelled.spelling, spelled.module, is_url);
+                self.emit_resolve_of_name(spelled.spelling, None, spelled.module, is_url);
             let is_candidate = self.builder.strict_eq(text, answer_for_candidate);
             let candidate = self.create_block();
-            let other = self.create_block();
+            let mut other = self.create_block();
             self.builder
                 .branch(is_candidate, Edge::to(candidate), Edge::to(other));
+            // A file of an executable has two paths: `path.join(__dirname, name)` and `require.resolve()` say where it lay when the program was built,
+            // `path.join(import.meta.dir, name)` and `import.meta.resolve()` where the executable has it.
+            let url_of_source = match is_url {
+                true => self.file.find_url_of_source(spelled.module),
+                false => None,
+            };
+            if url_of_source.is_some() || (!is_url && self.file.has_source_path_of(spelled.module))
+            {
+                self.continue_in(other);
+                let other_answer = match url_of_source {
+                    Some(url) => self.emit_text(&url),
+                    None => {
+                        self.emit_path_in_program(spelled.spelling, None, spelled.module, false)
+                    }
+                };
+                let is_candidate = self.builder.strict_eq(text, other_answer);
+                other = self.create_block();
+                self.builder
+                    .branch(is_candidate, Edge::to(candidate), Edge::to(other));
+            }
 
             self.continue_in(candidate);
             let loaded = self.emit_load_of_candidate(load, spelled);
@@ -1459,7 +1503,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         specifier: Option<ValueId>,
     ) -> ValueId {
         match site.answer {
-            SiteAnswer::Module(module) => self.emit_resolve_module(site.specifier, module, false),
+            SiteAnswer::Module(module) => {
+                self.emit_resolve_module(site.specifier, specifier, module, false)
+            }
             SiteAnswer::Computed(candidates) => {
                 let specifier = specifier.unwrap_or_else(|| self.builder.undefined());
                 let node = site.specifier_node;
@@ -1493,21 +1539,49 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn emit_resolve_module(
         &mut self,
         specifier: ImportSpecifier,
+        given: Option<ValueId>,
         module: ModuleRef,
         is_url: bool,
     ) -> ValueId {
         let ImportSpecifier::Constant(text) = specifier else {
             unreachable!("only a constant specifier names one module");
         };
-        self.emit_resolve_of_name(text, module, is_url)
+        self.emit_resolve_of_name(text, given, module, is_url)
     }
 
-    fn emit_resolve_of_name(&mut self, name: Atom, module: ModuleRef, is_url: bool) -> ValueId {
+    fn emit_resolve_of_name(
+        &mut self,
+        name: Atom,
+        given: Option<ValueId>,
+        module: ModuleRef,
+        is_url: bool,
+    ) -> ValueId {
         if !is_url && let Some(asked) = self.file.builtin_name_as_asked(name, module) {
             let asked = asked.to_vec();
             let asked = self.file.intern_bytes(&asked);
             return self.builder.string(asked);
         }
+        // `bun build --compile` prints the path of the file on the machine that builds in place of what the program wrote.
+        // A whole path is one that the executable gave the program, as an import `with { type: "file" }` does: it is its own answer.
+        if !is_url
+            && let ModuleRef::File(file) = module
+            && !bun_paths::is_absolute_loose(self.file.queries.atom_bytes(name))
+            && let Some(mut path) = self.file.inputs.sources.source_path(file)
+        {
+            // `require.resolve("./a.cjs?fresh=1")`
+            path.extend_from_slice(self.file.inputs.sources.query(file));
+            return self.emit_text(&path);
+        }
+        self.emit_path_in_program(name, given, module, is_url)
+    }
+
+    fn emit_path_in_program(
+        &mut self,
+        name: Atom,
+        given: Option<ValueId>,
+        module: ModuleRef,
+        is_url: bool,
+    ) -> ValueId {
         let name = self.file.intern_atom(name);
         let referrer = self.file.module_id();
         // A package may name one file for require() and another for an import, so about code that is not in the program the run time asks
@@ -1515,7 +1589,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let is_code_outside = matches!(module, ModuleRef::External { .. })
             && self.file.inputs.modules.external_kind(module) != Some(ExternalKind::HostValue);
         if is_code_outside && !is_url {
-            let specifier = self.builder.string(name);
+            // Where the host finds nothing its error names what the program asked for: `require.resolve(__dirname + "/a.js")` asks for the whole path.
+            let specifier = given.unwrap_or_else(|| self.builder.string(name));
             return self
                 .builder
                 .resolve_dynamic(specifier, referrer, false, false);
@@ -1591,7 +1666,22 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
         self.continue_in(handler.block());
         let error = self.builder.catch_value();
-        self.emit_settled_promise(BuiltinId::PromiseReject, error)
+        self.emit_import_rejected_by_loader(error)
+    }
+
+    // The loader of `bun run` rejects a promise of its own, and import() resolves the promise of the program with that one: the program hears of the failure two jobs later.
+    fn emit_import_rejected_by_loader(&mut self, error: ValueId) -> ValueId {
+        let rejected = self.emit_settled_promise(BuiltinId::PromiseReject, error);
+        let with_resolvers = self.emit_builtin_itself(BuiltinId::PromiseWithResolvers);
+        let constructor = self.emit_builtin_itself(BuiltinId::Promise);
+        let capability = call::emit_call(self, with_resolvers, Some(constructor), &[]);
+        let resolve = self.file.intern_bytes(b"resolve");
+        let resolve = PropertyName::Constant(self.file.text_key(resolve));
+        let resolve = self.emit_get(capability, resolve);
+        call::emit_call(self, resolve, None, &[rejected]);
+        let promise = self.file.intern_bytes(b"promise");
+        let promise = PropertyName::Constant(self.file.text_key(promise));
+        self.emit_get(capability, promise)
     }
 
     fn lower_untested_call(
@@ -1673,6 +1763,8 @@ fn find_operation(
             (argument_count <= 1).then_some(ModuleOperation::RequireResolve)
         }
         ImportSiteKind::ImportMetaResolve(_) => match answer {
+            // The build knows nothing of a name that it leaves to the run time. A load of it asks the mocks of a test first, and `import.meta.resolve` does not.
+            SiteAnswer::Module(ModuleRef::External { .. }) => None,
             SiteAnswer::Module(_) if site.consults_resolver && argument_count == 1 => {
                 Some(ModuleOperation::ImportMetaResolve)
             }

@@ -185,6 +185,14 @@ pub struct CheckedMember {
     pub is_readonly: bool,
 }
 
+/// A member that a type and a base of it have under one name, with different types.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct MemberTypedOtherwise {
+    pub kind_in_base: ObjectMemberKind,
+    pub checked: TypeId,
+    pub in_base: TypeId,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct ListedMember {
     pub name: MemberName,

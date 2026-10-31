@@ -319,7 +319,7 @@ fn create_source_header(
         let position = file.position_of_making_this_in(function, &header);
         file.where_this_is_made.push((header.position, position));
     }
-    if file.is_anonymous_in_bundle(func.name_pos) {
+    if file.is_anonymous_in_bundle(func.name_pos) || file.is_printed_without_name(function) {
         header.flags = header.flags.without(FunctionFlags::HAS_EXPLICIT_NAME);
     }
     if file.inputs.library_functions.is_left_out(source) {

@@ -2,8 +2,8 @@ use std::fmt::Write;
 
 use super::generated::{
     AmbiguousExport, Data, Entry, EvalScope, ExpectedResult, Function, Layout, Module,
-    ModuleFailure, OpenedName, ProgramList, ReplaceableBuiltin, RuntimeFunctionEntry, TypeSite,
-    Variable, WebAssemblyModule,
+    ModuleFailure, OpenedName, ProgramList, ReplaceableBuiltin, RuntimeFunctionEntry, SourceStamp,
+    TypeSite, Variable, WebAssemblyModule,
 };
 use super::ids::{FunctionId, Id};
 use super::program::{NameTables, Program};
@@ -78,6 +78,9 @@ impl<'a> Printer<'a> {
                     &program.ambiguous_exports,
                     AmbiguousExport::print_fields,
                 );
+            }
+            ProgramList::SourceStamps => {
+                self.print_lines(list, &program.source_stamps, SourceStamp::print_fields);
             }
             ProgramList::EvalScopes => {
                 self.print_lines(list, &program.eval_scopes, EvalScope::print_fields);

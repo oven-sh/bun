@@ -32,8 +32,8 @@ console.log(this === module.exports, this === module, this === exports);
 // CHECK-NEXT: PutModuleVariable v1 variable=[[g_2]]
 // CHECK-NEXT: v3 = ModuleBuiltin builtin=ModuleRequire module=[[m_0]]
 // CHECK-NEXT: v4 = ModuleBuiltin builtin=ModuleObject module=[[m_0]]
-// CHECK-NEXT: v5 = String string="/$bunfs/root/this-at-top-of-cjs-as-eval-reads-it.cjs"
-// CHECK-NEXT: v6 = String string="/$bunfs/root"
+// CHECK-NEXT: v5 = String string="{{*}}commonjs/this-at-top-of-cjs-as-eval-reads-it.cjs"
+// CHECK-NEXT: v6 = String string="{{*}}commonjs"
 // CHECK-NEXT: v7 = NewClosure function=[[f_3]]
 // CHECK-NEXT: v8 = Integer integer=5
 // CHECK-NEXT: v9 = NewArray contents=anything

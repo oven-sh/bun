@@ -14,8 +14,8 @@ use crate::ir::generated::{
     Field, Function, FunctionFlags, FunctionVisibility, Header, HostRead, ImportPhase, Layout,
     LayoutKind, LimitId, MAGIC, Module, ModuleExport, ModuleFailure, ModuleRequest,
     ModuleRequestKind, OpenedName, ProgramList, ReplaceableBuiltin, RequiredName,
-    RuntimeFunctionEntry, SCHEMA_HASH, StaticField, SyntheticExport, TypeSite, TypeSiteKind,
-    Variable, WebAssemblyModule,
+    RuntimeFunctionEntry, SCHEMA_HASH, SourceStamp, StaticField, SyntheticExport, TypeSite,
+    TypeSiteKind, Variable, WebAssemblyModule,
 };
 use crate::ir::testing::{build_function, function_with_parameters};
 use crate::ir::{
@@ -211,6 +211,11 @@ fn create_full_program() -> Program {
     program.ambiguous_exports.push(AmbiguousExport {
         module: MODULE,
         name: names.name,
+    });
+    program.source_stamps.push(SourceStamp {
+        module: MODULE,
+        low: 7,
+        high: 9,
     });
     program.eval_scopes.push(EvalScope {
         bindings: vec![EvalBinding {
@@ -454,6 +459,7 @@ fn counts_match_program() {
             ProgramList::AmbiguousExports,
             program.ambiguous_exports.len(),
         ),
+        (ProgramList::SourceStamps, program.source_stamps.len()),
         (ProgramList::EvalScopes, program.eval_scopes.len()),
         (ProgramList::Functions, program.functions.len()),
         (ProgramList::Data, program.data.len()),

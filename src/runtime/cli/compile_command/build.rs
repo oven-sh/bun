@@ -231,6 +231,9 @@ fn write_product(
             path_aliases: &path_aliases,
             root_below_working_directory: root_below_working_directory.as_deref(),
             root_from_executable: root_from_executable.as_deref(),
+            // The program holds `__dirname` or the like, so it tells the folder itself, and asks for its own modules by paths below it.
+            root_on_build_machine: (build.holds_source_paths && !options.runs_in_place)
+                .then(|| trim_trailing_separators(&build.root_directory)),
             further_package_names: &build.further_package_names,
             root_folders_spelled: match options.runs_in_place {
                 true => b"",

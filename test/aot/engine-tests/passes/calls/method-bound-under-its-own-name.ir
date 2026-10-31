@@ -2931,8 +2931,9 @@ runtimefunction id=FunctionPrototypeCall function=f102
 # CHECK-LABEL: function {{*}}name="fromSubclass"
 # CHECK: module=m0 position=5136 role=GenericEntrypoint flags=[HasThis] captures=[{type=f55}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f55} creator=Entrypoint{target=f55 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f55, v1: anything):
-# CHECK-NEXT: v2: string = CallDirect v1 function=f55
-# CHECK-NEXT: ReturnCall v2 requirement=Allowed
+# CHECK-NEXT: RecordCallee v0
+# CHECK-NEXT: v3: string = CallDirect v1 function=f55
+# CHECK-NEXT: ReturnCall v3 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="fromGetter"
 # CHECK: module=m0 position=3296 role=GenericEntrypoint flags=[HasThis] captures=[{type=f183}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f183} creator=Entrypoint{target=f183 arguments=Registers} inlineFrames=[{}, {callee=f183 callPosition=3296 isTailCall=true module=m0}, {callee=f53 callPosition=3296 parent=1 isTailCall=true module=m0}] {

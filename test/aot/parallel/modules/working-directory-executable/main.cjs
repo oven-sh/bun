@@ -1,4 +1,4 @@
-// What an executable cannot do as `bun run` does once `process.chdir(__dirname)` has put the working directory into the executable. The expected output is written down.
+// What an executable cannot do as `bun run` does once `process.chdir(module.path)` has put the working directory into the executable. The expected output is written down.
 // The executable holds read-only data: whatever would change something under its root fails as on a read-only file system, by a relative path as by a whole one.
 // The system has no such directory: a child starts in the system's own working directory, and there is nothing above the root.
 // Flags: --asset ./data
@@ -6,7 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const started = process.cwd();
 // Under `bun run` the same calls would change this folder, so there the program works on a copy of it.
-let root = __dirname;
+let root = module.path;
 if (Bun.embeddedFiles.length === 0) {
   root = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "working-directory-"));
   fs.cpSync(path.join(__dirname, "data"), path.join(root, "data"), { recursive: true });

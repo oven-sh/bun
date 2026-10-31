@@ -32,6 +32,8 @@ pub(crate) struct Timings {
     /// The same keys → the megabytes by which the file's worker grew at most while it ran the file, with what it started.
     growth: StringArrayHashMap<u32>,
     measured_growth: StringArrayHashMap<u32>,
+    /// A file that took more megabytes is heavy. With `--aot-memory-limit` that is a worker's share of the limit.
+    pub(crate) heavy_over: u32,
     /// Cost assigned to files with no entry when packing shards.
     median: u32,
     /// Nine files in ten take no longer.
@@ -58,6 +60,7 @@ impl Timings {
             measured: StringArrayHashMap::new(),
             growth,
             measured_growth: StringArrayHashMap::new(),
+            heavy_over: 1024,
             median,
             slow,
         }
@@ -158,7 +161,7 @@ impl Timings {
     /// Its worker grew by over a gigabyte when the file was last measured.
     pub(crate) fn is_heavy(&self, abs_path: &[u8]) -> bool {
         self.growth_of(abs_path)
-            .is_some_and(|megabytes| megabytes > 1024)
+            .is_some_and(|megabytes| megabytes > self.heavy_over)
     }
 
     /// What the heaviest of `files` took. A run needs room for it, so heavy files that took no more together may run at once.
@@ -176,6 +179,17 @@ impl Timings {
             .filter_map(|file| self.growth_of(file.as_bytes()));
         let sum: u64 = growths.map(u64::from).sum();
         u32::try_from(sum * u64::from(count) / (files.len() as u64).max(1)).unwrap_or(u32::MAX)
+    }
+
+    /// What a file that is not heavy took that runs at a moment taken at random: the longer a file runs, the more it counts.
+    pub(crate) fn growth_of_running_light_file(&self, files: &[Interned]) -> u32 {
+        let (mut growth, mut time) = (0u64, 0u64);
+        for file in files.iter().filter(|file| !self.is_heavy(file.as_bytes())) {
+            let ms = u64::from(self.get(file.as_bytes()).unwrap_or(self.median));
+            growth += ms * u64::from(self.growth_of(file.as_bytes()).unwrap_or(0));
+            time += ms;
+        }
+        u32::try_from(growth / time.max(1)).unwrap_or(u32::MAX)
     }
 
     pub(crate) fn record_growth(&mut self, abs_path: &[u8], megabytes: u32) {

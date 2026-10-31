@@ -489,12 +489,13 @@ function emitJscPrograms(
   const testPrograms: string[] = [];
   for (const program of jscPrograms(cfg)) {
     n.comment(`─── ${program.name} (JSC standalone program) ───`);
+    const orderOnlyInputs = [headersReady, ...(program.sourcesFrom ?? []).flatMap(name => deps.get(name)!.outputs)];
     const prefixes: Array<{ prefix: PrecompiledHeader; files: RegExp | undefined }> = [];
     for (const { header, files } of program.pch ?? []) {
       const base = prefixes[0]?.prefix;
       const prefix = pch(n, cfg, header, {
         flags: program.cxxflags,
-        orderOnlyInputs: [headersReady],
+        orderOnlyInputs,
         ...(base !== undefined && { base }),
       });
       prefixes.unshift({ prefix, files });
@@ -503,11 +504,14 @@ function emitJscPrograms(
       const prefix = prefixes.find(({ files }) => files === undefined || files.test(slash(src)))?.prefix;
       return cxx(n, cfg, src, {
         flags: program.cxxflags,
-        orderOnlyInputs: [headersReady],
+        orderOnlyInputs,
         ...(prefix !== undefined && { pch: prefix.pch, pchHeader: prefix.wrapperHeader, pchBases: prefix.bases }),
       });
     });
-    const from = (["WebKit", "mimalloc", ...(program.deps ?? [])] as const).map(name => deps.get(name)!);
+    objects.push(
+      ...(program.cSources ?? []).map(src => cc(n, cfg, src, { flags: program.cflags ?? [], orderOnlyInputs })),
+    );
+    const from = (["WebKit", "mimalloc"] as const).map(name => deps.get(name)!);
     const depLink = lazyDepObjects(
       cfg,
       from.flatMap(d => d.objects),

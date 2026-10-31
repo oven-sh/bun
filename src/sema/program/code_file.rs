@@ -506,7 +506,10 @@ fn jsx_mode_of(jsx: &JsxSettings, atoms: &Interner<'_>) -> JsxMode {
     }
 }
 
-fn import_meta_main(context: &CodeLoadContext<'_, '_, '_>, key: LoadKey<'_>) -> Option<bool> {
+pub(super) fn import_meta_main(
+    context: &CodeLoadContext<'_, '_, '_>,
+    key: LoadKey<'_>,
+) -> Option<bool> {
     if let Some(known) = context.find_loaded_before(key) {
         return known.compiled.import_meta_main;
     }
@@ -514,7 +517,7 @@ fn import_meta_main(context: &CodeLoadContext<'_, '_, '_>, key: LoadKey<'_>) -> 
         path: context.host.file_of_module(key.path),
         ..key
     };
-    let (is_entry_point, count) = (context.is_entry_point(file), context.entry_points.len());
+    let (is_entry_point, count) = (context.is_entry_point(file), context.entry_point_count());
     match (is_entry_point, context.inputs.main_module, count) {
         (_, MainModule::AnyFile, _) => None,
         (false, ..) if context.is_main_module_beside_entry_points(file) => None,

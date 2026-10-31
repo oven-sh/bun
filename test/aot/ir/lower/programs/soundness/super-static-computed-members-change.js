@@ -80,7 +80,7 @@ function dynamic(text) { return (text + "!").slice(0, text.length); }
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="build"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|[[f_8]] flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|[[f_8]] flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -95,7 +95,7 @@ function dynamic(text) { return (text + "!").slice(0, text.length); }
 // CHECK-NEXT: Return v8
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="w"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_12]]|[[L_13]] flags=[IsExpected]}, {type=undefined|null|number|string flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_12]]|[[L_13]] flags=[IsExpected]}, {type=undefined|null|number|string flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_12]]|[[L_13]], v1: undefined|null|number|string):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

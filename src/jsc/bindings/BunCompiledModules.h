@@ -39,7 +39,7 @@ bool isHiddenFromRequireCache(const WTF::String& key);
 // The attributes say as what the file is asked for, and the executable may hold it as that. Null: the import has none.
 JSC::JSPromise* importCompiledModule(Zig::GlobalObject*, const WTF::String& key, const JSC::ScriptFetchParameters* attributes, int64_t referrerAsyncOrder);
 // These three answer null or false for a request with import attributes.
-JSC::JSPromise* compiledModuleSource(Zig::GlobalObject*, const WTF::String& key, bool hasImportAttributes);
+JSC::JSPromise* compiledModuleSource(Zig::GlobalObject*, const WTF::String& key, const JSC::ScriptFetchParameters* attributes);
 bool requireCompiledModule(Zig::GlobalObject*, JSCommonJSModule* target, const WTF::String& path, bool hasImportAttributes);
 // The function of the host that require() hands an ES module to, if the path names a compiled one.
 JSC::JSObject* loaderOfCompiledESModule(Zig::GlobalObject*, const WTF::String& path, bool hasImportAttributes);
@@ -63,6 +63,8 @@ JSC::JSValue errorIfCodeOutsideImageIsRefused(JSC::JSGlobalObject*, ErrorCode, c
 JSC::JSValue errorIfHostObjectOutsideImageIsRefused(JSC::JSGlobalObject*, ErrorCode, const WTF::String& path);
 // What process.mainModule and require.main answer in an ahead-of-time executable: the module object of the file at `Bun.main`.
 JSC::JSValue mainModuleOfExecutable(Zig::GlobalObject*);
+// The path under which an ahead-of-time executable knows `path`, a file of the machine that built it: `__filename` and require.resolve() answer such paths. Null: it is no such path.
+WTF::String pathInExecutable(const WTF::String& path);
 // Comes before a store into `Bun.main`, and throws in an ahead-of-time executable whose build saw no such store. The value that is there already may be stored again.
 void willStorePathOfMainModule(Zig::GlobalObject*, JSC::JSValue path);
 // A file of an ahead-of-time executable has a module object only once its code uses `module` or `require` as a value.
@@ -85,6 +87,7 @@ JSC::JSValue errorIfDebuggerIsRefused(JSC::JSGlobalObject*, ASCIILiteral builtin
 
 void didDeleteRequireCacheEntry(Zig::GlobalObject*, const WTF::String& key);
 bool requireCacheListsCompiledFiles(Zig::GlobalObject*);
+bool isLibraryModuleInRequireCache(Zig::GlobalObject*, const WTF::String& key);
 bool isEvaluatedCompiledFile(Zig::GlobalObject*, const WTF::String& key);
 JSC::JSValue compiledRequireCacheEntry(Zig::GlobalObject*, const WTF::String& key);
 bool isRecordOfCompiledModule(JSC::AbstractModuleRecord*);

@@ -10,7 +10,7 @@ use bun_sema::check::aot::{FileOrigin, containers_completed_by_bun_types};
 use bun_sema::config::{self, ConfigError};
 use bun_sema::hir::FileKind;
 use bun_sema::json::Json;
-use bun_sema::program::{CompileInputs, FileId, Files, MainModule, RootFileNames, Run};
+use bun_sema::program::{CodeView, CompileInputs, FileId, Files, MainModule, RootFileNames, Run};
 use bun_sema::resolve::{
     CodeFailure, CodeHost, CodeImportForm, CodeImportKind, CodeOptions, CodeRequest,
     CodeResolution, ComputedCandidate, ComputedCodeRequest, ComputedResolution, ExternalKind, Host,
@@ -62,7 +62,9 @@ fn load<'u: 's, 's>(
 ) -> Result<LoadedProgram<'s>, LoadFailure> {
     use_dedicated_pool("Bun Compile");
     let entry_paths = match request.entry_points {
-        EntryPoints::Written(specifiers) | EntryPoints::WrittenFor(specifiers, _) => {
+        EntryPoints::Written(specifiers)
+        | EntryPoints::WrittenFor(specifiers, _)
+        | EntryPoints::WrittenAndFound(specifiers, ..) => {
             resolve_entry_points(host, request.code, specifiers)?
         }
         EntryPoints::Resolved(paths)
@@ -143,6 +145,19 @@ fn load<'u: 's, 's>(
         }
     };
     options.emits_declarations = false;
+    let config_path = project.config_path.clone();
+    let find_entry_points = |code: &dyn CodeView<'_>| match request.entry_points {
+        EntryPoints::WrittenAndFound(_, _, find) if !types_stop_at_entry_points => {
+            let mut found = find(code);
+            let code = request.code;
+            if !is_project_the_same_with(host, code, &config_path, &entry_paths, &found) {
+                found.clear();
+            }
+            found
+        }
+        _ => Vec::new(),
+    };
+    let finds_entry_points = matches!(request.entry_points, EntryPoints::WrittenAndFound(..));
     let files = Files::load_for_compile_with_parsed_files(
         session,
         parsed,
@@ -151,9 +166,11 @@ fn load<'u: 's, 's>(
         root_files,
         &CompileInputs {
             entry_points: &entry_paths,
+            finds_entry_points: finds_entry_points.then_some(&find_entry_points),
             main_module: match request.entry_points {
                 EntryPoints::Configured(..) | EntryPoints::Imported(_) => MainModule::Elsewhere,
-                EntryPoints::WrittenFor(_, main_module) => main_module,
+                EntryPoints::WrittenFor(_, main_module)
+                | EntryPoints::WrittenAndFound(_, main_module, _) => main_module,
                 EntryPoints::Written(_) | EntryPoints::Resolved(_) => MainModule::EntryPoint,
             },
             loaded_before,
@@ -385,6 +402,30 @@ fn resolve_entry_points(
     })
 }
 
+/// Whether `find_project` and `add_files_of_other_projects` answer for `entry_paths` and `further` together what they have answered for `entry_paths`: the project at `config_path`.
+fn is_project_the_same_with(
+    host: &dyn CodeHost,
+    code: &CodeOptions,
+    config_path: &[u8],
+    entry_paths: &[Vec<u8>],
+    further: &[Vec<u8>],
+) -> bool {
+    if code.tsconfig_override.is_some() {
+        return true;
+    }
+    // Without a configuration the program lists the entry points that are TypeScript.
+    if config_path.is_empty() {
+        return !further.iter().any(|path| is_typescript_file_name(path));
+    }
+    let all = [entry_paths, further].concat();
+    first_entry_point_of_largest_project(host, &all)
+        == first_entry_point_of_largest_project(host, entry_paths)
+        && further.iter().all(|path| {
+            config::find_config(host, &host.directory_of(path))
+                .is_none_or(|nearest| nearest == config_path)
+        })
+}
+
 fn find_project(
     host: &dyn CodeHost,
     request: &CompileRequest<'_, '_>,
@@ -467,7 +508,9 @@ pub fn find_configuration_of_each_entry_point(
     request: &CompileRequest<'_, '_>,
 ) -> Option<Vec<Vec<u8>>> {
     let entry_paths = match request.entry_points {
-        EntryPoints::Written(specifiers) | EntryPoints::WrittenFor(specifiers, _) => {
+        EntryPoints::Written(specifiers)
+        | EntryPoints::WrittenFor(specifiers, _)
+        | EntryPoints::WrittenAndFound(specifiers, ..) => {
             resolve_entry_points(host, request.code, specifiers).ok()?
         }
         EntryPoints::Resolved(paths)

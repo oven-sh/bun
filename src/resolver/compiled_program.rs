@@ -97,6 +97,8 @@ pub struct CompiledProgram {
     root_below_working_directory: Option<&'static [u8]>,
     /// Where the root directory of the build lies, seen from the folder of the executable that the build wrote: `../src`.
     root_from_executable: Option<&'static [u8]>,
+    /// Of a program that holds `__dirname`, `__filename` or an answer of `require.resolve`: the root directory of the build, which those paths begin with.
+    root_on_build_machine: Option<&'static [u8]>,
     /// Ascending by path.
     further_package_names: Box<[CompiledFurtherPackageName]>,
     /// Built with `--aot-allow-code-from-disk`. Whether the program itself loads such code is the image's to say.
@@ -165,7 +167,7 @@ pub enum PackageLookup {
 /// In a public path, a `..` that leaves the root directory of the build.
 const PARENT_OF_ROOT: &[u8] = b"_.._";
 
-fn is_relative_specifier(specifier: &[u8]) -> bool {
+pub(crate) fn is_relative_specifier(specifier: &[u8]) -> bool {
     let after_dots = specifier
         .strip_prefix(b"..")
         .or_else(|| specifier.strip_prefix(b"."));
@@ -380,6 +382,7 @@ impl CompiledProgram {
             path_aliases: Box::new([]),
             root_below_working_directory: None,
             root_from_executable: None,
+            root_on_build_machine: None,
             further_package_names: Box::new([]),
             allows_code_from_disk: false,
             root_folders_spelled: b"",
@@ -441,6 +444,38 @@ impl CompiledProgram {
     pub fn with_root_from_executable(mut self, root: Option<&'static [u8]>) -> CompiledProgram {
         self.root_from_executable = root;
         self
+    }
+
+    pub fn with_root_on_build_machine(mut self, root: Option<&'static [u8]>) -> CompiledProgram {
+        self.root_on_build_machine = root;
+        self
+    }
+
+    pub fn root_on_build_machine(&self) -> Option<&'static [u8]> {
+        self.root_on_build_machine
+    }
+
+    /// Where the file that the executable knows as `path` lay on the machine that built it: what `require.resolve` answers, as with `bun build --compile`.
+    pub fn source_path_of_public(&self, public_root: &[u8], path: &[u8]) -> Option<Vec<u8>> {
+        let root = self.root_on_build_machine?;
+        if !is_bun_standalone_file_path(path) {
+            return None;
+        }
+        // It lists nothing for the root itself.
+        let deepest = directories_of_importer(public_root, path, root)
+            .into_iter()
+            .next();
+        Some(deepest.unwrap_or_else(|| root.to_vec()))
+    }
+
+    /// The path under which the executable knows `path`, a file or a folder of the machine that built it.
+    pub fn public_path_of_source(&self, public_root: &[u8], path: &[u8]) -> Option<Vec<u8>> {
+        let root = self.root_on_build_machine?;
+        if !bun_paths::is_absolute(path) || is_bun_standalone_file_path(path) {
+            return None;
+        }
+        let below_root = [b"./", bun_paths::resolve_path::relative(root, path)].concat();
+        join_public_path(public_root, public_root, &below_root)
     }
 
     /// Where the root directory lies below the folder of this executable, wherever it is installed.
@@ -980,6 +1015,9 @@ impl CompiledProgram {
         specifier: &[u8],
         search: &ExtensionSearch<'_>,
     ) -> Option<&CompiledEntryPoint> {
+        // `new Worker(__filename)`
+        let known_to_program = self.public_path_of_source(public_root, specifier);
+        let specifier = known_to_program.as_deref().unwrap_or(specifier);
         let lookup = |path: &[u8]| {
             let entry_point = self.entry_point_by_module_path(path)?;
             Some(entry_point.module_path)
@@ -1321,6 +1359,42 @@ mod tests {
             assert_eq!(find(b"/work/app/test/", b"plugins.js"), None);
             assert_eq!(find(ROOT, b"./absent.js"), None);
             assert!(!program_with_lookup(false).knows_root_on_disk());
+        }
+
+        #[cfg(not(windows))]
+        #[test]
+        fn path_of_the_build_machine_and_path_in_the_executable_lead_to_one_another() {
+            let program = program_with_lookup(false).with_root_on_build_machine(Some(b"/work/app"));
+            let pairs: [(&[u8], &[u8]); 4] = [
+                (b"/work/app", b"/$bunfs/root"),
+                (b"/work/app/main.js", b"/$bunfs/root/main.js"),
+                (b"/work/app/lib/a.cjs", b"/$bunfs/root/lib/a.cjs"),
+                (b"/work/shared/util.js", b"/$bunfs/root/_.._/shared/util.js"),
+            ];
+            for (on_build_machine, in_executable) in pairs {
+                let found = program.public_path_of_source(ROOT, on_build_machine);
+                assert_eq!(found.as_deref(), Some(in_executable));
+                let found = program.source_path_of_public(ROOT, in_executable);
+                assert_eq!(found.as_deref(), Some(on_build_machine));
+            }
+            assert_eq!(program.public_path_of_source(ROOT, b"./main.js"), None);
+            assert_eq!(
+                program.public_path_of_source(ROOT, b"/$bunfs/root/main.js"),
+                None
+            );
+            assert_eq!(
+                program.source_path_of_public(ROOT, b"/work/app/main.js"),
+                None
+            );
+            let without_root = program_with_lookup(false);
+            assert_eq!(
+                without_root.public_path_of_source(ROOT, b"/work/app/main.js"),
+                None
+            );
+            assert_eq!(
+                without_root.source_path_of_public(ROOT, b"/$bunfs/root/main.js"),
+                None
+            );
         }
 
         #[test]

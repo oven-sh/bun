@@ -55,6 +55,11 @@ pub trait CodeHost: Host {
         false
     }
 
+    /// Whether another program, which runs in the same realm, holds the file as what an import with this `type` gets.
+    fn is_form_in_other_program(&self, _path: &[u8], _type_attribute: &[u8]) -> bool {
+        false
+    }
+
     /// Whether no program holds the file in any form: an earlier compile could not take it, and the loader at run time says what is wrong with it.
     fn is_left_to_loader(&self, _path: &[u8]) -> bool {
         false

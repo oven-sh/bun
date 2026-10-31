@@ -268,7 +268,7 @@ typesite w118 module=m3 position=1571 kind=Variable
 typesite w119 module=m7 position=2444 kind=Variable
 layout L0 kind=Instance name="Countdown" module=m0 position=1244 constructor=f12 fields=[{key="from" declared={type=number site=w17} flags=[IsRequired]}] ownFieldCount=1
 layout L1 kind=Instance name="Liar" module=m0 position=1715 constructor=f14
-layout L2 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent site=w85}}] ownFieldCount=1
+layout L2 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent site=w85} variableName="current"}] ownFieldCount=1
 layout L3 module=m0 position=1431 fields=[{key="next" declared={type=undefined|null|function|f37 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="return" declared={type=undefined|null|function|f38 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=2
 layout L4 fields=[{key="done" declared={type=undefined|boolean}}, {key="value" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
 layout L5 module=m4 position=6451 fields=[{key="done" declared={type=boolean}}, {key="value" declared={type=anything}}] ownFieldCount=2
@@ -1336,7 +1336,7 @@ function f24 module=m0 position=3716 kind=Arrow flags=[IsChecked] thisType={type
     v4 = Convert v3 declared={type=undefined|null|L0 site=w98 flags=[OmitsNull, OmitsUndefined]} @3722
     Return v4 @3722
 }
-function f25 module=m0 position=3827 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w42}] functionTypes=[f53] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f25 module=m0 position=3827 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=number site=w42}] functionTypes=[f53] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
     Jump -> next b1() @3827
   b1():
@@ -1346,7 +1346,7 @@ function f25 module=m0 position=3827 kind=Arrow flags=[IsChecked] captures=[{typ
     v4 = Call v1, -, v3 calleeName="total" @3833
     ReturnCall v4 casts=[{declared={type=number site=w99}}, {declared={type=number site=w42}}] @3833
 }
-function f26 module=m0 position=3885 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w43}] functionTypes=[f54] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f26 module=m0 position=3885 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=number site=w43}] functionTypes=[f54] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
     Jump -> next b1() @3885
   b1():
@@ -1357,7 +1357,7 @@ function f26 module=m0 position=3885 kind=Arrow flags=[IsChecked] captures=[{typ
     v5 = Call v1, -, v3, v4 calleeName="firstAbove" @3891
     ReturnCall v5 casts=[{declared={type=number site=w100}}, {declared={type=number site=w43}}] @3891
 }
-function f27 module=m0 position=3947 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|null|Array<number> site=w44 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f55] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f27 module=m0 position=3947 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=undefined|null|Array<number> site=w44 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f55] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
     Jump -> next b1() @3947
   b1():
@@ -1367,7 +1367,7 @@ function f27 module=m0 position=3947 kind=Arrow flags=[IsChecked] captures=[{typ
     v4 = Call v1, -, v3 calleeName="firstTwo" @3953
     ReturnCall v4 casts=[{declared={type=undefined|null|Array<number> site=w101 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<number> site=w44 flags=[OmitsNull, OmitsUndefined]}}] @3953
 }
-function f28 module=m0 position=4009 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|number|Array<number>> site=w45 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f56] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f28 module=m0 position=4009 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|number|Array<number>> site=w45 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f56] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
     Jump -> next b1() @4009
   b1():
@@ -1377,7 +1377,7 @@ function f28 module=m0 position=4009 kind=Arrow flags=[IsChecked] captures=[{typ
     v4 = Call v1, -, v3 calleeName="firstAndRest" @4015
     ReturnCall v4 casts=[{declared={type=undefined|null|Array<undefined|null|number|Array<number>> site=w102 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<undefined|null|number|Array<number>> site=w45 flags=[OmitsNull, OmitsUndefined]}}] @4015
 }
-function f29 module=m0 position=4067 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|null|Array<number> site=w46 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f57] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f29 module=m0 position=4067 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=undefined|null|Array<number> site=w46 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f57] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
     Jump -> next b1() @4067
   b1():
@@ -1387,7 +1387,7 @@ function f29 module=m0 position=4067 kind=Arrow flags=[IsChecked] captures=[{typ
     v4 = Call v1, -, v3 calleeName="spread" @4073
     ReturnCall v4 casts=[{declared={type=undefined|null|Array<number> site=w103 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<number> site=w46 flags=[OmitsNull, OmitsUndefined]}}] @4073
 }
-function f30 module=m0 position=4120 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w47}] functionTypes=[f58] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f30 module=m0 position=4120 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=number site=w47}] functionTypes=[f58] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
     Jump -> next b1() @4120
   b1():
@@ -1397,7 +1397,7 @@ function f30 module=m0 position=4120 kind=Arrow flags=[IsChecked] captures=[{typ
     v4 = Call v1, -, v3 calleeName="largest" @4126
     ReturnCall v4 casts=[{declared={type=number site=w104}}, {declared={type=number site=w47}}] @4126
 }
-function f31 module=m0 position=4175 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|null|Array<number> site=w48 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f59] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f31 module=m0 position=4175 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=undefined|null|Array<number> site=w48 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f59] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
     Jump -> next b1() @4175
   b1():
@@ -1410,7 +1410,7 @@ function f31 module=m0 position=4175 kind=Arrow flags=[IsChecked] captures=[{typ
     v7 = Call v1, -, v6 calleeName="spread" @4181
     ReturnCall v7 casts=[{declared={type=undefined|null|Array<number> site=w105 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<number> site=w48 flags=[OmitsNull, OmitsUndefined]}}] @4181
 }
-function f32 module=m0 position=4239 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|null|Array<number> site=w49 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f60] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f32 module=m0 position=4239 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=undefined|null|Array<number> site=w49 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f60] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
     Jump -> next b1() @4239
   b1():
@@ -1423,7 +1423,7 @@ function f32 module=m0 position=4239 kind=Arrow flags=[IsChecked] captures=[{typ
     v7 = Call v1, -, v6 calleeName="spread" @4245
     ReturnCall v7 casts=[{declared={type=undefined|null|Array<number> site=w106 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<number> site=w49 flags=[OmitsNull, OmitsUndefined]}}] @4245
 }
-function f33 module=m0 position=4318 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w50}] functionTypes=[f61] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f33 module=m0 position=4318 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=number site=w50}] functionTypes=[f61] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
     Jump -> next b1() @4318
   b1():
@@ -1433,7 +1433,7 @@ function f33 module=m0 position=4318 kind=Arrow flags=[IsChecked] captures=[{typ
     v4 = Call v1, -, v3 calleeName="throwsInside" @4324
     ReturnCall v4 casts=[{declared={type=number site=w107}}, {declared={type=number site=w50}}] @4324
 }
-function f34 module=m0 position=4380 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|null|Array<number> site=w51 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f63] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f34 module=m0 position=4380 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=undefined|null|Array<number> site=w51 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f63] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
     Jump -> next b1() @4380
   b1():
@@ -1445,7 +1445,7 @@ function f34 module=m0 position=4380 kind=Arrow flags=[IsChecked] captures=[{typ
     v6 = Call v2, v1, v4, v5 calleeName="Array.from" @4392
     ReturnCall v6 casts=[{declared={type=undefined|null|Array<number> site=w110 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<number> site=w51 flags=[OmitsNull, OmitsUndefined]}}] @4392
 }
-function f35 module=m0 position=4459 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w52}] functionTypes=[f64] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f35 module=m0 position=4459 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=number site=w52}] functionTypes=[f64] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
     Jump -> next b1() @4459
   b1():
@@ -2191,7 +2191,7 @@ runtimefunction id=IteratorConsumersFrom function=f73
 # CHECK: module=m0 position=947 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w14 flags=[OmitsNull, OmitsUndefined]}, {type=f25|f26|f27|f28|f29|f30|f31|f32|f33|f34|f35 site=w15 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: string, v1: f25|f26|f27|f28|f29|f30|f31|f32|f33|f34|f35) handler=b1():
 # CHECK-NEXT: v2: anything = Call v1 calleeName="run" accessSite=64 callees=[f25, f26, f27, f28, f29, f30, f31, f32, f33, f34, f35]
-# CHECK-NEXT: v3: undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v3: undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v4: undefined|string = CallDirect v3 function=f1 accessSite=65
 # CHECK-NEXT: Jump -> next b5(v4)
 # CHECK-NEXT: b1() role=CatchHandler:
@@ -2306,7 +2306,7 @@ runtimefunction id=IteratorConsumersFrom function=f73
 # CHECK-LABEL: function f19 module=
 # CHECK: m0 position=3468 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=MapIterator<pristine[Storage, Names]>}] functionTypes=[f47] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f104} {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: Map<int, "b"|"c", proven, pristine[Storage, Names]> = CallDirect function=f104
+# CHECK-NEXT: v0: Map<undefined|int|"b"|"c"|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, undefined|int|"b"|"c"|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> = CallDirect function=f104
 # CHECK-NEXT: v1: MapIterator = CallBuiltin v0 overload=MapPrototypeKeys/0 accessSite=85 @3504 tail
 # CHECK-NEXT: v2: MapIterator<pristine[Storage, Names]> = AssumeType v1 provenType=MapIterator<pristine[Storage, Names]>
 # CHECK-NEXT: Return v2
@@ -2357,7 +2357,7 @@ runtimefunction id=IteratorConsumersFrom function=f73
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f25 module=
-# CHECK: m0 position=3827 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w42 flags=[IsExpected]}] functionTypes=[f53] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f76 fallback=f89} {
+# CHECK: m0 position=3827 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=number site=w42 flags=[IsExpected]}] functionTypes=[f53] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f76 fallback=f89} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
@@ -2369,7 +2369,7 @@ runtimefunction id=IteratorConsumersFrom function=f73
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f26 module=
-# CHECK: m0 position=3885 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w43 flags=[IsExpected]}] functionTypes=[f54] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f77 fallback=f90} {
+# CHECK: m0 position=3885 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=number site=w43 flags=[IsExpected]}] functionTypes=[f54] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f77 fallback=f90} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
@@ -2381,43 +2381,43 @@ runtimefunction id=IteratorConsumersFrom function=f73
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f27 module=
-# CHECK: m0 position=3947 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> site=w44 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f55] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f78 fallback=f91} {
+# CHECK: m0 position=3947 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w44 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f55] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f78 fallback=f91} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v2: undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
-# CHECK-NEXT: v3: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v2 function=f78
+# CHECK-NEXT: v3: Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v2 function=f78
 # CHECK-NEXT: ReturnCall v3
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v4: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v0 function=f91
+# CHECK-NEXT: v4: Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v0 function=f91
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f28 module=
-# CHECK: m0 position=4009 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w45 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f56] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f79 fallback=f92} {
+# CHECK: m0 position=4009 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w45 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f56] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f79 fallback=f92} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v2: undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
-# CHECK-NEXT: v3: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v2 function=f79
+# CHECK-NEXT: v3: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v2 function=f79
 # CHECK-NEXT: ReturnCall v3
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v4: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v0 function=f92
+# CHECK-NEXT: v4: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v0 function=f92
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f29 module=
-# CHECK: m0 position=4067 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> site=w46 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f57] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f80 fallback=f93} {
+# CHECK: m0 position=4067 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w46 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f57] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f80 fallback=f93} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v2: undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
-# CHECK-NEXT: v3: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v2 function=f80
+# CHECK-NEXT: v3: Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v2 function=f80
 # CHECK-NEXT: ReturnCall v3
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v4: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v0 function=f93
+# CHECK-NEXT: v4: Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v0 function=f93
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f30 module=
-# CHECK: m0 position=4120 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w47}] functionTypes=[f58] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f81 fallback=f94} {
+# CHECK: m0 position=4120 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=number site=w47}] functionTypes=[f58] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f81 fallback=f94} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
@@ -2429,31 +2429,31 @@ runtimefunction id=IteratorConsumersFrom function=f73
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f31 module=
-# CHECK: m0 position=4175 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> site=w48 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f59] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f82 fallback=f95} {
+# CHECK: m0 position=4175 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w48 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f59] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f82 fallback=f95} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v2: undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
-# CHECK-NEXT: v3: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v2 function=f82
+# CHECK-NEXT: v3: Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v2 function=f82
 # CHECK-NEXT: ReturnCall v3
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v4: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v0 function=f95
+# CHECK-NEXT: v4: Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v0 function=f95
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f32 module=
-# CHECK: m0 position=4239 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> site=w49 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f60] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f83 fallback=f96} {
+# CHECK: m0 position=4239 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w49 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f60] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f83 fallback=f96} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v2: undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
-# CHECK-NEXT: v3: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v2 function=f83
+# CHECK-NEXT: v3: Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v2 function=f83
 # CHECK-NEXT: ReturnCall v3
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v4: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v0 function=f96
+# CHECK-NEXT: v4: Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v0 function=f96
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f33 module=
-# CHECK: m0 position=4318 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=0 site=w50}] functionTypes=[f61] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f84 fallback=f97} {
+# CHECK: m0 position=4318 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=0 site=w50}] functionTypes=[f61] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f84 fallback=f97} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
@@ -2465,7 +2465,7 @@ runtimefunction id=IteratorConsumersFrom function=f73
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f34 module=
-# CHECK: m0 position=4380 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=Array<number, proven, pristine[Storage, Names, Dense]> site=w51 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f63] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f85 fallback=f98} {
+# CHECK: m0 position=4380 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=Array<number, proven, pristine[Storage, Names, Dense]> site=w51 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f63] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f85 fallback=f98} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
@@ -2477,7 +2477,7 @@ runtimefunction id=IteratorConsumersFrom function=f73
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f35 module=
-# CHECK: m0 position=4459 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=int[0, 2147483647] site=w52}] functionTypes=[f64] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f86 fallback=f99} {
+# CHECK: m0 position=4459 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=int[0, 2147483647] site=w52}] functionTypes=[f64] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f86 fallback=f99} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
@@ -2559,7 +2559,7 @@ runtimefunction id=IteratorConsumersFrom function=f73
 # CHECK: module=m0 position=947 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w14 flags=[OmitsNull, OmitsUndefined]}, {type=f25|f26|f27|f28|f29|f30|f31|f32|f33|f34|f35}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f11 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f11} {
 # CHECK-NEXT: b0(v0: string, v1: f25|f26|f27|f28|f29|f30|f31|f32|f33|f34|f35) handler=b1():
 # CHECK-NEXT: v2: anything = Call v1 calleeName="run" accessSite=64 callees=[f25, f26, f27, f28, f29, f30, f31, f32, f33, f34, f35]
-# CHECK-NEXT: v3: undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v3: undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v4: undefined|string = CallDirect v3 function=f1 accessSite=65
 # CHECK-NEXT: Jump -> next b5(v4)
 # CHECK-NEXT: b1() role=CatchHandler:

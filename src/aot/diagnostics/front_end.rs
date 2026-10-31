@@ -217,6 +217,10 @@ impl Diagnostics {
         }
     }
 
+    pub(crate) fn add_fault_of_emitted_program(&mut self, message: Vec<u8>) {
+        self.report_internal_error(Stage::LinkAndEmit, message);
+    }
+
     pub(crate) fn add_emit_error(&mut self, error: EmitError) {
         match error {
             EmitError::ProgramTooLarge { bytes } => {

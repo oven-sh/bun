@@ -593,6 +593,10 @@
     "millionInstructions": 11417,
     "megabytes": 115
   },
+  "calls that each parse a text by one record type of 250 parts, each part in a list": {
+    "millionInstructions": 7777,
+    "megabytes": 133
+  },
   "lines that each add an element to one sum and truncate it, in a loop that carries the sum as an integer": {
     "millionInstructions": 15207,
     "megabytes": 235

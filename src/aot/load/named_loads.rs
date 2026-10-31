@@ -9,7 +9,7 @@ use bun_sema::hir::{
 use bun_sema::import_sites::{
     ImportSiteKind, ImportSpecifier, find_values_of_parameter, is_exported,
 };
-use bun_sema::program::{CodeAnswer, FileId, Files};
+use bun_sema::program::{CodeAnswer, CodeView, FileId, Files};
 use bun_sema::resolve::{
     CodeFailure, CodeResolution, ComputedResolution, ExternalKind, FinishedFile, SiteResolution,
 };
@@ -165,7 +165,7 @@ fn sort_named_modules(named: &mut Vec<NamedModule>) {
 const MAX_REEXPORTS: usize = 8;
 
 pub(crate) fn find_import_of(
-    files: &Files<'_>,
+    files: &dyn CodeView<'_>,
     file: FileId,
     symbol: SymbolId,
 ) -> Option<(ImportId, Atom)> {

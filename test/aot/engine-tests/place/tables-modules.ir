@@ -68,6 +68,7 @@ function f4 name="runtime" module=m6 kind=Module results=[{type=anything}] {
 # CHECK-NEXT: requiredNames 1 8
 # CHECK-NEXT: exportStatements 0 0
 # CHECK-NEXT: ambiguousExports 0 0
+# CHECK-NEXT: sourceStamps 0 0
 # CHECK-NEXT: moduleFailures 2 16
 # CHECK-NEXT: modulesByPath 5 10
 # CHECK-NEXT: directoriesOfModulesByPath 1 4

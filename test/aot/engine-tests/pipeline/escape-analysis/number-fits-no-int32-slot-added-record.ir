@@ -188,21 +188,22 @@ function f2 name="twoAdded" module=m0 position=655 flags=[IsChecked, HasExplicit
 # CHECK-NEXT: v5: "ok:" = String string="ok:"
 # CHECK-NEXT: StringBuilderAppend v4, v5
 # CHECK-NEXT: v7: i32 = StringBuilderCheckpoint v4
-# CHECK-NEXT: v8: int[0, 2] = CallDirect v3, v4 function=f7 calledBuiltin=JSONStringify
-# CHECK-NEXT: Switch v8 cases=[1] -> case b1(), otherwise b2()
+# CHECK-NEXT: v8: 0 = Integer
+# CHECK-NEXT: v9: int[0, 2] = CallDirect v3, v4, v8 function=f7 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v9 cases=[1] -> case b1(), otherwise b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v9: "" = String string=""
-# CHECK-NEXT: Jump -> next b3(v9)
+# CHECK-NEXT: v10: "" = String string=""
+# CHECK-NEXT: Jump -> next b3(v10)
 # CHECK-NEXT: b2() frequency=Rare:
 # CHECK-NEXT: StringBuilderRollBack v4, v7
-# CHECK-NEXT: v11: undefined = Undefined
-# CHECK-NEXT: v12: undefined|string = CallBuiltin -, v3, v11 overload=JSONStringify/0 accessSite=10
-# CHECK-NEXT: Jump -> next b3(v12)
-# CHECK-NEXT: b3(v13: undefined|string ~ ""):
-# CHECK-NEXT: v14: ":" = String string=":"
-# CHECK-NEXT: v15: false = Boolean
-# CHECK-NEXT: v16: ":undefined" = String string=":undefined"
-# CHECK-NEXT: StringBuilderAppend v4, v13, v14, v15, v16
-# CHECK-NEXT: v18: string = StringBuilderFinish v4
-# CHECK-NEXT: Return v18
+# CHECK-NEXT: v12: undefined = Undefined
+# CHECK-NEXT: v13: undefined|string = CallBuiltin -, v3, v12 overload=JSONStringify/0 accessSite=10
+# CHECK-NEXT: Jump -> next b3(v13)
+# CHECK-NEXT: b3(v14: undefined|string ~ ""):
+# CHECK-NEXT: v15: ":" = String string=":"
+# CHECK-NEXT: v16: false = Boolean
+# CHECK-NEXT: v17: ":undefined" = String string=":undefined"
+# CHECK-NEXT: StringBuilderAppend v4, v14, v15, v16, v17
+# CHECK-NEXT: v19: string = StringBuilderFinish v4
+# CHECK-NEXT: Return v19
 # CHECK-NEXT: }

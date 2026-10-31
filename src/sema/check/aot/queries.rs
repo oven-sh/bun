@@ -1,8 +1,8 @@
 use super::answers::{
     CallTarget, CheckedMember, CheckedType, ClassDeclaration, ClassMember, ClassMemberSource,
     ClassParent, ClassRef, ClassShape, EnumConstant, FunctionRef, GaveUp, IndexSignature,
-    ListedMember, MemberLookup, MemberName, ObjectMember, ObjectMemberKind, PositionTypes,
-    QueryStatistics, SignatureShape, TypeDisplayName, WrittenType,
+    ListedMember, MemberLookup, MemberName, MemberTypedOtherwise, ObjectMember, ObjectMemberKind,
+    PositionTypes, QueryStatistics, SignatureShape, TypeDisplayName, WrittenType,
 };
 use super::builtin_types::BuiltinTypeSymbols;
 use super::declared_signatures::DeclaredSignatures;
@@ -75,6 +75,8 @@ pub(super) struct Memo<'c> {
     gave_up: GaveUpAnswers,
     members: FxHashMap<TypeId, Result<&'c [ObjectMember], GaveUp>>,
     checked_members: FxHashMap<TypeId, Result<&'c [CheckedMember], GaveUp>>,
+    /// Of the two types that `members_typed_otherwise` was asked about last.
+    most_recent_checked_members: [Option<(TypeId, Vec<CheckedMember>)>; 2],
     signature_results: FxHashMap<SigId, CheckedType>,
     signatures: FxHashMap<SigId, SignatureShape<'c>>,
     function_signatures: FxHashMap<FunctionRef, SignatureShape<'c>>,
@@ -1212,6 +1214,59 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             }
         }
         answer
+    }
+
+    /// The members that `object_type` and `base` both have under one string name, with different types, in the order of `base`.
+    /// It keeps no list of the members of either: a class has those of all the classes above it, so the lists of a row of classes
+    /// that extend one another take room that grows with the square of its length.
+    pub fn members_typed_otherwise(
+        &mut self,
+        object_type: TypeId,
+        base: TypeId,
+    ) -> Result<Vec<MemberTypedOtherwise>, GaveUp> {
+        // In such a row the base is the class that was asked about just before, and classes that extend one class follow one another.
+        let (in_base, base_is_kept) = self.checked_members_for_now(base)?;
+        let (members, is_kept) = self.checked_members_for_now(object_type)?;
+        let mut types: FxHashMap<Atom, TypeId> = FxHashMap::default();
+        types.reserve(members.len());
+        for member in &members {
+            if let (MemberName::String(name), Ok(checked)) = (member.name, member.checked) {
+                types.insert(name, checked);
+            }
+        }
+        let mut found = Vec::new();
+        for member in &in_base {
+            if let (MemberName::String(name), Ok(in_base)) = (member.name, member.checked)
+                && let Some(&checked) = types.get(&name)
+                && checked != in_base
+            {
+                found.push(MemberTypedOtherwise {
+                    kind_in_base: member.kind,
+                    checked,
+                    in_base,
+                });
+            }
+        }
+        self.memo.most_recent_checked_members = [
+            is_kept.then_some((object_type, members)),
+            base_is_kept.then_some((base, in_base)),
+        ];
+        Ok(found)
+    }
+
+    /// The list, and whether the same question gets the same answer later.
+    fn checked_members_for_now(
+        &mut self,
+        object_type: TypeId,
+    ) -> Result<(Vec<CheckedMember>, bool), GaveUp> {
+        for recent in &mut self.memo.most_recent_checked_members {
+            if let Some((_, members)) = recent.take_if(|it| it.0 == object_type) {
+                return Ok((members, true));
+            }
+        }
+        let unstable_answers = self.unstable_answers;
+        let members = self.ask(|queries| queries.compute_checked_members_for_now(object_type))?;
+        Ok((members, self.unstable_answers == unstable_answers))
     }
 
     pub fn find_checked_member(

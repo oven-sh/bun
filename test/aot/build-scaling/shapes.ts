@@ -1775,6 +1775,23 @@ export const shapes: Shape[] = [
         `    sum = sum | 0;\n  }\n  return bits + sum;\n}\n${aFloat64Array(size)}console.log(run(list, 3));\n`,
     }),
   },
+  {
+    name: "calls that each parse a text by one record type of 250 parts, each part in a list",
+    counted: "calls",
+    size: 100,
+    entry: "main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        declaredConsole +
+        lines(250, index => `interface Part${index} { a${index}: number }`) +
+        `interface Whole { id: number;\n${lines(250, index => `  part${index}: Part${index}[];`)}}\n` +
+        `function use(whole: Whole): number { return whole.id; }\nconst texts: string[] = ['{"id":1}'];\nlet sum = 0;\n` +
+        lines(size, () => "sum += use(JSON.parse(texts[0]));") +
+        "console.log(sum);\n",
+    }),
+  },
 ];
 
 if (import.meta.main) {

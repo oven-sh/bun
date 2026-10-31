@@ -534,260 +534,263 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f21 visibility=Private
 # CHECK-NEXT: v44: boolean = ShapeTest v41 layouts=[L0]
 # CHECK-NEXT: Branch v44 -> taken b8(), notTaken b11()
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v45: int[0, 2] = CallDirect v41, v42 function=f31 calledBuiltin=JSONStringify
-# CHECK-NEXT: Switch v45 cases=[1] -> case b9(), otherwise b10()
+# CHECK-NEXT: v45: 0 = Integer
+# CHECK-NEXT: v46: int[0, 2] = CallDirect v41, v42, v45 function=f31 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v46 cases=[1] -> case b9(), otherwise b10()
 # CHECK-NEXT: b9():
 # CHECK-NEXT: Jump -> next b18()
 # CHECK-NEXT: b10() frequency=Rare:
 # CHECK-NEXT: Jump -> next b28()
 # CHECK-NEXT: b11():
-# CHECK-NEXT: v46: boolean = ShapeTest v41 layouts=[L1]
-# CHECK-NEXT: Branch v46 -> taken b12(), notTaken b15()
+# CHECK-NEXT: v47: boolean = ShapeTest v41 layouts=[L1]
+# CHECK-NEXT: Branch v47 -> taken b12(), notTaken b15()
 # CHECK-NEXT: b12():
-# CHECK-NEXT: v47: int[0, 2] = CallDirect v41, v42 function=f32 calledBuiltin=JSONStringify
-# CHECK-NEXT: Switch v47 cases=[1] -> case b13(), otherwise b14()
+# CHECK-NEXT: v48: 0 = Integer
+# CHECK-NEXT: v49: int[0, 2] = CallDirect v41, v42, v48 function=f32 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v49 cases=[1] -> case b13(), otherwise b14()
 # CHECK-NEXT: b13():
 # CHECK-NEXT: Jump -> next b18()
 # CHECK-NEXT: b14() frequency=Rare:
 # CHECK-NEXT: Jump -> next b28()
 # CHECK-NEXT: b15():
-# CHECK-NEXT: v48: boolean = ShapeTest v41 layouts=[L2]
-# CHECK-NEXT: Branch v48 -> taken b16(), notTaken b27()
+# CHECK-NEXT: v50: boolean = ShapeTest v41 layouts=[L2]
+# CHECK-NEXT: Branch v50 -> taken b16(), notTaken b27()
 # CHECK-NEXT: b16():
-# CHECK-NEXT: v49: int[0, 2] = CallDirect v41, v42 function=f33 calledBuiltin=JSONStringify
-# CHECK-NEXT: Switch v49 cases=[1] -> case b17(), otherwise b26()
+# CHECK-NEXT: v51: 0 = Integer
+# CHECK-NEXT: v52: int[0, 2] = CallDirect v41, v42, v51 function=f33 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v52 cases=[1] -> case b17(), otherwise b26()
 # CHECK-NEXT: b17():
 # CHECK-NEXT: Jump -> next b18()
 # CHECK-NEXT: b18():
-# CHECK-NEXT: v50: "" = String string=""
-# CHECK-NEXT: v51: "" = Upcast v50 castType=string
-# CHECK-NEXT: v52: " own " = String string=" own "
-# CHECK-NEXT: StringBuilderAppend v42, v51, v52
-# CHECK-NEXT: v54: string = StringBuilderFinish v42
-# CHECK-NEXT: v55: anything = Call v34 calleeName="make" accessSite=11 callees=[f10, f11, f12, ..]
-# CHECK-NEXT: v56: L0|L1|L2 = AssumeType v55 provenType=L0|L1|L2
-# CHECK-NEXT: v57: L0|L1|L2 ~ L1|L2 = Expect v56 expectedType=undefined|null|L1|L2
-# CHECK-NEXT: v58: boolean = IsSlotFilled v57 key="level" receivers=[L0, L1, L2] level=Proven accessSite=12
-# CHECK-NEXT: v59: string = Add v54, v58
-# CHECK-NEXT: v60: undefined = CallDirect v38, v59 function=f3 accessSite=13
-# CHECK-NEXT: v61: ", read" = String string=", read"
-# CHECK-NEXT: v62: string = Add v36, v61
-# CHECK-NEXT: v63: anything = Call v34 calleeName="make" accessSite=14 callees=[f10, f11, f12, ..]
-# CHECK-NEXT: v64: L0|L1|L2 = AssumeType v63 provenType=L0|L1|L2
-# CHECK-NEXT: v65: L0|L1|L2 ~ L1|L2 = Expect v64 expectedType=undefined|null|L1|L2
-# CHECK-NEXT: v66: boolean ~ true = TypeTest v65 testedType=undefined|null|L1|L2
-# CHECK-NEXT: Branch v66 -> taken b19(| 0), notTaken b33(v62, v65)
-# CHECK-NEXT: b19(v67: L1|L2):
-# CHECK-NEXT: v68: boolean = IsSlotFilled v67 key="level" receivers=[L1, L2] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v68 -> taken b20(| 0), notTaken b31(v62, v67)
-# CHECK-NEXT: b20(v69: guard):
-# CHECK-NEXT: v70: int[-2147483643, 2147483647] = GetSlot v67, v69 key="level" receivers=[L1, L2] level=Expected accessSite=23 [holdsDeclaredType]
-# CHECK-NEXT: v71: " " = String string=" "
-# CHECK-NEXT: v72: anything = Call v34 calleeName="make" accessSite=16 callees=[f10, f11, f12, ..]
-# CHECK-NEXT: v73: L0|L1|L2 = AssumeType v72 provenType=L0|L1|L2
-# CHECK-NEXT: v74: L0|L1|L2 ~ L1|L2 = Expect v73 expectedType=undefined|null|L1|L2
-# CHECK-NEXT: v75: boolean = IsSlotFilled v74 key="level" receivers=[L0, L1, L2] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v75 -> taken b21(| 0), notTaken b25()
-# CHECK-NEXT: b21(v76: guard):
-# CHECK-NEXT: v77: int[-2147483643, 2147483647] = GetSlot v74, v76 key="level" receivers=[L0, L1, L2] level=Expected accessSite=34 [holdsDeclaredType]
-# CHECK-NEXT: v78: string = Strcat v70, v71, v77
-# CHECK-NEXT: v79: undefined = CallDirect v62, v78 function=f3 accessSite=19
-# CHECK-NEXT: v80: ", stored" = String string=", stored"
-# CHECK-NEXT: v81: string = Add v36, v80
-# CHECK-NEXT: v82: anything = Call v34 calleeName="make" accessSite=20 callees=[f10, f11, f12, ..]
-# CHECK-NEXT: v83: L0|L1|L2 = AssumeType v82 provenType=L0|L1|L2
-# CHECK-NEXT: v84: L0|L1|L2 ~ L1|L2 = Expect v83 expectedType=undefined|null|L1|L2
-# CHECK-NEXT: v85: 5 = Integer integer=5
-# CHECK-NEXT: v86: boolean ~ true = TypeTest v84 testedType=undefined|null|L1|L2
-# CHECK-NEXT: Branch v86 -> taken b22(| 0), notTaken b50(v81, v84)
-# CHECK-NEXT: b22(v87: L1|L2):
-# CHECK-NEXT: v88: boolean = IsSlotFilled v87 key="level" receivers=[L1, L2] level=Expected
-# CHECK-NEXT: Branch v88 -> taken b23(| 0), notTaken b45(v81, v87)
-# CHECK-NEXT: b23(v89: guard):
-# CHECK-NEXT: PutSlot v87, v89, v85 key="level" receivers=[L1, L2] level=Expected accessSite=24
-# CHECK-NEXT: v91: boolean = IsSlotFilled v87 key="level" receivers=[L1, L2] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v91 -> taken b24(), notTaken b48(v81, v87)
+# CHECK-NEXT: v53: "" = String string=""
+# CHECK-NEXT: v54: "" = Upcast v53 castType=string
+# CHECK-NEXT: v55: " own " = String string=" own "
+# CHECK-NEXT: StringBuilderAppend v42, v54, v55
+# CHECK-NEXT: v57: string = StringBuilderFinish v42
+# CHECK-NEXT: v58: anything = Call v34 calleeName="make" accessSite=11 callees=[f10, f11, f12, ..]
+# CHECK-NEXT: v59: L0|L1|L2 = AssumeType v58 provenType=L0|L1|L2
+# CHECK-NEXT: v60: L0|L1|L2 ~ L1|L2 = Expect v59 expectedType=undefined|null|L1|L2
+# CHECK-NEXT: v61: boolean = IsSlotFilled v60 key="level" receivers=[L0, L1, L2] level=Proven accessSite=12
+# CHECK-NEXT: v62: string = Add v57, v61
+# CHECK-NEXT: v63: undefined = CallDirect v38, v62 function=f3 accessSite=13
+# CHECK-NEXT: v64: ", read" = String string=", read"
+# CHECK-NEXT: v65: string = Add v36, v64
+# CHECK-NEXT: v66: anything = Call v34 calleeName="make" accessSite=14 callees=[f10, f11, f12, ..]
+# CHECK-NEXT: v67: L0|L1|L2 = AssumeType v66 provenType=L0|L1|L2
+# CHECK-NEXT: v68: L0|L1|L2 ~ L1|L2 = Expect v67 expectedType=undefined|null|L1|L2
+# CHECK-NEXT: v69: boolean ~ true = TypeTest v68 testedType=undefined|null|L1|L2
+# CHECK-NEXT: Branch v69 -> taken b19(| 0), notTaken b33(v65, v68)
+# CHECK-NEXT: b19(v70: L1|L2):
+# CHECK-NEXT: v71: boolean = IsSlotFilled v70 key="level" receivers=[L1, L2] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v71 -> taken b20(| 0), notTaken b31(v65, v70)
+# CHECK-NEXT: b20(v72: guard):
+# CHECK-NEXT: v73: int[-2147483643, 2147483647] = GetSlot v70, v72 key="level" receivers=[L1, L2] level=Expected accessSite=23 [holdsDeclaredType]
+# CHECK-NEXT: v74: " " = String string=" "
+# CHECK-NEXT: v75: anything = Call v34 calleeName="make" accessSite=16 callees=[f10, f11, f12, ..]
+# CHECK-NEXT: v76: L0|L1|L2 = AssumeType v75 provenType=L0|L1|L2
+# CHECK-NEXT: v77: L0|L1|L2 ~ L1|L2 = Expect v76 expectedType=undefined|null|L1|L2
+# CHECK-NEXT: v78: boolean = IsSlotFilled v77 key="level" receivers=[L0, L1, L2] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v78 -> taken b21(| 0), notTaken b25()
+# CHECK-NEXT: b21(v79: guard):
+# CHECK-NEXT: v80: int[-2147483643, 2147483647] = GetSlot v77, v79 key="level" receivers=[L0, L1, L2] level=Expected accessSite=34 [holdsDeclaredType]
+# CHECK-NEXT: v81: string = Strcat v73, v74, v80
+# CHECK-NEXT: v82: undefined = CallDirect v65, v81 function=f3 accessSite=19
+# CHECK-NEXT: v83: ", stored" = String string=", stored"
+# CHECK-NEXT: v84: string = Add v36, v83
+# CHECK-NEXT: v85: anything = Call v34 calleeName="make" accessSite=20 callees=[f10, f11, f12, ..]
+# CHECK-NEXT: v86: L0|L1|L2 = AssumeType v85 provenType=L0|L1|L2
+# CHECK-NEXT: v87: L0|L1|L2 ~ L1|L2 = Expect v86 expectedType=undefined|null|L1|L2
+# CHECK-NEXT: v88: 5 = Integer integer=5
+# CHECK-NEXT: v89: boolean ~ true = TypeTest v87 testedType=undefined|null|L1|L2
+# CHECK-NEXT: Branch v89 -> taken b22(| 0), notTaken b50(v84, v87)
+# CHECK-NEXT: b22(v90: L1|L2):
+# CHECK-NEXT: v91: boolean = IsSlotFilled v90 key="level" receivers=[L1, L2] level=Expected
+# CHECK-NEXT: Branch v91 -> taken b23(| 0), notTaken b45(v84, v90)
+# CHECK-NEXT: b23(v92: guard):
+# CHECK-NEXT: PutSlot v90, v92, v88 key="level" receivers=[L1, L2] level=Expected accessSite=24
+# CHECK-NEXT: v94: boolean = IsSlotFilled v90 key="level" receivers=[L1, L2] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v94 -> taken b24(), notTaken b48(v84, v90)
 # CHECK-NEXT: b24():
-# CHECK-NEXT: v92: 5 = Upcast v85 castType=int[-2147483643, 2147483647]
-# CHECK-NEXT: v93: undefined = CallDirect v81, v92 function=f3 accessSite=22
+# CHECK-NEXT: v95: 5 = Upcast v88 castType=int[-2147483643, 2147483647]
+# CHECK-NEXT: v96: undefined = CallDirect v84, v95 function=f3 accessSite=22
 # CHECK-NEXT: Jump -> next b2(v24)
 # CHECK-NEXT: b25() frequency=Rare:
-# CHECK-NEXT: v94: string = Add v70, v71
-# CHECK-NEXT: Jump -> next b36(v94, v74, v62)
+# CHECK-NEXT: v97: string = Add v73, v74
+# CHECK-NEXT: Jump -> next b36(v97, v77, v65)
 # CHECK-NEXT: b26() frequency=Rare:
 # CHECK-NEXT: Jump -> next b28()
 # CHECK-NEXT: b27() frequency=Rare:
 # CHECK-NEXT: Jump -> next b28()
 # CHECK-NEXT: b28() frequency=Rare:
 # CHECK-NEXT: StringBuilderRollBack v42, v43
-# CHECK-NEXT: v96: undefined = Undefined
-# CHECK-NEXT: v97: undefined|string = CallBuiltin -, v41, v96 overload=JSONStringify/0 accessSite=10
-# CHECK-NEXT: v98: undefined|string ~ string = Upcast v97 castType=undefined|string
-# CHECK-NEXT: v99: " own " = String string=" own "
-# CHECK-NEXT: v100: string = Add v98, v99
-# CHECK-NEXT: v101: anything = Call v34 calleeName="make" accessSite=11 callees=[f10, f11, f12, ..]
-# CHECK-NEXT: v102: L0|L1|L2 = AssumeType v101 provenType=L0|L1|L2
-# CHECK-NEXT: v103: L0|L1|L2 ~ L1|L2 = Expect v102 expectedType=undefined|null|L1|L2
-# CHECK-NEXT: v104: boolean = IsSlotFilled v103 key="level" receivers=[L0, L1, L2] level=Proven accessSite=12
-# CHECK-NEXT: v105: string = Add v100, v104
-# CHECK-NEXT: v106: undefined = CallDirect v38, v105 function=f3 accessSite=13
-# CHECK-NEXT: v107: ", read" = String string=", read"
-# CHECK-NEXT: v108: string = Add v36, v107
-# CHECK-NEXT: v109: anything = Call v34 calleeName="make" accessSite=14 callees=[f10, f11, f12, ..]
-# CHECK-NEXT: v110: L0|L1|L2 = AssumeType v109 provenType=L0|L1|L2
-# CHECK-NEXT: v111: L0|L1|L2 ~ L1|L2 = Expect v110 expectedType=undefined|null|L1|L2
-# CHECK-NEXT: v112: boolean ~ true = TypeTest v111 testedType=undefined|null|L1|L2
-# CHECK-NEXT: Branch v112 -> taken b29(| 0), notTaken b33(v108, v111)
-# CHECK-NEXT: b29(v113: L1|L2) frequency=Unlikely:
-# CHECK-NEXT: v114: boolean = IsSlotFilled v113 key="level" receivers=[L1, L2] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v114 -> taken b30(| 0), notTaken b31(v108, v113)
-# CHECK-NEXT: b30(v115: guard) frequency=Unlikely:
-# CHECK-NEXT: v116: int[-2147483643, 2147483647] = GetSlot v113, v115 key="level" receivers=[L1, L2] level=Expected accessSite=23 [holdsDeclaredType]
-# CHECK-NEXT: Jump -> next b32(v116, v108)
-# CHECK-NEXT: b31(v117: string, v118: L1|L2) frequency=Rare:
-# CHECK-NEXT: v119: anything = SuperGet v118, v118 key="level" accessSite=23
-# CHECK-NEXT: v120: undefined|int = AssumeType v119 provenType=undefined|int
-# CHECK-NEXT: Jump -> next b32(v120, v117)
-# CHECK-NEXT: b32(v121: undefined|int ~ int[-2147483643, 2147483647], v122: string) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b34(v121, v122)
-# CHECK-NEXT: b33(v123: string, v124: L0|L1|L2 ~ L1|L2) frequency=Rare:
-# CHECK-NEXT: v125: undefined|int ~ int = CallDirect v124 function=f26 @448:2 tail
-# CHECK-NEXT: v126: undefined|int ~ int = AssumeType v125 provenType=undefined|int
-# CHECK-NEXT: Jump -> next b34(v126, v123)
-# CHECK-NEXT: b34(v127: undefined|int ~ int[-2147483643, 2147483647], v128: string) frequency=Unlikely:
-# CHECK-NEXT: v129: " " = String string=" "
-# CHECK-NEXT: v130: string = Add v127, v129
-# CHECK-NEXT: v131: anything = Call v34 calleeName="make" accessSite=16 callees=[f10, f11, f12, ..]
-# CHECK-NEXT: v132: L0|L1|L2 = AssumeType v131 provenType=L0|L1|L2
-# CHECK-NEXT: v133: L0|L1|L2 ~ L1|L2 = Expect v132 expectedType=undefined|null|L1|L2
-# CHECK-NEXT: v134: boolean = IsSlotFilled v133 key="level" receivers=[L0, L1, L2] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v134 -> taken b35(| 0), notTaken b36(v130, v133, v128)
-# CHECK-NEXT: b35(v135: guard) frequency=Unlikely:
-# CHECK-NEXT: v136: int[-2147483643, 2147483647] = GetSlot v133, v135 key="level" receivers=[L0, L1, L2] level=Expected accessSite=34 [holdsDeclaredType]
-# CHECK-NEXT: Jump -> next b37(v136, v130, v128)
-# CHECK-NEXT: b36(v137: string, v138: L0|L1|L2 ~ L1|L2, v139: string) frequency=Rare:
-# CHECK-NEXT: v140: anything = SuperGet v138, v138 key="level" accessSite=34
-# CHECK-NEXT: v141: undefined|int = AssumeType v140 provenType=undefined|int
-# CHECK-NEXT: Jump -> next b37(v141, v137, v139)
-# CHECK-NEXT: b37(v142: undefined|int ~ int[-2147483643, 2147483647], v143: string, v144: string) frequency=Unlikely:
-# CHECK-NEXT: v145: string = Add v143, v142
-# CHECK-NEXT: v146: undefined = CallDirect v144, v145 function=f3 accessSite=19
-# CHECK-NEXT: v147: ", stored" = String string=", stored"
-# CHECK-NEXT: v148: string = Add v36, v147
-# CHECK-NEXT: Jump -> next b42(v148, v34)
-# CHECK-NEXT: b38(v149: f10|f11|f12) frequency=Rare:
-# CHECK-NEXT: Jump -> next b41(v34, v149)
+# CHECK-NEXT: v99: undefined = Undefined
+# CHECK-NEXT: v100: undefined|string = CallBuiltin -, v41, v99 overload=JSONStringify/0 accessSite=10
+# CHECK-NEXT: v101: undefined|string ~ string = Upcast v100 castType=undefined|string
+# CHECK-NEXT: v102: " own " = String string=" own "
+# CHECK-NEXT: v103: string = Add v101, v102
+# CHECK-NEXT: v104: anything = Call v34 calleeName="make" accessSite=11 callees=[f10, f11, f12, ..]
+# CHECK-NEXT: v105: L0|L1|L2 = AssumeType v104 provenType=L0|L1|L2
+# CHECK-NEXT: v106: L0|L1|L2 ~ L1|L2 = Expect v105 expectedType=undefined|null|L1|L2
+# CHECK-NEXT: v107: boolean = IsSlotFilled v106 key="level" receivers=[L0, L1, L2] level=Proven accessSite=12
+# CHECK-NEXT: v108: string = Add v103, v107
+# CHECK-NEXT: v109: undefined = CallDirect v38, v108 function=f3 accessSite=13
+# CHECK-NEXT: v110: ", read" = String string=", read"
+# CHECK-NEXT: v111: string = Add v36, v110
+# CHECK-NEXT: v112: anything = Call v34 calleeName="make" accessSite=14 callees=[f10, f11, f12, ..]
+# CHECK-NEXT: v113: L0|L1|L2 = AssumeType v112 provenType=L0|L1|L2
+# CHECK-NEXT: v114: L0|L1|L2 ~ L1|L2 = Expect v113 expectedType=undefined|null|L1|L2
+# CHECK-NEXT: v115: boolean ~ true = TypeTest v114 testedType=undefined|null|L1|L2
+# CHECK-NEXT: Branch v115 -> taken b29(| 0), notTaken b33(v111, v114)
+# CHECK-NEXT: b29(v116: L1|L2) frequency=Unlikely:
+# CHECK-NEXT: v117: boolean = IsSlotFilled v116 key="level" receivers=[L1, L2] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v117 -> taken b30(| 0), notTaken b31(v111, v116)
+# CHECK-NEXT: b30(v118: guard) frequency=Unlikely:
+# CHECK-NEXT: v119: int[-2147483643, 2147483647] = GetSlot v116, v118 key="level" receivers=[L1, L2] level=Expected accessSite=23 [holdsDeclaredType]
+# CHECK-NEXT: Jump -> next b32(v119, v111)
+# CHECK-NEXT: b31(v120: string, v121: L1|L2) frequency=Rare:
+# CHECK-NEXT: v122: anything = SuperGet v121, v121 key="level" accessSite=23
+# CHECK-NEXT: v123: undefined|int = AssumeType v122 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b32(v123, v120)
+# CHECK-NEXT: b32(v124: undefined|int ~ int[-2147483643, 2147483647], v125: string) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b34(v124, v125)
+# CHECK-NEXT: b33(v126: string, v127: L0|L1|L2 ~ L1|L2) frequency=Rare:
+# CHECK-NEXT: v128: undefined|int ~ int = CallDirect v127 function=f26 @448:2 tail
+# CHECK-NEXT: v129: undefined|int ~ int = AssumeType v128 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b34(v129, v126)
+# CHECK-NEXT: b34(v130: undefined|int ~ int[-2147483643, 2147483647], v131: string) frequency=Unlikely:
+# CHECK-NEXT: v132: " " = String string=" "
+# CHECK-NEXT: v133: string = Add v130, v132
+# CHECK-NEXT: v134: anything = Call v34 calleeName="make" accessSite=16 callees=[f10, f11, f12, ..]
+# CHECK-NEXT: v135: L0|L1|L2 = AssumeType v134 provenType=L0|L1|L2
+# CHECK-NEXT: v136: L0|L1|L2 ~ L1|L2 = Expect v135 expectedType=undefined|null|L1|L2
+# CHECK-NEXT: v137: boolean = IsSlotFilled v136 key="level" receivers=[L0, L1, L2] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v137 -> taken b35(| 0), notTaken b36(v133, v136, v131)
+# CHECK-NEXT: b35(v138: guard) frequency=Unlikely:
+# CHECK-NEXT: v139: int[-2147483643, 2147483647] = GetSlot v136, v138 key="level" receivers=[L0, L1, L2] level=Expected accessSite=34 [holdsDeclaredType]
+# CHECK-NEXT: Jump -> next b37(v139, v133, v131)
+# CHECK-NEXT: b36(v140: string, v141: L0|L1|L2 ~ L1|L2, v142: string) frequency=Rare:
+# CHECK-NEXT: v143: anything = SuperGet v141, v141 key="level" accessSite=34
+# CHECK-NEXT: v144: undefined|int = AssumeType v143 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b37(v144, v140, v142)
+# CHECK-NEXT: b37(v145: undefined|int ~ int[-2147483643, 2147483647], v146: string, v147: string) frequency=Unlikely:
+# CHECK-NEXT: v148: string = Add v146, v145
+# CHECK-NEXT: v149: undefined = CallDirect v147, v148 function=f3 accessSite=19
+# CHECK-NEXT: v150: ", stored" = String string=", stored"
+# CHECK-NEXT: v151: string = Add v36, v150
+# CHECK-NEXT: Jump -> next b42(v151, v34)
+# CHECK-NEXT: b38(v152: f10|f11|f12) frequency=Rare:
+# CHECK-NEXT: Jump -> next b41(v34, v152)
 # CHECK-NEXT: b39() frequency=Rare:
-# CHECK-NEXT: v150: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 = GetArrayElement v22, v25 arrayStorage=Contiguous level=Proven [keyIsIntegral]
-# CHECK-NEXT: v151: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 ~ undefined|"a plain subclass"|"a subclass with a pair"|"the base" = Expect v150 expectedType=undefined|null|string
-# CHECK-NEXT: Jump -> next b40(v151)
-# CHECK-NEXT: b40(v152: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 ~ "a plain subclass"|"a subclass with a pair"|"the base") frequency=Rare:
-# CHECK-NEXT: v153: 1 = Integer integer=1
-# CHECK-NEXT: v154: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 = GetArrayElement v22, v153 arrayStorage=Contiguous level=Proven [keyIsIntegral]
-# CHECK-NEXT: v155: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 ~ undefined|f10|f11|f12 = Expect v154 expectedType=undefined|null|function|f10|f11|f12
-# CHECK-NEXT: Jump -> next b41(v155, v152)
-# CHECK-NEXT: b41(v156: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 ~ undefined|f10|f11|f12, v157: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 ~ "a plain subclass"|"a subclass with a pair"|"the base") frequency=Rare:
-# CHECK-NEXT: v158: ", made" = String string=", made"
-# CHECK-NEXT: v159: string = Add v157, v158
-# CHECK-NEXT: v160: anything = Call v156 calleeName="make" accessSite=9 callees=[f10, f11, f12, ..]
-# CHECK-NEXT: v161: L0|L1|L2 = AssumeType v160 provenType=L0|L1|L2
-# CHECK-NEXT: v162: L0|L1|L2 ~ L1|L2 = Expect v161 expectedType=undefined|null|L1|L2
-# CHECK-NEXT: v163: undefined = Undefined
-# CHECK-NEXT: v164: undefined|string = CallBuiltin -, v162, v163 overload=JSONStringify/0 accessSite=10
-# CHECK-NEXT: v165: " own " = String string=" own "
-# CHECK-NEXT: v166: string = Add v164, v165
-# CHECK-NEXT: v167: anything = Call v156 calleeName="make" accessSite=11 callees=[f10, f11, f12, ..]
-# CHECK-NEXT: v168: L0|L1|L2 = AssumeType v167 provenType=L0|L1|L2
-# CHECK-NEXT: v169: L0|L1|L2 ~ L1|L2 = Expect v168 expectedType=undefined|null|L1|L2
-# CHECK-NEXT: v170: boolean = IsSlotFilled v169 key="level" receivers=[L0, L1, L2] level=Proven accessSite=12
-# CHECK-NEXT: v171: string = Add v166, v170
-# CHECK-NEXT: v172: undefined = CallDirect v159, v171 function=f3 accessSite=13
-# CHECK-NEXT: v173: ", read" = String string=", read"
-# CHECK-NEXT: v174: string = Add v157, v173
-# CHECK-NEXT: v175: anything = Call v156 calleeName="make" accessSite=14 callees=[f10, f11, f12, ..]
-# CHECK-NEXT: v176: L0|L1|L2 = AssumeType v175 provenType=L0|L1|L2
-# CHECK-NEXT: v177: L0|L1|L2 ~ L1|L2 = Expect v176 expectedType=undefined|null|L1|L2
-# CHECK-NEXT: v178: undefined|int ~ int = CallDirect v177 function=f1 accessSite=15
-# CHECK-NEXT: v179: undefined|int ~ int = AssumeType v178 provenType=undefined|int
-# CHECK-NEXT: v180: " " = String string=" "
-# CHECK-NEXT: v181: anything = Call v156 calleeName="make" accessSite=16 callees=[f10, f11, f12, ..]
-# CHECK-NEXT: v182: L0|L1|L2 = AssumeType v181 provenType=L0|L1|L2
-# CHECK-NEXT: v183: L0|L1|L2 ~ L1|L2 = Expect v182 expectedType=undefined|null|L1|L2
-# CHECK-NEXT: v184: undefined|int ~ int = CallDirect v183 function=f5 accessSite=18
-# CHECK-NEXT: v185: undefined|int ~ int = AssumeType v184 provenType=undefined|int
-# CHECK-NEXT: v186: string = Strcat v179, v180, v185
-# CHECK-NEXT: v187: undefined = CallDirect v174, v186 function=f3 accessSite=19
-# CHECK-NEXT: v188: ", stored" = String string=", stored"
-# CHECK-NEXT: v189: string = Add v157, v188
-# CHECK-NEXT: Jump -> next b42(v189, v156)
-# CHECK-NEXT: b42(v190: string, v191: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 ~ f10|f11|f12) frequency=Unlikely:
-# CHECK-NEXT: v192: anything = Call v191 calleeName="make" accessSite=20 callees=[f10, f11, f12, ..]
-# CHECK-NEXT: v193: L0|L1|L2 = AssumeType v192 provenType=L0|L1|L2
-# CHECK-NEXT: v194: L0|L1|L2 ~ L1|L2 = Expect v193 expectedType=undefined|null|L1|L2
-# CHECK-NEXT: v195: boolean ~ true = TypeTest v194 testedType=undefined|null|L1|L2
-# CHECK-NEXT: Branch v195 -> taken b43(| 0), notTaken b50(v190, v194)
-# CHECK-NEXT: b43(v196: L1|L2) frequency=Unlikely:
-# CHECK-NEXT: v197: boolean = IsSlotFilled v196 key="level" receivers=[L1, L2] level=Expected
-# CHECK-NEXT: Branch v197 -> taken b44(| 0), notTaken b45(v190, v196)
-# CHECK-NEXT: b44(v198: guard) frequency=Unlikely:
-# CHECK-NEXT: v199: 5 = Integer integer=5
-# CHECK-NEXT: PutSlot v196, v198, v199 key="level" receivers=[L1, L2] level=Expected accessSite=24
-# CHECK-NEXT: Jump -> next b46(v190, v196)
-# CHECK-NEXT: b45(v201: string, v202: L1|L2) frequency=Rare:
-# CHECK-NEXT: v203: 5 = Integer integer=5
-# CHECK-NEXT: PropSet v202, v203 key="level" accessSite=24 receivers=[L0, L1, L2]
-# CHECK-NEXT: Jump -> next b46(v201, v202)
-# CHECK-NEXT: b46(v205: string, v206: L1|L2) frequency=Unlikely:
-# CHECK-NEXT: v207: boolean = IsSlotFilled v206 key="level" receivers=[L1, L2] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v207 -> taken b47(| 0), notTaken b48(v205, v206)
-# CHECK-NEXT: b47(v208: guard) frequency=Unlikely:
-# CHECK-NEXT: v209: int[-2147483643, 2147483647] = GetSlot v206, v208 key="level" receivers=[L1, L2] level=Expected accessSite=25 [holdsDeclaredType]
-# CHECK-NEXT: Jump -> next b49(v209, v205)
-# CHECK-NEXT: b48(v210: string, v211: L1|L2) frequency=Rare:
-# CHECK-NEXT: v212: anything = SuperGet v211, v211 key="level" accessSite=25
-# CHECK-NEXT: v213: undefined|int = AssumeType v212 provenType=undefined|int
-# CHECK-NEXT: Jump -> next b49(v213, v210)
-# CHECK-NEXT: b49(v214: undefined|int ~ int[-2147483643, 2147483647], v215: string) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b51(v214, v215)
-# CHECK-NEXT: b50(v216: string, v217: L0|L1|L2 ~ L1|L2) frequency=Rare:
-# CHECK-NEXT: v218: 5 = Integer integer=5
-# CHECK-NEXT: v219: undefined|int ~ int = CallDirect v217, v218 function=f27 @505:3 tail
-# CHECK-NEXT: v220: undefined|int ~ int = AssumeType v219 provenType=undefined|int
-# CHECK-NEXT: Jump -> next b51(v220, v216)
-# CHECK-NEXT: b51(v221: undefined|int ~ int[-2147483643, 2147483647], v222: string) frequency=Unlikely:
-# CHECK-NEXT: v223: undefined = CallDirect v222, v221 function=f3 accessSite=22
+# CHECK-NEXT: v153: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 = GetArrayElement v22, v25 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v154: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 ~ undefined|"a plain subclass"|"a subclass with a pair"|"the base" = Expect v153 expectedType=undefined|null|string
+# CHECK-NEXT: Jump -> next b40(v154)
+# CHECK-NEXT: b40(v155: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 ~ "a plain subclass"|"a subclass with a pair"|"the base") frequency=Rare:
+# CHECK-NEXT: v156: 1 = Integer integer=1
+# CHECK-NEXT: v157: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 = GetArrayElement v22, v156 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v158: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 ~ undefined|f10|f11|f12 = Expect v157 expectedType=undefined|null|function|f10|f11|f12
+# CHECK-NEXT: Jump -> next b41(v158, v155)
+# CHECK-NEXT: b41(v159: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 ~ undefined|f10|f11|f12, v160: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 ~ "a plain subclass"|"a subclass with a pair"|"the base") frequency=Rare:
+# CHECK-NEXT: v161: ", made" = String string=", made"
+# CHECK-NEXT: v162: string = Add v160, v161
+# CHECK-NEXT: v163: anything = Call v159 calleeName="make" accessSite=9 callees=[f10, f11, f12, ..]
+# CHECK-NEXT: v164: L0|L1|L2 = AssumeType v163 provenType=L0|L1|L2
+# CHECK-NEXT: v165: L0|L1|L2 ~ L1|L2 = Expect v164 expectedType=undefined|null|L1|L2
+# CHECK-NEXT: v166: undefined = Undefined
+# CHECK-NEXT: v167: undefined|string = CallBuiltin -, v165, v166 overload=JSONStringify/0 accessSite=10
+# CHECK-NEXT: v168: " own " = String string=" own "
+# CHECK-NEXT: v169: string = Add v167, v168
+# CHECK-NEXT: v170: anything = Call v159 calleeName="make" accessSite=11 callees=[f10, f11, f12, ..]
+# CHECK-NEXT: v171: L0|L1|L2 = AssumeType v170 provenType=L0|L1|L2
+# CHECK-NEXT: v172: L0|L1|L2 ~ L1|L2 = Expect v171 expectedType=undefined|null|L1|L2
+# CHECK-NEXT: v173: boolean = IsSlotFilled v172 key="level" receivers=[L0, L1, L2] level=Proven accessSite=12
+# CHECK-NEXT: v174: string = Add v169, v173
+# CHECK-NEXT: v175: undefined = CallDirect v162, v174 function=f3 accessSite=13
+# CHECK-NEXT: v176: ", read" = String string=", read"
+# CHECK-NEXT: v177: string = Add v160, v176
+# CHECK-NEXT: v178: anything = Call v159 calleeName="make" accessSite=14 callees=[f10, f11, f12, ..]
+# CHECK-NEXT: v179: L0|L1|L2 = AssumeType v178 provenType=L0|L1|L2
+# CHECK-NEXT: v180: L0|L1|L2 ~ L1|L2 = Expect v179 expectedType=undefined|null|L1|L2
+# CHECK-NEXT: v181: undefined|int ~ int = CallDirect v180 function=f1 accessSite=15
+# CHECK-NEXT: v182: undefined|int ~ int = AssumeType v181 provenType=undefined|int
+# CHECK-NEXT: v183: " " = String string=" "
+# CHECK-NEXT: v184: anything = Call v159 calleeName="make" accessSite=16 callees=[f10, f11, f12, ..]
+# CHECK-NEXT: v185: L0|L1|L2 = AssumeType v184 provenType=L0|L1|L2
+# CHECK-NEXT: v186: L0|L1|L2 ~ L1|L2 = Expect v185 expectedType=undefined|null|L1|L2
+# CHECK-NEXT: v187: undefined|int ~ int = CallDirect v186 function=f5 accessSite=18
+# CHECK-NEXT: v188: undefined|int ~ int = AssumeType v187 provenType=undefined|int
+# CHECK-NEXT: v189: string = Strcat v182, v183, v188
+# CHECK-NEXT: v190: undefined = CallDirect v177, v189 function=f3 accessSite=19
+# CHECK-NEXT: v191: ", stored" = String string=", stored"
+# CHECK-NEXT: v192: string = Add v160, v191
+# CHECK-NEXT: Jump -> next b42(v192, v159)
+# CHECK-NEXT: b42(v193: string, v194: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 ~ f10|f11|f12) frequency=Unlikely:
+# CHECK-NEXT: v195: anything = Call v194 calleeName="make" accessSite=20 callees=[f10, f11, f12, ..]
+# CHECK-NEXT: v196: L0|L1|L2 = AssumeType v195 provenType=L0|L1|L2
+# CHECK-NEXT: v197: L0|L1|L2 ~ L1|L2 = Expect v196 expectedType=undefined|null|L1|L2
+# CHECK-NEXT: v198: boolean ~ true = TypeTest v197 testedType=undefined|null|L1|L2
+# CHECK-NEXT: Branch v198 -> taken b43(| 0), notTaken b50(v193, v197)
+# CHECK-NEXT: b43(v199: L1|L2) frequency=Unlikely:
+# CHECK-NEXT: v200: boolean = IsSlotFilled v199 key="level" receivers=[L1, L2] level=Expected
+# CHECK-NEXT: Branch v200 -> taken b44(| 0), notTaken b45(v193, v199)
+# CHECK-NEXT: b44(v201: guard) frequency=Unlikely:
+# CHECK-NEXT: v202: 5 = Integer integer=5
+# CHECK-NEXT: PutSlot v199, v201, v202 key="level" receivers=[L1, L2] level=Expected accessSite=24
+# CHECK-NEXT: Jump -> next b46(v193, v199)
+# CHECK-NEXT: b45(v204: string, v205: L1|L2) frequency=Rare:
+# CHECK-NEXT: v206: 5 = Integer integer=5
+# CHECK-NEXT: PropSet v205, v206 key="level" accessSite=24 receivers=[L0, L1, L2]
+# CHECK-NEXT: Jump -> next b46(v204, v205)
+# CHECK-NEXT: b46(v208: string, v209: L1|L2) frequency=Unlikely:
+# CHECK-NEXT: v210: boolean = IsSlotFilled v209 key="level" receivers=[L1, L2] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v210 -> taken b47(| 0), notTaken b48(v208, v209)
+# CHECK-NEXT: b47(v211: guard) frequency=Unlikely:
+# CHECK-NEXT: v212: int[-2147483643, 2147483647] = GetSlot v209, v211 key="level" receivers=[L1, L2] level=Expected accessSite=25 [holdsDeclaredType]
+# CHECK-NEXT: Jump -> next b49(v212, v208)
+# CHECK-NEXT: b48(v213: string, v214: L1|L2) frequency=Rare:
+# CHECK-NEXT: v215: anything = SuperGet v214, v214 key="level" accessSite=25
+# CHECK-NEXT: v216: undefined|int = AssumeType v215 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b49(v216, v213)
+# CHECK-NEXT: b49(v217: undefined|int ~ int[-2147483643, 2147483647], v218: string) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b51(v217, v218)
+# CHECK-NEXT: b50(v219: string, v220: L0|L1|L2 ~ L1|L2) frequency=Rare:
+# CHECK-NEXT: v221: 5 = Integer integer=5
+# CHECK-NEXT: v222: undefined|int ~ int = CallDirect v220, v221 function=f27 @505:3 tail
+# CHECK-NEXT: v223: undefined|int ~ int = AssumeType v222 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b51(v223, v219)
+# CHECK-NEXT: b51(v224: undefined|int ~ int[-2147483643, 2147483647], v225: string) frequency=Unlikely:
+# CHECK-NEXT: v226: undefined = CallDirect v225, v224 function=f3 accessSite=22
 # CHECK-NEXT: Jump -> next b1(v24)
 # CHECK-NEXT: b52():
-# CHECK-NEXT: v224: 1 = Integer integer=1
-# CHECK-NEXT: v225: "level" = String string="level"
-# CHECK-NEXT: v226: L1 = NewObject -, v224 layout=L1 fields=[0] allocationClass=1 [listsOnlyStoredValues]
-# CHECK-NEXT: v227: boolean = CallBuiltin -, v226, v225 overload=ReflectDeleteProperty/0 accessSite=1
-# CHECK-NEXT: v228: undefined|int ~ int = CallDirect v226 function=f23 @448:5 tail
-# CHECK-NEXT: v229: undefined|int ~ int = AssumeType v228 provenType=undefined|int
-# CHECK-NEXT: v230: " " = String string=" "
-# CHECK-NEXT: v231: undefined|int ~ int = CallDirect v226 function=f5 accessSite=4
+# CHECK-NEXT: v227: 1 = Integer integer=1
+# CHECK-NEXT: v228: "level" = String string="level"
+# CHECK-NEXT: v229: L1 = NewObject -, v227 layout=L1 fields=[0] allocationClass=1 [listsOnlyStoredValues]
+# CHECK-NEXT: v230: boolean = CallBuiltin -, v229, v228 overload=ReflectDeleteProperty/0 accessSite=1
+# CHECK-NEXT: v231: undefined|int ~ int = CallDirect v229 function=f23 @448:5 tail
 # CHECK-NEXT: v232: undefined|int ~ int = AssumeType v231 provenType=undefined|int
 # CHECK-NEXT: v233: " " = String string=" "
-# CHECK-NEXT: v234: string = Strcat v229, v230, v232, v233
-# CHECK-NEXT: v235: 6 = Integer integer=6
-# CHECK-NEXT: PropSet v226, v235 key="level" accessSite=24 receivers=[L0, L1, L2]
-# CHECK-NEXT: v237: boolean = IsSlotFilled v226 key="level" receivers=[L1, L2] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v237 -> taken b53(| 0), notTaken b54()
-# CHECK-NEXT: b53(v238: guard):
-# CHECK-NEXT: v239: int[-2147483643, 2147483647] = GetSlot v226, v238 key="level" receivers=[L1, L2] level=Expected accessSite=25 [holdsDeclaredType]
-# CHECK-NEXT: Jump -> next b55(v239)
+# CHECK-NEXT: v234: undefined|int ~ int = CallDirect v229 function=f5 accessSite=4
+# CHECK-NEXT: v235: undefined|int ~ int = AssumeType v234 provenType=undefined|int
+# CHECK-NEXT: v236: " " = String string=" "
+# CHECK-NEXT: v237: string = Strcat v232, v233, v235, v236
+# CHECK-NEXT: v238: 6 = Integer integer=6
+# CHECK-NEXT: PropSet v229, v238 key="level" accessSite=24 receivers=[L0, L1, L2]
+# CHECK-NEXT: v240: boolean = IsSlotFilled v229 key="level" receivers=[L1, L2] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v240 -> taken b53(| 0), notTaken b54()
+# CHECK-NEXT: b53(v241: guard):
+# CHECK-NEXT: v242: int[-2147483643, 2147483647] = GetSlot v229, v241 key="level" receivers=[L1, L2] level=Expected accessSite=25 [holdsDeclaredType]
+# CHECK-NEXT: Jump -> next b55(v242)
 # CHECK-NEXT: b54() frequency=Unlikely:
-# CHECK-NEXT: v240: anything = SuperGet v226, v226 key="level" accessSite=25
-# CHECK-NEXT: v241: undefined|int = AssumeType v240 provenType=undefined|int
-# CHECK-NEXT: Jump -> next b55(v241)
-# CHECK-NEXT: b55(v242: undefined|int ~ int[-2147483643, 2147483647]):
-# CHECK-NEXT: v243: " own " = String string=" own "
-# CHECK-NEXT: v244: boolean = IsSlotFilled v226 key="level" receivers=[L1] level=Proven accessSite=6
-# CHECK-NEXT: v245: string = Strcat v234, v242, v243, v244
-# CHECK-NEXT: v246: "the own field deleted, the pair shows" = String string="the own field deleted, the pair shows"
-# CHECK-NEXT: v247: undefined = CallDirect v246, v245 function=f3 accessSite=7
-# CHECK-NEXT: v248: undefined = Undefined
-# CHECK-NEXT: Return v248
+# CHECK-NEXT: v243: anything = SuperGet v229, v229 key="level" accessSite=25
+# CHECK-NEXT: v244: undefined|int = AssumeType v243 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b55(v244)
+# CHECK-NEXT: b55(v245: undefined|int ~ int[-2147483643, 2147483647]):
+# CHECK-NEXT: v246: " own " = String string=" own "
+# CHECK-NEXT: v247: boolean = IsSlotFilled v229 key="level" receivers=[L1] level=Proven accessSite=6
+# CHECK-NEXT: v248: string = Strcat v237, v245, v246, v247
+# CHECK-NEXT: v249: "the own field deleted, the pair shows" = String string="the own field deleted, the pair shows"
+# CHECK-NEXT: v250: undefined = CallDirect v249, v248 function=f3 accessSite=7
+# CHECK-NEXT: v251: undefined = Undefined
+# CHECK-NEXT: Return v251
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="read"
 # CHECK: module=m0 position=448 role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1|L2 site=w2 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|int site=w3}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f23 fallback=f26} {

@@ -582,6 +582,12 @@ mod _impl {
         if bun_standalone_graph::is_bun_standalone_file_path(path.as_bytes()) {
             return ChdirTarget::InExecutable(graph.dir_key(path.as_bytes()));
         }
+        // `process.chdir(__dirname)` where the folder of the build is not on this machine: the executable holds what lay there.
+        if let Ok(directory) = graph.dir_key(path.as_bytes())
+            && bun_standalone_graph::is_bun_standalone_file_path(directory)
+        {
+            return ChdirTarget::InExecutable(Ok(directory));
+        }
         ChdirTarget::OnDisk(if current.is_some() { path } else { to })
     }
 

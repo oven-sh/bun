@@ -326,7 +326,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f9 visibility=Private
 # CHECK-NEXT: v73: 1 = Integer integer=1
 # CHECK-NEXT: v74: 2 = Integer integer=2
 # CHECK-NEXT: v75: Map<1, 2> = NewMapFromData data=d3
-# CHECK-NEXT: v76: Map<int, int, proven, pristine[Storage, Names]> = AssumeType v75 provenType=Map<int, int, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v76: Map<undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> = AssumeType v75 provenType=Map<undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v77: int[0, 2147483647] = CallBuiltin v76 overload=MapPrototypeSize/0 accessSite=29
 # CHECK-NEXT: v78: true = Boolean boolean=true
 # CHECK-NEXT: v79: builtin(Array) = Builtin builtin=Array

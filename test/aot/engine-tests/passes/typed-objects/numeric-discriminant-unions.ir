@@ -612,11 +612,11 @@ runtimefunction id=ArrayTraversalTraverseArray function=f39 visibility=Private
 # CHECK-NEXT: end of function f47
 # CHECK-LABEL: function {{*}}name="show"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 90, patchpoints: 12, rare instructions: 82
+# CHECK-NEXT: instructions: 93, patchpoints: 12, rare instructions: 82
 # CHECK-NEXT: end of function f5
 # CHECK-LABEL: function {{*}}name="show"
 # CHECK: role=GenericEntrypoint
-# CHECK-NEXT: instructions: 90, patchpoints: 12, rare instructions: 82
+# CHECK-NEXT: instructions: 93, patchpoints: 12, rare instructions: 82
 # CHECK-NEXT: end of function f57
 # CHECK-LABEL: function {{*}}name="upgrade"
 # CHECK: role=EntryChecks

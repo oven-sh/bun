@@ -365,20 +365,21 @@ function f32 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v82: "s" = String string="s"
 # CHECK-NEXT: v83: L13 = NewObject -, v82 layout=L13 fields=[3] allocationClass=6 [listsOnlyStoredValues]
 # CHECK-NEXT: v84: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: v85: int[0, 2] = CallDirect v83, v84 function=f36 calledBuiltin=JSONStringify
-# CHECK-NEXT: Switch v85 cases=[1] -> case b2(), otherwise b3()
+# CHECK-NEXT: v85: 0 = Integer
+# CHECK-NEXT: v86: int[0, 2] = CallDirect v83, v84, v85 function=f36 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v86 cases=[1] -> case b2(), otherwise b3()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v86: string = StringBuilderFinish v84
+# CHECK-NEXT: v87: string = StringBuilderFinish v84
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b3() frequency=Rare:
 # CHECK-NEXT: StringBuilderDiscard v84
-# CHECK-NEXT: v88: undefined = Undefined
-# CHECK-NEXT: v89: undefined|string = CallBuiltin -, v83, v88 overload=JSONStringify/0 accessSite=15
+# CHECK-NEXT: v89: undefined = Undefined
+# CHECK-NEXT: v90: undefined|string = CallBuiltin -, v83, v89 overload=JSONStringify/0 accessSite=15
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v90: anything ~ object = Construct v56 calleeName="RunsCode" accessSite=10 callees=[f15]
-# CHECK-NEXT: v91: anything ~ object = Construct v61 calleeName="StoresUndefined" accessSite=11 callees=[f16]
-# CHECK-NEXT: v92: 0 = Integer
+# CHECK-NEXT: v91: anything ~ object = Construct v56 calleeName="RunsCode" accessSite=10 callees=[f15]
+# CHECK-NEXT: v92: anything ~ object = Construct v61 calleeName="StoresUndefined" accessSite=11 callees=[f16]
+# CHECK-NEXT: v93: 0 = Integer
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b5():
 # CHECK-NEXT: LoopHint

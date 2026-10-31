@@ -173,6 +173,8 @@ static bool reloadsFilesFromDisk()
 extern "C" JSC::EncodedJSValue ResolveMessage__createModuleNotFound(JSC::JSGlobalObject*, const BunString* specifier, const BunString* referrer, bool isForRequire);
 extern "C" BunString Bun__AOT__pathOfForm(const BunString* path, const BunString* typeAttribute, bool* isFormWithoutAttributes);
 extern "C" BunString Bun__AOT__nodeModuleNamedWithoutPrefix(const BunString* name);
+extern "C" BunString Bun__AOT__pathInExecutable(const BunString* path);
+extern "C" uint64_t Bun__AOT__stampOfFile(const BunString* path);
 
 namespace Bun {
 using namespace JSC;
@@ -254,8 +256,8 @@ static std::optional<AOT::ModuleID> compiledModuleForRequest(Zig::GlobalObject* 
 
 static String typeAttributeOf(const ScriptFetchParameters& attributes)
 {
-    // What another attribute chooses, the path of a module does not say.
-    if (attributes.attributes().size() != 1)
+    // What another attribute chooses, the path of a module does not say. The engine asks for a statement that the loader links with the type alone.
+    if (attributes.attributes().size() > 1)
         return {};
     switch (attributes.type()) {
     case ScriptFetchParameters::Type::JSON:
@@ -316,9 +318,10 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionCompiledSourceAfterFailedFactory, (JSC::JSGlo
     return {};
 }
 
-JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& key, bool hasImportAttributes)
+JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& key, const ScriptFetchParameters* attributes)
 {
-    auto module = compiledModuleForRequest(globalObject, key, hasImportAttributes, AOT::LoadByName::Import);
+    // `import data from "./data.json" with { type: "json" }` in a statement that the loader links, and in a compiled file: one module, so one object.
+    auto module = attributes ? findModuleWithAttributes(globalObject, key, *attributes) : compiledModuleForRequest(globalObject, key, false, AOT::LoadByName::Import);
     if (!module)
         return nullptr;
     auto& vm = getVM(globalObject);
@@ -456,8 +459,11 @@ bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject* globalObject, JSCom
 
 void didDeleteRequireCacheEntry(Zig::GlobalObject* globalObject, const String& key)
 {
-    if (!reloadsFilesFromDisk())
+    if (!reloadsFilesFromDisk()) {
+        if (auto module = AOT::findLibraryModuleInRequireCache(globalObject, key))
+            AOT::didDeleteRequireCacheEntry(globalObject, *module);
         return;
+    }
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     if (auto module = moduleThatAnswersToPath(key)) {
         AOT::didDeleteRequireCacheEntry(globalObject, *module);
@@ -475,8 +481,15 @@ bool requireCacheListsCompiledFiles(Zig::GlobalObject*)
     return reloadsFilesFromDisk();
 }
 
+bool isLibraryModuleInRequireCache(Zig::GlobalObject* globalObject, const String& key)
+{
+    return hasCompiledModules() && AOT::findLibraryModuleInRequireCache(globalObject, key);
+}
+
 bool isEvaluatedCompiledFile(Zig::GlobalObject* globalObject, const String& key)
 {
+    if (isLibraryModuleInRequireCache(globalObject, key))
+        return true;
     if (!reloadsFilesFromDisk())
         return false;
     auto module = compiledModuleForPath(key);
@@ -485,6 +498,8 @@ bool isEvaluatedCompiledFile(Zig::GlobalObject* globalObject, const String& key)
 
 JSValue compiledRequireCacheEntry(Zig::GlobalObject* globalObject, const String& key)
 {
+    if (auto module = AOT::findLibraryModuleInRequireCache(globalObject, key))
+        return AOT::requireCacheEntry(globalObject, *module);
     if (!isEvaluatedCompiledFile(globalObject, key))
         return {};
     return AOT::requireCacheEntry(globalObject, *compiledModuleForPath(key));
@@ -497,9 +512,11 @@ bool isRecordOfCompiledModule(AbstractModuleRecord* record)
 
 void forEachEvaluatedCompiledFile(Zig::GlobalObject* globalObject, const WTF::Function<void(const String&)>& functor)
 {
-    if (!hasCompiledModules() || !reloadsFilesFromDisk())
+    if (!hasCompiledModules())
         return;
-    AOT::forEachEvaluatedFile(globalObject, functor);
+    if (reloadsFilesFromDisk())
+        AOT::forEachEvaluatedFile(globalObject, functor);
+    AOT::forEachLibraryModuleInRequireCache(globalObject, functor);
 }
 
 // `require.cache[name] = { exports: fake }`, where `name` turns out to be "fs": overridableRequire() would answer require("fs") with the entry.
@@ -689,6 +706,13 @@ JSCommonJSModule* parentOfCompiledModule(JSCommonJSModule* module)
     return parent ? dynamicDowncast<JSCommonJSModule>(parent) : nullptr;
 }
 
+String pathInExecutable(const String& path)
+{
+    BunString pathArgument = Bun::toString(path);
+    BunString known = Bun__AOT__pathInExecutable(&pathArgument);
+    return known.isDead() ? String() : known.transferToWTFString();
+}
+
 JSValue mainModuleOfExecutable(Zig::GlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
@@ -697,6 +721,9 @@ JSValue mainModuleOfExecutable(Zig::GlobalObject* globalObject)
     if (main.isString()) {
         String path = asString(main)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+        // `Bun.main = require.resolve("./other.cjs")` stores where the file lay when the program was built.
+        if (String known = pathInExecutable(path); !known.isNull())
+            path = known;
         if (auto module = compiledModuleForRequest(globalObject, path, false, AOT::LoadByName::Require)) {
             JSObject* moduleObject = AOT::mainModuleObject(globalObject, *module);
             RETURN_IF_EXCEPTION(scope, {});
@@ -886,6 +913,12 @@ static void callInLaterTurn(JSGlobalObject* globalObject)
     });
 }
 
+static uint64_t stampOfFile(const String& path)
+{
+    BunString pathArgument = Bun::toString(path);
+    return Bun__AOT__stampOfFile(&pathArgument);
+}
+
 const AOT::ModuleHost compiledModuleHost = {
     &createModuleObject,
     &createRequirer,
@@ -911,6 +944,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &runMock,
     &loadsSynchronously,
     &callInLaterTurn,
+    &stampOfFile,
 };
 
 JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path, NotInExecutable what)
@@ -1155,13 +1189,14 @@ const AOT::ModuleHost compiledModuleHost {};
 std::optional<AOT::ModuleID> compiledModuleForPath(const String&) { return std::nullopt; }
 bool isHiddenFromRequireCache(const String&) { return false; }
 std::optional<AOT::ModuleID> moduleThatMockReplaces(const String&) { return std::nullopt; }
-JSPromise* compiledModuleSource(Zig::GlobalObject*, const String&, bool) { return nullptr; }
+JSPromise* compiledModuleSource(Zig::GlobalObject*, const String&, const ScriptFetchParameters*) { return nullptr; }
 JSPromise* importCompiledModule(Zig::GlobalObject*, const String&, const ScriptFetchParameters*, int64_t) { return nullptr; }
 bool requireCompiledModule(Zig::GlobalObject*, JSCommonJSModule*, const String&, bool) { return false; }
 JSObject* loaderOfCompiledESModule(Zig::GlobalObject*, const String&, bool) { return nullptr; }
 JSValue loadCompiledModuleNamespace(Zig::GlobalObject*, const String&) { return {}; }
 bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject*, JSCommonJSModule*, const String&, bool) { return false; }
 bool compiledModulesRunInPlaceOfFiles() { return false; }
+bool compiledProgramRunsInSeveralRealmsAtOnce() { return false; }
 String firstCompiledModuleMatching(JSGlobalObject*, RegExp*) { return {}; }
 JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path, NotInExecutable)
 {
@@ -1169,6 +1204,7 @@ JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code,
 }
 JSValue errorIfCodeOutsideImageIsRefused(JSGlobalObject*, ErrorCode, const String&) { return {}; }
 JSValue errorIfHostObjectOutsideImageIsRefused(JSGlobalObject*, ErrorCode, const String&) { return {}; }
+String pathInExecutable(const String&) { return {}; }
 JSValue mainModuleOfExecutable(Zig::GlobalObject*) { return jsUndefined(); }
 void willStorePathOfMainModule(Zig::GlobalObject*, JSValue) {}
 bool appendNewChildrenOfCompiledModule(JSGlobalObject*, JSCommonJSModule*) { return true; }
@@ -1182,6 +1218,7 @@ void willSetRequireCacheEntry(Zig::GlobalObject*, const String&, JSValue) {}
 void willStoreLoaderOfExtension(Zig::GlobalObject*, StringView) {}
 void didDeleteRequireCacheEntry(Zig::GlobalObject*, const String&) {}
 bool requireCacheListsCompiledFiles(Zig::GlobalObject*) { return false; }
+bool isLibraryModuleInRequireCache(Zig::GlobalObject*, const String&) { return false; }
 bool isEvaluatedCompiledFile(Zig::GlobalObject*, const String&) { return false; }
 JSValue compiledRequireCacheEntry(Zig::GlobalObject*, const String&) { return {}; }
 bool isRecordOfCompiledModule(AbstractModuleRecord*) { return false; }

@@ -1009,7 +1009,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--update-timings                 After the run, write measured per-file durations to the first --timings file (only this shard's files under --shard; merged with what was read otherwise)."
     ),
     parse_param!(
-        "--aot-memory-limit <STR>         With --aot --parallel: the memory that the run may take, e.g. 5GB. What doesn't fit as one program is compiled as several. Defaults to the container's limit, or the memory that is free."
+        "--aot-memory-limit <STR>         With --aot --parallel: the memory that the run may take, e.g. 5GB. What doesn't fit as one program is compiled as several. Defaults to the container's limit, or the memory that is free. When given, a test file starts only where there is room for what --timings says it took."
     ),
 ];
 const TEST_PARAMS: &[ParamType] = concat_params!(

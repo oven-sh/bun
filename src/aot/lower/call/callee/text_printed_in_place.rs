@@ -401,6 +401,15 @@ impl FileLowering<'_, '_, '_, '_> {
         let mut bytes = Vec::with_capacity(replaced.len() * 5);
         let (mut last_start, mut last_end, mut end_of_bytes) = (0, 0, 0);
         for (text, _) in &replaced {
+            // All of it is cut: the `a` of `a ? b : c`.
+            if self.lies_in_kept_text_of(text.start, text.end, text.start, text.start) {
+                continue;
+            }
+            if let PrintedText::Copy { start, end, .. } = text.printed
+                && self.lies_in_kept_text_of(text.start, text.end, start, end)
+            {
+                continue;
+            }
             // Nothing beneath what is given as bytes is printed. A copy there still says where the place of an error in an initializer leads.
             // Of two for one piece the first stands for both.
             let is_bytes = !matches!(text.printed, PrintedText::Copy { .. });
@@ -434,6 +443,14 @@ impl FileLowering<'_, '_, '_, '_> {
             (last_start, last_end) = (text.start, text.end);
         }
         bytes
+    }
+
+    // An executable quotes from the text that it keeps, which lacks what bundling removes: of `a ? b : c` with `a` known it holds `b` alone.
+    // A piece there that copies `b` in the place of all three stands for itself, and whoever followed the copy would find the piece again, without end.
+    // A test run quotes from the file, where the piece is wider than what it copies.
+    fn lies_in_kept_text_of(&self, start: u32, end: u32, from: u32, to: u32) -> bool {
+        let place = |at: u32| self.type_ranges.map_offset(at);
+        !self.inputs.modules.runs_tests() && place(from) <= place(start) && place(end) <= place(to)
     }
 
     fn find_text_from_printer(&self) -> Vec<ReplacedText> {
@@ -483,8 +500,11 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             around.push(index);
         }
-        let is_kept_whole = |from: u32, to: u32| self.type_ranges.keeps_as_written(from, to);
         let told = texts.iter().zip(&inner).map(|(text, inner)| {
+            let is_kept_whole = |from: u32, to: u32| {
+                self.type_ranges.keeps_as_written(from, to)
+                    && !self.lies_in_kept_text_of(text.start, text.end, from, to)
+            };
             let written = &self.hir.text[text.start as usize..text.end as usize];
             let differences = find_differences_from_written(
                 &text.printed,

@@ -295,6 +295,11 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     if (!prefixed.isNull()) {
                         return JSValue::encode(jsString(vm, prefixed));
                     }
+                    // In an ahead-of-time executable Module._resolveFilename() answers, as require.resolve() does, with where the file lay when the program was built.
+                    if (Bun::hasCompiledModules()) [[unlikely]] {
+                        if (WTF::String known = Bun::pathInExecutable(str.data); !known.isNull() && Bun::compiledModuleForPath(known))
+                            string = jsString(vm, known);
+                    }
                     throwIfResolvedFileIsRefused(lexicalGlobalObject, string, from);
                     RETURN_IF_EXCEPTION(scope, {});
                     return JSC::JSValue::encode(string);
@@ -616,6 +621,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
         auto name = asString(bunMain)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         isMain = URL::fileURLWithFileSystemPath(name.data).string() == thisObject->url;
+        // `Bun.main = require.resolve("./other.cjs")` stores where the file lay when the program was built.
+        if (String known = isMain ? String() : Bun::pathInExecutable(name.data); !known.isNull())
+            isMain = URL::fileURLWithFileSystemPath(known).string() == thisObject->url;
     }
 
     return JSValue::encode(jsBoolean(isMain));

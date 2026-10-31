@@ -43,7 +43,12 @@
 // MISSING: [[handler]]() role=CatchHandler:
 // MISSING-NEXT: [[error]] = CatchValue
 // MISSING: [[reject]] = Builtin builtin=PromiseReject
-// MISSING: = Call [[reject]], {{*}}, [[error]]
+// MISSING: [[rejected]] = Call [[reject]], {{*}}, [[error]]
+// MISSING: [[withResolvers]] = Builtin builtin=PromiseWithResolvers
+// MISSING: [[capability]] = Call [[withResolvers]]
+// MISSING: [[resolve]] = PropGet [[capability]] key="resolve"
+// MISSING: = Call [[resolve]], {{*}}[[rejected]]
+// MISSING: [[promise]] = PropGet [[capability]] key="promise"
 // MISSING: Return
 
 import "./imports/pages/first";

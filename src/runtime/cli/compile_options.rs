@@ -1041,6 +1041,7 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
         imports_are_in_other_images: !run_compiled::images_below_test_part().is_empty(),
         shares_realms: run_compiled::builds_what_test_parts_share()
             || !run_compiled::images_below_test_part().is_empty(),
+        runs_in_several_realms: cmd == Tag::TestCommand && ctx.test_options.isolate,
         images_below: ImagesBelow {
             images: run_compiled::images_below_test_part(),
             holds_module: Some(run_compiled::is_module_below_test_part),

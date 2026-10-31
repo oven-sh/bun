@@ -4,6 +4,15 @@ use bun_ast::Loader;
 use bun_paths::fs::PathName;
 use std::hash::{DefaultHasher, Hasher};
 
+/// Differs where a file was written since: of when it was last written, and how long it is. The build makes one of each file that the run may read again
+/// from disk, and the run time another before it loads the compiled file for the first time. Never zero, which stands for no file.
+pub fn stamp_of_file(written_seconds: i64, written_nanoseconds: i64, size: u64) -> u64 {
+    let written = (written_seconds as u64)
+        .wrapping_mul(1_000_000_000)
+        .wrapping_add(written_nanoseconds as u64);
+    (written ^ size.rotate_left(44)) | 1
+}
+
 pub const DEFAULT_LOADERS: &[(&[u8], Loader)] = &[
     (b".cjs", Loader::Js),
     (b".css", Loader::Css),

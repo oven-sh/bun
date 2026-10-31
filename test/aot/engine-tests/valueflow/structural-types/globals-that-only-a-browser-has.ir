@@ -754,8 +754,9 @@ runtimefunction id=IteratorOperationsIteratorGenericClose function=f303 visibili
 # CHECK-NEXT: b0(v0: f29, v1: anything):
 # CHECK-NEXT: v2: anything = GetArgument
 # CHECK-NEXT: v3: Array = CreateRest firstArgument=1
-# CHECK-NEXT: v4: object = CallDirect v0, v2, v3 function=f29
-# CHECK-NEXT: ReturnCall v4 requirement=Allowed
+# CHECK-NEXT: RecordCallee v0
+# CHECK-NEXT: v5: object = CallDirect v0, v2, v3 function=f29
+# CHECK-NEXT: ReturnCall v5 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="show"
 # CHECK: module=m0 position=623 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=f19|f20|f26}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f7 parameter=1073741825 parameterMap=[{original=1}]} creator=Version{provenVersion=f7} inlineFrames=[{}, {callee=f26 callPosition=4294967295 module=m0}] {

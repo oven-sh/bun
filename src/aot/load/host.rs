@@ -61,7 +61,7 @@ use crate::load::sources::{
 use crate::load::test_runner_names;
 use crate::load::worker_files::find_file_named_as_in_executable;
 use crate::load::{is_host_path, is_in_node_modules};
-use crate::module_keys::is_url_with_text;
+use crate::module_keys::{is_url_with_text, places_of_form};
 use crate::options::Options;
 use crate::statistics::LimitValues;
 
@@ -131,6 +131,9 @@ pub(crate) struct LoadHost<'a> {
     evaluated_texts: EvaluatedTexts,
     react_compiler: ReactCompiler<'a>,
     entry_point_paths: Vec<Vec<u8>>,
+    /// As `entry_point_paths`, of `begin_at`.
+    found_entry_point_paths: Guarded<Vec<Vec<u8>>>,
+    has_found_entry_points: AtomicBool,
     /// Sorted. The entry points whose names say nothing about them and that aren't text.
     binary_entry_point_paths: Vec<Vec<u8>>,
     /// Entry points that are named as declaration files and hold statements that run. `bun run` runs them.
@@ -158,10 +161,14 @@ enum ServedBy {
     Disk,
 }
 
-fn collect_entry_point_paths(disk: &Disk, options: &Options<'_>) -> Vec<Vec<u8>> {
+fn collect_entry_point_paths(
+    disk: &Disk,
+    options: &Options<'_>,
+    entry_points: &[Vec<u8>],
+) -> Vec<Vec<u8>> {
     let is_case_sensitive = disk.is_case_sensitive();
-    let mut paths = Vec::with_capacity(2 * options.entry_points.len());
-    for entry_point in &options.entry_points {
+    let mut paths = Vec::with_capacity(2 * entry_points.len());
+    for entry_point in entry_points {
         let path = from_argument(&options.code.working_directory, entry_point);
         paths.push(to_path(&disk.realpath(&path), is_case_sensitive).into_owned());
         paths.push(to_path(&path, is_case_sensitive).into_owned());
@@ -195,6 +202,15 @@ impl<'a> LoadHost<'a> {
         *self.files_left_alone.lock() = files;
     }
 
+    /// The load that runs begins at these files too, and at no others beside `Options::entry_points`. They are written as those are, their names say that
+    /// they are code, and none is read yet as an entry point is.
+    pub(crate) fn begin_at(&self, entry_points: &[Vec<u8>]) {
+        let paths = collect_entry_point_paths(self.disk, self.input.options, entry_points);
+        self.has_found_entry_points
+            .store(!paths.is_empty(), Ordering::Relaxed);
+        *self.found_entry_point_paths.lock() = paths;
+    }
+
     /// What takes a while to free, for whoever frees it beside other work.
     pub(crate) fn into_leftovers(self) -> Box<dyn Send> {
         self.plugins.into_leftovers()
@@ -204,7 +220,7 @@ impl<'a> LoadHost<'a> {
         let (disk, provider, messages) = (input.disk, input.provider, input.messages);
         let options = input.options;
         let load = &options.load;
-        let entry_point_paths = collect_entry_point_paths(disk, options);
+        let entry_point_paths = collect_entry_point_paths(disk, options, &options.entry_points);
         let is_binary = |path: &&Vec<u8>| {
             loader_named_by_path(&load.loaders, path).is_none()
                 && (disk.read(path)).is_some_and(|contents| appears_to_be_binary(&contents, true))
@@ -234,6 +250,8 @@ impl<'a> LoadHost<'a> {
             binary_entry_point_paths: binary_entry_point_paths.collect(),
             entry_points_that_run_despite_their_names,
             entry_point_paths,
+            found_entry_point_paths: Guarded::new(Vec::new()),
+            has_found_entry_points: AtomicBool::new(false),
             extra_extensions: extra_extensions.collect(),
             unreadable: Guarded::new(Vec::new()),
             background_reads: Guarded::new(Vec::new()),
@@ -311,6 +329,8 @@ impl<'a> LoadHost<'a> {
 
     fn is_entry_point(&self, path: &[u8]) -> bool {
         self.is_among(&self.entry_point_paths, path)
+            || (self.has_found_entry_points.load(Ordering::Relaxed)
+                && self.is_among(&self.found_entry_point_paths.lock(), path))
     }
 
     fn runs_despite_its_name(&self, path: &[u8]) -> bool {
@@ -739,6 +759,12 @@ impl CodeHost for LoadHost<'_> {
             || (aot.is_part_of_test_files && self.is_data_that_only_test_files_import(path))
             || (self.leaves_files_alone.load(Ordering::Relaxed)
                 && self.files_left_alone.lock().contains(path))
+    }
+
+    fn is_form_in_other_program(&self, path: &[u8], type_attribute: &[u8]) -> bool {
+        let images_below = &self.input.options.aot.images_below;
+        places_of_form(to_native(path), type_attribute)
+            .is_some_and(|places| images_below.holds_module(&places.path_of_form))
     }
 
     fn is_left_to_loader(&self, path: &[u8]) -> bool {

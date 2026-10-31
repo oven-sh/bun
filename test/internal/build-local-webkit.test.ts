@@ -109,18 +109,19 @@ describe("which builds compile WebKit", () => {
     expect(prebuiltHasProgramObjects(cfg)).toBe(false);
     writeFileSync(join(source.destDir!, objects("testaot")), "");
     expect(prebuiltHasProgramObjects(cfg)).toBe(true);
-    // The ICU of the tarball keeps its data compressed. The objects of jsc hold what reads it; testaot gets it here, with zstd.
+    // The ICU of the tarball keeps its data compressed. The objects of jsc hold what reads it; testaot gets it here, with
+    // zstd's decoder compiled for it alone: the objects of zstd that bun links want bun's run time in a hardened build.
     expect(
-      jscPrograms(cfg).map(({ name, sources, libs, deps }) => [
+      jscPrograms(cfg).map(({ name, sources, cSources, libs, sourcesFrom }) => [
         name,
-        sources.map(s => relative(buildDir, s)),
+        [...sources, ...(cSources ?? [])].map(s => relative(buildDir, s)),
         libs,
-        deps,
+        sourcesFrom,
       ]),
     ).toEqual(
       ["jsc", "testaot"].map(name => [
         name,
-        ["OutOfMemory.cpp", ...(name === "testaot" ? ["ICUData.cpp"] : [])].map(file =>
+        ["OutOfMemory.cpp", ...(name === "testaot" ? ["ICUData.cpp", "ZstdDecoder.c"] : [])].map(file =>
           join("deps", "WebKit", "programs", name, file),
         ),
         [join(source.destDir!, objects(name))],

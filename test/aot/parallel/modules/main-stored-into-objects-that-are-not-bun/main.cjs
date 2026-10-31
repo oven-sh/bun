@@ -8,4 +8,4 @@ globalThis.seenByTheHost?.(Bun);
 const holder = globalThis.holderOfTheHost?.() ?? {};
 holder.main = "index.js";
 const copy = Object.assign({}, Bun, { main: "index.js" });
-console.log(require.main === module, other.isMain(), require.main.filename === __filename, manifest.main, holder.main, copy.main);
+console.log(require.main === module, other.isMain(), require.main.filename === module.filename, manifest.main, holder.main, copy.main);

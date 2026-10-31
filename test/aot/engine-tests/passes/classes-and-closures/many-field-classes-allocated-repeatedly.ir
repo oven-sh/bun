@@ -864,34 +864,35 @@ function f66 module=m4 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0(v0: "a key nobody declared"|"bare"|"frozen"|"wider"|"with options", v1: L0|L1):
 # CHECK-NEXT: v2: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: v3: boolean = ShapeTest v1 layouts=[L0]
-# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b4()
-# CHECK-NEXT: b1() handler=b3():
-# CHECK-NEXT: v4: int[0, 2] = CallDirect v1, v2 function=f69 calledBuiltin=JSONStringify
-# CHECK-NEXT: Switch v4 cases=[1] -> case b2(), otherwise b4()
-# CHECK-NEXT: b2() handler=b3():
-# CHECK-NEXT: v5: string = StringBuilderFinish v2
-# CHECK-NEXT: Jump -> next b5(v5)
-# CHECK-NEXT: b3() role=CleanupHandler frequency=Rare:
-# CHECK-NEXT: v6: exception = CatchException
-# CHECK-NEXT: JSONResetHolders v2
-# CHECK-NEXT: Rethrow v6
-# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b3()
+# CHECK-NEXT: b1() handler=b5():
+# CHECK-NEXT: v4: 0 = Integer
+# CHECK-NEXT: v5: int[0, 2] = CallDirect v1, v2, v4 function=f69 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v5 cases=[1] -> case b2(), otherwise b3()
+# CHECK-NEXT: b2() handler=b5():
+# CHECK-NEXT: v6: string = StringBuilderFinish v2
+# CHECK-NEXT: Jump -> next b4(v6)
+# CHECK-NEXT: b3() frequency=Rare:
 # CHECK-NEXT: StringBuilderDiscard v2
-# CHECK-NEXT: v9: undefined = Undefined
-# CHECK-NEXT: v10: undefined|string = CallBuiltin -, v1, v9 overload=JSONStringify/0 accessSite=65
-# CHECK-NEXT: Jump -> next b5(v10)
-# CHECK-NEXT: b5(v11: undefined|string ~ string):
-# CHECK-NEXT: v12: boolean = GetSlot v1 key="finalized" receivers=[L0, L1] level=Proven accessSite=66
-# CHECK-NEXT: v13: undefined = Undefined
-# CHECK-NEXT: v14: undefined|"late" = GetSlot v1 key="late" receivers=[L0, L1] level=Proven accessSite=68
-# CHECK-NEXT: v15: "function" = String string="function"
-# CHECK-NEXT: v16: "http://localhost/hello" = String string="http://localhost/hello"
-# CHECK-NEXT: v17: f19 = GetSlot v1 key="answer" receivers=[L0, L1] level=Proven accessSite=72
-# CHECK-NEXT: v18: L0|L1 = GetCapture v17 function=f19
-# CHECK-NEXT: v19: undefined|string = GetSlot v18 key=#"#answer"@L0 receivers=[L0, L1] level=Proven accessSite=141
-# CHECK-NEXT: v20: undefined = CallBuiltin -, v0, v11, v12, v13, v14, v15, v16, v19 overload=ConsoleLog/0 accessSite=74
-# CHECK-NEXT: v21: undefined = Undefined
-# CHECK-NEXT: Return v21
+# CHECK-NEXT: v8: undefined = Undefined
+# CHECK-NEXT: v9: undefined|string = CallBuiltin -, v1, v8 overload=JSONStringify/0 accessSite=65
+# CHECK-NEXT: Jump -> next b4(v9)
+# CHECK-NEXT: b4(v10: undefined|string ~ string):
+# CHECK-NEXT: v11: boolean = GetSlot v1 key="finalized" receivers=[L0, L1] level=Proven accessSite=66
+# CHECK-NEXT: v12: undefined = Undefined
+# CHECK-NEXT: v13: undefined|"late" = GetSlot v1 key="late" receivers=[L0, L1] level=Proven accessSite=68
+# CHECK-NEXT: v14: "function" = String string="function"
+# CHECK-NEXT: v15: "http://localhost/hello" = String string="http://localhost/hello"
+# CHECK-NEXT: v16: f19 = GetSlot v1 key="answer" receivers=[L0, L1] level=Proven accessSite=72
+# CHECK-NEXT: v17: L0|L1 = GetCapture v16 function=f19
+# CHECK-NEXT: v18: undefined|string = GetSlot v17 key=#"#answer"@L0 receivers=[L0, L1] level=Proven accessSite=141
+# CHECK-NEXT: v19: undefined = CallBuiltin -, v0, v10, v11, v12, v13, v14, v15, v18 overload=ConsoleLog/0 accessSite=74
+# CHECK-NEXT: v20: undefined = Undefined
+# CHECK-NEXT: Return v20
+# CHECK-NEXT: b5() role=CleanupHandler frequency=Rare:
+# CHECK-NEXT: v21: exception = CatchException
+# CHECK-NEXT: JSONResetHolders v2
+# CHECK-NEXT: Rethrow v21
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Context"
 # CHECK: module=m0 position=829 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L2 site=w6 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|L4 site=w7 flags=[OmitsNull]}] results=[{type=L0|L1 flags=[IsFromCompiler]}] functionTypes=[f24] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {

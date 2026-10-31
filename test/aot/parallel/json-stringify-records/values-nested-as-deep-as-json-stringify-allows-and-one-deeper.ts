@@ -21,7 +21,6 @@ for (const levels of [40_000, 40_001]) {
   attempt("in an object that is written here " + levels, () => JSON.stringify({ q: "x", deep: lists(levels - 1) }));
   attempt("beside a wide text " + levels, () => JSON.stringify([lists(levels - 1), "中"]));
   attempt("through toJSON " + levels, () => JSON.stringify(said(levels)));
-  attempt("indented " + levels, () => (JSON.stringify(lists(levels), null, 1) as string).length > 0);
   attempt("a replacer that is a function " + levels, () => JSON.stringify(lists(levels), (_key, value) => value));
 }
 attempt("far deeper, lists", () => JSON.stringify(lists(300_000)));

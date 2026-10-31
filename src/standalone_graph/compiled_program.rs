@@ -18,7 +18,8 @@ use crate::Error;
 #[cfg(windows)]
 use crate::StandaloneModuleGraph::normalize_file_key;
 use crate::StandaloneModuleGraph::{
-    File, StandaloneModuleGraph, dir_stat, is_bun_standalone_file_path,
+    BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, File, StandaloneModuleGraph, dir_stat,
+    is_bun_standalone_file_path,
 };
 
 const CORRUPTED: Error = Error::CorruptedCompiledProgram;
@@ -34,6 +35,7 @@ const ALLOWS_CODE_FROM_DISK: u32 = 8;
 const HAS_ROOT_FOLDERS_SPELLED: u32 = 16;
 const HAS_ROOT_FROM_EXECUTABLE: u32 = 32;
 const HAS_FURTHER_PACKAGE_NAMES: u32 = 64;
+const HAS_ROOT_ON_BUILD_MACHINE: u32 = 128;
 /// The length of the path, what `require` and what `import` find, and what the name hides.
 const PACKAGE_NAME_SIZE: usize = 4 * size_of::<u32>();
 const HIDES_OTHER_PATHS: u32 = 1;
@@ -115,6 +117,8 @@ pub struct CompiledProgramInput<'a> {
     pub root_folders_spelled: &'a [u8],
     /// `CompiledProgram::root_from_executable`
     pub root_from_executable: Option<&'a [u8]>,
+    /// `CompiledProgram::root_on_build_machine`
+    pub root_on_build_machine: Option<&'a [u8]>,
     /// Ascending by path.
     pub further_package_names: &'a [FurtherPackageName],
     pub preserves_source_paths: bool,
@@ -161,6 +165,8 @@ pub(crate) fn capacity(input: &CompiledProgramInput<'_>) -> usize {
         + input.root_folders_spelled.len()
         + size_of::<u32>()
         + input.root_from_executable.map_or(0, <[u8]>::len)
+        + size_of::<u32>()
+        + input.root_on_build_machine.map_or(0, <[u8]>::len)
         + encode_further_package_names(input.further_package_names).len()
 }
 
@@ -264,6 +270,7 @@ pub(crate) fn append_record(
             | (u32::from(input.allows_code_from_disk) * ALLOWS_CODE_FROM_DISK)
             | (u32::from(!input.root_folders_spelled.is_empty()) * HAS_ROOT_FOLDERS_SPELLED)
             | (u32::from(input.root_from_executable.is_some()) * HAS_ROOT_FROM_EXECUTABLE)
+            | (u32::from(input.root_on_build_machine.is_some()) * HAS_ROOT_ON_BUILD_MACHINE)
             | (u32::from(!input.further_package_names.is_empty()) * HAS_FURTHER_PACKAGE_NAMES),
     };
     let root = match input.root_below_working_directory {
@@ -287,6 +294,16 @@ pub(crate) fn append_record(
         .concat(),
     };
     let root_from_executable = match input.root_from_executable {
+        Some(root) => [
+            &u32::try_from(root.len())
+                .map_err(|_| CORRUPTED)?
+                .to_le_bytes()[..],
+            root,
+        ]
+        .concat(),
+        None => Vec::new(),
+    };
+    let root_on_build_machine = match input.root_on_build_machine {
         Some(root) => [
             &u32::try_from(root.len())
                 .map_err(|_| CORRUPTED)?
@@ -320,6 +337,7 @@ pub(crate) fn append_record(
         &root,
         &root_folders,
         &root_from_executable,
+        &root_on_build_machine,
         &encode_further_package_names(input.further_package_names),
         slice_as_bytes(&image_ranges),
     ]);
@@ -607,6 +625,14 @@ fn try_read(
         root_from_executable = Some(payload.bytes(end, length)?);
         end += length;
     }
+    let mut root_on_build_machine = None;
+    if header.flags & HAS_ROOT_ON_BUILD_MACHINE != 0 {
+        let length = payload.bytes(end, size_of::<u32>())?;
+        let length = u32::from_le_bytes(length.try_into().ok()?) as usize;
+        end += size_of::<u32>();
+        root_on_build_machine = Some(payload.bytes(end, length)?);
+        end += length;
+    }
     let mut further_package_names = Vec::new();
     if header.flags & HAS_FURTHER_PACKAGE_NAMES != 0 {
         further_package_names = read_further_package_names(payload, &mut end)?;
@@ -644,6 +670,7 @@ fn try_read(
     let program = program.with_code_from_disk(header.flags & ALLOWS_CODE_FROM_DISK != 0);
     let program = program.with_root_folders_spelled(root_folders_spelled);
     let program = program.with_root_from_executable(root_from_executable);
+    let program = program.with_root_on_build_machine(root_on_build_machine);
     let program = program.with_further_package_names(further_package_names.into_boxed_slice());
     Some(program.with_path_aliases(path_aliases))
 }
@@ -931,9 +958,34 @@ impl StandaloneModuleGraph {
             .map(Box::from)
     }
 
+    /// `key`, as `absolute_key` makes it, under the root of the executable, where it lies below the folder in which the program was built.
+    /// `__dirname` and `__filename` hold paths of that folder, as with `bun build --compile`. Where the disk has it no longer, what the executable holds answers.
+    fn key_under_own_root(program: &CompiledProgram, key: &[u8]) -> Option<Vec<u8>> {
+        if program.preserves_source_paths {
+            return None;
+        }
+        let mut root = program.root_on_build_machine()?.to_vec();
+        resolve_path::platform_to_posix_in_place(&mut root[..]);
+        let below = key.strip_prefix(&root[..])?;
+        if !below.is_empty() && !below.starts_with(b"/") {
+            return None;
+        }
+        let own_root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
+        let own_root = own_root.strip_suffix(b"/").unwrap_or(own_root);
+        let mut under_own_root = [own_root, below].concat();
+        resolve_path::platform_to_posix_in_place(&mut under_own_root[..]);
+        Some(under_own_root)
+    }
+
     /// Whether `key`, as `absolute_key` makes it, can be a file or a directory that the graph answers for outside of its own root: each of those begins as all of them do, or is a directory above them all.
     fn is_near_source_paths(&self, program: &CompiledProgram, key: &[u8]) -> bool {
         if cfg!(windows) {
+            return true;
+        }
+        if program
+            .root_on_build_machine()
+            .is_some_and(|root| key.starts_with(root))
+        {
             return true;
         }
         let common = program
@@ -967,6 +1019,8 @@ impl StandaloneModuleGraph {
         let program = self.compiled_program.as_ref()?;
         let mut buffer = path_buffer_pool::get();
         let key = absolute_key(path, &mut buffer)?.as_bytes();
+        let under_own_root = Self::key_under_own_root(program, key);
+        let key = under_own_root.as_deref().unwrap_or(key);
         if program.entry_point_by_source_path(key).is_some() || program.holds_module_at(key) {
             return Some(SourcePathKind::File);
         }
@@ -1026,12 +1080,18 @@ impl StandaloneModuleGraph {
 
     pub fn find_at_source_path(&self, name: &[u8]) -> Option<&File> {
         let program = self.compiled_program.as_ref()?;
-        if !program.preserves_source_paths {
+        if !program.preserves_source_paths && program.root_on_build_machine().is_none() {
             return None;
         }
         let mut buffer = path_buffer_pool::get();
         let key = absolute_key(name, &mut buffer)?;
-        let file_index = self.files.get_index(key.as_bytes())?;
+        let under_own_root = Self::key_under_own_root(program, key.as_bytes());
+        if !program.preserves_source_paths && under_own_root.is_none() {
+            return None;
+        }
+        let file_index = self
+            .files
+            .get_index(under_own_root.as_deref().unwrap_or(key.as_bytes()))?;
         // The file of an entry point is empty: its text is on the disk or nowhere.
         let is_entry_point = program
             .entry_point_by_file_index(u32::try_from(file_index).ok()?)
@@ -1057,6 +1117,24 @@ impl StandaloneModuleGraph {
             return is_directory.then_some(key);
         }
         let program = self.compiled_program.as_ref()?;
+        if !program.preserves_source_paths {
+            // Every key of such a graph lies under its own root.
+            program.root_on_build_machine()?;
+            let mut on_build_machine = path_buffer_pool::get();
+            let key = absolute_key(name, &mut on_build_machine)?;
+            let under_own_root = Self::key_under_own_root(program, key.as_bytes())?;
+            let is_directory = self.dirs.contains_key(&under_own_root[..])
+                || program.holds_module_below(&under_own_root);
+            let length = under_own_root.len();
+            if !is_directory
+                || length > buffer.len()
+                || matches!(bun_sys::directory_exists_at(Fd::cwd(), key), Ok(true))
+            {
+                return None;
+            }
+            buffer[..length].copy_from_slice(&under_own_root);
+            return Some(&buffer[..length]);
+        }
         let key = absolute_key(name, buffer)?;
         if !self.is_near_source_paths(program, key.as_bytes())
             || !self.dirs.contains_key(key.as_bytes())
@@ -1137,6 +1215,7 @@ pub(crate) mod tests {
             allows_code_from_disk: false,
             root_folders_spelled: b"",
             root_from_executable: None,
+            root_on_build_machine: None,
             further_package_names: &[],
             preserves_source_paths,
             symbols: b"",
@@ -1401,6 +1480,19 @@ pub(crate) mod tests {
             #[cfg(not(windows))]
             assert_eq!(program.root_on_disk(b"/work"), expected);
             assert_eq!(program.knows_root_on_disk(), root.is_some());
+        }
+    }
+
+    #[test]
+    fn root_on_build_machine_round_trips() {
+        let entry_points = [entry_point(10, b"/$bunfs/root/main.js")];
+        for root in [None, Some(&b"/work/app"[..])] {
+            let mut input = program(&IMAGE, ALIGNMENT, &entry_points, false);
+            input.root_on_build_machine = root;
+            let (bytes, record_at, _) = write(&input, &[Some(0)], 5).unwrap();
+            let (program, record_end) = read_back(bytes.clone(), record_at).unwrap();
+            assert_eq!(record_end, bytes.len());
+            assert_eq!(program.root_on_build_machine(), root);
         }
     }
 

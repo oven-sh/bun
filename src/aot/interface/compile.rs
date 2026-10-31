@@ -33,6 +33,8 @@ pub struct Compilation {
     pub names_of_worker_files: Vec<EntryPointPaths>,
     /// The last folders of the root directory, where a path that the program writes goes up out of them and comes back. Empty where none does.
     pub root_folders_spelled: Vec<u8>,
+    /// The programs hold the path of a file on the machine that builds: `__filename`, `__dirname` or what `require.resolve` answers, as `bun build --compile` has them.
+    pub holds_source_paths: bool,
     /// In a test run: a call of `import()` is given a path with a query.
     pub imports_file_with_query: bool,
     /// With code from disk: the files of the program, for the names of their packages.

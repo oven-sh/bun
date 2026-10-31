@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "autobuild-preview-pr-942-f61fbc65";
+export const WEBKIT_VERSION = "autobuild-preview-pr-942-e01a9a37";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -1905,8 +1905,11 @@ export interface JSCProgram {
   cxxflags: string[];
   ldflags: string[];
   libs?: string[];
-  /** Dependencies of bun that it is linked with, beside WebKit and mimalloc. */
-  deps?: Array<"zstd">;
+  /** Its sources in C, and their flags. */
+  cSources?: string[];
+  cflags?: string[];
+  /** Dependencies of bun whose sources it compiles for itself. Its compiles wait until they are fetched. */
+  sourcesFrom?: Array<"zstd">;
   /**
    * Headers to precompile for the program's sources, with its flags, each on top of the one before. A source takes
    * the last one whose `files` matches its path, or that has none.
@@ -2012,14 +2015,30 @@ extern "C" const void* bun_icu_maybe_decompress(const void* item, int32_t* lengt
   return source;
 }
 
-/** testaot as `program` says, reading the data of a prebuilt WebKit's ICU. */
-function readingPrebuiltIcuData(cfg: Config, program: JSCProgram): JSCProgram {
+/**
+ * `program` with what reads those frames: zstd's decoder, as zstd itself puts it into one file, compiled for this program
+ * alone, as shell/CMakeLists.txt compiles it for the shell. Not the objects bun links: those carry what the build asks
+ * of bun's libraries (in a hardened bun they keep their arrays on a second stack, which bun's run time sets up), and
+ * these programs are linked without that run time.
+ */
+function withZstdDecoder(cfg: Config, program: JSCProgram): JSCProgram {
+  const zstd = join(cfg.vendorDir, "zstd");
+  const source = join(depBuildDir(cfg, "WebKit"), "programs", program.name, "ZstdDecoder.c");
+  const decoder = join(zstd, "build", "single_file_libs", "zstddeclib-in.c");
+  writeIfChanged(source, `#include "${decoder.replaceAll("\\", "/")}"\n`);
+  const include = `-I${join(zstd, "lib")}`;
   return {
     ...program,
-    sources: [...program.sources, icuDataHook(cfg, program.name)],
-    cxxflags: [...program.cxxflags, `-I${join(cfg.vendorDir, "zstd", "lib")}`],
-    deps: ["zstd"],
+    cxxflags: [...program.cxxflags, include],
+    cSources: [source],
+    cflags: [...groupCompileFlags(cfg, cfg.buildDir, {}).c, include],
+    sourcesFrom: ["zstd"],
   };
+}
+
+/** testaot as `program` says, reading the data of a prebuilt WebKit's ICU. */
+function readingPrebuiltIcuData(cfg: Config, program: JSCProgram): JSCProgram {
+  return withZstdDecoder(cfg, { ...program, sources: [...program.sources, icuDataHook(cfg, program.name)] });
 }
 
 /**
@@ -2047,7 +2066,8 @@ export function jscPrograms(cfg: Config): JSCProgram[] {
         libs: [resolve(prebuiltDestDir(cfg), programObjects(cfg, name))],
       };
       // The objects of jsc hold the shell's own hook.
-      return name === "testaot" && cfg.linux && cfg.abi !== "android" ? readingPrebuiltIcuData(cfg, program) : program;
+      const hasCompressedData = cfg.windows || (cfg.linux && cfg.abi !== "android");
+      return name === "testaot" && hasCompressedData ? readingPrebuiltIcuData(cfg, program) : program;
     });
   }
   if (cfg.webkit !== "local") return [];
@@ -2075,7 +2095,7 @@ export function jscPrograms(cfg: Config): JSCProgram[] {
     .filter(f => f.startsWith("testb3_") && f.endsWith(".cpp"))
     .sort()
     .map(f => `b3/${f}`);
-  const jscShell = program(
+  let jscShell = program(
     "jsc",
     ["jsc.cpp", "tools/JSDollarVMShell.cpp", ...shell, ...embedder],
     cfg.darwin ? ["-ledit"] : [],
@@ -2083,8 +2103,7 @@ export function jscPrograms(cfg: Config): JSCProgram[] {
   // The data of the ICU of a prebuilt WebKit is a zstd frame an item (icu/compress-data.ts). jsc.cpp has the hook that
   // reads it, as shell/CMakeLists.txt builds it with BUN_ICU_ZSTD_SOURCE_DIR.
   if (linuxIcuRoot(cfg) !== undefined) {
-    jscShell.cxxflags = [...jscShell.cxxflags, "-DBUN_ICU_ZSTD=1", `-I${join(cfg.vendorDir, "zstd", "lib")}`];
-    jscShell.deps = ["zstd"];
+    jscShell = withZstdDecoder(cfg, { ...jscShell, cxxflags: [...jscShell.cxxflags, "-DBUN_ICU_ZSTD=1"] });
   }
   const testaot = program(
     "testaot",

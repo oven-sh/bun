@@ -15,7 +15,7 @@ use crate::session::ArenaBox;
 use bun_threading::Guarded;
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU32, AtomicU64};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU32, AtomicU64, AtomicUsize};
 
 const WORDS: usize = 4;
 /// A word of `ModuleCell::readers` and a bit in it.
@@ -99,6 +99,10 @@ static TASKS: Guarded<Tasks> = Guarded::new(Tasks {
     unripe: Vec::new(),
 });
 
+/// The files that `let_trees_go_behind` has listed and that are not committed yet, of all programs. At zero nothing is left to lower,
+/// and the trees are about to be freed: packing one then costs time and saves nothing.
+static AWAITED_COMMITS: AtomicUsize = AtomicUsize::new(0);
+
 /// Held, with others, by a thread that has taken ripe cells out of `Tasks::unripe`, until it has let their trees go. The list is that
 /// of the process, so they may be cells of another program. That program holds it alone when it takes its cells out of the list:
 /// from then on nobody else has one, and it may end.
@@ -142,6 +146,13 @@ impl<'s> ModuleCell<'s> {
 
     fn erased(&self) -> *const ModuleCell<'static> {
         std::ptr::from_ref(self).cast()
+    }
+
+    /// Before `awaited` goes down: a listed file awaits its own commit and no other.
+    fn await_own_commit_no_more(&self) {
+        if self.is_committed.load(Relaxed) && self.awaited.load(Relaxed) != 0 {
+            AWAITED_COMMITS.fetch_sub(1, SeqCst);
+        }
     }
 
     fn end_watch(&self) {
@@ -419,6 +430,7 @@ impl Files<'_> {
         for &file in files {
             self.modules[file.idx()].is_committed.store(true, Relaxed);
         }
+        AWAITED_COMMITS.fetch_add(files.len(), SeqCst);
         for &file in files {
             self.for_each_awaiting(file, &mut |module| {
                 module.awaited.fetch_add(1, Relaxed);
@@ -427,6 +439,7 @@ impl Files<'_> {
     }
 
     pub fn note_commit(&self, file: FileId) {
+        self.modules[file.idx()].await_own_commit_no_more();
         self.for_each_awaiting(file, &mut |module| {
             if module.awaited.load(Relaxed) != 0 && module.awaited.fetch_sub(1, SeqCst) == 1 {
                 module.unwatched.store(std::ptr::null_mut(), SeqCst);
@@ -436,6 +449,22 @@ impl Files<'_> {
                 tasks.unripe.push((time, module.erased()));
             }
         });
+    }
+
+    pub fn is_tree_gone(&self, file: FileId) -> bool {
+        self.modules[file.idx()].state.load(SeqCst) == GONE
+    }
+
+    /// No tree goes from now on, not even one that a thread is about to let go. It waits for no such thread, and tasks of
+    /// this program may run. `watch_no_more` still follows.
+    pub fn let_no_more_trees_go(&self) {
+        for cell in self.modules.iter() {
+            let _lock = cell.set_aside.lock();
+            if cell.state.load(SeqCst) == HERE {
+                cell.state.store(KEPT, SeqCst);
+                cell.end_watch();
+            }
+        }
     }
 
     /// The end of `let_trees_go_behind`: no tree goes anymore. What is gone comes back for whoever reads it. No task of
@@ -451,6 +480,7 @@ impl Files<'_> {
                 .retain(|entry| !cells.contains(&entry.1));
         }
         for cell in self.modules.iter() {
+            cell.await_own_commit_no_more();
             cell.awaited.store(0, Relaxed);
             cell.is_committed.store(false, Relaxed);
             let _lock = cell.set_aside.lock();
@@ -522,11 +552,12 @@ impl Drop for ReadingTask {
         let read = READ.replace(std::mem::take(&mut self.read_by_outer));
         TASK.set(self.outer);
         let (word, bit) = self.bit;
+        let is_more_to_lower = AWAITED_COMMITS.load(SeqCst) != 0;
         for module in read {
             // SAFETY: the program outlives its tasks.
             let module = unsafe { &*module };
             module.readers[word].fetch_and(!bit, SeqCst);
-            if module.is_ripe.load(SeqCst) {
+            if is_more_to_lower && module.is_ripe.load(SeqCst) {
                 module.let_go();
             }
         }
@@ -546,7 +577,12 @@ impl Drop for ReadingTask {
             // SAFETY: `watch_no_more` of its program waits for `RELEASING_RIPE_CELLS`.
             let module = unsafe { &*module };
             module.is_ripe.store(true, SeqCst);
-            module.let_go();
+            if is_more_to_lower {
+                module.let_go();
+            }
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

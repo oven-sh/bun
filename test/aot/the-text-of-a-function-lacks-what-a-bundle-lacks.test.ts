@@ -149,6 +149,28 @@ for (const thrower of [quotesBehindWhatIsRemoved, quotesBehindAValue, quotesBehi
   }
 }
 console.log(JSON.stringify([statements({}), expressions({}), values()]));
+
+// At the top level of the file, each in a variable that is read once: there the build once followed a piece that copied itself, without end.
+const chosenByADefine = DEFINED_AS_FALSE ? "dropped" : "kept";
+console.log(chosenByADefine);
+const chosenByTheOther = DEFINED_AS_TRUE ? 1 : 2;
+console.log(chosenByTheOther);
+const chosenByANegation = !DEFINED_AS_TRUE ? dead() : \`kept \${1 + 1}\`;
+console.log(chosenByANegation);
+const nestedChoices = DEFINED_AS_TRUE ? (DEFINED_AS_FALSE ? "a" : "b") : "c";
+console.log(nestedChoices);
+const behindAnd = DEFINED_AS_TRUE && "kept";
+console.log(behindAnd);
+const behindOr = DEFINED_AS_FALSE || "kept";
+console.log(behindOr);
+const aValue = DEFINED_AS_A_STRING;
+console.log(aValue);
+const aLongerValue = SHORT;
+console.log(aLongerValue);
+const anObject = CONFIG;
+console.log(JSON.stringify(anObject));
+const chosenBetweenValues = DEFINED_AS_FALSE ? SHORT : DEFINED_AS_A_NUMBER;
+console.log(chosenBetweenValues);
 `,
 };
 

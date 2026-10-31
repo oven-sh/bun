@@ -273,6 +273,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         if let Some(Resolved::Builtin(path)) = self.file.builtins.of_pure_expr(expression)
             && let Some(builtin) = path.locked_builtin()
+            && !self.file.names_source_path(expression)
         {
             return self.emit_locked_builtin(builtin);
         }

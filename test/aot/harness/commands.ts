@@ -1,17 +1,18 @@
 // How the tests of test/aot start a command, and what they make of how it ended.
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { closeSync, existsSync, openSync, readdirSync, readSync, renameSync, rmSync, statSync, utimesSync } from "fs";
 import { bunExe, isASAN, isLinux, isWindows } from "harness";
 import { availableParallelism, tmpdir } from "os";
 import { join } from "path";
 import { locksEnvironment } from "../hardened";
+import { raiseDefaultTimeout } from "./default-timeout";
 import { endAtMemoryLimit, memoryLimitOfAKnownProgram } from "./memory-limit";
 import { reportsToTheRunnerAlone, throughAtOnce, withoutCoreDump } from "./without-core-dump";
 
 export { unsupported } from "./compiler";
 
 // One build takes about as long as the whole default limit of bun:test.
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 // Each build keeps one core busy for about a second and writes an executable the size of Bun.
 export const slots = Math.max(1, Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism());
@@ -157,8 +158,15 @@ export function told(run: { stdout: string; stderr: string; exitCode: number }) 
   };
 }
 
+function withoutItsMiddle(text: string, kept = 8192) {
+  if (text.length <= 4 * kept) return text;
+  const middle = text.slice(kept, -kept);
+  const errors = (middle.match(/^error\b.*$/gm) ?? []).slice(0, 20).map(line => `\n${line.slice(0, 400)}`);
+  return `${text.slice(0, kept)} [${middle.length} characters are left out here]${errors.join("")}\n[and then] ${text.slice(-kept)}`;
+}
+
 export function built(build: { stderr: string; exitCode: number }) {
-  expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
+  expect({ stderr: withoutItsMiddle(build.stderr), exitCode: build.exitCode }).toEqual({
     stderr: expect.not.stringMatching(/^error\b/m),
     exitCode: 0,
   });

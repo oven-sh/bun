@@ -8,6 +8,7 @@ use bun_sema::program::{FileId, FileRole, Files};
 use bun_sema::resolve::Host;
 use bun_sema::util::SharedSort;
 use bun_threading::Guarded;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub fn check_and_lower<'s, T: Send>(
     loaded: &LoadedProgram<'s>,
@@ -26,6 +27,7 @@ pub fn check_and_lower<'s, T: Send>(
         files_to_lower,
         lower,
         note_commit,
+        None,
         &Passes {
             count: PassCount::Exactly(1),
             before_next: &|| {},
@@ -57,6 +59,7 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
     files_to_lower: &[FileId],
     lower: &(dyn Fn(&mut Checker<'_, 's>, FileId) -> Option<T> + Sync),
     note_commit: &(dyn Fn(FileId, &T) + Sync),
+    prepare: Option<&(dyn Fn(FileId) + Sync)>,
     passes: &Passes<'_>,
 ) -> CheckedProgram<T> {
     let files = loaded.files();
@@ -77,6 +80,14 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
     if !loaded.is_read_again {
         files.let_trees_go_behind(&to_check);
     }
+    let passes_left = AtomicUsize::new(usize::MAX);
+    let prepare_lowered_file = |file: FileId| {
+        if let Some(prepare) = prepare
+            && slots[file.idx()].is_some()
+        {
+            prepare(file);
+        }
+    };
     let work = FileWork {
         requested: &requested,
         after_file: Some(&|checker, file| {
@@ -93,7 +104,9 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
                 note_commit(file, product);
             }
         },
+        beside_file: prepare.map(|_| &prepare_lowered_file as &(dyn Fn(FileId) + Sync)),
         frees_tree: &|_| !loaded.is_read_again,
+        is_last_pass: &|| passes_left.load(Ordering::Relaxed) == 0,
         first_round: LOWERING_ROUNDS,
         left_out_bodies: request.left_out_bodies,
     };
@@ -110,8 +123,10 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
     let parts = cut_into_passes(files, to_check, pass_count);
     let logs = parts.len() > 1 && bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true);
     let mut report: Option<crate::Report> = None;
+    passes_left.store(parts.len(), Ordering::Relaxed);
     for part in parts {
         let began = std::time::Instant::now();
+        passes_left.fetch_sub(1, Ordering::Relaxed);
         if report.is_some() {
             // SAFETY: the tasks of the pass before have ended, and what they lowered holds nothing of the checker's.
             unsafe { loaded.renew_checker(&|count, each| host.parallel(count, each)) };

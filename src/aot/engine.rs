@@ -62,6 +62,7 @@ pub struct EngineOptions {
     record: CompileOptions,
     /// Nobody chose a thread count, so the engine gets no more threads than the program has work for.
     fits_threads_to_program: bool,
+    images_below: Vec<[u64; 2]>,
 }
 
 /// A thread that joins a build touches megabytes of its own first.
@@ -134,13 +135,10 @@ fn reports_of(options: &AotOptions) -> ReportSet {
 }
 
 // A list of records of the same form, one for each image. The engine reads it while it reads the options.
-fn fill_images_below(record: &mut CompileOptions, images: &[&'static [u8]]) {
-    let list: Vec<[u64; 2]> = (images.iter())
+fn list_images_below(images: &[&'static [u8]]) -> Vec<[u64; 2]> {
+    (images.iter())
         .map(|image| [image.as_ptr() as u64, image.len() as u64])
-        .collect();
-    let list: &'static [[u64; 2]] = Vec::leak(list);
-    record.target.images_below.address = list.as_ptr() as u64;
-    record.target.images_below.size = list.len() as u64;
+        .collect()
 }
 
 fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
@@ -207,7 +205,9 @@ fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
     }
     if options.shares_realms {
         record.output |= OutputOptions::SHARES_REALMS;
-        fill_images_below(record, &options.images_below.images);
+    }
+    if options.runs_in_several_realms {
+        record.output |= OutputOptions::RUNS_IN_SEVERAL_REALMS;
     }
     let mut removed = FeatureSet::from_features(&options.trim.remove_internal);
     for name in &options.trim.remove {
@@ -244,13 +244,17 @@ impl EngineOptions {
         Ok(EngineOptions {
             record,
             fits_threads_to_program: request.options.thread_count.is_none(),
+            images_below: match request.options.shares_realms {
+                true => list_images_below(&request.options.images_below.images),
+                false => Vec::new(),
+            },
         })
     }
 
     /// `ImagesBelow::wait_for_all`: the last of them was not there when the options were made.
     pub fn wait_for_images_below(&mut self, below: &ImagesBelow) {
         if below.wait_for_all.is_some() {
-            fill_images_below(&mut self.record, &below.all());
+            self.images_below = list_images_below(&below.all());
         }
     }
 
@@ -264,6 +268,8 @@ impl EngineOptions {
 
     fn record_for(&self, program_bytes: usize) -> CompileOptions {
         let mut record = self.record;
+        record.target.images_below.address = self.images_below.as_ptr() as u64;
+        record.target.images_below.size = self.images_below.len() as u64;
         if self.fits_threads_to_program {
             let useful = program_bytes / PROGRAM_BYTES_PER_THREAD + 1;
             record.thread_count =
@@ -582,14 +588,36 @@ struct BunAOTResult {
 #[repr(C)]
 struct HostThreadPool {
     schedule: unsafe extern "C" fn(run: unsafe extern "C" fn(*mut c_void), argument: *mut c_void),
-    give_free_memory_of_current_thread_back: extern "C" fn(),
+    give_free_memory_of_current_thread_back: extern "C" fn(may_wait: bool) -> bool,
 }
 
-extern "C" fn give_free_memory_of_current_thread_back() {
-    if bun_alloc::USE_MIMALLOC {
+static TURN_TO_COLLECT: bun_threading::Mutex = bun_threading::Mutex::new();
+/// The threads that have the turn or wait for it.
+static THREADS_IN_LINE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+// The engine asks every thread of the pool at once. A forced collect purges the arenas of the whole process, one thread at a time, and a thread that finds another at
+// it calls sched_yield() until it is its turn: the time in the kernel grew with the square of the threads, and without bound where the one at it had lost its
+// processor. So they take turns here, asleep, and a thread that has work in hand goes on with it.
+extern "C" fn give_free_memory_of_current_thread_back(may_wait: bool) -> bool {
+    use core::sync::atomic::Ordering::{AcqRel, Acquire, Release};
+    if !bun_alloc::USE_MIMALLOC {
+        return true;
+    }
+    if may_wait {
+        THREADS_IN_LINE.fetch_add(1, AcqRel);
+    } else if THREADS_IN_LINE
+        .compare_exchange(0, 1, AcqRel, Acquire)
+        .is_err()
+    {
+        return false;
+    }
+    {
+        let _turn = TURN_TO_COLLECT.lock_guard();
         bun_alloc::mimalloc::mi_collect(true);
         bun_alloc::mimalloc::mi_on_thread_idle();
     }
+    THREADS_IN_LINE.fetch_sub(1, Release);
+    true
 }
 
 /// The engine's loops run on the threads that the front end's did.

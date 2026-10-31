@@ -105,5 +105,5 @@ function f1 name="write" module=m0 position=39 flags=[IsChecked, HasExplicitName
 # CALLS-NOT: ExitsSideways{{*}}:CallBuiltin)
 # CALLS-LABEL: end of function
 # The counts hold calls, whose moves follow the calling convention: not for Windows.
-# X64: instructions: 14, patchpoints: 2, rare instructions: 11
-# ARM64: instructions: 16, patchpoints: 2, rare instructions: 12
+# X64: instructions: 15, patchpoints: 2, rare instructions: 11
+# ARM64: instructions: 17, patchpoints: 2, rare instructions: 12

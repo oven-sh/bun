@@ -3,5 +3,5 @@
 const made = require("node:module").createRequire(__filename);
 console.log(arguments.length, typeof made.main);
 console.log(made.main === undefined);
-console.log(typeof made.main.filename, made.main.filename === __filename, made.main.loaded);
+console.log(typeof made.main.filename, made.main.filename === module.filename, made.main.loaded);
 console.log(typeof require("node:module").createRequire("/somewhere/else.js").main);

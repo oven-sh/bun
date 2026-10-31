@@ -2,7 +2,7 @@
 // comparisons are made in place in every loop, also in the loops of functions that are cold. There the characters answer: one application held 137 KB of such arms in cold functions.
 import { expect } from "bun:test";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { run } from "./harness/run";
 import { test } from "./supported";
@@ -65,7 +65,8 @@ test.skipIf(process.arch !== "x64")(
     const { band, bytes } = await comparisonsOf([]);
     expect(band).toBe("c");
     expect(bytes).toBeGreaterThan(0);
-    expect(bytes / 2).toBeLessThan(140);
+    // A compiler with assertions writes its own checks into the code: 682 bytes a comparison.
+    if (!isASAN && !isDebug) expect(bytes / 2).toBeLessThan(140);
   },
   240_000,
 );

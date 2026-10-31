@@ -6,7 +6,7 @@ type GetWindowSize = (fd: number, size: number[]) => boolean;
 // streams for `fd`, `isTTY`, `columns`, `rows` and `write` and does nothing else with them. Every other operation on such an object is a trap
 // that calls `needsWholeStream`, so the compiler, which follows the traps, keeps getStdioWriteStream() wherever one of them can run, and
 // native code then makes the streams with that and never comes here. `needsWholeStream` does not return.
-// console.log asks a proxy nothing: it prints the target, by the printer that the target has. So the target has one, and that is such a trap too.
+// console.log asks a proxy nothing: it prints the target, and looks at each of its members. So the target has one, a getter, and that is such a trap too.
 // `writeToSink` calls write() of what the constructor of fs.WriteStream makes for the descriptor: native code makes it when the stream is
 // first read. `getWindowSize` is the one of node:tty.
 export function getLightStdioWriteStreams(
@@ -119,7 +119,14 @@ export function getLightStdioWriteStreams(
       "%write of this stream%": writeToThis,
       "%write of both streams%": writeFast,
     };
-    return new Proxy({ [Symbol.for("nodejs.util.inspect.custom")]: needsWholeStream }, handler);
+    return new Proxy(
+      {
+        get "%the whole stream%"() {
+          return needsWholeStream();
+        },
+      },
+      handler,
+    );
   }
 
   return {
@@ -138,7 +145,11 @@ export function getLightStdinStream(isTTY: boolean, needsWholeStream: NeedsWhole
   void process.nextTick;
   require("node:events");
   return new Proxy(
-    { [Symbol.for("nodejs.util.inspect.custom")]: needsWholeStream },
+    {
+      get "%the whole stream%"() {
+        return needsWholeStream();
+      },
+    },
     {
       get(_, key) {
         if (key === "isTTY") return isTTY ? true : undefined;

@@ -5033,6 +5033,37 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
             *cost_left = cost_left.saturating_sub(cost_of_run);
             from..to
         };
+        let beside_file = file_work
+            .and_then(|work| work.beside_file)
+            .filter(|_| workers > 1);
+        // Where in `queue` the files are that take one thread as long as all the files take all the threads.
+        let long_files: Vec<usize> = (0..heavy)
+            .filter(|&at| beside_file.is_some() && size_of(queue[at]) * workers >= cost)
+            .collect();
+        let long_files_with_second_thread = Guarded::new(0usize);
+        // A thread that comes once the visit of a long file has begun works beside it before it takes a file of its own.
+        let work_beside_a_file = || -> bool {
+            let Some(beside_file) = beside_file else {
+                return false;
+            };
+            let heavy_taken = left.lock().0;
+            let file = {
+                let mut served = long_files_with_second_thread.lock();
+                match long_files.get(*served) {
+                    Some(&at) if at < heavy_taken => {
+                        *served += 1;
+                        queue[at]
+                    }
+                    _ => return false,
+                }
+            };
+            let began = since_round_began();
+            let reading = bun_sema::program::ReadingTask::begin();
+            beside_file(to_check[file]);
+            drop(reading);
+            busy.fetch_add(since_round_began() - began, Ordering::Relaxed);
+            true
+        };
         /// State that a worker with no files left waits on.
         #[derive(Default)]
         struct Activity {
@@ -5117,6 +5148,18 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
             }
             Some(file)
         };
+        // The trees are freed when the last pass ends. Once a thread finds no file to take, packing them away first only
+        // takes time: the task of a long file would end with those of all the files that were committed while it ran.
+        let keeps_trees = AtomicBool::new(false);
+        let keep_the_trees_that_are_left = || {
+            if let Some(work) = file_work
+                && !is_last_round
+                && (work.is_last_pass)()
+                && !keeps_trees.swap(true, Ordering::Relaxed)
+            {
+                program.files.let_no_more_trees_go();
+            }
+        };
         // Each thread's last task leaves its memory here for that thread's next task. The memory comes from the
         // thread's arena, so no other thread reuses it.
         let spares = Guarded::new(Vec::new());
@@ -5130,6 +5173,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 own.map(|at| spares.swap_remove(at).1)
             };
             let task_began = since_round_began();
+            let bytes_of_first = bytes_of(first);
             let mut checker = new_checker(expected, spare);
             // A task's index is the index of its first file, which is unique within the round.
             let round = match visits.lock()[first].rechecks {
@@ -5239,7 +5283,10 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                     && !is_last_round
                 {
                     (work.after_commit)(file);
-                    if (work.frees_tree)(file) {
+                    if done == to_check.len() {
+                        keep_the_trees_that_are_left();
+                    }
+                    if (work.frees_tree)(file) && !keeps_trees.load(Ordering::Relaxed) {
                         program.files.note_commit(file);
                     }
                 }
@@ -5277,7 +5324,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 tasks_of_round.fetch_add(1, Ordering::Relaxed);
                 let mut longest = longest_task.lock();
                 if took > longest.0 {
-                    *longest = (took, task_began, bytes_of(first));
+                    *longest = (took, task_began, bytes_of_first);
                 }
             }
             upcoming
@@ -5325,6 +5372,8 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         let take_first_unchecked_file = &take_first_unchecked_file;
         let (activity, activity_has_changed) = (&activity, &activity_has_changed);
         let (first_idle, since_round_began) = (&first_idle, &since_round_began);
+        let work_beside_a_file = &work_beside_a_file;
+        let keep_the_trees_that_are_left = &keep_the_trees_that_are_left;
         // Returns a closure that runs one task per call on the current thread. The closure returns false once this
         // thread has nothing left to do in this round.
         //
@@ -5353,6 +5402,9 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
             }
             let (mut first, mut is_active) = (None, false);
             move || {
+                if work_beside_a_file() {
+                    return true;
+                }
                 let mut next = || {
                     if let Some(file) = take_file_to_recheck(false) {
                         return Some(file);
@@ -5396,6 +5448,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 if logs_round {
                     first_idle.fetch_min(since_round_began(), Ordering::Relaxed);
                 }
+                keep_the_trees_that_are_left();
                 if activity.active == 0 {
                     first = take_first_unchecked_file();
                     if first.is_some() {
@@ -5427,7 +5480,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
             let wall = since_round_began().max(1);
             let (took, began, bytes) = *longest_task.lock();
             bun_core::print_errorln!(
-                "AOT round of the checker | {} | {} files, {} of them heavy, {} that those import go first | {} tasks | {} visits thrown away | wall {} ms | {}.{} of {} threads busy | the first thread found nothing to take at {} ms | the longest task {} ms, begun at {} ms with a file of {} KB | at most {} results stored between two idle moments of a task",
+                "AOT round of the checker | {} | {} files, {} of them heavy, {} that those import go first | {} tasks | {} visits thrown away | wall {} ms | {}.{} of {} threads busy | the first thread found nothing to take at {} ms | the longest task {} ms, begun at {} ms with a file of {} KB | at most {} results stored between two idle moments of a task | {} long files, a second thread beside {} of them | the trees of {} files packed away",
                 match is_last_round {
                     true => "one thread, in order",
                     false => "all threads",
@@ -5446,6 +5499,12 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 began / 1000,
                 bytes >> 10,
                 most_logged_between_idle_moments.load(Ordering::Relaxed),
+                long_files.len(),
+                *long_files_with_second_thread.lock(),
+                files
+                    .iter()
+                    .filter(|&&file| program.files.is_tree_gone(to_check[file]))
+                    .count(),
             );
         }
         #[cfg(test)]

@@ -136,6 +136,16 @@ pub extern "C" fn Bun__AOT__pathOfForm(
     }
 }
 
+/// BunCompiledModules.cpp. Zero: there is no such file.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__stampOfFile(path: &bun_core::String) -> u64 {
+    let Ok(stat) = bun_sys::stat(&bun_core::ZBox::from_bytes(path.to_utf8().slice())) else {
+        return 0;
+    };
+    let stat = bun_sys::PosixStat::init(&stat);
+    bun_aot::module_keys::stamp_of_file(stat.mtim.sec, stat.mtim.nsec, stat.size)
+}
+
 /// BunCompiledModules.cpp. `require` looks in `require.cache` for a Node.js module that is named without `node:`, under the name as it is written.
 /// The path of the module that such a name finds. `Dead`: it is no such name.
 #[unsafe(no_mangle)]
@@ -150,6 +160,24 @@ pub extern "C" fn Bun__AOT__nodeModuleNamedWithoutPrefix(
             bun_core::String::clone_utf8(path)
         }
         _ => bun_core::String::DEAD,
+    }
+}
+
+/// The path under which the executable knows `path`, a file of the machine that built it, as `__filename` and `require.resolve` name it.
+fn find_path_in_executable(path: &[u8]) -> Option<Vec<u8>> {
+    let graph = standalone_module_graph()?;
+    let public_root = graph.base_public_path_with_default_suffix();
+    graph
+        .compiled_program()?
+        .public_path_of_source(public_root, path)
+}
+
+/// BunCompiledModules.cpp. `find_path_in_executable`. `Dead`: it is no such path.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__pathInExecutable(path: &bun_core::String) -> bun_core::String {
+    match find_path_in_executable(path.to_utf8().slice()) {
+        Some(path) => bun_core::String::clone_utf8(&path),
+        None => bun_core::String::DEAD,
     }
 }
 
@@ -835,7 +863,12 @@ pub extern "C" fn Bun__AOT__isStartOfWorker(
 /// BunCompiledModules.cpp. The entry point, and in a test run the test file that the runner has started last.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__AOT__isMainModule(global: &JSGlobalObject, path: &bun_core::String) -> bool {
-    global.bun_vm().main() == Some(path.to_utf8().slice())
+    let Some(main) = global.bun_vm().main() else {
+        return false;
+    };
+    let path = path.to_utf8();
+    // `Bun.main = require.resolve("./other.cjs")`
+    main == path.slice() || find_path_in_executable(main).is_some_and(|main| main == path.slice())
 }
 
 /// BunCompiledModules.cpp

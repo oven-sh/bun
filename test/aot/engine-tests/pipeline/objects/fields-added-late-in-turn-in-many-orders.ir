@@ -196,7 +196,7 @@ function f4 name="Wide" module=m0 position=433 kind=BaseConstructor flags=[HasNe
 # CHECK-NEXT: v20: 0 = Integer
 # CHECK-NEXT: v21: 0 = Integer
 # CHECK-NEXT: Jump -> next b3(v20, v21)
-# CHECK-NEXT: b3(v22: int[0, 4096], v23: int[0, 16]):
+# CHECK-NEXT: b3(v22: int|whole, v23: int[0, 16]):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v25: boolean = Less v23, v19
 # CHECK-NEXT: Branch v25 -> taken b4(| 0), notTaken b7()
@@ -217,27 +217,25 @@ function f4 name="Wide" module=m0 position=433 kind=BaseConstructor flags=[HasNe
 # CHECK-NEXT: v40: 1 = Integer integer=1
 # CHECK-NEXT: v41: int[1, 16] = Add v37, v40
 # CHECK-NEXT: v42: int[1, 256] = Mul v41, v39
-# CHECK-NEXT: v43: int[1, 4352] = Add v22, v42
+# CHECK-NEXT: v43: int|whole = Add v22, v42
 # CHECK-NEXT: v44: number = Call v0, -, v8 calleeName="sumOf" accessSite=7 callees=[f2]
 # CHECK-NEXT: v45: boolean = StrictEq v44, v43
 # CHECK-NEXT: Branch v45 -> taken b5(), notTaken b6()
 # CHECK-NEXT: b5():
 # CHECK-NEXT: v46: int[1, 16] = Increment v26
-# CHECK-NEXT: v47: fact = Specified
-# CHECK-NEXT: v48: int[1, 4096] = AssumeType v43, v47 provenType=int[0, 4096]
-# CHECK-NEXT: Jump -> next b3(v48, v46)
+# CHECK-NEXT: Jump -> next b3(v43, v46)
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v49: "round " = String string="round "
-# CHECK-NEXT: v50: " step " = String string=" step "
-# CHECK-NEXT: v51: ": " = String string=": "
-# CHECK-NEXT: v52: number = Call v0, -, v8 calleeName="sumOf" accessSite=9 callees=[f2]
-# CHECK-NEXT: v53: " is not " = String string=" is not "
-# CHECK-NEXT: v54: string = Strcat v49, v7, v50, v26, v51, v52, v53, v43
-# CHECK-NEXT: v55: Error = CallBuiltin -, v54 overload=Error/1 accessSite=10
-# CHECK-NEXT: Throw v55
+# CHECK-NEXT: v47: "round " = String string="round "
+# CHECK-NEXT: v48: " step " = String string=" step "
+# CHECK-NEXT: v49: ": " = String string=": "
+# CHECK-NEXT: v50: number = Call v0, -, v8 calleeName="sumOf" accessSite=9 callees=[f2]
+# CHECK-NEXT: v51: " is not " = String string=" is not "
+# CHECK-NEXT: v52: string = Strcat v47, v7, v48, v26, v49, v50, v51, v43
+# CHECK-NEXT: v53: Error = CallBuiltin -, v52 overload=Error/1 accessSite=10
+# CHECK-NEXT: Throw v53
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v56: int[1, 40000] = Increment v7
-# CHECK-NEXT: Jump -> next b1(v56)
+# CHECK-NEXT: v54: int[1, 40000] = Increment v7
+# CHECK-NEXT: Jump -> next b1(v54)
 # CHECK-NEXT: b8():
 # CHECK-NEXT: Jump -> next b9()
 # CHECK-NEXT: b9():

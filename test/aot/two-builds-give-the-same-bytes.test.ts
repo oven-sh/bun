@@ -50,7 +50,8 @@ console.log((await import("./lib/lazy.mjs")).default);
 `,
   "lib/twice.ts": `export function twice(n: number) { return n * 2; }`,
   "lib/data.json": `{ "name": "data" }`,
-  "lib/inner.cjs": `module.exports = { file: __filename };`,
+  // Not `__filename`, `__dirname` or require.resolve(): they hold the folder of the build, as with `bun build --compile`.
+  "lib/inner.cjs": `module.exports = { file: module.filename };`,
   "lib/lazy.mjs": `export default "lazy";`,
   "node_modules/named/package.json": `{ "name": "named", "main": "index.js" }`,
   "node_modules/named/index.js": `module.exports = "named";`,

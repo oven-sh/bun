@@ -3,7 +3,7 @@ use super::runtime_reach::ReachWhileLoading;
 use super::{
     Build, LoadedBuild, LoadedProject, Options, ProgramsOfOneLoad, StartedWorkers,
     begins_program_at_each_entry_point, find_further_worker_files, joins_workers, library_code_of,
-    mentions_worker_constructor, preload_of,
+    mentions_worker_constructor, options_with_worker_files, preload_of,
 };
 use crate::builtins::table::{self, Mutability};
 use crate::builtins::{BuiltinNames, RuntimeUses};
@@ -16,6 +16,7 @@ use crate::load::fold_inputs::{
 };
 use crate::load::host::{LoadHost, LoadHostInput, create_disk};
 use crate::load::is_in_archive_of_bun;
+use crate::load::loaders::{loader_named_by_path, script_kind_of};
 use crate::load::named_loads::{
     leave_named_library_modules_to_loader, resolve_loads_through_imported_loaders,
 };
@@ -29,11 +30,11 @@ use crate::load::sources::{
     FreezeInput, FrozenSources, check_unique_paths_across_projects, freeze_sources, parsed_source,
 };
 use crate::load::worker_files::{
-    SearchedFrom, WorkerSearch, find_code_that_starts_workers, find_embedded_code_files,
-    source_path_of,
+    SearchedFrom, SomeFilesOf, WorkerFile, WorkerSearch, find_code_that_starts_workers,
+    find_embedded_code_files, source_path_of,
 };
 use crate::load::{PerProject, ProjectId, SourceKind, Sources};
-use crate::options::LoadOptions;
+use crate::options::{LoadOptions, PathOptions};
 use crate::statistics::{
     LimitId, LimitValues, Stage, StatisticId, Statistics, log_why_files_are_loaded_again,
 };
@@ -43,8 +44,8 @@ use bun_sema::atom::Interner;
 use bun_sema::check::aot::FileOrigin;
 use bun_sema::fold::FoldInputs;
 use bun_sema::import_sites::ImportSpecifier;
-use bun_sema::program::{FileId, Files, MainModule, Run};
-use bun_sema::resolve::{CodeHost, CodeOptions};
+use bun_sema::program::{CodeView, FileId, Files, MainModule, Run};
+use bun_sema::resolve::{CodeHost, CodeOptions, is_declaration_file_name};
 use bun_sema::session::{Session, SessionSlot};
 use bun_sema::util::{FxHashSet, SharedSort};
 use bun_sema_driver::host::Disk;
@@ -606,7 +607,203 @@ impl<'a> Build<'a> {
         let options = self.options;
         let (host, request) = (project.host, project.request);
         let session = shared.sessions.application;
-        let application = self.load_application(session, host, request, shared)?;
+        let is_held_below = |path: &[u8]| options.aot.images_below.holds_module(path);
+        let code_from_root = CodeOptions {
+            working_directory: bun_sema_driver::host::from_native(&options.paths.root_directory),
+            ..request.code.clone()
+        };
+        let limits = self.limits.clone();
+        let parameters_below = &options.aot.replaced_by_tests.parameters_that_start_workers;
+        let provider = self.provider;
+        // One resolver for each search, made at its first question. Not one for all: between two searches the host is told to leave other files alone.
+        let is_built_upon = options.aot.shares_realms && !options.aot.is_part_of_test_files;
+        let find_code = |files: &dyn CodeView<'_>,
+                         (paths, is_built_upon): (&PathOptions, bool),
+                         in_parallel: InParallel<'_>| {
+            let tables = [FileFinderTables::default(), FileFinderTables::default()];
+            let finders = [OnceCell::new(), OnceCell::new()];
+            let from_here =
+                || finders[0].get_or_init(|| FileFinder::new(&tables[0], host, request.code));
+            let from_root =
+                || finders[1].get_or_init(|| FileFinder::new(&tables[1], host, &code_from_root));
+            let search = WorkerSearch {
+                limits: &limits,
+                loaders: &options.load.loaders,
+                paths,
+                runs_in_place: options.aot.runs_in_place,
+                provider,
+                resolve_entry_point: &|written| from_here().find_entry_point(written),
+                resolve_bare_name: &|name| from_root().find_entry_point(name),
+                find_files_named_in_part: &|from, names| {
+                    let directory = match from {
+                        SearchedFrom::FolderOf(file) => host.directory_of(file),
+                        SearchedFrom::RootDirectory => {
+                            Cow::Borrowed(&code_from_root.working_directory[..])
+                        }
+                        SearchedFrom::WorkingDirectory => {
+                            Cow::Borrowed(&request.code.working_directory[..])
+                        }
+                    };
+                    resolve_names_known_in_part(host, request.code, &directory, names)
+                },
+                working_directory: &request.code.working_directory,
+                is_held_below: &is_held_below,
+                parameters_below,
+                resolve_import: &|importer, written| from_here().find_import(importer, written),
+                is_built_upon,
+            };
+            find_code_that_starts_workers(files, &search, in_parallel)
+        };
+        // The files that Workers start from are entry points of the one program of such a build. The load looks for them once all its files are parsed, and goes on
+        // with them: a load of everything for the search and a second one with what it found would parse every file twice.
+        let known = (self.known_worker_files.as_ref())
+            .filter(|_| self.takes_in_worker_files.is_some())
+            .filter(|_| self.programs.is_none() && !options.aot.checks_only)
+            .filter(|_| preload_of(options).is_none());
+        let splits = known.is_some_and(|known| known.0);
+        let left_out = known.map(|known| known.1.clone());
+        let in_parallel = self.parallel_runner();
+        // Each with the path that the load knows it by.
+        let taken_in: Guarded<Vec<(Vec<u8>, WorkerFile)>> = Guarded::new(Vec::new());
+        // The files that were searched and start no Worker themselves. A file that does is looked at again beside the new ones: a call there may hand it the file of the next Worker.
+        let searched_before: Guarded<FxHashSet<Vec<u8>>> = Guarded::new(FxHashSet::default());
+        let find_entry_points = |code: &dyn CodeView<'_>| -> Vec<Vec<u8>> {
+            let mut taken_in = taken_in.lock();
+            let known: Vec<WorkerFile> = taken_in.iter().map(|it| it.1.clone()).collect();
+            let longer = options_with_worker_files(options, &known);
+            let mut searched_before = searched_before.lock();
+            let compiled = code.compiled_files().iter().copied();
+            let some = SomeFilesOf {
+                all: code,
+                searched: compiled
+                    .filter(|&file| !searched_before.contains(code.file_name(file)))
+                    .collect(),
+            };
+            let found = find_code(&some, (&longer.paths, false), &in_parallel);
+            let with_starts: FxHashSet<Vec<u8>> = found.files_with_starts.into_iter().collect();
+            let searched = some.searched.iter().map(|&file| code.file_name(file));
+            searched_before.extend(
+                searched
+                    .filter(|&name| !with_starts.contains(name))
+                    .map(<[u8]>::to_vec),
+            );
+            let started = StartedWorkers {
+                files: found.files,
+                constructs_node_workers: found.constructs_node_workers,
+                ..Default::default()
+            };
+            if taken_in.is_empty() && !joins_workers(splits, &started) {
+                return Vec::new();
+            }
+            let mut entry_points: FxHashSet<Vec<u8>> = longer.entry_points.into_iter().collect();
+            let loaded = code.entry_points().iter();
+            entry_points.extend(loaded.map(|&first| source_path_of(code.file_name(first))));
+            let left_out = left_out.as_deref().unwrap_or_default();
+            let further =
+                find_further_worker_files(&started, left_out, |path| entry_points.contains(path));
+            let tables = FileFinderTables::default();
+            let finder = FileFinder::new(&tables, host, request.code);
+            // What else a Worker starts from is read in another way where it is an entry point, or is no file. The search behind the load finds it.
+            let path_of = |file: &WorkerFile| {
+                let loader = loader_named_by_path(&options.load.loaders, &file.source_path)?;
+                let is_plain_code = script_kind_of(loader).is_some()
+                    && !is_declaration_file_name(&file.source_path)
+                    && file.text.is_none();
+                finder
+                    .find_entry_point(&file.source_path)
+                    .filter(|_| is_plain_code)
+            };
+            let Some(paths) = further
+                .iter()
+                .map(path_of)
+                .collect::<Option<Vec<Vec<u8>>>>()
+            else {
+                return Vec::new();
+            };
+            taken_in.extend(paths.iter().cloned().zip(further));
+            let written: Vec<Vec<u8>> = (taken_in.iter())
+                .map(|it| it.1.source_path.clone())
+                .collect();
+            host.begin_at(&written);
+            paths
+        };
+        let written = match request.entry_points {
+            EntryPoints::Written(written) => Some((written, MainModule::EntryPoint)),
+            EntryPoints::WrittenFor(written, main_module) => Some((written, main_module)),
+            _ => None,
+        };
+        let request_that_finds = written.filter(|_| left_out.is_some()).map(|written| {
+            let entry_points =
+                EntryPoints::WrittenAndFound(written.0, written.1, &find_entry_points);
+            CompileRequest {
+                entry_points,
+                ..*request
+            }
+        });
+        host.begin_at(&[]);
+        let loaded = request_that_finds.as_ref().unwrap_or(request);
+        let application = match self.load_application(session, host, loaded, shared) {
+            Ok(application) => application,
+            Err(stage) => {
+                // A build that is given them says what is wrong with them as it always has.
+                let taken_in = taken_in.lock();
+                self.files_of_the_one_program = taken_in.iter().map(|it| it.1.clone()).collect();
+                return Err(stage);
+            }
+        };
+        let found = written.map_or(&[][..], |written| {
+            let entry_points = application.files().entry_points();
+            entry_points.get(written.0.len()..).unwrap_or_default()
+        });
+        let taken_in: Vec<WorkerFile> = {
+            let taken_in = taken_in.lock();
+            let path_of = |&first: &FileId| application.files().module(first).file_name();
+            let file_at = |path: &[u8]| taken_in.iter().find(|it| it.0 == path);
+            let files = found.iter().filter_map(|first| file_at(path_of(first)));
+            files.map(|it| it.1.clone()).collect()
+        };
+        if taken_in.len() != found.len() {
+            self.took_in_too_much = true;
+            return Err(Stage::Load);
+        }
+        if !taken_in.is_empty() && crate::statistics::logs_stages() {
+            bun_core::print_errorln!(
+                "AOT load goes on | with {} more files that Workers start from",
+                taken_in.len()
+            );
+        }
+        let options = match (self.takes_in_worker_files, taken_in.is_empty()) {
+            (Some(grows), false) => grows.take_in(&taken_in),
+            _ => options,
+        };
+        self.options = options;
+        // They are in the one program of the build, and so is whatever else a Worker starts from.
+        if let Some(known) = (self.known_worker_files.as_mut()).filter(|_| !taken_in.is_empty()) {
+            known.0 = false;
+        }
+        let all_positions: Vec<usize> = (0..options.entry_points.len()).collect();
+        let request_for_all = CompileRequest {
+            entry_points: match request.entry_points {
+                EntryPoints::WrittenFor(_, main_module) => {
+                    EntryPoints::WrittenFor(&options.entry_points, main_module)
+                }
+                _ => EntryPoints::Written(&options.entry_points),
+            },
+            ..*request
+        };
+        let project_of_all = ApplicationLoad {
+            host,
+            request: &request_for_all,
+            scope: project.scope,
+            asset_reads: project.asset_reads,
+            finish_asset_reads: project.finish_asset_reads,
+            positions: &all_positions,
+        };
+        let project = match taken_in.is_empty() {
+            true => project,
+            false => &project_of_all,
+        };
+        let request = project.request;
         if project.asset_reads == AssetReads::FinishedLater {
             read_assets(project.scope, host);
         }
@@ -631,7 +828,6 @@ impl<'a> Build<'a> {
 
         let files = application.files();
         self.started_workers = Default::default();
-        let is_held_below = |path: &[u8]| options.aot.images_below.holds_module(path);
         if !options.aot.checks_only {
             self.started_workers.copies = find_embedded_code_files(
                 files,
@@ -640,61 +836,27 @@ impl<'a> Build<'a> {
                 &self.parallel_runner(),
             );
         }
-        let code_from_root = CodeOptions {
-            working_directory: bun_sema_driver::host::from_native(&options.paths.root_directory),
-            ..request.code.clone()
-        };
-        let limits = self.limits.clone();
-        let parameters_below = &options.aot.replaced_by_tests.parameters_that_start_workers;
-        let provider = self.provider;
-        // One resolver for each search, made at its first question. Not one for all: between two searches the host is told to leave other files alone.
-        let find_code = |files: &Files<'_>, in_parallel: InParallel<'_>| {
-            let tables = [FileFinderTables::default(), FileFinderTables::default()];
-            let finders = [OnceCell::new(), OnceCell::new()];
-            let from_here =
-                || finders[0].get_or_init(|| FileFinder::new(&tables[0], host, request.code));
-            let from_root =
-                || finders[1].get_or_init(|| FileFinder::new(&tables[1], host, &code_from_root));
-            let search = WorkerSearch {
-                limits: &limits,
-                loaders: &options.load.loaders,
-                paths: &options.paths,
-                runs_in_place: options.aot.runs_in_place,
-                provider,
-                resolve_entry_point: &|written| from_here().find_entry_point(written),
-                resolve_bare_name: &|name| from_root().find_entry_point(name),
-                find_files_named_in_part: &|from, names| {
-                    let directory = match from {
-                        SearchedFrom::FolderOf(file) => host.directory_of(file),
-                        SearchedFrom::RootDirectory => {
-                            Cow::Borrowed(&code_from_root.working_directory[..])
-                        }
-                        SearchedFrom::WorkingDirectory => {
-                            Cow::Borrowed(&request.code.working_directory[..])
-                        }
-                    };
-                    resolve_names_known_in_part(host, request.code, &directory, names)
-                },
-                working_directory: &request.code.working_directory,
-                is_held_below: &is_held_below,
-                parameters_below,
-                resolve_import: &|importer, written| from_here().find_import(importer, written),
-                is_built_upon: options.aot.shares_realms && !options.aot.is_part_of_test_files,
-            };
-            find_code_that_starts_workers(files, &search, in_parallel)
-        };
         let mut files_with_starts: FxHashSet<Vec<u8>> = FxHashSet::default();
         // A file that names no constructor starts a Worker too, where it calls a function of a program below that does.
         if !options.aot.checks_only
             && (mentions_worker_constructor(files) || !parameters_below.is_empty())
         {
-            let found = find_code(files, &self.parallel_runner());
+            let asked = (&options.paths, is_built_upon);
+            let found = find_code(files, asked, &self.parallel_runner());
             files_with_starts.extend(found.files_with_starts);
             self.replaced_builtins.parameters_that_start_workers = found.parameters;
             self.started_workers.files = found.files;
             self.started_workers.names = found.names;
             self.started_workers.code = found.code;
             self.started_workers.constructs_node_workers = found.constructs_node_workers;
+        }
+        let is_started = |file: &WorkerFile| {
+            let mut started = self.started_workers.files.iter();
+            started.any(|it| it.source_path == file.source_path)
+        };
+        if !taken_in.iter().all(is_started) {
+            self.took_in_too_much = true;
+            return Err(Stage::Load);
         }
         if let Some((splits, left_out)) = &self.known_worker_files
             && joins_workers(*splits, &self.started_workers)
@@ -755,7 +917,8 @@ impl<'a> Build<'a> {
                         break;
                     };
                     let files = further.files();
-                    let found = find_code(files, &self.parallel_runner());
+                    let asked = (&options.paths, is_built_upon);
+                    let found = find_code(files, asked, &self.parallel_runner());
                     files_with_starts.extend(found.files_with_starts);
                     let started = StartedWorkers {
                         files: found.files,
@@ -1281,9 +1444,9 @@ impl<'a> Build<'a> {
             }
             Err(failure) => {
                 let entry_point_names = match request.entry_points {
-                    EntryPoints::Written(specifiers) | EntryPoints::WrittenFor(specifiers, _) => {
-                        specifiers
-                    }
+                    EntryPoints::Written(specifiers)
+                    | EntryPoints::WrittenFor(specifiers, _)
+                    | EntryPoints::WrittenAndFound(specifiers, ..) => specifiers,
                     EntryPoints::Resolved(paths)
                     | EntryPoints::Imported(paths)
                     | EntryPoints::Configured(paths, _) => paths,

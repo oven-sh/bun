@@ -98,8 +98,12 @@ pub(super) fn scan_files(input: &BindInput<'_, '_>) -> Scans {
         ReplacedModule::File(path) => Some(path.clone()),
         ReplacedModule::Runtime(_) => None,
     }));
+    let program = Program {
+        runs_tests: input.runs_tests,
+        loads_code_from_disk: input.loads_code_from_disk,
+        mocks_any_module: input.mocks_any_module,
+    };
     for_each_mut(&mut slots, input.in_parallel, &|(file, scan)| {
-        let program = (input.runs_tests, input.loads_code_from_disk);
         *scan = Some(scan_file(files, sources, &mocked_paths, program, *file));
     });
     let mut by_file = Vec::new();
@@ -269,11 +273,18 @@ fn find_paths_only_mocks_answer(files: &Files<'_>, sources: &Sources) -> FxHashS
     paths
 }
 
+#[derive(Copy, Clone)]
+struct Program {
+    runs_tests: bool,
+    loads_code_from_disk: bool,
+    mocks_any_module: bool,
+}
+
 fn scan_file(
     files: &Files<'_>,
     sources: &Sources,
     mocked_paths: &FxHashSet<Vec<u8>>,
-    (runs_tests, loads_code_from_disk): (bool, bool),
+    program: Program,
     file: FileId,
 ) -> FileScan {
     let compiled = files.compiled(file);
@@ -282,8 +293,9 @@ fn scan_file(
         files,
         sources,
         mocked_paths,
-        runs_tests,
-        loads_code_from_disk,
+        runs_tests: program.runs_tests,
+        loads_code_from_disk: program.loads_code_from_disk,
+        mocks_any_module: program.mocks_any_module,
         hir: files.hir(file),
         compiled: compiled.expect("the loader analyzes every compiled file"),
         named_in_choices: parsed_source(files, file)
@@ -338,6 +350,7 @@ struct FileScanner<'a, 's> {
     mocked_paths: &'a FxHashSet<Vec<u8>>,
     runs_tests: bool,
     loads_code_from_disk: bool,
+    mocks_any_module: bool,
     hir: &'a hir::File<'s>,
     compiled: &'a CompiledModule<'s>,
     named_in_choices: &'a [NamedModule],
@@ -534,7 +547,8 @@ impl FileScanner<'_, '_> {
             // `virtual:config`: no file and no package has such a name, so only a plugin answers for it, and a preload or a test may bring one. The loader of the run time is asked. A name that may be a package stays a failure: code that nobody has seen costs the whole program, and an optional dependency that is absent is common.
             (Err(_), SiteForm::Declaration | SiteForm::Load)
                 if (self.runs_tests && self.has_scheme_of_its_own(specifier))
-                    || (!self.mocked_paths.is_empty() && self.is_answered_by_mock(specifier)) =>
+                    || (!self.mocked_paths.is_empty() && self.is_answered_by_mock(specifier))
+                    || self.may_be_answered_by_mock_out_of_sight() =>
             {
                 let kind = ExternalKind::UncompiledCode;
                 self.externals.push((specifier, kind));
@@ -597,6 +611,12 @@ impl FileScanner<'_, '_> {
             && !matches!(name.first(), None | Some(b'.' | b'/'))
             && strings::index_of_char_usize(name, b':').is_none()
             && self.mocked_paths.contains(name)
+    }
+
+    // `const { mock } = require("bun:test"); mock.module("made-up", ..)`, `fake("made-up")` where `fake` calls `mock.module(name, ..)`: no site says which
+    // names such a program mocks. The loader of the run time is asked, and fails as in plain Bun where nobody has mocked the name by then.
+    fn may_be_answered_by_mock_out_of_sight(&self) -> bool {
+        self.runs_tests && self.mocks_any_module
     }
 
     fn is_answered_by_mock(&self, specifier: Atom) -> bool {

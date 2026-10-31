@@ -12,7 +12,7 @@ use crate::load::sources::parsed_source;
 use crate::load::{PerProject, ProjectId, Sources};
 use crate::lower::{
     DefinedObjectTypes, FileInputs, LeftOutDeclarations, LibraryFunctions, LoweredFile,
-    LoweringInputs, LoweringOptions, RuntimeTranspiler, lower_file,
+    LoweringInputs, LoweringOptions, PreparedFiles, RuntimeTranspiler, lower_file, prepare_file,
 };
 use crate::modules::{ApplicationGraph, Library, LinkedProject, ModuleGraph, ModuleRef, Shape};
 use crate::package_diagnostics::report_package_errors;
@@ -20,11 +20,13 @@ use crate::report;
 use crate::statistics::{Counters, Stage, StatisticId, Statistics};
 use bun_core::current_work;
 use bun_sema::atom::{Interner, known};
+use bun_sema::bind::{Binding, CommonJsVariable};
 use bun_sema::check::aot::{
     DiagnosticClass, FileOrigin, FunctionRef, LeftOutBodies, QueryStatistics,
 };
 use bun_sema::config;
 use bun_sema::hir::DiagnosticKind;
+use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{FileId, FileRole, Files, HostLoader, Run};
 use bun_sema::resolve::Options as CompilerOptions;
 use bun_sema::session::{Session, SessionSlot};
@@ -328,6 +330,7 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
                     || checker.found_early_error(file)
                     || self.decided.roles.reported_early_error(file)
                 {
+                    self.inputs.prepared.wait_and_drop(file);
                     return Some(None);
                 }
                 let lowered = lower_file(self.inputs, checker, file)?;
@@ -345,6 +348,12 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
                 }
                 defined.publish_names_of_file(file);
             },
+            Some(&|file| {
+                let files = self.loaded.loaded.files();
+                prepare_file(self.inputs, files, file, || {
+                    is_well_formed(files, file) && !self.decided.roles.reported_early_error(file)
+                });
+            }),
             &driver::Passes {
                 count: pass_count,
                 before_next: &|| self.inputs.defined_object_types.forget_names_of_types(),
@@ -1205,6 +1214,11 @@ impl Build<'_> {
         let mut lowered_files = file_inputs.iter().flatten();
         let makes_registries =
             project == ProjectId::Application && lowered_files.any(FileInputs::makes_registries);
+        let reads_source_paths =
+            project == ProjectId::Application && reads_source_paths(files, sources);
+        if reads_source_paths {
+            sources.note_source_paths_at_run_time();
+        }
         then(&LoweringInputs {
             roles: &lowering_roles,
             checked_elsewhere: match project {
@@ -1225,12 +1239,34 @@ impl Build<'_> {
             defined_object_types: &defined_object_types,
             files: &file_inputs,
             makes_registries,
+            reads_source_paths,
             replaced_builtins: &self.options.load.replaced_builtins,
             limits: &self.limits,
             transpiler: &transpiler,
+            prepared: &PreparedFiles::default(),
             options: self.lowering_options(),
         });
     }
+}
+
+// By what the names are bound to, in code that is not dead.
+fn reads_source_paths(files: &Files<'_>, sources: &Sources) -> bool {
+    files.compiled_files().iter().any(|&file| {
+        if !sources.has_source_path(file) {
+            return false;
+        }
+        let decisions = &files.analysis(file).decisions;
+        let mut names = files.bound(file).ident_bindings().iter();
+        let mut sites = files.analysis(file).import_sites.iter();
+        names.any(|&(name, binding)| {
+            matches!(
+                binding,
+                Binding::CommonJs(CommonJsVariable::Filename | CommonJsVariable::Dirname)
+            ) && !decisions.is_dead_expr(name)
+        }) || sites.any(|site| {
+            matches!(site.kind, ImportSiteKind::RequireResolve(call) if !decisions.is_dead_expr(call))
+        })
+    })
 }
 
 pub(crate) fn find_files_to_lower(compiled_files: &[FileId], roles: &RoleDecision) -> Vec<FileId> {

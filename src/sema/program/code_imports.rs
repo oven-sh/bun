@@ -263,6 +263,17 @@ fn resolve_file_loaded_another_way<'r>(
     resolution: CodeResolution<'r>,
 ) -> CodeResolution<'r> {
     let is_outside = matches!(resolution, CodeResolution::External { .. });
+    // `import data from "./data.json" with { type: "json" }` here and in a file of another program: one module, which that program holds under the type.
+    if let (CodeResolution::File(file), Some(type_attribute)) =
+        (resolution, loader_attribute(hir, site))
+        && file.host_module.is_none()
+        && (context.host).is_form_in_other_program(file.path, context.atoms.bytes(type_attribute))
+    {
+        return CodeResolution::External {
+            specifier: file.path,
+            kind: ExternalKind::UncompiledCode,
+        };
+    }
     let Some(type_attribute) = loader_attribute(hir, site).filter(|_| is_outside) else {
         return resolution;
     };
@@ -281,6 +292,9 @@ fn resolve_file_loaded_another_way<'r>(
         } if context.host.leaves_to_run_time(path) => path,
         _ => return resolution,
     };
+    if (context.host).is_form_in_other_program(path, context.atoms.bytes(type_attribute)) {
+        return resolution;
+    }
     let loader_with = |type_attribute| {
         let kind = loader_kind(site);
         let request = (context.resolver).loader_request(path, kind, type_attribute, None);

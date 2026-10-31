@@ -91,7 +91,9 @@ async function see(flags: string[], env: Record<string, string>) {
   return {
     seen: ran.stdout.split("\n").filter(line => line.startsWith("SEEN ")),
     taken: [
-      ...ran.stderr.matchAll(/^AOT files are loaded again \| with (\d+) more files that Workers start from$/gm),
+      ...ran.stderr.matchAll(
+        /^AOT (?:files are loaded again|load goes on) \| with (\d+) more files that Workers start from$/gm,
+      ),
     ].map(match => Number(match[1])),
     exitCode: ran.exitCode,
   };

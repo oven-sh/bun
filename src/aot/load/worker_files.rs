@@ -4,11 +4,12 @@ use bun_core::strings::{self, is_valid_utf8};
 use bun_options_types::aot_options::{ParameterThatStartsWorkers, PlaceIsReachedBy};
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
-use bun_sema::atom::{Atom, known};
+use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{
-    Binding, BindingInitializer, ClassOwner, CommonJsVariable, Decl, FnOwner, MemberOwner, Parent,
-    PatParent, SymbolId,
+    Binding, BindingInitializer, Bound, ClassOwner, CommonJsVariable, Decl, FnOwner, MemberOwner,
+    Parent, PatParent, SymbolId,
 };
+use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::fold::{Constant, FoldedValue, TreeNode, push_children};
 use bun_sema::hir::{
     BinOp, Branches, CallId, ClassId, ExportSpecId, ExprId, ExprKind, File, Flags, FnBody, FnId,
@@ -19,10 +20,10 @@ use bun_sema::import_sites::{
     ENCODERS, Encoder, ImportSiteKind, ImportSpecifier, find_values_passed_for, is_exported,
 };
 use bun_sema::messages::Category;
-use bun_sema::program::{CodeAnswer, ComputedTargets, FileId, Files};
+use bun_sema::program::{CodeAnswer, CodeView, ComputedTargets, FileId};
 use bun_sema::resolve::ExternalKind;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
-use bun_sema_driver::Locator;
+use bun_sema_driver::TextLocator;
 use bun_sema_driver::host::to_native;
 use smallvec::SmallVec;
 
@@ -37,11 +38,12 @@ use crate::load::module_paths::{
 use crate::load::named_loads::find_import_of;
 use crate::load::runtime_modules::find_module_named;
 use crate::load::source_provider::SourceProvider;
-use crate::load::sources::parsed_source;
+use crate::load::sources::parsed_source_in as parsed_source;
 use crate::load::{SourceKind, is_host_path, is_in_node_modules};
 use crate::module_keys::{is_name_of_text, is_url_with_text, name_of_text};
 use crate::options::{EntryText, PathOptions};
 use crate::statistics::{LimitId, LimitValues};
+use core::any::Any;
 use core::cell::RefCell;
 use std::rc::Rc;
 
@@ -115,6 +117,50 @@ pub(crate) enum SearchedFrom<'a> {
 type FindFilesNamedInPart<'a> =
     dyn Fn(SearchedFrom<'_>, &[(&[u8], Option<&[u8]>)]) -> Option<Vec<Vec<u8>>> + 'a;
 
+/// A program of which only some files are searched. What they lead to in the others is followed there.
+pub(crate) struct SomeFilesOf<'v, 's> {
+    pub all: &'v dyn CodeView<'s>,
+    pub searched: Vec<FileId>,
+}
+
+impl<'s> CodeView<'s> for SomeFilesOf<'_, 's> {
+    fn atoms(&self) -> &Interner<'s> {
+        self.all.atoms()
+    }
+
+    fn hir(&self, file: FileId) -> &File<'s> {
+        self.all.hir(file)
+    }
+
+    fn bound(&self, file: FileId) -> &Bound<'s> {
+        self.all.bound(file)
+    }
+
+    fn analysis(&self, file: FileId) -> &FileAnalysis<'s> {
+        self.all.analysis(file)
+    }
+
+    fn answers(&self, file: FileId) -> Option<(&[CodeAnswer<'s>], &[CodeAnswer<'s>])> {
+        self.all.answers(file)
+    }
+
+    fn file_name(&self, file: FileId) -> &[u8] {
+        self.all.file_name(file)
+    }
+
+    fn entry_points(&self) -> &[FileId] {
+        self.all.entry_points()
+    }
+
+    fn compiled_files(&self) -> &[FileId] {
+        &self.searched
+    }
+
+    fn host_payload(&self, file: FileId) -> Option<&(dyn Any + Send + Sync)> {
+        self.all.host_payload(file)
+    }
+}
+
 fn is_absolute(path: &[u8]) -> bool {
     path.starts_with(b"/") || matches!(path, [drive, b':', b'/', ..] if drive.is_ascii_alphabetic())
 }
@@ -129,7 +175,7 @@ fn with_forward_slashes(mut path: Vec<u8>) -> Vec<u8> {
 }
 
 // As `import.meta.url` and `pathToFileURL()` write it when the program runs: they escape what Node escapes, and the parser of URLs escapes the rest.
-fn write_file_url(path: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn write_file_url(path: &[u8]) -> Option<Vec<u8>> {
     if !is_absolute(path) {
         return None;
     }
@@ -298,7 +344,7 @@ fn with_separators_of_program(directory: &[u8]) -> Vec<u8> {
 }
 
 struct Walk<'a, 's> {
-    files: &'a Files<'s>,
+    files: &'a dyn CodeView<'s>,
     search: &'a WorkerSearch<'a>,
     limits: &'a LimitValues,
     provider: &'a dyn SourceProvider,
@@ -335,7 +381,7 @@ struct Walk<'a, 's> {
     /// The `new Worker()` whose argument is followed.
     start: (FileId, ExprId),
     /// Of the file of the last `start` that was shown. A file that starts many Workers has its lines counted once.
-    locator: Option<Locator<'a, 's>>,
+    locator: Option<(FileId, TextLocator<'a>)>,
     /// Each file with its `WorkerFile::has_options`.
     copies: Vec<(FileId, bool)>,
     texts: Vec<WorkerFile>,
@@ -541,7 +587,7 @@ fn ask_once(
 }
 
 pub(crate) fn find_code_that_starts_workers(
-    files: &Files<'_>,
+    files: &dyn CodeView<'_>,
     search: &WorkerSearch<'_>,
     in_parallel: InParallel<'_>,
 ) -> CodeThatStartsWorkers {
@@ -629,7 +675,7 @@ pub(crate) fn find_code_that_starts_workers(
     let mut followed_by_name = WaysFollowedByName::default();
     for file in walk.files_with_starts.clone() {
         walk.visit_file(file, &mut followed_by_name);
-        files_with_starts.push(files.module(file).file_name().to_vec());
+        files_with_starts.push(files.file_name(file).to_vec());
     }
     let code = match walk.has_unseen_start {
         true => CodeOfWorkers::Unseen,
@@ -670,13 +716,13 @@ pub(crate) fn find_code_that_starts_workers(
 
 /// `starts`, and the files that get to one of them through what they import, over any number of files.
 /// A value comes to a start through calls, and whoever calls has imported. Thousands of files store under a name like `path`, and all but these have objects of their own in mind.
-fn find_files_that_reach(files: &Files<'_>, starts: &[FileId]) -> FxHashSet<FileId> {
+fn find_files_that_reach(files: &dyn CodeView<'_>, starts: &[FileId]) -> FxHashSet<FileId> {
     let mut importers: FxHashMap<FileId, Vec<FileId>> = FxHashMap::default();
     for &importer in files.compiled_files() {
-        let Some(compiled) = files.compiled(importer) else {
+        let Some((written, implied)) = files.answers(importer) else {
             continue;
         };
-        for answer in compiled.code_answers.iter().chain(compiled.implied_answers) {
+        for answer in written.iter().chain(implied) {
             let imported = match answer {
                 CodeAnswer::File(imported) => core::slice::from_ref(imported),
                 CodeAnswer::Computed(ComputedTargets::Modules { files, .. }) => files,
@@ -701,28 +747,28 @@ fn find_files_that_reach(files: &Files<'_>, starts: &[FileId]) -> FxHashSet<File
 
 /// The files with an import that leads to code of a program below. Which file there is not asked: that costs a look at the disk for each import.
 /// A file that gets to none of these hands nothing to a program below, whatever names it stores under.
-fn find_files_that_import_from_below(files: &Files<'_>) -> Vec<FileId> {
+fn find_files_that_import_from_below(files: &dyn CodeView<'_>) -> Vec<FileId> {
     let leads_below = |answer: &CodeAnswer<'_>| match *answer {
         CodeAnswer::External {
             specifier,
             kind: ExternalKind::UncompiledCode,
-        } => find_module_named(files.atoms.bytes(specifier)).is_none(),
+        } => find_module_named(files.atoms().bytes(specifier)).is_none(),
         _ => false,
     };
     let compiled = files.compiled_files().iter().copied();
     compiled
         .filter(|&file| {
-            files.compiled(file).is_some_and(|it| {
-                it.code_answers
-                    .iter()
-                    .chain(it.implied_answers)
-                    .any(leads_below)
-            })
+            (files.answers(file))
+                .is_some_and(|(written, implied)| written.iter().chain(implied).any(leads_below))
         })
         .collect()
 }
 
-fn find_sites_of_file(files: &Files<'_>, file: FileId, below: &NamesBelow<'_>) -> SitesOfFile {
+fn find_sites_of_file(
+    files: &dyn CodeView<'_>,
+    file: FileId,
+    below: &NamesBelow<'_>,
+) -> SitesOfFile {
     let mut sites = SitesOfFile::default();
     let Some(source) = parsed_source(files, file) else {
         return sites;
@@ -731,7 +777,7 @@ fn find_sites_of_file(files: &Files<'_>, file: FileId, below: &NamesBelow<'_>) -
     let decisions = &files.analysis(file).decisions;
     // By the name alone: what leads to a program below is out of sight, whichever file there it is.
     let is_sought =
-        |_: FileId, _: usize, name: Atom| below.exports.contains_key(files.atoms.bytes(name));
+        |_: FileId, _: usize, name: Atom| below.exports.contains_key(files.atoms().bytes(name));
     let mut known = FxHashMap::default();
     let mut find = |callee: ExprId| {
         let found = find_declaration_called(files, file, callee, &mut known, &is_sought)?;
@@ -798,24 +844,24 @@ fn find_sites_of_file(files: &Files<'_>, file: FileId, below: &NamesBelow<'_>) -
 }
 
 fn find_module_answered(
-    files: &Files<'_>,
+    files: &dyn CodeView<'_>,
     file: FileId,
     site: Option<usize>,
 ) -> Option<RuntimeModule> {
-    let answer = site.and_then(|site| files.compiled(file)?.code_answers.get(site));
+    let answer = site.and_then(|site| files.answers(file)?.0.get(site));
     match answer {
         Some(&CodeAnswer::HostModule(module)) => RuntimeModule::from_registry_id(module.0),
         // The first of the programs of a realm holds Bun's own modules. To the programs above it they are left to the loader, under the names that are written.
         Some(&CodeAnswer::External {
             specifier,
             kind: ExternalKind::UncompiledCode,
-        }) => find_module_named(files.atoms.bytes(specifier)),
+        }) => find_module_named(files.atoms().bytes(specifier)),
         _ => None,
     }
 }
 
 pub(crate) fn may_start_workers(
-    files: &Files<'_>,
+    files: &dyn CodeView<'_>,
     file: FileId,
     constructor: Option<BuiltinId>,
     worker_threads: Option<RuntimeModule>,
@@ -861,24 +907,30 @@ impl<'a> NamesBelow<'a> {
 }
 
 /// By the names alone: which file an import leads to is asked of the few that are left.
-fn may_hand_file_to_program_below(files: &Files<'_>, file: FileId, below: &NamesBelow<'_>) -> bool {
+fn may_hand_file_to_program_below(
+    files: &dyn CodeView<'_>,
+    file: FileId,
+    below: &NamesBelow<'_>,
+) -> bool {
     let is_told_nothing =
         below.exports.is_empty() && below.members.is_empty() && below.properties.is_empty();
     if is_told_nothing || parsed_source(files, file).is_none() {
         return false;
     }
     let is_sought =
-        |_: FileId, _: usize, name: Atom| below.exports.contains_key(files.atoms.bytes(name));
+        |_: FileId, _: usize, name: Atom| below.exports.contains_key(files.atoms().bytes(name));
     let hir = files.hir(file);
     let mut known = FxHashMap::default();
     let mut leads_below =
         |callee: ExprId| match find_declaration_called(files, file, callee, &mut known, &is_sought)
         {
             Some(Declaration::Below(..)) => true,
-            Some(Declaration::Member(name)) => below.members.contains_key(files.atoms.bytes(name)),
+            Some(Declaration::Member(name)) => {
+                below.members.contains_key(files.atoms().bytes(name))
+            }
             Some(Declaration::Here(..) | Declaration::Whole(_)) | None => false,
         };
-    let is_property = |name: Atom| below.properties.contains_key(files.atoms.bytes(name));
+    let is_property = |name: Atom| below.properties.contains_key(files.atoms().bytes(name));
     let mut expressions = (0..hir.exprs.len() as u32).map(ExprId);
     let mut classes = (0..hir.classes.len() as u32).map(ClassId);
     expressions.any(|expression| match hir[expression].kind {
@@ -889,7 +941,7 @@ fn may_hand_file_to_program_below(files: &Files<'_>, file: FileId, below: &Names
 
 // Every code file that the program embeds with the `file` loader, sorted by path.
 pub(crate) fn find_embedded_code_files(
-    files: &Files<'_>,
+    files: &dyn CodeView<'_>,
     loaders: &[(Vec<u8>, Loader)],
     is_held_below: &dyn Fn(&[u8]) -> bool,
     in_parallel: InParallel<'_>,
@@ -911,7 +963,7 @@ pub(crate) fn source_path_of(path: &[u8]) -> Vec<u8> {
 }
 
 fn describe_embedded_file(
-    files: &Files<'_>,
+    files: &dyn CodeView<'_>,
     loaders: &[(Vec<u8>, Loader)],
     copy: FileId,
 ) -> Option<WorkerFile> {
@@ -920,7 +972,7 @@ fn describe_embedded_file(
     if !is_copy || source.is_from_plugin || source.plugin_module.is_some() {
         return None;
     }
-    let path = files.module(copy).file_name();
+    let path = files.file_name(copy);
     let is_code =
         loader_named_by_path(loaders, path).is_some_and(|loader| script_kind_of(loader).is_some());
     if !is_code {
@@ -932,7 +984,7 @@ fn describe_embedded_file(
             return None;
         };
         match hir[value].kind {
-            ExprKind::String(path) => Some(files.atoms.bytes(path).to_vec()),
+            ExprKind::String(path) => Some(files.atoms().bytes(path).to_vec()),
             _ => None,
         }
     })?;
@@ -1124,12 +1176,12 @@ impl Walk<'_, '_> {
             let &CodeAnswer::External {
                 specifier,
                 kind: ExternalKind::UncompiledCode,
-            } = files.compiled(importer)?.code_answers.get(site)?
+            } = files.answers(importer)?.0.get(site)?
             else {
                 return None;
             };
-            let written_in = files.module(importer).file_name();
-            let path = (self.search.resolve_import)(written_in, files.atoms.bytes(specifier))?;
+            let written_in = files.file_name(importer);
+            let path = (self.search.resolve_import)(written_in, files.atoms().bytes(specifier))?;
             Some(source_path_of(&path))
         };
         let found = find();
@@ -1145,7 +1197,7 @@ impl Walk<'_, '_> {
         site: usize,
         name: Atom,
     ) -> Vec<PlaceOfStart> {
-        let name = self.files.atoms.bytes(name);
+        let name = self.files.atoms().bytes(name);
         // Few exports start Workers, and to ask which file an import leads to costs a look at the disk.
         let Some(below) = self.names_below.exports.get(name) else {
             return Vec::new();
@@ -1159,7 +1211,7 @@ impl Walk<'_, '_> {
 
     /// What the programs below say of a property of this name.
     fn find_places_below_by_name(&self, name: Atom, way: PlaceIsReachedBy) -> Vec<PlaceOfStart> {
-        let name = self.files.atoms.bytes(name);
+        let name = self.files.atoms().bytes(name);
         let names = match way {
             PlaceIsReachedBy::Export => &self.names_below.exports,
             PlaceIsReachedBy::Member => &self.names_below.members,
@@ -1193,8 +1245,8 @@ impl Walk<'_, '_> {
             places
                 .into_iter()
                 .map(move |place| ParameterThatStartsWorkers {
-                    module: source_path_of(files.module(exporter).file_name()),
-                    export: files.atoms.bytes(name).to_vec(),
+                    module: source_path_of(files.file_name(exporter)),
+                    export: files.atoms().bytes(name).to_vec(),
                     reached_by: PlaceIsReachedBy::Export,
                     index: place.index,
                     has_options: place.has_options,
@@ -1232,7 +1284,7 @@ impl Walk<'_, '_> {
         names.shared_sort_unstable();
         names.dedup();
         let names: Vec<Atom> = (names.into_iter())
-            .map(|name| files.atoms.intern(name))
+            .map(|name| files.atoms().intern(name))
             .collect();
         for exporter in exporters() {
             let (hir, bound) = (files.hir(exporter), files.bound(exporter));
@@ -1253,7 +1305,7 @@ impl Walk<'_, '_> {
         let without_export = self.parameters.iter().filter_map(|(&declaration, places)| {
             let reached = match declaration {
                 Declaration::Whole(file) => {
-                    let module = source_path_of(files.module(file).file_name());
+                    let module = source_path_of(files.file_name(file));
                     (module, known::default, PlaceIsReachedBy::Export)
                 }
                 Declaration::Member(name) => by_name(name, PlaceIsReachedBy::Member),
@@ -1266,7 +1318,7 @@ impl Walk<'_, '_> {
         for ((module, name, reached_by), places) in without_export.chain(properties) {
             found.extend(places.iter().map(|place| ParameterThatStartsWorkers {
                 module: module.clone(),
-                export: files.atoms.bytes(name).to_vec(),
+                export: files.atoms().bytes(name).to_vec(),
                 reached_by,
                 index: place.index,
                 has_options: place.has_options,
@@ -1365,7 +1417,7 @@ impl Walk<'_, '_> {
     fn is_worker_of_node(&self, file: FileId, callee: ExprId) -> bool {
         self.find_member_of_module(file, callee)
             .is_some_and(|(module, name)| {
-                Some(module) == self.modules[0] && self.files.atoms.bytes(name) == b"Worker"
+                Some(module) == self.modules[0] && self.files.atoms().bytes(name) == b"Worker"
             })
     }
 
@@ -1532,7 +1584,7 @@ impl Walk<'_, '_> {
                         self.follow_property(file, name, is_this(hir, obj));
                     }
                     // A Worker starts from a URL as from what the URL says.
-                    if files.atoms.bytes(name) == b"href" {
+                    if files.atoms().bytes(name) == b"href" {
                         self.push(file, obj);
                     }
                 }
@@ -1608,7 +1660,7 @@ impl Walk<'_, '_> {
         match (files.analysis(file).decisions).constant(hir, expression) {
             FoldedValue::Constant(Constant::String(text))
             | FoldedValue::ConstantOutsideDeadZone(Constant::String(text)) => {
-                return Some(files.atoms.bytes(text).to_vec());
+                return Some(files.atoms().bytes(text).to_vec());
             }
             FoldedValue::Constant(_) | FoldedValue::ConstantOutsideDeadZone(_) => return None,
             FoldedValue::Unknown => {}
@@ -1625,10 +1677,10 @@ impl Walk<'_, '_> {
             }
             ExprKind::Template { exprs } => {
                 let mut texts = hir.ids(hir.template_texts(exprs));
-                let mut text = files.atoms.bytes(texts.next()?).to_vec();
+                let mut text = files.atoms().bytes(texts.next()?).to_vec();
                 for (substitution, following) in hir.ids(exprs).zip(texts) {
                     text.append(&mut self.find_text(file, substitution)?);
-                    text.extend_from_slice(files.atoms.bytes(following));
+                    text.extend_from_slice(files.atoms().bytes(following));
                 }
                 Some(text)
             }
@@ -1652,12 +1704,8 @@ impl Walk<'_, '_> {
             ExprKind::Call(call) => self.find_text_of_call(file, expression, call),
             ExprKind::Dot { obj, name, .. } => self.find_text_of_member(file, obj, name),
             ExprKind::Ident(_) => match bound.binding(expression) {
-                Binding::CommonJs(CommonJsVariable::Filename) => {
-                    Some(self.as_seen(&self.find_own_path(file)?))
-                }
-                Binding::CommonJs(CommonJsVariable::Dirname) => {
-                    Some(self.as_seen(dirname::<Posix>(&self.find_own_path(file)?)))
-                }
+                Binding::CommonJs(CommonJsVariable::Filename) => self.find_source_path(file, false),
+                Binding::CommonJs(CommonJsVariable::Dirname) => self.find_source_path(file, true),
                 Binding::Symbol(symbol) if self.variables_left > 0 => {
                     self.variables_left -= 1;
                     match self.find_initializer_of(file, symbol) {
@@ -1695,7 +1743,7 @@ impl Walk<'_, '_> {
 
     /// The path of the module as the program sees it when it runs, with forward slashes.
     fn find_own_path(&self, file: FileId) -> Option<Vec<u8>> {
-        let path = self.files.module(file).file_name();
+        let path = self.files.file_name(file);
         if is_host_path(path) {
             return None;
         }
@@ -1714,11 +1762,28 @@ impl Walk<'_, '_> {
         )))
     }
 
+    /// What `__filename` holds in the file and `require.resolve` answers for it, or the folder of that: in an executable, where the file lies on the machine that builds.
+    fn find_source_path(&self, file: FileId, is_folder: bool) -> Option<Vec<u8>> {
+        let folder_or_file = |path: &[u8]| match is_folder {
+            true => dirname::<Posix>(path).to_vec(),
+            false => path.to_vec(),
+        };
+        if self.search.runs_in_place || self.reads_source_paths {
+            return Some(self.as_seen(&folder_or_file(&self.find_own_path(file)?)));
+        }
+        let path = self.files.file_name(file);
+        if is_host_path(path) {
+            return None;
+        }
+        let path = folder_or_file(to_native(path));
+        Some(with_separators_of_host(&path, cfg!(windows)))
+    }
+
     fn find_text_of_member(&mut self, file: FileId, object: ExprId, name: Atom) -> Option<Vec<u8>> {
         let files = self.files;
         let hir = files.hir(file);
         let object = hir.skip_type_assertions(object);
-        let name = files.atoms.bytes(name);
+        let name = files.atoms().bytes(name);
         if matches!(hir[object].kind, ExprKind::ImportMeta) {
             if files.bound(file).import_meta_may_be_modified() {
                 return None;
@@ -1751,7 +1816,7 @@ impl Walk<'_, '_> {
             ExprKind::Call(call) => {
                 let callee = hir.skip_type_assertions(hir[call].callee);
                 (self.find_member_of_module(file, callee)).is_some_and(|(module, name)| {
-                    Some(module) == self.modules[2] && files.atoms.bytes(name) == b"pathToFileURL"
+                    Some(module) == self.modules[2] && files.atoms().bytes(name) == b"pathToFileURL"
                 })
             }
             ExprKind::Ident(_) => match bound.binding(expression) {
@@ -1778,13 +1843,12 @@ impl Walk<'_, '_> {
         let hir = files.hir(file);
         let analysis = files.analysis(file);
         if let Some(site) = analysis.import_site_of_call(expression) {
-            let &CodeAnswer::File(found) = files.compiled(file)?.code_answers.get(site)? else {
+            let &CodeAnswer::File(found) = files.answers(file)?.0.get(site)? else {
                 return None;
             };
-            let path = self.find_own_path(found)?;
             return match analysis.import_sites[site].kind {
-                ImportSiteKind::RequireResolve(_) => Some(self.as_seen(&path)),
-                ImportSiteKind::ImportMetaResolve(_) => write_file_url(&path),
+                ImportSiteKind::RequireResolve(_) => self.find_source_path(found, false),
+                ImportSiteKind::ImportMetaResolve(_) => write_file_url(&self.find_own_path(found)?),
                 _ => None,
             };
         }
@@ -1795,7 +1859,7 @@ impl Walk<'_, '_> {
             return encode(&self.find_text(file, *arguments.first()?)?);
         }
         if let Some((module, name)) = self.find_member_of_module(file, callee) {
-            let name = files.atoms.bytes(name);
+            let name = files.atoms().bytes(name);
             let position = self.modules.iter().position(|&it| it == Some(module))?;
             return match (position, name) {
                 (1, b"join" | b"resolve") => {
@@ -1820,7 +1884,7 @@ impl Walk<'_, '_> {
         }
         match hir[callee].kind {
             ExprKind::Dot { obj, name, .. }
-                if matches!(files.atoms.bytes(name), b"toString" | b"toJSON")
+                if matches!(files.atoms().bytes(name), b"toString" | b"toJSON")
                     && self.is_url(file, obj) =>
             {
                 self.find_text(file, obj)
@@ -1890,7 +1954,7 @@ impl Walk<'_, '_> {
         let mut found = None;
         for property in properties.iter().map(|property| hir[property]) {
             let key = property.key.name().ok_or(())?;
-            if self.files.atoms.bytes(key) != name {
+            if self.files.atoms().bytes(key) != name {
                 continue;
             }
             found = match property.kind {
@@ -1938,7 +2002,7 @@ impl Walk<'_, '_> {
 
     /// Adds what every `preload` names that the object literal writes, or a literal that it spreads.
     fn find_preloads(&mut self, file: FileId, options: ExprId, names: &mut Vec<ExprId>) {
-        let (hir, atoms) = (self.files.hir(file), &self.files.atoms);
+        let (hir, atoms) = (self.files.hir(file), self.files.atoms());
         let ExprKind::Object(properties) = hir[self.find_initializer(file, options)].kind else {
             return;
         };
@@ -2036,7 +2100,7 @@ impl Walk<'_, '_> {
         };
         // A package names the file of a Worker that most programs never start, and the program of such a file is no small one.
         // What the project names and hands to a package is a file of the project, which it means to start.
-        if is_in_node_modules(self.files.module(written_in).file_name()) {
+        if is_in_node_modules(self.files.file_name(written_in)) {
             return false;
         }
         let is_relative = text.starts_with(b"./") || text.starts_with(b"../");
@@ -2129,7 +2193,7 @@ impl Walk<'_, '_> {
                 false => Some(text).filter(|path| is_absolute(path)),
             }
         };
-        let written_in = self.files.module(file).file_name();
+        let written_in = self.files.file_name(file);
         if runs_in_place || self.is_evaluated || is_in_node_modules(written_in) {
             return false;
         }
@@ -2154,7 +2218,7 @@ impl Walk<'_, '_> {
     fn add_files_named_in_part(&mut self, file: FileId, argument: ExprId) -> bool {
         let files = self.files;
         let analysis = files.analysis(file);
-        let written_in = files.module(file).file_name();
+        let written_in = files.file_name(file);
         let Some(specifier) = analysis.find_name_of_worker(argument) else {
             return false;
         };
@@ -2164,10 +2228,11 @@ impl Walk<'_, '_> {
         let names: Option<Vec<(&[u8], Option<&[u8]>)>> =
             (analysis.alternatives_of(specifier).iter())
                 .map(|&name| match name {
-                    ImportSpecifier::Constant(text) => Some((files.atoms.bytes(text), None)),
-                    ImportSpecifier::Pattern { prefix, suffix } => {
-                        Some((files.atoms.bytes(prefix), Some(files.atoms.bytes(suffix))))
-                    }
+                    ImportSpecifier::Constant(text) => Some((files.atoms().bytes(text), None)),
+                    ImportSpecifier::Pattern { prefix, suffix } => Some((
+                        files.atoms().bytes(prefix),
+                        Some(files.atoms().bytes(suffix)),
+                    )),
                     ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => None,
                 })
                 .collect();
@@ -2278,9 +2343,13 @@ impl Walk<'_, '_> {
         let (file, start) = self.start;
         let offset = self.files.hir(file)[start].pos;
         let unlocated = new_driver_diagnostic(0, Category::Message, Vec::new(), &[]);
-        let known = self.locator.take().filter(|it| it.file() == file);
-        let locator = known.unwrap_or_else(|| Locator::new(self.files, file));
-        let locator = self.locator.insert(locator);
+        let files = self.files;
+        let known = self.locator.take().filter(|it| it.0 == file);
+        let locator = known.unwrap_or_else(|| {
+            let text = &files.hir(file).text[..];
+            (file, TextLocator::new(files.file_name(file), text))
+        });
+        let locator = &self.locator.insert(locator).1;
         let located = locator.locate(offset, offset, unlocated);
         let line = located.line.saturating_sub(located.source_line) as usize;
         ShownPosition {
@@ -2311,7 +2380,7 @@ impl Walk<'_, '_> {
         let &[Decl::Param(pattern)] = bound.symbol(symbol).decls else {
             return self.follow_symbol(file, symbol);
         };
-        let is_loaded = parsed_source(files, file).is_some() && files.compiled(file).is_some();
+        let is_loaded = parsed_source(files, file).is_some() && files.answers(file).is_some();
         if !is_loaded || self.parameters_left == 0 {
             self.has_unseen_start = true;
             return;
@@ -2421,7 +2490,7 @@ impl Walk<'_, '_> {
         }
         self.variables_left -= 1;
         // `this.#file` is stored to inside its class.
-        let is_private = self.files.atoms.bytes(name).starts_with(b"#");
+        let is_private = self.files.atoms().bytes(name).starts_with(b"#");
         let was_behind_property = self.is_behind_property;
         if self.search.is_built_upon && !is_private && !was_behind_property {
             let place = PlaceOfStart {
@@ -2785,7 +2854,7 @@ impl Walk<'_, '_> {
         name: Atom,
     ) -> bool {
         let files = self.files;
-        let answer = site.and_then(|site| files.compiled(importer)?.code_answers.get(site));
+        let answer = site.and_then(|site| files.answers(importer)?.0.get(site));
         let Some(&CodeAnswer::File(exporter)) = answer else {
             return false;
         };
@@ -2798,7 +2867,7 @@ impl Walk<'_, '_> {
             }
             return is_path;
         }
-        if files.compiled(exporter).is_none() {
+        if files.answers(exporter).is_none() {
             return false;
         }
         let (hir, bound) = (files.hir(exporter), files.bound(exporter));
@@ -2932,7 +3001,7 @@ fn find_calls_of_super(hir: &File<'_>, constructor: FnId) -> Vec<CallId> {
 
 /// What a callee leads to: `spawn(..)`, `spawning.spawn(..)`, `new Pool(..)` and `pool.start(..)`, imported, required or neither.
 fn find_declaration_called(
-    files: &Files<'_>,
+    files: &dyn CodeView<'_>,
     file: FileId,
     callee: ExprId,
     known: &mut KnownDeclarations,
@@ -2942,7 +3011,7 @@ fn find_declaration_called(
 }
 
 fn find_declaration_behind(
-    files: &Files<'_>,
+    files: &dyn CodeView<'_>,
     file: FileId,
     expression: ExprId,
     variables_left: usize,
@@ -3005,7 +3074,7 @@ fn find_declaration_behind(
 }
 
 /// The import site of `require("./spawn")` and of `await import("./spawn")`.
-fn find_site_that_loads(files: &Files<'_>, file: FileId, loaded: ExprId) -> Option<usize> {
+fn find_site_that_loads(files: &dyn CodeView<'_>, file: FileId, loaded: ExprId) -> Option<usize> {
     let (hir, analysis) = (files.hir(file), files.analysis(file));
     let call = match hir[loaded].kind {
         ExprKind::Await(promise) => hir.skip_type_assertions(promise),
@@ -3024,7 +3093,7 @@ fn find_site_that_loads(files: &Files<'_>, file: FileId, loaded: ExprId) -> Opti
 
 /// `object.name`, where `object` is the object of a module or anything else.
 fn find_declaration_of_member(
-    files: &Files<'_>,
+    files: &dyn CodeView<'_>,
     file: FileId,
     object: ExprId,
     name: Atom,
@@ -3037,7 +3106,7 @@ fn find_declaration_of_member(
 }
 
 /// The import site that an object comes from: `spawning` in `spawning.start`, imported as a namespace or required.
-fn find_site_of_object(files: &Files<'_>, file: FileId, object: ExprId) -> Option<usize> {
+fn find_site_of_object(files: &dyn CodeView<'_>, file: FileId, object: ExprId) -> Option<usize> {
     let (hir, bound) = (files.hir(file), files.bound(file));
     let object = hir.skip_type_assertions(object);
     match (hir[object].kind, bound.binding(object)) {
@@ -3066,7 +3135,7 @@ fn find_site_of_object(files: &Files<'_>, file: FileId, object: ExprId) -> Optio
 /// What a file gets from the module that an import site loads: an export, or without a name what `require()` answers.
 /// A file that says `exports.start = ..` lists no exports: what it exports is known by the name of the property.
 fn find_declaration_loaded(
-    files: &Files<'_>,
+    files: &dyn CodeView<'_>,
     importer: FileId,
     site: usize,
     name: Option<Atom>,
@@ -3080,7 +3149,7 @@ fn find_declaration_loaded(
     if listed.is_some() {
         return listed;
     }
-    match *files.compiled(importer)?.code_answers.get(site)? {
+    match *files.answers(importer)?.0.get(site)? {
         CodeAnswer::File(exporter) => match by_name {
             Some(name) => Some(Declaration::Member(name)),
             None => Some(Declaration::Whole(exporter)),
@@ -3100,7 +3169,7 @@ fn find_declaration_loaded(
 }
 
 fn find_declaration_of_export(
-    files: &Files<'_>,
+    files: &dyn CodeView<'_>,
     importer: FileId,
     site: Option<usize>,
     name: Atom,
@@ -3108,7 +3177,7 @@ fn find_declaration_of_export(
     is_sought_below: &IsSoughtBelow<'_>,
 ) -> Option<Declaration> {
     let site = site?;
-    match *files.compiled(importer)?.code_answers.get(site)? {
+    match *files.answers(importer)?.0.get(site)? {
         CodeAnswer::File(exporter) => {
             find_declaration_exported_by(files, exporter, name, reexports_left, is_sought_below)
         }
@@ -3123,14 +3192,14 @@ fn find_declaration_of_export(
 }
 
 fn find_declaration_exported_by(
-    files: &Files<'_>,
+    files: &dyn CodeView<'_>,
     exporter: FileId,
     name: Atom,
     reexports_left: usize,
     is_sought_below: &IsSoughtBelow<'_>,
 ) -> Option<Declaration> {
     let reexports_left = reexports_left.checked_sub(1)?;
-    files.compiled(exporter)?;
+    files.answers(exporter)?;
     let (hir, bound) = (files.hir(exporter), files.bound(exporter));
     let find_behind = |kind, name| {
         let site = files.analysis(exporter).import_site_index(kind);

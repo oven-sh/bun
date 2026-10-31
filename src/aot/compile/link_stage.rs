@@ -3,14 +3,17 @@ use super::replaced_exports::{ExportedVariables, collect_files_of_modules};
 use super::summary::{collect_entry_point_paths, collect_folder_paths, collect_source_texts};
 use super::{BoundBuild, BoundProject, Build, FrontEndOutput, LoadedBuild, ProgramPlace};
 use crate::builtins::BuiltinId;
-use crate::ir::Id;
-use crate::ir::generated::{ModuleFlags, ModuleKind, NameClass, OpenedName, ReplaceableBuiltin};
+use crate::ir::generated::{
+    ModuleFlags, ModuleKind, NameClass, OpenedName, ReplaceableBuiltin, SourceStamp,
+};
+use crate::ir::{Id, ModuleId};
 use crate::link::{
     self, LinkError, LinkInput, LinkProject, LinkUnit, Linked, ProgramKeys, ProgramModule,
     ProgramVariableKey,
 };
 use crate::load::sources::parsed_source;
 use crate::load::{ProgramFile, ProjectId};
+use crate::module_keys::stamp_of_file;
 use crate::statistics::Stage;
 use bun_sema::erasure::PackedTypeRanges;
 use bun_sema::program::FileId;
@@ -246,6 +249,24 @@ impl Build<'_> {
                 program.opened_names.push(OpenedName { holder, name });
             }
         }
+        // A test may write a file of the program anew before anything has loaded it, and `bun test` reads what is there by then.
+        if self.options.aot.runs_in_place {
+            for (index, module) in program.modules.iter().enumerate() {
+                if !module.flags.contains(ModuleFlags::MAY_BE_EVICTED) {
+                    continue;
+                }
+                let path = bun_core::ZBox::from_bytes(program.strings.get(module.path));
+                if let Ok(stat) = bun_sys::stat(&path) {
+                    let stat = bun_sys::PosixStat::init(&stat);
+                    let stamp = stamp_of_file(stat.mtim.sec, stat.mtim.nsec, stat.size);
+                    program.source_stamps.push(SourceStamp {
+                        module: ModuleId::new(index),
+                        low: stamp as u32,
+                        high: (stamp >> 32) as u32,
+                    });
+                }
+            }
+        }
         self.statistics.add_counters(application.view(), counters);
         let (entry_points, folders) = paths.expect("link has called it");
         debug_assert_eq!(entry_points.len(), program.entries.len());
@@ -263,6 +284,8 @@ impl Build<'_> {
             is_ready_for_loader_functions: application_graph.is_ready_for_loader_functions(),
             exported_variables: ExportedVariables::collect(&program, &files_of_modules),
             writes_preload,
+            holds_source_paths: (loaded.projects.iter())
+                .any(|(_, project)| project.sources.holds_source_paths()),
             held_library_code: core::mem::take(&mut self.held_library_code),
             program,
             body_remap,

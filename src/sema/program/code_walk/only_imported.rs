@@ -71,7 +71,7 @@ fn find_files_that_require_may_load(
     let mut may_be_required = vec![false; files.len()];
     let mut runs_inside_require = vec![false; files.len()];
     let mut to_visit: Vec<u32> = Vec::new();
-    for entry_point in &context.entry_points {
+    for entry_point in &context.entry_points() {
         let index = state.index_of[&context.canonical_key(entry_point.key)];
         may_be_required[index as usize] = true;
     }

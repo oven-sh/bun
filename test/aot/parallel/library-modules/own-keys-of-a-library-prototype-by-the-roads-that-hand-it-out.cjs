@@ -50,3 +50,16 @@ const fourth = unknown();
 fourth.instance = new EventEmitter();
 fourth.held = fourth.instance.constructor.prototype;
 console.log("off the constructor of an instance:", namesCalled(fourth.held, new EventEmitter()));
+
+// Above an instance that came back out of sight: nobody handed the prototype object out, the program asks for it.
+const fifth = unknown();
+fifth.instance = dc.channel("y");
+console.log("by Object.getPrototypeOf:", namesCalled(Object.getPrototypeOf(fifth.instance), channel));
+console.log("by __proto__:", namesCalled(fifth.instance.__proto__, channel));
+console.log("by Reflect.getPrototypeOf:", namesCalled(Reflect.getPrototypeOf(fifth.instance), channel));
+
+// Up the whole chain, as a library that wraps every method of an object does.
+const sixth = unknown();
+sixth.instance = new EventEmitter();
+for (let object = sixth.instance; object && object !== Object.prototype; object = Object.getPrototypeOf(object))
+  console.log("up the chain:", namesCalled(object, sixth.instance));

@@ -1091,17 +1091,20 @@ JSC_DEFINE_HOST_FUNCTION(functionRequireCacheDidDelete, (JSC::JSGlobalObject * g
     return JSValue::encode(jsUndefined());
 }
 
-// Without an argument: whether the cache lists files of the compiled program at all.
+// Without an argument: whether the cache lists modules of the compiled program at all.
+// With a third: whether a require() has put the built-in module there. No entry is made.
 JSC_DEFINE_HOST_FUNCTION(functionRequireCacheCompiledEntry, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     if (!callFrame->argumentCount())
-        return JSValue::encode(jsBoolean(Bun::hasCompiledModules() && Bun::requireCacheListsCompiledFiles(defaultGlobalObject(globalObject))));
+        return JSValue::encode(jsBoolean(Bun::hasCompiledModules()));
     JSValue keyValue = callFrame->uncheckedArgument(0);
     if (!keyValue.isString() || !seesCompiledModules(globalObject, callFrame->argument(1)))
         return JSValue::encode(jsUndefined());
     WTF::String key = asString(keyValue)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    if (callFrame->argument(2).isTrue())
+        return JSValue::encode(jsBoolean(Bun::isLibraryModuleInRequireCache(defaultGlobalObject(globalObject), key)));
     JSValue entry = Bun::compiledRequireCacheEntry(defaultGlobalObject(globalObject), key);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(entry ? entry : jsUndefined());
@@ -4238,7 +4241,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
         // The loader keeps parameters of the type alone for an import() without attributes, and fetches with them where a require() takes over a load in flight.
         bool hasImportAttributes = parameters && (parameters->type() != ScriptFetchParameters::Type::JavaScript || !parameters->attributes().isEmpty());
         JSC::AOT::AskerOfModule asker(globalObject, referrer);
-        JSC::JSPromise* compiled = Bun::compiledModuleSource(static_cast<Zig::GlobalObject*>(globalObject), moduleKey, hasImportAttributes);
+        JSC::JSPromise* compiled = Bun::compiledModuleSource(static_cast<Zig::GlobalObject*>(globalObject), moduleKey, hasImportAttributes ? parameters.get() : nullptr);
         if (scope.exception()) [[unlikely]] {
             JSPromise* rejected = JSPromise::create(vm, globalObject->promiseStructure());
             rejected->markAsHandled();

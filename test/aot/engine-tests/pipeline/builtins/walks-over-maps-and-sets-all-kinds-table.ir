@@ -4922,7 +4922,7 @@ runtimefunction id=IteratorConsumersFrom function=f68
 # CHECK-LABEL: function {{*}}name="changing"
 # CHECK: module=m0 position=3941 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type="adds until the table grows"|"clears and fills again"|"clears at the third"|"deletes all but the last"|"deletes and adds again"|"deletes what comes next"|"deletes what it stands on"|"deletes what lies behind"|"turns the keys wide" site=w19 flags=[OmitsNull, OmitsUndefined]}, {type=int[3, 8] site=w20}, {type=f15|f16|f17|f18|f19|f20|f21|f22|f23 site=w21 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f12 module=
-# CHECK: m0 position=2019 kind=Arrow role=EntryChecks flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24}, {type=number site=w26 flags=[IsExpected]}] results=[{type=Array<undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24, proven, Contiguous, pristine[Storage, Names, Dense]> site=w27 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f31] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f74 fallback=f87} inlineFrames=[{}, {callee=f74 callPosition=2019 isTailCall=true module=m0}] {
+# CHECK: m0 position=2019 kind=Arrow role=EntryChecks flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24}, {type=number site=w26 flags=[IsExpected]}] results=[{type=Array site=w27 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f31] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f74 fallback=f87} inlineFrames=[{}, {callee=f74 callPosition=2019 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24, v1: anything ~ number):
 # CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=number
 # CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
@@ -4930,15 +4930,14 @@ runtimefunction id=IteratorConsumersFrom function=f68
 # CHECK-NEXT: v4: undefined = CallDirect v0, v3 function=f98
 # CHECK-NEXT: v5: undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24 = ResultAt v4
 # CHECK-NEXT: v6: number = ResultAt v4 index=1
-# CHECK-NEXT: v7: Array<undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24, Contiguous> = NewArray v5, v6 contents=undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24 allocationSite=42 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v8: Array<undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v7 provenType=Array<undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Return v8
+# CHECK-NEXT: v7: Array = NewArray v5, v6 contents=anything allocationSite=42
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v9: Array<undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v0, v1 function=f87
-# CHECK-NEXT: ReturnCall v9 requirement=Allowed
+# CHECK-NEXT: v8: Array = CallDirect v0, v1 function=f87
+# CHECK-NEXT: ReturnCall v8 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function f13 module=
-# CHECK: m0 position=2103 kind=Arrow role=EntryChecks flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24}, {type=number site=w30 flags=[IsExpected]}] results=[{type=Array<undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24, proven, Contiguous, pristine[Storage, Names, Dense]> site=w31 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f32] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f75 fallback=f88} inlineFrames=[{}, {callee=f75 callPosition=2103 isTailCall=true module=m0}] {
+# CHECK: m0 position=2103 kind=Arrow role=EntryChecks flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24}, {type=number site=w30 flags=[IsExpected]}] results=[{type=Array site=w31 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f32] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f75 fallback=f88} inlineFrames=[{}, {callee=f75 callPosition=2103 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24, v1: anything ~ number):
 # CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=number
 # CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
@@ -4946,15 +4945,14 @@ runtimefunction id=IteratorConsumersFrom function=f68
 # CHECK-NEXT: v4: undefined = CallDirect v0, v3 function=f99
 # CHECK-NEXT: v5: number = ResultAt v4
 # CHECK-NEXT: v6: undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24 = ResultAt v4 index=1
-# CHECK-NEXT: v7: Array<undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24, Contiguous> = NewArray v5, v6 contents=undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24 allocationSite=43 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v8: Array<undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v7 provenType=Array<undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Return v8
+# CHECK-NEXT: v7: Array = NewArray v5, v6 contents=anything allocationSite=43
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v9: Array<undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v0, v1 function=f88
-# CHECK-NEXT: ReturnCall v9 requirement=Allowed
+# CHECK-NEXT: v8: Array = CallDirect v0, v1 function=f88
+# CHECK-NEXT: ReturnCall v8 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function f14 module=
-# CHECK: m0 position=2186 kind=Arrow role=EntryChecks flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24}, {type=number site=w34 flags=[IsExpected]}] results=[{type=Array<undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24, proven, Contiguous, pristine[Storage, Names, Dense]> site=w35 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f33] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f76 fallback=f89} inlineFrames=[{}, {callee=f76 callPosition=2186 isTailCall=true module=m0}] {
+# CHECK: m0 position=2186 kind=Arrow role=EntryChecks flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24}, {type=number site=w34 flags=[IsExpected]}] results=[{type=Array site=w35 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f33] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f76 fallback=f89} inlineFrames=[{}, {callee=f76 callPosition=2186 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24, v1: anything ~ number):
 # CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=number
 # CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
@@ -4962,12 +4960,11 @@ runtimefunction id=IteratorConsumersFrom function=f68
 # CHECK-NEXT: v4: undefined = CallDirect v0, v3 function=f100
 # CHECK-NEXT: v5: undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24 = ResultAt v4
 # CHECK-NEXT: v6: undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24 = ResultAt v4 index=1
-# CHECK-NEXT: v7: Array<undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24, Contiguous> = NewArray v5, v6 contents=undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24 allocationSite=44 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v8: Array<undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v7 provenType=Array<undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Return v8
+# CHECK-NEXT: v7: Array = NewArray v5, v6 contents=anything allocationSite=44
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v9: Array<undefined|null|boolean|number|string|bigint|object|symbol("s")@m0:24, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v0, v1 function=f89
-# CHECK-NEXT: ReturnCall v9 requirement=Allowed
+# CHECK-NEXT: v8: Array = CallDirect v0, v1 function=f89
+# CHECK-NEXT: ReturnCall v8 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function f15 module=
 # CHECK: m0 position=4378 kind=Arrow role=EntryChecks flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=Map<number, undefined|null|string> site=w75 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w76 flags=[IsExpected]}] results=[{type=boolean site=w77 flags=[IsExpected]}] functionTypes=[f35] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f77 fallback=f90} {

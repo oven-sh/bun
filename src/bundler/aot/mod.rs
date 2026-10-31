@@ -68,6 +68,8 @@ pub struct AotEntryPoint {
 pub struct AotBuild {
     /// `Compilation::root_folders_spelled`
     pub root_folders_spelled: Vec<u8>,
+    /// `Compilation::holds_source_paths`
+    pub holds_source_paths: bool,
     /// `Compilation::imports_file_with_query`
     pub imports_file_with_query: bool,
     /// `Compilation::replaced_builtins`

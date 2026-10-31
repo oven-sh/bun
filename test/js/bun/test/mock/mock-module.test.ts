@@ -852,6 +852,7 @@ describe.concurrent("the original of a mocked module", () => {
           test("a package, which is not evaluated twice", () => {
             expect([earlyPackage.hello(), cjs.hello()]).toEqual(["real-hello", "mocked-hello"]);
             expect(earlyPackage.hello).toBe(seen.original.hello);
+            expect(require("cjs-pkg").hello()).toBe("mocked-hello");
           });
 
           test("a builtin, in the file of a factory that is running", async () => {

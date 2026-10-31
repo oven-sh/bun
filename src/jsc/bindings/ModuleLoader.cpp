@@ -460,6 +460,9 @@ static JSValue handleVirtualModuleResult(
             RETURN_IF_EXCEPTION(scope, {});
             commonJSModule->setExportsObject(exports);
             commonJSModule->hasEvaluated = true;
+            // Left in the require map, it would hide the mock from require() once the factory has settled.
+            JSC__JSMap__remove(requireMapOf(globalObject, commonJSModule->moduleGraph()), globalObject, JSValue::encode(commonJSModule->filename()));
+            RETURN_IF_EXCEPTION(scope, {});
             return commonJSModule;
         }
         JSC::JSPromise* pending = Bun::runModuleMock(globalObject, moduleMock, specifier->toWTFString(BunString::ZeroCopy), !allowPromise || commonJSModule);

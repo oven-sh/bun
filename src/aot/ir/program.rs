@@ -1,6 +1,7 @@
 use super::generated::{
-    Data, Entry, EvalScope, ExpectedResult, Function, Layout, Module, ModuleFailure, OpenedName,
-    ReplaceableBuiltin, RuntimeFunctionEntry, TypeSite, Variable, WebAssemblyModule,
+    AmbiguousExport, Data, Entry, EvalScope, ExpectedResult, Function, Layout, Module,
+    ModuleFailure, OpenedName, ReplaceableBuiltin, RuntimeFunctionEntry, TypeSite, Variable,
+    WebAssemblyModule,
 };
 use super::property_keys::PropertyKeyTable;
 use super::strings::StringTable;
@@ -17,6 +18,7 @@ pub struct Program {
     pub variables: Vec<Variable>,
     pub modules: Vec<Module>,
     pub module_failures: Vec<ModuleFailure>,
+    pub ambiguous_exports: Vec<AmbiguousExport>,
     pub eval_scopes: Vec<EvalScope>,
     pub functions: Vec<Function>,
     pub data: Vec<Data>,

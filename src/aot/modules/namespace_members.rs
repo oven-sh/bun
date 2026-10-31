@@ -458,6 +458,13 @@ impl FileBinder<'_, '_> {
         if self.context.stored_in_cache.contains(target) {
             return self.look_at(answer);
         }
+        // `require.cache[path].exports = other`: `require` answers what the program has stored in the entry that the run time made for the file, another object too.
+        if self.context.modules.interop(target).kind != ModuleKind::CommonJs
+            && self.context.evicted.is_table_reached()
+            && self.context.order.is_code_of_program(target)
+        {
+            return self.look_at(answer);
+        }
         // Behind a mock of an ES module that was required before, `require` answers what the factory gave: another object too.
         if self.context.modules.interop(target).kind == ModuleKind::SourceText
             && self.context.mocked.contains(target)

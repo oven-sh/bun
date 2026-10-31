@@ -4788,6 +4788,14 @@ pub(crate) fn transpile_as_loaded(
     transpile_source_code_inner::<false>(jsc_vm, &args).ok()
 }
 
+/// BunCompiledModules.cpp. The executable of a compiled program holds the file as it is, so the loader of its kind can read it.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__compiledProgramHoldsFileAsItIs(path: &bun_core::String) -> bool {
+    let path = path.to_utf8();
+    bun_standalone_graph::Graph::get_ref()
+        .is_some_and(|graph| graph.find_asset_under_root(path.slice()).is_some())
+}
+
 /// Transpiles plugin-provided source through the per-thread
 /// `TRANSPILE_PRINTER`, writing the result into `ret`.
 #[unsafe(no_mangle)]

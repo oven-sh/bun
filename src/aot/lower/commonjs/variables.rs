@@ -210,10 +210,14 @@ impl FileLowering<'_, '_, '_, '_> {
 
     // The path of a file and its folder, as the record of the file has them.
     fn find_path_text(&self, owner: FileId, builtin: BuiltinId) -> Option<Vec<u8>> {
-        let path = self.inputs.sources.module_paths(owner).public_path;
+        let is_commonjs = self.inputs.modules.kind(owner) == ModuleKind::CommonJs;
+        // `./a.cjs?fresh=1`: `__filename` has the query, `import.meta.path` of an ES module does not.
+        let path = match is_commonjs {
+            true => self.inputs.sources.public_path(owner),
+            false => self.inputs.sources.public_path_without_query(owner),
+        };
         // `import.meta.path` of a text that is no file begins with a `/`, and `__filename` of one that is CommonJS is its name.
-        let is_commonjs_text =
-            is_name_of_text(path) && self.inputs.modules.kind(owner) == ModuleKind::CommonJs;
+        let is_commonjs_text = is_name_of_text(path) && is_commonjs;
         find_text_in_path(path, is_commonjs_text, builtin)
     }
 

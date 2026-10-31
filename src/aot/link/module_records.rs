@@ -106,16 +106,19 @@ pub(super) fn build_module_records(
         names: FxHashMap::default(),
         synthetic_exports: collect_synthetic_exports(input),
         is_named_at_run_time: find_modules_named_at_run_time(input),
+        ambiguous_exports: Vec::new(),
     };
     let modules = builder.build_modules(units);
     input.progress.current.set(None);
     let module_failures = builder.build_failures();
+    let ambiguous_exports = core::mem::take(&mut builder.ambiguous_exports);
     if let Some(error) = input.progress.error.take() {
         return Err(error);
     }
     Ok(ModuleRecords {
         modules,
         module_failures,
+        ambiguous_exports,
         entries: build_entries(input, strings),
         runtime_functions: collect_runtime_functions(input),
         web_assembly_modules: collect_web_assembly_modules(input),
@@ -185,6 +188,7 @@ struct RecordBuilder<'b, 'a, 's> {
     names: FxHashMap<Atom, StringId>,
     synthetic_exports: Vec<Vec<MergedSyntheticExport>>,
     is_named_at_run_time: Vec<bool>,
+    ambiguous_exports: Vec<generated::AmbiguousExport>,
 }
 
 impl RecordBuilder<'_, '_, '_> {
@@ -501,6 +505,13 @@ impl RecordBuilder<'_, '_, '_> {
         }
         record.requests = self.build_requests(project, ModuleRef::File(file));
         record.exports = self.build_exports(project, graph.exports(file));
+        for &name in graph.ambiguous_names(file) {
+            let ambiguous = generated::AmbiguousExport {
+                module: input.id_of(project, ModuleRef::File(file)),
+                name: self.intern_atom(name),
+            };
+            self.ambiguous_exports.push(ambiguous);
+        }
         let requests = graph.requests_of(ModuleRef::File(file));
         let is_requested = |module: ModuleRef| requests.iter().any(|it| it.target == module);
         // ES modules import a CommonJS file through its face, which has the names of a mock.
@@ -508,13 +519,15 @@ impl RecordBuilder<'_, '_, '_> {
             true => graph.face(required.module).unwrap_or(required.module),
             false => required.module,
         };
+        // Tree shaking drops an unused import of a file without side effects, and the file may go with it.
+        let may_be_gone = |required: &modules::RequiredName| {
+            let rule = graph.interop(required.module).export_rule;
+            required.is_found_unless_mocked && rule != generated::SyntheticExportRule::RuntimeModule
+        };
         record.required_names = graph
             .required_names(file)
             .iter()
-            // Tree shaking drops an unused import of a file without side effects, and the file may go with it.
-            .filter(|required| {
-                !required.is_found_unless_mocked || is_requested(exporter_of(required))
-            })
+            .filter(|required| !may_be_gone(required) || is_requested(exporter_of(required)))
             .map(|required| generated::RequiredName {
                 module: input.id_of(project, exporter_of(required)),
                 name: self.intern_atom(required.name),

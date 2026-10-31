@@ -120,7 +120,7 @@ console.log(run(900000));
 // CHECK-NEXT: Return v6
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="collect"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[HasRestParameter] captures=[{type=env [[L_8]] flags=[IsFromCompiler]}, {type=undefined|null|[[f_3]]|[[f_4]]|[[f_5]] flags=[IsExpected]}] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=undefined|null|[[f_11]] flags=[IsExpected]}] functionTypes={{*}}[[f_6]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[HasRestParameter] captures=[{type=env [[L_8]] flags=[IsFromCompiler]}, {type=undefined|null|[[f_3]]|[[f_4]]|[[f_5]] flags=[IsExpected] variableName="fn"}] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=undefined|null|[[f_11]] flags=[IsExpected]}] functionTypes={{*}}[[f_6]]] {
 // CHECK-NEXT: b0(v0: env [[L_8]], v1: undefined|null|[[f_3]]|[[f_4]]|[[f_5]], v2: Array):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

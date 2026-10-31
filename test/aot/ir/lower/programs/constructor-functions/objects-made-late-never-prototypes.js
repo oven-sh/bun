@@ -275,7 +275,7 @@
 // CHECK-NEXT: ReturnCall v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="__"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] captures=[{type=undefined|null|number|string|symbol|bigint|[[L_9]] flags=[IsExpected]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_10]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] captures=[{type=undefined|null|number|string|symbol|bigint|[[L_9]] flags=[IsExpected] variableName="d"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_10]]] {
 // CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_9]], v1: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -284,7 +284,7 @@
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="__"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] captures=[{type=undefined|null|number|string|symbol|bigint|[[L_9]] flags=[IsExpected]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_11]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] captures=[{type=undefined|null|number|string|symbol|bigint|[[L_9]] flags=[IsExpected] variableName="d"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_11]]] {
 // CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_9]], v1: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

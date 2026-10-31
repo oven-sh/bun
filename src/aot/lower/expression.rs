@@ -432,7 +432,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         if self.file.decisions().reads_member(inner) {
             self.lower_member_reads(inner);
-        } else if has_dead_zone {
+        } else if has_dead_zone && !self.file.names_only_inlined_constants(inner) {
             lower(self, expression);
         }
         self.emit_constant(constant)

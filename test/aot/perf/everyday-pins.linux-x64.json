@@ -180,8 +180,8 @@
     "untyped": 104.4
   },
   "everyday-arrays/concat": {
-    "typed": 737.7,
-    "untyped": 737.3
+    "typed": 206.9,
+    "untyped": 206.9
   },
   "everyday-arrays/copy-within-a-ring": {
     "typed": 21,
@@ -544,8 +544,8 @@
     "untyped": 559.9
   },
   "everyday-classes/arrow-function-field": {
-    "typed": 15,
-    "untyped": 15
+    "typed": 11,
+    "untyped": 11
   },
   "everyday-classes/bound-method": {
     "typed": 7,
@@ -680,7 +680,7 @@
     "untyped": 12
   },
   "everyday-classes/singleton": {
-    "typed": 11,
+    "typed": 8,
     "untyped": 8
   },
   "everyday-classes/stack-class-over-an-array": {
@@ -1804,8 +1804,8 @@
     "untyped": 173.3
   },
   "everyday-downleveled/spread-list.concat-empty": {
-    "typed": 759.4,
-    "untyped": 752.8
+    "typed": 159.1,
+    "untyped": 160.2
   },
   "everyday-downleveled/spread-list.native": {
     "typed": 6,
@@ -2560,16 +2560,16 @@
     "untyped": 16
   },
   "everyday-kinds-of-types/tuple.destructured": {
-    "typed": 27,
-    "untyped": 27
+    "typed": 26,
+    "untyped": 26
   },
   "everyday-kinds-of-types/tuple.of-a-record-and-a-number": {
     "typed": 28,
     "untyped": 26
   },
   "everyday-kinds-of-types/union.one-or-a-list": {
-    "typed": 15,
-    "untyped": 15
+    "typed": 14,
+    "untyped": 14
   },
   "everyday-lists-of-objects-read-by-name-in-a-loop/a-callback-nobody-knows-reads-a-name-of-each.forEach": {
     "typed": 1646,
@@ -4205,7 +4205,7 @@
   },
   "everyday-spellings/constant.namespace": {
     "typed": 5,
-    "untyped": 6
+    "untyped": 5
   },
   "everyday-spellings/constant.static-readonly": {
     "typed": 5,
@@ -4328,8 +4328,8 @@
     "untyped": 7
   },
   "everyday-spellings/generic.generic-two-uses": {
-    "typed": 10,
-    "untyped": 8
+    "typed": 7,
+    "untyped": 7
   },
   "everyday-spellings/has-a-name.has-own": {
     "typed": 60,
@@ -4612,8 +4612,8 @@
     "untyped": 8
   },
   "everyday-spellings/static.namespace": {
-    "typed": 11,
-    "untyped": 12
+    "typed": 10,
+    "untyped": 8
   },
   "everyday-spellings/static.static-field": {
     "typed": 6,

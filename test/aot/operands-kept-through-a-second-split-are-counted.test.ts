@@ -64,14 +64,15 @@ test.skipIf(process.arch !== "x64")(
 );
 
 // The body of a module has no name. If this program holds no such place any more, take another whose line has two blanks behind the number of the function.
+// Ask a Bun with assertions too: it puts checks into the code that it generates, six times the bytes, so its allocator splits in other places.
 test.skipIf(process.arch !== "x64")(
   "a function without a name is named by its file",
   async () => {
-    const { output } = await countsOf(stored("typed-spread-into-optional-members.ts", "objects"), {
+    const { output } = await countsOf(stored("array-from-of-a-set-with-a-mapper.js", "builtins"), {
       BUN_JSC_airDumpPhaseStats: "1",
     });
     expect(output).toMatch(
-      /^cold uses kept through a second split: \d+, between two defs: 0, in f\d+  \(.*typed-spread-into-optional-members\.ts:1\)$/m,
+      /^cold uses kept through a second split: \d+, between two defs: 0, in f\d+  \(.*array-from-of-a-set-with-a-mapper\.js:1\)$/m,
     );
   },
   300_000,

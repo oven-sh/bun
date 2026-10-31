@@ -136,6 +136,7 @@ impl Build<'_> {
             replaced_exports,
             replaced_builtins: &self.options.load.replaced_builtins,
             runs_in_place: self.options.aot.runs_in_place,
+            ignores_declared_side_effects: self.options.code.ignores_declared_side_effects,
             mocked_modules: match project {
                 ProjectId::Application => &self.options.load.mocked_modules,
                 ProjectId::Runtime => &mocked_modules,

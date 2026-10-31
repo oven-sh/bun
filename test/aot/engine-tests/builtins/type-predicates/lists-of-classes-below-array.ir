@@ -385,20 +385,19 @@ function f7 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="g"
-# CHECK: module=m0 position=422 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=null|int|Array site=w3 flags=[IsExpected, OmitsUndefined]}] results=[{type="list"|"other" site=w4 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything ~ null|int|Array):
-# CHECK-NEXT: v1: null|int|Array = AssumeType v0 provenType=null|int|Array
-# CHECK-NEXT: v2: null|int|Array ~ null|int|L1 = Expect v1 expectedType=undefined|null|number|L1
-# CHECK-NEXT: v3: boolean = TypeTest v2 testedType=Array
-# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2()
+# CHECK: module=m0 position=422 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|L1 site=w3 flags=[IsExpected, OmitsUndefined]}] results=[{type="list"|"other" site=w4 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: anything ~ undefined|null|number|L1):
+# CHECK-NEXT: v1: null|int|Array ~ null|int|L1 = AssumeType v0 provenType=null|int|Array
+# CHECK-NEXT: v2: boolean = TypeTest v1 testedType=Array
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v4: "list" = String string="list"
-# CHECK-NEXT: Jump -> next b3(v4)
+# CHECK-NEXT: v3: "list" = String string="list"
+# CHECK-NEXT: Jump -> next b3(v3)
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v5: "other" = String string="other"
-# CHECK-NEXT: Jump -> next b3(v5)
-# CHECK-NEXT: b3(v6: "list"|"other"):
-# CHECK-NEXT: Return v6
+# CHECK-NEXT: v4: "other" = String string="other"
+# CHECK-NEXT: Jump -> next b3(v4)
+# CHECK-NEXT: b3(v5: "list"|"other"):
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Stack"
 # CHECK: module=m0 position=193 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=Array flags=[IsFromCompiler]}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {

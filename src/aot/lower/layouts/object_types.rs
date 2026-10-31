@@ -168,13 +168,24 @@ impl FileLowering<'_, '_, '_, '_> {
             .iter()
             .filter_map(|&(name, member)| Some((self.describe_name(name)?, member.kind)))
             .collect();
+        let flags = describe_flags(fields.iter().map(|field| listed_member_flags(field.1)));
+        let has_other_optional_members =
+            self.queries.has_other_optional_members_than_mapped_type(ty);
+        let bytes_of_flags: Vec<u8> = match has_other_optional_members {
+            true => flags.0.iter().flat_map(|part| part.to_le_bytes()).collect(),
+            false => Vec::new(),
+        };
         let names = descriptions
             .iter()
-            .map(|(name, kind)| (name.as_slice(), *kind));
+            .map(|(name, kind)| (name.as_slice(), *kind))
+            .chain(
+                has_other_optional_members
+                    .then_some((bytes_of_flags.as_slice(), ObjectMemberKind::Field)),
+            );
         NamesOfObjectType {
             identity: TypeIdentity::of_untyped_members(names),
             is_empty: descriptions.is_empty(),
-            flags: describe_flags(fields.iter().map(|field| listed_member_flags(field.1))),
+            flags,
         }
     }
 

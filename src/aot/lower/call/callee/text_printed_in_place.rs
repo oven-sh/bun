@@ -1,13 +1,14 @@
 use std::cmp::Reverse;
 
 use bun_core::fmt::pow10_exp_1e4_to_1e9;
-use bun_core::strings::{index_of, index_of_char_usize};
+use bun_core::strings::{index_of, index_of_any, index_of_char_usize};
 use bun_sema::bind::{FnOwner, Parent};
 use bun_sema::fold::Constant;
 use bun_sema::hir::{
     BinOp, Chain, ExprId, ExprKind, FnBody, FnId, FnKind, end_of_expr, start_inside_parentheses,
     start_of,
 };
+use rustc_hash::FxHashMap;
 
 use super::{is_identifier_name, needs_no_escape};
 use crate::lower::FileLowering;
@@ -74,6 +75,7 @@ const MARK_OF_DIFFERENCES: u8 = 4;
 const COPY_OF_WRITTEN_TEXT: u8 = 5;
 const LINE_BREAK_WITH_INDENTATION: u8 = 6;
 const TEXT_WITH_PIECE_OF_ITS_OWN: u8 = 7;
+const WRITTEN_TEXT_AS_ESCAPES: u8 = 8;
 
 struct TextFromPrinter {
     start: u32,
@@ -83,12 +85,14 @@ struct TextFromPrinter {
 
 const SMALLEST_COPY: usize = 4;
 
-fn find_where_written_goes_on(written: &[u8], from: usize, next: &[u8]) -> Option<usize> {
+/// The places from `from` on where the written text may go on, in order.
+fn places_where_written_may_go_on(written: &[u8], from: usize) -> impl Iterator<Item = usize> {
     let (mut at, mut passed_over) = (from, 0);
-    while at + SMALLEST_COPY <= written.len() && passed_over < 64 {
-        if written[at..at + SMALLEST_COPY] == next[..SMALLEST_COPY] {
-            return Some(at);
+    std::iter::from_fn(move || {
+        if at + SMALLEST_COPY > written.len() || passed_over >= 64 {
+            return None;
         }
+        let place = at;
         let rest = &written[at..];
         at = match rest {
             [b'/', b'/', ..] => {
@@ -102,11 +106,132 @@ fn find_where_written_goes_on(written: &[u8], from: usize, next: &[u8]) -> Optio
                 at + 1
             }
         };
+        Some(place)
+    })
+}
+
+/// Printed text that is not in the file, like the escapes of a long literal, asks from one place for each of its bytes: from the second time on a table answers.
+#[derive(Default)]
+struct WhereWrittenGoesOn {
+    asked_from: Option<usize>,
+    places: Option<PlacesByText>,
+}
+
+struct PlacesByText {
+    begins_a_text: [bool; 256],
+    first_place_of: FxHashMap<[u8; SMALLEST_COPY], usize>,
+}
+
+impl WhereWrittenGoesOn {
+    #[inline]
+    fn find(&mut self, written: &[u8], from: usize, next: &[u8]) -> Option<usize> {
+        if self.asked_from == Some(from)
+            && let Some(places) = &self.places
+        {
+            if !places.begins_a_text[next[0] as usize] {
+                return None;
+            }
+            let next: [u8; SMALLEST_COPY] = next[..SMALLEST_COPY].try_into().unwrap();
+            return places.first_place_of.get(&next).copied();
+        }
+        self.find_without_table(written, from, next)
     }
-    None
+
+    /// How many bytes at the head of `next` begin no text that the written text could go on with from `from`.
+    fn count_bytes_that_begin_nothing(&self, from: usize, next: &[u8], also_stops: u8) -> usize {
+        match &self.places {
+            Some(places) if self.asked_from == Some(from) => next
+                .iter()
+                .take_while(|&&byte| {
+                    !places.begins_a_text[byte as usize] && byte != b'\n' && byte != also_stops
+                })
+                .count(),
+            _ => 0,
+        }
+    }
+
+    fn find_without_table(&mut self, written: &[u8], from: usize, next: &[u8]) -> Option<usize> {
+        let next: [u8; SMALLEST_COPY] = next[..SMALLEST_COPY].try_into().unwrap();
+        let text_at = |at: usize| -> [u8; SMALLEST_COPY] {
+            written[at..at + SMALLEST_COPY].try_into().unwrap()
+        };
+        if self.asked_from != Some(from) {
+            self.asked_from = Some(from);
+            self.places = None;
+            return places_where_written_may_go_on(written, from).find(|&at| text_at(at) == next);
+        }
+        let mut places = PlacesByText {
+            begins_a_text: [false; 256],
+            first_place_of: FxHashMap::default(),
+        };
+        for at in places_where_written_may_go_on(written, from) {
+            places.begins_a_text[written[at] as usize] = true;
+            places.first_place_of.entry(text_at(at)).or_insert(at);
+        }
+        let found = places.first_place_of.get(&next).copied();
+        self.places = Some(places);
+        found
+    }
 }
 
 /// What stands behind `markOfDifferences`. `written` starts at `start` in the file. `is_kept_whole`: no type is cut out of that piece of the file.
+/// Bun's printer writes a character of a text that is not ASCII as `\xNN`, `\uNNNN` or two of those. How many bytes of `written`, all of
+/// them such characters, `printed` begins with in that form, and how many bytes they are there.
+fn count_written_printed_as_escapes(written: &[u8], printed: &[u8]) -> (usize, usize) {
+    const DIGITS: &[u8; 16] = b"0123456789ABCDEF";
+    let digit = |number: u32, shift: u32| DIGITS[(number >> shift) as usize & 15];
+    let unit = |unit: u32| {
+        [
+            b'\\',
+            b'u',
+            digit(unit, 12),
+            digit(unit, 8),
+            digit(unit, 4),
+            digit(unit, 0),
+        ]
+    };
+    let (mut read, mut shown) = (0, 0);
+    loop {
+        let low = |byte: u8| u32::from(byte & 0x3F);
+        let (character, size) = match written[read..] {
+            [a @ 0xC2..=0xDF, b, ..] => (u32::from(a & 0x1F) << 6 | low(b), 2),
+            [a @ 0xE0..=0xEF, b, c, ..] => (u32::from(a & 0x0F) << 12 | low(b) << 6 | low(c), 3),
+            [a @ 0xF0..=0xF4, b, c, d, ..] => (
+                u32::from(a & 0x07) << 18 | low(b) << 12 | low(c) << 6 | low(d),
+                4,
+            ),
+            _ => break,
+        };
+        let mut escaped = [0; 12];
+        let length = match character {
+            ..=0xFF => {
+                escaped[..4].copy_from_slice(&[
+                    b'\\',
+                    b'x',
+                    digit(character, 4),
+                    digit(character, 0),
+                ]);
+                4
+            }
+            0x100..=0xFFFF => {
+                escaped[..6].copy_from_slice(&unit(character));
+                6
+            }
+            _ => {
+                escaped[..6].copy_from_slice(&unit(0xD800 + ((character - 0x10000) >> 10)));
+                escaped[6..].copy_from_slice(&unit(0xDC00 + ((character - 0x10000) & 0x3FF)));
+                12
+            }
+        };
+        if !printed[shown..].starts_with(&escaped[..length]) {
+            break;
+        }
+        read += size;
+        shown += length;
+    }
+    (read, shown)
+}
+
 fn find_differences_from_written(
     printed: &[u8],
     written: &[u8],
@@ -116,6 +241,7 @@ fn find_differences_from_written(
 ) -> Vec<u8> {
     let mut differences = Vec::with_capacity(printed.len() / 8 + 8);
     let mut inner = inner.iter().peekable();
+    let mut where_written_goes_on = WhereWrittenGoesOn::default();
     let (mut at, mut end_of_copied) = (0, 0);
     while at < printed.len() {
         let next = &printed[at..];
@@ -130,9 +256,48 @@ fn find_differences_from_written(
                 &inner.printed[..],
             )
         });
+        if next[0] == b'\\' {
+            let rest = &written[end_of_copied..];
+            let passed_over = rest.iter().take(64).position(|&byte| byte >= 0x80);
+            let passed_over = passed_over.unwrap_or(rest.len());
+            let (size, shown) = count_written_printed_as_escapes(&rest[passed_over..], next);
+            let (from, to) = (
+                end_of_copied + passed_over,
+                end_of_copied + passed_over + size,
+            );
+            if size > 0
+                && next_inner.is_none_or(|(start_of_inner, ..)| start_of_inner >= to)
+                && is_kept_whole(start + from as u32, start + to as u32)
+            {
+                differences.push(WRITTEN_TEXT_AS_ESCAPES);
+                push_number(&mut differences, passed_over as u64);
+                push_number(&mut differences, size as u64);
+                end_of_copied = to;
+                at += shown;
+                continue;
+            }
+        }
+        // Neither a copy nor a piece of its own nor a line break begins in these, so each would be written out by itself.
+        let begins_inner = match next_inner {
+            Some((_, _, [first, ..])) => Some(*first),
+            Some(_) => None,
+            None => Some(b'\n'),
+        };
+        if let Some(begins_inner) = begins_inner {
+            let run = where_written_goes_on.count_bytes_that_begin_nothing(
+                end_of_copied,
+                next,
+                begins_inner,
+            );
+            if run > 0 {
+                differences.extend_from_slice(&next[..run]);
+                at += run;
+                continue;
+            }
+        }
         let may_be_copied = next.len() >= SMALLEST_COPY && !matches!(next[0], b' ' | b'\n');
         let found = match may_be_copied {
-            true => find_where_written_goes_on(written, end_of_copied, next),
+            true => where_written_goes_on.find(written, end_of_copied, next),
             false => None,
         };
         if let Some((start_of_inner, end_of_inner, printed_inner)) = next_inner
@@ -275,12 +440,18 @@ impl FileLowering<'_, '_, '_, '_> {
         let transpiled = self.transpiled.as_ref();
         let functions = transpiled.map_or(&[][..], |transpiled| transpiled.printed_functions());
         let places = self.find_places_of_text_from_printer();
-        let is_mark =
-            |byte: &u8| (MARK_OF_TEXT_FROM_PRINTER..=TEXT_WITH_PIECE_OF_ITS_OWN).contains(byte);
+        const MARKS: [u8; 6] = [
+            MARK_OF_TEXT_FROM_PRINTER,
+            MARK_OF_DIFFERENCES,
+            COPY_OF_WRITTEN_TEXT,
+            LINE_BREAK_WITH_INDENTATION,
+            TEXT_WITH_PIECE_OF_ITS_OWN,
+            WRITTEN_TEXT_AS_ESCAPES,
+        ];
         let mut texts: Vec<TextFromPrinter> = functions
             .iter()
             .zip(places)
-            .filter(|(function, _)| !function.text.iter().any(is_mark))
+            .filter(|(function, _)| index_of_any(&function.text, &MARKS).is_none())
             .filter_map(|(function, place)| {
                 let (start, end, is_in_brackets) = place?;
                 let mut printed = Vec::with_capacity(function.text.len() + 2);
@@ -312,9 +483,7 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             around.push(index);
         }
-        let is_kept_whole = |from: u32, to: u32| {
-            self.type_ranges.map_offset(to) - self.type_ranges.map_offset(from) == to - from
-        };
+        let is_kept_whole = |from: u32, to: u32| self.type_ranges.keeps_as_written(from, to);
         let told = texts.iter().zip(&inner).map(|(text, inner)| {
             let written = &self.hir.text[text.start as usize..text.end as usize];
             let differences = find_differences_from_written(

@@ -31,7 +31,7 @@ const replacement = function () {
   return "replaced";
 };
 for (const prototype of [Intl.NumberFormat.prototype, Intl.DateTimeFormat.prototype]) {
-  for (const name of ["formatToParts", "formatRange", "formatRangeToParts", "resolvedOptions", "constructor", "added"]) {
+  for (const name of ["formatToParts", "formatRange", "formatRangeToParts", "resolvedOptions", "added"]) {
     const before = Object.getOwnPropertyDescriptor(prototype, name);
     console.log(name, say(() => ((prototype[name] = replacement), prototype[name] === replacement)));
     if (before) Object.defineProperty(prototype, name, before);

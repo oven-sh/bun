@@ -670,11 +670,14 @@ impl<'a, 's> FileBinder<'a, 's> {
     // A mock that stands in place of the module has its own names alone.
     fn find_unlisted_name(&self, module: ModuleRef, name: Atom) -> Option<RequiredName> {
         let context = self.context;
-        let rule = context.modules.interop(module).export_rule;
-        let is_unlisted = rule == SyntheticExportRule::RuntimeModule
-            && (context.mocked.contains(module)
-                || !context.known_members.has(context.modules, module, name));
-        is_unlisted.then(|| RequiredName::new(module, name))
+        if context.modules.interop(module).export_rule != SyntheticExportRule::RuntimeModule {
+            return None;
+        }
+        let is_listed = context.known_members.has(context.modules, module, name);
+        (!is_listed || context.mocked.contains(module)).then(|| RequiredName {
+            is_found_unless_mocked: is_listed,
+            ..RequiredName::new(module, name)
+        })
     }
 
     // A mock that comes before a CommonJS file is loaded stands for the whole file, whatever its text stores: the link of a module that asks for a name that the mock leaves out fails.

@@ -49,6 +49,9 @@ pub struct CompiledPackageName {
     pub imported: Option<u32>,
     /// The name is that of a package with `exports`: below it only what is written down is found.
     pub hides_other_paths: bool,
+    /// The build asked for the name that way, and the `exports` of its package turned it away.
+    pub is_hidden_from_require: bool,
+    pub is_hidden_from_import: bool,
 }
 
 /// `package_names::FurtherPackageName`, as the executable holds it.
@@ -225,6 +228,14 @@ fn segments_below_public_root<'p>(
     }
     push_segments(&mut kept, segments.chain(split_path(written)));
     Some(kept)
+}
+
+/// The public path of the folder that `relative` leads to from the root directory of the build, without a trailing `/`.
+pub(crate) fn public_path_from_root(public_root: &[u8], relative: &[u8]) -> Vec<u8> {
+    let mut kept = Vec::new();
+    push_segments(&mut kept, split_path(relative));
+    let path = [public_root, &kept.join(&b"/"[..])].concat();
+    path.strip_suffix(b"/").unwrap_or(&path).to_vec()
 }
 
 /// The public path a file would have, without a trailing `/`.
@@ -759,6 +770,16 @@ impl CompiledProgram {
                 .is_ok_and(|position| further[position].hides_other_paths)
     }
 
+    fn is_hidden_name(&self, path: &[u8], is_require: bool) -> bool {
+        let position = self
+            .package_names
+            .binary_search_by_key(&path, |name| name.path);
+        position.is_ok_and(|position| match is_require {
+            true => self.package_names[position].is_hidden_from_require,
+            false => self.package_names[position].is_hidden_from_import,
+        })
+    }
+
     /// What "paths" and "baseUrl" of the tsconfig.json that applies in `source_dir` map a bare `specifier` to, in the order of `Resolver::match_tsconfig_paths`.
     fn resolve_path_alias(
         &self,
@@ -897,6 +918,9 @@ impl CompiledProgram {
                 let mut segments = folders.clone();
                 segments.push(b"node_modules");
                 let node_modules = [public_root, &segments.join(&b"/"[..]), b"/"].concat();
+                if self.is_hidden_name(&[&node_modules[..], specifier].concat(), is_require) {
+                    return Hidden;
+                }
                 if let Some(package) = package
                     && self.hides_other_paths(&[&node_modules[..], package].concat())
                 {
@@ -1557,6 +1581,11 @@ mod tests {
                 b"/$bunfs/root/node_modules/orm/index.js",
             ];
 
+            const HIDDEN_FROM_REQUIRE: [&[u8]; 2] = [
+                b"/$bunfs/root/node_modules/driver/lib/absent.js",
+                b"/$bunfs/root/node_modules/orm/index.js",
+            ];
+
             fn find_file(path: &[u8]) -> Option<&'static [u8]> {
                 FILES.into_iter().find(|&file| file == path)
             }
@@ -1569,7 +1598,7 @@ mod tests {
                     module_path: path,
                 });
                 let order = (0..FILES.len() as u32).collect();
-                let names: [(&[u8], Option<u32>, Option<u32>, bool); 7] = [
+                let names: [(&[u8], Option<u32>, Option<u32>, bool); 9] = [
                     (b"/$bunfs/root/node_modules/@scope/closed", None, None, true),
                     (
                         b"/$bunfs/root/node_modules/@scope/closed/feature",
@@ -1580,7 +1609,9 @@ mod tests {
                     (b"/$bunfs/root/node_modules/both", Some(4), Some(3), true),
                     (b"/$bunfs/root/node_modules/driver", Some(1), Some(1), false),
                     (b"/$bunfs/root/node_modules/driver/", Some(2), None, false),
+                    (HIDDEN_FROM_REQUIRE[0], None, None, false),
                     (b"/$bunfs/root/node_modules/orm/", None, None, false),
+                    (HIDDEN_FROM_REQUIRE[1], None, Some(8), false),
                     (
                         b"/$bunfs/root/node_modules/orm/node_modules/driver",
                         Some(5),
@@ -1594,6 +1625,8 @@ mod tests {
                         required,
                         imported,
                         hides_other_paths,
+                        is_hidden_from_require: HIDDEN_FROM_REQUIRE.contains(&path),
+                        is_hidden_from_import: false,
                     }
                 });
                 let program = CompiledProgram::new(
@@ -1701,6 +1734,16 @@ mod tests {
                 let directory = [&b"driver"[..], &[bun_paths::SEP]].concat();
                 assert_eq!(require(ROOT, &directory), Found(FILES[2]));
                 assert_eq!(require(ROOT, b"driver"), Found(FILES[1]));
+            }
+
+            #[test]
+            fn name_that_the_build_saw_turned_away_is_hidden() {
+                assert_eq!(require(ROOT, b"orm/index.js"), Hidden);
+                assert_eq!(require(b"/$bunfs/root/lib/deep/", b"orm/index.js"), Hidden);
+                assert_eq!(require(ROOT, b"driver/lib/absent.js"), Hidden);
+                assert_eq!(require(ROOT, b"orm/index"), Found(FILES[8]));
+                let imported = find_in(&program(false), ROOT, b"orm/index.js", false);
+                assert_eq!(imported, Found(FILES[8]));
             }
 
             #[test]

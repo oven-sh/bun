@@ -729,6 +729,27 @@ const projects: Record<string, Record<string, string>> = {
     "uses-them.test.ts": `import { name } from "./shared/value"; import { inner } from "./shared/space"; import type { Kind } from "./shared/kind"; import { other } from "./shared/partly"; import standard from "./shared/standard"; ${head}
       test("they are there", () => { const kind: Kind = { level: 2 }; console.log("they are there:", name, inner, kind.level, other, standard); });`,
   },
+  "a name that a test file imports twice": {
+    "shared/one.ts": `console.log("one.ts runs"); export const name = "name of one.ts"; export const other = "other of one.ts"; export default "default of one.ts";`,
+    "shared/two.ts": `console.log("two.ts runs"); export const name = 2; export const other = 22; export default 222;`,
+    "shared/kind.ts": `console.log("kind.ts runs"); export interface name { level: number }`,
+    "built-in.test.ts": `import { test, mock } from "bun:test"; import { mock } from "bun:test"; test("from a built-in module", () => { console.log("from a built-in module:", typeof mock); });`,
+    "two-built-ins.test.ts": `import { join as name } from "node:path"; import { basename as name } from "node:path"; ${head} test("two of a built-in module", () => { console.log("two of a built-in module:", name("a/b")); });`,
+    "one-file.test.ts": `import { name } from "./shared/one"; import { name } from "./shared/one"; ${head} test("from one file", () => { console.log("from one file:", name); });`,
+    "two-files.test.ts": `import { name } from "./shared/one"; import { name } from "./shared/two"; ${head} test("from two files", () => { console.log("from two files:", name + 1); });`,
+    "partly.test.ts": `import { name, other } from "./shared/one"; import { name } from "./shared/two"; ${head} test("one of two", () => { console.log("one of two:", name + 1, other); });`,
+    "three.test.ts": `import { name } from "./shared/two"; import name from "./shared/two"; import { other as name } from "./shared/one"; ${head} test("three times", () => { console.log("three times:", name); });`,
+    "space.test.ts": `import { name } from "./shared/one"; import * as name from "./shared/two"; ${head} test("a namespace", () => { console.log("a namespace:", Object.keys(name).join(), name.name + 1); });`,
+    "statement.test.ts": `import name, * as name from "./shared/two"; import other, { other } from "./shared/two"; ${head} test("in one statement", () => { console.log("in one statement:", name + 1, other + 1); });`,
+    "type-first.test.ts": `import { name } from "./shared/kind"; import { name } from "./shared/two"; ${head} test("a type first", () => { console.log("a type first:", name + 1); });`,
+    "type-behind.test.ts": `import { name } from "./shared/two"; import type { name } from "./shared/kind"; ${head} test("a type by its syntax", () => { console.log("a type by its syntax:", name + 1); });`,
+    "interface-between.test.ts": `import { name } from "./shared/one"; interface name { level: number } import { name } from "./shared/two"; ${head} test("an interface between", () => { console.log("an interface between:", name + 1); });`,
+    "required.test.ts": `import { name } from "./shared/one"; import name = require("./shared/two"); ${head} test("import = require", () => { console.log("import = require:", name.name + 1); });`,
+    "own.test.ts": `import { name } from "./shared/one"; import { name } from "./shared/two"; ${head} const name = "own const"; test("and the file's own", () => { console.log("and the file's own:", name); });`,
+    "unused.test.ts": `import { name } from "./shared/one"; import { name } from "./shared/two"; ${head} test("never read", () => { console.log("never read"); });`,
+    "uses-them.test.ts": `import { name } from "./shared/one"; import { other } from "./shared/two"; import type { name as Kind } from "./shared/kind"; ${head}
+      test("they are there", () => { const kind: Kind = { level: 2 }; console.log("they are there:", name, other, kind.level); });`,
+  },
   "names imported from a CommonJS file that hands on the exports of another": {
     "node_modules/dep/package.json": `{ "name": "dep", "version": "1.0.0", "main": "./index.js" }`,
     "node_modules/dep/index.js": `exports.x = function x() { return "x of dep"; }; exports.y = 2;`,
@@ -918,6 +939,7 @@ const shareARunInLayers = [
   "a file of data that one statement imports, found by a name made at run time where the importer has not run",
   "require() of a file of data that another test file's modules import",
   "built-in modules that only the test file names",
+  "a name that a test file imports twice",
 ];
 
 // The results of each folder, and what the whole run printed.

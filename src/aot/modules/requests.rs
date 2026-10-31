@@ -35,6 +35,7 @@ use bun_sema::program::{
 use bun_sema::resolve::{CodeFailure, ExternalKind};
 use bun_sema::util::{FxHashMap, FxHashSet};
 use core::ops::Range;
+use std::collections::hash_map::Entry;
 
 const MAX_SCANNED_REQUESTS: usize = 16;
 
@@ -184,6 +185,7 @@ pub(super) fn leave_imports_of_test_files_to_loader(
         .collect();
     let (cycle_of, _) = strongly_connected_components(&edges);
     statements.retain(|it| cycle_of[it.importer.idx()] != cycle_of[it.target.idx()]);
+    let mut first_statements: FxHashMap<(FileId, FileId), ModuleRef> = FxHashMap::default();
     for statement in &statements {
         let &Statement {
             importer,
@@ -193,14 +195,15 @@ pub(super) fn leave_imports_of_test_files_to_loader(
             target,
         } = statement;
         let scan = scans.find_mut(importer).expect("the file was scanned");
-        // The loader has one module under two spellings of its path. So has the importer: the first spelling stands for both.
-        let known = scan.left_to_loader.iter().find(|it| it.1 == target);
-        let is_new = known.is_none();
-        let left = ModuleRef::External {
+        // The loader has one module under two spellings of its path, and under two types: `with { type: "yaml" }` and `with { type: "text" }` of one
+        // file get what the first of them loaded. So has the importer: the first statement stands for all.
+        let first = first_statements.entry((importer, target));
+        let is_new = matches!(first, Entry::Vacant(_));
+        let left = *first.or_insert(ModuleRef::External {
             importer,
-            specifier: known.map_or(specifier, |it| it.0),
+            specifier,
             type_attribute,
-        };
+        });
         scan.sites[site] = ScannedSite::Module(left);
         if !scan.left_to_loader.contains(&(specifier, target)) {
             scan.left_to_loader.push((specifier, target));
@@ -494,6 +497,17 @@ impl FileScanner<'_, '_> {
                     type_attribute: None,
                 });
             }
+            (Err(CodeFailure::ModuleNotFound), SiteForm::Declaration)
+                if self.may_be_written_by_program(site, specifier) =>
+            {
+                self.externals
+                    .push((specifier, ExternalKind::UncompiledCode));
+                return ScannedSite::Module(ModuleRef::External {
+                    importer: self.file,
+                    specifier,
+                    type_attribute: None,
+                });
+            }
             (Ok(ScannedSite::Erased), SiteForm::Load) => CodeFailure::ModuleNotFound,
             (Ok(ScannedSite::Erased), SiteForm::Declaration) if is_jsx_site(site.kind) => {
                 CodeFailure::ModuleNotFound
@@ -543,14 +557,18 @@ impl FileScanner<'_, '_> {
     // there yet. The loader of the run time is asked when the call runs, and fails as in plain Bun where the file is still missing.
     fn may_be_written_by_program(&self, site: &ImportSite, specifier: Atom) -> bool {
         let specifier = self.files.atoms.bytes(specifier);
-        let loads = matches!(
-            site.kind,
+        let is_asked_behind_other_code = match site.kind {
             ImportSiteKind::ImportCall(_)
-                | ImportSiteKind::Require(_)
-                | ImportSiteKind::ImportMetaRequire(_)
-        );
+            | ImportSiteKind::Require(_)
+            | ImportSiteKind::ImportMetaRequire(_) => true,
+            // A test file is loaded behind the test files in front of it, and what one of those writes is there by then.
+            ImportSiteKind::Import(_)
+            | ImportSiteKind::ExportFrom(_)
+            | ImportSiteKind::ExportStar(_) => self.runs_tests,
+            _ => false,
+        };
         self.loads_code_from_disk
-            && loads
+            && is_asked_behind_other_code
             && is_path_that_program_may_write(self.sources.public_path(self.file), specifier)
     }
 

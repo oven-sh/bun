@@ -345,7 +345,7 @@ fn resolve_at_run_time<'r>(
         CodeResolution::NotFound(CodeFailure::ModuleNotFound) => {
             is_load && bun_paths::is_absolute(specifier)
         }
-        // `./a.ts?fresh=1` is one more instance of the file, which only code from disk can be.
+        // `./a.ts?fresh=1` is one more module of the file. Where the program holds none, `CodeHost::holds_modules_with_queries`, only code from disk can be one.
         CodeResolution::NotFound(CodeFailure::QueryString) => kind == ExternalKind::UncompiledCode,
         _ => false,
     };

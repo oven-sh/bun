@@ -45,6 +45,7 @@ use crate::load::loaders::{
     to_host_loader_of_attribute,
 };
 use crate::load::macros;
+use crate::load::modules_with_queries::ModulesWithQueries;
 use crate::load::named_loads::{
     find_library_modules_named_in_choices, find_loads_of_files_missing_at_build,
 };
@@ -54,7 +55,9 @@ use crate::load::runtime_declarations;
 use crate::load::runtime_modules::{RuntimeModules, RuntimeResolution};
 use crate::load::runtime_types;
 use crate::load::source_provider::{SourceFile, SourceProvider};
-use crate::load::sources::{ParsedSource, PluginModuleName, SourceKind, parsed_source_mut};
+use crate::load::sources::{
+    FileWithQuery, ParsedSource, PluginModuleName, SourceKind, parsed_source_mut,
+};
 use crate::load::test_runner_names;
 use crate::load::worker_files::find_file_named_as_in_executable;
 use crate::load::{is_host_path, is_in_node_modules};
@@ -124,6 +127,7 @@ pub(crate) struct LoadHost<'a> {
     disk: &'a Disk,
     input: LoadHostInput<'a>,
     plugins: PluginModules<'a>,
+    modules_with_queries: ModulesWithQueries,
     evaluated_texts: EvaluatedTexts,
     react_compiler: ReactCompiler<'a>,
     entry_point_paths: Vec<Vec<u8>>,
@@ -224,6 +228,7 @@ impl<'a> LoadHost<'a> {
         LoadHost {
             disk,
             plugins: PluginModules::new(provider, disk, messages, &load.in_memory_files),
+            modules_with_queries: ModulesWithQueries::default(),
             evaluated_texts: EvaluatedTexts::new(),
             react_compiler: ReactCompiler::new(load.react_compiler, provider, messages),
             binary_entry_point_paths: binary_entry_point_paths.collect(),
@@ -354,7 +359,7 @@ impl<'a> LoadHost<'a> {
     }
 
     fn plugin_loader(&self, path: &[u8]) -> Option<Loader> {
-        let module = self.plugins.loaded(path)?;
+        let module = (self.plugins).loaded(self.modules_with_queries.file_behind(path))?;
         module.is_from_plugin.then_some(module.loader)
     }
 
@@ -380,7 +385,8 @@ impl<'a> LoadHost<'a> {
         let (provider, messages) = (self.input.provider, self.input.messages);
         let mut are_assets = true;
         for path in &paths {
-            let contents = match self.plugins.read(path, self.default_loader(path)) {
+            let file = self.modules_with_queries.file_behind(path);
+            let contents = match self.plugins.read(file, self.default_loader(file)) {
                 ModuleText::Text(contents) => contents,
                 ModuleText::Failed => continue,
                 ModuleText::Deferred | ModuleText::Missing => {
@@ -396,12 +402,12 @@ impl<'a> LoadHost<'a> {
                 are_assets = false;
                 continue;
             }
-            let file = SourceFile {
-                path: self.plugins.provider_path(path),
+            let source = SourceFile {
+                path: self.plugins.provider_path(file),
                 contents: &contents,
                 loader: Loader::File,
             };
-            let _ = messages.with_log(|log| provider.set_embedded_contents(&file, log));
+            let _ = messages.with_log(|log| provider.set_embedded_contents(&source, log));
         }
         // The names were checked when these files had no contents yet.
         if self.reads_in_background_after_load && !paths.is_empty() {
@@ -513,6 +519,7 @@ impl Host for LoadHost<'_> {
     delegate_host_services_to_disk!(disk);
 
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
+        let path = self.modules_with_queries.file_behind(path);
         match self.served_by(path) {
             ServedBy::PluginModule => match self.plugins.read(path, self.default_loader(path)) {
                 ModuleText::Text(text) => Some(text),
@@ -527,6 +534,7 @@ impl Host for LoadHost<'_> {
 
     // The files that run have been read by now, each through the plugins.
     fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {
+        let path = self.modules_with_queries.file_behind(path);
         let is_on_disk = matches!(self.served_by(path), ServedBy::Disk);
         if is_on_disk && !self.plugins.was_read(path) && !self.is_background_read(path) {
             return without_commonjs_wrapper(self.disk.read_source(path));
@@ -541,6 +549,7 @@ impl Host for LoadHost<'_> {
     }
 
     fn file_stamp(&self, path: &[u8]) -> Option<FileStamp> {
+        let path = self.modules_with_queries.file_behind(path);
         match self.served_by(path) {
             ServedBy::Declarations(_) | ServedBy::RuntimeTypes => Some(FileStamp::IMMUTABLE),
             ServedBy::Disk if !self.plugins.was_read(path) && !self.is_background_read(path) => {
@@ -552,7 +561,7 @@ impl Host for LoadHost<'_> {
 
     fn is_file(&self, path: &[u8]) -> bool {
         if !is_host_path(path) {
-            return self.disk.is_file(path);
+            return (self.disk).is_file(self.modules_with_queries.file_behind(path));
         }
         match self.served_by(path) {
             ServedBy::PluginModule
@@ -771,6 +780,27 @@ impl CodeHost for LoadHost<'_> {
         }
     }
 
+    // A test run has a loader, which reads the file again.
+    fn holds_modules_with_queries(&self) -> bool {
+        !self.input.options.load.runs_tests
+    }
+
+    fn add_module_with_query(&self, path: &[u8], query: &[u8]) -> Option<Vec<u8>> {
+        let loader = self.default_loader(path);
+        let is_text_of_module = script_kind_of(loader).is_some()
+            || parses_text_as_data(loader)
+            || loader == Loader::File;
+        let is_file_of_program = matches!(self.served_by(path), ServedBy::Disk)
+            && !is_bundled(path)
+            && !is_declaration_file_name(path);
+        (is_text_of_module && is_file_of_program)
+            .then(|| self.modules_with_queries.add(path, query))
+    }
+
+    fn file_of_module<'p>(&'p self, path: &'p [u8]) -> &'p [u8] {
+        self.modules_with_queries.file_behind(path)
+    }
+
     fn directory_of<'p>(&self, path: &'p [u8]) -> Cow<'p, [u8]> {
         let working_directory = &self.input.options.code.working_directory;
         match (self.plugins).directory_of_virtual_module(path, working_directory) {
@@ -865,6 +895,7 @@ impl CodeHost for LoadHost<'_> {
     }
 
     fn read_code(&self, path: &[u8]) -> CodeRead {
+        let path = self.modules_with_queries.file_behind(path);
         let served_by = self.served_by(path);
         match served_by {
             ServedBy::EvaluatedText => {
@@ -890,6 +921,7 @@ impl CodeHost for LoadHost<'_> {
     }
 
     fn is_read_by_plugin(&self, path: &[u8]) -> bool {
+        let path = self.modules_with_queries.file_behind(path);
         self.should_ask_plugins(self.served_by(path), path) && self.plugins.has_load_plugin(path)
     }
 
@@ -921,6 +953,7 @@ impl CodeHost for LoadHost<'_> {
     }
 
     fn read_in_background(&self, path: &[u8]) {
+        let path = self.modules_with_queries.file_behind(path);
         self.plugins.read(path, self.default_loader(path));
     }
 
@@ -961,6 +994,10 @@ impl CodeHost for LoadHost<'_> {
                 payload: Some(Box::new(ParsedSource {
                     byte_count: text.len(),
                     parse_failure: Some(b"an earlier compile could not take the file".to_vec()),
+                    // Elsewhere the loader reads the file on disk.
+                    text_that_fails_at_load: (!self.input.options.load.runs_tests
+                        && !self.input.options.aot.runs_in_place)
+                        .then(|| text.into()),
                     ..ParsedSource::new(SourceKind::Program, Loader::Js)
                 })),
             };
@@ -983,9 +1020,16 @@ impl CodeHost for LoadHost<'_> {
             namespace: namespace.into(),
             path: path.into(),
         });
+        let file_with_query = || {
+            let module = self.modules_with_queries.find(path)?;
+            Some(FileWithQuery {
+                file: module.file.as_slice().into(),
+                query: module.query.as_slice().into(),
+            })
+        };
         let parse_data = |loader: Loader, plugin_module: Option<PluginModuleName>| {
             let source = SourceFile {
-                path: self.plugins.provider_path(path),
+                path: (self.plugins).provider_path(self.modules_with_queries.file_behind(path)),
                 contents: text,
                 loader,
             };
@@ -1001,6 +1045,7 @@ impl CodeHost for LoadHost<'_> {
                     byte_count: text.len(),
                     is_from_plugin,
                     plugin_module,
+                    file_with_query: file_with_query(),
                     web_assembly: parsed.web_assembly,
                     is_page: parsed.is_page,
                     ..ParsedSource::new(SourceKind::Data, loader)
@@ -1074,6 +1119,7 @@ impl CodeHost for LoadHost<'_> {
                 byte_count: text.len(),
                 is_from_plugin,
                 plugin_module,
+                file_with_query: file_with_query(),
                 parse_failure,
                 is_language_assumed,
                 ..ParsedSource::new(source_kind, loader)
@@ -1174,6 +1220,7 @@ impl CodeHost for LoadHost<'_> {
             };
             source.files_missing_at_build_at = find_loads_of_files_missing_at_build(
                 request,
+                self.input.options.load.runs_tests,
                 &|written| is_there(written) || is_there(&from_native(written)),
                 &|written| parses_text_as_data(self.default_loader(written)),
             );

@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { measureCommandWithMemory } from "./analysis-scaling/measure-check";
 import { withThreads } from "./harness/flags";
+import { reads } from "./harness/reads";
 import type { Program } from "./long-functions-programs";
 
 async function costOfBuild(program: Program, flags: readonly string[] = []) {
@@ -55,5 +56,6 @@ export async function expectPeakBytesForEachItem(
     writeProgramOfSize(size),
     peakBytes => (peakBytes - withNone) / size < mostBytesForEachItem,
   );
+  reads(`the peak of a build of ${size} items`, (withAll - withNone) / size, mostBytesForEachItem, "bytes an item");
   expect((withAll - withNone) / size).toBeLessThan(mostBytesForEachItem);
 }

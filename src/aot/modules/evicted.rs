@@ -35,6 +35,8 @@ pub(super) struct EvictedModules {
     is_every_export_asked_for: bool,
     /// The text of a copy names a file that nobody knows.
     copies_name_any_file: bool,
+    /// A file names the table, or lets go of something that leads there: it may get at the entry of a file, and store other `exports` in it.
+    is_table_reached: bool,
 }
 
 impl EvictedModules {
@@ -44,6 +46,10 @@ impl EvictedModules {
 
     pub(super) fn is_every_module(&self) -> bool {
         self.is_every_module
+    }
+
+    pub(super) fn is_table_reached(&self) -> bool {
+        self.is_every_module || self.is_table_reached
     }
 
     pub(super) fn iter(&self) -> impl Iterator<Item = ModuleRef> + '_ {
@@ -330,6 +336,7 @@ pub(super) fn find_evicted_modules(
             evicted.is_every_module = true;
         }
         evicted.is_every_export_asked_for |= builtins.reaches_module_cache();
+        evicted.is_table_reached |= builtins.reaches_module_cache();
         let (hir, bound) = (input.files.hir(file), input.files.bound(file));
         let (analysis, scan) = (input.files.analysis(file), scans.of(file));
         // A CommonJS file whose body throws is out of the table, and the next `require()` runs it again.

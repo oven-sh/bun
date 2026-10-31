@@ -324,10 +324,59 @@ impl Usage {
     }
 }
 
-/// A part that many trees share is not copied for a merge that adds nothing.
+/// `Usage::merge()` for a part. A part that many trees share is copied where the merge adds something to it, and not before. The merge finds that out itself, in its
+/// one walk over the two trees: to compare them first, at every level again, takes the square of the height of a tree.
 fn merge_part(own: &mut Rc<Usage>, walk: &mut Walk, other: &Rc<Usage>) {
-    if !Rc::ptr_eq(own, other) && **own != **other {
-        Rc::make_mut(own).merge(walk, other);
+    if Rc::ptr_eq(own, other) || (walk.is_out_of_budget() && !walk.looks_at_every_use_of(own)) {
+        return;
+    }
+    if !own.facts.contains(other.facts) || other.arms.iter().any(|arm| !own.arms.contains(arm)) {
+        let own = Rc::make_mut(own);
+        own.facts |= other.facts;
+        for &arm in &other.arms {
+            own.add_arm(arm);
+        }
+    }
+    if walk.is_out_of_budget() {
+        return;
+    }
+    for member in &other.members {
+        let found = own.members.iter().position(|own| own.name == member.name);
+        match found {
+            Some(found) => {
+                let mut part = Rc::clone(&own.members[found].usage);
+                merge_part(&mut part, walk, &member.usage);
+                if !Rc::ptr_eq(&part, &own.members[found].usage) {
+                    Rc::make_mut(own).members[found].usage = part;
+                }
+            }
+            None if walk.enter_all_nodes_of(&member.usage) => {
+                Rc::make_mut(own).members.push(member.clone());
+            }
+            None if walk.enter_node() => {
+                let part = Rc::make_mut(own).member_mut(member.name);
+                part.merge(walk, &member.usage);
+            }
+            None => {}
+        }
+    }
+    match (&own.elements, &other.elements) {
+        (_, None) => {}
+        (Some(elements_of_own), Some(elements)) => {
+            let mut part = Rc::clone(elements_of_own);
+            merge_part(&mut part, walk, elements);
+            if !Rc::ptr_eq(&part, elements_of_own) {
+                Rc::make_mut(own).elements = Some(part);
+            }
+        }
+        (None, Some(elements)) if walk.enter_all_nodes_of(elements) => {
+            Rc::make_mut(own).elements = Some(Rc::clone(elements));
+        }
+        (None, Some(elements)) => {
+            if walk.enter_node() {
+                Rc::make_mut(own).elements_mut().merge(walk, elements);
+            }
+        }
     }
 }
 
@@ -2893,6 +2942,25 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
+    /// A part belongs to the trees of many subjects, and its type is worked out once. What was cut short for lack of stack, or rests on an answer that may be
+    /// another next time, is not kept.
+    fn type_of_part(&mut self, part: &Rc<Usage>) -> TypeId {
+        if part.members.is_empty() && part.elements.is_none() {
+            return self.type_of_usage(part);
+        }
+        if let Some(&(_, known)) = self.memo.types_of_parts.get(&Rc::as_ptr(part)) {
+            return known;
+        }
+        let not_kept = (self.count_answers_not_kept(), self.c.times_cut_short.get());
+        let ty = self.type_of_usage(part);
+        if not_kept == (self.count_answers_not_kept(), self.c.times_cut_short.get()) {
+            // The table holds the part, so it stays where it is and what it is: whoever adds to it copies it.
+            let kept = (Rc::clone(part), ty);
+            self.memo.types_of_parts.insert(Rc::as_ptr(part), kept);
+        }
+        ty
+    }
+
     fn number_type(&mut self, facts: Facts) -> TypeId {
         let int32 = self.c.p.aot_symbols().int32_alias();
         match int32 {
@@ -2913,8 +2981,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if usage.members.is_empty() && (elements.is_none() || stores_object) {
             return;
         }
-        let element_type = match elements {
-            Some(elements) => self.type_of_usage(elements),
+        let element_type = match &usage.elements {
+            Some(elements) => self.type_of_part(elements),
             None => TypeId::ANY,
         };
         let array = self.c.array_of(element_type);
@@ -2978,7 +3046,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             props.push(Prop {
                 name: member.name,
                 flags,
-                source: PropSource::Type(self.type_of_usage(&member.usage)),
+                source: PropSource::Type(self.type_of_part(&member.usage)),
                 mapper: MapperId::IDENTITY,
                 name_type: TypeId::UNRESOLVED,
             });

@@ -106,6 +106,8 @@ pub(super) struct PathInput<'a> {
     pub kind: SourceKind,
     pub plugin_module: Option<&'a PluginModuleName>,
     pub file_name: &'a [u8],
+    /// What stands behind the path of the file in the name of the module: `?fresh=1`, or nothing.
+    pub query: &'a [u8],
     pub canonical_path: &'a [u8],
     pub host_loader: HostLoader,
     pub is_linkable: bool,
@@ -135,12 +137,16 @@ pub(super) fn compute_public_path(context: &PathContext<'_>, input: &PathInput<'
             {
                 return input.file_name.into();
             }
-            SourceKind::Program | SourceKind::Data => compute_program_path(
-                context.runs_in_place,
-                context.paths,
-                to_native(input.file_name),
-                maps.entry_point_indexes.get(&input.file).copied(),
-            ),
+            SourceKind::Program | SourceKind::Data => {
+                let mut path = compute_program_path(
+                    context.runs_in_place,
+                    context.paths,
+                    to_native(input.file_name),
+                    maps.entry_point_indexes.get(&input.file).copied(),
+                );
+                path.extend_from_slice(input.query);
+                path
+            }
             SourceKind::TypesOnly => compute_program_path(
                 context.runs_in_place,
                 context.paths,
@@ -382,6 +388,7 @@ mod tests {
             kind: SourceKind::Program,
             plugin_module: None,
             file_name: path,
+            query: b"",
             canonical_path: path,
             host_loader,
             is_linkable: true,
@@ -568,6 +575,22 @@ mod tests {
         };
         assert_eq!(path(1, BY_NAME), b"virt:x");
         assert_eq!(path(2, as_text()), b"virt:x?text");
+    }
+
+    #[test]
+    fn module_with_query_stands_under_path_of_file_and_query() {
+        let (file, module) = (b"/project/lib/a.ts", b"/project/lib/a%3fx.ts");
+        let mut maps = FileMaps::default();
+        maps.add_linkable_file(file, FileId(1), BY_NAME);
+        maps.add_linkable_file(module, FileId(2), BY_NAME);
+        let input = PathInput {
+            query: b"?x",
+            canonical_path: module,
+            ..program_file(2, file, BY_NAME)
+        };
+        assert_eq!(public_path(&maps, input), b"/$bunfs/root/lib/a.ts?x");
+        let input = program_file(1, file, BY_NAME);
+        assert_eq!(public_path(&maps, input), b"/$bunfs/root/lib/a.ts");
     }
 
     #[test]

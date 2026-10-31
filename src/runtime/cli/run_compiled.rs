@@ -179,6 +179,11 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
             .then(|| entry_points.len() - 1);
         let Some(refused) = find_refused_files(&failure, independent_count, stand_in, !checks_only)
         else {
+            // SAFETY: nothing else borrows the log behind a build.
+            let log = unsafe { ctx.log_mut() };
+            if !log.has_errors() {
+                log.add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("the build failed"));
+            }
             let target = &ctx.bundler_options.compile_target;
             print_failure(ctx.log_ref(), RequestOrigin::BuildFlag, target, &failure);
             exit_or_wait_for_change(watched)

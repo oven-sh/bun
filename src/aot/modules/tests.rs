@@ -528,6 +528,27 @@ fn external_package_no_site_names_has_a_module() {
 }
 
 #[test]
+fn declared_side_effects_can_be_ignored() {
+    let files = [
+        ("main.mjs", "import 'lib';\n"),
+        (
+            "node_modules/lib/package.json",
+            r#"{ "name": "lib", "version": "1.0.0", "main": "index.js", "sideEffects": false }"#,
+        ),
+        ("node_modules/lib/index.js", "console.log(1);\n"),
+    ];
+    with_graph(&files, |graph, input| {
+        let lib = file_named(input, "node_modules/lib/index.js");
+        assert!(graph.has_no_side_effects(lib));
+        let ignoring = BindInput {
+            ignores_declared_side_effects: true,
+            ..*input
+        };
+        assert!(!bind_modules(&ignoring).graph.has_no_side_effects(lib));
+    });
+}
+
+#[test]
 fn computed_import_is_counted_with_all_the_files_that_it_means() {
     let specifier = "`./pages/${name}.js`";
     let main = format!("export const load = (name) => import({specifier});\n");

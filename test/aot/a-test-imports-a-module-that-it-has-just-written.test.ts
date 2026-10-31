@@ -1,6 +1,7 @@
 import { expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { reads } from "./harness/reads";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -171,6 +172,7 @@ console.log("SAID the end");
         line: `SAID ${label} THROWS ERR_MODULE_NOT_FOUND`,
       });
     // My first form of the second look went round for a minute, to 16 GB.
+    reads(`a module that is not there, ${form}`, took / 1000, 30, "s");
     expect({ form, isQuick: took < 30_000 }).toEqual({ form, isQuick: true });
   }
 });

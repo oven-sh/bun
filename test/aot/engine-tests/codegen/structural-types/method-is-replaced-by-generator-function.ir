@@ -426,7 +426,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f21 visibility=Private
 # CHECK-NEXT: end of function f26
 # CHECK-LABEL: function {{*}}name="firstTwo"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 158, patchpoints: 18, rare instructions: 96
+# CHECK-NEXT: instructions: 157, patchpoints: 18, rare instructions: 96
 # CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="kind"
 # CHECK: role=Source
@@ -446,7 +446,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f21 visibility=Private
 # CHECK-NEXT: end of function f31
 # CHECK-LABEL: function {{*}}name="values"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 29, patchpoints: 1, rare instructions: 96
+# CHECK-NEXT: instructions: 28, patchpoints: 1, rare instructions: 95
 # CHECK-NEXT: end of function f6
 # CHECK-LABEL: function {{*}}name="values"
 # CHECK: role=GenericEntrypoint

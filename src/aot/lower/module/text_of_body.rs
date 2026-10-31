@@ -2,7 +2,7 @@ use std::cmp::Reverse;
 
 use bun_core::strings::{index_of, index_of_char_usize, last_index_of_char};
 use bun_sema::fold::FoldedValue;
-use bun_sema::hir::{ExprId, ExprKind, FnId, PatKind, StmtId, StmtKind};
+use bun_sema::hir::{ClassId, ExprId, ExprKind, FnId, PatKind, StmtId, StmtKind};
 
 use crate::lower::FileLowering;
 
@@ -108,7 +108,17 @@ impl FileLowering<'_, '_, '_, '_> {
         if self.decisions().is_dead_stmt(statement) {
             return false;
         }
+        let left_out = self.inputs.library_functions.left_out_declarations();
         match hir[statement].kind {
+            StmtKind::Class(class) => {
+                !left_out.is_class_left_out(self.file, class)
+                    || self.is_checked_though_left_out(class)
+            }
+            StmtKind::Enum(_) | StmtKind::Module(_)
+                if left_out.is_statement_left_out(self.file, statement) =>
+            {
+                false
+            }
             StmtKind::Empty
             | StmtKind::Fn(_)
             | StmtKind::Interface(_)
@@ -121,13 +131,30 @@ impl FileLowering<'_, '_, '_, '_> {
                 !self.is_function_or_data(expression)
             }
             StmtKind::Var(declarations) => declarations.iter().any(|declaration| {
+                let is_left_out = left_out.is_declarator_left_out(self.file, declaration);
                 let declaration = &hir[declaration];
+                let value = declaration.init.some().map(|value| hir[value].kind);
+                match value {
+                    Some(ExprKind::Class(class)) if is_left_out => {
+                        return self.is_checked_though_left_out(class);
+                    }
+                    _ if is_left_out => return false,
+                    _ => {}
+                }
                 let is_name = matches!(hir[declaration.pat].kind, PatKind::Ident(_));
                 !is_name
                     || !(declaration.init.is_none() || self.is_function_or_data(declaration.init))
             }),
             _ => true,
         }
+    }
+
+    // `FunctionLowering::lower_checks_of_left_out_class`
+    fn is_checked_though_left_out(&self, class: ClassId) -> bool {
+        let left_out = self.inputs.library_functions.left_out_declarations();
+        let mut members = self.hir[class].members.iter();
+        left_out.is_heritage_check_kept(self.file, class)
+            || members.any(|member| left_out.is_key_conversion_kept(self.file, member))
     }
 
     fn is_function_or_data(&self, expression: ExprId) -> bool {

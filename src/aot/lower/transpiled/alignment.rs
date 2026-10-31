@@ -10,6 +10,7 @@ use bun_sema::hir::{
 };
 use rustc_hash::FxHashMap;
 use smallvec::{SmallVec, smallvec};
+use std::cell::RefCell;
 
 use super::{ParsedText, PositionSet};
 
@@ -52,6 +53,14 @@ pub(super) struct PrintedTree<'a> {
     pub(super) import_paths: &'a [&'a [u8]],
 }
 
+/// How a search for a position went on from a candidate that was taken while no other waited. The numbers count the candidate itself.
+#[derive(Copy, Clone)]
+enum SearchFrom {
+    FoundAfter(u64),
+    NeverFound,
+    NotFoundWithin(u64),
+}
+
 /// Walks the front end's tree and the tree that the transpiler prints side by side.
 pub(super) struct Alignment<'a, 's> {
     hir: &'a hir::File<'s>,
@@ -66,6 +75,9 @@ pub(super) struct Alignment<'a, 's> {
     pending: Vec<(ExprId, Expr)>,
     /// One bit for each expression that has been held against what is printed for it.
     aligned: Vec<u64>,
+    /// `const b = a; const c = b;` and so on are all printed with the literal of `a`, at its position. The search that starts at one of them comes to the
+    /// one before at once, and goes on from there as the search before it did. By candidate, for the position that was last looked for from it.
+    searches: RefCell<FxHashMap<ExprId, (u32, SearchFrom)>>,
 }
 
 fn position_of(position: Loc) -> Option<u32> {
@@ -240,6 +252,7 @@ impl<'a, 's> Alignment<'a, 's> {
             keys_printed_as_names: Vec::new(),
             pending: Vec::new(),
             aligned: vec![0; parsed.hir.exprs.len() / 64 + 1],
+            searches: RefCell::default(),
         }
     }
 
@@ -597,9 +610,58 @@ impl<'a, 's> Alignment<'a, 's> {
         false
     }
 
+    /// `may_be_printed_as()` for what the parser gives that position, candidate by candidate.
     fn may_be_printed_at(&self, expression: ExprId, position: Loc) -> bool {
-        let position = position_of(position);
-        self.may_be_printed_as(expression, |it| Some(self.parsed_position(it)) == position)
+        let Some(position) = position_of(position) else {
+            return false;
+        };
+        let hir = self.hir;
+        let mut candidates: SmallVec<[ExprId; 8]> = smallvec![expression];
+        // Those that were taken while no other waited, each with how many had been taken by then.
+        let mut taken_alone: SmallVec<[(ExprId, u64); 8]> = SmallVec::new();
+        let mut searched = 0;
+        // How it ends, counted from the candidate that was taken last.
+        let end = loop {
+            let Some(candidate) = candidates.pop() else {
+                break SearchFrom::NeverFound;
+            };
+            searched += 1;
+            if searched > self.max_steps {
+                break SearchFrom::NotFoundWithin(0);
+            }
+            let candidate = hir.skip_type_assertions(candidate);
+            if candidates.is_empty() {
+                match self.searches.borrow().get(&candidate) {
+                    Some(&(known_position, known)) if known_position == position => match known {
+                        SearchFrom::NotFoundWithin(steps) if searched + steps <= self.max_steps => {
+                        }
+                        _ => break known,
+                    },
+                    _ => {}
+                }
+                taken_alone.push((candidate, searched));
+            }
+            if self.parsed_position(candidate) == position {
+                break SearchFrom::FoundAfter(1);
+            }
+            candidates.extend(self.operands_printed_alone(candidate));
+            // A folded result may take the position of what is printed for its first operand.
+            if let ExprKind::Binary { left, .. } = hir[candidate].kind {
+                candidates.push(left);
+            }
+        };
+        let mut searches = self.searches.borrow_mut();
+        for (candidate, taken) in taken_alone {
+            let from_here = match end {
+                SearchFrom::FoundAfter(steps) => SearchFrom::FoundAfter(searched - taken + steps),
+                SearchFrom::NeverFound => SearchFrom::NeverFound,
+                SearchFrom::NotFoundWithin(steps) => {
+                    SearchFrom::NotFoundWithin(searched - taken + steps)
+                }
+            };
+            searches.insert(candidate, (position, from_here));
+        }
+        matches!(end, SearchFrom::FoundAfter(steps) if searched - 1 + steps <= self.max_steps)
     }
 
     fn find_operand_printed_at(&self, expression: ExprId, position: Loc) -> Option<ExprId> {

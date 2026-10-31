@@ -481,8 +481,8 @@ runtimefunction id=ArrayTraversalTraverseArray function=f34 visibility=Private
 # CHECK-NEXT: v12: undefined|string = CallBuiltin -, v9, v10, v11 overload=JSONStringify/0 accessSite=3
 # CHECK-NEXT: v13: undefined = CallDirect v12 function=f46 accessSite=4
 # CHECK-NEXT: v14: Array<Array> = CallBuiltin -, v9 overload=ObjectEntries/0 accessSite=6
-# CHECK-NEXT: v15: Array<Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> = AssumeType v14 provenType=Array<Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v16: Array<Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> = CallBuiltin v15 overload=ArrayPrototypeReverse/0 accessSite=8
+# CHECK-NEXT: v15: Array<Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v14 provenType=Array<Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v16: Array<Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = CallBuiltin v15 overload=ArrayPrototypeReverse/0 accessSite=8
 # CHECK-NEXT: v17: Object = CallBuiltin -, v16 overload=ObjectFromEntries/0 accessSite=9
 # CHECK-NEXT: v18: undefined = Undefined
 # CHECK-NEXT: v19: undefined|string = CallBuiltin -, v17, v18 overload=JSONStringify/0 accessSite=10
@@ -498,4 +498,14 @@ runtimefunction id=ArrayTraversalTraverseArray function=f34 visibility=Private
 # CHECK-NEXT: ReturnCall v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function f5 module=
-# CHECK: m0 position=1258 kind=Arrow role=EntryChecks flags=[IsChecked] length=2 captures=[{type=Array<anything, proven, pristine[Storage, Names, Dense]> site=w26 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type=undefined|"operationAOTJSONSourceAbandon"|"operationAOTJSONSourceOpen" site=w32 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w33 flags=[IsExpected]}] results=[{type=number site=w34 flags=[IsExpected]}] functionTypes=[f12] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f36 fallback=f37}
+# CHECK: m0 position=1258 kind=Arrow role=EntryChecks flags=[IsChecked] length=2 captures=[{type=Array<anything, proven, pristine[Storage, Names, Dense]> site=w26 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type=undefined|"operationAOTJSONSourceAbandon"|"operationAOTJSONSourceOpen" site=w32 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w33 flags=[IsExpected]}] results=[{type=number site=w34 flags=[IsExpected]}] functionTypes=[f12] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f36 fallback=f37} {
+# CHECK-NEXT: b0(v0: Array<anything, proven, pristine[Storage, Names, Dense]>, v1: undefined|"operationAOTJSONSourceAbandon"|"operationAOTJSONSourceOpen", v2: anything ~ number):
+# CHECK-NEXT: v3: boolean ~ true = TypeTest v2 testedType=number
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v4: number):
+# CHECK-NEXT: v5: anything ~ number = CallDirect v0, v1, v4 function=f36
+# CHECK-NEXT: ReturnCall v5 requirement=Allowed
+# CHECK-NEXT: b2() frequency=Unlikely:
+# CHECK-NEXT: v6: anything ~ number = CallDirect v0, v1, v2 function=f37
+# CHECK-NEXT: ReturnCall v6 requirement=Allowed
+# CHECK-NEXT: }

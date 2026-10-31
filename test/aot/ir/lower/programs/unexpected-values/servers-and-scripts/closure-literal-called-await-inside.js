@@ -75,7 +75,7 @@ console.log(total);
 // CHECK-NEXT: Return v27
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="getRouter"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=env [[L_4]] flags=[IsFromCompiler]}, {type=undefined|null|[[L_1]] flags=[IsExpected]}, {type=undefined|null|number|string|symbol|bigint|[[L_2]] flags=[IsExpected]}, {type=undefined|null|[[L_3]] flags=[IsExpected]}, {type=undefined|null|[[L_6]] flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|Promise<undefined|null|[[L_7]]> flags=[IsExpected]}] functionTypes={{*}}[[f_9]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=env [[L_4]] flags=[IsFromCompiler]}, {type=undefined|null|[[L_1]] flags=[IsExpected] variableName="request"}, {type=undefined|null|number|string|symbol|bigint|[[L_2]] flags=[IsExpected] variableName="options"}, {type=undefined|null|[[L_3]] flags=[IsExpected] variableName="event"}, {type=undefined|null|[[L_6]] flags=[IsExpected] variableName="signal"}] thisType={type=anything} results=[{type=undefined|null|Promise<undefined|null|[[L_7]]> flags=[IsExpected]}] functionTypes={{*}}[[f_9]]] {
 // CHECK-NEXT: b0(v0: env [[L_4]], v1: undefined|null|[[L_1]], v2: undefined|null|number|string|symbol|bigint|[[L_2]], v3: undefined|null|[[L_3]], v4: undefined|null|[[L_6]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -102,7 +102,7 @@ console.log(total);
 // CHECK-NEXT: Return v18
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="terminal"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 captures=[{type=undefined|null|[[L_1]] flags=[IsExpected]}, {type=undefined|null|[[L_3]] flags=[IsExpected]}, {type=undefined|null|[[L_6]] flags=[IsExpected]}, {type=anything}, {type=undefined|null|[[f_9]] flags=[IsExpected]}, {type=undefined|null|[[L_10]] flags=[IsExpected]}, {type=undefined|null|[[f_12]] flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_17]] flags=[IsExpected]}] results=[{type=undefined|null|Promise flags=[IsExpected]}] functionTypes={{*}}[[f_14]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 captures=[{type=undefined|null|[[L_1]] flags=[IsExpected] variableName="request"}, {type=undefined|null|[[L_3]] flags=[IsExpected] variableName="event"}, {type=undefined|null|[[L_6]] flags=[IsExpected] variableName="signal"}, {type=anything variableName="executed"}, {type=undefined|null|[[f_9]] flags=[IsExpected] variableName="getRouter"}, {type=undefined|null|[[L_10]] flags=[IsExpected] variableName="start"}, {type=undefined|null|[[f_12]] flags=[IsExpected] variableName="executeRouter"}] thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_17]] flags=[IsExpected]}] results=[{type=undefined|null|Promise flags=[IsExpected]}] functionTypes={{*}}[[f_14]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_1]], v1: undefined|null|[[L_3]], v2: undefined|null|[[L_6]], v3: anything, v4: undefined|null|[[f_9]], v5: undefined|null|[[L_10]], v6: undefined|null|[[f_12]], v7: undefined|null|number|string|symbol|bigint|[[L_17]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

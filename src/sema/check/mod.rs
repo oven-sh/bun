@@ -276,6 +276,8 @@ pub struct Program<'s> {
     package_names_of_linked_files: std::sync::OnceLock<FxHashMap<FileId, Vec<u8>>>,
     /// See `Checker::modules_that_export`. Built on first use.
     exporting_modules: std::sync::OnceLock<errors_declaration_emit::ExportingModules>,
+    /// What `exporting_modules` returns to a task that was discarded.
+    no_exporting_modules: errors_declaration_emit::ExportingModules,
     aot_symbols: std::sync::OnceLock<aot::ProgramSymbols>,
     aot_store_indexes: std::sync::OnceLock<&'s [std::sync::OnceLock<aot::StoreIndex<'s>>]>,
     aot_prototype_links: std::sync::OnceLock<&'s [std::sync::OnceLock<aot::PrototypeLinks<'s>>]>,
@@ -663,6 +665,7 @@ impl<'s> Program<'s> {
             auto_array_type,
             package_names_of_linked_files: Default::default(),
             exporting_modules: Default::default(),
+            no_exporting_modules: Default::default(),
             aot_symbols: Default::default(),
             aot_store_indexes: Default::default(),
             aot_prototype_links: Default::default(),
@@ -2851,6 +2854,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// That's the case when every query is about, or mentions, a declaration in the current file's import cycle
     /// (`Components`), and those files declare nothing global. An importer comes after the files it imports in program
     /// order, unless they import each other.
+    ///
+    /// The target of an alias is an exception. A file that prints the name of a type it doesn't import resolves the
+    /// exports of every module in the program (`exporting_modules`), whether it imports them or not.
     fn is_reachable_only_by_importers(&self, from: usize) -> bool {
         let (files, Some(visited)) = (self.files(), self.task.file) else {
             return false;
@@ -2876,6 +2882,9 @@ impl<'p, 's> Checker<'p, 's> {
                 | Query::MappedProp(ty, _) => mentioned.ty(ty),
                 Query::ReturnOfSignature(signature) => mentioned.sig(signature),
                 Query::Cond(_, _, mapper) => mentioned.mapper(mapper),
+                Query::AliasTarget(alias) if self.is_searched_for_exports(alias.file) => {
+                    return false;
+                }
                 Query::AliasTarget(alias) => mentioned.file(alias.file),
                 Query::WriteType(file, _) => mentioned.file(file),
                 _ => {}

@@ -75,6 +75,22 @@ pub trait CodeHost: Host {
         None
     }
 
+    /// Whether the program holds a module of its own for `./a.ts?fresh=1`. Otherwise only a loader that reads the file again at run time can make one.
+    fn holds_modules_with_queries(&self) -> bool {
+        false
+    }
+
+    /// The path of one more module of the file at `path`, which the program knows as `path` with `query` behind it. Whoever asks with the same two gets the same path.
+    /// It lies in the directory of the file and ends as the name of the file does. `None` if the host can make no second module of such a file.
+    fn add_module_with_query(&self, _path: &[u8], _query: &[u8]) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// The file whose text the module at `path` runs: `path` itself, but for a path that `add_module_with_query` has made.
+    fn file_of_module<'p>(&'p self, path: &'p [u8]) -> &'p [u8] {
+        path
+    }
+
     /// The directory that the imports of a file are resolved from, and whose `tsconfig.json` says how the file is transpiled.
     fn directory_of<'p>(&self, path: &'p [u8]) -> Cow<'p, [u8]> {
         Cow::Borrowed(dirname::<Posix>(path))

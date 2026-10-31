@@ -282,7 +282,7 @@ function f8 name="early" module=m0 position=1751 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: Predecessors: #22, #21
 # CHECK-NEXT: Double b@120 = Phi(ReadsLocalState, v5:Parameter)
 # CHECK-NEXT: Int32 b@122 = Phi(ReadsLocalState, v6:Parameter)
-# CHECK-NEXT: Int32 b@125 = Phi(ReadsLocalState, v5:Parameter)
+# CHECK-NEXT: Int32 b@125 = Phi(ReadsLocalState)
 # CHECK-NEXT: Double b@81 = Add(b@120, b@120, v10:Add)
 # CHECK-NEXT: Int32 b@8 = Add(b@122, $1(b@54), v11:Increment)
 # CHECK-NEXT: Int32 b@102 = LessThan(b@8, b@125, v8:Less)
@@ -295,7 +295,7 @@ function f8 name="early" module=m0 position=1751 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: Successors: #21
 # CHECK-NEXT: BB#21: ; frequency = 0.004878
 # CHECK-NEXT: Predecessors: #24, #20
-# CHECK-NEXT: Int32 b@124 = Phi(ReadsLocalState, v11:Increment)
+# CHECK-NEXT: Int32 b@124 = Phi(ReadsLocalState)
 # CHECK-NEXT: Void b@107 = Upsilon(b@81, ^120, WritesLocalState, v11:Increment)
 # CHECK-NEXT: Void b@130 = Upsilon(b@8, ^122, WritesLocalState, v11:Increment)
 # CHECK-NEXT: Void b@131 = Upsilon(b@124, ^125, WritesLocalState, v11:Increment)
@@ -419,8 +419,8 @@ function f8 name="early" module=m0 position=1751 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: BB#54: ; frequency = 0.235271
 # CHECK-NEXT: Predecessors: #53, #52
 # CHECK-NEXT: Int32 b@426 = Phi(ReadsLocalState, v7:Parameter)
-# CHECK-NEXT: Int32 b@429 = Phi(ReadsLocalState, v9:Less)
-# CHECK-NEXT: Double b@430 = Phi(ReadsLocalState, v9:Less)
+# CHECK-NEXT: Int32 b@429 = Phi(ReadsLocalState)
+# CHECK-NEXT: Double b@430 = Phi(ReadsLocalState)
 # CHECK-NEXT: Void b@440 = Upsilon(b@426, ^427, WritesLocalState, v9:Less)
 # CHECK-NEXT: Void b@441 = Upsilon($0(b@306), ^428, WritesLocalState, v9:Less)
 # CHECK-NEXT: Void b@384 = Jump(Terminal, v9:Less)
@@ -428,7 +428,7 @@ function f8 name="early" module=m0 position=1751 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: BB#21: ; frequency = 2.352711
 # CHECK-NEXT: Predecessors: #54, #44
 # CHECK-NEXT: Int32 b@427 = Phi(ReadsLocalState, v7:Parameter)
-# CHECK-NEXT: Int64 b@428 = Phi(ReadsLocalState, v6:Parameter)
+# CHECK-NEXT: Int64 b@428 = Phi(ReadsLocalState)
 # CHECK-NEXT: Void b@84 = Jump(Terminal)
 # CHECK-NEXT: Successors: #42
 # CHECK-NEXT: BB#42: ; frequency = 2.352711

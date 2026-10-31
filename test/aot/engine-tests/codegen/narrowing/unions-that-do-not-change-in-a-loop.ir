@@ -716,5 +716,5 @@ runtimefunction id=ArrayTraversalTraverseArray function=f33 visibility=Private
 # CHECK-NEXT: end of function f36
 # CHECK-LABEL: function {{*}}name="leavesTheLoop"
 # CHECK: role=GenericVersion
-# CHECK-NEXT: instructions: 78, patchpoints: 7, rare instructions: 125, polls: 1
+# CHECK-NEXT: instructions: 78, patchpoints: 7, rare instructions: 123, polls: 1
 # CHECK-NEXT: end of function f42

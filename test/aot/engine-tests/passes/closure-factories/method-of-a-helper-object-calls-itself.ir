@@ -551,7 +551,6 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Branch v11 -> taken b4(| 0), notTaken b6(v10)
 # CHECK-NEXT: b4(v12: int[-4503599627370495, 4503599627370495]):
 # CHECK-NEXT: PutSlot v0, v8, v12 key="calls" receivers=[L0] level=Expected accessSite=56
-# CHECK-NEXT: FinishBirth v0
 # CHECK-NEXT: Jump -> next b7()
 # CHECK-NEXT: b5() frequency=Unlikely:
 # CHECK-NEXT: v14: anything ~ int[-4503599627370496, 4503599627370495] = PropGet v0 key="calls" accessSite=55 receivers=[L0]

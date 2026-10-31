@@ -625,7 +625,7 @@ console.log("push", String(readPush()));
 // CHECK-NEXT: Return v11
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|[[L_2]] site=[[w_82]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|null|[[L_2]] site=[[w_83]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_84]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|[[L_2]] site=[[w_82]] flags=[OmitsNull, OmitsUndefined] variableName="it"}] thisType={type=anything} results=[{type=undefined|null|[[L_2]] site=[[w_83]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_84]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_2]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -643,7 +643,7 @@ console.log("push", String(readPush()));
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="n"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[IsChecked, HasExplicitName] length=1 captures=[{type=undefined|null|[[L_2]] site=[[w_51]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type=number site=[[w_86]]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[IsChecked, HasExplicitName] length=1 captures=[{type=undefined|null|[[L_2]] site=[[w_51]] flags=[OmitsNull, OmitsUndefined] variableName="made"}] thisType={type=anything} parameters=[{type=number site=[[w_86]]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_2]], v1: number):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -653,7 +653,7 @@ console.log("push", String(readPush()));
 // CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|[[L_2]] site=[[w_88]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|null|[[L_2]] site=[[w_89]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_90]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|[[L_2]] site=[[w_88]] flags=[OmitsNull, OmitsUndefined] variableName="made"}] thisType={type=anything} results=[{type=undefined|null|[[L_2]] site=[[w_89]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_90]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_2]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -661,7 +661,7 @@ console.log("push", String(readPush()));
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="back"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|[[L_2]] site=[[w_66]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|null|[[L_2]] site=[[w_91]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|[[L_2]] site=[[w_66]] flags=[OmitsNull, OmitsUndefined] variableName="made"}] thisType={type=anything} results=[{type=undefined|null|[[L_2]] site=[[w_91]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_2]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

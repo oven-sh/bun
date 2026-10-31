@@ -1,4 +1,5 @@
 use super::aliases::declared_names;
+use super::spelled_values::SpelledValues;
 use super::unnamed_holders::UnnamedHolders;
 use super::{
     BuiltinPath, CommonJsBuiltins, EvaluatedText, KeyOfModuleCache, ModuleObjectMention,
@@ -306,6 +307,7 @@ pub(super) struct Resolver<'a, 's> {
     named_outside: OnceCell<FxHashSet<SymbolId>>,
     /// The calls whose callee is a name or a member of one, by what the name is bound to. See `spelled_values`.
     pub(super) calls_by_name: OnceCell<FxHashMap<SymbolId, Vec<hir::CallId>>>,
+    pub(super) spelled_values: RefCell<SpelledValues>,
     pub(super) unnamed_holders: RefCell<UnnamedHolders>,
     // The ids of the expressions that count as evaluated lie in this range, which is short for a part of a file.
     evaluated: Range<u32>,
@@ -402,6 +404,7 @@ impl<'a, 's> Resolver<'a, 's> {
             has_seen_declarations: false,
             named_outside: OnceCell::new(),
             calls_by_name: OnceCell::new(),
+            spelled_values: RefCell::default(),
             unnamed_holders: RefCell::default(),
             states: vec![ExprState::Unvisited; evaluated.len()],
             first_state: evaluated.start,

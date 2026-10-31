@@ -264,13 +264,17 @@ fn freeze_file(
         None => loader_by_name(module.file_name()),
     };
     let plugin_module = payload.and_then(|payload| payload.plugin_module.as_ref());
+    let with_query = payload.and_then(|payload| payload.file_with_query.as_ref());
+    let file_name = with_query.map_or_else(|| module.file_name(), |it| &it.file);
+    let query = with_query.map_or(&b""[..], |it| &it.query);
     let public_path = compute_public_path(
         context,
         &PathInput {
             file,
             kind,
             plugin_module,
-            file_name: module.file_name(),
+            file_name,
+            query,
             canonical_path: module.path.text,
             host_loader: compiled.map_or(BY_NAME, |compiled| compiled.loader),
             is_linkable: is_linkable(files, file),
@@ -278,10 +282,9 @@ fn freeze_file(
         },
     );
     let (diagnostic_path, display_path): (Box<[u8]>, _) = match (kind, plugin_module) {
-        (SourceKind::Program | SourceKind::Data | SourceKind::TypesOnly, None) => (
-            to_native(files.module(file).file_name()).into(),
-            OnceLock::new(),
-        ),
+        (SourceKind::Program | SourceKind::Data | SourceKind::TypesOnly, None) => {
+            (to_native(file_name).into(), OnceLock::new())
+        }
         (SourceKind::Program | SourceKind::Data | SourceKind::TypesOnly, Some(_))
         | (
             SourceKind::EvaluatedText | SourceKind::RuntimeModule(_) | SourceKind::RuntimeFunctions,
@@ -300,6 +303,10 @@ fn freeze_file(
         kind,
         loader,
         byte_count: payload.map_or(0, |payload| payload.byte_count as u64),
+        query_length: match public_path.ends_with(query) {
+            true => query.len(),
+            false => 0,
+        },
         public_path,
         display_path,
         diagnostic_path,

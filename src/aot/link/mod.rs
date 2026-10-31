@@ -408,6 +408,7 @@ pub fn link_while(
         variables: tables.variables,
         modules: records.modules,
         module_failures: records.module_failures,
+        ambiguous_exports: records.ambiguous_exports,
         eval_scopes: tables.eval_scopes,
         functions: Vec::new(),
         data: tables.data,

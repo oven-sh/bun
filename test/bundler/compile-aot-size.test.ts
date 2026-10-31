@@ -39,7 +39,7 @@ const toolStrings: Record<string, string[]> = {
   "linter": ["Unexpected any. Specify a different type."],
   "package manager": ["lockfile had changes, but lockfile is frozen"],
   "options of bun test": ["--shard count must be greater than 0", "--retry cannot be used with --rerun-each"],
-  "compiler": ["RequiredPassLeftOperation"],
+  "compiler": ["RequiredPassLeftOperation", "1234567890123"],
 };
 const allToolStrings = Object.entries(toolStrings).flatMap(([tool, strings]) =>
   strings.map(each => `${tool}: ${each}`),
@@ -110,6 +110,22 @@ describe.skipIf(!canTrim)("bun build --compile --aot", () => {
     expect(totalBytes).toBeLessThanOrEqual(mostBytesOfCompiler);
   });
 
+  test("the compiler keeps nothing of Intl", () => {
+    const compiler = model.features.find(each => each.name === featureNamed("ImageCompiler"))!.index;
+    const intl = new Set(model.features.filter(each => each.name.startsWith("Intl")).map(each => each.index));
+    expect(intl.size).toBeGreaterThan(0);
+    const table = readTrimTable(bunExe());
+    let sharedBytes = 0;
+    for (const { start, end, set } of table.ranges) {
+      const users = table.sets[set]!;
+      const usersAtRunTime = users.filter(user => !removedByAot.has(user));
+      if (users.includes(compiler) && usersAtRunTime.length > 0 && usersAtRunTime.every(user => intl.has(user)))
+        sharedBytes += end - start;
+    }
+    console.log("the compiler and Intl share", sharedBytes, "bytes");
+    expect(sharedBytes).toBeLessThan(16_384);
+  });
+
   test.skipIf(!isGlibc || process.arch !== "x64")("every range of code of a page or more can be cut", () => {
     const onlyFilled = readTrimTable(bunExe()).ranges.filter(each => each.isCode && !each.canBeCut);
     expect(onlyFilled.filter(each => each.end - each.start >= 4096)).toEqual([]);
@@ -146,6 +162,21 @@ describe.skipIf(!canTrim)("bun build --compile --aot", () => {
       },
       600_000,
     );
+
+    test("a program that formats from patterns contains no strings from the CLI tools", async () => {
+      using dir = tempDirForAotBuilds("compile-aot-size", {
+        "program.ts": `
+          const dates = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeZone: "UTC" });
+          console.log(dates.format(0), (1234.5).toLocaleString("en-US"), new Date(0).toLocaleTimeString("de-DE", { timeZone: "UTC" }));
+        `,
+      });
+      const program = await build(String(dir), "program");
+      expect(await spawned([program], String(dir), bunEnv)).toMatchObject({
+        stdout: "Jan 1, 1970 1,234.5 00:00:00\n",
+        exitCode: 0,
+      });
+      expect(findToolStrings(readFileSync(program))).toEqual([]);
+    }, 600_000);
 
     test.each(Object.entries(madeByIntl))(
       "objects of %s are collected",

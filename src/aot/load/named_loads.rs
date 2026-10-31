@@ -243,9 +243,10 @@ pub(crate) fn is_path_that_program_may_write(importer: &[u8], specifier: &[u8]) 
 
 /// `writeFileSync(path, text); await import(path)`: where a load spells a path at which the build finds no file. The loader of the run time reads the file
 /// when the call runs, and nobody has read what its text imports. `is_there`: a file lies at the absolute path, or another program holds it.
-/// `is_data`: a file of that name has no code, `./made.json`.
+/// `is_data`: a file of that name has no code, `./made.json`. In a test run a statement counts too: an earlier test file may write what this file imports.
 pub(crate) fn find_loads_of_files_missing_at_build(
     request: &FinishedFile<'_, '_>,
+    runs_tests: bool,
     is_there: &dyn Fn(&[u8]) -> bool,
     is_data: &dyn Fn(&[u8]) -> bool,
 ) -> Vec<u32> {
@@ -257,15 +258,21 @@ pub(crate) fn find_loads_of_files_missing_at_build(
     };
     let mut found = Vec::new();
     for (site, resolution) in analysis.import_sites.iter().zip(request.resolutions) {
-        let (ImportSiteKind::ImportCall(call)
-        | ImportSiteKind::Require(call)
-        | ImportSiteKind::ImportMetaRequire(call)) = site.kind
-        else {
-            continue;
+        let hir = request.hir;
+        let position = match site.kind {
+            ImportSiteKind::ImportCall(call)
+            | ImportSiteKind::Require(call)
+            | ImportSiteKind::ImportMetaRequire(call) => {
+                if site.specifier_node.is_none() || analysis.decisions.is_dead_expr(call) {
+                    continue;
+                }
+                hir[site.specifier_node].pos
+            }
+            ImportSiteKind::Import(import) if runs_tests => hir[hir[import].stmt].start,
+            ImportSiteKind::ExportFrom(export) if runs_tests => hir[hir[export].stmt].start,
+            ImportSiteKind::ExportStar(statement) if runs_tests => hir[statement].start,
+            _ => continue,
         };
-        if site.specifier_node.is_none() || analysis.decisions.is_dead_expr(call) {
-            continue;
-        }
         let is_missing = match *resolution {
             // A query asks for a copy of a file that is there.
             SiteResolution::Constant(CodeResolution::External {
@@ -292,7 +299,7 @@ pub(crate) fn find_loads_of_files_missing_at_build(
             SiteResolution::Constant(_) | SiteResolution::Computed(_) => false,
         };
         if is_missing {
-            found.push(request.hir[site.specifier_node].pos);
+            found.push(position);
         }
     }
     found

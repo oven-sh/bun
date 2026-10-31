@@ -51,7 +51,7 @@ const higher = {
   replace: f => "a1b2".replace(/\d/g, f),
   replaceText: f => "xyx".replaceAll("x", f),
   reviver: f => JSON.parse('{"a":1,"b":[2]}', (k, v) => (typeof v === "number" ? f(v, 1) : v)),
-  replacer: f => JSON.stringify({ a: 1, b: 2 }, (k, v) => (typeof v === "number" ? f(v, 1) : v)),
+  replacer: f => { const root = { a: 1, b: 2 }; return JSON.stringify(root, function (k, v) { return this === root ? f(v, 1) : v; }); },
   getter: f => Object.defineProperty({ mark: "g" }, "x", { get: f }).x,
   setter: f => { const o = Object.defineProperty({ mark: "s" }, "x", { set: f }); o.x = 3; return "set"; },
   proxyGet: f => new Proxy({}, { get: (t, k) => f(String(k), 1) }).name,

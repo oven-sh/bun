@@ -12,50 +12,6 @@ typed-objects/plain-clone-takes-stores-behind-it	// CALLS- wide PutBy
 typed-objects/plain-clone-takes-stores-behind-it	// CALLS- both PutBy
 # Each group below is one thing that the compiler does not do today: the words above it say for which JavaScript, and what is made instead.
 # A line that says what must NOT be there (IR-, CALLS-, IR= 0) and fails names something that IS there.
-# `new Intl.DateTimeFormat("en-US", { year: "numeric", .. })`, `date.toLocaleString("en-US", { .. })`, `n.toLocaleString("en-US")`: with a constant locale and constant options the old compiler computed the pattern at build time and
-# formatted from it. Nothing does today: NewFormatterWithPattern and operationAOTFormatWithPattern do not exist, ICU makes the formatter at run time, and toLocaleString makes one at every call.
-# The IR-, `IR= 0` and CALLS- lines say where that must not happen. Until it happens somewhere they cannot fail.
-calls-fast-paths/intl-constant-formatters	// IR- ^variable (g\d+) name="buddhist" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? = PutModuleVariable \2 variable=\1\b
-calls-fast-paths/intl-constant-formatters	// IR- ^variable (g\d+) name="compact" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? = PutModuleVariable \2 variable=\1\b
-calls-fast-paths/intl-constant-formatters-in-every-flow	// IR= 0 makeSubclassInstance NewFormatterWithPattern
-calls-fast-paths/intl-constant-formatters-in-every-flow	// IR= 0 makeWithOptionsThatAreChanged NewFormatterWithPattern
-calls-fast-paths/intl-constant-formatters-in-every-flow	// IR= 0 makeWithOptionsThatEscape NewFormatterWithPattern
-calls-fast-paths/intl-constant-formatters	// IR+ ^variable (g\d+) name="count" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? = PutModuleVariable \2 variable=\1\b
-calls-fast-paths/intl-constant-formatters	// IR+ ^variable (g\d+) name="localTime" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? = PutModuleVariable \2 variable=\1\b
-calls-fast-paths/intl-constant-formatters	// IR+ ^variable (g\d+) name="minute" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? = PutModuleVariable \2 variable=\1\b
-calls-fast-paths/intl-constant-formatters-in-every-flow	// IR= 0 makeFormatter  = New(Plain)?Object 
-calls-fast-paths/intl-constant-formatters-in-every-flow	// IR= 0 makeFormatter Construct|overload=IntlDateTimeFormat/
-calls-fast-paths/intl-constant-formatters-in-every-flow	// IR= 1 makeFormatter  = NewFormatterWithPattern 
-calls-fast-paths/intl-constant-formatters-in-every-flow	// IR= 1 makeWithSharedOptions  = NewFormatterWithPattern 
-calls-fast-paths/intl-constant-formatters-known-traps	// CALLS+ accountingInTamil operationAOTFormatWithPattern
-calls-fast-paths/intl-constant-formatters-known-traps	// CALLS- roundedToAnIncrement operationAOTFormatWithPattern
-calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS+ dateAndTimeInUTC operationAOTFormatWithPattern
-calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS+ dollarsWithSharedOptions operationAOTFormatWithPattern
-calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS+ grouped operationAOTFormatWithPattern
-calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS+ inNewYork operationAOTFormatWithPattern
-calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS+ inUntypedCode operationAOTFormatWithPattern
-calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS+ longDate operationAOTFormatWithPattern
-calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS+ ofNewDate operationAOTFormatWithPattern
-calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS+ percent operationAOTFormatWithPattern
-calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS+ timeOnly operationAOTFormatWithPattern
-calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS+ twoDigits operationAOTFormatWithPattern
-calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS+ wholeDollars operationAOTFormatWithPattern
-calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS- fourDigits operationAOTFormatWithPattern
-calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS- hostLocale operationAOTFormatWithPattern
-calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS- inNewYorkByName operationAOTFormatWithPattern
-calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS- localeFromOutside operationAOTFormatWithPattern
-calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS- optionsFromOutside operationAOTFormatWithPattern
-calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS- threeArguments operationAOTFormatWithPattern
-calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS- withOptionsThatAreChanged operationAOTFormatWithPattern
-calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS- withSharedOptions operationAOTFormatWithPattern
-# `count.format(n)` on an Intl.NumberFormat or an Intl.DateTimeFormat in a function that the program runs once: the receiver goes to a function that flow does not know, so its names are not proven, and such a function gets no test of them. Where a function runs more often, the call is resolved behind the test (calls-fast-paths/format-of-an-intl-formatter).
-# a call of a built-in only where its callee is that built-in, which a bound function never is: PropGet and Call stay, in every program.
-calls-fast-paths/intl-constant-formatters	// IR= 1 formatCount CallBuiltin v[0-9]+, v[0-9]+ overload=IntlNumberFormatPrototypeFormat/
-calls-fast-paths/intl-constant-formatters	// IR= 1 formatNewDate CallBuiltin v[0-9]+, v[0-9]+ overload=IntlDateTimeFormatPrototypeFormat/
-calls-fast-paths/intl-constant-formatters	// IR= 1 formatRow CallBuiltin v[0-9]+, v[0-9]+ overload=IntlDateTimeFormatPrototypeFormat/
-calls-fast-paths/intl-constant-formatters	// IR= 1 formatRow CallBuiltin v[0-9]+, v[0-9]+ overload=IntlNumberFormatPrototypeFormat/
-calls-fast-paths/intl-constant-formatters	// IRT= 1 formatLocalTime CallBuiltin v[0-9]+, v[0-9]+ overload=IntlDateTimeFormatPrototypeFormat/
-calls-fast-paths/intl-constant-formatters	// IRT= 1 formatMinute CallBuiltin v[0-9]+, v[0-9]+ overload=IntlDateTimeFormatPrototypeFormat/
 # `function f(x, ...rest) { return rest[x] }`: the rest list is a parameter of the body, and the generic entrypoint makes it (CreateRest: in the frame where nothing else takes it, on the heap in byBoolean, typedNumber and typedString).
 # A read goes to the arguments themselves (GetMyArgumentByVal) only where the body is copied into its entrypoint.
 # `function step(steps: MapIterator<number>) { return steps.next().value }`, and so for SetIterator and ArrayIterator: the parameter is not tested for the class of the engine, `next` is read by name and called as any function is.

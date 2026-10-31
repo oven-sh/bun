@@ -118,6 +118,7 @@ typesite w30 module=m0 position=2106 kind=Variable
 typesite w31 module=m0 position=1069 kind=PropertyRead
 typesite w32 module=m2 position=4142 kind=Variable
 typesite w33 module=m2 position=4344 kind=Variable
+typesite w34 module=m4 position=302 kind=Variable
 layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent site=w8}}] ownFieldCount=1
 layout L1 module=m0 position=1718 fields=[{key="kind" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
 layout L2 module=m0 position=739 fields=[{key="turns" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
@@ -647,24 +648,30 @@ function f16 name="next" module=m4 position=25 kind=Method role=Library flags=[H
     Jump -> next b1() @25
   b1():
     v2 = StepGenerator v0, v1 check=IsGenerator @91
-    v3 = ResultAt v2 @188
-    v4 = ResultAt v2 index=1 @251
-    v5 = Integer integer=2 @315
-    v6 = StrictEq v4, v5 @304
-    Branch v6 -> taken b2(| 0), notTaken b4(| 0) @304
-  b2(v7):
-    Jump -> next b3() @304
+    v3 = ResultAt v2 @186
+    v4 = ResultAt v2 index=1 @249
+    v5 = Integer integer=1 @320
+    v6 = StrictEq v4, v5 @309
+    v7 = Convert v6 declared={type=boolean site=w34} @309
+    v8 = Integer integer=2 @370
+    v9 = StrictEq v4, v8 @359
+    Branch v9 -> taken b2(| 0), notTaken b4(| 0) @359
+  b2(v10):
+    Jump -> next b3() @359
   b3():
-    v8 = ResumeGenerator v0, v1 @362
-    Return v8 @362
-  b4(v9):
-    Jump -> next b5() @304
-  b5():
-    v10 = Integer integer=1 @460
-    v11 = StrictEq v9, v10 @449
-    v12 = Convert v11 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @421
-    v13 = CreateIteratorResult v3, v12 @421
-    Return v13 @421
+    v11 = ResumeGenerator v0, v1 @427
+    v12 = PropGet v11 key="value" @492
+    v13 = PropGet v11 key="done" @521
+    v14 = Boolean boolean=true @537
+    v15 = StrictEq v13, v14 @521
+    v16 = Convert v15 declared={type=boolean site=w34} @514
+    Jump -> next b5(v12, v16) @514
+  b4(v17):
+    Jump -> next b5(v3, v7) @359
+  b5(v18, v19: boolean):
+    v20 = Convert v19 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @560
+    v21 = CreateIteratorResult v18, v20 @560
+    Return v21 @560
 }
 runtimefunction id=FunctionPrototypeApply function=f15
 runtimefunction id=ArrayPrototypeForEach function=f14
@@ -703,8 +710,8 @@ runtimefunction id=GeneratorPrototypeNext function=f16 visibility=Private
 # CHECK-NEXT: Branch v21 -> taken b3(), notTaken b6()
 # CHECK-NEXT: b3() frequency=Rare handler=b10():
 # CHECK-NEXT: v22: undefined = Undefined
-# CHECK-NEXT: v23: object = CallDirect v13, v22 function=f16
-# CHECK-NEXT: v24: anything = PropGet v23 key="done"
+# CHECK-NEXT: v23: L(IteratorResult) = CallDirect v13, v22 function=f16
+# CHECK-NEXT: v24: anything ~ boolean = PropGet v23 key="done"
 # CHECK-NEXT: v25: boolean = ToBoolean v24
 # CHECK-NEXT: Branch v25 -> taken b4(), notTaken b5()
 # CHECK-NEXT: b4() frequency=Rare:
@@ -764,8 +771,8 @@ runtimefunction id=GeneratorPrototypeNext function=f16 visibility=Private
 # CHECK-NEXT: Branch v59 -> taken b16(), notTaken b19()
 # CHECK-NEXT: b16() frequency=Rare handler=b23():
 # CHECK-NEXT: v60: undefined = Undefined
-# CHECK-NEXT: v61: object = CallDirect v51, v60 function=f16
-# CHECK-NEXT: v62: anything = PropGet v61 key="done"
+# CHECK-NEXT: v61: L(IteratorResult) = CallDirect v51, v60 function=f16
+# CHECK-NEXT: v62: anything ~ boolean = PropGet v61 key="done"
 # CHECK-NEXT: v63: boolean = ToBoolean v62
 # CHECK-NEXT: Branch v63 -> taken b17(), notTaken b18()
 # CHECK-NEXT: b17() frequency=Rare:
@@ -1000,7 +1007,7 @@ runtimefunction id=GeneratorPrototypeNext function=f16 visibility=Private
 # CHECK-NEXT: v54: 0 = Integer
 # CHECK-NEXT: LoopHint [throwsOwedError]
 # CHECK-NEXT: Jump -> next b14(v54, v50)
-# CHECK-NEXT: b14(v56: int[0, 4294967295], v57: int|whole):
+# CHECK-NEXT: b14(v56: int[0, 4294967295], v57: int[4, 8589934594]):
 # CHECK-NEXT: LoopHint [leavesOwedError]
 # CHECK-NEXT: v59: boolean = Less v56, v53
 # CHECK-NEXT: Branch v59 -> taken b15(| 0), notTaken b19()
@@ -1010,53 +1017,55 @@ runtimefunction id=GeneratorPrototypeNext function=f16 visibility=Private
 # CHECK-NEXT: b16(v62: guard):
 # CHECK-NEXT: v63: int[0, 4294967294] ~ int[0, 2147483647] = Upcast v60 castType=int[0, 9007199254740990]
 # CHECK-NEXT: v64: int[1, 2] = GetArrayElement v52, v63, v62 arrayStorage=Int32 level=Proven accessSite=57 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v65: int|whole = Add v57, v64
+# CHECK-NEXT: v65: int[5, 8589934596] = Add v57, v64
 # CHECK-NEXT: Jump -> next b18(v65)
 # CHECK-NEXT: b17() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b18(v57)
-# CHECK-NEXT: b18(v66: int|whole):
+# CHECK-NEXT: b18(v66: int[4, 8589934596] ~ int[5, 8589934596]):
 # CHECK-NEXT: v67: int[1, 4294967295] = Increment v60
-# CHECK-NEXT: Jump -> next b14(v67, v66)
+# CHECK-NEXT: v68: fact = Specified
+# CHECK-NEXT: v69: int[4, 8589934594] ~ int[5, 8589934594] = AssumeType v66, v68 provenType=int[4, 8589934594]
+# CHECK-NEXT: Jump -> next b14(v67, v69)
 # CHECK-NEXT: b19() handler=b20():
-# CHECK-NEXT: v68: "abc" = String string="abc"
-# CHECK-NEXT: v69: number = ToNumber v11 calledBuiltin=StringPrototypeCharAt
-# CHECK-NEXT: v70: int|whole = ToIntegerOrInfinity v69
-# CHECK-NEXT: v71: string = CallBuiltin v68, v70 overload=StringPrototypeCharAt/0 accessSite=38
-# CHECK-NEXT: v72: undefined = CallDirect v71 function=f2 accessSite=39
-# CHECK-NEXT: v73: 0 = Integer
-# CHECK-NEXT: v74: " " = String string=" "
-# CHECK-NEXT: v75: "   " = String string="   "
-# CHECK-NEXT: v76: fractional = Double number=0.25
-# CHECK-NEXT: v77: string = Strcat v57, v74, v76, v75, v73
-# CHECK-NEXT: v78: undefined = CallDirect v77 function=f2 accessSite=45
+# CHECK-NEXT: v70: "abc" = String string="abc"
+# CHECK-NEXT: v71: number = ToNumber v11 calledBuiltin=StringPrototypeCharAt
+# CHECK-NEXT: v72: int|whole = ToIntegerOrInfinity v71
+# CHECK-NEXT: v73: string = CallBuiltin v70, v72 overload=StringPrototypeCharAt/0 accessSite=38
+# CHECK-NEXT: v74: undefined = CallDirect v73 function=f2 accessSite=39
+# CHECK-NEXT: v75: 0 = Integer
+# CHECK-NEXT: v76: " " = String string=" "
+# CHECK-NEXT: v77: "   " = String string="   "
+# CHECK-NEXT: v78: fractional = Double number=0.25
+# CHECK-NEXT: v79: string = Strcat v57, v76, v78, v77, v75
+# CHECK-NEXT: v80: undefined = CallDirect v79 function=f2 accessSite=45
 # CHECK-NEXT: Jump -> next b27()
 # CHECK-NEXT: b20() role=CatchHandler:
-# CHECK-NEXT: v79: anything = CatchValue
-# CHECK-NEXT: v80: anything ~ undefined|null|number|string|symbol|bigint|object = Upcast v79 castType=anything
-# CHECK-NEXT: v81: boolean = TypeTest v80 testedType=undefined|null
-# CHECK-NEXT: Branch v81 -> taken b21(), notTaken b22(| 0)
+# CHECK-NEXT: v81: anything = CatchValue
+# CHECK-NEXT: v82: anything ~ undefined|null|number|string|symbol|bigint|object = Upcast v81 castType=anything
+# CHECK-NEXT: v83: boolean = TypeTest v82 testedType=undefined|null
+# CHECK-NEXT: Branch v83 -> taken b21(), notTaken b22(| 0)
 # CHECK-NEXT: b21():
-# CHECK-NEXT: v82: undefined = Undefined
-# CHECK-NEXT: Jump -> next b23(v82)
-# CHECK-NEXT: b22(v83: boolean|number|string|symbol|bigint|object ~ number|string|symbol|bigint|object):
-# CHECK-NEXT: v84: anything = PropGet v83 key="name" accessSite=46
+# CHECK-NEXT: v84: undefined = Undefined
 # CHECK-NEXT: Jump -> next b23(v84)
-# CHECK-NEXT: b23(v85: anything):
-# CHECK-NEXT: v86: anything ~ undefined|null|number|string|symbol|bigint|object = Upcast v79 castType=anything
-# CHECK-NEXT: v87: undefined = CallDirect v85 function=f2 accessSite=47
-# CHECK-NEXT: v88: boolean = TypeTest v86 testedType=undefined|null
-# CHECK-NEXT: Branch v88 -> taken b24(), notTaken b25(| 0)
+# CHECK-NEXT: b22(v85: boolean|number|string|symbol|bigint|object ~ number|string|symbol|bigint|object):
+# CHECK-NEXT: v86: anything = PropGet v85 key="name" accessSite=46
+# CHECK-NEXT: Jump -> next b23(v86)
+# CHECK-NEXT: b23(v87: anything):
+# CHECK-NEXT: v88: anything ~ undefined|null|number|string|symbol|bigint|object = Upcast v81 castType=anything
+# CHECK-NEXT: v89: undefined = CallDirect v87 function=f2 accessSite=47
+# CHECK-NEXT: v90: boolean = TypeTest v88 testedType=undefined|null
+# CHECK-NEXT: Branch v90 -> taken b24(), notTaken b25(| 0)
 # CHECK-NEXT: b24():
-# CHECK-NEXT: v89: undefined = Undefined
-# CHECK-NEXT: Jump -> next b26(v89)
-# CHECK-NEXT: b25(v90: boolean|number|string|symbol|bigint|object ~ number|string|symbol|bigint|object):
-# CHECK-NEXT: v91: anything = PropGet v90 key="message" accessSite=50
+# CHECK-NEXT: v91: undefined = Undefined
 # CHECK-NEXT: Jump -> next b26(v91)
-# CHECK-NEXT: b26(v92: anything):
-# CHECK-NEXT: v93: string = CallBuiltin -, v92 overload=String/0 builtinCallForm=AnyReceiver accessSite=51
-# CHECK-NEXT: v94: undefined = CallBuiltin -, v93 overload=ConsoleError/0 accessSite=52
+# CHECK-NEXT: b25(v92: boolean|number|string|symbol|bigint|object ~ number|string|symbol|bigint|object):
+# CHECK-NEXT: v93: anything = PropGet v92 key="message" accessSite=50
+# CHECK-NEXT: Jump -> next b26(v93)
+# CHECK-NEXT: b26(v94: anything):
+# CHECK-NEXT: v95: string = CallBuiltin -, v94 overload=String/0 builtinCallForm=AnyReceiver accessSite=51
+# CHECK-NEXT: v96: undefined = CallBuiltin -, v95 overload=ConsoleError/0 accessSite=52
 # CHECK-NEXT: Jump -> next b27()
 # CHECK-NEXT: b27():
-# CHECK-NEXT: v95: undefined = Undefined
-# CHECK-NEXT: Return v95
+# CHECK-NEXT: v97: undefined = Undefined
+# CHECK-NEXT: Return v97
 # CHECK-NEXT: }

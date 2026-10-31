@@ -168,6 +168,19 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
             interop.require_result = RequireResult::Namespace;
         }
     }
+    // `require("./data.sqlite")` answers `{ __esModule, db, default }`, in `bun run` and where `bun build --compile` leaves the call to the loader.
+    let holds_database = |file: FileId| {
+        parsed_source(files, file)
+            .is_some_and(|it| matches!(it.loader, Loader::Sqlite | Loader::SqliteEmbedded))
+    };
+    for &file in &compiled_files {
+        if let Some(interop) = interops[file.idx()]
+            .as_mut()
+            .filter(|it| holds_database(file) && it.kind == ModuleKind::Data)
+        {
+            interop.require_result = RequireResult::Namespace;
+        }
+    }
     leave_require_of_data_imported_later_to_loader(input, scans, &compiled_files, &mut interops);
     answer_require_with_what_an_import_has_loaded(input, &compiled_files, &mut interops);
     // A path that shows when the program runs may name any of the others. It goes to the loader, and changes nothing for the calls that are linked.

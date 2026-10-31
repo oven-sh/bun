@@ -109,13 +109,22 @@ describe("which builds compile WebKit", () => {
     expect(prebuiltHasProgramObjects(cfg)).toBe(false);
     writeFileSync(join(source.destDir!, objects("testaot")), "");
     expect(prebuiltHasProgramObjects(cfg)).toBe(true);
+    // The ICU of the tarball keeps its data compressed. The objects of jsc hold what reads it; testaot gets it here, with zstd.
     expect(
-      jscPrograms(cfg).map(({ name, sources, libs }) => [name, sources.map(s => relative(buildDir, s)), libs]),
+      jscPrograms(cfg).map(({ name, sources, libs, deps }) => [
+        name,
+        sources.map(s => relative(buildDir, s)),
+        libs,
+        deps,
+      ]),
     ).toEqual(
       ["jsc", "testaot"].map(name => [
         name,
-        [join("deps", "WebKit", "programs", name, "OutOfMemory.cpp")],
+        ["OutOfMemory.cpp", ...(name === "testaot" ? ["ICUData.cpp"] : [])].map(file =>
+          join("deps", "WebKit", "programs", name, file),
+        ),
         [join(source.destDir!, objects(name))],
+        name === "testaot" ? ["zstd"] : undefined,
       ]),
     );
     expect(webkit.provides(cfg).files).toEqual(expect.arrayContaining([objects("jsc"), objects("testaot")]));

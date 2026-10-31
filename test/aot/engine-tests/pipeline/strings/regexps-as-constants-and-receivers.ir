@@ -1,6 +1,5 @@
 # A RegExp literal is an object wherever it stands: a constant of the module that is made when it is first read, the receiver of a method, an argument. `new RegExp` likewise, or it throws.
 # FORM: AsRead
-# DIAGNOSTIC: RegExpWithoutCode
 # RUN: lower-to-b3 optimized f1
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
 

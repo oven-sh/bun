@@ -496,15 +496,15 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f10
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="two"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 95, patchpoints: 39, rare instructions: 105
+# CHECK-NEXT: instructions: 93, patchpoints: 39, rare instructions: 94
 # CHECK-NEXT: end of function f1
 # CHECK-LABEL: function {{*}}name="three"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 138, patchpoints: 58, rare instructions: 133
+# CHECK-NEXT: instructions: 134, patchpoints: 58, rare instructions: 119
 # CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="bytes"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 95, patchpoints: 39, rare instructions: 105
+# CHECK-NEXT: instructions: 93, patchpoints: 39, rare instructions: 94
 # CHECK-NEXT: end of function f3
 # CHECK-LABEL: function {{*}}name="singles"
 # CHECK: role=Source

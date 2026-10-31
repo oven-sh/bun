@@ -358,6 +358,7 @@ fn with_loaded_bind_input<R>(
             replaced_exports: &[],
             replaced_builtins: &[],
             runs_in_place: false,
+            ignores_declared_side_effects: false,
             mocked_modules: &[],
             mocks_any_module: false,
             handed_on_modules: &[],

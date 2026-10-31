@@ -13,6 +13,7 @@
 #include "JSCommonJSModule.h"
 #include "ModuleLoader.h"
 #include "PathInlines.h"
+#include "ScriptExecutionContext.h"
 #include "WebCoreJSBuiltins.h"
 #include "ZigGlobalObject.h"
 #if ENABLE(AOT)
@@ -25,6 +26,7 @@
 #include <JavaScriptCore/CustomGetterSetter.h>
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSMapInlines.h>
+#include <JavaScriptCore/JSONObject.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/RegExp.h>
@@ -155,6 +157,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPrepareHoldersBeforeLookupsUnder, (JSC::JSGlo
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier);
 extern "C" JSC::EncodedJSValue Blob__createEmptyJSONBodyError(JSC::JSGlobalObject*);
 extern "C" bool Bun__compiledProgramRunsInPlace();
+extern "C" bool Bun__compiledProgramHoldsFileAsItIs(const BunString*);
 extern "C" bool Bun__AOT__isWorkerTextRefusedByTrimming(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__isStartOfWorker(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__isMainModule(JSC::JSGlobalObject*, const BunString* path);
@@ -829,15 +832,24 @@ bool isAskingWhyFileFailsToLoad()
 // The file is read and parsed as `require` reads it, and nothing of it runs.
 static JSValue createLoadError(JSGlobalObject* realm, const String& path)
 {
+    BunString specifier = Bun::toString(path);
     // The name of a built-in module is not a path. Reading one that the executable does not hold fails as under `bun run`.
-    if (!Bun__compiledProgramRunsInPlace() && isAbsolutePath(path))
+    // An executable holds a file that the build could not take as it is: what is wrong with it is for its loader to say.
+    if (!Bun__compiledProgramRunsInPlace() && isAbsolutePath(path) && !Bun__compiledProgramHoldsFileAsItIs(&specifier))
         return {};
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(realm);
-    BunString specifier = Bun::toString(path);
     ErrorableResolvedSource source;
     SetForScope isAsking(isAskingWhyFileFails, true);
     Bun__transpileFile(globalObject->bunVM(), globalObject, &specifier, &specifier, nullptr, &source, false, true, BunLoaderTypeNone);
-    return source.success ? JSValue() : JSValue::decode(source.result.err);
+    if (!source.success)
+        return JSValue::decode(source.result.err);
+    // The text of a JSON file goes through the parser of the engine next, as where the loader reads it. What that throws stays thrown.
+    if (source.result.value.tag == SyntheticModuleType::JSONForObjectLoader) {
+        auto scope = DECLARE_THROW_SCOPE(realm->vm());
+        JSC::JSONParseWithException(realm, source.result.value.source_code.toWTFString(BunString::NonNull));
+        RELEASE_AND_RETURN(scope, JSValue());
+    }
+    return {};
 }
 
 static JSValue createModuleNotFoundError(JSGlobalObject* realm, const String& specifier, const String& importer, bool isForRequire)
@@ -867,6 +879,13 @@ static bool loadsSynchronously(JSGlobalObject* globalObject, AOT::ModuleID modul
     return Bun__AOT__isLoadedSynchronously(globalObject, &pathArgument);
 }
 
+static void callInLaterTurn(JSGlobalObject* globalObject)
+{
+    defaultGlobalObject(globalObject)->scriptExecutionContext()->postTask([](WebCore::ScriptExecutionContext& context) {
+        AOT::deliverTextThatWaits(context.vm());
+    });
+}
+
 const AOT::ModuleHost compiledModuleHost = {
     &createModuleObject,
     &createRequirer,
@@ -891,6 +910,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &requirePrototype,
     &runMock,
     &loadsSynchronously,
+    &callInLaterTurn,
 };
 
 JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path, NotInExecutable what)

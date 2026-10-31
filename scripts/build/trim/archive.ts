@@ -126,7 +126,7 @@ export function copyArchiveWithout(
     const padded = (size: number) => size + (size & 1);
     const indexSize = 4 + 4 * offered.length + names.length;
     // A second index is what tells a reader that the long names end as they do in an archive of Microsoft's kind.
-    const sorted = indexes > 1 ? offered.toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)) : [];
+    const sorted = indexes > 1 ? [...offered].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)) : [];
     const secondSize = indexes > 1 ? 4 + 4 * kept.length + 4 + 2 * sorted.length + names.length : 0;
     const newHeaderOf = new Map<number, number>();
     let at = 8 + 60 + padded(indexSize) + (indexes > 1 ? 60 + padded(secondSize) : 0) + (longNames?.bytes ?? 0);

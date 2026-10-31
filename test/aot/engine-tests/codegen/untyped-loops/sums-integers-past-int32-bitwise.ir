@@ -442,11 +442,11 @@ function f5 name="counters" module=m0 position=2596 flags=[IsChecked, HasExplici
 # -- generated: f0 overWords products runningSum lengths counters
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 126, patchpoints: 58, rare instructions: 12, polls: 1
+# CHECK-NEXT: instructions: 127, patchpoints: 58, rare instructions: 12, polls: 1
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="overWords"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 95, patchpoints: 17, rare instructions: 926, polls: 2
+# CHECK-NEXT: instructions: 95, patchpoints: 17, rare instructions: 942, polls: 2
 # CHECK-NEXT: end of function f1
 # CHECK-LABEL: function {{*}}name="products"
 # CHECK: role=Source
@@ -454,7 +454,7 @@ function f5 name="counters" module=m0 position=2596 flags=[IsChecked, HasExplici
 # CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="runningSum"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 232, patchpoints: 44, rare instructions: 600, polls: 2
+# CHECK-NEXT: instructions: 232, patchpoints: 44, rare instructions: 602, polls: 2
 # CHECK-NEXT: end of function f10
 # CHECK-LABEL: function {{*}}name="lengths"
 # CHECK: role=Source

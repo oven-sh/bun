@@ -44,6 +44,14 @@ const programs: [entry: string, pairs: Pair[]][] = [
     ],
   ],
   [
+    "bytes-copied-into-a-list-that-grows.ts",
+    [
+      ["from the first on", "from the last on", 1],
+      ["from the first on", "up to a count, tested above", 1],
+      ["in pairs, by one counter", "in pairs, by two counters that meet", 1],
+    ],
+  ],
+  [
     "members-under-keys.js",
     [
       ["a method under a plain name", "a method under a symbol that the module creates", 4],
@@ -130,6 +138,21 @@ const programs: [entry: string, pairs: Pair[]][] = [
     [
       ["members that a literal spells out", "members that two spreads bring behind a member of the literal", 2],
       ["members that a literal spells out", "members that Object.assign brings to a literal with a member", 2],
+      [
+        "members that two spreads bring behind a member of the literal",
+        "members that two spreads bring under the interface of the defaults",
+        2,
+      ],
+      [
+        "members that Object.assign brings to a literal with a member",
+        "members that Object.assign brings to an empty literal under the interface of the defaults",
+        2,
+      ],
+      [
+        "members that two spreads bring behind a member of the literal",
+        "members that two spreads bring under what Required makes of the options",
+        2,
+      ],
       [
         "members that a literal gives numbers written in place",
         "members that two spreads bring behind a member of the literal",

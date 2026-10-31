@@ -140,8 +140,9 @@ test("replaces", () => {
   });
   async function report(words: string, ...flags: string[]) {
     const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words };
+    // With the address sanitizer and assertions the calls take 4 s under plain Bun and 13 s over layers.
     const { stdout, stderr, exitCode } = await run(
-      [bunExe(), "test", "--isolate", "--parallel=2", ...flags],
+      [bunExe(), "test", "--isolate", "--parallel=2", "--timeout=60000", ...flags],
       String(dir),
       env,
     );

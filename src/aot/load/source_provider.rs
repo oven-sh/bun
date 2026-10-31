@@ -186,6 +186,9 @@ pub trait SourceProvider: Sync {
 
     fn clear_embedded_files(&self) {}
 
+    /// Puts the file into the executable as it is, at the path of its module. The loader of the run time reads it there.
+    fn embed_at_module_path(&self, _file: &SourceFile<'_>, _module_path: &[u8]) {}
+
     fn parse_data<'s>(
         &self,
         file: &SourceFile<'_>,

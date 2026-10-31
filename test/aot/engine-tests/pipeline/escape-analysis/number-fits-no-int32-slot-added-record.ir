@@ -180,34 +180,29 @@ function f2 name="twoAdded" module=m0 position=655 flags=[IsChecked, HasExplicit
 # CHECK-LABEL: function {{*}}name="handedOn"
 # CHECK: module=m0 position=436 role=ResultWorker flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w2}, {type=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> site=w3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=i32}, {type=unspecified|L0}, {type=boolean|unspecified}, {type=unspecified|"odd"}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}, {original=1}]} creator=ResultWorker{origin=f1}
 # CHECK-LABEL: function {{*}}name="twoAdded"
-# CHECK: module=m0 position=655 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} results=[{type=string site=w7 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f2} inlineFrames=[{}, {callee=f7 callPosition=4294967295}] {
+# CHECK: module=m0 position=655 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} results=[{type=string site=w7 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f2} {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v2: true = Boolean boolean=true
-# CHECK-NEXT: v3: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: v4: "ok:" = String string="ok:"
-# CHECK-NEXT: StringBuilderAppend v3, v4
-# CHECK-NEXT: v6: i32 = StringBuilderCheckpoint v3
-# CHECK-NEXT: v7: boolean = JSONHasStackSpace
-# CHECK-NEXT: Branch v7 -> taken b1(), notTaken b2()
+# CHECK-NEXT: v3: L0 = NewObject -, v2 layout=L0 fields=[1] allocationSite=5 allocationClass=0
+# CHECK-NEXT: v4: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: v5: "ok:" = String string="ok:"
+# CHECK-NEXT: StringBuilderAppend v4, v5
+# CHECK-NEXT: v7: i32 = StringBuilderCheckpoint v4
+# CHECK-NEXT: v8: int[0, 2] = CallDirect v3, v4 function=f7 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v8 cases=[1] -> case b1(), otherwise b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v8: buildercursor = StringBuilderReserve v3 size=128
-# CHECK-NEXT: v9: buildercursor = JSONAppendKey v3, v8 string="ok" [opensObject]
-# CHECK-NEXT: v10: buildercursor = JSONAppendBoolean v3, v9, v2
-# CHECK-NEXT: v11: buildercursor = JSONAppendToken v3, v10 jsonToken=CloseObject
-# CHECK-NEXT: StringBuilderCommit v3, v11
-# CHECK-NEXT: v13: "" = String string=""
-# CHECK-NEXT: Jump -> next b3(v13)
+# CHECK-NEXT: v9: "" = String string=""
+# CHECK-NEXT: Jump -> next b3(v9)
 # CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: StringBuilderRollBack v3, v6
-# CHECK-NEXT: v15: L0 = NewObject -, v2 layout=L0 fields=[1] allocationSite=5 allocationClass=0
-# CHECK-NEXT: v16: undefined = Undefined
-# CHECK-NEXT: v17: undefined|string = CallBuiltin -, v15, v16 overload=JSONStringify/0 accessSite=10
-# CHECK-NEXT: Jump -> next b3(v17)
-# CHECK-NEXT: b3(v18: undefined|string ~ ""):
-# CHECK-NEXT: v19: ":" = String string=":"
-# CHECK-NEXT: v20: false = Boolean
-# CHECK-NEXT: v21: ":undefined" = String string=":undefined"
-# CHECK-NEXT: StringBuilderAppend v3, v18, v19, v20, v21
-# CHECK-NEXT: v23: string = StringBuilderFinish v3
-# CHECK-NEXT: Return v23
+# CHECK-NEXT: StringBuilderRollBack v4, v7
+# CHECK-NEXT: v11: undefined = Undefined
+# CHECK-NEXT: v12: undefined|string = CallBuiltin -, v3, v11 overload=JSONStringify/0 accessSite=10
+# CHECK-NEXT: Jump -> next b3(v12)
+# CHECK-NEXT: b3(v13: undefined|string ~ ""):
+# CHECK-NEXT: v14: ":" = String string=":"
+# CHECK-NEXT: v15: false = Boolean
+# CHECK-NEXT: v16: ":undefined" = String string=":undefined"
+# CHECK-NEXT: StringBuilderAppend v4, v13, v14, v15, v16
+# CHECK-NEXT: v18: string = StringBuilderFinish v4
+# CHECK-NEXT: Return v18
 # CHECK-NEXT: }

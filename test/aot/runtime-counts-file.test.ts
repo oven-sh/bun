@@ -75,7 +75,7 @@ describe("compile/aot/runtime-counts-file", () => {
     const lines = text.split("\n");
     expect(lines.pop()).toBe("");
     const isCount = (line: string) =>
-      /^\d+\t(counter|exit|limit|operation|refilled|made|branch|flattened|hashed):\S+$/.test(line);
+      /^\d+\t(counter|exit|limit|operation|refilled|made|branch|flattened|hashed|decoded):\S+$/.test(line);
     // Behind the counts: what was made and learned, by its description, and the places that allocate.
     const isDescribed = (line: string) =>
       /^\d+\t(structures|plans dropped by collections|keys of plans|pairs of layouts|named):\S.*$/.test(line);

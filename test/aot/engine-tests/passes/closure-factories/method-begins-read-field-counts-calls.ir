@@ -189,7 +189,6 @@ function f3 module=m0 position=291 length=1 captures=[{type=anything}, {type=any
 # CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b4(v7)
 # CHECK-NEXT: b2(v9: int[-2147483642, 2147483647]):
 # CHECK-NEXT: PutSlot v0, v5, v9 key="calls" receivers=[L0] level=Expected accessSite=21
-# CHECK-NEXT: FinishBirth v0
 # CHECK-NEXT: Jump -> next b5(v9)
 # CHECK-NEXT: b3() frequency=Unlikely:
 # CHECK-NEXT: v11: anything ~ int[-2147483643, 2147483647] = PropGet v0 key="calls" accessSite=20 receivers=[L0]

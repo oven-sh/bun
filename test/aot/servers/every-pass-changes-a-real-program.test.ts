@@ -47,15 +47,8 @@ const passesThatReportNoChange = [
   "SummarizeForInlining",
   "VerifyProgram",
 ];
-/**
- * ExpandLongArrayLiterals finds work in the server on Fastify alone, whose build takes longer than the three together.
- * CallThroughMethodTable had one call here, in the stream classes that node:tty brought into the server on Elysia. node:tty no
- * longer loads them for isatty().
- * KeepStringsJoinedInLoops looks for a string that a loop joins again and again from parts it leaves alone, as in
- * `for (const key of keys) if (key.startsWith(`${path}.`))`. None of the three has such a loop: the servers on Fastify (nine functions),
- * Koa, Express, Hono and node:http have.
- */
-const passesWithoutWorkHere = ["CallThroughMethodTable", "ExpandLongArrayLiterals", "KeepStringsJoinedInLoops"];
+/** ExpandLongArrayLiterals finds work in the server on Fastify alone, whose build takes longer than the three together. */
+const passesWithoutWorkHere = ["ExpandLongArrayLiterals"];
 /** Two of them count what they decide. */
 const statisticsOfPassesThatReportNoChange = {
   ElideStackChecks: "FunctionsEnteredWithoutStackCheck",

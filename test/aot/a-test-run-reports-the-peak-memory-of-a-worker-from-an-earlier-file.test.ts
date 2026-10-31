@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir } from "harness";
+import { reads } from "./harness/reads";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -84,6 +85,8 @@ test("a process does not report the peak of the process that started it", async 
   const startedByLarge = await runOnOneWorker("", "--aot");
   expect(held.at(-1)).toBe(1);
   expect(startedByLarge.exitCode).toBe(0);
+  const apart = Math.abs(startedByLarge.buildPeakMB - startedBySmall.buildPeakMB);
+  reads("the peak of the build of a test run by who starts it", apart, spikeMB / 2, "MB apart");
   expect(Math.abs(startedByLarge.buildPeakMB - startedBySmall.buildPeakMB)).toBeLessThan(spikeMB / 2);
   if (!isWindows)
     expect(Math.abs(startedByLarge.coordinatorPeakMB - startedBySmall.coordinatorPeakMB)).toBeLessThan(spikeMB / 2);

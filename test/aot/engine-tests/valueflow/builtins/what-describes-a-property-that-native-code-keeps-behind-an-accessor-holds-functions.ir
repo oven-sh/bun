@@ -4,6 +4,8 @@
 # own = { get: Object.getOwnPropertyDescriptor({ a: 1 }, "a").get }
 # Native code lays accessors of its own on some objects. What describes such a property holds a function under `get`, so a field that takes it may hold a function.
 # A property of an object that the program made alone is a value: its description holds undefined there.
+# The object with such accessors is the one that native code makes, which Windows does not have: there process.env is a proxy that the library makes.
+# REQUIRES: not-windows
 # RUN: valueflow-apply
 # CHECK: layout L0 name="Kept"
 # CHECK-NOT: declared={type=undefined}

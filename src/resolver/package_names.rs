@@ -5,7 +5,8 @@ use core::ptr::NonNull;
 use bun_ast::{ImportKind, Log};
 use bun_paths::is_sep_native;
 
-use crate::compiled_program::{compare_source_paths, normalize_separator};
+use crate::compiled_program::{compare_source_paths, normalize_separator, public_path_from_root};
+use crate::package_json::Package;
 use crate::resolver::{Resolver, TSConfigRef};
 
 /// A file or a folder: where it is on the disk of the build, and where in the executable.
@@ -22,6 +23,16 @@ pub struct PackageName {
     pub required: Option<u32>,
     pub imported: Option<u32>,
     pub hides_other_paths: bool,
+    pub is_hidden_from_require: bool,
+    pub is_hidden_from_import: bool,
+}
+
+/// A name that the build asked for from `directory`, and that the "exports" of its package turned away.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct RefusedName {
+    pub directory: Vec<u8>,
+    pub specifier: Vec<u8>,
+    pub is_require: bool,
 }
 
 /// `compiled_program::CompiledPathAlias`
@@ -151,10 +162,25 @@ pub fn add_written_names(
             required: Some(position as u32),
             imported: Some(position as u32),
             hides_other_paths: false,
+            is_hidden_from_require: false,
+            is_hidden_from_import: false,
         });
     }
     names.sort_by(|a, b| a.public_path.cmp(&b.public_path));
     names.dedup_by(|later, earlier| later.public_path == earlier.public_path);
+    names
+}
+
+/// `names` and `hidden`, each name once.
+pub fn add_hidden_names(mut names: Vec<PackageName>, hidden: Vec<PackageName>) -> Vec<PackageName> {
+    names.extend(hidden);
+    names.sort_by(|a, b| a.public_path.cmp(&b.public_path));
+    names.dedup_by(|later, earlier| {
+        let is_same = later.public_path == earlier.public_path;
+        earlier.is_hidden_from_require |= is_same && later.is_hidden_from_require;
+        earlier.is_hidden_from_import |= is_same && later.is_hidden_from_import;
+        is_same
+    });
     names
 }
 
@@ -420,6 +446,8 @@ impl Resolver<'_> {
                     entry_points,
                 ),
                 hides_other_paths: false,
+                is_hidden_from_require: false,
+                is_hidden_from_import: false,
             });
         }
         for (place, package) in places
@@ -496,6 +524,8 @@ impl Resolver<'_> {
                         required,
                         imported,
                         hides_other_paths,
+                        is_hidden_from_require: false,
+                        is_hidden_from_import: false,
                     });
                 }
             }
@@ -504,6 +534,55 @@ impl Resolver<'_> {
         self.prefer_module_field = prefers_module_field;
         names.sort_by(|a, b| a.public_path.cmp(&b.public_path));
         names.dedup_by(|later, earlier| later.public_path == earlier.public_path);
+        names
+    }
+
+    /// `refused`, each under the public path that it would have as a file: below the `node_modules` that holds its package.
+    pub fn find_hidden_names(
+        &mut self,
+        refused: &[RefusedName],
+        root: BuildPaths<'_>,
+    ) -> Vec<PackageName> {
+        let root_directory: Vec<u8> = root
+            .source_path
+            .iter()
+            .map(|&byte| native_separator(byte))
+            .collect();
+        let root_directory = bun_paths::strings::without_trailing_slash(&root_directory);
+        let separator = &[bun_paths::SEP][..];
+        let mut unread_log = Log::default();
+        let log_of_build = core::mem::replace(&mut self.log, NonNull::from(&mut unread_log));
+        let mut names = Vec::new();
+        for name in refused {
+            let Some(package) = Package::parse_name(&name.specifier) else {
+                continue;
+            };
+            let directory = bun_paths::strings::without_trailing_slash(&name.directory);
+            let place = core::iter::successors(Some(directory), |folder| parent(folder))
+                .filter(|folder| last_component(folder) != NODE_MODULES)
+                .find(|&folder| {
+                    let installed = [folder, separator, NODE_MODULES, separator, package].concat();
+                    self.read_dir_info_ignore_error(&installed).is_some()
+                });
+            let Some(relative) = place.and_then(|it| to_relative_specifier(root_directory, it))
+            else {
+                continue;
+            };
+            let place = public_path_from_root(root.public_path, &relative);
+            names.push(PackageName {
+                public_path: [&place[..], b"/node_modules/", &name.specifier]
+                    .concat()
+                    .into_iter()
+                    .map(normalize_separator)
+                    .collect(),
+                required: None,
+                imported: None,
+                hides_other_paths: false,
+                is_hidden_from_require: name.is_require,
+                is_hidden_from_import: !name.is_require,
+            });
+        }
+        self.log = log_of_build;
         names
     }
 }

@@ -380,6 +380,14 @@ fn symbolic_link_option_is_copied() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn ignoring_annotations_ignores_declared_side_effects() {
+    assert!(!convert_code(|_| {}).ignores_declared_side_effects);
+    let ignoring = convert_code(|options| options.ignore_dce_annotations = true);
+    assert!(ignoring.ignores_declared_side_effects);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn written_configuration_path_is_absolute() {
     assert_eq!(convert_code(|_| {}).tsconfig_override, None);
     let code = convert_code(|options| {

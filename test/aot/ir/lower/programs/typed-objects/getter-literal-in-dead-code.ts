@@ -105,7 +105,7 @@ console.log(showKept(makeKept(2)));
 // CHECK-NEXT: Return v16
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="value"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] captures=[{type=number site=[[w_8]]}] thisType={type=anything} results=[{type=number site=[[w_15]]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] captures=[{type=number site=[[w_8]] variableName="n"}] thisType={type=anything} results=[{type=number site=[[w_15]]}] {
 // CHECK-NEXT: b0(v0: number):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

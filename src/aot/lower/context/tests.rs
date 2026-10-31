@@ -511,7 +511,7 @@ fn text_range_is_cleared_without_function_text() {
     let range = find_function(&with_text, "f").text;
     let types = with_text.module.types_in_function_text.unwrap();
     let source = files[0].1.as_bytes();
-    let mut text = vec![0; source.len() - types.removed_len()];
+    let mut text = vec![0; types.kept_len(source.len())];
     types.remove_from(source, &mut text);
     let text = &text[range.start as usize..range.end as usize];
     assert_eq!(text, b"function f() {}");

@@ -79,17 +79,26 @@ pub(crate) struct EvaluatedTextSite {
     pub implied_answer: u32,
 }
 
+/// `modules_with_queries`
+pub(crate) struct FileWithQuery {
+    pub file: Box<[u8]>,
+    pub query: Box<[u8]>,
+}
+
 pub(crate) struct ParsedSource {
     pub kind: SourceKind,
     pub loader: Loader,
     pub byte_count: usize,
     pub is_from_plugin: bool,
     pub plugin_module: Option<PluginModuleName>,
+    pub file_with_query: Option<FileWithQuery>,
     pub web_assembly: Option<Vec<u8>>,
     pub is_page: bool,
     pub has_compiled_components: bool,
     /// Why the text is no program, where the program finds that out when it loads the file. An empty module stands in its place.
     pub parse_failure: Option<Vec<u8>>,
+    /// The file as it is, where an executable holds a file that fails at load: it has no disk to read it from when the program loads it.
+    pub text_that_fails_at_load: Option<Box<[u8]>>,
     /// Nothing but the way the file is loaded says that it is a program.
     pub is_language_assumed: bool,
     pub builtins: ResolvedBuiltins,
@@ -121,10 +130,12 @@ impl ParsedSource {
             byte_count: 0,
             is_from_plugin: false,
             plugin_module: None,
+            file_with_query: None,
             web_assembly: None,
             is_page: false,
             has_compiled_components: false,
             parse_failure: None,
+            text_that_fails_at_load: None,
             is_language_assumed: false,
             builtins: ResolvedBuiltins::default(),
             evaluated_text_sites: Vec::new(),
@@ -194,6 +205,8 @@ struct SourceEntry {
     loader: Loader,
     byte_count: u64,
     public_path: Box<[u8]>,
+    /// How much of the end of `public_path` is a query: `?fresh=1`.
+    query_length: usize,
     /// Empty until it is asked for where it is `compute_display_path` of `diagnostic_path`: few files are ever shown.
     display_path: OnceLock<Box<[u8]>>,
     diagnostic_path: Box<[u8]>,
@@ -248,6 +261,16 @@ impl Sources {
 
     pub fn public_path(&self, file: FileId) -> &[u8] {
         &self.entries[file.idx()].public_path
+    }
+
+    /// `public_path` up to the query that the module was asked for with. `import.meta.path` of `./a.ts?fresh=1` is the path of `a.ts`.
+    pub fn public_path_without_query(&self, file: FileId) -> &[u8] {
+        let entry = &self.entries[file.idx()];
+        &entry.public_path[..entry.public_path.len() - entry.query_length]
+    }
+
+    pub fn has_query(&self, file: FileId) -> bool {
+        self.entries[file.idx()].query_length != 0
     }
 
     pub fn diagnostic_path(&self, file: FileId) -> &[u8] {

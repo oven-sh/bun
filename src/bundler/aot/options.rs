@@ -213,6 +213,7 @@ fn code_options(input: &OptionsInput<'_, '_, '_>) -> CodeOptions {
     code.prefers_module_field = !input.aot.runs_in_place;
     code.builds_executable = !input.aot.runs_in_place;
     code.preserves_symlinks = options.preserve_symlinks;
+    code.ignores_declared_side_effects = options.ignore_dce_annotations;
     // As `bun run` and `bun test` transpile the same files.
     code.transpiles_by_working_directory = input.aot.runs_in_place;
     code.types_stop_at_entry_points = input.aot.is_part_of_test_files;

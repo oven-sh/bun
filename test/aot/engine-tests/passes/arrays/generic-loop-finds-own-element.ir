@@ -268,10 +268,9 @@ runtimefunction id=ArrayPrototypeSome function=f26
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="filled"
-# CHECK: module=m0 position=832 flags=[HasRestParameter, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array site=w0 flags=[IsExpected]}, {type=Array<undefined|"a"|"b"|"c", proven, pristine[Storage, Names, Dense]> site=w1 flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L0|L1 site=w2 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything ~ Array, v1: Array<undefined|"a"|"b"|"c", proven, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v3: Array = AssumeType v0 provenType=Array
-# CHECK-NEXT: v2: Array ~ L1 = Expect v3 expectedType=undefined|null|L0|L1
+# CHECK: module=m0 position=832 flags=[HasRestParameter, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 site=w0 flags=[IsExpected]}, {type=Array<undefined|"a"|"b"|"c", proven, pristine[Storage, Names, Dense]> site=w1 flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L0|L1 site=w2 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: anything ~ undefined|null|L0|L1, v1: Array<undefined|"a"|"b"|"c", proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v2: Array ~ L1 = AssumeType v0 provenType=Array
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="walk"

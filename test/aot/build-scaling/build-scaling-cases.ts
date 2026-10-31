@@ -123,19 +123,21 @@ async function measure(shape: Shape, size: number, carrier: string[]): Promise<B
   try {
     const cost = await measureCommandWithMemory(
       cwd,
-      [
-        bunExe(),
-        "build",
-        "--compile",
-        "--aot",
-        withThreads(1),
-        ...(shape.flags ?? []),
-        ...(shape.counts ? withReport(report, "summary") : []),
-        ...carrier,
-        entry,
-        "--outfile",
-        executable,
-      ],
+      shape.isTestRun
+        ? [bunExe(), "test", "--aot", ...(shape.flags ?? []), entry]
+        : [
+            bunExe(),
+            "build",
+            "--compile",
+            "--aot",
+            withThreads(1),
+            ...(shape.flags ?? []),
+            ...(shape.counts ? withReport(report, "summary") : []),
+            ...carrier,
+            entry,
+            "--outfile",
+            executable,
+          ],
       900_000,
       envOfShapeBuilds,
       shape.isRefused ? 1 : 0,
@@ -167,7 +169,8 @@ const slackOfAllShapesTogether = 1.15;
 
 async function measureAllShapesTogether(carrier: string[]): Promise<Cost> {
   const built = shapes.filter(
-    shape => !shape.isRefused && !shape.isBundledFirst && !shape.flags && !shape.isExcludedFromCombinedBuild,
+    shape =>
+      !shape.isRefused && !shape.isBundledFirst && !shape.flags && !shape.isExcludedFromCombinedBuild && !shape.isTestRun,
   );
   const files = built.flatMap((shape, index) =>
     Object.entries(shape.write(shape.size * factor)).map(([path, text]) => [`shape-${index}/${path}`, text]),
@@ -302,7 +305,7 @@ export const buildScaling = (part: number, parts: number) =>
             return addedByTwice < least ? undefined : addedByTwice / Math.max(added, leastDivisor);
           };
           // Most shapes are the same program at size 0, so each of its builds says what that program needs.
-          const nothing = JSON.stringify([shape.write(0), shape.entry, shape.flags, shape.isBundledFirst]);
+          const nothing = JSON.stringify([shape.write(0), shape.entry, shape.flags, shape.isBundledFirst, shape.isTestRun]);
           const grownInMemory = ([none, once, twice]: Costs) => {
             const peakBytes = Math.min(none.peakBytes, leastPeakOfNothing.get(nothing) ?? Infinity);
             leastPeakOfNothing.set(nothing, peakBytes);

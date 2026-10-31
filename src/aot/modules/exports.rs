@@ -983,6 +983,21 @@ impl ExportTables {
     }
 }
 
+/// `export * from "./a"; export * from "./b"`, and both export the name. The module does not export it. The loader of the run time, which links code
+/// that is not compiled to the module, says so in other words than of a name that nobody exports, and looks behind no further star for it.
+pub(super) fn find_ambiguous_names(
+    files: &Files<'_>,
+    tables: &ExportTables,
+    file: FileId,
+) -> Vec<Atom> {
+    let names = tables.names(file).iter();
+    let ambiguous = names.filter(|it| it.1.resolution == Resolution::Ambiguous);
+    let mut ambiguous: Vec<Atom> = ambiguous.map(|it| it.0).collect();
+    let atoms = &files.atoms;
+    ambiguous.shared_sort_unstable_by(|&a, &b| compare_code_units(atoms.bytes(a), atoms.bytes(b)));
+    ambiguous
+}
+
 pub(super) fn finish_exports(
     files: &Files<'_>,
     tables: &ExportTables,

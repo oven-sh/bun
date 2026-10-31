@@ -628,7 +628,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f39 visibility=Private
 # CHECK-NEXT: end of function f42
 # CHECK-LABEL: function {{*}}name="upgrade"
 # CHECK: role=GenericVersion
-# CHECK-NEXT: instructions: 50, patchpoints: 23
+# CHECK-NEXT: instructions: 53, patchpoints: 23
 # CHECK-NEXT: end of function f44
 # CHECK-LABEL: function {{*}}name="upgrade"
 # CHECK: role=GenericEntrypoint

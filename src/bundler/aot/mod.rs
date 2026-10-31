@@ -27,7 +27,7 @@ use bun_aot::{BuildFailed, Compilation};
 use bun_ast::{Loc, Log};
 use bun_options_types::aot_options::{AotOptions, ReplacedByTests};
 use bun_resolver::package_names::{
-    BuildPaths, FurtherPackageName, PackageName, PathAlias, add_written_names,
+    BuildPaths, FurtherPackageName, PackageName, PathAlias, add_hidden_names, add_written_names,
 };
 use bun_sema_driver::Libs;
 use core::ptr::NonNull;
@@ -190,6 +190,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
     );
     let result = bun_aot::compile(&options, &services, log);
 
+    let refused_names = services.take_refused_names();
     let embedded = services.shut_down();
     let (package_names, path_aliases) = match &result {
         // A program that runs in place asks the disk, and one entry point is loaded by nobody.
@@ -217,6 +218,21 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
             (names, resolver.find_path_aliases(&folders))
         }
         Ok(_) | Err(_) => (Vec::new(), Vec::new()),
+    };
+    // A program that runs in place reads the package.json files itself.
+    let package_names = match result.is_ok() && !aot.runs_in_place && !refused_names.is_empty() {
+        true => {
+            let root = BuildPaths {
+                source_path: &options.paths.root_directory,
+                public_path: module_prefix,
+            };
+            let resolver = &mut bundle.transpiler.resolver;
+            add_hidden_names(
+                package_names,
+                resolver.find_hidden_names(&refused_names, root),
+            )
+        }
+        false => package_names,
     };
     let further_package_names = match &result {
         Ok(compilation) if !compilation.program_files.is_empty() => {

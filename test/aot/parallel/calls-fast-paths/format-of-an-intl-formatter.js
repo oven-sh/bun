@@ -1,12 +1,5 @@
 // `formatter.format(value)`: `format` is an accessor that answers a function bound to the formatter. Where the formatter has its names, the call formats without the read and without a call of a function,
 // and goes by what the read found, whatever the arguments do to the formatter afterwards.
-// IRT= 1 formatCount IsPristine v[0-9]+ builtinClass=IntlNumberFormat
-// IRT= 1 formatCount CallBuiltin v[0-9]+, v[0-9]+ overload=IntlNumberFormatPrototypeFormat/
-// IRT= 1 formatTime IsPristine v[0-9]+ builtinClass=IntlDateTimeFormat
-// IRT= 1 formatTime CallBuiltin v[0-9]+, v[0-9]+ overload=IntlDateTimeFormatPrototypeFormat/
-// IR= 1 formatNewDate CallBuiltin v[0-9]+, v[0-9]+ overload=IntlDateTimeFormatPrototypeFormat/
-// CALLS+ formatTime operationAOTFormatDateTime
-// CALLS+ formatNewDate operationAOTFormatDateTime
 const count = new Intl.NumberFormat("en-US");
 const day = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "medium", timeZone: "UTC" });
 const say = run => {

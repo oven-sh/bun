@@ -186,6 +186,8 @@ fn write_product(
             required: name.required,
             imported: name.imported,
             hides_other_paths: name.hides_other_paths,
+            is_hidden_from_require: name.is_hidden_from_require,
+            is_hidden_from_import: name.is_hidden_from_import,
         })
         .collect();
     let path_aliases: Vec<CompiledPathAliasInput<'_>> = build
@@ -469,7 +471,8 @@ fn build_program(
         typescript_libs: bun_sema_driver::Libs::Bundled(crate::cli::typescript_libs::BUNDLED),
     });
     built.map_err(|failure| {
-        if !request.log.has_errors() {
+        // Whoever is told which entry points to leave out builds again without them, and may have nothing to say about it.
+        if !request.log.has_errors() && failure.refused_entry_points.is_none() {
             request
                 .log
                 .add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("the build failed"));

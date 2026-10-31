@@ -292,6 +292,18 @@ class Image:
                 numbers.append(name)
         self.name(numbers, "module-variable", False)
         self.notes.append("module-variable %d" % len(numbers))
+        o, count = self.tables["namedCaptures"]
+        cursor, numbers = start + o, []
+        while cursor < start + o + count:
+            varint()
+            for _ in range(varint()):
+                varint()
+                name = varint()
+                if name >= self.numberOfStrings:
+                    raise Refusal("ProgramTables: namedCaptures names string %d of %d" % (name, self.numberOfStrings))
+                numbers.append(name)
+        self.name(numbers, "captured-variable", False)
+        self.notes.append("captured-variable %d" % len(numbers))
         column("literalStrings", 0, 4, "literal-union-member")
         column("bigIntConstants", 0, 4, "bigint-digits")
         column("moduleExports", 0, 3, "export", True)
@@ -321,7 +333,8 @@ class Image:
                 if end > ps:
                     raise Refusal("ProgramTables: the environment of shape %d runs out of the section" % shape)
                 strings.append((name, "environment-name"))
-                identifiers += [(struct.unpack_from("<I", data, start + at + ENVIRONMENT + 8 * i)[0], "environment-variable") for i in range(described)]
+                variables = (struct.unpack_from("<I", data, start + at + ENVIRONMENT + 8 * i)[0] for i in range(described))
+                strings += [(variable, "environment-variable") for variable in variables if variable != 0xffffffff]
                 self.regions.append((at, end, "the record of an environment"))
                 continue
             word, _, _, name, _, numberOfFields, numberOfOperands = struct.unpack_from("<IIIIIHH", data, start + at)

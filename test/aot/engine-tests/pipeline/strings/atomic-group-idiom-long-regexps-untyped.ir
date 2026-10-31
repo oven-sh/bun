@@ -1,6 +1,5 @@
 # The atomic-group idiom `(?=(X))\1` inside very long regular expressions (the same program without type annotations).
 # FORM: AsRead
-# DIAGNOSTIC: RegExpWithoutCode
 # RUN: lower-to-b3 optimized f1
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
 

@@ -83,10 +83,8 @@ impl<'h> Resolver<'h> {
             search.request.suffix = end.unwrap_or_default();
             match end {
                 Some(_) => search.find_candidates(),
-                // A path finds what a walk over the folders finds.
-                None if is_path(start) && strings::split(start, b"/").any(is_left_out_of_walks) => {
-                    Ok(())
-                }
+                // A path finds what a walk over the folders finds, and a walk passes by folders: `./names/.hidden.js` is found.
+                None if is_path(start) && lies_in_folder_left_out_of_walks(start) => Ok(()),
                 None => search.try_specifier(start),
             }
         });
@@ -602,6 +600,10 @@ pub(super) fn is_inside(path: &[u8], folder: &[u8]) -> bool {
 
 fn is_left_out_of_walks(folder: &[u8]) -> bool {
     folder == b"node_modules" || folder.starts_with(b".") && !is_dot_segment(folder)
+}
+
+fn lies_in_folder_left_out_of_walks(path: &[u8]) -> bool {
+    strings::split(split_after_last_slash(path).0, b"/").any(is_left_out_of_walks)
 }
 
 fn is_path(specifier: &[u8]) -> bool {

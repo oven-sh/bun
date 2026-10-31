@@ -94,6 +94,24 @@ pub enum CodeFailure {
     QueryString,
 }
 
+impl CodeFailure {
+    /// A `package.json` turns the name away: "exports" of the package, or "imports" of the importer's.
+    pub fn is_refusal_of_package_json(self) -> bool {
+        match self {
+            CodeFailure::PackagePathNotExported
+            | CodeFailure::PackageImportNotDefined
+            | CodeFailure::InvalidModuleSpecifier
+            | CodeFailure::InvalidPackageTarget
+            | CodeFailure::InvalidPackageConfiguration
+            | CodeFailure::UnsupportedDirectoryImport => true,
+            CodeFailure::ModuleNotFound
+            | CodeFailure::PackageNotFound
+            | CodeFailure::BuiltinModuleNotFound
+            | CodeFailure::QueryString => false,
+        }
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ExternalKind {
     UncompiledCode,

@@ -11,7 +11,9 @@ declare function $getContiguousIndex<T>(a: unknown[], k: number): T;
 declare function $getOwnContiguousIndex<T>(a: unknown[], k: number): T;
 declare function $putOwnContiguousIndex(a: unknown[], k: number, value: unknown): void;
 declare function $getOwnDoubleIndex(a: unknown[], k: number): number;
+declare function $getOwnInt32Index(a: unknown[], k: number): number;
 declare function $putOwnDoubleIndex(a: unknown[], k: number, value: number): void;
+declare function $putOwnInt32Index(a: unknown[], k: number, value: number): void;
 declare function $truncateNewArray<T>(out: T[], n: number): T[];
 declare function $newContiguousArray<T>(n: number): T[];
 declare function $putContiguousIndex(out: unknown[], k: number, value: unknown): void;
@@ -474,20 +476,19 @@ function trySortNumbersInPlace<T>(array: T[], isDescending: boolean): boolean {
     return true;
   }
   if (kind !== $arrayStorageInt32) return false;
-  const first = $getContiguousIndex<number | undefined>(array, 0);
-  if (first === undefined || !isWritableBehindFirstStore<T>(array, kind, count, first)) return false;
+  if (!$hasContiguousIndex(array, 0) || !isWritableBehindFirstStore<T>(array, kind, count, $getOwnInt32Index(array, 0)))
+    return false;
   for (let index = 1; index < count; index = (index + 1) | 0) {
-    const element = $getContiguousIndex<number | undefined>(array, index);
-    if (element === undefined) return false;
-    const value = element | 0;
+    if (!$hasContiguousIndex(array, index)) return false;
+    const value: number = $getOwnInt32Index(array, index);
     let position = index;
     while (position > 0) {
-      const before = $getOwnContiguousIndex<number>(array, (position - 1) | 0) | 0;
+      const before: number = $getOwnInt32Index(array, (position - 1) | 0);
       if (!(isDescending ? before < value : value < before)) break;
-      $putOwnContiguousIndex(array, position, before);
+      $putOwnInt32Index(array, position, before);
       position = (position - 1) | 0;
     }
-    if (position !== index) $putOwnContiguousIndex(array, position, value);
+    if (position !== index) $putOwnInt32Index(array, position, value);
   }
   return true;
 }

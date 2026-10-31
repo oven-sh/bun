@@ -510,11 +510,17 @@ fn import_meta_main(context: &CodeLoadContext<'_, '_, '_>, key: LoadKey<'_>) -> 
     if let Some(known) = context.find_loaded_before(key) {
         return known.compiled.import_meta_main;
     }
-    let (is_entry_point, count) = (context.is_entry_point(key), context.entry_points.len());
+    let file = LoadKey {
+        path: context.host.file_of_module(key.path),
+        ..key
+    };
+    let (is_entry_point, count) = (context.is_entry_point(file), context.entry_points.len());
     match (is_entry_point, context.inputs.main_module, count) {
         (_, MainModule::AnyFile, _) => None,
-        (false, ..) if context.is_main_module_beside_entry_points(key) => None,
+        (false, ..) if context.is_main_module_beside_entry_points(file) => None,
         (false, ..) | (true, MainModule::Elsewhere, _) => Some(false),
+        // `./main.mjs?again`: `bun run` asks an ES module whether its file is the one that it was started with, and a CommonJS module whether it is `require.main`.
+        (true, MainModule::EntryPoint, 1) if file.path.len() != key.path.len() => None,
         (true, MainModule::EntryPoint, 1) => Some(true),
         (true, MainModule::EntryPoint | MainModule::EntryPointOfProcessOrWorker, _) => None,
     }

@@ -141,3 +141,15 @@ test("formatters keep the locales that they are made with", async () => {
   );
   expect(locales).toBe("locales: de, fr, ja");
 });
+
+// Bun's library reads `constructor` from objects that nobody knows. That hands out no constructor of a formatter, which could then be given any locale.
+test("a formatter keeps its locale beside code that reads `constructor` from what it is handed", async () => {
+  const beside = await report(
+    `import { readFileSync } from "node:fs"; const day = new Intl.DateTimeFormat("ja"); const rows: { at: number }[] = JSON.parse(readFileSync(process.argv[2]!, "utf8")); for (const row of rows) console.log(day.format(row.at)); Promise.resolve(rows).then(r => console.log(r.length));`,
+  );
+  expect(beside.locales).toBe("locales: ja");
+  const handedOver = await report(
+    `import { promisify } from "node:util"; const count = new Intl.NumberFormat("de"); const later: any = promisify((x: any, done: any) => done(null, x)); later(count).then((x: any) => console.log(x.format(1)));`,
+  );
+  expect(handedOver.locales).toBe("locales: de");
+});

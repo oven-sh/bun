@@ -75,6 +75,20 @@ impl ModuleFailure {
         }
     }
 
+    /// An executable reads no `package.json`, so its resolver answers with whatever file lies at that path.
+    pub fn is_refusal_of_package_json(&self) -> bool {
+        match self.kind {
+            ModuleFailureKind::Unresolved { reason, .. }
+            | ModuleFailureKind::UnresolvedAtLoad { reason, .. } => {
+                reason.is_refusal_of_package_json()
+            }
+            ModuleFailureKind::NotAProgram { .. }
+            | ModuleFailureKind::ExportNotFound { .. }
+            | ModuleFailureKind::ExportAmbiguous { .. }
+            | ModuleFailureKind::ExportMayBeAbsent { .. } => false,
+        }
+    }
+
     pub fn effect(&self) -> FailureEffect {
         match self.kind {
             ModuleFailureKind::Unresolved { .. } => match site_form(self.site) {

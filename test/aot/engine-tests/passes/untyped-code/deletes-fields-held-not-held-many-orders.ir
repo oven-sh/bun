@@ -373,20 +373,20 @@ function f37 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v13: Array<never> = NewArray contents=never allocationSite=13 [contentsAreProven]
 # CHECK-NEXT: v227: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v13 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v14: Array<never> = NewArray contents=never allocationSite=14 [contentsAreProven]
-# CHECK-NEXT: v228: Array<never, proven, pristine[Storage, Names]> = AssumeType v14 provenType=Array<never, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v228: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v14 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v15: anything = PropGet v228 key="reverse" accessSite=0
 # CHECK-NEXT: v229: builtin(ArrayPrototypeReverse) = AssumeType v15 provenType=builtin(ArrayPrototypeReverse)
 # CHECK-NEXT: v16: anything = Call v229, v228 calleeKey="reverse" calleeName="reverse" accessSite=1 callees=[builtin(ArrayPrototypeReverse)]
-# CHECK-NEXT: v230: Array<never, proven, pristine[Storage, Names]> = AssumeType v16 provenType=Array<never, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v17: Array<never, proven, pristine[Storage, Names]> = AssumeType v230 provenType=undefined|null|Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole">
-# CHECK-NEXT: v231: Array<never, proven, pristine[Storage, Names]> = AssumeType v17 provenType=Array<never, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v230: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v16 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v17: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v230 provenType=undefined|null|Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole">
+# CHECK-NEXT: v231: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v17 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v18: Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole"> = Data data=d7 allocationSite=15
 # CHECK-NEXT: v232: Array<"inner", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v18 provenType=Array<"inner", proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v19: Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole"> = Data data=d8 allocationSite=16
 # CHECK-NEXT: v233: Array<"flag"|"fraction"|"large"|"whole", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v19 provenType=Array<"flag"|"fraction"|"large"|"whole", proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v20: Array<Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]>, Contiguous> = NewArray v221, v222, v223, v224, v225, v226, v227, v231, v232, v233 contents=Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]> allocationSite=17 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v234: Array<Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v20 provenType=Array<Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v21: Array<Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]> = Upcast v234 castType=undefined|null|Array<undefined|null|Array>
+# CHECK-NEXT: v20: Array<Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v221, v222, v223, v224, v225, v226, v227, v231, v232, v233 contents=Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names, Dense]> allocationSite=17 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v234: Array<Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v20 provenType=Array<Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v21: Array<Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = Upcast v234 castType=undefined|null|Array<undefined|null|Array>
 # CHECK-NEXT: v22: 0 = Integer
 # CHECK-NEXT: v23: 0 = Integer
 # CHECK-NEXT: v24: "sealed" = String string="sealed"
@@ -404,19 +404,19 @@ function f37 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v33: Array<Array<"closed"|"frozen"|"sealed"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v235, v236, v237 contents=Array<"closed"|"frozen"|"sealed"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> allocationSite=24 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v238: Array<Array<"closed"|"frozen"|"sealed"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v33 provenType=Array<Array<"closed"|"frozen"|"sealed"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v34: 0 = Integer
-# CHECK-NEXT: v35: Array<Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]> = Upcast v21 castType=undefined|null|Array<undefined|null|Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole">>
-# CHECK-NEXT: v239: Array<Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v35 provenType=Array<Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v35: Array<Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = Upcast v21 castType=undefined|null|Array<undefined|null|Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole">>
+# CHECK-NEXT: v239: Array<Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v35 provenType=Array<Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v36: iteratorstate = IteratorOpen v239
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v38: undefined = IteratorResume v36
 # CHECK-NEXT: v39: anything = ResultAt v38 index=1
-# CHECK-NEXT: v240: undefined|Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]> = AssumeType v39 provenType=undefined|Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]>
+# CHECK-NEXT: v240: undefined|Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names, Dense]> = AssumeType v39 provenType=undefined|Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: b2() handler=b16():
-# CHECK-NEXT: v40: undefined|Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]> = AssumeType v240 provenType=undefined|null|Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole">
-# CHECK-NEXT: v241: undefined|Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]> = AssumeType v40 provenType=undefined|Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]>
+# CHECK-NEXT: v40: undefined|Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names, Dense]> = AssumeType v240 provenType=undefined|null|Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole">
+# CHECK-NEXT: v241: undefined|Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names, Dense]> = AssumeType v40 provenType=undefined|Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v41: iteratorstate = IteratorOpen v220
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b3() handler=b16():

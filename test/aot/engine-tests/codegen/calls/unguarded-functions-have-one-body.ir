@@ -411,11 +411,11 @@ runtimefunction id=FunctionPrototypeCall function=f8
 # CHECK-NEXT: v12: 0 = Upcast v10 castType=int|whole
 # CHECK-NEXT: v13: 0 = Upcast v11 castType=int[0, 300]
 # CHECK-NEXT: Jump -> next b1(v12, v13)
-# CHECK-NEXT: b1(v14: int|whole, v15: int[0, 300]):
+# CHECK-NEXT: b1(v14: int[0, 631800], v15: int[0, 300]):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v17: 300 = Integer integer=300
 # CHECK-NEXT: v18: boolean = Less v15, v17
-# CHECK-NEXT: Branch v18 -> taken b2(| 0), notTaken b6(v14)
+# CHECK-NEXT: Branch v18 -> taken b2(| 0), notTaken b6()
 # CHECK-NEXT: b2(v19: int[0, 299]):
 # CHECK-NEXT: v20: 1 = Integer integer=1
 # CHECK-NEXT: v21: int[0, 1] = BitAnd v19, v20
@@ -426,7 +426,7 @@ runtimefunction id=FunctionPrototypeCall function=f8
 # CHECK-NEXT: v25: 1 = Integer integer=1
 # CHECK-NEXT: v26: 2 = Integer integer=2
 # CHECK-NEXT: v27: boolean = TypeTest v24 testedType=f3
-# CHECK-NEXT: Branch v27 -> taken b4(| 0), notTaken b5(v19)
+# CHECK-NEXT: Branch v27 -> taken b4(| 0), notTaken b5()
 # CHECK-NEXT: b4(v28: f3):
 # CHECK-NEXT: v29: int[2, 3] = GetCapture v28 function=f3
 # CHECK-NEXT: v30: 0 = Integer
@@ -465,14 +465,16 @@ runtimefunction id=FunctionPrototypeCall function=f8
 # CHECK-NEXT: v63: int[4, 1200] = Add v61, v62
 # CHECK-NEXT: v64: int[4, 1200] = Upcast v63 castType=int[0, 2392]|"marker of sumTested"
 # CHECK-NEXT: v65: int[10, 2106] = Add v52, v64
-# CHECK-NEXT: v66: int|whole = Add v14, v65
+# CHECK-NEXT: v66: int[10, 633906] = Add v14, v65
 # CHECK-NEXT: v67: int[1, 300] = Increment v19
-# CHECK-NEXT: Jump -> next b1(v66, v67)
-# CHECK-NEXT: b5(v68: int[0, 299]) frequency=Unlikely:
-# CHECK-NEXT: v69: undefined = Undefined
-# CHECK-NEXT: v70: never = Call v69, v1, v68, v25, v26 accessSite=9 callees=[f3]
+# CHECK-NEXT: v68: fact = Specified
+# CHECK-NEXT: v69: int[10, 631800] = AssumeType v66, v68 provenType=int[0, 631800]
+# CHECK-NEXT: Jump -> next b1(v69, v67)
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v70: undefined = Undefined
+# CHECK-NEXT: v71: never = Call v70, v1, v19, v25, v26 accessSite=9 callees=[f3]
 # CHECK-NEXT: Unreachable
-# CHECK-NEXT: b6(v71: int|whole):
+# CHECK-NEXT: b6():
 # CHECK-NEXT: v72: anything = PropGet v1 key="first" accessSite=13
 # CHECK-NEXT: v73: undefined|f3 = AssumeType v72 provenType=undefined|f3
 # CHECK-NEXT: v74: -1 = Integer integer=-1
@@ -518,7 +520,7 @@ runtimefunction id=FunctionPrototypeCall function=f8
 # CHECK-NEXT: v112: Array<undefined|int> = NewArray v106, v107, v108, v109 contents=undefined|int
 # CHECK-NEXT: v113: int|whole|"marker of sumOfAll" = CallDirect v110, v111, v112 function=f3 accessSite=24 [calleeIsPredicted]
 # CHECK-NEXT: v114: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v115: undefined = CallBuiltin v114, v71, v80, v88, v92, v96, v102, v113 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=25
+# CHECK-NEXT: v115: undefined = CallBuiltin v114, v14, v80, v88, v92, v96, v102, v113 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=25
 # CHECK-NEXT: v116: undefined = Undefined
 # CHECK-NEXT: Return v116
 # CHECK-NEXT: b9() frequency=Unlikely:

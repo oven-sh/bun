@@ -863,6 +863,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     // Taken out of `require.cache` in a test run, an ES module loads again: the run time says which object answers.
     // So it does behind a mock of an ES module that was required before: `require` then answers what the factory gave, and no longer the namespace object.
+    // So it does where the program gets at the entries of `require.cache`: behind `require.cache[path].exports = other`, `require` answers `other`.
     // So it does for a module of the library that a mock may stand in place of. `require` takes a name that starts with `node:` to the registry, where no mock stands.
     fn may_load_again(&self, module: ModuleRef) -> bool {
         let modules = self.file.inputs.modules;
@@ -880,7 +881,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         match modules.kind(file) {
             ModuleKind::SourceText => {
-                modules.may_be_evicted(module) || modules.may_be_mocked(module)
+                modules.may_be_evicted(module)
+                    || modules.may_be_mocked(module)
+                    || modules.reaches_entries_of_cache()
             }
             // The variables of the file are those of its first load. The loader has the later ones.
             ModuleKind::CommonJs => modules.may_be_evicted(module),
@@ -991,14 +994,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         &mut self,
         module: ModuleRef,
         specifier: StringId,
-        emit_require: impl FnOnce(&mut Self) -> ValueId,
+        emit_require: impl FnOnce(&mut Self, bool) -> ValueId,
     ) -> ValueId {
         let Some(imported) = (self.file.inputs.modules.interop(module)).form_that_imports_get
         else {
-            return emit_require(self);
+            return emit_require(self, false);
         };
         let other_way = self.emit_what_an_import_has_loaded(imported, specifier);
-        let required = emit_require(self);
+        let required = emit_require(self, true);
         self.finish_other_way(other_way, required)
     }
 
@@ -1030,7 +1033,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     // One of the modules that a computed specifier can name.
     fn emit_require_of_candidate(&mut self, module: ModuleRef, specifier: StringId) -> ValueId {
-        self.emit_require_unless_imported(module, specifier, |this| {
+        self.emit_require_unless_imported(module, specifier, |this, _| {
             this.emit_require_of_candidate_itself(module, specifier)
         })
     }
@@ -1085,12 +1088,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> ValueId {
         match site.answer {
             SiteAnswer::Module(module) => {
-                let emit_require = |this: &mut Self| {
+                let emit_require = |this: &mut Self, is_in_one_arm: bool| {
                     let outer = this
                         .builder
                         .set_tail_position(this.is_call_in_tail_position);
                     let may_load_again = this.may_load_again(module);
-                    let required = match (site.plan, site.specifier) {
+                    let plan = site.plan.map(|plan| PlannedSite {
+                        is_bare: plan.is_bare && !is_in_one_arm,
+                        ..plan
+                    });
+                    let required = match (plan, site.specifier) {
                         (Some(plan), _) if !may_load_again => this.emit_planned_require(plan),
                         (_, ImportSpecifier::Constant(text)) => {
                             let text = this.file.intern_atom(text);
@@ -1107,7 +1114,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                         let text = self.file.intern_atom(text);
                         self.emit_require_unless_imported(module, text, emit_require)
                     }
-                    _ => emit_require(self),
+                    _ => emit_require(self, false),
                 }
             }
             SiteAnswer::Computed(candidates) => {
@@ -1463,13 +1470,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             // It loads nothing, so what the resolver of the run time finds is the answer, as in plain Bun: the file may have been written since the build.
             // Where it finds nothing it throws, in its own words.
             SiteAnswer::Failed(failure) => match site.specifier {
-                ImportSpecifier::Constant(text) => {
+                ImportSpecifier::Constant(text)
+                    if !(self.file.inputs.modules.failure(failure))
+                        .is_refusal_of_package_json() =>
+                {
                     let specifier = self.emit_name_as_given(text, specifier);
                     let referrer = self.referrer_of(site);
                     self.builder
                         .resolve_dynamic(specifier, referrer, false, false)
                 }
-                ImportSpecifier::Pattern { .. }
+                ImportSpecifier::Constant(_)
+                | ImportSpecifier::Pattern { .. }
                 | ImportSpecifier::OneOf(_)
                 | ImportSpecifier::Unknown => {
                     self.emit_require_failure(site, specifier, failure, false)

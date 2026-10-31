@@ -355,7 +355,7 @@ function f5 name="overOtherKinds" module=m0 position=2337 flags=[IsChecked, HasE
 # -- generated: f0 lengthOfQuoted readsPastTheEnd overOtherKinds
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 304, patchpoints: 71, rare instructions: 156, polls: 3
+# CHECK-NEXT: instructions: 302, patchpoints: 71, rare instructions: 151, polls: 3
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="lengthOfQuoted"
 # CHECK: role=Source

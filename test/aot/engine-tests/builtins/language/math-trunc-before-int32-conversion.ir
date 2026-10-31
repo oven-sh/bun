@@ -372,7 +372,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f17 visibility=Private
 # -- generated: f0 roundedOtherwise
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 266, patchpoints: 56, rare instructions: 354, polls: 2
+# CHECK-NEXT: instructions: 266, patchpoints: 56, rare instructions: 353, polls: 2
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="roundedOtherwise"
 # CHECK: role=EntryChecks
@@ -384,5 +384,5 @@ runtimefunction id=ArrayTraversalTraverseArray function=f17 visibility=Private
 # CHECK-NEXT: end of function f21
 # CHECK-LABEL: function {{*}}name="roundedOtherwise"
 # CHECK: role=GenericVersion
-# CHECK-NEXT: instructions: 76, patchpoints: 17, rare instructions: 93
+# CHECK-NEXT: instructions: 78, patchpoints: 17, rare instructions: 93
 # CHECK-NEXT: end of function f24

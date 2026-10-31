@@ -42,6 +42,10 @@
     "millionInstructions": 24412,
     "megabytes": 171
   },
+  "writes to members of names that are made of the names before them, in a package of a test run": {
+    "millionInstructions": 13457,
+    "megabytes": 252
+  },
   "functions that call what nobody knows": {
     "millionInstructions": 7530,
     "millionInstructionsWithMusl": 16401,
@@ -553,6 +557,10 @@
     "millionInstructions": 3651,
     "megabytes": 95
   },
+  "untyped functions in a row that each hand their parameters and a member of one to the next": {
+    "millionInstructions": 7511,
+    "megabytes": 122
+  },
   "a chain of conditional types": {
     "millionInstructions": 910,
     "megabytes": 145
@@ -568,6 +576,26 @@
   "literals that each spread the one before": {
     "millionInstructions": 7682,
     "megabytes": 89
+  },
+  "record types that typed functions take, each parsed from a text": {
+    "millionInstructions": 23130,
+    "megabytes": 119
+  },
+  "branches in a row that each assign another function to one variable": {
+    "millionInstructions": 13118,
+    "megabytes": 153
+  },
+  "cases of one switch that each assign another text to one variable": {
+    "millionInstructions": 1878,
+    "megabytes": 106
+  },
+  "branches in a row that each assign another function of the language to one variable": {
+    "millionInstructions": 11417,
+    "megabytes": 115
+  },
+  "lines that each add an element to one sum and truncate it, in a loop that carries the sum as an integer": {
+    "millionInstructions": 15207,
+    "megabytes": 235
   },
   "all shapes as the entry points of one build, on four threads": {
     "megabytes": 654

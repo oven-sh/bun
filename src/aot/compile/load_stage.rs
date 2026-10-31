@@ -24,6 +24,7 @@ use crate::load::runtime_modules::RuntimeModules;
 use crate::load::runtime_roots::{
     FurtherLibraryCode, RuntimeRoots, collect_runtime_roots, join_asks, join_root_paths,
 };
+use crate::load::source_provider::SourceFile;
 use crate::load::sources::{
     FreezeInput, FrozenSources, check_unique_paths_across_projects, freeze_sources, parsed_source,
 };
@@ -36,6 +37,7 @@ use crate::options::LoadOptions;
 use crate::statistics::{
     LimitId, LimitValues, Stage, StatisticId, Statistics, log_why_files_are_loaded_again,
 };
+use bun_ast::Loader;
 use bun_builtin_sources::{Archive, Manifest, VIRTUAL_ROOT};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::FileOrigin;
@@ -1330,6 +1332,7 @@ impl<'a> Build<'a> {
             freeze_sources(&input, &in_parallel)
         });
         let application = self.finish_freeze(programs.application, application)?;
+        self.embed_files_that_fail_at_load(programs.application.files(), &application);
         let input = self.create_freeze_input(shared, programs.runtime, Some(roots));
         let runtime = freeze_sources(&input, &in_parallel);
         let sources = PerProject {
@@ -1340,6 +1343,23 @@ impl<'a> Build<'a> {
         let frozen = frozen.map(|project, sources| (programs.get(project).files(), sources));
         self.stop_at_internal_error(check_unique_paths_across_projects(frozen))?;
         Ok(sources)
+    }
+
+    /// `bun run` says what is wrong with such a file where the program loads it, in the words of the loader of its kind. So does an executable: the same loader reads what the executable holds.
+    fn embed_files_that_fail_at_load(&self, files: &Files<'_>, sources: &Sources) {
+        for &file in files.compiled_files() {
+            let text =
+                parsed_source(files, file).and_then(|it| it.text_that_fails_at_load.as_deref());
+            if let Some(contents) = text {
+                let source = SourceFile {
+                    path: bun_sema_driver::host::to_native(files.module(file).file_name()),
+                    contents,
+                    loader: Loader::File,
+                };
+                let module_path = sources.module_paths(file).public_path;
+                self.provider.embed_at_module_path(&source, module_path);
+            }
+        }
     }
 
     fn stop_at_internal_error<T>(&mut self, result: Result<T, InternalError>) -> Result<T, Stage> {

@@ -94,6 +94,8 @@ pub(super) struct FileRow {
     pub holders: Vec<Holder>,
     pub answer_members: Vec<(ExprId, AnswerMember)>,
     pub exports: Vec<ModuleExport>,
+    /// `find_ambiguous_names`
+    pub ambiguous_names: Vec<Atom>,
     pub unread_exports: Vec<SymbolId>,
     /// A module of data: whatever names it in the files of the program is an import or export statement that links names to its variables.
     pub is_data_linked_by_names_alone: bool,
@@ -540,6 +542,10 @@ impl ModuleGraph {
 
     pub fn exports(&self, file: FileId) -> &[ModuleExport] {
         &self.row(file).exports
+    }
+
+    pub fn ambiguous_names(&self, file: FileId) -> &[Atom] {
+        &self.row(file).ambiguous_names
     }
 
     pub fn unread_exports(&self, file: FileId) -> &[SymbolId] {

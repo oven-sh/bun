@@ -238,6 +238,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn lower_main_module_comparison(&mut self, expression: ExprId, op: BinOp) -> ValueId {
         self.set_position(self.file.hir[expression].pos);
+        // `require("./main.cjs?again")`: `import.meta.main` goes by the file, and `require.main` is the module without a query.
+        if self.file.inputs.sources.has_query(self.file.file) {
+            let is_negated = matches!(
+                classify_operator(op),
+                OperatorClass::Equality {
+                    is_negated: true,
+                    ..
+                }
+            );
+            return self.builder.boolean(is_negated);
+        }
         let meta = self.lower_import_meta();
         let key = self.file.atom_key(known::main);
         let is_main = self.emit_get(meta, PropertyName::Constant(key));

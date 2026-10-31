@@ -1,8 +1,3 @@
 # Programs that end with a realm that is having a bad time, which bad-time.py does not count, and why.
-arrays/array-creation-and-search-stubs    means it: defines an index accessor on the prototype of an Array subclass, as arrays/empty-arrays-of-numbers does
-arrays/array-subclass-prototype-element    has one in the plain engine too
-soundness/native-short-cuts-heirs-indexed-getters    means it: has one in the plain engine too
-typed-objects/absent-fields-under-another-prototype    has one in the plain engine too
-untyped-code/define-properties-own-descriptors    has one in the plain engine too
-untyped-code/props-added-under-changing-prototypes    has one in the plain engine too
-untyped-code/stores-add-props-accessor-prototypes    has one in the plain engine too
+# None. The built-ins of a compiled program are read-only, so nothing can be put at an index above its arrays, and an accessor at an index of any other prototype changes the objects below that prototype alone.
+# A realm with an image that begins to have a bad time all the same stops the process, which bad-time.py reports as a death by a signal.

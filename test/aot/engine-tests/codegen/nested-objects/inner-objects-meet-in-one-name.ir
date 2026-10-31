@@ -330,7 +330,7 @@ function f5 name="maybe" module=m0 position=2233 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: BB#26: ; frequency = 0.000010
 # CHECK-NEXT: Predecessors: #30, #29
 # CHECK-NEXT: Int64 b@144 = Phi(ReadsLocalState, v12:Parameter)
-# CHECK-NEXT: Int64 b@147 = Phi(ReadsLocalState, v12:Parameter)
+# CHECK-NEXT: Int64 b@147 = Phi(ReadsLocalState)
 # CHECK-NEXT: Int32 b@122 = Below(b@144, b@147, v15:IsElementPresent)
 # CHECK-NEXT: Void b@123 = Branch(b@122, Terminal, v15:IsElementPresent)
 # CHECK-NEXT: Successors: Then:#27, Else:Rare:#32
@@ -341,7 +341,7 @@ function f5 name="maybe" module=m0 position=2233 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: Successors: #28
 # CHECK-NEXT: BB#28: ; frequency = 0.000010
 # CHECK-NEXT: Predecessors: #33, #27
-# CHECK-NEXT: Int64 b@146 = Phi(ReadsLocalState, v16:TypeTest)
+# CHECK-NEXT: Int64 b@146 = Phi(ReadsLocalState)
 # CHECK-NEXT: Int32 b@15 = LessEqual(b@144, $2147483647(b@67), v16:TypeTest)
 # CHECK-NEXT: Void b@14 = Branch(b@15, Terminal, v16:TypeTest)
 # CHECK-NEXT: Successors: Then:#29, Else:Rare:#20

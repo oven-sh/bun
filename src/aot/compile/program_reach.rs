@@ -1963,6 +1963,8 @@ struct Walk<'a, 's> {
     a_load_looks_at_every_export: bool,
     names_read_from_loads: Vec<Atom>,
     files_found_by_name: Vec<ModuleRef>,
+    // How many of them there were when the first module object was followed since the walk last asked.
+    files_found_when_objects_were_followed: Option<usize>,
     is_found_by_name: FxHashSet<ModuleRef>,
     objects_handed_on: FxHashSet<Sym>,
     // By an enum that is not handed on: the files that read members of it whose values the build knows.
@@ -2109,6 +2111,7 @@ impl<'a, 's> Walk<'a, 's> {
             a_load_looks_at_every_export: false,
             names_read_from_loads: Vec::new(),
             files_found_by_name: Vec::new(),
+            files_found_when_objects_were_followed: None,
             is_found_by_name: FxHashSet::default(),
             objects_handed_on: FxHashSet::default(),
             files_reading_members: FxHashMap::default(),
@@ -2853,6 +2856,7 @@ impl<'a, 's> Walk<'a, 's> {
 
     // Which object a read of `children` or `parent` is made on is not followed: every object that is handed out may be the one.
     fn follow_module_object(&mut self, module: ModuleRef) {
+        (self.files_found_when_objects_were_followed).get_or_insert(self.files_found_by_name.len());
         let is_out_of_sight = self.out_of_sight.contains(&module);
         let read = self.input.ways_read_out_of_sight;
         let mut related = Vec::new();
@@ -3181,6 +3185,13 @@ impl<'a, 's> Walk<'a, 's> {
                 self.follow_look(module);
             } else if let Some(module) = self.newly_handed_out.pop() {
                 self.follow_module_object(module);
+            } else if (self.files_found_when_objects_were_followed.take())
+                .is_some_and(|found| found < self.files_found_by_name.len())
+            {
+                // A file that is found by name is a child of every module that requires under a name which the build cannot follow, also of one that was followed
+                // before the file was found. Once for all the files found since, not once a file.
+                self.requirers = None;
+                (self.newly_handed_out).clone_from(&self.modules_with_objects);
             } else {
                 break;
             }
@@ -3370,6 +3381,7 @@ fn find_files_named_at_run_time(input: &ProgramReachInput<'_, '_>, package: &[u8
 }
 
 // The decisions of the bundler (src/bundler/barrel_imports.rs): a barrel is a file of a package with `"sideEffects": false`, no entry point, that defines none of the names it exports, and that no file exports with `export *`.
+// With --ignore-dce-annotations the load still leaves out what no import names, and all that is loaded runs: no request waits.
 fn find_barrels(input: &ProgramReachInput<'_, '_>, files: &[Option<FileUnits>]) -> Vec<bool> {
     let graph = input.graph;
     let hands_on_all_it_exports = |file: FileId| {
@@ -3388,6 +3400,8 @@ fn find_barrels(input: &ProgramReachInput<'_, '_>, files: &[Option<FileUnits>]) 
     let mut is_barrel: Vec<bool> = scanned_files
         .map(|(file, units)| {
             units.is_some()
+                && graph.has_record(file)
+                && graph.has_no_side_effects(file)
                 && matches!(
                     input.files.declared_side_effects(file),
                     DeclaredSideEffects::None

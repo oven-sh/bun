@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { measureUntilWithinBounds } from "./harness/measure-again";
+import { reads } from "./harness/reads";
 import { test } from "./supported";
 
 const isSlowBuild = isDebug || isASAN;
@@ -98,6 +99,7 @@ async function expectLinearBuildTime(name: string, few: number, writeProgramOfSi
     },
     growth => growth < 6,
   );
+  reads("four times the live checked values", growth, 6, "times the processor seconds");
   expect(growth).toBeLessThan(6);
 }
 

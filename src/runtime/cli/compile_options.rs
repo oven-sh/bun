@@ -1013,7 +1013,10 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
     // The functions of a test file are handed to `test` and `describe`, which call each of them once, and what they call often is in another
     // program. Ranked among themselves, three quarters of them would count as warm or hot, and their program is built while other tests run.
     // So they are ranked as those of a very large program are: what has many callers is hot, a loop is warm, the rest is cold.
-    if is_part_of_test_files && !option_words.iter().any(|word| word.starts_with(b"heat=")) {
+    // A layer is a part of the run too: who calls its functions often is in the programs above. A run is cut into layers because it is large, and
+    // an executable of all of it ranks them that way.
+    let is_part_of_run = is_part_of_test_files || run_compiled::builds_what_test_parts_share();
+    if is_part_of_run && !option_words.iter().any(|word| word.starts_with(b"heat=")) {
         option_words.push(b"heat=ReadOffStructure");
     }
     let part_limit = |name: &[u8]| {

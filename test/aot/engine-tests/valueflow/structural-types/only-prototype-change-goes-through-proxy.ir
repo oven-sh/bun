@@ -202,11 +202,11 @@ function f2 name="Cat" module=m0 position=57 kind=BaseConstructor flags=[HasNewT
   b0(v0: anything):
     Jump -> next b1() @57
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @51
-    v2 = NewObject v1 layout=L0 @51
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @51
-    v4 = CallDirect v3 function=f6 @51
-    Return v3 @51
+    v1 = GetConstructPrototype v0 layout=L0 @57
+    v2 = NewObject v1 layout=L0 @57
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @57
+    v4 = CallDirect v3 function=f6 @57
+    Return v3 @57
 }
 function f3 name="speak" module=m0 position=81 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
@@ -220,11 +220,11 @@ function f4 name="Robot" module=m0 position=131 kind=BaseConstructor flags=[HasN
   b0(v0: anything):
     Jump -> next b1() @131
   b1():
-    v1 = GetConstructPrototype v0 layout=L1 @125
-    v2 = NewObject v1 layout=L1 @125
-    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @125
-    v4 = CallDirect v3 function=f7 @125
-    Return v3 @125
+    v1 = GetConstructPrototype v0 layout=L1 @131
+    v2 = NewObject v1 layout=L1 @131
+    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @131
+    v4 = CallDirect v3 function=f7 @131
+    Return v3 @131
 }
 function f5 name="speak" module=m0 position=159 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
@@ -271,14 +271,14 @@ function f19 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f20 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 # -- generated: f0 facts Cat speak Robot f6
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f25 callPosition=653 isConstruction=true module=m0}, {callee=f25 callPosition=470 isConstruction=true module=m0}, {callee=f25 callPosition=401 isConstruction=true module=m0}, {callee=f6 callPosition=51 parent=3 module=m0}, {callee=f6 callPosition=51 parent=2 module=m0}, {callee=f6 callPosition=51 parent=1 module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f25 callPosition=653 isConstruction=true module=m0}, {callee=f25 callPosition=470 isConstruction=true module=m0}, {callee=f25 callPosition=401 isConstruction=true module=m0}, {callee=f6 callPosition=57 parent=3 module=m0}, {callee=f6 callPosition=57 parent=2 module=m0}, {callee=f6 callPosition=57 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f4 = GetModuleVariable variable=g3
 # CHECK-NEXT: v1: f4 = FinishClass v0 layout=L1
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: v3: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v2, v3)
-# CHECK-NEXT: b1(v4: int|whole, v5: int[0, 2000]):
+# CHECK-NEXT: b1(v4: int[0, 4294967294000], v5: int[0, 2000]):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v7: 2000 = Integer integer=2000
 # CHECK-NEXT: v8: boolean = Less v5, v7
@@ -288,36 +288,38 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v11: L0 = NewObject -, v10 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
 # CHECK-NEXT: v12: string = CallDirect v11 function=f1 accessSite=1
 # CHECK-NEXT: v13: int[0, 2147483647] = GetStringLength v12
-# CHECK-NEXT: v14: int|whole = Add v4, v13
+# CHECK-NEXT: v14: int[0, 4297114777647] = Add v4, v13
 # CHECK-NEXT: v15: int[1, 2000] = Increment v9
-# CHECK-NEXT: Jump -> next b1(v14, v15)
+# CHECK-NEXT: v16: fact = Specified
+# CHECK-NEXT: v17: int[0, 4294967294000] = AssumeType v14, v16 provenType=int[0, 4294967294000]
+# CHECK-NEXT: Jump -> next b1(v17, v15)
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v16: "2000 honest: " = String string="2000 honest: "
-# CHECK-NEXT: v17: string = Add v16, v4
-# CHECK-NEXT: v18: undefined = CallBuiltin -, v17 overload=ConsoleLog/0 accessSite=5
-# CHECK-NEXT: v19: "cat" = String string="cat"
-# CHECK-NEXT: v20: "before: " = String string="before: "
-# CHECK-NEXT: v21: L0 = NewObject -, v19 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: v22: string = CallDirect v21 function=f1 accessSite=9
-# CHECK-NEXT: v23: string = Add v20, v22
-# CHECK-NEXT: v24: undefined = CallBuiltin -, v23 overload=ConsoleLog/0 accessSite=10
-# CHECK-NEXT: v25: L2 = NewObject layout=L2 allocationSite=5 allocationClass=2
-# CHECK-NEXT: v26: Proxy = CallBuiltin -, v21, v25 overload=Proxy/1 accessSite=11
-# CHECK-NEXT: v27: anything = PropGet v1 key="prototype" accessSite=12
-# CHECK-NEXT: v28: object = AssumeType v27 provenType=object
-# CHECK-NEXT: v29: boolean = CallBuiltin -, v26, v28 overload=ReflectSetPrototypeOf/0 accessSite=13
-# CHECK-NEXT: v30: "after: " = String string="after: "
-# CHECK-NEXT: v31: string = CallDirect v21 function=f1 accessSite=16
-# CHECK-NEXT: v32: string = Add v30, v31
-# CHECK-NEXT: v33: undefined = CallBuiltin -, v32 overload=ConsoleLog/0 accessSite=17
-# CHECK-NEXT: v34: "another cat: " = String string="another cat: "
-# CHECK-NEXT: v35: "cat" = String string="cat"
-# CHECK-NEXT: v36: L0 = NewObject -, v35 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: v37: string = CallDirect v36 function=f1 accessSite=21
-# CHECK-NEXT: v38: string = Add v34, v37
-# CHECK-NEXT: v39: undefined = CallBuiltin -, v38 overload=ConsoleLog/0 accessSite=22
-# CHECK-NEXT: v40: undefined = Undefined
-# CHECK-NEXT: Return v40
+# CHECK-NEXT: v18: "2000 honest: " = String string="2000 honest: "
+# CHECK-NEXT: v19: string = Add v18, v4
+# CHECK-NEXT: v20: undefined = CallBuiltin -, v19 overload=ConsoleLog/0 accessSite=5
+# CHECK-NEXT: v21: "cat" = String string="cat"
+# CHECK-NEXT: v22: "before: " = String string="before: "
+# CHECK-NEXT: v23: L0 = NewObject -, v21 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: v24: string = CallDirect v23 function=f1 accessSite=9
+# CHECK-NEXT: v25: string = Add v22, v24
+# CHECK-NEXT: v26: undefined = CallBuiltin -, v25 overload=ConsoleLog/0 accessSite=10
+# CHECK-NEXT: v27: L2 = NewObject layout=L2 allocationSite=5 allocationClass=2
+# CHECK-NEXT: v28: Proxy = CallBuiltin -, v23, v27 overload=Proxy/1 accessSite=11
+# CHECK-NEXT: v29: anything = PropGet v1 key="prototype" accessSite=12
+# CHECK-NEXT: v30: object = AssumeType v29 provenType=object
+# CHECK-NEXT: v31: boolean = CallBuiltin -, v28, v30 overload=ReflectSetPrototypeOf/0 accessSite=13
+# CHECK-NEXT: v32: "after: " = String string="after: "
+# CHECK-NEXT: v33: string = CallDirect v23 function=f1 accessSite=16
+# CHECK-NEXT: v34: string = Add v32, v33
+# CHECK-NEXT: v35: undefined = CallBuiltin -, v34 overload=ConsoleLog/0 accessSite=17
+# CHECK-NEXT: v36: "another cat: " = String string="another cat: "
+# CHECK-NEXT: v37: "cat" = String string="cat"
+# CHECK-NEXT: v38: L0 = NewObject -, v37 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: v39: string = CallDirect v38 function=f1 accessSite=21
+# CHECK-NEXT: v40: string = Add v36, v39
+# CHECK-NEXT: v41: undefined = CallBuiltin -, v40 overload=ConsoleLog/0 accessSite=22
+# CHECK-NEXT: v42: undefined = Undefined
+# CHECK-NEXT: Return v42
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="facts"
 # CHECK: module=m0 position=203 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0 site=w1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=247 module=m0}, {callee=f3 callPosition=247 module=m0}] {
@@ -449,7 +451,7 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Cat"
-# CHECK: module=m0 position=57 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f6 callPosition=51 module=m0}] {
+# CHECK: module=m0 position=57 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f6 callPosition=57 module=m0}] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f2 = AssumeType v0 provenType=f2
 # CHECK-NEXT: v2: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}]
@@ -473,7 +475,7 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Robot"
-# CHECK: module=m0 position=131 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 inlineFrames=[{}, {callee=f7 callPosition=125 module=m0}] {
+# CHECK: module=m0 position=131 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 inlineFrames=[{}, {callee=f7 callPosition=131 module=m0}] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: object = GetConstructPrototype v0 layout=L1
 # CHECK-NEXT: v2: object ~ L1 = NewObject v1 layout=L1 allocationSite=7 allocationClass=1

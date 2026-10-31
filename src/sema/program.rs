@@ -4320,6 +4320,19 @@ impl<'s> Included<'_, 's> {
     where
         's: 'r,
     {
+        self.visits_from(resolver, is_requested, None)
+    }
+
+    /// `visits`. `is_walked_from`: the only files whose `rootTasks` count, listed like `is_requested`. `None`: all do.
+    fn visits_from<'r>(
+        &self,
+        resolver: &Resolver<'r>,
+        is_requested: &[bool],
+        is_walked_from: Option<&[bool]>,
+    ) -> Vec<Vec<Visit>>
+    where
+        's: 'r,
+    {
         let project_resolvers = ProjectResolvers::new();
         let &Included {
             host,
@@ -4387,6 +4400,9 @@ impl<'s> Included<'_, 's> {
             |file: FileId| (modules[file.idx()].edges.iter()).any(|edge| is_requested[edge.idx()]);
         let mut seen = vec![false; modules.len()];
         for (first, reason) in tasks {
+            if is_walked_from.is_some_and(|is_walked_from| !is_walked_from[first.idx()]) {
+                continue;
+            }
             if let Some((reason, name)) = reason.filter(|_| is_requested[first.idx()]) {
                 visit(first, reason, name);
             }
@@ -4755,13 +4771,29 @@ impl<'s> Included<'_, 's> {
         }
     }
 
+    /// The files that the code of a compile build refers to, directly or through others, with one more entry after the
+    /// files. The build reads the rest of its project for what they declare for every file, and the program has none of them.
+    fn reached_from_code(&self) -> Vec<bool> {
+        let compiled = (0u32..).zip(self.modules);
+        let compiled = compiled.filter(|(_, module)| module.compiled.is_some());
+        let mut pending: Vec<FileId> = compiled.map(|(file, _)| FileId(file)).collect();
+        let mut is_reached = vec![false; self.modules.len() + 1];
+        while let Some(file) = pending.pop() {
+            if !std::mem::replace(&mut is_reached[file.idx()], true) {
+                pending.extend(self.modules[file.idx()].edges);
+            }
+        }
+        is_reached
+    }
+
     /// `addProcessingDiagnosticsForFileCasing`, wherever `collectFiles` calls it. `respelled`: the
     /// files it reached under more than one spelling of their name. `case_variants`: the names that differ
-    /// only in case, where that makes them the names of different files.
+    /// only in case, where that makes them the names of different files. In a compile build only `reached_from_code` counts.
     fn file_casing_errors(
         &self,
         respelled: &[FileId],
         case_variants: &[Vec<(&[u8], FileId)>],
+        is_compile_build: bool,
     ) -> Vec<Explanation> {
         if respelled.is_empty() && case_variants.is_empty() {
             return Vec::new();
@@ -4773,7 +4805,8 @@ impl<'s> Included<'_, 's> {
         }
         let resolving = Session::new();
         let resolver = Resolver::new(&resolving, self.host, self.options);
-        let visits = self.visits(&resolver, &is_requested);
+        let reached_from_code = is_compile_build.then(|| self.reached_from_code());
+        let visits = self.visits_from(&resolver, &is_requested, reached_from_code.as_deref());
         let differs = |file: FileId, to_file: &[&Visit], visit: &Visit, is_referred_to: bool| {
             let (existing, name) = (
                 displayed_path(&to_file[0].name),
@@ -5531,8 +5564,12 @@ impl<'s> Files<'s> {
                     }
                     Err(code) => {
                         missing_roots.push(root);
-                        let message = reference_problem(options, code, root);
-                        without_file.push((because(IncludeReason::RootFile(index), root), message));
+                        // The code of a compile build says what the program is made of. The list of its project doesn't.
+                        if compile.is_none() {
+                            let message = reference_problem(options, code, root);
+                            let reason = IncludeReason::RootFile(index);
+                            without_file.push((because(reason, root), message));
+                        }
                     }
                 }
             }
@@ -6673,7 +6710,9 @@ impl<'s> Files<'s> {
         let (output_path_errors, common_source_directory) =
             output_path_errors(&included, &summaries, &mut include_errors);
         program_errors.extend(output_path_errors);
-        for (at, problem) in included.file_casing_errors(&respelled, &case_variants) {
+        let casing_errors =
+            included.file_casing_errors(&respelled, &case_variants, compile.is_some());
+        for (at, problem) in casing_errors {
             match at {
                 Some((file, start, end)) => include_errors.push((file, start, end, problem)),
                 None => program_errors.push(problem),
@@ -8160,6 +8199,12 @@ impl<'s> Files<'s> {
             self.modules_resolved_at_merge = self
                 .arena
                 .alloc_slice_fill_iter(at_merge.map(|links| links.0));
+        }
+        for (index, module) in self.modules.iter().enumerate() {
+            let file = FileId(index as u32);
+            for &(import, taker) in module.bound.names_taken_from_imports() {
+                self.placeholders.push((Sym { file, id: import }, taker));
+            }
         }
         // Each file is visited once, however many of its names are redirected.
         let mut placeholders =

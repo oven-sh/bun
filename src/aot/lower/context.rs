@@ -3,13 +3,14 @@ mod function_table;
 mod shown_names;
 #[cfg(test)]
 mod tests;
+mod text_replaced_by_bundling;
 
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Bound};
 use bun_sema::check::aot::{
     BuiltinTypeSymbols, ConstLocalPrefixes, FunctionRef, NamedValues, Queries, QueryInputs,
 };
-use bun_sema::erasure::{TypeRanges, find_type_ranges};
+use bun_sema::erasure::{TypeRanges, find_type_ranges, find_type_ranges_beside};
 use bun_sema::fold::{Constant, Decisions};
 use bun_sema::hir::{self, ExprId, ExprKind, NodeData, VarDeclId};
 use bun_sema::import_sites::ResolvedForm;
@@ -19,6 +20,7 @@ use rustc_hash::FxHashMap;
 
 use self::function_table::FunctionTable;
 use self::shown_names::ShownNames;
+use self::text_replaced_by_bundling::find_text_replaced_by_bundling;
 use super::LoweredFile;
 use super::call::PrintedOperators;
 use super::class::ClassState;
@@ -176,6 +178,7 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     pub(in crate::lower) transpiled: Option<TranspiledFile>,
     pub(in crate::lower) const_local_prefixes: ConstLocalPrefixes,
     pub(in crate::lower) inlined_constants: FxHashMap<VarDeclId, Option<Constant>>,
+    pub(in crate::lower) names_only_inlined_constants: FxHashMap<ExprId, bool>,
     pub(in crate::lower) enum_member_reads: FxHashMap<ExprId, Constant>,
     /// The position of each plain function that has a header, and `FileLowering::position_of_making_this_in`.
     pub(in crate::lower) where_this_is_made: Vec<(u32, u32)>,
@@ -308,9 +311,13 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             max_handler_arguments_per_block: inputs.limits.get(LimitId::MaxHandlerArgumentsPerBlock)
                 as usize,
         });
-        let has_types_in_function_text = inputs.options.embeds_function_text && !hir.is_js;
-        let type_ranges = match has_types_in_function_text {
-            true => find_type_ranges(hir),
+        let type_ranges = match inputs.options.embeds_function_text {
+            true => {
+                let decisions = &compiled.analysis.decisions;
+                let atoms = &queries.files().atoms;
+                let replaced = find_text_replaced_by_bundling(hir, bound, decisions, atoms);
+                find_type_ranges_beside(hir, replaced)
+            }
             false => TypeRanges::default(),
         };
         let removable = Removable::of_file(
@@ -355,6 +362,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             transpiled,
             const_local_prefixes: ConstLocalPrefixes::default(),
             inlined_constants: FxHashMap::default(),
+            names_only_inlined_constants: FxHashMap::default(),
             enum_member_reads: FxHashMap::default(),
             where_this_is_made: Vec::new(),
             printed_operators: PrintedOperators::default(),

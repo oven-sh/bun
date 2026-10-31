@@ -108,7 +108,7 @@ console.log(isConstructor(rope), isConstructor(rope + "s"), isConstructor(("x" +
 // CHECK-NEXT: Throw v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="toString"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} captures=[{type=undefined|null|string flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_4]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} captures=[{type=undefined|null|string flags=[IsExpected] variableName="text"}] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_4]]] {
 // CHECK-NEXT: b0(v0: undefined|null|string):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

@@ -131,7 +131,7 @@ class T {
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="#g"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}, {type=env [[L_3]] flags=[IsFromCompiler]}, {type=anything}, {type=function flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|[[f_16]] flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}, {type=env [[L_3]] flags=[IsFromCompiler]}, {type=anything variableName="n"}, {type=function flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|[[f_16]] flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: env [[L_2]], v1: env [[L_3]], v2: anything, v3: function):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

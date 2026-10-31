@@ -1174,28 +1174,31 @@ function f51 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v231: never = RequireObjectCoercible v230 name="configurable"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b14():
-# CHECK-NEXT: v232: undefined = CallBuiltin -, v19, v200, v204, v219, v226 overload=ConsoleLog/0 accessSite=37
+# CHECK-NEXT: v232: boolean = Upcast v226 castType=anything
+# CHECK-NEXT: v233: fact = Specified
+# CHECK-NEXT: v234: boolean = AssumeType v232, v233 provenType=undefined|boolean
+# CHECK-NEXT: v235: undefined = CallBuiltin -, v19, v200, v204, v219, v234 overload=ConsoleLog/0 accessSite=37
 # CHECK-NEXT: Jump -> next b15()
 # CHECK-NEXT: b15() handler=b16():
-# CHECK-NEXT: v233: 5 = Integer integer=5
-# CHECK-NEXT: PropSet v16, v233 key="name2" accessSite=38 receivers=[L2]
-# CHECK-NEXT: v235: "stored" = String string="stored"
-# CHECK-NEXT: v236: anything = PropGet v16 key="name2" accessSite=41 receivers=[L2]
-# CHECK-NEXT: v237: undefined|int = AssumeType v236 provenType=undefined|int
-# CHECK-NEXT: v238: undefined|int ~ int = Upcast v237 castType=anything
-# CHECK-NEXT: v239: undefined = CallBuiltin -, v235, v238 overload=ConsoleLog/0 accessSite=42
+# CHECK-NEXT: v236: 5 = Integer integer=5
+# CHECK-NEXT: PropSet v16, v236 key="name2" accessSite=38 receivers=[L2]
+# CHECK-NEXT: v238: "stored" = String string="stored"
+# CHECK-NEXT: v239: anything = PropGet v16 key="name2" accessSite=41 receivers=[L2]
+# CHECK-NEXT: v240: undefined|int = AssumeType v239 provenType=undefined|int
+# CHECK-NEXT: v241: undefined|int ~ int = Upcast v240 castType=anything
+# CHECK-NEXT: v242: undefined = CallBuiltin -, v238, v241 overload=ConsoleLog/0 accessSite=42
 # CHECK-NEXT: Jump -> next b17()
 # CHECK-NEXT: b16() role=CatchHandler:
-# CHECK-NEXT: v240: anything = CatchValue
-# CHECK-NEXT: v241: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v242: anything ~ undefined|null|Error = Upcast v240 castType=anything
-# CHECK-NEXT: v243: anything = PropGet v242 key="name" accessSite=45
-# CHECK-NEXT: v244: anything ~ undefined|null|string = Expect v243 expectedType=undefined|null|string
-# CHECK-NEXT: v245: undefined = CallBuiltin v241, v244 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=46
+# CHECK-NEXT: v243: anything = CatchValue
+# CHECK-NEXT: v244: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v245: anything ~ undefined|null|Error = Upcast v243 castType=anything
+# CHECK-NEXT: v246: anything = PropGet v245 key="name" accessSite=45
+# CHECK-NEXT: v247: anything ~ undefined|null|string = Expect v246 expectedType=undefined|null|string
+# CHECK-NEXT: v248: undefined = CallBuiltin v244, v247 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=46
 # CHECK-NEXT: Jump -> next b17()
 # CHECK-NEXT: b17():
-# CHECK-NEXT: v246: undefined = Undefined
-# CHECK-NEXT: Return v246
+# CHECK-NEXT: v249: undefined = Undefined
+# CHECK-NEXT: Return v249
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="make"
 # CHECK: module=m0 position=235 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

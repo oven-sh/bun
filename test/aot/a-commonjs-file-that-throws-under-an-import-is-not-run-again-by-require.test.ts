@@ -111,6 +111,11 @@ const filesWithImportThatWaits: Record<string, string> = {
     `import("./module.mjs").then(() => settle("waits: module.mjs loaded"), error => settle("waits: module.mjs rejected " + error.message));`,
   ),
   "waits/module.mjs": importer("waits"),
+  // The loader is asked for the file while the file runs, so before it goes out of the program.
+  "same/file.cjs": thrower(
+    "same",
+    `import("./file.cjs").then(() => settle("same: file.cjs loaded"), error => settle("same: file.cjs rejected " + error.message));`,
+  ),
   "a.test.mjs": `import { test } from "bun:test";
 globalThis.runs = {};
 globalThis.say = (...words) => console.log(...words);
@@ -120,7 +125,7 @@ globalThis.settle = words => {
   say(words);
 };
 const allSettled = async () => {
-  while (settled < runs.waits) await new Promise(resolve => setTimeout(resolve, 1));
+  while (settled < (runs.waits ?? 0) + (runs.same ?? 0)) await new Promise(resolve => setTimeout(resolve, 1));
 };
 for (const round of [1, 2, 3]) {
   try {
@@ -140,6 +145,26 @@ for (const [how, load] of [
     say("waits: later,", how, "loaded");
   } catch (error) {
     say("waits: later,", how, "threw", error.message);
+  }
+  await allSettled();
+}
+for (const round of [1, 2, 3]) {
+  try {
+    say("same: required", round, require("./same/file.cjs"));
+  } catch (error) {
+    say("same: require threw", round, error.message);
+  }
+}
+await allSettled();
+for (const [how, load] of [
+  ["require()", () => require("./same/file.cjs")],
+  ["import()", () => import("./same/file.cjs")],
+]) {
+  try {
+    await load();
+    say("same: later,", how, "loaded");
+  } catch (error) {
+    say("same: later,", how, "threw", error.message);
   }
   await allSettled();
 }
@@ -248,6 +273,17 @@ for (const [way, words] of [
         "waits: later, require() threw waits throws 4",
         "waits: later, import() threw waits throws 4",
         "waits: later, import() of the module threw waits throws 4",
+        "same: the file runs 1",
+        "same: require threw 1 same throws 1",
+        "same: the file runs 2",
+        "same: require threw 2 same throws 2",
+        "same: the file runs 3",
+        "same: require threw 3 same throws 3",
+        "same: file.cjs loaded",
+        "same: file.cjs loaded",
+        "same: file.cjs loaded",
+        "same: later, require() loaded",
+        "same: later, import() loaded",
       ],
       exitCode: 0,
     });

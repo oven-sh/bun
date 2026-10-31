@@ -13,7 +13,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { BuildError } from "../error.ts";
 import { copyArchiveWithout, readArchiveIndex } from "./archive.ts";
 import { readAt } from "./binary-reader.ts";
-import { readWeakAliases } from "./bitcode-symbols.ts";
+import { isBitcodeAt, readWeakAliases } from "./bitcode-symbols.ts";
 import {
   findLinkedMembers,
   findNameMissingFromObjects,
@@ -22,7 +22,7 @@ import {
   sectionInFile,
 } from "./coff-graph.ts";
 import { nameSections } from "./coff-object-editor.ts";
-import { builtinModulesSection, CoffObject } from "./coff-objects.ts";
+import { builtinModulesSection, CoffObject, IMAGE_SYM_CLASS_EXTERNAL } from "./coff-objects.ts";
 import type { SectionGraph } from "./graph.ts";
 import { createSectionOrder, findCompiledObjects, groupOfNode, writeTableIntoSection } from "./linker-common.ts";
 import type { Link, Linker, LinkerFormat, SectionOrder } from "./linker.ts";
@@ -34,12 +34,7 @@ const symbolMapFlag = "/map:";
 const commonFlags = ["/lldsavetemps:prelink", "/opt:nolldtailmerge"];
 export const unnamedSectionPrefix = "bun_unnamed_";
 
-const IMAGE_SYM_CLASS_EXTERNAL = 2;
-const bitcodeMagic = 0x4243c0de;
-
 const isArchive = (path: string) => /\.(lib|rlib|a)$/i.test(path) && existsSync(path);
-const isBitcodeAt = (fd: number, offset: number, size: number) =>
-  size >= 4 && readAt(fd, offset, 4).readUInt32BE(0) === bitcodeMagic;
 
 interface NamesOfCompiledObjects {
   defined: Set<string>;

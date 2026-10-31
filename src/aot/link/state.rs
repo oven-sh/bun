@@ -2,8 +2,8 @@ use super::program_keys::ProgramModule;
 use super::unit::LinkUnit;
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{
-    Data, Entry, EvalScope, ExpectedResult, Function, Layout, Module, ModuleFailure,
-    RuntimeFunctionEntry, TypeSite, Variable, WebAssemblyModule,
+    AmbiguousExport, Data, Entry, EvalScope, ExpectedResult, Function, Layout, Module,
+    ModuleFailure, RuntimeFunctionEntry, TypeSite, Variable, WebAssemblyModule,
 };
 use crate::ir::{
     DataId, EvalScopeId, ExpectedResultId, FunctionId, IdMap, LayoutId, ModuleFailureId, ModuleId,
@@ -214,6 +214,7 @@ pub(super) struct ProgramTables {
 pub(super) struct ModuleRecords {
     pub modules: Vec<Module>,
     pub module_failures: Vec<ModuleFailure>,
+    pub ambiguous_exports: Vec<AmbiguousExport>,
     pub entries: Vec<Entry>,
     pub runtime_functions: Vec<RuntimeFunctionEntry>,
     pub web_assembly_modules: Vec<WebAssemblyModule>,

@@ -152,6 +152,8 @@ pub(super) struct Plan {
     may_mock_every_module: bool,
     /// A test run: `require.cache` lists the files of the program that have run.
     lists_files_in_cache: bool,
+    /// `EvictedModules::is_table_reached`
+    reaches_entries_of_cache: bool,
     /// `delete require.cache[path]` loads the file anew: `EvictedModules`.
     may_be_evicted: Vec<bool>,
     library_modules_stored_in_cache: LibraryModulesStoredInCache,
@@ -196,6 +198,7 @@ impl Plan {
             mocked_runtime_modules: Vec::new(),
             may_mock_every_module: false,
             lists_files_in_cache: false,
+            reaches_entries_of_cache: false,
             may_be_evicted: vec![false; order.numbers.len()],
             library_modules_stored_in_cache: LibraryModulesStoredInCache::default(),
             may_evict_every_module: false,
@@ -243,6 +246,10 @@ impl Plan {
 
     pub(super) fn set_lists_files_in_cache(&mut self) {
         self.lists_files_in_cache = true;
+    }
+
+    pub(super) fn set_reaches_entries_of_cache(&mut self) {
+        self.reaches_entries_of_cache = true;
     }
 
     pub(super) fn set_may_be_evicted(&mut self, module: ModuleRef) {
@@ -626,6 +633,11 @@ impl ModuleGraph {
 
     pub fn lists_files_in_cache(&self) -> bool {
         self.plan.lists_files_in_cache
+    }
+
+    /// A test run in which a file of the program may get at the entry of a file in `require.cache`.
+    pub fn reaches_entries_of_cache(&self) -> bool {
+        self.plan.reaches_entries_of_cache
     }
 
     pub fn may_be_evicted(&self, module: ModuleRef) -> bool {

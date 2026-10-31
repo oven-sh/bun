@@ -32,6 +32,8 @@
 # console.log(sum, held.length);
 # -- end of source
 # FORM: AsRead
+# On Windows process.env is a proxy that the library makes, and this file has no library: nothing is known to lie there, and what comes behind the read is not reached.
+# REQUIRES: not-windows
 # RUN: pipeline FinishBirths
 
 module m0 path="object-create-sinks-behind-a-test-of-its-prototype.ts" displayPath="object-create-sinks-behind-a-test-of-its-prototype.ts" body=f0 namespaceLayout=L(m0)

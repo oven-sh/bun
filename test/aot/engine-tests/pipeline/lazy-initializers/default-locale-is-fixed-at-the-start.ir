@@ -1,6 +1,5 @@
 # The default locale is fixed when the process starts: what the program stores in LANG, LC_ALL, LC_NUMERIC and their like changes neither Number.prototype.toLocaleString nor Intl.NumberFormat. A number that is written at the top level may therefore be written at the first read, which here comes behind the change, and is the first use of a locale in the compiled program.
 # FORM: AsRead
-# DIAGNOSTIC: StoredTypeOwedToCheck
 # RUN: valueflow-apply
 
 module m0 path="default-locale-is-fixed-at-the-start.ts" displayPath="default-locale-is-fixed-at-the-start.ts" body=f0 namespaceLayout=L(m0)
@@ -578,12 +577,12 @@ runtimefunction id=ObjectsToLocaleString function=f32
 # CHECK-NEXT: v22: builtin(IntlNumberFormat) = Upcast v41 castType=anything
 # CHECK-NEXT: v42: builtin(IntlNumberFormat) = AssumeType v22 provenType=builtin(IntlNumberFormat)
 # CHECK-NEXT: v23: anything ~ object = Construct v42, -, v11 calleeName="Intl.NumberFormat" accessSite=13 callees=[builtin(IntlNumberFormat)]
-# CHECK-NEXT: v43: IntlNumberFormat = AssumeType v23 provenType=IntlNumberFormat
-# CHECK-NEXT: v24: IntlNumberFormat = Check v43 expectedType=undefined|null|IntlNumberFormat site=w22
-# CHECK-NEXT: v44: IntlNumberFormat = AssumeType v24 provenType=IntlNumberFormat
+# CHECK-NEXT: v43: IntlNumberFormat<pristine[Storage, Names]> = AssumeType v23 provenType=IntlNumberFormat<pristine[Storage, Names]>
+# CHECK-NEXT: v24: IntlNumberFormat<pristine[Storage, Names]> = Check v43 expectedType=undefined|null|IntlNumberFormat site=w22
+# CHECK-NEXT: v44: IntlNumberFormat<pristine[Storage, Names]> = AssumeType v24 provenType=IntlNumberFormat<pristine[Storage, Names]>
 # CHECK-NEXT: v25: anything = PropGet v44 key="format" accessSite=14
 # CHECK-NEXT: v26: fractional = Double number=1234567.891
-# CHECK-NEXT: v27: anything = Call v25, v44, v26 calleeKey="format" calleeName="format" accessSite=15 callees=[builtin(IntlDurationFormatPrototypeFormat), builtin(IntlListFormatPrototypeFormat), builtin(IntlRelativeTimeFormatPrototypeFormat), ..]
+# CHECK-NEXT: v27: anything = Call v25, v44, v26 calleeKey="format" calleeName="format" accessSite=15
 # CHECK-NEXT: v28: "written the way of the default locale" = String string="written the way of the default locale"
 # CHECK-NEXT: v29: undefined = Undefined
 # CHECK-NEXT: Return v29

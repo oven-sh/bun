@@ -64,6 +64,54 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    /// Each name in the expression gives way to the value of its constant, so none is read in its dead zone. Operands are asked first and each expression once: a sum of many terms asks for each of the sums in it.
+    pub(in crate::lower) fn names_only_inlined_constants(&mut self, expression: ExprId) -> bool {
+        let hir = self.hir;
+        let mut pending: SmallVec<[(ExprId, bool); 16]> = SmallVec::new();
+        pending.push((expression, false));
+        while let Some((visited, has_asked_operands)) = pending.pop() {
+            if self.names_only_inlined_constants.contains_key(&visited) {
+                continue;
+            }
+            let mut operands: SmallVec<[ExprId; 4]> = SmallVec::new();
+            let answer = match hir[visited].kind {
+                ExprKind::Ident(_) => Some(self.find_inlined_constant(visited).is_some()),
+                ExprKind::Null
+                | ExprKind::True
+                | ExprKind::False
+                | ExprKind::Number(_)
+                | ExprKind::String(_)
+                | ExprKind::BigInt(_) => Some(true),
+                ExprKind::Binary { left, right, .. } => {
+                    operands.extend([left, right]);
+                    None
+                }
+                ExprKind::Unary { operand, .. } => {
+                    operands.push(operand);
+                    None
+                }
+                ExprKind::Template { exprs } => {
+                    operands.extend(hir.ids(exprs));
+                    None
+                }
+                _ => Some(false),
+            };
+            let answer = match answer {
+                Some(answer) => answer,
+                None if has_asked_operands => operands
+                    .iter()
+                    .all(|operand| self.names_only_inlined_constants[operand]),
+                None => {
+                    pending.push((visited, true));
+                    pending.extend(operands.into_iter().map(|operand| (operand, false)));
+                    continue;
+                }
+            };
+            self.names_only_inlined_constants.insert(visited, answer);
+        }
+        self.names_only_inlined_constants[&expression]
+    }
+
     fn find_folded_wherever_it_runs(&self, expression: ExprId) -> Option<Constant> {
         if let Decision::Constant(constant) = self.decisions().decision(expression) {
             return Some(constant);

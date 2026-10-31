@@ -34,8 +34,11 @@ const ALLOWS_CODE_FROM_DISK: u32 = 8;
 const HAS_ROOT_FOLDERS_SPELLED: u32 = 16;
 const HAS_ROOT_FROM_EXECUTABLE: u32 = 32;
 const HAS_FURTHER_PACKAGE_NAMES: u32 = 64;
-/// The length of the path, what `require` and what `import` find, and whether the name hides other paths.
+/// The length of the path, what `require` and what `import` find, and what the name hides.
 const PACKAGE_NAME_SIZE: usize = 4 * size_of::<u32>();
+const HIDES_OTHER_PATHS: u32 = 1;
+const IS_HIDDEN_FROM_REQUIRE: u32 = 2;
+const IS_HIDDEN_FROM_IMPORT: u32 = 4;
 const PATH_ALIAS_SIZE: usize = 4 * size_of::<u32>();
 const NO_ENTRY_POINT: u32 = u32::MAX;
 const SHARED_LIBRARY_EXTENSIONS: [&[u8]; 3] = [b".dylib", b".dll", b".so"];
@@ -77,6 +80,8 @@ pub struct CompiledPackageNameInput<'a> {
     pub required: Option<u32>,
     pub imported: Option<u32>,
     pub hides_other_paths: bool,
+    pub is_hidden_from_require: bool,
+    pub is_hidden_from_import: bool,
 }
 
 /// `CompiledPathAlias`
@@ -339,7 +344,9 @@ fn encode_package_names(names: &[CompiledPackageNameInput<'_>], places: &[u32]) 
             length,
             place_of(name.required)?,
             place_of(name.imported)?,
-            u32::from(name.hides_other_paths),
+            (u32::from(name.hides_other_paths) * HIDES_OTHER_PATHS)
+                | (u32::from(name.is_hidden_from_require) * IS_HIDDEN_FROM_REQUIRE)
+                | (u32::from(name.is_hidden_from_import) * IS_HIDDEN_FROM_IMPORT),
         ];
         bytes.extend(words.into_iter().flat_map(u32::to_le_bytes));
     }
@@ -421,16 +428,17 @@ fn read_package_names(
         index => ((index as usize) < entry_point_count).then_some(Some(index)),
     };
     let mut names = Vec::with_capacity(count);
-    for [length, required, imported, hides_other_paths] in
-        records.as_chunks::<4>().0.as_chunks::<4>().0
-    {
+    for [length, required, imported, hidden] in records.as_chunks::<4>().0.as_chunks::<4>().0 {
         let path = payload.bytes(path_at, u32::from_le_bytes(*length) as usize)?;
         path_at += path.len();
+        let hidden = u32::from_le_bytes(*hidden);
         names.push(CompiledPackageName {
             path,
             required: entry_point(u32::from_le_bytes(*required))?,
             imported: entry_point(u32::from_le_bytes(*imported))?,
-            hides_other_paths: u32::from_le_bytes(*hides_other_paths) != 0,
+            hides_other_paths: hidden & HIDES_OTHER_PATHS != 0,
+            is_hidden_from_require: hidden & IS_HIDDEN_FROM_REQUIRE != 0,
+            is_hidden_from_import: hidden & IS_HIDDEN_FROM_IMPORT != 0,
         });
     }
     if !names.is_sorted_by(|a, b| a.path < b.path) {
@@ -1274,6 +1282,8 @@ pub(crate) mod tests {
             required,
             imported,
             hides_other_paths,
+            is_hidden_from_require: false,
+            is_hidden_from_import: false,
         };
         let names = [
             name(
@@ -1283,6 +1293,24 @@ pub(crate) mod tests {
                 false,
             ),
             name(b"/$bunfs/root/node_modules/both", Some(2), Some(1), true),
+            CompiledPackageNameInput {
+                is_hidden_from_require: true,
+                ..name(
+                    b"/$bunfs/root/node_modules/open/inner.js",
+                    None,
+                    None,
+                    false,
+                )
+            },
+            CompiledPackageNameInput {
+                is_hidden_from_import: true,
+                ..name(
+                    b"/$bunfs/root/node_modules/open/other.js",
+                    None,
+                    None,
+                    false,
+                )
+            },
         ];
         let mut input = program(&IMAGE, ALIGNMENT, &entry_points, false);
         input.package_names = &names;
@@ -1305,7 +1333,11 @@ pub(crate) mod tests {
                 &search,
             )
         };
-        use bun_resolver::compiled_program::PackageLookup::{Found, Unknown};
+        use bun_resolver::compiled_program::PackageLookup::{Found, Hidden, Unknown};
+        assert_eq!(find(b"open/inner.js", true), Hidden);
+        assert_eq!(find(b"open/inner.js", false), Unknown);
+        assert_eq!(find(b"open/other.js", true), Unknown);
+        assert_eq!(find(b"open/other.js", false), Hidden);
         assert_eq!(
             find(b"both", true),
             Found(b"/$bunfs/root/node_modules/both/common.cjs")
@@ -1331,7 +1363,7 @@ pub(crate) mod tests {
         patch(&mut out_of_range, names_at + 4, 3);
         assert_eq!(read_back(out_of_range, record_at).err(), Some(CORRUPTED));
         let mut too_many = bytes.clone();
-        patch(&mut too_many, names_at - 4, 3);
+        patch(&mut too_many, names_at - 4, names.len() as u32 + 1);
         assert_eq!(read_back(too_many, record_at).err(), Some(CORRUPTED));
         assert_eq!(
             read_back(bytes[..bytes.len() - 1].to_vec(), record_at).err(),

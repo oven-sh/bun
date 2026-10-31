@@ -295,10 +295,17 @@ export class Realm {
 
 const typedArrayTag = Reflect.getOwnPropertyDescriptor(prototypeOf(Int8Array.prototype), Symbol.toStringTag)!.get!;
 
-// Its cell says Function, as that of every function does.
+const structureOf = (value: object) => /StructureID: (\d+)/.exec(jscDescribe(value))?.[1];
+
+// Its cell says Function, as that of every function does. The functions that the formatters of ECMA-402 bind have the empty name: they are known by the structure,
+// which every bound function of a realm begins with and no other function has.
 function isBoundFunction(value: Function): boolean {
   const name: unknown = Reflect.getOwnPropertyDescriptor(value, "name")?.value;
-  return typeof name === "string" && name.startsWith("bound ") && !Object.hasOwn(value, "prototype");
+  if (typeof name !== "string" || Object.hasOwn(value, "prototype")) return false;
+  if (name.startsWith("bound ")) return true;
+  const bound = function () {}.bind(null);
+  Reflect.getOwnPropertyDescriptor(bound, "name");
+  return structureOf(value) === structureOf(bound);
 }
 
 // Their cells are named "Object". Neither function looks for a formatter that an older program has put on another object.

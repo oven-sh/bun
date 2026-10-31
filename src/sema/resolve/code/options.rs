@@ -32,6 +32,8 @@ pub struct CodeOptions {
     pub builds_executable: bool,
     /// Files that are no entry points, and any of which the host may run as the main module.
     pub main_modules_beside_entry_points: Vec<Vec<u8>>,
+    /// `--ignore-dce-annotations`: a file that is loaded and imported runs, whatever `"sideEffects"` in its package.json says.
+    pub ignores_declared_side_effects: bool,
 }
 
 /// The condition of `exports` and `imports` that names what `--aot` compiles.
@@ -74,6 +76,7 @@ impl CodeOptions {
             types_stop_at_entry_points: false,
             builds_executable: false,
             main_modules_beside_entry_points: Vec::new(),
+            ignores_declared_side_effects: false,
         };
         options.add_custom_condition(AOT_CONDITION);
         options

@@ -52,6 +52,34 @@ impl EmbeddedFiles {
         Ok(())
     }
 
+    /// No name is made for it: whoever asks for the module finds the file.
+    pub(crate) fn embed_at_module_path(
+        &self,
+        context: &BuildContext,
+        file: &SourceFile<'_>,
+        module_path: &[u8],
+    ) {
+        let module_path = posix_path(module_path);
+        let Some(dest_path) = module_path.strip_prefix(&posix_path(&context.module_prefix)[..])
+        else {
+            return;
+        };
+        let output = OutputFile::init(Options {
+            data: OptionsData::Buffer {
+                data: file.contents.into(),
+            },
+            size: Some(file.contents.len()),
+            output_path: dest_path.into(),
+            input_path: file.path.into(),
+            input_loader: Loader::File,
+            loader: Loader::File,
+            output_kind: OutputKind::Asset,
+            side: Some(Side::Client),
+            ..Default::default()
+        });
+        self.files.lock().push(output);
+    }
+
     pub(crate) fn clear(&self) {
         self.files.lock().clear();
     }

@@ -163,6 +163,139 @@ test("library modules lower the same at any thread count", async () => {
     });
 });
 
+// `take(make())` does not fit, so the type checker writes an error message. To name `Hidden`, which maker.js does not import, it looks
+// through the exports of every module of the program, and in a page `module.exports = exports.default` leads back to itself. What such
+// a page knows about `exports.default` depends on who asks first. In the order of the program that is first.js, however long it takes.
+test("a module that exports its own `exports.default` lowers the same whichever file asks about it first", async () => {
+  const pages = Array.from({ length: 12 }, (_, index) => index + 1);
+  const steps = Array.from({ length: 400 }, (_, index) => index);
+  using dir = tempDir("aot-threads-fall-own-default", {
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: { ...compilerOptions, target: "esnext", allowJs: true, skipLibCheck: true, types: [] },
+    }),
+    "package.json": JSON.stringify({ name: "pages", type: "module" }),
+    "main.ts":
+      `import { taken } from "./first.js";\n` +
+      pages.map(page => `import * as page${page} from "./pages/page${page}.js";\n`).join("") +
+      `declare const console: { log(...values: unknown[]): void };\n` +
+      `console.log(taken, ${pages.map(page => `page${page}.name${page}`).join(", ")});\n`,
+    "hidden.js": `export class Hidden {\n  constructor() {\n    this.count = 1;\n  }\n}\n`,
+    "factory.js": `import { Hidden } from "./hidden.js";\nexport function create() {\n  return new Hidden();\n}\n`,
+    "maker.js": `import { create } from "./factory.js";\nexport function make() {\n  return { inner: create() };\n}\n`,
+    "first.js":
+      `import { make } from "./maker.js";\n/** @param {number} count */\nfunction take(count) {\n  return count;\n}\n` +
+      steps
+        .map(step => `function step${step}(value) {\n  return { at: ${step}, value, next: [value, ${step}] };\n}\n`)
+        .join("") +
+      `export const steps = [${steps.map(step => `step${step}(${step})`).join(", ")}];\n` +
+      `export const taken = take(make());\n`,
+    "pages/package.json": JSON.stringify({ type: "commonjs" }),
+    ...Object.fromEntries(
+      pages.map(page => [
+        `pages/page${page}.js`,
+        `"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+Object.defineProperty(exports, "name${page}", { enumerable: true, get: function () { return name${page}; } });
+const name${page} = "page ${page}";
+if ((typeof exports.default === "function" || (typeof exports.default === "object" && exports.default !== null)) && typeof exports.default.__esModule === "undefined") {
+  Object.defineProperty(exports.default, "__esModule", { value: true });
+  Object.assign(exports.default, exports);
+  module.exports = exports.default;
+}
+`,
+      ]),
+    ),
+  });
+  const first = await build(String(dir), "main.ts", 1, withCheapBackEnd);
+  expect(first).toEqual({ ...first, exitCode: 0, errors: 0 });
+  for (const threads of [2, 4, 8, 16])
+    expect({ threads, ...(await build(String(dir), "main.ts", threads, withCheapBackEnd)) }).toEqual({
+      threads,
+      ...first,
+    });
+});
+
+// `Middle` has no constructor, so `super(..)` below it takes the parameters of `Base`. In the file of `Base` they have the types that
+// index.d.ts declares, and in any other file they are untyped. One thread lowers base and far one after the other and remembers what
+// it has found out about `Middle`; with more threads far, the largest file, is lowered by itself.
+test("a class without a constructor takes the same parameters whichever file was lowered before", async () => {
+  const steps = Array.from({ length: 1500 }, (_, index) => index);
+  using dir = tempDir("aot-threads-fall-inherited-constructor", {
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: { ...compilerOptions, target: "esnext", allowJs: true, skipLibCheck: true, types: [] },
+    }),
+    "package.json": JSON.stringify({ name: "classes", type: "module" }),
+    "main.ts": `import { Near } from "base";
+import { Far, Farther } from "far";
+declare const console: { log(...values: unknown[]): void };
+console.log(new Near("near").name, new Far({ name: "far", size: [2] }).name, new Farther({ name: "farther", size: [3] }).name);
+`,
+    "node_modules/base/package.json": JSON.stringify({
+      name: "base",
+      version: "1.0.0",
+      main: "index.js",
+      types: "index.d.ts",
+    }),
+    "node_modules/base/index.d.ts": `export declare class Base {
+  constructor(options: { name: string; size?: number[] });
+  name: string;
+}
+export declare class Middle extends Base {}
+export declare class Other extends Base {}
+export declare class Near extends Middle {
+  constructor(name: string);
+}
+`,
+    "node_modules/base/index.js": `"use strict";
+class Base {
+  constructor(options) {
+    this.name = options.name;
+    this.size = options.size;
+  }
+}
+class Middle extends Base {}
+class Other extends Base {}
+class Near extends Middle {
+  constructor(name) {
+    super({ name, size: [1] });
+  }
+}
+exports.Base = Base;
+exports.Middle = Middle;
+exports.Other = Other;
+exports.Near = Near;
+`,
+    "node_modules/far/package.json": JSON.stringify({ name: "far", version: "1.0.0", main: "index.js" }),
+    "node_modules/far/index.js":
+      `"use strict";
+const { Middle, Other } = require("base");
+class Far extends Middle {
+  constructor({ name, size }) {
+    super({ name, size });
+  }
+}
+class Farther extends Other {
+  constructor({ name, size }) {
+    super({ name, size });
+  }
+}
+exports.Far = Far;
+exports.Farther = Farther;
+` +
+      steps
+        .map(step => `function step${step}(value) {\n  return { at: ${step}, value, next: [value, ${step}] };\n}\n`)
+        .join("") +
+      `exports.steps = [${steps.map(step => `step${step}(${step})`).join(", ")}];\n`,
+  });
+  const first = await build(String(dir), "main.ts", 1, withCheapBackEnd);
+  expect(first).toEqual({ ...first, exitCode: 0, errors: 0 });
+  for (const threads of [2, 8])
+    expect({ threads, ...(await build(String(dir), "main.ts", threads, withCheapBackEnd)) }).toEqual({
+      threads,
+      ...first,
+    });
+});
+
 // The typescript package is large enough for the flow analysis to split its work into batches, which the small programs above never do.
 // One thread takes serial code paths that two or more threads skip. A debug or ASAN build of Bun takes an hour here.
 test.skipIf(wanted === "quick")("a large untyped package builds the same at one thread", async () => {

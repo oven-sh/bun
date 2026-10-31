@@ -21,6 +21,8 @@
 # -- end of source
 # FORM: AsRead
 # OPTIONS: testing=OverwriteDeadValuesAtCollections
+# On Windows process.env is a proxy that the library makes, and this file has no library: nothing is known to lie there, and what comes behind the read is not reached.
+# REQUIRES: not-windows
 # RUN: pipeline FinishBirths
 # RUN(WHOLE): compile
 # WHOLE: image not empty

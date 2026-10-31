@@ -58,8 +58,35 @@ static long find(Table* table, unsigned long first, unsigned long second, int* i
     return slot;
 }
 
-// The first mapping of a process that holds code is that of its executable.
-static int findCode(int pid, unsigned long* start, unsigned long* end)
+enum { MostPiecesOfCode = 64 };
+static unsigned long startOfCode[MostPiecesOfCode], endOfCode[MostPiecesOfCode];
+static int piecesOfCode;
+
+static int isCode(unsigned long address)
+{
+    for (int piece = 0; piece < piecesOfCode; piece++) {
+        if (address >= startOfCode[piece] && address < endOfCode[piece])
+            return 1;
+    }
+    return 0;
+}
+
+static const char* fileOf(const char* line)
+{
+    while (*line && *line != '\n' && *line != '/')
+        line++;
+    return line;
+}
+
+static int isSameFile(const char* left, const char* right)
+{
+    while (*left == *right && *left && *left != '\n')
+        left++, right++;
+    return *left == *right;
+}
+
+// The first mapping of a process that has just begun is of its executable. An executable that was built without part of Bun has Bun's code in several pieces.
+static int findCode(int pid)
 {
     char path[32] = "/proc/";
     char digits[12];
@@ -82,6 +109,7 @@ static int findCode(int pid, unsigned long* start, unsigned long* end)
     close(file);
     text[size] = 0;
 
+    piecesOfCode = 0;
     for (char* line = text; *line;) {
         unsigned long bounds[2] = { 0, 0 };
         char* cursor = line;
@@ -89,14 +117,13 @@ static int findCode(int pid, unsigned long* start, unsigned long* end)
             for (; (*cursor >= '0' && *cursor <= '9') || (*cursor >= 'a' && *cursor <= 'f'); cursor++)
                 bounds[which] = bounds[which] * 16 + (*cursor <= '9' ? *cursor - '0' : *cursor - 'a' + 10);
         }
-        if (cursor[2] == 'x') {
-            *start = bounds[0];
-            *end = bounds[1];
-            return 1;
+        if (cursor[2] == 'x' && isSameFile(fileOf(line), fileOf(text)) && piecesOfCode < MostPiecesOfCode) {
+            startOfCode[piecesOfCode] = bounds[0];
+            endOfCode[piecesOfCode++] = bounds[1];
         }
         while (*line && *line++ != '\n') { }
     }
-    return 0;
+    return piecesOfCode;
 }
 
 // A container may refuse it.
@@ -135,8 +162,7 @@ int countCallsOfStart(const char* path, unsigned long* counts)
     int status = 0;
     if (waitpid(child, &status, 0) < 0 || (status & 0xff) != 0x7f)
         return 2;
-    unsigned long start = 0, end = 0;
-    if (!findCode(child, &start, &end)) {
+    if (!findCode(child)) {
         kill(child, Kill);
         waitpid(child, &status, 0);
         return 3;
@@ -161,7 +187,7 @@ int countCallsOfStart(const char* path, unsigned long* counts)
         counts[0]++;
         // A call pushes one word and goes elsewhere. A push goes on to the next instruction.
         int isCall = stack == stackOfCaller - 8 && at - caller - 1 >= LongestInstruction;
-        if (isCall && at >= start && at < end && caller >= start && caller < end) {
+        if (isCall && isCode(at) && isCode(caller)) {
             int isNew;
             if (find(&functions, at, 0, &isNew) < 0)
                 return 8;

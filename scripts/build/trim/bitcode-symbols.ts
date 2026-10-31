@@ -18,6 +18,9 @@ const uncommonLayouts = new Map([
 ]);
 const [hasUncommonFlag, weakFlag, indirectFlag] = [1 << 2, 1 << 4, 1 << 6];
 
+export const isBitcodeAt = (fd: number, offset: number, size: number) =>
+  size >= 4 && readAt(fd, offset, 4).readUInt32BE(0) === bitcodeMagic;
+
 class Bits {
   at = 0;
   private readonly bytes: Buffer;
@@ -79,7 +82,7 @@ export function readWeakAliases(
   size: number,
   file: string,
 ): [name: string, target: string][] {
-  if (size < 8 || readAt(fd, offset, 4).readUInt32BE(0) !== bitcodeMagic) return [];
+  if (size < 8 || !isBitcodeAt(fd, offset, size)) return [];
   let symbols: Buffer | undefined;
   let strings: Buffer | undefined;
   for (let at = 4; at + 8 <= size;) {

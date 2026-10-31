@@ -53,7 +53,8 @@ test.skipIf(typeof tracer === "string")(
     const plain = countCalls(await build(["build", "--compile"], "plain"));
     console.error(`compiled ${JSON.stringify(compiled)}\nplain ${JSON.stringify(plain)}`);
 
-    expect(plain.functionsOfWidestCall).toBeGreaterThan(1);
+    // Else the tracer did not find Bun's code in one of them.
+    expect(Math.min(compiled.functionsOfWidestCall, plain.functionsOfWidestCall)).toBeGreaterThan(1);
     expect(compiled.functionsOfWidestCall).toBeLessThanOrEqual(2 * plain.functionsOfWidestCall);
     expect(compiled.functions).toBeLessThan(plain.functions);
     expect(compiled.instructions).toBeLessThan(plain.instructions);

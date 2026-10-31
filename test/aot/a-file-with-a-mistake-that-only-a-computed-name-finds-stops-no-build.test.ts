@@ -6,15 +6,18 @@ import { test } from "./supported";
 
 // An executable holds whatever `import(name)` may find, and a project is full of files that nobody ever loads: the tsconfig with comments that a package ships as
 // `base.json`, a fixture with a syntax error. `bun run` says what is wrong with such a file where the program loads it. The build once stopped at each of them.
+// The executable holds such a file as it is, and says the same as `bun run`, in the words of the loader of its kind. It once said "Cannot find module".
 const mistakes = {
   "node_modules/pkg/configs/base.json": `{\n  // a comment\n  "a": 1\n}\n`,
   "node_modules/pkg/fixtures/broken.js": `const a = ;\n`,
   "data/commented.json": `{\n  // a comment\n  "a": 2\n}\n`,
   "data/broken.js": `const b = ;\n`,
+  "data/broken.ts": `const c: = 1;\n`,
+  "data/broken.toml": `a = [\n`,
 };
 const files = {
   "package.json": `{ "name": "p", "type": "module" }`,
-  "node_modules/pkg/package.json": `{ "name": "pkg", "version": "1.0.0", "main": "index.js" }`,
+  "node_modules/pkg/package.json": `{ "name": "pkg", "version": "1.0.0", "exports": { ".": "./index.js", "./configs/*": "./configs/*.json" } }`,
   "node_modules/pkg/index.js": `module.exports = { name: "pkg" };\n`,
   "data/good.json": `{ "a": 3 }\n`,
   "data/good.js": `export default "good";\n`,
@@ -23,13 +26,21 @@ const files = {
   try {
     console.log(label, JSON.stringify((await load()).default));
   } catch (error) {
-    console.log(label, "threw");
+    console.log(label, "threw", error.constructor.name + ":", String(error.message).split("\\n")[0]);
   }
 };
 const unknown = process.argv[2] ?? "node:path";
 await tried("a name nobody knows", async () => ({ default: typeof (await import(unknown)).join }));
 await tried("required", async () => ({ default: typeof require(unknown).join }));
-for (const name of ["good.json", "good.js", "commented.json", "broken.js"]) await tried(name, () => import("./data/" + name));
+for (const name of ["good.json", "good.js", "commented.json", "broken.js", "broken.ts", "broken.toml"]) {
+  await tried(name, () => import("./data/" + name));
+  await tried(name + " once more", () => import("./data/" + name));
+  await tried(name + " required", async () => ({ default: typeof require("./data/" + name) }));
+}
+for (const name of ["base"]) {
+  await tried("of a package", () => import("pkg/configs/" + name));
+  await tried("of a package, required", async () => ({ default: typeof require("pkg/configs/" + name) }));
+}
 `,
   "spelled.js": `import data from "./data/commented.json";\nconsole.log(data);\n`,
 };
@@ -42,9 +53,25 @@ test("the program builds, and runs as under bun run", async () => {
     `a name nobody knows "function"`,
     `required "function"`,
     `good.json {"a":3}`,
+    `good.json once more {"a":3}`,
+    `good.json required "object"`,
     `good.js "good"`,
-    "commented.json threw",
-    "broken.js threw",
+    `good.js once more "good"`,
+    `good.js required "object"`,
+    ...["commented.json", "commented.json once more", "commented.json required"].map(
+      label => label + " threw SyntaxError: JSON Parse error: Unrecognized token '/'",
+    ),
+    ...["broken.js", "broken.js once more", "broken.js required"].map(
+      label => label + " threw BuildMessage: Unexpected ;",
+    ),
+    ...["broken.ts", "broken.ts once more", "broken.ts required"].map(
+      label => label + " threw BuildMessage: Unexpected =",
+    ),
+    ...["broken.toml", "broken.toml once more", "broken.toml required"].map(
+      label => label + " threw BuildMessage: Unterminated array; expected ']'",
+    ),
+    "of a package threw SyntaxError: JSON Parse error: Unrecognized token '/'",
+    "of a package, required threw SyntaxError: JSON Parse error: Unrecognized token '/'",
     "",
   ]);
   const executable = join(cwd, "main" + (isWindows ? ".exe" : ""));

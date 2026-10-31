@@ -1,6 +1,5 @@
 # RegExp.prototype.compile gives a literal another pattern and other flags: called on it, in a callee, through call, by a computed name, by text made at run time. source, flags, test, replace, match, split and search follow. And what `new RegExp` and `RegExp` make of constant operands, valid or not.
 # FORM: AsRead
-# DIAGNOSTIC: RegExpWithoutCode
 # RUN: lower-to-air size f2
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
 

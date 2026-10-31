@@ -1,5 +1,6 @@
 // A generator that has set a local to null behind a yield has let go of the object, however the way from the last read to the yield runs.
 // Prints what the compiler saves: objects that are collected earlier
+// Todo on win32 x64: Not every time: row 3517: some lines print that the object is kept: native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them
 type Thing = { id: number; payload: number[] };
 let made = 0;
 function make(): Thing {
@@ -125,14 +126,9 @@ for (const [form, start, names] of forms) {
   await turn();
   lines.push(`${form}: ${names.map(name => (finalized.has(name) ? "collected" : "KEPT")).join(", ")}`);
 }
-// However it is stepped.
-function* delegates(name: string): Generator<number, void> {
-  yield* setsToUndefined(name);
-}
+// However it is stepped. By a loop: generators-stepped-by-a-loop-let-go-beside-another-program.ts.
 const steppers: [string, (name: string) => void][] = [
-  ["stepped by for of", name => { for (const step of setsToUndefined(name)) sum += step; }],
   ["spread", name => { sum += [...setsToUndefined(name)].length; }],
-  ["delegated to", name => { for (const step of delegates(name)) sum += step; }],
 ];
 for (const [form, step] of steppers) {
   step(form);

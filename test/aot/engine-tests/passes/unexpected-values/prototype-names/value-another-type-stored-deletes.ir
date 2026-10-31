@@ -427,7 +427,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f23 visibility=Private
 # CHECK-NEXT: Branch v26 -> taken b6(| 0), notTaken b8(v21, v18, v23)
 # CHECK-NEXT: b6(v27: guard):
 # CHECK-NEXT: PutSlot v23, v27, v25 key="name" receivers=[L0] level=Expected accessSite=17
-# CHECK-NEXT: v29: boolean = HasNoFieldOutsideSlot v23 [mayMeetUnfinishedObject]
+# CHECK-NEXT: v29: boolean = HasNoFieldOutsideSlot v23
 # CHECK-NEXT: Branch v29 -> taken b7(), notTaken b11(v21, v18, v23)
 # CHECK-NEXT: b7():
 # CHECK-NEXT: v30: undefined|null|string = Call v1, -, v23 calleeName="nameOf" accessSite=7 callees=[f5]

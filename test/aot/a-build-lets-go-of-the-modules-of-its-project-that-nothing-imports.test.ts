@@ -3,6 +3,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { reads } from "./harness/reads";
 import { test } from "./supported";
 
 // A tsconfig.json without "include" takes in every file under its folder: tests, scripts, other programs. A build reads
@@ -76,5 +77,6 @@ test("a build holds neither the text nor the tree of the modules of its project 
   const beside = await build(folder);
   // It held 1.3 to 1.8 times their text. What is left is a record for each file, and what each thread has just freed.
   // An allocator that checks for errors holds on to what is freed.
+  reads("what a build holds of modules that nothing imports", (beside - alone) / bytes, 1, "times their text");
   if (!isASAN && !isDebug) expect((beside - alone) / bytes).toBeLessThan(1);
 }, 240_000);

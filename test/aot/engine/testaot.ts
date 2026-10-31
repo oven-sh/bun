@@ -93,10 +93,11 @@ async function expectEveryTestPasses(args: string[], cwd?: string) {
       !failsToday.some(name => line.startsWith(`FAIL ${name}: `)) &&
       !isOverABoundByTheCostOfMusl(line),
   );
-  // In front of its FAIL line a native test has said which check failed, and where.
-  expect(failed.length ? lines.filter(line => !/^(PASS|TODO|SKIP|  still fails:) /.test(line)).slice(-60) : []).toEqual(
-    [],
+  // In front of its FAIL line a native test has said which check failed, and where. A row that musl is forgiven is no part of the failure.
+  const shown = lines.filter(
+    line => !/^(PASS|TODO|SKIP|  still fails:) /.test(line) && !isOverABoundByTheCostOfMusl(line),
   );
+  expect(failed.length ? shown.slice(-60) : []).toEqual([]);
   // A file of IR tests has a FAIL line for each of its commands that fails, and counts once in the last line.
   const listed = new Set(
     lines.filter(line => line.startsWith("FAIL ")).map(line => /^FAIL (.+?\.ir):\d+: /.exec(line)?.[1] ?? line),

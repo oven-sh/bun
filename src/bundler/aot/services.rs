@@ -21,6 +21,7 @@ use bun_paths::resolve_path::posix_to_platform_in_place;
 use bun_react_compiler::Observer;
 use bun_resolver::options::{ExternalModules, Packages};
 use bun_resolver::package_json::Status;
+use bun_resolver::package_names::RefusedName;
 use bun_resolver::{DataURL, GlobalCache, Resolver, ResultUnion};
 use bun_sema::atom::Interner;
 use bun_sema::fold::FoldOptions;
@@ -229,6 +230,7 @@ pub(crate) struct BundlerServices {
     macros: MacroThread,
     /// Those that no thread holds.
     file_finders: Guarded<Vec<FileFinder>>,
+    refused_names: Guarded<Vec<RefusedName>>,
 }
 
 impl BundlerServices {
@@ -253,7 +255,12 @@ impl BundlerServices {
             embedded: EmbeddedFiles::default(),
             macros: MacroThread::new(),
             file_finders: Guarded::new(Vec::new()),
+            refused_names: Guarded::new(Vec::new()),
         }
+    }
+
+    pub(crate) fn take_refused_names(&self) -> Vec<RefusedName> {
+        core::mem::take(&mut *self.refused_names.lock())
     }
 
     pub(crate) fn shut_down(self) -> Vec<OutputFile> {
@@ -366,6 +373,18 @@ impl SourceProvider for BundlerServices {
         let mut finder = idle.unwrap_or_else(create);
         let found = finder.find(search);
         self.file_finders.lock().push(finder);
+        if let FoundCode::NotFound(failure) = found
+            && failure.is_refusal_of_package_json()
+            && search.kind != CodeImportKind::EntryPoint
+        {
+            let mut directory = to_native(search.directory).to_vec();
+            posix_to_platform_in_place(&mut directory);
+            self.refused_names.lock().push(RefusedName {
+                directory,
+                specifier: search.specifier.to_vec(),
+                is_require: search.kind == CodeImportKind::Require,
+            });
+        }
         found
     }
 
@@ -450,6 +469,10 @@ impl SourceProvider for BundlerServices {
 
     fn clear_embedded_files(&self) {
         self.embedded.clear();
+    }
+
+    fn embed_at_module_path(&self, file: &SourceFile<'_>, module_path: &[u8]) {
+        (self.embedded).embed_at_module_path(&self.context, file, module_path);
     }
 
     fn parse_data<'s>(

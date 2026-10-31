@@ -230,47 +230,63 @@ runtimefunction id=ObjectsToLocaleString function=f5
 # CHECK-NEXT: v8: L0 = NewObject -, v5, v7 layout=L0 fields=[1, 0] allocationSite=3 allocationClass=0
 # CHECK-NEXT: v9: L0 = FinishObject v8
 # CHECK-NEXT: v10: fractional = Double number=1234567.891
-# CHECK-NEXT: v11: "de-DE" = String string="de-DE"
-# CHECK-NEXT: v12: string = CallBuiltin v10, v11 overload=NumberPrototypeToLocaleString/0 accessSite=3
-# CHECK-NEXT: v13: fractional = Double number=0.5
-# CHECK-NEXT: v14: "en-US" = String string="en-US"
-# CHECK-NEXT: v15: undefined = Undefined
-# CHECK-NEXT: v16: string = CallBuiltin v13, v14, v15 overload=NumberPrototypeToLocaleString/0 accessSite=5
-# CHECK-NEXT: v17: L1 = NewObject -, v12, v16 layout=L1 fields=[1, 0] allocationSite=4 allocationClass=1
-# CHECK-NEXT: v18: L1 = FinishObject v17
-# CHECK-NEXT: v19: "none" = String string="none"
-# CHECK-NEXT: PutModuleVariable v19 variable=g1
-# CHECK-NEXT: v21: "not a tag" = String string="not a tag"
-# CHECK-NEXT: v22: string = CallDirect v21 function=f1 accessSite=6
-# CHECK-NEXT: v23: L2 = NewObject -, v22 layout=L2 fields=[0] allocationSite=5 allocationClass=2
-# CHECK-NEXT: v24: L2 = FinishObject v23
-# CHECK-NEXT: v25: L3 = NewObject layout=L3 allocationSite=6 allocationClass=3
-# CHECK-NEXT: v26: f2 = NewClosure function=f2 allocationSite=7
-# CHECK-NEXT: DefineGetter v25, v26 key="maximumFractionDigits"
-# CHECK-NEXT: v28: L3 = FinishObject v25
-# CHECK-NEXT: v29: fractional = Double number=1.25
-# CHECK-NEXT: v30: "en-US" = String string="en-US"
-# CHECK-NEXT: v31: string = CallBuiltin v29, v30, v28 overload=NumberPrototypeToLocaleString/1 accessSite=8
-# CHECK-NEXT: v32: L2 = NewObject -, v31 layout=L2 fields=[0] allocationSite=8 allocationClass=2
-# CHECK-NEXT: v33: L2 = FinishObject v32
-# CHECK-NEXT: v34: "odd" = CallDirect function=f3 accessSite=10
-# CHECK-NEXT: v35: L2 = NewObject -, v34 layout=L2 fields=[0] allocationSite=11 allocationClass=2
-# CHECK-NEXT: v36: L2 = FinishObject v35
-# CHECK-NEXT: v37: bigint = BigInt digits="12345678901234567890"
+# CHECK-NEXT: v11: null|string = FormatNumberWithPattern v10 formatPattern=[536870913, 2359353, 0, 0, 0, 262915, 259, 2949376, 738274817, 1701052421, 4539437]
+# CHECK-NEXT: v12: boolean = TypeTest v11 testedType=string
+# CHECK-NEXT: Branch v12 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v13: string):
+# CHECK-NEXT: Jump -> next b3(v13)
+# CHECK-NEXT: b2() frequency=Unlikely:
+# CHECK-NEXT: v14: "de-DE" = String string="de-DE"
+# CHECK-NEXT: v15: string = CallBuiltin v10, v14 overload=NumberPrototypeToLocaleString/0 accessSite=3
+# CHECK-NEXT: Jump -> next b3(v15)
+# CHECK-NEXT: b3(v16: string):
+# CHECK-NEXT: v17: fractional = Double number=0.5
+# CHECK-NEXT: v18: null|string = FormatNumberWithPattern v17 formatPattern=[536870913, 2359353, 0, 0, 0, 262915, 259, 2949376, 771828737, 1852112901, 5461293]
+# CHECK-NEXT: v19: boolean = TypeTest v18 testedType=string
+# CHECK-NEXT: Branch v19 -> taken b4(| 0), notTaken b5()
+# CHECK-NEXT: b4(v20: string):
+# CHECK-NEXT: Jump -> next b6(v20)
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v21: "en-US" = String string="en-US"
+# CHECK-NEXT: v22: undefined = Undefined
+# CHECK-NEXT: v23: string = CallBuiltin v17, v21, v22 overload=NumberPrototypeToLocaleString/0 accessSite=5
+# CHECK-NEXT: Jump -> next b6(v23)
+# CHECK-NEXT: b6(v24: string):
+# CHECK-NEXT: v25: L1 = NewObject -, v16, v24 layout=L1 fields=[1, 0] allocationSite=4 allocationClass=1
+# CHECK-NEXT: v26: L1 = FinishObject v25
+# CHECK-NEXT: v27: "none" = String string="none"
+# CHECK-NEXT: PutModuleVariable v27 variable=g1
+# CHECK-NEXT: v29: "not a tag" = String string="not a tag"
+# CHECK-NEXT: v30: string = CallDirect v29 function=f1 accessSite=6
+# CHECK-NEXT: v31: L2 = NewObject -, v30 layout=L2 fields=[0] allocationSite=5 allocationClass=2
+# CHECK-NEXT: v32: L2 = FinishObject v31
+# CHECK-NEXT: v33: L3 = NewObject layout=L3 allocationSite=6 allocationClass=3
+# CHECK-NEXT: v34: f2 = NewClosure function=f2 allocationSite=7
+# CHECK-NEXT: DefineGetter v33, v34 key="maximumFractionDigits"
+# CHECK-NEXT: v36: L3 = FinishObject v33
+# CHECK-NEXT: v37: fractional = Double number=1.25
 # CHECK-NEXT: v38: "en-US" = String string="en-US"
-# CHECK-NEXT: v39: string = CallBuiltin v37, v38 overload=BigIntPrototypeToLocaleString/0 accessSite=12
-# CHECK-NEXT: v40: L2 = NewObject -, v39 layout=L2 fields=[0] allocationSite=12 allocationClass=2
+# CHECK-NEXT: v39: string = CallBuiltin v37, v38, v36 overload=NumberPrototypeToLocaleString/1 accessSite=8
+# CHECK-NEXT: v40: L2 = NewObject -, v39 layout=L2 fields=[0] allocationSite=8 allocationClass=2
 # CHECK-NEXT: v41: L2 = FinishObject v40
-# CHECK-NEXT: v42: "start is over" = String string="start is over"
-# CHECK-NEXT: v43: anything ~ undefined|null|string = GetModuleVariable variable=g1
-# CHECK-NEXT: v44: int[0, 4294967295] = CallBuiltin v2, v42, v43 overload=ArrayPrototypePush/0 accessSite=14
-# CHECK-NEXT: v45: Array<L0|L1|L2|Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v9, v18, v24, v33, v36, v41, v2 contents=L0|L1|L2|Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> allocationSite=13 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v46: Array<L0|L1|L2|Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v45 provenType=Array<L0|L1|L2|Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v47: undefined = Undefined
-# CHECK-NEXT: v48: undefined|string = CallBuiltin -, v46, v47 overload=JSONStringify/0 accessSite=18
-# CHECK-NEXT: v49: undefined = CallBuiltin -, v48 overload=ConsoleLog/0 accessSite=19
-# CHECK-NEXT: v50: undefined = Undefined
-# CHECK-NEXT: Return v50
+# CHECK-NEXT: v42: "odd" = CallDirect function=f3 accessSite=10
+# CHECK-NEXT: v43: L2 = NewObject -, v42 layout=L2 fields=[0] allocationSite=11 allocationClass=2
+# CHECK-NEXT: v44: L2 = FinishObject v43
+# CHECK-NEXT: v45: bigint = BigInt digits="12345678901234567890"
+# CHECK-NEXT: v46: "en-US" = String string="en-US"
+# CHECK-NEXT: v47: string = CallBuiltin v45, v46 overload=BigIntPrototypeToLocaleString/0 accessSite=12
+# CHECK-NEXT: v48: L2 = NewObject -, v47 layout=L2 fields=[0] allocationSite=12 allocationClass=2
+# CHECK-NEXT: v49: L2 = FinishObject v48
+# CHECK-NEXT: v50: "start is over" = String string="start is over"
+# CHECK-NEXT: v51: anything ~ undefined|null|string = GetModuleVariable variable=g1
+# CHECK-NEXT: v52: int[0, 4294967295] = CallBuiltin v2, v50, v51 overload=ArrayPrototypePush/0 accessSite=14
+# CHECK-NEXT: v53: Array<L0|L1|L2|Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v9, v26, v32, v41, v44, v49, v2 contents=L0|L1|L2|Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> allocationSite=13 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v54: Array<L0|L1|L2|Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v53 provenType=Array<L0|L1|L2|Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v55: undefined = Undefined
+# CHECK-NEXT: v56: undefined|string = CallBuiltin -, v54, v55 overload=JSONStringify/0 accessSite=18
+# CHECK-NEXT: v57: undefined = CallBuiltin -, v56 overload=ConsoleLog/0 accessSite=19
+# CHECK-NEXT: v58: undefined = Undefined
+# CHECK-NEXT: Return v58
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="bad"
 # CHECK: module=m0 position=347 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type="not a tag" site=w10 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w11 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

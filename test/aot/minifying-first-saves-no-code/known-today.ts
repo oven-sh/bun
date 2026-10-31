@@ -216,7 +216,7 @@ export const knownToday: Record<string, string> = {
   "esbuild/default: default/ImportWithHashParameter":
     "written: the build: 2 | import foo from './file.txt#foo' |     ^ | error: TS100150: Could not resol",
   "esbuild/default: default/ImportWithQueryParameter":
-    "written: the build: 2 | import foo from './file.txt?foo' |     ^ | error: TS100159: bun compile doe",
+    "bundled: the bundler: 2 | import foo from './file.txt?foo' |                     ^ | error: Could not resolve: \"./file.txt?foo\"",
   "esbuild/default: default/MinifiedDynamicImportWithExpressionCJS":
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "esbuild/default: default/MinifiedExportsAndModuleFormatCommonJS":
@@ -373,7 +373,7 @@ export const knownToday: Record<string, string> = {
   "esbuild/extra: extra/NoMinifyCatchScope5": "bundled: operations 105 -> 104",
   "esbuild/extra: extra/ObjectRestPattern2": "each file: run-time operations 242 -> 241",
   "esbuild/extra: extra/PathWithQuestionMark":
-    'written: the build: 1 | import foo from "./file.js?ignore-me"; |     ^ | error: TS100159: bun compile does not support a query string in an imp',
+    'bundled: the bundler: 1 | import foo from "./file.js?ignore-me"; |                     ^ | error: Could not resolve: "./file.js?ignore-me"',
   "esbuild/extra: extra/PrototypeChain1":
     "written: \"error: SyntaxError: Export named 'prop' not found in module '/$bunfs/root/c000/cjs-proto.; each file: \"error: SyntaxError: Export named 'prop' not found in module '/$bunfs/root/c000/cjs-proto.; bundled: \"\\nexit 0\", bun run \"error: SyntaxError: Export named 'prop' not found in module",
   "esbuild/extra: extra/PrototypeChain2":

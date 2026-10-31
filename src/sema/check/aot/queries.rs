@@ -6,7 +6,9 @@ use super::answers::{
 };
 use super::builtin_types::BuiltinTypeSymbols;
 use super::declared_signatures::DeclaredSignatures;
-use super::inferred_from_use::{ReferenceIndex, Subject, TypeState, TypesInProgress, UsageState};
+use super::inferred_from_use::{
+    ReferenceIndex, Subject, TypeState, TypesInProgress, Usage, UsageState,
+};
 use super::kept_answers::{
     GaveUpAnswers, KeptFact, KeptMemo, ObjectAnswers, TypeAnswers, TypeQuestion,
 };
@@ -101,6 +103,8 @@ pub(super) struct Memo<'c> {
     /// The subjects that were left as `UsageState::NotKept` since a question ran out of stack.
     pub(super) usages_that_lacked_stack: Vec<Subject>,
     pub(super) inferred_types: FxHashMap<Subject, TypeState>,
+    /// By the address of a part of a tree, which the entry holds.
+    pub(super) types_of_parts: FxHashMap<*const Usage, (Rc<Usage>, TypeId)>,
     pub(super) types_in_progress: TypesInProgress,
     /// For a sum that a question went through: whether what it yields is used as an int32.
     pub(super) sums_used_as_int32: FxHashMap<ExprId, bool>,
@@ -885,6 +889,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     pub fn function_signature(&mut self, function: FunctionRef) -> SignatureShape<'c> {
         self.memoized_signature(
             function,
+            Some(function.file),
             |memo| &mut memo.function_signatures,
             |kept| &mut kept.function_signatures,
             |queries| queries.compute_function_signature(function),
@@ -894,6 +899,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     pub fn signature(&mut self, signature: SigId) -> SignatureShape<'c> {
         self.memoized_signature(
             signature,
+            self.find_file_of_signature(signature),
             |memo| &mut memo.signatures,
             |kept| &mut kept.signatures,
             |queries| queries.compute_signature(signature),
@@ -937,19 +943,15 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     fn memoized_signature<K: Copy + Eq + Hash>(
         &mut self,
         key: K,
+        file_of_parameters: Option<FileId>,
         table: for<'m> fn(&'m mut Memo<'c>) -> &'m mut FxHashMap<K, SignatureShape<'c>>,
         kept: for<'m> fn(&'m mut KeptMemo<'c>) -> &'m mut FxHashMap<K, SignatureShape<'c>>,
         compute: impl FnOnce(&mut Self) -> SignatureShape<'c>,
     ) -> SignatureShape<'c> {
-        let file = self.file;
-        let holds_everywhere_else = |shape: &SignatureShape<'c>| {
-            shape
-                .declaration
-                .is_none_or(|function| function.file != file)
-        };
-        if let Some(&known) = kept(&mut self.kept).get(&key)
-            && holds_everywhere_else(&known)
-        {
+        // The file of a function infers the parameters that the function leaves untyped. A class without a constructor takes the
+        // parameters of a class above it, and its shape names no declaration.
+        let holds_everywhere_else = file_of_parameters != Some(self.file);
+        if holds_everywhere_else && let Some(&known) = kept(&mut self.kept).get(&key) {
             if self.depth == 0 {
                 self.statistics.asked += 1;
             }
@@ -957,10 +959,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
         let was_known = table(&mut self.memo).contains_key(&key);
         let shape = self.memoized_record(key, table, compute);
-        if !was_known
-            && holds_everywhere_else(&shape)
-            && table(&mut self.memo).remove(&key).is_some()
-        {
+        if !was_known && holds_everywhere_else && table(&mut self.memo).remove(&key).is_some() {
             kept(&mut self.kept).insert(key, shape);
         }
         shape
@@ -1314,6 +1313,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             |answers| &mut answers.identity,
             |queries| queries.compute_type_identity(ty),
         )
+    }
+
+    pub fn has_other_optional_members_than_mapped_type(&mut self, object_type: TypeId) -> bool {
+        self.c
+            .has_other_optional_members_than_mapped_type(object_type)
     }
 
     pub fn object_origin(&mut self, object_type: TypeId) -> ObjectOrigin {

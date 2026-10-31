@@ -12,6 +12,7 @@ pub(crate) mod loaders;
 pub(crate) mod locked_builtin_defines;
 pub(crate) mod macros;
 pub(crate) mod module_paths;
+pub(crate) mod modules_with_queries;
 pub(crate) mod named_loads;
 pub(crate) mod plugin_modules;
 pub mod project;

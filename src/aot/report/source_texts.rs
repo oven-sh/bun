@@ -54,7 +54,7 @@ impl ModuleSource {
 
     pub fn function_text_len(&self) -> usize {
         let types = self.types_in_function_text.as_ref();
-        types.map_or(0, |types| self.len() - types.removed_len())
+        types.map_or(0, |types| types.kept_len(self.len()))
     }
 
     /// `text()` keeps what it decompresses for the rest of the build. This does not.

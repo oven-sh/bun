@@ -10,24 +10,115 @@ use bun_sema::hir::{
     StmtKind,
 };
 use bun_sema::util::{FxHashMap, FxHashSet};
+use std::rc::Rc;
+
+/// What the variables and the parameters of a file stand for. Each is walked once: a large file writes to members at hundreds of thousands of places, each of them asks
+/// what the object is, and the ways back from there run through the same names.
+#[derive(Default)]
+pub(super) struct SpelledValues {
+    /// Of the names that are walked to the end.
+    known: FxHashMap<SymbolId, Rc<[ExprId]>>,
+    /// The names that are being walked, and those that came round to one of them and wait for its end, with what they found themselves. In the order in which their walks began.
+    waiting: Vec<(SymbolId, Vec<ExprId>)>,
+    /// Where each of them stands in `waiting`.
+    places: FxHashMap<SymbolId, usize>,
+}
+
+/// The walk from one expression, or from one name.
+pub(super) struct Walk {
+    seen: FxHashSet<ExprId>,
+    /// The first of `SpelledValues::waiting` that it came round to.
+    comes_round_to: usize,
+}
+
+fn without_repeats(values: Vec<ExprId>) -> Vec<ExprId> {
+    let mut seen = FxHashSet::default();
+    values
+        .into_iter()
+        .filter(|&value| seen.insert(value))
+        .collect()
+}
 
 impl Resolver<'_, '_> {
     pub(super) fn find_values_spelled_for(&self, expr: ExprId) -> Vec<ExprId> {
-        let (mut values, mut seen) = (Vec::new(), FxHashSet::default());
-        self.push_values_spelled_for(expr, &mut seen, &mut values);
-        values
+        let mut values = Vec::new();
+        let mut walk = Walk {
+            seen: FxHashSet::default(),
+            comes_round_to: usize::MAX,
+        };
+        self.push_values_spelled_for(expr, &mut walk, &mut values);
+        without_repeats(values)
     }
 
-    fn push_values_spelled_for(
+    fn push_values_of_name(
         &self,
-        expr: ExprId,
-        seen: &mut FxHashSet<ExprId>,
+        name: SymbolId,
+        declaration: Decl,
+        walk: &mut Walk,
         values: &mut Vec<ExprId>,
     ) {
+        let place = {
+            let mut spelled = self.spelled_values.borrow_mut();
+            if let Some(known) = spelled.known.get(&name) {
+                return values.extend_from_slice(known);
+            }
+            // `function a(x) { b(x); }`, `function b(y) { a(y); }`: what is passed for one is passed for the other. Whichever walk began first ends last, and has it all.
+            if let Some(&place) = spelled.places.get(&name) {
+                walk.comes_round_to = walk.comes_round_to.min(place);
+                return;
+            }
+            let place = spelled.waiting.len();
+            spelled.places.insert(name, place);
+            spelled.waiting.push((name, Vec::new()));
+            place
+        };
+        let mut found = Vec::new();
+        let mut from_name = Walk {
+            seen: FxHashSet::default(),
+            comes_round_to: place,
+        };
+        match declaration {
+            Decl::Var(pattern) => self.push_values_of_variable(pattern, &mut from_name, &mut found),
+            Decl::Param(pattern) => {
+                self.push_values_of_parameter(pattern, &mut from_name, &mut found);
+            }
+            _ => {}
+        }
+        let mut spelled = self.spelled_values.borrow_mut();
+        if from_name.comes_round_to < place {
+            walk.comes_round_to = walk.comes_round_to.min(from_name.comes_round_to);
+            values.extend_from_slice(&found);
+            spelled.waiting[place].1 = found;
+            return;
+        }
+        let all: Rc<[ExprId]> = without_repeats(found).into();
+        let waited = spelled.waiting.split_off(place);
+        let is_among_all: FxHashSet<ExprId> = match waited.len() {
+            1 => FxHashSet::default(),
+            _ => all.iter().copied().collect(),
+        };
+        for (waiting, own) in waited {
+            spelled.places.remove(&waiting);
+            // What went on from it into a property or an element did not come to the end as it was.
+            let own: Vec<ExprId> = (own.into_iter())
+                .filter(|value| !is_among_all.contains(value))
+                .collect();
+            let known = match own.is_empty() {
+                true => Rc::clone(&all),
+                false => {
+                    without_repeats(own.into_iter().chain(all.iter().copied()).collect()).into()
+                }
+            };
+            spelled.known.insert(waiting, known);
+        }
+        values.extend_from_slice(&all);
+    }
+
+    fn push_values_spelled_for(&self, expr: ExprId, walk: &mut Walk, values: &mut Vec<ExprId>) {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let expr = hir.skip_type_assertions(expr);
         // A parameter of a function that is called at thousands of places leads to as many expressions.
-        if !seen.insert(expr) {
+        if !walk.seen.insert(expr) {
             return;
         }
         let before = values.len();
@@ -35,8 +126,8 @@ impl Resolver<'_, '_> {
             // `flag ? "at" : "map"`
             ExprKind::Cond { branches, .. } => {
                 let branches = hir.branches(branches);
-                self.push_values_spelled_for(branches.yes, seen, values);
-                self.push_values_spelled_for(branches.no, seen, values);
+                self.push_values_spelled_for(branches.yes, walk, values);
+                self.push_values_spelled_for(branches.no, walk, values);
             }
             // `name ?? "at"`
             ExprKind::Binary {
@@ -44,29 +135,25 @@ impl Resolver<'_, '_> {
                 left,
                 right,
             } => {
-                self.push_values_spelled_for(left, seen, values);
-                self.push_values_spelled_for(right, seen, values);
+                self.push_values_spelled_for(left, walk, values);
+                self.push_values_spelled_for(right, walk, values);
             }
             _ => {}
         }
         // `row.name` for `{ name: "at" }`
         if let Some((object, MemberKey::Name(name))) = hir.member_key(expr) {
             let mut wholes = Vec::new();
-            self.push_values_spelled_for(object, seen, &mut wholes);
+            self.push_values_spelled_for(object, walk, &mut wholes);
             for whole in wholes {
                 if let Some(part) = self.find_property_of_literal(whole, name) {
-                    self.push_values_spelled_for(part, seen, values);
+                    self.push_values_spelled_for(part, walk, values);
                 }
             }
         }
         if let (ExprKind::Ident(_), Binding::Symbol(symbol)) = (hir[expr].kind, bound.binding(expr))
             && let &[declaration] = bound.symbol(symbol).decls
         {
-            match declaration {
-                Decl::Var(pattern) => self.push_values_of_variable(pattern, seen, values),
-                Decl::Param(pattern) => self.push_values_of_parameter(pattern, seen, values),
-                _ => {}
-            }
+            self.push_values_of_name(symbol, declaration, walk, values);
         }
         // Nothing is known of it but itself.
         if values.len() == before {
@@ -74,12 +161,7 @@ impl Resolver<'_, '_> {
         }
     }
 
-    fn push_elements_of(
-        &self,
-        list: ExprId,
-        seen: &mut FxHashSet<ExprId>,
-        values: &mut Vec<ExprId>,
-    ) {
+    fn push_elements_of(&self, list: ExprId, walk: &mut Walk, values: &mut Vec<ExprId>) {
         let (hir, bound) = (self.input.hir, self.input.bound);
         // `names.push("at", "map")`
         let name = hir.skip_type_assertions(list);
@@ -95,20 +177,20 @@ impl Resolver<'_, '_> {
                     MemberLookup::Found(BuiltinId::ArrayPrototypePush | BuiltinId::ArrayPrototypeUnshift)
                 )));
                 for element in hir.ids(hir[call].args).filter(|_| adds) {
-                    self.push_values_spelled_for(element, seen, values);
+                    self.push_values_spelled_for(element, walk, values);
                 }
             }
         }
         let mut lists = Vec::new();
-        self.push_values_spelled_for(list, seen, &mut lists);
+        self.push_values_spelled_for(list, walk, &mut lists);
         for list in lists {
             match hir[list].kind {
                 ExprKind::Array(elements) => {
                     for element in hir.ids(elements) {
                         match hir[element].kind {
                             // `[...names, "at"]`
-                            ExprKind::Spread(inner) => self.push_elements_of(inner, seen, values),
-                            _ => self.push_values_spelled_for(element, seen, values),
+                            ExprKind::Spread(inner) => self.push_elements_of(inner, walk, values),
+                            _ => self.push_values_spelled_for(element, walk, values),
                         }
                     }
                 }
@@ -128,11 +210,11 @@ impl Resolver<'_, '_> {
                             | BuiltinId::ArrayPrototypeReverse
                             | BuiltinId::ArrayPrototypeToSorted
                             | BuiltinId::ArrayPrototypeToReversed,
-                        )) => self.push_elements_of(receiver, seen, values),
+                        )) => self.push_elements_of(receiver, walk, values),
                         Some(MemberLookup::Found(BuiltinId::ArrayPrototypeConcat)) => {
-                            self.push_elements_of(receiver, seen, values);
+                            self.push_elements_of(receiver, walk, values);
                             for other in hir.ids(hir[call].args) {
-                                self.push_elements_of(other, seen, values);
+                                self.push_elements_of(other, walk, values);
                             }
                         }
                         _ => {}
@@ -160,35 +242,25 @@ impl Resolver<'_, '_> {
     }
 
     // `const name = "at"`, `for (const name of ["at", "map"])`
-    fn push_values_of_variable(
-        &self,
-        pattern: PatId,
-        seen: &mut FxHashSet<ExprId>,
-        values: &mut Vec<ExprId>,
-    ) {
+    fn push_values_of_variable(&self, pattern: PatId, walk: &mut Walk, values: &mut Vec<ExprId>) {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let PatParent::Var(declaration) = bound.pat_parent[pattern.idx()] else {
-            return self.push_values_of_part(pattern, seen, values);
+            return self.push_values_of_part(pattern, walk, values);
         };
         if hir[declaration].init.is_some() {
-            return self.push_values_spelled_for(hir[declaration].init, seen, values);
+            return self.push_values_spelled_for(hir[declaration].init, walk, values);
         }
         let statement = bound.var_stmt[declaration.idx()];
         if let Parent::Stmt(above) = bound.parent_of_stmt(statement)
             && let StmtKind::ForOf { left, expr, .. } = hir[above].kind
             && left == statement
         {
-            self.push_elements_of(expr, seen, values);
+            self.push_elements_of(expr, walk, values);
         }
     }
 
     // `for (const [holder, name] of [[Math, "max"]])`, `pairs.forEach(([holder, name]) => { .. })`, `for (const { holder, name } of [{ holder: Math, name: "max" }])`
-    fn push_values_of_part(
-        &self,
-        pattern: PatId,
-        seen: &mut FxHashSet<ExprId>,
-        values: &mut Vec<ExprId>,
-    ) {
+    fn push_values_of_part(&self, pattern: PatId, walk: &mut Walk, values: &mut Vec<ExprId>) {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let whole = match bound.pat_parent[pattern.idx()] {
             PatParent::Elem(whole, _) | PatParent::Prop(whole, _) => whole,
@@ -196,8 +268,8 @@ impl Resolver<'_, '_> {
         };
         let mut wholes = Vec::new();
         match bound.pat_parent[whole.idx()] {
-            PatParent::Var(_) => self.push_values_of_variable(whole, seen, &mut wholes),
-            PatParent::Param(_) => self.push_values_of_parameter(whole, seen, &mut wholes),
+            PatParent::Var(_) => self.push_values_of_variable(whole, walk, &mut wholes),
+            PatParent::Param(_) => self.push_values_of_parameter(whole, walk, &mut wholes),
             _ => return,
         }
         for value in wholes {
@@ -226,7 +298,7 @@ impl Resolver<'_, '_> {
                 _ => None,
             };
             if let Some(part) = part {
-                self.push_values_spelled_for(part, seen, values);
+                self.push_values_spelled_for(part, walk, values);
             }
         }
     }
@@ -267,19 +339,14 @@ impl Resolver<'_, '_> {
         name.is_some().then_some(name)
     }
 
-    fn push_values_of_parameter(
-        &self,
-        pattern: PatId,
-        seen: &mut FxHashSet<ExprId>,
-        values: &mut Vec<ExprId>,
-    ) {
+    fn push_values_of_parameter(&self, pattern: PatId, walk: &mut Walk, values: &mut Vec<ExprId>) {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let PatParent::Param(parameter) = bound.pat_parent[pattern.idx()] else {
-            return self.push_values_of_part(pattern, seen, values);
+            return self.push_values_of_part(pattern, walk, values);
         };
         // `(holder, name = "at") => { .. }`
         if hir[parameter].default.is_some() {
-            self.push_values_spelled_for(hir[parameter].default, seen, values);
+            self.push_values_spelled_for(hir[parameter].default, walk, values);
         }
         let function = bound.param_fn[parameter.idx()];
         let Some(index) = hir[function].params.iter().position(|it| it == parameter) else {
@@ -299,7 +366,7 @@ impl Resolver<'_, '_> {
             for operand in
                 (calls.iter().filter(is_called_by_name)).filter_map(|&call| operand_of(call))
             {
-                self.push_values_spelled_for(operand, seen, values);
+                self.push_values_spelled_for(operand, walk, values);
             }
         }
         let FnOwner::Expr(expression) = bound.fns[function.idx()].owner else {
@@ -315,7 +382,7 @@ impl Resolver<'_, '_> {
         // `((name) => { .. })("at")`
         if callee == expression {
             if let Some(operand) = operand_of(call) {
-                self.push_values_spelled_for(operand, seen, values);
+                self.push_values_spelled_for(operand, walk, values);
             }
             return;
         }
@@ -326,12 +393,12 @@ impl Resolver<'_, '_> {
                     return;
                 };
                 let mut rows_spelled = Vec::new();
-                self.push_elements_of(rows, seen, &mut rows_spelled);
+                self.push_elements_of(rows, walk, &mut rows_spelled);
                 for row in rows_spelled {
                     match hir[row].kind {
                         ExprKind::Array(cells) => {
                             if let Some(cell) = hir.ids(cells).nth(index) {
-                                self.push_values_spelled_for(cell, seen, values);
+                                self.push_values_spelled_for(cell, walk, values);
                             }
                         }
                         _ if index == 0 => values.push(row),
@@ -342,7 +409,7 @@ impl Resolver<'_, '_> {
             // `["at", "map"].forEach(name => { .. })`
             _ if index == 0 => {
                 if let Some((list, MemberKey::Name(_))) = hir.member_key(callee) {
-                    self.push_elements_of(list, seen, values);
+                    self.push_elements_of(list, walk, values);
                 }
             }
             _ => {}

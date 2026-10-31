@@ -64,7 +64,10 @@ use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use commonjs_exports::{CommonJsInput, InnerCommonJs, scan_commonjs_modules};
 use core::cmp::Ordering;
 use evicted::{find_evicted_modules, find_library_modules_stored_in_cache};
-use exports::{ExportTables, Resolution, collect_export_entries, finish_exports, resolve_exports};
+use exports::{
+    ExportTables, Resolution, collect_export_entries, find_ambiguous_names, finish_exports,
+    resolve_exports,
+};
 use failures::{PendingFailure, number_failures};
 use graph::{FileRow, find};
 use imports::{FileImports, bind_imports, finish_bindings, finish_named_members};
@@ -95,6 +98,8 @@ pub struct BindInput<'a, 's> {
     pub replaced_builtins: &'a [u32],
     /// `AotOptions::runs_in_place`: the program answers as `bun run`, not as `bun build --compile`, where the two differ.
     pub runs_in_place: bool,
+    /// `CodeOptions::ignores_declared_side_effects`
+    pub ignores_declared_side_effects: bool,
     /// `LoadOptions::mocked_modules`
     pub mocked_modules: &'a [ReplacedModule],
     /// `LoadOptions::mocks_any_module`
@@ -560,6 +565,7 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
                 && files.analysis(file).has_live_top_level_await,
             // A load that fails throws, whatever the package says of the file.
             has_no_side_effects: is_code_of_program
+                && !input.ignores_declared_side_effects
                 && !is_library[file.idx()]
                 && find(&load_failures, file).is_none()
                 && is_declared_free_of_side_effects(
@@ -589,6 +595,10 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             holders: imports.holders,
             answer_members: imports.answer_members,
             exports,
+            ambiguous_names: match is_compiled {
+                true => find_ambiguous_names(files, &tables, file),
+                false => Vec::new(),
+            },
             unread_exports: Vec::new(),
             is_data_linked_by_names_alone: false,
             is_left_to_loader: files_left_to_loader.contains(&file),
@@ -634,6 +644,9 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     }
     if evicted.is_every_module() {
         plan.set_every_module_may_be_evicted();
+    }
+    if evicted.is_table_reached() {
+        plan.set_reaches_entries_of_cache();
     }
     for module in evicted.asked_for_any_export() {
         plan.set_every_export_is_asked_for(module);

@@ -1428,7 +1428,7 @@
     "jit": 75
   },
   "closure/accessors-a-helper-defines-under-its-parameter": {
-    "typed": 30,
+    "typed": 23,
     "untyped": 21,
     "jit": 182
   },

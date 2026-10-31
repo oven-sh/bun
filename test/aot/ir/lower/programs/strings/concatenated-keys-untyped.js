@@ -199,7 +199,7 @@ console.log(rows + " rows");
 // CHECK-NEXT: Return v15
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="valueOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=anything}, {type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_11]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=anything variableName="tag"}, {type=anything variableName="v"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_11]]] {
 // CHECK-NEXT: b0(v0: anything, v1: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

@@ -525,10 +525,13 @@ pub fn emit_program(
 // that is given back as ever.
 struct KeepsFreeBlocksBelowThePeak {
     is_over: Arc<AtomicBool>,
-    watcher: Option<JoinHandle<()>>,
+    watcher: Option<JoinHandle<Duration>>,
+    began_at: Instant,
 }
 
 static BUILDS_THAT_KEEP_FREE_BLOCKS: AtomicUsize = AtomicUsize::new(0);
+// Not the system's own mark: on Linux a spawned process starts from its parent's, and the log of phases resets it.
+static MOST_RESIDENT_SEEN: AtomicUsize = AtomicUsize::new(0);
 
 impl KeepsFreeBlocksBelowThePeak {
     const PERCENT_OF_PEAK: usize = 85;
@@ -549,25 +552,37 @@ impl KeepsFreeBlocksBelowThePeak {
                 thread.spawn(move || Self::watch(&is_over)).ok()
             })
             .flatten();
-        KeepsFreeBlocksBelowThePeak { is_over, watcher }
+        KeepsFreeBlocksBelowThePeak {
+            is_over,
+            watcher,
+            began_at: Instant::now(),
+        }
     }
 
-    fn watch(is_over: &AtomicBool) {
-        let mut gives_back = true;
+    /// Returns for how long it kept the free blocks.
+    fn watch(is_over: &AtomicBool) -> Duration {
+        let mut keeps_since: Option<Instant> = None;
+        let mut kept_for = Duration::ZERO;
         let mut was_near_peak_at = Instant::now();
         while !is_over.load(Ordering::Acquire) {
-            let (resident, peak) = Self::resident_now_and_at_most();
+            let resident = Self::resident_now();
+            let seen_before = MOST_RESIDENT_SEEN.fetch_max(resident, Ordering::Relaxed);
+            let peak = seen_before.max(resident);
             if resident / 100 >= peak / 10_000 * Self::PERCENT_OF_PEAK {
                 was_near_peak_at = Instant::now();
             }
-            let should_give_back = was_near_peak_at.elapsed() < Self::TIME_BEHIND_THE_PEAK;
-            if should_give_back != gives_back {
-                gives_back = should_give_back;
-                Self::give_back(gives_back);
+            let should_keep = was_near_peak_at.elapsed() >= Self::TIME_BEHIND_THE_PEAK;
+            if should_keep != keeps_since.is_some() {
+                Self::give_back(!should_keep);
+                match keeps_since.take() {
+                    Some(since) => kept_for += since.elapsed(),
+                    None => keeps_since = Some(Instant::now()),
+                }
             }
             std::thread::park_timeout(Self::TIME_BETWEEN_LOOKS);
         }
         Self::give_back(true);
+        kept_for + keeps_since.map_or(Duration::ZERO, |since| since.elapsed())
     }
 
     fn give_back(gives_back: bool) {
@@ -575,8 +590,8 @@ impl KeepsFreeBlocksBelowThePeak {
         mi_option_set_default(Option::purge_holes, gives_back.into());
     }
 
-    fn resident_now_and_at_most() -> (usize, usize) {
-        let (mut resident, mut peak) = (0, 0);
+    fn resident_now() -> usize {
+        let mut resident = 0;
         let unused = core::ptr::null_mut();
         // SAFETY: it writes a number through each pointer that is not null.
         unsafe {
@@ -585,13 +600,13 @@ impl KeepsFreeBlocksBelowThePeak {
                 unused,
                 unused,
                 &raw mut resident,
-                &raw mut peak,
+                unused,
                 unused,
                 unused,
                 unused,
             );
         }
-        (resident, peak)
+        resident
     }
 }
 
@@ -605,7 +620,15 @@ impl Drop for KeepsFreeBlocksBelowThePeak {
         self.is_over.store(true, Ordering::Release);
         if let Some(watcher) = self.watcher.take() {
             watcher.thread().unpark();
-            let _ = watcher.join();
+            let kept_for = watcher.join().unwrap_or_default();
+            if logs_stages() {
+                bun_core::print_errorln!(
+                    "AOT free blocks | most resident seen {} MB | kept {} ms of {} ms",
+                    MOST_RESIDENT_SEEN.load(Ordering::Relaxed) >> 20,
+                    kept_for.as_millis(),
+                    self.began_at.elapsed().as_millis(),
+                );
+            }
         }
     }
 }
@@ -2422,6 +2445,21 @@ impl<'a> Build<'a> {
         files
     }
 
+    /// Its entry points are the files that the test files above it load. None of them is a test file.
+    fn holds_files_for_programs_above(&self) -> bool {
+        self.options.load.runs_tests && self.options.load.every_export_is_asked_for
+    }
+
+    // Such a file leaves the layer as a refused entry point does. `bun test` says what is wrong with it where a test file loads it, and nowhere else.
+    fn forget_errors_that_loader_reports(&mut self) {
+        let loaders = &self.options.load.loaders;
+        let holds_code = |path: &[u8]| {
+            loader_by_path(loaders, path, CodeImportKind::Import).is_java_script_like()
+        };
+        let files = self.diagnostics.files_that_fail_at_load(holds_code);
+        self.diagnostics.forget_errors_in(&files);
+    }
+
     fn find_loads_below(&self, left: &[Vec<u8>]) -> Option<Arc<LoadsBelowFilesLeftToLoader>> {
         // In an executable no loader reads such a file, so none asks for what it imports.
         let is_read_by_loader = !left.is_empty() && self.options.load.runs_tests;
@@ -2715,6 +2753,9 @@ impl<'a> Build<'a> {
         let refused_entry_points = self.find_refused_entry_points();
         let left_to_loader = self.find_files_to_leave_to_loader();
         let loads_below_files_left_to_loader = self.find_loads_below(&left_to_loader);
+        if refused_entry_points.is_some() && self.holds_files_for_programs_above() {
+            self.forget_errors_that_loader_reports();
+        }
         self.clock.add_to(&mut self.statistics);
         match result {
             Ok(value) => {

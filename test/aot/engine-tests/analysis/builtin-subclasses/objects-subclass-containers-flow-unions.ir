@@ -882,9 +882,9 @@ runtimefunction id=IteratorOperationsIteratorGenericClose function=f39 visibilit
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function f10 module=
-# CHECK: m0 position=232 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=Array flags=[IsFromCompiler, IsExpected]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything ~ Array):
-# CHECK-NEXT: v6: Array = AssumeType v0 provenType=Array
+# CHECK: m0 position=232 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1 flags=[IsFromCompiler, IsExpected]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: anything ~ L1):
+# CHECK-NEXT: v6: Array ~ L1 = AssumeType v0 provenType=Array
 # CHECK-NEXT: v5: L1 = Check v6 expectedType=L1 cause=AddedByPass
 # CHECK-NEXT: v1: L1 = AssumeType v5 provenType=object [isWordOfFrontEnd]
 # CHECK-NEXT: v2: 8 = Integer integer=8

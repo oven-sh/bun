@@ -333,7 +333,7 @@ function f3 name="inLoop" module=m0 position=1038 flags=[IsChecked, HasExplicitN
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: string = CallDirect function=f7 accessSite=2
-# CHECK-NEXT: v1: number = CallDirect function=f8 accessSite=3
+# CHECK-NEXT: v1: int[0, 10737418235] = CallDirect function=f8 accessSite=3
 # CHECK-NEXT: v2: undefined = CallBuiltin -, v0, v1 overload=ConsoleLog/0 accessSite=4
 # CHECK-NEXT: v3: undefined = Undefined
 # CHECK-NEXT: Return v3
@@ -350,7 +350,7 @@ function f3 name="inLoop" module=m0 position=1038 flags=[IsChecked, HasExplicitN
 # CHECK-LABEL: function {{*}}name="caller"
 # CHECK: module=m0 position=899 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=3 site=w2}] results=[{type=string site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="inLoop"
-# CHECK: module=m0 position=1038 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=5 site=w4}] results=[{type=number site=w5}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=1038 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=5 site=w4}] results=[{type=int[0, 10737418235] site=w5}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="repeat"
 # CHECK: module=m0 position=341 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int|whole}, {type="ab"|"eo"|"xa"}, {type=undefined|","|"-"}] results=[{type=string site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{}, {}, {}]} {
 # CHECK-NEXT: b0(v0: int|whole, v1: "ab"|"eo"|"xa", v2: undefined|","|"-"):
@@ -523,13 +523,13 @@ function f3 name="inLoop" module=m0 position=1038 flags=[IsChecked, HasExplicitN
 # CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="inLoop"
-# CHECK: module=m0 position=1038 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} results=[{type=number site=w5}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f3} inlineFrames=[{}, {callee=f1 callPosition=1133 module=m0}, {callee=f5 callPosition=341 parent=1 module=m0}] {
+# CHECK: module=m0 position=1038 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} results=[{type=int[0, 10737418235] site=w5}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f3} inlineFrames=[{}, {callee=f1 callPosition=1133 module=m0}, {callee=f5 callPosition=341 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 5 = Integer integer=5
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v1, v2)
-# CHECK-NEXT: b1(v3: int|whole, v4: int[0, 5]):
+# CHECK-NEXT: b1(v3: int[0, 10737418235], v4: int[0, 5]):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v6: boolean = Less v4, v0
 # CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b3()
@@ -538,9 +538,11 @@ function f3 name="inLoop" module=m0 position=1038 flags=[IsChecked, HasExplicitN
 # CHECK-NEXT: v9: "," = String string=","
 # CHECK-NEXT: v10: string = CallDirect v7, v8, v9 function=f5 @439:1 tail
 # CHECK-NEXT: v11: int[0, 2147483647] = GetStringLength v10
-# CHECK-NEXT: v12: int|whole = Add v3, v11
+# CHECK-NEXT: v12: int[0, 12884901882] = Add v3, v11
 # CHECK-NEXT: v13: int[1, 5] = Increment v7
-# CHECK-NEXT: Jump -> next b1(v12, v13)
+# CHECK-NEXT: v14: fact = Specified
+# CHECK-NEXT: v15: int[0, 10737418235] = AssumeType v12, v14 provenType=int[0, 10737418235]
+# CHECK-NEXT: Jump -> next b1(v15, v13)
 # CHECK-NEXT: b3():
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }

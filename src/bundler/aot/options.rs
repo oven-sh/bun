@@ -15,12 +15,12 @@ use bun_sema::resolve::{CodeOptions, JsxRuntime, JsxSettings};
 use bun_sema_driver::Libs;
 use bun_sema_driver::host::{from_argument, from_native, to_native};
 
-use super::paths::{absolute_path, relative_path, report_long_path};
+use super::paths::{absolute_path, real_directory_path, relative_path, report_long_path};
 use crate::bun_fs::PathName;
 use crate::bundle_v2::FileMap;
 use crate::options::{
     AllowUnresolved, BundleOptions, DEFAULT_WILDCARD_PATTERNS, Format, PackagesOption,
-    PathTemplate, PlaceholderField, Target, jsx,
+    PathTemplate, PlaceholderField, Target, common_entry_directory, jsx, longest_common_path_of,
 };
 
 pub(crate) struct OptionsInput<'r, 'i, 'a> {
@@ -364,7 +364,8 @@ fn root_directory(
 ) -> Option<Vec<u8>> {
     let written = &input.bundle_options.root_dir[..];
     if written.is_empty() {
-        let directory = common_entry_directory(input.working_directory, entry_points);
+        let entries: Vec<&[u8]> = entry_points.iter().map(|entry| &entry[..]).collect();
+        let directory = common_entry_directory(input.working_directory, &entries);
         let assets = if input.aot.runs_in_place {
             &[][..]
         } else {
@@ -379,22 +380,6 @@ fn root_directory(
         return None;
     }
     Some(root_directory)
-}
-
-fn common_entry_directory(working_directory: &[u8], entry_points: &[Vec<u8>]) -> Vec<u8> {
-    let paths: Vec<Vec<u8>> = entry_points
-        .iter()
-        .map(|entry| absolute_path(working_directory, entry))
-        .collect();
-    let first_directory = paths
-        .first()
-        .map(|first| bun_core::dirname(first).unwrap_or(&first[..]));
-    let all: Vec<&[u8]> = first_directory
-        .into_iter()
-        .chain(paths.iter().map(|path| &path[..]))
-        .collect();
-    let common = absolute_path(working_directory, longest_common_path_of(&all));
-    without_trailing_slash_windows_path(&common).to_vec()
 }
 
 /// Never above the working directory: the executable would name the folders of the machine that built it.
@@ -424,16 +409,6 @@ fn widen_to_assets(
     let all: Vec<&[u8]> = all.iter().map(|folder| &folder[..]).collect();
     let common = absolute_path(&working_directory, longest_common_path_of(&all));
     without_trailing_slash_windows_path(&common).to_vec()
-}
-
-/// `resolve_path::longest_common_path` has a second rule for more than eight paths, which can answer a folder that does not hold all of them.
-fn longest_common_path_of<'a>(paths: &[&'a [u8]]) -> &'a [u8] {
-    let Some((&first, rest)) = paths.split_first() else {
-        return b"";
-    };
-    rest.iter().fold(first, |common, &path| {
-        resolve_path::longest_common_path(&[common, path])
-    })
 }
 
 /// `bun run` starts a file under its real path, and so `node_modules/.bin/tool` finds what lies beside the file that the link names.
@@ -482,13 +457,6 @@ fn real_file_path(path: &[u8]) -> Option<Vec<u8>> {
     let name = bun_core::ZStr::from_buf(&name[..], path.len());
     let mut buffer = bun_paths::path_buffer_pool::get();
     Some(bun_sys::realpath(name, &mut buffer).ok()?.to_vec())
-}
-
-fn real_directory_path(directory: &[u8]) -> Option<Vec<u8>> {
-    let opened = bun_sys::Dir::open(directory).ok()?;
-    let mut buffer = bun_paths::path_buffer_pool::get();
-    let real_path = opened.get_fd_path(&mut buffer).ok()?;
-    Some(real_path.to_vec())
 }
 
 fn entry_point_names(

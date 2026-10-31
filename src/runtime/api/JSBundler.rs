@@ -1335,7 +1335,8 @@ pub(crate) mod js_bundler {
             let mut is_root_written = false;
             let mut derived_root_error: Option<String> = None;
             'root: {
-                let path: Utf8Bytes = 'brk: {
+                let mut is_shared_by_entry_points = false;
+                let mut path: Utf8Bytes = 'brk: {
                     if let Some(slice) = config.get_optional_slice(global_this, b"root")? {
                         is_root_written = true;
                         break 'brk slice;
@@ -1364,17 +1365,24 @@ pub(crate) mod js_bundler {
                         break 'brk Utf8Bytes::Borrowed(if d.is_empty() { b"." } else { d });
                     }
 
-                    // NOTE: `get_if_exists_longest_common_path` wants `&[&[u8]]`
-                    // but `StringSet::keys()` yields `&[Box<[u8]>]`; build a borrow
-                    // adapter on the stack.
                     let borrowed: Vec<&[u8]> = entry_points.iter().map(|b| b.as_ref()).collect();
-                    break 'brk Utf8Bytes::Borrowed(
-                        bun_paths::resolve_path::get_if_exists_longest_common_path(&borrowed)
-                            .unwrap_or(b"."),
-                    );
+                    is_shared_by_entry_points = true;
+                    break 'brk Utf8Bytes::Owned(bun_bundler::options::common_entry_directory(
+                        bun_resolver::fs::FileSystem::get().top_level_dir(),
+                        &borrowed,
+                    ));
                 };
 
-                let dir = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice()) {
+                let mut opened = bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice());
+                // The shared directory is derived from names: a package or a plugin can resolve them, and the user may not be allowed to list it.
+                if is_shared_by_entry_points
+                    && (opened.as_ref())
+                        .is_err_and(bun_bundler::options::common_entry_directory_falls_back)
+                {
+                    path = Utf8Bytes::Borrowed(b".");
+                    opened = bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice());
+                }
+                let dir = match opened {
                     Ok(d) => d,
                     Err(err) => {
                         let message = format!(

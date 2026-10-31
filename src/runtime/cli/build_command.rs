@@ -486,8 +486,10 @@ impl BuildCommand {
         }
 
         let mut src_root_dir_buf = bun_paths::path_buffer_pool::get();
+        let common_entry_directory: Vec<u8>;
         let src_root_dir: &[u8] = 'brk1: {
-            let path: &[u8] = 'brk2: {
+            let mut is_shared_by_entry_points = false;
+            let mut path: &[u8] = 'brk2: {
                 if !ctx.bundler_options.root_dir.is_empty() {
                     break 'brk2 &ctx.bundler_options.root_dir;
                 }
@@ -503,12 +505,28 @@ impl BuildCommand {
                     .iter()
                     .map(|s| &**s)
                     .collect();
-                resolve_path::get_if_exists_longest_common_path(&entries).unwrap_or(b".")
+                common_entry_directory = options::common_entry_directory(
+                    bun_resolver::fs::FileSystem::get().top_level_dir(),
+                    &entries,
+                );
+                is_shared_by_entry_points = true;
+                &common_entry_directory
             };
+
+            let mut opened = bun_sys::open_dir_at(Fd::cwd(), path);
+            // The shared directory is derived from names: a package or a plugin can resolve them, and the user may not be allowed to list it.
+            if is_shared_by_entry_points
+                && opened
+                    .as_ref()
+                    .is_err_and(options::common_entry_directory_falls_back)
+            {
+                path = b".";
+                opened = bun_sys::open_dir_at(Fd::cwd(), path);
+            }
 
             // `bun_sys::Dir` is the owning RAII
             // handle; its Drop closes the fd when this block ends.
-            let dir = match bun_sys::open_dir_at(Fd::cwd(), path) {
+            let dir = match opened {
                 Ok(d) => bun_sys::Dir { fd: d },
                 Err(err) => {
                     bun_core::pretty_errorln!(

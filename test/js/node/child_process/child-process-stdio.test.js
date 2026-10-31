@@ -276,7 +276,7 @@ describe("fd 0, 1 or 2 of the parent at another stdio slot", () => {
     expectCases("fork", [
       [
         { stdio: [0, 0, 0, "ipc"] },
-        { reaches: [0, 0, 0], code: 0, message: "written", stdio: [null, null, null, null] },
+        { reaches: [0, 0, 0, null], code: 0, message: "written", stdio: [null, null, null, null] },
       ],
     ]));
 

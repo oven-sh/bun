@@ -1,12 +1,12 @@
 // Started by spawnWithStdioFiles (../stdio-fd-slots-helpers.ts) with fds 0, 1 and 2 bound to three
 // different files. Runs one spawn per row with the row's options. Each child writes a token to
-// every fd below the row's slot count, so the file that holds a token names the fd of this process
-// that the child's fd is.
+// every fd that the row's stdio sets, except the ipc fd. The file that holds a token names the fd
+// of this process that the child's fd is.
 //
 // The node:child_process rows use nothing from bun, so node can run this file too.
 //
 //   parent: <result file> <api> <rows as JSON>
-//   child:  --child <row> <slots>
+//   child:  --child <row> <fds, comma separated>
 const fs = require("node:fs");
 const cp = require("node:child_process");
 
@@ -40,7 +40,9 @@ const apis = {
     return { returned: show(cp.execFileSync(process.execPath, args, options)) };
   },
   execSync(args, options) {
-    const command = [process.execPath, ...args].map(arg => JSON.stringify(arg)).join(" ");
+    // sh expands $ and ` inside double quotes. cmd.exe has no other quote.
+    const quote = process.platform === "win32" ? arg => `"${arg}"` : arg => `'${arg.replaceAll("'", "'\\''")}'`;
+    const command = [process.execPath, ...args].map(quote).join(" ");
     return { returned: show(cp.execSync(command, options)) };
   },
   fork(args, options) {
@@ -67,9 +69,11 @@ async function parent(resultFile, api, rowsJSON) {
     return file ? Bun.file(Number(file[1])) : value;
   });
   const results = [];
-  for (const [row, { slots, options }] of rows.entries()) {
+  for (const [row, options] of rows.entries()) {
+    // The ipc fd carries messages, so it gets no token.
+    const fds = [...(options.stdio ?? [0, 1, 2]).keys()].filter(fd => options.stdio?.[fd] !== "ipc");
     try {
-      results.push(await apis[api]([__filename, "--child", String(row), String(slots)], options));
+      results.push(await apis[api]([__filename, "--child", String(row), fds.join(",")], options));
     } catch (e) {
       results.push({ threw: e.message });
     }
@@ -87,8 +91,8 @@ async function parent(resultFile, api, rowsJSON) {
   fs.writeFileSync(resultFile, JSON.stringify({ results, stillOpen: [0, 1, 2].map(isOpen) }));
 }
 
-function child(row, slots) {
-  for (let fd = 0; fd < Number(slots); fd++) {
+function child(row, fds) {
+  for (const fd of fds.split(",").map(Number)) {
     try {
       fs.writeSync(fd, `row${row}fd${fd};`);
     } catch {

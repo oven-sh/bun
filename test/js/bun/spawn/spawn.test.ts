@@ -2153,6 +2153,21 @@ describe("fd 0, 1 or 2 of the parent at another stdio slot", () => {
     expect(result).toEqual({ stdout: "wrote to fd 0", stderr: "", exitCode: 0 });
   });
 
+  // A number that is not an integer truncates to an fd that the caller did not name: NaN, 0.5 and
+  // -0.5 to fd 0.
+  it.each([NaN, 0.5, -0.5, 1.5])("%p is not a file descriptor", value => {
+    const error = expect.objectContaining({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `file descriptor must be a valid integer, received: ${value}`,
+    });
+    const cmd = [bunExe(), "-e", "0"];
+    expect(() => spawn({ cmd, env: bunEnv, stdin: value })).toThrow(error);
+    expect(() => spawn({ cmd, env: bunEnv, stdout: value })).toThrow(error);
+    expect(() => spawn({ cmd, env: bunEnv, stdio: ["ignore", "ignore", value] })).toThrow(error);
+    expect(() => spawn({ cmd, env: bunEnv, stdio: ["ignore", "ignore", "ignore", value] })).toThrow(error);
+    expect(() => spawnSync({ cmd, env: bunEnv, stdout: value })).toThrow(error);
+  });
+
   // On Windows .stdio has no fd for such a slot: spawn_process_windows records
   // WindowsStdioResult::Unavailable for every extra slot that is not a pipe.
   it.concurrent.skipIf(isWindows)("Subprocess.stdio reports a parent fd at an extra slot", async () => {
@@ -2161,7 +2176,7 @@ describe("fd 0, 1 or 2 of the parent at another stdio slot", () => {
       // Only 0, 1 and 2 mean "inherit" at the slot of their own number. Any other fd is reported there too.
       const fd = require("fs").openSync("/dev/null", "r");
       const own = Bun.spawn({
-        cmd: [process.execPath, "-e", "0"],
+        cmd: [process.execPath, "-e", "require('fs').fstatSync(" + fd + ")"],
         stdio: ["ignore", "ignore", "inherit", ...Array(fd - 3).fill("ignore"), fd],
       });
       console.log(JSON.stringify({ fd0AtSlot3: zero.stdio, fdAtItsOwnSlot: own.stdio[fd] === fd }));

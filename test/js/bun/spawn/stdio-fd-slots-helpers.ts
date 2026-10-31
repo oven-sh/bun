@@ -20,19 +20,12 @@ export async function spawnWithStdioFiles(api: string, rows: SpawnStdioOptions[]
   using dir = tempDir("stdio-fd-slots", { fd0: "", fd1: "", fd2: "" });
   const files = ["fd0", "fd1", "fd2"].map(name => join(String(dir), name));
   const resultFile = join(String(dir), "result.json");
-  // The child writes a token to every slot except the ipc slot, which carries messages.
-  const slots = rows.map(options => (options.stdio ? options.stdio.filter(entry => entry !== "ipc").length : 3));
-  const fds = files.map(file => openSync(file, "r+"));
+  const fds: number[] = [];
   let exitCode: number;
   try {
+    for (const file of files) fds.push(openSync(file, "r+"));
     await using proc = spawn({
-      cmd: [
-        bunExe(),
-        fixture,
-        resultFile,
-        api,
-        JSON.stringify(rows.map((options, row) => ({ slots: slots[row], options }))),
-      ],
+      cmd: [bunExe(), fixture, resultFile, api, JSON.stringify(rows)],
       env: bunEnv,
       stdio: [fds[0], fds[1], fds[2]],
     });
@@ -46,7 +39,7 @@ export async function spawnWithStdioFiles(api: string, rows: SpawnStdioOptions[]
   const { results, stillOpen } = JSON.parse(readFileSync(resultFile, "utf8"));
   return {
     rows: results.map((result: object, row: number) => ({
-      reaches: Array.from({ length: slots[row] }, (_, fd) => {
+      reaches: Array.from({ length: rows[row].stdio?.length ?? 3 }, (_, fd) => {
         const file = written.findIndex(text => text.includes(`row${row}fd${fd};`));
         return file === -1 ? null : file;
       }),

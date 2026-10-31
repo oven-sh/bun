@@ -1548,12 +1548,6 @@ mod _async_tasks {
             0
         }
     }
-    impl FsReturn for JSValue {
-        #[inline]
-        fn fs_to_js(self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-            Ok(self)
-        }
-    }
     impl FsReturn for () {
         #[inline]
         fn fs_to_js(self, _global: &JSGlobalObject) -> JsResult<JSValue> {

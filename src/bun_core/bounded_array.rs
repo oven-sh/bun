@@ -227,18 +227,6 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
     }
 }
 
-impl<T, const N: usize> core::ops::Deref for BoundedArrayAligned<T, N> {
-    type Target = [T];
-    fn deref(&self) -> &[T] {
-        self.const_slice()
-    }
-}
-impl<T, const N: usize> core::ops::DerefMut for BoundedArrayAligned<T, N> {
-    fn deref_mut(&mut self) -> &mut [T] {
-        self.slice()
-    }
-}
-
 // Only defined for `T == u8`.
 impl<const BUFFER_CAPACITY: usize> crate::io::Write for BoundedArrayAligned<u8, BUFFER_CAPACITY> {
     #[inline]
@@ -249,13 +237,6 @@ impl<const BUFFER_CAPACITY: usize> crate::io::Write for BoundedArrayAligned<u8, 
     #[inline]
     fn written_len(&self) -> usize {
         self.len
-    }
-}
-
-impl<const BUFFER_CAPACITY: usize> core::fmt::Write for BoundedArrayAligned<u8, BUFFER_CAPACITY> {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        self.append_slice(s.as_bytes())
-            .map_err(|_| core::fmt::Error)
     }
 }
 

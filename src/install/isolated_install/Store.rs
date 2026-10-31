@@ -61,15 +61,6 @@ impl<T> Default for NewId<T> {
         Self::INVALID
     }
 }
-impl<T> fmt::Debug for NewId<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.0 == Self::MAX {
-            f.write_str("invalid")
-        } else {
-            write!(f, "{}", self.0)
-        }
-    }
-}
 
 impl<T> NewId<T> {
     const MAX: u32 = u32::MAX;

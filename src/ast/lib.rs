@@ -438,18 +438,6 @@ impl IntoText for Vec<u8> {
         Cow::Owned(self)
     }
 }
-impl IntoText for String {
-    #[inline]
-    fn into_text(self) -> Cow<'static, [u8]> {
-        Cow::Owned(self.into_bytes())
-    }
-}
-impl IntoText for Box<[u8]> {
-    #[inline]
-    fn into_text(self) -> Cow<'static, [u8]> {
-        Cow::Owned(self.into_vec())
-    }
-}
 
 /// Sink adapter for [`Log::print`] — lets callers pass either a borrowed
 /// `fmt::Write` impl or the `*mut bun_core::io::Writer` returned by

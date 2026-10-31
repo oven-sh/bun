@@ -1768,21 +1768,6 @@ pub mod io {
         }
     }
 
-    impl<W: Write + ?Sized> Write for Box<W> {
-        #[inline]
-        fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
-            (**self).write_all(buf)
-        }
-        #[inline]
-        fn flush(&mut self) -> crate::CrateResult<()> {
-            (**self).flush()
-        }
-        #[inline]
-        fn written_len(&self) -> usize {
-            (**self).written_len()
-        }
-    }
-
     /// In-memory growable sink.
     impl<A: core::alloc::Allocator> Write for Vec<u8, A> {
         #[inline]
@@ -1956,11 +1941,6 @@ impl<T> RacyCell<T> {
     #[inline]
     pub unsafe fn write(&self, value: T) {
         self.0.set(value)
-    }
-}
-impl<T: Default> Default for RacyCell<T> {
-    fn default() -> Self {
-        Self::new(T::default())
     }
 }
 
@@ -3211,11 +3191,6 @@ impl<I: core::hash::Hash, M> core::hash::Hash for GenericIndex<I, M> {
     #[inline]
     fn hash<H: core::hash::Hasher>(&self, h: &mut H) {
         self.0.hash(h)
-    }
-}
-impl<I: core::fmt::Display, M> core::fmt::Display for GenericIndex<I, M> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        self.0.fmt(f)
     }
 }
 impl<I: core::fmt::Debug, M> core::fmt::Debug for GenericIndex<I, M> {

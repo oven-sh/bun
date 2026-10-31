@@ -36,17 +36,6 @@ impl std::hash::Hash for TsNode<'_> {
         self.raw.hash(state);
     }
 }
-impl std::fmt::Debug for TsNode<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{:?}({}:{})",
-            self.kind(),
-            self.raw.file.0,
-            self.raw.node.0
-        )
-    }
-}
 
 impl<'a> TsNode<'a> {
     #[inline]
@@ -337,11 +326,6 @@ impl PartialEq for SourceFile<'_> {
     }
 }
 impl Eq for SourceFile<'_> {}
-impl std::fmt::Debug for SourceFile<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SourceFile({:?})", bstr::BStr::new(self.file_name()))
-    }
-}
 
 impl<'a> SourceFile<'a> {
     #[inline]

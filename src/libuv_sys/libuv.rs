@@ -2318,11 +2318,6 @@ impl fmt::Debug for ReturnCode {
         write!(f, "{}", self.0)
     }
 }
-impl fmt::Display for ReturnCode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
 
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

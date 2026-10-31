@@ -269,12 +269,6 @@ impl PartialEq for StoreStr {
     }
 }
 impl Eq for StoreStr {}
-impl PartialEq<[u8]> for StoreStr {
-    #[inline]
-    fn eq(&self, other: &[u8]) -> bool {
-        self.slice() == other
-    }
-}
 impl<const N: usize> PartialEq<&[u8; N]> for StoreStr {
     #[inline]
     fn eq(&self, other: &&[u8; N]) -> bool {
@@ -421,13 +415,6 @@ impl<T> StoreSlice<T> {
     }
 }
 
-impl<'a, T> From<bun_alloc::ArenaVec<'a, T>> for StoreSlice<T> {
-    #[inline]
-    fn from(v: bun_alloc::ArenaVec<'a, T>) -> Self {
-        StoreSlice::from_bump(v)
-    }
-}
-
 impl<T> Default for StoreSlice<T> {
     #[inline]
     fn default() -> Self {
@@ -450,22 +437,10 @@ impl<T> AsRef<[T]> for StoreSlice<T> {
     }
 }
 
-impl<T> From<&[T]> for StoreSlice<T> {
-    #[inline]
-    fn from(s: &[T]) -> Self {
-        StoreSlice::new(s)
-    }
-}
 impl<T> From<&mut [T]> for StoreSlice<T> {
     #[inline]
     fn from(s: &mut [T]) -> Self {
         StoreSlice::new_mut(s)
-    }
-}
-
-impl<T: core::fmt::Debug> core::fmt::Debug for StoreSlice<T> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        self.slice().fmt(f)
     }
 }
 

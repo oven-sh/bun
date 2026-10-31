@@ -189,11 +189,6 @@ impl<T> From<&[T]> for RawSlice<T> {
         RawSlice::new(s)
     }
 }
-impl<T: core::fmt::Debug> core::fmt::Debug for RawSlice<T> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        self.slice().fmt(f)
-    }
-}
 // SAFETY: `RawSlice<T>` only ever vends `&[T]` (never `&mut [T]` / owned `T`),
 // so its auto-trait bounds follow `&[T]` exactly: `&[T]: Send ⇔ T: Sync` and
 // `&[T]: Sync ⇔ T: Sync`. The wrapped raw pointer carries no ownership.

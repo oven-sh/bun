@@ -28,19 +28,6 @@ pub enum BackendError {
     UnsupportedOnPlatform,
 }
 
-impl From<codecs::Error> for BackendError {
-    fn from(e: codecs::Error) -> Self {
-        match e {
-            codecs::Error::DecodeFailed => Self::DecodeFailed,
-            codecs::Error::EncodeFailed => Self::EncodeFailed,
-            codecs::Error::TooManyPixels => Self::TooManyPixels,
-            codecs::Error::OutOfMemory => Self::OutOfMemory,
-            codecs::Error::UnknownFormat => Self::UnknownFormat,
-            codecs::Error::UnsupportedOnPlatform => Self::UnsupportedOnPlatform,
-        }
-    }
-}
-
 impl BackendError {
     /// Reshape into the
     /// caller's `Result<Option<T>, codecs::Error>` convention used by

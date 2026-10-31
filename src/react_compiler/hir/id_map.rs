@@ -336,12 +336,6 @@ impl<K: Clone, V: Clone, A: MapAllocator> Clone for IdMap<K, V, A> {
     }
 }
 
-impl<K: Copy + fmt::Debug, V: fmt::Debug, A: MapAllocator> fmt::Debug for IdMap<K, V, A> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_map().entries(self.iter()).finish()
-    }
-}
-
 impl<K: Copy + Into<u32>, V, A: MapAllocator> Extend<(K, V)> for IdMap<K, V, A> {
     fn extend<I: IntoIterator<Item = (K, V)>>(&mut self, iter: I) {
         for (k, v) in iter {

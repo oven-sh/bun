@@ -316,11 +316,6 @@ impl PartialEq for Token<'_> {
     }
 }
 impl Eq for Token<'_> {}
-impl std::fmt::Debug for Token<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}({:?})", self.raw.kind, bstr::BStr::new(self.text()))
-    }
-}
 impl Spanned for Token<'_> {
     #[inline]
     fn span(&self) -> Span {

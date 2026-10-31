@@ -136,16 +136,3 @@ impl<T: Clone> Clone for JsCell<T> {
         Self::new(self.get().clone())
     }
 }
-
-impl<T> From<T> for JsCell<T> {
-    #[inline(always)]
-    fn from(value: T) -> Self {
-        Self::new(value)
-    }
-}
-
-impl<T: core::fmt::Debug> core::fmt::Debug for JsCell<T> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        self.get().fmt(f)
-    }
-}

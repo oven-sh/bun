@@ -235,41 +235,9 @@ impl<T> Default for List<'_, T> {
     }
 }
 
-impl<T> From<Vec<T>> for List<'_, T> {
-    #[inline]
-    fn from(own: Vec<T>) -> Self {
-        List::Own(own)
-    }
-}
-
-impl<T: Clone> From<List<'_, T>> for Box<[T]> {
-    #[inline]
-    fn from(list: List<'_, T>) -> Self {
-        match list {
-            List::Permanent(borrowed) => borrowed.into(),
-            List::Own(own) => own.into(),
-            List::One(one) => Box::new([one]),
-        }
-    }
-}
-
 impl<T: PartialEq> PartialEq for List<'_, T> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        **self == **other
-    }
-}
-
-impl<T: PartialEq> PartialEq<Vec<T>> for List<'_, T> {
-    #[inline]
-    fn eq(&self, other: &Vec<T>) -> bool {
-        **self == **other
-    }
-}
-
-impl<T: PartialEq> PartialEq<List<'_, T>> for Vec<T> {
-    #[inline]
-    fn eq(&self, other: &List<'_, T>) -> bool {
         **self == **other
     }
 }

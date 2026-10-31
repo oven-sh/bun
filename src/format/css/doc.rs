@@ -169,12 +169,6 @@ impl<'a> From<Cow<'a, [u8]>> for Doc<'a> {
     }
 }
 
-impl<'a> From<Vec<Doc<'a>>> for Doc<'a> {
-    fn from(parts: Vec<Doc<'a>>) -> Self {
-        Doc::Array(parts)
-    }
-}
-
 /// `[a, b, ..]`, where each part is anything that converts into a `Doc`. `Doc` must be in scope.
 macro_rules! docs {
     ($($part:expr),* $(,)?) => {

@@ -180,12 +180,6 @@ impl<T: ?Sized> From<NonNull<T>> for ParentRef<T, crate::Shared> {
     }
 }
 
-impl<T: ?Sized, P> core::fmt::Debug for ParentRef<T, P> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "ParentRef({:p})", self.ptr)
-    }
-}
-
 impl<T: ?Sized, P> PartialEq for ParentRef<T, P> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {

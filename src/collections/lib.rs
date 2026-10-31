@@ -198,25 +198,6 @@ impl<T: PartialEq, const N: usize> PartialEq for SmallList<T, N> {
     }
 }
 impl<T: Eq, const N: usize> Eq for SmallList<T, N> {}
-impl<T: core::fmt::Debug, const N: usize> core::fmt::Debug for SmallList<T, N> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl<T, const N: usize> core::ops::Deref for SmallList<T, N> {
-    type Target = [T];
-    #[inline]
-    fn deref(&self) -> &[T] {
-        self.0.as_slice()
-    }
-}
-impl<T, const N: usize> core::ops::DerefMut for SmallList<T, N> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut [T] {
-        self.0.as_mut_slice()
-    }
-}
 
 impl<T, const N: usize> IntoIterator for SmallList<T, N> {
     type Item = T;
@@ -240,20 +221,6 @@ impl<'a, T, const N: usize> IntoIterator for &'a mut SmallList<T, N> {
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter_mut()
-    }
-}
-impl<T, const N: usize> FromIterator<T> for SmallList<T, N> {
-    #[cfg_attr(bun_asan, inline(never))]
-    #[cfg_attr(not(bun_asan), inline)]
-    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
-        Self(smallvec::SmallVec::from_iter(iter))
-    }
-}
-impl<T, const N: usize> Extend<T> for SmallList<T, N> {
-    #[cfg_attr(bun_asan, inline(never))]
-    #[cfg_attr(not(bun_asan), inline)]
-    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
-        self.0.extend(iter)
     }
 }
 

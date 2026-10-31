@@ -1847,12 +1847,6 @@ impl<const N: usize> PutKey for &[u8; N] {
         self.as_slice().put(target, global, value)
     }
 }
-impl PutKey for &str {
-    #[inline]
-    fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
-        self.as_bytes().put(target, global, value)
-    }
-}
 
 /// Dispatch trait for `JSValue::coerce::<T>()`.
 pub trait CoerceTo: Sized {

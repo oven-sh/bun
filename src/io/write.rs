@@ -203,13 +203,6 @@ impl<'a, W: fmt::Write + ?Sized> FmtAdapter<'a, W> {
     }
 }
 
-impl<W: fmt::Write + ?Sized> fmt::Write for FmtAdapter<'_, W> {
-    #[inline]
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.inner.write_str(s)
-    }
-}
-
 // `W: Sized` (no `?Sized`) — together with [`AsFmt`] (the inverse adapter),
 // `?Sized` here would let rustc probe the infinite tower
 // `FmtAdapter<AsFmt<FmtAdapter<AsFmt<…>>>>` when checking `dyn Write: Write`,

@@ -30,25 +30,6 @@ impl From<bun_sys::Error> for ReadDataError {
     }
 }
 
-impl Error {
-    pub(crate) fn name(&self) -> &'static str {
-        match self {
-            Self::Fail => "Fail",
-            Self::Sys(e) => <&'static str>::from(e),
-            Self::Alloc(_) => "OutOfMemory",
-            Self::MakeLibUvOwned(e) => <&'static str>::from(e),
-            Self::Paths(e) => e.name(),
-            Self::LeavesDestination(_) => "EXDEV",
-        }
-    }
-}
-
-impl bun_core::output::ErrName for Error {
-    fn name(&self) -> &[u8] {
-        (*self).name().as_bytes()
-    }
-}
-
 impl From<bun_tar::Error> for Error {
     fn from(e: bun_tar::Error) -> Self {
         match e {

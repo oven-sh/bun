@@ -33,11 +33,6 @@ impl std::hash::Hash for Signature<'_> {
         self.id.hash(state);
     }
 }
-impl std::fmt::Debug for Signature<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Signature({})", bstr::BStr::new(&self.to_text()))
-    }
-}
 
 /// A list of signatures.
 #[derive(Copy, Clone)]
@@ -77,12 +72,6 @@ impl<'a> SignatureList<'a> {
             file: self.file,
             ids: self.ids.iter(),
         }
-    }
-}
-
-impl std::fmt::Debug for SignatureList<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_list().entries(self.iter()).finish()
     }
 }
 

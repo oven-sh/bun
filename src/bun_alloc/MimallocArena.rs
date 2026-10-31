@@ -619,14 +619,6 @@ impl core::fmt::Write for ArenaString<'_> {
     }
 }
 
-impl core::ops::Deref for ArenaString<'_> {
-    type Target = str;
-    #[inline]
-    fn deref(&self) -> &str {
-        self.as_str()
-    }
-}
-
 /// Extension methods on `Vec<T, &MimallocArena>` to cover the
 /// `bumpalo::collections::Vec` API gaps.
 pub trait ArenaVecExt<'a, T> {

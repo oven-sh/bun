@@ -41,11 +41,6 @@ impl std::hash::Hash for Variable<'_> {
         self.kind.hash(state);
     }
 }
-impl std::fmt::Debug for Variable<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.kind.fmt(f)
-    }
-}
 
 #[inline]
 fn is_class_name(symbol: Symbol) -> bool {

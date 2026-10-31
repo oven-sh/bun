@@ -1608,13 +1608,6 @@ impl<A: Allocator + Default> Clone for StringHashMapKey<A> {
     }
 }
 
-impl<A: Allocator + Default> From<Box<[u8], A>> for StringHashMapKey<A> {
-    #[inline]
-    fn from(b: Box<[u8], A>) -> Self {
-        Self::owned(b)
-    }
-}
-
 impl<A: Allocator + Default> From<&'static [u8]> for StringHashMapKey<A> {
     /// Zero-copy: the slice is stored by reference. This is the conversion
     /// `hashbrown::VacantEntryRef::insert` calls on miss in the

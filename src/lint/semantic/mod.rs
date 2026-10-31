@@ -730,16 +730,6 @@ impl std::hash::Hash for Reference<'_> {
         std::ptr::from_ref(self.raw).addr().hash(state);
     }
 }
-impl std::fmt::Debug for Reference<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Reference({:?}, {:?})",
-            self.raw().site,
-            self.raw().flags
-        )
-    }
-}
 
 impl<'a> Reference<'a> {
     #[inline]

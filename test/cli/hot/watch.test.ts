@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, forEachLine, isBroken, isLinux, isWindows, tempDir } from "harness";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
@@ -53,6 +53,26 @@ describe.todoIf(isBroken && isWindows)("--watch works", async () => {
 // The loop of `--hot` and `--watch` sleeps when the program has nothing to do, up to a second at a time. A poll
 // before that sleep can take the wakeup of work that is already there, so the sleep must not start while work waits.
 
+// bun:test ends the child of a serial test that times out. It leaves the child of a concurrent test.
+const children: Bun.Subprocess[] = [];
+afterAll(() => {
+  for (const child of children) child.kill("SIGKILL");
+});
+
+/** Starts `bun <flag> main.js` in `cwd`. */
+function start(flag: string, cwd: string, env = bunEnv) {
+  const runner = spawn({
+    cmd: [bunExe(), flag, "--no-clear-screen", "main.js"],
+    env,
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  children.push(runner);
+  return runner;
+}
+
 /** Follows a process that stays alive. `until` polls, and throws with the output if the process ends first. */
 function alive(runner: Bun.Subprocess<"ignore", "pipe", "pipe">) {
   const output = { stdout: "", stderr: "" };
@@ -76,19 +96,24 @@ function alive(runner: Bun.Subprocess<"ignore", "pipe", "pipe">) {
 
 /**
  * The timeout argument of the poll that blocks the main thread of `pid`, or `undefined` if none does. Linux only.
+ * The kernel prints `running` for a thread that is not blocked, so a poll that returns at once never shows.
  * The system calls are epoll_pwait2, and epoll_pwait on x64 and on arm64 for a kernel that lacks it.
  */
 function blockingPoll(pid: number) {
+  const path = `/proc/${pid}/syscall`;
   try {
-    const fields = readFileSync(`/proc/${pid}/syscall`, "latin1").split(" ");
+    const fields = readFileSync(path, "latin1").split(" ");
     return ["441", "281", "22"].includes(fields[0]) ? fields[4] : undefined;
-  } catch {
-    return undefined;
+  } catch (error) {
+    const { code } = error as NodeJS.ErrnoException;
+    // The process is gone: `until` reports how it ended.
+    if (code === "ENOENT" || code === "ESRCH") return undefined;
+    throw new Error(`cannot read ${path}: ${code}`, { cause: error });
   }
 }
 
 // A task that is not done after one batch yields: it goes on after the loop has polled.
-test.each(
+test.concurrent.each(
   ["--hot", "--watch"].flatMap(flag => [
     [
       flag,
@@ -142,14 +167,7 @@ test.each(
     `,
     "main.js": main,
   });
-  await using runner = spawn({
-    cmd: [bunExe(), flag, "--no-clear-screen", "main.js"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "ignore",
-  });
+  await using runner = start(flag, String(dir));
   const child = alive(runner);
   await child.until(() => child.output.stdout.includes("done"));
   expect(child.output.stderr).toContain("error: the bug");
@@ -159,7 +177,7 @@ test.each(
 
 // The loop polls before it runs a task that yielded. The Worker keeps more than two batches queued until the
 // request is answered, so a loop that runs queued tasks without a poll never reads the request.
-test.each(["--hot", "--watch"])(
+test.concurrent.each(["--hot", "--watch"])(
   "%s answers a request between the batches of a Worker's messages after an uncaught error",
   async flag => {
     using dir = tempDir("hot-poll-between-batches", {
@@ -196,14 +214,7 @@ test.each(["--hot", "--watch"])(
         };
       `,
     });
-    await using runner = spawn({
-      cmd: [bunExe(), flag, "--no-clear-screen", "main.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "ignore",
-    });
+    await using runner = start(flag, String(dir));
     const child = alive(runner);
     let url: string | undefined;
     await child.until(() => (url = /url (\S+) /.exec(child.output.stdout)?.[1]) !== undefined);
@@ -232,7 +243,7 @@ const fence = `
 
 // The watcher thread restarts the process by itself when the program has not run its kill-signal listeners
 // 500 ms after a save. The loop runs an immediate right before it polls, and the interval gives that poll
-// something to wait on.
+// something to wait on. Not concurrent: those 500 ms are wall-clock time.
 test("--watch runs the kill-signal listeners for a save that waits when the loop goes to sleep", async () => {
   using dir = tempDir("watch-queued-reload", {
     "trace.log": "",
@@ -249,14 +260,7 @@ test("--watch runs the kill-signal listeners for a save that waits when the loop
     `,
   });
   const root = String(dir);
-  await using runner = spawn({
-    cmd: [bunExe(), "--watch", "--no-clear-screen", "main.js"],
-    env: { ...bunEnv, BUN_WATCHER_TRACE: join(root, "trace.log") },
-    cwd: join(root, "src"),
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "ignore",
-  });
+  await using runner = start("--watch", join(root, "src"), { ...bunEnv, BUN_WATCHER_TRACE: join(root, "trace.log") });
   const [stdout, stderr, exitCode] = await Promise.all([runner.stdout.text(), runner.stderr.text(), runner.exited]);
   expect(stderr).toContain("error: the bug");
   expect({ stdout, exitCode }).toEqual({ stdout: "listener ran\nrestarted\n", exitCode: 0 });
@@ -264,7 +268,7 @@ test("--watch runs the kill-signal listeners for a save that waits when the loop
 
 // The sleep ends by itself after a second, so these look at the main thread from outside: /proc names the system
 // call that blocks it. Each script writes `queued` once its work waits, and the work writes `ran`.
-test.skipIf(!isLinux).each([
+test.concurrent.skipIf(!isLinux).each([
   [
     // The loop runs an immediate right before it polls.
     "after a failed run while the reload of a save waits",
@@ -310,6 +314,7 @@ test.skipIf(!isLinux).each([
       throw new Error("the bug");
     `,
   ]),
+  // The sleep itself reports a rejection that the last turn left.
   [
     "while the report of a rejection from a timer waits",
     `
@@ -321,6 +326,20 @@ test.skipIf(!isLinux).each([
       }, 0);
     `,
   ],
+  ...[
+    ["a tick", `process.nextTick(() => writeFileSync("../ran", ""));`],
+    ["a microtask", `Promise.resolve().then(() => writeFileSync("../ran", ""));`],
+  ].map(([work, start]) => [
+    `while ${work} of the listener of a rejection from a timer waits`,
+    `
+      const { writeFileSync } = require("node:fs");
+      process.on("unhandledRejection", () => {
+        ${start}
+        writeFileSync("../queued", "");
+      });
+      setTimeout(() => Promise.reject(new Error("late")), 0);
+    `,
+  ]),
   [
     "after a failed run between the batches of a MessageChannel",
     `
@@ -342,14 +361,7 @@ test.skipIf(!isLinux).each([
     "src/main.js": `console.log("first run");`,
   });
   const root = String(dir);
-  await using runner = spawn({
-    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
-    env: { ...bunEnv, BUN_WATCHER_TRACE: join(root, "trace.log") },
-    cwd: join(root, "src"),
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "ignore",
-  });
+  await using runner = start("--hot", join(root, "src"), { ...bunEnv, BUN_WATCHER_TRACE: join(root, "trace.log") });
   const child = alive(runner);
   await child.until(() => child.output.stdout.includes("first run"));
   // The sleep of the idle loop, and its timeout. A loop that has not slept yet has nothing to poll, and the poll

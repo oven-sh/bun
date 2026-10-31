@@ -1393,6 +1393,8 @@ impl EventLoop {
         self.tick_concurrent();
         let _ = self.promote_yield_tasks();
         let _ = self.global_ref().handle_rejected_promises();
+        // A listener that ran has had no checkpoint for what it queued.
+        let _ = self.drain_microtasks();
 
         #[cfg(unix)]
         {

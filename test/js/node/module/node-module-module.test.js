@@ -1287,6 +1287,7 @@ console.log("survived", require("./late.js"));`,
         "sub/dep.mjs": `export const dep = "sub dep";`,
         "commonjs.cjs": `module.exports = { commonjs: true };`,
         "required.cjs": `module.exports = { required: true };`,
+        "unloaded.cjs": `module.exports = { who: "file" };`,
         "in-flight.mjs": `globalThis.inFlightFileRan = true; export const who = "file";`,
       });
       await using proc = Bun.spawn({ cmd: [exe, "main.cjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
@@ -1389,6 +1390,8 @@ console.log("survived", require("./late.js"));`,
       // require() alone does not give a CommonJS file to that loader, so the text gets the name.
       filenameOfARequiredCommonJSFile: { text: true },
       afterTheTextOfARequiredCommonJSFile: { import: { text: true }, require: { required: true } },
+      // One registry answers require() and import(): the text has the name of a CommonJS file that nothing loaded.
+      requireAfterTheTextOfAnUnloadedCommonJSFile: { text: "text", require: "text" },
       // A "?" starts a query, as in every name of a module in Bun. import.meta.filename has no query.
       queryInTheFilename: { dep: "text", filename: "dep.mjs" },
       importWithTheQueryOfTheFilename: "text",
@@ -1428,6 +1431,8 @@ console.log("survived", require("./late.js"));`,
       // CommonJS file that an ES module imported.
       filenameOfTheCommonJSEntry: { a: 1 },
       filenameOfAnImportedCommonJSFile: { commonjs: true },
+      // Node.js keeps its cache of CommonJS modules apart from the ES modules, so require() runs the file.
+      requireAfterTheTextOfAnUnloadedCommonJSFile: { text: "text", require: "file" },
       // In Node.js the filename is the path of a file, "?" and all. import() with the query loads dep.mjs.
       queryInTheFilename: { dep: "text", filename: "dep.mjs?query" },
       importWithTheQueryOfTheFilename: "dep",

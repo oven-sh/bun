@@ -232,6 +232,12 @@ rows.filenameOfARequiredCommonJSFile = attempt(() => {
   require(requiredCommonJS);
   return { ...exportsOf("export const text = true;", requiredCommonJS) };
 });
+// Text under the path of a CommonJS file that nothing loaded. Bun has one registry for require() and import(), so
+// require() of the path gets the text. Node.js keeps its cache of CommonJS modules apart, and require() runs the file.
+rows.requireAfterTheTextOfAnUnloadedCommonJSFile = attempt(() => {
+  const name = here("unloaded.cjs");
+  return { text: exportsOf('export const who = "text";', name).who, require: require(name).who };
+});
 // A "?" in the filename starts a query in Bun, as in every name of a module, so import() of the name gets the text.
 // In Node.js the filename is the path of a file, "?" and all, and the same import() loads dep.mjs.
 const withQuery = attempt(() =>

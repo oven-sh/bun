@@ -2087,6 +2087,9 @@ pub mod bv2_impl {
         /// Files which are imported by CSS and inlined in CSS
         pub(crate) additional_files_imported_by_css_and_inlined: &'a mut DynamicBitSetUnmanaged,
 
+        /// (importer, record index) of each bundled `import()` with `unreadable_attributes`.
+        pub(crate) imports_with_unreadable_attributes: Vec<(IndexInt, u32)>,
+
         pub(crate) stack: Vec<ReachFrame>,
     }
 
@@ -2247,6 +2250,12 @@ pub mod bv2_impl {
                             }
 
                             let next_source = import_record.source_index;
+                            if next_source.is_valid()
+                                && import_record.unreadable_attributes.is_some()
+                            {
+                                self.imports_with_unreadable_attributes
+                                    .push((source_index.get(), ir_idx as u32));
+                            }
                             // The importing file's own target decides: a server
                             // build's browser-side files cannot call `import.meta.require`.
                             let target_is_bun = self.split_require
@@ -2303,6 +2312,63 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
+        /// Warns once for each bundled `import()` whose loader came from the file extension.
+        #[cold]
+        fn warn_unreadable_import_attributes(&self, imports: &[(IndexInt, u32)]) {
+            use bun_ast::import_record::UnreadableAttributes as Reason;
+            let sources = self.graph.input_files.items_source();
+            let flags = self.graph.input_files.items_flags();
+            let all_import_records = self.graph.ast.items_import_records();
+            let log = self.transpiler.log_mut();
+            // One call: the two records of `import(a ? x : y, o)`, or one file in two graphs.
+            let mut seen = bun_collections::StringArrayHashMap::<()>::default();
+            for &(importer, record_index) in imports {
+                let record =
+                    &all_import_records[importer as usize].as_slice()[record_index as usize];
+                let Some(reason) = record.unreadable_attributes else {
+                    continue;
+                };
+                let loc = record.unreadable_attributes_loc;
+                let target = record.source_index.get() as usize;
+                // An `onLoad` plugin or a node polyfill supplied the module.
+                if flags[target].contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
+                    || sources[target].path.namespace == b"node"
+                {
+                    continue;
+                }
+                let source = &sources[importer as usize];
+                let mut call = source.path.text.to_vec();
+                call.extend_from_slice(&loc.start.to_ne_bytes());
+                if seen.get_or_put(&call).expect("oom").found_existing {
+                    continue;
+                }
+                let reason = match reason {
+                    Reason::OptionsNotObjectLiteral => {
+                        "the second argument is not an object literal"
+                    }
+                    Reason::WithNotObjectLiteral => {
+                        "the value of \"with\" is not an object literal"
+                    }
+                    Reason::TypeNotStringLiteral => "the value of \"type\" is not a string literal",
+                    Reason::PropertyNotPlain => {
+                        "this property can change \"with\" or \"type\" when the call runs"
+                    }
+                };
+                let range = bun_ast::Range { loc, len: 0 };
+                log.add_range_warning_fmt_with_note(
+                    Some(source),
+                    range,
+                    format_args!(
+                        "The bundler cannot read the attributes of this import() because {reason}"
+                    ),
+                    format_args!(
+                        "This import is bundled with the loader for its file extension. To use the \"type\" attribute at build time, write the attributes as literals in the call, such as import(path, {{ with: {{ type: \"json\" }} }})."
+                    ),
+                    range,
+                );
+            }
+        }
+
         pub(crate) fn find_reachable_files(&mut self) -> Result<Box<[Index]>, Error> {
             // RAII guard — `Ctx` ends the span on Drop.
             let _trace = crate::perf::trace("Bundler.findReachableFiles");
@@ -2366,6 +2432,7 @@ pub mod bv2_impl {
                 additional_files_needed_outside_css: &mut additional_files_needed_outside_css,
                 additional_files_imported_by_css_and_inlined:
                     &mut additional_files_imported_by_css_and_inlined,
+                imports_with_unreadable_attributes: Vec::new(),
                 stack: Vec::new(),
             };
 
@@ -2408,7 +2475,14 @@ pub mod bv2_impl {
             // reshaped for borrowck — release the visitor's `&mut`
             // borrows on the two bitsets and `input_files` columns before the
             // cleanup loop reads them.
-            let ReachableFileVisitor { reachable, .. } = visitor;
+            let ReachableFileVisitor {
+                reachable,
+                imports_with_unreadable_attributes,
+                ..
+            } = visitor;
+            if !imports_with_unreadable_attributes.is_empty() {
+                self.warn_unreadable_import_attributes(&imports_with_unreadable_attributes);
+            }
 
             // reshaped for borrowck — three disjoint mutable SoA
             // columns via `split_mut()` on a value-type `Slice` snapshot.

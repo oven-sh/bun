@@ -646,7 +646,7 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
         .slice(1)
         .map(section => section.trim().split(/\r?\n/).join(" | "));
 
-    it("converts values like the JS ToUint32 operation", async () => {
+    it("converts values like V8, which gives 0 for a non-number that converts to a negative Smi", async () => {
       const out = await checkSameOutput("test_v8_value_uint32_value");
       expect(casesOf(out)).toEqual(
         expect.arrayContaining([
@@ -655,6 +655,11 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
           "-1 | maybe.IsNothing() = 0 | maybe.FromJust() = 4294967295",
           "4294967296 | maybe.IsNothing() = 0 | maybe.FromJust() = 0",
           "NaN | maybe.IsNothing() = 0 | maybe.FromJust() = 0",
+          // The JS ToUint32 operation gives 4294967295 for these four. V8 gives 0 for the two that convert to a Smi.
+          "'-1' | maybe.IsNothing() = 0 | maybe.FromJust() = 0",
+          "'-1.5' | maybe.IsNothing() = 0 | maybe.FromJust() = 4294967295",
+          "'-4294967297' | maybe.IsNothing() = 0 | maybe.FromJust() = 4294967295",
+          "object with valueOf returning -1 | maybe.IsNothing() = 0 | maybe.FromJust() = 0",
           "Symbol | maybe.IsNothing() = 1 | threw TypeError",
           "10n | maybe.IsNothing() = 1 | threw TypeError",
           "object with throwing valueOf | maybe.IsNothing() = 1 | threw the valueOf error",

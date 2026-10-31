@@ -840,8 +840,9 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
   describe("Object::Clone", () => {
     it("copies the prototype and the own properties of a plain object", async () => {
       const out = await checkSameOutput("test_v8_object_clone");
-      // both objects, and the accessor property without running its getter
-      expect(out.match(/same as the original's: true/g)).toHaveLength(2);
+      // every object, the frozen one, and the accessor property without running its getter
+      expect(out.match(/same as the original's: true/g)).toHaveLength(5);
+      expect(out).toContain("extensible, sealed, frozen: false true true");
       expect(out).toContain("getter calls during Clone(): 0");
     });
     it("gives the copy of a template instance internal fields of its own", async () => {
@@ -851,6 +852,12 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
         out.match(/copy after writing the original's fields: 2 internal fields: &b, "set on the copy"/g),
       ).toHaveLength(2);
       expect(out.match(/copies intact after collecting their originals: 100 of 100/g)).toHaveLength(2);
+      // the instance without an index key and the one with an index key, of both kinds
+      expect(
+        out.match(/copy made while an exception is pending: 2 internal fields, same aligned pointer: 1/g),
+      ).toHaveLength(4);
+      // each of those and a plain object per kind left the exception pending
+      expect(out.match(/: caught pending/g)).toHaveLength(6);
     });
   });
 });

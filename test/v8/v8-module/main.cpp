@@ -3261,6 +3261,28 @@ void clone_template_instance(const FunctionCallbackInfo<Value> &info) {
   info.GetReturnValue().Set(Array::New(isolate, objects, 2));
 }
 
+// V8's Clone() runs no script and cannot fail, so it also works while an
+// exception is pending. uWebSockets.js clones its response object for the next
+// pipelined request after the handler of the previous one threw.
+void perform_object_clone_with_pending_exception(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Object> original = info[0].As<Object>();
+  isolate->ThrowError(String::NewFromUtf8(isolate, "pending").ToLocalChecked());
+  Local<Object> copy = original->Clone();
+  std::cout << "copy made while an exception is pending: "
+            << copy->InternalFieldCount() << " internal fields";
+  // Only an object with internal fields has an aligned pointer to read.
+  if (original->InternalFieldCount() > 0) {
+    std::cout << ", same aligned pointer: "
+              << (copy->GetAlignedPointerFromInternalField(
+                      0, kEmbedderDataTypeTagDefault) ==
+                  original->GetAlignedPointerFromInternalField(
+                      0, kEmbedderDataTypeTagDefault));
+  }
+  std::cout << std::endl;
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -3438,6 +3460,8 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_backing_store_deleted_by_addon);
   NODE_SET_METHOD(exports, "perform_object_clone", perform_object_clone);
   NODE_SET_METHOD(exports, "clone_template_instance", clone_template_instance);
+  NODE_SET_METHOD(exports, "perform_object_clone_with_pending_exception",
+                  perform_object_clone_with_pending_exception);
 
   // without this, node hits a UAF deleting the Global
   // (Context::GetIsolate was removed in V8 14.6; the module initializer runs

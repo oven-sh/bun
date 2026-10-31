@@ -1276,9 +1276,21 @@ module.exports = debugMode => {
       Object.defineProperty(instance, "hidden", { value: "non-enumerable", writable: true, configurable: true });
       Object.defineProperty(instance, "accessor", { get: getter, set: setter, enumerable: true, configurable: true });
 
+      // JSC gives an object with this many properties a property table of its own, which a copy cannot share.
+      const manyProperties = { nested };
+      for (let i = 0; i < 300; i++) manyProperties["p" + i] = i;
+      for (let i = 0; i < 300; i += 3) delete manyProperties["p" + i];
+
+      // Bun copies an object that has an index key by defining each of its properties on a new object.
+      const frozen = Object.freeze({ 0: "index value", data: "data value", nested });
+      const withoutPrototype = Object.assign(Object.create(null), { 0: "index value", data: "data value", nested });
+
       for (const [description, original] of [
         ["object with data properties", withData],
         ["class instance with index, data, non-enumerable, accessor and symbol properties", instance],
+        ["object with hundreds of properties, some deleted", manyProperties],
+        ["frozen object with an index key", frozen],
+        ["object without a prototype, with an index key", withoutPrototype],
       ]) {
         console.log(`====== ${description}`);
         const before = describe(original);
@@ -1287,6 +1299,12 @@ module.exports = debugMode => {
         console.log("same prototype:", Object.getPrototypeOf(copy) === Object.getPrototypeOf(original));
         console.log("own properties of the copy:", describe(copy));
         console.log("same as the original's:", describe(copy) === before);
+        console.log(
+          "extensible, sealed, frozen:",
+          Object.isExtensible(copy),
+          Object.isSealed(copy),
+          Object.isFrozen(copy),
+        );
         console.log("nested object is shared:", copy.nested === nested);
         if (original === instance) {
           console.log("getter calls during Clone():", getterCalls);
@@ -1334,6 +1352,20 @@ module.exports = debugMode => {
         console.log("copy of the copy with an index key:", JSON.stringify(copyOfCopy));
         console.log("same prototype:", Object.getPrototypeOf(copyOfCopy) === Object.getPrototypeOf(copy));
         console.log("copyOfCopy.describeInternalFields():", copyOfCopy.describeInternalFields());
+
+        // `original` has no index key and `copy` has one.
+        for (const [description, source] of [
+          ["the original", original],
+          ["the copy with an index key", copy],
+          ["an object with data properties", { number: 1, string: "two" }],
+        ]) {
+          try {
+            nativeModule.perform_object_clone_with_pending_exception(source);
+            console.log(`cloning ${description} did not throw`);
+          } catch (e) {
+            console.log(`cloning ${description}: caught`, e.message);
+          }
+        }
       }
     },
   };

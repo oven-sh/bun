@@ -4173,6 +4173,46 @@ mod v8_api {
         pub(super) fn v8_Map_Set() -> *mut c_void;
         #[link_name = "?Delete@Map@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@@Z"]
         pub(super) fn v8_Map_Delete() -> *mut c_void;
+        #[link_name = "?NewBackingStore@ArrayBuffer@v8@@SA?AV?$unique_ptr@VBackingStore@v8@@U?$default_delete@VBackingStore@v8@@@std@@@std@@PEAX_KP6AX010@Z0@Z"]
+        pub(super) fn v8_ArrayBuffer_NewBackingStore() -> *mut c_void;
+        #[link_name = "?New@ArrayBuffer@v8@@SA?AV?$Local@VArrayBuffer@v8@@@2@PEAVIsolate@2@V?$shared_ptr@VBackingStore@v8@@@std@@@Z"]
+        pub(super) fn v8_ArrayBuffer_New_backing_store() -> *mut c_void;
+        #[link_name = "?Detach@ArrayBuffer@v8@@QEAAXXZ"]
+        pub(super) fn v8_ArrayBuffer_Detach() -> *mut c_void;
+        #[link_name = "?ByteLength@ArrayBuffer@v8@@QEBA_KXZ"]
+        pub(super) fn v8_ArrayBuffer_ByteLength() -> *mut c_void;
+        #[link_name = "?Data@ArrayBuffer@v8@@QEBAPEAXXZ"]
+        pub(super) fn v8_ArrayBuffer_Data() -> *mut c_void;
+        #[link_name = "?ByteLength@SharedArrayBuffer@v8@@QEBA_KXZ"]
+        pub(super) fn v8_SharedArrayBuffer_ByteLength() -> *mut c_void;
+        #[link_name = "?Data@SharedArrayBuffer@v8@@QEBAPEAXXZ"]
+        pub(super) fn v8_SharedArrayBuffer_Data() -> *mut c_void;
+        #[link_name = "??1BackingStore@v8@@QEAA@XZ"]
+        pub(super) fn v8_BackingStore_dtor() -> *mut c_void;
+        #[link_name = "??0CFunctionInfo@v8@@QEAA@AEBVCTypeInfo@1@IPEBV21@W4Int64Representation@01@@Z"]
+        pub(super) fn v8_CFunctionInfo_ctor() -> *mut c_void;
+        #[link_name = "??0CFunction@v8@@QEAA@PEBXPEBVCFunctionInfo@1@@Z"]
+        pub(super) fn v8_CFunction_ctor() -> *mut c_void;
+        #[link_name = "?NewFromUnsigned@BigInt@v8@@SA?AV?$Local@VBigInt@v8@@@2@PEAVIsolate@2@_K@Z"]
+        pub(super) fn v8_BigInt_NewFromUnsigned() -> *mut c_void;
+        #[link_name = "?GetOwnPropertyNames@Object@v8@@QEAA?AV?$MaybeLocal@VArray@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_Object_GetOwnPropertyNames() -> *mut c_void;
+        #[link_name = "?GetOwnPropertyNames@Object@v8@@QEAA?AV?$MaybeLocal@VArray@v8@@@2@V?$Local@VContext@v8@@@2@W4PropertyFilter@2@W4KeyConversionMode@2@@Z"]
+        pub(super) fn v8_Object_GetOwnPropertyNames_filter() -> *mut c_void;
+        #[link_name = "?Clone@Object@v8@@QEAA?AV?$Local@VObject@v8@@@2@XZ"]
+        pub(super) fn v8_Object_Clone() -> *mut c_void;
+        #[link_name = "?NumberValue@Value@v8@@QEBA?AV?$Maybe@N@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_Value_NumberValue() -> *mut c_void;
+        #[link_name = "?BooleanValue@Value@v8@@QEBA_NPEAVIsolate@2@@Z"]
+        pub(super) fn v8_Value_BooleanValue() -> *mut c_void;
+        #[link_name = "?IsExternal@Value@v8@@QEBA_NXZ"]
+        pub(super) fn v8_Value_IsExternal() -> *mut c_void;
+        #[link_name = "?IsArrayBuffer@Value@v8@@QEBA_NXZ"]
+        pub(super) fn v8_Value_IsArrayBuffer() -> *mut c_void;
+        #[link_name = "?IsArrayBufferView@Value@v8@@QEBA_NXZ"]
+        pub(super) fn v8_Value_IsArrayBufferView() -> *mut c_void;
+        #[link_name = "?IsSharedArrayBuffer@Value@v8@@QEBA_NXZ"]
+        pub(super) fn v8_Value_IsSharedArrayBuffer() -> *mut c_void;
     }
 }
 
@@ -5376,6 +5416,26 @@ pub(crate) fn fix_dead_code_elimination() {
             v8_CpuProfileNode_GetChild,
             v8_Map_Set,
             v8_Map_Delete,
+            v8_ArrayBuffer_NewBackingStore,
+            v8_ArrayBuffer_New_backing_store,
+            v8_ArrayBuffer_Detach,
+            v8_ArrayBuffer_ByteLength,
+            v8_ArrayBuffer_Data,
+            v8_SharedArrayBuffer_ByteLength,
+            v8_SharedArrayBuffer_Data,
+            v8_BackingStore_dtor,
+            v8_CFunctionInfo_ctor,
+            v8_CFunction_ctor,
+            v8_BigInt_NewFromUnsigned,
+            v8_Object_GetOwnPropertyNames,
+            v8_Object_GetOwnPropertyNames_filter,
+            v8_Object_Clone,
+            v8_Value_NumberValue,
+            v8_Value_BooleanValue,
+            v8_Value_IsExternal,
+            v8_Value_IsArrayBuffer,
+            v8_Value_IsArrayBufferView,
+            v8_Value_IsSharedArrayBuffer,
         );
         ::core::hint::black_box(&raw const v8_Function_kLineOffsetNotFound);
     }

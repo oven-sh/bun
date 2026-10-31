@@ -12,6 +12,7 @@ describe("bun", () => {
     const tempDir = tmpdirSync();
 
     for (const packageName of ["pkg", "@scope/pkg"]) {
+      // Keep negative self-reference checks independent of registry auto-install.
       // general check without exports
       await writeFile(
         join(tempDir, "package.json"),
@@ -26,7 +27,7 @@ describe("bun", () => {
       );
 
       let subprocess = spawn({
-        cmd: [bunExe(), "run", "other.js"],
+        cmd: [bunExe(), "--no-install", "run", "other.js"],
         cwd: tempDir,
         stdout: "pipe",
       });
@@ -43,7 +44,7 @@ describe("bun", () => {
       );
 
       subprocess = spawn({
-        cmd: [bunExe(), "run", "other.js"],
+        cmd: [bunExe(), "--no-install", "run", "other.js"],
         cwd: tempDir,
         stdout: "pipe",
       });
@@ -57,7 +58,7 @@ describe("bun", () => {
       );
 
       subprocess = spawn({
-        cmd: [bunExe(), "run", "other.js"],
+        cmd: [bunExe(), "--no-install", "run", "other.js"],
         cwd: tempDir,
         stdout: "pipe",
       });

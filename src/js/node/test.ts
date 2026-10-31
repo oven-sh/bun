@@ -41,6 +41,7 @@ const kDefaultFunction = () => {};
 // globals, so capture them at module load like Node's runner does.
 const realSetTimeout = setTimeout;
 const realClearTimeout = clearTimeout;
+const nextTick = process.nextTick;
 const kDefaultOptions = kEmptyObject;
 // Matches Node's internal/timers TIMEOUT_MAX.
 const kTimeoutMax = 2 ** 31 - 1;
@@ -438,7 +439,7 @@ function reportCancelledFile(
     column: 1,
     file: absolute,
   };
-  const error = makeTestFailure("test did not finish before its parent and was cancelled", "cancelledByParent");
+  const error = cancelledByParentFailure();
   const details = { __proto__: null, duration_ms: 0, type: "test", error };
   reporter.enqueue({ __proto__: null, ...fileNode });
   reporter.dequeue({ __proto__: null, ...fileNode });
@@ -1420,6 +1421,18 @@ function makeTestFailure(message: string, failureType?: string) {
   return error;
 }
 
+function cancelledByParentFailure() {
+  return makeTestFailure("test did not finish before its parent and was cancelled", "cancelledByParent");
+}
+
+function makeSubtestsFailure(failedSubtests: number, firstSubtestError: unknown) {
+  const error = makeTestFailure(`${failedSubtests} subtest${failedSubtests > 1 ? "s" : ""} failed`, "subtestsFailed");
+  if (firstSubtestError !== undefined) {
+    (error as { cause?: unknown }).cause = firstSubtestError;
+  }
+  return error;
+}
+
 class TestPlan {
   expected: number;
   actual = 0;
@@ -1554,6 +1567,9 @@ function getTestContext(): TestContext | SuiteContext | undefined {
 type Hook = { fn: Function; timeout: number | undefined; signal: AbortSignal | undefined; result?: Promise<void> };
 type HookSets = { before: Hook[]; after: Hook[]; beforeEach: Hook[]; afterEach: Hook[] };
 
+// The subtest chain of a node that has nothing left to wait for. drainSubtestChain() puts it back.
+const kSettledChain: Promise<unknown> = Promise.resolve();
+
 class TestNode {
   name: string;
   parent: TestNode | undefined;
@@ -1576,7 +1592,9 @@ class TestNode {
   error: unknown = null;
   // Inline subtests are serialized through this chain. `concurrency` is
   // validated for Node-compat error codes but subtests always run serially.
-  subtestChain: Promise<unknown> = Promise.resolve();
+  subtestChain: Promise<unknown> = kSettledChain;
+  // The subtests on the chain that are not done, without the todo ones: what Node fails a test for when it cancels them.
+  unfinishedSubtests = 0;
   failedSubtests = 0;
   firstSubtestError: unknown = undefined;
   // First failure from a before hook created while this test was running.
@@ -1651,6 +1669,11 @@ class TestNode {
   // inline subtests instead of bun:test registrations.
   isRunning(): boolean {
     return (this.started && !this.finished) || this.isExecutionPhase;
+  }
+
+  // True when the result of a test is in. Its afterEach and after hooks run then, and `finished` follows them.
+  hasResult(): boolean {
+    return this.passed || this.error !== null;
   }
 }
 
@@ -2295,6 +2318,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   const ctx = node.getCtx();
   const ancestors = ancestorChain(node);
   let failure: unknown;
+  let subtestsFailure: unknown;
 
   // Node applies the plan option before the beforeEach hooks run, and only for a
   // truthy count, so `{ plan: 0 }` installs no plan at all (test.js:1313-1315).
@@ -2362,18 +2386,13 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       node.plan?.cancel();
     }
 
-    const { failedSubtests, firstSubtestError } = node;
+    const { failedSubtests } = node;
     if (failure === undefined && failedSubtests > 0) {
-      const error = makeTestFailure(
-        `${failedSubtests} subtest${failedSubtests > 1 ? "s" : ""} failed`,
-        "subtestsFailed",
-      );
-      if (firstSubtestError !== undefined) {
-        (error as { cause?: unknown }).cause = firstSubtestError;
-      }
-      failure = error;
+      failure = subtestsFailure = makeSubtestsFailure(failedSubtests, node.firstSubtestError);
     }
   }
+  // A failed body phase did not wait for its subtests. What the hooks create does not queue after them.
+  if (failure !== undefined) node.subtestChain = kSettledChain;
 
   const bodyFailure = failure;
   failure = applyExpectFailure(node, failure);
@@ -2384,9 +2403,6 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   // pass()/fail() precede afterEach).
   node.passed = failure === undefined;
   node.error = failure ?? (acceptedXfail ? bodyFailure : null);
-  // Mark finished before hooks so a late t.test() from an after/afterEach
-  // hook hits addTest()'s parentAlreadyFinished path (Node cancels these).
-  node.finished = true;
 
   for (let i = ancestors.length - 1; i >= 0; i--) {
     const ancestor = ancestors[i];
@@ -2399,13 +2415,39 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     }
   }
 
-  for (const hook of node.hooks.after) {
-    try {
-      await runHook(hook, node, ctx);
-    } catch (err) {
-      if (!acceptedXfail) failure ??= err;
+  // Node finishes a test after its hooks (finalize()). The hooks and the wait take turns: each can add to the other.
+  const { after } = node.hooks;
+  let afterIndex = 0;
+  let waited = false;
+  for (;;) {
+    for (; afterIndex < after.length; afterIndex++) {
+      try {
+        await runHook(after[afterIndex], node, ctx);
+      } catch (err) {
+        if (!acceptedXfail) failure ??= err;
+      }
+    }
+    if (node.subtestChain === kSettledChain) break;
+    waited = true;
+    if (!(await subtestsSettleAtOnce(node))) {
+      // Node cancels what is not finished at this point. A test fails for a subtest, and not for a hook.
+      node.subtestChain = kSettledChain;
+      const { unfinishedSubtests } = node;
+      if (unfinishedSubtests > 0) {
+        node.unfinishedSubtests = 0;
+        node.failedSubtests += unfinishedSubtests;
+        node.firstSubtestError ??= cancelledByParentFailure();
+      }
     }
   }
+  if (waited && !acceptedXfail) {
+    failure ??= node.hookFailure;
+    const { failedSubtests } = node;
+    if (failedSubtests > 0 && (failure === undefined || failure === subtestsFailure)) {
+      failure = makeSubtestsFailure(failedSubtests, node.firstSubtestError);
+    }
+  }
+  node.finished = true;
 
   try {
     node.mockTracker?.reset();
@@ -2420,6 +2462,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
 }
 
 function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo: boolean): Promise<undefined> {
+  if (!ownTodo) parent.unfinishedSubtests++;
   const run = async () => {
     if (child.options.skip) {
       child.finished = true;
@@ -2440,6 +2483,7 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo:
       parent.failedSubtests++;
       parent.firstSubtestError ??= failure;
     }
+    if (!ownTodo && parent.unfinishedSubtests > 0) parent.unfinishedSubtests--;
   };
   const result = (parent.subtestChain = parent.subtestChain.then(run));
   return result.then(() => undefined);
@@ -2461,12 +2505,22 @@ async function drainSubtestChain(node: TestNode) {
       // Failures are tracked through failedSubtests.
     }
   } while (chain !== node.subtestChain);
+  node.subtestChain = kSettledChain;
+}
+
+// False when the subtest chain of a node needs more than the microtasks that are left to settle: a timer, or I/O.
+function subtestsSettleAtOnce(node: TestNode) {
+  const { promise, resolve } = Promise.withResolvers<boolean>();
+  nextTick(resolve, false);
+  drainSubtestChain(node).then(() => resolve(true));
+  return promise;
 }
 
 function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown, ownTodo: boolean): Promise<undefined> {
   // A describe()/suite() created while a test is running becomes a suite
   // subtest: its children were collected eagerly when the callback ran and are
   // already chained on the suite's own subtestChain; failures roll up here.
+  if (!ownTodo) parent.unfinishedSubtests++;
   const run = async () => {
     if (build !== undefined) {
       try {
@@ -2504,14 +2558,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
         type: "suite",
         tags: suite.tags,
         todo: suite.todoFlag ? (suite.message ?? true) : undefined,
-        error: suite.passed
-          ? undefined
-          : serializeRunError(
-              makeTestFailure(
-                `${suite.failedSubtests} subtest${suite.failedSubtests > 1 ? "s" : ""} failed`,
-                "subtestsFailed",
-              ),
-            ),
+        error: suite.passed ? undefined : serializeRunError(makeSubtestsFailure(suite.failedSubtests, undefined)),
       });
     }
     // A todo suite's failures do not fail the owning test (Node).
@@ -2519,6 +2566,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
       parent.failedSubtests++;
       parent.firstSubtestError ??= suite.firstSubtestError;
     }
+    if (!ownTodo && parent.unfinishedSubtests > 0) parent.unfinishedSubtests--;
   };
   const result = (parent.subtestChain = parent.subtestChain.then(run));
   return result.then(() => undefined);
@@ -2587,6 +2635,11 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
   };
 }
 
+// A finished node takes no subtest. A test whose hooks run takes one from t.test() only, as on Node.
+function takesNoSubtest(node: TestNode, executionParent: TestNode | undefined) {
+  return node.finished || (executionParent === undefined && node.hasResult());
+}
+
 function addTest(
   arg0: unknown,
   arg1: unknown,
@@ -2599,7 +2652,7 @@ function addTest(
 
   const runningNode = executionParent ?? currentNode();
   if (runningNode !== undefined) {
-    if (runningNode.finished) {
+    if (takesNoSubtest(runningNode, executionParent)) {
       // t.test() escaped its parent: Node fails the late subtest but resolves
       // the promise; don't fall through to bun:test's internal-phase throw.
       return Promise.resolve(undefined);
@@ -2698,7 +2751,7 @@ function addSuite(
   const { ownTags } = validateTestOptions(options);
 
   const runningNode = executionParent ?? currentNode();
-  if (runningNode !== undefined && runningNode.finished) {
+  if (runningNode !== undefined && takesNoSubtest(runningNode, executionParent)) {
     return Promise.resolve(undefined);
   }
   if (runningNode !== undefined && runningNode.isRunning()) {

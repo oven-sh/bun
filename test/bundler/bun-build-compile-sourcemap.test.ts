@@ -305,4 +305,64 @@ main();`,
     // Verify it failed (the error was thrown)
     expect(exitCode).not.toBe(0);
   });
+
+  // An executable prints the `sources` of its maps as they are, so a chunk in
+  // a directory has the base of the chunk at the root: the outdir of
+  // Bun.build, the working directory of the CLI.
+  describe("the sources of a chunk in a directory", () => {
+    const files = {
+      "proj/main.ts": `console.log("main");`,
+      "proj/a/deep/worker.ts": `import { where } from "./where";\nconsole.log(where);`,
+      "proj/a/deep/where.ts": `export const where = "a/deep";`,
+    };
+    const sourcesIn = async (folder: string) => {
+      const sources: Record<string, string[]> = {};
+      for (const map of new Bun.Glob("*.map").scanSync({ cwd: folder })) {
+        sources[map] = (await Bun.file(join(folder, map)).json()).sources;
+      }
+      return sources;
+    };
+
+    test("Bun.build with an outdir", async () => {
+      using dir = tempDir("build-compile-sourcemap-chunk-in-directory-api", files);
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "proj", "main.ts"), join(String(dir), "proj", "a", "deep", "worker.ts")],
+        compile: { outfile: "app" },
+        outdir: join(String(dir), "out"),
+        sourcemap: "external",
+      });
+      expect(result.success).toBe(true);
+      expect(await sourcesIn(join(String(dir), "out"))).toEqual({
+        "app.map": ["../proj/main.ts"],
+        "worker.js.map": ["../proj/a/deep/where.ts", "../proj/a/deep/worker.ts"],
+      });
+    });
+
+    test("bun build --compile", async () => {
+      using dir = tempDir("build-compile-sourcemap-chunk-in-directory-cli", files);
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          "--compile",
+          "--sourcemap=external",
+          "./proj/main.ts",
+          "./proj/a/deep/worker.ts",
+          "--outfile",
+          join("out", "app"),
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(await sourcesIn(join(String(dir), "out"))).toEqual({
+        "app.map": ["proj/main.ts"],
+        "worker.js.map": ["proj/a/deep/where.ts", "proj/a/deep/worker.ts"],
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
 });

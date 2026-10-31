@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
+import path from "node:path";
 import { SourceMapConsumer, type RawSourceMap } from "source-map";
 
 describe("compile --target=browser", () => {
@@ -663,6 +664,55 @@ console.log(greet("world"));`,
       const html = await result.outputs[0].text();
       expect(html).toContain("//# sourceMappingURL=data:application/json;base64,");
     });
+
+    // A `sources` entry is relative to the directory of the file that carries
+    // the map. An inline map is in the HTML file with its script, wherever the
+    // chunk naming would put the script. A linked map is a file of its own.
+    test.each(["inline", "linked"] as const)(
+      "the sources of the %s map resolve from the file that carries it",
+      async sourcemap => {
+        const page = (script: string) =>
+          `<!DOCTYPE html><html><body><script type="module" src="./${script}"></script></body></html>`;
+        using dir = tempDir(`compile-browser-sourcemap-sources-${sourcemap}`, {
+          "pages/root.html": page("root.ts"),
+          "pages/root.ts": `console.log("root");`,
+          "pages/a/deep/deep.html": page("deep.ts"),
+          "pages/a/deep/deep.ts": `console.log("deep");`,
+        });
+
+        const result = await Bun.build({
+          root: `${dir}/pages`,
+          entrypoints: [`${dir}/pages/root.html`, `${dir}/pages/a/deep/deep.html`],
+          compile: true,
+          target: "browser",
+          outdir: `${dir}/dist`,
+          naming: { chunk: "js/[name]-[hash].[ext]" },
+          sourcemap,
+        });
+        expect(result.success).toBe(true);
+
+        // Where the sources of each map resolve to from the directory of its carrier.
+        const fromDir = (file: string) => path.relative(String(dir), file).replaceAll("\\", "/");
+        const resolved: Record<string, string[]> = {};
+        for (const output of result.outputs) {
+          const text = await output.text();
+          const inline = text.match(/\/\/# sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/=]+)/);
+          if (output.kind !== "sourcemap" && !inline) continue;
+          const map = JSON.parse(output.kind === "sourcemap" ? text : atob(inline![1]));
+          resolved[fromDir(output.path).replace(/-[0-9a-z]+\.js\.map$/, "-[hash].js.map")] = map.sources.map(
+            (source: string) => fromDir(path.resolve(path.dirname(output.path), source)),
+          );
+        }
+        expect(resolved).toEqual(
+          sourcemap === "inline"
+            ? { "dist/root.html": ["pages/root.ts"], "dist/a/deep/deep.html": ["pages/a/deep/deep.ts"] }
+            : {
+                "dist/js/root-[hash].js.map": ["pages/root.ts"],
+                "dist/js/deep-[hash].js.map": ["pages/a/deep/deep.ts"],
+              },
+        );
+      },
+    );
 
     // Standalone HTML is assembled in two passes: each script and stylesheet
     // chunk is resolved on its own first (asset references become data: URIs,

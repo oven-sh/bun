@@ -55,6 +55,38 @@ describe.concurrent("bun build --dts", () => {
     expect(readFileSync(join(String(dir), "package.json"), "utf8")).toBe(project["package.json"]);
   });
 
+  // The typed file of a chunk takes each module from the `sources` of the
+  // chunk's source map, which are relative to the chunk's directory.
+  test("a chunk in a directory below the outdir keeps the types of its own modules", async () => {
+    using dir = tempDir("build-dts-chunk-in-directory", {
+      "tsconfig.json": project["tsconfig.json"],
+      "package.json": project["package.json"],
+      "src/index.ts": `export { util } from "./util";\n`,
+      "src/util.ts": `export interface Options {
+  n: number;
+}
+export function util(options: Options): string {
+  return String(options.n);
+}
+`,
+      "src/sub/index.ts": `export { util } from "../util";
+export { util as subUtil } from "./util";
+`,
+      "src/sub/util.ts": `export interface Flagged {
+  n: string;
+}
+export function util(options: Flagged): string {
+  return options.n;
+}
+`,
+    });
+    const built = await bun(String(dir), "build", "./src/index.ts", "./src/sub/index.ts", "--outdir", "src", "--dts");
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(readFileSync(join(String(dir), "src/sub/index.aot.ts"), "utf8")).toContain(
+      "function util(options: Options): string {",
+    );
+  });
+
   test.each([
     ["says nothing", undefined, true],
     ["says something else", { strict: true }, true],

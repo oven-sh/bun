@@ -1736,27 +1736,54 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             true => self.expression_allowing_in(),
             false => self.expression(),
         };
-        if self.token() == T::Colon
-            && expression.idx() + 1 == self.f.exprs.len()
-            && let Some(&Expr {
+        if self.token() == T::Colon && expression.idx() + 1 == self.f.exprs.len() {
+            if let Some(&Expr {
                 kind: ExprKind::Ident(label),
                 pos,
                 end,
             }) = self.f.exprs.last()
-            && pos == start.pos
-        {
-            self.pop_expr();
-            self.finish_name(pos, end);
-            self.next();
-            let body = self.embedded_statement();
-            self.f.rare_syntax |= rare::ODD_JUMP;
-            return self.add_stmt(StmtKind::Labeled { label, body }, start, Span::EMPTY);
+                && pos == start.pos
+            {
+                self.pop_expr();
+                self.finish_name(pos, end);
+                self.next();
+                let body = self.embedded_statement();
+                self.f.rare_syntax |= rare::ODD_JUMP;
+                return self.add_stmt(StmtKind::Labeled { label, body }, start, Span::EMPTY);
+            }
+            // `expression.Kind == ast.KindIdentifier` holds for a missing identifier too: a label without a name.
+            if self.recovers()
+                && self.options.dialect == Default::default()
+                && self.pos() == start.pos
+                // The emulation of tsc's second parse of a top-level `await` statement isn't exact in list recovery.
+                && !self.has_await_in_statement
+            {
+                return self.label_without_name(start);
+            }
         }
         // `parseSemicolon`
         if !self.eat_semicolon() && !self.can_parse_semicolon() {
             return self.statement_without_semicolon(start, expression);
         }
         self.add_stmt(StmtKind::Expr(expression), start, Span::EMPTY)
+    }
+
+    /// `parseExpressionOrLabeledStatement`, at the `:` after a missing identifier, which is the last expression.
+    #[cold]
+    #[inline(never)]
+    fn label_without_name(&mut self, start: Start) -> StmtId {
+        self.pop_expr();
+        self.next();
+        // `isFileProbablyExternalModule`: a statement of the file makes it a module, not an `import` or `export` body.
+        let was_module = self.f.has_module_syntax;
+        let body = self.embedded_statement();
+        self.f.has_module_syntax = was_module;
+        self.f.rare_syntax |= rare::ODD_JUMP;
+        let kind = StmtKind::Labeled {
+            label: known::empty,
+            body,
+        };
+        self.add_stmt(kind, start, Span::EMPTY)
     }
 
     /// The current token can't follow the expression statement `expression`.

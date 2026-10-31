@@ -18874,5 +18874,37 @@
       "script.d.ts": "declare global {\n    var insideTheBlock: number;\n}\ndeclare module \"an-ambient-module\" {\n    export const value: number;\n}\ndeclare var besideTheBlock: number;\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"target\": \"esnext\", \"lib\": [\"esnext\"] } }\n"
     }
+  },
+  "colon-where-the-body-of-an-if-a-loop-or-a-label-has-to-start": {
+    "files": {
+      "a.ts": "declare const a: boolean;\nif (a) :: a;\nfor (let i = 0; i :: < 1; i++) {}\ndo :: a; while (a);\nwhile (a) : : a;\nif (a) : a; else a;\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"target\": \"esnext\", \"lib\": [\"esnext\"] } }\n"
+    }
+  },
+  "label-without-a-name-in-functions-of-a-referenced-project": {
+    "files": {
+      "app/b.ts": "import { g, h, i } from \"../lib/a\";\nexport const x1: boolean = g(true);\nexport const x2: boolean = h(true);\nexport const x3: boolean = i(true);\n",
+      "app/tsconfig.json": "{ \"compilerOptions\": { \"composite\": true, \"strict\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"lib\": [\"esnext\"], \"types\": [], \"outDir\": \"out\" }, \"files\": [\"b.ts\"], \"references\": [{ \"path\": \"../lib\" }] }\n",
+      "lib/a.ts": "export function g(a: boolean) { if (a): return 1; }\nexport function h(a: boolean) { do : { break : ; return 1; } while (a); }\nexport function i(a: boolean) { do : { break x; return 1; } while (a); }\n",
+      "lib/tsconfig.json": "{ \"compilerOptions\": { \"composite\": true, \"strict\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"lib\": [\"esnext\"], \"types\": [], \"outDir\": \"out\" }, \"files\": [\"a.ts\"] }\n",
+      "tsconfig.json": "{ \"files\": [], \"references\": [{ \"path\": \"./lib\" }, { \"path\": \"./app\" }] }\n"
+    },
+    "build": true
+  },
+  "label-without-a-name-before-an-export-in-a-referenced-project": {
+    "files": {
+      "down/b.ts": "import { q } from \"../up/a\";\nexport const r: string = q;\n",
+      "down/tsconfig.json": "{ \"compilerOptions\": { \"composite\": true, \"strict\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"lib\": [\"esnext\"], \"types\": [], \"outDir\": \"out\" }, \"files\": [\"b.ts\"], \"references\": [{ \"path\": \"../up\" }] }\n",
+      "tsconfig.json": "{ \"files\": [], \"references\": [{ \"path\": \"./up\" }, { \"path\": \"./down\" }] }\n",
+      "up/a.ts": "declare const a: boolean;\nif (a) : export const q = 1;\n",
+      "up/tsconfig.json": "{ \"compilerOptions\": { \"composite\": true, \"strict\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"lib\": [\"esnext\"], \"types\": [], \"outDir\": \"out\" }, \"files\": [\"a.ts\"] }\n"
+    },
+    "build": true
+  },
+  "label-without-a-name-before-an-export-with-isolated-declarations": {
+    "files": {
+      "a.ts": "declare const a: boolean;\ndeclare function f(): number;\nexport const before = 1;\nif (a) : export const q = f();\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"declaration\": true, \"isolatedDeclarations\": true, \"types\": [], \"target\": \"esnext\", \"lib\": [\"esnext\"] } }\n"
+    }
   }
 }

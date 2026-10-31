@@ -475,6 +475,24 @@ export const copy = value;
     });
 }
 
+#[test]
+fn unused_label_without_a_name_is_reported_at_an_empty_range() {
+    let tsconfig = r#"{
+        "compilerOptions": { "strict": true, "noLib": true, "types": [], "allowUnusedLabels": false }
+    }"#;
+    let text = "declare const a: boolean;\nif (a) : a;\nnamed: a;\n";
+    let files = [("tsconfig.json", tsconfig), ("main.ts", text)];
+    with_program(&files, &["./main.ts"], 1, |program| {
+        let build = check_only(program);
+        let unused = build.diagnostics().filter(|it| it.diagnostic.code == 7028);
+        let ranges: Vec<(u32, u32)> = unused
+            .map(|it| (it.diagnostic.start, it.diagnostic.end))
+            .collect();
+        // As in TypeScript's API: the missing name is empty, where the `)` ends. The other range is `named`.
+        assert_eq!(ranges, [(32, 32), (38, 43)]);
+    });
+}
+
 const GLOBAL_TYPES_WITHOUT_REGEXP: &str =
     "interface Array<T> { length: number; [index: number]: T }
 interface Boolean {}

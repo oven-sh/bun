@@ -1649,7 +1649,12 @@ impl<'s> Checker<'_, 's> {
                 if self.module_options(file).allow_unused_labels == Some(false)
                     && bound.unused_labels.contains(&s)
                 {
-                    self.error_at(self.span_of_token(file, hir[s].start), 7028, &[]);
+                    // `GetErrorRangeForNode`: a missing identifier is empty, at its `node.Pos()`.
+                    let at = match label == known::empty {
+                        true => (file, hir[s].loc.pos, hir[s].loc.pos),
+                        false => self.span_of_token(file, hir[s].start),
+                    };
+                    self.error_at(at, 7028, &[]);
                 }
                 self.check_source_element(file, body);
             }

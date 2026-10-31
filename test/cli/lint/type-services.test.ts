@@ -93,6 +93,26 @@ test.concurrent("the inner part of a dotted namespace is a namespace whatever it
   expect(exitCode).toBe(0);
 });
 
+// tsc reads the `:` as a label without a name, whose body is the `return`. So `g` can end without a value.
+test.concurrent("a function of a file with a syntax error has the type that tsc's tree gives it", async () => {
+  const { errors, exitCode } = await lint(
+    {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { ...options, strict: true, module: "esnext", moduleResolution: "bundler", noEmit: true },
+      }),
+      "a.ts": "export function g(a: boolean) { if (a): return 1; }\n",
+      "b.ts":
+        'import { g } from "./a";\nconst v = g(true);\nif (v !== undefined) { void v; }\n' +
+        "export const w = v as number;\nexport const q = v || 0;\n",
+    },
+    [...rule("no-unnecessary-condition", "no-unnecessary-type-assertion", "prefer-nullish-coalescing"), "b.ts"],
+  );
+  expect(errors).toEqual([
+    "5:20 Prefer using nullish coalescing operator (`??`) instead of a logical or (`||`), as it is a safer operator.",
+  ]);
+  expect(exitCode).toBe(1);
+});
+
 describe("`export *` from a package that the file also requires, and that has other types for `require`", () => {
   const names = Array.from({ length: 12 }, (_, i) => `dual-${i + 1}`);
   const files = {

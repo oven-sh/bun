@@ -205,12 +205,12 @@ for (const row of collectsMore.slice(0, Number(options.rows))) console.log(line(
 const holdsMore = whole.filter(row => most(row, cost => cost.peakMegabytes) > 1.3 * row.jit.peakMegabytes + 8);
 console.log(`\n${holdsMore.length} hold over 1.3 times what the JIT holds\n${heading}`);
 for (const row of holdsMore.slice(0, Number(options.rows))) console.log(line(row));
-const grows = (cost: Cost) => cost.peakMegabytes > 1.5 * cost.peakMegabytesOfAQuarter + 8;
+const grows = (cost: Cost) => cost.peakMegabytes > 1.5 * cost.peakMegabytesOfShortRun + 8;
 const growsWithTurns = whole.filter(row => (grows(row.typed) || grows(row.untyped)) && !grows(row.jit));
 console.log(
-  `\n${growsWithTurns.length} hold more the longer they run, and under the JIT do not: most MB resident at a quarter of the turns > at all of them: typed, untyped, JIT`,
+  `\n${growsWithTurns.length} hold more the longer they run, and under the JIT do not: most MB resident in the short run of a reading > in the long one: typed, untyped, JIT`,
 );
 for (const row of growsWithTurns.slice(0, Number(options.rows)))
   console.log(
-    `  ${[row.typed, row.untyped, row.jit].map(cost => `${cost.peakMegabytesOfAQuarter.toFixed(0).padStart(5)} > ${cost.peakMegabytes.toFixed(0).padStart(5)}`).join("  |")}  ${row.name}`,
+    `  ${[row.typed, row.untyped, row.jit].map(cost => `${cost.peakMegabytesOfShortRun.toFixed(0).padStart(5)} > ${cost.peakMegabytes.toFixed(0).padStart(5)}`).join("  |")}  ${row.name}`,
   );

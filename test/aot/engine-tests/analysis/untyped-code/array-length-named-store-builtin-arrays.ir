@@ -154,18 +154,13 @@ function f39 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f40 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 # -- generated: setLength f15 f19
 # CHECK-LABEL: function {{*}}name="setLength"
-# CHECK: module=m0 position=444 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=null|boolean|number|string|object}, {type=int[0, 2]}] results=[{type=null|boolean|number|string|object}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: null|boolean|number|string|object, v1: int[0, 2]):
-# CHECK-NEXT: PropSet v0, v1 key="length" accessSite=21
-# CHECK-NEXT: Return v0
-# CHECK-NEXT: }
+# CHECK: module=m0 position=444 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=null|boolean|number|string|object}, {type=int[0, 2]}] results=[{type=null|boolean|number|string|object}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f15 name=
 # CHECK: "a concat" module=m0 position=1304 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=Array<"written", proven, pristine[Storage, Names]>}] functionTypes=[f34] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f48} {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: undefined = CallDirect function=f48
-# CHECK-NEXT: v1: Array<never> = NewArray contents=never @1304 tail
-# CHECK-NEXT: v2: Array<"written", proven, pristine[Storage, Names]> = AssumeType v1 provenType=Array<"written", proven, pristine[Storage, Names]>
-# CHECK-NEXT: Return v2
+# CHECK-NEXT: v0: Array<never> = NewArray contents=never @1304 tail
+# CHECK-NEXT: v1: Array<"written", proven, pristine[Storage, Names]> = AssumeType v0 provenType=Array<"written", proven, pristine[Storage, Names]>
+# CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f19 name=
 # CHECK: "parsed, empty" module=m0 position=1476 kind=Arrow thisType={type=anything} results=[{type=null|boolean|number|string|object}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

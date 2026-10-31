@@ -158,7 +158,7 @@ class Parent {
 // CHECK-NEXT: Return v14
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 captures=[{type=undefined|null|string|symbol site=[[w_8]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_9]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 captures=[{type=undefined|null|string|symbol site=[[w_8]] flags=[OmitsNull, OmitsUndefined] variableName="name"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_9]]] {
 // CHECK-NEXT: b0(v0: undefined|null|string|symbol, v1: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

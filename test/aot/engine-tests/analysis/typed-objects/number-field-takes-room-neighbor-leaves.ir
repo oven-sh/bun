@@ -402,8 +402,8 @@ function f6 module=m0 position=2335 kind=Arrow flags=[IsChecked] length=2 captur
 }
 function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f8]
 function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f9 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f10 name="forEach" module=m2 position=3958 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=43 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f9 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f10 name="forEach" module=m2 position=3958 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeForEach thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = ToObject v0 message="Array.prototype.forEach requires that |this| not be null or undefined"
     v4 = PropGet v3 key="length"
@@ -442,12 +442,12 @@ function f10 name="forEach" module=m2 position=3958 kind=Method role=Library fla
     v33 = Undefined
     Return v33
 }
-runtimefunction id=43 function=f10
-runtimefunction id=68 function=f9
+runtimefunction id=ArrayPrototypeForEach function=f10
+runtimefunction id=ArrayIteratorPrototypeNext function=f9
 # -- generated: f0 putIntoFull putIntoRoomy putIntoWritten textOf look f6
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 1605, patchpoints: 167, rare instructions: 1488, polls: 14
+# CHECK-NEXT: instructions: 563, patchpoints: 75, rare instructions: 750, polls: 8
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="putIntoFull"
 # CHECK: role=EntryChecks
@@ -487,11 +487,11 @@ runtimefunction id=68 function=f9
 # CHECK-NEXT: end of function f18
 # CHECK-LABEL: function {{*}}name="textOf"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 31, patchpoints: 2, rare instructions: 15
+# CHECK-NEXT: instructions: 15, patchpoints: 2, rare instructions: 11
 # CHECK-NEXT: end of function f4
 # CHECK-LABEL: function {{*}}name="look"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 249, patchpoints: 20, rare instructions: 132, polls: 1
+# CHECK-NEXT: instructions: 270, patchpoints: 9, rare instructions: 132, polls: 1
 # CHECK-NEXT: end of function f5
 # CHECK-LABEL: function f6 role=
 # CHECK: EntryChecks

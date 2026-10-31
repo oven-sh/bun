@@ -40,7 +40,8 @@ pub use state::UnitIds;
 pub use unit::LinkUnit;
 
 use crate::builtins::RuntimeFunction;
-use crate::ir::{InParallel, Program, drop_each, for_each_mut};
+use crate::ir::generated::{ModuleFlags, VariableFlags};
+use crate::ir::{Id, InParallel, Program, drop_each, for_each_mut};
 use crate::load::{PerProject, ProgramFile, ProjectId, SourceKind, Sources};
 use crate::modules::{ModuleGraph, Shape};
 use crate::statistics::{Counters, LimitId, LimitValues, StatisticId};
@@ -53,7 +54,7 @@ use definitions::{
 };
 use keys::merge_keys;
 use marks::mark;
-use module_records::{RecordInput, build_module_records};
+use module_records::{RecordInput, RecordProgress, build_module_records};
 use module_table::{collect_module_origins, collect_modules};
 use move_definitions::{MoveInput, move_definitions};
 use numbering::{ProgramDefinitions, number_program};
@@ -129,6 +130,10 @@ pub enum LinkError {
     MissingUnit {
         file: ProgramFile,
     },
+    MissingRecord {
+        module: ProgramModule,
+        named_by: Option<ProgramModule>,
+    },
     TypeHashCollision {
         files: [ProgramFile; 2],
     },
@@ -163,6 +168,7 @@ pub fn link_while(
     let atoms = &projects.application.loaded.files().atoms;
     let mut times = StepTimes::new();
     let mut units = order_units(units, &projects)?;
+    for_each_mut(&mut units, in_parallel, &LinkUnit::index);
     check_limits(&units, &projects, limits)?;
     let ((modules, synthetic_exports), (functions, layouts)) = run_beside(
         beside,
@@ -180,6 +186,42 @@ pub fn link_while(
         },
     );
     forget_library_layouts_without_definition(&mut units, &layouts);
+    if crate::statistics::logs_stages() {
+        let definitions = || units.iter().flat_map(|unit| &unit.layout_definitions);
+        let mut defined: Vec<u32> = (units.iter().zip(&layouts.local_to_merged))
+            .flat_map(|(unit, merged)| {
+                let ids = unit.layout_definitions.iter();
+                ids.map(|(id, _)| merged[id.index()])
+            })
+            .collect();
+        defined.sort_unstable();
+        defined.dedup();
+        // Several types go by one layout, and each has a definition. Two definitions of one type for one layout say the same.
+        let mut of_types: Vec<_> = (units.iter().zip(&layouts.local_to_merged))
+            .flat_map(|(unit, merged)| {
+                unit.object_types.iter().map(|&(definition, ty)| {
+                    let (id, layout) = &unit.layout_definitions[definition as usize];
+                    (merged[id.index()], ty, layout.fields.len())
+                })
+            })
+            .collect();
+        let of_types_count = of_types.len();
+        let fields_of_types: usize = of_types.iter().map(|it| it.2).sum();
+        of_types.sort_unstable();
+        of_types.dedup_by_key(|it| (it.0, it.1));
+        bun_core::print_errorln!(
+            "AOT link | units {} | layout definitions {} with {} fields | for {} layouts | keys named {} | of object types {} with {} fields, without those that say the same {} with {} fields",
+            units.len(),
+            definitions().count(),
+            definitions().map(|(_, it)| it.fields.len()).sum::<usize>(),
+            defined.len(),
+            layouts.keys.len(),
+            of_types_count,
+            fields_of_types,
+            of_types.len(),
+            of_types.iter().map(|it| it.2).sum::<usize>(),
+        );
+    }
     let mut variable_lists = collect_key_lists(&units, |unit| &unit.variables);
     variable_lists.push(&synthetic_exports);
     let variables = merge_keys(&variable_lists, in_parallel);
@@ -314,6 +356,7 @@ pub fn link_while(
                         variables: &variables,
                         definitions: &definitions,
                         numbering: &numbering,
+                        progress: RecordProgress::default(),
                     },
                     &mut strings,
                 )
@@ -321,6 +364,7 @@ pub fn link_while(
             run_beside(beside, build_records, || meanwhile(&keys)).0
         },
     );
+    let records = records.map_err(|error| vec![error])?;
     let module_origins = collect_module_origins(&projects, &modules, &numbering);
     let mut writes_preload = false;
     run_beside(
@@ -344,6 +388,14 @@ pub fn link_while(
     );
     times.end_step(StatisticId::LinkMoveDefinitionsNanoseconds);
 
+    // A mock stores its object as what a CommonJS file exports.
+    for module in &records.modules {
+        if let Some(exports) = module.exports_variable
+            && module.flags.contains(ModuleFlags::MAY_BE_MOCKED)
+        {
+            tables.variables[exports.to_word() as usize].flags |= VariableFlags::IS_REPLACEABLE;
+        }
+    }
     let functions_by_unit = core::mem::take(&mut tables.functions_by_unit);
     let body_remap = BodyRemap::new(core::mem::take(&mut numbering.units), functions_by_unit);
     let program = Program {
@@ -356,12 +408,16 @@ pub fn link_while(
         variables: tables.variables,
         modules: records.modules,
         module_failures: records.module_failures,
+        ambiguous_exports: records.ambiguous_exports,
+        source_stamps: Vec::new(),
         eval_scopes: tables.eval_scopes,
         functions: Vec::new(),
         data: tables.data,
         entries: records.entries,
         runtime_functions: records.runtime_functions,
         web_assembly_modules: records.web_assembly_modules,
+        replaceable_builtins: Vec::new(),
+        opened_names: Vec::new(),
     };
     count_definitions(&definitions, &retained, &mut times.counters);
     count_module_forms(&projects, &modules, &mut times.counters);
@@ -391,7 +447,7 @@ fn compiled_files(projects: &Projects<'_, '_>) -> Vec<ProgramFile> {
         let compiled = projects.get(project).loaded.files().compiled_files().iter();
         let first = files.len();
         files.extend(compiled.map(|&file| ProgramFile { project, file }));
-        files[first..].sort_unstable();
+        files[first..].shared_sort_unstable();
     }
     files
 }

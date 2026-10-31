@@ -1,9 +1,9 @@
 // Arrays and `arguments` objects that stubs allocate (literals, empty arrays of a fixed, requested or learned capacity, arrays of holes, slices, copies), and `includes` and `indexOf` by stub: every fast path, every case that goes to the runtime, free lists that run out, and all of it again once arrays may inherit elements.
 // CALLS+ mixedLiterals ArrayLiteral\.n4
 // CALLS+ doubleLiterals ArrayLiteralWithDouble\.n4
-// CALLS+ doubleLiterals NewEmptyArray\.
+// CALLS+ doubleLiterals NewEmptyArrayAtSite\.Double
 // CALLS+ filledConditionally NewEmptyArrayAtSite
-// CALLS+ numbersFilledConditionally NewArrayWithLength
+// CALLS+ numbersFilledConditionally NewEmptyArrayAtSite\.Double
 // CALLS+ checkSlices ArraySlice
 // CALLS+ captureStrict CreateArguments
 // CALLS+ searchStrings ArraySearch

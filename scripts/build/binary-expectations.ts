@@ -385,11 +385,13 @@ function symbolsOfIRText(cfg: Config): string[] | undefined {
     "*3JSC3AOT5Typed9printType*",
     "*3JSC3AOT5Typed11printString*",
     "*3JSC3AOT5Typed16printPropertyKey*",
+    "*builtinTableRuntimeFunctionTokens*",
     "*7bun_aot2ir5print*",
     "*7bun_aot2ir10print_body*",
     "*7bun_aot2ir11print_names*",
     "*7bun_aot2ir9generated10entry_text*",
     "*7bun_aot2ir9generated11record_text*",
+    "*RUNTIME_FUNCTION_TOKENS*",
   ];
 }
 

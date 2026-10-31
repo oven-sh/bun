@@ -15,7 +15,7 @@ use bun_sema_driver::host::{Disk, to_native};
 use bun_sema_parser::{CompileParseOptions, parse_for_compile};
 use bun_threading::Guarded;
 
-use crate::builtins::{BuiltinNames, Platforms};
+use crate::builtins::{BuiltinNames, Platforms, ReplacedMembersSought};
 use crate::compile::runtime_reach::{LoadInput, ReachWhileLoading};
 use crate::diagnostics::LoadMessages;
 use crate::load::builtin_uses::{self, BuiltinUseInput};
@@ -32,6 +32,8 @@ pub(crate) struct RuntimeHost<'a> {
     pub runtime_modules: &'a RuntimeModules,
     pub builtin_names: &'a BuiltinNames,
     pub platform: Platforms,
+    /// `LoadOptions::replaced_builtins`.
+    pub replaced_builtins: &'a [u32],
     pub messages: &'a LoadMessages,
     pub unreadable: Guarded<Vec<Vec<u8>>>,
     pub manifest: &'static Manifest,
@@ -204,6 +206,9 @@ impl CodeHost for RuntimeHost<'_> {
         let input = BuiltinUseInput {
             names: self.builtin_names,
             platform: self.platform,
+            replaced: self.replaced_builtins,
+            replaced_members_sought: ReplacedMembersSought::None,
+            is_served_by_other_images: false,
         };
         let source = parsed_source_mut(payload);
         builtin_uses::finish_runtime_file(&input, self.runtime_modules, request, source)

@@ -590,6 +590,146 @@ test("session.close() before the handshake ends doesn't wait for a pending HTTP/
   expect(exitCode).toBe(0);
 }, 30_000);
 
+// A stream is pending until lsquic opens it: before the handshake ends, or
+// while the peer's stream limit is used up. A pending stream does not hold a
+// graceful close open.
+describe("session.close() with a stream that is still pending", () => {
+  const GET = { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" };
+  const outcome = (promise: Promise<unknown>) =>
+    promise.then(
+      () => "fulfilled",
+      e => e?.code ?? String(e),
+    );
+  // @types/node does not declare `pending`.
+  const isPending = (stream: object): boolean => (stream as any).pending;
+  // The body of a stream as text. If the read fails, the error code follows the text.
+  const text = async (stream: AsyncIterable<Uint8Array[]>) => {
+    let body = "";
+    try {
+      for await (const batch of stream) for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+    } catch (e: any) {
+      body += `[${e?.code ?? e}]`;
+    }
+    return body;
+  };
+
+  // Raw QUIC sends no GOAWAY. Its close waited for the body of the pending
+  // stream, which cannot leave before the handshake ends.
+  test("before the handshake ends, closes a raw QUIC session at once", async () => {
+    await using cleanup = new AsyncDisposableStack();
+    // Nothing answers on this socket.
+    const silent = await Bun.udpSocket({ hostname: "127.0.0.1" });
+    cleanup.defer(() => silent.close());
+    // An endpoint takes `handshakeTimeout` from its first connect(), so this
+    // session gets an endpoint of its own. No timer can then end the session:
+    // a close that waits for the pending stream does not settle.
+    const endpoint = new QuicEndpoint();
+    cleanup.defer(() => endpoint.destroy());
+    const session = await connect(`127.0.0.1:${silent.port}`, {
+      endpoint,
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer: "manual",
+      handshakeTimeout: 600_000,
+      transportParams: { maxIdleTimeout: 0 },
+    } as SessionOptions);
+    const opened = outcome(session.opened);
+    const stream = await session.createBidirectionalStream({ body: new TextEncoder().encode("hello") });
+    const streamClosed = outcome(stream.closed);
+    const pending = isPending(stream);
+    const closed = outcome(session.close());
+
+    expect({ pending, closed: await closed, opened: await opened, stream: await streamClosed }).toEqual({
+      pending: true,
+      closed: "fulfilled",
+      opened: "ERR_INVALID_STATE",
+      stream: "fulfilled",
+    });
+  });
+
+  // The peer allows two streams. Two requests are open and a third one is
+  // pending when close() runs. close() sends a GOAWAY, waits for the two open
+  // requests, and never opens the third one. No idle timer runs, so a close
+  // that waits for the third request does not settle.
+  test("after the handshake, waits for the open streams and not for one over the peer's stream limit", async () => {
+    await using cleanup = new AsyncDisposableStack();
+    const paths: string[] = [];
+    const firstOnServer = Promise.withResolvers<any>();
+    const server = await listen(
+      serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { initialMaxStreamsBidi: 2, maxIdleTimeout: 0 },
+        async onheaders(this: any, headers: Record<string, any>) {
+          const path = headers[":path"];
+          paths.push(path);
+          this.sendHeaders({ ":status": "200" });
+          if (path === "/first") return firstOnServer.resolve(this);
+          // The answer to the upload is the request body, so it comes after the end of the request.
+          if (path === "/upload") this.writer.writeSync(new TextEncoder().encode(await text(this)));
+          this.writer.endSync();
+        },
+      },
+    );
+    cleanup.defer(() => server.destroy());
+    const client = await connect(server.address!, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 0 },
+    } as SessionOptions);
+    cleanup.defer(() => client.destroy());
+    await client.opened;
+    const firstAnswered = Promise.withResolvers<void>();
+    const uploadAnswered = Promise.withResolvers<void>();
+    const first = await client.createBidirectionalStream({
+      headers: { ...GET, ":path": "/first" },
+      onheaders: () => firstAnswered.resolve(),
+    });
+    const firstClosed = outcome(first.closed);
+    const upload = await client.createBidirectionalStream({ onheaders: () => uploadAnswered.resolve() });
+    const uploadClosed = outcome(upload.closed);
+    upload.sendHeaders({ ...GET, ":method": "POST", ":path": "/upload" });
+    const third = await client.createBidirectionalStream({ headers: { ...GET, ":path": "/third" } });
+    const thirdClosed = outcome(third.closed);
+    const pending = [first, upload, third].map(isPending);
+    // Both requests are answered, so the server has everything the client sent.
+    await Promise.all([firstAnswered.promise, uploadAnswered.promise]);
+
+    const closed = outcome(client.close());
+    // The end of the first request frees a stream at the server. The client
+    // ends its upload after that, and the packet that carries the end
+    // acknowledges the first response. So the stream credit of the server
+    // reaches the client before the answer to the upload.
+    (await firstOnServer.promise).writer.endSync();
+    await firstClosed;
+    upload.writer.writeSync(new TextEncoder().encode("sent after close()"));
+    upload.writer.endSync();
+
+    expect({
+      pending,
+      body: await text(upload),
+      closed: await closed,
+      first: await firstClosed,
+      upload: await uploadClosed,
+      third: await thirdClosed,
+      paths,
+    }).toEqual({
+      pending: [false, false, true],
+      body: "sent after close()",
+      closed: "fulfilled",
+      first: "fulfilled",
+      upload: "fulfilled",
+      third: "fulfilled",
+      paths: ["/first", "/upload"],
+    });
+  });
+});
+
 // `destroy()` sends STOP_SENDING and RESET_STREAM. Once the response is sent and
 // acked, STOP_SENDING finishes the stream and lsquic frees it in the next service
 // pass, so a queued RESET_STREAM packet would point to freed memory.

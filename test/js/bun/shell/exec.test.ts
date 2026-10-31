@@ -78,6 +78,16 @@ describe("bun exec", () => {
     .stdout("")
     .runAsTest("cd with no arguments works");
 
+  TestBuilder.command`${BUN} exec ${'FOO=`echo hi`; echo "[$FOO]"'}`
+    .env(bunEnv)
+    .stdout("[hi]\n")
+    .runAsTest("backtick substitution as an assignment value");
+
+  TestBuilder.command`${BUN} exec ${"echo pre`echo m`post"}`
+    .env(bunEnv)
+    .stdout("prempost\n")
+    .runAsTest("backtick substitution after text");
+
   test("bun works even when not in PATH", async () => {
     const val = await $`bun exec 'bun'`.env({ ...bunEnv, PATH: "" }).nothrow();
     expect(val.stderr.toString()).not.toContain("bun: command not found: bun");

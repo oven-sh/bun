@@ -5,9 +5,11 @@
 // nothing to run: such a case is a program of its own. The shared builds of build-both-ways.ts take plugins of onLoad and
 // onResolve only.
 // ./build-plugins-native/shout.c is built with the system's C compiler against the headers in src/runtime/napi, without node-gyp.
+// Runs alone: one build of CI measures where the time of this file goes on macOS x64. This line and what says TIMES go again.
 import { afterAll, beforeAll, expect } from "bun:test";
-import { rmSync } from "fs";
+import { copyFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { cpus, loadavg, release } from "os";
 import { join, resolve } from "path";
 import { slot, spawned } from "./harness/commands";
 import { describe, test } from "./supported";
@@ -43,6 +45,25 @@ const tsconfig = {
   exclude: ["build.ts"],
 };
 
+// TIMES: each child process says when it started, in ms from the start of the file, and how long it took.
+const began = performance.now();
+const machine = () =>
+  `${process.platform} ${process.arch} ${release()}, ${cpus().length} processors, load ${loadavg()
+    .map(load => load.toFixed(1))
+    .join(" ")}`;
+function says(start: number, what: string) {
+  const ms = (time: number) => String(Math.round(time)).padStart(7);
+  console.error(`TIMES ${ms(start - began)} +${ms(performance.now() - start)} ms  ${what}`);
+}
+async function timed<T>(what: string, work: () => Promise<T>): Promise<T> {
+  const start = performance.now();
+  try {
+    return await work();
+  } finally {
+    says(start, what);
+  }
+}
+
 const systemCC = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 if (!systemCC || isWindows)
   console.error(
@@ -52,8 +73,9 @@ else {
   const folder = String(tempDir("aot-build-plugins-native", {}));
   const addon = join(folder, "shout.node");
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
-  beforeAll(async () => {
-    const compile = await spawned(
+  afterAll(() => says(began, `the whole file, on ${machine()}`));
+  const cc = (output: string) =>
+    spawned(
       [
         systemCC,
         "-shared",
@@ -63,11 +85,14 @@ else {
         "-I" + resolve(import.meta.dir, "../../packages/bun-native-bundler-plugin-api"),
         join(import.meta.dir, "build-plugins-native", "shout.c"),
         "-o",
-        addon,
+        output,
       ],
       folder,
       bunEnv,
     );
+  beforeAll(async () => {
+    console.error(`TIMES on ${machine()}`);
+    const compile = await timed("cc", () => cc(addon));
     expect({ stderr: compile.stderr, exitCode: compile.exitCode }).toEqual({
       stderr: expect.not.stringContaining("error"),
       exitCode: 0,
@@ -147,7 +172,9 @@ build.onLoad({ filter: /napi\\/empty\\.node$/ }, (args: any) => { tell("onLoad",
   // each case were told.
   const buildScript = (program: Case[]) => `const [outfile, how] = process.argv.slice(2);
 const addon = ${JSON.stringify(addon)};
+const began = performance.now();
 const napiModule = require(addon);
+const required = performance.now();
 const told: string[][] = [${program.map(() => "[]").join(", ")}];
 const shown = (value: unknown) => (typeof value === "function" ? "function" : JSON.stringify(value));
 const plugins = [${program
@@ -166,7 +193,7 @@ try {
 } catch (error: any) {
   built = { success: false, messages: ["Bun.build rejected: " + error.message], outputs: [] };
 }
-console.log(JSON.stringify({ ...built, told }));
+console.log(JSON.stringify({ ...built, told, ms: [Math.round(required - began), Math.round(performance.now() - required)] }));
 `;
 
   // A program of several cases starts each in turn, behind a line that names its folder.
@@ -182,24 +209,37 @@ console.log(JSON.stringify({ ...built, told }));
     };
   }
 
-  async function buildAndRun(program: string, how: "plain" | "aot") {
+  async function buildAndRun(program: string, how: "plain" | "aot", label: string) {
     const executable = join(program, how);
-    const build = await spawned([bunExe(), "build.ts", executable, how], program, bunEnv);
-    let answer: { success: boolean; messages: string[]; outputs: string[]; told: string[][] } | undefined;
+    const started = performance.now();
+    const build = await timed(`${label}: build ${how}`, () =>
+      spawned([bunExe(), "build.ts", executable, how], program, bunEnv),
+    );
+    let answer:
+      { success: boolean; messages: string[]; outputs: string[]; told: string[][]; ms?: number[] } | undefined;
     try {
       answer = JSON.parse(build.stdout.slice(build.stdout.lastIndexOf("\n", build.stdout.length - 2) + 1));
     } catch {}
+    if (answer?.ms) {
+      says(
+        started,
+        `${label}: build ${how}, of which require(addon) ${answer.ms[0]} ms and Bun.build ${answer.ms[1]} ms`,
+      );
+      delete answer.ms;
+    }
     // A build that answers and then ends with anything but 0 has died too.
     if (!answer || build.exitCode !== 0) return { how, died: build };
     if (!answer.success) return { how, ...answer };
     // An executable that was built with `aot` ends where it would interpret.
     const env = how === "aot" ? { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" } : bunEnv;
-    return { how, ...answer, ...(await spawned([executable], program, env)) };
+    const ran = await timed(`${label}: run ${how}`, () => spawned([executable], program, env));
+    await timed(`${label}: run ${how} once more`, () => spawned([executable], program, env));
+    return { how, ...answer, ...ran };
   }
 
-  async function bothWays(program: Case[]) {
+  async function bothWays(program: Case[], label: string) {
     using dir = tempDir("aot-build-plugins-native", { ...filesOf(program), "build.ts": buildScript(program) });
-    return [await buildAndRun(String(dir), "plain"), await buildAndRun(String(dir), "aot")];
+    return [await buildAndRun(String(dir), "plain", label), await buildAndRun(String(dir), "aot", label)];
   }
 
   /** What the build of a program and its run yield for one of its cases. */
@@ -219,9 +259,13 @@ console.log(JSON.stringify({ ...built, told }));
     const built = new Map<Case, ReturnType<typeof bothWays>>();
     test.each(Object.entries(cases))(
       "%s",
-      async (_, it) => {
+      async (name, it) => {
         const program = it.folder ? together : [it];
-        const both = await built.getOrInsertComputed(program[0], () => slot(() => bothWays(program)));
+        const label = it.folder ? together.map(one => one.folder).join("+") : name;
+        const asked = performance.now();
+        const both = await built.getOrInsertComputed(program[0], () =>
+          slot(() => (says(asked, `${label}: waited for a slot`), bothWays(program, label))),
+        );
         const yields = it.fails
           ? { success: false, messages: it.fails, outputs: [], told: [] }
           : {
@@ -241,6 +285,42 @@ console.log(JSON.stringify({ ...built, told }));
       },
       // The limit that build-both-ways.ts gives its tests, which wait for the same four children. This folder's default of 120 s
       // is below the 240 s at which spawned() ends one child under a sanitizer: a test could end with its child still running.
+      600_000,
+    );
+  });
+
+  // TIMES: what it costs a process on macOS to load an addon that it has not seen, without a signature and with one.
+  describe("TIMES", () => {
+    test.skipIf(process.platform !== "darwin")(
+      "what loading a new addon costs",
+      async () => {
+        const isLate = () => performance.now() - began > 100_000;
+        const copy = (name: string) => (copyFileSync(addon, join(folder, name)), join(folder, name));
+        const load = async (what: string, file: string) => {
+          const start = performance.now();
+          const loaded = await spawned([bunExe(), "-e", "require(process.argv[1])", file], folder, bunEnv);
+          says(
+            start,
+            `${what}: exit code ${loaded.exitCode}${loaded.stderr && `, stderr ${JSON.stringify(loaded.stderr.slice(0, 200))}`}`,
+          );
+        };
+        console.error(`TIMES on ${machine()}`);
+        await timed("bun -e 0", () => spawned([bunExe(), "-e", "0"], folder, bunEnv));
+        await timed("cc once more", () => cc(join(folder, "again.node")));
+        await load("load shout.node, which the builds have loaded", addon);
+        for (const name of ["unsigned-1.node", "unsigned-2.node"])
+          if (!isLate()) await load("load a new copy without a signature", copy(name));
+        if (!isLate()) await load("load the first of those copies once more", join(folder, "unsigned-1.node"));
+        for (const name of ["signed-1.node", "signed-2.node"]) {
+          if (isLate()) break;
+          const file = copy(name);
+          const start = performance.now();
+          const signed = await spawned(["codesign", "--force", "--sign", "-", file], folder, bunEnv);
+          says(start, `codesign --force --sign -: exit code ${signed.exitCode}`);
+          await load("load a new copy with an ad hoc signature", file);
+        }
+        if (!isLate()) await load("load the first signed copy once more", join(folder, "signed-1.node"));
+      },
       600_000,
     );
   });

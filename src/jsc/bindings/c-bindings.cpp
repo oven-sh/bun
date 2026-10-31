@@ -406,8 +406,18 @@ static WTF::Vector<int>& inheritedFileDescriptors()
 extern "C" void bun_remember_inherited_file_descriptors()
 {
     DIR* directory = opendir("/proc/self/fd");
-    if (!directory)
+    if (!directory) {
+        // Without procfs nothing lists the open descriptors: probe each number below the limit, at most 2^16.
+        struct rlimit limit;
+        int end = 1 << 16;
+        if (!getrlimit(RLIMIT_NOFILE, &limit) && limit.rlim_cur < static_cast<rlim_t>(end))
+            end = static_cast<int>(limit.rlim_cur);
+        for (int fd = 3; fd < end; fd++) {
+            if (fcntl(fd, F_GETFD) != -1)
+                inheritedFileDescriptors().append(fd);
+        }
         return;
+    }
     while (struct dirent* entry = readdir(directory)) {
         char* end = nullptr;
         long fd = strtol(entry->d_name, &end, 10);

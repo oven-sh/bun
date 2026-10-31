@@ -2703,7 +2703,13 @@ fn os_entropy(bytes: &mut [u8]) {
 pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
     static CELL: Once<crate::CrateResult<ZBox>> = Once::new();
     let r = CELL.get_or_init(|| {
-        let path = std::env::current_exe().map_err(|_| crate::CrateError::Unexpected)?;
+        let path = match std::env::current_exe() {
+            Ok(path) => path,
+            #[cfg(target_os = "linux")]
+            Err(_) => return exe_path_from_exec().ok_or(crate::CrateError::Unexpected),
+            #[cfg(not(target_os = "linux"))]
+            Err(_) => return Err(crate::CrateError::Unexpected),
+        };
         // Symlink resolution: Rust's
         // `current_exe()` already resolves on Linux (`readlink /proc/self/exe`),
         // but on Darwin it returns the raw `_NSGetExecutablePath` result and on
@@ -2746,6 +2752,87 @@ pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
         Ok(z) => Ok(z.as_zstr()),
         Err(e) => Err(*e),
     }
+}
+
+/// Linux without procfs: the absolute name `execve` left (`AT_EXECFN`, then `argv[0]`), if its file is this program.
+#[cfg(target_os = "linux")]
+#[cold]
+#[inline(never)]
+fn exe_path_from_exec() -> Option<ZBox> {
+    use core::ffi::{CStr, c_char, c_int, c_void};
+    use core::mem::offset_of;
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::{FileExt, OpenOptionsExt};
+
+    const ELF_64_BIT_MAGIC: &[u8] = b"\x7fELF\x02";
+
+    extern "C" fn main_program(
+        info: *mut libc::dl_phdr_info,
+        _size: usize,
+        headers: *mut c_void,
+    ) -> c_int {
+        // SAFETY: `dl_iterate_phdr` passes a valid `info` and the `&mut &[u8]` it was given. The main program is
+        // never unloaded, so its program headers stay mapped.
+        unsafe {
+            let info = &*info;
+            let size = usize::from(info.dlpi_phnum) * size_of::<libc::Elf64_Phdr>();
+            *crate::callback_ctx::<&[u8]>(headers) =
+                core::slice::from_raw_parts(info.dlpi_phdr.cast(), size);
+        }
+        1
+    }
+    // The auxiliary vector is no source for these: after a start through the musl loader it holds the loader's.
+    let mut mapped_headers: &'static [u8] = &[];
+    // SAFETY: `main_program` stops at the first object, which is the main program, and writes only `mapped_headers`.
+    unsafe { libc::dl_iterate_phdr(Some(main_program), (&raw mut mapped_headers).cast()) };
+    if mapped_headers.is_empty() {
+        return None;
+    }
+
+    // SAFETY: `getauxval` reads the vector that the kernel gave the process. `AT_EXECFN` is a NUL-terminated string
+    // on the initial stack, which lives as long as the process.
+    let executed = unsafe {
+        let executed = libc::getauxval(libc::AT_EXECFN) as *const c_char;
+        (!executed.is_null()).then(|| CStr::from_ptr(executed))
+    };
+    let argv0 = argv_storage().first().map(|argument| argument.as_cstr());
+
+    [executed, argv0].into_iter().flatten().find_map(|name| {
+        // A relative name is below the directory of the start, and the current directory can be another one by now.
+        if name.to_bytes().first() != Some(&b'/') {
+            return None;
+        }
+        // Not `Path::canonicalize`: it frees what libc allocated with `free`, which is mimalloc's in this link.
+        let mut resolved = PathBuffer::ZEROED;
+        // SAFETY: `name` is NUL-terminated, and `resolved` has the `PATH_MAX` bytes that `realpath` can write.
+        if unsafe { libc::realpath(name.as_ptr(), resolved.0.as_mut_ptr().cast()) }.is_null() {
+            return None;
+        }
+        let resolved = CStr::from_bytes_until_nul(&resolved.0).ok()?.to_bytes();
+        // The parent chose `argv[0]`: do not wait for a FIFO, adopt a terminal or follow a link put there since.
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY | libc::O_NOFOLLOW)
+            .open(std::ffi::OsStr::from_bytes(resolved))
+            .ok()?;
+        if !file.metadata().ok()?.is_file() {
+            return None;
+        }
+        let mut file_header = [0u8; size_of::<libc::Elf64_Ehdr>()];
+        file.read_exact_at(&mut file_header, 0).ok()?;
+        let headers_offset = &file_header[offset_of!(libc::Elf64_Ehdr, e_phoff)..];
+        let headers_offset = u64::from_ne_bytes(*headers_offset.first_chunk()?);
+        let header_count = &file_header[offset_of!(libc::Elf64_Ehdr, e_phnum)..];
+        let header_count = usize::from(u16::from_ne_bytes(*header_count.first_chunk()?));
+        if !file_header.starts_with(ELF_64_BIT_MAGIC)
+            || header_count * size_of::<libc::Elf64_Phdr>() != mapped_headers.len()
+        {
+            return None;
+        }
+        let mut headers = vec![0u8; mapped_headers.len()];
+        file.read_exact_at(&mut headers, headers_offset).ok()?;
+        (headers == mapped_headers).then(|| ZBox::from_bytes(resolved))
+    })
 }
 
 // ── get_thread_count ──────────────────────────────────────────────────────
@@ -4368,7 +4455,13 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         envp.push(core::ptr::null());
 
         // we must clone selfExePath in case argv[0] was not an absolute path
-        let exec_path = self_exe_path().expect("unreachable");
+        let Ok(exec_path) = self_exe_path() else {
+            crate::err_generic!("Failed to reload: the path of the executable is not known");
+            if may_return {
+                return;
+            }
+            crate::Global::exit(1);
+        };
 
         libc::execve(
             exec_path.as_ptr(),
@@ -4399,9 +4492,9 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     }
 }
 
-/// Replaces this process with Bun run with `args`.
+/// Replaces this process with the Bun at `exec_path` run with `args`.
 #[cfg(unix)]
-pub fn exec_self(args: &[&[u8]], keep_open: Option<Fd>) -> i32 {
+pub fn exec_self(exec_path: &ZStr, args: &[&[u8]], keep_open: Option<Fd>) -> i32 {
     unsafe extern "C" {
         safe fn on_before_reload_process_posix(close_inherited_fds: bool);
     }
@@ -4412,10 +4505,9 @@ pub fn exec_self(args: &[&[u8]], keep_open: Option<Fd>) -> i32 {
     argv.extend(args.iter().map(ZBox::from_bytes));
     let mut pointers: Vec<*const core::ffi::c_char> = argv.iter().map(|z| z.as_ptr()).collect();
     pointers.push(core::ptr::null());
-    let exec_path = self_exe_path().expect("unreachable").as_ptr();
     on_before_reload_process_posix(false);
-    // SAFETY: `pointers` is a null-terminated array of NUL-terminated strings that outlive the call, `environ` is the
-    // process's own, and `fcntl` takes no pointer.
+    // SAFETY: `exec_path` is NUL-terminated, `pointers` is a null-terminated array of NUL-terminated strings that outlive
+    // the call, `environ` is the process's own, and `fcntl` takes no pointer.
     unsafe {
         if let Some(fd) = keep_open {
             let flags = libc::fcntl(fd.native(), libc::F_GETFD);
@@ -4423,7 +4515,11 @@ pub fn exec_self(args: &[&[u8]], keep_open: Option<Fd>) -> i32 {
                 libc::fcntl(fd.native(), libc::F_SETFD, flags & !libc::FD_CLOEXEC);
             }
         }
-        libc::execve(exec_path, pointers.as_ptr().cast(), c_environ().cast());
+        libc::execve(
+            exec_path.as_ptr(),
+            pointers.as_ptr().cast(),
+            c_environ().cast(),
+        );
     }
     std::io::Error::last_os_error().raw_os_error().unwrap_or(-1)
 }

@@ -3,9 +3,24 @@ import { CString, dlopen, ptr } from "bun:ffi";
 import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
+import { chmodSync, closeSync, openSync, readSync, realpathSync, symlinkSync, writeFileSync } from "fs";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isRoot,
+  isWindows,
+  tempDir,
+  tmpdirSync,
+  withoutProc,
+} from "harness";
+import { mkfifo } from "mkfifo";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
+import { cc, envWithoutExePath } from "../../../cli/no-exe-path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
 
@@ -723,6 +738,113 @@ it("process.argv0", () => {
 it("process.execPath", () => {
   expect(process.execPath).not.toBe(basename(process.argv0));
   expect(which(process.execPath)).not.toBeNull();
+});
+
+// Without /proc the kernel gives no path for the executable. `execve` left two names of it: the path that the kernel
+// executed, and `argv[0]`. Each can name another file, so bun takes the first absolute one that holds its program.
+describe.skipIf(!isLinux || !cc)("process.execPath when /proc/self/exe cannot be read", () => {
+  // The third value shows that the child could not read the link.
+  const print = `JSON.stringify([process.execPath, process.argv[0], (() => { try { return require("fs").readlinkSync("/proc/self/exe"); } catch (error) { return error.code; } })()])`;
+
+  async function start(options) {
+    await using proc = Bun.spawn({ ...options, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return exitCode === 0 ? JSON.parse(stdout) : { stderr, exitCode };
+  }
+
+  async function startEach(starts) {
+    const results = await Promise.all(Object.values(starts).map(start));
+    return Object.fromEntries(Object.keys(starts).map((how, i) => [how, results[i]]));
+  }
+
+  it("is the real path of bun when an absolute name leads to it", async () => {
+    using dir = tempDir("exec-path", { "wrapper.sh": "#!/bin/sh\n", "bin/.keep": "" });
+    const root = String(dir);
+    const link = join(root, "bin", "bun");
+    symlinkSync(bunExe(), link);
+    const script = join(root, "script.js");
+    await Bun.write(script, `#!${bunExe()}\nconsole.log(${print});\n`);
+    chmodSync(script, 0o755);
+    const env = await envWithoutExePath(root);
+    const bun = realpathSync(bunExe());
+
+    expect(
+      await startEach({
+        "by an absolute path": { cmd: [bunExe(), "-p", print], env },
+        "as `bun`, found in PATH": { cmd: [bunExe(), "-p", print], argv0: "bun", env },
+        "through a link": { cmd: [link, "-p", print], env },
+        // The kernel then names the script as the file it executed.
+        "as the interpreter of a script": { cmd: [script], env },
+        // A wrapper script can pass its own path as `argv[0]`.
+        "with an argv[0] that names a script": { cmd: [bunExe(), "-p", print], argv0: join(root, "wrapper.sh"), env },
+        "by a relative path, with an argv[0] that is absolute": {
+          cmd: ["./bun", "-p", print],
+          argv0: link,
+          cwd: join(root, "bin"),
+          env,
+        },
+      }),
+    ).toEqual({
+      "by an absolute path": [bun, bun, "ENOENT"],
+      "as `bun`, found in PATH": [bun, bun, "ENOENT"],
+      "through a link": [bun, bun, "ENOENT"],
+      "as the interpreter of a script": [bun, bun, "ENOENT"],
+      "with an argv[0] that names a script": [bun, bun, "ENOENT"],
+      "by a relative path, with an argv[0] that is absolute": [bun, bun, "ENOENT"],
+    });
+  });
+
+  it("is argv[0], as in Node, when no absolute name leads to bun", async () => {
+    using dir = tempDir("exec-path", { "bin/.keep": "" });
+    const root = String(dir);
+    symlinkSync(bunExe(), join(root, "bin", "bun"));
+    const env = await envWithoutExePath(root);
+    // The kernel executes a relative path in each of these, so only `argv[0]` can be absolute.
+    const relative = { cmd: ["./bun", "-p", print], cwd: join(root, "bin"), env };
+
+    // The program headers of bun with one byte changed, in a file of its own.
+    const elfHeader = Buffer.alloc(64);
+    const executable = openSync(bunExe(), "r");
+    readSync(executable, elfHeader, 0, 64, 0);
+    const programHeaders = Buffer.alloc(Number(elfHeader.readBigUInt64LE(32)) + elfHeader.readUInt16LE(56) * 56);
+    readSync(executable, programHeaders, 0, programHeaders.length, 0);
+    closeSync(executable);
+    programHeaders[programHeaders.length - 1] ^= 1;
+    const otherProgram = join(root, "other-program");
+    writeFileSync(otherProgram, programHeaders);
+
+    const fifo = join(root, "fifo");
+    mkfifo(fifo);
+
+    expect(
+      await startEach({
+        "by a relative path": relative,
+        "with an argv[0] that names a shell": { ...relative, argv0: "/bin/sh" },
+        "with an argv[0] that names other program headers": { ...relative, argv0: otherProgram },
+        "with an argv[0] that names a FIFO": { ...relative, argv0: fifo },
+      }),
+    ).toEqual({
+      "by a relative path": ["./bun", "bun", "ENOENT"],
+      "with an argv[0] that names a shell": ["/bin/sh", "bun", "ENOENT"],
+      "with an argv[0] that names other program headers": [otherProgram, "bun", "ENOENT"],
+      "with an argv[0] that names a FIFO": [fifo, "bun", "ENOENT"],
+    });
+  });
+});
+
+// AddressSanitizer warns on stderr where it cannot read /proc.
+it.skipIf(!withoutProc.available || isASAN)("process.execPath is the real path of bun with /proc unmounted", () => {
+  const { stdout, stderr, exitCode } = spawnSync({
+    cmd: [...withoutProc.command, bunExe(), "-p", `JSON.stringify([process.execPath, process.argv[0]])`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+    stdout: JSON.stringify([realpathSync(bunExe()), realpathSync(bunExe())]) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 it("process.uptime()", () => {

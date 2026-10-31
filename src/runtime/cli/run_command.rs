@@ -2048,19 +2048,37 @@ impl RunCommand {
         let mut new_path: Vec<u8> = Vec::with_capacity(new_path_len);
 
         if needs_to_force_bun {
-            match Self::create_fake_temporary_node_executable(
+            let has_alias_target = match Self::create_fake_temporary_node_executable(
                 &mut new_path,
                 &mut optional_bun_self_path,
             ) {
-                Ok(()) => {}
+                Ok(()) => true,
                 Err(crate::Error::Alloc(bun_alloc::AllocError)) => bun_core::out_of_memory(),
-                Err(other) => panic!(
-                    "unexpected error from createFakeTemporaryNodeExecutable: {}",
-                    other.name()
-                ),
-            }
+                Err(_) => {
+                    let alias_dir = bstr::BStr::new(if cfg!(windows) {
+                        bun_node_dir_win
+                    } else {
+                        bun_node_exe.as_bytes()
+                    });
+                    // `--bun` asks for bun as `node`, so the script must not run with another `node`.
+                    if force_using_bun {
+                        bun_core::err_generic!(
+                            "failed to create <b>node<r> alias in {}: the path of the bun executable is not known",
+                            alias_dir,
+                        );
+                        Global::exit(1);
+                    }
+                    bun_core::run_once! {{
+                        bun_core::warn!(
+                            "failed to create <b>node<r> alias in {}, scripts that run <b>node<r> will not find it",
+                            alias_dir,
+                        );
+                    }}
+                    false
+                }
+            };
 
-            if !force_using_bun {
+            if !force_using_bun && has_alias_target {
                 let env_mut = &mut *env_loader;
                 env_mut
                     .map

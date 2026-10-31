@@ -13,6 +13,7 @@ import {
   symlinkSync,
 } from "node:fs";
 import { basename, join } from "node:path";
+import { envWithoutExePath } from "../no-exe-path";
 
 let watchee: Subprocess;
 
@@ -330,6 +331,59 @@ it.skipIf(isWindows)("--watch reports an error when its executable was deleted",
 
   expect(await stderr).toContain(`error: Failed to reload "${exe}`);
   expect(await stderr).toContain(`ENOENT (execve)`);
+  expect(await proc.exited).toBe(1);
+});
+
+// Without /proc the kernel gives no path for the executable, but `execve` left the path that it executed.
+it.skipIf(!isLinux || !cc)("--watch restarts when it cannot read /proc/self/exe", async () => {
+  using dir = tempDir("watch-exe-path-from-exec", {
+    "app/entry.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
+  });
+  const proc = spawn({
+    // The flag skips a debug build's slow crash symbolication.
+    cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "--watch", "entry.js"],
+    // As a shell starts the `bun` it found in PATH.
+    argv0: "bun",
+    cwd: join(String(dir), "app"),
+    env: await envWithoutExePath(String(dir)),
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  watchee = proc;
+
+  const { waitFor, release } = stdoutWaiter(proc);
+  await waitFor("iter first");
+  await Bun.write(join(String(dir), "app", "entry.js"), `console.log("iter second"); setInterval(() => {}, 1000);`);
+  await waitFor("iter second");
+  release();
+  expect(proc.exitCode).toBeNull();
+});
+
+// A relative path is no name for the executable: the session has nothing to restart, and it says so.
+it.skipIf(!isLinux || !cc)("--watch reports an error when it cannot know the path of its executable", async () => {
+  using dir = tempDir("watch-exe-path-unknown", {
+    "app/entry.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
+  });
+  symlinkSync(bunExe(), join(String(dir), "app", "bun"));
+  const proc = spawn({
+    cmd: ["./bun", "--debug-crash-handler-use-trace-string", "--watch", "entry.js"],
+    cwd: join(String(dir), "app"),
+    env: await envWithoutExePath(String(dir)),
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  watchee = proc;
+  const stderr = proc.stderr.text();
+
+  const { waitFor, release } = stdoutWaiter(proc);
+  await waitFor("iter first");
+  release();
+
+  await Bun.write(join(String(dir), "app", "entry.js"), `console.log("iter second");`);
+
+  expect(await stderr).toContain("error: Failed to reload: the path of the executable is not known\n");
   expect(await proc.exited).toBe(1);
 });
 

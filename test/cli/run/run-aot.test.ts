@@ -2,12 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { spawn } from "child_process";
 import { once } from "events";
 import { chmodSync, readdirSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDirWithBunTypes as tempDir, withoutProc } from "harness";
 import { join } from "path";
 import type { Readable } from "stream";
 import { text } from "stream/consumers";
 import { unsupported } from "../../aot/harness/commands";
 import { run as runCommand } from "../../aot/harness/run";
+import { cc, envWithoutExePath } from "../no-exe-path";
 
 const supported = !unsupported;
 
@@ -981,7 +982,11 @@ row("typed", Typed.name, new Typed().grow(2), TypedWithConstructor.name, new Typ
   });
 });
 
-test.skipIf(!supported).each([false, true])("inherited file descriptors stay open (--aot: %p)", async aot => {
+async function writeToInheritedDescriptors(
+  aot: boolean,
+  env: Record<string, string | undefined> = bunEnv,
+  launcher: string[] = [],
+) {
   using dir = tempDir("run-aot", {
     "entry.js": `
       const { writeSync } = require("fs");
@@ -990,9 +995,10 @@ test.skipIf(!supported).each([false, true])("inherited file descriptors stay ope
       writeSync(64, "written to 64");
     `,
   });
-  const child = spawn(bunExe(), ["run", ...(aot ? ["--debug-aot"] : []), "entry.js"], {
+  const [program, ...args] = [...launcher, bunExe(), "run", ...(aot ? ["--debug-aot"] : []), "entry.js"];
+  const child = spawn(program, args, {
     cwd: String(dir),
-    env: bunEnv,
+    env,
     stdio: Array.from({ length: 65 }, (_, descriptor) => ([1, 2, 3, 4, 64].includes(descriptor) ? "pipe" : "ignore")),
   });
   const [stderr, third, fourth, sixtyFourth, [exitCode]] = await Promise.all([
@@ -1002,14 +1008,38 @@ test.skipIf(!supported).each([false, true])("inherited file descriptors stay ope
     text((child.stdio as readonly unknown[])[64] as Readable),
     once(child, "exit"),
   ]);
-  expect({ stderr, third, fourth, sixtyFourth, exitCode }).toEqual({
-    stderr: "",
-    third: "written to 3",
-    fourth: "written to 4",
-    sixtyFourth: "written to 64",
-    exitCode: 0,
-  });
+  return { stderr, third, fourth, sixtyFourth, exitCode };
+}
+
+const writtenToInheritedDescriptors = {
+  stderr: "",
+  third: "written to 3",
+  fourth: "written to 4",
+  sixtyFourth: "written to 64",
+  exitCode: 0,
+};
+
+test.skipIf(!supported).each([false, true])("inherited file descriptors stay open (--aot: %p)", async aot => {
+  expect(await writeToInheritedDescriptors(aot)).toEqual(writtenToInheritedDescriptors);
 });
+
+// Without /proc the process has no path for the executable that it starts again, and no list of its descriptors.
+test.skipIf(!supported || !isLinux || !cc)(
+  "inherited file descriptors stay open under --aot when /proc gives no path and no list of them",
+  async () => {
+    using dir = tempDir("run-aot-no-proc", {});
+    const env = await envWithoutExePath(String(dir), { descriptorList: false });
+    expect(await writeToInheritedDescriptors(true, env)).toEqual(writtenToInheritedDescriptors);
+  },
+);
+
+// AddressSanitizer warns on stderr where it cannot read /proc.
+test.skipIf(!supported || !withoutProc.available || isASAN)(
+  "inherited file descriptors stay open under --aot with /proc unmounted",
+  async () => {
+    expect(await writeToInheritedDescriptors(true, bunEnv, withoutProc.command)).toEqual(writtenToInheritedDescriptors);
+  },
+);
 
 test.skipIf(!supported).each([false, true])("messages to and from the parent process (--aot: %p)", async aot => {
   using dir = tempDir("run-aot", {

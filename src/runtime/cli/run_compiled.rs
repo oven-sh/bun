@@ -412,8 +412,15 @@ fn start_second_process(
         Output::err_generic("--aot could not start bun again: {}", (&error,));
         Global::exit(1)
     }
+    let Ok(executable) = bun_core::self_exe_path() else {
+        Output::err_generic(
+            "--aot could not start bun again: the path of the executable is not known",
+            (),
+        );
+        Global::exit(1)
+    };
     Output::flush();
-    let errno = bun_core::exec_self(&arguments, descriptor);
+    let errno = bun_core::exec_self(executable, &arguments, descriptor);
     Output::err_generic("--aot could not start bun again: errno {}", (errno,));
     Global::exit(1)
 }

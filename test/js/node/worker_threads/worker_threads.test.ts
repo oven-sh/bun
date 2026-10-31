@@ -733,6 +733,96 @@ describe("error event", () => {
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/MessagePort \[EventTarget\] \{.*\}/s);
   });
+
+  // The resolver reports what is wrong in a tsconfig.json to the thread that reads the directory
+  // first. A define and the file of --tsconfig-override are reported to each thread. A worker that
+  // runs did not fail, so it fires no 'error' event for such a report.
+  describe.concurrent("for a diagnostic in the log of the worker", () => {
+    // `listeners` is more source text for the parent. With no 'error' listener, an 'error' event
+    // ends the parent with exit code 1.
+    const parent = (specifier: string, listeners = "") => `
+      import { Worker } from "node:worker_threads";
+      const worker = new Worker(${JSON.stringify(specifier)});
+      worker.on("online", () => console.log("online"));
+      worker.on("message", data => console.log("message:", data));
+      worker.on("exit", code => console.log("exit", code));
+      ${listeners}
+    `;
+    const entry = `
+      import { parentPort } from "node:worker_threads";
+      parentPort.postMessage("hi");
+    `;
+    const warning = JSON.stringify({ compilerOptions: { moduleSuffixes: [".ios"] } });
+
+    async function run(cwd: string, ...args: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args, "main.mjs"],
+        env: bunEnv,
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    test("is not fired when the entry is beside a tsconfig.json that does not parse", async () => {
+      using dir = tempDir("worker-threads-log-entry", {
+        "sub/tsconfig.json": "{",
+        "sub/worker.ts": entry,
+        "main.mjs": parent("./sub/worker.ts"),
+      });
+      expect(await run(String(dir))).toEqual({ stdout: "online\nmessage: hi\nexit 0\n", stderr: "", exitCode: 0 });
+    });
+
+    test("is not fired when the worker imports a package through a symlink", async () => {
+      // The layout of a workspace. The import reads packages/lib, which has a tsconfig.json with a warning.
+      using dir = tempDir("worker-threads-log-symlink", {
+        "packages/lib/tsconfig.json": warning,
+        "packages/lib/index.ts": `export const name = "lib";`,
+        "app/worker.ts": `
+          import { parentPort } from "node:worker_threads";
+          import { name } from "lib";
+          parentPort.postMessage("hi " + name);
+        `,
+        "app/main.mjs": parent("./worker.ts"),
+      });
+      fs.mkdirSync(join(String(dir), "app", "node_modules"));
+      fs.symlinkSync(join(String(dir), "packages", "lib"), join(String(dir), "app", "node_modules", "lib"), "junction");
+      expect(await run(join(String(dir), "app"))).toEqual({
+        stdout: "online\nmessage: hi lib\nexit 0\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("is not fired when the file of --tsconfig-override has a warning", async () => {
+      // The main thread prints the report.
+      using dir = tempDir("worker-threads-log-override", {
+        "tsconfig.custom.json": warning,
+        "worker.ts": entry,
+        "main.mjs": parent("./worker.ts"),
+      });
+      const { stdout, stderr, exitCode } = await run(String(dir), "--tsconfig-override", "./tsconfig.custom.json");
+      expect({ stdout, warnings: stderr.split("\n").filter(line => line.startsWith("warn:")), exitCode }).toEqual({
+        stdout: "online\nmessage: hi\nexit 0\n",
+        warnings: ["warn: moduleSuffixes is not supported yet"],
+        exitCode: 0,
+      });
+    });
+
+    test("is MODULE_NOT_FOUND for a missing entry when a define is not valid", async () => {
+      // The main thread prints the report.
+      using dir = tempDir("worker-threads-log-define", {
+        "main.mjs": parent("./missing.js", `worker.on("error", error => console.log("error:", error.code));`),
+      });
+      expect(await run(String(dir), "--define", "a-b=1")).toEqual({
+        stdout: "online\nerror: MODULE_NOT_FOUND\nexit 1\n",
+        stderr: 'error: define key "a-b" must be a valid identifier\n',
+        exitCode: 0,
+      });
+    });
+  });
 });
 
 // Debug and ASAN builds assert on `vm.hasTerminationRequest()` if startup continues to its GC after the stop.

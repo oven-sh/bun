@@ -127,6 +127,11 @@
 
       in
       {
+        packages = rec {
+          bun = pkgs.callPackage ./nix/package.nix { };
+          default = bun;
+        };
+
         devShells.default = (pkgs.mkShell.override {
           stdenv = pkgs.clangStdenv;
         }) {

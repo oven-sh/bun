@@ -77,6 +77,7 @@ import {
   uploadArtifact,
   type JunitFileSuite,
 } from "./buildkite.ts";
+import { nodeGypCacheDirectory, nodeGypCacheProblems } from "./node-gyp-cache.ts";
 
 const isX64 = process.arch === "x64";
 
@@ -887,6 +888,34 @@ function assertExpectedPlatform() {
     );
 }
 
+/**
+ * Checks that node-gyp's cache has the headers of the pinned Node.js, and on Windows its node.lib,
+ * where a test's node-gyp looks for them. An image's bake puts them there for the account that runs
+ * jobs (the `nodejs` tool of scripts/build/ci-images/spec.ts). Without them every job downloads them
+ * from nodejs.org and still passes, until that download fails. CI bakes the Linux and Windows images.
+ */
+function assertNodeGypCache() {
+  if (!isBuildkite || !(isLinux || isWindows)) {
+    return;
+  }
+
+  // The home and the environment that spawnBun() gives a test.
+  const { username, homedir } = userInfo();
+  const { LOCALAPPDATA, XDG_CACHE_HOME } = process.env;
+  const directory = nodeGypCacheDirectory({ isWindows, homedir, env: { LOCALAPPDATA, XDG_CACHE_HOME } });
+  const problems = nodeGypCacheProblems(directory, { isWindows, arch: process.arch });
+  if (problems.length) {
+    console.error(
+      `node-gyp cache check FAILED, this machine is not the image scripts/build/ci-images/spec.ts describes.\n` +
+        `Its \`nodejs\` tool bakes the headers of the pinned Node.js into node-gyp's cache of the account that runs jobs.\n` +
+        `This job runs as ${username}, and node-gyp reads ${directory}:\n  ${problems.join("\n  ")}`,
+    );
+    process.exit(1);
+  }
+
+  !isQuiet && console.log("node-gyp cache:", directory, "(ok)");
+}
+
 type Limit = <T>(fn: () => Promise<T>) => Promise<T>;
 
 /**
@@ -916,6 +945,7 @@ function createLimit(concurrency: number): Limit {
 
 async function runTests(): Promise<TestResult[]> {
   assertExpectedPlatform();
+  assertNodeGypCache();
 
   let execPath: string;
   if (options.step) {

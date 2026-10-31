@@ -52,12 +52,12 @@ macro_rules! init_p {
 }
 
 /// What `Parser::parse_only` parsed.
-pub struct ParsedOnly<'p, 'a> {
+pub struct ParsedOnly<'p, 'a, const TYPESCRIPT: bool = false> {
     pub stmts: &'p [js_ast::Stmt],
-    p: &'p P<'a, false, false>,
+    p: &'p P<'a, TYPESCRIPT, false>,
 }
 
-impl<'a> ParsedOnly<'_, 'a> {
+impl<'a, const TYPESCRIPT: bool> ParsedOnly<'_, 'a, TYPESCRIPT> {
     /// An unvisited identifier is its spelling.
     #[inline]
     pub fn name_of(&self, r#ref: js_ast::Ref) -> &'a [u8] {
@@ -114,18 +114,28 @@ pub fn parse_only_text<R>(
     jsc_builtin_syntax: bool,
     f: impl FnOnce(&ParsedOnly<'_, '_>) -> R,
 ) -> Option<R> {
-    let arena = bun_alloc::Arena::new();
-    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
-    let _ast_scope = ast_memory_allocator.enter();
     let source = bun_ast::Source::init_path_string(&b"chunk.js"[..], text);
     let mut options = Options::init(Default::default(), bun_ast::Loader::Js);
     options.features.no_macros = true;
     options.features.top_level_await = top_level_await;
     options.jsc_builtin_syntax = jsc_builtin_syntax;
     options.suppress_warnings_about_weird_code = true;
+    parse_only_source(&source, options, f)
+}
+
+/// Runs `Parser::parse_only` on `source`, in an arena of its own. `TYPESCRIPT` is `options.ts`. Returns `None` on a
+/// parse error.
+pub fn parse_only_source<const TYPESCRIPT: bool, R>(
+    source: &bun_ast::Source<'_>,
+    options: Options<'_>,
+    f: impl FnOnce(&ParsedOnly<'_, '_, TYPESCRIPT>) -> R,
+) -> Option<R> {
+    let arena = bun_alloc::Arena::new();
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    let _ast_scope = ast_memory_allocator.enter();
     let define = Define::default();
     let mut log = bun_ast::Log::init();
-    let parser = Parser::init(options, &mut log, &source, &define, &arena).ok()?;
+    let parser = Parser::init(options, &mut log, source, &define, &arena).ok()?;
     parser.parse_only(f).ok()
 }
 
@@ -468,10 +478,14 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses, and visits nothing: `f` gets the statements as they were written (nothing folded, dropped or bound).
-    /// `Err`: the source does not parse.
+    /// `TYPESCRIPT` is `options.ts`. `Err`: the source does not parse.
     #[cold]
-    pub fn parse_only<R>(mut self, f: impl FnOnce(&ParsedOnly<'_, 'a>) -> R) -> Result<R, Error> {
-        type Pi<'a> = P<'a, false, false>;
+    pub fn parse_only<const TYPESCRIPT: bool, R>(
+        mut self,
+        f: impl FnOnce(&ParsedOnly<'_, 'a, TYPESCRIPT>) -> R,
+    ) -> Result<R, Error> {
+        type Pi<'a, const TYPESCRIPT: bool> = P<'a, TYPESCRIPT, false>;
+        debug_assert_eq!(self.options.ts, TYPESCRIPT);
         let lexer = core::mem::replace(
             &mut self.lexer,
             js_lexer::Lexer::init_without_reading(
@@ -481,10 +495,10 @@ impl<'a> Parser<'a> {
             ),
         );
         let options = core::mem::take(&mut self.options);
-        let mut __p = init_p!(Pi<'_>;
+        let mut __p = init_p!(Pi<'_, TYPESCRIPT>;
             self.bump, self.log, self.source, self.define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
-        let p: &mut Pi<'_> = unsafe { __p.assume_init_mut() };
+        let p: &mut Pi<'_, TYPESCRIPT> = unsafe { __p.assume_init_mut() };
         p.starts_for_parse_only = Some(Default::default());
         if p.lexer.token == js_lexer::T::THashbang {
             p.lexer.next()?;

@@ -2387,6 +2387,57 @@ fn path_template_print_tolerates_malformed_brackets() {
     assert_eq!(find_unterminated_placeholder(b"[foo]-[name].[ext]"), None);
 }
 
+#[cfg(test)]
+#[test]
+fn stand_in_hash_prints_the_directory_depth_of_the_final_path() {
+    fn depth(path: &mut [u8]) -> usize {
+        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(path);
+        let dir =
+            bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Posix>(path);
+        if dir.is_empty() {
+            0
+        } else {
+            1 + strings::count_char(dir, b'/')
+        }
+    }
+    for data in [
+        b"[dir]/[name].[ext]".as_slice(),
+        b"./js/[name].[ext]",
+        b"[hash]/[name].[ext]",
+        b"[dir]/[hash12]/[name]-[hash].[ext]",
+        b"./[name]-[hash].[ext]",
+    ] {
+        for dir in [b"".as_slice(), b".", b"a/b", b"../x"] {
+            for sanitize_parent_dirs in [true, false] {
+                let mut template = PathTemplate {
+                    data: Box::from(data),
+                    placeholder: Placeholder {
+                        dir: Box::from(dir),
+                        name: Box::from(b"n".as_slice()),
+                        ext: Box::from(b"js".as_slice()),
+                        hash: None,
+                        target: Box::default(),
+                    },
+                };
+                let mut before = Vec::new();
+                template
+                    .print_with_stand_in_hash(&mut before, sanitize_parent_dirs)
+                    .unwrap();
+                template.placeholder.hash = Some(template.content_hash(u64::MAX));
+                let mut after = Vec::new();
+                template.print(&mut after, sanitize_parent_dirs).unwrap();
+                assert_eq!(
+                    depth(&mut before),
+                    depth(&mut after),
+                    "{} with [dir] = {}",
+                    String::from_utf8_lossy(data),
+                    String::from_utf8_lossy(dir),
+                );
+            }
+        }
+    }
+}
+
 impl PathTemplate {
     pub(crate) fn needs(&self, field: PlaceholderField) -> bool {
         path_template_needs(&self.data, field)
@@ -2484,6 +2535,28 @@ impl PathTemplate {
             &self.placeholder.name,
             &self.placeholder.ext,
             self.placeholder.hash,
+            &self.placeholder.target,
+            sanitize_parent_dirs,
+        )
+    }
+
+    /// [`Self::print`] with a stand-in for a `[hash]` not assigned yet. No hash has a separator, so the directory depth is final.
+    pub(crate) fn print_with_stand_in_hash<W: bun_io::Write>(
+        &self,
+        writer: &mut W,
+        sanitize_parent_dirs: bool,
+    ) -> bun_io::Result<()> {
+        path_template_print(
+            writer,
+            &self.data,
+            &self.placeholder.dir,
+            &self.placeholder.name,
+            &self.placeholder.ext,
+            Some(
+                self.placeholder
+                    .hash
+                    .unwrap_or(bun_core::fmt::ContentHash::short(0)),
+            ),
             &self.placeholder.target,
             sanitize_parent_dirs,
         )

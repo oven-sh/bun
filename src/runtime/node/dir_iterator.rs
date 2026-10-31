@@ -185,18 +185,13 @@ mod platform {
 mod platform {
     use super::*;
 
-    // The `libc` crate binds neither `getdents` nor `getdirentries` on
-    // FreeBSD, so declare the former here.
-    unsafe extern "C" {
-        // Not a `safe fn` because `buf` must be writable for `nbytes` bytes.
-        fn getdents(fd: core::ffi::c_int, buf: *mut core::ffi::c_char, nbytes: usize) -> isize;
-    }
-
     pub(crate) struct NewIterator<const USE_WINDOWS_OSPATH: bool> {
         pub(crate) dir: Fd,
         pub(crate) buf: [u8; 8192],
         pub(crate) index: usize,
         pub(crate) end_index: usize,
+        /// The listing ended because the directory was removed.
+        pub(crate) removed: bool,
     }
 
     impl<const USE_WINDOWS_OSPATH: bool> NewIterator<USE_WINDOWS_OSPATH> {
@@ -208,27 +203,18 @@ mod platform {
                 };
                 if self.index >= filled.len() {
                     // SAFETY: `dir` is an open fd and `buf` is writable for its full length.
-                    let rc = unsafe {
-                        getdents(
-                            self.dir.native(),
-                            self.buf.as_mut_ptr().cast::<libc::c_char>(),
-                            self.buf.len(),
-                        )
+                    let read = unsafe {
+                        sys::getdents64(self.dir, self.buf.as_mut_ptr(), self.buf.len())
+                    }?;
+                    let Some(n) = read else {
+                        self.removed = true;
+                        return Ok(None);
                     };
-                    if rc < 0 {
-                        let e = sys::last_errno();
-                        // FreeBSD reports ENOENT when iterating an unlinked
-                        // but still-open directory.
-                        if e == libc::ENOENT {
-                            return Ok(None);
-                        }
-                        return Err(sys::Error::from_code_int(e, Tag::getdents64));
-                    }
-                    if rc == 0 {
+                    if n == 0 {
                         return Ok(None);
                     }
                     self.index = 0;
-                    self.end_index = usize::try_from(rc).expect("int cast");
+                    self.end_index = n;
                     continue 'start_over;
                 }
                 let Some(record) = dirent::parse::<dirent::Native>(filled, self.index) else {
@@ -273,6 +259,8 @@ mod platform {
         pub(crate) buf: [u8; 8192],
         pub(crate) index: usize,
         pub(crate) end_index: usize,
+        /// The listing ended because the directory was removed.
+        pub(crate) removed: bool,
     }
 
     impl<const USE_WINDOWS_OSPATH: bool> NewIterator<USE_WINDOWS_OSPATH> {
@@ -285,28 +273,19 @@ mod platform {
                     return dirent::end_walk(&mut self.end_index, Tag::getdents64);
                 };
                 if self.index >= filled.len() {
-                    // glibc doesn't expose getdents64; go straight to the
-                    // raw syscall.
-                    // SAFETY: buf is valid for 8192 bytes; fd is a plain c_int.
-                    let rc = unsafe {
-                        libc::syscall(
-                            libc::SYS_getdents64,
-                            self.dir.native() as libc::c_long,
-                            self.buf.as_mut_ptr(),
-                            self.buf.len(),
-                        )
+                    // SAFETY: `buf` is writable for its full length.
+                    let read = unsafe {
+                        sys::getdents64(self.dir, self.buf.as_mut_ptr(), self.buf.len())
+                    }?;
+                    let Some(n) = read else {
+                        self.removed = true;
+                        return Ok(None);
                     };
-                    if rc < 0 {
-                        return Err(sys::Error::from_code_int(
-                            sys::last_errno(),
-                            Tag::getdents64,
-                        ));
-                    }
-                    if rc == 0 {
+                    if n == 0 {
                         return Ok(None);
                     }
                     self.index = 0;
-                    self.end_index = rc as usize;
+                    self.end_index = n;
                     continue 'start_over;
                 }
                 let Some(record) = dirent::parse::<dirent::Native>(filled, self.index) else {
@@ -682,6 +661,19 @@ impl<const IS_U16: bool> NewWrappedIterator<IS_U16>
 where
     (): WrappedSelect<IS_U16>,
 {
+    /// The listing ended because the directory was removed after it was opened. Always false on macOS and Windows.
+    #[inline]
+    pub(crate) fn dir_was_removed(&self) -> bool {
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+        {
+            self.iter.removed
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
+        {
+            false
+        }
+    }
+
     pub(crate) fn init(dir: Fd) -> Self {
         #[cfg(target_os = "macos")]
         {
@@ -706,6 +698,7 @@ where
                     end_index: 0,
                     // zero-init avoids the invalid_value lint on [u8; N]
                     buf: [0u8; 8192],
+                    removed: false,
                 },
             };
         }
@@ -718,6 +711,7 @@ where
                     end_index: 0,
                     // zero-init avoids the invalid_value lint on [u8; N]
                     buf: [0u8; 8192],
+                    removed: false,
                 },
             };
         }

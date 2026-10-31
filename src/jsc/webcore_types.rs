@@ -403,6 +403,14 @@ impl Blob {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
     }
 
+    /// The Blob's bytes, or `None` for a file- or S3-backed Blob, which has to be read first.
+    pub fn in_memory_view(&self) -> Option<&[u8]> {
+        if self.needs_to_read_file() || self.is_s3() {
+            return None;
+        }
+        Some(self.shared_view())
+    }
+
     /// A usable filename: a non-empty `name`, else [`store_path`]. (`file.name`
     /// itself may be `""`; that is not a filename.)
     ///

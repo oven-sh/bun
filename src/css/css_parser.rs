@@ -661,7 +661,8 @@ pub trait CustomAtRuleParser {
         is_nested: bool,
     ) -> CssResult<Self::AtRule>;
 
-    fn on_import_rule(this: &mut Self, import_rule: &mut ImportRule, start: u32, end: u32);
+    /// Returns true when the rule got an import record and belongs in [`StyleSheet::imports`].
+    fn on_import_rule(this: &mut Self, import_rule: &mut ImportRule, start: u32, end: u32) -> bool;
     fn on_layer_rule(this: &mut Self, layers: &SmallList<LayerName, 1>);
     fn enclosing_layer_length(this: &mut Self) -> u32;
     fn push_to_enclosing_layer(this: &mut Self, name: LayerName);
@@ -768,9 +769,9 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         import_rule: &mut ImportRule,
         start_position: u32,
         end_position: u32,
-    ) {
+    ) -> bool {
         if !this.track_layers_and_imports {
-            return;
+            return false;
         }
         // SAFETY: `import_records` shares raw-pointer provenance with
         // `Parser.import_records` (see field doc / `parse_bundler`). This hook
@@ -800,6 +801,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
             original_path: b"",
             flags: Default::default(),
         });
+        true
     }
 
     fn on_layer_rule(this: &mut Self, layers: &SmallList<LayerName, 1>) {
@@ -952,6 +954,7 @@ pub struct TopLevelRuleParser<'a, AtRuleParserT: CustomAtRuleParser> {
     pub(crate) at_rule_parser: &'a mut AtRuleParserT,
     // TODO: think about memory management
     pub(crate) rules: &'a mut CssRuleList<AtRuleParserT::AtRule>,
+    pub(crate) imports: &'a mut Vec<ImportRule>,
     pub(crate) composes: &'a mut ComposesMap,
     pub(crate) local_properties: &'a mut LocalPropertyUsage,
 }
@@ -962,6 +965,7 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT
         options: &'a ParserOptions<'a>,
         at_rule_parser: &'a mut AtRuleParserT,
         rules: &'a mut CssRuleList<AtRuleParserT::AtRule>,
+        imports: &'a mut Vec<ImportRule>,
         composes: &'a mut ComposesMap,
         local_properties: &'a mut LocalPropertyUsage,
     ) -> Self {
@@ -971,6 +975,7 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT
             state: TopLevelState::Start,
             at_rule_parser,
             rules,
+            imports,
             composes,
             local_properties,
         }
@@ -1313,13 +1318,16 @@ mod rule_parsers {
                         loc,
                         ..Default::default()
                     };
-                    AtRuleParserT::on_import_rule(
+                    if AtRuleParserT::on_import_rule(
                         this.at_rule_parser,
                         &mut import_rule,
                         u32::try_from(start.position).expect("int cast"),
                         u32::try_from(start.position + 1).expect("int cast"),
-                    );
-                    this.rules.v.push(CssRule::Import(import_rule));
+                    ) {
+                        this.imports.push(import_rule);
+                    } else {
+                        this.rules.v.push(CssRule::Import(import_rule));
+                    }
                     Ok(())
                 }
                 AtRulePrelude::Namespace { prefix, url } => {
@@ -2329,6 +2337,8 @@ pub(crate) fn fill_property_bit_set(
 pub struct StyleSheet<AtRule> {
     /// A list of top-level rules within the style sheet.
     pub rules: CssRuleList<AtRule>,
+    /// The `@import` rules of a `parse_bundler` sheet, which has no `CssRule::Import` in `rules`.
+    pub imports: Vec<ImportRule>,
     pub sources: Vec<Box<[u8]>>,
     pub source_map_urls: Vec<Option<Box<[u8]>>>,
     pub license_comments: Vec<&'static [u8]>, // TODO: lifetime — arena
@@ -2353,6 +2363,7 @@ impl<AtRule> StyleSheet<AtRule> {
     pub fn empty() -> Self {
         Self {
             rules: CssRuleList::default(),
+            imports: Vec::new(),
             sources: Vec::new(),
             source_map_urls: Vec::new(),
             license_comments: Vec::new(),
@@ -2649,11 +2660,13 @@ mod stylesheet_impl {
             parser.reset(&state);
 
             let mut rules = CssRuleList::<AtRule>::default();
+            let mut imports: Vec<ImportRule> = Vec::new();
             let mut rule_parser = TopLevelRuleParser::new(
                 arena,
                 &options,
                 at_rule_parser,
                 &mut rules,
+                &mut imports,
                 &mut composes,
                 &mut local_properties,
             );
@@ -2683,6 +2696,7 @@ mod stylesheet_impl {
             Ok((
                 Self {
                     rules,
+                    imports,
                     sources,
                     source_map_urls,
                     license_comments,

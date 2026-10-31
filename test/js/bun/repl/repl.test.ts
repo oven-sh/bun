@@ -808,6 +808,95 @@ describe.concurrent("Bun REPL", () => {
     });
   });
 
+  describe("history keys", () => {
+    const up = "\x1b[A";
+    const down = "\x1b[B";
+    // Ctrl+A then Ctrl+K: empties the line.
+    const kill = "\x01\x0b";
+    const unknownCommand = "Unknown command: .foo\nType .help for available commands";
+    const editorBanner = "// Entering editor mode (Ctrl+D to finish, Ctrl+C to cancel)";
+
+    /** Feeds `keys` to a REPL whose history file holds `entries`, oldest first. */
+    async function runWithHistory(entries: string[], keys: string) {
+      using home = tempDir("repl-home", { ".bun_repl_history": entries.map(entry => `${entry}\n`).join("") });
+      return await runRepl(`${keys}.exit\n`, { home: String(home) });
+    }
+
+    describe.each([
+      ["Down", down],
+      ["Ctrl+N", "\x0e"],
+    ])("%s with no newer entry to go to", (_name, key) => {
+      test("keeps the line being entered when the history is empty", async () => {
+        const { outputs, stderr, exitCode } = await runWithHistory([], `20 + 1${key}\n`);
+        expect(outputs).toEqual(["21"]);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      });
+
+      test("keeps the line being entered, also after a round trip through the history", async () => {
+        const { outputs, stderr, exitCode } = await runWithHistory(
+          ["1 + 1"],
+          `20 + 1${key}\n` +
+            // Up and back, then more typing: the key does not roll the line back to the `7` that Up saved.
+            `7${up}${key}7${key}\n` +
+            // On an empty line the key draws no second prompt.
+            `${key}30 + 3\n`,
+        );
+        expect(outputs).toEqual(["21", "77", "33"]);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      });
+    });
+
+    // Each row recalls `100 + 1` with two Ups, then ends that line without evaluating it.
+    // The next line starts at the newest end of the history, not on `100 + 1`.
+    describe.each([
+      ["an unknown command", `${up}${up}${kill}.foo\n`, "", [unknownCommand, "44"]],
+      ["an empty line", `${up}${up}${kill}\n`, "", ["", "44"]],
+      ["a recalled entry left incomplete", `${up}${up} + (\n`, ")\n", ["145"]],
+      ["a recalled entry in .editor mode", `.editor\n${up}${up}\n`, "\x04", [`${editorBanner}\n\n\n\n44`]],
+      ["the Ctrl+D that ends .editor mode", `.editor\n${up}${up}${kill}\x04`, "", [editorBanner, "44"]],
+      // Ctrl+D leaves the recalled entry on the line, so the kill comes after it.
+      [
+        "the Ctrl+D that ends .editor mode on a recalled entry",
+        `.editor\n${up}${up}\x04${kill}`,
+        "",
+        [editorBanner, "44"],
+      ],
+    ])("after %s", (_name, before, after, expected) => {
+      test.each([
+        ["Down does not step to the next newer entry", `40 + 4${down}\n`],
+        ["Up saves the typed line and Down brings it back", `40 + 4${up}${down}\n`],
+      ])("%s", async (_probe, typed) => {
+        const { outputs, stderr, exitCode } = await runWithHistory(["100 + 1", "200 + 2"], before + typed + after);
+        expect(outputs).toEqual(expected);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      });
+    });
+
+    test("Up recalls the newest entry after an Enter that evaluated nothing", async () => {
+      const { outputs, stderr, exitCode } = await runWithHistory(["100 + 1", "200 + 2"], `${up}${kill}.foo\n${up}\n`);
+      expect(outputs).toEqual([unknownCommand, "202"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("Down steps to the next newer entry and, past the newest, restores the line that Up left", async () => {
+      const { outputs, stderr, exitCode } = await runWithHistory(
+        ["100 + 1", "200 + 2"],
+        // An empty line is restored too: `60 + 6` is not appended to the recalled entry.
+        `${up}${down}60 + 6\n` +
+          // Up stops at the oldest entry.
+          `9${up}${up}${up}${up}${up}${down}\n` +
+          `50 + 5${up}${up}${down}${down}\n`,
+      );
+      expect(outputs).toEqual(["66", "202", "55"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("async evaluation", () => {
     test("awaits promises at the top level and in async functions", async () => {
       const { outputs, stderr, exitCode } = await runRepl([
@@ -1142,6 +1231,26 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
     });
   });
 
+  test("down arrow with no newer entry leaves the line on the screen", async () => {
+    await withTerminalRepl(async ({ send, waitForScreen }) => {
+      const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+
+      send("40 + 2");
+      await waitForScreen(s => s.rows.at(-1) === "> 40 + 2");
+      send("\x1b[B + 1\n"); // Down, then the rest of the line
+      let screen = await waitForScreen(s => s.rows.length === top + 3 && s.rows.at(-1) === "> ");
+      expect(screen.rows.slice(top)).toEqual(["> 40 + 2 + 1", "43", "> "]);
+
+      send("7\x1b[A"); // Up: the entry above
+      await waitForScreen(s => s.rows.at(-1) === "> 40 + 2 + 1");
+      send("\x1b[B"); // Down: back on the line being entered
+      await waitForScreen(s => s.rows.at(-1) === "> 7");
+      send("7\x1b[B\n"); // more typing, then Down again
+      screen = await waitForScreen(s => s.rows.length === top + 5 && s.rows.at(-1) === "> ");
+      expect(screen.rows.slice(top)).toEqual(["> 40 + 2 + 1", "43", "> 77", "77", "> "]);
+    });
+  });
+
   test("tab completes REPL commands", async () => {
     await withTerminalRepl(async ({ send, waitFor }) => {
       send(".he");
@@ -1180,6 +1289,24 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
           // The result "81" never appears in the echoed input, so this only
           // matches once the expression actually evaluates, proving the ghost
           // was accepted (otherwise `JSO.stringify` is a ReferenceError).
+          send(".stringify(9*9)\n");
+          await waitFor('"81"');
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test.each([
+      ["down arrow", "\x1b[B"],
+      ["Ctrl+N", "\x0e"],
+    ])("%s with no newer entry keeps the suggestion", async (_name, key) => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send("JSO");
+          await waitFor(`${DIM}N`);
+          send(key);
+          // The ghost text is still there for the right arrow to accept.
+          send("\x1b[C");
           send(".stringify(9*9)\n");
           await waitFor('"81"');
         },

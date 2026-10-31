@@ -310,13 +310,11 @@ impl BuiltinIO {
     /// `Builtin.impl_` (disjoint from `stdout`/`stderr`) can write a borrowed
     /// slice without an intermediate heap clone.
     ///
-    /// # Safety
-    /// `shell` must point to the live `ShellExecEnv` owning this builtin
-    /// (i.e. `cmd.base.shell`); only dereferenced for the [`BuiltinIO::Buf`]
-    /// arm.
-    pub(crate) unsafe fn write_no_io_to(
+    /// `shell` is the `ShellExecEnv` owning this builtin (i.e. `cmd.base.shell`);
+    /// only used for the [`BuiltinIO::Buf`] arm.
+    pub(crate) fn write_no_io_to(
         &mut self,
-        shell: *mut crate::shell::interpreter::ShellExecEnv,
+        shell: &mut crate::shell::interpreter::ShellExecEnv,
         buf: &[u8],
     ) -> bun_sys::Result<usize> {
         if buf.is_empty() {
@@ -331,16 +329,13 @@ impl BuiltinIO {
                 // `target` is the destination identity, fixed at construction
                 // and preserved across `dup_ref` so `2>&1` lands in stdout's
                 // bytelist.
-                // SAFETY: caller contract — shell env outlives the Cmd node
-                // (single-threaded); `captured` points into a live
-                // `ShellExecEnv` Bufio.
-                unsafe {
-                    let captured = match *target {
-                        IoKind::Stdout => (*shell).buffered_stdout(),
-                        IoKind::Stderr => (*shell).buffered_stderr(),
-                    };
-                    (*captured).append_slice(buf)
+                let captured = match *target {
+                    IoKind::Stdout => shell.buffered_stdout(),
+                    IoKind::Stderr => shell.buffered_stderr(),
                 };
+                // SAFETY: `captured` points into a live `ShellExecEnv` Bufio: `shell`'s
+                // own, or an ancestor env's, which outlives `shell`. Single-threaded.
+                unsafe { (*captured).append_slice(buf) };
                 Ok(buf.len())
             }
             BuiltinIO::ArrayBuf { buf: arraybuf, i } => {
@@ -600,10 +595,9 @@ impl Builtin {
                     }
                 };
 
-                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 if redirect.stdin() {
                     let r = IOReader::init(redirfd, evtloop);
-                    r.set_interp(interp_ptr);
+                    r.set_interp(interp);
                     Self::of_mut(interp, cmd).stdin = BuiltinInput::Fd(r);
                 }
 
@@ -624,7 +618,7 @@ impl Builtin {
                     },
                     evtloop,
                 );
-                redirect_writer.set_interp(interp_ptr);
+                redirect_writer.set_interp(interp);
 
                 if redirect.stdout() {
                     let me = Self::of_mut(interp, cmd);
@@ -860,7 +854,7 @@ impl Builtin {
         // Split-borrow the Cmd so `shell`
         // and the builtin's stdout/stderr are accessible simultaneously.
         let cmd_node = interp.as_cmd_mut(cmd);
-        let shell = cmd_node.base.shell;
+        let shell = cmd_node.base.shell_mut();
         let crate::shell::states::cmd::Exec::Builtin(me) = &mut cmd_node.exec else {
             panic!("Cmd {} is not running a builtin", cmd);
         };
@@ -868,8 +862,7 @@ impl Builtin {
             IoKind::Stdout => &mut me.stdout,
             IoKind::Stderr => &mut me.stderr,
         };
-        // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd's lifetime.
-        unsafe { out.write_no_io_to(shell, buf) }
+        out.write_no_io_to(shell, buf)
     }
 
     /// Shell exec env of the owning Cmd.
@@ -1003,7 +996,7 @@ impl Builtin {
         interp: &Interpreter,
         cmd: NodeId,
         kind: Kind,
-        e: &ParseError,
+        e: &ParseError<'_>,
         set_wait_err: impl FnOnce(),
     ) -> Yield {
         let buf: Vec<u8> = match e {

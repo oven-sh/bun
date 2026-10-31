@@ -12,8 +12,8 @@ pub struct PreferExportFrom {
     check_used_variables: bool,
 }
 
-const PREFER_EXPORT_FROM: Message = Message::new("", "Prefer re-exporting directly from the source module.");
-const USE_EXPORT_FROM: Message = Message::new("", "use `export ... from ...;`");
+const PREFER_EXPORT_FROM: &Message = &Message::new("", "Prefer re-exporting directly from the source module.");
+const USE_EXPORT_FROM: &Message = &Message::new("", "use `export ... from ...;`");
 
 #[derive(Default)]
 pub struct State<'a> {

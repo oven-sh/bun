@@ -418,8 +418,8 @@ function f41 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f42 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f44]
 function f43 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f44]
 function f44 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f45 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f46 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f45 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f46 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = Undefined
     v4 = ToObject v0 message="Array.prototype.map requires that |this| not be null or undefined"
@@ -453,8 +453,8 @@ function f50 name="joinedText" module=m3 position=1819 role=Library flags=[IsChe
 function f51 name="finishJoin" module=m3 position=1934 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string site=w111 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w112 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w113}, {type=number site=w114}] results=[{type=undefined|null|string site=w115 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f52 name="finishReduce" module=m3 position=2116 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w116}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f53 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=131091 thisType={type=anything} parameters=[{type=undefined|null|Array site=w117 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w118}, {type=undefined|number site=w119}, {type=number site=w120}, {type=undefined|null|Array site=w121 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-runtimefunction id=65 function=f46
-runtimefunction id=69 function=f45
+runtimefunction id=64 function=f46
+runtimefunction id=68 function=f45
 runtimefunction id=131091 function=f53 visibility=Private
 # -- generated: f0 withSharedTargets f30 map
 # CHECK-LABEL: function f0 module=
@@ -550,7 +550,7 @@ runtimefunction id=131091 function=f53 visibility=Private
 # CHECK-NEXT: Jump -> next b4(v1)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="map"
-# CHECK: module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=Array flags=[IsExpected]} parameters=[{type=function flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+# CHECK: module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=64 thisType={type=Array flags=[IsExpected]} parameters=[{type=function flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
 # CHECK-NEXT: b0(v0: anything ~ Array, v1: anything ~ function, v2: anything):
 # CHECK-NEXT: v3: object ~ Array = ToObject v0 message="Array.prototype.map requires that |this| not be null or undefined"
 # CHECK-NEXT: v4: boolean ~ true = TypeTest v3 testedType=Array
@@ -604,13 +604,13 @@ runtimefunction id=131091 function=f53 visibility=Private
 # CHECK-NEXT: Jump -> next b3(v18)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="map"
-# CHECK: module=m2 position=5210 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 enclosingRuntimeFunction=65 captures=[{type=f46}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f46} creator=Entrypoint{target=f46 arguments=Registers} {
+# CHECK: module=m2 position=5210 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 enclosingRuntimeFunction=64 captures=[{type=f46}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f46} creator=Entrypoint{target=f46 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f46, v1: anything, v2: anything, v3: anything) frequency=Rare:
 # CHECK-NEXT: v4: anything = CallDirect v1, v2, v3 function=f46
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="map"
-# CHECK: module=m2 position=5210 kind=Method role=CalleeVersion flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=Array flags=[IsExpected]} parameters=[{type=function}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f46 parameter=1073741825 parameterMap=[{original=0}, {original=1}, {original=2}]} creator=Version{provenVersion=f46} {
+# CHECK: module=m2 position=5210 kind=Method role=CalleeVersion flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=64 thisType={type=Array flags=[IsExpected]} parameters=[{type=function}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f46 parameter=1073741825 parameterMap=[{original=0}, {original=1}, {original=2}]} creator=Version{provenVersion=f46} {
 # CHECK-NEXT: b0(v0: anything ~ Array, v1: function, v2: anything):
 # CHECK-NEXT: v3: object ~ Array = ToObject v0 message="Array.prototype.map requires that |this| not be null or undefined"
 # CHECK-NEXT: v4: boolean ~ true = TypeTest v3 testedType=Array

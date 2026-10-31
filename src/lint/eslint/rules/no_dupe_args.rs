@@ -4,7 +4,7 @@ use smallvec::SmallVec;
 /// Disallow duplicate arguments in `function` definitions.
 pub struct NoDupeArgs;
 
-const UNEXPECTED: Message = Message::new("unexpected", "Duplicate param '{{name}}'.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "Duplicate param '{{name}}'.");
 
 impl NoDupeArgs {
     fn check_params<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {

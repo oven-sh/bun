@@ -448,15 +448,6 @@ pub(crate) struct EncodeOptions {
     pub(crate) dither: bool,
     /// JPEG only: emit a progressive scan script (coarse-to-fine render).
     pub(crate) progressive: bool,
-    /// ICC profile to embed in the output container (JPEG APP2, PNG iCCP,
-    /// WebP ICCP). `None` ⇒ no profile chunk/marker is written. The
-    /// pipeline forwards this from the decode step so a non-sRGB source
-    /// (P3, Adobe RGB, XYB/Jpegli) preserves its colour meaning through
-    /// re-encode. Borrowed; the caller retains ownership.
-    // SAFETY invariant: borrowed from the caller and only valid for the
-    // duration of `encode()`; raw ptr instead of a lifetime param per the
-    // repo rule against lifetime params on structs.
-    pub(crate) icc_profile: Option<NonNull<[u8]>>,
 }
 
 impl Default for EncodeOptions {
@@ -470,7 +461,6 @@ impl Default for EncodeOptions {
             colors: 256,
             dither: false,
             progressive: false,
-            icc_profile: None,
         }
     }
 }
@@ -530,15 +520,18 @@ impl Encoded {
     }
 }
 
+/// `icc` is the ICC profile to embed in the output container (JPEG APP2, PNG
+/// iCCP, WebP ICCP). `None` ⇒ no profile chunk/marker is written. The
+/// pipeline forwards this from the decode step so a non-sRGB source
+/// (P3, Adobe RGB, XYB/Jpegli) preserves its colour meaning through
+/// re-encode.
 pub(crate) fn encode(
     rgba: &[u8],
     width: u32,
     height: u32,
     opts: EncodeOptions,
+    icc: Option<&[u8]>,
 ) -> Result<Encoded, Error> {
-    // SAFETY: `EncodeOptions.icc_profile` is borrowed from the caller for the
-    // duration of this call (raw-ptr stand-in for a lifetime param).
-    let icc: Option<&[u8]> = opts.icc_profile.map(|p| unsafe { p.as_ref() });
     match opts.format {
         Format::Jpeg => jpeg::encode(rgba, width, height, opts.quality, opts.progressive, icc),
         // PNG carries iCCP on both truecolour and indexed images — quantise

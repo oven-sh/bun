@@ -74,7 +74,8 @@ const makeAndCollect = (expression: string) => `
 const countMappedBytes = (file: Buffer) => getMappedSegments(file).reduce((sum, segment) => sum + segment.length, 0);
 
 // What an executable maps whatever its program is, on Linux x64 with glibc. These bounds only go down.
-const mostMappedBytes: Record<string, number> = { "": 68_440_000, "--trim": 25_700_000 };
+// One exception: the engine of WebKit e8f704815e94 has 167,808 bytes more that a trimmed executable keeps, and the second bound went up with it.
+const mostMappedBytes: Record<string, number> = { "": 68_440_000, "--trim": 25_880_000 };
 // The bytes of the feature ImageCompiler in the trim table: about 22.50 MB when this was set, with about the 250 KB of room it had before.
 const mostBytesOfCompiler = 22_750_000;
 

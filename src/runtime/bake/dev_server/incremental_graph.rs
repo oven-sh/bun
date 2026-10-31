@@ -1723,12 +1723,16 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         if !found_existing {
             *gop.key_ptr = Box::<[u8]>::from(abs_path);
         }
+        let had_failure = found_existing && gop.value_ptr.failed;
         *gop.value_ptr = File {
             kind: FileKind::Css,
             ..Default::default()
         };
         if !found_existing {
             self.edge_lists.push(EdgeLists::default());
+        }
+        if had_failure {
+            let _ = self.retract_failure(file_index);
         }
         *ctx.get_cached_index(Side::Server, index) =
             CachedFileIndex::from(Some::<FileIndex<SIDE>>(file_index));

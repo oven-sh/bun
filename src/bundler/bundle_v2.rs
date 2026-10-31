@@ -8428,6 +8428,18 @@ pub mod bv2_impl {
         pub(crate) css_entry_points: ArrayHashMap<Index, CssEntryPointMeta>,
     }
 
+    impl DevServerInput {
+        /// Makes `index` a css root that `finalize_bundle` also adds to the server graph.
+        pub fn mark_css_root_imported_on_server(&mut self, index: Index) -> Result<(), AllocError> {
+            self.css_entry_points.put(
+                index,
+                CssEntryPointMeta {
+                    imported_on_server: true,
+                },
+            )
+        }
+    }
+
     /// The lifetime of this structure is tied to the bundler's arena
     pub struct DevServerOutput<'a> {
         pub chunks: &'a mut [Chunk<'a>],

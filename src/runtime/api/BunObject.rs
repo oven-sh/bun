@@ -797,6 +797,7 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
 
     let decoded_specifier;
     let specifier_for_resolve = if specifier.starts_with_ascii(b"file://") {
+        query_string = bun_url::suffix_from_file_url(specifier);
         decoded_specifier = bun_url::path_from_file_url(specifier);
         &decoded_specifier
     } else {
@@ -809,6 +810,7 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
         from,
         Some(&mut query_string),
         mode,
+        !specifier.starts_with_ascii(b"file://"),
     )? {
         Ok(path) => path,
         Err(err) if err.as_class_ref::<jsc::ResolveMessage>().is_some() => {
@@ -821,7 +823,12 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
     if !query_string.is_empty() {
         let mut arraylist: Vec<u8> = Vec::with_capacity(1024);
         // Vec<u8> writes are infallible.
-        let _ = write!(&mut arraylist, "{}{}", result_value, query_string);
+        let _ = write!(&mut arraylist, "{}", result_value);
+        if query_string.starts_with_ascii(b"#") {
+            let _ = write!(&mut arraylist, "?{}", query_string);
+        } else {
+            let _ = write!(&mut arraylist, "{}", query_string);
+        }
 
         return Ok(Resolved::Found(BunString::clone_utf8(&arraylist)));
     }

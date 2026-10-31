@@ -34,8 +34,18 @@ const callsInFlight = 16;
 // release ASAN build, 50 ms on a debug build. A debug build also spends 0.6 ms
 // on each call. A leak in the wrapper count shows after a few calls.
 const rounds = { memory: isDebug ? 20 : isASAN ? 40 : 80, wrappers: 4 };
-// A run with no leak measures 27 at most (36 on a debug build).
-const maxBytesPerCall = isDebug ? 256 : 128;
+// The most that a case may grow by, in bytes for each call. It is undefined
+// where no run has measured what a run with no leak reads.
+// - The fixture read an exact number (Linux): a run with no leak measures 27 at
+//   most, and 40 on a debug build.
+// - macOS and Windows: the samples are RSS. With no leak the CI lanes measure
+//   -9 to 10. They get twice the room.
+// - Debug and ASAN builds off Linux, and a Linux without smaps_rollup: not
+//   measured.
+function maxBytesPerCall(exact: boolean): number | undefined {
+  if (exact) return isDebug ? 256 : 128;
+  return isLinux || isDebug || isASAN ? undefined : 256;
+}
 
 const written = (content: string) =>
   Object.fromEntries(Array.from({ length: callsInFlight }, (_, slot) => [`out-${slot}`, content]));
@@ -50,12 +60,14 @@ function growthPerRound(samples: number[]): number {
   return slopes.sort((a, b) => a - b)[slopes.length >> 1];
 }
 
+// The long cases come first: an ASAN build runs only five tests at a time.
 test.concurrent.each([
   // The call is rejected before anything is scheduled. It must not touch the disk.
   ["readFile", "is already aborted", "memory", "AbortError ABORT_ERR", {}],
   ["writeFile", "is already aborted", "memory", "AbortError ABORT_ERR", {}],
   // The call is scheduled, and the signal aborts before the result is back.
-  // How much of the data is on disk by then is not specified.
+  // How much of its data a writeFile has on disk by then is not specified.
+  ["readFile", "aborts on the next tick", "memory", "AbortError ABORT_ERR", {}],
   ["writeFile", "aborts on the next tick", "memory", "AbortError ABORT_ERR", undefined],
   // The call runs to its end.
   ["readFile", "never aborts", "wrappers", 'resolved with "blah"', {}],
@@ -74,9 +86,10 @@ test.concurrent.each([
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const { samples, abortSignals, rss, ...report } = JSON.parse(stdout) as {
+    const { samples, exact, abortSignals, rss, ...report } = JSON.parse(stdout) as {
       outcomes: Record<string, number>;
       samples: number[];
+      exact: boolean;
       abortSignals: number;
       rss: number;
     };
@@ -102,15 +115,16 @@ test.concurrent.each([
       const parts = [0, 1, 2].map(part => measured.slice(part * third, (part + 1) * third));
       const bytesPerCall = Math.min(...parts.map(growthPerRound)) / callsPerRound;
       console.log(`fs.promises.${method}, signal ${signal}: ${Math.round(bytesPerCall)} bytes per call`);
-      // The fixture has an exact number to read on Linux only.
-      if (isLinux) expect(bytesPerCall).toBeLessThan(maxBytesPerCall);
+      const bound = maxBytesPerCall(exact);
+      if (bound !== undefined) expect(bytesPerCall).toBeLessThan(bound);
     }
     // Every platform keeps the ceiling that this test had before it measured
     // the growth.
     expect(rss / 1024 / 1024).toBeLessThan(isASAN ? 700 : 200);
     expect(exitCode).toBe(0);
   },
-  // Only a debug build needs more than the default: a long loop takes about
-  // 8 s there. No CI lane runs one, so each keeps its own timeout.
-  isDebug ? 60_000 : undefined,
+  // A debug or ASAN build needs more than the 5 s default: a long loop takes
+  // about 8 s on a debug build, and up to 12 s on a release ASAN build on a
+  // busy machine.
+  isDebug || isASAN ? 60_000 : undefined,
 );

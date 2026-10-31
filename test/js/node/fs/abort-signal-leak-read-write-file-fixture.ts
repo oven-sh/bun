@@ -3,8 +3,8 @@
 // Calls fs.promises.readFile() or fs.promises.writeFile() in rounds, each call
 // with an AbortSignal of its own. Each round ends with a full GC and one sample
 // of the resident memory. Prints one JSON line: how the calls settled, the
-// samples, the AbortSignal wrappers left on the heap, and the RSS at the end.
-// The test decides what is a leak.
+// samples and whether they are exact, the AbortSignal wrappers left on the
+// heap, and the RSS at the end. The test decides what is a leak.
 //
 // argv: <readFile|writeFile> <signal> <rounds> <calls per round> <calls in flight>
 // cwd:  a directory that holds the file "blah"
@@ -60,14 +60,25 @@ const outcomeOfCall = (slot: number) => {
 // mappings out. That is common on an ASAN build just after a GC. No walk counts
 // a page twice, so the highest of a few reads is the number. About one sample
 // in a hundred still comes out low, and the median in the test takes those.
-function residentBytes(): number {
-  if (process.platform !== "linux") return process.memoryUsage.rss();
+function anonymousBytes(): number {
   let highest = 0;
   for (let read = 0; read < 8; read++) {
     const rollup = fs.readFileSync("/proc/self/smaps_rollup", "utf8");
     highest = Math.max(highest, Number(/^Anonymous:\s+(\d+) kB$/m.exec(rollup)![1]) * 1024);
   }
   return highest;
+}
+
+// Kernels before 4.14 and some sandboxes have no smaps_rollup. One source
+// serves the whole run, because the two do not count the same pages.
+let residentBytes: () => number = process.memoryUsage.rss;
+let exact = false;
+if (process.platform === "linux") {
+  try {
+    anonymousBytes();
+    residentBytes = anonymousBytes;
+    exact = true;
+  } catch {}
 }
 
 const outcomes: Record<string, number> = {};
@@ -90,6 +101,7 @@ console.log(
   JSON.stringify({
     outcomes,
     samples,
+    exact,
     abortSignals: heapStats().objectTypeCounts.AbortSignal ?? 0,
     rss: process.memoryUsage.rss(),
   }),

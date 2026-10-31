@@ -9527,6 +9527,10 @@ declare module "bun" {
   /**
    * Resolve routes against a directory of files using Next.js-style (`pages`
    * directory) conventions.
+   *
+   * A route parameter is the whole name of a folder, or of a file without its
+   * extension: `[slug].tsx`, `[...slug].tsx`, `[[...slug]].tsx`. A name that
+   * mixes brackets with other text, such as `[id]-edit.tsx`, is not supported.
    */
   class FileSystemRouter {
     /**

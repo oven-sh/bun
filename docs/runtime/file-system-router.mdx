@@ -19,6 +19,8 @@ pages
 └── [[...catchall]].tsx
 ```
 
+In this directory, `[slug]` and `[[...catchall]]` are route parameters. A route parameter is the whole name of a folder, or of a file without its extension. The router does not support a name that mixes brackets with other text: `[id]-edit.tsx` does not match `/7-edit`.
+
 To resolve routes against this directory:
 
 ```ts router.ts

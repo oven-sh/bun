@@ -1694,6 +1694,369 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
     });
   });
 
+  describe("multi-line history entries", () => {
+    // An input typed over several lines is one history entry. When it is
+    // recalled, each line is drawn on a row of its own, the later ones after
+    // the continuation prompt, and every keystroke redraws all of them from the
+    // row of the first prompt.
+    type Repl = Parameters<Parameters<typeof withTerminalRepl>[0]>[0];
+
+    /** Types `lines` as one input, waits for `result`, and returns the index of the row its prompt is on. */
+    async function enter({ send, waitForScreen }: Repl, lines: string[], result: string, prompt = "> ") {
+      let { rows } = await waitForScreen(s => s.rows.at(-1) === prompt);
+      const top = rows.length - 1;
+      for (const line of lines.slice(0, -1)) {
+        send(`${line}\n`);
+        const drawn = rows.length;
+        ({ rows } = await waitForScreen(s => s.rows.length > drawn && s.rows.at(-1) === "... "));
+      }
+      send(`${lines.at(-1)}\n`);
+      await waitForScreen(s => s.rows.at(-1) === prompt && s.rows.at(-2) === result);
+      return top;
+    }
+
+    test("a key on a recalled entry does not add rows", async () => {
+      await withTerminalRepl(async repl => {
+        const { send, waitForScreen } = repl;
+        await enter(repl, ["[1,", "2,", "3]"], "[ 1, 2, 3 ]");
+
+        send("\x1b[A"); // Up
+        let screen = await waitForScreen(s => s.rows.at(-1)!.endsWith("3]"));
+        const height = screen.rows.length;
+        let last = "3]";
+        for (const key of ["x", "y", "z"]) {
+          last += key;
+          send(key);
+          screen = await waitForScreen(s => s.rows.at(-1)!.endsWith(last));
+          expect(screen.rows.length).toBe(height);
+          await waitForScreen(s => s.cursor.row === height - 1 && s.cursor.col === s.rows.at(-1)!.length);
+        }
+      });
+    });
+
+    test("a recalled entry is drawn once and edited in place", async () => {
+      await withTerminalRepl(async repl => {
+        const { send, waitForScreen } = repl;
+        const top = await enter(repl, ["[1,", "2,", "3]"], "[ 1, 2, 3 ]");
+        const typed = ["> [1,", "... 2,", "... 3]", "[ 1, 2, 3 ]"];
+
+        send("\x1b[A"); // Up
+        let screen = await waitForScreen(s => s.rows.at(-1) === "... 3]");
+        expect(screen.rows.slice(top)).toEqual([...typed, "> [1,", "... 2,", "... 3]"]);
+        await waitForScreen(s => s.cursor.row === top + 6 && s.cursor.col === "... 3]".length);
+
+        send("xyz");
+        screen = await waitForScreen(s => s.rows.at(-1) === "... 3]xyz");
+        expect(screen.rows.slice(top)).toEqual([...typed, "> [1,", "... 2,", "... 3]xyz"]);
+        await waitForScreen(s => s.cursor.row === top + 6 && s.cursor.col === "... 3]xyz".length);
+
+        send("\x7f\x7f\x7f"); // Backspace, three times
+        screen = await waitForScreen(s => s.rows.at(-1) === "... 3]" && s.cursor.col === "... 3]".length);
+        expect(screen.rows.slice(top)).toEqual([...typed, "> [1,", "... 2,", "... 3]"]);
+
+        // Left over `]`, `3` and the line break: the cursor is at the end of the second line.
+        send("\x1b[D\x1b[D\x1b[D");
+        await waitForScreen(s => s.cursor.row === top + 5 && s.cursor.col === "... 2,".length);
+        send(" 2.5,");
+        screen = await waitForScreen(s => s.rows.at(-2) === "... 2, 2.5,");
+        expect(screen.rows.slice(top)).toEqual([...typed, "> [1,", "... 2, 2.5,", "... 3]"]);
+        await waitForScreen(s => s.cursor.row === top + 5 && s.cursor.col === "... 2, 2.5,".length);
+
+        // The result goes below the last line, not below the cursor.
+        send("\n");
+        screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "[ 1, 2, 2.5, 3 ]");
+        expect(screen.rows.slice(top)).toEqual([...typed, "> [1,", "... 2, 2.5,", "... 3]", "[ 1, 2, 2.5, 3 ]", "> "]);
+      });
+    });
+
+    test("each Backspace on the entry of issue #27560 redraws it once", async () => {
+      // With colors, as in the issue: the prompt is then "❯ ".
+      await withTerminalRepl(
+        async repl => {
+          const { send, waitForScreen } = repl;
+          const draw = (text: string) => text.split("\n").map((line, index) => (index === 0 ? "❯ " : "... ") + line);
+          let text = "if (1) {\n1\n2\n3\n}";
+          const top = await enter(repl, text.split("\n"), "undefined", "❯ ");
+          const typed = [...draw(text), "undefined"];
+
+          send("\x1b[A");
+          let screen = await waitForScreen(s => s.rows.at(-1) === "... }");
+          expect(screen.rows.slice(top)).toEqual([...typed, ...draw(text)]);
+
+          for (let deleted = 1; deleted <= 7; deleted++) {
+            text = text.slice(0, -1);
+            const drawn = draw(text);
+            send("\x7f");
+            screen = await waitForScreen(
+              s => s.rows.length === top + typed.length + drawn.length && s.rows.at(-1) === drawn.at(-1),
+            );
+            expect(screen.rows.slice(top)).toEqual([...typed, ...drawn]);
+          }
+          // `if (1) {` and an empty second line are left.
+          await waitForScreen(s => s.cursor.row === top + typed.length + 1 && s.cursor.col === "... ".length);
+        },
+        { env: { NO_COLOR: undefined, FORCE_COLOR: "1" } },
+      );
+    });
+
+    test("Enter and Ctrl+C go below the last line from a cursor on the first", async () => {
+      await withTerminalRepl(async repl => {
+        const { send, waitForScreen } = repl;
+        const top = await enter(repl, ["[1,", "2,", "3]"], "[ 1, 2, 3 ]");
+        const entry = ["> [1,", "... 2,", "... 3]"];
+
+        send("\x1b[A");
+        await waitForScreen(s => s.rows.at(-1) === "... 3]");
+        send("\x01"); // Ctrl+A: the start of the first line
+        await waitForScreen(s => s.cursor.row === top + 4 && s.cursor.col === "> ".length);
+        send("\n");
+        let screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.length === top + 9);
+        expect(screen.rows.slice(top + 4)).toEqual([...entry, "[ 1, 2, 3 ]", "> "]);
+
+        send("\x1b[A");
+        await waitForScreen(s => s.rows.at(-1) === "... 3]");
+        send("\x01");
+        await waitForScreen(s => s.cursor.row === top + 8 && s.cursor.col === "> ".length);
+        send("\x03");
+        screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "... 3]^C");
+        expect(screen.rows.slice(top + 8)).toEqual(["> [1,", "... 2,", "... 3]^C", "> "]);
+      });
+    });
+
+    test("recalling another entry clears every row of a multi-line one", async () => {
+      await withTerminalRepl(async repl => {
+        const { send, waitForScreen } = repl;
+        send("7\n");
+        await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "7");
+        const top = await enter(repl, ["[1,", "2,", "3]"], "[ 1, 2, 3 ]");
+        const typed = ["> [1,", "... 2,", "... 3]", "[ 1, 2, 3 ]"];
+
+        send("\x1b[A"); // Up: the three lines
+        let screen = await waitForScreen(s => s.rows.at(-1) === "... 3]");
+        expect(screen.rows.slice(top)).toEqual([...typed, "> [1,", "... 2,", "... 3]"]);
+
+        send("\x1b[A"); // Up: 7
+        screen = await waitForScreen(s => s.rows.at(-1) === "> 7");
+        expect(screen.rows.slice(top)).toEqual([...typed, "> 7"]);
+
+        send("\x1b[B"); // Down: the three lines again
+        screen = await waitForScreen(s => s.rows.at(-1) === "... 3]");
+        expect(screen.rows.slice(top)).toEqual([...typed, "> [1,", "... 2,", "... 3]"]);
+
+        send("\x1b[B"); // Down: the empty line
+        screen = await waitForScreen(s => s.rows.at(-1) === "> ");
+        expect(screen.rows.slice(top)).toEqual([...typed, "> "]);
+        await waitForScreen(s => s.cursor.row === top + 4 && s.cursor.col === "> ".length);
+      });
+    });
+
+    test("an entry recalled at the continuation prompt starts after that prompt", async () => {
+      await withTerminalRepl(async repl => {
+        const { send, waitForScreen } = repl;
+        const top = await enter(repl, ["[1,", "2,", "3]"], "[ 1, 2, 3 ]");
+
+        send("[0,\n");
+        await waitForScreen(s => s.rows.at(-1) === "... " && s.rows.at(-2) === "> [0,");
+        send("\x1b[A");
+        let screen = await waitForScreen(s => s.rows.at(-1) === "... 3]");
+        expect(screen.rows.slice(top + 4)).toEqual(["> [0,", "... [1,", "... 2,", "... 3]"]);
+        await waitForScreen(s => s.cursor.row === top + 7 && s.cursor.col === "... 3]".length);
+
+        send("]");
+        screen = await waitForScreen(s => s.rows.at(-1) === "... 3]]");
+        expect(screen.rows.slice(top + 4)).toEqual(["> [0,", "... [1,", "... 2,", "... 3]]"]);
+
+        send("\n");
+        screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "[ 0, [ 1, 2, 3 ] ]");
+        expect(screen.rows.slice(top + 4)).toEqual([
+          "> [0,",
+          "... [1,",
+          "... 2,",
+          "... 3]]",
+          "[ 0, [ 1, 2, 3 ] ]",
+          "> ",
+        ]);
+      });
+    });
+
+    test("lines of a recalled entry can be emptied and deleted", async () => {
+      await withTerminalRepl(async repl => {
+        const { send, waitForScreen } = repl;
+        // The second line is empty.
+        const top = await enter(repl, ["[1,", "", "2]"], "[ 1, 2 ]");
+        const typed = ["> [1,", "... ", "... 2]", "[ 1, 2 ]"];
+
+        send("\x1b[A");
+        let screen = await waitForScreen(s => s.rows.at(-1) === "... 2]");
+        expect(screen.rows.slice(top)).toEqual([...typed, "> [1,", "... ", "... 2]"]);
+
+        // Backspace over `]` and `2`: the input now ends with a line break.
+        send("\x7f\x7f");
+        screen = await waitForScreen(s => s.rows.length === top + 7 && s.rows.at(-1) === "... ");
+        expect(screen.rows.slice(top)).toEqual([...typed, "> [1,", "... ", "... "]);
+        await waitForScreen(s => s.cursor.row === top + 6 && s.cursor.col === "... ".length);
+
+        // The input is incomplete, so Enter asks for its next line on a new row.
+        send("\n");
+        await waitForScreen(s => s.rows.length === top + 8 && s.rows.at(-1) === "... ");
+        send("5]\n");
+        screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "[ 1, 5 ]");
+        const second = ["> [1,", "... ", "... ", "... 5]", "[ 1, 5 ]"];
+        expect(screen.rows.slice(top)).toEqual([...typed, ...second, "> "]);
+
+        // Up recalls those four lines. Ctrl+K after `[1,` deletes the other three.
+        send("\x1b[A");
+        screen = await waitForScreen(s => s.rows.at(-1) === "... 5]");
+        expect(screen.rows.slice(top)).toEqual([...typed, ...second, "> [1,", "... ", "... ", "... 5]"]);
+        send("\x01\x1b[C\x1b[C\x1b[C\x0b");
+        screen = await waitForScreen(s => s.rows.at(-1) === "> [1," && s.cursor.col === "> [1,".length);
+        expect(screen.rows.slice(top)).toEqual([...typed, ...second, "> [1,"]);
+
+        send("\n");
+        await waitForScreen(s => s.rows.at(-1) === "... " && s.rows.at(-2) === "> [1,");
+        send("6]\n");
+        screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "[ 1, 6 ]");
+        expect(screen.rows.slice(top)).toEqual([...typed, ...second, "> [1,", "... 6]", "[ 1, 6 ]", "> "]);
+      });
+    });
+
+    test("a line of the entry that is wider than the terminal wraps", async () => {
+      const cols = 30;
+      // "... " plus 34 characters: the first 26 share the continuation prompt's row.
+      const second = "333, 444, 555, 666, 777, 888, 999,";
+      const split = cols - "... ".length;
+      await withTerminalRepl(
+        async repl => {
+          const { send, waitForScreen } = repl;
+          const top = await enter(repl, ["[111, 222,", second, "0].length"], "10");
+          const drawn = ["> [111, 222,", `... ${second.slice(0, split)}`, second.slice(split), "... 0].length"];
+
+          send("\x1b[A");
+          let screen = await waitForScreen(s => s.rows.at(-1) === "... 0].length");
+          expect(screen.rows.slice(top)).toEqual([...drawn, "10", ...drawn]);
+          await waitForScreen(s => s.cursor.row === top + 8 && s.cursor.col === "... 0].length".length);
+
+          // Ctrl+B (left) to the end of the wrapped line, then insert there.
+          send(Buffer.alloc("\n0].length".length, "\x02").toString());
+          await waitForScreen(s => s.cursor.row === top + 7 && s.cursor.col === second.length - split);
+          send(" 1,");
+          const edited = `${second} 1,`;
+          screen = await waitForScreen(s => s.rows.at(-2) === edited.slice(split));
+          expect(screen.rows.slice(top + 5)).toEqual([
+            "> [111, 222,",
+            `... ${edited.slice(0, split)}`,
+            edited.slice(split),
+            "... 0].length",
+          ]);
+          await waitForScreen(s => s.cursor.row === top + 7 && s.cursor.col === edited.length - split);
+
+          // Ctrl+A, then insert on the first row while the cursor was three rows below it.
+          send("\x01" + "0, ");
+          screen = await waitForScreen(s => s.rows.at(-4) === "> 0, [111, 222,");
+          expect(screen.rows.slice(top + 5)).toEqual([
+            "> 0, [111, 222,",
+            `... ${edited.slice(0, split)}`,
+            edited.slice(split),
+            "... 0].length",
+          ]);
+          await waitForScreen(s => s.cursor.row === top + 5 && s.cursor.col === "> 0, ".length);
+
+          send("\n");
+          screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "11");
+          expect(screen.rows.slice(top + 8)).toEqual(["... 0].length", "11", "> "]);
+        },
+        { cols },
+      );
+    });
+
+    test("a line that fills the row exactly is followed by the next line", async () => {
+      const cols = 30;
+      // "> " plus 28 characters is exactly 30 columns.
+      const first = `["${Buffer.alloc(24, "a")}",`;
+      await withTerminalRepl(
+        async repl => {
+          const { send, waitForScreen } = repl;
+          const top = await enter(repl, [first, "2].length"], "2");
+          const typed = [`> ${first}`, "... 2].length", "2"];
+
+          send("\x1b[A");
+          let screen = await waitForScreen(s => s.rows.at(-1) === "... 2].length");
+          expect(screen.rows.slice(top)).toEqual([...typed, `> ${first}`, "... 2].length"]);
+          await waitForScreen(s => s.cursor.row === top + 4 && s.cursor.col === "... 2].length".length);
+
+          // Ctrl+B to the end of the full row. No cell is free after it, so the
+          // cursor is shown at the start of the next row.
+          send(Buffer.alloc("\n2].length".length, "\x02").toString());
+          await waitForScreen(s => s.cursor.row === top + 4 && s.cursor.col === 0);
+          // What is typed there wraps onto a row of its own.
+          send("0,");
+          screen = await waitForScreen(s => s.rows.at(-2) === "0,");
+          expect(screen.rows.slice(top)).toEqual([...typed, `> ${first}`, "0,", "... 2].length"]);
+          await waitForScreen(s => s.cursor.row === top + 4 && s.cursor.col === "0,".length);
+
+          send("\n");
+          screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "3");
+          const second = [`> ${first}`, "0,", "... 2].length", "3"];
+          expect(screen.rows.slice(top)).toEqual([...typed, ...second, "> "]);
+
+          // Recall it, delete all of it, and type one line that wraps: it is
+          // drawn like an input that never held a line break.
+          const line = "[111, 222, 333, 444, 555, 666].length";
+          const wrapAt = cols - "> ".length;
+          send("\x1b[A");
+          await waitForScreen(s => s.rows.at(-1) === "... 2].length" && s.rows.length === top + 10);
+          send("\x01\x0b" + line);
+          screen = await waitForScreen(s => s.rows.at(-1) === line.slice(wrapAt));
+          expect(screen.rows.slice(top)).toEqual([
+            ...typed,
+            ...second,
+            `> ${line.slice(0, wrapAt)}`,
+            line.slice(wrapAt),
+          ]);
+          await waitForScreen(s => s.cursor.row === top + 8 && s.cursor.col === line.length - wrapAt);
+
+          send("\n");
+          screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "6");
+          expect(screen.rows.slice(top + 7)).toEqual([`> ${line.slice(0, wrapAt)}`, line.slice(wrapAt), "6", "> "]);
+        },
+        { cols },
+      );
+    });
+
+    test("each line is highlighted on its own row", async () => {
+      // Colors enable syntax highlighting and ghost text; the prompt is then "❯ ".
+      await withTerminalRepl(
+        async repl => {
+          const { send, waitFor, waitForScreen } = repl;
+          send("var zzTail = 2\n");
+          await waitForScreen(s => s.rows.at(-1) === "❯ " && s.rows.at(-2) === "2");
+          const top = await enter(repl, ["[1, // one", "2]"], "[ 1, 2 ]", "❯ ");
+          const typed = ["❯ [1, // one", "... 2]", "[ 1, 2 ]"];
+
+          send("\x1b[A");
+          let screen = await waitForScreen(s => s.rows.at(-1) === "... 2]");
+          expect(screen.rows.slice(top)).toEqual([...typed, "❯ [1, // one", "... 2]"]);
+          // The comment's style ends before the line break, which is CR LF (the
+          // pty puts a CR of its own in front of the LF). The continuation prompt
+          // follows with a style of its own.
+          await waitFor(/\/\/ one(?:\x1b\[[\d;]*m)+\r\r\n(?:\x1b\[[\d;]*m)+\.\.\. (?:\x1b\[[\d;]*m)+/);
+
+          // The ghost text follows the last line.
+          send(" + zzT");
+          screen = await waitForScreen(s => s.rows.at(-1) === "... 2] + zzTail");
+          expect(screen.rows.slice(top)).toEqual([...typed, "❯ [1, // one", "... 2] + zzTail"]);
+          await waitForScreen(s => s.cursor.row === top + 4 && s.cursor.col === "... 2] + zzT".length);
+
+          // Right accepts it.
+          send("\x1b[C\n");
+          screen = await waitForScreen(s => s.rows.at(-1) === "❯ " && s.rows.at(-2) === '"1,22"');
+          expect(screen.rows.slice(top)).toEqual([...typed, "❯ [1, // one", "... 2] + zzTail", '"1,22"', "❯ "]);
+        },
+        { env: { NO_COLOR: undefined, FORCE_COLOR: "1" } },
+      );
+    });
+  });
+
   test(".editor mode collects lines until Ctrl+D", async () => {
     await withTerminalRepl(async ({ send, waitFor }) => {
       send(".editor\n");

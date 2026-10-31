@@ -825,6 +825,28 @@ describe.concurrent("the original of a mocked module", () => {
     );
   });
 
+  test("require() of a builtin returns the original until an async factory settles", async () => {
+    await expectFixturesToPass(
+      {
+        "early.cjs": `module.exports = require("node:fs").existsSync("/does/not/exist");`,
+        "late.cjs": `module.exports = require("node:fs").existsSync("/does/not/exist");`,
+        "original.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import early from "./early.cjs";
+
+          vi.mock("node:fs", async importOriginal => ({ ...(await importOriginal()), existsSync: () => true }));
+
+          test("builtin", async () => {
+            expect(early).toBe(false);
+            expect((await import("node:fs")).existsSync("/does/not/exist")).toBe(true);
+            expect(require("./late.cjs")).toBe(true);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
   test("jest.requireActual", async () => {
     await expectFixturesToPass(
       {

@@ -643,14 +643,12 @@ BuiltinModule fetchBuiltinModuleWithoutResolution(
         if (JSValue moduleMock = Bun::findModuleMock(globalObject, specifier)) {
             JSC::JSPromise* pending = Bun::runModuleMock(globalObject, moduleMock.getObject(), specifier->toWTFString(BunString::ZeroCopy), true);
             RETURN_IF_EXCEPTION(scope, {});
-            JSC::JSObject* result = pending ? nullptr : Bun::resultOfModuleMock(moduleMock.getObject());
-            if (!result) {
-                JSC::throwException(globalObject, scope, createAsyncModuleRequiredError(globalObject, specifier->toWTFString(BunString::ZeroCopy)));
-                return {};
+            // Until an async factory settles, require() returns the builtin itself, as in Vitest.
+            if (JSC::JSObject* result = pending ? nullptr : Bun::resultOfModuleMock(moduleMock.getObject())) {
+                JSValue exports = commonJSExportsOfObjectModule(globalObject, result, true);
+                RETURN_IF_EXCEPTION(scope, {});
+                return { Kind::Exports, exports };
             }
-            JSValue exports = commonJSExportsOfObjectModule(globalObject, result, true);
-            RETURN_IF_EXCEPTION(scope, {});
-            return { Kind::Exports, exports };
         }
     }
     if (Bun__fetchBuiltinModule(bunVM, globalObject, specifier, true, res)) {

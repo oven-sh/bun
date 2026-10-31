@@ -20,6 +20,8 @@ import {
   type Payload,
   reasonTooLong,
   recordEvents,
+  runScript,
+  scriptTimeout,
   showFrame,
   tryCall,
   validCloseCalls,
@@ -27,7 +29,7 @@ import {
 
 type Client = Awaited<ReturnType<typeof openClient>>;
 
-describe.each(implementations)("ws client close ($name)", ({ ws: implementation, builtin }) => {
+describe.each(implementations)("ws client close ($name)", ({ ws: implementation, builtin, specifier }) => {
   // The Close frame is parsed and echoed while the socket is paused. Without a resume the peer's FIN is never read, and
   // 'close' waits for the 30 s close timer, which is longer than this test's timeout.
   test("the peer's Close frame resumes a socket that was paused in a 'message' listener", async () => {
@@ -395,6 +397,57 @@ describe.each(implementations)("ws client close ($name)", ({ ws: implementation,
         );
         expect({ code, reason, wasClean }).toEqual({ code: 1000, reason: "bye", wasClean: false });
       });
+
+      // terminate() parses those frames before it returns, so their listeners run beneath the 'open' listener, and a
+      // worker's stop that lands in one ends the 'open' listener too. On Node.js, npm ws parses them after terminate()
+      // has returned.
+      test.concurrent.skipIf(!builtin)(
+        "a worker's stop in a 'message' listener ends the 'open' listener that called terminate()",
+        async () => {
+          const afterUpgrade = Buffer.concat([encodeFrame(OP.text, "a"), encodeFrame(OP.text, "b")]);
+          await using plain = await createPeer({ afterUpgrade });
+          await using secure = await createPeer({ secure: true, afterUpgrade });
+          const worker = `
+            const { parentPort, workerData } = require("node:worker_threads");
+            const { WebSocket } = require(process.env.WS_SPECIFIER);
+            const ran = parentPort.postMessage.bind(parentPort);
+            const client = new WebSocket(workerData.url, { rejectUnauthorized: false });
+            let calls = 0;
+            client.on("message", () => {
+              if (calls++) return ran("the listener, for the second frame");
+              if (workerData.stop === "process.exit()") process.exit(0);
+              ran("spinning");
+              for (;;) {}
+            });
+            client.on("open", () => {
+              client.terminate();
+              ran("the 'open' listener after terminate()");
+            });
+          `;
+          const { lines, exitCode } = await runScript(
+            { specifier },
+            `
+            const { Worker } = require("node:worker_threads");
+            function run(stop, url) {
+              const worker = new Worker(${JSON.stringify(worker)}, { eval: true, workerData: { stop, url } });
+              const ran = [];
+              worker.on("message", what => (what === "spinning" ? worker.terminate() : ran.push(what)));
+              const scheme = url.slice(0, url.indexOf(":"));
+              return new Promise(resolve =>
+                worker.on("exit", code => resolve(scheme + ", " + stop + ": ran " + JSON.stringify(ran) + ", exit code " + code)),
+              );
+            }
+            Promise.all([run("process.exit()", process.env.PLAIN_URL), run("terminate()", process.env.SECURE_URL)]).then(
+              lines => console.log(lines.join("\\n")),
+            );
+          `,
+            { PLAIN_URL: plain.url, SECURE_URL: secure.url },
+          );
+          expect(lines).toEqual(["ws, process.exit(): ran [], exit code 0", "wss, terminate(): ran [], exit code 1"]);
+          expect(exitCode).toBe(0);
+        },
+        scriptTimeout,
+      );
     });
 
     test("after close() emits 'close' 1006, not the code passed to close()", async () => {

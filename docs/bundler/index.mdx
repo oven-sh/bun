@@ -325,7 +325,7 @@ for (const res of result.outputs) {
   // Can be consumed as blobs
   await res.text();
 
-  // Bun sets Content-Type and Etag headers
+  // Bun sets Content-Type and ETag headers
   new Response(res);
 
   // Can be written manually, but you should use `outdir` in this case.
@@ -1678,7 +1678,8 @@ const build = await Bun.build({/* */});
 
 const artifact = build.outputs[0];
 
-// Content-Type header is automatically set
+// Bun sets the Content-Type header.
+// Without `outdir`, Bun also sets an ETag header from a hash of the bytes.
 return new Response(artifact);
 ```
 

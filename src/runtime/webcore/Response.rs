@@ -12,10 +12,13 @@ use crate::webcore::jsc::{
 };
 use bun_core::Output;
 use bun_core::{String as BunString, StringView, Utf8Bytes};
+use bun_http_types::ETag;
 use bun_http_types::Method::Method;
 
 use super::body::{Body, BodyMixin, Value as BodyValue, ValueError as BodyValueError};
+use super::headers_ref::response_body_content_type;
 use super::{FetchHeaders, ReadableStream, Request};
+use crate::api::BuildArtifact;
 
 use super::blob::Blob;
 use bun_ptr::weak_ptr::WeakPtrData;
@@ -568,8 +571,7 @@ impl Response {
             init.headers = Some(HeadersRef::create_empty());
 
             if let BodyValue::Blob(blob) = self.body.get().value.get() {
-                let content_type = blob.content_type_slice();
-                if !content_type.is_empty() {
+                if let Some(content_type) = response_body_content_type(blob) {
                     init.headers.as_mut().unwrap().put(
                         HTTPHeaderName::ContentType,
                         &StringView::ascii(content_type),
@@ -597,8 +599,7 @@ impl Response {
         }
 
         if let BodyValue::Blob(blob) = self.body.get().value.get() {
-            let content_type = blob.content_type_slice();
-            if !content_type.is_empty() {
+            if let Some(content_type) = response_body_content_type(blob) {
                 return Ok(Some(Utf8Bytes::Borrowed(content_type)));
             }
         }
@@ -1030,11 +1031,11 @@ impl Response {
         body: JSValue,
         init: JSValue,
     ) -> JsResult<RefPtr<Response>> {
+        let mut artifact = None;
         if body.is_object() {
-            // `as_class_ref` is the safe shared-borrow downcast (one audited
-            // unsafe in `JSValue`); only `&self` accessors (`is_s3`, `store`)
-            // are touched on this path.
-            if let Some(blob) = body.as_class_ref::<Blob>() {
+            // The two class tests of `as_class_ref::<Blob>()`, apart, so that the second keeps the build output.
+            // Only `&self` accessors (`is_s3`, `store`) are touched on this path.
+            if let Some(blob) = Blob::own_class_ref(body) {
                 if blob.is_s3() {
                     if !init.is_undefined_or_null() {
                         return Err(global_this.throw_invalid_arguments(format_args!(
@@ -1087,6 +1088,8 @@ impl Response {
                     )?;
                     return Ok(response);
                 }
+            } else {
+                artifact = body.as_class_ref::<BuildArtifact>();
             }
         }
         let init: Init = 'brk: {
@@ -1105,14 +1108,16 @@ impl Response {
             )));
         };
 
-        Self::from_body_and_init(global_this, body, init)
+        Self::from_body_and_init(global_this, body, init, artifact)
     }
 
+    /// `artifact` is `body` when `body` is a build output.
     #[inline(always)]
     fn from_body_and_init(
         global_this: &JSGlobalObject,
         body: JSValue,
         mut init: Init,
+        artifact: Option<&BuildArtifact>,
     ) -> JsResult<RefPtr<Response>> {
         let body: Body = 'brk: {
             if body.is_undefined_or_null() {
@@ -1134,12 +1139,27 @@ impl Response {
         // doing it on stack locals lets `?` trigger the scopeguard and
         // `init`'s drop glue and avoids leaking the heap allocation entirely.
         if let BodyValue::Blob(blob) = body.value.get() {
+            // A build output in memory gets an `ETag`. Only the header list carries it to `.headers`,
+            // a `fetch` handler and a route, so the list exists from here on.
+            let etag_hash = artifact.and_then(BuildArtifact::etag_hash);
+            if etag_hash.is_some() && init.headers.is_none() {
+                init.headers = Some(HeadersRef::create_empty());
+            }
             if let Some(headers) = init.headers.as_deref_mut() {
-                let content_type = blob.content_type_slice();
-                if !content_type.is_empty() && !headers.fast_has(HTTPHeaderName::ContentType) {
+                if let Some(content_type) = response_body_content_type(blob)
+                    && !headers.fast_has(HTTPHeaderName::ContentType)
+                {
                     headers.put(
                         HTTPHeaderName::ContentType,
                         &StringView::ascii(content_type),
+                        global_this,
+                    )?;
+                }
+                if let Some(etag_hash) = etag_hash {
+                    let mut buf: ETag::FormatBuffer = [0; 40];
+                    headers.put_default(
+                        HTTPHeaderName::ETag,
+                        &StringView::ascii(ETag::format(etag_hash, &mut buf)),
                         global_this,
                     )?;
                 }
@@ -1162,13 +1182,21 @@ impl Response {
         body: JSValue,
         parts: &InitParts,
     ) -> JsResult<JSValue> {
-        if body.is_object() && body.as_class_ref::<Blob>().is_some_and(|blob| blob.is_s3()) {
-            return Err(global_this.throw_invalid_arguments(format_args!(
-                "new Response(s3File) do not support ResponseInit options",
-            )));
+        let mut artifact = None;
+        if body.is_object() {
+            // As in `construct_into`.
+            if let Some(blob) = Blob::own_class_ref(body) {
+                if blob.is_s3() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "new Response(s3File) do not support ResponseInit options",
+                    )));
+                }
+            } else {
+                artifact = body.as_class_ref::<BuildArtifact>();
+            }
         }
         let init = Init::from_parts(global_this, parts)?;
-        let response = Self::from_body_and_init(global_this, body, init)?;
+        let response = Self::from_body_and_init(global_this, body, init, artifact)?;
         // SAFETY: the wrapper adopts the new response's only ref.
         Ok(unsafe { Response::to_js(response.into_raw(), global_this) })
     }

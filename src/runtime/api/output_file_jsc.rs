@@ -6,6 +6,8 @@
 //! and `node::types::{PathLike, PathOrFileDescriptor}` — all `bun_runtime`
 //! types. `bun_runtime` already depends on `bun_bundler`, so there is no cycle.
 
+use core::cell::Cell;
+
 use bun_jsc::{JSGlobalObject, JSValue, JsClass as _};
 
 use bun_bundler::options_impl::LoaderExt as _;
@@ -75,6 +77,7 @@ impl OutputFileJsc for OutputFile {
                     loader: self.input_loader,
                     output_kind: self.output_kind,
                     path: Box::<[u8]>::from(copy.pathname.as_ref()),
+                    etag_hash: Cell::new(0),
                 }
                 .to_js(global_object)
             }
@@ -98,6 +101,7 @@ impl OutputFileJsc for OutputFile {
                     loader: self.input_loader,
                     output_kind: self.output_kind,
                     path: Box::<[u8]>::from(path_to_use),
+                    etag_hash: Cell::new(0),
                 }
                 .to_js(global_object)
             }
@@ -118,6 +122,7 @@ impl OutputFileJsc for OutputFile {
                     loader: self.input_loader,
                     output_kind: self.output_kind,
                     path,
+                    etag_hash: Cell::new(0),
                 }
                 .to_js(global_object)
             }

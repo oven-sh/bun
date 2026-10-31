@@ -981,14 +981,124 @@ describe("Bun.build", () => {
     expect(await response.text()).toMatchSnapshot("response text");
   });
 
-  test.todo("new Response(BuildArtifact) sets etag", async () => {
-    const x = await Bun.build({
-      entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
-      outdir: tempDirWithFiles("response-buildartifact-etag", {}),
+  describe("new Response(BuildArtifact) sets etag", () => {
+    const entrypoints = [join(import.meta.dir, "./fixtures/trivial/index.js")];
+    // The tag of a static route: a hash of the bytes.
+    const etagOf = async (blob: Blob) =>
+      `"${Bun.hash.xxHash64(await blob.arrayBuffer()).toString(16).padStart(16, "0")}"`;
+
+    test("for an output in memory", async () => {
+      const build = await Bun.build({ entrypoints, sourcemap: "external" });
+      const entry = build.outputs.find(output => output.kind === "entry-point")!;
+      const sourcemap = build.outputs.find(output => output.kind === "sourcemap")!;
+      const etag = await etagOf(entry);
+
+      expect({
+        alone: new Response(entry).headers.get("etag"),
+        status: new Response(entry, { status: 201 }).headers.get("etag"),
+        otherHeader: new Response(entry, { headers: { "x-other": "1" } }).headers.get("etag"),
+        clone: new Response(entry).clone().headers.get("etag"),
+        twice: [new Response(entry).headers.get("etag"), new Response(entry).headers.get("etag")],
+        // The bundler gives a source map the hash "00000000".
+        sourcemap: new Response(sourcemap).headers.get("etag"),
+      }).toEqual({
+        alone: etag,
+        status: etag,
+        otherHeader: etag,
+        clone: etag,
+        twice: [etag, etag],
+        sourcemap: await etagOf(sourcemap),
+      });
+      expect(new Response(entry).headers.get("content-type")).toBe("text/javascript;charset=utf-8");
     });
-    const response = new Response(x.outputs[0]);
-    expect(response.headers.get("etag")).toBeTruthy();
-    expect(response.headers.get("etag")).toMatchSnapshot("content-etag");
+
+    test("unless the caller gives or removes one", async () => {
+      const build = await Bun.build({ entrypoints });
+      const entry = build.outputs[0];
+
+      const given = new Response(entry, { headers: { etag: '"given"', "content-type": "text/plain" } });
+      const set = new Response(entry);
+      set.headers.set("etag", '"set"');
+      const deleted = new Response(entry);
+      deleted.headers.delete("etag");
+
+      expect({
+        given: [given.headers.get("etag"), given.headers.get("content-type")],
+        set: set.headers.get("etag"),
+        deleted: deleted.headers.get("etag"),
+      }).toEqual({
+        given: ['"given"', "text/plain"],
+        set: '"set"',
+        deleted: null,
+      });
+    });
+
+    test("not for a slice, a Blob, or an output on disk", async () => {
+      using outdir = tempDir("response-buildartifact-etag", {});
+      const [inMemory, onDisk] = await Promise.all([
+        Bun.build({ entrypoints }),
+        Bun.build({ entrypoints, outdir: String(outdir) }),
+      ]);
+
+      expect({
+        slice: new Response(inMemory.outputs[0].slice(0, 4)).headers.get("etag"),
+        blob: new Response(new Blob(["hi"], { type: "text/javascript" })).headers.get("etag"),
+        // A file can change after the build, so a tag from the build can be wrong for it.
+        onDisk: new Response(onDisk.outputs[0]).headers.get("etag"),
+      }).toEqual({ slice: null, blob: null, onDisk: null });
+    });
+
+    test("that Bun.serve sends", async () => {
+      const build = await Bun.build({ entrypoints });
+      const entry = build.outputs[0];
+      const etag = await etagOf(entry);
+      const contentType = "text/javascript;charset=utf-8";
+
+      await using server = Bun.serve({
+        port: 0,
+        routes: { "/route": new Response(entry) },
+        fetch: () => new Response(entry),
+      });
+      const sent = async (path: string, init?: RequestInit) => {
+        const res = await fetch(new URL(path, server.url), init);
+        await res.arrayBuffer();
+        return [res.status, res.headers.get("etag"), res.headers.get("content-type")];
+      };
+
+      expect({
+        handler: await sent("/handler"),
+        handlerHead: await sent("/handler", { method: "HEAD" }),
+        route: await sent("/route"),
+        routeHead: await sent("/route", { method: "HEAD" }),
+        routeNotModified: (await sent("/route", { headers: { "if-none-match": etag } }))[0],
+      }).toEqual({
+        handler: [200, etag, contentType],
+        handlerHead: [200, etag, contentType],
+        route: [200, etag, contentType],
+        routeHead: [200, etag, contentType],
+        routeNotModified: 304,
+      });
+    });
+
+    // The tag is not `artifact.hash`: a build can keep that hash while the bytes change.
+    test("that changes when the bytes change", async () => {
+      using dir = tempDir("response-buildartifact-etag-rebuild", { "entry.js": "console.log(1);" });
+      const build = (sourcemap: "none" | "inline") =>
+        Bun.build({ entrypoints: [join(String(dir), "entry.js")], sourcemap });
+      const [first, second] = [(await build("none")).outputs[0], (await build("inline")).outputs[0]];
+      expect(await first.text()).not.toBe(await second.text());
+
+      const etag = new Response(first).headers.get("etag");
+      expect(new Response(second).headers.get("etag")).not.toBe(etag);
+
+      await using server = Bun.serve({
+        port: 0,
+        routes: { "/route": new Response(second) },
+        fetch: () => new Response("fallback"),
+      });
+      const res = await fetch(new URL("/route", server.url), { headers: { "if-none-match": etag! } });
+      expect([res.status, await res.text()]).toEqual([200, await second.text()]);
+    });
   });
 
   // test("BuildArtifact with assets", async () => {

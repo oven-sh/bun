@@ -209,6 +209,20 @@ const _: () = {
             unsafe { Bun__Bindgen__Blob__create(global.as_mut_ptr(), ptr.cast()) }
         }
     }
+
+    impl Blob {
+        /// [`JSValue::as_class_ref`] without the `BuildArtifact` fallback of `from_js`, for a
+        /// caller that needs the build output itself and downcasts to it when this misses.
+        #[inline]
+        pub fn own_class_ref(value: JSValue) -> Option<&'static Blob> {
+            if !value.is_cell() {
+                return None;
+            }
+            let blob = Bun__Bindgen__Blob__fromJS(value).cast::<Blob>();
+            // SAFETY: null, or the payload of the live cell that `value` encodes (see `JSValue::as_class_ref`).
+            unsafe { blob.as_ref() }
+        }
+    }
 };
 
 impl Blob {

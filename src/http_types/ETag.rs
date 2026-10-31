@@ -56,15 +56,15 @@ pub fn format(hash: u64, buf: &mut FormatBuffer) -> &[u8] {
 }
 
 pub fn append_to_headers(bytes: &[u8], headers: &mut Headers) {
-    let hash: u64 = xxhash64(0, bytes);
     let mut etag_buf: FormatBuffer = [0; 40];
-    let etag_str = format(hash, &mut etag_buf);
+    let etag_str = format(hash(bytes), &mut etag_buf);
     headers.append(b"etag", etag_str);
 }
 
+/// The hash that [`append_to_headers`] formats into the entity tag of `bytes`.
 #[inline]
-fn xxhash64(seed: u64, bytes: &[u8]) -> u64 {
-    bun_core::hash::xxhash64(seed, bytes)
+pub fn hash(bytes: &[u8]) -> u64 {
+    bun_core::hash::xxhash64(0, bytes)
 }
 
 /// Split an `If-None-Match` list into entity-tag fragments, honoring RFC 9110

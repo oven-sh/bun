@@ -2413,6 +2413,8 @@ pub(crate) struct BuildArtifact {
     pub path: Box<[u8]>,
     pub(crate) hash: bun_core::fmt::ContentHash,
     pub(crate) output_kind: OutputKind,
+    /// What `etag_hash` computed. Zero until then.
+    pub(crate) etag_hash: core::cell::Cell<u64>,
 }
 
 /// `BuildArtifact.kind` — what role an output file plays. Single canonical
@@ -2488,6 +2490,21 @@ impl BuildArtifact {
         write!(cursor, "{}", self.hash).expect("Unexpected");
         let written = 512 - cursor.len();
         bun_string_jsc::create_utf8_for_js(cx.global(), &buf[..written])
+    }
+
+    /// xxHash64 of the bytes, for the `ETag` that a static route also sends. Not `hash`: a rebuild can keep that while the bytes change.
+    /// `None` for an empty output and for one on disk, whose bytes can change after the build.
+    pub(crate) fn etag_hash(&self) -> Option<u64> {
+        let bytes = self.blob.shared_view();
+        if bytes.is_empty() {
+            return None;
+        }
+        let mut hash = self.etag_hash.get();
+        if hash == 0 {
+            hash = bun_http_types::ETag::hash(bytes);
+            self.etag_hash.set(hash);
+        }
+        Some(hash)
     }
 
     pub(crate) fn get_size(&self) -> f64 {

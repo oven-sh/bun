@@ -4,6 +4,7 @@
 use core::cell::Cell;
 use core::mem::size_of;
 
+use bun_core::strings;
 use bun_http::headers::api::StringPointer;
 use bun_http::headers::append_etag;
 use bun_http::{Headers, Method};
@@ -17,7 +18,7 @@ use bun_uws::{AnyRequest, AnyResponse};
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
 use crate::server::{AnyServer, HTTPStatusText, write_status};
 use crate::webcore::body::Value as BodyValue;
-use crate::webcore::headers_ref::any_blob_content_type;
+use crate::webcore::headers_ref::{any_blob_content_type, response_body_content_type};
 use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
 
 #[derive(bun_ptr::CellRefCounted)]
@@ -109,12 +110,24 @@ impl StaticRoute {
         fetch_headers: Option<&FetchHeaders>,
         status_code: u16,
     ) -> JsResult<RefPtr<StaticRoute>> {
-        let mut headers: Headers = bun_http_jsc::headers_jsc::from_fetch_headers(
+        let headers: Headers = bun_http_jsc::headers_jsc::from_fetch_headers(
             global_this,
             fetch_headers,
             any_blob_content_type(&blob),
         )?;
+        Ok(Self::init_from_any_blob_and_headers(
+            blob,
+            headers,
+            status_code,
+        ))
+    }
 
+    /// Ownership of `blob` is transferred to this function.
+    fn init_from_any_blob_and_headers(
+        blob: AnyBlob,
+        mut headers: Headers,
+        status_code: u16,
+    ) -> RefPtr<StaticRoute> {
         // Generate ETag if not already present
         if headers.get(b"etag").is_none() {
             if !blob.slice().is_empty() {
@@ -125,7 +138,7 @@ impl StaticRoute {
         let mut route = StaticRoute::new(blob, headers, None, status_code);
         // Match the body `on_get` sends. `blob.size()` returns the unknown-size sentinel for an S3 store.
         route.cached_blob_size = route.blob.slice().len() as u64;
-        Ok(RefPtr::new(route))
+        RefPtr::new(route)
     }
 
     /// Create a static route to be used on a single response, freeing the bytes once sent.
@@ -242,12 +255,24 @@ impl StaticRoute {
                 )?;
             }
 
-            return Ok(Some(Self::init_from_any_blob_with_headers(
+            // With no header list, `response.headers` would report the type of a `Blob` body, user-set or not, so the route sends it.
+            // Not a type with a line break: this write validates nothing, and a `fetch` handler's response leaves that type out too.
+            let fetch_headers = response.get_init_headers();
+            let content_type = match &blob {
+                AnyBlob::Blob(blob) if fetch_headers.is_none() => response_body_content_type(blob)
+                    .filter(|content_type| !strings::contains_any(content_type, b"\r\n\0")),
+                _ => any_blob_content_type(&blob),
+            };
+            let headers: Headers = bun_http_jsc::headers_jsc::from_fetch_headers(
                 global_this,
+                fetch_headers,
+                content_type,
+            )?;
+            return Ok(Some(Self::init_from_any_blob_and_headers(
                 blob,
-                response.get_init_headers(),
+                headers,
                 response.status_code(),
-            )?));
+            )));
         }
 
         Ok(None)

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
 import { isBroken, isMacOS, tempDir } from "harness";
+import { join } from "path";
 import { routes, static_responses } from "./bun-serve-static-helpers";
 
 describe.todoIf(isBroken && isMacOS)("static", () => {
@@ -106,9 +107,44 @@ describe("static route Content-Type", () => {
     return res.headers.get("content-type");
   }
 
+  let built: Promise<Blob> | undefined;
+  const buildOutput = () =>
+    (built ??= (async () => {
+      using dir = tempDir("static-route-build-output", { "entry.js": "console.log(1);" });
+      const build = await Bun.build({ entrypoints: [join(String(dir), "entry.js")] });
+      return build.outputs[0];
+    })());
+
+  const multipart = [
+    "--boundary",
+    'Content-Disposition: form-data; name="file"; filename="a.css"',
+    "",
+    "body{}",
+    "--boundary--",
+    "",
+  ].join("\r\n");
+
+  // Blobs with a type that no caller passed to `new Blob()`. `response.headers` reports the type
+  // for each, so a route sends it.
+  const typedByBun: [string, () => Blob | Promise<Blob>, string][] = [
+    ["Bun.build() output", buildOutput, "text/javascript;charset=utf-8"],
+    ["slice of a Bun.build() output", async () => (await buildOutput()).slice(0, 4), "text/javascript;charset=utf-8"],
+    ["Blob sliced with a type", () => new Blob(["xyz"]).slice(0, 2, "text/css"), "text/css;charset=utf-8"],
+    ["body of a data: URL", async () => (await fetch("data:text/css,x")).blob(), "text/css;charset=utf-8"],
+    [
+      "multipart part typed by its file name",
+      async () => {
+        const headers = { "content-type": "multipart/form-data; boundary=boundary" };
+        return (await new Response(multipart, { headers }).formData()).get("file") as Blob;
+      },
+      "text/css;charset=utf-8",
+    ],
+  ];
+
   // Registering a Response snapshots (and consumes) its body. Doing that must not
   // change the Content-Type the next registration of the same Response produces.
   test.each([
+    ...typedByBun.map(([label, blob, type]) => [label, async () => new Response(await blob()), type] as const),
     ["string body", () => new Response("hello"), "text/plain;charset=utf-8"],
     [
       "typed Blob body",
@@ -119,7 +155,7 @@ describe("static route Content-Type", () => {
     ["Response.json", () => Response.json({ a: 1 }), "application/json;charset=utf-8"],
     ["Uint8Array body", () => new Response(new Uint8Array([1, 2, 3])), null],
   ])("is stable across registrations: %s", async (_label, make, expected) => {
-    const response = make();
+    const response = await make();
 
     using server = Bun.serve({
       port: 0,
@@ -160,6 +196,49 @@ describe("static route Content-Type", () => {
       untouched: "text/html;charset=utf-8",
       touched: "text/html;charset=utf-8",
     });
+  });
+
+  test.each(typedByBun)("is the type that response.headers reports: %s", async (_label, blob, expected) => {
+    const untouched = new Response(await blob());
+    const touched = new Response(await blob());
+    expect(touched.headers.get("content-type")).toBe(expected);
+
+    using server = Bun.serve({
+      port: 0,
+      routes: { "/untouched": untouched, "/touched": touched, "/method": { GET: new Response(await blob()) } },
+      fetch: () => new Response("fallback"),
+    });
+
+    expect({
+      untouched: await contentTypeOf(server, "/untouched"),
+      touched: await contentTypeOf(server, "/touched"),
+      method: await contentTypeOf(server, "/method"),
+    }).toEqual({ untouched: expected, touched: expected, method: expected });
+  });
+
+  test("a Content-Type that was deleted is not sent", async () => {
+    const response = new Response(new Blob(["xyz"]).slice(0, 2, "text/css"));
+    response.headers.delete("content-type");
+
+    using server = Bun.serve({ port: 0, routes: { "/a": response }, fetch: () => new Response("fallback") });
+
+    expect(await contentTypeOf(server, "/a")).toBeNull();
+  });
+
+  // A route writes the type of the body as it is. `response.headers` throws for this one.
+  test("a type with a line break is not sent", async () => {
+    const blob = await (await fetch("data:text/x-a\r\nX-Injected: 1,hi")).blob();
+    expect(blob.type).toBe("text/x-a\r\nX-Injected: 1");
+
+    using server = Bun.serve({ port: 0, routes: { "/a": new Response(blob) }, fetch: () => new Response("fallback") });
+
+    const res = await fetch(new URL("/a", server.url));
+    expect({
+      status: res.status,
+      contentType: res.headers.get("content-type"),
+      injected: res.headers.get("x-injected"),
+      body: await res.text(),
+    }).toEqual({ status: 200, contentType: null, injected: null, body: "hi" });
   });
 
   test("a string body still serves its body bytes unchanged", async () => {

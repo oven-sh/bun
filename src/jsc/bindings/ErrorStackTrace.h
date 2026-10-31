@@ -228,9 +228,15 @@ public:
     // Asks the switch here, and not for each frame.
     explicit GeneratedCodeSourceMaps(void* bunVM);
 
-    void note(const JSC::StackFrame&) const;
+    void note(const JSC::StackFrame& frame) const
+    {
+        if (m_bunVM) [[unlikely]]
+            noteSlow(frame);
+    }
 
 private:
+    void noteSlow(const JSC::StackFrame&) const;
+
     // Null unless module.getSourceMapsSupport() has both enabled and generatedCode.
     void* m_bunVM;
 };

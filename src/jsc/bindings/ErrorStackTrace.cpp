@@ -447,11 +447,8 @@ GeneratedCodeSourceMaps::GeneratedCodeSourceMaps(void* bunVM)
     m_bunVM = support.enabled && support.generatedCode ? bunVM : nullptr;
 }
 
-void GeneratedCodeSourceMaps::note(const JSC::StackFrame& frame) const
+void GeneratedCodeSourceMaps::noteSlow(const JSC::StackFrame& frame) const
 {
-    if (!m_bunVM) [[likely]]
-        return;
-
     JSC::CodeBlock* codeBlock = frame.codeBlock();
     if (!codeBlock)
         return;

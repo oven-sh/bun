@@ -18,13 +18,13 @@ body:
   - type: input
     attributes:
       label: What version of Bun is running?
-      description: Copy the output of `bun --revision`
+      description: Copy the output of `bun -p "Bun.version_with_sha + ' ' + process.arch"` (or of `bun --revision` if Bun does not start)
   - type: input
     attributes:
       label: What platform is your computer?
       description: |
         For MacOS and Linux: copy the output of `uname -mprs`
-        For Windows: copy the output of `"$([Environment]::OSVersion | ForEach-Object VersionString) $(if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" })"` in the PowerShell console
+        For Windows: copy the output of `"$([Environment]::OSVersion | ForEach-Object VersionString) $((Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment').PROCESSOR_ARCHITECTURE)"` in the PowerShell console
   - type: textarea
     attributes:
       label: What steps can reproduce the bug?

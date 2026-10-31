@@ -487,8 +487,9 @@ describe.concurrent("Bun.resolve() rejections are tracked", () => {
 });
 
 // An import or a re-export of a name that the other module does not export fails when the importing module is linked.
-// None of that module's code is running then, so the error has no frame of its own to say where the statement is. It
-// is given one: the file of the statement, at the line and column that the specifier has in the file as it was written.
+// None of that module's code is running then, so an error that no JavaScript is waiting for has no frame to say where
+// the statement is. It is given one: the file of the statement, at the line and column that the specifier has in the
+// file as it was written.
 // https://github.com/oven-sh/bun/issues/5582
 describe.concurrent("module link error", () => {
   // The transpiler emits none of these lines, so an import under them is on another line in the text that is linked.
@@ -529,8 +530,42 @@ describe.concurrent("module link error", () => {
     ].join("\n"),
   });
   const jsxEnv = { ...bunEnv, NODE_ENV: "development" };
-  const notFound = `SyntaxError: Export named 'a' not found in module '<dir>/dep.ts'.`;
+  const message = `Export named 'a' not found in module '<dir>/dep.ts'.`;
+  const notFound = `SyntaxError: ${message}`;
   const basic = { ...dep, "index.ts": importer(`import { a } from "./dep.ts";`, `console.log(a);`) };
+  // A barrel with an `export { name } from` that went stale, and a module of the cycle that takes the barrel as a
+  // namespace. The namespace leaves the name out, and the link of the barrel says which statement it is.
+  const barrel = {
+    "bar.ts": `export const present = 1;\n`,
+    "index.ts": [
+      `// a barrel`,
+      `export { present } from "./bar.ts";`,
+      `export { renamedAway } from "./bar.ts";`,
+      `export { useApi } from "./feature.ts";`,
+      ``,
+    ].join("\n"),
+    "feature.ts": [
+      `// a feature that reads the barrel as a namespace`,
+      `import * as api from "./index.ts";`,
+      `export const useApi = () => Object.keys(api);`,
+      ``,
+    ].join("\n"),
+    "main.ts": `import { useApi } from "./index.ts";\nconsole.log(useApi());\n`,
+  };
+  // The same through an `export *`, from either end of the cycle.
+  const throughStar = {
+    "leaf.mjs": `export const present = 1;\n`,
+    "mid.mjs": `import "./x.mjs";\nexport { gone } from "./leaf.mjs";\n`,
+    "barrel.mjs": `export * from "./mid.mjs";\n`,
+    "x.mjs": `import * as ns from "./barrel.mjs";\nimport "./mid.mjs";\nexport const keys = () => Object.keys(ns);\n`,
+  };
+  const staleExport = [
+    `1 | import "./x.mjs";`,
+    `2 | export { gone } from "./leaf.mjs";`,
+    `             ^`,
+    `SyntaxError: export 'gone' not found in './leaf.mjs'`,
+    `      at <dir>/mid.mjs:2:10`,
+  ];
 
   type Files = Record<string, string>;
 
@@ -561,8 +596,22 @@ describe.concurrent("module link error", () => {
     return { printed, stderr, exitCode };
   }
 
+  // What `bun test` prints of an error that is not the error of a test.
+  const unhandled = (stderr: string) => /# Unhandled error between tests\n-+\n([^]*?)\n-+\n/.exec(stderr)?.[1];
+
   describe("names the statement in the uncaught error of the entry point", () => {
-    const statements: { statement: string; files: Files; error: string[]; args?: string[]; env?: typeof bunEnv }[] = [
+    type Statement = {
+      statement: string;
+      files: Files;
+      error: string[];
+      args?: string[];
+      env?: typeof bunEnv;
+      // What differs when a test file imports the module under `bun test --isolate`. "links": the record of the module
+      // says that it is TypeScript, where the name can be a type that the other module has. "bare": the text of a file
+      // that has no extension is read for an error only when the file is the entry point.
+      underIsolate?: "links" | "bare";
+    };
+    const statements: Statement[] = [
       {
         statement: "a named import",
         files: basic,
@@ -689,6 +738,7 @@ describe.concurrent("module link error", () => {
           `SyntaxError: export 'x' not found in './dep.ts'`,
           `      at <dir>/index.ts:7:13`,
         ],
+        underIsolate: "links",
       },
       {
         statement: "`export { a as x } from`, at the name it imports",
@@ -700,6 +750,7 @@ describe.concurrent("module link error", () => {
           `SyntaxError: export 'x' not found in './dep.ts'`,
           `      at <dir>/index.ts:7:13`,
         ],
+        underIsolate: "links",
       },
       {
         statement: "`export { x } from` of a name that two `export *` both provide",
@@ -733,6 +784,28 @@ describe.concurrent("module link error", () => {
           `SyntaxError: export 'x' not found in './dep.ts'`,
           `      at <dir>/index.ts:7:13`,
         ],
+        underIsolate: "links",
+      },
+      {
+        statement: "an import that an export clause above it exports, at the import",
+        files: {
+          ...dep,
+          "index.js": [
+            `export { b, x as y };`,
+            `import { b } from "./dep.ts";`,
+            `import { x } from "./dep.ts";`,
+            ``,
+          ].join("\n"),
+        },
+        args: ["./index.js"],
+        error: [
+          `1 | export { b, x as y };`,
+          `2 | import { b } from "./dep.ts";`,
+          `3 | import { x } from "./dep.ts";`,
+          `             ^`,
+          `SyntaxError: export 'y' not found in './dep.ts'`,
+          `      at <dir>/index.js:3:10`,
+        ],
       },
       {
         statement: "an import from a specifier that the transpiler rewrites",
@@ -761,24 +834,8 @@ describe.concurrent("module link error", () => {
         ],
       },
       {
-        statement: "an import in a directory that has parentheses in its name",
-        args: ["with (parentheses)/index.ts"],
-        files: {
-          ...dep,
-          "with (parentheses)/dep.ts": `export const b = 1;\n`,
-          "with (parentheses)/index.ts": importer(`import { a } from "./dep.ts";`, `console.log(a);`),
-        },
-        error: [
-          ...above,
-          `7 | import { a } from "./dep.ts";`,
-          `             ^`,
-          `SyntaxError: Export named 'a' not found in module '<dir>/with (parentheses)/dep.ts'.`,
-          `      at <dir>/with (parentheses)/index.ts:7:10`,
-        ],
-      },
-      {
         statement: "an import in a file that has JSX",
-        args: ["index.tsx"],
+        args: ["./index.tsx"],
         env: jsxEnv,
         files: {
           ...dep,
@@ -796,7 +853,7 @@ describe.concurrent("module link error", () => {
       {
         // The transpiler moves the import above the class that it rewrites.
         statement: "an import in a JavaScript file that has a decorator",
-        args: ["index.js"],
+        args: ["./index.js"],
         files: {
           ...dep,
           "index.js": [
@@ -850,6 +907,7 @@ describe.concurrent("module link error", () => {
           notFound,
           `      at <dir>/script:7:10`,
         ],
+        underIsolate: "bare",
       },
       {
         statement: "an import in the text that `bun -e` is given",
@@ -863,123 +921,57 @@ describe.concurrent("module link error", () => {
           `      at <dir>/[eval]:7:10`,
         ],
       },
+      {
+        statement: "a stale `export { x } from` of a barrel that a module of the cycle takes as a namespace",
+        args: ["./main.ts"],
+        files: barrel,
+        error: [
+          `1 | // a barrel`,
+          `2 | export { present } from "./bar.ts";`,
+          `3 | export { renamedAway } from "./bar.ts";`,
+          `             ^`,
+          `SyntaxError: export 'renamedAway' not found in './bar.ts'`,
+          `      at <dir>/index.ts:3:10`,
+        ],
+        underIsolate: "links",
+      },
+      {
+        statement: "a stale `export { x } from` that the namespace reaches through `export *`",
+        args: ["./x.mjs"],
+        files: throughStar,
+        error: staleExport,
+      },
+      {
+        statement: "the same when the module that has the statement is the entry point",
+        args: ["./mid.mjs"],
+        files: throughStar,
+        error: staleExport,
+      },
     ];
-    it.each(statements)("$statement", async ({ files, error, args = ["index.ts"], env = bunEnv }) => {
+    it.each(statements)("$statement", async ({ files, error, args = ["./index.ts"], env = bunEnv }) => {
       expect(await run(files, args, env)).toEqual({
         stdout: "",
         stderr: [...error, ``, `Bun v<bun-version>`].join("\n"),
         exitCode: 1,
       });
     });
-  });
 
-  describe("names the module alone when the statement is not in the source", () => {
-    const importers: { importer: string; args: string[]; files: Files; error: string[]; env?: typeof bunEnv }[] = [
-      {
-        importer: "the import of the JSX runtime, which the transpiler adds",
-        args: ["index.tsx"],
-        env: jsxEnv,
-        files: { ...react(), "index.tsx": importer(`console.log(<div />);`) },
-        error: [
-          `SyntaxError: Export named 'jsxDEV' not found in module '<dir>/node_modules/react/jsx-dev-runtime.js'.`,
-          `      at <dir>/index.tsx`,
-        ],
+    // `bun test --isolate` makes the record of a module from what the transpiler knows of it. JavaScriptCore parses
+    // nothing. The text of `bun -e` is no module that a test file can import.
+    it.each(statements.filter(({ args }) => args?.[0] !== "-e"))(
+      "under bun test --isolate: $statement",
+      async ({ files, error, args = ["./index.ts"], env = bunEnv, underIsolate }) => {
+        const test = { "isolate.test.ts": `import ${JSON.stringify(args[0])};\ntest("is never run", () => {});\n` };
+        const { stderr, exitCode } = await run({ ...files, ...test }, ["test", "--isolate", "./isolate.test.ts"], env);
+        expect({ unhandled: unhandled(stderr), exitCode }).toEqual(
+          {
+            links: { unhandled: undefined, exitCode: 0 },
+            bare: { unhandled: error.at(-2), exitCode: 1 },
+            located: { unhandled: error.join("\n"), exitCode: 1 },
+          }[underIsolate ?? "located"],
+        );
       },
-      {
-        importer: "the same in a directory that has parentheses in its name",
-        args: ["with (parentheses)/index.tsx"],
-        env: jsxEnv,
-        files: { ...react(), "with (parentheses)/index.tsx": importer(`console.log(<div />);`) },
-        error: [
-          `SyntaxError: Export named 'jsxDEV' not found in module '<dir>/node_modules/react/jsx-dev-runtime.js'.`,
-          `      at <dir>/with (parentheses)/index.tsx`,
-        ],
-      },
-      {
-        importer: "a file of another type that is imported as JavaScript",
-        args: ["-e", `await import("./index.txt", { with: { type: "js" } });`],
-        files: { ...dep, "index.txt": `import { a } from "./dep.ts";\nconsole.log(a);\n` },
-        error: [notFound, `      at <dir>/index.txt`],
-      },
-      {
-        // The text is not the text of the file, which has this import on line 7.
-        importer: "a file whose text a plugin gives",
-        args: ["plugin.mjs"],
-        files: {
-          ...basic,
-          "plugin.mjs": [
-            `Bun.plugin({`,
-            `  name: "another text",`,
-            `  setup(build) {`,
-            `    const contents = 'import { a } from "./dep.ts"; console.log(a);';`,
-            `    build.onLoad({ filter: /index\\.ts$/ }, () => ({ contents, loader: "ts" }));`,
-            `  },`,
-            `});`,
-            `await import("./index.ts");`,
-          ].join("\n"),
-        },
-        error: [notFound, `      at <dir>/index.ts`],
-      },
-      {
-        // Its text is not the text of the file that its identifier names, which has this import on line 7.
-        importer: "a node:vm module",
-        args: ["vm.mjs"],
-        files: {
-          ...basic,
-          "vm.mjs": [
-            `import vm from "node:vm";`,
-            `const dep = new vm.SourceTextModule("export const b = 1;", { identifier: "vm:dep" });`,
-            `const importer = new vm.SourceTextModule("import { a } from 'dep'; a;", { identifier: import.meta.dirname + "/index.ts" });`,
-            `await importer.link(() => dep);`,
-          ].join("\n"),
-        },
-        error: [`SyntaxError: Export named 'a' not found in module 'vm:dep'.`, `      at <dir>/index.ts`],
-      },
-      {
-        importer: "a node:vm module whose identifier has parentheses",
-        args: ["vm.mjs"],
-        files: {
-          "vm.mjs": [
-            `import vm from "node:vm";`,
-            `const dep = new vm.SourceTextModule("export const b = 1;", { identifier: "vm:dep" });`,
-            `const importer = new vm.SourceTextModule("import { a } from 'dep'; a;");`,
-            `await importer.link(() => dep);`,
-          ].join("\n"),
-        },
-        error: [`SyntaxError: Export named 'a' not found in module 'vm:dep'.`, `      at vm:module(0)`],
-      },
-      {
-        // A frame with no line is not looked up in a source map, where it would be taken for the first line.
-        importer: "a file of no type that Bun knows, whose source map has a mapping for its first line",
-        args: ["./bundle.out"],
-        files: {
-          "dep.mjs": `export const b = 1;\n`,
-          "bundle.out": [
-            `// @bun`,
-            `import { a } from "./dep.mjs";`,
-            `console.log(a);`,
-            `//# sourceMappingURL=data:application/json;base64,${Buffer.from(
-              JSON.stringify({
-                version: 3,
-                sources: ["original.ts"],
-                sourcesContent: ["the first line of the original\n"],
-                mappings: "AAAA",
-                names: [],
-              }),
-            ).toString("base64")}`,
-            ``,
-          ].join("\n"),
-        },
-        error: [`SyntaxError: Export named 'a' not found in module '<dir>/dep.mjs'.`, `      at <dir>/bundle.out`],
-      },
-    ];
-    it.each(importers)("$importer", async ({ files, args, error, env = bunEnv }) => {
-      expect(await run(files, args, env)).toEqual({
-        stdout: "",
-        stderr: [...error, ``, `Bun v<bun-version>`].join("\n"),
-        exitCode: 1,
-      });
-    });
+    );
   });
 
   const located = {
@@ -988,6 +980,7 @@ describe.concurrent("module link error", () => {
     column: 10,
     sourceURL: "<dir>/index.ts",
   };
+  const location = `error => ({ stack: error.stack, line: error.line, column: error.column, sourceURL: error.sourceURL })`;
 
   it.each([
     { first: "stack", order: ["stack", "line", "column", "sourceURL"] },
@@ -1008,7 +1001,7 @@ describe.concurrent("module link error", () => {
   it("Error.captureStackTrace() before the first read leaves the location as it is", async () => {
     const files = {
       ...basic,
-      // A SyntaxError's frames start with one for the parser, which has no position here, as for any SyntaxError.
+      // The frames that it captures are those of any SyntaxError.
       "capture.mjs": `
         const error = await import("./index.ts").catch(error => error);
         const [frames, framesOfAnySyntaxError] = [error, new SyntaxError("any")].map(error => {
@@ -1017,8 +1010,7 @@ describe.concurrent("module link error", () => {
         });
         console.log(JSON.stringify({
           header: error.stack.split("\\n")[0],
-          parserFrame: frames[0],
-          framesAreThoseOfAnySyntaxError: frames.join() === framesOfAnySyntaxError.join(),
+          framesAreThoseOfAnySyntaxError: frames.length > 0 && frames.join() === framesOfAnySyntaxError.join(),
           line: error.line,
           column: error.column,
           sourceURL: error.sourceURL,
@@ -1028,7 +1020,6 @@ describe.concurrent("module link error", () => {
     expect(await runJSON(files, ["capture.mjs"])).toEqual({
       printed: {
         header: notFound,
-        parserFrame: "    at <parse> (:0)",
         framesAreThoseOfAnySyntaxError: true,
         line: 7,
         column: 10,
@@ -1081,7 +1072,7 @@ describe.concurrent("module link error", () => {
         const first = await import("./index.ts").catch(error => error);
         const second = await import("./index.ts").catch(error => error);
         const throughAnother = await import("./again.ts").catch(error => error);
-        const location = error => ({ stack: error.stack, line: error.line, column: error.column, sourceURL: error.sourceURL });
+        const location = ${location};
         console.log(JSON.stringify({
           secondIsFirst: second === first,
           second: location(second),
@@ -1097,85 +1088,113 @@ describe.concurrent("module link error", () => {
     });
   });
 
-  it("a caught require() of the module has the import first and then the frames of the require()", async () => {
+  // A module that does not link is linked again, as the text that was read the first time, when a module that was not
+  // loaded before imports it. The statement is looked for in the file as it is then, as far as the statement.
+  it("a link that fails again after the file changed has the place of the statement in the file as it is, or none", async () => {
+    const at = (line: number, column: number) => ({
+      stack: `${notFound}\n    at <dir>/index.ts:${line}:${column}`,
+      line,
+      column,
+      sourceURL: "<dir>/index.ts",
+    });
+    const changes: { change: string; text: string | null; location?: ReturnType<typeof at> }[] = [
+      {
+        change: "the statement moved down",
+        text: importer(`// One more line.`, `// And another.`, `import { a } from "./dep.ts";`, `console.log(a);`),
+        location: at(9, 10),
+      },
+      {
+        // The statement is the one that binds the name. What it imports under the name is not compared.
+        change: "the name is now what another import is renamed to",
+        text: importer(`import { z, b as a } from "./dep.ts";`, `console.log(a, z);`),
+        location: at(7, 13),
+      },
+      {
+        change: "a syntax error under the statement",
+        text: importer(`import { a } from "./dep.ts";`, `console.log(a;`),
+        location: at(7, 10),
+      },
+      {
+        change: "a syntax error above the statement",
+        text: importer(`const = ;`, `import { a } from "./dep.ts";`, `console.log(a);`),
+      },
+      { change: "the name is bound by no import", text: importer(`import { a as c } from "./dep.ts";`) },
+      { change: "the file is empty", text: `` },
+      { change: "the file is deleted", text: null },
+    ];
     const files = {
       ...basic,
-      "throws.ts": `export const value = 1;\nthrow new Error("thrown while it runs");\n`,
-      // A debug build of Bun has more frames of its own require() than a release build. An error that a module
-      // throws as it runs has the same ones under the frame of the module.
-      "require.cjs": `
-        const [error, thrown] = ["./index.ts", "./throws.ts"].map(specifier => {
-          try {
-            require(specifier);
-          } catch (error) {
-            return error;
-          }
-        });
-        const [frames, framesOfThrown] = [error, thrown].map(error => error.stack.split("\\n").slice(2));
-        console.log(JSON.stringify({
-          stack: error.stack.split("\\n").slice(0, 2).join("\\n"),
-          framesOfRequireFollow: frames.length > 0 && frames.join() === framesOfThrown.join(),
-          line: error.line,
-          column: error.column,
-          sourceURL: error.sourceURL,
-        }));
+      ...Object.fromEntries(changes.map((_, i) => [`root-${i}.ts`, `import "./index.ts";\n`])),
+      "changes.json": JSON.stringify(changes.map(({ change, text }) => ({ change, text }))),
+      "changed.mjs": `
+        import { rmSync, writeFileSync } from "node:fs";
+        import changes from "./changes.json";
+        const first = await import("./index.ts").catch(error => error);
+        const location = ${location};
+        const printed = [];
+        for (const [i, { change, text }] of changes.entries()) {
+          if (text === null) rmSync("index.ts");
+          else writeFileSync("index.ts", text);
+          const error = await import("./root-" + i + ".ts").catch(error => error);
+          printed.push({ change, isAnotherError: error !== first, message: error.message, ...location(error) });
+        }
+        console.log(JSON.stringify({ first: location(first), changed: printed }));
       `,
     };
-    expect(await runJSON(files, ["require.cjs"])).toEqual({
-      printed: { ...located, framesOfRequireFollow: true },
+    expect(await runJSON(files, ["changed.mjs"])).toEqual({
+      printed: {
+        first: located,
+        changed: changes.map(({ change, location }) => ({ change, isAnotherError: true, message, ...location })),
+      },
       stderr: "",
       exitCode: 0,
     });
   });
 
-  it("an uncaught require() of the module prints the import and then where the require() is", async () => {
-    const { stdout, stderr, exitCode } = await run({ ...basic, "require.cjs": `require("./index.ts");\n` }, [
-      "require.cjs",
-    ]);
-    // Between the two are the frames of Bun's own require(), which a debug build of Bun has more of.
-    const own = /^ +at (require \(|native:|unknown:)/;
-    expect({ stdout, stderr: stderr.split("\n").filter(line => !own.test(line)), exitCode }).toEqual({
-      stdout: "",
-      stderr: [
-        ...above,
-        `7 | import { a } from "./dep.ts";`,
-        `             ^`,
-        notFound,
-        `      at <dir>/index.ts:7:10`,
-        `      at <dir>/require.cjs:1:1`,
-        ``,
-        `Bun v<bun-version>`,
-      ],
-      exitCode: 1,
-    });
-  });
-
-  // The frames of a link error are only in its stack string, as are those of an error that structuredClone() made.
-  // To print one they are read back from the string, whether or not a frame has a function name.
-  it("the frames of a stack that is only a string are printed when they have no function name, or parentheses in their location", async () => {
+  // No more than the first mebibyte of a module is parsed for the statement: a link that fails does not build the
+  // syntax tree of a bundle.
+  it("looks for the statement in the first mebibyte of the module", async () => {
+    const limit = 1024 * 1024;
+    const comment = (bytes: number) => `/*${Buffer.alloc(bytes - 4, "*").toString()}*/`;
+    const statement = `import { a } from "./dep.ts";`;
+    // What the mebibyte cuts short is no statement of the module. Without the rest, `export { x }` would export the
+    // import in front of it.
+    const imports = `import { x } from "./has-x.ts";\nconsole.log(x);\n`;
+    const rest = `\nfrom "./lacks-x.ts";\n`;
     const files = {
-      "cloned.mjs": `
-        import { join } from "node:path";
-        const error = new Error("cloned");
-        error.stack = [
-          "Error: cloned",
-          "    at async " + join(import.meta.dirname, "a.js") + ":2:3",
-          "    at " + join(import.meta.dirname, "with (parentheses)", "b.js") + ":4:5",
-          "    at named (" + join(import.meta.dirname, "module(0).js") + ":6:7)",
-          "    at other (vm:module(0):8:9)",
-        ].join("\\n");
-        console.log(JSON.stringify(Bun.inspect(structuredClone(error)).split("\\n")));
+      ...dep,
+      "has-x.ts": `export const x = 1;\n`,
+      "lacks-x.ts": `export const y = 2;\n`,
+      "a-mebibyte.js": comment(limit - statement.length) + statement,
+      "a-byte-more.js": comment(limit + 1 - statement.length) + statement,
+      "ends-after-the-clause.js": `${imports}${comment(limit - imports.length - 12)}export { x }${rest}`,
+      // The é is two bytes, and the mebibyte ends between them.
+      "ends-in-a-character.js": `${imports}${comment(limit - imports.length - 17)}export { x } // é${rest}`,
+      "limit.mjs": `
+        const location = ${location};
+        const printed = {};
+        for (const module of process.argv.slice(2)) {
+          const error = await import("./" + module).catch(error => error);
+          printed[module] = { message: error.message, ...location(error) };
+        }
+        console.log(JSON.stringify(printed));
       `,
     };
-    expect(await runJSON(files, ["cloned.mjs"])).toEqual({
-      printed: [
-        `error: cloned`,
-        `      at <dir>/a.js:2:3`,
-        `      at <dir>/with (parentheses)/b.js:4:5`,
-        `      at named (<dir>/module(0).js:6:7)`,
-        `      at other (vm:module(0):8:9)`,
-        ``,
-      ],
+    const modules = ["a-mebibyte.js", "a-byte-more.js", "ends-after-the-clause.js", "ends-in-a-character.js"];
+    const column = limit - statement.length + `import { a`.length;
+    expect(await runJSON(files, ["limit.mjs", ...modules])).toEqual({
+      printed: {
+        "a-mebibyte.js": {
+          message,
+          stack: `${notFound}\n    at <dir>/a-mebibyte.js:1:${column}`,
+          line: 1,
+          column,
+          sourceURL: "<dir>/a-mebibyte.js",
+        },
+        "a-byte-more.js": { message },
+        "ends-after-the-clause.js": { message: `export 'x' not found in './lacks-x.ts'` },
+        "ends-in-a-character.js": { message: `export 'x' not found in './lacks-x.ts'` },
+      },
       stderr: "",
       exitCode: 0,
     });
@@ -1189,7 +1208,7 @@ describe.concurrent("module link error", () => {
         "bad.test.ts": importer(`import { a } from "./dep.ts";`, `test("a", () => expect(a).toBe(1));`),
       };
       const { stderr, exitCode } = await run(files, ["test", ...flags, "./bad.test.ts"]);
-      expect({ unhandled: /# Unhandled error between tests\n-+\n([^]*?)\n-+\n/.exec(stderr)?.[1], exitCode }).toEqual({
+      expect({ unhandled: unhandled(stderr), exitCode }).toEqual({
         unhandled: [
           ...above,
           `7 | import { a } from "./dep.ts";`,
@@ -1201,6 +1220,139 @@ describe.concurrent("module link error", () => {
       });
     },
   );
+
+  // The statement is not looked for in these cases, and the error is what it was before any was: by design, the tests
+  // of this block also pass without the change that the tests above are for.
+  describe("is left as it is", () => {
+    const modules: { module: string; args: string[]; files: Files; error: string; env?: typeof bunEnv }[] = [
+      {
+        // The statement is not in the source.
+        module: "when the transpiler adds the import, as it does for the JSX runtime",
+        args: ["./index.tsx"],
+        env: jsxEnv,
+        files: { ...react(), "index.tsx": importer(`console.log(<div />);`) },
+        error: `SyntaxError: Export named 'jsxDEV' not found in module '<dir>/node_modules/react/jsx-dev-runtime.js'.`,
+      },
+      {
+        module: "when the file is of another type and is imported as JavaScript",
+        args: ["-e", `await import("./index.txt", { with: { type: "js" } });`],
+        files: { ...dep, "index.txt": `import { a } from "./dep.ts";\nconsole.log(a);\n` },
+        error: notFound,
+      },
+      {
+        // The text is not the text of the file, which has this import on line 7.
+        module: "when a plugin gives the text of the file",
+        args: ["plugin.mjs"],
+        files: {
+          ...basic,
+          "plugin.mjs": [
+            `Bun.plugin({`,
+            `  name: "another text",`,
+            `  setup(build) {`,
+            `    const contents = 'import { a } from "./dep.ts"; console.log(a);';`,
+            `    build.onLoad({ filter: /index\\.ts$/ }, () => ({ contents, loader: "ts" }));`,
+            `  },`,
+            `});`,
+            `await import("./index.ts");`,
+          ].join("\n"),
+        },
+        error: notFound,
+      },
+      {
+        // A position in a bundle is not a position in a source that somebody wrote.
+        module: "when the file is already bundled",
+        args: ["./bundled.js"],
+        files: { ...dep, "bundled.js": `// @bun\nimport { a } from "./dep.ts";\nconsole.log(a);\n` },
+        error: notFound,
+      },
+    ];
+    it.each(modules)("$module", async ({ files, args, error, env = bunEnv }) => {
+      expect(await run(files, args, env)).toEqual({
+        stdout: "",
+        stderr: [error, ``, `Bun v<bun-version>`].join("\n"),
+        exitCode: 1,
+      });
+    });
+
+    // The text of a node:vm module is not the text of the file that its identifier names, which has this import on
+    // line 7. The error has the frames of the link() that JavaScript called.
+    it("when the module is a node:vm module", async () => {
+      const files = {
+        ...basic,
+        "vm.mjs": `
+          import vm from "node:vm";
+          const dep = new vm.SourceTextModule("export const b = 1;", { identifier: "vm:dep" });
+          const importer = new vm.SourceTextModule("import { a } from 'dep'; a;", { identifier: import.meta.dirname + "/index.ts" });
+          const error = await importer.link(() => dep).catch(error => error);
+          console.log(JSON.stringify({ message: error.message, sourceURL: error.sourceURL }));
+        `,
+      };
+      expect(await runJSON(files, ["vm.mjs"])).toEqual({
+        printed: { message: `Export named 'a' not found in module 'vm:dep'.`, sourceURL: "node:vm" },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The link runs under the require(): the error has the frames of that code, and Error.prepareStackTrace gets them.
+    it("when CommonJS requires the module", async () => {
+      const files = {
+        ...basic,
+        "require.cjs": `
+          const calls = [];
+          Error.prepareStackTrace = (error, callSites) => {
+            calls.push(callSites.map(callSite => callSite.getFileName()).at(-1));
+            return "prepared";
+          };
+          let error;
+          try {
+            require("./index.ts");
+          } catch (thrown) {
+            error = thrown;
+          }
+          console.log(JSON.stringify({ name: error.name, message: error.message, stack: [error.stack, error.stack], calls }));
+        `,
+      };
+      expect(await runJSON(files, ["require.cjs"])).toEqual({
+        printed: {
+          name: "SyntaxError",
+          message,
+          stack: ["prepared", "prepared"],
+          calls: ["<dir>/require.cjs"],
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // expect() waits for the import() under the frame of the test, so the error has that frame.
+    it("when a test waits for the import() in expect().rejects", async () => {
+      const files = {
+        ...basic,
+        "rejects.test.ts": [
+          `import { expect, test } from "bun:test";`,
+          `test("rejects", async () => {`,
+          `  await expect(import("./index.ts")).rejects.toThrow("Export named 'a' not found in module");`,
+          `  const error = await import("./index.ts").catch(error => error);`,
+          `  console.log(JSON.stringify({ message: error.message, line: error.line, column: error.column, sourceURL: error.sourceURL }));`,
+          `});`,
+          ``,
+        ].join("\n"),
+      };
+      // The first line that `bun test` prints is its own.
+      const { stdout, exitCode } = await run(files, ["test", "./rejects.test.ts"]);
+      const printed = JSON.parse(stdout.split("\n").find(line => line.startsWith("{")) ?? "null");
+      expect({ printed, exitCode }).toEqual({
+        printed: {
+          message,
+          line: 3,
+          column: 46,
+          sourceURL: "<dir>/rejects.test.ts",
+        },
+        exitCode: 0,
+      });
+    });
+  });
 });
 
 // Bun.resolve() allocates its rejected promise while the exception the resolve

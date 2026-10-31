@@ -87,7 +87,7 @@ pub(crate) fn remap_stack_frame_positions(
 pub(crate) fn position_of_module_link_error(
     vm: &mut VirtualMachine,
     importer_url: &bun_core::String,
-    site: bun_jsc::module_link_error::Site,
+    site: u8,
     name: &bun_core::String,
     line: &mut u32,
     column: &mut u32,

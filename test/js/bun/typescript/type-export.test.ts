@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
 
 const ext = isWindows ? ".exe" : "";
 
@@ -181,6 +181,18 @@ describe("import not found", () => {
         stdout: "",
       });
     });
+});
+
+// The build does not check a name of a builtin module: the link of the executable does. The error says this and no
+// more, because an executable does not look for the statement in the modules that it holds.
+test.concurrent("a name that is not found when an executable links", async () => {
+  await using dir = tempDir("type-export", { "entry.mjs": `export { platform, nope } from "os";\n` });
+  const { stdout, stderr, exitCode } = await compileAndRun(String(dir), dir + "/entry.mjs");
+  expect({ stdout, stderr: normalizeBunSnapshot(stderr), exitCode }).toEqual({
+    stdout: "",
+    stderr: `SyntaxError: export 'nope' not found in 'os'\n\nBun v<bun-version>`,
+    exitCode: 1,
+  });
 });
 
 test.concurrent("js file type export", async () => {

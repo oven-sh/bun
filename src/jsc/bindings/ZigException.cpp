@@ -307,15 +307,15 @@ public:
         StringView line = stack.substring(start, end - start);
         offset = end;
 
-        // A frame with a function name is "name (location)". One without is its location alone, and a location can
-        // have parentheses of its own: "/path/to (copy)/file.js:1:2", "vm:module(0)".
-        auto functionNameEnd = line.endsWith(')') ? line.reverseFind(" ("_s) : WTF::notFound;
-        bool hasFunctionName = functionNameEnd != WTF::notFound && functionNameEnd > 0;
-        auto lastColon = line.reverseFind(':');
-        bool hasLineNumber = lastColon != WTF::notFound && WTF::parseInteger<unsigned int>(line.substring(lastColon + 1), 10, WTF::ParseIntegerWhitespacePolicy::Disallow);
+        // the proper singular spelling is parenthesis
+        auto openingParentheses = line.reverseFind('(');
+        auto closingParentheses = line.reverseFind(')');
 
-        if (!hasFunctionName && !hasLineNumber) {
-            // Special case: "unknown" frames have neither but are valid
+        if (openingParentheses > closingParentheses)
+            openingParentheses = WTF::notFound;
+
+        if (openingParentheses == WTF::notFound || closingParentheses == WTF::notFound) {
+            // Special case: "unknown" frames don't have parentheses but are valid
             // These appear in stack traces from certain error paths
             if (line == "unknown"_s) {
                 frame.sourceURL = line;
@@ -323,20 +323,12 @@ public:
                 return true;
             }
 
-            // Anything else, such as "native" or a location with no line, ends the frames
+            // For any other frame without parentheses, terminate parsing as before
             offset = stack.length();
             return false;
         }
 
-        StringView functionName;
-        StringView lineInner = line;
-        if (hasFunctionName) {
-            functionName = line.substring(0, functionNameEnd);
-            lineInner = StringView_slice(line, functionNameEnd + 2, line.length() - 1);
-        } else if (line.startsWith("async "_s)) {
-            frame.isAsync = true;
-            lineInner = line.substring(6);
-        }
+        auto lineInner = StringView_slice(line, openingParentheses + 1, closingParentheses);
 
         {
             auto marker1 = 0;
@@ -408,6 +400,8 @@ public:
             }
         }
     done_block:
+
+        StringView functionName = line.substring(0, openingParentheses - 1);
 
         if (functionName == "global code"_s) {
             functionName = StringView();

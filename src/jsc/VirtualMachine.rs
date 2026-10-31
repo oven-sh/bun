@@ -6896,13 +6896,9 @@ impl VirtualMachine {
         }
 
         let already_remapped = frames[top].remapped;
-        // A frame with no line has nothing to map or preview, and a lookup would take it for the first line.
-        let has_line = frames[top].position.line.is_valid();
         let resolved = {
             let top_source_url = frames[top].source_url.to_utf8();
-            let maybe_lookup: Option<bun_sourcemap::mapping::Lookup> = if !has_line {
-                None
-            } else if already_remapped {
+            let maybe_lookup: Option<bun_sourcemap::mapping::Lookup> = if already_remapped {
                 Some(bun_sourcemap::mapping::Lookup {
                     mapping: bun_sourcemap::mapping::Mapping {
                         generated: bun_sourcemap::LineColumnOffset::default(),

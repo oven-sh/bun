@@ -15,8 +15,8 @@ use crate::defines::Define;
 use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{
-    Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, StatementScope,
-    WrapMode,
+    Jest, LexicalDecl, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult,
+    StatementScope, WrapMode,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
@@ -51,7 +51,7 @@ macro_rules! init_p {
     }};
 }
 
-/// What `Parser::parse_only` parsed.
+/// What `Parser::parse_only` parsed. `Parser::parse_only_until` has one statement in it at a time, and notes no starts.
 pub struct ParsedOnly<'p, 'a, const TYPESCRIPT: bool = false> {
     pub stmts: &'p [js_ast::Stmt],
     p: &'p P<'a, TYPESCRIPT, false>,
@@ -114,21 +114,28 @@ pub fn parse_only_text<R>(
     jsc_builtin_syntax: bool,
     f: impl FnOnce(&ParsedOnly<'_, '_>) -> R,
 ) -> Option<R> {
+    let arena = bun_alloc::Arena::new();
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    let _ast_scope = ast_memory_allocator.enter();
     let source = bun_ast::Source::init_path_string(&b"chunk.js"[..], text);
     let mut options = Options::init(Default::default(), bun_ast::Loader::Js);
     options.features.no_macros = true;
     options.features.top_level_await = top_level_await;
     options.jsc_builtin_syntax = jsc_builtin_syntax;
     options.suppress_warnings_about_weird_code = true;
-    parse_only_source(&source, options, f)
+    let define = Define::default();
+    let mut log = bun_ast::Log::init();
+    let parser = Parser::init(options, &mut log, &source, &define, &arena).ok()?;
+    parser.parse_only(f).ok()
 }
 
-/// Runs `Parser::parse_only` on `source`, in an arena of its own. `TYPESCRIPT` is `options.ts`. Returns `None` on a
-/// parse error.
-pub fn parse_only_source<const TYPESCRIPT: bool, R>(
+/// Runs `Parser::parse_only_until` on `source`, in an arena of its own. `TYPESCRIPT` is `options.ts`. `None`: `f`
+/// answered at no statement, or `source` does not parse as far as the statement it would answer at.
+pub fn parse_only_source_until<const TYPESCRIPT: bool, R>(
     source: &bun_ast::Source<'_>,
     options: Options<'_>,
-    f: impl FnOnce(&ParsedOnly<'_, '_, TYPESCRIPT>) -> R,
+    is_prefix: bool,
+    f: impl FnMut(&ParsedOnly<'_, '_, TYPESCRIPT>) -> Option<R>,
 ) -> Option<R> {
     let arena = bun_alloc::Arena::new();
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
@@ -136,7 +143,7 @@ pub fn parse_only_source<const TYPESCRIPT: bool, R>(
     let define = Define::default();
     let mut log = bun_ast::Log::init();
     let parser = Parser::init(options, &mut log, source, &define, &arena).ok()?;
-    parser.parse_only(f).ok()
+    parser.parse_only_until(is_prefix, f).ok()?
 }
 
 pub struct Parser<'a> {
@@ -478,14 +485,10 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses, and visits nothing: `f` gets the statements as they were written (nothing folded, dropped or bound).
-    /// `TYPESCRIPT` is `options.ts`. `Err`: the source does not parse.
+    /// `Err`: the source does not parse.
     #[cold]
-    pub fn parse_only<const TYPESCRIPT: bool, R>(
-        mut self,
-        f: impl FnOnce(&ParsedOnly<'_, 'a, TYPESCRIPT>) -> R,
-    ) -> Result<R, Error> {
-        type Pi<'a, const TYPESCRIPT: bool> = P<'a, TYPESCRIPT, false>;
-        debug_assert_eq!(self.options.ts, TYPESCRIPT);
+    pub fn parse_only<R>(mut self, f: impl FnOnce(&ParsedOnly<'_, 'a>) -> R) -> Result<R, Error> {
+        type Pi<'a> = P<'a, false, false>;
         let lexer = core::mem::replace(
             &mut self.lexer,
             js_lexer::Lexer::init_without_reading(
@@ -495,10 +498,10 @@ impl<'a> Parser<'a> {
             ),
         );
         let options = core::mem::take(&mut self.options);
-        let mut __p = init_p!(Pi<'_, TYPESCRIPT>;
+        let mut __p = init_p!(Pi<'_>;
             self.bump, self.log, self.source, self.define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
-        let p: &mut Pi<'_, TYPESCRIPT> = unsafe { __p.assume_init_mut() };
+        let p: &mut Pi<'_> = unsafe { __p.assume_init_mut() };
         p.starts_for_parse_only = Some(Default::default());
         if p.lexer.token == js_lexer::T::THashbang {
             p.lexer.next()?;
@@ -519,6 +522,72 @@ impl<'a> Parser<'a> {
             stmts: stmts.as_slice(),
             p,
         }))
+    }
+
+    /// `parse_only`, a module-scope statement at a time: `f` gets each one alone in `stmts` as soon as it is parsed.
+    /// Nothing is parsed after the statement that `f` answers at, nor in a text that is already bundled
+    /// (`features.dont_bundle_twice`). `is_prefix`: the source is the start of a longer text. What its end cuts short
+    /// is not a statement of that text, so `f` gets a statement only if the token after it does not reach that end.
+    /// `Ok(None)`: `f` answered at no statement. `Err`: the source does not parse as far as that.
+    #[cold]
+    pub fn parse_only_until<const TYPESCRIPT: bool, R>(
+        mut self,
+        is_prefix: bool,
+        mut f: impl FnMut(&ParsedOnly<'_, 'a, TYPESCRIPT>) -> Option<R>,
+    ) -> Result<Option<R>, Error> {
+        type Pi<'a, const TYPESCRIPT: bool> = P<'a, TYPESCRIPT, false>;
+        debug_assert_eq!(self.options.ts, TYPESCRIPT);
+        let lexer = core::mem::replace(
+            &mut self.lexer,
+            js_lexer::Lexer::init_without_reading(
+                self.bump.alloc(bun_ast::Log::default()),
+                self.source,
+                self.bump,
+            ),
+        );
+        let options = core::mem::take(&mut self.options);
+        let mut __p = init_p!(Pi<'_, TYPESCRIPT>;
+            self.bump, self.log, self.source, self.define, lexer, options);
+        // SAFETY: `init_p!` only yields after `init` succeeded.
+        let p: &mut Pi<'_, TYPESCRIPT> = unsafe { __p.assume_init_mut() };
+        let has_hashbang = p.lexer.token == js_lexer::T::THashbang;
+        if has_hashbang {
+            p.lexer.next()?;
+        }
+        if p.log().errors > self.orig_error_count {
+            return Err(crate::Error::SyntaxError);
+        }
+        if p.options.features.dont_bundle_twice
+            && Self::has_bun_pragma(&self.source.contents, has_hashbang).is_some()
+        {
+            return Ok(None);
+        }
+        let opts = ParseStatementOptions {
+            scope: StatementScope::Module,
+            lexical_decl: LexicalDecl::AllowAll,
+            ..Default::default()
+        };
+        while p.lexer.token != js_lexer::T::TEndOfFile {
+            p.lexer.comments_to_preserve_before.clear();
+            let mut current_opts = opts;
+            let stmt = p.parse_stmt(&mut current_opts)?;
+            // What the parser only logs is still an error: the statement is its best guess.
+            if p.log().errors > self.orig_error_count {
+                return Err(crate::Error::SyntaxError);
+            }
+            // The token after the statement is whole only if the lexer has read a character behind it.
+            if is_prefix && p.lexer.code_point == -1 {
+                return Ok(None);
+            }
+            let found = f(&ParsedOnly {
+                stmts: core::slice::from_ref(&stmt),
+                p,
+            });
+            if found.is_some() {
+                return Ok(found);
+            }
+        }
+        Ok(None)
     }
 
     /// Bundler-only scan pass (see `bundler/cache.rs`). Never reached from

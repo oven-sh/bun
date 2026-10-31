@@ -671,3 +671,106 @@ test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv i
   expect(child.exitCode).toBe(null);
   webSocket.close();
 });
+
+// A debugger maps a position that it reads in the preview of an error. The `line` and `column` of a module link error
+// are where its statement is in the source as it was written, so the error has `originalLine` and `originalColumn` in
+// front of them, as an error whose position Bun mapped has: the preview ends before `sourceURL`.
+test("a module link error is previewed and reported as an error whose position is already mapped", async () => {
+  using dir = tempDir("inspect-link-error", {
+    "dep.ts": `export const b = 1;\n`,
+    // The transpiler emits neither of the first two lines of these.
+    "index.ts": `interface Erased {}\ntype AlsoErased = Erased;\nimport { a } from "./dep.ts";\nconsole.log(a);\n`,
+    "thrower.ts": `interface Erased {}\ntype AlsoErased = Erased;\nexport const thrower = () => {\n  throw new Error("thrown");\n};\n`,
+    "entry.mjs": `
+      import { thrower } from "./thrower.ts";
+      const linkError = await import("./index.ts").catch(error => error);
+      try {
+        thrower();
+      } catch (thrown) {
+        console.log(thrown);
+      }
+      console.log(linkError);
+      reportError(linkError);
+      // The reported error ends the process once the entry point has been evaluated, timers or not.
+      setInterval(() => {}, 60_000);
+      await new Promise(() => {});
+    `,
+  });
+  const cwd = fs.realpathSync(String(dir));
+  await using inspectee = spawn({
+    cmd: [bunExe(), "--inspect-wait=ws://127.0.0.1:0/", "entry.mjs"],
+    env: bunEnv,
+    cwd,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+
+  // The inspectee prints the error that it reports, so its stderr is read for as long as it runs.
+  let stderr = "";
+  const listening = Promise.withResolvers<string>();
+  (async () => {
+    const decoder = new TextDecoder();
+    for await (const chunk of inspectee.stderr) {
+      stderr += decoder.decode(chunk, { stream: true });
+      const url = stderr.match(/(ws:\/\/\S+)\n/)?.[1];
+      if (url) listening.resolve(url);
+    }
+    listening.reject(new Error(`No inspector URL in:\n${stderr}`));
+  })();
+
+  const webSocket = new WebSocket(await listening.promise);
+  const failed = Promise.withResolvers<never>();
+  failed.promise.catch(() => {});
+  webSocket.addEventListener("error", () => failed.reject(new Error(`The inspector socket failed:\n${stderr}`)));
+  webSocket.addEventListener("close", () => failed.reject(new Error(`The inspector closed the socket:\n${stderr}`)));
+
+  // The names of the properties in the preview of each error that is logged, by the name of the error.
+  const previews: Record<string, string[]> = {};
+  const previewed = Promise.withResolvers<void>();
+  const reported = Promise.withResolvers<{ name: string; message: string; urls: string[]; lineColumns: number[] }>();
+  const pending = new Map<number, () => void>();
+  webSocket.addEventListener("message", ({ data }) => {
+    const { id, method, params } = JSON.parse(data.toString());
+    if (typeof id === "number") return pending.get(id)?.();
+    if (method === "LifecycleReporter.error") reported.resolve(params);
+    const logged = method === "Console.messageAdded" && params.message.parameters?.[0];
+    if (logged?.subtype === "error") {
+      previews[logged.description.split(":")[0]] = logged.preview.properties.map(property => property.name);
+      if (Object.keys(previews).length === 2) previewed.resolve();
+    }
+  });
+  let nextId = 1;
+  function send(method: string) {
+    const id = nextId++;
+    const { promise, resolve } = Promise.withResolvers<void>();
+    pending.set(id, resolve);
+    webSocket.send(JSON.stringify({ id, method }));
+    return Promise.race([promise, failed.promise]);
+  }
+
+  await Promise.race([new Promise(resolve => webSocket.addEventListener("open", resolve)), failed.promise]);
+  await Promise.all(["Console", "Runtime", "LifecycleReporter", "Inspector"].map(domain => send(`${domain}.enable`)));
+  await send("Inspector.initialized");
+  const [{ name, message, urls, lineColumns }] = await Promise.race([
+    Promise.all([reported.promise, previewed.promise]),
+    failed.promise,
+  ]);
+  webSocket.close();
+
+  const withoutFolder = (text: string) => text.replaceAll(cwd, "<dir>").replaceAll("\\", "/");
+  expect({
+    previews,
+    reported: { name, message: withoutFolder(message), urls: urls.map(withoutFolder), lineColumns },
+  }).toEqual({
+    previews: {
+      Error: ["message", "originalLine", "originalColumn", "line", "column"],
+      SyntaxError: ["message", "originalLine", "originalColumn", "line", "column"],
+    },
+    reported: {
+      name: "SyntaxError",
+      message: "Export named 'a' not found in module '<dir>/dep.ts'.",
+      urls: ["<dir>/index.ts"],
+      lineColumns: [3, 10],
+    },
+  });
+});

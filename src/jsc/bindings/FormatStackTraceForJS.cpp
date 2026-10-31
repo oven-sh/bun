@@ -719,8 +719,8 @@ void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull s
 static_assert(!static_cast<uint8_t>(JSC::ModuleLinkErrorSite::Import) && static_cast<uint8_t>(JSC::ModuleLinkErrorSite::IndirectExport) == 1, "bun_jsc::module_link_error::Site");
 
 // JavaScriptCore calls this with the error it is about to throw because a statement of `importer` does not link
-// (CyclicModuleRecord.cpp has the default). No code of `importer` is running then, so the error has no frame in it:
-// the stack gets one here, at the statement if it is found in the source.
+// (CyclicModuleRecord.h). No code of `importer` is running then, so an error that no JavaScript waits for has no
+// frame: it gets one here, at the statement, when the statement is found in the source of `importer`.
 extern "C" void Bun__locateModuleLinkError(JSC::JSGlobalObject* lexicalGlobalObject, JSC::AbstractModuleRecord* importer, JSC::ErrorInstance* error, JSC::ModuleLinkErrorSite site, const JSC::Identifier& name)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -728,24 +728,26 @@ extern "C" void Bun__locateModuleLinkError(JSC::JSGlobalObject* lexicalGlobalObj
 
     if (error->hasMaterializedErrorInfo())
         return;
+    // The link runs under JavaScript, such as a require() of an ES module: the error has those frames, and
+    // Error.prepareStackTrace is to see them.
+    if (auto* frames = error->stackTrace(); frames && !frames->isEmpty())
+        return;
 
+    // Only a text that Bun read from where the program is stored is the text its URL names. That of a plugin, of a
+    // blob or of a node:vm module is not.
     auto* jsModule = dynamicDowncast<JSC::JSModuleRecord>(importer);
     auto* provider = jsModule ? jsModule->sourceCode().provider() : nullptr;
-    String importerURL = provider ? provider->sourceURL() : String();
-    if (importerURL.isEmpty())
-        importerURL = importer->moduleKey().string();
+    if (!provider || provider->provenance() != JSC::SourceProvenance::Static)
+        return;
+    String importerURL = provider->sourceURL();
     if (importerURL.isEmpty())
         return;
 
     JSC::LineColumn position;
-    bool hasPosition = false;
-    // Only a text that Bun read from where the program is stored is the text its URL names. That of a plugin, of a
-    // blob or of a node:vm module is not.
-    if (provider && provider->provenance() == JSC::SourceProvenance::Static) {
-        BunString importerURLString = Bun::toString(importerURL);
-        BunString nameString = Bun::toString(name.string());
-        hasPosition = Bun__positionOfModuleLinkError(Bun::vm(vm), &importerURLString, site, &nameString, &position.line, &position.column);
-    }
+    BunString importerURLString = Bun::toString(importerURL);
+    BunString nameString = Bun::toString(name.string());
+    if (!Bun__positionOfModuleLinkError(Bun::vm(vm), &importerURLString, static_cast<uint8_t>(site), &nameString, &position.line, &position.column))
+        return;
 
     String errorName = error->sanitizedNameString(lexicalGlobalObject);
     if (!scope.tryClearException()) [[unlikely]]
@@ -753,33 +755,21 @@ extern "C" void Bun__locateModuleLinkError(JSC::JSGlobalObject* lexicalGlobalObj
     String message = error->sanitizedMessageString(lexicalGlobalObject);
     if (!scope.tryClearException()) [[unlikely]]
         return;
-    String header = stackTraceHeaderOnly(errorName, message);
+    // The message comes from JS: past `String::MaxLength` makeString() calls `CRASH()`.
+    String stack = tryMakeString(stackTraceHeaderOnly(errorName, message), "\n    at "_s, importerURL, ':', position.line, ':', position.column);
+    if (stack.isNull()) [[unlikely]]
+        return;
 
-    WTF::StringBuilder stack { WTF::OverflowPolicy::RecordOverflow };
-    stack.append(header, "\n    at "_s, importerURL);
-    if (hasPosition)
-        stack.append(':', position.line, ':', position.column);
-    // What called a link that runs synchronously, such as a require() of an ES module.
-    if (auto* callers = error->stackTrace(); callers && !callers->isEmpty()) {
-        OrdinalNumber line;
-        OrdinalNumber column;
-        String sourceURL;
-        stack.append(formatStackTrace(vm, defaultGlobalObject(lexicalGlobalObject), lexicalGlobalObject, emptyString(), emptyString(), line, column, sourceURL, *callers, nullptr));
-        if (!scope.tryClearException()) [[unlikely]]
-            return;
-    }
-
-    String stackString = stack.hasOverflowed() ? header : stack.toString();
-    error->setErrorInfoForEmbedderError(position, WTF::move(importerURL), WTF::move(stackString));
+    // As on an error whose position was mapped: these say that `line` and `column` are a position in the source as it
+    // was written, to what prints an error (ZigException.cpp) and, by being ahead of them, to a debugger's preview.
+    const auto& names = builtinNames(vm);
+    error->putDirect(vm, names.originalLinePublicName(), jsNumber(position.line), PropertyAttribute::DontEnum | 0);
+    error->putDirect(vm, names.originalColumnPublicName(), jsNumber(position.column), PropertyAttribute::DontEnum | 0);
+    error->setErrorInfoForEmbedderError(position, WTF::move(importerURL), WTF::move(stack));
     error->materializeErrorInfoIfNeeded(vm);
-    // Without this, what prints an error whose stack has no frame left to read (ZigException.cpp) takes `line` and
-    // `column` for a position in the transpiled text, and maps it.
-    if (hasPosition)
-        error->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(position.line), PropertyAttribute::DontEnum | 0);
-    // Error.captureStackTrace() writes a "<parse>" frame for a SyntaxError from these, and maps the line once more.
+    // Error.captureStackTrace() writes a "<parse>" frame for a SyntaxError from this position, and maps it once more.
     error->setLine(0);
     error->setColumn(0);
-    error->setSourceURL({});
 }
 
 // ErrorInstance holds a frame's callee and code block weakly. Root them while user JS can run.

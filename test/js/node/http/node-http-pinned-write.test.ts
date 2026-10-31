@@ -1,3 +1,4 @@
+import { setSocketOptions } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { createHash } from "node:crypto";
@@ -6,10 +7,13 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
 
-// Large enough to overflow both the 16KB cork buffer and the kernel send
-// buffer on every platform (Windows loopback auto-tuning can absorb several
-// MB), so the native write reports backpressure and the tail is held.
-const CHUNK_SIZE = 64 * 1024 * 1024;
+// SO_SNDBUF for the server's sockets. By default the kernel takes about 4 MiB
+// on loopback before a write() has a tail left to hold.
+const SEND_BUFFER = 64 * 1024;
+
+// Larger than the 16KB cork buffer plus what the kernel takes with SEND_BUFFER,
+// so the native write reports backpressure and the tail is held.
+const CHUNK_SIZE = 1024 * 1024;
 
 const PATTERN_256 = Buffer.from(Array.from({ length: 256 }, (_, i) => i));
 const PATTERN_64_HIGH = Buffer.from(Array.from({ length: 64 }, (_, i) => 0xc0 + i));
@@ -48,6 +52,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
 
       await using server = http.createServer(async (req, res) => {
         try {
+          setSocketOptions(req.socket, 1, SEND_BUFFER);
           res.writeHead(200, {
             "Content-Type": "application/octet-stream",
             "Content-Length": String(CHUNK_SIZE),
@@ -123,6 +128,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
 
     await using server = http.createServer(async (req, res) => {
       try {
+        setSocketOptions(req.socket, 1, SEND_BUFFER);
         res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Length": String(CHUNK_SIZE) });
         res.write(payload);
         moved = payload.buffer.transfer();
@@ -163,6 +169,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     const expectedHash = sha1(payload);
 
     await using server = http.createServer(async (req, res) => {
+      setSocketOptions(req.socket, 1, SEND_BUFFER);
       res.writeHead(200, {
         "Content-Type": "application/octet-stream",
         "Content-Length": String(CHUNK_SIZE * 2),
@@ -187,6 +194,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     const second = Buffer.alloc(1024, 0xee);
 
     await using server = http.createServer((req, res) => {
+      setSocketOptions(req.socket, 1, SEND_BUFFER);
       res.writeHead(200, {
         "Content-Type": "application/octet-stream",
         "Content-Length": String(first.length + second.length),
@@ -212,6 +220,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     const expected = sha1(Buffer.alloc(CHUNK_SIZE * 2, "a"));
 
     await using server = http.createServer(async (req, res) => {
+      setSocketOptions(req.socket, 1, SEND_BUFFER);
       res.writeHead(200, { "Content-Type": "text/plain" });
       if (!res.write(payload)) await once(res, "drain");
       if (!res.write(payload)) await once(res, "drain");
@@ -234,6 +243,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     const expectedHash = sha1(raw);
 
     await using server = http.createServer(async (req, res) => {
+      setSocketOptions(req.socket, 1, SEND_BUFFER);
       res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Length": String(CHUNK_SIZE) });
       if (!res.write(payload, "latin1")) await once(res, "drain");
       res.end();
@@ -256,6 +266,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
         bunExe(),
         "-e",
         `
+        const { setSocketOptions } = require("bun:internal-for-testing");
         const http = require("node:http");
         const net = require("node:net");
         const { once } = require("node:events");
@@ -263,6 +274,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
         const PATTERN = Buffer.from(Array.from({ length: 256 }, (_, i) => i));
         let detachedAfterClose;
         const server = http.createServer((req, res) => {
+          setSocketOptions(req.socket, 1, ${SEND_BUFFER});
           const payload = Buffer.alloc(CHUNK_SIZE, PATTERN);
           res.writeHead(200, { "Content-Type": "application/octet-stream" });
           res.write(payload);
@@ -301,15 +313,13 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     });
   });
 
-  // 8 MB overflows the Linux/macOS loopback send+recv buffers with a paused
-  // client while keeping the spill + drain under the default test timeout.
-  const RESIZABLE_CHUNK_SIZE = 8 * 1024 * 1024;
   const resizableChild = (afterWrite: string) => `
+    const { setSocketOptions } = require("bun:internal-for-testing");
     const http = require("node:http");
     const net = require("node:net");
     const { once } = require("node:events");
     const { createHash } = require("node:crypto");
-    const CHUNK_SIZE = ${RESIZABLE_CHUNK_SIZE};
+    const CHUNK_SIZE = ${CHUNK_SIZE};
 
     const ab = new ArrayBuffer(CHUNK_SIZE, { maxByteLength: CHUNK_SIZE });
     const payload = Buffer.from(ab);
@@ -320,6 +330,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     let detachedAfterWrite;
     const wrote = Promise.withResolvers();
     const server = http.createServer(async (req, res) => {
+      setSocketOptions(req.socket, 1, ${SEND_BUFFER});
       res.writeHead(200, {
         "Content-Type": "application/octet-stream",
         "Content-Length": String(CHUNK_SIZE),
@@ -372,7 +383,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr }).toEqual({
-      stdout: JSON.stringify({ detachedAfterWrite: true, bodyLength: RESIZABLE_CHUNK_SIZE, hashMatches: true }),
+      stdout: JSON.stringify({ detachedAfterWrite: true, bodyLength: CHUNK_SIZE, hashMatches: true }),
       stderr: expect.any(String),
     });
     expect(exitCode).toBe(0);
@@ -390,7 +401,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr }).toEqual({
-      stdout: JSON.stringify({ detachedAfterWrite: true, bodyLength: RESIZABLE_CHUNK_SIZE, hashMatches: true }),
+      stdout: JSON.stringify({ detachedAfterWrite: true, bodyLength: CHUNK_SIZE, hashMatches: true }),
       stderr: expect.any(String),
     });
     expect(exitCode).toBe(0);
@@ -486,6 +497,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     const total = CHUNK_SIZE + 1024;
 
     await using server = http.createServer((req, res) => {
+      setSocketOptions(req.socket, 1, SEND_BUFFER);
       const first = makePayload(CHUNK_SIZE);
       res.writeHead(200, {
         "Content-Type": "application/octet-stream",

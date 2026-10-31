@@ -2679,6 +2679,17 @@ export default <>hi</>
     ).toThrow();
   });
 
+  // The constructor throws when the tsconfig logs a warning. A `paths` target that is
+  // not relative, with no `baseUrl`, logs none.
+  it("tsconfig `paths` with a target that is not relative and no baseUrl constructs", () => {
+    const transpiler = new Bun.Transpiler({
+      loader: "ts",
+      tsconfig: JSON.stringify({ compilerOptions: { paths: { "components/*": ["components/*"] } } }),
+    });
+
+    expect(transpiler.transformSync("export const a: number = 1;")).toBe("export const a = 1;\n");
+  });
+
   it("define with an empty-string key is ignored without leaving uninitialized slots", async () => {
     // `JSPropertyIterator` skips empty-name properties, but `names`/`values` were being
     // indexed by the property position instead of a dense counter, leaving garbage in the

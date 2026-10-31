@@ -369,7 +369,6 @@ impl TSConfigJSON {
                 }
             }
         }
-        let mut has_base_url = false;
 
         // Parse "compilerOptions"
         if let Some(compiler_opts) = compiler_opts {
@@ -433,7 +432,6 @@ impl TSConfigJSON {
                             Ok(v) => v,
                             Err(_) => return Ok(None),
                         };
-                    has_base_url = true;
                 }
             }
 
@@ -629,11 +627,7 @@ impl TSConfigJSON {
                                             // errdefer allocator.free(str) — handled by Drop.
                                             if Self::is_valid_tsconfig_path_pattern(
                                                 &str, log, source, item_loc,
-                                            ) && (has_base_url
-                                                || Self::is_valid_tsconfig_path_no_base_url_pattern(
-                                                    &str, log, source, item_loc,
-                                                ))
-                                            {
+                                            ) {
                                                 values.push(str);
                                             }
                                         }
@@ -664,10 +658,6 @@ impl TSConfigJSON {
                     }
                 }
             }
-        }
-
-        if cfg!(debug_assertions) && has_base_url {
-            debug_assert!(!result.base_url.is_empty());
         }
 
         Ok(Some(TSConfigJSON::new(result)))
@@ -736,68 +726,6 @@ impl TSConfigJSON {
         }
 
         Some(strings::tokenize(text, b".").map(Box::from).collect())
-    }
-
-    pub(crate) fn is_valid_tsconfig_path_no_base_url_pattern(
-        text: &[u8],
-        log: &mut bun_ast::Log,
-        source: &bun_ast::Source,
-        loc: bun_ast::Loc,
-    ) -> bool {
-        let c0: u8;
-        let c1: u8;
-        let c2: u8;
-        let n = text.len();
-
-        match n {
-            0 => {
-                return false;
-            }
-            // Relative "." or ".."
-            1 => {
-                return text[0] == b'.';
-            }
-            // "..", ".\", "./"
-            2 => {
-                return text[0] == b'.' && (text[1] == b'.' || text[1] == b'\\' || text[1] == b'/');
-            }
-            _ => {
-                c0 = text[0];
-                c1 = text[1];
-                c2 = text[2];
-            }
-        }
-
-        // Relative "./" or "../" or ".\\" or "..\\"
-        if c0 == b'.' && (bun_paths::is_sep_any(c1) || (c1 == b'.' && bun_paths::is_sep_any(c2))) {
-            return true;
-        }
-
-        // Absolute DOS "c:/" or "c:\\"
-        if c1 == b':' && bun_paths::is_sep_any(c2) {
-            match c0 {
-                b'a'..=b'z' | b'A'..=b'Z' => {
-                    return true;
-                }
-                _ => {}
-            }
-        }
-
-        // Absolute unix "/"
-        if bun_paths::is_sep_any(c0) {
-            return true;
-        }
-
-        let r = source.range_of_string(loc);
-        let _ = log.add_range_warning_fmt(
-            Some(source),
-            r,
-            format_args!(
-                "Non-relative path \"{}\" is not allowed when \"baseUrl\" is not set (did you forget a leading \"./\"?)",
-                bstr::BStr::new(text)
-            ),
-        );
-        false
     }
 
     // `Box<TSConfigJSON>` drop handles cleanup: PathsMap has Drop, and Box

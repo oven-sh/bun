@@ -7,6 +7,7 @@ import { unsupported } from "./harness/compiler";
 import { endAtMemoryLimit, memoryLimitOfAKnownProgram } from "./harness/memory-limit";
 import { run as runCommand } from "./harness/run";
 import { inTurn } from "./harness/shared-builds";
+import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const describe = unsupported ? describeAnywhere.skip : describeAnywhere.concurrent;
 
@@ -198,15 +199,31 @@ const withAddressSpaceOf =
 function executables() {
   const folders: Disposable[] = [];
   const buildsUnderWay = new Set<{ kill(signal: "SIGKILL"): void }>();
+  // The first test runs unless a filter (-t) leaves it out, and without a filter the others run too. So where it runs, the
+  // file takes itself to run as a whole. Whether a filter that keeps the first test keeps the others is not known here.
+  let runsAsAWhole = false;
+  let isOver = false;
 
   /**
    * `bun build --compile --aot <flags and entry points> --outfile <outfile>` in `cwd`. Answers what to start.
-   * A command has one turn, and there are as many turns as cores. So a build is told how many threads it has.
+   * Where the file runs as a whole, a command has one turn, and there are as many turns as cores: a build is told how many
+   * threads it has. Elsewhere little runs beside a build, and it takes the threads that it takes by default.
    */
   async function build(cwd: string, outfile: string, threads: number, ...flagsAndEntryPoints: string[]) {
-    const cmd = [bunExe(), "build", "--compile", "--aot", `--aot-threads=${threads}`, ...flagsAndEntryPoints];
+    // On Linux CI tests a Bun that carries its debug information, three times the bytes of the Bun that ships. A build writes
+    // its executable from the copy without it.
+    const cmd = [
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      ...(runsAsAWhole ? [`--aot-threads=${threads}`] : []),
+      ...withoutDebugInformation,
+      ...flagsAndEntryPoints,
+    ];
     const env = { ...bunEnv, BUN_CRASH_REPORT_URL: "" };
     const { stderr, exitCode } = await inTurn(async () => {
+      if (isOver) throw new Error(`The file ended before this build had its turn: ${cmd.join(" ")}`);
       await using proc = Bun.spawn({ cmd: [...cmd, "--outfile", outfile], cwd, env, stdout: "ignore", stderr: "pipe" });
       using held = endAtMemoryLimit(proc, memoryLimitOfAKnownProgram);
       buildsUnderWay.add(proc);
@@ -281,7 +298,9 @@ function executables() {
   /** Runs a program in a process of its own. `command` is what starts the executable. */
   async function start(name: string, env: Record<string, string> = {}, command = (executable: string) => [executable]) {
     if (!(name in programs)) throw new Error(`no test starts ${name} with this Bun, so it was not built`);
-    const ofMany = programsByThemselves.has(name) ? undefined : await buildOfMany();
+    // Where the file runs as a whole, the first test has started the build of many. Elsewhere the program has a build of its
+    // own, which is through sooner.
+    const ofMany = programsByThemselves.has(name) ? undefined : await builtOfMany;
     const { executable, cwd } = ofMany ?? (await buildByItself(name));
     return run(command(executable), cwd, ofMany ? { ...env, BUN_AOT_START_AT: name } : env);
   }
@@ -315,8 +334,9 @@ function executables() {
       files["worker.ts"] = importsTheCase("worker.ts");
       const folder = tempDir("aot-heap-limit-together", files);
       folders.push(folder);
-      // On a machine with cores to spare this build is what the file waits for longest, so it has two threads, and four where
-      // the machine has eight cores or more. With AddressSanitizer a build with more than two threads takes longer.
+      // On a machine with cores to spare this build is what the file waits for longest. So it has two threads, and four where
+      // the machine has eight cores or more: the programs beside it need a core each. With AddressSanitizer it keeps two: it
+      // is through before the tests of Workers start.
       const threads = isASAN || availableParallelism() < 8 ? 2 : 4;
       return build(String(folder), "program", threads, "program.ts", "worker.ts", ...alone);
     })());
@@ -329,15 +349,29 @@ function executables() {
     return join(cwd, "program");
   }
 
-  // A build may still be under way at the end: a filter left out the tests that wait for it, or it hangs. It is ended, and
-  // then its folder goes.
+  /**
+   * Runs the first test. Behind what it starts, the builds that many tests wait for start: the tests of Workers start last,
+   * and their build is through by then. Nothing waits for these builds here: a test that does says how its build failed, and
+   * a build that no test waits for is ended with the file.
+   */
+  function theFirstTest<Ended>(body: () => Ended, withWorkers: boolean) {
+    runsAsAWhole = true;
+    const ended = body();
+    if (Object.keys(programs).some(name => !programsByThemselves.has(name))) buildOfMany().catch(() => {});
+    if (withWorkers) buildTogether().catch(() => {});
+    return ended;
+  }
+
+  // A build may still be under way at the end: a filter left out the tests that wait for it, or it hangs. It is ended, one
+  // that still waits for its turn does not start, and then the folders go.
   afterAll(async () => {
+    isOver = true;
     for (const build of buildsUnderWay) build.kill("SIGKILL");
     await Promise.allSettled([builtOfMany, builtTogether, ...builtByThemselves.values()]);
     folders.forEach(folder => folder[Symbol.dispose]());
   });
 
-  return { oneOfMany, byItself, start, together, buildTogether, linkTogether };
+  return { oneOfMany, byItself, start, together, theFirstTest, linkTogether };
 }
 
 // TODO: with AddressSanitizer these run out of room where a release build does not.
@@ -354,35 +388,30 @@ export function addressSpaceForObjects(part: number, parts: number) {
   let cases = 0;
   const isInPart = () => cases++ % parts === part - 1;
   const dealt = <Row>(rows: Row[]) => rows.filter(isInPart);
-  const { oneOfMany, byItself, start, together, buildTogether, linkTogether } = executables();
+  const { oneOfMany, byItself, start, together, theFirstTest, linkTogether } = executables();
   // Tests start in the order in which they are defined, and few run at a time. So the order decides when the file ends. The
   // tests that take longest are defined first: the short ones run beside them. The tests of Workers are defined last: their
   // executable takes many times as long to build as the others, and a test that waits for its build keeps the next from
-  // starting. The first test starts that build behind its own, so that it is through when the last tests start. Of the tests
-  // of Workers the one that runs longest is the first: the file ends when the last of them ends.
-  const testsThatTakeLongest: (() => void)[] = [];
-  const testsBetween: (() => void)[] = [];
-  const testsOfWorkers: (() => void)[] = [];
+  // starting. Of the tests of Workers the one that runs longest is the first: the file ends when the last of them ends.
+  type Definition = (isFirst: boolean) => void;
+  const testsThatTakeLongest: Definition[] = [];
+  const testsBetween: Definition[] = [];
+  const testsOfWorkers: Definition[] = [];
   const among =
-    (tests: (() => void)[], add: "push" | "unshift" = "push") =>
+    (tests: Definition[], add: "push" | "unshift" = "push") =>
     (define: typeof test) =>
     (name: string, body: () => Promise<void>, timeout?: number) => {
-      if (isInPart()) tests[add](() => define(name, body, timeout));
+      if (isInPart())
+        tests[add](isFirst =>
+          define(name, isFirst ? () => theFirstTest(body, testsOfWorkers.length > 0) : body, timeout),
+        );
     };
-  const [inPart, inPartWithWorkers] = [among(testsBetween), among(testsOfWorkers)];
+  const [inPartFirst, inPart, inPartWithWorkers] = [
+    among(testsThatTakeLongest),
+    among(testsBetween),
+    among(testsOfWorkers),
+  ];
   const inPartWithWorkersFirst = among(testsOfWorkers, "unshift");
-  const inPartFirst = (define: typeof test) => (name: string, body: () => Promise<void>, timeout?: number) =>
-    among(testsThatTakeLongest)(define)(
-      name,
-      () => {
-        const ended = body();
-        // Whether a filter (-t) leaves out the tests of Workers is not known here. Then nothing waits for this build, and it is
-        // ended with the file. Otherwise a test of a Worker says how it failed.
-        if (testsOfWorkers.length) buildTogether().catch(() => {});
-        return ended;
-      },
-      timeout,
-    );
   /** `define.each(rows)` among the tests of `inPart`. The rows are dealt already. */
   const eachOf =
     (define: typeof test, rows: string[][]) =>
@@ -1547,6 +1576,6 @@ console.log(kept.map(count => count > 10_000 && count * 2 > kept[0]).join());
       120_000,
     );
 
-    for (const define of [...testsThatTakeLongest, ...testsBetween, ...testsOfWorkers]) define();
+    [...testsThatTakeLongest, ...testsBetween, ...testsOfWorkers].forEach((define, index) => define(index === 0));
   });
 }

@@ -439,6 +439,7 @@ impl Macro {
             // Build-only flags about the output bundle. The macro module's own
             // imports must still resolve.
             transform_options.external = Vec::new();
+            transform_options.library_externals = Vec::new();
             transform_options.packages = None;
 
             // JSC needs to be initialized if building from CLI

@@ -111,15 +111,18 @@ fn default_wildcard_patterns() -> Vec<WildcardPattern> {
 /// `logger`/`NODE_BUILTIN_PATTERNS`.
 pub(crate) fn init_external_modules(
     cwd: &[u8],
-    externals: &[&[u8]],
+    externals: &[Box<[u8]>],
+    library_externals: &[Box<[u8]>],
     log: &mut bun_ast::Log,
     target: Target,
 ) -> ExternalModules {
     let mut result = ExternalModules {
-        node_modules: StringSet::default(),
-        abs_paths: StringSet::default(),
         patterns: default_wildcard_patterns(),
+        ..Default::default()
     };
+    for name in library_externals {
+        result.add_user_name(name);
+    }
 
     match target {
         Target::Node => {
@@ -144,7 +147,7 @@ pub(crate) fn init_external_modules(
     patterns.extend(default_wildcard_patterns());
 
     for external in externals {
-        let path = *external;
+        let path: &[u8] = external;
         if let Some(i) = strings::index_of_char(path, b'*') {
             let i = i as usize;
             if strings::index_of_char(&path[i + 1..], b'*').is_some() {
@@ -164,7 +167,13 @@ pub(crate) fn init_external_modules(
                 suffix: Box::from(&external[i + 1..]),
             });
         } else if bun_paths::is_package_path(external) {
-            result.node_modules.insert(external).expect("unreachable");
+            result.add_user_name(external);
+            // Node.js and the browser polyfills take `stream` and `node:stream` for one module.
+            if !external.starts_with(b"node:") && is_node_builtin(external) {
+                result
+                    .user_names
+                    .insert(&[b"node:", external.as_ref()].concat());
+            }
         } else {
             let normalized = validate_path(log, cwd, external, b"external path");
 
@@ -177,6 +186,62 @@ pub(crate) fn init_external_modules(
     result.patterns = patterns;
 
     result
+}
+
+#[cfg(test)]
+#[test]
+fn external_names_by_where_they_come_from() {
+    fn list(names: &[&[u8]]) -> Vec<Box<[u8]>> {
+        names.iter().map(|name| Box::from(*name)).collect()
+    }
+    let mut log = bun_ast::Log::init();
+    for target in [Target::Browser, Target::Bun, Target::Node] {
+        // `--target=node` seeds the Node builtins. They are no names of the `external` option.
+        let seeded = init_external_modules(b"/project", &[], &[], &mut log, target);
+        assert_eq!(seeded.node_modules.contains(b"fs"), target == Target::Node);
+        assert!(!seeded.user_names.matches(b"fs"));
+
+        let named = init_external_modules(
+            b"/project",
+            &list(&[b"pkg", b"stream", b"node:zlib", b"./file.js", b"*.css"]),
+            &list(&[b"buffer"]),
+            &mut log,
+            target,
+        );
+        for name in [&b"pkg"[..], b"stream", b"node:zlib", b"buffer"] {
+            assert!(named.node_modules.contains(name));
+        }
+        let matched: [&[u8]; 8] = [
+            b"pkg",
+            b"pkg/sub",
+            b"stream",
+            b"stream/promises",
+            // The bare name of a Node builtin covers its `node:` spelling.
+            b"node:stream",
+            b"node:stream/promises",
+            b"node:zlib",
+            b"buffer",
+        ];
+        for path in matched {
+            assert!(named.user_names.matches(path), "{}", bstr::BStr::new(path));
+        }
+        let unmatched: [&[u8]; 7] = [
+            // `node:` is no spelling of a package.
+            b"node:pkg",
+            // The `node:` spelling does not cover the bare name.
+            b"zlib",
+            // A dependency of a library keeps its own spelling.
+            b"node:buffer",
+            b"fs/promises",
+            b"file.js",
+            b"./file.js",
+            b"style.css",
+        ];
+        for path in unmatched {
+            assert!(!named.user_names.matches(path), "{}", bstr::BStr::new(path));
+        }
+    }
+    assert!(!log.has_errors());
 }
 
 pub use bun_resolve_builtins::node_builtins::{
@@ -1929,11 +1994,8 @@ impl<'a> BundleOptions<'a> {
         // for the duration of this call only.
         opts.external = init_external_modules(
             Fs::FileSystem::get().top_level_dir(),
-            &transform
-                .external
-                .iter()
-                .map(|s| s.as_ref())
-                .collect::<Vec<&[u8]>>(),
+            &transform.external,
+            &transform.library_externals,
             // sole live `&mut` for this call (struct not yet returned).
             opts.log_mut(),
             opts.target,

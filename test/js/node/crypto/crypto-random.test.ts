@@ -395,7 +395,7 @@ describe.concurrent("generatePrime with safe and add/rem", () => {
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
-      timeout: 20_000,
+      timeout: 4500,
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stderr, signalCode: proc.signalCode, exitCode }).toEqual({ stderr: "", signalCode: null, exitCode: 0 });

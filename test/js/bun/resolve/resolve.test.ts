@@ -2230,6 +2230,189 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
   });
 });
 
+// `external` at the top level of bunfig.toml names what `bun build` leaves out of a bundle. A program
+// that runs has no bundle to leave a module out of: each import loads the file it resolves to.
+describe.concurrent("bunfig.toml `external`", () => {
+  describe("does not change what a program loads", () => {
+    // Every module exports its own path. This is what each specifier loads from a file in src/.
+    const expected = {
+      mypkg: "node_modules/mypkg/index.js",
+      "./noext": "src/noext.js",
+      "./dir": "src/dir/index.js",
+      "./wild.js": "src/wild.js",
+    };
+    const specifiers = Object.keys(expected);
+    const fixture = () =>
+      tempDir("bunfig-external", {
+        "bunfig.toml": `external = ["mypkg", "./src/noext", "./src/dir", "./wild*", "./mac*"]\n`,
+        ...Object.fromEntries(Object.values(expected).map(path => [path, `module.exports = ${JSON.stringify(path)};`])),
+        "node_modules/mypkg/package.json": JSON.stringify({ name: "mypkg", version: "1.0.0", main: "index.js" }),
+        "src/macro.ts": `export const which = () => "src/macro.ts";`,
+        // What "./wild.js" and "./macro.ts" name when they are read against the working directory.
+        "wild.js": `module.exports = "wild.js";`,
+        "macro.ts": `export const which = () => "macro.ts";`,
+        "src/static.mjs": [
+          ...specifiers.map((specifier, i) => `import m${i} from ${JSON.stringify(specifier)};`),
+          `console.log("loaded: " + JSON.stringify([${specifiers.map((_, i) => `m${i}`)}]));`,
+        ].join("\n"),
+        "src/static.test.mjs": `import { test } from "bun:test"; import "./static.mjs"; test("loaded", () => {});`,
+        "src/uses-macro.ts": `
+          import { which } from "./macro.ts" with { type: "macro" };
+          console.log("loaded: " + JSON.stringify([which()]));
+        `,
+        "worker.mjs": `new Worker(new URL("./src/static.mjs", import.meta.url));`,
+        "empty.mjs": ``,
+        "src/dynamic.mjs": `
+          import { createRequire } from "node:module";
+          import { relative } from "node:path";
+          const require = createRequire(import.meta.url);
+          const path = absolute => relative(process.cwd(), absolute).replaceAll("\\\\", "/");
+          const kinds = {
+            "import()": async specifier => (await import(specifier)).default,
+            "require()": specifier => require(specifier),
+            "require.resolve()": specifier => path(require.resolve(specifier)),
+            "import.meta.resolveSync()": specifier => path(import.meta.resolveSync(specifier)),
+            "Bun.resolveSync()": specifier => path(Bun.resolveSync(specifier, import.meta.dir)),
+          };
+          const result = {};
+          for (const [kind, load] of Object.entries(kinds)) {
+            result[kind] = {};
+            for (const specifier of ${JSON.stringify(specifiers)}) {
+              try {
+                result[kind][specifier] = await load(specifier);
+              } catch (error) {
+                result[kind][specifier] = String(error);
+              }
+            }
+          }
+          console.log("loaded: " + JSON.stringify(result));
+        `,
+      });
+
+    // `loaded` is what the program printed, or what it wrote to stderr if it printed nothing.
+    async function run(cwd: string, args: string[], env: Record<string, string> = {}) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        cwd,
+        env: { ...bunEnv, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const printed = stdout.match(/^loaded: (.*)$/m)?.[1];
+      return { loaded: printed === undefined ? stderr : JSON.parse(printed), exitCode };
+    }
+
+    test.each([
+      ["static imports under bun <file>", ["src/static.mjs"], Object.values(expected)],
+      ["static imports under --preload", ["--preload", "./src/static.mjs", "empty.mjs"], Object.values(expected)],
+      ["static imports in a Worker", ["worker.mjs"], Object.values(expected)],
+      ["static imports under bun test", ["test", "./src/static.test.mjs"], Object.values(expected)],
+      ["a macro import under bun <file>", ["src/uses-macro.ts"], ["src/macro.ts"]],
+    ])("%s", async (_, args, loaded) => {
+      using dir = fixture();
+      expect(await run(String(dir), args)).toEqual({ loaded, exitCode: 0 });
+    });
+
+    test("import(), require() and the resolve functions", async () => {
+      using dir = fixture();
+      expect(await run(String(dir), ["src/dynamic.mjs"])).toEqual({
+        loaded: {
+          "import()": expected,
+          "require()": expected,
+          "require.resolve()": expected,
+          "import.meta.resolveSync()": expected,
+          "Bun.resolveSync()": expected,
+        },
+        exitCode: 0,
+      });
+    });
+
+    test("a file behind a directory link, which loads once under its real path", async () => {
+      using dir = tempDir("bunfig-external-link", {
+        "bunfig.toml": `external = ["./link/s.ts"]\n`,
+        "real/s.ts": `globalThis.runs = (globalThis.runs ?? 0) + 1; export default import.meta.path;`,
+        "entry.ts": `
+          import exact from "./link/s.ts";
+          import other from "./link/s";
+          console.log("loaded: " + JSON.stringify([exact, other, globalThis.runs]));
+        `,
+      });
+      symlinkSync(join(String(dir), "real"), join(String(dir), "link"), "junction");
+      const real = join(String(dir), "real", "s.ts");
+      expect(await run(String(dir), ["entry.ts"])).toEqual({ loaded: [real, real, 1], exitCode: 0 });
+    });
+
+    // Without the key, "src/util.ts" is a file of a package "src", and auto-install looks for a package that is not installed.
+    test("an import that does not resolve, which fails as it does without the key", async () => {
+      const requests: string[] = [];
+      using registry = Bun.serve({
+        port: 0,
+        fetch(request) {
+          requests.push(new URL(request.url).pathname);
+          return new Response("not found", { status: 404 });
+        },
+      });
+      using dir = tempDir("bunfig-external-unresolved", {
+        "bunfig.toml": `external = ["src/*", "not-installed"]\n[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
+        "src/util.ts": `export default "src/util.ts";`,
+        "main.ts": `
+          const loaded = [];
+          for (const specifier of ["src/util.ts", "not-installed"]) {
+            try {
+              loaded.push((await import(specifier)).default);
+            } catch (error) {
+              loaded.push(error.name + ": " + error.message.replaceAll(import.meta.path, "<main>"));
+            }
+          }
+          console.log("loaded: " + JSON.stringify(loaded));
+        `,
+      });
+      const ran = await run(String(dir), ["main.ts"], { BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") });
+      expect({ ...ran, requests }).toEqual({
+        loaded: [
+          "ResolveMessage: Cannot find package 'src' imported from <main>",
+          "ResolveMessage: Cannot find package 'not-installed' imported from <main>",
+        ],
+        exitCode: 0,
+        requests: ["/src", "/not-installed"],
+      });
+    });
+  });
+
+  test("names what `bun build` leaves out, and --external replaces it", async () => {
+    using dir = tempDir("bunfig-external-build", {
+      "bunfig.toml": `external = ["from-bunfig"]\n`,
+      "entry.js": `import a from "from-bunfig"; import b from "from-cli"; console.log(a, b);`,
+      "node_modules/from-bunfig/package.json": JSON.stringify({ name: "from-bunfig", main: "index.js" }),
+      "node_modules/from-bunfig/index.js": `module.exports = "bundled from-bunfig";`,
+      "node_modules/from-cli/package.json": JSON.stringify({ name: "from-cli", main: "index.js" }),
+      "node_modules/from-cli/index.js": `module.exports = "bundled from-cli";`,
+    });
+    const build = async (...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "entry.js", ...args],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { imports: stdout.match(/^import .*$/gm), bundled: stdout.match(/bundled from-\w+/g), stderr, exitCode };
+    };
+    expect(await Promise.all([build(), build("--external", "from-cli"), build("--packages", "external")])).toEqual([
+      { imports: [`import a from "from-bunfig";`], bundled: ["bundled from-cli"], stderr: "", exitCode: 0 },
+      { imports: [`import b from "from-cli";`], bundled: ["bundled from-bunfig"], stderr: "", exitCode: 0 },
+      {
+        imports: [`import a from "from-bunfig";`, `import b from "from-cli";`],
+        bundled: null,
+        stderr: "",
+        exitCode: 0,
+      },
+    ]);
+  });
+});
+
 // On Windows these are not how the resolver spells the path, and it was asked again about its own spelling.
 test.concurrent.each(["import", "require"])(
   "%s() of a file written after its directory was read, by an absolute path with forward slashes",

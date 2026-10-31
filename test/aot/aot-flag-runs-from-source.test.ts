@@ -105,6 +105,36 @@ describe("what stops a build stops the run, and is printed as the build prints i
   });
 });
 
+// `-e` is `--eval` under `bun run`, so bunfig.toml is the one place that tells this build what to leave out.
+describe("what bunfig.toml lists in `external`", () => {
+  test("is left out of the build, and the program loads it", async () => {
+    using dir = tempDir("aot-flag-runs-from-source", {
+      "tsconfig.json": tsconfig,
+      "bunfig.toml": `external = ["p", "./unchecked.ts"]\n`,
+      "node_modules/p/package.json": JSON.stringify({
+        name: "p",
+        version: "1.0.0",
+        main: "index.js",
+        types: "index.d.ts",
+      }),
+      "node_modules/p/index.js": `module.exports = "p";`,
+      "node_modules/p/index.d.ts": `declare const name: string;\nexport default name;\n`,
+      // A type error, which stops the build of a file that it compiles.
+      "unchecked.ts": `export const port: number = "8080";\n`,
+      "main.ts":
+        declarations +
+        `import name from "p";\nimport { port } from "./unchecked.ts";\nconsole.log(name, "loaded", port);`,
+    });
+    const ran = await bun(String(dir), "run", "--aot", "main.ts");
+    const errors = ran.stderr.split("\n").filter(line => line.startsWith("error: "));
+    expect({ errors, stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({
+      errors: [],
+      stdout: "p loaded 8080\n",
+      exitCode: 0,
+    });
+  });
+});
+
 describe("the built-ins that a compiled program cannot change", () => {
   const writes = `
     const attempt = (name, change) => { try { console.log(name, "=>", String(change())); } catch (error) { console.log(name, "throws", error.name + ": " + error.message); } };

@@ -20,6 +20,15 @@ use crate::program::JsxImportKind;
 fn estring_to_store_str(s: &E::EString) -> StoreStr {
     if s.is_utf16 {
         super::helpers::arena_str(&bun_core::strings::to_utf8_alloc(s.slice16()))
+    } else if s.next.is_some() {
+        // `<a {...{ ["b" + "c"]: d }} />`: the parser inlines the spread, and joins the key into a rope.
+        let mut buf: HirVec<u8> = AstAlloc::vec_with_capacity(s.len());
+        let mut cur = Some(s);
+        while let Some(seg) = cur {
+            buf.extend_from_slice(seg.slice8());
+            cur = seg.next.as_ref().map(|r| r.get());
+        }
+        StoreStr::new(buf.leak())
     } else {
         StoreStr::new(s.slice8())
     }

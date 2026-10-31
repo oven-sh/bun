@@ -7,7 +7,7 @@ use smallvec::SmallVec;
 /// Disallow nested `then()` or `catch()` statements.
 pub struct NoNesting;
 
-const NO_NESTING: Message = Message::new("", "Avoid nesting promises.");
+const NO_NESTING: &Message = &Message::new("", "Avoid nesting promises.");
 
 #[derive(Default)]
 pub struct State<'a> {

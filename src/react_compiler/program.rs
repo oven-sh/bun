@@ -38,6 +38,7 @@ use crate::compile_result::{CompileDiagnostic, CompileOutput};
 use crate::hir::VariableBinding;
 use crate::imports::{ProgramContext, add_imports_to_program, validate_restricted_imports};
 use crate::lowering::FunctionNode;
+use crate::observer::{CompiledFunction, with_observation};
 use crate::pipeline;
 
 /// JSX runtime symbols the compiler may need to reference in generated code.
@@ -60,7 +61,7 @@ pub enum JsxImportKind {
 pub trait Host {
     fn symbols(&self) -> &[Symbol];
     fn module_scope(&self) -> &Scope;
-    fn import_records(&self) -> &[ImportRecord];
+    fn import_records(&self) -> &[ImportRecord<'_>];
 
     /// The operand of each `x as T` with the cast, in the order of the operands. The parser drops casts.
     fn type_casts(&self) -> &[(Loc, Loc)] {
@@ -194,11 +195,13 @@ pub fn has_module_scope_opt_out(stmts: &[Stmt]) -> bool {
 /// visit pass — `scan_imports` populates that field only after visiting), so
 /// imported bindings reach `Environment::resolve_module_type` instead of
 /// degrading to `Global`.
+#[inline(never)]
 pub fn collect_import_bindings(
     stmts: &[Stmt],
     records: &[ImportRecord],
     symbols: &[Symbol],
 ) -> IndexMap<Ref, VariableBinding> {
+    bun_removable_features::removable_definition!(ReactCompiler, collect_import_bindings);
     let mut out = IndexMap::new();
     for stmt in stmts {
         let StmtData::SImport(import) = &stmt.data else {
@@ -1169,11 +1172,13 @@ impl ReactCompilerState {
     /// (`ProgramContext::init_from_scope`, restricted-import validation) is
     /// deferred to the first `maybe_compile_*` call so the parser can set
     /// `p.react_compiler = Some(..)` without a `&mut p` borrow conflict.
+    #[inline(never)]
     pub fn new(
         options: ReactCompilerOptions,
         has_module_scope_opt_out: bool,
         import_bindings: IndexMap<Ref, VariableBinding>,
     ) -> Self {
+        bun_removable_features::removable_definition!(ReactCompiler, Self::new);
         bun_core::scoped_log!(
             react_compiler,
             "ReactCompilerState::new opt_out={}",
@@ -1304,7 +1309,40 @@ pub struct CompileResult {
 /// new body is returned as a `Vec` for the caller to splice into that buffer
 /// (so the existing mangle phase then runs on it), along with the new
 /// args/flags for `visit_func` / arrow-visit to apply.
+#[inline(never)]
 pub fn maybe_compile_pending(
+    state: &mut ReactCompilerState,
+    host: &mut dyn Host,
+    pending: &PendingCompile,
+    body: &mut [Stmt],
+    name: Option<&[u8]>,
+) -> Option<(Vec<Stmt>, CompileResult)> {
+    bun_removable_features::removable_definition!(ReactCompiler, maybe_compile_pending);
+    with_observation(|observation| {
+        let Some(observation) = observation else {
+            return compile_pending(state, host, pending, body, name);
+        };
+        let outlined_before = state.outlined_decls.len();
+        let mut recording = observation.record(host);
+        let compiled = compile_pending(state, &mut recording, pending, body, name);
+        let referenced = recording.into_referenced();
+        if let Some((body, result)) = &compiled {
+            let function = CompiledFunction {
+                parameters_loc: pending.args_loc,
+                parameters: result.args.slice(),
+                flags: result.flags,
+                body,
+                outlined: &state.outlined_decls[outlined_before..],
+                symbols: &[],
+                import_records: &[],
+            };
+            observation.report_function(host, referenced, &function);
+        }
+        compiled
+    })
+}
+
+fn compile_pending(
     state: &mut ReactCompilerState,
     host: &mut dyn Host,
     pending: &PendingCompile,
@@ -1462,7 +1500,29 @@ fn maybe_compile_node(
 /// `out_stmts` receives the `react/compiler-runtime` import statement
 /// (prepended) plus any outlined function decls (appended). Returns the
 /// summary `CompileOutput`.
+#[inline(never)]
 pub fn finish(
+    state: ReactCompilerState,
+    host: &mut dyn Host,
+    out_stmts: &mut Vec<Stmt>,
+) -> CompileOutput {
+    bun_removable_features::removable_definition!(ReactCompiler, finish);
+    with_observation(|observation| {
+        let Some(observation) = observation else {
+            return finish_program(state, host, out_stmts);
+        };
+        let output = finish_program(state, &mut observation.record(host), out_stmts);
+        match &output {
+            CompileOutput::Error { error, .. } => observation.report_failure(error),
+            CompileOutput::Unchanged | CompileOutput::Changed { .. } => {
+                observation.report_imports(out_stmts);
+            }
+        }
+        output
+    })
+}
+
+fn finish_program(
     mut state: ReactCompilerState,
     host: &mut dyn Host,
     out_stmts: &mut Vec<Stmt>,

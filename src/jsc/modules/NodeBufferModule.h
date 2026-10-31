@@ -178,8 +178,8 @@ DEFINE_NATIVE_MODULE(NodeBuffer)
     put(JSC::Identifier::fromString(vm, "kStringMaxLength"_s), JSC::jsNumber(Bun::Buffer::kStringMaxLength));
 
     JSC::JSObject* constants = JSC::constructEmptyObject(lexicalGlobalObject, globalObject->objectPrototype(), 2);
-    constants->putDirect(vm, JSC::Identifier::fromString(vm, "MAX_LENGTH"_s), JSC::jsNumber(Bun::Buffer::MAX_LENGTH));
-    constants->putDirect(vm, JSC::Identifier::fromString(vm, "MAX_STRING_LENGTH"_s), JSC::jsNumber(Bun::Buffer::MAX_STRING_LENGTH));
+    Bun::putDirectNamed(vm, constants, "MAX_LENGTH"_s, JSC::jsNumber(Bun::Buffer::MAX_LENGTH));
+    Bun::putDirectNamed(vm, constants, "MAX_STRING_LENGTH"_s, JSC::jsNumber(Bun::Buffer::MAX_STRING_LENGTH));
 
     put(JSC::Identifier::fromString(vm, "constants"_s), constants);
 

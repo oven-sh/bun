@@ -6,12 +6,12 @@ pub struct NoPromiseExecutorReturn {
     allow_void: bool,
 }
 
-const RETURNS_VALUE: Message = Message::new(
+const RETURNS_VALUE: &Message = &Message::new(
     "returnsValue",
     "Return values from promise executor functions cannot be read.",
 );
-const PREPEND_VOID: Message = Message::new("prependVoid", "Prepend `void` to the expression.");
-const WRAP_BRACES: Message = Message::new("wrapBraces", "Wrap the expression in `{}`.");
+const PREPEND_VOID: &Message = &Message::new("prependVoid", "Prepend `void` to the expression.");
+const WRAP_BRACES: &Message = &Message::new("wrapBraces", "Wrap the expression in `{}`.");
 
 /// ESLint's `curlyWrapFixer`. `arrow` is the `=>` of `function`.
 fn curly_wrap_fixer<'a>(fixer: Fixer<'a>, function: Expr<'a>, arrow: Span) -> [Fix; 2] {

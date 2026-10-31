@@ -1,0 +1,3049 @@
+//// narrowing/aliased-condition.queries.txt
+# A condition kept in a `const` narrows where the constant is tested.
+aliased-condition.ts:3 type `x` = string | number
+aliased-condition.ts:5 type `x` = string
+aliased-condition.ts:7 type `x` = number
+//// narrowing/aliased-condition.ts
+// A condition kept in a `const` narrows where the constant is tested.
+declare const x: string | number;
+const isText = typeof x === "string";
+if (isText) {
+  x;
+} else {
+  x;
+}
+//// narrowing/array-is-array.queries.txt
+# `Array.isArray` is a type guard that the library declares. It narrows like one that the program declares.
+array-is-array.ts:3 type `x` = string | number[]
+array-is-array.ts:4 type `x` = number[]
+array-is-array.ts:6 type `x` = string
+//// narrowing/array-is-array.ts
+// `Array.isArray` is a type guard that the library declares. It narrows like one that the program declares.
+declare const x: string | number[];
+if (Array.isArray(x)) {
+  x;
+} else {
+  x;
+}
+//// narrowing/assertion-function.queries.txt
+# A call to an assertion function narrows its argument in the statements after the call. The argument can be a property, a nested property, a property of `this` or an element at a constant key. An `asserts this is T` method narrows its receiver, and `asserts condition` narrows like an `if`. The narrowing of a property lasts until that property path is assigned: a store through an alias or a call doesn't reset it.
+assertion-function.ts:4 type `x` = string | number
+assertion-function.ts:5 type `x` = string | number
+assertion-function.ts:6 type `x` = string
+assertion-function.ts:17 type `entry.inner.token` = Token
+assertion-function.ts:18 type `entry.inner.token` = Word
+assertion-function.ts:19 type `entry.token` = Token
+assertion-function.ts:20 type `entry.token` = Token
+assertion-function.ts:21 type `entry.token` = Word
+
+assertion-function.ts:30 type `this.token` = Token
+assertion-function.ts:31 type `this.token` = Word
+
+assertion-function.ts:36 type `pair[0]` = Token
+assertion-function.ts:37 type `pair[0]` = Word
+assertion-function.ts:38 type `pair[1]` = Token
+assertion-function.ts:39 type `entry["token"]` = Token
+assertion-function.ts:40 type `entry.token` = Word
+
+assertion-function.ts:50 type `shape` = Shape
+assertion-function.ts:51 type `shape` = Round
+assertion-function.ts:52 type `holder.shape` = Shape
+assertion-function.ts:53 type `holder.shape` = Round
+
+assertion-function.ts:57 type `entry.token` = Token
+assertion-function.ts:58 type `entry.token` = Word
+assertion-function.ts:60 type `other.token` = Word
+assertion-function.ts:61 type `other.inner.token` = Digits
+
+assertion-function.ts:67 type `entry.token` = Word
+assertion-function.ts:69 type `entry.token` = Word
+assertion-function.ts:71 type `entry.token` = Token
+//// narrowing/assertion-function.ts
+// A call to an assertion function narrows its argument in the statements after the call. The argument can be a property, a nested property, a property of `this` or an element at a constant key. An `asserts this is T` method narrows its receiver, and `asserts condition` narrows like an `if`. The narrowing of a property lasts until that property path is assigned: a store through an alias or a call doesn't reset it.
+function assertString(v: unknown): asserts v is string {}
+declare const x: string | number;
+x;
+assertString(x);
+x;
+
+interface Word { kind: "word"; text: string }
+interface Digits { kind: "digits"; value: number }
+type Token = Word | Digits;
+interface Entry { token: Token; inner: { token: Token } }
+function assertWord(token: Token): asserts token is Word {}
+function assert(condition: unknown): asserts condition {}
+declare function change(entry: Entry): void;
+
+function properties(entry: Entry) {
+  assertWord(entry.inner.token);
+  entry.inner.token;
+  entry.token;
+  assertWord(entry.token);
+  entry.token;
+}
+
+class Reader {
+  token: Token;
+  constructor(token: Token) {
+    this.token = token;
+  }
+  read() {
+    assertWord(this.token);
+    this.token;
+  }
+}
+
+function constantKeys(pair: [Token, Token], entry: Entry) {
+  assertWord(pair[0]);
+  pair[0];
+  pair[1];
+  assertWord(entry["token"]);
+  entry.token;
+}
+
+class Shape {
+  assertRound(): asserts this is Round {}
+}
+class Round extends Shape {
+  radius = 1;
+}
+function receivers(shape: Shape, holder: { shape: Shape }) {
+  shape.assertRound();
+  shape;
+  holder.shape.assertRound();
+  holder.shape;
+}
+
+function conditions(entry: Entry, other: Entry) {
+  assert(entry.token.kind === "word");
+  entry.token;
+  assert(other.token.kind === "word" && other.inner.token.kind === "digits");
+  other.token;
+  other.inner.token;
+}
+
+function aliasStoreAndCall(entry: Entry, alias: Entry, other: Token) {
+  assertWord(entry.token);
+  alias.token = other;
+  entry.token;
+  change(entry);
+  entry.token;
+  entry.token = other;
+  entry.token;
+}
+
+export {};
+//// narrowing/condition-held-in-a-const.queries.txt
+# A condition stored in a `const` narrows references that can't have changed since: a `const`, a parameter or `let` that is never reassigned, `this`, and `readonly` properties of those. Other references keep their declared type. Nothing is narrowed if the condition is stored in a `let`, in a `const` with a type annotation, or behind more than five `const` aliases.
+condition-held-in-a-const.ts:8 type `unassigned` = Tree
+condition-held-in-a-const.ts:11 type `unassigned` = Leaf
+condition-held-in-a-const.ts:13 type `unassigned` = Branch
+condition-held-in-a-const.ts:16 type `reassigned` = Tree
+
+condition-held-in-a-const.ts:29 type `constant` = Leaf
+condition-held-in-a-const.ts:32 type `unassigned` = Leaf
+condition-held-in-a-const.ts:35 type `reassigned` = Tree
+
+condition-held-in-a-const.ts:41 type `holder.readonlyTree` = Tree
+condition-held-in-a-const.ts:45 type `holder.readonlyTree` = Leaf
+condition-held-in-a-const.ts:47 type `holder.readonlyTree` = Branch
+condition-held-in-a-const.ts:50 type `holder.mutableTree` = Tree
+condition-held-in-a-const.ts:43 type `holder.nested.leaf` = Leaf | undefined
+condition-held-in-a-const.ts:53 type `holder.nested.leaf` = Leaf
+condition-held-in-a-const.ts:55 type `holder.nested.leaf` = undefined
+
+condition-held-in-a-const.ts:67 type `this.current` = Tree
+condition-held-in-a-const.ts:70 type `this.current` = Leaf
+condition-held-in-a-const.ts:72 type `this.current` = Branch
+condition-held-in-a-const.ts:75 type `this.next` = Tree
+
+condition-held-in-a-const.ts:83 type `tree` = Tree
+condition-held-in-a-const.ts:87 type `tree` = Tree
+
+condition-held-in-a-const.ts:96 type `left` = Leaf
+condition-held-in-a-const.ts:97 type `right` = Leaf
+condition-held-in-a-const.ts:106 type `left` = Branch
+condition-held-in-a-const.ts:107 type `right` = Branch
+
+condition-held-in-a-const.ts:119 type `tree` = Tree
+condition-held-in-a-const.ts:122 type `tree` = Leaf
+//// narrowing/condition-held-in-a-const.ts
+// A condition stored in a `const` narrows references that can't have changed since: a `const`, a parameter or `let` that is never reassigned, `this`, and `readonly` properties of those. Other references keep their declared type. Nothing is narrowed if the condition is stored in a `let`, in a `const` with a type annotation, or behind more than five `const` aliases.
+interface Leaf { readonly kind: "leaf"; text: string }
+interface Branch { readonly kind: "branch"; children: Tree[] }
+type Tree = Leaf | Branch;
+interface Holder { readonly readonlyTree: Tree; mutableTree: Tree; readonly nested: { readonly leaf?: Leaf } }
+
+function parameters(unassigned: Tree, reassigned: Tree) {
+  const isUnassignedLeaf = unassigned.kind === "leaf";
+  const isReassignedLeaf = reassigned.kind === "leaf";
+  if (isUnassignedLeaf) {
+    unassigned;
+  } else {
+    unassigned;
+  }
+  if (isReassignedLeaf) {
+    reassigned;
+  }
+  reassigned = unassigned;
+}
+
+function locals(source: () => Tree) {
+  const constant = source();
+  let unassigned = source();
+  let reassigned = source();
+  const isConstantLeaf = constant.kind === "leaf";
+  const isUnassignedLeaf = unassigned.kind === "leaf";
+  const isReassignedLeaf = reassigned.kind === "leaf";
+  if (isConstantLeaf) {
+    constant;
+  }
+  if (isUnassignedLeaf) {
+    unassigned;
+  }
+  if (isReassignedLeaf) {
+    reassigned;
+  }
+  reassigned = constant;
+}
+
+function properties(holder: Holder) {
+  const isReadonlyLeaf = holder.readonlyTree.kind === "leaf";
+  const isMutableLeaf = holder.mutableTree.kind === "leaf";
+  const hasNestedLeaf = holder.nested.leaf !== undefined;
+  if (isReadonlyLeaf) {
+    holder.readonlyTree;
+  } else {
+    holder.readonlyTree;
+  }
+  if (isMutableLeaf) {
+    holder.mutableTree;
+  }
+  if (hasNestedLeaf) {
+    holder.nested.leaf;
+  } else {
+    holder.nested.leaf;
+  }
+}
+
+class Cursor {
+  readonly current: Tree;
+  next: Tree;
+  constructor(current: Tree, next: Tree) {
+    this.current = current;
+    this.next = next;
+  }
+  read() {
+    const isCurrentLeaf = this.current.kind === "leaf";
+    const isNextLeaf = this.next.kind === "leaf";
+    if (isCurrentLeaf) {
+      this.current;
+    } else {
+      this.current;
+    }
+    if (isNextLeaf) {
+      this.next;
+    }
+  }
+}
+
+function letAndAnnotatedConst(tree: Tree) {
+  let isLeaf = tree.kind === "leaf";
+  if (isLeaf) {
+    tree;
+  }
+  const isBranch: boolean = tree.kind === "branch";
+  if (isBranch) {
+    tree;
+  }
+}
+
+function bothLeaves(left: Tree, right: Tree) {
+  const isLeftLeaf = left.kind === "leaf";
+  const isRightLeaf = right.kind === "leaf";
+  const areBothLeaves = isLeftLeaf && isRightLeaf;
+  if (areBothLeaves) {
+    left;
+    right;
+  }
+}
+
+function neitherLeaf(left: Tree, right: Tree) {
+  const isLeftLeaf = left.kind === "leaf";
+  const isRightLeaf = right.kind === "leaf";
+  const isEitherLeaf = isLeftLeaf || isRightLeaf;
+  if (!isEitherLeaf) {
+    left;
+    right;
+  }
+}
+
+function aliasChain(tree: Tree) {
+  const first = tree.kind === "leaf";
+  const second = first;
+  const third = second;
+  const fourth = third;
+  const fifth = fourth;
+  const sixth = fifth;
+  if (sixth) {
+    tree;
+  }
+  if (fifth) {
+    tree;
+  }
+}
+
+export {};
+//// narrowing/discriminant.queries.txt
+# A comparison of a property that has literal types narrows a union. A property of type `string` leaves its object as declared.
+discriminant.ts:4 type `s` = S
+discriminant.ts:5 type `s` = { kind: "a"; x: number; }
+discriminant.ts:7 type `s` = { kind: "b"; y: string; }
+
+discriminant.ts:11 type `t` = { kind: string; }
+discriminant.ts:13 type `t` = { kind: string; }
+//// narrowing/discriminant.ts
+// A comparison of a property that has literal types narrows a union. A property of type `string` leaves its object as declared.
+type S = { kind: "a"; x: number } | { kind: "b"; y: string };
+declare const s: S;
+if (s.kind === "a") {
+  s;
+} else {
+  s;
+}
+declare const t: { kind: string };
+if (t.kind === "a") {
+  t;
+} else {
+  t;
+}
+//// narrowing/in.queries.txt
+# `in` with a string literal narrows a union by the presence of the property.
+in.ts:3 type `u` = { a: number; } | { b: string; }
+in.ts:4 type `u` = { a: number; }
+in.ts:6 type `u` = { b: string; }
+//// narrowing/in.ts
+// `in` with a string literal narrows a union by the presence of the property.
+declare const u: { a: number } | { b: string };
+if ("a" in u) {
+  u;
+} else {
+  u;
+}
+//// narrowing/instanceof.queries.txt
+# `instanceof` narrows a union of classes in both branches.
+instanceof.ts:5 type `x` = A | B
+instanceof.ts:6 type `x` = A
+instanceof.ts:8 type `x` = B
+//// narrowing/instanceof.ts
+// `instanceof` narrows a union of classes in both branches.
+class A { a = 1; }
+class B { b = 1; }
+declare const x: A | B;
+if (x instanceof A) {
+  x;
+} else {
+  x;
+}
+//// narrowing/nullish.queries.txt
+# A comparison with `null`, `undefined` or `void 0` separates the nullish members. A comparison with a local named `undefined` narrows by the type of that local.
+nullish.ts:4 type `x` = null | undefined
+nullish.ts:6 type `x` = string
+nullish.ts:9 type `x` = undefined
+nullish.ts:11 type `x` = string | null
+nullish.ts:14 type `x` = undefined
+nullish.ts:16 type `x` = string | null
+
+nullish.ts:20 type `y` = number
+nullish.ts:22 type `y` = string | number
+//// narrowing/nullish.ts
+// A comparison with `null`, `undefined` or `void 0` separates the nullish members. A comparison with a local named `undefined` narrows by the type of that local.
+declare const x: string | null | undefined;
+if (x == null) {
+  x;
+} else {
+  x;
+}
+if (x === undefined) {
+  x;
+} else {
+  x;
+}
+if (x === void 0) {
+  x;
+} else {
+  x;
+}
+function f(undefined: number, y: number | string) {
+  if (y === undefined) {
+    y;
+  } else {
+    y;
+  }
+}
+//// narrowing/property-path.queries.txt
+# A test of a property path narrows the reads of that path. The object and the member keep their declared types.
+property-path.ts:3 type `p.value` = string | number
+property-path.ts:4 type `p.value` = string
+property-path.ts:6 type `p.value` = number
+
+property-path.ts:4 type `p` = { value: string | number; }
+property-path.ts:4 member `p.value` = member value Field string | number checked string | number
+//// narrowing/property-path.ts
+// A test of a property path narrows the reads of that path. The object and the member keep their declared types.
+declare const p: { value: string | number };
+if (typeof p.value === "string") {
+  p.value;
+} else {
+  p.value;
+}
+//// narrowing/switch-discriminant.queries.txt
+# Each clause of a `switch` over a discriminant property narrows the object.
+switch-discriminant.ts:4 type `s` = S
+switch-discriminant.ts:6 type `s` = { kind: "a"; x: number; }
+switch-discriminant.ts:9 type `s` = { kind: "b"; y: string; }
+//// narrowing/switch-discriminant.ts
+// Each clause of a `switch` over a discriminant property narrows the object.
+type S = { kind: "a"; x: number } | { kind: "b"; y: string };
+declare const s: S;
+switch (s.kind) {
+  case "a":
+    s;
+    break;
+  case "b":
+    s;
+    break;
+}
+//// narrowing/switch-true.queries.txt
+# Each `case` test of `switch (true)` narrows in its clause, and `default` gets what no test accepts. The test can be about a property, a nested property, a property of `this` or an element at a constant key. A clause also knows that the tests before it failed. Clauses that share their statements, or fall through, get the union.
+switch-true.ts:4 type `x` = string | number
+switch-true.ts:5 type `x` = string
+switch-true.ts:8 type `x` = number
+switch-true.ts:20 type `entry.token` = Token
+switch-true.ts:21 type `entry.token` = Word
+switch-true.ts:24 type `entry.token` = Digits
+switch-true.ts:27 type `entry.token` = Space
+
+switch-true.ts:34 type `entry.inner.token` = Space
+switch-true.ts:35 type `entry.token` = Token
+switch-true.ts:38 type `entry.inner.token` = Digits | Word
+
+switch-true.ts:50 type `this.token` = Word
+switch-true.ts:53 type `this.token` = Digits
+switch-true.ts:56 type `this.token` = Space
+
+switch-true.ts:64 type `pair[0]` = Word
+switch-true.ts:65 type `pair[1]` = Token
+switch-true.ts:68 type `entry.token` = Digits
+switch-true.ts:69 type `pair[0]` = Digits | Space
+
+switch-true.ts:78 type `entry.token` = Digits | Word
+switch-true.ts:81 type `entry.token` = Space
+
+switch-true.ts:88 type `entry.token` = Word
+switch-true.ts:90 type `entry.token` = Digits | Word
+//// narrowing/switch-true.ts
+// Each `case` test of `switch (true)` narrows in its clause, and `default` gets what no test accepts. The test can be about a property, a nested property, a property of `this` or an element at a constant key. A clause also knows that the tests before it failed. Clauses that share their statements, or fall through, get the union.
+declare const x: string | number;
+switch (true) {
+  case typeof x === "string":
+    x;
+    break;
+  default:
+    x;
+}
+
+interface Word { kind: "word"; text: string }
+interface Digits { kind: "digits"; value: number }
+interface Space { kind: "space" }
+type Token = Word | Digits | Space;
+interface Entry { token: Token; inner: { token: Token } }
+function isDigits(token: Token): token is Digits { return token.kind === "digits"; }
+
+function properties(entry: Entry) {
+  switch (true) {
+    case entry.token.kind === "word":
+      entry.token;
+      break;
+    case isDigits(entry.token):
+      entry.token;
+      break;
+    default:
+      entry.token;
+  }
+}
+
+function nestedProperties(entry: Entry) {
+  switch (true) {
+    case entry.inner.token.kind === "space":
+      entry.inner.token;
+      entry.token;
+      break;
+    default:
+      entry.inner.token;
+  }
+}
+
+class Reader {
+  token: Token;
+  constructor(token: Token) {
+    this.token = token;
+  }
+  read() {
+    switch (true) {
+      case this.token.kind === "word":
+        this.token;
+        break;
+      case this.token.kind === "digits":
+        this.token;
+        break;
+      default:
+        this.token;
+    }
+  }
+}
+
+function constantKeys(pair: [Token, Token], entry: Entry) {
+  switch (true) {
+    case pair[0].kind === "word":
+      pair[0];
+      pair[1];
+      break;
+    case entry["token"].kind === "digits":
+      entry.token;
+      pair[0];
+      break;
+  }
+}
+
+function sharedStatements(entry: Entry) {
+  switch (true) {
+    case entry.token.kind === "word":
+    case entry.token.kind === "digits":
+      entry.token;
+      break;
+    default:
+      entry.token;
+  }
+}
+
+function fallThrough(entry: Entry) {
+  switch (true) {
+    case entry.token.kind === "word":
+      entry.token;
+    case entry.token.kind === "digits":
+      entry.token;
+      break;
+  }
+}
+
+export {};
+//// narrowing/switch-typeof.queries.txt
+# Each clause of `switch (typeof x)` narrows `x`, and `default` gets the remaining members.
+switch-typeof.ts:3 type `x` = string | number | boolean
+switch-typeof.ts:5 type `x` = string
+switch-typeof.ts:8 type `x` = number
+switch-typeof.ts:11 type `x` = boolean
+//// narrowing/switch-typeof.ts
+// Each clause of `switch (typeof x)` narrows `x`, and `default` gets the remaining members.
+declare const x: string | number | boolean;
+switch (typeof x) {
+  case "string":
+    x;
+    break;
+  case "number":
+    x;
+    break;
+  default:
+    x;
+}
+//// narrowing/switch-value.queries.txt
+# Each clause of a `switch` over a union of literals narrows the subject, and `default` gets the remaining members.
+switch-value.ts:3 type `v` = "a" | "b" | "c"
+switch-value.ts:5 type `v` = "a"
+switch-value.ts:8 type `v` = "b"
+switch-value.ts:11 type `v` = "c"
+//// narrowing/switch-value.ts
+// Each clause of a `switch` over a union of literals narrows the subject, and `default` gets the remaining members.
+declare const v: "a" | "b" | "c";
+switch (v) {
+  case "a":
+    v;
+    break;
+  case "b":
+    v;
+    break;
+  default:
+    v;
+}
+//// narrowing/truthiness.queries.txt
+# A reference used as a condition is tested for truth. The left operand of `??` is tested for presence, not for truth.
+truthiness.ts:4 type `x` = { a: 1; }
+truthiness.ts:6 type `x` = undefined
+
+truthiness.ts:9 type `y` = "" | "a" | undefined
+truthiness.ts:10 type `y` = "" | undefined
+truthiness.ts:11 type `y` = "" | "a" | undefined
+truthiness.ts:12 type `y` = undefined
+//// narrowing/truthiness.ts
+// A reference used as a condition is tested for truth. The left operand of `??` is tested for presence, not for truth.
+declare const x: { a: 1 } | undefined;
+if (x) {
+  x;
+} else {
+  x;
+}
+declare const y: "" | "a" | undefined;
+y ||
+  y;
+y ??
+  y;
+//// narrowing/type-guard-call.queries.txt
+# A call to a user-defined type guard narrows its argument in both branches.
+type-guard-call.ts:4 type `x` = string | number
+type-guard-call.ts:5 type `x` = string
+type-guard-call.ts:7 type `x` = number
+//// narrowing/type-guard-call.ts
+// A call to a user-defined type guard narrows its argument in both branches.
+function isString(v: unknown): v is string { return typeof v === "string"; }
+declare const x: string | number;
+if (isString(x)) {
+  x;
+} else {
+  x;
+}
+//// narrowing/type-guard-function.queries.txt
+# A call to a function declared `x is T` narrows its argument in both branches when the argument is a property, a nested property, a property of `this` or an element at a constant key. A `this is T` method narrows its receiver. A function whose body is such a check gets an inferred type predicate. The narrowing of a property lasts until that property path is assigned: a store through an alias or a call doesn't reset it.
+type-guard-function.ts:11 type `entry.inner.token` = Token
+type-guard-function.ts:12 type `entry.inner.token` = Word
+type-guard-function.ts:13 type `entry.token` = Token
+type-guard-function.ts:15 type `entry.inner.token` = Digits
+type-guard-function.ts:17 type `entry.token` = Token
+type-guard-function.ts:18 type `entry.token` = Word
+type-guard-function.ts:20 type `entry.token` = Digits
+
+type-guard-function.ts:30 type `this.token` = Token
+type-guard-function.ts:31 type `this.token` = Word
+type-guard-function.ts:33 type `this.token` = Digits
+
+type-guard-function.ts:39 type `pair[0]` = Token
+type-guard-function.ts:40 type `pair[0]` = Word
+type-guard-function.ts:41 type `pair[1]` = Token
+type-guard-function.ts:43 type `entry["token"]` = Token
+type-guard-function.ts:44 type `entry.token` = Word
+
+type-guard-function.ts:58 type `shape` = Round
+type-guard-function.ts:60 type `shape` = Shape
+type-guard-function.ts:63 type `holder.shape` = Round
+type-guard-function.ts:65 type `holder.shape` = Shape
+
+type-guard-function.ts:71 type `entry.token` = Digits
+type-guard-function.ts:73 type `entry.token` = Word
+
+type-guard-function.ts:79 type `entry.token` = Word
+type-guard-function.ts:81 type `entry.token` = Word
+type-guard-function.ts:82 type `entry.token` = Digits
+type-guard-function.ts:86 type `entry.token` = Word
+
+type-guard-function.ts:92 type `entry.token` = Word
+type-guard-function.ts:94 type `entry.token` = Digits
+
+type-guard-function.ts:101 type `entry.token` = Word
+type-guard-function.ts:103 type `entry.token` = Word
+type-guard-function.ts:105 type `entry.token` = Token
+//// narrowing/type-guard-function.ts
+// A call to a function declared `x is T` narrows its argument in both branches when the argument is a property, a nested property, a property of `this` or an element at a constant key. A `this is T` method narrows its receiver. A function whose body is such a check gets an inferred type predicate. The narrowing of a property lasts until that property path is assigned: a store through an alias or a call doesn't reset it.
+interface Word { kind: "word"; text: string }
+interface Digits { kind: "digits"; value: number }
+type Token = Word | Digits;
+interface Entry { token: Token; inner: { token: Token } }
+function isWord(token: Token): token is Word { return token.kind === "word"; }
+function isDigits(token: Token) { return token.kind === "digits"; }
+declare function change(entry: Entry): void;
+
+function properties(entry: Entry) {
+  if (isWord(entry.inner.token)) {
+    entry.inner.token;
+    entry.token;
+  } else {
+    entry.inner.token;
+  }
+  if (isWord(entry.token)) {
+    entry.token;
+  } else {
+    entry.token;
+  }
+}
+
+class Reader {
+  token: Token;
+  constructor(token: Token) {
+    this.token = token;
+  }
+  read() {
+    if (isWord(this.token)) {
+      this.token;
+    } else {
+      this.token;
+    }
+  }
+}
+
+function constantKeys(pair: [Token, Token], entry: Entry) {
+  if (isWord(pair[0])) {
+    pair[0];
+    pair[1];
+  }
+  if (isWord(entry["token"])) {
+    entry.token;
+  }
+}
+
+class Shape {
+  isRound(): this is Round {
+    return this instanceof Round;
+  }
+}
+class Round extends Shape {
+  radius = 1;
+}
+function receivers(shape: Shape, holder: { shape: Shape }) {
+  if (shape.isRound()) {
+    shape;
+  } else {
+    shape;
+  }
+  if (holder.shape.isRound()) {
+    holder.shape;
+  } else {
+    holder.shape;
+  }
+}
+
+function inferredPredicate(entry: Entry) {
+  if (isDigits(entry.token)) {
+    entry.token;
+  } else {
+    entry.token;
+  }
+}
+
+function otherControlFlow(entry: Entry) {
+  isWord(entry.token) &&
+    entry.token;
+  isWord(entry.token)
+    ? entry.token
+    : entry.token;
+  if (!isWord(entry.token)) {
+    return;
+  }
+  entry.token;
+}
+
+function aliasedCondition(entry: { readonly token: Token }) {
+  const isText = isWord(entry.token);
+  if (isText) {
+    entry.token;
+  } else {
+    entry.token;
+  }
+}
+
+function aliasStoreAndCall(entry: Entry, alias: Entry, other: Token) {
+  if (isWord(entry.token)) {
+    alias.token = other;
+    entry.token;
+    change(entry);
+    entry.token;
+    entry.token = other;
+    entry.token;
+  }
+}
+
+export {};
+//// narrowing/typeof-in-javascript.js
+// The checker narrows in an inferred file too.
+function f(x) {
+  if (typeof x === "string") {
+    x;
+  } else {
+    x;
+  }
+}
+//// narrowing/typeof-in-javascript.queries.txt
+# The checker narrows in an inferred file too.
+typeof-in-javascript.js:0 role `` = Inferred
+typeof-in-javascript.js:3 type `x` = any
+typeof-in-javascript.js:4 type `x` = string
+typeof-in-javascript.js:6 type `x` = any
+//// narrowing/typeof.queries.txt
+# `typeof x === "string"` narrows a union of primitives in both branches. After the statement `x` has its declared type.
+typeof.ts:3 type `x` = string | number
+typeof.ts:4 type `x` = string
+typeof.ts:6 type `x` = number
+typeof.ts:8 type `x` = string | number
+//// narrowing/typeof.ts
+// `typeof x === "string"` narrows a union of primitives in both branches. After the statement `x` has its declared type.
+declare const x: string | number;
+if (typeof x === "string") {
+  x;
+} else {
+  x;
+}
+x;
+//// non-strict-empty-literals/inner/empty-literals.ts
+export class Queue { items = []; last = null; add(n: number): number { this.items.push(n); this.last = n; return this.items.length; } }
+export let shared = [];
+export function remember(n: number): number { shared.push(n); return shared.length; }
+export function collect(n: number, into = []) { into.push(n); return into; }
+function empty() { return []; }
+export function one(n: number) { const made = empty(); made.push(n); return made; }
+export function state(n: number) { const kept = { last: null, list: [] }; kept.last = n; kept.list.push(n); return kept; }
+export function either(n: number, c: boolean) { const kept = c ? { last: null } : { list: [] }; if (kept.list) kept.list.push(n); else kept.last = n; return kept; }
+//// non-strict-empty-literals/inner/tsconfig.json
+{ "extends": "../../tsconfig.json", "compilerOptions": { "strict": false } }
+//// non-strict-empty-literals/main.queries.txt
+# `inner/` is written without `strictNullChecks`, the program with it. There `[]` is `any[]` and `null` is `any` wherever a declaration, a member of a literal or a result starts from one, as for a local variable.
+inner/empty-literals.ts:0 role `` = Checked
+inner/empty-literals.ts:1 class member `Queue` = items Field Member 1 unwritten checked any[]
+inner/empty-literals.ts:1 class member `Queue` = last Field Member 1 unwritten checked any
+inner/empty-literals.ts:2 binding `shared` = any[]
+inner/empty-literals.ts:4 binding `into` = any[]
+inner/empty-literals.ts:5 returns `empty` = any[]
+inner/empty-literals.ts:6 binding `made` = any[]
+inner/empty-literals.ts:7 binding `kept` = { last: any; list: any[]; }
+absent: inner/empty-literals.ts:1 diagnostic TS2345 = Semantic StopsBuild
+absent: inner/empty-literals.ts:1 diagnostic TS2322 = Semantic StopsBuild
+absent: inner/empty-literals.ts:3 diagnostic TS2345 = Semantic StopsBuild
+absent: inner/empty-literals.ts:4 diagnostic TS2345 = Semantic StopsBuild
+absent: inner/empty-literals.ts:6 diagnostic TS2345 = Semantic StopsBuild
+absent: inner/empty-literals.ts:7 diagnostic TS2345 = Semantic StopsBuild
+absent: inner/empty-literals.ts:7 diagnostic TS2322 = Semantic StopsBuild
+absent: inner/empty-literals.ts:8 diagnostic TS2345 = Semantic StopsBuild
+absent: inner/empty-literals.ts:8 diagnostic TS2322 = Semantic StopsBuild
+//// non-strict-empty-literals/main.ts
+import { Queue, remember, collect, one, state, either } from "./inner/empty-literals.ts";
+console.log(new Queue().add(1), remember(1), collect(1), one(1), state(1), either(1, true));
+//// null-checks-off-alone/inner/only-reported.ts
+// What `strictNullChecks` only reports, and makes no type of, is asked of the file.
+export function half(n: number): number { if (n < 0) return; return n / 2; }
+export class Point { x: number; }
+export class Early { y: number; constructor() { console.log(this.y); this.y = 1; } }
+//// null-checks-off-alone/inner/tsconfig.json
+{ "extends": "../../tsconfig.json", "compilerOptions": { "strictNullChecks": false } }
+//// null-checks-off-alone/main.queries.txt
+# `inner/` turns `strictNullChecks` off and keeps the rest of `strict`, the program has all of it.
+main.ts:0 option strictPropertyInitialization `` = true
+inner/only-reported.ts:0 option strictPropertyInitialization `` = true
+inner/only-reported.ts:0 role `` = Checked
+
+# TypeScript asks for `strictNullChecks` in front of each of these three. They make no type: the function returns `number`, the fields are `number`.
+inner/only-reported.ts:2 returns `half` = number
+absent: inner/only-reported.ts:2 diagnostic TS2322 = Semantic StopsBuild
+absent: inner/only-reported.ts:3 diagnostic TS2564 = Style StopsBuild
+absent: inner/only-reported.ts:4 diagnostic TS2565 = Semantic StopsBuild
+//// null-checks-off-alone/main.ts
+// `inner/` turns `strictNullChecks` off and keeps the rest of `strict`, the program has all of it.
+import { half, Point, Early } from "./inner/only-reported.ts";
+console.log(half(4), half(-4), new Point().x, new Early().y);
+//// object-members/accessors.queries.txt
+# Accessors are one member each, by what they declare; a getter and a setter with different types are unwritten, and the checked type is what a read gives.
+accessors.ts:9 has `A` = g Getter number checked number readonly
+accessors.ts:9 has `A` = s Setter string checked string
+accessors.ts:9 has `A` = p GetterAndSetter number checked number
+accessors.ts:9 has `A` = x GetterAndSetter boolean checked boolean
+accessors.ts:14 has `B` = d GetterAndSetter unwritten checked string
+accessors.ts:16 has `I` = d GetterAndSetter unwritten checked string
+//// object-members/accessors.ts
+// Accessors are one member each, by what they declare; a getter and a setter with different types are unwritten.
+class A {
+  get g(): number { return 1; }
+  set s(v: string) {}
+  get p(): number { return 1; }
+  set p(v: number) {}
+  accessor x: boolean = true;
+}
+let a: A;
+class B {
+  get d(): string { return ""; }
+  set d(v: string | number) {}
+}
+let b: B;
+interface I { get d(): string; set d(v: string | number); }
+let i: I;
+export {};
+//// object-members/declaration-file-alias-derived-member.d.ts
+// A declaration nobody checked, for declaration-file-alias-derived-member.ts.
+type Port = number;
+//// object-members/declaration-file-alias-derived-member.queries.txt
+# A member computed from a member or a template that names a `.d.ts` alias is unwritten: it promises neither `unknown` nor what the `.d.ts` says. The members beside it stay written.
+declaration-file-alias-derived-member.ts:6 has `Partial<Settings>` = port Field unwritten checked number optional
+declaration-file-alias-derived-member.ts:6 has `Partial<Settings>` = retries Field number checked number optional
+declaration-file-alias-derived-member.ts:7 index `Readonly<Ports>` = String unwritten checked number
+declaration-file-alias-derived-member.ts:8 has `{ [K in keyof Settings]: Port }` = port Field unwritten checked number
+declaration-file-alias-derived-member.ts:8 has `{ [K in keyof Settings]: Port }` = retries Field unwritten checked number
+
+# A spread takes the member itself, so its written type is that of the member.
+declaration-file-alias-derived-member.ts:12 has `typeof copy` = port Field unknown checked number
+declaration-file-alias-derived-member.ts:12 has `typeof copy` = retries Field number checked number
+
+# The type of a spread has no declared form, so an access on it is unwritten.
+declaration-file-alias-derived-member.ts:10 member `copy.port` = member port Field unwritten checked number
+declaration-file-alias-derived-member.ts:11 member `copy.retries` = member retries Field unwritten checked number
+//// object-members/declaration-file-alias-derived-member.ts
+// A member computed from a member or a template that names a `.d.ts` alias is unwritten: it promises neither `unknown` nor what the `.d.ts` says. The members beside it stay written.
+/// <reference path="./declaration-file-alias-derived-member.d.ts" />
+interface Settings { port: Port; retries: number }
+interface Ports { [name: string]: Port }
+declare const settings: Settings;
+let a: Partial<Settings>;
+let b: Readonly<Ports>;
+let c: { [K in keyof Settings]: Port };
+const copy = { ...settings };
+copy.port;
+copy.retries;
+let d: typeof copy;
+export {};
+//// object-members/declaration-file-alias-member.d.ts
+// Declarations nobody checked, for declaration-file-alias-member.ts.
+type Port = number;
+type Mode = "fast" | "slow";
+//// object-members/declaration-file-alias-member.queries.txt
+# A member that the program annotates with a type alias of a `.d.ts` is written as `unknown`: nothing is tested where it is stored or read. A member of a mapped type whose template names such an alias is unwritten.
+declaration-file-alias-member.ts:6 has `Settings` = port Field unknown checked number
+declaration-file-alias-member.ts:6 has `Settings` = mode Field unknown checked Mode | null
+declaration-file-alias-member.ts:6 has `Settings` = retries Field number checked number
+declaration-file-alias-member.ts:7 index `Ports` = String unknown checked number
+declaration-file-alias-member.ts:8 has `Server` = port Field unknown checked number
+declaration-file-alias-member.ts:9 has `{ [K in "first" | "second"]: Port }` = first Field unwritten checked number
+declaration-file-alias-member.ts:9 has `{ [K in "first" | "second"]: Port }` = second Field unwritten checked number
+//// object-members/declaration-file-alias-member.ts
+// A member that the program annotates with a type alias of a `.d.ts` is written as `unknown`: nothing is tested where it is stored or read. A member of a mapped type whose template names such an alias is unwritten.
+/// <reference path="./declaration-file-alias-member.d.ts" />
+interface Settings { port: Port; mode: Mode | null; retries: number }
+interface Ports { [name: string]: Port }
+class Server { port: Port = 0; }
+let a: Settings;
+let b: Ports;
+let c: Server;
+let d: { [K in "first" | "second"]: Port };
+export {};
+//// object-members/declaration-file-member.d.ts
+// Declarations nobody checked, for declaration-file-member.ts.
+interface Host { port: number }
+interface Merged { a: number }
+//// object-members/declaration-file-member.queries.txt
+# A member declared in a `.d.ts` is unwritten, also in a merged interface; one the program declares is written.
+declaration-file-member.ts:6 member `h.port` = member port Field unwritten checked number
+declaration-file-member.ts:7 member `m.a` = member a Field unwritten checked number
+declaration-file-member.ts:8 member `m.b` = member b Field number checked number
+//// object-members/declaration-file-member.ts
+// A member declared in a `.d.ts` is unwritten, also in a merged interface; one the program declares is written.
+/// <reference path="./declaration-file-member.d.ts" />
+declare global { interface Merged { b: number } }
+declare const h: Host;
+declare const m: Merged;
+h.port;
+m.a;
+m.b;
+export {};
+//// object-members/generic-class.queries.txt
+# The written type of a member of a class is as declared, whatever the type arguments. The checked type has them.
+generic-class.ts:3 has `Box<number>` = value Field T checked number
+//// object-members/generic-class.ts
+// A member of a class is as declared, whatever the type arguments.
+class Box<T> { value: T; constructor(v: T) { this.value = v; } }
+let b: Box<number>;
+export {};
+//// object-members/generic-interface.queries.txt
+# A member of a generic interface is instantiated.
+generic-interface.ts:3 has `Pair<number>` = first Field number checked number
+//// object-members/generic-interface.ts
+// A member of a generic interface is instantiated.
+interface Pair<T> { first: T; second: T }
+let p: Pair<number>;
+export {};
+//// object-members/index-signatures.queries.txt
+# Index signatures answer by key kind; an array element is not an index signature member.
+index-signatures.ts:4 index `D` = String number checked number
+index-signatures.ts:5 index `N` = Number string checked string
+index-signatures.ts:6 index `Record<string, boolean>` = String boolean checked boolean
+index-signatures.ts:7 index `{ [k: `a${string}`]: number }` = Pattern number checked number
+index-signatures.ts:8 member `d.foo` = index String number checked number
+index-signatures.ts:10 member `list[0]` = absent
+//// object-members/index-signatures.ts
+// Index signatures answer by key kind; an array element is not an index signature member.
+interface D { [key: string]: number }
+interface N { [i: number]: string }
+declare const d: D;
+let n: N;
+let r: Record<string, boolean>;
+let t: { [k: `a${string}`]: number };
+d.foo;
+declare const list: number[];
+list[0];
+export {};
+//// object-members/inferred-member.queries.txt
+# A class field without an annotation is unwritten; one with an annotation is written.
+inferred-member.ts:3 has `C` = x Field unwritten checked number
+inferred-member.ts:3 has `C` = y Field number checked number
+//// object-members/inferred-member.ts
+// A class field without an annotation is unwritten; one with an annotation is written.
+class C { x = 1; y: number = 2; }
+let c: C;
+export {};
+//// object-members/interface-and-literal.queries.txt
+# Members of interfaces and type literals are written; members of an object literal are not.
+interface-and-literal.ts:3 has `Point` = x Field number checked number
+interface-and-literal.ts:3 has `Point` = y Field string checked string
+interface-and-literal.ts:3 has `Point` = move Method (dx: number) => void checked (dx: number) => void
+interface-and-literal.ts:4 member `p.x` = member x Field number checked number
+interface-and-literal.ts:5 member `p["y"]` = member y Field string checked string
+interface-and-literal.ts:6 has `{ a: boolean }` = a Field boolean checked boolean
+interface-and-literal.ts:8 member `o.a` = member a Field unwritten checked number
+//// object-members/interface-and-literal.ts
+// Members of interfaces and type literals are written; members of an object literal are not.
+interface Point { x: number; y: string; move(dx: number): void }
+declare const p: Point;
+p.x;
+p["y"];
+let q: { a: boolean };
+const o = { a: 1 };
+o.a;
+export {};
+//// object-members/intersection-receiver.d.ts
+// Declarations nobody checked, for intersection-receiver.ts.
+interface Outside { id: string; rows: string | { n: number } }
+//// object-members/intersection-receiver.queries.txt
+# A member that several parts of an intersection declare is written only if it is written in every part: `{ brand: true } & string` is a string, so one part says nothing about the whole.
+intersection-receiver.ts:6 member `both.id` = member id Field { brand: true; } & string checked { brand: true; } & string
+intersection-receiver.ts:7 member `both.rows` = member rows Field { n: number; }[] & (string | { n: number; }) checked { n: number; }[] & (string | { n: number; })
+intersection-receiver.ts:8 member `both.own` = member own Field number checked number
+intersection-receiver.ts:10 member `half.id` = member id Field unwritten checked { brand: true; } & string
+intersection-receiver.ts:11 member `half.rows` = member rows Field unwritten checked { n: number; }[] & (string | { n: number; })
+intersection-receiver.ts:12 member `half.own` = member own Field number checked number
+//// object-members/intersection-receiver.ts
+// A member that several parts of an intersection declare is written only if it is written in every part: `{ brand: true } & string` is a string, so one part says nothing about the whole.
+/// <reference path="./intersection-receiver.d.ts" />
+interface A { id: { brand: true }; rows: { n: number }[]; own: number }
+interface B { id: string; rows: string | { n: number } }
+declare const both: A & B;
+both.id;
+both.rows;
+both.own;
+declare const half: A & Outside;
+half.id;
+half.rows;
+half.own;
+export {};
+//// object-members/intersection-with-declaration-file-part.d.ts
+// Declarations nobody checked, for intersection-with-declaration-file-part.ts.
+interface Theirs { shared: number; foreign: string }
+//// object-members/intersection-with-declaration-file-part.queries.txt
+# An intersection of a type of the program with one of a declaration file. A member is written if every part that declares it writes it: one that the program alone declares is, one that the declaration file declares, alone or too, is not.
+intersection-with-declaration-file-part.ts:5 member `both.own` = member own Field number checked number
+intersection-with-declaration-file-part.ts:6 member `both.shared` = member shared Field unwritten checked number
+intersection-with-declaration-file-part.ts:7 member `both.foreign` = member foreign Field unwritten checked string
+intersection-with-declaration-file-part.ts:4 has `Mine & Theirs` = own Field number checked number
+intersection-with-declaration-file-part.ts:4 has `Mine & Theirs` = shared Field unwritten checked number
+intersection-with-declaration-file-part.ts:4 has `Mine & Theirs` = foreign Field unwritten checked string
+intersection-with-declaration-file-part.ts:4 has `Mine` = shared Field number checked number
+//// object-members/intersection-with-declaration-file-part.ts
+// An intersection of a type of the program with one of a declaration file. A member is written if every part that declares it writes it: one that the program alone declares is, one that the declaration file declares, alone or too, is not.
+/// <reference path="./intersection-with-declaration-file-part.d.ts" />
+interface Mine { own: number; shared: number }
+declare const both: Mine & Theirs;
+both.own;
+both.shared;
+both.foreign;
+export {};
+//// object-members/mapped-key-remapping.queries.txt
+# An `as` clause that only filters keys follows the modifiers type; one that renames keys is unwritten.
+mapped-key-remapping.ts:6 has `Without<Config, "b">` = a Field number checked number
+absent: mapped-key-remapping.ts:6 has `Without<Config, "b">` = b Field number checked number
+absent: mapped-key-remapping.ts:6 has `Without<Config, "b">` = b Field unwritten checked number
+mapped-key-remapping.ts:7 has `Renamed<Config>` = get_a Field unwritten checked number
+mapped-key-remapping.ts:7 has `Renamed<Config>` = get_b Field unwritten checked number
+mapped-key-remapping.ts:8 index `Without<Table, "b">` = String number checked number
+//// object-members/mapped-key-remapping.ts
+// An `as` clause that only filters keys follows the modifiers type; one that renames keys is unwritten.
+interface Config { a: number; b: number }
+interface Table { [key: string]: number }
+type Without<T, X> = { [K in keyof T as Exclude<K, X>]: T[K] };
+type Renamed<T> = { [K in keyof T as `get_${string & K}`]: T[K] };
+let v1: Without<Config, "b">;
+let v2: Renamed<Config>;
+let v3: Without<Table, "b">;
+export {};
+//// object-members/mapped.d.ts
+// Declarations nobody checked, for mapped.ts.
+interface Host { port: number }
+type Mine<T> = { [K in keyof T]: T[K] };
+type HostOptions = { [K in "port"]: number };
+interface HostTable { [key: string]: number }
+//// object-members/mapped.queries.txt
+# A member of a library mapped type is written if its source is. A mapped type of another `.d.ts` has the trust of the type it maps, and its members are unwritten.
+mapped.ts:4 has `Partial<Config>` = a Field number checked number optional
+mapped.ts:5 has `Record<"a", number>` = a Field number checked number
+mapped.ts:6 has `Partial<Host>` = port Field unwritten checked number optional
+mapped.ts:7 shape `Mine<Config>` = Object
+mapped.ts:7 has `Mine<Config>` = a Field unwritten checked number
+mapped.ts:9 has `Partial<HostOptions>` = port Field unwritten checked number optional
+mapped.ts:10 index `Partial<HostTable>` = String unwritten checked number | undefined
+mapped.ts:11 has `Renamed<Host>` = get_port Field unwritten checked number
+mapped.ts:12 has `Partial<Record<"a", number>>` = a Field number checked number optional
+mapped.ts:13 index `Readonly<Record<string, number>>` = String number checked number
+//// object-members/mapped.ts
+// A member of a library mapped type is written if its source is. A mapped type of another `.d.ts` has the trust of the type it maps, and its members are unwritten.
+/// <reference path="./mapped.d.ts" />
+interface Config { a: number }
+let v1: Partial<Config>;
+let v2: Record<"a", number>;
+let v3: Partial<Host>;
+let v4: Mine<Config>;
+type Renamed<T> = { [K in keyof T as `get_${string & K}`]: T[K] };
+let v5: Partial<HostOptions>;
+let v6: Partial<HostTable>;
+let v7: Renamed<Host>;
+let v8: Partial<Record<"a", number>>;
+let v9: Readonly<Record<string, number>>;
+export {};
+//// object-members/member-merged-with-declaration-file.d.ts
+// Declarations nobody checked, for member-merged-with-declaration-file.ts.
+interface Shared { theirs: string; both(value: string): string }
+//// object-members/member-merged-with-declaration-file.queries.txt
+# An interface that the program and a declaration file both declare. What the program alone declares is written. What the declaration file declares is not, and neither is a method whose overloads come from both.
+member-merged-with-declaration-file.ts:5 member `shared.mine` = member mine Field number checked number
+member-merged-with-declaration-file.ts:6 member `shared.theirs` = member theirs Field unwritten checked string
+member-merged-with-declaration-file.ts:7 member `shared.both` = member both Method unwritten checked { (value: string): string; (value: number): number; }
+member-merged-with-declaration-file.ts:4 has `Shared` = mine Field number checked number
+member-merged-with-declaration-file.ts:4 has `Shared` = theirs Field unwritten checked string
+absent: member-merged-with-declaration-file.ts:4 has `Shared` = mine Field unwritten checked number
+//// object-members/member-merged-with-declaration-file.ts
+// An interface that the program and a declaration file both declare. What the program alone declares is written. What the declaration file declares is not, and neither is a method whose overloads come from both.
+/// <reference path="./member-merged-with-declaration-file.d.ts" />
+declare global { interface Shared { mine: number; both(value: number): number } }
+declare const shared: Shared;
+shared.mine;
+shared.theirs;
+shared.both;
+export {};
+//// object-members/member-of-inferred-type-argument.queries.txt
+# Only a type argument that somebody wrote reaches the written type of a member. An access takes the receiver's type from the checker, which may have inferred the arguments, so its written type is the member's in the declared form of the receiver. An instantiated mapped type has no declared form.
+member-of-inferred-type-argument.ts:14 member `box.value` = member value Field B checked number
+member-of-inferred-type-argument.ts:15 member `box["value"]` = member value Field B checked number
+member-of-inferred-type-argument.ts:16 member `hold(1).value` = member value Field H checked number
+member-of-inferred-type-argument.ts:17 member `wrap(1).value` = member value Field W checked number
+member-of-inferred-type-argument.ts:18 member `part(1).value` = member value Field unwritten checked number optional
+member-of-inferred-type-argument.ts:19 member `either(1).value` = member value Field string | H checked string | number
+member-of-inferred-type-argument.ts:20 member `both(1).value` = member value Field H checked number
+member-of-inferred-type-argument.ts:21 member `both(1).label` = member label Field T checked number
+member-of-inferred-type-argument.ts:22 member `table(1).first` = index String E checked number
+absent: member-of-inferred-type-argument.ts:16 member `hold(1).value` = member value Field number checked number
+
+member-of-inferred-type-argument.ts:23 has `Holder<number>` = value Field number checked number
+//// object-members/member-of-inferred-type-argument.ts
+// Only a type argument that somebody wrote reaches the written type of a member. An access takes the receiver's type from the checker, which may have inferred the arguments, so its written type is the member's in the declared form of the receiver. An instantiated mapped type has no declared form.
+class Box<B> { value: B; constructor(value: B) { this.value = value; } }
+interface Holder<H> { value: H }
+interface Plain { value: string }
+interface Table<E> { [key: string]: E }
+type Wrapper<W> = { value: W };
+declare function hold<T>(value: T): Holder<T>;
+declare function wrap<T>(value: T): Wrapper<T>;
+declare function part<T>(value: T): Partial<Box<T>>;
+declare function either<T>(value: T): Holder<T> | Plain;
+declare function both<T>(value: T): Holder<T> & { label: T };
+declare function table<T>(value: T): Table<T>;
+const box = new Box(1);
+box.value;
+box["value"];
+hold(1).value;
+wrap(1).value;
+part(1).value;
+either(1).value;
+both(1).value;
+both(1).label;
+table(1).first;
+let written: Holder<number>;
+export {};
+//// object-members/member-with-unresolved-import.queries.txt
+# A member whose type does not resolve gives up by itself. The other members of the object have their types.
+member-with-unresolved-import.ts:5 member `holder.bad` = member bad Field gave up: ErrorType checked gave up: ErrorType
+member-with-unresolved-import.ts:6 member `holder.good` = member good Field number checked number
+member-with-unresolved-import.ts:7 member `holder.list` = member list Field string[] checked string[]
+member-with-unresolved-import.ts:4 shape `Holder` = Object
+member-with-unresolved-import.ts:4 has `Holder` = bad Field gave up: ErrorType checked gave up: ErrorType
+member-with-unresolved-import.ts:4 has `Holder` = good Field number checked number
+member-with-unresolved-import.ts:4 has `Holder` = list Field string[] checked string[]
+member-with-unresolved-import.ts:2 diagnostic TS2307 = MissingDeclaration StopsBuild
+//// object-members/member-with-unresolved-import.ts
+// A member whose type does not resolve gives up by itself. The other members of the object have their types.
+import type { Missing } from "./no-such-file";
+interface Holder { bad: Missing; good: number; list: string[] }
+declare const holder: Holder;
+holder.bad;
+holder.good;
+holder.list;
+//// object-members/names.queries.txt
+# A member name prints as its text, a symbol as `[symbol]`, a private name as written. A name that is an array index prints like any name.
+names.ts:3 has `Names` = 0 Field string checked string
+names.ts:3 has `Names` = 01 Field string checked string
+names.ts:3 has `Names` = [symbol] Field string checked string
+names.ts:4 member `this.#x` = member #x Field number checked number
+names.ts:5 has `P` = #x Field number checked number
+//// object-members/names.ts
+// A member name prints as its text, a symbol as `[symbol]`, a private name as written. A name that is an array index prints like any name.
+interface Names { 0: string; "01": string; [Symbol.toStringTag]: string }
+let n: Names;
+class P { #x: number = 1; read() { return this.#x; } }
+let p: P;
+export {};
+//// object-members/optional-and-readonly.queries.txt
+# `optional` and `readonly` are flags, and `?` adds no `undefined` to the written or the checked type.
+optional-and-readonly.ts:3 has `O` = a Field number checked number optional
+optional-and-readonly.ts:3 has `O` = b Field string checked string readonly
+optional-and-readonly.ts:3 has `O` = c Field number | undefined checked number | undefined
+//// object-members/optional-and-readonly.ts
+// `optional` and `readonly` are flags, and `?` adds no `undefined` to the written type.
+interface O { a?: number; readonly b: string; c: number | undefined }
+let o: O;
+export {};
+//// object-members/spread-mapped-type.d.ts
+// A mapped type nobody checked, for spread-mapped-type.ts.
+type Stringify<T> = { [K in keyof T]: string };
+//// object-members/spread-mapped-type.queries.txt
+# A member that a spread copies from a mapped type is written only if the member of the mapped type is. An access on the spread is unwritten either way.
+spread-mapped-type.ts:14 has `typeof s1` = a Field unwritten checked string
+spread-mapped-type.ts:15 has `typeof s2` = a Field number checked number optional
+spread-mapped-type.ts:16 has `typeof s3` = a Field number checked number
+
+spread-mapped-type.ts:11 member `s1.a` = member a Field unwritten checked string
+spread-mapped-type.ts:12 member `s2.a` = member a Field unwritten checked number optional
+spread-mapped-type.ts:13 member `s3.a` = member a Field unwritten checked number
+//// object-members/spread-mapped-type.ts
+// A member that a spread copies from a mapped type is written only if the member of the mapped type is. An access on the spread is unwritten either way.
+/// <reference path="./spread-mapped-type.d.ts" />
+interface Config { a: number; b: number }
+type Without<T, X> = { [K in keyof T as Exclude<K, X>]: T[K] };
+declare const stringified: Stringify<Config>;
+declare const partial: Partial<Config>;
+declare const filtered: Without<Config, "b">;
+const s1 = { ...stringified };
+const s2 = { ...partial };
+const s3 = { ...filtered };
+s1.a;
+s2.a;
+s3.a;
+let t1: typeof s1;
+let t2: typeof s2;
+let t3: typeof s3;
+export {};
+//// object-members/spread-mapped.d.ts
+// Declarations nobody checked, for spread-mapped.ts.
+type Stringify<T> = { [K in keyof T]: string };
+//// object-members/spread-mapped.queries.txt
+# A copy of a mapped member is written only if the mapped type is trusted. An access on the spread is unwritten either way.
+spread-mapped.ts:5 has `Stringify<Config>` = a Field unwritten checked string
+spread-mapped.ts:11 has `typeof untrusted` = a Field unwritten checked string
+spread-mapped.ts:12 has `typeof trusted` = a Field number checked number
+
+spread-mapped.ts:9 member `untrusted.a` = member a Field unwritten checked string
+spread-mapped.ts:10 member `trusted.a` = member a Field unwritten checked number
+//// object-members/spread-mapped.ts
+// A copy of a mapped member is written only if the mapped type is trusted. An access on the spread is unwritten either way.
+/// <reference path="./spread-mapped.d.ts" />
+interface Config { a: number }
+declare const config: Config;
+declare const stringified: Stringify<Config>;
+declare const partial: Partial<Config>;
+const untrusted = { ...config, ...stringified };
+const trusted = { ...config, ...partial };
+untrusted.a;
+trusted.a;
+let t1: typeof untrusted;
+let t2: typeof trusted;
+export {};
+//// object-members/spread.queries.txt
+# A member that a spread copies stays written in the type of the literal; a member the literal adds is not. The type of a spread has no declared form, so an access on it is unwritten.
+spread.ts:7 has `typeof s` = a Field number checked number
+spread.ts:7 has `typeof s` = b Field unwritten checked number
+
+spread.ts:5 member `s.a` = member a Field unwritten checked number
+spread.ts:6 member `s.b` = member b Field unwritten checked number
+//// object-members/spread.ts
+// A member that a spread copies stays written in the type of the literal; a member the literal adds is not. The type of a spread has no declared form, so an access on it is unwritten.
+interface A { a: number }
+declare const x: A;
+const s = { ...x, b: 1 };
+s.a;
+s.b;
+let t: typeof s;
+export {};
+//// object-members/union-receiver.queries.txt
+# A member of a union is written only if it is written in every constituent.
+union-receiver.ts:5 member `u.k` = member k Field string | number checked string | number
+union-receiver.ts:8 member `v.k` = member k Field unwritten checked number
+//// object-members/union-receiver.ts
+// A member of a union is written only if it is written in every constituent.
+interface A { k: number }
+interface B { k: string }
+declare const u: A | B;
+u.k;
+const o = { k: 1 };
+declare const v: A | typeof o;
+v.k;
+export {};
+//// object-members/unique-symbol-in-a-constant.queries.txt
+# In a compile build a constant that is initialized with a unique symbol keeps it, so a member under that key is found through the constant. A variable that can change holds a `symbol`.
+unique-symbol-in-a-constant.ts:7 binding `kCopied` = unique symbol
+unique-symbol-in-a-constant.ts:8 binding `kTaken` = unique symbol
+unique-symbol-in-a-constant.ts:9 binding `kChanging` = symbol
+unique-symbol-in-a-constant.ts:10 binding `kParameter` = symbol
+unique-symbol-in-a-constant.ts:15 type `holder[kCopied]` = number
+unique-symbol-in-a-constant.ts:15 type `holder[kTaken]` = number
+
+# The compiler finds the field by the one name that the type of the key stands for.
+unique-symbol-in-a-constant.ts:15 member `holder[kCopied]` = member [symbol] Field unwritten checked number
+unique-symbol-in-a-constant.ts:15 member `holder[kTaken]` = member [symbol] Field unwritten checked number
+//// object-members/unique-symbol-in-a-constant.ts
+// In a compile build a constant that is initialized with a unique symbol keeps it, so a member under that key is found through the constant. A variable that can change holds a `symbol`.
+const kState = Symbol("state");
+const names: { kState: typeof kState } = { kState };
+class Holder {
+  [kState] = 1;
+}
+const kCopied = kState;
+const { kState: kTaken } = names;
+let kChanging = kState;
+function take({ kState: kParameter }: typeof names) {
+  return kParameter;
+}
+export function read(holder: Holder) {
+  kChanging = Symbol("other");
+  return [holder[kCopied], holder[kTaken], kChanging, take(names)];
+}
+//// two-call-signatures/lenient-folder/inner/handler.ts
+interface Handler { (value: number): string; (value: string): string }
+export const describe: Handler = value => value.toFixed(1);
+//// two-call-signatures/lenient-folder/inner/tsconfig.json
+{ "extends": "../../../tsconfig.json", "compilerOptions": { "strict": false } }
+//// two-call-signatures/lenient-folder/main.queries.txt
+# `noImplicitAny` decides whether a function under a type with two call signatures gets one signature made of both. `inner/` is written without it, the program with it.
+main.ts:0 option noImplicitAny `` = true
+inner/handler.ts:0 option noImplicitAny `` = false
+inner/handler.ts:0 role `` = Checked
+inner/handler.ts:2 parameter `value` = any
+absent: inner/handler.ts:2 diagnostic TS2339 = Semantic StopsBuild
+//// two-call-signatures/lenient-folder/main.ts
+// `noImplicitAny` decides whether a function under a type with two call signatures gets one signature made of both. `inner/` is written without it, the program with it.
+import { describe } from "./inner/handler.ts";
+console.log(describe(1));
+//// two-call-signatures/strict-folder/inner/handler.ts
+interface Handler { (value: number): string; (value: string): string }
+export const describe: Handler = value => typeof value + ":" + String(value);
+//// two-call-signatures/strict-folder/inner/tsconfig.json
+{ "extends": "../../../tsconfig.json", "compilerOptions": { "strict": true } }
+//// two-call-signatures/strict-folder/main.queries.txt
+# `noImplicitAny` decides whether a function under a type with two call signatures gets one signature made of both. `inner/` is written with it, the program without it.
+main.ts:0 option noImplicitAny `` = false
+inner/handler.ts:0 option noImplicitAny `` = true
+inner/handler.ts:2 parameter `value` = string | number
+absent: inner/handler.ts:2 diagnostic TS7006 = Style StopsBuild
+//// two-call-signatures/strict-folder/main.ts
+// `noImplicitAny` decides whether a function under a type with two call signatures gets one signature made of both. `inner/` is written with it, the program without it.
+import { describe } from "./inner/handler.ts";
+console.log(describe(1), describe("a"));
+//// two-call-signatures/strict-folder/tsconfig.json
+{ "extends": "../../tsconfig.json", "compilerOptions": { "strict": false } }
+//// type-arguments/calls.queries.txt
+# A call lists each type parameter of a compiled file together with what the call puts in its place: its own, and those of the receiver's class.
+calls.ts:17 call type argument `wrap(item)` = T = Item
+calls.ts:18 call type argument `wrap(1)` = T = 1
+calls.ts:19 call type argument `wrap<Other>(other)` = T = Other
+ordered: calls.ts:20 call type argument `pair(item, other)` = A = Item
+ordered: calls.ts:20 call type argument `pair(item, other)` = B = Other
+
+# A default stands in for an argument that nothing gives. Without one the checker says `unknown`, which is no argument.
+calls.ts:21 call type argument `create()` = D = Item
+calls.ts:22 call type argument `create<Other>()` = D = Other
+absent: calls.ts:23 call type argument `empty()` = N = unknown
+
+# An argument can be a type parameter itself.
+calls.ts:10 call type argument `wrap(value)` = T = P
+calls.ts:14 call type argument `new Box(change(this.get()))` = V = R
+absent: calls.ts:14 call type argument `this.get()` = V = V
+
+# A construction has the type parameters of the class, with a constructor or without one.
+calls.ts:24 call type argument `new Box(item)` = V = Item
+calls.ts:25 call type argument `new Bare<Other>()` = W = Other
+
+# A method has those of the receiver's class in front of its own. The `this` type of the class is no type parameter.
+calls.ts:26 call type argument `box.get()` = V = Item
+absent: calls.ts:26 call type argument `box.get()` = this = Box<Item>
+ordered: calls.ts:27 call type argument `box.map(() => other)` = V = Item
+ordered: calls.ts:27 call type argument `box.map(() => other)` = R = Other
+
+# A type parameter of a declaration file has no layout to fill.
+absent: calls.ts:28 call type argument `new Map<string, Item>()` = K = string
+absent: calls.ts:28 call type argument `new Map<string, Item>()` = V = Item
+//// type-arguments/calls.ts
+// A call lists each type parameter of a compiled file together with what the call puts in its place: its own, and those of the receiver's class.
+interface Item { name: string }
+interface Other { size: number }
+declare const item: Item;
+declare const other: Other;
+function wrap<T>(value: T): T { return value; }
+function pair<A, B>(first: A, second: B): [A, B] { return [first, second]; }
+function create<D = Item>(): D | undefined { return undefined; }
+function empty<N>(): N | undefined { return undefined; }
+function inner<P>(value: P): P { return wrap(value); }
+class Box<V> {
+  constructor(public value: V) {}
+  get(): V { return this.value; }
+  map<R>(change: (value: V) => R): Box<R> { return new Box(change(this.get())); }
+}
+class Bare<W> { value: W | undefined = undefined; }
+wrap(item);
+wrap(1);
+wrap<Other>(other);
+pair(item, other);
+create();
+create<Other>();
+empty();
+const box = new Box(item);
+new Bare<Other>();
+box.get();
+box.map(() => other);
+new Map<string, Item>();
+export {};
+//// type-arguments/classes.queries.txt
+# A class type lists each type parameter of the class together with its type argument. The type parameters of what encloses the class come first among the checker's arguments and are not listed.
+classes.ts:15 class type argument `Box<Item>` = V = Item
+classes.ts:16 class type argument `Box<Box<Other>>` = V = Box<Other>
+classes.ts:16 class type argument `Box<Other>` = V = Other
+ordered: classes.ts:17 class type argument `Pair<Item, number>` = A = Item
+ordered: classes.ts:17 class type argument `Pair<Item, number>` = B = number
+
+# Defaults are arguments.
+ordered: classes.ts:18 class type argument `Cache` = K = string
+ordered: classes.ts:18 class type argument `Cache` = E = Item
+ordered: classes.ts:19 class type argument `Cache<number>` = K = number
+ordered: classes.ts:19 class type argument `Cache<number>` = E = Item
+
+# Only the type parameters of the class itself, not those of its base class.
+classes.ts:20 class type argument `Derived<Other>` = X = Other
+absent: classes.ts:20 class type argument `Derived<Other>` = V = Other
+
+# The declared type of the class and `unknown` say nothing.
+absent: classes.ts:6 class type argument `Box<V>` = V = V
+absent: classes.ts:21 class type argument `Box<unknown>` = V = unknown
+
+# `Inner<Item>` has the arguments `O, Item`.
+classes.ts:26 class type argument `Inner<Item>` = I = Item
+absent: classes.ts:26 class type argument `Inner<Item>` = I = O
+absent: classes.ts:26 class type argument `Inner<Item>` = O = O
+classes.ts:27 class type argument `Inner<O>` = I = O
+//// type-arguments/classes.ts
+// A class type lists each type parameter of the class together with its type argument. The type parameters of what encloses the class come first among the checker's arguments and are not listed.
+interface Item { name: string }
+interface Other { size: number }
+class Box<V> {
+  constructor(public value: V) {}
+  copy(): Box<V> { return this; }
+}
+class Pair<A, B> {
+  constructor(public first: A, public second: B) {}
+}
+class Cache<K = string, E = Item> {
+  entries: [K, E][] = [];
+}
+class Derived<X> extends Box<X> {}
+let v1: Box<Item>;
+let v2: Box<Box<Other>>;
+let v3: Pair<Item, number>;
+let v4: Cache;
+let v5: Cache<number>;
+let v6: Derived<Other>;
+let v7: Box<unknown>;
+function make<O>(outer: O) {
+  class Inner<I> {
+    constructor(public outer: O, public inner: I) {}
+  }
+  let v8: Inner<Item>;
+  let v9: Inner<O>;
+}
+export {};
+//// type-identity/class-instantiations.queries.txt
+# Instantiations of a generic class share an identity, unless they accept different primitives.
+same: class-instantiations.ts:4 identity `Box<number>` <=> class-instantiations.ts:5 identity `Box<string>`
+
+class-instantiations.ts:6 primitives `Wrapper<number>` = number
+class-instantiations.ts:7 primitives `Wrapper<string>` = string
+different: class-instantiations.ts:6 identity `Wrapper<number>` <=> class-instantiations.ts:7 identity `Wrapper<string>`
+//// type-identity/class-instantiations.ts
+// Instantiations of a generic class share an identity, unless they accept different primitives.
+class Box<T> { constructor(public value: T) {} }
+class Wrapper<T> { valueOf(): T { throw new Error(); } }
+let v1: { p: Box<number> };
+let v2: { p: Box<string> };
+let v3: { p: Wrapper<number> };
+let v4: { p: Wrapper<string> };
+export {};
+//// type-identity/computed-member-order.queries.txt
+# No declaration orders the members of a computed object type, and its layout lists them by key, so two orders are one identity. Other members are another identity.
+computed-member-order.ts:7 origin `typeof first` = computed
+computed-member-order.ts:8 origin `typeof second` = computed
+same: computed-member-order.ts:7 identity `typeof first` <=> computed-member-order.ts:8 identity `typeof second`
+different: computed-member-order.ts:7 identity `typeof first` <=> computed-member-order.ts:9 identity `typeof other`
+//// type-identity/computed-member-order.ts
+// No declaration orders the members of a computed object type, and its layout lists them by key, so two orders are one identity. Other members are another identity.
+declare const a: { skipped: boolean; x: number; y: string };
+declare const b: { skipped: boolean; y: string; x: number };
+const { skipped: s1, ...first } = a;
+const { skipped: s2, ...second } = b;
+const { y: s3, ...other } = a;
+let v1: typeof first;
+let v2: typeof second;
+let v3: typeof other;
+export {};
+//// type-identity/computed-type-accepted-primitives.queries.txt
+# A computed object type is described by its structure, and the primitives it accepts are part of that: a string has a `length` that is a number.
+computed-type-accepted-primitives.ts:4 origin `typeof a` = computed
+computed-type-accepted-primitives.ts:5 origin `typeof b` = computed
+computed-type-accepted-primitives.ts:4 primitives `typeof a` = string
+computed-type-accepted-primitives.ts:5 primitives `typeof b` = none
+different: computed-type-accepted-primitives.ts:4 identity `typeof a` <=> computed-type-accepted-primitives.ts:5 identity `typeof b`
+//// type-identity/computed-type-accepted-primitives.ts
+// A computed object type is described by its structure, and the primitives it accepts are part of that: a string has a `length` that is a number.
+const { skipped: s1, ...a } = { skipped: true, length: 1 };
+const { skipped: s2, ...b } = { skipped: true, length: "s" };
+let v1: typeof a;
+let v2: typeof b;
+export {};
+//// type-identity/cycle-in-two-files-of-one-task-long.ts
+// More than a hundred times as much to check as in the two short files together, imported by cycle-in-two-files-of-one-task.ts.
+const one = 1;
+export const many = [
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+  one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one, one,
+];
+//// type-identity/cycle-in-two-files-of-one-task-other.ts
+// Two object types that are each other's type argument, imported by cycle-in-two-files-of-one-task.ts.
+export interface A<T> { v: T }
+export interface B<T> { w: T }
+export type First = A<Second>;
+export type Second = B<First>;
+let first: First;
+let second: Second;
+//// type-identity/cycle-in-two-files-of-one-task.queries.txt
+# The identity of a member of a cycle of types does not depend on which member a file asks about first, nor on what the checker has answered in an earlier file. One checker visits the two short files one after the other, because the long file makes them a small part of the program.
+same: cycle-in-two-files-of-one-task.ts:6 identity `First` <=> cycle-in-two-files-of-one-task-other.ts:6 identity `First`
+same: cycle-in-two-files-of-one-task.ts:5 identity `Second` <=> cycle-in-two-files-of-one-task-other.ts:7 identity `Second`
+different: cycle-in-two-files-of-one-task.ts:6 identity `First` <=> cycle-in-two-files-of-one-task.ts:5 identity `Second`
+//// type-identity/cycle-in-two-files-of-one-task.ts
+// The identity of a member of a cycle of types does not depend on which member a file asks about first, nor on what the checker has answered in an earlier file. One checker visits the two short files one after the other, because the long file makes them a small part of the program.
+import "./cycle-in-two-files-of-one-task-long";
+import "./cycle-in-two-files-of-one-task-other";
+import type { First, Second } from "./cycle-in-two-files-of-one-task-other";
+let second: Second;
+let first: First;
+export {};
+//// type-identity/declaration-order.queries.txt
+# A type literal is a declaration with one order of members. Two type literals have two identities, whether they list the same members in another order or in the same one.
+ordered: declaration-order.ts:3 has `{ b: string; a: number }` = b Field string checked string
+ordered: declaration-order.ts:3 has `{ b: string; a: number }` = a Field number checked number
+different: declaration-order.ts:2 identity `{ a: number; b: string }` <=> declaration-order.ts:3 identity `{ b: string; a: number }`
+different: declaration-order.ts:2 identity `{ a: number; b: string }` <=> declaration-order.ts:4 identity `{ a: number; b: string }`
+different: declaration-order.ts:5 identity `{ p: { a: number; b: string } }` <=> declaration-order.ts:6 identity `{ p: { b: string; a: number } }`
+//// type-identity/declaration-order.ts
+// A type literal is a declaration with one order of members. Two type literals have two identities, whether they list the same members in another order or in the same one.
+let v1: { a: number; b: string };
+let v2: { b: string; a: number };
+let v3: { a: number; b: string };
+let v4: { p: { a: number; b: string } };
+let v5: { p: { b: string; a: number } };
+export {};
+//// type-identity/dense-cycle-of-tuple-aliases.queries.txt
+# A cycle of types is described as one component, in time that does not grow with the number of paths through it. The identity of a member does not depend on where the walk enters the cycle, and members that are alike have one identity.
+same: dense-cycle-of-tuple-aliases.ts:19 identity `T3` <=> dense-cycle-of-tuple-aliases.ts:20 identity `T3`
+same: dense-cycle-of-tuple-aliases.ts:19 identity `T3` <=> dense-cycle-of-tuple-aliases.ts:21 identity `T9`
+different: dense-cycle-of-tuple-aliases.ts:22 identity `U0` <=> dense-cycle-of-tuple-aliases.ts:23 identity `U1`
+//// type-identity/dense-cycle-of-tuple-aliases.ts
+// A cycle of types is described as one component, in time that does not grow with the number of paths through it. The identity of a member does not depend on where the walk enters the cycle, and members that are alike have one identity.
+type T0 = [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13];
+type T1 = [T0, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13];
+type T2 = [T0, T1, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13];
+type T3 = [T0, T1, T2, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13];
+type T4 = [T0, T1, T2, T3, T5, T6, T7, T8, T9, T10, T11, T12, T13];
+type T5 = [T0, T1, T2, T3, T4, T6, T7, T8, T9, T10, T11, T12, T13];
+type T6 = [T0, T1, T2, T3, T4, T5, T7, T8, T9, T10, T11, T12, T13];
+type T7 = [T0, T1, T2, T3, T4, T5, T6, T8, T9, T10, T11, T12, T13];
+type T8 = [T0, T1, T2, T3, T4, T5, T6, T7, T9, T10, T11, T12, T13];
+type T9 = [T0, T1, T2, T3, T4, T5, T6, T7, T8, T10, T11, T12, T13];
+type T10 = [T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T11, T12, T13];
+type T11 = [T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T12, T13];
+type T12 = [T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T13];
+type T13 = [T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12];
+type U0 = [U1, number];
+type U1 = [U0, string];
+interface Box<T> { value: T }
+let top: T3;
+let argument: Box<T3>;
+let alike: T9;
+let first: U0;
+let second: U1;
+export {};
+//// type-identity/function-types.queries.txt
+# The compiler knows a function type by the declaration of its signature. Two that are written alike are two types, and so are the tuples that hold them. One declaration has one identity wherever it is named.
+different: function-types.ts:3 identity `() => number` <=> function-types.ts:4 identity `() => number`
+different: function-types.ts:3 identity `() => number` <=> function-types.ts:5 identity `F`
+different: function-types.ts:7 identity `[F]` <=> function-types.ts:9 identity `[() => number]`
+
+same: function-types.ts:5 identity `F` <=> function-types.ts:6 identity `F`
+same: function-types.ts:5 identity `F` <=> function-types.ts:2 identity `() => number`
+same: function-types.ts:7 identity `[F]` <=> function-types.ts:8 identity `[F]`
+//// type-identity/function-types.ts
+// The compiler knows a function type by the declaration of its signature. Two that are written alike are two types, and so are the tuples that hold them. One declaration has one identity wherever it is named.
+type F = () => number;
+let v1: () => number;
+let v2: () => number;
+let v3: F;
+let v4: F;
+let v5: [F];
+let v6: [F];
+let v7: [() => number];
+export {};
+//// type-identity/generic-instantiations.queries.txt
+# An instantiated generic interface is identified by the interface and its type arguments, not by its structure.
+same: generic-instantiations.ts:3 identity `Pair<number>` <=> generic-instantiations.ts:5 identity `Pair<number>`
+different: generic-instantiations.ts:5 identity `Pair<number>` <=> generic-instantiations.ts:6 identity `Pair<string>`
+different: generic-instantiations.ts:3 identity `Pair<number>` <=> generic-instantiations.ts:4 identity `{ first: number; second: number }`
+//// type-identity/generic-instantiations.ts
+// An instantiated generic interface is identified by the interface and its type arguments, not by its structure.
+interface Pair<T> { first: T; second: T }
+let v1: Pair<number>;
+let v2: { first: number; second: number };
+let v3: Pair<number>;
+let v4: Pair<string>;
+export {};
+//// type-identity/generic-type-literal-instantiations.queries.txt
+# The instantiations of one generic type literal are told apart by their type arguments: equal arguments are one identity wherever they are written.
+same: generic-type-literal-instantiations.ts:4 identity `Box<number>` <=> generic-type-literal-instantiations.ts:5 identity `Box<number>`
+different: generic-type-literal-instantiations.ts:4 identity `Box<number>` <=> generic-type-literal-instantiations.ts:6 identity `Box<string>`
+different: generic-type-literal-instantiations.ts:7 identity `Pair<number, string>` <=> generic-type-literal-instantiations.ts:8 identity `Pair<string, number>`
+same: generic-type-literal-instantiations.ts:9 identity `Box<Box<number>>` <=> generic-type-literal-instantiations.ts:10 identity `Box<Box<number>>`
+different: generic-type-literal-instantiations.ts:4 identity `Box<number>` <=> generic-type-literal-instantiations.ts:9 identity `Box<Box<number>>`
+different: generic-type-literal-instantiations.ts:4 identity `Box<number>` <=> generic-type-literal-instantiations.ts:2 identity `{ value: T }`
+//// type-identity/generic-type-literal-instantiations.ts
+// The instantiations of one generic type literal are told apart by their type arguments: equal arguments are one identity wherever they are written.
+type Box<T> = { value: T };
+type Pair<A, B> = { first: A; second: B };
+let v1: Box<number>;
+let v2: Box<number>;
+let v3: Box<string>;
+let v4: Pair<number, string>;
+let v5: Pair<string, number>;
+let v6: Box<Box<number>>;
+let v7: Box<Box<number>>;
+export {};
+//// type-identity/identity-with-member-that-gave-up.queries.txt
+# A member whose type does not resolve gives up by itself and takes the identity from no type that has it: neither from a type literal, which is identified by where it is written, nor from a computed type, which is identified by its members.
+identity-with-member-that-gave-up.ts:7 origin `{ bad: Missing; good: number }` = type literal identity-with-member-that-gave-up.ts:7
+identity-with-member-that-gave-up.ts:7 has `{ bad: Missing; good: number }` = bad Field gave up: ErrorType checked gave up: ErrorType
+identity-with-member-that-gave-up.ts:8 origin `typeof spread` = computed
+identity-with-member-that-gave-up.ts:8 has `typeof spread` = bad Field gave up: ErrorType checked gave up: ErrorType
+different: identity-with-member-that-gave-up.ts:7 identity `{ bad: Missing; good: number }` <=> identity-with-member-that-gave-up.ts:8 identity `typeof spread`
+different: identity-with-member-that-gave-up.ts:8 identity `typeof spread` <=> identity-with-member-that-gave-up.ts:9 identity `typeof sound`
+same: identity-with-member-that-gave-up.ts:8 identity `typeof spread` <=> identity-with-member-that-gave-up.ts:10 identity `typeof spread`
+//// type-identity/identity-with-member-that-gave-up.ts
+// A member whose type does not resolve gives up by itself and takes the identity from no type that has it: neither from a type literal, which is identified by where it is written, nor from a computed type, which is identified by its members.
+import type { Missing } from "./no-such-file";
+declare const bad: { skipped: boolean; bad: Missing; good: number };
+declare const good: { skipped: boolean; good: number };
+const { skipped: s1, ...spread } = bad;
+const { skipped: s2, ...sound } = good;
+let v1: { bad: Missing; good: number };
+let v2: typeof spread;
+let v3: typeof sound;
+let v4: typeof spread;
+//// type-identity/intersection-order.queries.txt
+# An intersection is identified by its parts in the order in which they are written: `A & B` and `B & A` are two identities, and `A & B` written twice is one.
+intersection-order.ts:4 origin `A & B` = computed
+different: intersection-order.ts:4 identity `A & B` <=> intersection-order.ts:5 identity `B & A`
+same: intersection-order.ts:4 identity `A & B` <=> intersection-order.ts:6 identity `A & B`
+//// type-identity/intersection-order.ts
+// An intersection is identified by its parts in the order in which they are written: `A & B` and `B & A` are two identities, and `A & B` written twice is one.
+interface A { a: number }
+interface B { b: string }
+let v1: A & B;
+let v2: B & A;
+let v3: A & B;
+export {};
+//// type-identity/member-order.queries.txt
+# Two type literals that list the same members in another order are two declarations with two orders of fields, so they have two identities.
+different: member-order.ts:2 identity `{ a: number; b: string }` <=> member-order.ts:3 identity `{ b: string; a: number }`
+//// type-identity/member-order.ts
+// Two type literals that list the same members in another order are two declarations with two orders of fields, so they have two identities.
+let v1: { a: number; b: string };
+let v2: { b: string; a: number };
+export {};
+//// type-identity/named-below-top.queries.txt
+# An interface has one identity wherever it is named, at the top of an annotation or below a member. Two interfaces with the same members have two identities.
+same: named-below-top.ts:4 identity `A` <=> named-below-top.ts:6 identity `A`
+same: named-below-top.ts:5 identity `B` <=> named-below-top.ts:7 identity `B`
+different: named-below-top.ts:4 identity `A` <=> named-below-top.ts:5 identity `B`
+different: named-below-top.ts:6 identity `{ p: A }` <=> named-below-top.ts:7 identity `{ p: B }`
+//// type-identity/named-below-top.ts
+// An interface has one identity wherever it is named, at the top of an annotation or below a member. Two interfaces with the same members have two identities.
+interface A { x: number }
+interface B { x: number }
+let v1: A;
+let v2: B;
+let v3: { p: A };
+let v4: { p: B };
+export {};
+//// type-identity/object-literal-instantiations.queries.txt
+# The type of an object literal in a generic function is one type for each instantiation of the function: what the literal holds differs.
+object-literal-instantiations.ts:5 origin `box(n)` = object literal object-literal-instantiations.ts:2
+object-literal-instantiations.ts:6 origin `box(s)` = object literal object-literal-instantiations.ts:2
+different: object-literal-instantiations.ts:5 identity `box(n)` <=> object-literal-instantiations.ts:6 identity `box(s)`
+different: object-literal-instantiations.ts:5 identity `box(n)` <=> object-literal-instantiations.ts:2 identity `{ value }`
+
+same: object-literal-instantiations.ts:5 identity `box(n)` <=> object-literal-instantiations.ts:7 identity `box(n)`
+//// type-identity/object-literal-instantiations.ts
+// The type of an object literal in a generic function is one type for each instantiation of the function: what the literal holds differs.
+function box<T>(value: T) { return { value }; }
+declare const n: number;
+declare const s: string;
+const v1 = box(n);
+const v2 = box(s);
+const v3 = box(n);
+export {};
+//// type-identity/optional-counts.queries.txt
+# A type literal with an optional member and one with a required member are two declarations, so they have two identities.
+different: optional-counts.ts:2 identity `{ a?: number }` <=> optional-counts.ts:3 identity `{ a: number }`
+//// type-identity/optional-counts.ts
+// A type literal with an optional member and one with a required member are two declarations, so they have two identities.
+let v1: { a?: number };
+let v2: { a: number };
+export {};
+//// type-identity/outer-type-arguments.queries.txt
+# A type declared inside a generic function is a different type for each type argument of the function. Only a call gives such a type: `ReturnType<typeof box<number>>` reads a result that nobody wrote, so as a written type it is unknown.
+outer-type-arguments.ts:14 origin `box(1)` = type literal outer-type-arguments.ts:4
+outer-type-arguments.ts:16 origin `pair(1)` = type literal outer-type-arguments.ts:10
+different: outer-type-arguments.ts:14 identity `box(1)` <=> outer-type-arguments.ts:15 identity `box("a")`
+different: outer-type-arguments.ts:16 identity `pair(1)` <=> outer-type-arguments.ts:17 identity `pair("a")`
+same: outer-type-arguments.ts:14 identity `box(1)` <=> outer-type-arguments.ts:18 identity `box(2)`
+same: outer-type-arguments.ts:16 identity `pair(1)` <=> outer-type-arguments.ts:19 identity `pair(2)`
+//// type-identity/outer-type-arguments.ts
+// A type declared inside a generic function is a different type for each type argument of the function. Only a call gives such a type: `ReturnType<typeof box<number>>` reads a result that nobody wrote, so as a written type it is unknown.
+function box<T>(value: T) {
+  interface Cell { value: T }
+  type Wrapper = { cell: Cell };
+  const wrapper: Wrapper = { cell: { value } };
+  return wrapper;
+}
+function pair<T>(value: T) {
+  type Half = { value: T };
+  type Whole = { half: Half };
+  const whole: Whole = { half: { value } };
+  return whole;
+}
+box(1);
+box("a");
+pair(1);
+pair("a");
+box(2);
+pair(2);
+export {};
+//// type-identity/readonly-ignored.queries.txt
+# `readonly` does not change the identity of an array type. Two type literals are two declarations, with `readonly` or without it.
+same: readonly-ignored.ts:4 identity `readonly number[]` <=> readonly-ignored.ts:5 identity `number[]`
+different: readonly-ignored.ts:2 identity `{ readonly a: number }` <=> readonly-ignored.ts:3 identity `{ a: number }`
+//// type-identity/readonly-ignored.ts
+// `readonly` does not change the identity of an array type. Two type literals are two declarations, with `readonly` or without it.
+let v1: { readonly a: number };
+let v2: { a: number };
+let v3: readonly number[];
+let v4: number[];
+export {};
+//// type-identity/recursive.queries.txt
+# Computing the identity of a recursive type terminates, and distinct types get distinct identities.
+different: recursive.ts:5 identity `N<number>` <=> recursive.ts:6 identity `N<string>`
+# The compiler knows a function type by the declaration of its signature: two declarations are two types.
+different: recursive.ts:7 identity `F` <=> recursive.ts:8 identity `G`
+different: recursive.ts:9 identity `{ g: typeof f }` <=> recursive.ts:10 identity `{ g: typeof h; x: 1 }`
+//// type-identity/recursive.ts
+// Computing the identity of a recursive type terminates, and distinct types get distinct identities.
+type N<T> = { inner: N<T[]> | null };
+type F = (next: F) => void;
+type G = (next: G) => number;
+let v1: N<number>;
+let v2: N<string>;
+let v3: F;
+let v4: G;
+function f(): { g: typeof f } { return { g: f }; }
+function h(): { g: typeof h; x: 1 } { return { g: h, x: 1 }; }
+export {};
+//// type-identity/same-structure-other.ts
+// The same structure in another file, imported by same-structure.ts.
+let d: { x: number };
+export {};
+//// type-identity/same-structure.queries.txt
+# An object type is identified by who declared it. An interface, an alias and a type literal with the same members have three identities, in one file or in two. One declaration has one identity wherever it is named.
+different: same-structure.ts:5 identity `A` <=> same-structure.ts:6 identity `B`
+different: same-structure.ts:7 identity `A` <=> same-structure.ts:8 identity `{ x: number }`
+different: same-structure.ts:9 identity `A` <=> same-structure-other.ts:2 identity `{ x: number }`
+different: same-structure.ts:8 identity `{ x: number }` <=> same-structure-other.ts:2 identity `{ x: number }`
+
+same: same-structure.ts:5 identity `A` <=> same-structure.ts:7 identity `A`
+same: same-structure.ts:6 identity `B` <=> same-structure.ts:4 identity `{ x: number }`
+//// type-identity/same-structure.ts
+// An object type is identified by who declared it. An interface, an alias and a type literal with the same members have three identities, in one file or in two. One declaration has one identity wherever it is named.
+import "./same-structure-other";
+interface A { x: number }
+type B = { x: number };
+let v1: A;
+let v2: B;
+let v3: A;
+let v4: { x: number };
+let v5: A;
+//// type-identity/type-argument-that-gave-up.queries.txt
+# A type argument without a shape is an unknown part of the identity. The type that holds it still has one.
+type-argument-that-gave-up.ts:3 written `Missing` = gave up: ErrorType
+absent: type-argument-that-gave-up.ts:3 identity `Box<Missing>` = gave up: ErrorType
+same: type-argument-that-gave-up.ts:3 identity `Box<Missing>` <=> type-argument-that-gave-up.ts:4 identity `Box<Missing>`
+different: type-argument-that-gave-up.ts:3 identity `Box<Missing>` <=> type-argument-that-gave-up.ts:5 identity `Box<number>`
+//// type-identity/type-argument-that-gave-up.ts
+// A type argument without a shape is an unknown part of the identity. The type that holds it still has one.
+interface Box<T> { value: T }
+let a: Box<Missing>;
+let b: Box<Missing>;
+let c: Box<number>;
+export {};
+//// type-identity/type-names.queries.txt
+# The origin of an object type is the symbol that declares it: an interface, or an alias declared at the top level of a file or a namespace. Any other type literal is its own origin.
+type-names.ts:8 origin `Point` = symbol Point type-names.ts:2
+type-names.ts:9 origin `Pair` = symbol Pair type-names.ts:3
+
+type-names.ts:6 origin `Inner` = type literal type-names.ts:5
+type-names.ts:10 origin `{ d: number }` = type literal type-names.ts:10
+//// type-identity/type-names.ts
+// The origin of an object type is the symbol that declares it: an interface, or an alias declared at the top level of a file or a namespace. Any other type literal is its own origin.
+interface Point { x: number }
+type Pair = { a: number; b: number };
+function local() {
+  type Inner = { c: number };
+  let v4: Inner;
+}
+let v1: Point;
+let v2: Pair;
+let v3: { d: number };
+export {};
+//// type-identity/union-order.queries.txt
+# The order of union members does not change an identity. A union of other declarations is another union.
+same: union-order.ts:4 identity `"a" | "b"` <=> union-order.ts:5 identity `"b" | "a"`
+same: union-order.ts:6 identity `A | B` <=> union-order.ts:7 identity `B | A`
+different: union-order.ts:8 identity `{ x: 1 } | { y: 1 }` <=> union-order.ts:9 identity `{ y: 1 } | { x: 1 }`
+//// type-identity/union-order.ts
+// The order of union members does not change an identity. A union of other declarations is another union.
+interface A { x: 1 }
+interface B { y: 1 }
+let v1: "a" | "b";
+let v2: "b" | "a";
+let v3: { k: A | B };
+let v4: { k: B | A };
+let v5: { x: 1 } | { y: 1 };
+let v6: { y: 1 } | { x: 1 };
+export {};
+//// type-identity/untrusted-leaf-in-type-argument.d.ts
+// An enum that only a declaration file declares, for untrusted-leaf-in-type-argument.ts.
+declare enum F { A = 0, B = 1 }
+//// type-identity/untrusted-leaf-in-type-argument.queries.txt
+# The trust of a leaf is part of an identity: a type argument that a checked file declares and an equal one that only a `.d.ts` declares give two identities.
+different: untrusted-leaf-in-type-argument.ts:5 identity `Box<E>` <=> untrusted-leaf-in-type-argument.ts:6 identity `Box<F>`
+same: untrusted-leaf-in-type-argument.ts:5 identity `Box<E>` <=> untrusted-leaf-in-type-argument.ts:7 identity `Box<E>`
+//// type-identity/untrusted-leaf-in-type-argument.ts
+// The trust of a leaf is part of an identity: a type argument that a checked file declares and an equal one that only a `.d.ts` declares give two identities.
+/// <reference path="./untrusted-leaf-in-type-argument.d.ts" />
+enum E { A, B }
+interface Box<T> { value: T }
+let a: Box<E>;
+let b: Box<F>;
+let c: Box<E>;
+export {};
+//// type-identity/unwritten-members.queries.txt
+# The untyped identity of an object literal depends only on the names and kinds of its members. The identity of its type is the literal's own.
+different: unwritten-members.ts:3 untyped identity `{ a: 1 }` <=> unwritten-members.ts:4 untyped identity `{ get a() { return 1; } }`
+same: unwritten-members.ts:2 untyped identity `{ a: 1, b: "x", m() {} }` <=> unwritten-members.ts:5 untyped identity `{ b: "y", m() {}, a: 2 }`
+different: unwritten-members.ts:2 identity `{ a: 1, b: "x", m() {} }` <=> unwritten-members.ts:5 identity `{ b: "y", m() {}, a: 2 }`
+//// type-identity/unwritten-members.ts
+// The untyped identity of an object literal depends only on the names and kinds of its members. The identity of its type is the literal's own.
+const o = { a: 1, b: "x", m() {} };
+const p = { a: 1 };
+const q = { get a() { return 1; } };
+const r = { b: "y", m() {}, a: 2 };
+export {};
+//// type-shape/accepted-primitives.queries.txt
+# An object type accepts the primitives that have its members with matching types.
+accepted-primitives.ts:2 primitives `{ length: number }` = string
+accepted-primitives.ts:3 primitives `{ toString(): string }` = string number boolean bigint symbol
+accepted-primitives.ts:4 primitives `Iterable<string>` = string
+accepted-primitives.ts:5 primitives `{ x: number }` = none
+accepted-primitives.ts:6 primitives `{ length: string }` = none
+//// type-shape/accepted-primitives.ts
+// An object type accepts the primitives that have its members with matching types.
+let v1: { length: number };
+let v2: { toString(): string };
+let v3: Iterable<string>;
+let v4: { x: number };
+let v5: { length: string };
+export {};
+//// type-shape/ambient.d.ts
+// Declarations nobody checked, for ambient.ts.
+interface Host { port: number }
+interface Shared { a: number }
+type Literal = { x: number };
+declare enum HostMode { Fast = "fast" }
+declare enum HostLevel { Low, High }
+declare const hostToken: unique symbol;
+//// type-shape/ambient.queries.txt
+# A type has the trust of the files that declare it. One that only a `.d.ts` declares keeps its shape and is untrusted, one that the program declares too is the program's, and one in the list of built-in types is a built-in class.
+ambient.ts:5 shape `Host` = Object untrusted
+ambient.ts:10 shape `Literal` = Object untrusted
+ambient.ts:11 shape `Mine` = Object
+ambient.ts:12 shape `HostMode.Fast` = StringLiteral("fast") untrusted
+ambient.ts:16 shape `typeof HostLevel` = AnyObject untrusted
+ambient.ts:17 shape `HostMode.Fast & { __brand: "mode" }` = StringLiteral("fast") untrusted
+
+# Of a merged interface only the member that the `.d.ts` declares is unwritten.
+ambient.ts:9 shape `Shared` = Object
+ambient.ts:9 origin `Shared` = symbol Shared ambient.d.ts:3
+ambient.ts:9 has `Shared` = a Field unwritten checked number
+ambient.ts:9 has `Shared` = b Field number checked number
+
+# A union has no declaration of its own: its members have the trust. A member of a `declare enum` without an initializer has no known value.
+ambient.ts:13 shape `HostLevel` = Union(HostLevel.Low | HostLevel.High)
+ambient.ts:14 shape `HostLevel.Low` = Number untrusted
+
+# `Promise` is a view because bun-types declares subtypes of it that the list does not have. The subtype of `Map` in lib.dom.d.ts does not count.
+ambient.ts:6 shape `Map<string, number>` = Builtin(0.0 Exact; string, number)
+ambient.ts:7 shape `Promise<void>` = Builtin(2.0 View; void)
+ambient.ts:8 shape `Date` = Builtin(5.0 Exact)
+
+# The type of a unique symbol does not show who declared it, so the written form of one from a `.d.ts` is `unknown`.
+ambient.ts:15 written `typeof hostToken` = unknown
+ambient.ts:15 shape `typeof hostToken` = Anything(Unknown)
+//// type-shape/ambient.ts
+// A type has the trust of the files that declare it. One that only a `.d.ts` declares keeps its shape and is untrusted, one that the program declares too is the program's, and one in the list of built-in types is a built-in class.
+/// <reference path="./ambient.d.ts" />
+declare global { interface Shared { b: number } }
+interface Mine { c: number }
+let v1: Host;
+let v2: Map<string, number>;
+let v3: Promise<void>;
+let v4: Date;
+let v5: Shared;
+let v6: Literal;
+let v7: Mine;
+let v8: HostMode.Fast;
+let v9: HostLevel;
+let v10: HostLevel.Low;
+let v11: typeof hostToken;
+let v12: typeof HostLevel;
+let v13: HostMode.Fast & { __brand: "mode" };
+export {};
+//// type-shape/arrays-and-tuples.queries.txt
+# Arrays and tuples keep their element types, element kinds and `readonly`.
+arrays-and-tuples.ts:2 shape `number[]` = Array(number)
+arrays-and-tuples.ts:3 shape `readonly string[]` = Array(readonly string)
+arrays-and-tuples.ts:4 shape `Array<number>` = Array(number)
+arrays-and-tuples.ts:5 shape `ReadonlyArray<string>` = Array(readonly string)
+arrays-and-tuples.ts:6 shape `[number, string]` = Tuple(Required number, Required string)
+arrays-and-tuples.ts:7 shape `[number, ...string[]]` = Tuple(Required number, Rest string)
+arrays-and-tuples.ts:8 shape `readonly [number]` = Tuple(readonly Required number)
+arrays-and-tuples.ts:10 shape `[...T, number]` = Tuple(Variadic T, Required number)
+//// type-shape/arrays-and-tuples.ts
+// Arrays and tuples keep their element types, element kinds and `readonly`.
+let v1: number[];
+let v2: readonly string[];
+let v3: Array<number>;
+let v4: ReadonlyArray<string>;
+let v5: [number, string];
+let v6: [number, ...string[]];
+let v7: readonly [number];
+let v8: [number, string?];
+function f<T extends unknown[]>(x: [...T, number]) {}
+export {};
+//// type-shape/augmented-library-interface.queries.txt
+# A program that adds a member to an interface of the default library does not make it a type of its own: it still names the built-in class.
+augmented-library-interface.ts:4 shape `Request` = Builtin(6.0 View)
+absent: augmented-library-interface.ts:4 shape `Request` = Object
+absent: augmented-library-interface.ts:4 shape `Request` = Object untrusted
+augmented-library-interface.ts:3 shape `User` = Object
+//// type-shape/augmented-library-interface.ts
+// A program that adds a member to an interface of the default library does not make it a type of its own: it still names the built-in class.
+interface User { name: string }
+declare global { interface Request { user?: User } }
+let request: Request;
+export {};
+//// type-shape/builtin-class-types.queries.txt
+# A type of the default library that names a built-in class is that class. It is exact where only instances of the class fit the type, and a view where other objects fit it too: a read-only form, or a type that a declaration file outside the default library extends, as bun-types does with `Promise` and `Error`.
+builtin-class-types.ts:2 shape `Map<string, number>` = Builtin(0.0 Exact; string, number)
+builtin-class-types.ts:3 shape `ReadonlyMap<string, number>` = Builtin(0.1 View; string, number)
+builtin-class-types.ts:4 shape `Promise<string>` = Builtin(2.0 View; string)
+builtin-class-types.ts:5 shape `Error` = Builtin(3.0 View)
+builtin-class-types.ts:6 shape `Intl.DateTimeFormat` = Builtin(7.0 Exact)
+builtin-class-types.ts:7 shape `Set<number>` = Builtin(1.0 Exact; number)
+builtin-class-types.ts:8 shape `ReadonlySet<number>` = Builtin(1.1 View; number)
+//// type-shape/builtin-class-types.ts
+// A type of the default library that names a built-in class is that class. It is exact where only instances of the class fit the type, and a view where other objects fit it too: a read-only form, or a type that a declaration file outside the default library extends, as bun-types does with `Promise` and `Error`.
+let a: Map<string, number>;
+let b: ReadonlyMap<string, number>;
+let c: Promise<string>;
+let d: Error;
+let e: Intl.DateTimeFormat;
+let f: Set<number>;
+let g: ReadonlySet<number>;
+export {};
+//// type-shape/builtin-with-unlisted-subtype.d.ts
+// A subtype of `Date` that the list of built-in types does not have, for builtin-with-unlisted-subtype.ts.
+interface Stamp extends Date { label: string }
+//// type-shape/builtin-with-unlisted-subtype.queries.txt
+# A built-in type is exact while every subtype that a declaration file outside the default library declares is in the list of built-in types. One subtype outside the list makes it a view. bun-types declares such subtypes of `Error`.
+builtin-with-unlisted-subtype.ts:3 shape `Date` = Builtin(5.0 View)
+builtin-with-unlisted-subtype.ts:4 shape `RegExp` = Builtin(4.0 Exact)
+builtin-with-unlisted-subtype.ts:5 shape `Error` = Builtin(3.0 View)
+absent: builtin-with-unlisted-subtype.ts:5 shape `Error` = Builtin(3.0 Exact)
+//// type-shape/builtin-with-unlisted-subtype.ts
+// A built-in type is exact while every subtype that a declaration file outside the default library declares is in the list of built-in types. One subtype outside the list makes it a view. bun-types declares such subtypes of `Error`.
+/// <reference path="./builtin-with-unlisted-subtype.d.ts" />
+let a: Date;
+let b: RegExp;
+let c: Error;
+export {};
+//// type-shape/classes.queries.txt
+# A compiled class has a class shape; a class only a type edge reaches is an object.
+classes.ts:3 shape `this` = Class(classes.ts:3)
+classes.ts:3 primitives `this` = none
+classes.ts:4 shape `C` = Class(classes.ts:3)
+classes.ts:4 primitives `C` = none
+classes.ts:5 shape `typeof C` = ClassConstructor(classes.ts:3)
+classes.ts:6 shape `Other` = Object
+//// type-shape/classes.ts
+// A compiled class has a class shape; a class only a type edge reaches is an object.
+import type { Other } from "./only-types";
+class C { x = 1; self(): this { return this; } }
+let v1: C;
+let v2: typeof C;
+let v3: Other;
+//// type-shape/conditional-types.queries.txt
+# A deferred conditional type is a type variable with the constraint that the checker computes.
+conditional-types.ts:8 shape `Plain<T>` = TypeVariable("text" | 0)
+
+# Evaluating it can come back to it, directly or through another alias: the checker would evaluate it with the constraints of its type parameters, a thousand rounds deep. No constraint is asked for, also not through `keyof`.
+conditional-types.ts:9 shape `Nest<N>` = TypeVariable(none)
+conditional-types.ts:9 shape `keyof Nest<N>` = TypeVariable(none)
+conditional-types.ts:10 shape `Ping<T>` = TypeVariable(none)
+
+# The members of a mapped type are evaluated when they are asked for: that recursion ends by itself.
+absent: conditional-types.ts:11 shape `Deep<T>` = TypeVariable(none)
+//// type-shape/conditional-types.ts
+// A deferred conditional type is a type variable. Its constraint is what the checker computes, except where evaluating the type can come back to the type itself.
+type Wrap<T> = { value: T };
+type Plain<T> = T extends string ? "text" : 0;
+type Nest<N extends number, Acc = never, Count extends 1[] = []> = N extends Count["length"] ? Acc : Nest<N, Wrap<Acc>, [...Count, 1]>;
+type Ping<T, Count extends 1[] = []> = T extends Count["length"] ? Count : Pong<T, [...Count, 1]>;
+type Pong<T, Count extends 1[]> = T extends Count["length"] ? Count : Ping<T, [...Count, 1]>;
+type Deep<T> = T extends object ? { [K in keyof T]: Deep<T[K]> } : 0;
+function plain<T>(value: Plain<T>) {}
+function nest<N extends number>(value: Nest<N>, keys: keyof Nest<N>) {}
+function ping<T extends number>(value: Ping<T>) {}
+function deep<T>(value: Deep<T>) {}
+export {};
+//// type-shape/empty-object.queries.txt
+# A type without members says nothing; an optional member is enough to be an object.
+empty-object.ts:3 shape `{}` = Anything(EmptyObjectType)
+empty-object.ts:4 shape `Object` = Anything(EmptyObjectType)
+empty-object.ts:5 shape `Empty` = Anything(EmptyObjectType)
+empty-object.ts:6 shape `{ a?: number }` = Object
+//// type-shape/empty-object.ts
+// A type without members says nothing; an optional member is enough to be an object.
+interface Empty {}
+let v1: {};
+let v2: Object;
+let v3: Empty;
+let v4: { a?: number };
+export {};
+//// type-shape/enum-inexact-power-other.ts
+export enum Other { Inexact = 3 ** 100 }
+//// type-shape/enum-inexact-power.queries.txt
+# The type of an enum member that the program computes holds no value: the checker's digits are not the engine's.
+enum-inexact-power.ts:4 shape `Size.Exact` = NumericEnumMember(1024)
+enum-inexact-power.ts:5 shape `Size.Inexact` = Number
+enum-inexact-power.ts:6 shape `Size.After` = Number
+enum-inexact-power.ts:7 shape `Size.Text` = String
+enum-inexact-power.ts:8 shape `Size.ExactText` = StringLiteral("1024")
+enum-inexact-power.ts:9 shape `Size.Borrowed` = Number
+enum-inexact-power.ts:10 shape `Other.Inexact` = Number
+//// type-shape/enum-inexact-power.ts
+// The type of an enum member that the program computes holds no value: the checker's digits are not the engine's.
+import { Other } from "./enum-inexact-power-other";
+enum Size { Exact = 2 ** 10, Inexact = 3 ** 100, After, Text = `${3 ** 100}`, ExactText = `${2 ** 10}`, Borrowed = Other.Inexact }
+let v1: Size.Exact;
+let v2: Size.Inexact;
+let v3: Size.After;
+let v4: Size.Text;
+let v5: Size.ExactText;
+let v6: Size.Borrowed;
+let v7: Other.Inexact;
+export {};
+//// type-shape/enums.queries.txt
+# Enum members keep their values; an enum with a computed member is not a union.
+enums.ts:5 shape `Direction.Down` = NumericEnumMember(1)
+enums.ts:6 shape `Name.A` = StringLiteral("a")
+enums.ts:7 shape `Direction` = Union(Direction.Up | Direction.Down)
+enums.ts:8 shape `Computed` = Number
+//// type-shape/enums.ts
+// Enum members keep their values; an enum with a computed member is not a union.
+enum Direction { Up, Down }
+enum Name { A = "a" }
+enum Computed { A = "ab".length }
+let v1: Direction.Down;
+let v2: Name.A;
+let v3: Direction;
+let v4: Computed;
+export {};
+//// type-shape/inferred-file.js
+// An inferred file answers with the checker's types, and nothing in it is written.
+const a = 1;
+a;
+//// type-shape/inferred-file.queries.txt
+# An inferred file answers with the checker's types, and nothing in it is written.
+inferred-file.js:0 role `` = Inferred
+inferred-file.js:3 type `a` = 1
+inferred-file.js:2 binding `a` = 1
+inferred-file.js:2 variable `a` = unwritten
+//// type-shape/intersection-of-type-parameter-and-object.queries.txt
+# An intersection with a type parameter is a type variable, and the other parts are its constraint.
+intersection-of-type-parameter-and-object.ts:2 shape `T & { a: number }` = TypeVariable({ a: number; })
+intersection-of-type-parameter-and-object.ts:2 shape `T & string` = TypeVariable(string)
+intersection-of-type-parameter-and-object.ts:2 shape `T & { a: number } & { b: string }` = TypeVariable({ a: number; } & { b: string; })
+intersection-of-type-parameter-and-object.ts:3 shape `T & { a: number }` = TypeVariable({ a: number; })
+//// type-shape/intersection-of-type-parameter-and-object.ts
+// An intersection with a type parameter is a type variable, and the other parts are its constraint.
+function f<T>(x: T & { a: number }, y: T & string, z: T & { a: number } & { b: string }) {}
+function g<T extends { b: string }>(x: T & { a: number }) {}
+export {};
+//// type-shape/intersections.queries.txt
+# A primitive wins an intersection, `void` as `undefined`: a brand is a phantom that no value has. Object parts merge. A type parameter makes it a type variable whose constraint is the other parts. A union among several object parts makes it a type variable without a constraint.
+intersections.ts:2 shape `string & { __brand: "id" }` = String
+intersections.ts:3 shape `{ a: number } & { b: string }` = Object
+intersections.ts:4 shape `(() => void) & { x: number }` = Function(1)
+intersections.ts:5 shape `string & number` = Never
+intersections.ts:6 shape `T & {}` = TypeVariable({})
+intersections.ts:9 shape `NoInfer<string | A> & B` = TypeVariable(none)
+intersections.ts:10 shape `void & { __brand: void }` = Undefined
+intersections.ts:11 shape `number & { __tag: "id" }` = Number
+intersections.ts:12 shape `"a" & { __brand: 1 }` = StringLiteral("a")
+intersections.ts:13 shape `symbol & { __brand: 1 } & { __other: 2 }` = Symbol
+//// type-shape/intersections.ts
+// A primitive wins an intersection, `void` as `undefined`: a brand is a phantom that no value has. Object parts merge. A type parameter makes it a type variable whose constraint is the other parts. A union among several object parts makes it a type variable without a constraint.
+let v1: string & { __brand: "id" };
+let v2: { a: number } & { b: string };
+let v3: (() => void) & { x: number };
+let v4: string & number;
+function f<T>(x: T & {}) {}
+interface A { a: number }
+interface B { b: number }
+let v5: NoInfer<string | A> & B;
+let v6: void & { __brand: void };
+let v7: number & { __tag: "id" };
+let v8: "a" & { __brand: 1 };
+let v9: symbol & { __brand: 1 } & { __other: 2 };
+export {};
+//// type-shape/mapped.queries.txt
+# A resolved mapped type is an object; a generic one is a type variable without a constraint.
+mapped.ts:3 shape `Partial<Config>` = Object
+mapped.ts:4 shape `Record<"a", number>` = Object
+mapped.ts:5 shape `{ [K in keyof T]: T[K] }` = TypeVariable(none)
+//// type-shape/mapped.ts
+// A resolved mapped type is an object; a generic one is a type variable without a constraint.
+interface Config { a: number; b?: string }
+let v1: Partial<Config>;
+let v2: Record<"a", number>;
+function f<T>(x: { [K in keyof T]: T[K] }) {}
+export {};
+//// type-shape/namespace-of-primitive-module-value.d.ts
+declare const text: string;
+export = text;
+//// type-shape/namespace-of-primitive-module-value.js
+module.exports = "text";
+//// type-shape/namespace-of-primitive-module.queries.txt
+# `import * as all` of a module whose value is a primitive: what runs has a namespace object with `default`, so that is its type.
+namespace-of-primitive-module.ts:4 type `all` = { default: string; }
+namespace-of-primitive-module.ts:5 type `all.default` = string
+namespace-of-primitive-module.ts:6 type `text` = string
+absent: namespace-of-primitive-module.ts:5 diagnostic TS2339 = Semantic StopsBuild
+//// type-shape/namespace-of-primitive-module.ts
+// `import * as all` of a module whose value is a primitive: what runs has a namespace object with `default`, so that is its type.
+import * as all from "./namespace-of-primitive-module-value.js";
+import text from "./namespace-of-primitive-module-value.js";
+let v1: typeof all;
+let v2: typeof all.default;
+let v3: typeof text;
+//// type-shape/only-types.ts
+// A class that classes.ts reaches by `import type` only.
+export class Other { y = 1 }
+//// type-shape/partial-of-declaration-file-type.d.ts
+// Declarations nobody checked, for partial-of-declaration-file-type.ts.
+interface Theirs { a: number; b: string }
+//// type-shape/partial-of-declaration-file-type.queries.txt
+# A mapped type over a type of a declaration file has the trust of that type: nobody checked what it says.
+partial-of-declaration-file-type.ts:3 shape `Partial<Theirs>` = Object untrusted
+partial-of-declaration-file-type.ts:4 shape `Readonly<Theirs>` = Object untrusted
+partial-of-declaration-file-type.ts:5 shape `Pick<Theirs, "a">` = Object untrusted
+absent: partial-of-declaration-file-type.ts:3 shape `Partial<Theirs>` = Object
+//// type-shape/partial-of-declaration-file-type.ts
+// A mapped type over a type of a declaration file has the trust of that type: nobody checked what it says.
+/// <reference path="./partial-of-declaration-file-type.d.ts" />
+let v1: Partial<Theirs>;
+let v2: Readonly<Theirs>;
+let v3: Pick<Theirs, "a">;
+export {};
+//// type-shape/partial-of-program-type.queries.txt
+# A mapped type over a type of the program has the trust of that type.
+partial-of-program-type.ts:3 shape `Partial<Mine>` = Object
+partial-of-program-type.ts:4 shape `Readonly<Mine>` = Object
+partial-of-program-type.ts:5 shape `Pick<Mine, "a">` = Object
+absent: partial-of-program-type.ts:3 shape `Partial<Mine>` = Object untrusted
+//// type-shape/partial-of-program-type.ts
+// A mapped type over a type of the program has the trust of that type.
+interface Mine { a: number; b: string }
+let v1: Partial<Mine>;
+let v2: Readonly<Mine>;
+let v3: Pick<Mine, "a">;
+export {};
+//// type-shape/primitives-and-literals.queries.txt
+# Primitive, literal and function types have their own shapes; `void` says nothing at run time.
+primitives-and-literals.ts:0 role `` = Checked
+primitives-and-literals.ts:2 shape `any` = Anything(Any)
+primitives-and-literals.ts:3 shape `unknown` = Anything(Unknown)
+primitives-and-literals.ts:4 shape `never` = Never
+primitives-and-literals.ts:5 shape `undefined` = Undefined
+primitives-and-literals.ts:6 shape `null` = Null
+primitives-and-literals.ts:7 shape `boolean` = Boolean
+primitives-and-literals.ts:8 shape `true` = BooleanLiteral(true)
+primitives-and-literals.ts:9 shape `number` = Number
+primitives-and-literals.ts:9 written `number` = number
+primitives-and-literals.ts:10 shape `1.5` = NumberLiteral(1.5)
+primitives-and-literals.ts:11 shape `bigint` = BigInt
+primitives-and-literals.ts:12 shape `-12n` = BigIntLiteral(-12)
+primitives-and-literals.ts:13 shape `string` = String
+primitives-and-literals.ts:14 shape `"a"` = StringLiteral("a")
+primitives-and-literals.ts:15 shape ``a${string}b`` = TemplateLiteral("a", string, "b")
+primitives-and-literals.ts:16 shape `symbol` = Symbol
+primitives-and-literals.ts:17 shape `object` = AnyObject
+primitives-and-literals.ts:18 shape `Uppercase<string>` = String
+primitives-and-literals.ts:19 shape `() => void` = Function(1)
+primitives-and-literals.ts:20 shape `void` = Anything(Void)
+primitives-and-literals.ts:21 shape `unique symbol` = Symbol
+primitives-and-literals.ts:22 shape `Function` = Function(0)
+//// type-shape/primitives-and-literals.ts
+// Primitive, literal and function types have their own shapes; `void` says nothing at run time.
+let v1: any;
+let v2: unknown;
+let v3: never;
+let v4: undefined;
+let v5: null;
+let v6: boolean;
+let v7: true;
+let v8: number;
+let v9: 1.5;
+let v10: bigint;
+let v11: -12n;
+let v12: string;
+let v13: "a";
+let v14: `a${string}b`;
+let v15: symbol;
+let v16: object;
+let v17: Uppercase<string>;
+let v18: () => void;
+function f(): void {}
+declare const s: unique symbol;
+let v19: Function;
+export {};
+//// type-shape/type-parameter-of-declaration-file.d.ts
+// The first declaration of `Host`, and so of its type parameter, for type-parameter-of-declaration-file.ts.
+interface Host<T> { value: T }
+//// type-shape/type-parameter-of-declaration-file.queries.txt
+# A type parameter has the trust of the file that declares it. The declarations of a merged interface share one type parameter, which is that of the first declaration.
+type-parameter-of-declaration-file.ts:3 written `T` = T
+type-parameter-of-declaration-file.ts:3 shape `T` = TypeVariable(none) untrusted
+absent: type-parameter-of-declaration-file.ts:3 shape `T` = TypeVariable(none)
+
+type-parameter-of-declaration-file.ts:4 shape `T` = TypeVariable(none; type-parameter-of-declaration-file.ts:1)
+type-parameter-of-declaration-file.ts:5 shape `T` = TypeVariable(string; type-parameter-of-declaration-file.ts:2)
+absent: type-parameter-of-declaration-file.ts:4 shape `T` = TypeVariable(none) untrusted
+//// type-shape/type-parameter-of-declaration-file.ts
+// A type parameter has the trust of the file that declares it. The declarations of a merged interface share one type parameter, which is that of the first declaration.
+/// <reference path="./type-parameter-of-declaration-file.d.ts" />
+declare global { interface Host<T> { extra: T } }
+interface Mine<T> { value: T }
+interface Named<T extends string> { value: T }
+export {};
+//// type-shape/union-with-declaration-file-member.d.ts
+// Declarations nobody checked, for union-with-declaration-file-member.ts.
+interface Theirs { b: string }
+//// type-shape/union-with-declaration-file-member.queries.txt
+# A union lists its members, and each has its own trust: a member of a declaration file takes nothing from the one beside it.
+union-with-declaration-file-member.ts:4 shape `Mine | Theirs` = Union(Mine | Theirs)
+union-with-declaration-file-member.ts:5 shape `string | Theirs` = Union(string | Theirs)
+union-with-declaration-file-member.ts:6 shape `Mine` = Object
+union-with-declaration-file-member.ts:7 shape `Theirs` = Object untrusted
+absent: union-with-declaration-file-member.ts:6 shape `Mine` = Object untrusted
+//// type-shape/union-with-declaration-file-member.ts
+// A union lists its members, and each has its own trust: a member of a declaration file takes nothing from the one beside it.
+/// <reference path="./union-with-declaration-file-member.d.ts" />
+interface Mine { a: number }
+let v1: Mine | Theirs;
+let v2: string | Theirs;
+let v3: Mine;
+let v4: Theirs;
+export {};
+//// type-shape/union-with-type-parameter.queries.txt
+# A type parameter in a union stays a member of it.
+union-with-type-parameter.ts:2 shape `T | string` = Union(string | T)
+union-with-type-parameter.ts:2 shape `T | undefined` = Union(undefined | T)
+union-with-type-parameter.ts:2 shape `T | T[]` = Union(T | T[])
+union-with-type-parameter.ts:3 shape `T | string` = Union(string | T)
+union-with-type-parameter.ts:3 shape `T` = TypeVariable(number; union-with-type-parameter.ts:1)
+//// type-shape/union-with-type-parameter.ts
+// A type parameter in a union stays a member of it.
+function f<T>(x: T | string, y: T | undefined, z: T | T[]) {}
+function g<T extends number>(x: T | string) {}
+export {};
+//// type-shape/union-with-unknown.queries.txt
+# The checker has reduced a union with `unknown` or `any` to that before anybody asks.
+union-with-unknown.ts:2 shape `unknown | string` = Anything(Unknown)
+union-with-unknown.ts:3 shape `any | string` = Anything(Any)
+union-with-unknown.ts:4 shape `unknown | { a: number } | undefined` = Anything(Unknown)
+//// type-shape/union-with-unknown.ts
+// The checker has reduced a union with `unknown` or `any` to that before anybody asks.
+let v1: unknown | string;
+let v2: any | string;
+let v3: unknown | { a: number } | undefined;
+export {};
+//// type-shape/unions.queries.txt
+# Unions are flat and drop `never`; a type parameter is a member like any other.
+unions.ts:4 shape `"a" | "b"` = Union("a" | "b")
+unions.ts:5 shape `B` = Union("a" | "b" | "c")
+unions.ts:6 shape `string | boolean` = Union(string | boolean)
+unions.ts:7 shape `number | never` = Number
+unions.ts:8 shape `string | any` = Anything(Any)
+unions.ts:9 shape `T | undefined` = Union(undefined | T)
+//// type-shape/unions.ts
+// Unions are flat and drop `never`; a type parameter is a member like any other.
+type A = "a" | "b";
+type B = A | "c";
+let v1: "a" | "b";
+let v2: B;
+let v3: string | boolean;
+let v4: number | never;
+let v5: string | any;
+function f<T>(x: T | undefined) {}
+export {};
+//// undefined-property/first.ts
+export function first(c: boolean) { return c ? { data: 1 } : { error: "x" }; }
+//// undefined-property/heavy.ts
+const n = 1;
+export const total = [n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n].length;
+//// undefined-property/main.queries.txt
+# The `error?: undefined` that `{ data: 1 }` gets beside `{ error: e }` is declared by that union, not by the first file of the same checker that used the name. heavy.ts makes a task hold more than one of the small files.
+untyped.js:1 returns `make` = { data: number; error?: undefined; } | { data?: undefined; error: any; }
+different: main.ts:4 identity `first(true)` <=> main.ts:5 identity `make(true, "e")`
+same: untyped.js:2 identity `make(true, 1)` <=> main.ts:5 identity `make(true, "e")`
+//// undefined-property/main.ts
+import { total } from "./heavy.ts";
+import { first } from "./first.ts";
+import { make } from "./untyped.js";
+export const typed = first(true);
+export const untyped = make(true, "e");
+export const sum = total;
+//// undefined-property/untyped.js
+export function make(c, e) { return c ? { data: 1 } : { error: e }; }
+export const made = make(true, 1);
+//// written-type/alias-from-declaration-file-keeps-program-types.queries.txt
+# A generic alias of a `.d.ts` is a function over types. The program's type that it is applied to stays written, as under the same alias declared here. Only what the `.d.ts` adds is unwritten.
+alias-from-declaration-file-keeps-program-types.ts:5 shape `Maybe<Point>` = Union(undefined | Point)
+alias-from-declaration-file-keeps-program-types.ts:6 shape `Own<Point>` = Union(undefined | Point)
+same: alias-from-declaration-file-keeps-program-types.ts:5 identity `Maybe<Point>` <=> alias-from-declaration-file-keeps-program-types.ts:6 identity `Own<Point>`
+absent: alias-from-declaration-file-keeps-program-types.ts:5 written `Maybe<Point>` = unknown
+
+alias-from-declaration-file-keeps-program-types.ts:7 shape `WithLabel<Point>` = Object
+alias-from-declaration-file-keeps-program-types.ts:7 has `WithLabel<Point>` = x Field number checked number
+alias-from-declaration-file-keeps-program-types.ts:7 has `WithLabel<Point>` = label Field unwritten checked string optional
+//// written-type/alias-from-declaration-file-keeps-program-types.ts
+// A generic alias of a `.d.ts` is a function over types. The program's type that it is applied to stays written, as under the same alias declared here. Only what the `.d.ts` adds is unwritten.
+/// <reference path="./helper.d.ts" />
+interface Point { x: number }
+type Own<T> = T | undefined;
+let a: Maybe<Point>;
+let b: Own<Point>;
+let c: WithLabel<Point>;
+export {};
+//// written-type/declaration-file-alias.d.ts
+// Declarations nobody checked, for declaration-file-alias.ts.
+type Port = number;
+type Level = "high";
+type Mode = "fast" | "slow";
+type Pair = [number, string];
+type Ports = number[];
+type ByName = Map<string, number>;
+type Later<T> = Promise<T>;
+type Several<T> = T[];
+type Options = { verbose: boolean };
+interface Host { port: number; mode: Mode }
+declare const hostPort: number;
+//// written-type/declaration-file-alias.queries.txt
+# A type that only a `.d.ts` declares is never tested: where the type cannot show who declared it, the written type is `unknown`. What the checked file writes around it stays.
+declaration-file-alias.ts:7 written `Port` = unknown
+declaration-file-alias.ts:7 variable `a` = unknown
+declaration-file-alias.ts:8 written `Local` = unknown
+declaration-file-alias.ts:9 written `Level` = unknown
+declaration-file-alias.ts:10 written `Port | undefined` = unknown
+declaration-file-alias.ts:11 written `Port[]` = unknown[]
+declaration-file-alias.ts:11 shape `Port[]` = Array(unknown)
+declaration-file-alias.ts:12 written `Map<string, Port>` = Map<string, unknown>
+declaration-file-alias.ts:13 written `Mode` = unknown
+declaration-file-alias.ts:13 shape `Mode` = Anything(Unknown)
+declaration-file-alias.ts:14 written `Mode | undefined` = unknown
+declaration-file-alias.ts:15 written `Mode[]` = unknown[]
+declaration-file-alias.ts:15 shape `Mode[]` = Array(unknown)
+declaration-file-alias.ts:16 written `Pair` = unknown
+declaration-file-alias.ts:16 shape `Pair` = Anything(Unknown)
+declaration-file-alias.ts:17 written `Host["port"]` = unknown
+declaration-file-alias.ts:18 written `keyof Host` = unknown
+declaration-file-alias.ts:19 written `typeof hostPort` = unknown
+declaration-file-alias.ts:20 written `Field<Host>` = unknown
+declaration-file-alias.ts:25 written `typeof mode` = unknown
+declaration-file-alias.ts:25 shape `typeof mode` = Anything(Unknown)
+declaration-file-alias.ts:25 variable `held` = unknown
+
+# That the value is an array, a Map or a Promise is the word of the `.d.ts` too, also around a type of the program.
+declaration-file-alias.ts:26 written `Ports` = unknown
+declaration-file-alias.ts:26 shape `Ports` = Anything(Unknown)
+declaration-file-alias.ts:27 written `ByName` = unknown
+declaration-file-alias.ts:28 written `Later<Mine>` = unknown
+declaration-file-alias.ts:29 written `Several<Mine>` = unknown
+declaration-file-alias.ts:30 written `Ports[]` = unknown[]
+
+# An object type shows who declared it, so it keeps its name and its shape says that it is not trusted.
+declaration-file-alias.ts:21 shape `Options[]` = Array(Options)
+declaration-file-alias.ts:21 shape `Options` = Object untrusted
+declaration-file-alias.ts:22 written `Host` = Host
+declaration-file-alias.ts:22 shape `Host` = Object untrusted
+
+# The same forms over the program's own types are written.
+declaration-file-alias.ts:23 written `Own` = number
+declaration-file-alias.ts:24 written `Field<Mine>` = number
+//// written-type/declaration-file-alias.ts
+// A type that only a `.d.ts` declares is never tested: where the type cannot show who declared it, the written type is `unknown`. What the checked file writes around it stays.
+/// <reference path="./declaration-file-alias.d.ts" />
+interface Mine { port: number }
+type Own = number;
+type Local = Port;
+type Field<T extends { port: unknown }> = T["port"];
+let a: Port;
+let b: Local;
+let c: Level;
+let d: Port | undefined;
+let e: Port[];
+let f: Map<string, Port>;
+let g: Mode;
+let h: Mode | undefined;
+let i: Mode[];
+let j: Pair;
+let k: Host["port"];
+let l: keyof Host;
+let m: typeof hostPort;
+let n: Field<Host>;
+let o: Options[];
+let p: Host;
+let q: Own;
+let r: Field<Mine>;
+function s(mode?: Mode) { let held: typeof mode; }
+let t: Ports;
+let u: ByName;
+let v: Later<Mine>;
+let w: Several<Mine>;
+let x: Ports[];
+export {};
+//// written-type/enum-access-again.ts
+// Passes on what enum-access-other.ts exports.
+export * from "./enum-access-other";
+//// written-type/enum-access-other.ts
+// An enum in another checked file, imported by enum-access.ts.
+export enum F { X = 7 }
+export const enum K { X = 9 }
+//// written-type/enum-access-script.ts
+// An enum in a script: global to TypeScript, local to this file under `bun run`. Imported by enum-access.ts.
+enum S { T = 8 }
+//// written-type/enum-access.d.ts
+// An ambient enum, referenced by enum-access.ts.
+declare enum G { Y = 3 }
+//// written-type/enum-access.queries.txt
+# An enum member access is a constant, unless the enum is imported or only declared, or its name is unbound at run time. A member of an imported `const` enum is a constant too.
+enum-access.ts:5 enum member `A = 1` = 1
+enum-access.ts:8 enum `E.A` = 1
+enum-access.ts:9 enum `E["B"]` = "b"
+enum-access-other.ts:2 enum member `X = 7` = 7
+enum-access-other.ts:3 enum member `X = 9` = 9
+enum-access.ts:23 enum `K.X` = 9
+enum-access.ts:24 enum `L["X"]` = 9
+enum-access.ts:25 enum `all.K.X` = 9
+enum-access-script.ts:2 enum member `T = 8` = 8
+
+absent: enum-access.ts:10 enum `F.X` = 7
+absent: enum-access.ts:11 enum `G.Y` = 3
+absent: enum-access.ts:15 enum `H.Z` = 4
+absent: enum-access.ts:16 enum `I.W` = 5
+absent: enum-access.ts:17 enum `N.J.V` = 6
+absent: enum-access.ts:19 enum `S.T` = 8
+absent: enum-access.ts:26 enum `all.F.X` = 7
+
+# Every file of a build is a module, so the enum of the script is not a global and `S` is unbound here.
+enum-access.ts:19 diagnostic TS2304 = MissingDeclaration StopsBuild
+//// written-type/enum-access.ts
+// An enum member access is a constant, unless the enum is imported or only declared, or its name is unbound at run time. A member of an imported `const` enum is a constant too.
+/// <reference path="./enum-access.d.ts" />
+import { F } from "./enum-access-other";
+enum E {
+  A = 1,
+  B = "b",
+}
+E.A;
+E["B"];
+F.X;
+G.Y;
+declare enum H { Z = 4 }
+declare const enum I { W = 5 }
+declare namespace N { enum J { V = 6 } }
+H.Z;
+I.W;
+N.J.V;
+import "./enum-access-script";
+S.T;
+import { K } from "./enum-access-other";
+import { K as L } from "./enum-access-again";
+import * as all from "./enum-access-again";
+K.X;
+L["X"];
+all.K.X;
+all.F.X;
+//// written-type/enum-member-const-prefix-export-from.queries.txt
+# `bun run` ends the const local prefix of a file where it parses `export { .. } from`. The prefix of a function in it is not affected.
+enum-member-const-prefix-export-from.ts:6 enum member `FromLeading = leading` = 5 reads other file or variable
+enum-member-const-prefix-export-from.ts:6 enum member `FromInner = inner` = 3
+//// written-type/enum-member-const-prefix-export-from.ts
+// `bun run` ends the const local prefix of a file where it parses `export { .. } from`, so it inlines no `const` of the file's own statement list, not even one above that statement.
+const leading = 5;
+function reads() {
+  const inner = 3;
+  {
+    enum E { FromLeading = leading, FromInner = inner }
+  }
+}
+export { Other } from "./enum-member-origin-other";
+//// written-type/enum-member-const-prefix.queries.txt
+# `bun run` inlines a `const` of the const local prefix of a scope into what it visits later, so an enum member that reads one is a constant.
+enum-member-const-prefix.ts:11 enum member `FromLeading = leading` = 5
+enum-member-const-prefix.ts:12 enum member `AfterLeading` = 6
+enum-member-const-prefix.ts:13 enum member `FromText = leadingText` = "w"
+enum-member-const-prefix.ts:14 enum member `FromSum = leadingSum` = 6
+enum-member-const-prefix.ts:16 enum member `FromFilled = filled` = "w-5"
+enum-member-const-prefix.ts:23 enum member `FromInner = inner` = 3
+enum-member-const-prefix.ts:38 enum member `FromEarly = early` = 2
+enum-member-const-prefix.ts:38 enum member `FromOuter = outer` = 1
+enum-member-const-prefix.ts:46 enum member `FromLocal = local` = 4
+
+# A string rope, a `const` after the prefix, in the statement list of the enum, and below the reader.
+enum-member-const-prefix.ts:15 enum member `FromJoined = joined` = "ab" reads other file or variable
+enum-member-const-prefix.ts:17 enum member `FromAfterLet = afterLet` = 7 reads other file or variable
+enum-member-const-prefix.ts:18 enum member `AfterAfterLet` = 8 reads other file or variable
+enum-member-const-prefix.ts:21 enum member `FromInner = inner` = 3 reads other file or variable
+enum-member-const-prefix.ts:28 enum member `FromBelow = below` = 6 reads other file or variable
+enum-member-const-prefix.ts:40 enum member `FromLate = late` = 3 reads other file or variable
+//// written-type/enum-member-const-prefix.ts
+// `bun run` inlines a `const` of the const local prefix of a scope into what it visits later, so an enum member that reads one is a constant. A `const` after the prefix, one in the statement list of the enum, one below the reader and one that holds a string rope are variables.
+const leading = 5;
+const leadingText = "w", leadingSum = leading + 1;
+const joined = "a" + "b";
+const filled = `${leadingText}-${leading}`;
+interface Erased {}
+let count = 0;
+const afterLet = 7;
+function reads() {
+  enum E {
+    FromLeading = leading,
+    AfterLeading,
+    FromText = leadingText,
+    FromSum = leadingSum,
+    FromJoined = joined,
+    FromFilled = filled,
+    FromAfterLet = afterLet,
+    AfterAfterLet,
+  }
+  const inner = 3;
+  enum SameList { FromInner = inner }
+  {
+    enum Nested { FromInner = inner }
+  }
+}
+function order() {
+  function before() {
+    enum E { FromBelow = below }
+  }
+  const below = 6;
+}
+function clauses(selector: number) {
+  const outer = 1;
+  switch (selector) {
+    case 0:
+      const early = 2;
+    case 1:
+      enum InLaterClause { FromEarly = early, FromOuter = outer }
+      const late = 3;
+      enum InOwnClause { FromLate = late }
+  }
+}
+namespace Space {
+  const local = 4;
+  function inside() {
+    enum E { FromLocal = local }
+  }
+}
+export {};
+//// written-type/enum-member-inexact-power-other.ts
+export enum Other { Inexact = 3 ** 100 }
+//// written-type/enum-member-inexact-power.queries.txt
+# An enum member whose value rests on a power that is not exact is no constant of the build: its digits are those of the engine's arithmetic, so the program computes it.
+enum-member-inexact-power.ts:6 enum member `A = inlined` = 5.153775207320113e+47 rests on inexact power
+enum-member-inexact-power.ts:11 enum member `Exact = 2 ** 10` = 1024
+enum-member-inexact-power.ts:12 enum member `AfterExact` = 1025
+enum-member-inexact-power.ts:13 enum member `Inexact = 3 ** 100` = 5.153775207320113e+47 rests on inexact power
+enum-member-inexact-power.ts:14 enum member `AfterInexact` = 5.153775207320113e+47 rests on inexact power
+enum-member-inexact-power.ts:15 enum member `FromSibling = Inexact % 1000` = 232 rests on inexact power
+enum-member-inexact-power.ts:16 enum member `FromAccess = E.Inexact` = 5.153775207320113e+47 rests on inexact power
+enum-member-inexact-power.ts:17 enum member `InText = `${7 ** 30}`` = "2.2539340290692256e+25" rests on inexact power
+enum-member-inexact-power.ts:18 enum member `FromText = `${InText}!`` = "2.2539340290692256e+25!" rests on inexact power
+enum-member-inexact-power.ts:19 enum member `Fraction = 2 ** 0.5` = 1.4142135623730951 rests on inexact power
+enum-member-inexact-power.ts:20 enum member `Negative = 10 ** -5` = 0.00001 rests on inexact power
+enum-member-inexact-power.ts:21 enum member `ZeroExponent = 7.5 ** 0` = 1
+enum-member-inexact-power.ts:22 enum member `FromOtherFile = Other.Inexact` = 5.153775207320113e+47 reads other file or variable rests on inexact power
+enum-member-inexact-power.ts:23 enum member `Plain = 1` = 1
+
+absent: enum-member-inexact-power.ts:7 enum `FromConstant.A` = 5.153775207320113e+47
+enum-member-inexact-power.ts:25 enum `E.Exact` = 1024
+enum-member-inexact-power.ts:26 enum `E.AfterExact` = 1025
+absent: enum-member-inexact-power.ts:27 enum `E.Inexact` = 5.153775207320113e+47
+absent: enum-member-inexact-power.ts:28 enum `E.AfterInexact` = 5.153775207320113e+47
+absent: enum-member-inexact-power.ts:29 enum `E.FromSibling` = 232
+absent: enum-member-inexact-power.ts:30 enum `E.FromAccess` = 5.153775207320113e+47
+absent: enum-member-inexact-power.ts:31 enum `E.InText` = "2.2539340290692256e+25"
+absent: enum-member-inexact-power.ts:32 enum `E.FromText` = "2.2539340290692256e+25!"
+enum-member-inexact-power.ts:33 enum `E.ZeroExponent` = 1
+enum-member-inexact-power.ts:34 enum `E.Plain` = 1
+//// written-type/enum-member-inexact-power.ts
+// An enum member whose value rests on a power that is not exact is no constant of the build: its digits are those of the engine's arithmetic, so the program computes it.
+import { Other } from "./enum-member-inexact-power-other";
+function scope() {
+  const inlined = 3 ** 100;
+  {
+    enum FromConstant { A = inlined }
+    FromConstant.A;
+  }
+}
+export enum E {
+  Exact = 2 ** 10,
+  AfterExact,
+  Inexact = 3 ** 100,
+  AfterInexact,
+  FromSibling = Inexact % 1000,
+  FromAccess = E.Inexact,
+  InText = `${7 ** 30}`,
+  FromText = `${InText}!`,
+  Fraction = 2 ** 0.5,
+  Negative = 10 ** -5,
+  ZeroExponent = 7.5 ** 0,
+  FromOtherFile = Other.Inexact,
+  Plain = 1,
+}
+E.Exact;
+E.AfterExact;
+E.Inexact;
+E.AfterInexact;
+E.FromSibling;
+E.FromAccess;
+E.InText;
+E.FromText;
+E.ZeroExponent;
+E.Plain;
+//// written-type/enum-member-origin-other.ts
+// An enum in another checked file, imported by enum-member-origin.ts.
+export enum Other { A = 7 }
+//// written-type/enum-member-origin.queries.txt
+# An enum member is a constant where `bun run` inlines it: not where its value reads another file, a variable or a declared enum, not after such a member, and not through an import.
+enum-member-origin.ts:7 enum member `Shifted = 1 << 1` = 2
+enum-member-origin.ts:8 enum member `AfterShifted` = 3
+enum-member-origin.ts:9 enum member `FromOwnFile = Own.A` = 2
+enum-member-origin.ts:10 enum member `FromOtherFile = Other.A` = 7 reads other file or variable
+enum-member-origin.ts:11 enum member `AfterOtherFile` = 8 reads other file or variable
+enum-member-origin.ts:12 enum member `FromVariable = five` = 5 reads other file or variable
+enum-member-origin.ts:13 enum member `FromDeclared = Declared.A` = 1 reads other file or variable
+
+enum-member-origin.ts:15 enum `E.Shifted` = 2
+enum-member-origin.ts:16 enum `E.AfterShifted` = 3
+enum-member-origin.ts:17 enum `E.FromOwnFile` = 2
+absent: enum-member-origin.ts:18 enum `E.FromOtherFile` = 7
+absent: enum-member-origin.ts:19 enum `E.AfterOtherFile` = 8
+absent: enum-member-origin.ts:20 enum `E.FromVariable` = 5
+absent: enum-member-origin.ts:21 enum `E.FromDeclared` = 1
+absent: enum-member-origin.ts:23 enum `Alias.Shifted` = 2
+//// written-type/enum-member-origin.ts
+// An enum member is a constant where `bun run` inlines it: not where its value reads another file, a variable or a declared enum, not after such a member, and not through an import.
+import { Other } from "./enum-member-origin-other";
+const five = 5;
+declare enum Declared { A = 1 }
+enum Own { A = 2 }
+export enum E {
+  Shifted = 1 << 1,
+  AfterShifted,
+  FromOwnFile = Own.A,
+  FromOtherFile = Other.A,
+  AfterOtherFile,
+  FromVariable = five,
+  FromDeclared = Declared.A,
+}
+E.Shifted;
+E.AfterShifted;
+E.FromOwnFile;
+E.FromOtherFile;
+E.AfterOtherFile;
+E.FromVariable;
+E.FromDeclared;
+import { E as Alias } from "./enum-member-origin";
+Alias.Shifted;
+//// written-type/generic-alias.queries.txt
+# A generic alias instantiated with `int32` gives `int32`.
+generic-alias.ts:4 written `Id<int32>` = int32
+generic-alias.ts:4 shape `Id<int32>` = Int32(number)
+generic-alias.ts:4 variable `a` = int32
+//// written-type/generic-alias.ts
+// A generic alias instantiated with `int32` gives `int32`.
+import type { int32 } from "bun";
+type Id<T> = T;
+let a: Id<int32> = 1;
+export {};
+//// written-type/helper.d.ts
+// Aliases that only a declaration file declares, for the fixtures that reference this file.
+type Id = string;
+type Maybe<T> = T | undefined;
+type WithLabel<T> = T & { label?: string };
+//// written-type/inexact-argument-of-conditional-alias.queries.txt
+# A conditional alias decides by its argument. An argument that names a `.d.ts` alias is not exact, so the written type is `unknown`, not the branch the checker takes.
+inexact-argument-of-conditional-alias.ts:4 written `Id` = unknown
+inexact-argument-of-conditional-alias.ts:4 written `Id[]` = unknown[]
+inexact-argument-of-conditional-alias.ts:4 written `ElementKind<Id[]>` = unknown
+inexact-argument-of-conditional-alias.ts:4 variable `a` = unknown
+absent: inexact-argument-of-conditional-alias.ts:4 written `ElementKind<Id[]>` = "text"
+absent: inexact-argument-of-conditional-alias.ts:4 written `ElementKind<Id[]>` = "other"
+
+inexact-argument-of-conditional-alias.ts:5 written `ElementKind<string[]>` = "text"
+//// written-type/inexact-argument-of-conditional-alias.ts
+// A conditional alias decides by its argument. An argument that names a `.d.ts` alias is not exact, so the written type is `unknown`, not the branch the checker takes.
+/// <reference path="./helper.d.ts" />
+type ElementKind<T> = T extends string[] ? "text" : "other";
+let a: ElementKind<Id[]>;
+let b: ElementKind<string[]>;
+export {};
+//// written-type/inexact-argument-of-program-interface.queries.txt
+# A member of the program's interface can decide by the type argument, so an argument that names a `.d.ts` alias makes the written type `unknown`. A library type keeps its name and takes the written form of the argument.
+inexact-argument-of-program-interface.ts:4 written `Field<Id>` = unknown
+absent: inexact-argument-of-program-interface.ts:4 written `Field<Id>` = Field<unknown>
+absent: inexact-argument-of-program-interface.ts:4 written `Field<Id>` = Field<string>
+inexact-argument-of-program-interface.ts:8 written `Field<string>` = Field<string>
+
+inexact-argument-of-program-interface.ts:5 written `Array<Id>` = unknown[]
+inexact-argument-of-program-interface.ts:6 written `Promise<Id>` = Promise<unknown>
+inexact-argument-of-program-interface.ts:7 written `Map<string, Id[]>` = Map<string, unknown[]>
+//// written-type/inexact-argument-of-program-interface.ts
+// A member of the program's interface can decide by the type argument, so an argument that names a `.d.ts` alias makes the written type `unknown`. A library type keeps its name and takes the written form of the argument.
+/// <reference path="./helper.d.ts" />
+interface Field<T> { kind: T extends string ? "text" : "other" }
+let a: Field<Id>;
+let b: Array<Id>;
+let c: Promise<Id>;
+let d: Map<string, Id[]>;
+let e: Field<string>;
+export {};
+//// written-type/int32-forms.queries.txt
+# Every way to name `int32` from "bun" gives the type `int32`, a number with the constraint `Int32`: imports, aliases, `import("bun").int32`, `| undefined` and parentheses.
+int32-forms.ts:6 written `int32` = int32
+int32-forms.ts:6 shape `int32` = Int32(number)
+int32-forms.ts:6 variable `a` = int32
+int32-forms.ts:7 written `Whole` = int32
+int32-forms.ts:7 shape `Whole` = Int32(number)
+int32-forms.ts:8 written `Count` = int32
+int32-forms.ts:8 shape `Count` = Int32(number)
+int32-forms.ts:9 written `Inline` = int32
+int32-forms.ts:9 shape `Inline` = Int32(number)
+int32-forms.ts:10 written `int32 | undefined` = int32 | undefined
+int32-forms.ts:10 shape `int32 | undefined` = Union(undefined | int32)
+int32-forms.ts:11 signature `g` = (int32 checked int32) this unwritten checked any returns unwritten checked void
+int32-forms.ts:12 signature `r` = () this unwritten checked any returns int32 checked int32
+int32-forms.ts:13 written `int32` = int32
+int32-forms.ts:13 shape `int32` = Int32(number)
+int32-forms.ts:15 has `K` = field Field int32 checked int32
+//// written-type/int32-forms.ts
+// Every way to name `int32` from "bun" gives the type `int32`, a number with the constraint `Int32`: imports, aliases, `import("bun").int32`, `| undefined` and parentheses.
+import type { int32 } from "bun";
+import type { int32 as Whole } from "bun";
+type Count = int32;
+type Inline = import("bun").int32;
+let a: int32 = 1;
+let b: Whole = 1;
+let c: Count = 1;
+let d: Inline = 1;
+let e: int32 | undefined;
+function g(p: int32) {}
+function r(): int32 { return 1; }
+let q: (int32) = 1;
+class K { field: int32 = 0; }
+let k: K;
+export {};
+//// written-type/int32-in-containers.queries.txt
+# `int32` is a type, so a container keeps it: the element of an array, a type argument and the member it instantiates are `int32`.
+int32-in-containers.ts:3 written `int32[]` = int32[]
+int32-in-containers.ts:3 shape `int32[]` = Array(int32)
+int32-in-containers.ts:3 written `int32` = int32
+int32-in-containers.ts:3 shape `int32` = Int32(number)
+int32-in-containers.ts:4 written `Map<string, int32>` = Map<string, int32>
+int32-in-containers.ts:4 written `int32` = int32
+int32-in-containers.ts:4 shape `int32` = Int32(number)
+int32-in-containers.ts:6 written `Box<int32>` = Box<int32>
+int32-in-containers.ts:6 has `Box<int32>` = v Field int32 checked int32
+int32-in-containers.ts:6 written `int32` = int32
+int32-in-containers.ts:6 shape `int32` = Int32(number)
+//// written-type/int32-in-containers.ts
+// `int32` is a type, so a container keeps it: the element of an array, a type argument and the member it instantiates are `int32`.
+import type { int32 } from "bun";
+let a: int32[] = [];
+let b: Map<string, int32>;
+interface Box<T> { v: T }
+let c: Box<int32>;
+export {};
+//// written-type/int32-union.queries.txt
+# `int32` is a member of a union like any other type. The checker joins it with nothing, not even with `number`.
+int32-union.ts:3 written `int32 | number` = number | int32
+int32-union.ts:3 shape `int32 | number` = Union(number | int32)
+int32-union.ts:3 variable `a` = number | int32
+int32-union.ts:4 written `int32 | null` = int32 | null
+int32-union.ts:4 shape `int32 | null` = Union(null | int32)
+//// written-type/int32-union.ts
+// `int32` is a member of a union like any other type. The checker joins it with nothing, not even with `number`.
+import type { int32 } from "bun";
+let a: int32 | number = 1;
+let b: int32 | null = 1;
+export {};
+//// written-type/interface-default-from-declaration-file.queries.txt
+# A reference without type arguments takes the defaults of the type parameters. A default that names a `.d.ts` alias makes the written type `unknown`.
+interface-default-from-declaration-file.ts:5 written `Box` = unknown
+absent: interface-default-from-declaration-file.ts:5 written `Box` = Box<string>
+interface-default-from-declaration-file.ts:6 written `Case` = Case<string>
+interface-default-from-declaration-file.ts:7 written `Box<number>` = Box<number>
+//// written-type/interface-default-from-declaration-file.ts
+// A reference without type arguments takes the defaults of the type parameters. A default that names a `.d.ts` alias makes the written type `unknown`.
+/// <reference path="./helper.d.ts" />
+interface Box<T = Id> { value: T }
+interface Case<T = string> { value: T }
+let a: Box;
+let b: Case;
+let c: Box<number>;
+export {};
+//// written-type/long-alias-chain.queries.txt
+# A chain of aliases to `int32` is `int32`, whatever its length.
+long-alias-chain.ts:68 written `A64` = int32
+long-alias-chain.ts:68 shape `A64` = Int32(number)
+long-alias-chain.ts:68 variable `a` = int32
+//// written-type/long-alias-chain.ts
+// A chain of aliases to `int32` is `int32`, whatever its length.
+import type { int32 } from "bun";
+type A0 = int32;
+type A1 = A0;
+type A2 = A1;
+type A3 = A2;
+type A4 = A3;
+type A5 = A4;
+type A6 = A5;
+type A7 = A6;
+type A8 = A7;
+type A9 = A8;
+type A10 = A9;
+type A11 = A10;
+type A12 = A11;
+type A13 = A12;
+type A14 = A13;
+type A15 = A14;
+type A16 = A15;
+type A17 = A16;
+type A18 = A17;
+type A19 = A18;
+type A20 = A19;
+type A21 = A20;
+type A22 = A21;
+type A23 = A22;
+type A24 = A23;
+type A25 = A24;
+type A26 = A25;
+type A27 = A26;
+type A28 = A27;
+type A29 = A28;
+type A30 = A29;
+type A31 = A30;
+type A32 = A31;
+type A33 = A32;
+type A34 = A33;
+type A35 = A34;
+type A36 = A35;
+type A37 = A36;
+type A38 = A37;
+type A39 = A38;
+type A40 = A39;
+type A41 = A40;
+type A42 = A41;
+type A43 = A42;
+type A44 = A43;
+type A45 = A44;
+type A46 = A45;
+type A47 = A46;
+type A48 = A47;
+type A49 = A48;
+type A50 = A49;
+type A51 = A50;
+type A52 = A51;
+type A53 = A52;
+type A54 = A53;
+type A55 = A54;
+type A56 = A55;
+type A57 = A56;
+type A58 = A57;
+type A59 = A58;
+type A60 = A59;
+type A61 = A60;
+type A62 = A61;
+type A63 = A62;
+type A64 = A63;
+let a: A64 = 1;
+export {};
+//// written-type/own-int32-alias.queries.txt
+# A program's own `type int32 = number` is a plain `number`: only `int32` from "bun" has the constraint.
+own-int32-alias.ts:3 written `int32` = number
+own-int32-alias.ts:3 shape `int32` = Number
+own-int32-alias.ts:3 variable `a` = number
+absent: own-int32-alias.ts:3 shape `int32` = Int32(number)
+//// written-type/own-int32-alias.ts
+// A program's own `type int32 = number` is a plain `number`: only `int32` from "bun" has the constraint.
+type int32 = number;
+let a: int32 = 1;
+export {};
+//// written-type/recursive-generic-alias-with-inexact-argument.queries.txt
+# A generic alias names itself with a `.d.ts` alias as the argument. The written type of that member is `unknown`, not the alias with the argument of the outer reference.
+recursive-generic-alias-with-inexact-argument.ts:4 written `Labeled<number>` = Labeled<number>
+recursive-generic-alias-with-inexact-argument.ts:4 shape `Labeled<number>` = Object
+recursive-generic-alias-with-inexact-argument.ts:4 has `Labeled<number>` = value Field number checked number
+recursive-generic-alias-with-inexact-argument.ts:4 has `Labeled<number>` = label Field unknown checked Labeled<string> | null
+absent: recursive-generic-alias-with-inexact-argument.ts:4 has `Labeled<number>` = label Field Labeled<number> | null checked Labeled<string> | null
+//// written-type/recursive-generic-alias-with-inexact-argument.ts
+// A generic alias names itself with a `.d.ts` alias as the argument. The written type of that member is `unknown`, not the alias with the argument of the outer reference.
+/// <reference path="./helper.d.ts" />
+type Labeled<T> = { value: T; label: Labeled<Id> | null };
+let a: Labeled<number>;
+export {};
+//// written-type/variable-in-javascript.js
+// A JSDoc type in a JavaScript file is not a written type.
+/** @type {number} */
+let a = 1;
+//// written-type/variable-in-javascript.queries.txt
+# A JSDoc type in a JavaScript file is not a written type.
+variable-in-javascript.js:3 variable `a` = unwritten
+//// written-type/variables.queries.txt
+# A variable's written type is its annotation. A binding element, an unannotated variable and conflicting annotations have none.
+variables.ts:2 variable `a` = number
+variables.ts:3 variable `p` = string
+variables.ts:3 variable `q` = number
+variables.ts:3 variable `r` = boolean[]
+variables.ts:4 variable `d` = number
+variables.ts:5 variable `d` = number
+variables.ts:6 variable `b` = unwritten
+variables.ts:7 variable `c` = unwritten
+variables.ts:8 variable `e` = unwritten
+variables.ts:9 variable `e` = unwritten
+//// written-type/variables.ts
+// A variable's written type is its annotation. A binding element, an unannotated variable and conflicting annotations have none.
+let a: number = 1;
+function f(p: string, q?: number, ...r: boolean[]) {}
+var d: number;
+var d: number;
+const { b }: { b: number } = { b: 1 };
+let c = 1;
+var e: number;
+var e: string;
+export {};

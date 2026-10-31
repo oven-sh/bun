@@ -1,0 +1,1 @@
+{ "compilerOptions": { "strict": true, "skipLibCheck": false, "typeRoots": ["./imports/types"], "types": ["bun"] } }

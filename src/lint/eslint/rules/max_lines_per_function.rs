@@ -9,7 +9,7 @@ pub struct MaxLinesPerFunction {
     counts_iifes: bool,
 }
 
-const EXCEED: Message = Message::new(
+const EXCEED: &Message = &Message::new(
     "exceed",
     "{{name}} has too many lines ({{lineCount}}). Maximum allowed is {{maxLines}}.",
 );

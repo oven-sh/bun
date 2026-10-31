@@ -7,7 +7,7 @@ use bun_jsc::{DeprecatedStrong, JSGlobalObject, JSValue, JsResult};
 use bun_core::Timespec;
 
 use crate::test_runner::bun_test::{
-    self, BunTest, BunTestPtr, BunTestRoot, DescribeScope, HandleUncaughtExceptionResult,
+    self, BunTest, BunTestPtr, DescribeScope, HandleUncaughtExceptionResult,
     RefDataValue, StepResult,
 };
 use crate::test_runner::bun_test::debug::group;
@@ -45,14 +45,9 @@ pub(crate) struct QueuedDescribe {
 // `Strong: Drop` covers cleanup — no explicit Drop needed.
 
 impl Collection {
-    /// # Safety
-    /// `bun_test_root` must be a valid, exclusive pointer to a live `BunTestRoot` for the
-    /// duration of this call. The caller (`BunTest::init`) passes a pointer to its own
-    /// `bun_test_root` field.
-    pub(crate) fn init(bun_test_root: *mut BunTestRoot) -> Collection {
+    /// `hook_scope` (`BunTestRoot::hook_scope`) becomes the parent of the file's root scope.
+    pub(crate) fn init(hook_scope: *mut DescribeScope) -> Collection {
         let _g = group::begin();
-        // SAFETY: see fn-level Safety doc.
-        let bun_test_root = unsafe { &mut *bun_test_root };
 
         let only = if let Some(runner) = Jest::runner() {
             if runner.only { bun_test::Only::Contains } else { bun_test::Only::No }
@@ -61,7 +56,7 @@ impl Collection {
         };
 
         let mut root_scope = DescribeScope::create(bun_test::BaseScope {
-            parent: Some(&raw mut *bun_test_root.hook_scope),
+            parent: Some(hook_scope),
             name: None,
             concurrent: false,
             mode: bun_test::ScopeMode::Normal,

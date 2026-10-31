@@ -1,0 +1,58 @@
+# setTimeout(later, 10); setImmediate(soon); kept = setTimeout(watched, 10); bytes.reduce(fold, first)
+# The timer is the `this` of its callback, and what the callback of reduce() answers is its next accumulator: both are the result of the call.
+# The program drops three of the four results, so no value of the program holds them. Native code hands them on all the same.
+# RUN: valueflow-why values=f1:v1 values=f2:v1 values=f3:v1 values=f4:v3
+# CHECK: values=f1:v1
+# CHECK: operand 0 {{*}} 1 members: object{{*}}@f0
+# CHECK: values=f2:v1
+# CHECK: operand 0 {{*}} 1 members: object{{*}}@f0
+# CHECK: values=f3:v1
+# CHECK: operand 0 {{*}} 1 members: object{{*}}@f0
+# CHECK: values=f4:v3
+# CHECK: operand 0 {{*}} object{{*}}@f0 object{{*}}@f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="First"
+layout L1 name="Next"
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=SetTimeout
+    v1 = Undefined
+    v2 = NewClosure function=f1
+    v3 = Integer integer=10
+    v4 = Call v0, v1, v2, v3
+    v5 = Builtin builtin=SetImmediate
+    v6 = NewClosure function=f2
+    v7 = Call v5, v1, v6
+    v8 = NewClosure function=f3
+    v9 = Call v0, v1, v8, v3
+    v10 = Builtin builtin=Uint8Array
+    v11 = Construct v10, -, v3
+    v12 = Builtin builtin=TypedArrayPrototypeReduce
+    v13 = NewClosure function=f4
+    v14 = NewObject layout=L0
+    v15 = Call v12, v11, v13, v14
+    Return v9
+}
+function f1 name="later" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="mass"
+    Return v1
+}
+function f2 name="soon" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="mass"
+    Return v1
+}
+function f3 name="watched" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="mass"
+    Return v1
+}
+function f4 name="fold" kind=Arrow parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject layout=L1
+    v3 = PropGet v0 key="mass"
+    Return v2
+}

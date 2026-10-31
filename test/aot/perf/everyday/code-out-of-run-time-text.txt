@@ -79,35 +79,35 @@ function turn(i: number): number {
 const nothing = String(Date.now()).slice(99);
 const gauge: any = new Function("return { reading() { return 1.5; } }" + nothing)();
 function turn(i: number): number {
-  return gauge.reading() > 1 ? i & 1 : 2;
+  return gauge.reading() >= 0 ? i & 1 : 2;
 }
 //// get-time-called-on-an-object-that-the-text-made
 const nothing = String(Date.now()).slice(99);
 const stamp: any = new Function("return { getTime() { return 1.5; } }" + nothing)();
 function turn(i: number): number {
-  return stamp.getTime() > 1 ? i & 1 : 2;
+  return stamp.getTime() >= 0 ? i & 1 : 2;
 }
 //// send-called-on-an-object-that-the-text-made
 const nothing = String(Date.now()).slice(99);
 const channel: any = new Function("return { send() { return 1.5; } }" + nothing)();
 function turn(i: number): number {
-  return channel.send() > 1 ? i & 1 : 2;
+  return channel.send() >= 0 ? i & 1 : 2;
 }
 //// now-called-on-an-object-that-the-text-made
 const nothing = String(Date.now()).slice(99);
 const clock: any = new Function("return { now() { return 1.5; } }" + nothing)();
 function turn(i: number): number {
-  return clock.now() > 1 ? i & 1 : 2;
+  return clock.now() >= 0 ? i & 1 : 2;
 }
 //// get-time-called-on-a-date-that-the-text-made
 const nothing = String(Date.now()).slice(99);
 const stamp: any = new Function("return new Date(1700000000000)" + nothing)();
 function turn(i: number): number {
-  return stamp.getTime() > 1 ? i & 1 : 2;
+  return stamp.getTime() >= 0 ? i & 1 : 2;
 }
 //// now-called-on-the-performance-object-that-the-text-handed-over
 const nothing = String(Date.now()).slice(99);
 const clock: any = new Function("return performance" + nothing)();
 function turn(i: number): number {
-  return clock.now() > 1 ? i & 1 : 2;
+  return clock.now() >= 0 ? i & 1 : 2;
 }

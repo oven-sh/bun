@@ -168,6 +168,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             framework_routes_affected: _,
             html_routes_soft_affected: _,
             html_routes_hard_affected: _,
+            html_routes_emitted: _,
             had_adjusted_edges: _,
             client_components_added: _,
             client_components_removed: _,
@@ -192,6 +193,8 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
         other_bytes += memory_cost_array_list(&dev.incremental_result.html_routes_soft_affected);
         // .html_routes_hard_affected
         other_bytes += memory_cost_array_list(&dev.incremental_result.html_routes_hard_affected);
+        // .html_routes_emitted
+        other_bytes += memory_cost_array_list(&dev.incremental_result.html_routes_emitted);
     }
     // .has_tailwind_plugin_hack
     if let Some(hack) = &dev.has_tailwind_plugin_hack {

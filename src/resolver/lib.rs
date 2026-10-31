@@ -891,6 +891,108 @@ pub mod fs {
     /// The active filesystem backend (always the real filesystem).
     pub(crate) type Implementation = RealFS;
 
+    /// Which cache keys of a directory a bust evicts.
+    #[derive(Clone, Copy)]
+    pub(crate) enum DirKeys {
+        /// Its real path and that path through each link followed: the directory changed on disk.
+        Every,
+        /// The given path alone: a guess after a miss, which names the path that the lookup walked.
+        Walked,
+    }
+
+    /// Every cache key of a directory: its real path, and that path through each link followed.
+    #[derive(Default)]
+    struct DirLinks {
+        /// Path of a link as walked, to the real path of the directory.
+        real_of: bun_collections::StringHashMap<&'static [u8]>,
+        /// Real path of a directory, to the paths of the links to it.
+        links_of: bun_collections::StringHashMap<bun_collections::SmallList<&'static [u8], 1>>,
+    }
+
+    impl DirLinks {
+        fn insert(&mut self, link: &'static [u8], real: &'static [u8]) {
+            if self.real_of.get(link) == Some(&real) {
+                return;
+            }
+            bun_core::handle_oom(self.real_of.put_static_key(link, real));
+            match self.links_of.get_mut(real) {
+                Some(links) if links.0.contains(&link) => {}
+                Some(links) => links.0.push(link),
+                None => bun_core::handle_oom(
+                    self.links_of
+                        .put_static_key(real, core::iter::once(link).collect()),
+                ),
+            }
+        }
+
+        /// Calls `each` with `path`, then with every other cache key of that directory.
+        fn for_each_key_of(&self, path: &[u8], mut each: impl FnMut(&[u8])) {
+            each(path);
+            if self.real_of.is_empty() {
+                return;
+            }
+
+            let mut real_buf = bun_paths::path_buffer_pool::get();
+            let mut key_buf = bun_paths::path_buffer_pool::get();
+            // The record of the deepest link in `path` holds the real path of that link in full.
+            let deepest_link = Self::ancestors(path)
+                .find_map(|ancestor| Some((ancestor.len(), *self.real_of.get(ancestor)?)));
+            let real: &[u8] = match deepest_link {
+                Some((link_len, real_of_link)) => {
+                    let Some(len) =
+                        Self::join_below(&mut real_buf[..], real_of_link, &path[link_len..])
+                    else {
+                        return;
+                    };
+                    each(&real_buf[..len]);
+                    &real_buf[..len]
+                }
+                None => path,
+            };
+
+            for ancestor in Self::ancestors(real) {
+                let Some(links) = self.links_of.get(ancestor) else {
+                    continue;
+                };
+                for link in links {
+                    let Some(len) =
+                        Self::join_below(&mut key_buf[..], link, &real[ancestor.len()..])
+                    else {
+                        continue;
+                    };
+                    if &key_buf[..len] != path {
+                        each(&key_buf[..len]);
+                    }
+                }
+            }
+        }
+
+        /// `path`, then each directory above it up to the root, as cache keys.
+        fn ancestors<'p>(path: &'p [u8]) -> impl Iterator<Item = &'p [u8]> {
+            core::iter::successors(Some(path), |dir: &&'p [u8]| {
+                let parent = strings::paths::without_trailing_slash_windows_path(
+                    crate::Dirname::dirname(dir),
+                );
+                (parent.len() < dir.len()).then_some(parent)
+            })
+        }
+
+        /// Writes `dir`, one separator and `below`: the rest of a path after a directory, which can be empty.
+        fn join_below(buf: &mut [u8], dir: &[u8], below: &[u8]) -> Option<usize> {
+            let below = strings::paths::without_leading_path_separator(below);
+            let dir_ends_in_sep = dir.last().is_some_and(|&last| bun_paths::is_sep_any(last));
+            let sep_len = usize::from(!below.is_empty() && !dir_ends_in_sep);
+            let len = dir.len() + sep_len + below.len();
+            if len > buf.len() {
+                return None;
+            }
+            buf[..dir.len()].copy_from_slice(dir);
+            buf[dir.len()..dir.len() + sep_len].fill(bun_paths::SEP);
+            buf[len - below.len()..len].copy_from_slice(below);
+            Some(len)
+        }
+    }
+
     // ── RealFS ───────────────────────────────────────────────────────────
 
     /// Real-filesystem backend: directory-entry cache plus fd-limit
@@ -901,6 +1003,8 @@ pub mod fs {
         /// this directly (`rfs.entries.get_or_put(..)`); modeled as the wrapper
         /// `EntriesMap` (bun_alloc has no BSSMap equivalent).
         pub entries: EntriesMap,
+        /// Guarded by `entries_mutex`.
+        dir_links: DirLinks,
         pub(crate) cwd: &'static [u8],
         #[cfg(not(windows))]
         pub(crate) file_limit: usize,
@@ -917,9 +1021,18 @@ pub mod fs {
             RealFS {
                 entries_mutex: Mutex::default(),
                 entries: EntriesMap::new(),
+                dir_links: DirLinks::default(),
                 cwd,
                 #[cfg(not(windows))]
                 file_limit,
+            }
+        }
+
+        /// Records the directory link `link` to `real`. The caller holds `entries_mutex`.
+        pub(crate) fn record_dir_link(&mut self, link: &'static [u8], real: &'static [u8]) {
+            debug_assert!(self.entries_mutex.is_held_by_current_thread());
+            if link != real {
+                self.dir_links.insert(link, real);
             }
         }
 
@@ -1193,9 +1306,13 @@ pub mod fs {
             Ok(unsafe { &mut *out })
         }
 
-        /// Evicts `file_path` from the directory-entry cache; returns whether
-        /// an entry was removed.
-        pub(crate) fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
+        /// Evicts the listing of the directory `path` under `keys`. `each` gets a key and whether a listing went.
+        pub(crate) fn bust_entries_cache(
+            &mut self,
+            path: &[u8],
+            keys: DirKeys,
+            mut each: impl FnMut(&[u8], bool),
+        ) {
             // `entries` is the process-global
             // BSSMap singleton and `remove` mutates it; callers (transpiler /
             // hot-reloader / VM) reach this without `RESOLVER_MUTEX`, so take
@@ -1203,7 +1320,12 @@ pub mod fs {
             // invariant. No caller already holds it (no re-entry from
             // `read_directory`/`dir_info_cached_maybe_log`).
             let _g = self.entries_mutex.lock_guard();
-            self.entries.remove(file_path)
+            let entries = &mut self.entries;
+            let mut evict = |key: &[u8]| each(key, entries.remove(key));
+            match keys {
+                DirKeys::Every => self.dir_links.for_each_key_of(path, evict),
+                DirKeys::Walked => evict(path),
+            }
         }
 
         /// lstat + (if symlink) open + fstat +

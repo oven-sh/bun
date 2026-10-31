@@ -8,3 +8,6 @@ export const registerMacro = b.fn({
   capability: "heap",
   throws: true,
 });
+
+/** `bun:internal-for-testing`: the bust that a watcher sends for a directory that changed. */
+export const bustResolverDirCache = b.fn({ args: { path: b.string.utf8 } });

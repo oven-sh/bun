@@ -101,6 +101,12 @@ export interface DevServerTest {
 
   /** Starting files */
   files?: FileObject;
+  /**
+   * Directory links to create after `files` are written and before the
+   * server starts. Each key is the path of a link and each value is its
+   * target, relative to the directory of the link.
+   */
+  symlinks?: Record<string, string>;
   /** Manually specify which html files to serve */
   htmlFiles?: string[];
   /**
@@ -1968,6 +1974,12 @@ function testImpl<T extends DevServerTest>(
         x => path.join(root, x),
       );
       await writeAll(root, options.files);
+      for (const [link, target] of Object.entries(options.symlinks ?? {})) {
+        const linkPath = path.join(root, link);
+        fs.mkdirSync(path.dirname(linkPath), { recursive: true });
+        // A junction needs an absolute target. A POSIX link stays relative, as an install writes it.
+        fs.symlinkSync(isWindows ? path.resolve(path.dirname(linkPath), target) : target, linkPath, "junction");
+      }
       const runInstall = options.framework === "react";
       if (runInstall) {
         // await copyCachedReactDeps(root);

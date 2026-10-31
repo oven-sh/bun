@@ -3,7 +3,7 @@
 // cross-checked against Node.js. Cases Bun gets wrong today are marked `test.failing`.
 import { describe, expect, test } from "bun:test";
 import assert from "node:assert";
-import { createPublicKey, createSecretKey, generateKeyPairSync } from "node:crypto";
+import { createPrivateKey, createPublicKey, createSecretKey, generateKeyPairSync } from "node:crypto";
 import util from "node:util";
 
 type Thunk = () => unknown;
@@ -1012,6 +1012,13 @@ const cases: Case[] = [
     loose: true,
   },
   {
+    name: "private KeyObjects imported twice from the same bytes",
+    a: () => createPrivateKey(ecKeys[0].privateKey.export({ type: "pkcs8", format: "pem" })),
+    b: () => createPrivateKey(ecKeys[0].privateKey.export({ type: "pkcs8", format: "pem" })),
+    strict: true,
+    loose: true,
+  },
+  {
     name: "a KeyObject and an empty object",
     a: () => createSecretKey(Buffer.alloc(16, 1)),
     b: () => ({}),
@@ -1267,8 +1274,10 @@ describe("detached ArrayBuffer", () => {
   });
 
   test("assert.partialDeepStrictEqual compares CryptoKeys by what they hold, then by own properties", () => {
-    const partial = (actual: unknown, expected: unknown) =>
-      caught(() => assert.partialDeepStrictEqual(actual, expected))?.code ?? "equal";
+    const partial = (actual: unknown, expected: unknown) => {
+      const error = caught(() => assert.partialDeepStrictEqual(actual, expected));
+      return error ? error.code : "equal";
+    };
     expect({
       same: partial(secretCryptoKey(1), secretCryptoKey(1)),
       otherBytes: partial(secretCryptoKey(1), secretCryptoKey(2)),

@@ -258,6 +258,8 @@ pub struct Options<'a> {
     pub verbose: Option<HTTPVerboseLevel>,
     pub disable_keepalive: Option<bool>,
     pub disable_decompression: Option<bool>,
+    /// See `Flags::keep_partial_content_encoded`.
+    pub keep_partial_content_encoded: bool,
     pub max_redirects: Option<u8>,
     pub reject_unauthorized: Option<bool>,
     pub tls_props: Option<SSLConfigSharedPtr>,
@@ -481,6 +483,7 @@ impl<'a> AsyncHTTP<'a> {
         if let Some(val) = options.disable_decompression {
             this.client.flags.disable_decompression = val;
         }
+        this.client.flags.keep_partial_content_encoded = options.keep_partial_content_encoded;
         if let Some(val) = options.max_redirects {
             this.client.remaining_redirect_count = (val.min(126) + 1) as i8;
         }

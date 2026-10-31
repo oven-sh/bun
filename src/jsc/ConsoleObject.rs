@@ -2908,14 +2908,17 @@ pub mod formatter {
         }
     }
 
-    /// Where one instance of `print_array` stops and another one prints the rest: at a hole.
+    /// Where one instance of `print_array` stops and another one prints the rest: at a hole of
+    /// an array.
     pub(super) struct ArrayWalkPoint {
-        len: u64,
+        /// The length of the array: at most 2^32 - 1.
+        len: u32,
         /// The hole.
         i: u32,
         /// The first hole of its run.
         empty_start: u32,
-        nonempty_count: u32,
+        /// At most 100.
+        nonempty_count: u8,
         was_good_time: bool,
         writer_failed: bool,
     }
@@ -4303,7 +4306,7 @@ pub mod formatter {
         ) -> JsResult<()> {
             let from = W::resumed(from);
             let len = match from {
-                Some(from) => from.len,
+                Some(from) => u64::from(from.len),
                 None => value.get_length(self.global_this)?,
             };
             if from.is_none() && len != 0 && self.depth > self.max_depth {
@@ -4399,7 +4402,7 @@ pub mod formatter {
                 let mut nonempty_count: u32 = 1;
                 if let Some(from) = from {
                     i = from.i;
-                    nonempty_count = from.nonempty_count;
+                    nonempty_count = u32::from(from.nonempty_count);
                     empty_start = Some(from.empty_start);
                 }
                 let mut walk = W::new();
@@ -4429,14 +4432,17 @@ pub mod formatter {
                                     // Each answer from here on costs a pass over the sparse
                                     // map. An instance that lists the map's indexes prints
                                     // the rest, from this hole.
+                                    debug_assert!(len <= u64::from(u32::MAX) && nonempty_count <= 100);
                                     let from = ArrayWalkPoint {
-                                        len,
+                                        len: len as u32,
                                         i,
                                         empty_start: empty_start.unwrap_or(i),
-                                        nonempty_count,
+                                        nonempty_count: nonempty_count as u8,
                                         was_good_time,
                                         writer_failed: writer.failed,
                                     };
+                                    // The other instance enters this scope again, and leaves
+                                    // it before it closes the bracket.
                                     drop(_qs);
                                     drop(_indent);
                                     drop(_depth);

@@ -1,3 +1,4 @@
+import internals from "bun:internal-for-testing";
 import { jscDescribe } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import {
@@ -1749,4 +1750,277 @@ it.skipIf(!isASAN)("prints a substring-rope jsx type after a prop's inspect.cust
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toEndWith("</div-abcdefghijklmnopqrstuvwxyz>\n");
   expect(exitCode).toBe(0);
+});
+
+// An array in sparse mode keeps its elements in a hash map, which has no order: the only way to
+// ask it for the element after a run of holes is a pass over the whole map. A print shows at most
+// 100 elements, and it must not make that pass once for each run of holes before them. A map of
+// 16 elements or fewer is small enough for that. A print that meets a bigger one lists its
+// indexes instead.
+describe("Bun.inspect array in sparse mode", () => {
+  const base = 2 ** 28;
+  // `count` elements in the sparse map, with `gap - 1` holes before each.
+  function sparse(count, gap) {
+    const a = [];
+    for (let k = 1; k <= count; k++) a[base + k * gap] = k;
+    return a;
+  }
+  // The text of a print on one line.
+  const flat = value => Bun.inspect(value).replace(/\s+/g, " ");
+  // What `flat` gives for these parts: a number is a run of that many holes, a string is an element as printed.
+  const printed = (...parts) =>
+    `[ ${parts.map(part => (typeof part === "string" ? part : part === 1 ? "empty item" : `${part} x empty items`)).join(", ")} ]`;
+  // Elements `from` to `to` of `sparse(count, 21)`, each after its 20 holes.
+  const after20 = (from, to) => Array.from({ length: to - from + 1 }, (_, k) => [20, String(from + k)]).flat();
+
+  it("does not pass over the sparse map once for each run of holes", () => {
+    const elements = 32_000;
+    // The same map size in all three. `oneRun` has its elements next to each other, so a print
+    // asks the map for one element. The other two have a run of holes before each element, so a
+    // print asks it for 100 of them.
+    const oneRun = sparse(elements, 1);
+    const near = sparse(elements, 21);
+    const far = sparse(elements, 120_000);
+    expect(flat(oneRun)).toStartWith("[ 268435457 x empty items, 1, 2, 3, ");
+    expect(flat(near)).toStartWith("[ 268435477 x empty items, 1, 20 x empty items, 2, ");
+    expect(flat(far)).toStartWith("[ 268555456 x empty items, 1, 119999 x empty items, 2, ");
+
+    function timeInspect(a) {
+      let ms = Infinity;
+      for (let run = 0; run < 5; run++) {
+        const t0 = performance.now();
+        Bun.inspect(a);
+        ms = Math.min(ms, performance.now() - t0);
+      }
+      return ms;
+    }
+    withoutAggressiveGC(() => {
+      const once = timeInspect(oneRun);
+      // `oneRun` costs 1 pass. The other two cost 6. With a pass for each run they cost 100.
+      expect(timeInspect(near) / once).toBeLessThan(25);
+      expect(timeInspect(far) / once).toBeLessThan(25);
+    });
+  });
+
+  const seven = printed(base + 21, "1", ...after20(2, 7));
+  const seventeen = printed(base + 21, "1", ...after20(2, 17));
+  const forty = printed(base + 21, "1", ...after20(2, 40));
+  it.each([
+    ["1 element", () => sparse(1, 21), printed(base + 21, "1")],
+    ["7 elements", () => sparse(7, 21), seven],
+    ["16 elements", () => sparse(16, 21), printed(base + 21, "1", ...after20(2, 16))],
+    ["17 elements", () => sparse(17, 21), seventeen],
+    ["40 elements", () => sparse(40, 21), forty],
+    ["40 elements of a frozen array", () => Object.freeze(sparse(40, 21)), forty],
+    [
+      "20 elements that are far apart",
+      () => sparse(20, 2 ** 27),
+      printed(base + 2 ** 27, "1", ...Array.from({ length: 19 }, (_, k) => [2 ** 27 - 1, String(k + 2)]).flat()),
+    ],
+    [
+      "elements that are next to each other",
+      () => Object.assign(sparse(30, 1), { [base + 41]: "x" }),
+      printed(base + 1, ...Array.from({ length: 30 }, (_, k) => String(k + 1)), 10, '"x"'),
+    ],
+    [
+      "holes after the last element",
+      () => Object.assign(sparse(20, 21), { length: base + 1000 }),
+      printed(base + 21, "1", ...after20(2, 20), 579),
+    ],
+    [
+      "elements before the sparse map",
+      () => Object.assign([1, 2, 3], Object.fromEntries(Array.from({ length: 20 }, (_, k) => [base + k * 21, k + 4]))),
+      printed("1", "2", "3", base - 3, "4", ...Array.from({ length: 19 }, (_, k) => [20, String(k + 5)]).flat()),
+    ],
+    ["a frozen array with holes", () => Object.freeze([1, , 3, , 5, , , 8]), printed("1", 1, "3", 1, "5", 2, "8")],
+    ["a sealed array with holes", () => Object.seal([1, , 3, , 5, , , 8]), printed("1", 1, "3", 1, "5", 2, "8")],
+    [
+      "a frozen array with a hole after each of 20 elements",
+      () => Object.freeze(Object.assign([], Object.fromEntries(Array.from({ length: 20 }, (_, k) => [k * 2, k])))),
+      printed("0", ...Array.from({ length: 19 }, (_, k) => [1, String(k + 1)]).flat()),
+    ],
+    [
+      "an accessor index",
+      () => Object.defineProperty(Object.assign([1, , 3, , 5], { 9: 9 }), 7, { get: () => "got", enumerable: true }),
+      printed("1", 1, "3", 1, "5", 2, '"got"', 1, "9"),
+    ],
+    [
+      "an index that is not enumerable",
+      () => Object.defineProperty(Object.assign([1, , 3], { [base]: "far" }), 5, { value: "hidden" }),
+      printed("1", 1, "3", 2, '"hidden"', base - 6, '"far"'),
+    ],
+    [
+      "sparse arrays in a sparse array",
+      () => Object.assign(sparse(18, 21), { [base + 2 * 21]: sparse(17, 21), [base + 9 * 21]: sparse(40, 21) }),
+      printed(base + 21, "1", 20, seventeen, ...after20(3, 8), 20, forty, ...after20(10, 18)),
+    ],
+    ["the same sparse array twice", () => Array(2).fill(sparse(17, 21)), printed(seventeen, seventeen)],
+  ])("prints %s", (_, build, expected) => {
+    expect(flat(build())).toBe(expected);
+  });
+
+  it("prints the first elements of more than 100", () => {
+    // The first index of an array counts as one of the 100 also when it is a hole.
+    expect(flat(sparse(150, 21)).split("...")[0]).toBe(printed(base + 21, "1", ...after20(2, 99)).slice(0, -2) + ", ");
+  });
+
+  // Code that runs during a print can change the array: an element's `inspect.custom`, or an
+  // index that is an accessor. With 8 elements each answer is read from the array as it is then.
+  // With 24 the print lists the next indexes of the sparse map and walks the list: a listed
+  // index that is gone prints as a hole, and an index that is added where the print already
+  // listed does not print.
+  // In a child so that a print that does not end times this test out instead of the runner.
+  it.each([
+    [8, 6, false],
+    [24, 16, true],
+  ])("prints an array of %d elements that changes during the print", async (count, late, listed) => {
+    const code = `
+      const base = 2 ** 28;
+      const count = ${count};
+      const at = k => base + k * 21;
+      // \`count\` elements in the sparse map with 20 holes before each.
+      function fixture(length = at(count) + 1) {
+        const a = [];
+        for (let k = 1; k <= count; k++) a[at(k)] = k;
+        a.length = length;
+        return a;
+      }
+      const show = a => console.log(Bun.inspect(a).replace(/\\s+/g, " "));
+      // The print of element \`k\` runs \`change\`.
+      function print(k, change, length) {
+        const a = fixture(length);
+        a[at(k)] = { [Bun.inspect.custom]() { change(a); return "ran"; } };
+        show(a);
+      }
+      const deleteFrom3 = a => { for (let k = 3; k <= count; k++) delete a[at(k)]; };
+
+      print(2, a => { delete a[at(4)]; });
+      print(2, a => { a[at(count) + 5] = "new"; }, at(count) + 10);
+      print(${late}, a => { a[at(count) + 5] = "new"; }, at(count) + 10);
+      print(2, a => { a[at(3) + 5] = "new"; });
+      print(2, a => { a[at(2) + 1] = "new"; });
+      print(1, a => { a[at(1) + 5] = "new"; });
+      print(2, a => { delete a[at(3)]; a[at(3) + 5] = "new"; });
+      print(2, a => { a.length = at(3) + 1; });
+      print(2, a => { Object.freeze(a); });
+      print(2, a => { a.length = 0; for (let i = 0; i < 50; i++) a[i] = i; });
+      print(2, deleteFrom3);
+      print(2, a => { deleteFrom3(a); a[at(count) + 5] = "new"; }, at(count) + 10);
+      const a = fixture();
+      Object.defineProperty(a, at(2), { get() { delete a[at(3)]; return "got"; }, enumerable: true });
+      show(a);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const first = base + 21;
+    expect({ printed: stdout.split("\n"), stderr, exitCode }).toEqual({
+      printed: [
+        // Element 2 deletes element 4.
+        printed(first, "1", 20, "ran", 20, "3", 41, "5", ...after20(6, count)),
+        // Element 2 adds an index past the last element. No list reaches that far yet.
+        printed(first, "1", 20, "ran", ...after20(3, count), 4, '"new"', 4),
+        // A late element adds the same index. With 24 elements the list already ends at the last one.
+        listed
+          ? printed(first, "1", ...after20(2, late - 1), 20, "ran", ...after20(late + 1, count), 9)
+          : printed(first, "1", ...after20(2, late - 1), 20, "ran", ...after20(late + 1, count), 4, '"new"', 4),
+        // Element 2 adds an index between elements 3 and 4. With 24 elements both are listed.
+        listed
+          ? printed(first, "1", 20, "ran", ...after20(3, count))
+          : printed(first, "1", 20, "ran", 20, "3", 4, '"new"', 15, "4", ...after20(5, count)),
+        // Element 2 adds the index next to itself. The print reads that index, it does not skip to it.
+        printed(first, "1", 20, "ran", '"new"', 19, "3", ...after20(4, count)),
+        // Element 1 adds an index before the print lists anything.
+        printed(first, "ran", 4, '"new"', 15, "2", ...after20(3, count)),
+        // Element 2 deletes element 3 and adds an index after it.
+        listed
+          ? printed(first, "1", 20, "ran", 41, "4", ...after20(5, count))
+          : printed(first, "1", 20, "ran", 25, '"new"', 15, "4", ...after20(5, count)),
+        // Element 2 cuts the array off after element 3. The length is the one from before the print.
+        printed(first, "1", 20, "ran", 20, "3", 21 * (count - 3)),
+        // Element 2 freezes the array.
+        printed(first, "1", 20, "ran", ...after20(3, count)),
+        // Element 2 empties the array and fills indexes 0 to 49.
+        printed(first, "1", 20, "ran", 21 * (count - 2)),
+        // Element 2 deletes every element after itself.
+        printed(first, "1", 20, "ran", 21 * (count - 2)),
+        // The same, and it adds an index past them.
+        printed(first, "1", 20, "ran", 21 * (count - 2) + 4, '"new"', 4),
+        // Index 2 is an accessor that deletes element 3.
+        printed(first, "1", 20, '"got"', 41, "4", ...after20(5, count)),
+        "",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A build with assertions counts the passes over a sparse map.
+  const passCount = internals.sparseMapPassCount;
+  describe.skipIf(passCount?.() === undefined)("passes over the sparse map", () => {
+    function passes(value) {
+      const before = passCount();
+      Bun.inspect(value);
+      return passCount() - before;
+    }
+    // `elements` in the sparse map. The first `runs` have 20 holes before each, the rest are next to each other.
+    function withRuns(elements, runs) {
+      const a = [];
+      let index = base;
+      for (let k = 0; k < elements; k++) a[(index += k < runs ? 21 : 1)] = k;
+      return a;
+    }
+    // 80 elements in groups of 8 that are next to each other.
+    function groups() {
+      const a = [];
+      for (let k = 0; k < 80; k++) a[base + (k >> 3) * 1000 + (k & 7)] = k;
+      return a;
+    }
+    // Its second element deletes every element after itself when it prints.
+    function deletesTheRest() {
+      const a = sparse(24, 21);
+      a[base + 2 * 21] = {
+        [Bun.inspect.custom]() {
+          for (let k = 3; k <= 24; k++) delete a[base + k * 21];
+          return "ran";
+        },
+      };
+      return a;
+    }
+    it.each([
+      // Not in sparse mode.
+      ["an array without holes", () => [1, 2, 3], 0],
+      ["an array with holes that is not in sparse mode", () => [1, , 3, , 5], 0],
+      // 16 elements or fewer in the sparse map: one pass for each run of holes.
+      ["1 element", () => sparse(1, 21), 1],
+      ["7 elements", () => sparse(7, 21), 7],
+      ["16 elements", () => sparse(16, 21), 16],
+      // More: the first element that a print asks the sparse map for costs one pass.
+      ["17 elements, 1 run of holes", () => withRuns(17, 1), 1],
+      ["1000 elements, 1 run of holes", () => withRuns(1000, 1), 1],
+      // The next pass lists 4 elements.
+      ["2 runs of holes", () => withRuns(40, 2), 2],
+      ["5 runs of holes", () => withRuns(40, 5), 2],
+      // Each pass after that lists twice as many.
+      ["6 runs of holes", () => withRuns(40, 6), 3],
+      ["13 runs of holes", () => withRuns(40, 13), 3],
+      ["14 runs of holes", () => withRuns(40, 14), 4],
+      ["17 elements, 17 runs of holes", () => sparse(17, 21), 4],
+      ["29 runs of holes", () => withRuns(40, 29), 4],
+      ["30 runs of holes", () => withRuns(40, 30), 5],
+      ["61 runs of holes", () => withRuns(200, 61), 5],
+      ["62 runs of holes", () => withRuns(200, 62), 6],
+      ["150 runs of holes", () => sparse(150, 21), 6],
+      ["150 runs of holes that are long", () => sparse(150, 2 ** 24), 6],
+      ["runs of holes between groups of elements", groups, 6],
+      ["the same array twice", () => Array(2).fill(sparse(150, 21)), 12],
+      ["an array whose element deletes the listed ones", deletesTheRest, 3],
+    ])("%s", (_, build, expected) => {
+      expect(passes(build())).toBe(expected);
+    });
+  });
 });

@@ -58,7 +58,11 @@ async function getProtocZipBytes(): Promise<Uint8Array> {
 
 async function startServer(): Promise<Server> {
   const tmpDir = tmpdirSync();
-  await cp(join(import.meta.dir, "fixtures/tonic-server"), tmpDir, { recursive: true });
+  await cp(join(import.meta.dir, "fixtures/tonic-server"), tmpDir, {
+    recursive: true,
+    // What a build in place leaves behind. This copy builds into CARGO_TARGET_DIR.
+    filter: source => !["target", "Cargo.lock"].includes(path.basename(source)),
+  });
   const protocZip = await unzipper.Open.buffer(await getProtocZipBytes());
 
   const protocPath = join(tmpDir, "protoc");

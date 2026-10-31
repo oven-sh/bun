@@ -34,6 +34,9 @@ public:
     void*& alignedPointerAt(int i) { return m_alignedPointers[i]; }
     size_t alignedPointerCount() const { return m_alignedPointers.size(); }
     static InternalFieldObject* create(JSC::VM& vm, JSC::Structure* structure, int internalFieldCount);
+    // A new cell that owns `butterfly` and its own copy of the internal fields of `source`.
+    static InternalFieldObject* createWithFieldsOf(JSC::VM& vm, JSC::Structure* structure, JSC::Butterfly* butterfly, const InternalFieldObject& source);
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 
     DECLARE_VISIT_CHILDREN;
 
@@ -42,6 +45,13 @@ protected:
         : Base(vm, structure)
         , m_fields(WTF::FillWith {}, internalFieldCount, JSC::WriteBarrier<JSC::Unknown>(vm, this, JSC::jsUndefined()))
         , m_alignedPointers(WTF::FillWith {}, internalFieldCount, static_cast<void*>(nullptr))
+    {
+    }
+
+    InternalFieldObject(JSC::VM& vm, JSC::Structure* structure, JSC::Butterfly* butterfly, const InternalFieldObject& source)
+        : Base(vm, structure, butterfly)
+        , m_fields(source.m_fields)
+        , m_alignedPointers(source.m_alignedPointers)
     {
     }
 

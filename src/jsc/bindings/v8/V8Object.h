@@ -70,6 +70,8 @@ public:
 
     BUN_EXPORT int GetIdentityHash();
 
+    BUN_EXPORT Local<Object> Clone();
+
     BUN_EXPORT MaybeLocal<Array> GetOwnPropertyNames(Local<Context> context, PropertyFilter filter, KeyConversionMode key_conversion = KeyConversionMode::kKeepNumbers);
 
 private:

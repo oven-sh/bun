@@ -1,12 +1,18 @@
 #include "V8Object.h"
 #include "shim/InternalFieldObject.h"
 #include "V8HandleScope.h"
+#include "napi.h"
 #include "JavaScriptCore/ArgList.h"
+#include "JavaScriptCore/BuiltinNames.h"
+#include "JavaScriptCore/ButterflyInlines.h"
 #include "JavaScriptCore/ConstructData.h"
+#include "JavaScriptCore/DeferGCInlines.h"
+#include "JavaScriptCore/GetterSetter.h"
 #include "JavaScriptCore/IdentifierInlines.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/PropertyNameArray.h"
 #include "JavaScriptCore/StringObject.h"
+#include "JavaScriptCore/StructureInlines.h"
 #include "v8_compatibility_assertions.h"
 
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::Object)
@@ -200,6 +206,116 @@ int Object::GetIdentityHash()
     // V8 only guarantees a non-zero value that is stable for the object's
     // lifetime; the JSC cell address satisfies that under our non-moving GC.
     return static_cast<int>(reinterpret_cast<uintptr_t>(localToCell()) & INT_MAX) | 1;
+}
+
+// A Structure that is or was a dictionary's, or that a prototype or an object with immutable properties has, is not given to a second object; indexed storage is not copied by words.
+static bool canShareStructure(JSC::Structure* structure)
+{
+    return !structure->hasBeenDictionary() && !structure->mayBePrototype() && !structure->mayHaveImmutableProperties() && !JSC::hasIndexedProperties(structure->indexingType());
+}
+
+// V8 copies the words of the object, its map included. Keeping the Structure keeps the inline caches of code that sees the copies monomorphic.
+static JSObject* cloneWithSameStructure(JSC::VM& vm, JSObject* source)
+{
+    JSC::Structure* structure = source->structure();
+    unsigned outOfLineCapacity = structure->outOfLineCapacity();
+    // Nothing keeps the butterfly alive until the cell that owns it exists.
+    JSC::DeferGC deferGC(vm);
+    JSC::Butterfly* butterfly = nullptr;
+    if (outOfLineCapacity) {
+        butterfly = JSC::Butterfly::createUninitialized(vm, nullptr, 0, outOfLineCapacity, false, 0);
+        memcpy(butterfly->propertyStorage() - outOfLineCapacity, source->butterfly()->propertyStorage() - outOfLineCapacity, outOfLineCapacity * sizeof(JSC::EncodedJSValue));
+    }
+    if (source->type() == JSC::FinalObjectType) {
+        return JSFinalObject::createWithButterflyCopyingInlineStorage(vm, structure, butterfly, source->inlineStorageUnsafe());
+    }
+    return shim::InternalFieldObject::createWithFieldsOf(vm, structure, butterfly, *uncheckedDowncast<shim::InternalFieldObject>(source));
+}
+
+// Defines every own property again on a new object of the same class and prototype, from what the Structure and the storage of `source` hold, so no getter runs.
+static JSObject* cloneByDefiningProperties(JSC::VM& vm, JSObject* source)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSGlobalObject* globalObject = source->realm();
+    JSC::Structure* structure = source->structure();
+    JSValue prototype = source->getPrototypeDirect();
+
+    WTF::Vector<std::pair<RefPtr<WTF::UniquedStringImpl>, unsigned>, 8> properties;
+    JSC::MarkedArgumentBuffer values;
+    structure->forEachProperty(vm, [&](const JSC::PropertyTableEntry& entry) -> bool {
+        // With poly proto this slot holds the prototype, which the copy gets from its Structure.
+        if (entry.key() != vm.propertyNames->builtinNames().polyProtoName().impl()) {
+            properties.append({ entry.key(), entry.attributes() });
+            values.appendWithCrashOnOverflow(source->getDirect(entry.offset()));
+        }
+        return true;
+    });
+
+    JSObject* copy;
+    if (source->type() != JSC::FinalObjectType) {
+        JSC::Structure* emptyStructure = shim::InternalFieldObject::createStructure(vm, globalObject, prototype);
+        copy = shim::InternalFieldObject::createWithFieldsOf(vm, emptyStructure, nullptr, *uncheckedDowncast<shim::InternalFieldObject>(source));
+    } else if (prototype.isObject()) {
+        copy = JSC::constructEmptyObject(globalObject, JSC::asObject(prototype), structure->inlineCapacity());
+    } else {
+        copy = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    }
+
+    for (size_t i = 0; i < properties.size(); i++) {
+        JSC::PropertyName name(properties[i].first.get());
+        unsigned attributes = properties[i].second;
+        JSValue value = values.at(i);
+        if (attributes & JSC::PropertyAttribute::Accessor) {
+            copy->putDirectAccessor(globalObject, name, uncheckedDowncast<JSC::GetterSetter>(value), attributes);
+        } else if (attributes & JSC::PropertyAttribute::CustomAccessorOrValue) {
+            copy->putDirectCustomAccessor(vm, name, value, attributes);
+        } else {
+            copy->putDirect(vm, name, value, attributes);
+        }
+    }
+
+    if (JSC::hasIndexedProperties(structure->indexingType())) {
+        JSC::PropertyNameArrayBuilder indices(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+        source->getOwnIndexedPropertyNames(globalObject, indices, JSC::DontEnumPropertiesMode::Include);
+        for (const Identifier& name : indices) {
+            uint32_t index = *JSC::parseIndex(name);
+            JSValue value;
+            unsigned attributes;
+            {
+                JSC::PropertySlot slot(source, JSC::PropertySlot::InternalMethodType::VMInquiry, &vm);
+                if (!JSObject::getOwnPropertySlotByIndex(source, globalObject, index, slot)) {
+                    continue;
+                }
+                value = slot.isAccessor() ? JSValue(slot.getterSetter()) : slot.getValue(globalObject, index);
+                attributes = slot.attributes();
+            }
+            copy->putDirectIndex(globalObject, index, value, attributes, JSC::PutDirectIndexLikePutDirect);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+    }
+
+    if (!structure->isStructureExtensible()) {
+        JSObject::preventExtensions(copy, globalObject);
+    }
+    return copy;
+}
+
+Local<Object> Object::Clone()
+{
+    Isolate* isolate = Isolate::GetCurrent();
+    auto& vm = isolate->vm();
+    JSObject* source = localToObjectPointer<JSObject>();
+    // V8 also copies arrays, RegExps, Errors and WebAssembly objects, and fails a CHECK for an object of any other kind.
+    if (!source || (source->type() != JSC::FinalObjectType && source->classInfo() != shim::InternalFieldObject::info())) [[unlikely]] {
+        BUN_PANIC("v8::Object::Clone is only implemented for plain objects and objects created from a template");
+    }
+    NapiUngatedScope ungated { vm };
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    JSObject* copy = canShareStructure(source->structure()) ? cloneWithSameStructure(vm, source) : cloneByDefiningProperties(vm, source);
+    // Only an allocation can fail here, which is fatal in V8 too.
+    scope.releaseAssertNoException();
+    return isolate->currentHandleScope()->createLocal<Object>(vm, copy);
 }
 
 Maybe<bool> Object::DefineOwnProperty(Local<Context> context, Local<Name> key, Local<Value> value, PropertyAttribute attributes)

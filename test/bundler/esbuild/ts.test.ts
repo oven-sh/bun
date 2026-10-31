@@ -1997,6 +1997,96 @@ describe("bundler", () => {
       { file: "/out/nested-propagation.js", stdout: "100 100 100 625 625 625" },
     ],
     minifySyntax: false, // intentionally disabled. enum inlining always happens
+    onAfterBundle(api) {
+      // "a.b" names an enum of an earlier block of "n" without the namespace.
+      api
+        .expectFile("/out/nested-propagation.js")
+        .toContain("console.log(100 /* b */, 100 /* b */, 100 /* b */, 625 /* g */, 625 /* g */, 625 /* g */);");
+    },
+  });
+  // An enum takes a value from an enum of an earlier block of the same
+  // namespace by its bare name. The members behind it count on from the value.
+  const siblingNamespaceEnumMember = {
+    files: {
+      "/entry.ts": /* ts */ `
+        namespace M {
+          export enum Z { Q = 3, W = 4 }
+          export enum S { Q = "a" }
+          export namespace N { export enum Z { Q = 3 } }
+        }
+        namespace M {
+          export enum Y1 { P = Z.Q, R }
+          export enum Y2 { P = Z.Q, R, S, T }
+          export enum Y3 { P = Z.Q + 1, R }
+          export enum Y4 { P = Z.Q | Z.W, R }
+          export enum Y5 { A, P = Z.Q, R }
+          export enum Y6 { P = Z["Q"], R }
+          export enum Y7 { P = N.Z.Q, R }
+          export enum Y8 { P = S.Q, R = 1 }
+          enum Y9 { P = Z.Q, R }
+          export const y9 = Y9;
+          export function y10(M: any) { enum Y { P = Z.Q, R } return Y }
+        }
+        namespace M { export enum X { A = Y1.R, B } }
+        namespace A.B { export const enum Z { Q = 3 } }
+        namespace A.B { export enum Y { P = Z.Q, R } }
+        export namespace E { export enum Z { Q = 3 } }
+        export namespace E { export enum Y { P = Z.Q, R } }
+        for (const e of [M.Y1, M.Y2, M.Y3, M.Y4, M.Y5, M.Y6, M.Y7, M.Y8, M.y9, M.y10(0), M.X, A.B.Y, E.Y]) {
+          console.log(JSON.stringify(e));
+        }
+      `,
+    },
+    run: {
+      stdout: `
+        {"3":"P","4":"R","P":3,"R":4}
+        {"3":"P","4":"R","5":"S","6":"T","P":3,"R":4,"S":5,"T":6}
+        {"4":"P","5":"R","P":4,"R":5}
+        {"7":"P","8":"R","P":7,"R":8}
+        {"0":"A","3":"P","4":"R","A":0,"P":3,"R":4}
+        {"3":"P","4":"R","P":3,"R":4}
+        {"3":"P","4":"R","P":3,"R":4}
+        {"1":"R","P":"a","R":1}
+        {"3":"P","4":"R","P":3,"R":4}
+        {"3":"P","4":"R","P":3,"R":4}
+        {"4":"A","5":"B","A":4,"B":5}
+        {"3":"P","4":"R","P":3,"R":4}
+        {"3":"P","4":"R","P":3,"R":4}
+      `,
+    },
+  };
+  itBundled("ts/SiblingNamespaceEnumMember", {
+    ...siblingNamespaceEnumMember,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain(`Y1[Y1["P"] = 3] = "P";\n    Y1[Y1["R"] = 4] = "R";`);
+      api.expectFile("/out.js").toContain(`Y8["P"] = "a";`);
+    },
+  });
+  itBundled("ts/SiblingNamespaceEnumMemberMinified", {
+    ...siblingNamespaceEnumMember,
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+  });
+  itBundled("ts/SiblingNamespaceEnumMemberNoBundle", {
+    ...siblingNamespaceEnumMember,
+    bundling: false,
+  });
+  itBundled("ts/SiblingNamespaceEnumShadowedArgument", {
+    files: {
+      "/entry.ts": /* ts */ `
+        namespace M { export enum Z { Q = 3 } }
+        namespace M {
+          export function member(M: any) { return Z.Q }
+          export function object(M: any) { return Z }
+        }
+        console.log(M.member(0), M.object(0) === M.Z);
+      `,
+    },
+    run: { stdout: "3 true" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("return 3 /* Q */;");
+    },
   });
   itBundled("ts/EnumTreeShaking", {
     files: {

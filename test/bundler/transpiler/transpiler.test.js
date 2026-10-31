@@ -2312,6 +2312,204 @@ export default class {
     });
   });
 
+  describe("an export of a sibling namespace block, named without the namespace", () => {
+    const first = "namespace M { export enum Z { Q = 3, W = 4 } }\n";
+    // The output of a second `namespace M` block with this body.
+    const second = (body, minify = false) => {
+      const out = ts.parsed(`${first}namespace M { ${body} }`, true, false, minify);
+      return out.slice(out.lastIndexOf("((M) => {"));
+    };
+    // Runs the output and returns the value of `result`.
+    const run = (code, result) => new Function(`${ts.parsed(code)};\nreturn ${result};`)();
+
+    it.each([
+      ["P = Z.Q, R", { P: 3, R: 4, 3: "P", 4: "R" }],
+      ["P = Z.Q, R, S, T", { P: 3, R: 4, S: 5, T: 6, 3: "P", 4: "R", 5: "S", 6: "T" }],
+      ["P = Z.Q + 1, R", { P: 4, R: 5, 4: "P", 5: "R" }],
+      ["P = Z.Q | Z.W, R", { P: 7, R: 8, 7: "P", 8: "R" }],
+      ["A, P = Z.Q, R", { A: 0, P: 3, R: 4, 0: "A", 3: "P", 4: "R" }],
+      ["P = Z['Q'], R", { P: 3, R: 4, 3: "P", 4: "R" }],
+    ])("enum Y { %s } counts on from a member of the enum Z of the first block", (members, Y) => {
+      expect(run(`${first}namespace M { export enum Y { ${members} } }`, "M.Y")).toEqual(Y);
+    });
+
+    it.each([
+      [
+        "from a const enum",
+        "namespace M { export const enum Z { Q = 3 } }\nnamespace M { export enum Y { P = Z.Q, R } }",
+        "M.Y",
+      ],
+      [
+        "in a dotted namespace",
+        "namespace A.B { export enum Z { Q = 3 } }\nnamespace A.B { export enum Y { P = Z.Q, R } }",
+        "A.B.Y",
+      ],
+      [
+        "from an enum of a nested namespace",
+        "namespace M { export namespace N { export enum Z { Q = 3 } } }\nnamespace M { export enum Y { P = N.Z.Q, R } }",
+        "M.Y",
+      ],
+      [
+        "from an enum with the name of the namespace",
+        "namespace M { export enum M { Q = 3 } }\nnamespace M { export enum Y { P = M.Q, R } }",
+        "M.Y",
+      ],
+      [
+        "from an enum of a namespace that merges with a function",
+        "namespace M { export function F() {} }\nnamespace M { export namespace F { export enum E { Q = 3 } } }\nnamespace M { export enum Y { P = F.E.Q, R } }",
+        "M.Y",
+      ],
+      [
+        "from an enum of a namespace that merges with a class",
+        "namespace M { export class C {} }\nnamespace M { export namespace C { export enum E { Q = 3 } } }\nnamespace M { export enum Y { P = C.E.Q, R } }",
+        "M.Y",
+      ],
+      ["when it is not exported", `${first}namespace M { enum Y { P = Z.Q, R } export const y = Y }`, "M.y"],
+      [
+        "when it is in a function",
+        `${first}namespace M { export function f() { enum Y { P = Z.Q, R } return Y } }`,
+        "M.f()",
+      ],
+      [
+        "under a parameter with the name of the namespace",
+        `${first}namespace M { export function f(M: any) { enum Y { P = Z.Q, R } return Y } }`,
+        "M.f(0)",
+      ],
+    ])("the enum of the second block counts on %s", (_, code, result) => {
+      expect(run(code, result)).toEqual({ P: 3, R: 4, 3: "P", 4: "R" });
+    });
+
+    it("the enum of the second block counts on when bun runs the file", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `${first}namespace M { export enum Y { P = Z.Q, R, S } }\nconsole.log(JSON.stringify(M.Y));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: '{"3":"P","4":"R","5":"S","P":3,"R":4,"S":5}\n',
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it("a third block counts on from the enum of the second block", () => {
+      const code = `${first}namespace M { export enum Y { P = Z.Q, R } }\nnamespace M { export enum X { A = Y.R, B } }`;
+      expect(run(code, "M.X")).toEqual({ A: 4, B: 5, 4: "A", 5: "B" });
+    });
+
+    it("a string member gets no reverse mapping", () => {
+      const code = `namespace M { export enum Z { Q = "a" } }\nnamespace M { export enum Y { P = Z.Q, R = 1 } }`;
+      expect(run(code, "M.Y")).toEqual({ P: "a", R: 1, 1: "R" });
+    });
+
+    it("prints the value of a member", () => {
+      expect(second("export enum Y { P = Z.Q, R }")).toBe(`((M) => {
+  let Y;
+  ((Y) => {
+    Y[Y["P"] = 3] = "P";
+    Y[Y["R"] = 4] = "R";
+  })(Y = M.Y ||= {});
+})(M ||= {})`);
+      // Outside an enum initializer too, as for the full name `M.Z.Q`.
+      expect(second("export const x = Z.Q, y = Z['W'], z = typeof Z.Q")).toBe(`((M) => {
+  M.x = 3 /* Q */;
+  M.y = 4 /* W */;
+  M.z = typeof 3 /* Q */;
+})(M ||= {})`);
+      expect(second("export function f(M: number) { return Z.Q }")).toBe(`((M) => {
+  function f(M) {
+    return 3 /* Q */;
+  }
+  M.f = f;
+})(M ||= {})`);
+    });
+
+    it("a negative value left of ** is in parentheses", () => {
+      const code = "namespace M { export enum Z { Q = -3 } }\nnamespace M { export const f = (n: number) => Z.Q ** n }";
+      expect(ts.parsed(code)).toEndWith(`((M) => {
+  M.f = (n) => (-3) /* Q */ ** n;
+})(M ||= {})`);
+      expect(run(code, "M.f(2)")).toBe(9);
+    });
+
+    // tsc gives 4. The enum of the later block has no value yet when this one is visited.
+    it.todo("an enum of a function counts on from a member of an enum of a later block", () => {
+      const code =
+        "namespace M { export function f() { enum Y { P = Z.Q, R } return Y } }\nnamespace M { export enum Z { Q = 3 } }";
+      expect(run(code, "M.f()")).toEqual({ P: 3, R: 4, 3: "P", 4: "R" });
+    });
+
+    // Control: only a property access on the name can fold. These print the same without the fold.
+    it("prints a read that does not fold as before", () => {
+      expect(second("export const z = Z, name = Z[3], q = Z?.Q, o = { Z }")).toBe(`((M) => {
+  M.z = M.Z;
+  M.name = M.Z[3];
+  M.q = M.Z?.Q;
+  M.o = { Z: M.Z };
+})(M ||= {})`);
+      expect(second("export function f() { (Z as any).Q = 5; delete (Z as any).W }")).toBe(`((M) => {
+  function f() {
+    M.Z.Q = 5;
+    delete M.Z.W;
+  }
+  M.f = f;
+})(M ||= {})`);
+      // A statement, and two declarators that read the same namespace object.
+      expect(second("Z; export function f(a: any) { const z = Z, y = Z; return [a, z, y] }")).toBe(`((M) => {
+  M.Z;
+  function f(a) {
+    const z = M.Z, y = M.Z;
+    return [a, z, y];
+  }
+  M.f = f;
+})(M ||= {})`);
+      // The minifier moves a read to its one use.
+      expect(second("export function f(a: any) { const z = Z; return [a, z] }", true)).toBe(`((M) => {
+  function f(a) {
+    return [a, M.Z];
+  }
+  M.f = f;
+})(M ||= {})`);
+      // A member that is computed at run time.
+      expect(
+        ts.parsed("namespace M { export enum Z { Q = f() } }\nnamespace M { export enum Y { P = Z.Q, R = 1 } }"),
+      ).toContain(`    Y[Y["P"] = M.Z.Q] = "P";\n`);
+      // A namespace, a variable, a class, and a function with and without a namespace of its name.
+      expect(
+        ts.parsed(
+          "namespace M { export namespace N { export const q = 1 } export let v = 1; export class K {} export function F() {} export function G() {} }\nnamespace M { export namespace F { export const x = 1 } }\nnamespace M { export const a = [N, N.q, v, new K(), F(), G(), (0, F)(), (0, G)(), F.x] }",
+        ),
+      ).toEndWith(`((M) => {
+  M.a = [M.N, M.N.q, M.v, new M.K, M.F(), M.G(), (0, M.F)(), (0, M.G)(), M.F.x];
+})(M ||= {})`);
+    });
+
+    it.each([
+      ["identifiers", { identifiers: true }],
+      ["identifiers and syntax", { identifiers: true, syntax: true }],
+    ])("a member that folds leaves the use counts of the literal (minify %s)", (_, minify) => {
+      const transpiler = new Bun.Transpiler({ loader: "ts", minify });
+      // The second body uses the closure argument before the member folds.
+      for (const body of [
+        v => `export enum Y { P = ${v}, R }`,
+        v => `export const a = 0; const v = ${v}; export const w = v + v`,
+      ]) {
+        // The strings keep the character counts equal. The minifier orders its names by them.
+        const folded = transpiler.transformSync(`${first}namespace M { ${body("Z.Q")} }\nexport const s = "3";`);
+        const written = transpiler.transformSync(`${first}namespace M { ${body("3")} }\nexport const s = "Z.Q";`);
+        expect(folded.replace(`"3"`, `"Z.Q"`)).toBe(written);
+      }
+    });
+  });
+
   describe("exports.replace", () => {
     const transpiler = new Bun.Transpiler({
       exports: {

@@ -12,36 +12,36 @@ pub struct NoInvalidHtmlAttribute {
     checks_rel: bool,
 }
 
-const EMPTY_IS_MEANINGLESS: Message =
-    Message::new("emptyIsMeaningless", "An empty “{{attributeName}}” attribute is meaningless.");
-const NEVER_VALID: Message =
-    Message::new("neverValid", "“{{reportingValue}}” is never a valid “{{attributeName}}” attribute value.");
-const NO_EMPTY: Message = Message::new("noEmpty", "An empty “{{attributeName}}” attribute is meaningless.");
-const NO_METHOD: Message = Message::new("noMethod", "The ”{{attributeName}}“ attribute cannot be a method.");
-const NOT_ALONE: Message =
-    Message::new("notAlone", "“{{reportingValue}}” must be directly followed by “{{missingValue}}”.");
-const NOT_PAIRED: Message = Message::new(
+const EMPTY_IS_MEANINGLESS: &Message =
+    &Message::new("emptyIsMeaningless", "An empty “{{attributeName}}” attribute is meaningless.");
+const NEVER_VALID: &Message =
+    &Message::new("neverValid", "“{{reportingValue}}” is never a valid “{{attributeName}}” attribute value.");
+const NO_EMPTY: &Message = &Message::new("noEmpty", "An empty “{{attributeName}}” attribute is meaningless.");
+const NO_METHOD: &Message = &Message::new("noMethod", "The ”{{attributeName}}“ attribute cannot be a method.");
+const NOT_ALONE: &Message =
+    &Message::new("notAlone", "“{{reportingValue}}” must be directly followed by “{{missingValue}}”.");
+const NOT_PAIRED: &Message = &Message::new(
     "notPaired",
     "“{{reportingValue}}” can not be directly followed by “{{secondValue}}” without “{{missingValue}}”.",
 );
-const NOT_VALID_FOR: Message = Message::new(
+const NOT_VALID_FOR: &Message = &Message::new(
     "notValidFor",
     "“{{reportingValue}}” is not a valid “{{attributeName}}” attribute value for <{{elementName}}>.",
 );
-const ONLY_MEANINGFUL_FOR: Message =
-    Message::new("onlyMeaningfulFor", "The ”{{attributeName}}“ attribute only has meaning on the tags: {{tagNames}}");
-const ONLY_STRINGS: Message = Message::new("onlyStrings", "“{{attributeName}}” attribute only supports strings.");
-const SPACE_DELIMITED: Message =
-    Message::new("spaceDelimited", "”{{attributeName}}“ attribute values should be space delimited.");
-const SUGGEST_REMOVE_DEFAULT: Message = Message::new("suggestRemoveDefault", "\"remove {{attributeName}}\"");
-const SUGGEST_REMOVE_EMPTY: Message =
-    Message::new("suggestRemoveEmpty", "\"remove empty attribute {{attributeName}}\"");
-const SUGGEST_REMOVE_INVALID: Message =
-    Message::new("suggestRemoveInvalid", "“remove invalid attribute {{reportingValue}}”");
-const SUGGEST_REMOVE_WHITESPACES: Message =
-    Message::new("suggestRemoveWhitespaces", "remove whitespaces in “{{attributeName}}”");
-const SUGGEST_REMOVE_NON_STRING: Message =
-    Message::new("suggestRemoveNonString", "remove non-string value in “{{attributeName}}”");
+const ONLY_MEANINGFUL_FOR: &Message =
+    &Message::new("onlyMeaningfulFor", "The ”{{attributeName}}“ attribute only has meaning on the tags: {{tagNames}}");
+const ONLY_STRINGS: &Message = &Message::new("onlyStrings", "“{{attributeName}}” attribute only supports strings.");
+const SPACE_DELIMITED: &Message =
+    &Message::new("spaceDelimited", "”{{attributeName}}“ attribute values should be space delimited.");
+const SUGGEST_REMOVE_DEFAULT: &Message = &Message::new("suggestRemoveDefault", "\"remove {{attributeName}}\"");
+const SUGGEST_REMOVE_EMPTY: &Message =
+    &Message::new("suggestRemoveEmpty", "\"remove empty attribute {{attributeName}}\"");
+const SUGGEST_REMOVE_INVALID: &Message =
+    &Message::new("suggestRemoveInvalid", "“remove invalid attribute {{reportingValue}}”");
+const SUGGEST_REMOVE_WHITESPACES: &Message =
+    &Message::new("suggestRemoveWhitespaces", "remove whitespaces in “{{attributeName}}”");
+const SUGGEST_REMOVE_NON_STRING: &Message =
+    &Message::new("suggestRemoveNonString", "remove non-string value in “{{attributeName}}”");
 
 const REL: &[u8] = b"rel";
 const ATTRIBUTE_NAME: [(&str, &[u8]); 1] = [("attributeName", REL)];

@@ -213,12 +213,12 @@ const moduleChildrenFunctions = [
 
 const requireCacheFunctions = [...functionsIn("builtins/CommonJS", "createRequireCache"), ...moduleChildrenFunctions];
 
+// A built-in handler of Module._extensions loads a file that is an ES module through it, and module._compile the text of one.
+const esModuleIntoModuleFunctions = functionsIn("builtins/CommonJS", "requireESMFromHijackedExtension");
+
 const fusedTraversalFunctions = functionsIn("prelude/array-traversal", "traverseArray");
 
 const streamedModuleFunctions = functionsIn("builtins/WasmStreaming", "consumeStream");
-
-// A built-in handler of Module._extensions loads a file that is an ES module through it, and module._compile the text of one.
-const esModuleIntoModuleFunctions = functionsIn("builtins/CommonJS", "requireESMFromHijackedExtension");
 
 const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFunctionSpec[]>> = {
   "%ModuleObject%._compile": esModuleIntoModuleFunctions,

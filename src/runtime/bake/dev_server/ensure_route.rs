@@ -120,7 +120,9 @@ pub(super) fn ensure_route_is_bundled(
                                     .as_ref()
                                     .expect("infallible: server bound")
                                     .get_or_load_plugins(
-                                        crate::server::ServePluginsCallback::DevServer,
+                                        crate::server::ServePluginsCallback::DevServer(
+                                            dev.client_transpiler().options.source_map,
+                                        ),
                                     );
                                 match load_result {
                                     crate::server::GetOrStartLoadResult::Pending => {

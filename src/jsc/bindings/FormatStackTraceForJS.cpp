@@ -51,17 +51,22 @@ static ALWAYS_INLINE OwnStack ownStackOf(JSC::VM& vm, JSC::JSObject* object)
     return ownStack;
 }
 
-// Whether the object takes new properties. The Structure of a class that answers isExtensible() itself says "not extensible"
-// from the start: globalThis, and the objects and functions of compiled code. A Proxy answers with a trap and is not asked:
-// Error.captureStackTrace takes none, and a store to one lands on its own cell.
+// Whether the object takes new properties. A class that answers isExtensible() itself is asked, because its Structure does not
+// say: that of globalThis says "not extensible" from the start, and that of an object of compiled code never says it. A Proxy
+// answers with a trap and is not asked: Error.captureStackTrace takes none, and a store to one lands on its own cell.
 static ALWAYS_INLINE bool isExtensibleWithoutTrap(JSC::JSObject* object)
 {
     JSC::Structure* structure = object->structure();
-    if (structure->isStructureExtensible()) [[likely]]
-        return true;
-    if (!structure->typeInfo().overridesIsExtensible())
-        return false;
-    return object->type() == JSC::ProxyObjectType || object->methodTable()->isExtensible(object, structure->globalObject());
+    if (structure->typeInfo().overridesIsExtensible()) [[unlikely]]
+        return object->type() == JSC::ProxyObjectType || object->methodTable()->isExtensible(object, structure->globalObject());
+    return structure->isStructureExtensible();
+}
+
+// A built-in object of a compiled executable is closed this way, not by Object.freeze(). putDirect() refuses it, and
+// putDirectOrThrow() then throws what an assignment to it throws. So it is left to the store.
+static ALWAYS_INLINE bool hasImmutableProperties(JSC::Structure* structure)
+{
+    return structure->hasImmutableProperties() && !structure->hasFrozenElementsInPlace();
 }
 
 enum class StackRefusal : bool {
@@ -69,14 +74,11 @@ enum class StackRefusal : bool {
     NotConfigurable,
 };
 
-// What V8 says when Error.captureStackTrace refuses its target. A built-in object of a compiled executable is closed with
-// immutable properties, and keeps what every define on it says.
-static NEVER_INLINE JSC::EncodedJSValue throwStackRefusal(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* target, StackRefusal refusal)
+// What V8 says when Error.captureStackTrace refuses its target.
+static NEVER_INLINE JSC::EncodedJSValue throwStackRefusal(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, StackRefusal refusal)
 {
     if (refusal == StackRefusal::NotConfigurable)
         return JSC::throwVMTypeError(globalObject, scope, "Cannot redefine property: stack"_s);
-    if (target->hasImmutableProperties() && !target->hasFrozenElementsInPlace())
-        return JSC::throwVMTypeError(globalObject, scope, JSC::ImmutablePropertyDefineError);
     return JSC::throwVMTypeError(globalObject, scope, "Cannot define property stack, object is not extensible"_s);
 }
 
@@ -90,7 +92,10 @@ std::optional<unsigned> attributesForStackStore(JSC::VM& vm, JSC::JSObject* obje
 {
     unsigned attributes = JSC::PropertyAttribute::DontEnum | 0;
     auto* instance = dynamicDowncast<JSC::ErrorInstance>(object);
-    if (!instance && !object->structure()->isNonExtensibleOrHasNonConfigurableProperties()) [[likely]]
+    JSC::Structure* structure = object->structure();
+    if (!instance && !structure->isNonExtensibleOrHasNonConfigurableProperties()) [[likely]]
+        return attributes;
+    if (hasImmutableProperties(structure)) [[unlikely]]
         return attributes;
 
     OwnStack ownStack = ownStackOf(vm, object);
@@ -907,6 +912,9 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
     auto stackTrace = errorObject->stackTrace();
 
     JSValue result;
+    // The frames that this call took out of the error. Their cells stay rooted until it returns.
+    std::unique_ptr<WTF::Vector<JSC::StackFrame>> takenStackTrace;
+    JSC::MarkedArgumentBuffer protectedFrameCells;
     if (stackTrace == nullptr) {
         WTF::Vector<JSC::StackFrame> emptyTrace;
         result = computeErrorInfoToJSValue(vm, emptyTrace, line, column, sourceURL, errorObject);
@@ -916,7 +924,6 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
         auto ownedStackTrace = isBeingMaterialized
             ? makeUnique<WTF::Vector<JSC::StackFrame>>(*stackTrace)
             : makeUnique<WTF::Vector<JSC::StackFrame>>(WTF::move(*stackTrace));
-        JSC::MarkedArgumentBuffer protectedFrameCells;
         protectFrameCells(protectedFrameCells, *ownedStackTrace);
         if (protectedFrameCells.hasOverflowed()) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
@@ -924,16 +931,17 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
         }
         result = computeErrorInfoToJSValue(vm, *ownedStackTrace, line, column, sourceURL, errorObject);
         if (!isBeingMaterialized) {
-            // An error that does not take the stack below keeps its frames: the next read formats them again.
-            bool keepsFrames = !scope.exception() && !attributesForStackStore(vm, errorObject);
-            errorObject->setStackFrames(vm, keepsFrames ? WTF::move(*ownedStackTrace) : WTF::Vector<JSC::StackFrame> {});
+            errorObject->setStackFrames(vm, {});
+            takenStackTrace = WTF::move(ownedStackTrace);
         }
     }
     RETURN_IF_EXCEPTION(scope, {});
-    // Object.seal() and Object.freeze() turn the accessor that called this into one that is not configurable. It stays then,
-    // and formats again at the next read.
+    // Object.seal() and Object.freeze() turn the accessor that called this into one that is not configurable. It stays then:
+    // the error keeps its frames, and the next read formats them again.
     if (auto attributes = attributesForStackStore(vm, errorObject))
         errorObject->putDirect(vm, vm.propertyNames->stack, result, *attributes);
+    else if (takenStackTrace)
+        errorObject->setStackFrames(vm, WTF::move(*takenStackTrace));
     return JSValue::encode(result);
 }
 
@@ -968,13 +976,16 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     // V8 refuses a target before it captures a frame: one that is not extensible, even if it has a `stack`, and then one whose
     // `stack` is not configurable.
     auto* instance = dynamicDowncast<JSC::ErrorInstance>(errorObject);
+    JSC::Structure* structure = errorObject->structure();
     OwnStack ownStack;
-    if (instance || errorObject->structure()->isNonExtensibleOrHasNonConfigurableProperties()) {
-        if (!isExtensibleWithoutTrap(errorObject)) [[unlikely]]
-            return throwStackRefusal(lexicalGlobalObject, scope, errorObject, StackRefusal::NotExtensible);
+    if (instance || structure->isNonExtensibleOrHasNonConfigurableProperties()) {
         ownStack = ownStackOf(vm, errorObject);
-        if (ownStack.value && (ownStack.attributes & JSC::PropertyAttribute::DontDelete)) [[unlikely]]
-            return throwStackRefusal(lexicalGlobalObject, scope, errorObject, StackRefusal::NotConfigurable);
+        if (!hasImmutableProperties(structure)) [[likely]] {
+            if (!isExtensibleWithoutTrap(errorObject)) [[unlikely]]
+                return throwStackRefusal(lexicalGlobalObject, scope, StackRefusal::NotExtensible);
+            if (ownStack.value && (ownStack.attributes & JSC::PropertyAttribute::DontDelete)) [[unlikely]]
+                return throwStackRefusal(lexicalGlobalObject, scope, StackRefusal::NotConfigurable);
+        }
     }
 
     size_t stackTraceLimit = globalObject->stackTraceLimit().value_or(DEFAULT_ERROR_STACK_TRACE_LIMIT);
@@ -1007,6 +1018,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
 
             // `ownStack` is what the head found: nothing since then ran JavaScript or changed the Structure of the error. An
             // error that has the accessor from an earlier capture keeps it.
+            ASSERT(ownStackOf(vm, instance).value == ownStack.value);
             auto* lazyStack = globalObject->m_lazyStackCustomGetterSetter.get(globalObject);
             unsigned lazyStackAttributes = JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::CustomAccessor;
             if (ownStack.value != JSC::JSValue(lazyStack) || ownStack.attributes != lazyStackAttributes) {

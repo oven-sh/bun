@@ -20,7 +20,7 @@ attempt("capture", () => Error.captureStackTrace(target));
 attempt("another property", () => {
   const key = Reflect.ownKeys(target).find(key => key !== "stack");
   const found = Object.getOwnPropertyDescriptor(target, key);
-  return [key, found.writable, found.configurable].join("/");
+  return found ? [key, found.writable, found.configurable].join("/") : "none";
 });
 attempt("store", () => {
   target.stack = "stored";

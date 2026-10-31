@@ -487,12 +487,15 @@ impl DevServer {
                 if !self.has_failure_from_earlier_bundle(owner) {
                     continue;
                 }
-                // The link step would fail this file again: its import scan has to pass.
-                if !bv2.css_import_scan_passes(row) {
-                    continue;
-                }
             }
             let on_server = self.failed_on_server_before_this_bundle(key);
+            if failed_on_client.is_none() && on_server.is_none() {
+                continue;
+            }
+            // The link step would fail this file again: its import scan has to pass.
+            if !bv2.css_import_scan_passes(row) {
+                continue;
+            }
             // A plugin can load one path as a stylesheet for the browser and as a module for the server.
             let stylesheet_on_server = on_server.filter(|_| {
                 target.bake_graph() != bake::Graph::Client || Self::imported_by_server_row(bv2, row)

@@ -2366,6 +2366,64 @@ devTest("css file whose error turns into an @import that is not css does not bun
     expect(await memberLoads()).toBe(2);
   },
 });
+devTest("css root that a framework route imports is not bundled again while its @import fails in the link step", {
+  framework: minimalFramework,
+  // "dep.css" is the text of "dep.txt". "flip.css" is a script or a stylesheet, as "flip.txt" says. The class name in
+  // "member.css" counts the times that the plugin loaded it.
+  pluginFile: `
+    import { join } from "node:path";
+    let memberLoads = 0;
+    export default [
+      {
+        name: "kind-plugin",
+        setup(build) {
+          build.onLoad({ filter: /dep\\.css$/ }, async () => ({
+            contents: await Bun.file(join(import.meta.dir, "dep.txt")).text(),
+            loader: "css",
+          }));
+          build.onLoad({ filter: /flip\\.css$/ }, async () => {
+            const text = await Bun.file(join(import.meta.dir, "flip.txt")).text();
+            if (text.includes("as javascript")) return { contents: "export {};", loader: "js" };
+            return { contents: text, loader: "css" };
+          });
+          build.onLoad({ filter: /member\\.css$/ }, () => ({
+            contents: ".member-v" + ++memberLoads + " { color: red; }",
+            loader: "css",
+          }));
+        },
+      },
+    ];
+  `,
+  files: {
+    // The server graph holds the importer of each stylesheet, and the failure of "dep.css" while it does not parse.
+    "routes/index.ts": frameworkStylesheetRoute("../main.css"),
+    "routes/second.ts": frameworkStylesheetRoute("../dep.css"),
+    "main.css": `@import "./dep.css";\n@import "./member.css";\n.main-v1 { color: red; }`,
+    "dep.css": ``,
+    "dep.txt": `@import "./flip.css";\n.dep-v1 { color: red; }}`,
+    "flip.css": ``,
+    "flip.txt": `/* as javascript */`,
+    "member.css": ``,
+  },
+  async test(dev) {
+    expect(await linkedStylesheets(dev, "/")).toEqual({ status: 500, sheets: [] });
+    expect(await linkedStylesheets(dev, "/second")).toEqual({ status: 500, sheets: [] });
+    // "dep.css" parses now, and its @import is a script: it still fails, in the link step this time.
+    await Bun.write(dev.join("dep.txt"), `@import "./flip.css";\n.dep-v1 { color: red; }`);
+    // Each save bundles "dep.css" again for the route that imports it. "main.css" stays out of those bundles.
+    for (const _ of [1, 2, 3]) {
+      await dev.writeNoChanges("routes/second.ts");
+    }
+    await Bun.write(dev.join("flip.txt"), `.flip-v1 { color: red; }`);
+    await dev.writeNoChanges("routes/second.ts");
+    expect(await linkedStylesheets(dev, "/second")).toEqual({ status: 200, sheets: [".flip-v1 .dep-v1"] });
+    // The plugin loaded "member.css" twice: in the first bundle of "main.css", and in the one that repaired "dep.css".
+    expect(await linkedStylesheets(dev, "/")).toEqual({
+      status: 200,
+      sheets: [".flip-v1 .dep-v1 .member-v2 .main-v1"],
+    });
+  },
+});
 devTest("css file with an @import that an onResolve plugin rejects does not bundle the stylesheet that imports it", {
   files: {
     "bunfig.toml": `

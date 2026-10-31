@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { openSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -9,7 +10,6 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
-import { openSync } from "fs";
 import { join } from "path";
 import util from "util";
 import { runInNewContext } from "vm";

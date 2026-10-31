@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect } from "bun:test";
-import { itBundled } from "./expectBundled";
+import { itBundled, type BundlerTestBundleAPI } from "./expectBundled";
 
 const nestedFunctions = /* js */ `
   export function outer() {
@@ -76,6 +76,71 @@ describe("bundler", () => {
       `,
     },
     run: { stdout: "RedisClient\nRedisClient\nRedisClient\n" },
+  });
+  // Only Bun can load a `with { type: "sqlite" }` import. The bundler leaves it
+  // in the output for every target, with its attribute, so the bundle opens the
+  // database when Bun runs it.
+  //
+  // The fixture is `app.db` on purpose: `.sqlite` selects the loader by
+  // extension alone, while a `.db` file only gets it from the attribute.
+  describe("sqlite import attribute on a target other than bun", () => {
+    const files = {
+      "/entry.js": /* js */ `
+        import db from './app.db' with {type: "sqlite"};
+        console.log(db.query("select message from messages LIMIT 1").get().message);
+      `,
+      "/app.db": (() => {
+        const db = new Database(":memory:");
+        db.exec("create table messages (message text)");
+        db.exec("insert into messages values ('Hello, world!')");
+        return db.serialize();
+      })(),
+    };
+    // A bundled output starts with a `// entry.js` header. The transpiled one does not.
+    const keepsAttribute = (api: BundlerTestBundleAPI) => {
+      expect(api.readFile("out.js").replace(/^\/\/ entry\.js\n/, "")).toBe(
+        'import db from "./app.db" with { type: "sqlite" };\n' +
+          'console.log(db.query("select message from messages LIMIT 1").get().message);\n',
+      );
+    };
+    for (const target of ["node", "browser"] as const) {
+      itBundled(`bun/sqlite-attribute-target-${target}`, {
+        target,
+        files,
+        onAfterBundle: keepsAttribute,
+        run: { stdout: "Hello, world!" },
+      });
+    }
+    itBundled("bun/sqlite-attribute-target-node-no-bundle", {
+      target: "node",
+      bundling: false,
+      files,
+      onAfterBundle: keepsAttribute,
+      run: { stdout: "Hello, world!" },
+    });
+    // `--format cjs` turns the import into a `require()`. The loader goes in its second argument.
+    for (const target of ["bun", "node"] as const) {
+      itBundled(`bun/sqlite-attribute-format-cjs-target-${target}`, {
+        target,
+        format: "cjs",
+        files,
+        onAfterBundle(api) {
+          api.expectFile("out.js").toContain('require("./app.db", { type: "sqlite" })');
+        },
+        run: { stdout: "Hello, world!" },
+      });
+    }
+    // An importer that is an ES module by type gets `__toESM(..., 1)`. Node mode
+    // binds `default` to the whole namespace, so a sqlite module does not take it.
+    itBundled("bun/sqlite-attribute-format-cjs-esm-importer", {
+      target: "bun",
+      format: "cjs",
+      files: { "/entry.mjs": files["/entry.js"], "/app.db": files["/app.db"] },
+      onAfterBundle(api) {
+        api.expectFile("out.js").toContain('__toESM(require("./app.db", { type: "sqlite" }))');
+      },
+      run: { stdout: "Hello, world!" },
+    });
   });
   itBundled("bun/embedded-sqlite-file", {
     target: "bun",

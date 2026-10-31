@@ -32,7 +32,7 @@ use bun_core::strings;
 
 use crate::options::ModuleType;
 use bun_ast::ast_result::Ast;
-use bun_ast::{CharFreq, ExportsKind, Ref, Scope, SlotCounts, StoreStr, TlaCheck};
+use bun_ast::{CharFreq, ExportsKind, Ref, Scope, SlotCounts, StoreStr};
 use bun_ast::{part, symbol};
 
 pub(crate) type CommonJSNamedExports = bun_ast::ast_result::CommonJSNamedExports;
@@ -77,7 +77,6 @@ pub struct BundledAst<'arena> {
     pub(crate) wrapper_ref: Ref,
     pub(crate) require_ref: Ref,
     pub(crate) top_level_await_keyword: bun_ast::Range,
-    pub tla_check: TlaCheck,
 
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass
@@ -125,7 +124,6 @@ bun_collections::multi_array_columns! {
         wrapper_ref: Ref,
         require_ref: Ref,
         top_level_await_keyword: bun_ast::Range,
-        tla_check: TlaCheck,
         named_imports: NamedImports,
         named_exports: NamedExports,
         export_star_import_records: bun_alloc::AstVec<u32>,
@@ -185,7 +183,6 @@ impl<'arena> BundledAst<'arena> {
             wrapper_ref: Ref::NONE,
             require_ref: Ref::NONE,
             top_level_await_keyword: bun_ast::Range::NONE,
-            tla_check: TlaCheck::default(),
             named_imports: NamedImports::default(),
             named_exports: NamedExports::default(),
             export_star_import_records: bun_alloc::AstAlloc::vec(),
@@ -322,7 +319,6 @@ impl<'arena> BundledAst<'arena> {
             wrapper_ref: ast.wrapper_ref,
             require_ref: ast.require_ref,
             top_level_await_keyword: ast.top_level_await_keyword,
-            tla_check: TlaCheck::default(),
             // These are used when bundling. They are filled in during the parser pass
             // since we already have to traverse the AST then anyway and the parser pass
             // is conveniently fully parallelized.

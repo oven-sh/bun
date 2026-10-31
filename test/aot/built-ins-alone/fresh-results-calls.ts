@@ -459,6 +459,7 @@ export const notCalled: Record<string, string> = {
   "%CompilerHelpers%.plainQueryEntries": ofTheCompiler,
   "%CompilerHelpers%.plainQueryKeys": ofTheCompiler,
   "%CompilerHelpers%.plainQueryValues": ofTheCompiler,
+  "native:Bindgen:jest.bind.ts:nodeTestFileFlags": ofOneModule("node:test"),
   "native:Bindgen:node_fs_binding.bind.ts:binding": ofOneModule("internal/fs/binding"),
   "native:Bindgen:node_util_binding.bind.ts:extractedSplitNewLinesFastPathStringsOnly":
     ofOneModule("internal/util/inspect"),

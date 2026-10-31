@@ -424,6 +424,11 @@ impl<'p, 'a, Id> StreamingClap<'p, 'a, Id, crate::args::SliceIterator<'a>> {
             unknown_long_flags: None,
         }
     }
+
+    /// The words that `next` has not read yet.
+    pub fn unread(&self) -> &'a [&'a [u8]] {
+        self.iter.remain
+    }
 }
 
 #[cfg(test)]

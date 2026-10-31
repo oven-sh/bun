@@ -286,15 +286,6 @@ enum TemplateExpression<'a> {
     TSType(TypeNode<'a>),
 }
 
-impl Spanned for TemplateExpression<'_> {
-    fn span(&self) -> Span {
-        match self {
-            Self::Expression(e) => e.span(),
-            Self::TSType(t) => t.span(),
-        }
-    }
-}
-
 /// `${e}`
 struct FormatTemplateExpression<'a> {
     expression: TemplateExpression<'a>,

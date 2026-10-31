@@ -99,6 +99,7 @@ SEL WKWebView::s_rightMouseDown;
 SEL WKWebView::s_rightMouseUp;
 SEL WKWebView::s_otherMouseDown;
 SEL WKWebView::s_otherMouseUp;
+SEL WKWebView::s_simulateMouseMove;
 SEL WKWebView::s_keyDown;
 SEL WKWebView::s_keyUp;
 SEL WKWebView::s_scrollWheel;
@@ -505,6 +506,7 @@ bool ObjCRuntime::load()
     WKWebView::s_rightMouseUp = sel("rightMouseUp:");
     WKWebView::s_otherMouseDown = sel("otherMouseDown:");
     WKWebView::s_otherMouseUp = sel("otherMouseUp:");
+    WKWebView::s_simulateMouseMove = sel("_simulateMouseMove:");
     WKWebView::s_keyDown = sel("keyDown:");
     WKWebView::s_keyUp = sel("keyUp:");
     WKWebView::s_scrollWheel = sel("scrollWheel:");

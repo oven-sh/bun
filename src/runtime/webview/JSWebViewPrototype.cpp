@@ -12,6 +12,9 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/JSONObject.h>
 #include <wtf/text/MakeString.h>
+#include <algorithm>
+#include <cmath>
+#include <limits>
 
 #include "ipc_protocol.h" // VirtualKey, Mod*
 
@@ -24,6 +27,8 @@ static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncEvaluate);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncScreenshot);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncCdp);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncClick);
+static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncMouseMove);
+static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncHover);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncType);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncPress);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncScroll);
@@ -48,6 +53,8 @@ static const HashTableValue JSWebViewPrototypeTableValues[] = {
     { "screenshot"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncScreenshot, 0 } },
     { "cdp"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncCdp, 1 } },
     { "click"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncClick, 2 } },
+    { "mouseMove"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncMouseMove, 2 } },
+    { "hover"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncHover, 1 } },
     { "type"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncType, 1 } },
     { "press"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncPress, 1 } },
     { "scroll"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncScroll, 2 } },
@@ -153,6 +160,17 @@ static bool checkSlot(JSGlobalObject* g, ThrowScope& scope, const WriteBarrier<J
         return false;
     }
     return true;
+}
+
+// After argument parsing: a Proxy getter or valueOf can call view.close()
+// between unwrapThis and the send (the same TOCTOU as screenshot()).
+static bool checkOpenSlot(JSGlobalObject* g, ThrowScope& scope, JSWebView* view, const WriteBarrier<JSPromise>& slot, ASCIILiteral what)
+{
+    if (view->m_closed) {
+        Bun::throwError(g, scope, ErrorCode::ERR_INVALID_STATE, "WebView is closed"_s);
+        return false;
+    }
+    return checkSlot(g, scope, slot, what);
 }
 
 static uint8_t parseModifiers(JSGlobalObject* g, ThrowScope& scope, JSValue v)
@@ -408,6 +426,82 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncCdp, (JSGlobalObject * globalObject, 
 
 // --- Native input -----------------------------------------------------------
 
+// Clamped to the u32 wire field: an out-of-range float→integer cast is UB
+// (Infinity gave 0 on x86-64 and saturated on arm64).
+static bool parseTimeout(JSGlobalObject* g, ThrowScope& scope, JSValue opts, uint32_t& timeout)
+{
+    if (!opts.isObject()) return true;
+    JSValue t = opts.getObject()->get(g, Identifier::fromString(g->vm(), "timeout"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!t.isNumber()) return true;
+    double d = t.toNumber(g);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!std::isnan(d)) timeout = static_cast<uint32_t>(std::clamp(d, 0.0, static_cast<double>(UINT32_MAX)));
+    return true;
+}
+
+struct ClickOptions {
+    uint8_t button = 0;
+    uint8_t modifiers = 0;
+    uint8_t clickCount = 1;
+    uint32_t timeout = 30000;
+};
+static bool parseClickOptions(JSGlobalObject* g, ThrowScope& scope, JSValue opts, ClickOptions& out)
+{
+    if (!opts.isObject()) return true;
+    VM& vm = g->vm();
+    JSObject* o = opts.getObject();
+    JSValue b = o->get(g, Identifier::fromString(vm, "button"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (b.isString()) {
+        WTF::String bs = b.toWTFString(g);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (bs == "right"_s)
+            out.button = 1;
+        else if (bs == "middle"_s)
+            out.button = 2;
+    }
+    JSValue m = o->get(g, Identifier::fromString(vm, "modifiers"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    out.modifiers = parseModifiers(g, scope, m);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSValue cc = o->get(g, Identifier::fromString(vm, "clickCount"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (cc.isNumber()) out.clickCount = static_cast<uint8_t>(std::clamp(cc.toInt32(g), 1, 3));
+    RETURN_IF_EXCEPTION(scope, false);
+    return parseTimeout(g, scope, opts, out.timeout);
+}
+
+// The wire carries floats; a value past float range would become Infinity.
+static bool parsePoint(JSGlobalObject* g, ThrowScope& scope, JSValue xv, JSValue yv, double& x, double& y)
+{
+    x = xv.toNumber(g);
+    RETURN_IF_EXCEPTION(scope, false);
+    y = yv.toNumber(g);
+    RETURN_IF_EXCEPTION(scope, false);
+    auto fitsFloat = [](double v) { return std::isfinite(v) && std::fabs(v) <= std::numeric_limits<float>::max(); };
+    if (!fitsFloat(x) || !fitsFloat(y)) {
+        Bun::ERR::INVALID_ARG_VALUE(scope, g, "x/y"_s, jsNumber(fitsFloat(x) ? y : x), "must be finite and within float range"_s);
+        return false;
+    }
+    return true;
+}
+
+static bool parseSelector(JSGlobalObject* g, ThrowScope& scope, JSValue v, WTF::String& selector)
+{
+    if (!v.isString()) {
+        Bun::ERR::INVALID_ARG_TYPE(scope, g, "selector"_s, "string"_s, v);
+        return false;
+    }
+    selector = v.toWTFString(g);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (selector.isEmpty()) {
+        Bun::ERR::INVALID_ARG_VALUE(scope, g, "selector"_s, v, "must not be empty"_s);
+        return false;
+    }
+    return true;
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClick, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, jsWebViewProtoFuncClick);
@@ -417,62 +511,75 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClick, (JSGlobalObject * globalObject
     RETURN_IF_EXCEPTION(scope, {});
 
     JSValue arg0 = callFrame->argument(0);
-
-    // Shared options parse: { button, modifiers, clickCount, timeout }
-    // timeout only applies to the selector overload.
-    uint8_t button = 0, mods = 0, clickCount = 1;
-    uint32_t timeout = 30000;
-    auto parseOpts = [&](JSValue opts) -> bool {
-        if (!opts.isObject()) return true;
-        JSObject* o = opts.getObject();
-        JSValue b = o->get(globalObject, Identifier::fromString(vm, "button"_s));
-        RETURN_IF_EXCEPTION(scope, false);
-        if (b.isString()) {
-            WTF::String bs = b.toWTFString(globalObject);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (bs == "right"_s)
-                button = 1;
-            else if (bs == "middle"_s)
-                button = 2;
-        }
-        JSValue m = o->get(globalObject, Identifier::fromString(vm, "modifiers"_s));
-        RETURN_IF_EXCEPTION(scope, false);
-        mods = parseModifiers(globalObject, scope, m);
-        RETURN_IF_EXCEPTION(scope, false);
-        JSValue cc = o->get(globalObject, Identifier::fromString(vm, "clickCount"_s));
-        RETURN_IF_EXCEPTION(scope, false);
-        if (cc.isNumber()) clickCount = static_cast<uint8_t>(std::clamp(cc.toInt32(globalObject), 1, 3));
-        RETURN_IF_EXCEPTION(scope, false);
-        JSValue t = o->get(globalObject, Identifier::fromString(vm, "timeout"_s));
-        RETURN_IF_EXCEPTION(scope, false);
-        if (t.isNumber()) timeout = static_cast<uint32_t>(std::max(0.0, t.toNumber(globalObject)));
-        RETURN_IF_EXCEPTION(scope, false);
-        return true;
-    };
+    ClickOptions opts;
 
     // click(selector, opts?) — rAF-polled actionability check page-side
     // via callAsyncJavaScript:, then native click at the resolved center.
     if (arg0.isString()) {
-        WTF::String selector = arg0.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (selector.isEmpty()) {
-            return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "selector"_s, arg0, "must not be empty"_s);
-        }
-        if (!parseOpts(callFrame->argument(1))) return {};
-        if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
-        return JSValue::encode(thisObject->clickSelector(globalObject, selector, timeout, button, mods, clickCount));
+        WTF::String selector;
+        if (!parseSelector(globalObject, scope, arg0, selector)) return {};
+        if (!parseClickOptions(globalObject, scope, callFrame->argument(1), opts)) return {};
+        if (!checkOpenSlot(globalObject, scope, thisObject, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+        return JSValue::encode(thisObject->clickSelector(globalObject, selector, opts.timeout, opts.button, opts.modifiers, opts.clickCount));
     }
 
     // click(x, y, opts?)
-    double x = arg0.toNumber(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    double y = callFrame->argument(1).toNumber(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (!parseOpts(callFrame->argument(2))) return {};
+    double x, y;
+    if (!parsePoint(globalObject, scope, arg0, callFrame->argument(1), x, y)) return {};
+    if (!parseClickOptions(globalObject, scope, callFrame->argument(2), opts)) return {};
 
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
-    return JSValue::encode(thisObject->click(globalObject,
-        static_cast<float>(x), static_cast<float>(y), button, mods, clickCount));
+    if (!checkOpenSlot(globalObject, scope, thisObject, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    return JSValue::encode(thisObject->click(globalObject, static_cast<float>(x), static_cast<float>(y), opts.button, opts.modifiers, opts.clickCount));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncMouseMove, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, jsWebViewProtoFuncMouseMove);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = unwrapThis(globalObject, scope, callFrame, "mouseMove"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    double dx, dy;
+    if (!parsePoint(globalObject, scope, callFrame->argument(0), callFrame->argument(1), dx, dy)) return {};
+    float x = static_cast<float>(dx), y = static_cast<float>(dy);
+    // WKWebView drops a move outside its visibleRect once it is first
+    // responder (after any click), so such a move would resolve as a no-op.
+    // Chrome dispatches it and clears :hover, and cdp() can resize the page
+    // behind m_width/m_height, so the bound is WebKit-only.
+    if (thisObject->m_backend == WebViewBackend::WebKit) {
+        auto inViewport = [](double v, uint32_t size) { return v >= 0 && v < static_cast<double>(size); };
+        if (!inViewport(dx, thisObject->m_width) || !inViewport(dy, thisObject->m_height)) {
+            bool xBad = !inViewport(dx, thisObject->m_width);
+            return Bun::ERR::OUT_OF_RANGE(scope, globalObject, WTF::String(xBad ? "x"_s : "y"_s),
+                makeString("within the viewport: >= 0 and < "_s, xBad ? thisObject->m_width : thisObject->m_height),
+                jsNumber(xBad ? dx : dy));
+        }
+        // Narrowing can round a value just below the edge up onto it.
+        auto belowEdge = [](float v, uint32_t size) { return std::min(v, std::nextafter(static_cast<float>(size), 0.0f)); };
+        x = belowEdge(x, thisObject->m_width);
+        y = belowEdge(y, thisObject->m_height);
+    }
+
+    if (!checkOpenSlot(globalObject, scope, thisObject, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    return JSValue::encode(thisObject->mouseMove(globalObject, x, y));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncHover, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, jsWebViewProtoFuncHover);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = unwrapThis(globalObject, scope, callFrame, "hover"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    WTF::String selector;
+    if (!parseSelector(globalObject, scope, callFrame->argument(0), selector)) return {};
+    uint32_t timeout = 30000;
+    if (!parseTimeout(globalObject, scope, callFrame->argument(1), timeout)) return {};
+
+    if (!checkOpenSlot(globalObject, scope, thisObject, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    return JSValue::encode(thisObject->hover(globalObject, selector, timeout));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncType, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -489,7 +596,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncType, (JSGlobalObject * globalObject,
     WTF::String text = textArg.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    if (!checkOpenSlot(globalObject, scope, thisObject, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->type(globalObject, text));
 }
 
@@ -522,7 +629,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncPress, (JSGlobalObject * globalObject
             "must be a virtual key name (Enter, Tab, Escape, Arrow*, etc.) or a single character"_s);
     }
 
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    if (!checkOpenSlot(globalObject, scope, thisObject, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->press(globalObject, vk, mods,
         vk == VirtualKey::Character ? key : WTF::String()));
 }
@@ -546,7 +653,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScroll, (JSGlobalObject * globalObjec
         return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "dx/dy"_s,
             jsNumber(std::isfinite(dx) ? dy : dx), "must be finite"_s);
 
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    if (!checkOpenSlot(globalObject, scope, thisObject, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->scroll(globalObject, dx, dy));
 }
 
@@ -558,26 +665,16 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScrollTo, (JSGlobalObject * globalObj
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "scrollTo"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
-    JSValue arg0 = callFrame->argument(0);
-    if (!arg0.isString()) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "selector"_s, "string"_s, arg0);
-    }
-    WTF::String selector = arg0.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (selector.isEmpty()) {
-        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "selector"_s, arg0, "must not be empty"_s);
-    }
+    WTF::String selector;
+    if (!parseSelector(globalObject, scope, callFrame->argument(0), selector)) return {};
 
     // opts: { timeout?, block?: "start"|"center"|"end"|"nearest" }
     uint32_t timeout = 30000;
     uint8_t block = 1; // center
     JSValue opts = callFrame->argument(1);
+    if (!parseTimeout(globalObject, scope, opts, timeout)) return {};
     if (opts.isObject()) {
         JSObject* o = opts.getObject();
-        JSValue t = o->get(globalObject, Identifier::fromString(vm, "timeout"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        if (t.isNumber()) timeout = static_cast<uint32_t>(std::max(0.0, t.toNumber(globalObject)));
-        RETURN_IF_EXCEPTION(scope, {});
         JSValue b = o->get(globalObject, Identifier::fromString(vm, "block"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (b.isString()) {
@@ -597,7 +694,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScrollTo, (JSGlobalObject * globalObj
         }
     }
 
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    if (!checkOpenSlot(globalObject, scope, thisObject, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->scrollTo(globalObject, selector, timeout, block));
 }
 
@@ -618,7 +715,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncResize, (JSGlobalObject * globalObjec
     if (h == 0 || h > 16384)
         return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "height"_s, 1, 16384, jsNumber(h));
 
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    if (!checkOpenSlot(globalObject, scope, thisObject, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->resize(globalObject, w, h));
 }
 

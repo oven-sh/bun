@@ -397,6 +397,7 @@ struct NSEvent : Ref {
         LeftMouseUp = 2,
         RightMouseDown = 3,
         RightMouseUp = 4,
+        MouseMoved = 5,
         KeyDown = 10,
         KeyUp = 11,
         OtherMouseDown = 25,
@@ -638,14 +639,13 @@ struct WKWebView : Ref {
     static SEL s_otherMouseUp;
     static SEL s_keyDown;
     static SEL s_keyUp;
-    void mouseDown(NSEvent e) { msg<void>(s_mouseDown, e.m_id); }
-    void mouseUp(NSEvent e) { msg<void>(s_mouseUp, e.m_id); }
-    void rightMouseDown(NSEvent e) { msg<void>(s_rightMouseDown, e.m_id); }
-    void rightMouseUp(NSEvent e) { msg<void>(s_rightMouseUp, e.m_id); }
-    void otherMouseDown(NSEvent e) { msg<void>(s_otherMouseDown, e.m_id); }
-    void otherMouseUp(NSEvent e) { msg<void>(s_otherMouseUp, e.m_id); }
     void keyDown(NSEvent e) { msg<void>(s_keyDown, e.m_id); }
     void keyUp(NSEvent e) { msg<void>(s_keyUp, e.m_id); }
+
+    // WKWebView has no mouseMoved: override (that selector enqueues nothing).
+    // This SPI (macOS 13+) is what WebAutomationSessionMac.mm uses for a move.
+    static SEL s_simulateMouseMove;
+    void simulateMouseMove(NSEvent e) { msg<void>(s_simulateMouseMove, e.m_id); }
 
     static SEL s_scrollWheel;
     void scrollWheel(NSEvent e) { msg<void>(s_scrollWheel, e.m_id); }

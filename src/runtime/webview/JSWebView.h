@@ -4,6 +4,7 @@
 #include "BunClientData.h"
 #include "JSEventTarget.h"
 #include "WebViewEventTarget.h"
+#include "ipc_protocol.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/LazyClassStructure.h>
@@ -78,8 +79,7 @@ public:
 
     // WebKit: viewId routes frames to the host. Chrome: 0.
     uint32_t m_viewId = 0;
-    // Chrome: target creation width/height for the first navigate() which
-    // does Target.createTarget. WebKit: held in the child.
+    // Viewport size from the constructor and resize(); bounds mouseMove(x, y) on WebKit.
     uint32_t m_width = 0, m_height = 0;
     bool m_closed = false;
     // Updated from NavDone replies / Page.frameNavigated — the getters are
@@ -97,12 +97,8 @@ public:
     WTF::String m_sessionId;
     WTF::String m_targetId;
     WTF::String m_pendingChromeNavigateUrl;
-    // clickSelector stash — the actionability eval chains into a
-    // dispatchMouseEvent that needs these. WebViewHost has the same fields
-    // on its side (m_selButton etc.) for the same chain.
-    uint8_t m_selButton = 0;
-    uint8_t m_selModifiers = 0;
-    uint8_t m_selClickCount = 1;
+    // Chrome selector-op stash; WebViewHost has the same field for WebKit.
+    WebViewProto::SelectorContinuation m_sel;
     // goBack/goForward stash — PageGetNavigationHistory chains into
     // navigateToHistoryEntry with entries[currentIndex + delta].id.
     int8_t m_chromeHistoryDelta = 0;
@@ -165,6 +161,8 @@ public:
     JSC::JSPromise* cdp(JSC::JSGlobalObject*, const WTF::String& method, const WTF::String& paramsJson);
     JSC::JSPromise* click(JSC::JSGlobalObject*, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount);
     JSC::JSPromise* clickSelector(JSC::JSGlobalObject*, const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount);
+    JSC::JSPromise* mouseMove(JSC::JSGlobalObject*, float x, float y);
+    JSC::JSPromise* hover(JSC::JSGlobalObject*, const WTF::String& selector, uint32_t timeout);
     JSC::JSPromise* type(JSC::JSGlobalObject*, const WTF::String& text);
     JSC::JSPromise* press(JSC::JSGlobalObject*, WebViewProto::VirtualKey, uint8_t modifiers, const WTF::String& character);
     JSC::JSPromise* scroll(JSC::JSGlobalObject*, double dx, double dy);

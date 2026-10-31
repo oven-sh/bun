@@ -1106,18 +1106,6 @@ JSCommonJSModule* JSCommonJSModule::create(
     return out;
 }
 
-JSCommonJSModule* JSCommonJSModule::create(
-    Zig::GlobalObject* globalObject,
-    const WTF::String& key,
-    JSValue exportsObject,
-    bool hasEvaluated,
-    JSValue parent)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto* requireMapKey = JSC::jsStringWithCache(vm, key);
-    return JSCommonJSModule::create(globalObject, requireMapKey, exportsObject, hasEvaluated, parent);
-}
-
 size_t JSCommonJSModule::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
 {
     auto* thisObject = uncheckedDowncast<JSCommonJSModule>(cell);

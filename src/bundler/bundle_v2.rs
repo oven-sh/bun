@@ -5897,6 +5897,20 @@ pub mod bv2_impl {
             Ok(ctx)
         }
 
+        /// False if link would report an `@import` of this stylesheet that is not css.
+        pub fn css_import_scan_passes(&self, source_index: Index) -> bool {
+            let records = &self.graph.ast.items_import_records()[source_index.get() as usize];
+            let mut log = bun_ast::Log::init();
+            LinkerContext::scan_css_imports(
+                source_index.get(),
+                records.as_slice(),
+                std::ptr::from_ref(self.graph.ast.items_css()),
+                self.graph.input_files.items_source(),
+                self.graph.input_files.items_loader(),
+                &mut log,
+            ) == crate::linker_context_mod::ScanCssImportsResult::Ok
+        }
+
         // The body has deep DevServer field access (current_bundle.start_data,
         // css_entry_points, etc.). After tier-6 collapse this fn should be hoisted into
         // bun_runtime::bake (which can name DevServer concretely) and call back into BundleV2

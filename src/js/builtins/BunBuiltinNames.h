@@ -59,7 +59,6 @@ using namespace JSC;
     macro(createCommonJSModule) \
     macro(createFIFO) \
     macro(createInternalModuleById) \
-    macro(createUninitializedArrayBuffer) \
     macro(ctimeMs) \
     macro(data) \
     macro(decode) \

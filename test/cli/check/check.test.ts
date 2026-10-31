@@ -4365,6 +4365,8 @@ export {};
     // A member of an object literal is a method, an accessor or a property by its syntax, even when the binder gave it
     // no symbol. A class that inherits it through `ReturnType`, a type alias or interface merging overrides it as tsc
     // allows: TS2425 only for a property, TS2426 for an accessor, and TS2611 for a method overridden by an accessor.
+    // The binder gives the members of `mixin`'s literal symbols, because `both` repeats. `obj`, `getterOnly` and
+    // `setterOnly` have none.
     test("reports overrides of members inherited from an object literal like tsc", async () => {
       using dir = project({
         "a.ts": `
@@ -4421,6 +4423,20 @@ declare class B6 {}
 interface B6 extends Identity<typeof obj> {}
 type Identity<U> = U extends infer V ? V : never;
 class D10 extends B6 { method(): number { return 2; } }
+const getterOnly = { get g(): number { return 1; } };
+const setterOnly = { set s(v: number) {} };
+type G = typeof getterOnly;
+type S = typeof setterOnly;
+declare class B7 {}
+interface B7 extends G {}
+class D11 extends B7 { g(): number { return 2; } }
+class D12 extends B7 { g = 2; }
+class D13 extends B7 { get g(): number { return 2; } }
+declare class B8 {}
+interface B8 extends S {}
+class D14 extends B8 { s(v: number): void {} }
+class D15 extends B8 { s = 3; }
+class D16 extends B8 { set s(v: number) {} }
 export {};
 `,
       });
@@ -4443,7 +4459,15 @@ export {};
         a.ts(43,23): error TS2425: Class 'B3' defines instance member property 'method', but extended class 'D7' defines it as instance member function.
         a.ts(46,23): error TS2425: Class 'B4' defines instance member property 'method', but extended class 'D8' defines it as instance member function.
         a.ts(50,23): error TS2425: Class 'B5' defines instance member property 'method', but extended class 'D9' defines it as instance member function.
-        a.ts(50,54): error TS2425: Class 'B5' defines instance member property 'other', but extended class 'D9' defines it as instance member function."
+        a.ts(50,54): error TS2425: Class 'B5' defines instance member property 'other', but extended class 'D9' defines it as instance member function.
+        a.ts(61,24): error TS2416: Property 'g' in type 'D11' is not assignable to the same property in base type 'B7'.
+          Type '() => number' is not assignable to type 'number'.
+        a.ts(61,24): error TS2426: Class 'B7' defines instance member accessor 'g', but extended class 'D11' defines it as instance member function.
+        a.ts(62,24): error TS2610: 'g' is defined as an accessor in class 'B7', but is overridden here in 'D12' as an instance property.
+        a.ts(66,24): error TS2416: Property 's' in type 'D14' is not assignable to the same property in base type 'B8'.
+          Type '(v: number) => void' is not assignable to type 'number'.
+        a.ts(66,24): error TS2426: Class 'B8' defines instance member accessor 's', but extended class 'D14' defines it as instance member function.
+        a.ts(67,24): error TS2610: 's' is defined as an accessor in class 'B8', but is overridden here in 'D15' as an instance property."
       `);
       expect(exitCode).toBe(1);
     });

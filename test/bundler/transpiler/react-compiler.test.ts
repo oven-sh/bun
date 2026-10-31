@@ -2465,6 +2465,303 @@ describe("bundler", () => {
     },
   });
 
+  // The scope of `w` and the scope of the array after it depend on `c` alone,
+  // so they merge into one memo block. The merge drops each output of the
+  // block that nothing uses after it, and a store was no use. `let w` went
+  // back into the block, with the store outside it:
+  // `ReferenceError: w is not defined`.
+  //
+  // With `minify.syntax` the statements of a nested block reach the compiler
+  // as one comma expression, and a store that ends it stays in the output.
+  // The last three entries of `stores` are wrong only then.
+  {
+    // Where the store is. Each one assigns `pair` to `w` and sets `n`.
+    const stores: Record<string, string> = {
+      Member: `const n = (w = pair).length;`,
+      Element: `const n = [(w = pair)].length + 1;`,
+      JsxChild: `const n = 2; count([<i>{(w = pair).length}</i>]);`,
+      Conditional: `const n = flag ? (w = pair).length : 0;`,
+      ConditionalBranch: `const n = (flag ? (w = pair) : pair).length;`,
+      LogicalAnd: `const n = flag && (w = pair).length;`,
+      Optional: `const n = (w = pair)?.length;`,
+      Chained: `let u; const n = (u = w = pair).length;`,
+      Twice: `const n = (w = pair).length + (w = [c]).length - 1;`,
+      ArrayPattern: `const n = ([w] = [pair]).length + 1;`,
+      ObjectPattern: `const n = ({ w } = { w: pair }).w.length;`,
+      IfTest: `let n = 0; if ((w = pair)) n = 2;`,
+      SwitchCase: `let n = 0; switch (c) { case 1: n = (w = pair).length; }`,
+      WhileTest: `let n = 0; while ((w = pair) && n < 2) n++;`,
+      DoWhileTest: `let n = 0; do n++; while ((w = pair) && n < 2);`,
+      ForInit: `let n = 0; for (let i = (w = pair).length; i > 0; i--) n++;`,
+      ForTest: `let n = 0; for (let i = 0; (w = pair) && i < 2; i++) n++;`,
+      // The whole update: a value with no instruction around it.
+      ForUpdate: `let n = 0; for (let i = 0; i < 2; w = pair) n += ++i;`,
+      ForOfCollection: `let n = 0; for (const it of (w = pair)) n++;`,
+      Handler: `let n = 2; try { risky(); } catch { w = pair; }`,
+      Label: `let n = 2; skip: { if (!flag) break skip; n = (w = pair).length; }`,
+      Return: `const n = 2; if (!flag) return <div>{(w = pair).length}</div>;`,
+      CommaInABranch: `let n = 0; if (flag) (n = 2), (w = pair);`,
+      StatementInABranch: `let n = 0; if (flag) { n = 2; w = pair; }`,
+      PatternStatementInABranch: `let n = 0; if (flag) { n = 2; [w] = [pair]; }`,
+      StatementInALoop: `let n = 0; while (n < 2) { n++; w = pair; }`,
+    };
+    const position = (name: string, directive: string, store: string) => `
+      export function ${name}({ c, flag, risky }) {
+        ${directive}
+        let w = [c];
+        const info = { first: w.length };
+        count(w);
+        const pair = [c, c];
+        ${store}
+        return <div>{info.first}{pair.length}{n}</div>;
+      }
+    `;
+
+    for (const minifySyntax of [false, true] as const) {
+      itBundled(`react-compiler/DeadStoreAfterScopesThatMerge-syntax=${minifySyntax}`, {
+        files: {
+          "/entry.js": /* js */ `
+            import * as forms from "./forms";
+            import * as positions from "./positions";
+            import { size } from "react/compiler-runtime";
+            const risky = () => {
+              throw new Error("risky");
+            };
+            // The second render loads every memo block from the cache. In the
+            // third one only \`d\` is new.
+            const render = form => {
+              globalThis.rendering = form;
+              const renders = [[1, 2], [1, 2], [1, 5], [3, 5]].map(([c, d]) => {
+                try {
+                  return JSON.stringify(form({ c, d, flag: c === 1, risky }).p.children);
+                } catch (e) {
+                  return "threw " + e;
+                }
+              });
+              return renders.join(" ");
+            };
+            // The size of the memo cache of a form, or that it was left as written.
+            const lines = Object.entries(forms).map(
+              ([name, form]) => name + "=" + render(form) + (size(form) ? " [" + size(form) + "]" : " as written"),
+            );
+            // Each position against the same function with "use no memo".
+            const names = Object.keys(positions).filter(name => !name.endsWith("AsWritten"));
+            const differ = names.filter(name => render(positions[name]) !== render(positions[name + "AsWritten"]));
+            const asWritten = names.filter(name => !size(positions[name]));
+            lines.push("positions that differ: " + (differ.join(" ") || "none"));
+            lines.push("positions left as written: " + (asWritten.join(" ") || "none"));
+            console.log(lines.join("\\n"));
+          `,
+          "/positions.jsx":
+            `const count = x => x.length;` +
+            Object.entries(stores)
+              .map(([name, store]) => position(name, "", store) + position(name + "AsWritten", `"use no memo";`, store))
+              .join(""),
+          "/forms.jsx": /* jsx */ `
+            import { useMemo, useRef } from "react";
+            const count = x => x.length;
+            const next = i => (i < 3 ? [i] : null);
+            const useThing = x => x;
+
+            export function ExpressionValue({ c }) {
+              let w = [c];
+              const info = { first: w.length };
+              count(w);
+              const n = (w = [c, c]).length;
+              return <div>{info.first}{n}</div>;
+            }
+            // Four scopes merge: \`w\`, the two inner arrays, the outer array.
+            export function ThreeMerges({ c }) {
+              let w = [c];
+              const info = { first: w.length };
+              count(w);
+              const n = (w = [[c], [c, c]]).length;
+              return <div>{info.first}{n}</div>;
+            }
+            // \`w\` is declared in the second of the merged scopes.
+            export function DeclaredInTheSecondScope({ c }) {
+              let w = [[c]];
+              const info = { first: w.length };
+              count(w);
+              const n = (w = [c, c]).length;
+              return <div>{info.first}{n}</div>;
+            }
+            // The store is in the scope of \`box\`, which saves \`w\` and loads it.
+            export function LaterScope({ c, d }) {
+              let w = [c];
+              const info = { first: w.length };
+              count(w);
+              const pair = [c, c];
+              const box = {};
+              box.v = w = [d];
+              return <div>{info.first}{pair.length}{box.v[0]}</div>;
+            }
+            // The read in the scope of \`pair\` declared \`w\`, not the store.
+            export function ReadByTheNextScope({ c }) {
+              let w = [c];
+              const info = { first: w.length };
+              count(w);
+              const pair = [w];
+              const n = (w = [c]).length;
+              return <div>{info.first}{pair.length}{n}</div>;
+            }
+            // The whole body is the callback of a \`useMemo\`.
+            export function StoreInAMemoCallback({ c }) {
+              return useMemo(() => {
+                let w = [c];
+                const info = { first: w.length };
+                count(w);
+                const n = (w = [c, c]).length;
+                return <div>{info.first}{n}</div>;
+              }, [c]);
+            }
+            // The merged block is in the block of \`x\`, which declares \`w\` too.
+            // Both blocks save \`w\`: one more slot than before.
+            export function Nested({ c, d }) {
+              const x = [d];
+              let w = [c];
+              const info = { first: w.length };
+              count(w);
+              const pair = [c, c];
+              x.push(info, pair);
+              const n = (w = pair).length;
+              return <div>{x[0]}{n}</div>;
+            }
+            // \`o\` is made in each render, so the scope of \`x\` has no memo
+            // block. Only the merged block declares \`w\`.
+            export function NestedInAScopeWithNoBlock({ c, d }) {
+              const o = [];
+              o.push(useThing(d));
+              const x = [o];
+              let w = [c];
+              const info = { first: w.length };
+              count(w);
+              const pair = [c, c];
+              x.push(info, pair);
+              const n = (w = pair).length;
+              return <div>{x.length}{n}</div>;
+            }
+            // \`both\` reads \`k\` and the inner array, the outputs of the merged
+            // block. With \`w\` a third output it no longer merges into that
+            // block: four more slots than before.
+            export function NextScopeKeepsItsBlock({ c, d }) {
+              const x = [d];
+              let w = [c];
+              const k = w.length + c;
+              count(w);
+              const both = [[c, c], k];
+              x.push(both);
+              const n = (w = both).length;
+              return <div>{x[0]}{k}{n}</div>;
+            }
+            // In the same way the scope of \`memo\` keeps its own block. The
+            // check of \`useMemo\` then passes, and the function is compiled.
+            export function MemoAfterTheMergedBlock({ c }) {
+              let w = [c];
+              const v = w.length;
+              count(w);
+              const pair = [];
+              pair.push(c);
+              const x = {};
+              const memo = useMemo(() => [pair], [pair]);
+              x.memo = memo;
+              x.v = v;
+              const n = count((w = pair));
+              return <div>{v}{n}{x.memo.length}</div>;
+            }
+            // Here that check reports \`m\`, which the loop test assigns: the
+            // function is left as written. Before, it was compiled and threw.
+            export function LoopTestStoreInAMemoCallback({ c }) {
+              return useMemo(() => {
+                let w = [c];
+                const v = w.length;
+                count(w);
+                const pair = [];
+                let m;
+                let k = 0;
+                while ((m = next(k)) && k < c) {
+                  pair.push(m);
+                  k++;
+                }
+                const u = [pair, m, v];
+                let u2;
+                const n = (u2 = w = pair).length;
+                return <div>{v}{n}{u.length}</div>;
+              }, [c]);
+            }
+            // Nothing reads \`x\`, and its store is in the merged block. The block
+            // declared \`x\` before, and still does.
+            export function NeverRead({ c }) {
+              const ref = useRef(null);
+              const r = [];
+              let x = c;
+              r.push(c);
+              const y = [];
+              if ((x = ref.current) == null) {
+                y.push(c);
+              }
+              y.push(c);
+              return <div>{r.length}{y.length}</div>;
+            }
+            // The next scope depends on \`d\`, so the two do not merge.
+            export function NoMerge({ c, d }) {
+              let w = [c];
+              const info = { first: w.length };
+              count(w);
+              const n = (w = [d, d]).length;
+              return <div>{info.first}{n}</div>;
+            }
+            // A read after the store kept the declaration.
+            export function ReadAfterTheStore({ c }) {
+              let w = [c];
+              const info = { first: w.length };
+              count(w);
+              const n = (w = [c, c]).length;
+              return <div>{info.first}{n}{w.length}</div>;
+            }
+          `,
+          "/node_modules/react/index.js": `exports.useRef = current => ({ current }); exports.useMemo = make => make();`,
+          "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+          "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+          "/node_modules/react/compiler-runtime.js": `
+            const caches = new Map();
+            exports.c = n => {
+              if (!caches.has(globalThis.rendering))
+                caches.set(globalThis.rendering, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+              return caches.get(globalThis.rendering);
+            };
+            exports.size = component => caches.get(component)?.length;
+          `,
+          "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        },
+        reactCompiler: true,
+        backend: "cli",
+        target: "browser",
+        minifySyntax,
+        run: {
+          stdout: `
+            DeclaredInTheSecondScope=[1,2] [1,2] [1,2] [1,2] [9]
+            ExpressionValue=[1,2] [1,2] [1,2] [1,2] [9]
+            LaterScope=[1,2,2] [1,2,2] [1,2,5] [1,2,5] [13]
+            LoopTestStoreInAMemoCallback=[1,1,3] [1,1,3] [1,1,3] [1,3,3] as written
+            MemoAfterTheMergedBlock=[1,1,1] [1,1,1] [1,1,1] [1,1,1] [15]
+            Nested=[2,2] [2,2] [5,2] [5,2] [14]
+            NestedInAScopeWithNoBlock=[3,2] [3,2] [3,2] [3,2] [6]
+            NeverRead=[1,2] [1,2] [1,2] [1,2] [7]
+            NextScopeKeepsItsBlock=[2,2,2] [2,2,2] [5,2,2] [5,4,2] [17]
+            NoMerge=[1,2] [1,2] [1,2] [1,2] [10]
+            ReadAfterTheStore=[1,2,2] [1,2,2] [1,2,2] [1,2,2] [10]
+            ReadByTheNextScope=[1,1,1] [1,1,1] [1,1,1] [1,1,1] [12]
+            StoreInAMemoCallback=[1,2] [1,2] [1,2] [1,2] [9]
+            ThreeMerges=[1,2] [1,2] [1,2] [1,2] [9]
+            positions that differ: none
+            positions left as written: none
+          `,
+        },
+      });
+    }
+  }
+
   // Outside the compiler, the bundler binds a local that holds a `require()` /
   // `import()` export to the export itself: `const { a } = require("./m")`
   // declares nothing, and `ns.a` off `const ns = require("./m")` is an import

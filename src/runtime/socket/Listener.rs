@@ -541,6 +541,7 @@ impl Listener {
             ));
             log!("Failed to listen {}", errno);
             let mapped = bun_sys::SystemErrno::init(errno as i64);
+            #[allow(deprecated)] // listen(2) on a socket: 102 is the value wanted
             let errno = if mapped == Some(bun_sys::SystemErrno::ENAMETOOLONG)
                 || (matches!(connection, UnixOrHost::Fd(_))
                     && matches!(

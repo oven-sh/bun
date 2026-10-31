@@ -108,13 +108,20 @@ JSC::JSObject* appendNativeModuleExports(Zig::GlobalObject*, uint32_t registryID
 
 JSC::JSObject* createAsyncModuleRequiredError(JSC::JSGlobalObject*, const WTF::String& specifier);
 
+// `reachedFile` decides what a termination that the program outlives (a node:vm `timeout` or `breakOnSigint`)
+// leaves in the require map. It is set once the module is a file: the entry stays, with the exports so far, as
+// it does in Node's cache. It is also set for a module of an ahead-of-time compiled executable, which the engine
+// cannot run a second time. Until then the entry is a placeholder that only this loader made, for a built-in or
+// for a plugin's callback, and the caller removes it: process.getBuiltinModule() and the `node:` names load such
+// a module again, where Node leaves its own built-ins at `{}`.
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* moduleObject,
     JSValue specifierValue,
     String specifier,
     BunString* referrer,
-    BunString* typeAttribute);
+    BunString* typeAttribute,
+    bool& reachedFile);
 
 template<bool isExtension>
 JSValue fetchCommonJSModuleNonBuiltin(

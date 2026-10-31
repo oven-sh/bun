@@ -676,7 +676,8 @@ JSValue fetchCommonJSModule(
     JSValue specifierValue,
     String specifierWtfString,
     BunString* referrer,
-    BunString* typeAttribute)
+    BunString* typeAttribute,
+    bool& reachedFile)
 {
     void* bunVM = globalObject->bunVM();
     auto& vm = JSC::getVM(globalObject);
@@ -688,12 +689,14 @@ JSValue fetchCommonJSModule(
     RETURN_IF_EXCEPTION(scope, {});
 
     if (Bun::hasCompiledModules() && !target->moduleGraph()) [[unlikely]] {
+        reachedFile = true;
         bool hasRun = requireCompiledModule(globalObject, target, specifierWtfString, !!typeAttribute);
         RETURN_IF_EXCEPTION(scope, {});
         if (hasRun) {
             target->hasEvaluated = true;
             RELEASE_AND_RETURN(scope, target);
         }
+        reachedFile = false;
     }
 
     BunString specifier = Bun::toString(specifierWtfString);
@@ -755,6 +758,7 @@ JSValue fetchCommonJSModule(
         // never give it its source); only ES modules go through the loader, which
         // fetches its own copy — this one is released with `res`.
         if (res->result.value.isCommonJSModule) {
+            reachedFile = true;
             target->evaluate(globalObject, specifierWtfString, res->result.value);
             RETURN_IF_EXCEPTION(scope, {});
             RELEASE_AND_RETURN(scope, target);
@@ -813,6 +817,9 @@ JSValue fetchCommonJSModule(
             }
         }
     }
+
+    // Not a built-in and not a plugin's module: a file.
+    reachedFile = true;
 
     bool hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice = [&]() -> bool {
         auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, specifierWtfString));

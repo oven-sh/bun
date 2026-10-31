@@ -64,6 +64,7 @@
 
 #include <JavaScriptCore/DFGAbstractHeap.h>
 #include <JavaScriptCore/Completion.h>
+#include <JavaScriptCore/DeferTermination.h>
 #include "ModuleLoader.h"
 #include <JavaScriptCore/JSMap.h>
 
@@ -1427,46 +1428,44 @@ const JSC::ClassInfo JSCommonJSModule::s_info = { "Module"_s, &Base::s_info, nul
 const JSC::ClassInfo RequireResolveFunctionPrototype::s_info = { "resolve"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RequireResolveFunctionPrototype) };
 const JSC::ClassInfo RequireFunctionPrototype::s_info = { "require"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RequireFunctionPrototype) };
 
-ALWAYS_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObject, JSCommonJSModule* child, JSC::ThrowScope& throwScope, JSC::JSValue specifierValue)
+// A load that failed leaves no entry in the require map: the next require() loads the module again.
+static NEVER_INLINE void evictFromRequireMapAndRethrow(Zig::GlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSMap* requireMap, JSC::JSValue key, bool keepWhenTerminated)
 {
     auto& vm = JSC::getVM(globalObject);
-    JSC::JSValue exception = throwScope.exception();
+    JSC::Exception* exception = scope.exception();
     ASSERT(exception);
-    // tryClearException() cannot clear a termination, and JSMap::remove with
-    // it still pending does nothing.
-    if (vm.hasPendingTerminationException()) [[unlikely]]
-        RELEASE_AND_RETURN(throwScope, {});
-    (void)throwScope.tryClearException();
-
-    // On error, remove the module from the require map
-    // so that it can be re-evaluated on the next require.
-    // The entry can already be gone: `delete require.cache[__filename]; throw ...`, or a graph's dispose().
-    requireMapOf(globalObject, child->moduleGraph())->remove(globalObject, specifierValue);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    throwScope.throwException(globalObject, exception);
-    RELEASE_AND_RETURN(throwScope, {});
+    bool terminated = vm.isTerminationException(exception);
+    // A program can outlive a termination: node:vm withdraws the one of a `timeout` or `breakOnSigint` run.
+    // A VM that is stopping needs no cleanup. The scope below throws a termination again only while the VM
+    // still has the request.
+    if (terminated && (keepWhenTerminated || !WebCore::clientData(vm)->scriptAllowed() || !vm.hasTerminationRequest()))
+        return;
+    {
+        // JSMap::remove does nothing while an exception is pending, and a trap check in it can throw a termination.
+        JSC::DeferTerminationForAWhile deferScope(vm);
+        (void)scope.tryClearException();
+        // The entry can already be gone: `delete require.cache[__filename]; throw ...`, or a graph's dispose().
+        requireMap->remove(globalObject, key);
+        (void)scope.tryClearException();
+    }
+    if (!terminated)
+        scope.throwException(globalObject, exception);
 }
-#define REQUIRE_CJS_RETURN_IF_EXCEPTION      \
-    if (throwScope.exception()) [[unlikely]] \
-    return finishRequireWithError(globalObject, child, throwScope, specifierValue)
 
-// $requireCommonJS(resolvedId, newModule, parentFilename, userArgumentCount, userOptions)
-JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
+// Everything of $requireCommonJS that can fail. Its caller then takes the entry out of the require map.
+static JSValue loadIntoRequireMap(Zig::GlobalObject* globalObject, CallFrame* callframe, JSMap* requireMap, JSValue specifierValue, JSCommonJSModule* child, bool& reachedFile)
 {
-    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(callframe->argumentCount() == 5);
-    // This is always a new JSCommonJSModule in its parent's Bun.ModuleGraph, so the cast cannot fail.
-    JSCommonJSModule* child = uncheckedDowncast<JSCommonJSModule>(callframe->uncheckedArgument(1));
-    JSValue specifierValue = callframe->uncheckedArgument(0);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // To handle import/export cycles, the module is in the map before it loads.
+    requireMap->set(globalObject, specifierValue, child);
+    RETURN_IF_EXCEPTION(scope, {});
     // If Module._resolveFilename is overridden, this could cause this to be a non-string
     WTF::String specifier = specifierValue.toWTFString(globalObject);
-    REQUIRE_CJS_RETURN_IF_EXCEPTION;
+    RETURN_IF_EXCEPTION(scope, {});
     // If this.filename is overridden, this could cause this to be a non-string
     WTF::String referrer = callframe->uncheckedArgument(2).toWTFString(globalObject);
-    REQUIRE_CJS_RETURN_IF_EXCEPTION;
+    RETURN_IF_EXCEPTION(scope, {});
 
     BunString referrerStr = Bun::toString(referrer);
     BunString typeAttributeStr = { BunStringTag::Dead };
@@ -1483,11 +1482,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
             JSObject* obj = options.getObject();
             // This getter is expensive and rare.
             auto typeValue = obj->getIfPropertyExists(globalObject, vm.propertyNames->type);
-            REQUIRE_CJS_RETURN_IF_EXCEPTION;
+            RETURN_IF_EXCEPTION(scope, {});
             if (typeValue) {
                 if (typeValue.isString()) {
                     typeAttribute = typeValue.toWTFString(globalObject);
-                    REQUIRE_CJS_RETURN_IF_EXCEPTION;
+                    RETURN_IF_EXCEPTION(scope, {});
                     typeAttributeStr = Bun::toString(typeAttribute);
                 }
             }
@@ -1497,25 +1496,37 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
     // An ES module of an executable runs here. A stack that is taken meanwhile lists the function that loads an ES module from disk.
     if (Bun::hasCompiledModules() && !child->moduleGraph()) [[unlikely]] {
         JSObject* loader = Bun::loaderOfCompiledESModule(globalObject, specifier, !typeAttribute.isEmpty());
-        REQUIRE_CJS_RETURN_IF_EXCEPTION;
+        RETURN_IF_EXCEPTION(scope, {});
         if (loader)
             callframe->setCallee(loader);
     }
 
     // Load the module
-    JSValue fetchResult = Bun::fetchCommonJSModule(
-        globalObject,
-        child,
-        specifierValue,
-        specifier,
-        &referrerStr,
-        typeAttribute.isEmpty()
-            ? nullptr
-            : &typeAttributeStr);
-    REQUIRE_CJS_RETURN_IF_EXCEPTION;
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(fetchResult));
+    RELEASE_AND_RETURN(scope, Bun::fetchCommonJSModule(globalObject, child, specifierValue, specifier, &referrerStr, typeAttribute.isEmpty() ? nullptr : &typeAttributeStr, reachedFile));
 }
-#undef REQUIRE_CJS_RETURN_IF_EXCEPTION
+
+// $requireCommonJS(resolvedId, newModule, parentFilename, userArgumentCount, userOptions, requireMap)
+JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
+{
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(callframe->argumentCount() == 6);
+    JSValue specifierValue = callframe->uncheckedArgument(0);
+    // This is always a new JSCommonJSModule in its parent's Bun.ModuleGraph, so the cast cannot fail.
+    JSCommonJSModule* child = uncheckedDowncast<JSCommonJSModule>(callframe->uncheckedArgument(1));
+    // The map that `overridableRequire` looked `resolvedId` up in. `this` can be any object there, so it is not
+    // always the map of `child`'s Bun.ModuleGraph.
+    JSMap* requireMap = uncheckedDowncast<JSMap>(callframe->uncheckedArgument(5));
+
+    bool reachedFile = false;
+    JSValue result = loadIntoRequireMap(globalObject, callframe, requireMap, specifierValue, child, reachedFile);
+    if (throwScope.exception()) [[unlikely]] {
+        evictFromRequireMapAndRethrow(globalObject, throwScope, requireMap, specifierValue, reachedFile);
+        return {};
+    }
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {

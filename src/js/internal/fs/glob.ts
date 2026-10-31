@@ -1,7 +1,7 @@
 // Port of Node.js lib/internal/fs/glob.js (v26.3.0):
 //   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/lib/internal/fs/glob.js
-// backed by a vendored copy of minimatch (Node's deps/minimatch/index.js, ISC license):
-//   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/deps/minimatch/index.js
+// backed by a vendored copy of minimatch (Node's deps/minimatch/index.js):
+//   https://github.com/nodejs/node/blob/bc2e01dcf6acd5cf7d169b5f26cf89abaaeb41f1/deps/minimatch/index.js
 // embedded below lazyMinimatch(); the vendored block is third-party and not edited but for types — the port above it follows bun's style.
 //
 // This is not backed by Bun.Glob: the vendored test-fs-glob.mjs (448 cases)
@@ -1055,7 +1055,8 @@ interface BalancedMatchModule {
 
 interface BraceExpansionModule {
   EXPANSION_MAX: number;
-  expand(str: string, options?: { max?: number }): string[];
+  EXPANSION_MAX_LENGTH: number;
+  expand(str: string, options?: { max?: number; maxLength?: number }): string[];
 }
 
 type ParsedClass = [source: string, needsUnicodeFlag: boolean, consumed: number, hasMagic: boolean];
@@ -1105,21 +1106,28 @@ interface MinimatchFunction extends Omit<MinimatchModule, "minimatch"> {
 
 let _minimatch: MinimatchModule | undefined;
 // ─────────────────────────────────────────────────────────────────────────
-// Vendored: Node.js deps/minimatch/index.js (v26.3.0, ISC license). The code is unmodified; the types are added.
-//   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/deps/minimatch/index.js
+// Vendored: Node.js deps/minimatch/index.js (v26.12.1). The code is unmodified; the types are added.
+//   https://github.com/nodejs/node/blob/bc2e01dcf6acd5cf7d169b5f26cf89abaaeb41f1/deps/minimatch/index.js
+// minimatch 10.2.6: Blue Oak Model License 1.0.0. https://blueoakcouncil.org/license/1.0.0
+// brace-expansion 5.0.9, balanced-match 4.0.4: Copyright Julian Gruber, TypeScript port Copyright Isaac Z. Schlueter.
+//   MIT License. https://github.com/juliangruber/brace-expansion https://github.com/juliangruber/balanced-match
 // ─────────────────────────────────────────────────────────────────────────
 function lazyMinimatch(): MinimatchModule {
   if (_minimatch) return _minimatch;
   const exports = {} as MinimatchModule;
   const module = { exports };
-  // --- begin vendored minimatch (Node v26.3.0 deps/minimatch/index.js) ---
+  // --- begin vendored minimatch (Node v26.12.1 deps/minimatch/index.js) ---
   var __getOwnPropNames = Object.getOwnPropertyNames;
   var __commonJS = <T extends object>(
     cb: Record<string, (exports: T, module: { exports: T }) => void>,
-    mod?: { exports: T },
+    mod?: { exports: T } | 0,
   ) =>
     function __require(): T {
-      return (mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} as T }).exports, mod), mod.exports);
+      try {
+        return (mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} as T }).exports, mod), mod.exports);
+      } catch (e) {
+        throw ((mod = 0), e);
+      }
     };
 
   // node_modules/balanced-match/dist/commonjs/index.js
@@ -1194,7 +1202,7 @@ function lazyMinimatch(): MinimatchModule {
     "node_modules/brace-expansion/dist/commonjs/index.js"(exports2: BraceExpansionModule) {
       "use strict";
       Object.defineProperty(exports2, "__esModule", { value: true });
-      exports2.EXPANSION_MAX = (void 0)!;
+      exports2.EXPANSION_MAX_LENGTH = exports2.EXPANSION_MAX = (void 0)!;
       exports2.expand = expand;
       var balanced_match_1 = require_commonjs();
       var escSlash = "\0SLASH" + Math.random() + "\0";
@@ -1213,6 +1221,7 @@ function lazyMinimatch(): MinimatchModule {
       var commaPattern = /\\,/g;
       var periodPattern = /\\\./g;
       exports2.EXPANSION_MAX = 1e5;
+      exports2.EXPANSION_MAX_LENGTH = 4e6;
       function numeric(str: string) {
         return !isNaN(str as unknown as number) ? parseInt(str, 10) : str.charCodeAt(0);
       }
@@ -1252,15 +1261,15 @@ function lazyMinimatch(): MinimatchModule {
         parts.push(...p);
         return parts;
       }
-      function expand(str: string, options: { max?: number } = {}) {
+      function expand(str: string, options: { max?: number; maxLength?: number } = {}) {
         if (!str) {
           return [];
         }
-        const { max = exports2.EXPANSION_MAX } = options;
+        const { max = exports2.EXPANSION_MAX, maxLength = exports2.EXPANSION_MAX_LENGTH } = options;
         if (str.slice(0, 2) === "{}") {
           str = "\\{\\}" + str.slice(2);
         }
-        return expand_(escapeBraces(str), max, true).map(unescapeBraces);
+        return expand_(escapeBraces(str), max, maxLength, true).map(unescapeBraces);
       }
       function embrace(str: string) {
         return "{" + str + "}";
@@ -1274,18 +1283,90 @@ function lazyMinimatch(): MinimatchModule {
       function gte(i: number, y: number) {
         return i >= y;
       }
-      function expand_(str: string, max: number, isTop: boolean): string[] {
-        const expansions: string[] = [];
-        const m = (0, balanced_match_1.balanced)("{", "}", str);
-        if (!m) return [str];
-        const pre = m.pre;
-        const post = m.post.length ? expand_(m.post, max, false) : [""];
-        if (m.pre.endsWith("$")) {
-          for (let k = 0; k < post.length && k < max; k++) {
-            const expansion = pre + "{" + m.body + "}" + post[k];
-            expansions.push(expansion);
+      function combine(
+        acc: string[],
+        pre: string,
+        values: string[],
+        max: number,
+        maxLength: number,
+        dropEmpties: boolean,
+      ) {
+        const out: string[] = [];
+        let length = 0;
+        for (let a = 0; a < acc.length; a++) {
+          for (let v = 0; v < values.length; v++) {
+            if (out.length >= max) return out;
+            const expansion = acc[a] + pre + values[v];
+            if (dropEmpties && !expansion) continue;
+            if (length + expansion.length > maxLength) return out;
+            out.push(expansion);
+            length += expansion.length;
           }
-        } else {
+        }
+        return out;
+      }
+      function expandSequence(body: string, isAlphaSequence: boolean, max: number, maxLength: number) {
+        const n = body.split(/\.\./);
+        const N: string[] = [];
+        if (n[0] === void 0 || n[1] === void 0) {
+          return N;
+        }
+        const x = numeric(n[0]);
+        const y = numeric(n[1]);
+        const width = Math.max(n[0].length, n[1].length);
+        let incr = n.length === 3 && n[2] !== void 0 ? Math.max(Math.abs(numeric(n[2])), 1) : 1;
+        let test = lte;
+        const reverse = y < x;
+        if (reverse) {
+          incr *= -1;
+          test = gte;
+        }
+        const pad = n.some(isPadded);
+        let length = 0;
+        for (let i = x; test(i, y) && N.length < max; i += incr) {
+          let c: string;
+          if (isAlphaSequence) {
+            c = String.fromCharCode(i);
+            if (c === "\\") {
+              c = "";
+            }
+          } else {
+            c = String(i);
+            if (pad) {
+              const need = width - c.length;
+              if (need > 0) {
+                const z = new Array(need + 1).join("0");
+                if (i < 0) {
+                  c = "-" + z + c.slice(1);
+                } else {
+                  c = z + c;
+                }
+              }
+            }
+          }
+          if (length + c.length > maxLength) break;
+          N.push(c);
+          length += c.length;
+        }
+        return N;
+      }
+      function expand_(str: string, max: number, maxLength: number, isTop: boolean): string[] {
+        let acc = [""];
+        let dropEmpties = false;
+        let firstGroup = true;
+        for (;;) {
+          const m = (0, balanced_match_1.balanced)("{", "}", str);
+          if (!m) {
+            return combine(acc, str, [""], max, maxLength, dropEmpties);
+          }
+          const pre = m.pre;
+          if (pre.endsWith("$")) {
+            acc = combine(acc, pre + "{" + m.body + "}", [""], max, maxLength, dropEmpties && !m.post.length);
+            firstGroup = false;
+            if (!m.post.length) break;
+            str = m.post;
+            continue;
+          }
           const isNumericSequence = /^-?\d+\.\.-?\d+(?:\.\.-?\d+)?$/.test(m.body);
           const isAlphaSequence = /^[a-zA-Z]\.\.[a-zA-Z](?:\.\.-?\d+)?$/.test(m.body);
           const isSequence = isNumericSequence || isAlphaSequence;
@@ -1294,76 +1375,56 @@ function lazyMinimatch(): MinimatchModule {
             const mPost = m.post;
             if (mPost.match(/,(?!,).*\}/)) {
               str = m.pre + "{" + m.body + escClose + mPost;
-              return expand_(str, max, true);
+              isTop = true;
+              continue;
             }
-            return [str];
+            return combine(acc, pre + "{" + m.body + "}" + m.post, [""], max, maxLength, dropEmpties);
           }
-          let n: string[];
+          if (firstGroup) {
+            dropEmpties = isTop && !isSequence;
+            firstGroup = false;
+          }
+          let values: string[];
           if (isSequence) {
-            n = m.body.split(/\.\./);
+            values = expandSequence(m.body, isAlphaSequence, max, maxLength);
           } else {
-            n = parseCommaParts(m.body);
+            let n = parseCommaParts(m.body);
             const nLength = n.length;
             if (nLength === 1 && n[0] !== void 0) {
-              n = expand_(n[0], max, false).map(embrace);
+              n = expand_(n[0], max, maxLength, false).map(embrace);
               if (n.length === 1) {
-                return post.map(p => m.pre + n[0] + p);
+                acc = combine(acc, pre + n[0], [""], max, maxLength, dropEmpties && !m.post.length);
+                if (!m.post.length) break;
+                str = m.post;
+                continue;
               }
             }
-          }
-          let N: string[];
-          if (isSequence && n[0] !== void 0 && n[1] !== void 0) {
-            const x = numeric(n[0]);
-            const y = numeric(n[1]);
-            const width = Math.max(n[0].length, n[1].length);
-            let incr = n.length === 3 && n[2] !== void 0 ? Math.max(Math.abs(numeric(n[2])), 1) : 1;
-            let test = lte;
-            const reverse = y < x;
-            if (reverse) {
-              incr *= -1;
-              test = gte;
+            let dropsEmpties = dropEmpties && !m.post.length && !pre;
+            for (let d = 0; dropsEmpties && d < acc.length; d++) {
+              if (acc[d]) {
+                dropsEmpties = false;
+              }
             }
-            const pad = n.some(isPadded);
-            N = [];
-            for (let i = x; test(i, y); i += incr) {
-              let c: string;
-              if (isAlphaSequence) {
-                c = String.fromCharCode(i);
-                if (c === "\\") {
-                  c = "";
+            values = [];
+            let valuesLength = 0;
+            outer: for (let j = 0; j < n.length; j++) {
+              const expanded = expand_(n[j], max, maxLength, false);
+              for (let k = 0; k < expanded.length; k++) {
+                const v = expanded[k];
+                if (dropsEmpties && !v) continue;
+                if (values.length >= max || valuesLength + v.length > maxLength) {
+                  break outer;
                 }
-              } else {
-                c = String(i);
-                if (pad) {
-                  const need = width - c.length;
-                  if (need > 0) {
-                    const z = new Array(need + 1).join("0");
-                    if (i < 0) {
-                      c = "-" + z + c.slice(1);
-                    } else {
-                      c = z + c;
-                    }
-                  }
-                }
-              }
-              N.push(c);
-            }
-          } else {
-            N = [];
-            for (let j = 0; j < n.length; j++) {
-              N.push(...expand_(n[j], max, false));
-            }
-          }
-          for (let j = 0; j < N.length; j++) {
-            for (let k = 0; k < post.length && expansions.length < max; k++) {
-              const expansion = pre + N[j] + post[k];
-              if (!isTop || isSequence || expansion) {
-                expansions.push(expansion);
+                values.push(v);
+                valuesLength += v.length;
               }
             }
           }
+          acc = combine(acc, pre, values, max, maxLength, dropEmpties && !m.post.length);
+          if (!m.post.length) break;
+          str = m.post;
         }
-        return expansions;
+        return acc;
       }
     },
   });

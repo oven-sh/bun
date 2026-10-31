@@ -86,6 +86,8 @@ For compatibility reasons, the following packages are embedded into Bun's binary
 | [`acorn`](https://github.com/acornjs/acorn) | MIT |
 | [`acorn-walk`](https://github.com/acornjs/acorn) | MIT |
 | [`assert`](https://npmjs.com/package/assert) | MIT |
+| [`balanced-match`](https://github.com/juliangruber/balanced-match) | MIT |
+| [`brace-expansion`](https://github.com/juliangruber/brace-expansion) | MIT |
 | [`browserify-zlib`](https://npmjs.com/package/browserify-zlib) | MIT |
 | [`buffer`](https://npmjs.com/package/buffer) | MIT |
 | [`constants-browserify`](https://npmjs.com/package/constants-browserify) | MIT |
@@ -93,6 +95,7 @@ For compatibility reasons, the following packages are embedded into Bun's binary
 | [`domain-browser`](https://npmjs.com/package/domain-browser) | MIT |
 | [`events`](https://npmjs.com/package/events) | MIT |
 | [`https-browserify`](https://npmjs.com/package/https-browserify) | MIT |
+| [`minimatch`](https://github.com/isaacs/minimatch) | [Blue Oak 1.0.0](https://blueoakcouncil.org/license/1.0.0) |
 | [`os-browserify`](https://npmjs.com/package/os-browserify) | MIT |
 | [`path-browserify`](https://npmjs.com/package/path-browserify) | MIT |
 | [`process`](https://npmjs.com/package/process) | MIT |

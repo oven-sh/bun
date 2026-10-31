@@ -237,6 +237,8 @@ RefPtr<CryptoKeyRSA> CryptoKeyRSA::importSpki(CryptoAlgorithmIdentifier identifi
     auto pkey = EvpPKeyPtr(d2i_PUBKEY(nullptr, &ptr, keyData.size()));
     if (!pkey)
         return nullptr;
+    if (ptr - keyData.begin() != (ptrdiff_t)keyData.size())
+        return nullptr;
     if (EVP_PKEY_id(pkey.get()) != EVP_PKEY_RSA) {
         if (keyTypeMismatch)
             *keyTypeMismatch = true;
@@ -254,6 +256,8 @@ RefPtr<CryptoKeyRSA> CryptoKeyRSA::importPkcs8(CryptoAlgorithmIdentifier identif
     // We use d2i_PKCS8_PRIV_KEY_INFO() to import a private key.
     auto p8inf = PKCS8PrivKeyInfoPtr(d2i_PKCS8_PRIV_KEY_INFO(nullptr, &ptr, keyData.size()));
     if (!p8inf)
+        return nullptr;
+    if (ptr - keyData.begin() != (ptrdiff_t)keyData.size())
         return nullptr;
 
     auto pkey = EvpPKeyPtr(EVP_PKCS82PKEY(p8inf.get()));

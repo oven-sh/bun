@@ -1,7 +1,8 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { createCipheriv, createSecretKey, type webcrypto } from "node:crypto";
+import { totalmem } from "node:os";
 
 type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
 type HmacImportParams = webcrypto.HmacImportParams;
@@ -132,6 +133,37 @@ describe("Web Crypto", () => {
       const wrapped = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, payload);
       return { key, iv, wrapped };
     }
+
+    // https://w3c.github.io/webcrypto/#concept-parse-a-jwk reads the bytes as UTF-8. As in Node.js,
+    // one leading byte order mark is skipped and malformed UTF-8 is a DataError, not U+FFFD.
+    it("decodes the wrapped bytes as UTF-8 and skips a byte order mark", async () => {
+      const jwk = (kid: string) => `{"kty":"oct","k":"AAECAwQFBgcICQoLDA0ODw","alg":"A128GCM","kid":"${kid}"}`;
+      const encode = (s: string) => new TextEncoder().encode(s);
+      const unwrap = async (payload: Uint8Array<ArrayBuffer>) => {
+        const { key, iv, wrapped } = await setup(payload);
+        return crypto.subtle
+          .unwrapKey("jwk", wrapped, key, { name: "AES-GCM", iv }, { name: "AES-GCM" }, true, ["encrypt", "decrypt"])
+          .then(
+            async k => Buffer.from(await crypto.subtle.exportKey("raw", k)).toString("hex"),
+            e => `${e.name}: ${e.message}`,
+          );
+      };
+      expect({
+        plain: await unwrap(encode(jwk("a"))),
+        bom: await unwrap(encode("\uFEFF" + jwk("a"))),
+        "bom twice": await unwrap(encode("\uFEFF\uFEFF" + jwk("a"))),
+        "non-ASCII member": await unwrap(encode(jwk("ключ"))),
+        "invalid UTF-8": await unwrap(
+          Buffer.concat([encode(jwk("a").slice(0, -2)), Buffer.from([0xff, 0xfe]), encode('"}')]),
+        ),
+      }).toEqual({
+        plain: "000102030405060708090a0b0c0d0e0f",
+        bom: "000102030405060708090a0b0c0d0e0f",
+        "bom twice": "DataError: WrappedKey cannot be converted to a JSON object",
+        "non-ASCII member": "000102030405060708090a0b0c0d0e0f",
+        "invalid UTF-8": "DataError: WrappedKey cannot be converted to a JSON object",
+      });
+    });
 
     it("rejects when wrapped bytes are not valid JSON", async () => {
       const { key, iv, wrapped } = await setup(new TextEncoder().encode("not json {{{"));
@@ -346,6 +378,36 @@ describe("oversized inputs", () => {
     }
     expect(exitCode).toBe(0);
   });
+
+  // WTF::String::fromUTF8 aborts on 2^30 bytes or more that are not ASCII. The text is 2^30 + 2 bytes
+  // of U+20AC: it has to be valid UTF-8 to get to the conversion. The child holds 4 GiB and makes two
+  // AES-CTR passes over 1 GiB: 5 seconds in a release build, over 20 with ASAN, 145 in a debug build.
+  // So small machines, ASAN builds and debug builds skip, and the test carries its own ceiling.
+  it.skipIf(isASAN || isDebug || Math.min(totalmem(), process.constrainedMemory() || Infinity) < 10 * 1024 ** 3)(
+    'unwrapKey("jwk") rejects 1 GiB of UTF-8 that is not ASCII instead of aborting',
+    async () => {
+      const script = `
+        const key = await crypto.subtle.importKey("raw", new Uint8Array(32).fill(1), "AES-CTR", false, ["encrypt", "unwrapKey"]);
+        const ctr = { name: "AES-CTR", counter: new Uint8Array(16), length: 64 };
+        const wrapped = await crypto.subtle.encrypt(ctr, key, Buffer.alloc(2 ** 30 + 2, "\\u20ac"));
+        const result = await crypto.subtle
+          .unwrapKey("jwk", wrapped, key, ctr, "AES-GCM", true, ["encrypt"])
+          .then(() => "resolved", e => e.name);
+        console.log(result);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("DataError");
+      expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+    },
+    30_000,
+  );
 });
 
 describe("oversized outputs", () => {

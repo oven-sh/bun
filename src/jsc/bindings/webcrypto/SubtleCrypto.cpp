@@ -58,6 +58,7 @@
 #include "CryptoKeyRSA.h"
 #include "BunString.h"
 #include "ErrorCode.h"
+#include "helpers.h"
 #include "JSDOMExceptionHandling.h"
 #include "VectorSizeLimit.h"
 #include "node/crypto/CryptoUtil.h"
@@ -1564,8 +1565,15 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                     keyData = bytes;
                     break;
                 case SubtleCrypto::KeyFormat::Jwk: {
-                    String jwkString(byteCast<Latin1Character>(bytes.span()));
-                    auto jwkObject = JSONParse(&state, jwkString);
+                    // https://w3c.github.io/webcrypto/#concept-parse-a-jwk reads the bytes as UTF-8. Like Node, skip one byte order mark and reject malformed bytes.
+                    static constexpr std::array<uint8_t, 3> utf8ByteOrderMark { 0xEF, 0xBB, 0xBF };
+                    auto jwkBytes = bytes.span();
+                    if (spanHasPrefix(jwkBytes, std::span { utf8ByteOrderMark }))
+                        jwkBytes = jwkBytes.subspan(utf8ByteOrderMark.size());
+                    // String::fromUTF8 aborts on 2^30 bytes or more that are not ASCII, and the caller controls the size.
+                    bool isUTF8 = !jwkBytes.empty() && simdutf::validate_utf8(reinterpret_cast<const char*>(jwkBytes.data()), jwkBytes.size());
+                    String jwkString = isUTF8 ? Zig::tryConvertValidUTF8ToString(jwkBytes) : String();
+                    auto jwkObject = jwkString.isNull() ? JSValue() : JSONParse(&state, jwkString);
                     if (scope.exception()) [[unlikely]] {
                         weakThis->m_pendingPromises.remove(index);
                         promise->reject(Exception { ExistingExceptionError });

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_outgoing.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 17a5f190f17251c9b4bea8ce90880918a91fffc6329dddc4d5ee859370eb9709.
+// Written against that file with the SHA-256 88cc609e812d2ff8933707581fee5dd0d2bb35619f0dbcfe268a07ec05c0e9f4.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_outgoing"
@@ -147,7 +147,7 @@ function isContentDispositionField(s: string) {
 
 declare global {
   namespace $Node {
-    interface OutgoingMessageOptions extends EventEmitterOptions {
+    interface OutgoingMessageOptions {
       highWaterMark?: number;
       rejectNonStandardBodyWrites?: boolean;
     }
@@ -282,12 +282,11 @@ function OutgoingMessage(
   rejectNonStandardBodyWrites: boolean | undefined = undefined,
   keepAliveTimeout: number | undefined = undefined,
 ) {
+  Stream.$call(this, undefined);
   if (options === kHandle) {
-    Stream.$call(this, undefined);
     highWaterMark ??= getDefaultHighWaterMark();
     if (rejectNonStandardBodyWrites === undefined) rejectNonStandardBodyWrites = false;
   } else {
-    Stream.$call(this, options);
     keepAliveTimeout = 0;
   }
 

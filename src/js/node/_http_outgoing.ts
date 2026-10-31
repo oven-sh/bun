@@ -136,7 +136,8 @@ function isContentDispositionField(s) {
 }
 
 function OutgoingMessage(options) {
-  Stream.$call(this, options);
+  // As in node, Stream gets no options. `undefined` and not a missing argument: that call needs no arity fix-up.
+  Stream.$call(this, undefined);
 
   // Queue that holds all currently pending data, until the response will be
   // assigned to the socket (until it will its turn in the HTTP pipeline).

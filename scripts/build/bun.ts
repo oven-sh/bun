@@ -19,6 +19,7 @@ import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
 import { cc, cxx, link, pch, type PrecompiledHeader } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
+import { boringsslEmbedderHooks } from "./deps/boringssl.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
@@ -39,7 +40,7 @@ import type { Ninja } from "./ninja.ts";
 import { emitRust, windowsShimPath } from "./rust.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
-import { resolveDep, type Dependency, type DepName, type ResolvedDep } from "./source.ts";
+import { groupCompileFlags, resolveDep, type Dependency, type DepName, type ResolvedDep } from "./source.ts";
 import { streamPath } from "./stream.ts";
 import { generateUnifiedSources } from "./unified.ts";
 
@@ -458,6 +459,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   });
 
   emitJscPrograms(n, cfg, depsByName, codegenReady, builtinTableObjects);
+  emitH3blast(n, cfg, depsByName);
 
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
   const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [
@@ -522,6 +524,43 @@ function emitJscPrograms(
     if (program.name === "jsc" || program.name === "testaot") testPrograms.push(exe);
   }
   n.phony("engine-test-programs", testPrograms.length > 0 ? testPrograms : deps.get("WebKit")!.outputs);
+}
+
+/**
+ * packages/h3blast, the HTTP/3 load generator for `Bun.serve({ http3: true })`:
+ * a C program over lsquic and BoringSSL, compiled the way those are and linked
+ * from the objects bun gets. On request (`--target=h3blast`). It links without
+ * bun's runtime, so it defines what those objects expect the runtime to define
+ * (src/boringssl_hooks.c). Returns the executable, or nothing where there is none.
+ */
+export function emitH3blast(n: Ninja, cfg: Config, deps: ReadonlyMap<DepName, ResolvedDep>): string | undefined {
+  // For a Linux machine (epoll, timerfd, sendmmsg). Nothing runs a load generator on Android.
+  if (!cfg.linux || cfg.abi === "android") return undefined;
+  n.comment("─── h3blast (HTTP/3 load generator) ───");
+  const srcDir = resolve(cfg.cwd, "packages", "h3blast", "src");
+  const from = (["lsquic", "lsqpack", "lshpack", "boringssl"] as const).map(name => deps.get(name)!);
+  const compile = (source: string, defines: string[]) =>
+    cc(n, cfg, resolve(srcDir, source), {
+      flags: groupCompileFlags(cfg, srcDir, {
+        includes: from.flatMap(d => d.includes),
+        cflags: [
+          ...[...from.flatMap(d => d.defines), ...defines].map(d => `-D${d}`),
+          // The program's own code, not a dependency's: it keeps its warnings.
+          ...["-std=c11", "-Wall", "-Wextra", "-Wno-unused-parameter"],
+        ],
+      }).c,
+      implicitInputs: from.flatMap(d => d.outputs),
+    });
+  const objects = [compile("h3blast.c", []), compile("boringssl_hooks.c", Object.keys(boringsslEmbedderHooks(cfg)))];
+  const depLink = lazyDepObjects(
+    cfg,
+    from.flatMap(d => d.objects),
+  );
+  return link(n, cfg, "h3blast", [...objects, ...depLink.eager], {
+    lazyObjects: depLink.lazy,
+    libs: from.flatMap(d => d.libs),
+    flags: [...computeTargetLinkFlags(cfg), ...systemLibs(cfg)],
+  });
 }
 
 /**

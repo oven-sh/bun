@@ -6223,6 +6223,8 @@ impl VirtualMachine {
         self.entry_point_result.evaluated_as_cjs = false;
         self.set_pending_internal_promise(None);
         self.has_patched_run_main = false;
+        // The list of the outgoing file's `Module._initPaths()`.
+        self.transpiler.resolver.node_module_paths = None;
         self.set_main(None);
         self.main_resolved_path = bun_core::String::EMPTY;
         self.unhandled_error_counter = 0;

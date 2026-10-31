@@ -7,3 +7,9 @@ export const _stat = b.fn({
   returns: b.i32,
   rustPath: "crate::node_module_module::stat",
 });
+
+export const setNodeModulePaths = b.fn({
+  args: { paths: b.array(b.string.utf8.owned) },
+  capability: "heap",
+  rustPath: "crate::node_module_module::set_node_module_paths",
+});

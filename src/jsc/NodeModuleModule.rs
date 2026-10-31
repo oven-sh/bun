@@ -1,5 +1,5 @@
 use crate::{
-    self as jsc, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc, Strong,
+    self as jsc, HostReturn as _, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc, Strong,
     VirtualMachineRef as VirtualMachine,
 };
 use bun_ast::Loader;
@@ -111,6 +111,28 @@ pub(crate) fn stat(path: &[u8]) -> i32 {
         Ok(bun_sys::ExistsAtType::Directory) => 1, // Returns 1 for directories.
         Err(_) => -1, // Returns a negative integer for any other kind of strings.
     }
+}
+
+/// `Module._initPaths()`: what CommonJS searches after `node_modules` from now on.
+pub(crate) fn set_node_module_paths(
+    heap: &crate::bindgen::JsHeap<'_>,
+    paths: Vec<bun_core::Utf8Bytes<'static>>,
+) {
+    // SAFETY: only the VM is taken from it.
+    let vm = unsafe { heap.global() }.bun_vm().as_mut();
+    vm.transpiler.resolver.node_module_paths =
+        Some(paths.iter().map(|path| Box::from(&**path)).collect());
+}
+
+/// That list as an array, for the lookup paths of a bare specifier. The empty value before the first call.
+#[unsafe(no_mangle)]
+extern "C" fn NodeModuleModule__nodeModulePaths(global: &JSGlobalObject) -> JSValue {
+    let resolver = &global.bun_vm().transpiler.resolver;
+    let Some(paths) = resolver.node_module_paths.as_deref() else {
+        return JSValue::ZERO;
+    };
+    let paths: Vec<BunString> = paths.iter().map(|path| BunString::clone_utf8(path)).collect();
+    crate::bun_string_jsc::to_js_array(global, &paths).or_pending_exception()
 }
 
 pub enum CustomLoader {

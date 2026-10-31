@@ -510,6 +510,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveLookupPaths,
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(resolveLookupPaths(globalObject, request, parent)));
 }
 
+extern "C" JSC::EncodedJSValue NodeModuleModule__nodeModulePaths(JSGlobalObject*);
+
 JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String request, PathResolveModule parent)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -523,8 +525,9 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
             true
 #endif
             )) {
+        JSArray* array;
         if (parent.paths) {
-            auto array = JSC::constructArray(globalObject, (ArrayAllocationProfile*)nullptr, nullptr, 0);
+            array = JSC::constructArray(globalObject, (ArrayAllocationProfile*)nullptr, nullptr, 0);
             RETURN_IF_EXCEPTION(scope, {});
             auto len = parent.paths->length();
             for (size_t i = 0; i < len; i++) {
@@ -533,18 +536,28 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
                 array->push(globalObject, path);
                 RETURN_IF_EXCEPTION(scope, {});
             }
-            RELEASE_AND_RETURN(scope, array);
         } else if (parent.pathsArrayLazy && parent.filename) {
             auto filenameValue = parent.filename->value(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             auto filename = Bun::toString(filenameValue);
             auto paths = JSValue::decode(Resolver__nodeModulePathsJSValue(&filename, globalObject, true));
-            RELEASE_AND_RETURN(scope, paths);
-        } else {
-            auto array = JSC::constructEmptyArray(globalObject, nullptr, 0);
             RETURN_IF_EXCEPTION(scope, {});
-            RELEASE_AND_RETURN(scope, array);
+            array = uncheckedDowncast<JSArray>(paths);
+        } else {
+            array = JSC::constructEmptyArray(globalObject, nullptr, 0);
+            RETURN_IF_EXCEPTION(scope, {});
         }
+        // After `Module._initPaths()`, CommonJS goes on to the directories that it listed.
+        JSValue listed = JSValue::decode(NodeModuleModule__nodeModulePaths(globalObject));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (listed) [[unlikely]] {
+            auto* list = uncheckedDowncast<JSArray>(listed);
+            for (unsigned i = 0, length = list->length(); i < length; i++) {
+                array->push(globalObject, list->getIndexQuickly(i));
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+        }
+        RELEASE_AND_RETURN(scope, array);
     }
 
     JSValue dirname;

@@ -5325,6 +5325,22 @@ impl TestCommand {
         }
     }
 
+    /// Returns whether the runner moved on. The error ends a describe() or a test. Anything else stays stuck.
+    #[cold]
+    #[inline(never)]
+    fn report_nothing_left(
+        vm: &mut VirtualMachine,
+        global: &jsc::JSGlobalObject,
+        buntest: &bun_test::BunTest,
+        file_path: &[u8],
+    ) -> bool {
+        let (what, waits_for) = Self::what_runner_waits_for(buntest);
+        let p = jsc::JSPromise::opaque_mut(Self::never_settled(global, what, file_path));
+        vm.unhandled_rejection(global, p.result(global.vm()), p.to_js());
+        vm.event_loop_ref().tick();
+        waits_for.is_some() && waits_for != Self::what_runner_waits_for(buntest).1
+    }
+
     #[optimize(size)]
     pub(crate) fn run(
         reporter: &mut CommandLineReporter,
@@ -5522,19 +5538,10 @@ impl TestCommand {
                     if buntest.timer.state != crate::timer::EventLoopTimerState::ACTIVE
                         && !vm.has_work_left()
                     {
-                        let (what, waits_for) = Self::what_runner_waits_for(buntest);
-                        let p = jsc::JSPromise::opaque_mut(Self::never_settled(
-                            global, what, file_path,
-                        ));
-                        vm.unhandled_rejection(global, p.result(global.vm()), p.to_js());
-                        vm.event_loop_ref().tick();
-                        // The error ends a describe() or a test. Anything else stays stuck, so abandon the file.
-                        if waits_for.is_none()
-                            || waits_for == Self::what_runner_waits_for(buntest).1
-                        {
-                            break;
+                        if Self::report_nothing_left(vm, global, buntest, file_path) {
+                            continue;
                         }
-                        continue;
+                        break;
                     }
                     vm.event_loop_ref().auto_tick_asleep();
                     if buntest.phase == bun_test::Phase::Done {

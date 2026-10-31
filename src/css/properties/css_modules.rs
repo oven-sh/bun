@@ -5,8 +5,6 @@ use crate::printer::Printer;
 
 use crate::css_values::ident::{CustomIdent, CustomIdentList};
 
-use crate::dependencies::Location;
-
 use bun_alloc::Arena; // bumpalo::Bump re-export (CSS is an AST/arena crate)
 use bun_wyhash::Wyhash;
 
@@ -18,13 +16,11 @@ pub struct Composes {
     pub from: Option<Specifier>,
     /// The source location of the `composes` property.
     pub loc: bun_ast::Loc,
-    pub(crate) cssparser_loc: Location,
 }
 
 impl Composes {
     pub fn parse(input: &mut Parser) -> css::Result<Composes> {
         let loc = input.position();
-        let loc2 = input.current_source_location();
         let mut names = CustomIdentList::default();
         while let Ok(name) = input.try_parse(Self::parse_one_ident) {
             names.append(name);
@@ -49,7 +45,6 @@ impl Composes {
             loc: bun_ast::Loc {
                 start: i32::try_from(loc).expect("int cast"),
             },
-            cssparser_loc: Location::from_source_location(loc2),
         })
     }
 
@@ -89,7 +84,6 @@ impl Composes {
             names,
             from: self.from.as_ref().map(|f| f.deep_clone(bump)),
             loc: self.loc,
-            cssparser_loc: self.cssparser_loc,
         }
     }
 
@@ -107,7 +101,7 @@ impl Composes {
             (Some(a), Some(b)) if Specifier::eql(*a, *b) => {}
             _ => return false,
         }
-        lhs.loc == rhs.loc && lhs.cssparser_loc == rhs.cssparser_loc
+        lhs.loc == rhs.loc
     }
 }
 
@@ -146,13 +140,7 @@ impl Specifier {
     pub fn parse(input: &mut Parser) -> css::Result<Specifier> {
         input.skip_whitespace();
         let start_position = input.position();
-        if let Ok(file) = input.try_parse(|i| {
-            let s = i.expect_url_or_string()?;
-            // SAFETY: `s` borrows the parser source/arena which outlives the
-            // `add_import_record` call. Detach the borrow so `input` is reusable
-            // (same trick as `css_parser::src_str` — Token payloads are arena-static).
-            Ok::<&'static [u8], _>(unsafe { &*std::ptr::from_ref::<[u8]>(s) })
-        }) {
+        if let Ok(file) = input.try_parse(|i| i.expect_url_or_string()) {
             let end_position = input.position();
             let import_record_index = input.add_import_record(
                 file,
@@ -166,15 +154,11 @@ impl Specifier {
         Ok(Specifier::Global)
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             Specifier::Global => dest.write_str(b"global"),
             Specifier::ImportRecordIndex(import_record_index) => {
-                let url = dest.get_import_record_url(*import_record_index)?;
-                // SAFETY: `url` borrows printer-owned import-record storage
-                // which outlives the `serialize_string` call. Detach so `dest`
-                // is reborrowable as the `WriteAll` sink.
-                let url: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(url) };
+                let (url, _) = dest.get_import_record_url(import_record_index)?;
                 dest.serialize_string(url)
             } // .source_index => {},
         }

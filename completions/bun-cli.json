@@ -4660,6 +4660,92 @@
           "hasValue": false,
           "required": false,
           "multiple": false
+        },
+        {
+          "name": "dts",
+          "description": "Write declaration files (.d.ts), and each output file with its types kept (.aot.ts), to --outdir. Implies --check",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "aot",
+          "description": "Compile JavaScript and TypeScript to machine code at build time. Requires --compile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "aot-log-type-mismatches",
+          "description": "With --aot: the executable logs every value that doesn't match its declared type",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "explain",
+          "description": "With --aot: list the code that compiled to a slow path and how to fix it, worst first. Other reports: json, guards, guards-json, trim, missed-optimizations, allocations",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": true
+        },
+        {
+          "name": "aot-huge-heap",
+          "description": "With --aot: remove the 32 GB heap limit per thread. Uses more memory and runs slower",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "aot-allow-code-from-disk",
+          "description": "With --aot: let import() and require() load code that isn't in the executable from disk at run time. Makes it larger and slower",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-compile-function-source",
+          "description": "With --aot: don't embed function source code. fn.toString() returns [native code], and an eval() or new Function() call the compiler didn't find at build time throws",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "compile-in-place",
+          "description": "With --aot: keep modules at their paths on disk and load anything that wasn't compiled from there. The executable only runs on the machine that built it",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "trim",
+          "description": "Remove the Bun and Node.js APIs your code never calls from the executable. Requires --compile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "trim-locales",
+          "description": "Keep only these locales, such as en,de-AT. Implies --trim",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": true
+        },
+        {
+          "name": "obfuscate",
+          "description": "With --aot: strip function names and source locations from the executable and write them to <outfile>.map",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "compile-inspector",
+          "description": "With --aot: let a debugger attach to the executable (BUN_INSPECT, --inspect). Makes it larger and slower",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
         }
       ],
       "positionalArgs": [],

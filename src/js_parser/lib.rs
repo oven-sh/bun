@@ -142,7 +142,7 @@ pub mod Macro {
     }
     impl MacroContext {
         #[inline]
-        pub(crate) fn call(
+        pub fn call(
             &mut self,
             import_record_path: &[u8],
             source_dir: &[u8],
@@ -356,6 +356,7 @@ pub mod defines {
         }
     }
 
+    /// Threads share it only through the read-only `Box<Define>`, and the `StoreRef`s in `value` point into immutable, process-lifetime AST stores.
     #[derive(Clone)]
     pub struct DefineData {
         pub value: ExprData,
@@ -368,14 +369,6 @@ pub mod defines {
         pub original_name: Option<Box<[u8]>>,
         pub flags: Flags,
     }
-
-    // SAFETY: `ExprData` contains `StoreRef` raw pointers into immutable,
-    // process-lifetime AST stores. `DefineData` is only shared across threads
-    // via the read-only `Box<Define>` after init. Never written through.
-    unsafe impl Send for DefineData {}
-    // SAFETY: see `Send` impl above — the `StoreRef` targets are immutable and
-    // process-lifetime, and `DefineData` is read-only after init.
-    unsafe impl Sync for DefineData {}
 
     impl Default for DefineData {
         fn default() -> Self {
@@ -447,7 +440,7 @@ pub mod defines {
             self.flags.method_call_must_be_replaced_with_undefined()
         }
         #[inline]
-        pub(crate) fn valueless(&self) -> bool {
+        pub fn valueless(&self) -> bool {
             self.flags.valueless()
         }
 
@@ -534,6 +527,64 @@ pub mod defines {
     }
 
     impl Define {
+        /// A table with only the globals that are known to have no side effects.
+        pub fn with_pure_globals(
+            drop_debugger: bool,
+            omit_unused_global_calls: bool,
+        ) -> Box<Define> {
+            use crate::defines_table::{
+                GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING,
+                GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES,
+            };
+            let mut define = Box::new(Define {
+                drop_debugger,
+                ..Default::default()
+            });
+            define.dots.reserve(124);
+
+            let value_define = DefineData::init(Options {
+                value: ExprData::EUndefined(E::Undefined),
+                valueless: true,
+                can_be_removed_if_unused: true,
+                ..Default::default()
+            });
+            for global in GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES.iter() {
+                define.insert_global(global, &value_define);
+            }
+
+            let to_string_safe = DefineData::init(Options {
+                value: ExprData::EUndefined(E::Undefined),
+                valueless: true,
+                can_be_removed_if_unused: true,
+                call_can_be_unwrapped_if_unused: E::CallUnwrap::IfUnusedAndToStringSafe,
+                ..Default::default()
+            });
+            let call_define = if omit_unused_global_calls {
+                &to_string_safe
+            } else {
+                &value_define
+            };
+            for global in GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING.iter() {
+                define.insert_global(global, call_define);
+            }
+            define
+        }
+
+        fn insert_global(&mut self, global: &[&[u8]], value_define: &DefineData) {
+            let key = global[global.len() - 1];
+            let parts: Vec<Box<[u8]>> = global.iter().map(|p| Box::<[u8]>::from(*p)).collect();
+            self.dots_filter.insert(key);
+            let dot_define = DotDefine {
+                parts,
+                data: value_define.clone(),
+            };
+            if let Some(existing) = self.dots.get_mut(key) {
+                existing.push(dot_define);
+            } else {
+                self.dots.put_assume_capacity(key, vec![dot_define]);
+            }
+        }
+
         /// The dot defines whose last part is `name` (`NODE_ENV` for
         /// `process.env.NODE_ENV`).
         #[inline]

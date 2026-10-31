@@ -251,7 +251,7 @@ fn to_js_module_record(
 bun_opaque::opaque_ffi! { pub struct IdentifierArray; }
 unsafe extern "C" {
     fn Bun__VM__sharedModuleInfoIdentifiers(vm: *const VM, count: usize) -> *mut IdentifierArray;
-    fn JSC__IdentifierArray__create(count: usize) -> *mut IdentifierArray;
+    safe fn JSC__IdentifierArray__create(count: usize) -> *mut IdentifierArray;
     fn JSC__IdentifierArray__destroy(identifiers: *mut IdentifierArray, count: usize);
     fn JSC__IdentifierArray__isNull(identifier_array: *mut IdentifierArray, n: usize) -> bool;
     fn JSC__IdentifierArray__setFromChars(
@@ -286,8 +286,7 @@ struct OwnedIdentifierArray {
 impl OwnedIdentifierArray {
     fn new(count: usize) -> Self {
         Self {
-            // SAFETY: FFI call; returns `count` null slots.
-            ptr: unsafe { JSC__IdentifierArray__create(count) },
+            ptr: JSC__IdentifierArray__create(count),
             count,
         }
     }

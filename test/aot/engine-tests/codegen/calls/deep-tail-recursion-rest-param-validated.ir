@@ -1,0 +1,128 @@
+# deep-tail-recursion-through-rest-parameters.js in a build that checks itself while it runs. The output is that of plain Bun.
+# FORM: AsRead
+# OPTIONS: validate
+# RUN: lower-to-air size f1
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="deep-tail-recursion-through-rest-param.js" displayPath="deep-tail-recursion-through-rest-param.js" body=f0 namespaceLayout=L(m0)
+module m1 path="deep-tail-recursion-rest-param-validated.js" displayPath="deep-tail-recursion-rest-param-validated.js" body=f7 requests=[{target=m0 completes=true}] namespaceLayout=L(m1)
+entry module=m1
+layout L0 module=m0 position=336 fields=[{key="even" declared={type=undefined|null|function|f2 flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="odd" declared={type=undefined|null|function|f3 flags=[IsExpected]} flags=[IsRequired, IsMethod]}] ownFieldCount=2
+data d0 root=Array{contents=undefined|null|string elements=[String{value="even"}, String{value="odd"}]} module=m0
+variable g0 name="throughValue" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="table" module=m0 declared={type=undefined|null|absent|L0 flags=[IsExpected]} flags=[IsImmutable]
+variable g2 name="names" module=m0 declared={type=undefined|null|absent|Array<undefined|null|string> flags=[IsExpected]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=undefined|null|function|f2 flags=[IsExpected]}
+    v2 = NewObject layout=L0
+    PropDefine v2, v1 key="even"
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=undefined|null|function|f3 flags=[IsExpected]}
+    PropDefine v2, v5 key="odd"
+    v7 = FinishObject v2
+    v8 = Convert v7 declared={type=undefined|null|L0 flags=[IsExpected]}
+    PutModuleVariable v8 variable=g1
+    v10 = Data data=d0
+    v11 = Convert v10 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    PutModuleVariable v11 variable=g2
+    v13 = Integer integer=1
+    v14 = ElemGet v11, v13
+    v15 = Convert v14 declared={type=undefined|null|string flags=[IsExpected]}
+    v16 = ElemGet v8, v15
+    v17 = GetModuleVariable variable=g0
+    v18 = Integer integer=1000000
+    v19 = String string="v"
+    v20 = Call v17, -, v18, v19 calleeName="throughValue"
+    v21 = Undefined
+    Return v21
+}
+function f1 name="throughValue" module=m0 position=597 flags=[HasRestParameter, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}, {type=Array flags=[IsFromCompiler]}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: Array):
+    v2 = Convert v0 declared={type=number flags=[IsExpected]}
+    v3 = Integer
+    v4 = StrictEq v2, v3
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v5):
+    v6 = String string="value "
+    v7 = PropGet v1 key="length"
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    v9 = Add v6, v8
+    v10 = Integer
+    v11 = ElemGet v1, v10
+    v12 = Add v9, v11
+    v13 = Convert v12 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v13
+  b2(v14):
+    v15 = GetModuleVariable variable=g1
+    v16 = CheckInitialized v15 name="table"
+    v17 = GetModuleVariable variable=g2
+    v18 = CheckInitialized v17 name="names"
+    v19 = Integer integer=2
+    v20 = ElemGet v18, v19
+    v21 = Convert v20 declared={type=undefined|null|string flags=[IsExpected]}
+    v22 = ElemGet v16, v21
+    v23 = Convert v22 declared={type=undefined|null|function flags=[IsExpected]}
+    v24 = TypeTest v23 testedType=undefined|null
+    Branch v24 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v25):
+    v26 = GetModuleVariable variable=g0
+    Jump -> next b5(v26)
+  b4(v27):
+    Jump -> next b5(v27)
+  b5(v28):
+    v29 = Convert v28 declared={type=undefined|null|function flags=[IsExpected]}
+    v30 = Convert v14 declared={type=number flags=[IsExpected]}
+    v31 = Integer integer=1
+    v32 = Sub v30, v31
+    v33 = Integer
+    v34 = ElemGet v1, v33
+    v35 = Call v29, -, v32, v34, v30
+    ReturnCall v35 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}]
+}
+function f2 name="even" module=m0 position=340 kind=Method flags=[HasRestParameter, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}, {type=Array flags=[IsFromCompiler]}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: Array):
+    v2 = Convert v0 declared={type=number flags=[IsExpected]}
+    v3 = GetModuleVariable variable=g1
+    v4 = CheckInitialized v3 name="table"
+    v5 = PropGet v4 key="odd"
+    v6 = Convert v5 declared={type=undefined|null|function|f3 flags=[IsExpected]}
+    v7 = Convert v2 declared={type=number flags=[IsExpected]}
+    v8 = Integer integer=1
+    v9 = Sub v7, v8
+    v10 = NewArray v9 contents=anything
+    AppendSpread v10, v1
+    v12 = CallList v6, v4, v10 calleeKey="odd" calleeName="table.odd"
+    ReturnCall v12 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}]
+}
+function f3 name="odd" module=m0 position=448 kind=Method flags=[HasRestParameter, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}, {type=Array flags=[IsFromCompiler]}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: Array):
+    v2 = Convert v0 declared={type=number flags=[IsExpected]}
+    v3 = String string="odd "
+    v4 = PropGet v1 key="length"
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    v6 = Add v3, v5
+    v7 = Integer integer=1
+    v8 = ElemGet v1, v7
+    v9 = Add v6, v8
+    v10 = Convert v9 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v10
+}
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f7 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+# -- generated: throughValue
+# CHECK-LABEL: function {{*}}name="throughValue"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 347, patchpoints: 48, rare instructions: 530
+# CHECK-NEXT: end of function f1
+# CHECK-LABEL: function {{*}}name="throughValue"
+# CHECK: role=GenericEntrypoint
+# CHECK-NEXT: instructions: 84, patchpoints: 12, rare instructions: 64
+# CHECK-NEXT: end of function f10

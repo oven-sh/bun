@@ -1,0 +1,49 @@
+# Species constructor replaced on prototype.
+# FORM: AsRead
+# RUN: valueflow-apply
+
+module m0 path="main.mjs" displayPath="main.mjs" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="A" module=m0 position=52 constructor=f1 flags=[HasHeritage]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Array
+    v1 = ResolveHeritage v0
+    v2 = NewClosure function=f1
+    v3 = NewClass v2, v0, v1 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Convert v4 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = PropGet v5 key="prototype"
+    v7 = Convert v6 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v8 = Builtin builtin=Array
+    v9 = Convert v8 declared={type=undefined|null|function flags=[IsExpected]}
+    PropSet v7, v9 key="constructor"
+    v11 = Undefined
+    Return v11
+}
+function f1 name="A" module=m0 position=52 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L0
+    v5 = Convert v4 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Return v5
+}
+# -- generated: f0
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: builtin(Array) = Builtin builtin=Array
+# CHECK-NEXT: v1: null|object = ResolveHeritage v0
+# CHECK-NEXT: v10: builtin(ArrayPrototype) = AssumeType v1 provenType=builtin(ArrayPrototype)
+# CHECK-NEXT: v2: f1 = NewClosure function=f1 allocationSite=0
+# CHECK-NEXT: v3: f1 = NewClass v2, v0, v10 layout=L0
+# CHECK-NEXT: v4: f1 = FinishClass v3 layout=L0
+# CHECK-NEXT: v5: anything = PropGet v4 key="prototype" accessSite=0
+# CHECK-NEXT: v11: object = AssumeType v5 provenType=object
+# CHECK-NEXT: v6: object ~ L0 = Upcast v11 castType=anything
+# CHECK-NEXT: v12: object ~ L0 = AssumeType v6 provenType=object
+# CHECK-NEXT: v7: builtin(Array) = Builtin builtin=Array
+# CHECK-NEXT: PropSet v12, v7 key="constructor" accessSite=1
+# CHECK-NEXT: v9: undefined = Undefined
+# CHECK-NEXT: Return v9
+# CHECK-NEXT: }

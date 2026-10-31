@@ -28,7 +28,6 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     clangVersion: "23.1.1",
     clangResourceDir: "/fake/llvm/lib/clang/23",
     ar: "/fake/llvm/bin/llvm-ar",
-    ranlib: "/fake/llvm/bin/llvm-ranlib",
     ld: "/fake/llvm/bin/ld.lld",
     ld64Lld: "/fake/llvm/bin/ld64.lld",
     rustLlvmVersion: "23.1.1",
@@ -51,7 +50,6 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     rustupHome: undefined,
     msvcLinker: undefined,
     rc: undefined,
-    mt: undefined,
     nasm: undefined,
     ...overrides,
   } as Toolchain;
@@ -195,18 +193,18 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
   });
 
   test("WebKit prebuilt resolves to the macOS tarball with a macos-keyed cache dir", () => {
-    const cfg = resolveDarwin({ lto: false });
+    const cfg = resolveDarwin({ lto: false, aot: false });
     const source = webkit.source(cfg);
     if (source.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${source.kind}`);
     expect(source.url).toContain("bun-webkit-macos-arm64.tar.gz");
     expect(source.destDir).toContain("-macos-arm64");
 
-    const x64 = webkit.source(resolveDarwin({ arch: "x64", lto: false }));
+    const x64 = webkit.source(resolveDarwin({ arch: "x64", lto: false, aot: false }));
     if (x64.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${x64.kind}`);
     expect(x64.url).toContain("bun-webkit-macos-amd64.tar.gz");
 
     // Release defaults to LTO, which selects the bitcode (-lto) tarball.
-    const lto = webkit.source(resolveDarwin());
+    const lto = webkit.source(resolveDarwin({ aot: false }));
     if (lto.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${lto.kind}`);
     expect(lto.url).toContain("bun-webkit-macos-arm64-lto.tar.gz");
   });

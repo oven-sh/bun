@@ -1,0 +1,76 @@
+// Code whose text the build cannot know, as routers, validators and serializers make it with `new Function`: the executable has no JIT, so it is interpreted.
+//// a-prefix-compared-character-by-character
+const nothing = String(Date.now()).slice(99);
+const matchPrefix = new Function("path", "i", "return path.charCodeAt(i + 1) === 115 && path.charCodeAt(i + 2) === 101 && path.charCodeAt(i + 3) === 114 && path.charCodeAt(i + 4) === 115" + nothing) as (path: string, i: number) => boolean;
+const paths: string[] = ["/users/12/posts" + nothing, "/usage/of/things" + nothing];
+function turn(i: number): number {
+  return matchPrefix(paths[i & 1]!, 1) ? 1 : 2;
+}
+//// names-stored-on-an-object-of-a-constructor-of-the-program
+const nothing = String(Date.now()).slice(99);
+const NullObject = function () {} as unknown as new () => Record<string, unknown>;
+NullObject.prototype = Object.create(null);
+const createParams = new Function("NullObject", "return function (values) { const params = new NullObject(); params['shop'] = values[0]; params['order'] = values[1]; return params; }" + nothing)(NullObject) as (values: unknown[]) => Record<string, unknown>;
+const values: unknown[] = ["west", 7];
+function turn(i: number): number {
+  values[1] = i;
+  return createParams(values).order as number;
+}
+//// methods-of-the-program-bound-in-the-text
+const nothing = String(Date.now()).slice(99);
+class Serializer {
+  constructor(public step: number) {}
+  asInteger(i: number): string { return String(i + this.step); }
+  asBoolean(flag: boolean): string { return flag ? "true" : "false"; }
+}
+const stringify = new Function("serializer", "const asInteger = serializer.asInteger.bind(serializer), asBoolean = serializer.asBoolean.bind(serializer); return function (o) { let json = '{\"id\":'; json += asInteger(o.id); json += ',\"count\":'; json += asInteger(o.count); json += ',\"open\":'; json += asBoolean(o.open); return json + '}'; }" + nothing)(new Serializer(0)) as (o: unknown) => string;
+const order = { id: 1, count: 2, open: true };
+function turn(i: number): number {
+  order.id = i & 1023;
+  return stringify(order).length;
+}
+//// integers-validated-as-a-schema-compiler-writes-it
+const nothing = String(Date.now()).slice(99);
+const validate = new Function("data", "if (!(data && typeof data == 'object' && !Array.isArray(data))) return false; const a = data.quantity; if (!(typeof a == 'number' && !(a % 1) && !isNaN(a) && isFinite(a))) return false; if (a < 1 || isNaN(a)) return false; const b = data.unitCents; if (!(typeof b == 'number' && !(b % 1) && !isNaN(b) && isFinite(b))) return false; return Number.isInteger(b)" + nothing) as (data: unknown) => boolean;
+const items: unknown[] = [JSON.parse('{"quantity":2,"unitCents":199}'), JSON.parse('{"quantity":3,"unitCents":1.5}')];
+function turn(i: number): number {
+  return validate(items[i & 1]) ? 1 : 2;
+}
+//// a-key-parsed-as-a-schema-library-writes-it
+const nothing = String(Date.now()).slice(99);
+type Payload = { value: unknown; issues: unknown[] };
+const leaf = { _zod: { run(payload: Payload, ctx: unknown): Payload { if (typeof payload.value !== "number") payload.issues.push("no number"); return payload; } } };
+const shape = { quantity: leaf, unitCents: leaf };
+const parse = new Function("shape", "return function (payload, ctx) { const input = payload.value; const newResult = {}; const key_0 = shape[\"quantity\"]._zod.run({ value: input[\"quantity\"], issues: [] }, ctx); const key_0_present = \"quantity\" in input; if (key_0.issues.length) { payload.issues.push(key_0.issues[0]); } if (key_0_present) { newResult[\"quantity\"] = key_0.value; } const key_1 = shape[\"unitCents\"]._zod.run({ value: input[\"unitCents\"], issues: [] }, ctx); const key_1_present = \"unitCents\" in input; if (key_1.issues.length) { payload.issues.push(key_1.issues[0]); } if (key_1_present) { newResult[\"unitCents\"] = key_1.value; } payload.value = newResult; return payload; }" + nothing)(shape) as (payload: Payload, ctx: unknown) => Payload;
+const input: unknown = JSON.parse('{"quantity":2,"unitCents":199}');
+const ctx = { async: false };
+function turn(i: number): number {
+  return (parse({ value: input, issues: [] }, ctx).value as { quantity: number }).quantity + (i & 1);
+}
+//// the-names-of-a-parsed-object-walked-as-a-schema-compiler-writes-it
+const nothing = String(Date.now()).slice(99);
+const validate = new Function("data", "for (const key in data) { if (!(key === 'sku' || key === 'quantity' || key === 'unitCents')) return false; } return true" + nothing) as (data: unknown) => boolean;
+const items: unknown[] = [JSON.parse('{"sku":"a","quantity":2,"unitCents":199}'), JSON.parse('{"sku":"b","quantity":3,"unitCents":5}')];
+function turn(i: number): number {
+  return validate(items[i & 1]) ? 1 : 2;
+}
+//// a-result-asked-for-its-class-as-a-composed-handler-writes-it
+const nothing = String(Date.now()).slice(99);
+class CustomStatus {
+  constructor(public code: number, public response: unknown) {}
+}
+class Refusal extends Error {
+  constructor(public status: number) { super("refused"); }
+}
+const handle = new Function("CustomStatus", "Refusal", "return function (value) { if (value instanceof CustomStatus) return value.code; if (value instanceof Refusal) return value.status; return 200; }" + nothing)(CustomStatus, Refusal) as (value: unknown) => number;
+const values: unknown[] = [{ user: 1 }, new CustomStatus(201, "made"), { id: 2 }, new Refusal(401)];
+function turn(i: number): number {
+  return handle(values[i & 3]);
+}
+//// a-path-cut-out-of-a-url-as-a-composed-handler-writes-it
+const nothing = String(Date.now()).slice(99);
+const pathOf = new Function("u", "const s = u.indexOf('/', 11), qi = u.indexOf('?', s + 1); return u.substring(s, qi === -1 ? undefined : qi)" + nothing) as (u: string) => string;
+const urls: string[] = ["http://127.0.0.1:3000/api/projects/7/tasks?status=open" + nothing, "http://127.0.0.1:3000/health" + nothing];
+function turn(i: number): number {
+  return pathOf(urls[i & 1]!).length;
+}

@@ -1,0 +1,405 @@
+# Arrays that are filled with `push` in a loop, with strings, objects and numbers.
+# FORM: AsRead
+# RUN: lower-to-air size f0 f11
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="array-pushed.ts" displayPath="array-pushed.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 name="Box" module=m0 position=181 fields=[{key="v" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Array{contents=undefined|null|Array<number> elements=[Array{contents=number elements=[Number{}]}, Array{contents=number elements=[Number{value=1}]}, Array{contents=number elements=[Number{value=3}]}, Array{contents=number elements=[Number{value=5}]}, Array{contents=number elements=[Number{value=6}]}, Array{contents=number elements=[Number{value=9}]}, Array{contents=number elements=[Number{value=12}]}, Array{contents=number elements=[Number{value=26}]}, Array{contents=number elements=[Number{value=40}]}, Array{contents=number elements=[Number{value=130}]}, Array{contents=number elements=[Number{value=1}, Number{value=1}, Number{value=1}, Number{value=30}]}, Array{contents=number elements=[Number{value=30}, Number{value=1}, Number{value=1}, Number{value=1}]}, Array{contents=number elements=[Number{}, Number{}, Number{}, Number{value=7}]}, Array{contents=number elements=[Number{value=2}, Number{value=4}, Number{value=8}, Number{value=16}, Number{value=32}, Number{value=64}]}]} module=m0
+data d1 root=Array{contents=undefined|null|string elements=[String{value="f"}, String{value="g"}]} module=m0
+data d2 root=Array{contents=undefined|null|L0} module=m0
+data d3 root=Array{contents=anything} module=m0
+data d4 root=Array{contents=number} module=m0
+data d5 root=Array{contents=number} module=m0
+data d6 root=Array{contents=undefined|null|string} module=m0
+data d7 root=Array{contents=undefined|null|string} module=m0
+data d8 root=Array{contents=anything} module=m0
+data d9 root=Array{contents=undefined|null|string} module=m0
+data d10 root=Array{contents=undefined|null|L0} module=m0
+data d11 root=Array{contents=undefined|null|string} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f4
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f5
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = NewClosure function=f6
+    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v12 = NewClosure function=f7
+    v13 = Convert v12 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v14 = NewClosure function=f8
+    v15 = Convert v14 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v16 = NewClosure function=f9
+    v17 = Convert v16 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v18 = NewClosure function=f10
+    v19 = Convert v18 declared={type=f10 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v20 = NewClosure function=f11
+    v21 = Convert v20 declared={type=f11 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v22 = Builtin builtin=GlobalThis
+    v23 = PropGet v22 key="globalThis" [isFreeName]
+    v24 = Convert v23 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v25 = Convert v24 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v26 = PropGet v25 key="gc"
+    v27 = NewClosure function=f12
+    v28 = Data data=d0
+    v29 = Convert v28 declared={type=undefined|null|Array<undefined|null|Array<number>> flags=[OmitsNull, OmitsUndefined]}
+    v30 = IteratorOpen v29
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v32 = IteratorResume v30
+    v33 = ResultAt v32 index=1
+    Jump -> next b2()
+  b2() handler=b9():
+    v34 = Convert v33 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v35 = Integer
+    v36 = Convert v35 declared={type=number}
+    v37 = Integer
+    v38 = Convert v37 declared={type=number}
+    Jump -> next b3(v36, v38)
+  b3(v39: number, v40: number) handler=b9():
+    LoopHint
+    v42 = Integer integer=700
+    v43 = Less v40, v42
+    Branch v43 -> taken b4(| 0), notTaken b8(| 0)
+  b4(v44) handler=b9():
+    v45 = PropGet v34 key="length"
+    v46 = Convert v45 declared={type=number} illTypedCause=Assertion
+    v47 = Mod v44, v46
+    v48 = ElemGet v34, v47
+    v49 = Convert v48 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v50 = Call v1, -, v49 calleeName="strings"
+    v51 = Convert v50 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    v52 = Call v21, -, v51 calleeName="sum"
+    v53 = Convert v52 declared={type=number}
+    v54 = Call v3, -, v49 calleeName="boxes"
+    v55 = Convert v54 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}
+    v56 = Call v21, -, v55 calleeName="sum"
+    v57 = Convert v56 declared={type=number}
+    v58 = Add v53, v57
+    v59 = Call v5, -, v49 calleeName="mixed"
+    v60 = Convert v59 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+    v61 = Call v21, -, v60 calleeName="sum"
+    v62 = Convert v61 declared={type=number}
+    v63 = Add v58, v62
+    v64 = Call v7, -, v49 calleeName="numbers"
+    v65 = Convert v64 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
+    v66 = Call v21, -, v65 calleeName="sum"
+    v67 = Convert v66 declared={type=number}
+    v68 = Add v63, v67
+    v69 = Call v9, -, v49 calleeName="doubles"
+    v70 = Convert v69 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
+    v71 = Call v21, -, v70 calleeName="sum"
+    v72 = Convert v71 declared={type=number}
+    v73 = Add v68, v72
+    v74 = Add v39, v73
+    v75 = Convert v74 declared={type=number}
+    v76 = Integer integer=11
+    v77 = Mod v49, v76
+    v78 = Call v17, -, v77 calleeName="two"
+    v79 = Convert v78 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|string|L0>> flags=[OmitsNull, OmitsUndefined]}
+    v80 = IteratorOpen v79 elementCount=2 [isDestructuring]
+    Jump -> next b5()
+  b5() handler=b7():
+    v81 = IteratorResume v80 stepIndex=0
+    v82 = ResultAt v81 index=1
+    v83 = Convert v82 declared={type=undefined|null|Array<undefined|null|string>} illTypedCause=Assertion
+    v84 = IteratorResume v80 stepIndex=1
+    v85 = ResultAt v84 index=1
+    v86 = Convert v85 declared={type=undefined|null|Array<undefined|null|L0>} illTypedCause=Assertion
+    Jump -> next b6()
+  b6() handler=b9():
+    v87 = Call v21, -, v83 calleeName="sum"
+    v88 = Convert v87 declared={type=number}
+    v89 = Call v21, -, v86 calleeName="sum"
+    v90 = Convert v89 declared={type=number}
+    v91 = Add v88, v90
+    v92 = Add v75, v91
+    v93 = Convert v92 declared={type=number}
+    v94 = String string="o"
+    v95 = Add v94, v44
+    v96 = Call v11, -, v95 calleeName="one"
+    v97 = Convert v96 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    v98 = Call v21, -, v97 calleeName="sum"
+    v99 = Convert v98 declared={type=number}
+    v100 = String string="m"
+    v101 = Integer integer=5
+    v102 = Mod v44, v101
+    v103 = Integer
+    v104 = StrictEq v102, v103
+    v105 = Call v13, -, v100, v104 calleeName="maybe"
+    v106 = Convert v105 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    v107 = Call v21, -, v106 calleeName="sum"
+    v108 = Convert v107 declared={type=number}
+    v109 = Add v99, v108
+    v110 = Integer integer=2
+    v111 = Mod v44, v110
+    v112 = Integer
+    v113 = StrictEq v111, v112
+    v114 = Data data=d1
+    v115 = Call v15, -, v113, v114 calleeName="either"
+    v116 = Convert v115 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    v117 = Call v21, -, v116 calleeName="sum"
+    v118 = Convert v117 declared={type=number}
+    v119 = Add v109, v118
+    v120 = Call v19 calleeName="leaf"
+    v121 = Convert v120 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    v122 = Call v21, -, v121 calleeName="sum"
+    v123 = Convert v122 declared={type=number}
+    v124 = Add v119, v123
+    v125 = Add v93, v124
+    v126 = Convert v125 declared={type=number}
+    v127 = Increment v44
+    v128 = Convert v127 declared={type=number}
+    Jump -> next b3(v126, v128)
+  b7() role=IterationCleanup subject=v80 handler=b9():
+    v129 = CatchException
+    Rethrow v129
+  b8(v130) handler=b9():
+    v131 = PropGet v34 key="join"
+    v132 = String string="-"
+    v133 = Call v131, v34, v132 calleeKey="join" calleeName="pattern.join"
+    v134 = Convert v133 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v135 = String string=" "
+    v136 = Add v134, v135
+    v137 = Add v136, v39
+    Jump -> next b1()
+  b9() role=IterationCleanup subject=v30:
+    v138 = CatchException
+    Rethrow v138
+}
+function f1 name="strings" module=m0 position=202 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="boxes" module=m0 position=323 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Data data=d2
+    v2 = Convert v1 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b1(v4)
+  b1(v5: number):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(| 0, 1), notTaken b3(| 0, 1)
+  b2(v8, v9):
+    v10 = PropGet v2 key="push"
+    v11 = Convert v8 declared={type=number}
+    v12 = NewObject -, v11 layout=L0 fields=[0]
+    v13 = FinishObject v12
+    v14 = Call v10, v2, v13 calleeKey="push" calleeName="a.push"
+    v15 = Increment v8
+    v16 = Convert v15 declared={type=number}
+    Jump -> next b1(v16)
+  b3(v17, v18):
+    Return v2
+}
+function f3 name="mixed" module=m0 position=437 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Data data=d3
+    v2 = Convert v1 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b1(v4)
+  b1(v5: number):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(| 0, 1), notTaken b3(| 0, 1)
+  b2(v8, v9):
+    v10 = PropGet v2 key="push"
+    v11 = Call v10, v2, v8 calleeKey="push" calleeName="a.push"
+    v12 = Increment v8
+    v13 = Convert v12 declared={type=number}
+    Jump -> next b1(v13)
+  b3(v14, v15):
+    Return v2
+}
+function f4 name="numbers" module=m0 position=597 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Data data=d4
+    v2 = Convert v1 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b1(v4)
+  b1(v5: number):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(| 0, 1), notTaken b3(| 0, 1)
+  b2(v8, v9):
+    v10 = PropGet v2 key="push"
+    v11 = Integer integer=2
+    v12 = Mul v8, v11
+    v13 = Call v10, v2, v12 calleeKey="push" calleeName="a.push"
+    v14 = Increment v8
+    v15 = Convert v14 declared={type=number}
+    Jump -> next b1(v15)
+  b3(v16, v17):
+    Return v2
+}
+function f5 name="doubles" module=m0 position=716 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Data data=d5
+    v2 = Convert v1 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b1(v4)
+  b1(v5: number):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(| 0, 1), notTaken b3(| 0, 1)
+  b2(v8, v9):
+    v10 = PropGet v2 key="push"
+    v11 = Double number=0.5
+    v12 = Add v8, v11
+    v13 = Call v10, v2, v12 calleeKey="push" calleeName="a.push"
+    v14 = Increment v8
+    v15 = Convert v14 declared={type=number}
+    Jump -> next b1(v15)
+  b3(v16, v17):
+    Return v2
+}
+function f6 name="one" module=m0 position=837 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Data data=d6
+    v2 = Convert v1 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    v3 = PropGet v2 key="push"
+    v4 = Call v3, v2, v0 calleeKey="push" calleeName="a.push"
+    Return v2
+}
+function f7 name="maybe" module=m0 position=920 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=boolean}] results=[{type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: boolean):
+    v2 = Data data=d7
+    v3 = Convert v2 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    v4 = ToBoolean v1
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v5):
+    v6 = PropGet v3 key="push"
+    v7 = Call v6, v3, v0 calleeKey="push" calleeName="a.push"
+    Jump -> next b3()
+  b2(v8):
+    Jump -> next b3()
+  b3():
+    Return v3
+}
+function f8 name="either" module=m0 position=1034 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean}, {type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: boolean, v1: undefined|null|Array<undefined|null|string>):
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    v4 = Data data=d8
+    Jump -> next b3(v4)
+  b2(v5):
+    v6 = PropGet v1 key="slice"
+    v7 = Integer
+    v8 = Integer integer=1
+    v9 = Call v6, v1, v7, v8 calleeKey="slice" calleeName="from.slice"
+    v10 = Convert v9 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    Jump -> next b3(v10)
+  b3(v11):
+    v12 = Convert v11 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    Return v12
+}
+function f9 name="two" module=m0 position=1152 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|Array<undefined|null|Array<undefined|null|string|L0>> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Data data=d9
+    v2 = Convert v1 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    v3 = Data data=d10
+    v4 = Convert v3 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}
+    v5 = Integer
+    v6 = Convert v5 declared={type=number}
+    Jump -> next b1(v6)
+  b1(v7: number):
+    LoopHint
+    v9 = Less v7, v0
+    Branch v9 -> taken b2(| 0, 1), notTaken b3(| 0, 1)
+  b2(v10, v11):
+    v12 = PropGet v2 key="push"
+    v13 = String string="t"
+    v14 = Add v13, v10
+    v15 = Call v12, v2, v14 calleeKey="push" calleeName="a.push"
+    v16 = PropGet v4 key="push"
+    v17 = Negate v10
+    v18 = Convert v17 declared={type=number}
+    v19 = NewObject -, v18 layout=L0 fields=[0]
+    v20 = FinishObject v19
+    v21 = Call v16, v4, v20 calleeKey="push" calleeName="b.push"
+    v22 = Increment v10
+    v23 = Convert v22 declared={type=number}
+    Jump -> next b1(v23)
+  b3(v24, v25):
+    v26 = NewArray v2, v4 contents=undefined|null|Array<undefined|null|string|L0>
+    v27 = Convert v26 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|string|L0>> flags=[OmitsNull, OmitsUndefined]}
+    Return v27
+}
+function f10 name="leaf" module=m0 position=1321 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Data data=d11
+    v1 = Convert v0 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    v2 = PropGet v1 key="push"
+    v3 = String string="leaf"
+    v4 = Call v2, v1, v3 calleeKey="push" calleeName="a.push"
+    Return v1
+}
+function f11 name="sum" module=m0 position=1401 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array):
+    v1 = PropGet v0 key="length"
+    v2 = Convert v1 declared={type=number} illTypedCause=Assertion
+    v3 = Integer integer=1000
+    v4 = Mul v2, v3
+    v5 = Convert v4 declared={type=number}
+    v6 = IteratorOpen v0
+    Jump -> next b1(v5)
+  b1(v7: number):
+    LoopHint
+    v9 = IteratorResume v6
+    v10 = ResultAt v9
+    v11 = ResultAt v9 index=1
+    Branch v10 -> taken b2(), notTaken b3()
+  b2():
+    v12 = Convert v7 declared={type=number}
+    Return v12
+  b3():
+    Jump -> next b4()
+  b4() handler=b10():
+    v13 = TypeTest v11 testedType=number
+    Branch v13 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v14) handler=b10():
+    v15 = Convert v14 declared={type=number} illTypedCause=Assertion
+    Jump -> next b9(v15)
+  b6(v16) handler=b10():
+    v17 = TypeTest v16 testedType=string
+    Branch v17 -> taken b7(| 0), notTaken b8(| 0)
+  b7(v18) handler=b10():
+    v19 = Convert v18 declared={type=undefined|null|string} illTypedCause=Assertion
+    v20 = PropGet v19 key="length"
+    v21 = Convert v20 declared={type=number} illTypedCause=Assertion
+    Jump -> next b9(v21)
+  b8(v22) handler=b10():
+    v23 = Convert v22 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v24 = PropGet v23 key="v"
+    Jump -> next b9(v24)
+  b9(v25) handler=b10():
+    v26 = Add v7, v25
+    v27 = Convert v26 declared={type=number}
+    Jump -> next b1(v27)
+  b10() role=IterationCleanup subject=v6:
+    v28 = CatchException
+    Rethrow v28
+}
+function f12 module=m0 position=139 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f13]
+# -- generated: f0 sum
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 838, patchpoints: 96, rare instructions: 1858, polls: 8
+# CHECK-NEXT: end of function f0
+# CHECK-LABEL: function {{*}}name="sum"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 89, patchpoints: 8, rare instructions: 36, polls: 2
+# CHECK-NEXT: end of function f11

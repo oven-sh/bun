@@ -32,7 +32,7 @@ function drainQueue() {
     while (++queueIndex < len) {
       if (currentQueue) {
         var item = currentQueue[queueIndex];
-        item.fun.apply(null, item.array);
+        item.fun.apply(null, item.args);
       }
     }
     queueIndex = -1;
@@ -93,4 +93,28 @@ export const chdir = function (dir) {
 
 export const umask = function () {
   return 0;
+};
+
+export default {
+  addListener,
+  argv,
+  binding,
+  browser,
+  chdir,
+  cwd,
+  emit,
+  env,
+  listeners,
+  nextTick,
+  off,
+  on,
+  once,
+  prependListener,
+  prependOnceListener,
+  removeAllListeners,
+  removeListener,
+  title,
+  umask,
+  version,
+  versions,
 };

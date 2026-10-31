@@ -2506,6 +2506,48 @@ impl JSValue {
             index => Some(index as u32),
         }
     }
+    /// How many own indexes an array or an arguments object holds in `range`. Runs no user code.
+    pub(crate) fn present_index_count_in(self, range: core::ops::Range<u32>) -> usize {
+        // SAFETY: with a capacity of 0 the callee writes nothing.
+        unsafe { self.list_present_indexes(&range, core::ptr::null_mut(), 0) }
+    }
+    /// The own indexes in `range`, ascending, enumerable or not. Runs no user code.
+    pub(crate) fn present_indexes_in(self, range: core::ops::Range<u32>) -> Vec<u32> {
+        let mut indexes = Vec::<u32>::new();
+        loop {
+            let capacity = indexes.capacity();
+            // SAFETY: `indexes` has room for `capacity` elements.
+            let count =
+                unsafe { self.list_present_indexes(&range, indexes.as_mut_ptr(), capacity) };
+            if count <= capacity {
+                // SAFETY: the callee initialized the first `count` elements.
+                unsafe { indexes.set_len(count) };
+                return indexes;
+            }
+            bun_core::handle_oom(indexes.try_reserve_exact(count));
+        }
+    }
+    /// # Safety: `out` has room for `capacity` elements, the most that the callee writes. It returns how many there are.
+    unsafe fn list_present_indexes(
+        self,
+        range: &core::ops::Range<u32>,
+        out: *mut u32,
+        capacity: usize,
+    ) -> usize {
+        debug_assert!(self.is_cell());
+        debug_assert!(self.js_type().is_array() || self.js_type().is_arguments());
+        unsafe extern "C" {
+            fn Bun__JSObject__presentIndexesInRange(
+                this: JSValue,
+                from: u32,
+                end: u32,
+                out: *mut u32,
+                capacity: usize,
+            ) -> usize;
+        }
+        // SAFETY: the contract of the caller is the contract of the callee.
+        unsafe { Bun__JSObject__presentIndexesInRange(self, range.start, range.end, out, capacity) }
+    }
     /// `JSValue.getNameProperty` — the value's `.name` (function/class
     /// name). Empty for empty/`undefined`/`null`.
     pub fn get_name_property(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {

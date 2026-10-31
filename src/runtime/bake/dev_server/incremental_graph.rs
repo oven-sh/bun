@@ -231,6 +231,17 @@ pub(crate) enum InsertFailureKey<'a> {
     Index(u32),
 }
 
+/// What the join asks the bundler to print in the bundle that repaired a stylesheet.
+#[derive(Copy, Clone)]
+pub(crate) enum JoinRequest {
+    /// A css root that may not be in the bundle: the bundler enters it by its graph key.
+    Root(ClientFileIndex),
+    /// A stylesheet this bundle parsed: the bundler prints it from its source index.
+    Parsed(bun_ast::Index),
+    /// A css root asked at an earlier scan end: the bundler prints it if the bundle holds it now.
+    Asked(ClientFileIndex),
+}
+
 pub(crate) struct ReceiveChunkSourceMap {
     pub(crate) chunk: bun_sourcemap::Chunk,
     pub(crate) escaped_source: Option<Box<[u8]>>,
@@ -1239,6 +1250,82 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 .first_dep
                 .is_some()
         })
+    }
+
+    /// Lists the css roots to print for `file`, which the running bundle parsed as `source_index`.
+    #[cold]
+    pub(crate) fn holders_of_repaired_css(
+        &mut self,
+        server_graph: &IncrementalGraph<{ Side::Server }>,
+        file: FileIndex<SIDE>,
+        source_index: bun_ast::Index,
+        repaired: &[(FileIndex<SIDE>, bun_ast::Index)],
+        asked: &mut Vec<ClientFileIndex>,
+        out: &mut Vec<JoinRequest>,
+    ) {
+        debug_assert!(matches!(SIDE, Side::Client));
+        let mut it = self.edge_lists[file.get() as usize].first_dep;
+        while let Some(edge_index) = it {
+            let edge = self.edges[edge_index.get() as usize];
+            it = edge.next_dependency;
+            let root = edge.dependency;
+            if !matches!(
+                self.bundled_files.values()[root.get() as usize].content,
+                Content::CssRoot(_),
+            ) {
+                continue;
+            }
+            let holder = ClientFileIndex::init(root.get());
+            if asked.contains(&holder) {
+                // Another joined root can bring in a root that the bundler could not enter.
+                out.push(JoinRequest::Asked(holder));
+                continue;
+            }
+            let request = match repaired.iter().find(|(index, _)| *index == root) {
+                Some(&(_, parsed)) => JoinRequest::Parsed(parsed),
+                // That failure still gates the root, and the bundle that clears it joins the root.
+                None if self.reaches_unrepaired_failure(server_graph, root, repaired) => continue,
+                None => JoinRequest::Root(holder),
+            };
+            asked.push(holder);
+            out.push(request);
+        }
+        let holder = ClientFileIndex::init(file.get());
+        if !asked.contains(&holder) && self.has_html_or_script_importer(file) {
+            asked.push(holder);
+            out.push(JoinRequest::Parsed(source_index));
+        }
+    }
+
+    /// True if `root` or a file it imports has a failure on record that this bundle did not repair.
+    fn reaches_unrepaired_failure(
+        &self,
+        server_graph: &IncrementalGraph<{ Side::Server }>,
+        root: FileIndex<SIDE>,
+        repaired: &[(FileIndex<SIDE>, bun_ast::Index)],
+    ) -> bool {
+        let unrepaired = |index: FileIndex<SIDE>| {
+            let file = index.get() as usize;
+            // A stylesheet that a server file imports has its failure on the server graph.
+            let failed = self.bundled_files.values()[file].failed
+                || server_graph
+                    .bundled_files
+                    .get(&self.bundled_files.keys()[file])
+                    .is_some_and(|on_server| on_server.failed);
+            failed && !repaired.iter().any(|(known, _)| *known == index)
+        };
+        if unrepaired(root) {
+            return true;
+        }
+        let mut it = self.edge_lists[root.get() as usize].first_import;
+        while let Some(edge_index) = it {
+            let edge = self.edges[edge_index.get() as usize];
+            it = edge.next_import;
+            if unrepaired(edge.imported) {
+                return true;
+            }
+        }
+        false
     }
 
     /// Keeps a failed stylesheet that html or a script imports a css root for `invalidate`.

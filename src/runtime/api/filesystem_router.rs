@@ -300,7 +300,7 @@ impl FileSystemRouter {
 
         // The resolver reads again each directory that the last scan or this one read, under each of its names.
         let dir = strings::paths::without_trailing_slash_windows_path(&self.config.dir);
-        // With inotify and kqueue the reloader finds the module of a saved file through the resolver's record of its directory.
+        // On a directory event the inotify and kqueue reloaders find the watched modules of that directory through the resolver's record of it.
         #[cfg(unix)]
         let watcher = import_watcher();
         #[cfg(unix)]

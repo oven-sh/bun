@@ -1557,8 +1557,9 @@ describe.concurrent("bun --hot", () => {
     expect(result).toEqual({ stdout: "run 1: / /blog/a\nrun 2: / /blog/a /blog/b /new\n", exitCode: 0 });
   });
 
-  // With inotify the reloader finds the module of a renamed file through the resolver's record of its directory,
-  // which reload() drops. Each case saves `saved` by a rename after the first run.
+  // Each case saves `saved` by a rename after the first run. With inotify that is an event of the directory, and the
+  // reloader finds the module through the resolver's record of the directory, which reload() drops. With kqueue the
+  // event of the file itself reloads the module.
   const router = `new Bun.FileSystemRouter({ style: "nextjs", dir: import.meta.dir + "/pages", fileExtensions: [".tsx", ".js"] })`;
   const cases: Record<string, { files: Record<string, string>; saved: string; link?: [string, string] }> = {
     "a route after reload()": {
@@ -1615,7 +1616,8 @@ describe.concurrent("bun --hot", () => {
       saved: "pages/blog/post.tsx",
     },
   };
-  it.skipIf(!isLinux).each(Object.keys(cases))("a save by a rename reloads %s", async name => {
+  // A rename over a file that exists can fail with EPERM on Windows.
+  it.skipIf(isWindows).each(Object.keys(cases))("a save by a rename reloads %s", async name => {
     const { files, saved, link } = cases[name];
     files["server.js"] += `
       console.log("version " + imported.default);

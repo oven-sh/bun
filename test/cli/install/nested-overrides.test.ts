@@ -2914,7 +2914,7 @@ describe.concurrent("flat override fixes", () => {
       const { err, exitCode } = await install(dir);
       expect(diagnostics(err)).toEqual([
         `warn: no-deps@${rule} not in catalog${why}`,
-        "error: no-deps@1.0.1 failed to resolve",
+        "error: no-deps@1.0.1 failed to resolve (declared by one-dep@1.0.0)",
       ]);
       expect(err).toMatch(/package\.json:\d+:\d+/);
       expect(exitCode).toBe(1);

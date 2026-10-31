@@ -4797,6 +4797,14 @@ pub(crate) mod testing_apis {
     use crate::generated_bindgen::socket_body::SocketFaultErrnoName;
     use crate::generated_bindgen::socket_body::SocketFaultRule;
 
+    /// `socketInternals.refCount` of `bun:internal-for-testing`.
+    pub(crate) fn socket_ref_count(socket: BunSocket<'_>) -> u32 {
+        match socket {
+            BunSocket::Tcp(this) => this.ref_count.get(),
+            BunSocket::Tls(this) => this.ref_count.get(),
+        }
+    }
+
     pub(crate) fn socket_fault_injection_available() -> bool {
         cfg!(socket_fault_injection)
     }

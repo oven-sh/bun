@@ -274,27 +274,19 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
     let quiet = manager.options.log_level == LogLevel::Silent;
     let dry_run = manager.options.dry_run;
 
-    let configured_linker = manager.options.node_linker;
-    let loaded = {
-        let load = manager.load_lockfile_from_cwd::<false>();
-        match &load {
-            LoadResult::NotFound => Err(None),
-            LoadResult::Err(cause) => Err(Some(cause.value.name())),
-            LoadResult::Ok(_) => Ok(load.node_linker(configured_linker)),
-        }
-    };
-    let linker = match loaded {
-        Ok(linker) => linker,
-        Err(None) => {
+    let load = manager.load_lockfile_from_cwd::<false>();
+    let linker = match &load {
+        LoadResult::Ok(_) => load.node_linker(&manager.lockfile, manager.options.node_linker),
+        LoadResult::NotFound => {
             if !quiet {
                 Output::err_generic("missing lockfile, nothing to prune", ());
                 bun_core::note!("run 'bun install' first");
             }
             Global::exit(1);
         }
-        Err(Some(name)) => {
+        LoadResult::Err(cause) => {
             if !quiet {
-                Output::err_generic("failed to load lockfile: {s}", (name,));
+                Output::err_generic("failed to load lockfile: {s}", (cause.value.name(),));
                 print_log_errors(manager.log_mut());
             }
             Global::exit(1);

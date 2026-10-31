@@ -1,10 +1,10 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="create"
-// CHECK: [[head]] = NewDictionary
 // CHECK: [[called]] = Call {{*}}calleeName="k"
 // CHECK-NEXT: [[text]] = Convert [[called]] declared={type=undefined|null|string site=w{{*}}} illTypedCause=DeclarationWithoutBody
 // CHECK-NEXT: [[key]] = ToPropertyKey [[text]]
 // CHECK: [[value]] = Call {{*}}calleeName="v"
+// CHECK: [[head]] = NewObject
 // CHECK-NEXT: ElemDefine [[head]], [[key]], [[value]]
 // CHECK: PropDefine [[head]], {{*}}key="ab"
 // CHECK-NEXT: [[name]] = ToPropertyKey

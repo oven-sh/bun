@@ -1,0 +1,6 @@
+# a-deletion-in-a-module-of-the-library-reaches-the-holder-that-its-receiver-lists.ir with another order of the rules: the answer is the same.
+# OPTIONS: testing=DelayFlowRules,DelayOtherFlowRules
+# RUN: valueflow-results
+# CHECK: builtin-location BunFFI."dlopen" Constant
+# CHECK: builtin-location BunFFI."callback" Unknown
+# PROGRAM-OF: a-deletion-in-a-module-of-the-library-reaches-the-holder-that-its-receiver-lists.ir

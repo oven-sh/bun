@@ -4,7 +4,7 @@ use bun_lint::utils::ts_scope::analyze_class_member_usage;
 /// Disallow unused private class members.
 pub struct NoUnusedPrivateClassMembers;
 
-const UNUSED_PRIVATE_CLASS_MEMBER: Message = Message::new(
+const UNUSED_PRIVATE_CLASS_MEMBER: &Message = &Message::new(
     "unusedPrivateClassMember",
     "Private class member '{{classMemberName}}' is defined but never used.",
 );

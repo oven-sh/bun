@@ -8,18 +8,24 @@ use bun_sema::resolve::{
 };
 use bun_sema::util::SharedSort;
 
+use crate::builtins::resolve::resolve_file_served_by_other_images;
 use crate::builtins::{
-    BuiltinNames, ImportTargets, Platforms, ResolveInput, ResolvedBuiltins, RuntimeFunction,
-    RuntimeModule, SourceDialect, resolve_file,
+    BuiltinNames, ImportTargets, Platforms, ReplacedMembersSought, ResolveInput, ResolvedBuiltins,
+    RuntimeFunction, RuntimeModule, SourceDialect, resolve_file, table,
 };
 use crate::load::evaluated_texts::{EvaluatedTexts, find_evaluated_function};
 use crate::load::react_compiler;
+use crate::load::replaced_builtins::members_sought_in_file_outside_packages;
 use crate::load::runtime_modules::RuntimeModules;
 use crate::load::sources::{EvaluatedTextSite, ParsedSource, SourceKind};
 
 pub(crate) struct BuiltinUseInput<'a> {
     pub names: &'a BuiltinNames,
     pub platform: Platforms,
+    pub replaced: &'a [u32],
+    pub replaced_members_sought: ReplacedMembersSought,
+    /// `AotOptions::imports_are_in_other_images`
+    pub is_served_by_other_images: bool,
 }
 
 pub(crate) fn finish_application_file(
@@ -30,8 +36,13 @@ pub(crate) fn finish_application_file(
     source: &mut ParsedSource,
 ) -> Vec<HostResolution> {
     source.evaluated_text_sites.clear();
+    source.names_main_module_in_text_left_to_run_time = false;
+    source
+        .library_modules_named_in_text_left_to_run_time
+        .clear();
     if source.kind == SourceKind::EvaluatedText {
-        source.evaluated_function = find_evaluated_function(request);
+        source.evaluated_function =
+            find_evaluated_function(request, input.is_served_by_other_images);
     }
     let resolved = resolve_builtins(input, request, SourceDialect::Program);
     let mut answers: Vec<HostResolution> = collect_host_module_ids(resolved.loaded_modules())
@@ -44,6 +55,16 @@ pub(crate) fn finish_application_file(
         let Some(path) =
             texts.and_then(|texts| texts.add(request.path, index, text, request.atoms))
         else {
+            for part in text.texts.iter().map(|&part| request.atoms.bytes(part)) {
+                if !bun_core::strings::contains(part, b"mainModule") {
+                    continue;
+                }
+                source.names_main_module_in_text_left_to_run_time = true;
+                // What stands between two quotes, whatever the text does with it.
+                let quoted = bun_core::strings::split_any(part, b"\"'`");
+                (source.library_modules_named_in_text_left_to_run_time)
+                    .extend(quoted.filter_map(table::module_by_specifier));
+            }
             continue;
         };
         source.evaluated_text_sites.push(EvaluatedTextSite {
@@ -86,7 +107,11 @@ fn resolve_builtins(
     dialect: SourceDialect,
 ) -> ResolvedBuiltins {
     let targets = collect_import_targets(request.analysis.import_sites, request.resolutions);
-    resolve_file(&ResolveInput {
+    let resolve = match input.is_served_by_other_images {
+        true => resolve_file_served_by_other_images,
+        false => resolve_file,
+    };
+    resolve(&ResolveInput {
         hir: request.hir,
         bound: request.bound,
         decisions: &request.analysis.decisions,
@@ -95,6 +120,14 @@ fn resolve_builtins(
         names: input.names,
         platform: input.platform,
         dialect,
+        replaced: input.replaced,
+        replaced_members_sought: match input.replaced_members_sought {
+            // The scan before the first build has read the helpers of the tests.
+            ReplacedMembersSought::WrittenOrNamed => {
+                members_sought_in_file_outside_packages(&targets, false)
+            }
+            sought => sought,
+        },
     })
 }
 

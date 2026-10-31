@@ -18874,5 +18874,23 @@
       "script.d.ts": "declare global {\n    var insideTheBlock: number;\n}\ndeclare module \"an-ambient-module\" {\n    export const value: number;\n}\ndeclare var besideTheBlock: number;\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"target\": \"esnext\", \"lib\": [\"esnext\"] } }\n"
     }
+  },
+  "call-resolved-again-on-the-back-edge-of-a-loop": {
+    "files": {
+      "a.ts": "declare function ap<A extends any[], R>(f: (...args: A) => R, args: A): R;\ndeclare function sp<A extends any[], R>(f: (...args: A) => R, ...args: A): R;\ndeclare const c: boolean;\nfunction h(this: unknown, p: boolean) {\n    return p;\n}\nfunction n(this: unknown, p: number) {\n    return p;\n}\nlet a: boolean = true;\nfor (let i = 0; i < 5; i++) a = h.apply(null, [a]);\nlet b: boolean = true;\nwhile (c) b = ap(h, [b]);\nlet d: boolean = true;\ndo {\n    d = ap(x => x, [d]);\n} while (c);\nlet e: boolean = true;\nfor (const i of [1]) e = h.call(null, e);\nlet f: boolean = true;\nwhile (c) f = h.bind(null, f)();\nlet g: boolean = true;\nwhile (c) g = h(...[g]);\nlet j: boolean = true;\nwhile (c) j = sp(h, j);\nlet k: boolean = true;\nwhile (c) k = h.apply(null, [k] satisfies [boolean]);\nlet l: number = 1;\nwhile (c) l = n.apply(null, [l]);\nlet m;\nm = 1;\nwhile (c) m = n.apply(null, [m]);\nlet o: boolean = true;\no = h.apply(null, [o]);\nconst sentinel: number = \"\";\nexport {};\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "call-resolved-again-on-the-back-edges-of-two-loops": {
+    "files": {
+      "a.ts": "declare function ap<A extends any[], R>(f: (...args: A) => R, args: A): R;\ndeclare const c: boolean;\nfunction text(this: unknown, p: string | number) {\n    return p;\n}\nfunction bit(this: unknown, p: 0 | 1, q: number) {\n    return p;\n}\nfunction maybe(this: unknown, p: boolean | null) {\n    return p;\n}\nlet s: string | number = 1;\nouter: for (;;) {\n    for (;;) {\n        s = ap(text, [s]);\n        if (c) continue outer;\n        if (!c) break outer;\n    }\n}\nlet b: 0 | 1 = 0;\nouter: while (c) {\n    do {\n        b = bit.apply(null, [b, 1]);\n        if (c) continue outer;\n    } while (c);\n}\nlet m: boolean | null = null;\nouter: for (const i of [1]) {\n    for (const j in {}) {\n        m = maybe.apply(null, [maybe.apply(null, [m])]);\n        if (c) continue outer;\n    }\n}\nconst sentinel: number = \"\";\nexport {};\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "call-resolved-again-on-the-back-edges-of-two-loops-with-the-list-below-the-argument": {
+    "files": {
+      "a.ts": "declare function box<A extends any[], R>(o: { f: (...args: A) => R; args: A }): R;\ndeclare const c: boolean;\nfunction h(this: unknown, p: string | number) {\n    return p;\n}\nlet s: string | number = 1;\nouter: for (;;) {\n    for (;;) {\n        s = h.apply(null, ([s]));\n        if (c) continue outer;\n        if (!c) break outer;\n    }\n}\nlet t: string | number = 1;\nouter: for (;;) {\n    for (;;) {\n        t = h.apply(null, c ? [t] : [t]);\n        if (c) continue outer;\n        if (!c) break outer;\n    }\n}\nlet u: string | number = 1;\nouter: for (;;) {\n    for (;;) {\n        u = box({ f: h, args: [u] });\n        if (c) continue outer;\n        if (!c) break outer;\n    }\n}\nconst sentinel: number = \"\";\nexport {};\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
   }
 }

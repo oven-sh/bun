@@ -603,7 +603,7 @@ impl ClientSession {
             client.fail(e);
             return;
         }
-        let request = client.h2_build_request(client.body_len_for_send());
+        let request = client.build_request(client.body_len_for_send());
         if let Err(err) = encode::write_request(self, client, stream_ref, &request) {
             // write_request pushes into the HPACK encoder's dynamic table per encode
             // call, so a mid-encode failure leaves entries the server will

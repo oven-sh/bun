@@ -633,10 +633,10 @@ it("process.env reads are never stale after a write (JIT inline-cache soundness)
 const MIN_ICU_VERSIONS_BY_PLATFORM_ARCH = {
   "darwin-x64": "70.1",
   "darwin-arm64": "72.1",
-  "linux-x64": "78.3",
-  "linux-arm64": "78.3",
-  "win32-x64": "78.3",
-  "win32-arm64": "78.3",
+  "linux-x64": "79.1",
+  "linux-arm64": "79.1",
+  "win32-x64": "79.1",
+  "win32-arm64": "79.1",
 };
 
 it("ICU version does not regress", () => {
@@ -644,7 +644,9 @@ it("ICU version does not regress", () => {
   if (!min) {
     throw new Error(`Unknown platform/arch: ${process.platform}-${process.arch}`);
   }
-  expect(parseFloat(process.versions.icu, 10) || 0).toBeGreaterThanOrEqual(parseFloat(min, 10));
+  // As many parts as the floor has: macOS may report four, and Bun.semver.order reads a missing part as the highest.
+  const version = process.versions.icu.split(".").slice(0, 2).join(".");
+  expect(Bun.semver.order(version, min)).toBeGreaterThanOrEqual(0);
 });
 
 it("process.versions.icu and process.versions.unicode describe the ICU the process runs with", () => {

@@ -5,7 +5,9 @@ use crate::compile::queue::{LOWERING_ROUNDS, ROLE_ROUNDS, run_queue};
 use bun_sema::check::{Checker, Requested};
 use bun_sema::program::FileId;
 use bun_sema::util::SharedSort;
+use bun_threading::{Condvar, Guarded};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread::ThreadId;
 
 #[derive(Copy, Clone)]
 struct PassOptions {
@@ -41,7 +43,9 @@ fn run_pass<'s>(
             requested,
             after_file: Some(after_file),
             after_commit: &|_| {},
+            beside_file: None,
             frees_tree: &|_| options.frees_trees,
+            is_last_pass: &|| false,
             first_round: options.first_round,
             left_out_bodies: None,
         },
@@ -91,6 +95,109 @@ fn each_file_is_visited() {
         assert!(report.diagnostics.is_empty());
         assert!(report.incomplete.is_empty());
     });
+}
+
+#[test]
+fn a_second_thread_works_beside_a_file_that_takes_as_long_as_the_round() {
+    let long: String = (0..3000)
+        .map(|index| format!("export const value{index} = one + one + one + one;\n"))
+        .collect();
+    let long = format!("const one = 1;\n{long}");
+    let files = [
+        ("main.ts", "import \"./long.ts\";\nimport \"./short.ts\";\n"),
+        ("long.ts", &long[..]),
+        ("short.ts", "export const one = 1;\n"),
+    ];
+    with_program(&files, &["./main.ts"], 4, |program| {
+        let long_file = program.file("long.ts");
+        let beside: Guarded<Vec<(FileId, ThreadId)>> = Guarded::new(Vec::new());
+        let has_worked_beside = Condvar::new();
+        let visiting_thread: Guarded<Option<ThreadId>> = Guarded::new(None);
+        let all = program.files().modules.len() as u32;
+        let mut to_check: Vec<FileId> = (0..all).map(FileId).collect();
+        to_check.shared_sort_by_key(|&file| program.files().rank_of_file(file));
+        run_queue(
+            program.loaded,
+            program.host,
+            program.request,
+            to_check,
+            &FileWork {
+                requested: &|_| Requested::All,
+                after_file: Some(&|_, file| {
+                    if file != long_file {
+                        return;
+                    }
+                    *visiting_thread.lock() = Some(std::thread::current().id());
+                    let mut beside = beside.lock();
+                    while beside.iter().all(|it| it.0 != long_file) {
+                        has_worked_beside.wait_guarded(&mut beside);
+                    }
+                }),
+                after_commit: &|_| {},
+                beside_file: Some(&|file| {
+                    beside.lock().push((file, std::thread::current().id()));
+                    has_worked_beside.notify_all();
+                }),
+                frees_tree: &|_| false,
+                is_last_pass: &|| false,
+                first_round: LOWERING_ROUNDS,
+                left_out_bodies: None,
+            },
+        );
+        let beside = beside.lock();
+        assert_eq!(beside.len(), 1);
+        assert_eq!(beside[0].0, long_file);
+        assert_ne!(Some(beside[0].1), *visiting_thread.lock());
+    });
+}
+
+fn is_tree_of_last_file_packed_away(is_last_pass: bool) -> bool {
+    let files = [
+        ("main.ts", "import \"./last.ts\";\nimport \"./short.ts\";\n"),
+        ("last.ts", "export const two = 1 + 1;\n"),
+        ("short.ts", "export const one = 1;\n"),
+    ];
+    with_program(&files, &["./main.ts"], 4, |program| {
+        let last = program.file("last.ts");
+        let committed = Guarded::new(0usize);
+        let has_committed = Condvar::new();
+        let all = program.files().modules.len();
+        let mut to_check: Vec<FileId> = (0..all as u32).map(FileId).collect();
+        to_check.shared_sort_by_key(|&file| program.files().rank_of_file(file));
+        program.files().let_trees_go_behind(&to_check);
+        run_queue(
+            program.loaded,
+            program.host,
+            program.request,
+            to_check,
+            &FileWork {
+                requested: &|_| Requested::All,
+                after_file: Some(&|_, file| {
+                    let mut committed = committed.lock();
+                    while file == last && *committed + 1 < all {
+                        has_committed.wait_guarded(&mut committed);
+                    }
+                }),
+                after_commit: &|_| {
+                    *committed.lock() += 1;
+                    has_committed.notify_all();
+                },
+                beside_file: None,
+                frees_tree: &|_| true,
+                is_last_pass: &|| is_last_pass,
+                first_round: LOWERING_ROUNDS,
+                left_out_bodies: None,
+            },
+        );
+        let is_gone = program.files().is_tree_gone(last);
+        program.files().watch_no_more();
+        is_gone
+    })
+}
+
+#[test]
+fn the_tree_of_the_last_file_of_the_last_pass_is_not_packed_away() {
+    assert!(!is_tree_of_last_file_packed_away(true));
 }
 
 #[test]

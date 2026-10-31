@@ -60,6 +60,7 @@ const APPLICATION_FILES: [(FileOrigin, &str); 5] = [
 const COMPILER_DIAGNOSTIC_EFFECTS: [(FileOrigin, Effect, Effect); FileOrigin::COUNT] = [
     (FileOrigin::NoFile, Effect::StopsBuild, Effect::Warns),
     (FileOrigin::ProgramSource, Effect::StopsBuild, Effect::Warns),
+    (FileOrigin::TestedSource, Effect::StopsBuild, Effect::Warns),
     (
         FileOrigin::ProgramJavaScript,
         Effect::StopsBuild,
@@ -200,6 +201,9 @@ fn compiler_diagnostic_follows_origin() {
         };
         (origin, shown_for_error, of_warning)
     });
+    // None of these is a build of tests.
+    let is_shown = |it: &(FileOrigin, Effect, Effect)| it.0 != FileOrigin::TestedSource;
+    let expected: Vec<_> = expected.into_iter().filter(is_shown).collect();
     assert_eq!(shown, expected);
 }
 

@@ -54,6 +54,14 @@ pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::St
 
 // ───────────────────────────── argv (C++ accessor wrappers) ─────────────────
 
+/// `process.stdout._handle.setBlocking(blocking)`. Like libuv's `uv_stream_set_blocking`, returns 0 or a negative errno.
+pub(crate) fn set_stdio_blocking(fd: i32, blocking: bool) -> i32 {
+    match bun_sys::update_nonblocking(bun_sys::Fd::from_uv(fd), !blocking) {
+        Ok(()) => 0,
+        Err(err) => -i32::from(err.errno),
+    }
+}
+
 pub(crate) fn get_argv(global: &JSGlobalObject) -> JsResult<JSValue> {
     bun_jsc::call_zero_is_throw(global, || Bun__Process__getArgv(global))
 }
@@ -106,6 +114,34 @@ pub(crate) extern "C" fn Bun__Node__getRedirectWarnings() -> bun_core::String {
     match crate::cli::Bun__Node__RedirectWarnings.get() {
         Some(path) => bun_core::String::clone_utf8(path),
         None => bun_core::String::DEAD,
+    }
+}
+
+/// Appends the bytes to the file at `path`, which it creates where there is none, as `fs.appendFileSync` does.
+/// False where a step fails.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__Node__appendToFile(
+    path: *const u8,
+    path_len: usize,
+    bytes: *const u8,
+    len: usize,
+) -> bool {
+    use bun_sys::{File, O};
+    // SAFETY: the caller passes two live spans, which nothing writes to during the call.
+    let (path, bytes) = unsafe {
+        (
+            core::slice::from_raw_parts(path, path_len),
+            core::slice::from_raw_parts(bytes, len),
+        )
+    };
+    match File::openat(
+        bun_sys::Fd::cwd(),
+        path,
+        O::APPEND | O::WRONLY | O::CREAT,
+        0o666,
+    ) {
+        Ok(file) => file.write_all(bytes).is_ok(),
+        Err(_) => false,
     }
 }
 
@@ -448,7 +484,7 @@ mod _impl {
         // `--interactive` boots the bootstrap through `eval_source`, so read
         // the user's real `-e` bytes from `interactive_eval_script` instead
         // (`undefined` when empty, matching `node -i` without `-e`).
-        if let Some(script) = vm.module_loader.interactive_eval_script.as_deref() {
+        if let Some(script) = vm.module_loader.interactive_eval_script {
             if script.is_empty() {
                 return JSValue::UNDEFINED;
             }
@@ -553,6 +589,12 @@ mod _impl {
         );
         if bun_standalone_graph::is_bun_standalone_file_path(path.as_bytes()) {
             return ChdirTarget::InExecutable(graph.dir_key(path.as_bytes()));
+        }
+        // `process.chdir(__dirname)` where the folder of the build is not on this machine: the executable holds what lay there.
+        if let Ok(directory) = graph.dir_key(path.as_bytes())
+            && bun_standalone_graph::is_bun_standalone_file_path(directory)
+        {
+            return ChdirTarget::InExecutable(Ok(directory));
         }
         ChdirTarget::OnDisk(if current.is_some() { path } else { to })
     }

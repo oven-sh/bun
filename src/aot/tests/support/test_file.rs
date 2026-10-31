@@ -875,7 +875,7 @@ mod tests {
             "// STATISTIC: FunctionsLowered >= 1",
             "// STATISTIC: FunctionsLowered <= 18446744073709551615",
             "// STATISTIC: ProgramBytes = 64",
-            "// STATISTIC: MaxNestingDepthHits = 0",
+            "// STATISTIC: MaxDataNestingDepthHits = 0",
         ]
         .join("\n");
         let file = parse_without_errors(&text);
@@ -887,7 +887,7 @@ mod tests {
             (StatisticId::FunctionsLowered, AtLeast, 1, 2),
             (StatisticId::FunctionsLowered, AtMost, u64::MAX, 3),
             (StatisticId::ProgramBytes, Equal, 64, 4),
-            (StatisticId::MaxNestingDepthHits, Equal, 0, 5),
+            (StatisticId::MaxDataNestingDepthHits, Equal, 0, 5),
         ];
         assert_eq!(listed, expected);
     }

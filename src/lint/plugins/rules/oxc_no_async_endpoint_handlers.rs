@@ -7,8 +7,8 @@ pub struct NoAsyncEndpointHandlers {
     allowed_names: Vec<String>,
 }
 
-const NO_ASYNC_HANDLERS: Message = Message::new("", "Express endpoint handler should not be `async`.");
-const NO_ASYNC_HANDLERS_FOR: Message = Message::new("", "Express endpoint handler for `{{endpoint}}` should not be `async`.");
+const NO_ASYNC_HANDLERS: &Message = &Message::new("", "Express endpoint handler should not be `async`.");
+const NO_ASYNC_HANDLERS_FOR: &Message = &Message::new("", "Express endpoint handler for `{{endpoint}}` should not be `async`.");
 
 impl Rule for NoAsyncEndpointHandlers {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "no-async-endpoint-handlers", Kind::Problem);

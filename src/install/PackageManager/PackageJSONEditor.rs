@@ -637,7 +637,7 @@ pub(crate) fn steer_used_catalogs_to_latest(
     let package_json_cache = &mut manager.workspace_package_json_cache;
     let lockfile = parsed.unwrap_or(&mut *manager.lockfile);
 
-    let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    let top_level = strings::without_trailing_slash(FileSystem::get().top_level_dir());
     let mut path_buf = path_buffer_pool::get();
     // The root's package.json, then each member's.
     for workspace in 0..=lockfile.workspace_paths.count() {

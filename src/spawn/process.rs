@@ -1068,6 +1068,8 @@ pub mod waiter_thread_posix {
         // those producer borrows (forbidden aliased-&mut). With `&self` on
         // both sides the only interior mutation goes through this cell.
         pub(crate) active: core::cell::UnsafeCell<Vec<*mut T>>,
+        /// Entries in `queue` plus `active`. Decremented only after the entry's exit is posted.
+        pub(crate) watched: AtomicU32,
     }
 
     impl<T: 'static> NewQueue<T> {
@@ -1075,6 +1077,7 @@ pub mod waiter_thread_posix {
             Self {
                 queue: ConcurrentQueue::new(),
                 active: core::cell::UnsafeCell::new(Vec::new()),
+                watched: AtomicU32::new(0),
             }
         }
     }
@@ -1231,6 +1234,7 @@ pub mod waiter_thread_posix {
 
     impl<T: ProcessLike> NewQueue<T> {
         pub(crate) fn append(&self, process: *mut T) {
+            self.watched.fetch_add(1, Ordering::SeqCst);
             self.queue.push(bun_core::heap::alloc_nn(TaskQueueEntry {
                 process,
                 next: bun_threading::Link::new(),
@@ -1290,6 +1294,7 @@ pub mod waiter_thread_posix {
 
                 if remove {
                     let _ = active.remove(i);
+                    self.watched.fetch_sub(1, Ordering::SeqCst);
                 } else {
                     i += 1;
                 }
@@ -1333,7 +1338,7 @@ pub mod waiter_thread_posix {
                     }
                 }
             }
-            EventLoopHandle::Mini(mut mini) => {
+            EventLoopHandle::Mini(mini) => {
                 let out = ResultTaskMini::<T>::new(ResultTaskMini {
                     result,
                     subprocess: process,
@@ -1345,10 +1350,9 @@ pub mod waiter_thread_posix {
                         out,
                         ResultTaskMini::<T>::run_from_main_thread_mini,
                     );
-                    mini.get_mut()
-                        .enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(
-                            core::ptr::addr_of_mut!((*out).task),
-                        ));
+                    mini.enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(
+                        core::ptr::addr_of_mut!((*out).task),
+                    ));
                 }
                 // `out` is now owned by the mini queue; freed in `run_from_main_thread_mini`.
             }
@@ -1441,6 +1445,11 @@ pub mod waiter_thread_posix {
         #[inline]
         pub(crate) fn should_use_waiter_thread() -> bool {
             bun_spawn_sys::waiter_thread_flag::get()
+        }
+
+        /// True while any thread's child has an exit still to post. After `false`, the caller must still check its task queue.
+        pub fn is_watching() -> bool {
+            instance_ref().js_process.watched.load(Ordering::SeqCst) > 0
         }
 
         /// Starts the thread on first use. If that fails, the next call retries.

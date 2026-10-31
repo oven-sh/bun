@@ -172,6 +172,8 @@ pub(super) struct FlowMemo {
     /// For each `Flow::Reduce`: the label at the start of the `finally` block, and the node itself.
     /// The nodes of the block have the numbers in between.
     finally_blocks: Vec<(u32, u32)>,
+    /// The last node of each `finally` block, in ascending order. See `flow_type_after_finally_block`.
+    finally_block_ends: Vec<u32>,
     /// Indexed by symbol: the flow node at which its declaration initializes it.
     declaration_node: Vec<u32>,
     /// Indexed by flow node. See `highest_unsettled_call` and `first_unsettled_call`. `u32::MAX`
@@ -373,8 +375,9 @@ struct ElementsSoFar {
     count: u32,
 }
 
-/// `FlowLoopKey`, without the reference.
-type FlowLoopKey = (FileId, FlowId, TypeId, TypeId);
+/// `FlowLoopKey`, with the `root_key` of the reference in its place. Without that, n names in n nested loops take n * n * n
+/// comparisons.
+type FlowLoopKey = (FileId, FlowId, TypeId, TypeId, u32);
 
 /// `SwitchStatementLinks`. tsgo assigns both unconditionally, so they keep the first computation's
 /// result even if it saw a loop's incomplete types.
@@ -577,6 +580,9 @@ enum Start {
     Unassigned,
 }
 
+/// The last node of a `finally` block, and those of `Walk::reduced` that a walk can reach from it.
+type AfterFinallyBlock = (FlowId, SmallVec<[(FlowId, FlowId); 2]>);
+
 struct Walk {
     reference: Reference,
     /// `refKey != nonDottedNameCacheKey`. `None` until a loop label needs it.
@@ -594,6 +600,11 @@ struct Walk {
     /// `reduceLabels`: the start of each `finally` block being traversed backwards, and the label
     /// whose antecedents are used instead.
     reduced: Vec<(FlowId, FlowId)>,
+    /// How many entries of `reduced` have a label that isn't lower than the one below them. Without
+    /// a loop there are none: the walk goes back through an outer block first.
+    reduced_out_of_order: u32,
+    /// See `flow_type_after_finally_block`.
+    after_finally_blocks: FxHashMap<AfterFinallyBlock, (FlowType, u32)>,
     /// How many back edges of loops are being followed.
     back_edges: u32,
     steps: u32,
@@ -630,6 +641,8 @@ struct Walk {
 }
 
 const MAX_STEPS: u32 = 2_000_000;
+/// See `flow_type_after_finally_block`.
+const LONG_EXACT_WALK: u32 = 10_000;
 /// A walk that has taken this many steps starts to skip. See `skip_unrelated_nodes`.
 const LONG_WALK: u32 = 32;
 /// A try to skip costs about as much as this many steps.
@@ -976,6 +989,8 @@ impl Walk {
             crossed: 0,
             shared_flows: SharedFlows::default(),
             reduced: Vec::new(),
+            reduced_out_of_order: 0,
+            after_finally_blocks: FxHashMap::default(),
             back_edges: 0,
             steps: 0,
             next_skip: LONG_WALK,
@@ -3606,14 +3621,21 @@ impl<'p, 's> Checker<'p, 's> {
         None
     }
 
-    /// `isMatchingConstructorReference`
+    /// `isMatchingConstructorReference`. TypeScript 7.0 resolves the key of `a[k]` before it compares `a` with the
+    /// reference. Resolving a constant key's name resolves a type, so in a loop it reports a cycle (7022) through
+    /// a key of an unrelated object, which TypeScript 6 accepts. Here the object comes first.
     fn is_matching_constructor_reference(&mut self, reference: &Reference, e: ExprId) -> bool {
-        let (obj, name) = match self.hir(reference.file).checked_kind(e) {
-            ExprKind::Dot { obj, name, .. } => (obj, Some(name)),
-            ExprKind::Index { obj, index, .. } => (obj, self.literal_key(reference.file, index)),
-            _ => return false,
-        };
-        name == Some(known::constructor) && self.matches(reference, obj)
+        let file = reference.file;
+        match self.hir(file).checked_kind(e) {
+            ExprKind::Dot { obj, name, .. } => {
+                name == known::constructor && self.matches(reference, obj)
+            }
+            ExprKind::Index { obj, index, .. } => {
+                self.matches(reference, obj)
+                    && self.literal_key(file, index) == Some(known::constructor)
+            }
+            _ => false,
+        }
     }
 
     /// `narrowTypeByConstructor`
@@ -3945,6 +3967,10 @@ impl<'p, 's> Checker<'p, 's> {
             return ty;
         }
         let constructor = self.get_type_of_expression(file, right);
+        // Nothing says what an undeclared class makes.
+        if sense && constructor == TypeId::ANY && self.lacks_bun_types() {
+            return TypeId::ANY;
+        }
         let object = self.global_ref(known::Object, &[]);
         if !self.is_type_derived_from(constructor, object) {
             return ty;
@@ -4404,7 +4430,7 @@ impl<'p, 's> Checker<'p, 's> {
         if predicate.asserts {
             return None;
         }
-        Some(self.apply_predicate(reference, ty, predicate, c, sense))
+        Some(self.apply_predicate(reference, ty, sig, predicate, c, sense))
     }
 
     /// `hasMatchingArgument`
@@ -4441,10 +4467,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `sig` is the signature that has `predicate`.
     fn apply_predicate(
         &mut self,
         reference: &Reference,
         ty: TypeId,
+        sig: SigId,
         predicate: Predicate,
         c: CallId,
         sense: bool,
@@ -4453,6 +4481,25 @@ impl<'p, 's> Checker<'p, 's> {
             return ty;
         };
         match predicate.ty {
+            // TypeScript takes `value is any` to be true of every value: it leaves the type as it is where the answer is yes,
+            // and `never` where it is no. This one tells that the value is an object of a class nobody declares, or nothing.
+            Some(_) if self.is_predicate_of_undeclared_class(sig, predicate, reference.file, c) => {
+                if !sense {
+                    return ty;
+                }
+                if self.matches(reference, subject) {
+                    return TypeId::ANY;
+                }
+                let is_taken_as_written = predicate.param.is_some()
+                    && is_parenthesized(self.hir(reference.file), subject);
+                if self.p.files.options.strict_null_checks
+                    && !is_taken_as_written
+                    && self.optional_chain_contains(reference, subject)
+                {
+                    return self.adjusted_type_with_facts(ty, facts::NE_UNDEFINED_OR_NULL);
+                }
+                ty
+            }
             // `narrowTypeByTypePredicate`
             Some(target) => {
                 // `any` isn't narrowed to exactly `Object` or `Function`.
@@ -4463,7 +4510,11 @@ impl<'p, 's> Checker<'p, 's> {
                     return ty;
                 }
                 if self.matches(reference, subject) {
-                    return self.narrowed_to(ty, target, sense, CheckDerived::No);
+                    let narrowed = self.narrowed_to(ty, target, sense, CheckDerived::No);
+                    if sense && narrowed == ty && self.holds_undeclared_class_where(target, ty) {
+                        return target;
+                    }
+                    return narrowed;
                 }
                 // The receiver is taken without its parentheses, but an argument is taken as
                 // written, and a parenthesized argument is neither an optional chain nor an access.
@@ -4496,6 +4547,72 @@ impl<'p, 's> Checker<'p, 's> {
             None if predicate.param.is_some() => self.narrow_by_asserted(reference, ty, subject),
             None => ty,
         }
+    }
+
+    /// `Options::declarations_of_last_resort` has `any` for a class of the run time, so `value is Buffer` says
+    /// `value is any`, and is written so in that file. A program that writes `any` itself means what TypeScript makes of it.
+    fn is_predicate_of_undeclared_class(
+        &mut self,
+        sig: SigId,
+        predicate: Predicate,
+        file_of_call: FileId,
+        c: CallId,
+    ) -> bool {
+        if !self.lacks_bun_types() {
+            return false;
+        }
+        let Some((file, func, _)) = self.sig_decl(sig) else {
+            return false;
+        };
+        let hir = self.hir(file);
+        let ret = hir[func].ret;
+        let says_any = !predicate.asserts && predicate.ty == Some(TypeId::ANY);
+        // `x => x instanceof Buffer`: only `check_if_expression_refines_any_parameter` finds `x is any`, for such a class.
+        if ret.is_none() {
+            return says_any;
+        }
+        let TypeNodeKind::Predicate { ty, .. } = hir[ret].kind else {
+            return false;
+        };
+        if ty.is_none() {
+            return false;
+        }
+        let is_keyword = matches!(hir[ty].kind, TypeNodeKind::Keyword(Keyword::Any));
+        if is_keyword && !self.files().is_of_last_resort(file) {
+            return false;
+        }
+        let written = self.type_from_node(file, ty);
+        if self.is_any(written) {
+            return true;
+        }
+        // `isA<Buffer>(x, Buffer)` of `isA<T>(x, kind: new () => T): x is T`. A call that writes `<any>` means what TypeScript makes of it.
+        if predicate.asserts || !self.is_type_param(written) {
+            return false;
+        }
+        let hir = self.hir(file_of_call);
+        let type_arguments = hir.list_at(hir[c].type_args);
+        if says_any {
+            return !(hir.ids(type_arguments))
+                .any(|node| matches!(hir[node].kind, TypeNodeKind::Keyword(Keyword::Any)));
+        }
+        // `isA(x, Buffer)`: nothing is inferred from `any`, so T is `unknown`.
+        predicate.ty == Some(TypeId::UNKNOWN)
+            && type_arguments.is_empty()
+            && (hir.ids(hir[c].args))
+                .any(|argument| self.get_type_of_expression(file_of_call, argument) == TypeId::ANY)
+    }
+
+    /// `holder is Holder & { held: Buffer }` says `Holder & { held: any }` where nobody declares the class, and `narrowed_to` keeps `Holder`:
+    /// each is assignable to the other. The candidate has every member of `ty`, so taking it refuses nothing that `ty` allows.
+    fn holds_undeclared_class_where(&mut self, candidate: TypeId, ty: TypeId) -> bool {
+        if !self.lacks_bun_types() || candidate == ty || !self.is_assignable(candidate, ty) {
+            return false;
+        }
+        self.properties_of_type(candidate).iter().any(|property| {
+            let name = property.name;
+            self.type_of_property_of_type(candidate, name) == Some(TypeId::ANY)
+                && (self.type_of_property_of_type(ty, name)).is_some_and(|it| it != TypeId::ANY)
+        })
     }
 
     /// `narrowTypeByAssertion`: `e` is the asserted expression. Code after `assert(false)` is
@@ -5296,6 +5413,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut lowest = vec![0u32; bound.flow.len()];
         let mut computed_key_nodes = Vec::new();
         let mut finally_blocks = Vec::new();
+        let mut finally_block_ends = Vec::new();
         let mut union_nodes = Vec::new();
         let mut noted_switches: FxHashMap<StmtId, (ResolvesKey, bool)> = FxHashMap::default();
         let mut longest = 0;
@@ -5415,7 +5533,10 @@ impl<'p, 's> Checker<'p, 's> {
                         (resolves_in_call, builds_union) = (about.3, about.4);
                     }
                 }
-                Flow::Reduce { label, .. } => finally_blocks.push((label.0, i as u32)),
+                Flow::Reduce { before, label, .. } => {
+                    finally_blocks.push((label.0, i as u32));
+                    finally_block_ends.push(before.0);
+                }
                 _ => {}
             }
             let resolves = about.2.max(resolves_in_call);
@@ -5444,6 +5565,9 @@ impl<'p, 's> Checker<'p, 's> {
         (memo.min_antecedent, memo.computed_key_nodes) = (lowest, computed_key_nodes);
         memo.union_nodes = union_nodes;
         memo.finally_blocks = finally_blocks;
+        finally_block_ends.sort_unstable();
+        finally_block_ends.dedup();
+        memo.finally_block_ends = finally_block_ends;
         for calls in [
             &mut memo.unsettled_call_before,
             &mut memo.unsettled_call_on_first_path,
@@ -6721,6 +6845,61 @@ impl<'p, 's> Checker<'p, 's> {
         ty
     }
 
+    /// FOR SPEED. `flow_type`, for a node that may be the last one of a `finally` block. Three nodes
+    /// follow that one: the block is left in the normal way, by an exception, or in the middle. It
+    /// isn't shared, so in tsgo each of them walks through the block, and through the three ends of
+    /// each block nested in its `try` block: 3 to the power of n walks for n blocks. What a walk
+    /// finds there only depends on the labels that stand for others at the time, so it's kept for
+    /// each set of those that it can reach.
+    fn flow_type_after_finally_block(&mut self, walk: &mut Walk, flow: FlowId) -> FlowType {
+        let file = walk.reference.file;
+        if walk.too_deep || self.task.file != Some(file) {
+            return self.flow_type(walk, flow);
+        }
+        if self.flow_memo.narrowing_index_file != Some(file) {
+            cold_path();
+            self.index_narrowing_subjects(file);
+        }
+        let memo = &self.flow_memo;
+        if memo.finally_block_ends.binary_search(&flow.0).is_err() {
+            return self.flow_type(walk, flow);
+        }
+        let highest = memo.max_antecedent[flow.idx()];
+        let mut reduced: SmallVec<[(FlowId, FlowId); 2]> = SmallVec::new();
+        for &(label, instead) in walk.reduced.iter().rev() {
+            if label.0 > highest {
+                if walk.reduced_out_of_order == 0 {
+                    break;
+                }
+            } else if !reduced.iter().any(|known| known.0 == label) {
+                reduced.push((label, instead));
+            }
+        }
+        let key = (flow, reduced);
+        // An invocation in tsgo may get less deep the second time, because it finds more in
+        // `sharedFlows`. An exact walk only relies on the first time once tsgo would take too long.
+        if (!walk.is_exact || walk.steps >= LONG_EXACT_WALK)
+            && let Some(&(known, invocations)) = walk.after_finally_blocks.get(&key)
+        {
+            walk.may_be_too_deep = true;
+            walk.deepest = walk.deepest.max(walk.depth + invocations);
+            if walk.depth + invocations > MAX_FLOW_DEPTH {
+                cold_path();
+                walk.too_deep = true;
+                return FlowType::new(TypeId::ERROR, false);
+            }
+            return known;
+        }
+        let deepest_before = std::mem::take(&mut walk.deepest);
+        let found = self.flow_type(walk, flow);
+        let invocations = walk.deepest.saturating_sub(walk.depth);
+        walk.deepest = walk.deepest.max(deepest_before);
+        if !walk.too_deep && walk.steps < MAX_STEPS && !found.incomplete && walk.unmade.is_none() {
+            walk.after_finally_blocks.insert(key, (found, invocations));
+        }
+        found
+    }
+
     /// `getTypeAtFlowNode`
     fn flow_type(&mut self, walk: &mut Walk, start: FlowId) -> FlowType {
         if walk.too_deep {
@@ -6944,9 +7123,12 @@ impl<'p, 's> Checker<'p, 's> {
                 } => {
                     above_shared_node = pending.len() + 1;
                     walk.has_left_finally_block = true;
+                    let is_out_of_order = walk.reduced.last().is_some_and(|top| top.0 <= label);
+                    walk.reduced_out_of_order += u32::from(is_out_of_order);
                     walk.reduced.push((label, instead));
-                    let t = self.flow_type(walk, before);
+                    let t = self.flow_type_after_finally_block(walk, before);
                     walk.reduced.pop();
+                    walk.reduced_out_of_order -= u32::from(is_out_of_order);
                     incomplete = t.incomplete;
                     break t.ty;
                 }
@@ -6980,7 +7162,7 @@ impl<'p, 's> Checker<'p, 's> {
                             bypass = Some((edge, stmt));
                             continue;
                         }
-                        let t = self.flow_type(walk, edge);
+                        let t = self.flow_type_after_finally_block(walk, edge);
                         if t.ty == walk.declared && self.starts_as_declared(walk) {
                             types.clear();
                             types.push(t.ty);
@@ -7042,7 +7224,13 @@ impl<'p, 's> Checker<'p, 's> {
                     let deepest_at_label = walk.deepest;
                     above_shared_node = pending.len() + 1;
                     let initial = self.initial_of(walk);
-                    let key = (file, flow, walk.declared, initial);
+                    let key = (
+                        file,
+                        flow,
+                        walk.declared,
+                        initial,
+                        root_key(walk.reference.root),
+                    );
                     if let Some(cached) =
                         self.flow_memo.cached_flow_loop_type(&key, &walk.reference)
                     {
@@ -7936,6 +8124,15 @@ impl<'p, 's> Checker<'p, 's> {
                 };
                 self.explicit_type_of_property(obj, name, diagnostic)
             }
+            // `Buffer["isBuffer"]`: TypeScript follows no brackets here. Nor does it need to: it knows what `Buffer` is.
+            ExprKind::Index { obj, index, .. }
+                if self.lacks_bun_types() && is_string_literal_like(hir, index) =>
+            {
+                let obj = self.explicit_type(file, obj, diagnostic.as_deref_mut())?;
+                let key = self.type_of_expr(file, index);
+                let name = self.property_name_of_type(key)?;
+                self.explicit_type_of_property(obj, name, diagnostic)
+            }
             _ => None,
         }
     }
@@ -7970,7 +8167,86 @@ impl<'p, 's> Checker<'p, 's> {
         diagnostic: Option<&mut Reported>,
     ) -> Option<TypeId> {
         let (prop, mapper) = self.get_property_of_type(obj, name)?;
+        if let PropSource::Symbol(sym) = prop.source
+            && let Some(listed) = self.members_that_narrow_of_any(sym)
+        {
+            return Some(listed);
+        }
         (self.has_explicit_type(prop, diagnostic)).then(|| self.type_of_prop(prop, mapper))
+    }
+
+    /// `Options::declarations_of_last_resort` has `any` for a variable. `any & { .. }` is `any` too, and what stands behind
+    /// the `&` lists the members that never return, that assert or that say what their argument is.
+    fn members_that_narrow_of_any(&mut self, sym: Sym) -> Option<TypeId> {
+        let files = self.files();
+        if !files.flags(sym).intersects(SymFlags::VARIABLE) {
+            return None;
+        }
+        let (file, Decl::Var(pat)) = files.value_declaration(sym)? else {
+            return None;
+        };
+        if !files.is_of_last_resort(file) {
+            return None;
+        }
+        let (hir, annotation) = (self.hir(file), self.type_annotation_of_pat(file, pat));
+        if annotation.is_none() {
+            return None;
+        }
+        let TypeNodeKind::Intersection(parts) = hir[annotation].kind else {
+            return None;
+        };
+        Some(self.type_from_node(file, hir.id_at(parts, 1)))
+    }
+
+    /// `e` is a member of a value of type `any`. A function that `members_that_narrow_of_any` lists and that says what its
+    /// argument is, says so wherever it goes: `list.filter(Buffer.isBuffer)`. One that never returns or that asserts does so
+    /// only where it is called by its declared name, so it stays `any`.
+    pub(super) fn type_predicate_listed_for_any(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+    ) -> Option<TypeId> {
+        if !self.lacks_bun_types() {
+            return None;
+        }
+        let listed = self.explicit_type(file, e, None)?;
+        self.says_what_its_argument_is(listed).then_some(listed)
+    }
+
+    fn says_what_its_argument_is(&mut self, function: TypeId) -> bool {
+        let [only] = self.signatures(function, false)[..] else {
+            return false;
+        };
+        (self.sig_predicate(only)).is_some_and(|predicate| !predicate.asserts)
+    }
+
+    /// `const { isBuffer } = Buffer`: `pat` is an element of a pattern that takes a value of type `any` apart.
+    pub(super) fn type_predicate_listed_for_element_of_any(
+        &mut self,
+        file: FileId,
+        pat: PatId,
+    ) -> Option<TypeId> {
+        if !self.lacks_bun_types() {
+            return None;
+        }
+        let PatParent::Prop(pattern, prop) = self.bound(file).pat_parent[pat.idx()] else {
+            return None;
+        };
+        let hir = self.hir(file);
+        let key = binding_element_property_name(hir, prop);
+        let (PropKey::Name(name), false) = (key, hir[prop].is_rest) else {
+            return None;
+        };
+        let PatParent::Var(declaration) = self.bound(file).pat_parent[pattern.idx()] else {
+            return None;
+        };
+        let taken_apart = hir[declaration].init;
+        if taken_apart.is_none() {
+            return None;
+        }
+        let object = self.explicit_type(file, taken_apart, None)?;
+        let listed = self.explicit_type_of_property(object, name, None)?;
+        self.says_what_its_argument_is(listed).then_some(listed)
     }
 
     /// True if `getExplicitTypeOfSymbol` returns `prop`'s type.
@@ -8068,6 +8344,9 @@ impl<'p, 's> Checker<'p, 's> {
             };
             return self.explicit_type_of_property(obj, name, diagnostic);
         };
+        if let Some(listed) = self.members_that_narrow_of_any(sym) {
+            return Some(listed);
+        }
         let flags = self.files().flags(sym);
         let declares_its_type =
             SymFlags::FUNCTION | SymFlags::METHOD | SymFlags::CLASS | SymFlags::VALUE_MODULE;
@@ -8814,7 +9093,7 @@ impl<'p, 's> Checker<'p, 's> {
                         None => return ty,
                     }
                 };
-                self.apply_predicate(reference, ty, predicate, c, true)
+                self.apply_predicate(reference, ty, sig, predicate, c, true)
             }
             _ => ty,
         }
@@ -9089,6 +9368,12 @@ impl<'p, 's> Checker<'p, 's> {
             return Some(false);
         }
         // `eachTypeContainedIn`: by type identity, not by comparability.
+        if switch_types.len() < 16 {
+            return Some(self.every_type(ty, |c, m| {
+                switch_types.contains(&c.with_freshness(m, false))
+            }));
+        }
+        let switch_types: crate::util::FxHashSet<TypeId> = switch_types.iter().copied().collect();
         Some(self.every_type(ty, |c, m| {
             switch_types.contains(&c.with_freshness(m, false))
         }))
@@ -9307,9 +9592,11 @@ impl<'p, 's> Checker<'p, 's> {
                 self.reduced(left)
             };
             self.walk_declared = outer;
+            // Nothing says what an undeclared class makes, so nothing says what is left without it.
+            let is_of_undeclared_class = when_true == TypeId::ANY && self.lacks_bun_types();
             // `x is never` is a type guard like any other, unless the empty result depends on an
             // unresolved type.
-            if when_true == declared || !leftover.is_never() {
+            if when_true == declared || !(leftover.is_never() || is_of_undeclared_class) {
                 continue;
             }
             return Some(Predicate {

@@ -33,6 +33,7 @@ impl BoundProgram<'_, '_, '_> {
         ModuleRef::External {
             importer: self.file(importer),
             specifier: self.atom(specifier),
+            type_attribute: None,
         }
     }
 

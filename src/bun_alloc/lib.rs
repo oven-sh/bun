@@ -520,9 +520,6 @@ macro_rules! oom_from_alloc {
 /// Uses mimalloc's
 /// `MI_MAX_ALIGN_SIZE` (16) fast-path: alignments ≤16 go through `mi_malloc`,
 /// larger through `mi_malloc_aligned`. `mi_free` handles both.
-///
-/// `GlobalAlloc` cannot say which requests can fail, and most callers end the process on
-/// null, so every request goes through mimalloc's `must` entry points.
 pub struct Mimalloc;
 
 use mimalloc::MI_MAX_ALIGN_SIZE;
@@ -538,12 +535,12 @@ use mimalloc::MI_MAX_ALIGN_SIZE;
 unsafe impl core::alloc::GlobalAlloc for Mimalloc {
     #[inline]
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
-        mimalloc::mi_must_malloc_auto_align(layout.size(), layout.align()).cast()
+        mimalloc::mi_malloc_auto_align(layout.size(), layout.align()).cast()
     }
 
     #[inline]
     unsafe fn alloc_zeroed(&self, layout: core::alloc::Layout) -> *mut u8 {
-        mimalloc::mi_must_zalloc_auto_align(layout.size(), layout.align()).cast()
+        mimalloc::mi_zalloc_auto_align(layout.size(), layout.align()).cast()
     }
 
     #[inline]
@@ -560,13 +557,34 @@ unsafe impl core::alloc::GlobalAlloc for Mimalloc {
         layout: core::alloc::Layout,
         new_size: usize,
     ) -> *mut u8 {
+        // `mi_realloc` leaves a block where it is while it stays half full, and a list that grew by doubling is always more than half
+        // full: `shrink_to_fit` and `into_boxed_slice` gave nothing back. Whoever shrinks a block keeps it, so it moves to a block of its
+        // size. Of a large block the end was never touched and takes no memory.
+        const LARGEST_BLOCK_MOVED: usize = 64 << 10;
+        if new_size < layout.size()
+            && new_size > 0
+            && layout.size() <= LARGEST_BLOCK_MOVED
+            && layout.align() <= MI_MAX_ALIGN_SIZE
+            // SAFETY: `ptr` is a live mimalloc allocation.
+            && mimalloc::mi_good_size(new_size) < unsafe { mimalloc::mi_usable_size(ptr.cast()) }
+        {
+            let moved: *mut u8 = mimalloc::mi_malloc(new_size).cast();
+            if !moved.is_null() {
+                // SAFETY: both blocks hold `new_size` bytes and are distinct, and `ptr` is not used again.
+                unsafe {
+                    core::ptr::copy_nonoverlapping(ptr, moved, new_size);
+                    mimalloc::mi_free(ptr.cast());
+                }
+                return moved;
+            }
+        }
         // SAFETY: `GlobalAlloc::realloc` contract — `ptr` is a live mimalloc
         // allocation with `layout`; `mi_realloc*` preserves the `min(old, new)` prefix.
         unsafe {
             if layout.align() <= MI_MAX_ALIGN_SIZE {
-                mimalloc::mi_must_realloc(ptr.cast(), new_size)
+                mimalloc::mi_realloc(ptr.cast(), new_size)
             } else {
-                mimalloc::mi_must_realloc_aligned(ptr.cast(), new_size, layout.align())
+                mimalloc::mi_realloc_aligned(ptr.cast(), new_size, layout.align())
             }
         }
         .cast()

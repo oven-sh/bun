@@ -113,7 +113,7 @@ function f1 name="tell" module=m0 position=103 flags=[IsChecked, HasExplicitName
     v19 = Convert v18 declared={type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]}
     Return v19
 }
-function f2 module=m1 position=145 role=Library flags=[IsChecked] length=3 enclosingRuntimeFunction=65565 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f2 module=m1 position=145 role=Library flags=[IsChecked] length=3 enclosingRuntimeFunction=JSBufferConstructorFrom thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = TypeTest v0 testedType=null|object
     Branch v3 -> taken b1(| 0), notTaken b15(| 0)
@@ -224,11 +224,11 @@ function f2 module=m1 position=145 role=Library flags=[IsChecked] length=3 enclo
     v94 = Call v89, -, v90, v91, v92, v93
     Throw v94
 }
-function f3 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-runtimefunction id=69 function=f3
-runtimefunction id=65565 function=f2
+function f3 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+runtimefunction id=ArrayIteratorPrototypeNext function=f3
+runtimefunction id=JSBufferConstructorFrom function=f2
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 120, patchpoints: 32, rare instructions: 72, polls: 2
+# CHECK-NEXT: instructions: 36, patchpoints: 13, rare instructions: 110, polls: 2
 # CHECK-NEXT: end of function f0

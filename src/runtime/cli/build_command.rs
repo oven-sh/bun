@@ -384,6 +384,12 @@ impl BuildCommand {
                     );
                     Global::exit(1);
                 }
+                if ctx.bundler_options.macos_info_plist.is_some() {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r><d>:<r> cannot use --compile --target browser with --macos-info-plist"
+                    );
+                    Global::exit(1);
+                }
 
                 // This is not a bun executable compile - clear compile flags
                 this_transpiler.options.compile_mode = options::CompileMode::StandaloneHtml;
@@ -1007,6 +1013,7 @@ impl BuildCommand {
                 let mut additions =
                     bun_standalone_module_graph::executable_request::ExecutableAdditions {
                         trim: trim_plan.as_ref(),
+                        info_plist: ctx.bundler_options.macos_info_plist.as_deref(),
                         ..Default::default()
                     };
 

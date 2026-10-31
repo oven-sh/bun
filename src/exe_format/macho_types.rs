@@ -32,6 +32,7 @@ pub(crate) const S_ATTR_SOME_INSTRUCTIONS: u32 = 0x400;
 pub(crate) const N_SECT: u8 = 0x0e;
 pub(crate) const N_STAB: u8 = 0xe0;
 pub(crate) const N_TYPE: u8 = 0x0e;
+pub(crate) const N_OSO: u8 = 0x66;
 pub(crate) const INDIRECT_SYMBOL_LOCAL_OR_ABS: u32 = 0xc000_0000;
 
 pub(crate) const LC_REQ_DYLD: u32 = 0x8000_0000;

@@ -191,6 +191,24 @@ describe("websocket", () => {
       },
     },
     {
+      args: ["--inspect=ws://localhost:0"],
+      url: {
+        protocol: "ws:",
+        hostname: "localhost",
+        port: anyPort,
+        pathname: anyPathname,
+      },
+    },
+    {
+      args: ["--inspect=ws://127.0.0.1:0"],
+      url: {
+        protocol: "ws:",
+        hostname: "127.0.0.1",
+        port: anyPort,
+        pathname: anyPathname,
+      },
+    },
+    {
       args: ["--inspect=ws://localhost/"],
       url: {
         protocol: "ws:",

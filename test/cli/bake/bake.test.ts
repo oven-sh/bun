@@ -2,6 +2,7 @@ import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { rmSync, symlinkSync } from "node:fs";
+import { rename } from "node:fs/promises";
 import { join } from "node:path";
 
 const env = { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1", NO_COLOR: "1" };
@@ -530,6 +531,36 @@ test.concurrent("bun bake serves the new app/server.ts after a change, on the sa
   expect(await get(url, "/")).toBe("200 v2");
 });
 
+test.concurrent("bun bake serves a page added to app/pages/, at the next reload", async () => {
+  using dir = tempDir("bake-command-late-page", {
+    "app/pages/index.html": page,
+    "app/server.ts": `export default { fetch: () => new Response("v1", { status: 404 }) };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const output = collectOutput(proc);
+  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+  expect(await get(url, "/late")).toBe("404 v1");
+
+  await Bun.write(join(String(dir), "app/pages/late.html"), `<!doctype html><html><body><h1>late</h1></body></html>`);
+  // A new file in app/pages/ does not reload; an edit to app/server.ts does. The reload imports
+  // the new page from a directory that the resolver listed before the page was there.
+  const before = output.text.length;
+  await Bun.write(
+    join(String(dir), "app/server.ts"),
+    `export default { fetch: () => new Response("v2", { status: 404 }) };`,
+  );
+  // While the edit is written, app/server.ts can be empty for a moment: that reload prints another
+  // error, and the reload for the whole file follows it.
+  const [, reloaded] = await output.waitFor(
+    new RegExp(`^[\\s\\S]{${before}}[\\s\\S]*?(url: http|error: Cannot find module[^\\n]*)`),
+  );
+  expect(reloaded).toBe("url: http");
+
+  expect(await get(url, "/late")).toContain("<h1>late</h1>");
+  expect(await get(url, "/missing")).toBe("404 v2");
+});
+
 test.concurrent("bun bake keeps one server across reloads when it started on a later port", async () => {
   // Take the port that `bun bake` tries first, so it starts on the next one.
   await using blocker = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("blocker") });
@@ -950,6 +981,47 @@ test.concurrent("bun bake keeps serving when a reload finds a page it cannot ser
   expect(proc.exitCode).toBeNull();
   expect(await get(url, "/missing")).toBe("200 v1");
 });
+
+// On Linux a save in place takes app/server.ts off the file watcher. On macOS a save by rename does.
+test.concurrent.each(["in place", "by rename"])(
+  "bun bake reloads app/server.ts again after a reload that found a page it cannot serve, saved %s",
+  async how => {
+    using dir = tempDir("bake-command-reload-after-error", {
+      "app/pages/index.html": page,
+      "app/server.ts": `export default { fetch: () => new Response("v1") };`,
+    });
+    const server = join(String(dir), "app/server.ts");
+    const save = async (version: string) => {
+      const contents = `export default { fetch: () => new Response("${version}") };`;
+      if (how === "in place") return void (await Bun.write(server, contents));
+      await Bun.write(server + ".next", contents);
+      // A rename does not replace a file on Windows while the watcher has it open.
+      if (isWindows) rmSync(server, { force: true });
+      await rename(server + ".next", server);
+    };
+
+    await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+    const output = collectOutput(proc);
+    const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+
+    await Bun.write(join(String(dir), "app/pages/[slug].html"), page);
+    await save("v2");
+    await output.waitFor(/a page cannot have/);
+
+    // That reload stopped before it loaded app/server.ts. The next save of it reloads all the same.
+    rmSync(join(String(dir), "app/pages/[slug].html"));
+    let seen = output.text.length;
+    await save("v3");
+    let body: string;
+    do {
+      // Each reload prints the URL again. On Windows one can run between the two steps of the rename.
+      await output.waitFor(new RegExp(`^[\\s\\S]{${seen}}[\\s\\S]*url: http`));
+      seen = output.text.length;
+      body = await get(url, "/missing");
+    } while (!body.includes("v3"));
+    expect(body).toBe("200 v3");
+  },
+);
 
 test.concurrent("bun bake reads a bake.config.ts whose default export is a promise", async () => {
   using dir = tempDir("bake-command-config-promise", {

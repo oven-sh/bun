@@ -1132,6 +1132,30 @@ describe("StatementSync.prototype.run()", () => {
     db.close();
   });
 
+  // SQLite does not halt an EXPLAIN at SQLITE_DONE, so until the reset sqlite3_changes64() is the count of the
+  // statement before it: the 3 rows of setup(). Node resets first. A read leaves the count alone.
+  test.each([
+    // The plan of a plain insert has no row.
+    ["EXPLAIN QUERY PLAN INSERT INTO t VALUES (7)", 0],
+    ["EXPLAIN QUERY PLAN DELETE FROM t", 0],
+    ["EXPLAIN DELETE FROM t", 0],
+    ["EXPLAIN QUERY PLAN SELECT * FROM t", 3],
+  ])("of %s reports changes: %d, as in Node", (sql, changes) => {
+    const seen: Record<string, unknown> = {};
+    for (const [how, run] of [
+      ["StatementSync", (db: DatabaseSync) => db.prepare(sql).run()],
+      ["SQLTagStore", (db: DatabaseSync) => db.createTagStore().run([sql] as unknown as TemplateStringsArray)],
+    ] as const) {
+      const db = setup();
+      seen[how] = run(db);
+      db.close();
+    }
+    expect(seen).toEqual({
+      StatementSync: { changes, lastInsertRowid: 3 },
+      SQLTagStore: { changes, lastInsertRowid: 3 },
+    });
+  });
+
   // The statement has a row left when run() / get() reset it, so that reset is the commit.
   // Node 26.3's get() returns the row that was rolled back; Node's main branch throws.
   test.each(["run", "get"] as const)("%s() throws when ending a RETURNING statement fails to commit", method => {
@@ -1247,6 +1271,48 @@ describe("StatementSync.prototype.iterate()", () => {
     expect(db.isOpen).toBe(false);
     // Explicit return() on the now-finalized iterator likewise succeeds.
     expect(iter.return!()).toEqual<unknown>({ __proto__: null, done: true, value: null });
+  });
+
+  // While the iterator of an EXPLAIN of a write is on a row, SQLite keeps back the commit of the other writes, and the
+  // reset at the end of the listing makes it. Node checks that reset since v26.8.0 (nodejs/node#63319).
+  test("throws when the commit at the end of the listing of an EXPLAIN fails", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec(
+      "CREATE TABLE parent (id INTEGER PRIMARY KEY); CREATE TABLE child (p REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED)",
+    );
+    const iter = db.prepare("EXPLAIN DELETE FROM child").iterate();
+    expect(iter.next().done).toBe(false);
+    // No parent 99 exists, and the check is deferred to the commit.
+    expect(db.prepare("INSERT INTO child VALUES (99)").run()).toEqual({ changes: 1, lastInsertRowid: 1 });
+    expect(() => [...iter]).toThrow(
+      expect.objectContaining({ code: "ERR_SQLITE_ERROR", errcode: 787, message: "FOREIGN KEY constraint failed" }),
+    );
+    expect(iter.next()).toEqual<unknown>({ __proto__: null, done: true, value: null });
+    expect(db.prepare("SELECT count(*) AS n FROM child").get()).toEqual({ n: 0 });
+    expect(db.isTransaction).toBe(false);
+    db.close();
+  });
+
+  // Not fixed, and Node v26.3.0 does the same: SQLite lists the name of the table through a pointer into the schema
+  // that it freed. See "an EXPLAIN that is kept lists the schema of its run" in test/js/bun/sqlite/sqlite.test.js.
+  test.todo("an EXPLAIN that is kept lists the schema of its run", async () => {
+    const src = `
+      const { DatabaseSync } = require("node:sqlite");
+      const db = new DatabaseSync(":memory:");
+      db.exec("CREATE TABLE t (a, b)");
+      const explain = db.prepare("EXPLAIN INSERT INTO t VALUES (1, 2)");
+      db.exec("DROP TABLE t");
+      // These take the memory that the schema change freed.
+      for (let i = 0; i < 50; i++) db.prepare("SELECT '" + Buffer.alloc(40 + i, "Z") + "', " + i).all();
+      try {
+        console.log(explain.all().length);
+      } catch (error) {
+        console.log(error.message);
+      }
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "no such table: t\n", stderr: "", exitCode: 0 });
   });
 });
 

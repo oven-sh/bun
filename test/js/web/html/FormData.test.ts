@@ -1,4 +1,4 @@
-import { describe, expect, it, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { join } from "path";
 
@@ -253,6 +253,406 @@ describe("FormData", () => {
     } catch (e: any) {
       expect(typeof e.message).toBe("string");
     }
+  });
+
+  // RFC 2046 §5.1.1: a delimiter is CRLF, "--", the boundary. It counts only
+  // where a line starts, and the first close delimiter ends the body.
+  describe("multipart delimiters", () => {
+    const CRLF = "\r\n";
+    type Entries = [string, string | { filename: string; text: string }][];
+    type Row = { name: string; body: string } & ({ entries: Entries } | { rejects: string });
+
+    // Every row, built for one boundary.
+    const rowsFor = (B: string): Row[] => {
+      const header = (name: string) => `Content-Disposition: form-data; name="${name}"${CRLF}`;
+      const part = (name: string, value: string) => `--${B}${CRLF}${header(name)}${CRLF}${value}${CRLF}`;
+      const filePart = (name: string, value: string) =>
+        `--${B}${CRLF}Content-Disposition: form-data; name="${name}"; filename="${name}.bin"${CRLF}` +
+        `Content-Type: application/octet-stream${CRLF}${CRLF}${value}${CRLF}`;
+      const close = `--${B}--${CRLF}`;
+      // What a client can put inside a value to try to add a field.
+      const forged = `--${B}${CRLF}${header("role")}${CRLF}admin`;
+      const honest = part("role", "user") + close;
+
+      return [
+        // Bodies as curl, Go, undici and Ruby frame them.
+        {
+          name: "two fields, one empty",
+          body: part("name", "Jane Doe") + part("note", "") + close,
+          entries: [
+            ["name", "Jane Doe"],
+            ["note", ""],
+          ],
+        },
+        {
+          name: "a field and a file",
+          body: part("title", "report") + filePart("file", "hello file\n") + close,
+          entries: [
+            ["title", "report"],
+            ["file", { filename: "file.bin", text: "hello file\n" }],
+          ],
+        },
+        {
+          name: "a file with bytes that start like a delimiter",
+          body: filePart("blob", "\x00\x01\x02\xff\r\n--x") + part("lines", "a\nb") + close,
+          entries: [
+            ["blob", { filename: "blob.bin", text: "\x00\x01\x02\xff\r\n--x" }],
+            ["lines", "a\nb"],
+          ],
+        },
+
+        // A boundary inside a line is part of the value.
+        {
+          name: "a delimiter in the middle of a line",
+          body: part("comment", "hello" + forged) + honest,
+          entries: [
+            ["comment", "hello" + forged],
+            ["role", "user"],
+          ],
+        },
+        {
+          name: "a delimiter behind a bare LF",
+          body: part("comment", "hello\n" + forged) + honest,
+          entries: [
+            ["comment", "hello\n" + forged],
+            ["role", "user"],
+          ],
+        },
+        {
+          name: "a delimiter behind a bare CR",
+          body: part("comment", "hello\r" + forged) + honest,
+          entries: [
+            ["comment", "hello\r" + forged],
+            ["role", "user"],
+          ],
+        },
+        {
+          name: "a delimiter behind a dash at a line start",
+          body: part("comment", "hello" + CRLF + "-" + forged) + honest,
+          entries: [
+            ["comment", "hello" + CRLF + "-" + forged],
+            ["role", "user"],
+          ],
+        },
+        {
+          name: "a delimiter in the middle of a line of a file",
+          body: filePart("f", "\x00\x01\x7f" + forged) + honest,
+          entries: [
+            ["f", { filename: "f.bin", text: "\x00\x01\x7f" + forged }],
+            ["role", "user"],
+          ],
+        },
+        {
+          name: "the same name again, in the middle of a line",
+          body: part("role", "user" + forged) + close,
+          entries: [["role", "user" + forged]],
+        },
+        {
+          name: "a close delimiter in the middle of a line",
+          body: part("a", `1--${B}--`) + honest,
+          entries: [
+            ["a", `1--${B}--`],
+            ["role", "user"],
+          ],
+        },
+        { name: "a value that ends in x--boundary", body: part("a", `x--${B}`) + close, entries: [["a", `x--${B}`]] },
+        {
+          name: "a value that ends in CRLF",
+          body: part("a", "line1" + CRLF + "line2" + CRLF) + close,
+          entries: [["a", "line1" + CRLF + "line2" + CRLF]],
+        },
+        { name: "an empty value", body: part("a", "") + close, entries: [["a", ""]] },
+        {
+          name: "a line that starts with the boundary and more text",
+          body: part("a", `x${CRLF}--${B}suffix${CRLF}y`) + close,
+          entries: [["a", `x${CRLF}--${B}suffix${CRLF}y`]],
+        },
+        {
+          name: "a line that starts with the boundary, padding and more text",
+          body: part("a", `x${CRLF}--${B} \tsuffix${CRLF}y`) + close,
+          entries: [["a", `x${CRLF}--${B} \tsuffix${CRLF}y`]],
+        },
+        {
+          name: "a last line that is the boundary line without its last byte",
+          body: part("a", `1${CRLF}--${B.slice(0, -1)}`) + part("b", "2") + close,
+          entries: [
+            ["a", `1${CRLF}--${B.slice(0, -1)}`],
+            ["b", "2"],
+          ],
+        },
+
+        // Spaces and tabs behind the boundary are transport padding (RFC 2046 §5.1.1).
+        {
+          name: "an opening delimiter with padding",
+          body: `--${B} \t${CRLF}${header("a")}${CRLF}1${CRLF}${close}`,
+          entries: [["a", "1"]],
+        },
+        {
+          name: "a delimiter with padding",
+          body: part("a", "1") + `--${B}\t ${CRLF}${header("b")}${CRLF}2${CRLF}` + close,
+          entries: [
+            ["a", "1"],
+            ["b", "2"],
+          ],
+        },
+        {
+          name: "a line with the boundary and padding, where a value line could be",
+          body: part("comment", `hello${CRLF}--${B} ${CRLF}${header("role")}${CRLF}admin`) + honest,
+          entries: [
+            ["comment", "hello"],
+            ["role", "admin"],
+            ["role", "user"],
+          ],
+        },
+        { name: "only a close delimiter with padding", body: `--${B}-- \t${CRLF}`, entries: [] },
+        { name: "only a close delimiter with padding and no CRLF", body: `--${B}--\t `, entries: [] },
+
+        // The first close delimiter ends the body.
+        {
+          name: "a part behind the close delimiter",
+          body: part("a", "1") + honest + part("role", "admin") + close,
+          entries: [
+            ["a", "1"],
+            ["role", "user"],
+          ],
+        },
+        {
+          name: "a part behind a close delimiter with a suffix",
+          body: part("a", "1") + `--${B}--x${CRLF}` + part("role", "admin") + close,
+          entries: [["a", "1"]],
+        },
+        { name: "two close delimiters", body: part("a", "1") + close + close, entries: [["a", "1"]] },
+        { name: "only a close delimiter", body: close, entries: [] },
+        { name: "only a close delimiter with no CRLF", body: `--${B}--`, entries: [] },
+        {
+          name: "a part behind a close delimiter at offset 0",
+          body: close + part("role", "admin") + close,
+          entries: [],
+        },
+        {
+          name: "a part behind a close delimiter in the preamble",
+          body: "preamble" + CRLF + close + part("role", "admin") + close,
+          entries: [],
+        },
+        { name: "a close delimiter with no CRLF behind it", body: part("a", "1") + `--${B}--`, entries: [["a", "1"]] },
+        { name: "text behind the close delimiter", body: part("a", "1") + close + "epilogue", entries: [["a", "1"]] },
+        { name: "a preamble", body: "a preamble" + CRLF + part("a", "1") + close, entries: [["a", "1"]] },
+        {
+          name: "a preamble line that starts with the boundary and more text",
+          body: `--${B}suffix${CRLF}` + part("a", "1") + close,
+          entries: [["a", "1"]],
+        },
+        { name: "a CRLF before the opening delimiter", body: CRLF + part("a", "1") + close, entries: [["a", "1"]] },
+
+        // The blank line belongs to the part. Its CRLF is not a delimiter's CRLF.
+        {
+          name: "a forged part at the start of a value",
+          body: `--${B}${CRLF}${header("a")}${CRLF}${forged}${CRLF}${close}`,
+          rejects: "is missing header end",
+        },
+        {
+          name: "a part with headers and no blank line",
+          body: `--${B}${CRLF}${header("a")}${CRLF}${close}`,
+          rejects: "is missing header end",
+        },
+        {
+          name: "a value that is the boundary line",
+          body: part("a", `--${B}`) + close,
+          rejects: "is missing header end",
+        },
+        {
+          name: "two delimiter lines with no part between them",
+          body: `--${B}${CRLF}` + part("a", "1") + close,
+          rejects: "is missing header end",
+        },
+        {
+          name: "a delimiter line with the close delimiter below it",
+          body: part("a", "1") + `--${B}${CRLF}` + close,
+          rejects: "is missing header end",
+        },
+
+        // No close delimiter at a line start.
+        { name: "no close delimiter", body: part("a", "1"), rejects: "missing final boundary" },
+        { name: "no boundary", body: "a=1&b=2", rejects: "missing final boundary" },
+        {
+          name: "a close delimiter only in the middle of a line",
+          body: part("a", "1").slice(0, -2) + close,
+          rejects: "missing final boundary",
+        },
+        {
+          name: "a close delimiter at offset 0 with text behind it",
+          body: `--${B}--${B}--${CRLF}`,
+          rejects: "missing final boundary",
+        },
+        {
+          name: "a close delimiter at offset 0 with a LF behind it",
+          body: `--${B}--\n` + part("a", "1") + close,
+          rejects: "missing final boundary",
+        },
+        {
+          name: "a header with no colon, and no close delimiter",
+          body: `--${B}${CRLF}no colon${CRLF}${CRLF}x${CRLF}` + part("a", "1"),
+          rejects: "is missing header colon separator",
+        },
+
+        // The first boundary line is not at the start of a line.
+        {
+          name: "LF line ends",
+          body: (part("a", "1") + close).replaceAll(CRLF, "\n"),
+          rejects: "boundary is not at the start of a line",
+        },
+        {
+          name: "a byte order mark before the opening delimiter",
+          body: "\ufeff" + part("a", "1") + honest,
+          rejects: "boundary is not at the start of a line",
+        },
+        {
+          name: "a LF before the opening delimiter",
+          body: "\n" + part("a", "1") + honest,
+          rejects: "boundary is not at the start of a line",
+        },
+        {
+          name: "a space before the opening delimiter",
+          body: " " + part("a", "1") + honest,
+          rejects: "boundary is not at the start of a line",
+        },
+        {
+          name: "a forged part in the middle of a line of the preamble",
+          body: "x" + forged + CRLF + part("a", "1") + honest,
+          rejects: "boundary is not at the start of a line",
+        },
+        {
+          name: "a forged part behind a dash in the middle of a line of the preamble",
+          body: "x-" + forged + CRLF + part("a", "1") + honest,
+          rejects: "boundary is not at the start of a line",
+        },
+        {
+          name: "a close delimiter in the middle of the first line",
+          body: `x--${B}--${CRLF}` + part("a", "1") + honest,
+          rejects: "boundary is not at the start of a line",
+        },
+      ];
+    };
+
+    const stream = (bytes: Uint8Array) =>
+      new ReadableStream({
+        start(controller) {
+          const half = bytes.length >> 1;
+          controller.enqueue(bytes.subarray(0, half));
+          controller.enqueue(bytes.subarray(half));
+          controller.close();
+        },
+      });
+    const read = async (formData: FormData): Promise<Entries> =>
+      Promise.all(
+        [...formData].map(async ([name, value]): Promise<Entries[number]> =>
+          typeof value === "string" ? [name, value] : [name, { filename: value.name, text: await value.text() }],
+        ),
+      );
+    type Rejection = { name: string; code?: string; message: string };
+    const rejection = (e: any): { rejects: Rejection } => ({
+      rejects: { name: e?.name, code: e?.code, message: e?.message },
+    });
+
+    // Lowercase, because a Blob lowercases its type.
+    const B = "aab03x";
+    const type = `multipart/form-data; boundary=${B}`;
+    const headers = { "Content-Type": type };
+
+    let server: ReturnType<typeof Bun.serve>;
+    beforeAll(() => {
+      server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          try {
+            return Response.json(await read(await req.formData()));
+          } catch (e) {
+            return Response.json(rejection(e));
+          }
+        },
+      });
+    });
+    afterAll(() => server.stop(true));
+
+    // Every way a multipart body reaches the parser, with the error that way makes from the parser's text.
+    const parseError = (text: string): Rejection => ({
+      name: "TypeError",
+      code: "ERR_FORMDATA_PARSE_ERROR",
+      message: `FormData parse error ${text}`,
+    });
+    const whileParsing = (text: string): Rejection => ({ name: "Error", message: `${text} while parsing FormData` });
+    const entryPoints: [
+      string,
+      (body: string, bytes: Uint8Array) => Promise<FormData> | FormData,
+      (text: string) => Rejection,
+    ][] = [
+      ["Response(string)", body => new Response(body, { headers }).formData(), parseError],
+      ["Response(ReadableStream)", (_, bytes) => new Response(stream(bytes), { headers }).formData(), whileParsing],
+      ["Request", body => new Request("http://example.com/", { method: "POST", body, headers }).formData(), parseError],
+      [
+        "Blob",
+        (_, bytes) => new Blob([bytes], { type }).formData(),
+        text => ({ name: "Error", message: `FormData encoding failed: ${text}` }),
+      ],
+      ["FormData.from(string)", body => FormData.from(body, B), whileParsing],
+      ["FormData.from(Uint8Array)", (_, bytes) => FormData.from(bytes, B), whileParsing],
+      ["FormData.from(Blob)", (_, bytes) => FormData.from(new Blob([bytes]), B), whileParsing],
+      ["Bun.readableStreamToFormData", (_, bytes) => Bun.readableStreamToFormData(stream(bytes), B), whileParsing],
+    ];
+
+    for (const row of rowsFor(B)) {
+      it(row.name, async () => {
+        const bytes = new TextEncoder().encode(row.body);
+        const results: Record<string, unknown> = {};
+        const expected: Record<string, unknown> = {};
+        for (const [entryPoint, parse, error] of entryPoints) {
+          try {
+            results[entryPoint] = await read(await parse(row.body, bytes));
+          } catch (e) {
+            results[entryPoint] = rejection(e);
+          }
+          expected[entryPoint] = "entries" in row ? row.entries : { rejects: error(row.rejects) };
+        }
+        const response = await fetch(server.url, { method: "POST", headers, body: bytes });
+        results["Bun.serve req.formData()"] = await response.json();
+        expected["Bun.serve req.formData()"] =
+          "entries" in row ? row.entries : { rejects: { name: "Error", message: `FormData ${row.rejects}` } };
+
+        expect(results).toEqual(expected);
+      });
+    }
+
+    // The boundaries of real clients, the longest one, and ones whose search pattern overlaps itself.
+    it.each([
+      ["curl 8.14.1", "------------------------Ob426Yv2Ni1IJv5ZHKBGZI"],
+      ["Go 1.24 mime/multipart", "bea75cfd52f79761397fc237c39ad48c0be469e5a3c0710163c3c6df2b31"],
+      ["undici", "----formdata-undici-090416445098"],
+      ["Ruby 3.3 net/http", "B7i9v6ZrXrKtQRYam3CTmwQ6DN-sVNp9x6FH1ipErSFTlk__AwMNSw"],
+      ["72 bytes", Buffer.alloc(72, "a").toString()],
+      ["one dash", "-"],
+      ["a name and two dashes", "a--"],
+      ["a name and a CR", "a\r"],
+    ])("every row with a boundary of %s", async (_, boundary) => {
+      const results: Record<string, unknown> = {};
+      const expected: Record<string, unknown> = {};
+      for (const row of rowsFor(boundary)) {
+        try {
+          results[row.name] = await read(FormData.from(new TextEncoder().encode(row.body), boundary));
+        } catch (e) {
+          results[row.name] = rejection(e);
+        }
+        expected[row.name] = "entries" in row ? row.entries : { rejects: whileParsing(row.rejects) };
+      }
+      expect(results).toEqual(expected);
+    });
+
+    it("a boundary of 73 bytes", async () => {
+      const boundary = Buffer.alloc(73, "a").toString();
+      const { body } = rowsFor(boundary)[0];
+      expect(() => FormData.from(body, boundary)).toThrow("boundary is too long while parsing FormData");
+      const response = new Response(body, { headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` } });
+      expect(await response.formData().catch(rejection)).toEqual({ rejects: parseError("boundary is too long") });
+    });
   });
 
   // RFC 2045 §5.1 / RFC 7231 §3.1.1.1: media type/subtype and parameter

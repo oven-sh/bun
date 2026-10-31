@@ -1,9 +1,10 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-setDefaultTimeout(240_000);
+raiseDefaultTimeout(240_000);
 
 // In a test run an exported function is a variable, because a spy may replace it, and the variable's word is empty until something is stored to it: every reader takes an empty word
 // for the one closure of the function. A test file reads what it imports from a layer below through a stub that knows the word alone. It found the word empty at every read

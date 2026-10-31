@@ -125,7 +125,7 @@ Next.js and Angular load your pages by dynamic paths. [Frameworks](/compiler/lib
 Every `import`, and every `require()` of a constant path, is resolved at build time. An absolute path that doesn't exist yet, such as `/etc/app/config.json`, is looked up when the program runs. Nothing in `node:module` runs on the way. If your program depends on a hook, build it with `--no-aot`.
 
 - `Module._resolveFilename` and `Module.prototype.require` can be replaced, but Bun only calls them for dynamic paths. For aliases, use `paths` in `tsconfig.json` or `imports` in `package.json`.
-- `Module._extensions[".js"] = loader` throws. You don't need `@babel/register` or anything like it, because the build compiles TypeScript and JSX.
+- `Module._extensions[".js"] = loader` is stored, but Bun doesn't call it for a compiled file. That's the same with `--no-aot`. You don't need `@babel/register` or anything like it, because the build compiles TypeScript and JSX.
 - A tracer that patches modules as they load, like OpenTelemetry's auto-instrumentation, sees none of them.
 - A plugin that your program registers with `Bun.plugin()` answers for code that's loaded at run time, so `build.module("lodash", ...)` doesn't replace a `lodash` that was compiled into the executable. That's the same with `--no-aot`.
 - A module runs once, as in every executable. `require.cache` doesn't list compiled modules, and `delete require.cache[path]` does nothing.
@@ -203,6 +203,17 @@ const key = {
   },
 };
 undefined[key] = 1; // bun run prints "converted" and throws. An executable only throws.
+```
+
+## A function declared in a block
+
+In a CommonJS file that isn't in strict mode, a function declared inside a block is also visible in the rest of the enclosing function once the block has run, as in Node. Under `bun run` it stays inside the block.
+
+```js block.cjs icon="/icons/javascript.svg"
+{
+  function inner() {}
+}
+console.log(typeof inner); // bun run prints "undefined". An executable prints "function".
 ```
 
 ## Error messages

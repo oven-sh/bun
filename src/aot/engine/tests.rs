@@ -17,6 +17,7 @@ fn with_record(record: CompileOptions) -> EngineOptions {
     EngineOptions {
         record,
         fits_threads_to_program: false,
+        images_below: Vec::new(),
     }
 }
 
@@ -358,6 +359,7 @@ fn default_thread_count_fits_the_program() {
     let fitted = EngineOptions {
         record,
         fits_threads_to_program: true,
+        images_below: Vec::new(),
     };
     assert_eq!(fitted.record_for(0).thread_count, 1);
     assert_eq!(

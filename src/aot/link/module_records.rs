@@ -450,6 +450,9 @@ impl RecordBuilder<'_, '_, '_> {
         if graph.may_be_evicted(module) && graph.is_code_of_program(module) {
             flags |= ModuleFlags::MAY_BE_EVICTED;
         }
+        if graph.is_changed_on_disk_by_run(module) && graph.is_code_of_program(module) {
+            flags |= ModuleFlags::IS_CHANGED_ON_DISK_BY_RUN;
+        }
         if matches!(module, ModuleRef::File(file) if graph.runs_again(file)) {
             flags |= ModuleFlags::RUNS_AGAIN;
         }

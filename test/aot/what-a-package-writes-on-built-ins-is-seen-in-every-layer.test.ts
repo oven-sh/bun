@@ -1,9 +1,10 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 // A package stands in the lowest layer of a test run, the files of the project in the layer over it, a test file in a program over both. What the package stores on a
 // built-in object, as a polyfill does, is what the code of every layer finds there from then on: under the name, and where a built-in function looks the name up itself, as

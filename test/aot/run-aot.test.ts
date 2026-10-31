@@ -1,13 +1,14 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithBunTypes } from "harness";
 import { join } from "path";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run as runCommand } from "./harness/run";
 import { describe, test } from "./supported";
 
 // `bun run --debug-aot` and `bun test --debug-aot` compile the program as `bun compile` does and then run it. They write no executable.
 // `--aot` on the two commands only checks the program and then runs it from its source: aot-flag-runs-from-source.test.ts.
 const flags = ["--debug-aot"];
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 const compilerOptions = {
   strict: true,

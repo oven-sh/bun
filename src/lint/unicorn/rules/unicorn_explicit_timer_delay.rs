@@ -8,8 +8,8 @@ pub struct ExplicitTimerDelay {
     is_never: bool,
 }
 
-const MISSING_DELAY: Message = Message::new("", "`{{name}}` should have an explicit delay argument.");
-const REDUNDANT_DELAY: Message = Message::new("", "`{{name}}` should not have an explicit delay of `0`.");
+const MISSING_DELAY: &Message = &Message::new("", "`{{name}}` should have an explicit delay argument.");
+const REDUNDANT_DELAY: &Message = &Message::new("", "`{{name}}` should not have an explicit delay of `0`.");
 
 const TIMER_FUNCTION_NAMES: [&str; 2] = ["setTimeout", "setInterval"];
 

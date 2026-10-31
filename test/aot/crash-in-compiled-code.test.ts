@@ -1,15 +1,16 @@
 // A fault in the machine code of a compiled function, or in code that the compiled functions share: what the process prints
 // is enough to tell the build, the function and the line, and every compiled caller is there. The faults are planted: a copy of
 // the executable gets a load from a low address written over its code.
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { withoutCoreDump } from "./harness/commands";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run as runCommand } from "./harness/run";
 import { describe, test } from "./supported";
 
-setDefaultTimeout(240_000);
+raiseDefaultTimeout(240_000);
 
 const files = {
   "app.ts": `import { priceOf, type Item } from "./prices.ts";

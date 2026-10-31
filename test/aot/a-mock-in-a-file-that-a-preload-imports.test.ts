@@ -3,12 +3,13 @@
 // was seen by nobody. Over several programs the one that holds the module was then built closed:
 // "mock(module, fn) cannot replace a module that was compiled ahead of time". A run whose layers open every module for another reason hides that, so the
 // scan's own count is read as well.
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 const files = {
   "package.json": `{ "name": "p", "type": "module" }`,

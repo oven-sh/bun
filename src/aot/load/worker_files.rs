@@ -1775,6 +1775,10 @@ impl Walk<'_, '_> {
         if is_host_path(path) {
             return None;
         }
+        // `Sources::find_source_path`
+        if is_name_of_text(path) {
+            return Some(folder_or_file(path));
+        }
         let path = folder_or_file(to_native(path));
         Some(with_separators_of_host(&path, cfg!(windows)))
     }

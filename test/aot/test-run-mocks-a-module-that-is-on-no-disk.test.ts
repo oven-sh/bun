@@ -1,9 +1,10 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 // An extension imports a module that only its host has, and its tests mock it. Where the run is built as several programs, the file
 // that imports the name lies in another program than the test file that mocks it, and that program's build has to hear of the mock.

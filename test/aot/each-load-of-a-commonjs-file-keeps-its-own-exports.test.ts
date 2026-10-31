@@ -1,10 +1,11 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
 // supported.ts sets the limit for the first file of a process alone.
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 // A CommonJS file is taken out of require.cache and loads a second time. Each require() answers the load that it started or that the cache held,
 // and what was bound to the first load stays with it.

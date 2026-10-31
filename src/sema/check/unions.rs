@@ -1248,6 +1248,54 @@ impl<'p, 's> Checker<'p, 's> {
         matches!(self.data(ty), TypeData::Ref { target, .. } if self.files().flags(*target).contains(SymFlags::CLASS))
     }
 
+    /// The result of `filter` for the union `ty` of `members`, of which `kept` remain.
+    #[inline(never)]
+    fn filtered_union(&mut self, ty: TypeId, members: &[TypeId], kept: &[TypeId]) -> TypeId {
+        match kept[..] {
+            [] => TypeId::NEVER,
+            [only] => only,
+            _ => {
+                // Keeps what remains of a denormalized origin, unless a member inside one of its unions was
+                // removed.
+                let mut new_origin = OriginKey::None;
+                let left: Vec<TypeId>;
+                if let UnionOrigin::Union(origin) = self.origin(ty) {
+                    left = origin
+                        .iter()
+                        .copied()
+                        .filter(|u| self.is_union(*u) || kept.contains(u))
+                        .collect();
+                    if origin.len() - left.len() == members.len() - kept.len() {
+                        if let [only] = left[..] {
+                            return only;
+                        }
+                        new_origin = OriginKey::Union(&left);
+                    }
+                }
+                // `ObjectFlagsPrimitiveUnion` is forwarded.
+                let first_request = match self.is_primitive_union(ty) {
+                    true => FirstRequest::NONE,
+                    false => FirstRequest::WITHOUT_PRIMITIVE_UNION,
+                };
+                let types = self.types();
+                types.as_first_request(first_request, || {
+                    types.intern_key_with(
+                        TypeKey::Union(kept),
+                        &ProvenanceKey {
+                            alias: None,
+                            origin: new_origin,
+                            is_enum: false,
+                            stored_under: None,
+                            is_array_literal: false,
+                            is_array_pattern: false,
+                            has_other_instantiation: false,
+                        },
+                    )
+                })
+            }
+        }
+    }
+
     /// `filterType`
     pub fn filter(
         &mut self,
@@ -1266,49 +1314,7 @@ impl<'p, 's> Checker<'p, 's> {
                         kept.push(m);
                     }
                 }
-                match kept[..] {
-                    [] => TypeId::NEVER,
-                    [only] => only,
-                    _ => {
-                        // Keeps what remains of a denormalized origin, unless a member inside one of its unions was
-                        // removed.
-                        let mut new_origin = OriginKey::None;
-                        let left: Vec<TypeId>;
-                        if let UnionOrigin::Union(origin) = self.origin(ty) {
-                            left = origin
-                                .iter()
-                                .copied()
-                                .filter(|u| self.is_union(*u) || kept.contains(u))
-                                .collect();
-                            if origin.len() - left.len() == members.len() - kept.len() {
-                                if let [only] = left[..] {
-                                    return only;
-                                }
-                                new_origin = OriginKey::Union(&left);
-                            }
-                        }
-                        // `ObjectFlagsPrimitiveUnion` is forwarded.
-                        let first_request = match self.is_primitive_union(ty) {
-                            true => FirstRequest::NONE,
-                            false => FirstRequest::WITHOUT_PRIMITIVE_UNION,
-                        };
-                        let types = self.types();
-                        types.as_first_request(first_request, || {
-                            types.intern_key_with(
-                                TypeKey::Union(&kept),
-                                &ProvenanceKey {
-                                    alias: None,
-                                    origin: new_origin,
-                                    is_enum: false,
-                                    stored_under: None,
-                                    is_array_literal: false,
-                                    is_array_pattern: false,
-                                    has_other_instantiation: false,
-                                },
-                            )
-                        })
-                    }
-                }
+                self.filtered_union(ty, members, &kept)
             }
             TypeData::Intrinsic(
                 Intrinsic::Never
@@ -1364,6 +1370,23 @@ impl<'p, 's> Checker<'p, 's> {
         self.map_type_ex(ty, &mut f, true)
     }
 
+    #[inline(never)]
+    fn mapped_union(
+        &mut self,
+        ty: TypeId,
+        types: &[TypeId],
+        mapped: &[TypeId],
+        no_reductions: bool,
+    ) -> TypeId {
+        if *mapped == *types {
+            ty
+        } else if no_reductions {
+            self.union_unreduced(mapped)
+        } else {
+            self.union(mapped)
+        }
+    }
+
     /// `mapTypeEx`
     fn map_type_ex<F: FnMut(&mut Self, TypeId) -> TypeId>(
         &mut self,
@@ -1385,13 +1408,7 @@ impl<'p, 's> Checker<'p, 's> {
                         f(self, s)
                     });
                 }
-                if mapped[..] == *types {
-                    ty
-                } else if no_reductions {
-                    self.union_unreduced(&mapped)
-                } else {
-                    self.union(&mapped)
-                }
+                self.mapped_union(ty, types, &mapped, no_reductions)
             }
             TypeData::Intrinsic(
                 Intrinsic::Never

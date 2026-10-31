@@ -872,6 +872,12 @@ impl<T> LazyCell<T> {
         unsafe { &*self.0.get() }.get_or_init(compute)
     }
 
+    #[inline]
+    pub(crate) fn get(&self) -> Option<&T> {
+        // SAFETY: nothing clears it while the file is read.
+        unsafe { &*self.0.get() }.get()
+    }
+
     /// # Safety
     /// No reference to the value is alive, and no other thread uses the cell.
     unsafe fn clear(&self) {
@@ -2686,6 +2692,11 @@ pub struct ImportedConstant {
 /// The parser's output for one source file.
 #[derive(Default)]
 pub struct FileIn<S: Storage> {
+    pub exprs: S::Nodes<Expr>,
+    pub stmts: S::Nodes<Stmt>,
+    pub types: S::Nodes<TypeNode>,
+    pub fns: S::Nodes<Func>,
+    pub members: S::Nodes<Member>,
     pub kind: FileKind,
     /// `.js`, `.jsx`, `.mjs`, `.cjs`. Parsed like `.tsx`: TypeScript-only syntax is accepted and reported as an error
     /// afterwards.
@@ -2835,13 +2846,9 @@ pub struct FileIn<S: Storage> {
 
     pub ids: S::Nodes<u32>,
     pub numbers: S::Nodes<f64>,
-    pub exprs: S::Nodes<Expr>,
-    pub stmts: S::Nodes<Stmt>,
-    pub types: S::Nodes<TypeNode>,
     pub pats: S::Nodes<Pat>,
     pub pat_props: S::Nodes<PatProp>,
     pub pat_elems: S::Nodes<PatElem>,
-    pub fns: S::Nodes<Func>,
     pub params: S::Nodes<Param>,
     pub type_params: S::Nodes<TypeParam>,
     pub classes: S::Nodes<Class>,
@@ -2850,7 +2857,6 @@ pub struct FileIn<S: Storage> {
     pub enums: S::Few<Enum>,
     pub enum_members: S::Few<EnumMember>,
     pub modules: S::Few<Module>,
-    pub members: S::Nodes<Member>,
     pub props: S::Nodes<Prop>,
     pub var_decls: S::Nodes<VarDecl>,
     pub calls: S::Nodes<Call>,

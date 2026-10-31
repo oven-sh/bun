@@ -1,10 +1,11 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
 // supported.ts sets the limit for the first file of a process alone.
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 // `require.cache[path] = { exports: fake }`: how a test puts something of its own in place of a CommonJS file. require() answers with the entry from then on.
 const real = (name: string) =>

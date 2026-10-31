@@ -1144,11 +1144,11 @@ runtimefunction id=ArrayTraversalTraverseArray function=f85 visibility=Private
 # -- generated: sumAbs bumpAll f30
 # CHECK-LABEL: function {{*}}name="sumAbs"
 # CHECK: role=GenericVersion
-# CHECK-NEXT: instructions: 53, patchpoints: 8, rare instructions: 7, polls: 2
+# CHECK-NEXT: instructions: 48, patchpoints: 8, rare instructions: 7, polls: 2
 # CHECK-NEXT: end of function f94
 # CHECK-LABEL: function {{*}}name="bumpAll"
 # CHECK: role=GenericVersion
-# CHECK-NEXT: instructions: 61, patchpoints: 17, rare instructions: 10, polls: 2
+# CHECK-NEXT: instructions: 60, patchpoints: 17, rare instructions: 10, polls: 2
 # CHECK-NEXT: end of function f95
 # CHECK-LABEL: function f30 role=
 # CHECK: EntryChecks

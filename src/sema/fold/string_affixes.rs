@@ -600,6 +600,20 @@ pub(crate) fn find_export_of_module(
     find_constant: &dyn Fn(ExprId) -> Option<Constant>,
     is_module: &dyn Fn(Atom) -> bool,
 ) -> Option<Atom> {
+    match find_members_below_module(hir, bound, callee, find_constant, is_module)?[..] {
+        [member] => Some(member),
+        _ => None,
+    }
+}
+
+/// `fs.promises.writeFile`: the names that lead from the module to `callee`, the last one first.
+pub(crate) fn find_members_below_module(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    callee: ExprId,
+    find_constant: &dyn Fn(ExprId) -> Option<Constant>,
+    is_module: &dyn Fn(Atom) -> bool,
+) -> Option<SmallVec<[Atom; 4]>> {
     let mut pending_members: SmallVec<[Atom; 4]> = SmallVec::new();
     let mut e = callee;
     let is_export = loop {
@@ -646,10 +660,7 @@ pub(crate) fn find_export_of_module(
             _ => break false,
         }
     };
-    match pending_members[..] {
-        [member] if is_export => Some(member),
-        _ => None,
-    }
+    is_export.then_some(pending_members)
 }
 
 fn is_module_request(

@@ -1,10 +1,11 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 // 3,000 modules import one another, every tenth a CommonJS file too. tools.js requires 800 modules above them by name while it loads, each of which nothing else imports.
 // The mocked module reaches all 3,000, so any of them might lie behind the mock.

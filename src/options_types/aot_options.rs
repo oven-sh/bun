@@ -134,6 +134,8 @@ pub struct AotOptions {
     pub host_runs_files_from_disk: bool,
     /// `bun test --aot`: the test files, where they are no entry points of the build. The runner makes each the main module in its turn, and the build holds those that a file of the program imports.
     pub main_modules_beside_entry_points: Vec<Vec<u8>>,
+    /// A layer of a test run: the entry points that the files above it, which the build does not see, name behind `import` and nowhere behind `require`.
+    pub entry_points_only_imported_from_above: Vec<Vec<u8>>,
     /// The program holds every module of Bun's own code that the run can load, so none of them runs from its text.
     pub library_runs_compiled_alone: bool,
     /// The program is Bun's own code and nothing else, built before any of the test runs that it serves is known. It rests on nothing that a run can change.
@@ -413,6 +415,7 @@ impl Default for AotOptions {
             loads_code_from_disk: false,
             host_runs_files_from_disk: false,
             main_modules_beside_entry_points: Vec::new(),
+            entry_points_only_imported_from_above: Vec::new(),
             library_runs_compiled_alone: false,
             holds_library_alone: false,
             reference_library_image: None,
@@ -557,6 +560,7 @@ mod tests {
             loads_code_from_disk,
             host_runs_files_from_disk,
             main_modules_beside_entry_points,
+            entry_points_only_imported_from_above,
             library_runs_compiled_alone,
             holds_library_alone,
             reference_library_image,
@@ -608,6 +612,7 @@ mod tests {
         assert!(!loads_code_from_disk);
         assert!(!host_runs_files_from_disk);
         assert!(main_modules_beside_entry_points.is_empty());
+        assert!(entry_points_only_imported_from_above.is_empty());
         assert!(!library_runs_compiled_alone);
         assert!(!holds_library_alone);
         assert!(reference_library_image.is_none());

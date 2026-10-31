@@ -40,9 +40,9 @@ use crate::load::disk_delegation::{
 use crate::load::evaluated_texts::EvaluatedTexts;
 use crate::load::externals::{contains, is_external};
 use crate::load::loaders::{
-    BY_NAME, HostLoaderKind, host_loader_kind, loader_by_name, loader_by_path,
+    BY_NAME, HostLoaderKind, host_loader_kind, loader_by_name, loader_by_path, loader_by_query,
     loader_named_by_path, parses_text_as_data, script_kind_of, to_host_loader,
-    to_host_loader_of_attribute,
+    to_host_loader_of_attribute, to_host_loader_of_query,
 };
 use crate::load::macros;
 use crate::load::modules_with_queries::ModulesWithQueries;
@@ -355,6 +355,9 @@ impl<'a> LoadHost<'a> {
         is_linked_by_bundler: bool,
     ) -> Loader {
         if let Some(loader) = self.plugins.loader_of_entry_text(path) {
+            return loader;
+        }
+        if let Some(loader) = self.modules_with_queries.loader_by_query(path) {
             return loader;
         }
         let loaders = &self.input.options.load.loaders;
@@ -811,14 +814,23 @@ impl CodeHost for LoadHost<'_> {
         !self.input.options.load.runs_tests
     }
 
-    fn add_module_with_query(&self, path: &[u8], query: &[u8]) -> Option<Vec<u8>> {
-        let loader = self.default_loader(path);
+    fn add_module_with_query(
+        &self,
+        path: &[u8],
+        query: &[u8],
+        kind: CodeImportKind,
+    ) -> Option<Vec<u8>> {
+        let default_loader = self.default_loader(path);
+        // `require("./addon.node?raw")` loads the addon: it goes by the name of the file before any loader is asked.
+        let requires_addon = kind == CodeImportKind::Require && default_loader == Loader::Napi;
+        let by_query = loader_by_query(query).filter(|_| !requires_addon);
+        let loader = by_query.unwrap_or(default_loader);
         let is_text_of_module = script_kind_of(loader).is_some()
             || parses_text_as_data(loader)
             || loader == Loader::File;
         let is_file_of_program = matches!(self.served_by(path), ServedBy::Disk)
             && !is_bundled(path)
-            && !is_declaration_file_name(path);
+            && (by_query.is_some() || !is_declaration_file_name(path));
         (is_text_of_module && is_file_of_program)
             .then(|| self.modules_with_queries.add(path, query))
     }
@@ -894,23 +906,29 @@ impl CodeHost for LoadHost<'_> {
             }
             ServedBy::PluginModule | ServedBy::Disk => {}
         }
-        let default_loader =
-            self.default_loader_for(path, request.kind, request.is_linked_by_bundler);
+        let without_attribute = || match self.modules_with_queries.loader_by_query(path) {
+            Some(loader) => to_host_loader_of_query(loader),
+            None => {
+                let is_linked_by_bundler = request.is_linked_by_bundler;
+                let loader = self.default_loader_for(path, request.kind, is_linked_by_bundler);
+                to_host_loader(loader, path)
+            }
+        };
         let is_embedded = matches!(request.embed_attribute, Some(b"true"));
         let chosen = match request.type_attribute {
-            None => return to_host_loader(default_loader, path),
+            None => return without_attribute(),
             Some(b"macro") => {
                 let message = [
                     &b"a macro import was followed as code: "[..],
                     to_native(path),
                 ];
                 (self.input.messages).report_internal_error(message.concat());
-                return to_host_loader(default_loader, path);
+                return without_attribute();
             }
             Some(name) => match Loader::from_string(name) {
                 Some(Loader::Sqlite) if is_embedded => Loader::SqliteEmbedded,
                 Some(loader) => loader,
-                None => return to_host_loader(default_loader, path),
+                None => return without_attribute(),
             },
         };
         to_host_loader_of_attribute(chosen, path)

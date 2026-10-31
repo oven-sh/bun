@@ -1,9 +1,10 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-setDefaultTimeout(240_000);
+raiseDefaultTimeout(240_000);
 
 // `bun run` loads the entry point as the one import of the module "bun:main". A test run has no entry point, so `bun test` knows the name and has no such module: whoever loads it
 // gets an error, and a test file that imports it fails. An executable has a module of that name, which does nothing.

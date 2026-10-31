@@ -42,6 +42,9 @@ pub(crate) struct Coordinator<'a> {
     /// `--timings`: recorded cost per `files` index; stealing then goes by remaining time and takes the victim's slowest file.
     pub(crate) costs: Option<Vec<u64>>,
     pub(crate) cwd: &'a [u8],
+    /// Where the run was started. A build is handed the arguments as they were typed, so a relative `--cwd` among them is
+    /// followed once more, from here.
+    pub(crate) cwd_of_builds: &'a [u8],
     // [:null]?[*:0]const u8 — null-sentinel-terminated slice of C strings;
     // backing storage has a null at [len] for execve-style consumers.
     pub(crate) argv: Box<[bun_spawn::CStrPtr]>,
@@ -91,11 +94,13 @@ pub(crate) struct Coordinator<'a> {
     pub(crate) live_workers: u32,
     pub(crate) crashed_files: Vec<u32>,
     pub(crate) aborted: Option<u32>,
-    /// Nobody asked for workers: the test files run in some because their programs are several, one after another, and the run ends as it does in one process.
-    /// With --parallel a run ends with 0 whatever a test has stored.
-    pub(crate) hands_on_exit_code: bool,
+    /// Plain `bun test` runs these files in its own process: there is no `--parallel`, or it comes to one worker. They run in workers
+    /// because their programs are several, one after another, and the run ends as it does in one process.
+    /// Where plain `bun test` starts workers, a run ends with 0 whatever a test has stored, and its summary counts no snapshots.
+    pub(crate) ends_as_in_one_process: bool,
     /// `process.exitCode = 3` in a test: what the last file that changed it has left. Each file starts from there, whichever worker runs it.
     pub(crate) exit_code_left_by_tests: Option<u8>,
+    pub(crate) failed_to_write_inline_snapshots: bool,
     pub(crate) stop_reason: Option<StopReason>,
     pub(crate) last_printed_dot: bool,
     /// Kill-on-close Job Object so the OS reaps workers if the coordinator dies
@@ -949,7 +954,8 @@ impl<'a> Coordinator<'a> {
                 if w.inflight != Some(idx) {
                     return;
                 }
-                if let (true, Some(code)) = (self.hands_on_exit_code, exit_code_left.checked_sub(1))
+                if let (true, Some(code)) =
+                    (self.ends_as_in_one_process, exit_code_left.checked_sub(1))
                 {
                     self.exit_code_left_by_tests = Some(code as u8);
                 }
@@ -1024,6 +1030,17 @@ impl<'a> Coordinator<'a> {
             }
             frame::Kind::RefusedChange => {
                 crate::cli::run_compiled::add_refused_change(rd.str().to_vec());
+            }
+            frame::Kind::Snapshots => {
+                let [total, passed, failed, added, unwritten] = [(); 5].map(|()| rd.u32() as usize);
+                if self.ends_as_in_one_process {
+                    let snapshots = &mut self.reporter.jest.snapshots;
+                    snapshots.total += total;
+                    snapshots.passed += passed;
+                    snapshots.failed += failed;
+                    snapshots.added += added;
+                    self.failed_to_write_inline_snapshots |= unwritten != 0;
+                }
             }
             frame::Kind::Run | frame::Kind::Shutdown => {}
         }
@@ -1647,7 +1664,7 @@ impl<'a> Coordinator<'a> {
             let started = PartBuilder::start(
                 index,
                 paths,
-                self.cwd,
+                self.cwd_of_builds,
                 self.vm,
                 &self.envps[0],
                 parts_ptr,

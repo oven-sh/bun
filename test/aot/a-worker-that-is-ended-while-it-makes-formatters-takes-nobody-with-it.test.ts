@@ -1,11 +1,12 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
 // supported.ts sets the limit for the first file of a process alone.
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 // terminate() raises an exception in the Worker wherever it stands, also inside an operation of the run time that has nothing to refuse: "it does not throw" does not hold for
 // that one. An operation that asserts so ends the whole process. The arguments are constants, so these are the calls that a build may prepare.

@@ -32,12 +32,13 @@ Most of these [change a built-in object](/compiler/compatibility#built-in-object
 
 These [hook the module loader](/compiler/compatibility#loader-hooks-and-the-module-cache):
 
-| Package                          | Use instead                                    |
-| -------------------------------- | ---------------------------------------------- |
-| `module-alias`, `tsconfig-paths` | `paths` in `tsconfig.json`                     |
-| `pirates`, `@babel/register`     | Nothing. The build compiles TypeScript and JSX |
-| `require-in-the-middle`          | Build with `--no-aot`                          |
-| `clear-module`                   | Nothing. A module runs once                    |
+| Package                          | Use instead                 |
+| -------------------------------- | --------------------------- |
+| `module-alias`, `tsconfig-paths` | `paths` in `tsconfig.json`  |
+| `require-in-the-middle`          | Build with `--no-aot`       |
+| `clear-module`                   | Nothing. A module runs once |
+
+`pirates`, `@babel/register` and `sucrase/register` start and do nothing: their hook isn't called for a compiled file, and the build has already compiled TypeScript and JSX.
 
 Plenty of packages change built-in objects in ways that are allowed. `core-js` 3, `reflect-metadata`, `regenerator-runtime`, `colors`, `mockdate` and `sinon` with its fake timers all work.
 

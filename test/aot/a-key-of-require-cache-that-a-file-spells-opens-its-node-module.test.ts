@@ -1,10 +1,11 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
 // supported.ts sets the limit for the first file of a process alone.
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 // A test run compiles the Node.js modules that a program takes. `require.cache["fs"] = { exports: fake }` puts something else in their place, so the build has to read the key and leave
 // that module open. It reads a key that a file spells: a string, a name, require.resolve() of a string, a constant behind any number of names.

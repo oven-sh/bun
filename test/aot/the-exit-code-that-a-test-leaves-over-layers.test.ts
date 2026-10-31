@@ -1,9 +1,10 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-setDefaultTimeout(240_000);
+raiseDefaultTimeout(240_000);
 
 // `process.exitCode = 3` in a test: where every test passes, `bun test` ends with 3. A run over layers has its test files in worker processes, though nobody asked for any: they run one
 // after another, each starts from what the files before it have left, and the run ends as it does in one process. With --parallel a run ends with 0 whatever a test has stored, in plain Bun too.

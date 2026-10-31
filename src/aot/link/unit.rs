@@ -8,16 +8,18 @@ use super::type_hashes::{TypeHashes, hash_types};
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{
     Data, EvalScope, ExpectedResult, Function, Layout, ModuleReferenceKind, RuntimeFunctionEntry,
-    TypeSite, Variable,
+    TypeSite, Variable, VariableFlags, VariableInitialization,
 };
-use crate::ir::waiting_lists::WaitingLists;
+use crate::ir::ids::{optional_id_from_word, optional_id_to_word};
+use crate::ir::waiting_lists::{AsNumbers, WaitingLists};
 use crate::ir::{
-    FunctionId, Id, InParallel, LayoutId, PropertyKeyId, PropertyKeyTable, Reference, StringTable,
-    TypeTable, VariableId, for_each_mut,
+    DeclaredType, FunctionId, Id, InParallel, LayoutId, PositionFlags, PropertyKeyId,
+    PropertyKeyTable, Reference, StringTable, TypeTable, VariableId, for_each_mut,
 };
 use crate::load::ProgramFile;
 use crate::lower::{DefinedObjectType, FamilyFacts, Fragment, ModuleFragment, ObjectTypeKey};
 use crate::modules::ModuleFailureId;
+use bun_core::Pod;
 use bun_sema::erasure::PackedTypeRanges;
 use core::hash::{BuildHasher, Hash};
 use rustc_hash::FxBuildHasher;
@@ -397,13 +399,12 @@ impl LinkUnit {
 
     /// The long lists of plain records that nothing reads before the link.
     fn for_each_waiting_list(&mut self, each: &mut impl ForEachList) {
-        each.list(&mut self.function_references.ids);
-        each.list(&mut self.function_references.ends);
-        each.list(&mut self.function_references.rows);
-        each.list(&mut self.functions.keys);
-        each.list(&mut self.variables.keys);
-        each.list(&mut self.variable_definitions);
-        each.list(self.property_keys.list_mut());
+        each.numbers(&mut self.function_references.ids);
+        each.numbers(&mut self.function_references.ends);
+        each.numbers(&mut self.function_references.rows);
+        each.records(&mut self.functions.keys);
+        each.records(&mut self.variable_definitions);
+        each.records(self.property_keys.list_mut());
     }
 
     /// `index` comes before the link reads it.
@@ -483,21 +484,94 @@ impl LinkUnit {
 }
 
 trait ForEachList {
-    fn list<T: Copy>(&mut self, list: &mut Vec<T>);
+    fn numbers<T: Pod>(&mut self, list: &mut Vec<T>);
+    fn records<T: AsNumbers>(&mut self, list: &mut Vec<T>);
 }
 
 struct Take<'a>(&'a mut WaitingLists);
 
 impl ForEachList for Take<'_> {
-    fn list<T: Copy>(&mut self, list: &mut Vec<T>) {
+    fn numbers<T: Pod>(&mut self, list: &mut Vec<T>) {
         self.0.take(list);
+    }
+
+    fn records<T: AsNumbers>(&mut self, list: &mut Vec<T>) {
+        self.0.take_as_numbers(list);
     }
 }
 
 struct GiveBack<'a>(&'a mut WaitingLists);
 
 impl ForEachList for GiveBack<'_> {
-    fn list<T: Copy>(&mut self, list: &mut Vec<T>) {
+    fn numbers<T: Pod>(&mut self, list: &mut Vec<T>) {
         self.0.give_back(list);
+    }
+
+    fn records<T: AsNumbers>(&mut self, list: &mut Vec<T>) {
+        self.0.give_back_from_numbers(list);
+    }
+}
+
+impl AsNumbers for (VariableId, Variable) {
+    type Numbers = [u32; 10];
+
+    fn to_numbers(self) -> [u32; 10] {
+        let Variable {
+            name,
+            module,
+            declared:
+                DeclaredType {
+                    ty,
+                    site,
+                    flags: position,
+                },
+            initialization,
+            function,
+            owner,
+            flags,
+        } = self.1;
+        [
+            self.0.to_word(),
+            optional_id_to_word(name),
+            module.to_word(),
+            ty.to_word(),
+            optional_id_to_word(site),
+            position.to_wire(),
+            initialization.to_wire(),
+            optional_id_to_word(function),
+            optional_id_to_word(owner),
+            flags.to_wire(),
+        ]
+    }
+
+    fn from_numbers(numbers: [u32; 10]) -> (VariableId, Variable) {
+        let [
+            id,
+            name,
+            module,
+            ty,
+            site,
+            position,
+            initialization,
+            function,
+            owner,
+            flags,
+        ] = numbers;
+        let declared = DeclaredType {
+            ty: Id::from_word(ty),
+            site: optional_id_from_word(site),
+            flags: PositionFlags::from_wire(position).expect("`to_numbers` wrote it"),
+        };
+        let variable = Variable {
+            name: optional_id_from_word(name),
+            module: Id::from_word(module),
+            declared,
+            initialization: VariableInitialization::from_wire(initialization)
+                .expect("`to_numbers` wrote it"),
+            function: optional_id_from_word(function),
+            owner: optional_id_from_word(owner),
+            flags: VariableFlags::from_wire(flags).expect("`to_numbers` wrote it"),
+        };
+        (Id::from_word(id), variable)
     }
 }

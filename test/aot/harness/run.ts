@@ -1,6 +1,6 @@
 import { bunEnv } from "harness";
 import { expectLayers } from "./layers";
-import { endAtMemoryLimitTogether, memoryLimitOfCommandsAtOnce } from "./memory-limit";
+import { endAtMemoryLimitTogether } from "./memory-limit";
 import { reportsToTheRunnerAlone, throughAtOnce } from "./without-core-dump";
 
 const { watch } = endAtMemoryLimitTogether();
@@ -18,7 +18,7 @@ export async function run(cmd: string[], cwd?: string, env: Record<string, strin
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   if (held.exceeded)
     throw new Error(
-      `KILLED: the commands that ran at once held more than ${(memoryLimitOfCommandsAtOnce / 2 ** 30).toFixed(1)} GB together. Run fewer of them at once: ${cmd.join(" ")}`,
+      `KILLED: the commands that ran at once held too much together, or the machine had too little left: ${held.held}. Run fewer of them at once: ${cmd.join(" ")}`,
     );
   // A test that asks for layers gets them, or fails.
   const layers = env.BUN_DEBUG_TEST_AOT_WORDS?.match(/(?:^|,)TestRunLayers:([1-7])(?:,|$)/)?.[1];

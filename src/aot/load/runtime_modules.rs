@@ -589,7 +589,13 @@ pub(crate) fn builtins_that_load_library_modules_spelled_in(text: &[u8]) -> Opti
         let quote = (at > length).then(|| text[at - length - 1]);
         quote.is_some_and(|it| matches!(it, b'"' | b'\'' | b'`') && text.get(at) == Some(&it))
     };
-    let modules: [&[u8]; 3] = [b"bun", b"process", b"node:process"];
+    let modules: [&[u8]; 5] = [
+        b"bun",
+        b"process",
+        b"node:process",
+        b"console",
+        b"node:console",
+    ];
     if modules.into_iter().any(|it| {
         behind_each(text, it)
             .into_iter()
@@ -954,6 +960,8 @@ mod tests {
             "import process from 'node:process';",
             "import { stdout } from 'node:process';",
             "require(\"process\")[name]",
+            "import held from 'node:console';",
+            "require(\"console\")._stdout",
             "global[name]",
             "self[name]",
             "const self = this;",

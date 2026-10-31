@@ -1,8 +1,9 @@
-import { expect, setDefaultTimeout, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunExe, isASAN, isDebug, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 const modules = 3000;
 const exportsOfEach = 10;

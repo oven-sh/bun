@@ -7,8 +7,8 @@ use std::cell::OnceCell;
 /// Ensure a default export is present, given a default import.
 pub struct Default;
 
-const NO_DEFAULT: Message = Message::new("", "No default export found in imported module \"{{source}}\".");
-const DEFAULT: Message = Message::new("", "No default export found in imported module {{imported_name}}");
+const NO_DEFAULT: &Message = &Message::new("", "No default export found in imported module \"{{source}}\".");
+const DEFAULT: &Message = &Message::new("", "No default export found in imported module {{imported_name}}");
 
 /// `oxc_span`'s `VALID_EXTENSIONS`
 fn has_valid_extension(path: &[u8]) -> bool {

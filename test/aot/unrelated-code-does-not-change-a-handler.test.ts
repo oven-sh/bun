@@ -1,13 +1,14 @@
 // How the handlers of a small server are compiled depends on the handlers and on what they call, not on how much code there is
 // elsewhere in the program that seldom runs: the handlers are hot, and a body is parsed by the type it is given.
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { built, spawned } from "./harness/commands";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { test } from "./supported";
 
-setDefaultTimeout(240_000);
+raiseDefaultTimeout(240_000);
 
 const tsconfig = JSON.stringify({
   compilerOptions: {

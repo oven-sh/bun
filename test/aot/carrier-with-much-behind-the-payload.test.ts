@@ -51,7 +51,8 @@ test.skipIf(!isLinux)(
       const marker = blockAt(0).subarray(0, 64);
       const window = Buffer.alloc(2 * megabyte);
       let start = -1;
-      for (let at = Math.max(0, statSync(short).size - megabyte); start < 0 && at < longSize; at += megabyte) {
+      // A Bun that leaves out what the program does not use makes an executable that is shorter than its carrier: the tail may begin anywhere.
+      for (let at = 0; start < 0 && at < longSize; at += megabyte) {
         const found = window.subarray(0, readSync(file, window, 0, window.length, at)).indexOf(marker);
         if (found >= 0) start = at + found;
       }

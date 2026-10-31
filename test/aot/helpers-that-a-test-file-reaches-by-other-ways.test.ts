@@ -3,12 +3,13 @@
 // it. Over several programs the one that holds a module that such a helper mocks was built closed:
 // "mock(module, fn) cannot replace a module that was compiled ahead of time".
 // The same for a helper's function that goes on into a parameter, and for the files of a folder that a test file names and loads one by one.
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 const files = {
   "package.json": `{ "name": "p", "type": "module" }`,

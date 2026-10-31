@@ -44,6 +44,7 @@ pub(super) enum ScannedSite {
     Module(ModuleRef),
     Unresolved,
     AllModules,
+    /// A range of `FileScan::spellings`.
     Candidates(Range<u32>),
     Erased,
 }
@@ -66,6 +67,14 @@ pub(super) struct FileScan {
     pub requests: Vec<RequestDraft>,
     pub failures: Vec<PendingFailure>,
     pub computed_imports: Vec<ComputedImport<Span>>,
+}
+
+impl FileScan {
+    /// What a site that is `ScannedSite::Candidates` may name.
+    pub(super) fn modules_spelled_in(&self, range: &Range<u32>) -> impl Iterator<Item = ModuleRef> {
+        let spelled = &self.spellings[range.start as usize..range.end as usize];
+        spelled.iter().map(|spelled| spelled.module)
+    }
 }
 
 pub(super) struct Scans {
@@ -94,10 +103,7 @@ pub(super) fn scan_files(input: &BindInput<'_, '_>) -> Scans {
     let mut mocked_paths = find_paths_only_mocks_answer(files, sources);
     // The test file that holds the mock may lie in another program than the file that imports the name.
     let told = input.mocked_modules.iter();
-    mocked_paths.extend(told.filter_map(|module| match module {
-        ReplacedModule::File(path) => Some(path.clone()),
-        ReplacedModule::Runtime(_) => None,
-    }));
+    mocked_paths.extend(told.filter_map(ReplacedModule::file_path).cloned());
     let program = Program {
         runs_tests: input.runs_tests,
         loads_code_from_disk: input.loads_code_from_disk,

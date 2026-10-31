@@ -98,6 +98,8 @@ pub struct BindInput<'a, 's> {
     pub replaced_builtins: &'a [u32],
     /// `AotOptions::runs_in_place`: the program answers as `bun run`, not as `bun build --compile`, where the two differ.
     pub runs_in_place: bool,
+    /// `CodeOptions::working_directory`
+    pub working_directory: &'a [u8],
     /// `CodeOptions::ignores_declared_side_effects`
     pub ignores_declared_side_effects: bool,
     /// `LoadOptions::mocked_modules`
@@ -647,6 +649,9 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     }
     if evicted.is_every_module() {
         plan.set_every_module_may_be_evicted();
+    }
+    for module in evicted.changed_on_disk() {
+        plan.set_is_changed_on_disk_by_run(module);
     }
     if evicted.is_table_reached() {
         plan.set_reaches_entries_of_cache();

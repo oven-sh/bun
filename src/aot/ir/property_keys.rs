@@ -1,8 +1,12 @@
 use hashbrown::HashTable;
 
 pub use super::generated::{PropertyKey, PropertyKeyKind, WellKnownSymbol};
-use super::ids::{Id, LayoutId, ModuleId, PropertyKeyId, StringId};
+use super::ids::{
+    ABSENT_WORD, Id, LayoutId, ModuleId, PropertyKeyId, StringId, optional_id_from_word,
+    optional_id_to_word, optional_word,
+};
 use super::types::{hash_of, release_spare_capacity};
+use super::waiting_lists::AsNumbers;
 
 impl PropertyKey {
     pub fn from_text(text: StringId) -> PropertyKey {
@@ -64,6 +68,41 @@ impl PropertyKey {
         match self.kind {
             PropertyKeyKind::WellKnownSymbol | PropertyKeyKind::CreatedSymbol => None,
             _ => self.text,
+        }
+    }
+}
+
+/// The words of its record in the program that the engine reads.
+impl AsNumbers for PropertyKey {
+    type Numbers = [u32; 6];
+
+    fn to_numbers(self) -> [u32; 6] {
+        let PropertyKey {
+            kind,
+            text,
+            owner,
+            symbol,
+            module,
+            call_number,
+        } = self;
+        [
+            kind.to_wire(),
+            optional_id_to_word(text),
+            optional_id_to_word(owner),
+            symbol.map_or(ABSENT_WORD, WellKnownSymbol::to_wire),
+            optional_id_to_word(module),
+            optional_word(call_number),
+        ]
+    }
+
+    fn from_numbers([kind, text, owner, symbol, module, call_number]: [u32; 6]) -> PropertyKey {
+        PropertyKey {
+            kind: PropertyKeyKind::from_wire(kind).expect("`to_numbers` wrote it"),
+            text: optional_id_from_word(text),
+            owner: optional_id_from_word(owner),
+            symbol: WellKnownSymbol::from_wire(symbol),
+            module: optional_id_from_word(module),
+            call_number: (call_number != ABSENT_WORD).then_some(call_number),
         }
     }
 }

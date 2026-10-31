@@ -240,7 +240,12 @@ impl CodeHost for MemoryHost {
         self.holds_modules_with_queries
     }
 
-    fn add_module_with_query(&self, path: &[u8], query: &[u8]) -> Option<Vec<u8>> {
+    fn add_module_with_query(
+        &self,
+        path: &[u8],
+        query: &[u8],
+        _kind: CodeImportKind,
+    ) -> Option<Vec<u8>> {
         (!path.ends_with(b".json")).then(|| [path, query].concat())
     }
 

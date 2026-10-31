@@ -72,6 +72,10 @@ fn find_files_that_require_may_load(
     let mut runs_inside_require = vec![false; files.len()];
     let mut to_visit: Vec<u32> = Vec::new();
     for entry_point in &context.entry_points() {
+        // An entry point of a layer of a test run is loaded by the files above the layer, not by the host.
+        if context.is_only_imported_from_above(entry_point.key) {
+            continue;
+        }
         let index = state.index_of[&context.canonical_key(entry_point.key)];
         may_be_required[index as usize] = true;
     }

@@ -52,6 +52,8 @@ pub(crate) struct FoundInTests {
     pub text_spies_under_any_name: bool,
     pub evicted: Vec<WrittenModule>,
     pub evicts_any: bool,
+    /// `writeFileSync(path, text)`: the whole paths that the files spell to calls which write, move or remove what is there.
+    pub paths_changed_on_disk: Vec<Vec<u8>>,
     pub required_where_throws_are_caught: Vec<WrittenModule>,
     pub names_file_with_query: bool,
     pub imported_by_statements: Vec<WrittenModule>,
@@ -212,6 +214,10 @@ pub(crate) fn scan_files_of_tests(
     const FILES_LOOKED_AT_TOGETHER: usize = 16;
     let caches = ThreadCaches::default();
     let mut found: Guarded<FoundInTests> = Guarded::new(FoundInTests::default());
+    let working_directory = match bun_core::getcwd(&mut path_buffer_pool::get()) {
+        Ok(directory) => directory.as_bytes().to_vec(),
+        Err(_) => Vec::new(),
+    };
     let mut paths = files.to_vec();
     let mut seen: FxHashSet<Vec<u8>> = paths.iter().cloned().collect();
     // As `bun test` tells a test file by its name.
@@ -330,6 +336,23 @@ pub(crate) fn scan_files_of_tests(
                 (found.modules_replaced_in_text).extend(file.modules_replaced_in_text);
                 found.text_spies_under_any_name |= file.text_spies_under_any_name;
                 found.evicted.extend(file.evicted.into_iter().map(written));
+                for (changed, starts_at_own_directory) in file.changed_on_disk {
+                    let folder = match starts_at_own_directory {
+                        true => dirname::<platform::Auto>(&path),
+                        false => &working_directory[..],
+                    };
+                    let mut buffer = path_buffer_pool::get();
+                    let whole = Some(folder).filter(|folder| is_absolute(folder));
+                    let whole = whole.and_then(|folder| {
+                        let parts = &[&changed[..]];
+                        join_abs_string_buf_checked::<platform::Auto>(
+                            folder,
+                            &mut buffer[..],
+                            parts,
+                        )
+                    });
+                    (found.paths_changed_on_disk).extend(whole.map(<[u8]>::to_vec));
+                }
                 let throwers = file.required_where_throws_are_caught.into_iter();
                 (found.required_where_throws_are_caught).extend(throwers.map(written));
                 if (file.evicts_any || file.names_file_with_query) && logs_stages() {
@@ -612,9 +635,11 @@ pub(crate) fn find_what_tests_replace(
         resolve_once(&module.importer, &module.specifier, is_for_require)
     };
     // The keys of `require.cache` are what `require.resolve()` answers.
-    let evicted_modules: Vec<Vec<u8>> = (found.evicted.into_iter())
+    let mut evicted_modules: Vec<Vec<u8>> = (found.evicted.into_iter())
         .filter_map(|module| resolve_for(module, true))
         .collect();
+    // A file that the run writes anew is read from disk where something loads it afterwards, as one that was taken out of the table.
+    evicted_modules.extend(found.paths_changed_on_disk);
     let mut files_required_where_throws_are_caught: Vec<Vec<u8>> =
         (found.required_where_throws_are_caught.into_iter())
             .filter_map(|module| resolve_for(module, true))

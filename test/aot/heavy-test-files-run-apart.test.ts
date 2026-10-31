@@ -1,11 +1,12 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 // Each test file says when it starts and ends. The lines come in the order of the events.
 const fileThatTakes = (name: string, milliseconds: number, before = "") => `

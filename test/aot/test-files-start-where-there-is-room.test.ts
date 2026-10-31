@@ -1,11 +1,12 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-setDefaultTimeout(60_000);
+raiseDefaultTimeout(60_000);
 
 type Measured = { milliseconds: number; megabytes?: number; before?: string };
 

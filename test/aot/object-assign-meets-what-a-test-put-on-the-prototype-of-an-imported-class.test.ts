@@ -2,12 +2,13 @@
 // filled an object of the class. What it remembers holds until an object above the target changes, and that was once noted with the wrong program, so
 // the first Object.assign of a file decided for all later ones: a setter that a test put on the prototype was never called, and a store that has to
 // throw went through.
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 const files = {
   "package.json": `{ "name": "p", "type": "module" }`,

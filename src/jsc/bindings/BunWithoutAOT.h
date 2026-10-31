@@ -35,13 +35,11 @@ enum class LoadByName : uint8_t { Require,
 enum class RequireOverride : uint8_t {
     ResolveFilename = 1 << 0,
     RequireFunction = 1 << 1,
-    Extensions = 1 << 2,
 };
 
 inline void willLoadByName(JSGlobalObject*, JSValue, LoadByName = LoadByName::Require) {}
 inline void willAnswerWithModule(JSGlobalObject*, ModuleID, LoadByName = LoadByName::Require) {}
 inline void willChangeRequireOverride(JSGlobalObject*, RequireOverride, bool) {}
-inline bool hasFileWithExtension(StringView) { return false; }
 inline bool isCompiledModuleRecord(AbstractModuleRecord*) { return false; }
 inline bool entryPointIsCommonJS(JSGlobalObject*) { return false; }
 inline bool isModuleNamespace(JSCell*) { return false; }

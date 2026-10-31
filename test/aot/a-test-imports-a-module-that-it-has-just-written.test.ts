@@ -1,11 +1,12 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { reads } from "./harness/reads";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-setDefaultTimeout(240_000);
+raiseDefaultTimeout(240_000);
 
 // A test writes a module and loads it. Where the build knows the specifier, `import("./made.mjs")` or a path that it folds to one, the file is not there when the run is
 // built: the loader is asked when the call runs. It has read the folder of the test file before, so it has to read it again.

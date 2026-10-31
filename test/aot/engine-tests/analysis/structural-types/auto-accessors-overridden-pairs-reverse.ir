@@ -790,7 +790,7 @@ function f61 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: raise
 # CHECK-LABEL: function {{*}}name="raise"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 172, patchpoints: 16, rare instructions: 244
+# CHECK-NEXT: instructions: 176, patchpoints: 16, rare instructions: 265
 # CHECK-NEXT: end of function f8
 # CHECK-LABEL: function {{*}}name="raise"
 # CHECK: role=GenericEntrypoint

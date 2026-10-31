@@ -1,6 +1,7 @@
 //! Which files of a test run may load a second time. `delete require.cache[path]` makes the next `require()` or `import()` of the file load it again, from
 //! disk, and so does `require.cache[path] = undefined`. Code that asks for such a file asks the run time which instance answers, and knows nothing of what it gets, so the fewer the better.
 //! So does an import statement of a test file, which may be linked behind the `delete` of an earlier one: `leave_imports_of_test_files_to_loader`.
+//! A file that the run itself writes, moves or removes is among them, though it may load only once: `bun test` reads what lies on disk when something first loads it.
 
 use super::module_set::ModuleSet;
 use super::plan::ModuleRef;
@@ -12,7 +13,7 @@ use crate::load::sources::{SourceKind, parsed_source};
 use crate::options::ReplacedModule;
 use crate::statistics::logs_stages;
 use bun_ast::Target;
-use bun_core::strings::{contains, index_of_char};
+use bun_core::strings::{contains, index_of_char, last_index_of_char};
 use bun_paths::resolve_path::{dirname, join_abs_string_buf_checked, platform};
 use bun_paths::{is_absolute, path_buffer_pool};
 use bun_resolve_builtins::{Alias, Cfg};
@@ -22,8 +23,8 @@ use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{ExprId, ExprKind, StmtId, StmtKind};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, is_made_require};
 use bun_sema::program::FileId;
-use bun_sema::util::{FxHashMap, FxHashSet};
-use bun_sema_driver::host::to_native;
+use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
+use bun_sema_driver::host::{from_argument, to_native};
 
 #[derive(Default)]
 pub(super) struct EvictedModules {
@@ -37,6 +38,9 @@ pub(super) struct EvictedModules {
     copies_name_any_file: bool,
     /// A file names the table, or lets go of something that leads there: it may get at the entry of a file, and store other `exports` in it.
     is_table_reached: bool,
+    /// `writeFileSync(path, text)`: the files of the program at the paths that a file spells to a call which writes, moves or removes what is there.
+    /// What loads from there is a text that nobody has read.
+    changed_on_disk: FxHashSet<ModuleRef>,
 }
 
 impl EvictedModules {
@@ -54,6 +58,10 @@ impl EvictedModules {
 
     pub(super) fn iter(&self) -> impl Iterator<Item = ModuleRef> + '_ {
         self.modules.iter().copied()
+    }
+
+    pub(super) fn changed_on_disk(&self) -> impl Iterator<Item = ModuleRef> + '_ {
+        self.changed_on_disk.iter().copied()
     }
 
     pub(super) fn is_every_export_asked_for(&self) -> bool {
@@ -226,6 +234,48 @@ fn find_file_beside(
     })
 }
 
+/// The paths that a file spells to calls which write, move or remove what is there, each with whether it starts at the folder of the file, as `./a.js` in an import does.
+/// A path that the file does not spell is none: a test writes where it likes, mostly into a folder of its own, and a build that took every such call for one on a
+/// file of the program would know nothing of any file.
+pub(crate) fn find_paths_changed_on_disk(
+    analysis: &bun_sema::file_analysis::FileAnalysis<'_>,
+) -> Vec<(Atom, bool)> {
+    let mut paths = Vec::new();
+    for (argument, specifier) in analysis.paths_of_changed_files {
+        let starts_at_own_directory = analysis.is_path_from_own_directory(*argument)
+            || analysis.find_resolved_form(*argument).is_some();
+        for alternative in analysis.alternatives_of(specifier) {
+            if let ImportSpecifier::Constant(written) = *alternative {
+                paths.push((written, starts_at_own_directory));
+            }
+        }
+    }
+    paths
+}
+
+// `rmSync(folder, { recursive: true })`, `renameSync(folder, other)`: a path stands for the file there and for all that lies below it.
+fn find_files_at(by_path: &ReplacedModules<'_>, mut paths: Vec<Vec<u8>>) -> Vec<ModuleRef> {
+    let mut files: Vec<ModuleRef> = Vec::new();
+    paths.retain_mut(|path| match by_path.files.get(&path[..]) {
+        Some(&file) => {
+            files.push(ModuleRef::File(file));
+            false
+        }
+        None => {
+            path.push(b'/');
+            true
+        }
+    });
+    if !paths.is_empty() {
+        let below = by_path.files.iter().filter(|(name, _)| {
+            let mut folders = paths.iter();
+            folders.any(|folder| name.starts_with(folder))
+        });
+        files.extend(below.map(|(_, &file)| ModuleRef::File(file)));
+    }
+    files
+}
+
 // The stage log says why every file of a run may load again.
 fn say_why_every_file(input: &BindInput<'_, '_>, file: FileId, does: &str) {
     if logs_stages() {
@@ -304,6 +354,13 @@ pub(super) fn find_evicted_modules(
     let out_of_sight = input.files_that_tests_load.where_throws_are_caught.iter();
     let out_of_sight = out_of_sight.filter_map(|module| by_path.find(module));
     evicted.modules.extend(out_of_sight.filter(is_thrower));
+    // `rmSync(folder, { recursive: true })` in a test file that this build does not see.
+    let out_of_sight = input.evicted_modules.iter();
+    let mut paths_changed_on_disk: Vec<Vec<u8>> = out_of_sight
+        .filter(|module| by_path.find(module).is_none())
+        .filter_map(ReplacedModule::file_path)
+        .cloned()
+        .collect();
     for &file in &modules.compiled_files {
         if !matches!(
             input.sources.kind(file),
@@ -339,6 +396,14 @@ pub(super) fn find_evicted_modules(
         evicted.is_table_reached |= builtins.reaches_module_cache();
         let (hir, bound) = (input.files.hir(file), input.files.bound(file));
         let (analysis, scan) = (input.files.analysis(file), scans.of(file));
+        for (written, starts_at_own_directory) in find_paths_changed_on_disk(analysis) {
+            let name = input.files.module(file).file_name();
+            let folder = match starts_at_own_directory {
+                true => &name[..last_index_of_char(name, b'/').unwrap_or(0)],
+                false => input.working_directory,
+            };
+            paths_changed_on_disk.push(from_argument(folder, input.files.atoms.bytes(written)));
+        }
         // A CommonJS file whose body throws is out of the table, and the next `require()` runs it again.
         for (site, answer) in analysis.import_sites.iter().zip(&scan.sites) {
             if let (ImportSiteKind::Require(call), &ScannedSite::Module(required)) =
@@ -360,8 +425,7 @@ pub(super) fn find_evicted_modules(
                         evicted.modules.insert(module);
                     }
                     ScannedSite::Candidates(ref range) => {
-                        let range = range.start as usize..range.end as usize;
-                        evicted.modules.extend(&scan.candidates[range]);
+                        evicted.modules.extend(scan.modules_spelled_in(range));
                     }
                     ScannedSite::AllModules => {
                         say_why_every_file(
@@ -384,6 +448,27 @@ pub(super) fn find_evicted_modules(
             }
         }
     }
+    paths_changed_on_disk.shared_sort_unstable();
+    paths_changed_on_disk.dedup();
+    let mut changed_on_disk = find_files_at(&by_path, paths_changed_on_disk);
+    evicted.modules.extend(&changed_on_disk);
+    for module in changed_on_disk.iter().filter(|_| logs_stages()) {
+        if let ModuleRef::File(file) = *module {
+            bun_core::print_errorln!(
+                "AOT test run | the run writes, moves or removes a file of its own, which is compared with the disk before it loads: {}",
+                bstr::BStr::new(input.files.module(file).file_name()),
+            );
+        }
+    }
+    // A file of data names nothing.
+    changed_on_disk.retain(|module| {
+        matches!(*module, ModuleRef::File(file) if input.sources.kind(file) != SourceKind::Data)
+    });
+    let forms = changed_on_disk.iter().flat_map(|&it| modules.forms_of(it));
+    evicted.changed_on_disk = forms.chain(changed_on_disk.iter().copied()).collect();
+    // The new text names what it likes.
+    evicted.is_every_export_asked_for |= !changed_on_disk.is_empty();
+    evicted.copies_name_any_file |= !changed_on_disk.is_empty();
     if evicted.is_every_module {
         evicted.modules.clear();
         return evicted;
@@ -409,8 +494,8 @@ pub(super) fn find_evicted_modules(
                     evicted.named_by_copies.insert(named);
                 }
                 ScannedSite::Candidates(ref range) => {
-                    let range = range.start as usize..range.end as usize;
-                    evicted.named_by_copies.extend(&scan.candidates[range]);
+                    let named = scan.modules_spelled_in(range);
+                    evicted.named_by_copies.extend(named);
                 }
                 ScannedSite::AllModules => {
                     evicted.is_every_export_asked_for = true;
@@ -687,8 +772,8 @@ fn find_modules_held_under_name_without_prefix(
             let is_answer = |module: RuntimeModule| match *answer {
                 ScannedSite::Module(answer) => answer == ModuleRef::Runtime(module),
                 ScannedSite::Candidates(ref range) => {
-                    let range = range.start as usize..range.end as usize;
-                    scan.candidates[range].contains(&ModuleRef::Runtime(module))
+                    let mut named = scan.modules_spelled_in(range);
+                    named.any(|named| named == ModuleRef::Runtime(module))
                 }
                 ScannedSite::AllModules | ScannedSite::Unresolved | ScannedSite::Erased => false,
             };

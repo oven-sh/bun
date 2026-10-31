@@ -47,13 +47,9 @@ export const loadPlugin = (name: string) => say(import(\`${plugins}/\${name}\`))
 for (const name of ["a", "deep/b"]) console.log("SPEC " + name + " | " + (await loadSpec(name)));
 for (const name of ["one", "one.ts", "deep/two"]) console.log("PLUGIN " + name + " | " + (await loadPlugin(name)));
 `,
-  // A file that was compiled answers with what it said when the build read it.
-  "written-over.test.ts": `import { expect, test } from "bun:test";
-import { existsSync, writeFileSync } from "node:fs";
+  "loads-one-of-each.test.ts": `import { expect, test } from "bun:test";
 import { loadPlugin, loadSpec } from "./src/registry";
 test("the files run as they were compiled", async () => {
-  for (const path of ["./node_modules/specs/build/a.js", "./src/plugins/one.ts"])
-    if (existsSync(new URL(path, import.meta.url))) writeFileSync(new URL(path, import.meta.url), ${JSON.stringify(fromDisk)});
   console.log("SPEC a | " + (await loadSpec("a")));
   console.log("PLUGIN one | " + (await loadPlugin("one")));
   expect(1).toBe(1);
@@ -134,7 +130,8 @@ for (const [name, config] of Object.entries(configs)) {
   }, 240_000);
 
   for (const words of ["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1"]) {
-    const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words };
+    // A file that runs from its text trips the wire. A file that the run itself writes anew is read from disk, as in plain Bun, so writing over it tells nothing.
+    const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words, BUN_JSC_crashIfInterpreterIsUsed: "1" };
     test(`a test run under ${name} runs the files compiled (${words})`, async () => {
       using dir = tempDir("aot-computed-import-tsconfig-paths", filesOf(config));
       const ran = await run([bunExe(), "test", "--aot", "--isolate"], String(dir), env);

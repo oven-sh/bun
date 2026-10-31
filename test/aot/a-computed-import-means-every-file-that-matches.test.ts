@@ -21,12 +21,9 @@ export const loadFew = async name => (await import(\`../few/\${name}.js\`)).defa
 for (const name of ["f1", "f${count}", "deep/f7"]) console.log("SEEN " + name + " | " + (await load(name)));
 console.log("SEEN few | " + (await loadFew("b")));
 `,
-  // A file that was compiled answers with what it said when the build read it.
-  "written-over.test.js": `import { expect, test } from "bun:test";
-import { writeFileSync } from "node:fs";
+  "loads-the-last.test.js": `import { expect, test } from "bun:test";
 import { load } from "./src/registry.js";
 test("the file runs as it was compiled", async () => {
-  writeFileSync(new URL("./node_modules/specs/build/f${count}.js", import.meta.url), 'export default "read from disk when the test ran";\\n');
   console.log("SEEN f${count} | " + (await load("f${count}")));
   expect(1).toBe(1);
 });
@@ -71,7 +68,8 @@ test("an executable holds every file that a computed import may mean, and its re
 for (const words of ["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1"]) {
   test(`a test run runs such a file compiled (${words})`, async () => {
     using dir = tempDir("aot-computed-import-of-many-files", files);
-    const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words };
+    // A file that runs from its text trips the wire. A file that the run itself writes anew is read from disk, as in plain Bun, so writing over it tells nothing.
+    const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words, BUN_JSC_crashIfInterpreterIsUsed: "1" };
     const ran = await run([bunExe(), "test", "--aot", "--isolate"], String(dir), env);
     expect({ seen: seenIn(ran.stdout), exitCode: ran.exitCode }).toEqual({
       seen: [`SEEN f${count} | compiled f${count}`],

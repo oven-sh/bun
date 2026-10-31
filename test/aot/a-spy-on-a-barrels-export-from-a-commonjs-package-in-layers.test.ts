@@ -1,9 +1,10 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-setDefaultTimeout(240_000);
+raiseDefaultTimeout(240_000);
 
 // `export { add as cjsAdd } from "cjs-pkg"` in src, and `spyOn(barrel, "cjsAdd")` in a test file. Where the run is built in layers the package lies in a lower image than the
 // barrel, and the spy's store goes on there. ES modules see a CommonJS file through what was captured of it when it had run, and the store has to reach that.

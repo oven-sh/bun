@@ -2,13 +2,14 @@
 // Such a spy opens the exports that go by its name in the modules that are handed on, and one helper whose names the scan of the test files cannot read
 // opens every name. So the scan has to read them all: that is the second expectation. The third: flow finds nothing that the front end left closed, which
 // would start the build over.
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
 // supported.ts sets the limit for the first file of a process alone.
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 const files = {
   "src/math.ts": `

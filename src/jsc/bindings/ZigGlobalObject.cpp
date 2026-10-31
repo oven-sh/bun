@@ -1715,6 +1715,14 @@ JSC_DEFINE_HOST_FUNCTION(functionSetSelf,
     //   < 123
     //   > Object.getOwnPropertyDescriptor(globalThis, "self")
     //   < {value: 123, writable: true, enumerable: true, configurable: true}
+    // A compiled program whose build saw nothing that replaces `self` has locked the name, and putDirect() of a locked name does nothing and says nothing.
+    // The definition does the same to a name that is not locked, and throws what `globalThis.self = 123` throws for one that is.
+    if (Bun::hasCompiledModules()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        globalObject->methodTable()->defineOwnProperty(globalObject, globalObject, WebCore::builtinNames(vm).selfPublicName(), JSC::PropertyDescriptor(value, 0), true);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(value);
+    }
     globalObject->putDirect(vm, WebCore::builtinNames(vm).selfPublicName(), value, 0);
     return JSValue::encode(value);
 }

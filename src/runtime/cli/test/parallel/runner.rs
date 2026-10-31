@@ -34,6 +34,14 @@ use bun_sourcemap_jsc::code_coverage;
 /// module load alone can exceed the production 5ms threshold.
 const DEFAULT_SCALE_UP_AFTER_MS: i64 = 5;
 
+/// What workers hand on to the end of a run that plain `bun test` does in its own process.
+#[derive(Default)]
+pub(crate) struct LeftByWorkers {
+    /// `process.exitCode = 3` in a test.
+    pub(crate) exit_code: Option<u8>,
+    pub(crate) failed_to_write_inline_snapshots: bool,
+}
+
 /// Returns true if files were actually run via the worker pool, false if it
 /// left them to the caller to run sequentially (≤1 effective worker). The caller uses
 /// this to decide whether to run the serial coverage/JUnit reporters.
@@ -44,7 +52,7 @@ pub(crate) fn run_as_coordinator(
     ctx: Command::Context,
     coverage_opts: &mut CodeCoverageOptions,
     splits_files: bool,
-    exit_code_left_by_tests: &mut Option<u8>,
+    left_by_workers: &mut LeftByWorkers,
 ) -> crate::Result<bool> {
     // SAFETY: env loader is initialized before the test runner runs.
     let env = unsafe { &mut *vm.transpiler.env };
@@ -216,6 +224,8 @@ pub(crate) fn run_as_coordinator(
         files: sorted,
         costs,
         cwd: FileSystem::get().top_level_dir(),
+        cwd_of_builds: (ctx.original_cwd.as_deref())
+            .unwrap_or_else(|| FileSystem::get().top_level_dir()),
         argv,
         envps,
         // Coordinator borrows the workers slice while each Worker holds a raw
@@ -272,8 +282,9 @@ pub(crate) fn run_as_coordinator(
         live_workers: 0,
         crashed_files: Vec::new(),
         aborted: None,
-        hands_on_exit_code: ctx.test_options.parallel == 0,
+        ends_as_in_one_process: ctx.test_options.parallel.min(n) <= 1,
         exit_code_left_by_tests: None,
+        failed_to_write_inline_snapshots: false,
         stop_reason: None,
         last_printed_dot: false,
         #[cfg(windows)]
@@ -320,7 +331,10 @@ pub(crate) fn run_as_coordinator(
         Output::flush();
         Global::exit(code);
     }
-    *exit_code_left_by_tests = coord.exit_code_left_by_tests;
+    *left_by_workers = LeftByWorkers {
+        exit_code: coord.exit_code_left_by_tests,
+        failed_to_write_inline_snapshots: coord.failed_to_write_inline_snapshots,
+    };
     Ok(true)
 }
 
@@ -958,11 +972,26 @@ fn worker_flush_aggregates(
     // Snapshots flush lazily when the next file opens its snapshot file; the
     // last file each worker ran has no successor to trigger that.
     let runner = &mut reporter.jest;
-    let _ = runner
+    let wrote_inline_snapshots = runner
         .snapshots
         .write_inline_snapshots(&runner.files)
         .unwrap_or(false);
     let _ = runner.snapshots.write_snapshot_file();
+    if crate::cli::run_compiled::runs_compiled_code() {
+        let counted = &runner.snapshots;
+        let numbers = [
+            counted.total,
+            counted.passed,
+            counted.failed,
+            counted.added,
+            usize::from(!wrote_inline_snapshots),
+        ];
+        cmds.emit(frame::Kind::Snapshots, |wf| {
+            for number in numbers {
+                wf.u32(number as u32);
+            }
+        });
+    }
 
     cmds.emit(frame::Kind::RepeatBufs, |wf| {
         wf.str(reporter.failures_to_repeat_buf.as_slice());

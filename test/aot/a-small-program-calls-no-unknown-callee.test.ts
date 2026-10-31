@@ -1,14 +1,15 @@
 // A program that awaits uses process.nextTick, and so does nearly every program. A row of the table of built-ins that lets native code
 // queue a function nobody knows on behalf of something that common opens the world for all of them: the answers stay right, the code
 // grows and the build starts over. Nothing else shows it, so the count is held here at none.
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { built, spawned } from "./harness/commands";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { test } from "./supported";
 
-setDefaultTimeout(240_000);
+raiseDefaultTimeout(240_000);
 
 const tsconfig = JSON.stringify({
   compilerOptions: {

@@ -1,9 +1,10 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 // `new Set(list)` asks the new set for `add` and calls it for every value, and `new Map(list)` does so with `set`.
 // No expression spells that lookup, so a test that replaces the method has to be seen where the list is written in place too.

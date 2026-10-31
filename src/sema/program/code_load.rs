@@ -82,6 +82,7 @@ pub(super) struct CodeLoadContext<'a, 's: 'r, 'r> {
     /// What `CompileInputs::finds_entry_points` has named.
     found_entry_points: Guarded<Vec<CodeTarget<'r>>>,
     main_modules_beside_entry_points: FxHashSet<Vec<u8>>,
+    entry_points_only_imported_from_above: FxHashSet<Vec<u8>>,
     pub(super) is_case_sensitive: bool,
     shares_parsed_files: bool,
     files_loaded_before: FxHashMap<(Cow<'a, [u8]>, HostLoader), FileId>,
@@ -134,6 +135,10 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
                 }
             })
             .collect();
+        let entry_points_only_imported_from_above = (code.entry_points_only_imported_from_above)
+            .iter()
+            .map(|path| to_path(path, is_case_sensitive).into_owned())
+            .collect();
         let loaded_before = compile.inputs.loaded_before;
         let files_loaded_before = loaded_before.into_iter().flat_map(|files| {
             files.loaded_code_files().iter().filter_map(move |&file| {
@@ -154,6 +159,7 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             keys_of_entry_points,
             found_entry_points: Guarded::new(Vec::new()),
             main_modules_beside_entry_points,
+            entry_points_only_imported_from_above,
             is_case_sensitive,
             shares_parsed_files: compile.shares_parsed_files,
             files_loaded_before: files_loaded_before.collect(),
@@ -218,6 +224,11 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         }
         self.found_entry_points.lock().push(target);
         Some(target)
+    }
+
+    pub(super) fn is_only_imported_from_above(&self, key: LoadKey<'_>) -> bool {
+        let path = to_path(key.path, self.is_case_sensitive);
+        self.entry_points_only_imported_from_above.contains(&*path)
     }
 
     pub(super) fn is_main_module_beside_entry_points(&self, key: LoadKey<'_>) -> bool {

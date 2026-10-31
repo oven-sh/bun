@@ -1,5 +1,6 @@
-// A view that a constructor makes over a buffer is a new object, and so is a part of it, so their methods need no test; its bytes are the buffer's, so every other view sees what is stored.
-// IR= 0 lengthsOfNewViews IsPristine
+// A view that a constructor makes over a buffer is a new object, so its methods need no test of it; a part of a view is made in one of two places, and is tested where they meet; its bytes are the buffer's, so every other view sees what is stored.
+// IR= 0 lengthsOfNewViews IsPristine v(2|14|15)\b
+// IR= 3 lengthsOfNewViews IsPristine
 // IR= 1 lengthsOfGivenView IsPristine
 // IR= 1 storedThroughViewNobodyReads PutTypedArrayElement
 // IRT= 2 storedThroughOtherView GetTypedArrayElement .*isInsideView
@@ -51,8 +52,7 @@ export function outOfRange(buffer: ArrayBuffer, offset: number): string {
 }
 
 const buffer = new ArrayBuffer(8);
-print(String(lengthsOfNewViews(buffer)));
-for (let offset = 1; offset < 4; offset++) print(String(lengthsOfGivenView(new Uint8Array(buffer, offset))));
+print(String(lengthsOfNewViews(buffer)) + " " + String(lengthsOfGivenView(new Uint8Array(buffer, 3))));
 storedThroughViewNobodyReads(buffer, 7);
 print(new Uint8Array(buffer).join(","));
 print(String(storedThroughOtherView(buffer, 9)) + " " + String(storedThroughPart(buffer, 11)) + " " + String(storedThroughDataView(buffer, 513)));

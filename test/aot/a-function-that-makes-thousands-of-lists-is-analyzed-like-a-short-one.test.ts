@@ -1,15 +1,16 @@
 // The escape analysis keeps, for each value, the set of objects that the value may be. As rows of a bit for each object of the function these sets took
 // values times objects: 8000 list literals in one function cost the build 50 MB, 90 MB where the lists hold objects, and past 16384 the analysis gave up.
 // A set holds an object or two however long the function is, so what the sets take grows with the function, and the analysis gets to its end.
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { readBuildReport } from "./harness/build-report";
 import { built, spawned } from "./harness/commands";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { withReport } from "./harness/flags";
 import { test } from "./supported";
 
-setDefaultTimeout(240_000);
+raiseDefaultTimeout(240_000);
 
 const literals = 20_000;
 const chainFrom = (first: string, last: string) =>

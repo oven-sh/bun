@@ -139,6 +139,8 @@ pub(super) struct Plan {
     ways_followed_for_their_names: WaysBetweenModuleObjects,
     lets_process_out_of_sight: bool,
     is_ready_for_loader_functions: bool,
+    /// A test run in which a file stores `Module._resolveFilename` or `Module.prototype.require`: plain Bun asks them at every `require`.
+    asks_loader_functions: bool,
     /// A `require` of a file may run before the loader has come to a CommonJS file, and code names a way between module objects: whether one did says which file has the id ".".
     is_first_require_seen: bool,
     is_namespace_seen: Vec<bool>,
@@ -157,6 +159,8 @@ pub(super) struct Plan {
     reaches_entries_of_cache: bool,
     /// `delete require.cache[path]` loads the file anew: `EvictedModules`.
     may_be_evicted: Vec<bool>,
+    /// `EvictedModules::changed_on_disk`
+    is_changed_on_disk_by_run: Vec<bool>,
     library_modules_stored_in_cache: LibraryModulesStoredInCache,
     may_evict_every_module: bool,
     /// The host loads the entry point several times in one realm: `AotOptions::entry_points_run_again`.
@@ -191,6 +195,7 @@ impl Plan {
             ways_followed_for_their_names: WaysBetweenModuleObjects::default(),
             lets_process_out_of_sight: false,
             is_ready_for_loader_functions: false,
+            asks_loader_functions: false,
             is_first_require_seen: false,
             is_namespace_seen: vec![false; order.numbers.len()],
             is_marker_stored: vec![false; order.numbers.len()],
@@ -202,6 +207,7 @@ impl Plan {
             lists_files_in_cache: false,
             reaches_entries_of_cache: false,
             may_be_evicted: vec![false; order.numbers.len()],
+            is_changed_on_disk_by_run: vec![false; order.numbers.len()],
             library_modules_stored_in_cache: LibraryModulesStoredInCache::default(),
             may_evict_every_module: false,
             runs_again: vec![false; order.numbers.len()],
@@ -260,6 +266,10 @@ impl Plan {
 
     pub(super) fn set_may_be_evicted(&mut self, module: ModuleRef) {
         self.add(|plan| &mut plan.may_be_evicted, module);
+    }
+
+    pub(super) fn set_is_changed_on_disk_by_run(&mut self, module: ModuleRef) {
+        self.add(|plan| &mut plan.is_changed_on_disk_by_run, module);
     }
 
     pub(super) fn set_library_modules_stored_in_cache(
@@ -654,6 +664,11 @@ impl ModuleGraph {
         self.plan.may_evict_every_module || self.plan.has(&self.plan.may_be_evicted, module)
     }
 
+    /// `writeFileSync(path, text)` with the path of the file: what the run loads from there is a text that the build has not read.
+    pub fn is_changed_on_disk_by_run(&self, module: ModuleRef) -> bool {
+        (self.plan).has(&self.plan.is_changed_on_disk_by_run, module)
+    }
+
     /// `require.cache["fs"] = { exports: fake }`: an entry of the program may stand under the name, which is one that `require` looks for there.
     pub fn may_entry_in_cache_stand_under(&self, name: &[u8]) -> bool {
         (self.plan.library_modules_stored_in_cache).may_stand_under(name)
@@ -862,6 +877,14 @@ impl ModuleGraph {
 
     pub fn set_is_ready_for_loader_functions(&mut self, is_ready: bool) {
         self.plan.is_ready_for_loader_functions = is_ready;
+    }
+
+    pub fn asks_loader_functions(&self) -> bool {
+        self.plan.asks_loader_functions
+    }
+
+    pub fn set_asks_loader_functions(&mut self, asks: bool) {
+        self.plan.asks_loader_functions = asks;
     }
 
     pub fn set_names_way_to_module_objects(&mut self, module: ModuleRef) {

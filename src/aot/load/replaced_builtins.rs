@@ -80,6 +80,8 @@ pub struct FoundInFile {
     /// `ReplacedByTests::evicted_modules` and `evicts_any_module`, each file as this one writes it.
     pub evicted: Vec<Vec<u8>>,
     pub evicts_any: bool,
+    /// `find_paths_changed_on_disk`
+    pub changed_on_disk: Vec<(Vec<u8>, bool)>,
     /// `ReplacedByTests::files_required_where_throws_are_caught`, each file as this one writes it.
     pub required_where_throws_are_caught: Vec<Vec<u8>>,
     /// `ReplacedByTests::names_file_with_query`
@@ -268,6 +270,8 @@ impl<'s> Look<'s> {
             .extend(spied.map(|&it| bytes_of(it)));
         (found.evicted).extend(modules.evicted.iter().map(|&it| bytes_of(it)));
         found.evicts_any |= modules.evicts_any;
+        let changed = modules.changed_on_disk.iter();
+        (found.changed_on_disk).extend(changed.map(|&(path, is_own)| (bytes_of(path), is_own)));
         let throwers = modules.required_where_throws_are_caught.iter();
         (found.required_where_throws_are_caught).extend(throwers.map(|&it| bytes_of(it)));
         found.names_file_with_query |= modules.names_file_with_query;

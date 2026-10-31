@@ -1,9 +1,10 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-setDefaultTimeout(240_000);
+raiseDefaultTimeout(240_000);
 
 // `bun:fs` means `fs` to the transpiler, which prints `fs` wherever it reads the name: in `require(K)`, `import(K)`, `require.resolve(K)`, and in each arm of a choice there.
 // The loader does not know the name. Every other call hands it to the loader: `import.meta.require`, what `createRequire` made, `require` through `call` and `apply`,

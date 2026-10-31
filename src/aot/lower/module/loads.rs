@@ -947,6 +947,31 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> OtherWay {
         let file = self.file.module_id();
         let reads_as_written = self.builder.was_loaded_synchronously(file);
+        self.emit_require_as_written_if(reads_as_written, name, referrer)
+    }
+
+    // `Module._resolveFilename = ..` and `Module.prototype.require = ..`: from then on plain Bun asks the program at every `require`, so the host
+    // answers, by the name as it is written. Ends in the block where neither is stored.
+    fn emit_require_as_written_if_loader_functions_are_stored(
+        &mut self,
+        written: Atom,
+        referrer: ModuleId,
+    ) -> Option<OtherWay> {
+        let modules = self.file.inputs.modules;
+        if !modules.asks_loader_functions() || !modules.is_code_of_program(self.current_module()) {
+            return None;
+        }
+        let name = self.file.queries.atom_bytes(written).to_vec();
+        let are_stored = self.builder.are_loader_functions_stored();
+        Some(self.emit_require_as_written_if(are_stored, &name, referrer))
+    }
+
+    fn emit_require_as_written_if(
+        &mut self,
+        reads_as_written: ValueId,
+        name: &[u8],
+        referrer: ModuleId,
+    ) -> OtherWay {
         let answer = self.builder.create_variable(None);
         let as_written = self.create_block();
         let with_prefix = self.create_block();
@@ -1070,13 +1095,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             (site.answer, site.specifier)
         {
             let (referrer, looks_in_cache) = (self.referrer_of(site), site.looks_in_cache);
-            return self.emit_require_beside_entry_in_cache(
+            let other_way =
+                self.emit_require_as_written_if_loader_functions_are_stored(written, referrer);
+            let found = self.emit_require_beside_entry_in_cache(
                 module,
                 written,
                 referrer,
                 looks_in_cache,
                 |this| this.emit_require_of_answer(site, specifier),
             );
+            return match other_way {
+                Some(other_way) => self.finish_other_way(other_way, found),
+                None => found,
+            };
         }
         self.emit_require_of_answer(site, specifier)
     }
@@ -1504,7 +1535,37 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> ValueId {
         match site.answer {
             SiteAnswer::Module(module) => {
-                self.emit_resolve_module(site.specifier, specifier, module, false)
+                let modules = self.file.inputs.modules;
+                let asks_program = modules.asks_loader_functions()
+                    && modules.is_code_of_program(self.current_module());
+                let ImportSpecifier::Constant(written) = site.specifier else {
+                    return self.emit_resolve_module(site.specifier, specifier, module, false);
+                };
+                if !asks_program {
+                    return self.emit_resolve_module(site.specifier, specifier, module, false);
+                }
+                // As in `emit_require_as_written_if_loader_functions_are_stored`.
+                let referrer = self.referrer_of(site);
+                let are_stored = self.builder.are_loader_functions_stored();
+                let answer = self.builder.create_variable(None);
+                let (asked, bound, done) = (
+                    self.create_block(),
+                    self.create_block(),
+                    self.create_block(),
+                );
+                self.builder
+                    .branch(are_stored, Edge::to(asked), Edge::to(bound));
+                self.continue_in(asked);
+                let name = self.emit_name_as_given(written, specifier);
+                let found = self.builder.resolve_dynamic(name, referrer, false, false);
+                self.builder.write_variable(answer, found);
+                self.jump(done);
+                self.continue_in(bound);
+                let found = self.emit_resolve_module(site.specifier, specifier, module, false);
+                self.builder.write_variable(answer, found);
+                self.jump(done);
+                self.continue_in(done);
+                self.builder.read_variable(answer)
             }
             SiteAnswer::Computed(candidates) => {
                 let specifier = specifier.unwrap_or_else(|| self.builder.undefined());

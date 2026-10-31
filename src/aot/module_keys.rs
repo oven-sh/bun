@@ -42,6 +42,11 @@ pub fn loader_by_name(path: &[u8]) -> Loader {
     loader_by_path_or(DEFAULT_LOADERS, path, Loader::File)
 }
 
+/// `bun run` reads `./a.ts?raw` as text unless a `type` attribute says otherwise. No other query names a loader.
+pub fn loader_by_query(query: &[u8]) -> Option<Loader> {
+    (query == b"?raw").then_some(Loader::Text)
+}
+
 /// `unnamed`: the loader of a file whose extension names none.
 pub fn loader_by_path_or<E: AsRef<[u8]>>(
     table: &[(E, Loader)],

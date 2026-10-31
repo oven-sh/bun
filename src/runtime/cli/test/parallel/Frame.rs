@@ -36,6 +36,9 @@ pub(crate) enum Kind {
     CoverageFile,
     /// str line — one write to a read-only built-in that failed in a file that ran compiled, sent ahead of the file's FileDone
     RefusedChange,
+    /// 5 × u32: the snapshots that this worker counted in all its files (total, passed, failed, added), and 1 where it could not
+    /// write an inline one; sent at exit by a worker that runs compiled code
+    Snapshots,
 }
 
 impl TryFrom<u8> for Kind {
@@ -52,6 +55,7 @@ impl TryFrom<u8> for Kind {
             6 => Kind::Shutdown,
             7 => Kind::CoverageFile,
             8 => Kind::RefusedChange,
+            9 => Kind::Snapshots,
             _ => return Err(()),
         })
     }

@@ -1,9 +1,10 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 // "bun:wrap" holds what the bundler imports for the constructs it lowers, `using` among them. It is an ES module of Bun's own, compiled with the program like a file, and a program may
 // name it as it names any module of Bun. A mock of it stands in its place for import() and require(), as a mock of "undici" does; what a file has already taken from it stays.

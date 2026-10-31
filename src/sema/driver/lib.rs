@@ -29,6 +29,7 @@ use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::atom::RecentAtoms;
 use bun_sema::check::aot::{DiagnosticClass, DiagnosticSubject};
+use bun_sema::check::commit::RefusedInstantiations;
 use bun_sema::check::errors::Checked;
 use bun_sema::check::explain::Explained;
 use bun_sema::check::{Program, Requested, compute_ecma_line_starts};
@@ -5203,7 +5204,26 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 if let Some(work) = file_work {
                     checker.set_requested((work.requested)(file));
                 }
-                let checked = checker.check_file(file);
+                let passes_over_depth_limit = file_work.is_some() && is_last_round;
+                checker.leave_depth_limit_unreported(passes_over_depth_limit);
+                checker.allow_refused_instantiations_of_next_file();
+                let mut checked = checker.check_file(file);
+                if passes_over_depth_limit {
+                    loop {
+                        match checker.compute_refused_instantiations() {
+                            RefusedInstantiations::None => break,
+                            RefusedInstantiations::Computed => {}
+                            RefusedInstantiations::StillRefused => {
+                                checker.leave_depth_limit_unreported(false)
+                            }
+                        }
+                        checked = checker.check_file(file);
+                        if !checker.leaves_depth_limit_unreported() {
+                            break;
+                        }
+                    }
+                    checker.leave_depth_limit_unreported(false);
+                }
                 if request.plan_options.discards_first_visits
                     && !is_last_round
                     && visits.lock()[index].rechecks == 0
@@ -5550,8 +5570,17 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
             for &index in tasks[at] {
                 let file = to_check[index];
                 checker.set_requested((work.requested)(file));
-                checker.check_file(file);
-                after_file(&mut checker, file);
+                // No ordinary visit at the end: it would store results cut off at the limit, for the next file to find.
+                checker.leave_depth_limit_unreported(true);
+                checker.allow_refused_instantiations_of_next_file();
+                loop {
+                    checker.check_file(file);
+                    after_file(&mut checker, file);
+                    if checker.compute_refused_instantiations() != RefusedInstantiations::Computed {
+                        break;
+                    }
+                }
+                checker.leave_depth_limit_unreported(false);
                 (work.after_commit)(file);
                 checker.take_ran_out_of_stack();
             }

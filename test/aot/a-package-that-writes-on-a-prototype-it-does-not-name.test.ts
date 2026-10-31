@@ -3,13 +3,14 @@
 // its errors a `toString` that way), and one such line opened Object.prototype.toString for every String(x) of the whole run.
 // So a package's write on a prototype that it does not name opens nothing. Where it does hit Object.prototype, it either works as in plain Bun, because flow
 // saw it, or throws the TypeError that names the member, as in an executable. What it may never do is pass unseen.
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
 // supported.ts sets the limit for the first file of a process alone.
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 const files = {
   "node_modules/planter/package.json": `{ "name": "planter", "version": "1.0.0", "type": "module", "main": "index.js" }`,

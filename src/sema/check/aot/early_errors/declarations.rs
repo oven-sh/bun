@@ -97,10 +97,13 @@ impl Checker<'_, '_> {
         }
     }
 
-    // `bun build` refuses a file that assigns to a member of `import * as star` or deletes one.
+    // `bun build` refuses a file that assigns to a member of `import * as star` or deletes one. In `bun test` the statement throws when it runs, or stores `__esModule`,
+    // and the other tests of the file run.
     pub(super) fn check_namespace_member_assignment_early_errors(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if !hir.imports.iter().any(|import| import.namespace.is_some()) {
+        if self.p.files.options.allows_es_module_mark
+            || !hir.imports.iter().any(|import| import.namespace.is_some())
+        {
             return;
         }
         let star_of = |e: ExprId| {
@@ -151,12 +154,6 @@ impl Checker<'_, '_> {
                 },
                 _ => continue,
             };
-            // In a test run the namespace object takes `__esModule`, as in `bun test`. `bun build` refuses it.
-            if self.p.files.options.allows_es_module_mark
-                && name.is_some_and(|name| self.atoms().bytes(name) == b"__esModule")
-            {
-                continue;
-            }
             let at = self.span_of_token(file, at);
             match name {
                 Some(name) if code == 2540 => self.early_error_at(at, code, &[Arg::Atom(name)]),

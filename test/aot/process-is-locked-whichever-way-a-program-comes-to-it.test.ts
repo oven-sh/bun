@@ -1,11 +1,13 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { slot } from "./harness/commands";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
 // supported.ts sets the limit for the first file of a process alone.
-setDefaultTimeout(240_000);
+raiseDefaultTimeout(240_000);
 
 // The compiler folds reads of process.versions, process.release and process.isBun, so a compiled program may not store to them: the build warns and the store throws. The object is
 // the same whichever way a program comes to it, so the answer has to be the same too. The global object adds its `process` at the first read of that name, and a program that
@@ -22,23 +24,27 @@ const ways: [string, string, string][] = [
 const names = ["versions", "release", "isBun"];
 
 // The build cannot fold a read by a name that it does not know, so this one tells what the object really holds.
-const body = (object: string, name: string) => `let how = "stored";
-try { ${object}.${name} = 5; } catch (error) { how = error.constructor.name; }
-console.log("ANSWER", ${JSON.stringify(name)}, how, typeof process[[${JSON.stringify(name)}].join(globalThis.neverSet ?? "")]);
-`;
-const cases = ways.flatMap(([way, head, object], index) =>
-  names.map(name => ({ way, name, head, object, file: `${index}-${name}` })),
-);
+// Every store comes ahead of the first read of the global name.
+const body = (object: string, stored = names) =>
+  [
+    ...stored.map(
+      name => `let ${name}How = "stored";
+try { ${object}.${name} = 5; } catch (error) { ${name}How = error.constructor.name; }
+`,
+    ),
+    ...stored.map(
+      name => `console.log("ANSWER", ${JSON.stringify(name)}, ${name}How, typeof process[[${JSON.stringify(name)}].join(globalThis.neverSet ?? "")]);
+`,
+    ),
+  ].join("");
+const cases = ways.map(([way, head, object], index) => ({ way, head, object, file: String(index) }));
 const files = Object.fromEntries(
-  cases.flatMap(({ head, object, name, file }) => [
-    [`${file}.mjs`, `${head}\n${body(object, name)}`],
-    [
-      `${file}.test.mjs`,
-      `import { test } from "bun:test";\n${head}\ntest("a store", () => {\n${body(object, name)}});\n`,
-    ],
+  cases.flatMap(({ head, object, file }) => [
+    [`${file}.mjs`, `${head}\n${body(object)}`],
+    [`${file}.test.mjs`, `import { test } from "bun:test";\n${head}\ntest("a store", () => {\n${body(object)}});\n`],
   ]),
 );
-files["worker.mjs"] = `import held from "node:process";\n${body("held", "versions")}`;
+files["worker.mjs"] = `import held from "node:process";\n${body("held", ["versions"])}`;
 files["starts-a-worker.mjs"] = `const worker = new Worker(new URL("./worker.mjs", import.meta.url).href);
 await new Promise(resolve => worker.addEventListener("close", resolve));
 `;
@@ -46,10 +52,17 @@ await new Promise(resolve => worker.addEventListener("close", resolve));
 const answerIn = (stdout: string) => /^ANSWER (.*)$/m.exec(stdout)?.[1] ?? `no answer in ${JSON.stringify(stdout)}`;
 
 /** For each name, the answers that the ways give, each once. */
-async function answers(answerOf: (file: string) => Promise<string>) {
+async function answers(outputOf: (file: string) => Promise<string>) {
   const found: Record<string, string[]> = {};
-  const all = await Promise.all(cases.map(async ({ name, file }) => [name, await answerOf(file)]));
-  for (const [name, answer] of all) if (!(found[name] ??= []).includes(answer)) found[name].push(answer);
+  const all = await Promise.all(cases.map(({ file }) => slot(() => outputOf(file))));
+  for (const stdout of all) {
+    const given = Array.from(stdout.matchAll(/^ANSWER (.*)$/gm), match => match[1]);
+    if (given.length !== names.length) given.push(`incomplete ${JSON.stringify(stdout)}`);
+    for (const answer of given) {
+      const name = answer.split(" ")[0];
+      if (!(found[name] ??= []).includes(answer)) found[name].push(answer);
+    }
+  }
   return found;
 }
 const refused = {
@@ -60,8 +73,8 @@ const refused = {
 
 test.concurrent("in plain Bun every way stores", async () => {
   using directory = tempDir("process-by-every-way-plain", files);
-  const found = await answers(async file =>
-    answerIn((await run([bunExe(), "run", `./${file}.mjs`], String(directory), bunEnv)).stdout),
+  const found = await answers(
+    async file => (await run([bunExe(), "run", `./${file}.mjs`], String(directory), bunEnv)).stdout,
   );
   expect(found).toEqual({
     versions: ["versions stored number"],
@@ -76,10 +89,10 @@ test.concurrent("in an executable every way is refused", async () => {
     const executable = join(String(directory), file + (isWindows ? ".exe" : ".out"));
     const build = [bunExe(), "build", "--compile", "--aot", `./${file}.mjs`, ...more, "--outfile", executable];
     expect(await run(build, String(directory), bunEnv)).toMatchObject({ exitCode: 0 });
-    return answerIn((await run([executable], String(directory), bunEnv)).stdout);
+    return (await run([executable], String(directory), bunEnv)).stdout;
   };
   expect(await answers(file => runCompiled(file))).toEqual(refused);
-  expect(await runCompiled("starts-a-worker", "./worker.mjs")).toBe(refused.versions[0]);
+  expect(answerIn(await runCompiled("starts-a-worker", "./worker.mjs"))).toBe(refused.versions[0]);
 });
 
 for (const [form, words] of [
@@ -89,8 +102,8 @@ for (const [form, words] of [
   test.concurrent(`in a test run ${form} every way is refused`, async () => {
     using directory = tempDir("process-by-every-way-test-run", files);
     const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words };
-    const found = await answers(async file =>
-      answerIn((await run([bunExe(), "test", "--aot", `./${file}.test.mjs`], String(directory), env)).stdout),
+    const found = await answers(
+      async file => (await run([bunExe(), "test", "--aot", `./${file}.test.mjs`], String(directory), env)).stdout,
     );
     expect(found).toEqual(refused);
   });

@@ -116,9 +116,14 @@ impl Resolver<'_, '_> {
             ExportLookup::Unlisted | ExportLookup::HeldByNamespace => return None,
         };
         if found == object {
+            // The `default` of a module of native code is the object itself, until a mock exports another: collect_replaced_members().
+            let is_replaced = self.input.replaced.binary_search(&(object as u32)).is_ok();
             return Some(BuiltinPath {
                 id: object,
-                mutability: Mutability::AlwaysLocked,
+                mutability: match is_replaced {
+                    true => Mutability::ConstantUnlessWritten,
+                    false => Mutability::AlwaysLocked,
+                },
             });
         }
         self.path_of_member(object, Mutability::AlwaysLocked, found)

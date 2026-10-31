@@ -2,9 +2,12 @@
 //! The build gives each such module a path of its own, beside the file and with the ending of its name, so that whatever goes by the folder or
 //! by the name of a file says of the module what it says of the file.
 
+use bun_ast::Loader;
 use bun_core::fmt::hex_byte_lower;
 use bun_core::strings;
 use bun_sema::util::ShardedMap;
+
+use crate::module_keys::loader_by_query;
 
 /// How the `?` that every query begins with is written in the path of a module.
 const START_OF_QUERY: &[u8] = b"%3f";
@@ -38,6 +41,10 @@ impl ModulesWithQueries {
             true => self.modules.get_ref(path),
             false => None,
         }
+    }
+
+    pub(crate) fn loader_by_query(&self, path: &[u8]) -> Option<Loader> {
+        loader_by_query(&self.find(path)?.query)
     }
 
     /// The file whose text the module at `path` runs.
@@ -96,5 +103,27 @@ mod tests {
         assert_eq!(modules.find(&first).unwrap().query, b"?x");
         assert_eq!(modules.file_behind(b"/p/a.ts"), b"/p/a.ts");
         assert_eq!(modules.file_behind(b"/p/b%3fx.ts"), b"/p/b%3fx.ts");
+    }
+
+    #[test]
+    fn only_raw_alone_asks_for_text() {
+        let modules = ModulesWithQueries::default();
+        let loader = |query: &[u8]| modules.loader_by_query(&modules.add(b"/p/a.ts", query));
+        assert_eq!(loader(b"?raw"), Some(Loader::Text));
+        for query in [
+            &b"?"[..],
+            b"?RAW",
+            b"?raw=1",
+            b"?raw&x",
+            b"?x&raw",
+            b"?raw#x",
+            b"?raw?raw",
+            b"?text",
+            b"?url",
+        ] {
+            assert_eq!(loader(query), None);
+        }
+        assert_eq!(modules.loader_by_query(b"/p/a.ts"), None);
+        assert_eq!(modules.loader_by_query(b"/p/b%3fraw.ts"), None);
     }
 }

@@ -1,9 +1,10 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-setDefaultTimeout(240_000);
+raiseDefaultTimeout(240_000);
 
 // A built-in function has a row for a pristine operand, which leaves out what a lookup on such an operand finds, and a general row. Where tests replace a member that the table locks,
 // the first is passed by for the classes on whose instances a lookup finds the replaced member: Object.prototype.valueOf on an array, but not Object.prototype.toString, which

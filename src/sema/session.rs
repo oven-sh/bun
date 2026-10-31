@@ -130,6 +130,7 @@ impl Session {
     /// Returns the calling thread's arena, creating it on the thread's first call.
     ///
     /// The lookup is linear in the number of threads, so a task calls this once and stores the result.
+    #[inline(never)]
     pub fn arena(&self) -> &Arena {
         let thread = std::thread::current().id();
         let mut link = &self.first;

@@ -23,6 +23,7 @@ use crate::load::named_loads::NamedModule;
 #[cfg(test)]
 use crate::load::project::ProjectId;
 use crate::lower;
+use crate::module_keys::is_name_of_text;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum SourceKind {
@@ -295,6 +296,10 @@ impl Sources {
 
     fn find_source_path(&self, file: FileId) -> Option<Vec<u8>> {
         let entry = &self.entries[file.idx()];
+        // The text of `new Worker("data:text/javascript,..")` lay nowhere, and the `/` in its name parts no folders.
+        if is_name_of_text(&entry.diagnostic_path) {
+            return None;
+        }
         let path = with_separators_of_host(&entry.diagnostic_path, cfg!(windows));
         (*path != *self.public_path_without_query(file)).then_some(path)
     }

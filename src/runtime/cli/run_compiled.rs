@@ -913,7 +913,14 @@ pub(crate) fn test_part_files(ctx: &ContextData) -> Option<u32> {
     const FILES_ABOVE_SHARED_PROGRAM: u32 = 16;
     let aot = ctx.bundler_options.aot.as_ref()?;
     let written = aot.test_run_part_files.map(|files| files.max(1));
-    written.or_else(|| test_parts_share_a_program(ctx).then_some(FILES_ABOVE_SHARED_PROGRAM))
+    // Each program above the layers has a process of its own. Without `--parallel`, which gives every file a global object of its own,
+    // and without `--isolate` the test files share one, so they are one program. Only a word brings layers to such a run: splits_test_files().
+    let share_global_object = ctx.test_options.parallel == 0 && !ctx.test_options.isolate;
+    let files = match share_global_object {
+        true => u32::MAX,
+        false => FILES_ABOVE_SHARED_PROGRAM,
+    };
+    written.or_else(|| test_parts_share_a_program(ctx).then_some(files))
 }
 
 /// Whether this `bun test --aot` builds a program per part.
@@ -971,7 +978,7 @@ pub(crate) fn log_form_of_test_run(ctx: &ContextData, file_count: usize, splits_
     if builds_test_part() || !(is_asked || env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true)) {
         return;
     }
-    let files_to_a_program = test_part_files(ctx).unwrap_or(0);
+    let files_to_a_program = test_part_files(ctx).unwrap_or(0).min(file_count as u32);
     match (splits_files, test_run_layers(ctx)) {
         (false, _) if !cfg!(unix) || !Bun__AOT__takesImagesAboveOthers() => {
             bun_core::print_errorln!(

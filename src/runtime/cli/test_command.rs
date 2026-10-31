@@ -57,6 +57,10 @@ use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
 
 // The strings behind `from`, `import`, `require` and `module` (of `mock.module`). One too many names a file too many.
 fn for_each_imported_name(text: &[u8], mut visit: impl FnMut(&[u8])) {
+    for_each_imported_name_and_word(text, |name, _| visit(name));
+}
+
+fn for_each_imported_name_and_word(text: &[u8], mut visit: impl FnMut(&[u8], &[u8])) {
     const WORDS: [&[u8]; 4] = [b"from", b"import", b"require", b"module"];
     let mut at = 0;
     while let Some(found) = strings::index_of_any(&text[at..], b"fimr") {
@@ -86,7 +90,7 @@ fn for_each_imported_name(text: &[u8], mut visit: impl FnMut(&[u8])) {
             && strings::split(&name[..end], b"/").all(|part| part.len() <= LONGEST_PART_OF_PATH)
             && !is_imported_as_data(&name[end + 1..])
         {
-            visit(&name[..end]);
+            visit(&name[..end], word);
         }
     }
 }
@@ -170,10 +174,35 @@ fn find_names_imported_for_jsx(vm: &mut VirtualMachine, file: &[u8]) -> Vec<Box<
 }
 
 // The names that each file imports, file by file. A file that is not in memory yet takes a millisecond to come, and there are tens of thousands: many are asked for at once.
-fn find_names_imported_by<Path: core::ops::Deref<Target = [u8]> + Sync>(
+// In front of each name a byte: 1 behind `from` and `import`, 0 behind `require` and `module`.
+fn find_names_imported_by_and_how<Path: core::ops::Deref<Target = [u8]> + Sync>(
     files: &[Path],
 ) -> Vec<Vec<Box<[u8]>>> {
-    find_names_in(files, |text, visit| for_each_imported_name(text, visit))
+    find_names_in(files, |text, visit| {
+        let mut marked = Vec::new();
+        for_each_imported_name_and_word(text, |name, word| {
+            marked.clear();
+            marked.push((word == b"from" || word == b"import") as u8);
+            marked.extend_from_slice(name);
+            visit(&marked);
+        })
+    })
+}
+
+// `bun test` takes a file whose text does not say what it is for CommonJS or for an ES module by who loads it: `require` goes by the extension, `import` by the package.
+// The build of a layer does not see the files above it, so it is told which of its entry points they name behind `import` alone. Only four extensions say something.
+// find_files_imported_by() has read the files above and noted what they name in another way.
+static FILES_NAMED_OTHERWISE_THAN_BY_IMPORT: bun_threading::Guarded<Vec<Box<[u8]>>> =
+    bun_threading::Guarded::new(Vec::new());
+
+fn find_entry_points_only_imported(entry_points: &[Box<[u8]>]) -> Vec<Vec<u8>> {
+    const EXTENSIONS: [&[u8]; 4] = [b".cjs", b".cts", b".mjs", b".mts"];
+    let named_otherwise = FILES_NAMED_OTHERWISE_THAN_BY_IMPORT.lock();
+    (entry_points.iter())
+        .filter(|path| EXTENSIONS.iter().any(|extension| path.ends_with(extension)))
+        .filter(|path| !named_otherwise.contains(path))
+        .map(|path| path.to_vec())
+        .collect()
 }
 
 fn find_names_in<Path: core::ops::Deref<Target = [u8]> + Sync>(
@@ -221,14 +250,28 @@ fn find_files_imported_by<Path: core::ops::Deref<Target = [u8]> + Sync>(
         let _ = seen.insert(&**path);
     }
     let mut found = Vec::new();
-    for (test_file, names) in test_files.iter().zip(find_names_imported_by(test_files)) {
+    let mut named_otherwise = Vec::new();
+    for (test_file, names) in test_files
+        .iter()
+        .zip(find_names_imported_by_and_how(test_files))
+    {
         let folder = resolve_path::dirname::<bun_path::platform::Auto>(test_file);
-        for name in names {
+        for marked in names {
+            let (is_behind_import, name) = (marked[0] == 1, &marked[1..]);
+            if !is_behind_import {
+                let kind = bun_ast::ImportKind::Require;
+                if let Ok(result) = vm.transpiler.resolver.resolve(folder, name, kind) {
+                    named_otherwise.push(Box::from(result.path_pair.primary.text()));
+                }
+            }
             let kind = bun_ast::ImportKind::Stmt;
-            let Ok(result) = vm.transpiler.resolver.resolve(folder, &name, kind) else {
+            let Ok(result) = vm.transpiler.resolver.resolve(folder, name, kind) else {
                 continue;
             };
             let path = result.path_pair.primary.text();
+            if !is_behind_import {
+                named_otherwise.push(Box::from(path));
+            }
             let is_code = bun_path::is_absolute(path)
                 && EXTENSIONS.iter().any(|extension| path.ends_with(extension));
             if is_code && !seen.contains(path) {
@@ -237,6 +280,9 @@ fn find_files_imported_by<Path: core::ops::Deref<Target = [u8]> + Sync>(
             }
         }
     }
+    FILES_NAMED_OTHERWISE_THAN_BY_IMPORT
+        .lock()
+        .append(&mut named_otherwise);
     found
 }
 
@@ -3979,6 +4025,10 @@ impl TestCommand {
             if builds_packages_alone {
                 entry_points.extend(ctx.preloads.iter().cloned());
                 let (of_packages, others) = find_files_of_packages_reached_from(vm, entry_points);
+                let only_imported = find_entry_points_only_imported(&of_packages);
+                if let Some(aot) = ctx.bundler_options.aot.as_mut() {
+                    aot.entry_points_only_imported_from_above = only_imported;
+                }
                 (entry_points, files_above) = (of_packages, Some(others));
                 run_compiled::log_step_of_build("the files of packages are found");
             }
@@ -4041,6 +4091,10 @@ impl TestCommand {
             } else if builds_what_is_shared {
                 let test_files = keep_paths_for_the_build(entry_points);
                 entry_points = find_files_imported_by(vm, &test_files);
+                let only_imported = find_entry_points_only_imported(&entry_points);
+                if let Some(aot) = ctx.bundler_options.aot.as_mut() {
+                    aot.entry_points_only_imported_from_above = only_imported;
+                }
                 if names_what_is_used {
                     stand_in = Some(make_stand_in_that_names_what_tests_name(
                         vm,
@@ -4452,6 +4506,7 @@ impl TestCommand {
 
         let mut coverage_options: CodeCoverageOptions = ctx.test_options.coverage.clone();
         let mut ran_parallel = false;
+        let mut left_by_workers = ParallelRunner::LeftByWorkers::default();
 
         if !test_files.is_empty() {
             // Randomize the order of test files if --randomize flag is set
@@ -4470,7 +4525,6 @@ impl TestCommand {
             }
 
             if ctx.test_options.parallel > 0 || splits_files {
-                let mut exit_code_left_by_tests = None;
                 run_compiled::log_step_of_test_run(format_args!(
                     "{} test files are to run",
                     test_files.len()
@@ -4482,9 +4536,9 @@ impl TestCommand {
                     &mut *ctx,
                     &mut coverage_options,
                     splits_files,
-                    &mut exit_code_left_by_tests,
+                    &mut left_by_workers,
                 )?;
-                if let Some(code) = exit_code_left_by_tests {
+                if let Some(code) = left_by_workers.exit_code {
                     vm.exit_handler.exit_code = code;
                 }
             }
@@ -4521,7 +4575,8 @@ impl TestCommand {
         }
 
         let runner = &mut reporter.jest;
-        let write_snapshots_success = runner.snapshots.write_inline_snapshots(&runner.files)?;
+        let write_snapshots_success = runner.snapshots.write_inline_snapshots(&runner.files)?
+            && !left_by_workers.failed_to_write_inline_snapshots;
         runner.snapshots.write_snapshot_file()?;
         let mut write_coverage_success = true;
         if reporter.summary().pass > 20

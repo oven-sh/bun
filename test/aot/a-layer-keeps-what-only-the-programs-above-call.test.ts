@@ -2,12 +2,13 @@
 // does not see the programs above it, which call what it exports. Here `load` is called by the test file alone, and the package behind the file that it
 // loads is reached by nothing else. Flow once let go of such an export where its rules ran in one of the orders that are as good as the usual one:
 // "'load' was not compiled into this executable because your code never calls it".
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 const files = {
   "package.json": `{ "name": "p", "type": "module" }`,

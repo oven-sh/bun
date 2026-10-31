@@ -143,6 +143,15 @@ pub enum ReplacedModule {
     Runtime(u32),
 }
 
+impl ReplacedModule {
+    pub fn file_path(&self) -> Option<&Vec<u8>> {
+        match self {
+            ReplacedModule::File(path) => Some(path),
+            ReplacedModule::Runtime(_) => None,
+        }
+    }
+}
+
 /// `ReplacedByTests::files_imported_by_statements`, `files_imported_by_calls` and `files_required`
 #[derive(Clone, Default, PartialEq, Eq, Debug)]
 pub struct FilesThatTestsLoad {

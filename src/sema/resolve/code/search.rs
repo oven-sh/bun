@@ -274,7 +274,7 @@ impl<'h> Resolver<'h> {
             CodeResolution::File(CodeFile {
                 path,
                 host_module: None,
-            }) => match host.add_module_with_query(path, query) {
+            }) => match host.add_module_with_query(path, query, request.kind) {
                 Some(path) => CodeResolution::File(self.code_file(&path, None)),
                 None => CodeResolution::NotFound(CodeFailure::QueryString),
             },

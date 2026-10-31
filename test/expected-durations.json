@@ -7162,7 +7162,7 @@
   "aot/parallel/static-modules/rulings/computed-key-require-shows-ways/main.cjs": {
     "default": 9900
   },
-  "aot/parallel/static-modules/rulings/four-of-five-loader-hooks-take-function/main.cjs": {
+  "aot/parallel/static-modules/rulings/all-five-loader-hooks-take-function/main.cjs": {
     "default": 700
   },
   "aot/parallel/static-modules/rulings/module-object-out-of-sight/main.cjs": {

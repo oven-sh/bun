@@ -86,7 +86,7 @@ column(class A { constructor(a) { (function () { new new C2()(); })(); } });
 column(class A { constructor(a) { (function () { new.target; })(); } });
 column(class A { constructor(a) { (function () { import(a); })(); } });
 column(class A { constructor(a) { (function () { import(a, g); })(); } });
-column(class A { constructor(a) { (function () { import(`a${a}`); })(); } });
+column(class A { constructor(a) { (function () { import(`./none/a${a}`); })(); } });
 column(class A { constructor(a) { (function () { import("node:fs").then(f); })(); } });
 column(class A { constructor(a) { (function () { require(a); })(); } });
 column(class A { constructor(a) { (function () { require.resolve("node:fs"); })(); } });

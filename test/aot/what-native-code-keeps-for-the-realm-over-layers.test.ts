@@ -1,9 +1,10 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 // Native code has the library make `process.stderr` once for the realm, and it asks the lowest program for that. The program of a test file held a copy of the same code, took the
 // stream for what its copy makes, and called its own `write` on the closure of the other program: the worker died.

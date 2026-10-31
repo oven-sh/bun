@@ -552,12 +552,10 @@ void willSetRequireCacheEntry(Zig::GlobalObject* globalObject, const String& key
 
 void willStoreLoaderOfExtension(Zig::GlobalObject* globalObject, StringView extension)
 {
-    if (!hasCompiledModules())
-        return;
-    // How a test has a file of its own kind loaded, or looks at what the files of a kind hold. Elsewhere imports are bound for good.
-    if (reloadsFilesFromDisk())
-        return AOT::willStoreLoaderOfExtension(globalObject, extension);
-    AOT::willChangeRequireOverride(globalObject, AOT::RequireOverride::Extensions, AOT::hasFileWithExtension(extension));
+    // How a test has a file of its own kind loaded, or looks at what the files of a kind hold. Elsewhere imports are bound for good: the loader is stored,
+    // and only a file that is read from disk as the program runs is handed to it, as in an executable of `bun build --compile`.
+    if (hasCompiledModules() && reloadsFilesFromDisk())
+        AOT::willStoreLoaderOfExtension(globalObject, extension);
 }
 
 static JSCommonJSModule* boundModuleOf(JSValue require)

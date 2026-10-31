@@ -10,7 +10,8 @@ use bun_sema_driver::host::to_native;
 
 use crate::diagnostics::InternalError;
 use crate::load::loaders::{
-    BY_NAME, HostLoaderKind, host_loader_kind, loader_by_name, loader_by_path, to_host_loader,
+    BY_NAME, HostLoaderKind, host_loader_kind, is_asked_for_by_query, loader_by_name,
+    loader_by_path, to_host_loader,
 };
 use crate::load::plugin_modules::{DATA_URL_NAMESPACE, ENTRY_TEXT_NAMESPACE};
 use crate::load::sources::{ModulePaths, PluginModuleName, SourceKind};
@@ -45,8 +46,8 @@ impl<'s> FileMaps<'s> {
         for file in file_ids(files.modules.len()) {
             if is_linkable(files, file) {
                 let path = files.modules[file.idx()].path.text;
-                let compiled = files.compiled(file);
-                maps.add_linkable_file(path, file, compiled.map_or(BY_NAME, |it| it.loader));
+                let loader = files.compiled(file).map_or(BY_NAME, |it| it.loader);
+                maps.add_linkable_file(path, file, loader);
             }
         }
         for (index, &file) in files.entry_points().iter().enumerate() {
@@ -61,6 +62,11 @@ impl<'s> FileMaps<'s> {
     }
 
     fn add_linkable_file(&mut self, path: &'s [u8], file: FileId, loader: HostLoader) {
+        // What an import without attributes gets stands under the path, ahead of what a `type` asks for.
+        let loader = match is_asked_for_by_query(loader) {
+            true => BY_NAME,
+            false => loader,
+        };
         let primary = self.primary_files.entry(path).or_insert((file, loader));
         if loader < primary.1 {
             *primary = (file, loader);
@@ -211,7 +217,10 @@ fn is_data_that_only_an_attribute_asks_for(
     input: &PathInput<'_>,
 ) -> bool {
     let is_file_with_data = input.kind == SourceKind::Data && input.plugin_module.is_none();
-    if !is_file_with_data || context.maps.entry_point_indexes.contains_key(&input.file) {
+    if !is_file_with_data
+        || context.maps.entry_point_indexes.contains_key(&input.file)
+        || is_asked_for_by_query(input.host_loader)
+    {
         return false;
     }
     let kinds = [
@@ -353,6 +362,7 @@ mod tests {
 
     use super::*;
     use crate::builtins::RuntimeModule;
+    use crate::load::loaders::{to_host_loader_of_attribute, to_host_loader_of_query};
     use crate::options::default_loaders;
 
     fn as_text() -> HostLoader {
@@ -768,6 +778,29 @@ mod tests {
             path(b"/project/a.sql", Loader::Text),
             b"/$bunfs/root/a.sql?text"
         );
+    }
+
+    #[test]
+    fn text_that_a_query_asks_for_stands_under_path_of_file_and_query() {
+        let (file_name, module) = (b"/project/a.json", b"/project/a%3fraw.json");
+        let by_query = to_host_loader_of_query(Loader::Text);
+        let as_json = to_host_loader_of_attribute(Loader::Json, module);
+        let mut maps = FileMaps::default();
+        maps.add_linkable_file(module, FileId(1), as_json);
+        maps.add_linkable_file(module, FileId(2), by_query);
+        maps.add_linkable_file(module, FileId(3), as_text());
+        let path = |file, host_loader| {
+            let input = PathInput {
+                kind: SourceKind::Data,
+                query: b"?raw",
+                canonical_path: module,
+                ..program_file(file, file_name, host_loader)
+            };
+            public_path(&maps, input)
+        };
+        assert_eq!(path(1, as_json), b"/$bunfs/root/a.json?raw?json");
+        assert_eq!(path(2, by_query), b"/$bunfs/root/a.json?raw");
+        assert_eq!(path(3, as_text()), b"/$bunfs/root/a.json?raw?text");
     }
 
     #[test]

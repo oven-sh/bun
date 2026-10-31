@@ -855,7 +855,7 @@ function f16 name="Record" module=m0 position=413 kind=BaseConstructor flags=[Ha
   b4(v17):
     Return v17 @494
 }
-function f17 module=m0 position=2839 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w49}] functionTypes=[f35] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f17 module=m0 position=2839 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[OmitsNull, OmitsUndefined] variableName="record"}] thisType={type=anything} results=[{type=number site=w49}] functionTypes=[f35] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0):
     Jump -> next b1() @2839
   b1():
@@ -863,7 +863,7 @@ function f17 module=m0 position=2839 kind=Arrow flags=[IsChecked] captures=[{typ
     v2 = Call v1, -, v0 calleeName="lengthOfName" @2845
     ReturnCall v2 casts=[{declared={type=number site=w105}}, {declared={type=number site=w49}}] @2845
 }
-function f18 module=m0 position=2904 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w50}] functionTypes=[f36] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f18 module=m0 position=2904 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[OmitsNull, OmitsUndefined] variableName="record"}] thisType={type=anything} results=[{type=number site=w50}] functionTypes=[f36] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0):
     Jump -> next b1() @2904
   b1():
@@ -871,7 +871,7 @@ function f18 module=m0 position=2904 kind=Arrow flags=[IsChecked] captures=[{typ
     v2 = Call v1, -, v0 calleeName="lengthOfList" @2910
     ReturnCall v2 casts=[{declared={type=number site=w106}}, {declared={type=number site=w50}}] @2910
 }
-function f19 module=m0 position=2968 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w51}] functionTypes=[f37] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f19 module=m0 position=2968 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[OmitsNull, OmitsUndefined] variableName="record"}] thisType={type=anything} results=[{type=number site=w51}] functionTypes=[f37] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0):
     Jump -> next b1() @2968
   b1():
@@ -879,7 +879,7 @@ function f19 module=m0 position=2968 kind=Arrow flags=[IsChecked] captures=[{typ
     v2 = Call v1, -, v0 calleeName="firstOfList" @2974
     ReturnCall v2 casts=[{declared={type=number site=w107}}, {declared={type=number site=w51}}] @2974
 }
-function f20 module=m0 position=3033 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w52}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f20 module=m0 position=3033 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[OmitsNull, OmitsUndefined] variableName="record"}] thisType={type=anything} results=[{type=number site=w52}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0):
     Jump -> next b1() @3033
   b1():
@@ -888,7 +888,7 @@ function f20 module=m0 position=3033 kind=Arrow flags=[IsChecked] captures=[{typ
     v3 = Call v1, -, v0, v2 calleeName="elementOfList" @3039
     ReturnCall v3 casts=[{declared={type=number site=w108}}, {declared={type=number site=w52}}] @3039
 }
-function f21 module=m0 position=3100 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w53}] functionTypes=[f39] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f21 module=m0 position=3100 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[OmitsNull, OmitsUndefined] variableName="record"}] thisType={type=anything} results=[{type=number site=w53}] functionTypes=[f39] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0):
     Jump -> next b1() @3100
   b1():
@@ -896,7 +896,7 @@ function f21 module=m0 position=3100 kind=Arrow flags=[IsChecked] captures=[{typ
     v2 = Call v1, -, v0 calleeName="codeOfName" @3106
     ReturnCall v2 casts=[{declared={type=number site=w109}}, {declared={type=number site=w53}}] @3106
 }
-function f22 module=m0 position=3162 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=boolean site=w54}] functionTypes=[f40] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f22 module=m0 position=3162 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[OmitsNull, OmitsUndefined] variableName="record"}] thisType={type=anything} results=[{type=boolean site=w54}] functionTypes=[f40] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0):
     Jump -> next b1() @3162
   b1():
@@ -904,7 +904,7 @@ function f22 module=m0 position=3162 kind=Arrow flags=[IsChecked] captures=[{typ
     v2 = Call v1, -, v0 calleeName="startOfName" @3168
     ReturnCall v2 casts=[{declared={type=boolean site=w110}}, {declared={type=boolean site=w54}}] @3168
 }
-function f23 module=m0 position=3224 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w55}] functionTypes=[f41] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f23 module=m0 position=3224 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[OmitsNull, OmitsUndefined] variableName="record"}] thisType={type=anything} results=[{type=number site=w55}] functionTypes=[f41] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0):
     Jump -> next b1() @3224
   b1():
@@ -912,7 +912,7 @@ function f23 module=m0 position=3224 kind=Arrow flags=[IsChecked] captures=[{typ
     v2 = Call v1, -, v0 calleeName="twoLengths" @3230
     ReturnCall v2 casts=[{declared={type=number site=w111}}, {declared={type=number site=w55}}] @3230
 }
-function f24 module=m0 position=3290 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|number site=w56}] functionTypes=[f42] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f24 module=m0 position=3290 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[OmitsNull, OmitsUndefined] variableName="record"}] thisType={type=anything} results=[{type=undefined|number site=w56}] functionTypes=[f42] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0):
     Jump -> next b1() @3290
   b1():
@@ -920,7 +920,7 @@ function f24 module=m0 position=3290 kind=Arrow flags=[IsChecked] captures=[{typ
     v2 = Call v1, -, v0 calleeName="lengthOrNothing" @3296
     ReturnCall v2 casts=[{declared={type=undefined|number site=w112}}, {declared={type=undefined|number site=w56}}] @3296
 }
-function f25 module=m0 position=3352 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|null|string site=w57 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f43] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f25 module=m0 position=3352 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[OmitsNull, OmitsUndefined] variableName="record"}] thisType={type=anything} results=[{type=undefined|null|string site=w57 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f43] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0):
     Jump -> next b1() @3352
   b1():
@@ -928,7 +928,7 @@ function f25 module=m0 position=3352 kind=Arrow flags=[IsChecked] captures=[{typ
     v2 = Call v1, -, v0 calleeName="caught" @3358
     ReturnCall v2 casts=[{declared={type=undefined|null|string site=w113 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=w57 flags=[OmitsNull, OmitsUndefined]}}] @3358
 }
-function f26 module=m0 position=3411 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w58}] functionTypes=[f44] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f26 module=m0 position=3411 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[OmitsNull, OmitsUndefined] variableName="record"}] thisType={type=anything} results=[{type=number site=w58}] functionTypes=[f44] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0):
     Jump -> next b1() @3411
   b1():
@@ -941,7 +941,7 @@ function f26 module=m0 position=3411 kind=Arrow flags=[IsChecked] captures=[{typ
     v7 = Call v1, -, v6 calleeName="lengthInLoop" @3417
     ReturnCall v7 casts=[{declared={type=number site=w114}}, {declared={type=number site=w58}}] @3417
 }
-function f27 module=m0 position=3537 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 site=w59 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w61}] functionTypes=[f45] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f27 module=m0 position=3537 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 site=w59 flags=[OmitsNull, OmitsUndefined] variableName="record"}] thisType={type=anything} results=[{type=number site=w61}] functionTypes=[f45] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0):
     Jump -> next b1() @3537
   b1():
@@ -949,7 +949,7 @@ function f27 module=m0 position=3537 kind=Arrow flags=[IsChecked] captures=[{typ
     v2 = Call v1, -, v0 calleeName="storeIntoList" @3543
     ReturnCall v2 casts=[{declared={type=number site=w115}}, {declared={type=number site=w61}}] @3543
 }
-function f28 module=m0 position=3596 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 site=w59 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w62}] functionTypes=[f46] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f28 module=m0 position=3596 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 site=w59 flags=[OmitsNull, OmitsUndefined] variableName="record"}] thisType={type=anything} results=[{type=number site=w62}] functionTypes=[f46] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0):
     Jump -> next b1() @3596
   b1():
@@ -1180,26 +1180,30 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f51 visibility=Private
 # CHECK-NEXT: v6: undefined = Undefined
 # CHECK-NEXT: v7: undefined = Undefined
 # CHECK-NEXT: v8: L0 = NewObject -, v5, v6, v7 layout=L0 fields=[0, 1, 2] allocationSite=32 allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: v9: guard = AllGuards v8
-# CHECK-NEXT: Jump -> next b3(v8, v9)
+# CHECK-NEXT: Jump -> next b3(v8)
 # CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v10: object = GetConstructPrototype v3 layout=L0
+# CHECK-NEXT: v9: object = GetConstructPrototype v3 layout=L0
+# CHECK-NEXT: v10: undefined = Undefined
 # CHECK-NEXT: v11: undefined = Undefined
 # CHECK-NEXT: v12: undefined = Undefined
-# CHECK-NEXT: v13: undefined = Undefined
-# CHECK-NEXT: v14: L0 = NewObject v10, v11, v12, v13 layout=L0 fields=[0, 1, 2] allocationSite=32 allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: v15: guard = AllGuards v14
-# CHECK-NEXT: Jump -> next b3(v14, v15)
-# CHECK-NEXT: b3(v16: L0, v17: guard):
-# CHECK-NEXT: Jump -> next b4(v17)
-# CHECK-NEXT: b4(v18: guard):
-# CHECK-NEXT: PutSlot v16, v18, v1 key="name" receivers=[L0] level=Expected accessSite=90
-# CHECK-NEXT: PutSlot v16, v18, v2 key="list" receivers=[L0] level=Expected accessSite=91
-# CHECK-NEXT: PutSlot v16, -, v16 key="next" receivers=[L0] level=Proven accessSite=92
-# CHECK-NEXT: Return v16
+# CHECK-NEXT: v13: L0 = NewObject v9, v10, v11, v12 layout=L0 fields=[0, 1, 2] allocationSite=32 allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: Jump -> next b3(v13)
+# CHECK-NEXT: b3(v14: L0):
+# CHECK-NEXT: v15: boolean = HasNoFieldOutsideSlot v14
+# CHECK-NEXT: Branch v15 -> taken b4(| 0), notTaken b5()
+# CHECK-NEXT: b4(v16: guard):
+# CHECK-NEXT: PutSlot v14, v16, v1 key="name" receivers=[L0] level=Expected accessSite=90
+# CHECK-NEXT: PutSlot v14, v16, v2 key="list" receivers=[L0] level=Expected accessSite=91
+# CHECK-NEXT: PutSlot v14, -, v14 key="next" receivers=[L0] level=Proven accessSite=92
+# CHECK-NEXT: Return v14
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: PropSet v14, v1 key="name" accessSite=90 receivers=[L0]
+# CHECK-NEXT: PropSet v14, v2 key="list" accessSite=91 receivers=[L0]
+# CHECK-NEXT: PutSlot v14, -, v14 key="next" receivers=[L0] level=Proven accessSite=92
+# CHECK-NEXT: Return v14
 # CHECK-NEXT: }
 # CHECK-LABEL: function f17 module=
-# CHECK: m0 position=2839 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|number site=w49}] functionTypes=[f35] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f64 fallback=f87} {
+# CHECK: m0 position=2839 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="record"}] thisType={type=anything} results=[{type=undefined|number site=w49}] functionTypes=[f35] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f64 fallback=f87} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|L0):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|L0
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
@@ -1211,7 +1215,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f51 visibility=Private
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f18 module=
-# CHECK: m0 position=2904 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w50 flags=[IsExpected]}] functionTypes=[f36] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f65 fallback=f88} {
+# CHECK: m0 position=2904 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="record"}] thisType={type=anything} results=[{type=number site=w50 flags=[IsExpected]}] functionTypes=[f36] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f65 fallback=f88} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|L0):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|L0
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
@@ -1223,7 +1227,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f51 visibility=Private
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f19 module=
-# CHECK: m0 position=2968 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w51 flags=[IsExpected]}] functionTypes=[f37] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f66 fallback=f89} {
+# CHECK: m0 position=2968 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="record"}] thisType={type=anything} results=[{type=number site=w51 flags=[IsExpected]}] functionTypes=[f37] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f66 fallback=f89} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|L0):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|L0
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
@@ -1235,7 +1239,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f51 visibility=Private
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f20 module=
-# CHECK: m0 position=3033 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w52 flags=[IsExpected]}] functionTypes=[f38] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f67 fallback=f90} {
+# CHECK: m0 position=3033 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="record"}] thisType={type=anything} results=[{type=number site=w52 flags=[IsExpected]}] functionTypes=[f38] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f67 fallback=f90} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|L0):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|L0
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
@@ -1247,7 +1251,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f51 visibility=Private
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f21 module=
-# CHECK: m0 position=3100 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w53}] functionTypes=[f39] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f68 fallback=f91} {
+# CHECK: m0 position=3100 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="record"}] thisType={type=anything} results=[{type=number site=w53}] functionTypes=[f39] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f68 fallback=f91} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|L0):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|L0
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
@@ -1259,7 +1263,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f51 visibility=Private
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f22 module=
-# CHECK: m0 position=3162 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=boolean site=w54}] functionTypes=[f40] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f69 fallback=f92} {
+# CHECK: m0 position=3162 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="record"}] thisType={type=anything} results=[{type=boolean site=w54}] functionTypes=[f40] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f69 fallback=f92} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|L0):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|L0
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
@@ -1271,7 +1275,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f51 visibility=Private
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f23 module=
-# CHECK: m0 position=3224 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w55 flags=[IsExpected]}] functionTypes=[f41] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f70 fallback=f93} {
+# CHECK: m0 position=3224 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="record"}] thisType={type=anything} results=[{type=number site=w55 flags=[IsExpected]}] functionTypes=[f41] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f70 fallback=f93} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|L0):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|L0
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
@@ -1283,7 +1287,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f51 visibility=Private
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f24 module=
-# CHECK: m0 position=3290 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|number site=w56}] functionTypes=[f42] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f71 fallback=f94} {
+# CHECK: m0 position=3290 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="record"}] thisType={type=anything} results=[{type=undefined|number site=w56}] functionTypes=[f42] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f71 fallback=f94} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|L0):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|L0
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
@@ -1295,7 +1299,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f51 visibility=Private
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f25 module=
-# CHECK: m0 position=3352 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|string site=w57 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f43] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f72 fallback=f95} {
+# CHECK: m0 position=3352 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="record"}] thisType={type=anything} results=[{type=undefined|string site=w57 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f43] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f72 fallback=f95} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|L0):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|L0
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
@@ -1307,7 +1311,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f51 visibility=Private
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f26 module=
-# CHECK: m0 position=3411 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w58 flags=[IsExpected]}] functionTypes=[f44] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f73 fallback=f96} {
+# CHECK: m0 position=3411 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="record"}] thisType={type=anything} results=[{type=number site=w58 flags=[IsExpected]}] functionTypes=[f44] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f73 fallback=f96} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|L0):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|L0
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
@@ -1319,7 +1323,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f51 visibility=Private
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f27 module=
-# CHECK: m0 position=3537 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|L0 site=w59 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w61 flags=[IsExpected]}] functionTypes=[f45] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f74 fallback=f97} {
+# CHECK: m0 position=3537 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|L0 site=w59 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="record"}] thisType={type=anything} results=[{type=number site=w61 flags=[IsExpected]}] functionTypes=[f45] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f74 fallback=f97} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|L0):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|L0
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
@@ -1331,7 +1335,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f51 visibility=Private
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f28 module=
-# CHECK: m0 position=3596 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|L0 site=w59 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w62 flags=[IsExpected]}] functionTypes=[f46] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f75 fallback=f98} {
+# CHECK: m0 position=3596 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|L0 site=w59 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="record"}] thisType={type=anything} results=[{type=number site=w62 flags=[IsExpected]}] functionTypes=[f46] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f75 fallback=f98} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|L0):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|L0
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()

@@ -18,12 +18,14 @@ pub(super) fn find_text_replaced_by_bundling<'s>(
     decisions: &Decisions<'s>,
     atoms: &Interner<'s>,
     printed_without_name: &[FnId],
+    find_operand_printed_alone: &dyn Fn(ExprId) -> Option<ExprId>,
 ) -> Vec<ReplacedText> {
     let mut finder = Finder {
         hir,
         bound,
         decisions: &decisions.as_folded_by_bun_run(),
         atoms,
+        find_operand_printed_alone,
         replaced: Vec::new(),
     };
     finder.add_branches_of_statements();
@@ -41,6 +43,8 @@ struct Finder<'a, 's> {
     bound: &'a Bound<'s>,
     decisions: &'a Decisions<'s>,
     atoms: &'a Interner<'s>,
+    // `FileLowering::find_operand_printed_alone`
+    find_operand_printed_alone: &'a dyn Fn(ExprId) -> Option<ExprId>,
     replaced: Vec<ReplacedText>,
 }
 
@@ -118,9 +122,18 @@ impl Finder<'_, '_> {
                         (false, true) => yes,
                         _ => continue,
                     };
-                    let start = start_inside_parentheses(hir, expression);
+                    let (start, end) = (
+                        start_inside_parentheses(hir, expression),
+                        hir[expression].end,
+                    );
+                    // Of `a ? b : c ? d : b` with `a` and `c` false `bun run` prints the first `b`. An error quotes what stands there, so that one is kept.
+                    let printed =
+                        (self.find_operand_printed_alone)(expression).filter(|&printed| {
+                            start <= start_of(hir, printed) && end_of_expr(hir, printed) <= end
+                        });
+                    let kept = printed.unwrap_or(kept);
                     self.leave_out(start, start_of(hir, kept));
-                    self.leave_out(end_of_expr(hir, kept), hir[expression].end);
+                    self.leave_out(end_of_expr(hir, kept), end);
                 }
                 ExprKind::Ident(_) | ExprKind::Dot { .. }
                     if !shorthand_values.contains(&expression) =>

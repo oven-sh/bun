@@ -1,5 +1,6 @@
 mod alternatives;
 mod call_sites;
+mod changed_files;
 mod encoders;
 mod import_uses;
 mod jsx;
@@ -129,6 +130,7 @@ pub(crate) struct ImportScan<'s> {
     pub paths_from_own_directory: &'s [ExprId],
     pub answers_of_resolvers: &'s [(ExprId, ResolvedForm)],
     pub names_of_workers: &'s [(ExprId, ImportSpecifier)],
+    pub paths_of_changed_files: &'s [(ExprId, ImportSpecifier)],
     pub first_call_site: u32,
     pub sites_by_kind: &'s [u32],
     pub jsx_imports: JsxImportSet,

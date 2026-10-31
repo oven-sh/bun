@@ -162,3 +162,41 @@ fn modules_order_by_variant_project_file() {
         }
     }
 }
+
+#[test]
+fn function_keys_come_back_out_of_numbers() {
+    let file = FileId(7);
+    let function = FunctionRef {
+        file,
+        function: FnId(9),
+    };
+    let class = ClassRef {
+        file,
+        class: ClassId(9),
+    };
+    let member = MemberId(9);
+    let keys = [
+        FunctionKey::ModuleBody(file),
+        FunctionKey::WrappedModuleBody(file),
+        FunctionKey::FaceBody(file),
+        FunctionKey::CheckBody(file),
+        FunctionKey::Source(function),
+        FunctionKey::Signature(function),
+        FunctionKey::ClassSignature(class),
+        FunctionKey::ImplicitConstructor(class),
+        FunctionKey::InstanceInitializer(class),
+        FunctionKey::StaticInitializer(class),
+        FunctionKey::AccessorGetter { file, member },
+        FunctionKey::AccessorSetter { file, member },
+        FunctionKey::PrivateNameTest { file, member },
+    ];
+    let mut all = std::collections::BTreeSet::new();
+    for project in ProjectId::ALL {
+        for key in keys {
+            let key = InProject { project, key };
+            assert_eq!(ProgramFunctionKey::from_numbers(key.to_numbers()), key);
+            all.insert(key.to_numbers());
+        }
+    }
+    assert_eq!(all.len(), ProjectId::COUNT * keys.len());
+}

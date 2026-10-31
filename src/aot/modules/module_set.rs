@@ -302,7 +302,7 @@ fn is_parsed_into_value(input: &BindInput<'_, '_>, file: FileId) -> bool {
 
 // In an executable of `bun build --compile` the loader of `bun run` answers every other call: what `createRequire` made, `import.meta.require`,
 // `require` under another name, a computed path. A path that nothing is known about names no file here: it would change the answer of calls far from it.
-// `Interop::answers_loader_with_namespace` is for that path.
+// `Interop::answers_loader_with_namespace` is for that path. `bun build` links no path with a query behind it either: `require("./a.txt?raw")`.
 fn find_files_required_from_loader(
     input: &BindInput<'_, '_>,
     scans: &Scans,
@@ -328,7 +328,9 @@ fn find_files_required_from_loader(
                 _ if !requires => {}
                 &ScannedSite::Module(module) => {
                     let (hir, bound) = (input.files.hir(importer), input.files.bound(importer));
-                    if !is_linked_by_bundler(hir, bound, site.kind) {
+                    if !is_linked_by_bundler(hir, bound, site.kind)
+                        || is_named_with_query(input, module)
+                    {
                         add(module);
                     }
                 }
@@ -341,6 +343,13 @@ fn find_files_required_from_loader(
         }
     }
     found
+}
+
+fn is_named_with_query(input: &BindInput<'_, '_>, module: ModuleRef) -> bool {
+    let ModuleRef::File(file) = module else {
+        return false;
+    };
+    parsed_source(input.files, file).is_some_and(|source| source.file_with_query.is_some())
 }
 
 // `require()` answers the namespace object of a file that the loader of ES modules already holds, and it holds all that an entry point imports before any code runs.

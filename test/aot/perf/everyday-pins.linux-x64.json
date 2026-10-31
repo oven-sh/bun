@@ -876,20 +876,20 @@
     "untyped": 149.3
   },
   "everyday-copies-of-lists-of-every-kind/array-from.fractions-parsed": {
-    "typed": 197.7,
+    "typed": 182.9,
     "untyped": 170.3
   },
   "everyday-copies-of-lists-of-every-kind/array-from.fractions-pushed": {
-    "typed": 174.7,
-    "untyped": 174.8
+    "typed": 159.6,
+    "untyped": 160
   },
   "everyday-copies-of-lists-of-every-kind/array-from.fractions-with-a-hole": {
-    "typed": 167.5,
-    "untyped": 167.6
+    "typed": 154.9,
+    "untyped": 154.6
   },
   "everyday-copies-of-lists-of-every-kind/array-from.whole-from": {
-    "typed": 174.8,
-    "untyped": 174.7
+    "typed": 159.9,
+    "untyped": 159.8
   },
   "everyday-copies-of-lists-of-every-kind/array-from.whole-literal": {
     "typed": 12.3,
@@ -900,16 +900,16 @@
     "untyped": 147.3
   },
   "everyday-copies-of-lists-of-every-kind/array-from.whole-parsed": {
-    "typed": 197.7,
+    "typed": 182.7,
     "untyped": 162.4
   },
   "everyday-copies-of-lists-of-every-kind/array-from.whole-pushed": {
-    "typed": 178.8,
-    "untyped": 178.6
+    "typed": 164.2,
+    "untyped": 164.4
   },
   "everyday-copies-of-lists-of-every-kind/array-from.whole-with-a-hole": {
-    "typed": 175.2,
-    "untyped": 175.3
+    "typed": 162.2,
+    "untyped": 162.5
   },
   "everyday-copies-of-lists-of-every-kind/array-from.with-nan": {
     "typed": 62.3,
@@ -1080,12 +1080,12 @@
     "untyped": 120.9
   },
   "everyday-copies-of-lists-of-every-kind/spread.fractions-parsed": {
-    "typed": 189.9,
+    "typed": 175,
     "untyped": 164.4
   },
   "everyday-copies-of-lists-of-every-kind/spread.fractions-with-a-hole": {
-    "typed": 167.8,
-    "untyped": 167.6
+    "typed": 154.7,
+    "untyped": 155
   },
   "everyday-copies-of-lists-of-every-kind/spread.whole-from": {
     "typed": 120.7,
@@ -1096,12 +1096,12 @@
     "untyped": 120.7
   },
   "everyday-copies-of-lists-of-every-kind/spread.whole-parsed": {
-    "typed": 189.6,
+    "typed": 174.7,
     "untyped": 156.3
   },
   "everyday-copies-of-lists-of-every-kind/spread.whole-pushed": {
-    "typed": 194.6,
-    "untyped": 194.4
+    "typed": 106.1,
+    "untyped": 105.5
   },
   "everyday-copies-of-lists-of-every-kind/spread.whole-with-a-hole": {
     "typed": 147.9,

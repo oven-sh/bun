@@ -221,9 +221,9 @@
     }
   },
   "classes without fields that extend one another in a row": {
-    "millionInstructions": 11580,
+    "millionInstructions": 9548,
     "millionInstructionsWithMusl": 15777,
-    "megabytes": 367,
+    "megabytes": 318,
     "growth": {
       "instructions": 3.23,
       "peakBytes": 5
@@ -234,26 +234,23 @@
     "megabytes": 119
   },
   "classes with a field and a method each that extend one another in a row": {
-    "millionInstructions": 9289,
-    "megabytes": 184,
-    "growth": {
-      "instructions": 2.58
-    }
+    "millionInstructions": 7612,
+    "megabytes": 128
   },
   "methods of one name that each call the method above, up a row of classes": {
     "millionInstructions": 6640,
     "megabytes": 115
   },
   "classes that each store to this and extend one another in a row": {
-    "millionInstructions": 15297,
-    "megabytes": 232
+    "millionInstructions": 13705,
+    "megabytes": 176
   },
   "classes that each store to this, in a row below a class with an accessor": {
     "millionInstructions": 15362,
     "megabytes": 238
   },
   "classes without members that extend one another in a row": {
-    "millionInstructions": 10663,
+    "millionInstructions": 8265,
     "megabytes": 151,
     "growth": {
       "instructions": 2.59
@@ -600,6 +597,10 @@
   "lines that each add an element to one sum and truncate it, in a loop that carries the sum as an integer": {
     "millionInstructions": 15207,
     "megabytes": 235
+  },
+  "sums of fractions that one loop adds to, all alive past the calls behind it": {
+    "millionInstructions": 32203,
+    "megabytes": 245
   },
   "all shapes as the entry points of one build, on four threads": {
     "megabytes": 654

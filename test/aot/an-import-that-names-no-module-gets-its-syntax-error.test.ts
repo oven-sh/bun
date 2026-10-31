@@ -1,10 +1,11 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
 // supported.ts sets the limit for the first file of a process alone.
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 // `import { x }` without `from "module"` is a syntax error that the parser recovers from, so the build goes on with an import that names no module. Whoever follows `x` to
 // the module it comes from has to find none. A test run also reads the strings of the test files as code, so there the broken text need not even be code.

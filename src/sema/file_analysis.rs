@@ -38,6 +38,9 @@ pub struct FileAnalysis<'s> {
     paths_from_own_directory: &'s [ExprId],
     answers_of_resolvers: &'s [(ExprId, ResolvedForm)],
     names_of_workers: &'s [(ExprId, ImportSpecifier)],
+    /// `writeFileSync(path, text)`, `rmSync(path)`, `Bun.write(path, text)`: each operand that names a file which the call writes, moves or removes, with what it may be,
+    /// where that is known. `is_path_from_own_directory` and `find_resolved_form` say how it is written, as of the specifier of a site.
+    pub paths_of_changed_files: &'s [(ExprId, ImportSpecifier)],
     pub jsx_imports: JsxImportSet,
     pub unused_import_symbols: &'s [SymbolId],
     pub imports_used_only_in_dead_code: &'s [SymbolId],

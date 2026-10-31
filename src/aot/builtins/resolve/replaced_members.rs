@@ -15,7 +15,7 @@ use bun_sema::bind::{Binding, BindingInitializer};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{BinOp, ExprId, ExprKind, MemberKey, NodeData, PropKey, UnOp};
 use bun_sema::import_sites::ImportSiteKind;
-use bun_sema::util::SharedSort;
+use bun_sema::util::{FxHashSet, SharedSort};
 
 // Takes an object and a key, and writes the property.
 fn writes_member_of_operand(callee: BuiltinId) -> bool {
@@ -382,7 +382,10 @@ impl Resolver<'_, '_> {
                 && table::object_replacing_namespace(module).is_none()
                 && module != RuntimeModule::BunTest
             {
-                let members = table::members(table::canonical_id(table::namespace_of(module)));
+                let namespace = table::canonical_id(table::namespace_of(module));
+                // Under `default` too, which is no member of the table but the object itself: find_export().
+                found.members.push(namespace);
+                let members = table::members(namespace);
                 found.members.extend(members.iter().filter(|&&member| {
                     let entry = table::entry(member);
                     entry.mutability == Mutability::AlwaysLocked && entry.scope == Scope::Realm
@@ -454,16 +457,11 @@ impl Resolver<'_, '_> {
                     }
                 }
             }
-            // Objects that the file reaches without their names, under a name that some built-in object has. They come ON TOP of what stands above:
+            // Objects that the file reaches without their names, under a key that it spells. They come ON TOP of what stands above:
             // no older rule asks whether one was found. A package does in a test run what it does in an executable.
-            let names_member = || {
-                written
-                    .iter()
-                    .any(|&name| self.input.names.get(name).is_some())
-            };
             let unnamed = match holders.is_empty()
                 && sought == ReplacedMembersSought::WrittenOrNamed
-                && (!symbols.is_empty() || names_member())
+                && (!symbols.is_empty() || !written.is_empty())
             {
                 true => self.find_builtins_reached_without_names(write.object),
                 false => Vec::new(),
@@ -530,6 +528,8 @@ impl Resolver<'_, '_> {
                 }
             }
         }
+        let mut seen = FxHashSet::default();
+        found.names.retain(|&name| seen.insert(name));
         self.output.replaced_members = found.members;
         self.output.names_added = found.names;
         self.output.holders_named_from_outside = named_from_outside;

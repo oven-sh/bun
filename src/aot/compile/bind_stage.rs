@@ -4,7 +4,10 @@ use super::program_reach::{
 };
 use super::summary::collect_program_file_paths;
 use super::{BoundBuild, BoundProject, Build, LoadedBuild};
-use crate::builtins::{BuiltinValuePaths, builtin_type_paths, count_types_degraded_to_views};
+use crate::builtins::{
+    BuiltinId, BuiltinValuePaths, RuntimeModule, builtin_type_paths, count_types_degraded_to_views,
+    table,
+};
 use crate::known_helpers::KnownHelpers;
 use crate::link::run_beside;
 use crate::load::{PerProject, ProjectId};
@@ -15,6 +18,30 @@ use crate::options::{ReplacedExport, ReplacedModule};
 use crate::statistics::{Stage, StatisticId};
 use bun_sema::check::aot::BuiltinTypeSymbols;
 use bun_sema_driver::host::to_native;
+
+/// What the look through the test files found, for a program that lies below them.
+fn tests_store_loader_functions(builtins: &[u32], exports: &[ReplacedExport]) -> bool {
+    let is_stored = |builtin: Option<BuiltinId>| {
+        matches!(
+            builtin.map(table::canonical_id),
+            Some(BuiltinId::NodeModule_resolveFilename | BuiltinId::NodeModulePrototypeRequire)
+        )
+    };
+    builtins
+        .iter()
+        .any(|&builtin| is_stored(BuiltinId::from_wire(builtin)))
+        || exports.iter().any(|export| {
+            let module = match &export.module {
+                ReplacedModule::File(specifier) => table::module_by_specifier(specifier),
+                ReplacedModule::Runtime(id) => RuntimeModule::from_registry_id(*id),
+            };
+            module == Some(RuntimeModule::NodeModule)
+                && is_stored(
+                    table::find_name(&export.name)
+                        .and_then(|name| table::own_member(BuiltinId::NodeModule, name)),
+                )
+        })
+}
 
 // The text of a module says which shapes it can have. What the reached code does with the module says which one it has.
 fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules) {
@@ -136,6 +163,7 @@ impl Build<'_> {
             replaced_exports,
             replaced_builtins: &self.options.load.replaced_builtins,
             runs_in_place: self.options.aot.runs_in_place,
+            working_directory: &self.options.code.working_directory,
             ignores_declared_side_effects: self.options.code.ignores_declared_side_effects,
             mocked_modules: match project {
                 ProjectId::Application => &self.options.load.mocked_modules,
@@ -262,6 +290,15 @@ impl Build<'_> {
                 let nobody_reads = self.options.load.ways_named_that_nobody_reads;
                 let (left_out, reached) = find_left_out_code(&input, nobody_reads, &in_parallel);
                 finish_modules(&mut graph, &reached);
+                graph.set_asks_loader_functions(
+                    self.options.load.runs_tests
+                        && (reached.stores_loader_functions
+                            || self.options.load.stores_loader_functions
+                            || tests_store_loader_functions(
+                                &self.options.load.replaced_builtins,
+                                &self.options.load.replaced_exports,
+                            )),
+                );
                 if !reached.found_by_name.is_empty() {
                     self.started_workers.root_folders_spelled = find_root_folders_spelled(
                         view.files(),

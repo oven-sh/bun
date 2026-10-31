@@ -11,7 +11,7 @@
 
 use super::resolver::Resolver;
 use crate::builtins::table::{self, BuiltinId, MemberLookup, Prototype};
-use bun_sema::atom::Atom;
+use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Decl, FnOwner, Parent, PatParent, SymbolId};
 use bun_sema::fold::{TreeNode, push_children};
 use bun_sema::hir::{
@@ -810,6 +810,45 @@ impl Resolver<'_, '_> {
         answer
     }
 
+    /// The functions of the file whose own `prototype` object the value may be: `walk.prototype`, `Object.getPrototypeOf(walk())` of `function* walk() {}`, `new Tool().__proto__`.
+    fn find_functions_with_prototype(&self, value: ExprId) -> Vec<FnId> {
+        let hir = self.input.hir;
+        let is_way_up = |name: Atom| {
+            find_member(BuiltinId::ObjectPrototype, self.input.names.get(name))
+                == Some(BuiltinId::ObjectPrototype__proto__)
+        };
+        let made = match (hir[value].kind, hir.member_key(value)) {
+            (ExprKind::Call(call), _) => match self.find_builtin(hir[call].callee) {
+                Some(BuiltinId::ObjectGetPrototypeOf | BuiltinId::ReflectGetPrototypeOf) => {
+                    hir.ids(hir[call].args).next()
+                }
+                _ => None,
+            },
+            (_, Some((function, MemberKey::Name(name)))) if name == known::prototype => {
+                return self.find_functions_behind(function);
+            }
+            (_, Some((made, MemberKey::Name(name)))) if is_way_up(name) => Some(made),
+            _ => None,
+        };
+        let Some(made) = made else {
+            return Vec::new();
+        };
+        let mut functions = Vec::new();
+        for &made in self.spelled_values_of(made).iter() {
+            match hir[made].kind {
+                ExprKind::Call(call) => {
+                    let called = self.find_functions_behind(hir[call].callee).into_iter();
+                    functions.extend(called.filter(|&it| hir[it].flags.contains(Flags::GENERATOR)));
+                }
+                ExprKind::New(call) => {
+                    functions.extend(self.find_functions_behind(hir[call].callee));
+                }
+                _ => {}
+            }
+        }
+        functions
+    }
+
     fn find_prototypes_of_spelled(&self, value: ExprId) -> Vec<BuiltinId> {
         let hir = self.input.hir;
         let value = hir.skip_type_assertions(value);
@@ -824,6 +863,32 @@ impl Resolver<'_, '_> {
                 });
             links.collect()
         };
+        let is_async = |function: FnId| hir[function].flags.contains(Flags::ASYNC);
+        let is_generator = |function: FnId| hir[function].flags.contains(Flags::GENERATOR);
+        // `Object.getPrototypeOf(function* () {})`, `walk.__proto__` of `async function walk() {}`
+        let functions = self.find_functions_behind(value);
+        if !functions.is_empty() {
+            let prototypes = functions.into_iter().map(|function| {
+                match (is_async(function), is_generator(function)) {
+                    (false, false) => BuiltinId::FunctionPrototype,
+                    (true, false) => BuiltinId::AsyncFunctionPrototype,
+                    (false, true) => BuiltinId::GeneratorFunctionPrototype,
+                    (true, true) => BuiltinId::AsyncGeneratorFunctionPrototype,
+                }
+            });
+            return prototypes.collect();
+        }
+        let functions = self.find_functions_with_prototype(value);
+        if !functions.is_empty() {
+            let prototypes = functions.into_iter().map(|function| {
+                match (is_async(function), is_generator(function)) {
+                    (false, true) => BuiltinId::GeneratorPrototype,
+                    (true, true) => BuiltinId::AsyncGeneratorPrototype,
+                    (_, false) => BuiltinId::ObjectPrototype,
+                }
+            });
+            return prototypes.collect();
+        }
         vec![match hir[value].kind {
             ExprKind::Array(_) => BuiltinId::ArrayPrototype,
             ExprKind::Object(_) => BuiltinId::ObjectPrototype,
@@ -832,12 +897,6 @@ impl Resolver<'_, '_> {
             ExprKind::BigInt(_) => BuiltinId::BigIntPrototype,
             ExprKind::True | ExprKind::False => BuiltinId::BooleanPrototype,
             ExprKind::Regex { .. } => BuiltinId::RegExpPrototype,
-            ExprKind::Fn(function)
-                if !(hir[function].flags).intersects(Flags::ASYNC | Flags::GENERATOR) =>
-            {
-                BuiltinId::FunctionPrototype
-            }
-            ExprKind::Fn(_) => return Vec::new(),
             ExprKind::New(call) => {
                 let classes = self.find_builtins_behind(hir[call].callee);
                 return classes

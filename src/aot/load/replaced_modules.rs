@@ -13,7 +13,8 @@ use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, is_module_call_of_
 
 use crate::builtins::{BuiltinId, ResolvedBuiltins, RuntimeModule};
 use crate::modules::evicted::{
-    FileOfKey, find_file_of_key, find_files_named_with_query, stands_where_a_throw_is_caught,
+    FileOfKey, find_file_of_key, find_files_named_with_query, find_paths_changed_on_disk,
+    stands_where_a_throw_is_caught,
 };
 
 #[derive(Default)]
@@ -32,6 +33,8 @@ pub(super) struct ReplacedModules {
     pub spies_on_unknown_objects: SpiesOnUnknownObjects,
     /// `delete require.cache[require.resolve("./a")]`
     pub evicted: Vec<Atom>,
+    /// `find_paths_changed_on_disk`
+    pub changed_on_disk: Vec<(Atom, bool)>,
     /// As `evicted`, of a file that this one does not spell.
     pub evicts_any: bool,
     /// `ReplacedByTests::files_required_where_throws_are_caught`
@@ -586,6 +589,7 @@ impl Look<'_, '_> {
                 FileOfKey::Unknown => self.found.evicts_any = true,
             }
         }
+        self.found.changed_on_disk = find_paths_changed_on_disk(analysis);
         for site in analysis.import_sites {
             if let ImportSiteKind::Require(call) = site.kind
                 && stands_where_a_throw_is_caught(hir, bound, call)

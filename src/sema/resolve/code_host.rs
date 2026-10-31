@@ -86,8 +86,13 @@ pub trait CodeHost: Host {
     }
 
     /// The path of one more module of the file at `path`, which the program knows as `path` with `query` behind it. Whoever asks with the same two gets the same path.
-    /// It lies in the directory of the file and ends as the name of the file does. `None` if the host can make no second module of such a file.
-    fn add_module_with_query(&self, _path: &[u8], _query: &[u8]) -> Option<Vec<u8>> {
+    /// It lies in the directory of the file and ends as the name of the file does. `None` if the host can make no second module of such a file for an import of `kind`.
+    fn add_module_with_query(
+        &self,
+        _path: &[u8],
+        _query: &[u8],
+        _kind: CodeImportKind,
+    ) -> Option<Vec<u8>> {
         None
     }
 

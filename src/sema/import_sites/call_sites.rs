@@ -1,4 +1,5 @@
 use super::alternatives::{WrittenNames, find_alternatives};
+use super::changed_files::find_operands_that_name_changed_files;
 use super::made_requires::{
     OwnRequire, StepsLeft, Text, find_imported_export, find_own_require, follow_settled_bindings,
     follow_to_own_require, holds_import_meta_require, may_be_modified, may_require_get_members,
@@ -458,6 +459,7 @@ pub(super) struct ScannedCalls {
     pub(super) paths_from_own_directory: Vec<ExprId>,
     pub(super) answers_of_resolvers: Vec<(ExprId, ResolvedForm)>,
     pub(super) names_of_workers: Vec<(ExprId, ImportSpecifier)>,
+    pub(super) paths_of_changed_files: Vec<(ExprId, ImportSpecifier)>,
     pub(super) module_require_objects: Vec<ExprId>,
     pub(super) requires_of_other_files: Vec<(u32, Atom)>,
 }
@@ -473,6 +475,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     let mut module_require_objects = Vec::new();
     let mut requires_of_other_files = Vec::new();
     let mut names_of_workers = Vec::new();
+    let mut paths_of_changed_files = Vec::new();
     for index in 0..hir.exprs.len() {
         let call = ExprId(index as u32);
         let Some(form) = find_call_form(hir, call) else {
@@ -483,6 +486,14 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         let is_dead_in_bun_run = is_dead && decisions.as_folded_by_bun_run().is_dead_expr(call);
         if bound.parent_of_expr(call) == Parent::None || is_dead_in_bun_run {
             continue;
+        }
+        if let (false, CallForm::Call { callee, args }) = (is_dead, form) {
+            for path in find_operands_that_name_changed_files(inputs, callee, args) {
+                let specifier = call_specifier(inputs, path, &mut alternatives);
+                if specifier != ImportSpecifier::Unknown {
+                    paths_of_changed_files.push((path, specifier));
+                }
+            }
         }
         let text = Text::of(hir, bound, Some(decisions));
         let Some(found) = find_call_site(text, call, form, StepsLeft::ALL) else {
@@ -513,6 +524,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         paths_from_own_directory: alternatives.paths_from_own_directory,
         answers_of_resolvers: alternatives.answers_of_resolvers,
         names_of_workers,
+        paths_of_changed_files,
         module_require_objects,
         requires_of_other_files,
     }

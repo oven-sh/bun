@@ -22,12 +22,15 @@ test("a default is raised to what the runner gave, and never lowered", () => {
   }).toEqual({ withAssertions: 270_000, withAssertionsAndALongerLimit: 600_000, withoutAssertions: 120_000 });
 });
 
-test("no file of the harness sets the default by itself", () => {
-  for (const file of ["supported.ts", "harness/commands.ts", "harness/shared-builds.ts"])
-    expect({ file, sets: readFileSync(join(import.meta.dir, file), "utf8").includes("setDefaultTimeout") }).toEqual({
-      file,
-      sets: false,
-    });
+test("no file here sets a default under the runner's number by itself", () => {
+  const lower: string[] = [];
+  for (const file of new Bun.Glob("**/*.ts").scanSync({ cwd: import.meta.dir })) {
+    if (file.includes("node_modules")) continue;
+    const text = readFileSync(join(import.meta.dir, file), "utf8");
+    for (const [, limit] of text.matchAll(/^ *setDefaultTimeout\(([\d_]+)\)/gm))
+      if (Number(limit.replaceAll("_", "")) < givenToABunWithAssertions) lower.push(`${file}: ${limit}`);
+  }
+  expect(lower).toEqual([]);
 });
 
 test.skipIf(!isASAN && !isDebug)(

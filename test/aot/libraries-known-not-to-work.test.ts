@@ -262,17 +262,6 @@ const programs: Record<string, Program> = {
     },
     plain: "[object Object]\n",
   },
-  "pirates": {
-    files: {
-      "main.js": `
-        const Module = require("node:module");
-        const oldLoader = Module._extensions[".js"];
-        Module._extensions[".js"] = function newLoader(mod, filename) { return oldLoader(mod, filename); };
-        console.log(require("./other.js"));`,
-      "other.js": `module.exports = "one";`,
-    },
-    plain: "one\n",
-  },
   "module-alias": {
     files: {
       "main.js": `

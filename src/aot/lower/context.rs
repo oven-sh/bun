@@ -31,7 +31,7 @@ use super::layouts::{DefinedObjectTypes, LayoutState};
 use super::module::{LibraryFunctions, ModuleState};
 use super::prepared::{PreparedFile, PreparedFiles};
 use super::scope::{RegistryNames, ScopeAnalysis, ScopeInput, analyze_scopes};
-use super::transpiled::{ParsedText, RuntimeTranspiler, TranspileRequest, TranspiledFile};
+use super::transpiled::{ParsedText, Rewrite, RuntimeTranspiler, TranspileRequest, TranspiledFile};
 use super::types::TypeState;
 use crate::builtins::id::RuntimeModule;
 use crate::builtins::{
@@ -400,12 +400,18 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
                 let printed_without_name = transpiled.as_ref().map_or(&[][..], |transpiled| {
                     transpiled.declarations_printed_without_name()
                 });
+                let find_operand_printed_alone =
+                    |expression: ExprId| match transpiled.as_ref()?.find_rewrite(expression)? {
+                        Rewrite::Operand(operand) => Some(operand),
+                        _ => None,
+                    };
                 let replaced = find_text_replaced_by_bundling(
                     hir,
                     bound,
                     decisions,
                     atoms,
                     printed_without_name,
+                    &find_operand_printed_alone,
                 );
                 find_type_ranges_beside(hir, replaced)
             }

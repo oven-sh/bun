@@ -77,6 +77,7 @@ pub(super) struct Memo<'c> {
     checked_members: FxHashMap<TypeId, Result<&'c [CheckedMember], GaveUp>>,
     /// Of the two types that `members_typed_otherwise` was asked about last.
     most_recent_checked_members: [Option<(TypeId, Vec<CheckedMember>)>; 2],
+    pub(super) names_typed_by_this: FxHashMap<Sym, (&'c [Atom], usize)>,
     signature_results: FxHashMap<SigId, CheckedType>,
     signatures: FxHashMap<SigId, SignatureShape<'c>>,
     function_signatures: FxHashMap<FunctionRef, SignatureShape<'c>>,
@@ -157,6 +158,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             self.check_source_file_silently(file);
         }
+        self.class_members_by_name.is_on = true;
         let (memo_of_checker, arena) = self.aot_answers.take();
         let closed_cycles_before = self.closed_cycle_count();
         let union_members_compared_before = self.union_members_compared();
@@ -204,6 +206,7 @@ impl<'p, 's> Checker<'p, 's> {
 
 impl Drop for Queries<'_, '_, '_> {
     fn drop(&mut self) {
+        self.c.class_members_by_name.is_on = false;
         self.c.flow_analysis_disabled = std::mem::take(&mut self.flow_analysis_was_disabled);
         self.c.ran_out_of_stack.set(self.had_run_out_of_stack);
         self.c.rechecked_exprs.clear();
@@ -243,6 +246,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.c.work_trap = WORK_TRAP_DISARMED;
     }
 
+    #[inline(never)]
     fn take_cut_state(&mut self) -> CutState {
         self.forget_what_a_question_leaves();
         CutState {
@@ -252,6 +256,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     /// Why the question that ends here has no answer. `enclosing`: the state of the question around it, which goes on.
+    #[inline(never)]
     fn end_question(&mut self, enclosing: CutState) -> Option<GaveUp> {
         self.forget_what_a_question_leaves();
         let ran_out_of_stack = (self.c.ran_out_of_stack).replace(enclosing.ran_out_of_stack);
@@ -277,9 +282,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return Err(GaveUp::Unresolved);
         }
         let enclosing = self.take_cut_state();
+        let limit_hits = self.c.instantiation_limit_hits;
         self.depth += 1;
         let computed = compute(self);
         self.depth -= 1;
+        if self.c.leaves_depth_limit_unreported && self.c.instantiation_limit_hits != limit_hits {
+            self.unstable_answers += 1;
+        }
         let answer = match self.end_question(enclosing) {
             Some(reason) => Err(reason),
             None => computed,
@@ -293,6 +302,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         answer
     }
 
+    #[cold]
+    #[inline(never)]
     fn note_gave_up(&mut self, reason: GaveUp, is_outermost: bool) {
         if !reason.is_function_of_key() {
             self.unstable_answers += 1;
@@ -1224,6 +1235,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         object_type: TypeId,
         base: TypeId,
     ) -> Result<Vec<MemberTypedOtherwise>, GaveUp> {
+        let by_names =
+            self.ask(|queries| queries.compute_members_typed_otherwise(object_type, base));
+        if let Some(found) = by_names? {
+            return Ok(found);
+        }
         // In such a row the base is the class that was asked about just before, and classes that extend one class follow one another.
         let (in_base, base_is_kept) = self.checked_members_for_now(base)?;
         let (members, is_kept) = self.checked_members_for_now(object_type)?;

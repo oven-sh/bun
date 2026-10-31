@@ -1454,6 +1454,101 @@ fn name_of_a_worker_is_known_in_part() {
     }
 }
 
+const PATHS_OF_CHANGED_FILES: &[(&str, &[&str])] = &[
+    (
+        "import { writeFileSync } from 'node:fs'; writeFileSync('/p/a.js', text);",
+        &["/p/a.js"],
+    ),
+    (
+        "import { writeFileSync as put } from 'fs'; put('a.js', text);",
+        &["a.js"],
+    ),
+    (
+        "import fs from 'node:fs'; fs.writeFileSync('/p/a.js', text);",
+        &["/p/a.js"],
+    ),
+    (
+        "import * as fs from 'node:fs'; const put = fs.appendFileSync; put('/p/a.js', text);",
+        &["/p/a.js"],
+    ),
+    (
+        "import fs from 'node:fs'; await fs.promises.writeFile('/p/a.js', text);",
+        &["/p/a.js"],
+    ),
+    (
+        "import { rm } from 'node:fs/promises'; await rm('/p/a.js');",
+        &["/p/a.js"],
+    ),
+    (
+        "import { renameSync } from 'node:fs'; renameSync('/p/a.js', '/p/b.js');",
+        &["/p/a.js", "/p/b.js"],
+    ),
+    (
+        "import { copyFileSync } from 'node:fs'; copyFileSync('/p/a.js', '/p/b.js');",
+        &["/p/b.js"],
+    ),
+    (
+        "import { openSync } from 'node:fs'; openSync('/p/a.js', 'w');",
+        &["/p/a.js"],
+    ),
+    (
+        "export {}; require('fs').unlinkSync('/p/a.js');",
+        &["/p/a.js"],
+    ),
+    ("export {}; await Bun.write('/p/a.js', text);", &["/p/a.js"]),
+    (
+        "export {}; await Bun.write(Bun.file('/p/a.js'), text);",
+        &["/p/a.js"],
+    ),
+    (
+        "export {}; const file = Bun.file('/p/a.js'); await file.delete();",
+        &["/p/a.js"],
+    ),
+    (
+        "import { writeFileSync } from 'node:fs'; import { join } from 'node:path'; writeFileSync(join(import.meta.dir, 'a.js'), text);",
+        &["./a.js"],
+    ),
+    (
+        "import { writeFileSync } from 'node:fs'; for (const name of ['a.js', 'b.js']) writeFileSync('/p/' + name, text);",
+        &["/p/a.js", "/p/b.js"],
+    ),
+];
+
+const CALLS_THAT_CHANGE_NO_FILE_THAT_IS_KNOWN: &[&str] = &[
+    "import { writeFileSync } from 'node:fs'; writeFileSync(path, text);",
+    "import { readFileSync } from 'node:fs'; readFileSync('/p/a.js');",
+    "import { openSync } from 'node:fs'; openSync('/p/a.js'); openSync('/p/a.js', 'r'); openSync('/p/a.js', flags);",
+    "import { writeFileSync } from './mine.js'; writeFileSync('/p/a.js', text);",
+    "export {}; function writeFileSync() {} writeFileSync('/p/a.js', text);",
+    "export {}; other.writeFileSync('/p/a.js', text);",
+    "export {}; const Bun = other; Bun.write('/p/a.js', text);",
+    "import { writeFileSync } from 'node:fs'; if (false) writeFileSync('/p/a.js', text);",
+    "import { writeFileSync } from 'node:fs'; writeFileSync(...all);",
+    "export {}; other.file('/p/a.js').write(text);",
+];
+
+fn describe_paths_of_changed_files(text: &str) -> Vec<String> {
+    let mut described = Vec::new();
+    with_workspace(|w| {
+        let s = &w.analyze(&Source::new("a.mjs", text), &w.fold_inputs(&TARGET));
+        let paths = s.analysis.paths_of_changed_files.iter();
+        described = paths
+            .flat_map(|(_, specifier)| describe_specifier(s, specifier))
+            .collect();
+    });
+    described
+}
+
+#[test]
+fn paths_that_a_file_spells_to_calls_which_change_what_is_there() {
+    for &(text, paths) in PATHS_OF_CHANGED_FILES {
+        assert_eq!(describe_paths_of_changed_files(text), paths, "{text}");
+    }
+    for &text in CALLS_THAT_CHANGE_NO_FILE_THAT_IS_KNOWN {
+        assert!(describe_paths_of_changed_files(text).is_empty(), "{text}");
+    }
+}
+
 #[test]
 fn name_that_a_loop_takes_out_of_an_object_is_known_by_its_start_and_end() {
     let text = "for (const name in table) require(`./lib/${name}.js`);";

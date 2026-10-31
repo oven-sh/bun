@@ -643,7 +643,8 @@ impl FileLowering<'_, '_, '_, '_> {
             _ => self.find_operand_printed_alone(expression),
         };
         if let Some(operand) = operand {
-            let operand = self.skip_type_syntax(operand);
+            // `const r = (a, b)`: `b` is printed in the place of `r`. The piece for the brackets and all in them does not lie in what stands between them.
+            let operand = self.skip_unprinted_syntax(operand);
             return Some(ReplacedText {
                 start,
                 end,

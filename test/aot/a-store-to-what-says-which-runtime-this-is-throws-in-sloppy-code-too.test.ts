@@ -1,11 +1,12 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
 // supported.ts sets the limit for the first file of a process alone.
-setDefaultTimeout(240_000);
+raiseDefaultTimeout(240_000);
 
 // The compiler folds reads of process.versions.node, process.versions.bun and process.release.name, so an executable may not change the three. They are locked as the built-in
 // objects are: the change throws in sloppy code too, and the message names the member. A .cjs file is sloppy code, a .mjs file strict.

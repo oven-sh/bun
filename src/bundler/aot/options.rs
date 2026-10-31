@@ -221,6 +221,10 @@ fn code_options(input: &OptionsInput<'_, '_, '_>) -> CodeOptions {
     code.main_modules_beside_entry_points = (input.aot.main_modules_beside_entry_points.iter())
         .map(|path| from_native(path))
         .collect();
+    code.entry_points_only_imported_from_above =
+        (input.aot.entry_points_only_imported_from_above.iter())
+            .map(|path| from_native(path))
+            .collect();
     code.tsconfig_override = (options.tsconfig_override.as_ref())
         .map(|path| from_argument(&code.working_directory, path));
 

@@ -1,9 +1,10 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 // The lowest program of a test run holds all of Bun's own code, compiled. An `await` alone used to bring 34 files of it into the program of a test file again,
 // once for every part of a run: three quarters of the time that such a part took to build.

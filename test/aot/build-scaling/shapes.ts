@@ -1792,6 +1792,26 @@ export const shapes: Shape[] = [
         "console.log(sum);\n",
     }),
   },
+  {
+    // A step of the register allocator that was asked for one value at a time and walked and sorted the blocks each time: 16 s became 207 s at 20,000 sums, on x64 alone,
+    // where no register that holds a fraction outlives a call.
+    name: "sums of fractions that one loop adds to, all alive past the calls behind it",
+    counted: "sums",
+    size: 2500,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js":
+        `const a = [], b = [];\nfor (let i = 0; i <= ${size}; i++) { a.push(i + 0.25); b.push(i * 7); }\n` +
+        "function mix(s, v) { return (s * 33 + v) % 1000000007; }\nfunction big(a, b) {\n  let s = 1;\n" +
+        lines(size, index => `  let v${index} = 0;`) +
+        "  for (let turn = 0; turn < 3; turn++) {\n" +
+        lines(size, index => `    v${index} = v${index} + ${index % 3 === 2 ? "b" : "a"}[${index + 1}];`) +
+        "    s = mix(s, turn);\n  }\n" +
+        lines(size, index => `  s = mix(s, v${index} * 4);`) +
+        "  return s;\n}\nconsole.log(big(a, b));\n",
+    }),
+  },
 ];
 
 if (import.meta.main) {

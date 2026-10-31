@@ -456,6 +456,10 @@ impl CopyFile {
                     );
                     return Err(bun_errno::from_errno(bun_sys::E::EINVAL as i32).into());
                 }
+                // EAGAIN: a pipe or socket end is non-blocking and not ready. The read/write loop waits for it.
+                bun_sys::E::EAGAIN if !matches!(USE, TryWith::CopyFileRange) => {
+                    return self.fallback_read_write(remain, unknown_size, &mut total_written);
+                }
                 errno => {
                     self.system_error = Some(
                         bun_sys::Error {
@@ -969,14 +973,14 @@ fn read_write_loop_capped(
     let mut remaining = cap;
     while remaining > 0 {
         let want = (buf.len() as SizeType).min(remaining) as usize;
-        let amt = bun_sys::read(src_fd, &mut buf[..want])?;
+        let amt = bun_sys::read_retrying(src_fd, &mut buf[..want])?;
         if amt == 0 {
             break;
         }
         remaining -= amt as SizeType;
         let mut slice = &buf[..amt];
         while !slice.is_empty() {
-            match bun_sys::write(dest_fd, slice)? {
+            match bun_sys::write_retrying(dest_fd, slice)? {
                 0 => return Ok(()),
                 n => {
                     *total += n as u64;

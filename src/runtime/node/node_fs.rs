@@ -5233,7 +5233,7 @@ impl NodeFS {
         let mut broke = false;
         'toplevel: while remain > 0 {
             let read_len = (buf.len() as u64).min(remain) as usize;
-            let amt = match Syscall::read(src_fd, &mut buf[..read_len]) {
+            let amt = match Syscall::read_retrying(src_fd, &mut buf[..read_len]) {
                 Ok(result) => result,
                 Err(err) => {
                     return Err(if !src.is_empty() {
@@ -5253,7 +5253,7 @@ impl NodeFS {
 
             let mut slice = &buf[..amt];
             while !slice.is_empty() {
-                let written = match Syscall::write(dest_fd, slice) {
+                let written = match Syscall::write_retrying(dest_fd, slice) {
                     Ok(result) => result,
                     Err(err) => {
                         return Err(if !dest.is_empty() {
@@ -5272,7 +5272,7 @@ impl NodeFS {
         }
         if !broke {
             'outer: loop {
-                let amt = match Syscall::read(src_fd, buf) {
+                let amt = match Syscall::read_retrying(src_fd, buf) {
                     Ok(result) => result,
                     Err(err) => {
                         return Err(if !src.is_empty() {
@@ -5291,7 +5291,7 @@ impl NodeFS {
 
                 let mut slice = &buf[..amt];
                 while !slice.is_empty() {
-                    let written = match Syscall::write(dest_fd, slice) {
+                    let written = match Syscall::write_retrying(dest_fd, slice) {
                         Ok(result) => result,
                         Err(err) => {
                             return Err(if !dest.is_empty() {

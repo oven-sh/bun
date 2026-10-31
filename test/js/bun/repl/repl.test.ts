@@ -581,6 +581,34 @@ describe.concurrent("Bun REPL", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    test("--unhandled-rejections=throw prints an unhandled rejection once and keeps running", async () => {
+      const { outputs, stderr } = await runRepl(
+        [`Promise.reject(new Error("first")); 1`, `Promise.reject(new Error("second")); 2`, ".exit"],
+        { env: { BUN_OPTIONS: "--unhandled-rejections=throw" } },
+      );
+      expect({ outputs, errors: stderr.split("\n").filter(line => line.startsWith("error: ")) }).toEqual({
+        outputs: ["1", "2"],
+        errors: ["error: first", "error: second"],
+      });
+    });
+
+    // An uncaught error does not end the REPL, as in node's (which takes it with an uncaught-exception capture
+    // callback). So what the listeners of its report reject is reported in turn, here until the 20th call.
+    test("--unhandled-rejections=strict goes on reporting what a listener rejects", async () => {
+      const { stdout, exitCode } = await runRepl(
+        [
+          `let calls = 0; process.on("unhandledRejection", async () => { if (++calls === 20) { console.log("calls: " + calls); process.exit(0); } throw new Error("the listener failed"); }); 0`,
+          `Promise.reject(new Error("first")); 1`,
+          ".exit",
+        ],
+        { env: { BUN_OPTIONS: "--unhandled-rejections=strict" } },
+      );
+      expect({ lastLine: stripAnsi(stdout).trimEnd().split("\n").at(-1), exitCode }).toEqual({
+        lastLine: "calls: 20",
+        exitCode: 0,
+      });
+    });
   });
 
   describe("import statements", () => {

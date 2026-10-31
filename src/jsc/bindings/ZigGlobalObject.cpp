@@ -3787,6 +3787,7 @@ RefPtr<Performance> GlobalObject::performance()
 }
 
 extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise, JSC::EncodedJSValue rejectionOwner);
+extern "C" uint32_t Bun__VM__fatalUncaughtCount(void* vm);
 
 void GlobalObject::handleRejectedPromises()
 {
@@ -3795,6 +3796,7 @@ void GlobalObject::handleRejectedPromises()
 
     JSC::VM& virtual_machine = vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(virtual_machine);
+    const uint32_t fatalBefore = Bun__VM__fatalUncaughtCount(bunVM());
     do {
         // Move the whole list out under one cellLock, then iterate linearly —
         // the same pattern JSC's VM::didExhaustMicrotaskQueue and WebCore's
@@ -3817,6 +3819,11 @@ void GlobalObject::handleRejectedPromises()
                 (void)scope.tryClearException();
                 this->reportUncaughtExceptionAtEventLoop(this, ex);
             }
+        }
+        // A report no listener took ends the pass: a listener that always rejects would pin this loop. Must stay last.
+        if (Bun__VM__fatalUncaughtCount(bunVM()) != fatalBefore) [[unlikely]] {
+            m_aboutToBeNotifiedRejectedPromises.clear(this);
+            return;
         }
         // An unhandledRejection handler may itself reject a promise; loop
         // until the list stays empty.

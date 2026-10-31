@@ -2028,9 +2028,10 @@ pub mod bv2_impl {
             // handled by `for_worker` + `wire_after_move`.
             boxed.wire_after_move();
 
-            // `configure_defines` early-returns on `options.defines_loaded` (cloned
-            // as `true`); kept for spec parity.
-            boxed.configure_defines()?;
+            // The clone's define table was built for the server target.
+            let env = boxed.env_mut();
+            boxed.options.defines_loaded = false;
+            boxed.options.load_defines(arena, Some(env))?;
 
             // Re-project the resolver subset now that `target`/`conditions` etc.
             // have been overwritten for the browser.

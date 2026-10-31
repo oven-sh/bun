@@ -791,13 +791,39 @@ impl ESMConditions {
 pub use bun_options_types::jsx;
 pub use jsx as JSX;
 
-pub(crate) mod default_user_defines {
+pub mod default_user_defines {
     // This must be globally scoped so it doesn't disappear
     pub(crate) mod node_env {
         pub(crate) const KEY: &[u8] = b"process.env.NODE_ENV";
     }
     pub(crate) mod process_browser_define {
         pub(crate) const KEY: &[u8] = b"process.browser";
+    }
+
+    /// The Vite mode keys (https://vitejs.dev/guide/env-and-mode) that every
+    /// producer of a browser bundle folds, since a browser has no `import.meta.env`.
+    pub fn import_meta_env_defines(
+        is_production: bool,
+        ssr: bool,
+        static_: bool,
+    ) -> [(&'static [u8], &'static [u8]); 5] {
+        const fn boolean(value: bool) -> &'static [u8] {
+            if value { b"true" } else { b"false" }
+        }
+        [
+            (b"import.meta.env.DEV", boolean(!is_production)),
+            (b"import.meta.env.PROD", boolean(is_production)),
+            (
+                b"import.meta.env.MODE",
+                if is_production {
+                    b"\"production\""
+                } else {
+                    b"\"development\""
+                },
+            ),
+            (b"import.meta.env.SSR", boolean(ssr)),
+            (b"import.meta.env.STATIC", boolean(static_)),
+        ]
     }
 }
 
@@ -824,7 +850,7 @@ pub(crate) fn defines_from_transform_options(
     };
 
     let mut user_defines: defines::RawDefines = defines::RawDefines::default();
-    user_defines.reserve(input_keys.len() + 4);
+    user_defines.reserve(input_keys.len() + 8);
     for (i, key) in input_keys.iter().enumerate() {
         user_defines.insert(key.as_ref(), input_values[i].clone());
     }
@@ -890,8 +916,22 @@ pub(crate) fn defines_from_transform_options(
             Box::from(b"\"development\"".as_slice())
         };
 
-        user_defines.get_or_put_value(b"process.env.NODE_ENV", quoted_node_env.clone())?;
-        user_defines.get_or_put_value(b"process.env.BUN_ENV", quoted_node_env)?;
+        // `BUN_ENV` and the `import.meta.env` mode follow the `NODE_ENV` the
+        // bundle folds: an inlined env value (`Define::init` puts it after the
+        // user defines), else a user define, else the default.
+        let inlined_node_env = environment_defines
+            .get(default_user_defines::node_env::KEY)
+            .and_then(|data| data.value.e_string());
+        let user_node_env: Box<[u8]> = user_defines
+            .get_or_put_value(default_user_defines::node_env::KEY, quoted_node_env.clone())?
+            .value_ptr
+            .clone();
+        let node_env: Box<[u8]> = if inlined_node_env.is_some() {
+            quoted_node_env
+        } else {
+            user_node_env
+        };
+        user_defines.get_or_put_value(b"process.env.BUN_ENV", node_env.clone())?;
 
         // Automatically set `process.browser` to `true` for browsers and false for node+js
         // This enables some extra dead code elimination
@@ -900,6 +940,40 @@ pub(crate) fn defines_from_transform_options(
                 default_user_defines::process_browser_define::KEY,
                 Box::from(value.as_bytes()),
             )?;
+        }
+
+        // Only the browser lacks `import.meta.env` (the Bun runtime aliases it
+        // to `process.env`). A user define of the whole object keeps its keys.
+        if target == Target::Browser
+            && !user_defines.contains(b"import.meta.env")
+            && !user_defines.contains(b"import.meta")
+        {
+            // Same parser as `from_input`, so every quoting of `"production"`
+            // selects production. `from_input` reports a malformed value.
+            let is_production = match inlined_node_env {
+                Some(inlined) => inlined.eql_comptime(b"production"),
+                None => {
+                    let mut scratch_log = bun_ast::Log::default();
+                    defines::DefineData::parse(
+                        default_user_defines::node_env::KEY,
+                        &node_env,
+                        false,
+                        false,
+                        &mut scratch_log,
+                        bump,
+                    )
+                    .ok()
+                    .and_then(|data| data.value.e_string())
+                    .is_some_and(|s| s.eql_comptime(b"production"))
+                }
+            };
+            for (key, value) in default_user_defines::import_meta_env_defines(
+                is_production,
+                /* ssr: */ false,
+                /* static_: */ false,
+            ) {
+                user_defines.get_or_put_value(key, Box::from(value))?;
+            }
         }
     }
 

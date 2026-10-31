@@ -13,7 +13,7 @@ impl ImmediateObject {
         callback: JSValue,
         arguments: JSValue,
     ) -> JSValue {
-        Self::init_with(cx, id, Kind::SetImmediate, 0, callback, arguments)
+        Self::init_with(cx, id, Kind::SetImmediate, 0, callback, arguments, false)
     }
 
     /// Thin forwarder to

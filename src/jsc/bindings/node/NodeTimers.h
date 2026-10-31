@@ -5,7 +5,9 @@
 namespace Bun {
 
 JSC_DECLARE_HOST_FUNCTION(functionSetTimeout);
+JSC_DECLARE_HOST_FUNCTION(functionFakeSetTimeout);
 JSC_DECLARE_HOST_FUNCTION(functionSetInterval);
+JSC_DECLARE_HOST_FUNCTION(functionFakeSetInterval);
 JSC_DECLARE_HOST_FUNCTION(functionSetImmediate);
 JSC_DECLARE_HOST_FUNCTION(functionClearTimeout);
 JSC_DECLARE_HOST_FUNCTION(functionClearInterval);
@@ -15,7 +17,9 @@ JSC_DECLARE_HOST_FUNCTION(functionClearImmediate);
 // setInterval / setImmediate with Node's `[util.promisify.custom]` accessor,
 // which resolves to the node:timers/promises implementation on first read.
 JSC::JSValue createSetTimeoutFunction(JSC::VM&, JSC::JSObject* globalObject);
+JSC::JSValue createFakeSetTimeoutFunction(JSC::VM&, JSC::JSObject* globalObject);
 JSC::JSValue createSetIntervalFunction(JSC::VM&, JSC::JSObject* globalObject);
+JSC::JSValue createFakeSetIntervalFunction(JSC::VM&, JSC::JSObject* globalObject);
 JSC::JSValue createSetImmediateFunction(JSC::VM&, JSC::JSObject* globalObject);
 
 } // namespace Bun

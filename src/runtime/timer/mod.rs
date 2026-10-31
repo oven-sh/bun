@@ -109,6 +109,7 @@ macro_rules! impl_timer_object {
                 interval: u32,
                 callback: ::bun_jsc::JSValue,
                 arguments: ::bun_jsc::JSValue,
+                fakeable: bool,
             ) -> ::bun_jsc::JSValue {
                 // Heap-allocate; `*mut Self` is the
                 // pointer the JS wrapper holds. Ownership
@@ -124,7 +125,7 @@ macro_rules! impl_timer_object {
                 // owned here; `internals.init()` writes every field.
                 unsafe {
                     (*payload).internals.init(
-                        js_value, cx, id, kind, interval, callback, arguments,
+                        js_value, cx, id, kind, interval, callback, arguments, fakeable,
                     );
                 }
                 if cx.vm().as_mut().is_inspector_enabled() {
@@ -592,7 +593,20 @@ impl All {
             unsafe { (*flags.as_ptr()).set_epoch(self.epoch) };
         }
 
-        if self.fake_timers.is_active() && tag.allow_fake_timers() {
+        let is_fakeable_timeout = if tag == EventLoopTimerTag::TimeoutObject {
+            // SAFETY: `timer` is live and tagged as a `TimeoutObject` per the
+            // constructor invariant; the packed interval bit records which
+            // timer API scheduled it, including future interval refreshes.
+            unsafe {
+                (*TimeoutObject::from_timer_ptr(timer))
+                    .internals
+                    .is_fakeable()
+            }
+        } else {
+            tag.allow_fake_timers()
+        };
+
+        if self.fake_timers.is_active() && is_fakeable_timeout {
             // SAFETY: see fn contract
             unsafe {
                 self.fake_timers.timers.insert(timer);

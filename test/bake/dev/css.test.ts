@@ -2547,3 +2547,80 @@ devTest(
     },
   },
 );
+devTest("css file repaired with no watcher event comes back in a stylesheet that is css by an import attribute", {
+  files: {
+    ...dataPluginFiles,
+    ...Object.fromEntries(
+      ["saved", "requested"].flatMap(dir => [
+        // "main.txt" is a stylesheet because the script imports it as one. "other.ts" imports "dep.css" too.
+        [`${dir}/index.html`, emptyHtmlFile({ scripts: ["index.ts"] })],
+        [`${dir}/index.ts`, `import "./main.txt" with { type: "css" };`],
+        [`${dir}/main.txt`, `@import "./dep.css";\n.main-v1 { color: red; }`],
+        [`${dir}/other.html`, emptyHtmlFile({ scripts: ["other.ts"] })],
+        [`${dir}/other.ts`, `import "./dep.css";`],
+        [`${dir}/dep.css`, ``],
+        [`data/${dir}/dep.txt`, `.dep-v1 { color: red; }}`],
+      ]),
+    ),
+  },
+  async test(dev) {
+    const failed = { status: 500, sheets: [] };
+    const repaired = { status: 200, sheets: [".dep-v2 .main-v1"] };
+    for (const page of ["/saved", "/saved/other"]) {
+      expect({ page, ...(await linkedStylesheets(dev, page)) }).toEqual({ page, ...failed });
+    }
+    await Bun.write(dev.join("data/saved/dep.txt"), `.dep-v2 { color: red; }`);
+    // This save bundles "other.ts" with "dep.css". "main.txt" joins that bundle as a stylesheet, whatever its name.
+    await dev.writeNoChanges("saved/other.ts");
+    expect(await linkedStylesheets(dev, "/saved/other")).toEqual({ status: 200, sheets: [".dep-v2"] });
+    expect(await linkedStylesheets(dev, "/saved")).toEqual(repaired);
+
+    expect(await linkedStylesheets(dev, "/requested")).toEqual(failed);
+    await Bun.write(dev.join("data/requested/dep.txt"), `.dep-v2 { color: red; }`);
+    // Here the first bundle of the other page builds "dep.css". "main.txt" is not an input of it.
+    expect(await linkedStylesheets(dev, "/requested/other")).toEqual({ status: 200, sheets: [".dep-v2"] });
+    expect(await linkedStylesheets(dev, "/requested")).toEqual(repaired);
+  },
+});
+devTest("css file repaired with no watcher event comes back in a stylesheet whose plugin path has a dot segment", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./spelled-path-plugin.ts"]
+    `,
+    // The plugin answers "spelled-main.css" with the path of "site/main.css", spelled with a "." segment: the resolver
+    // names that file without it. "dep.css" is the text of "data/dep.txt", which no watcher sees.
+    "spelled-path-plugin.ts": `
+      import { join, sep } from "node:path";
+      export default {
+        name: "spelled-path-plugin",
+        setup(build) {
+          build.onResolve({ filter: /^spelled-main\\.css$/ }, () => ({
+            path: [import.meta.dir, "site", ".", "main.css"].join(sep),
+          }));
+          build.onLoad({ filter: /dep\\.css$/ }, async () => ({
+            contents: await Bun.file(join(import.meta.dir, "data", "dep.txt")).text(),
+            loader: "css",
+          }));
+        },
+      };
+    `,
+    "site/page.html": emptyHtmlFile({ styles: ["spelled-main.css"] }),
+    "site/main.css": `@import "./dep.css";\n.main-v1 { color: red; }`,
+    "site/other.html": emptyHtmlFile({ scripts: ["other.ts"] }),
+    "site/other.ts": `import "./dep.css";`,
+    "site/dep.css": ``,
+    "data/dep.txt": `.dep-v1 { color: red; }}`,
+  },
+  async test(dev) {
+    for (const page of ["/site/page", "/site/other"]) {
+      expect({ page, ...(await linkedStylesheets(dev, page)) }).toEqual({ page, status: 500, sheets: [] });
+    }
+    await Bun.write(dev.join("data/dep.txt"), `.dep-v2 { color: red; }`);
+    // This save bundles "other.ts" with "dep.css". No bundle can have "main.css" as an entry point under the path that
+    // the plugin gave it: the bundle has the page that links it instead.
+    await dev.writeNoChanges("site/other.ts");
+    expect(await linkedStylesheets(dev, "/site/other")).toEqual({ status: 200, sheets: [".dep-v2"] });
+    expect(await linkedStylesheets(dev, "/site/page")).toEqual({ status: 200, sheets: [".dep-v2 .main-v1"] });
+  },
+});

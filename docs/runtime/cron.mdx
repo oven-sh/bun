@@ -221,7 +221,7 @@ job.ref(); // keep the process alive (default)
 
 In-process cron honors `jest.useFakeTimers()`. `setSystemTime()`, `advanceTimersByTime()`, and `runOnlyPendingTimers()` control when it fires, so you can test scheduled callbacks without waiting on the real clock.
 
-A cron job schedules its next run every time it fires, so `runAllTimers()` never runs out of timers. `runAllTimers()` runs the callback until it reaches the [loop limit](/test/dates-times#fake-timers), then throws. Use `advanceTimersByTime()` or `runOnlyPendingTimers()` instead.
+Bun schedules the next fire of a job each time its handler finishes, until you stop the job. With a synchronous handler, `runAllTimers()` never runs out of timers. It runs the handler until the [loop limit](/test/dates-times#fake-timers), then throws. Use `advanceTimersByTime()` or `runOnlyPendingTimers()` instead.
 
 ---
 

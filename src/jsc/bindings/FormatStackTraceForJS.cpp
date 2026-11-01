@@ -26,6 +26,7 @@
 #include "ErrorStackTrace.h"
 #include "ObjectBindings.h"
 #include "headers-handwritten.h"
+#include "NodeVM.h"
 
 #include <wtf/Scope.h>
 #include <wtf/Threading.h>
@@ -642,8 +643,33 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
     return jsString(vm, result);
 }
 
+// A trace of the default length is rooted on the stack, with no allocation.
+using FrameCells = JSC::MarkedArgumentBufferWithSize<2 * DEFAULT_ERROR_STACK_TRACE_LIMIT>;
+
+// ErrorInstance holds a frame's callee and code block weakly. Root them while user JS can run.
+template<size_t inlineCapacity>
+static void protectFrameCells(JSC::MarkedArgumentBufferWithSize<inlineCapacity>& cells, const Vector<StackFrame>& stackTrace)
+{
+    cells.ensureCapacity(stackTrace.size() * 2);
+    for (auto& frame : stackTrace) {
+        if (auto* callee = frame.callee())
+            cells.append(callee);
+        if (auto* codeBlock = frame.codeBlock())
+            cells.append(codeBlock);
+    }
+}
+
 static JSValue computeErrorInfoToJSValue(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance)
 {
+    // Nothing else roots the frames: a collection, or the program's getter or formatter, can run while they are formatted.
+    FrameCells protectedFrameCells;
+    protectFrameCells(protectedFrameCells, stackTrace);
+    if (protectedFrameCells.hasOverflowed()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwOutOfMemoryError(errorInstance->globalObject(), scope);
+        return {};
+    }
+
     return computeErrorInfoToJSValueWithoutSkipping(vm, stackTrace, line, column, sourceURL, errorInstance);
 }
 
@@ -714,31 +740,10 @@ void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull s
     }
 }
 
-// ErrorInstance holds a frame's callee and code block weakly. Root them while user JS can run.
-static void protectFrameCells(JSC::MarkedArgumentBuffer& cells, const Vector<StackFrame>& stackTrace)
-{
-    cells.ensureCapacity(stackTrace.size() * 2);
-    for (auto& frame : stackTrace) {
-        if (auto* callee = frame.callee())
-            cells.append(callee);
-        if (auto* codeBlock = frame.codeBlock())
-            cells.append(codeBlock);
-    }
-}
-
 JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, JSObject* errorInstance)
 {
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
-
-    // stackTrace stays installed on errorInstance: a GC that finds one of its frames dead frees it mid-format.
-    JSC::MarkedArgumentBuffer protectedFrameCells;
-    protectFrameCells(protectedFrameCells, stackTrace);
-    if (protectedFrameCells.hasOverflowed()) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        throwOutOfMemoryError(errorInstance->globalObject(), scope);
-        return jsUndefined();
-    }
 
     JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorInstance);
 
@@ -837,12 +842,6 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
         auto ownedStackTrace = isBeingMaterialized
             ? makeUnique<WTF::Vector<JSC::StackFrame>>(*stackTrace)
             : makeUnique<WTF::Vector<JSC::StackFrame>>(WTF::move(*stackTrace));
-        JSC::MarkedArgumentBuffer protectedFrameCells;
-        protectFrameCells(protectedFrameCells, *ownedStackTrace);
-        if (protectedFrameCells.hasOverflowed()) [[unlikely]] {
-            throwOutOfMemoryError(globalObject, scope);
-            return {};
-        }
         result = computeErrorInfoToJSValue(vm, *ownedStackTrace, line, column, sourceURL, errorObject);
         if (!isBeingMaterialized)
             errorObject->setStackFrames(vm, {});
@@ -867,8 +866,8 @@ bool isImportMetaEnvForTests(JSC::JSObject*);
 
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto& vm = JSC::getVM(globalObject);
+    // Every Bun::GlobalScope installs this. In a node:vm context, lexicalGlobalObject is a NodeVMGlobalObject, not a Zig::GlobalObject.
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSValue objectArg = callFrame->argument(0);
@@ -881,14 +880,20 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     JSC::JSObject* errorObject = objectArg.asCell()->getObject();
     JSC::JSValue caller = callFrame->argument(1);
 
-    size_t stackTraceLimit = globalObject->stackTraceLimit().value_or(DEFAULT_ERROR_STACK_TRACE_LIMIT);
-    if (stackTraceLimit == 0) {
+    // No read shows a `stack` that is stored on the global proxy of a node:vm context, so nothing is captured for one.
+    if (errorObject->type() == JSC::GlobalProxyType && uncheckedDowncast<JSC::JSGlobalProxy>(errorObject)->target()->inherits<NodeVMGlobalObject>()) [[unlikely]]
+        return JSC::JSValue::encode(JSC::jsUndefined());
+
+    size_t stackTraceLimit = lexicalGlobalObject->stackTraceLimit().value_or(0);
+    // util.getCallSites() and isInsideNodeModules() in src/js capture through Error.stackTraceLimit, so a Zig::GlobalObject keeps the default at 0.
+    if (!stackTraceLimit && lexicalGlobalObject->inherits<Zig::GlobalObject>())
         stackTraceLimit = DEFAULT_ERROR_STACK_TRACE_LIMIT;
-    }
 
     WTF::Vector<JSC::StackFrame> stackTrace;
-    JSCStackTrace::getFramesForCaller(vm, callFrame, errorObject, caller, stackTrace, stackTraceLimit);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (stackTraceLimit) {
+        JSCStackTrace::getFramesForCaller(vm, callFrame, errorObject, caller, stackTrace, stackTraceLimit);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     if (auto* instance = dynamicDowncast<JSC::ErrorInstance>(errorObject)) {
         if (instance->hasMaterializedErrorInfo()) {
@@ -911,10 +916,12 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
                 const auto& propertyName = vm.propertyNames->stack;
                 VM::DeletePropertyModeScope deleteScope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
                 DeletePropertySlot slot;
-                JSObject::deleteProperty(instance, globalObject, propertyName, slot);
+                JSObject::deleteProperty(instance, lexicalGlobalObject, propertyName, slot);
             }
             RETURN_IF_EXCEPTION(scope, {});
 
+            // A CustomGetterSetter cell belongs to no realm, so a node:vm context shares the one the Zig::GlobalObject owns.
+            Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
             instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, globalObject->m_lazyStackCustomGetterSetter.get(globalObject), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::CustomAccessor | 0);
         }
     } else {
@@ -923,7 +930,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         String sourceURL;
         JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject);
         RETURN_IF_EXCEPTION(scope, {});
-        putDirectOrThrow(globalObject, errorObject, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
+        putDirectOrThrow(lexicalGlobalObject, errorObject, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
         RETURN_IF_EXCEPTION(scope, {});
     }
 

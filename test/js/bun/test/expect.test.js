@@ -7,6 +7,7 @@
  */
 
 import { stripVTControlCharacters } from "node:util";
+import * as emptyModuleNamespace from "./empty-module.fixture.js";
 // import these functions typed with the bun:test types,
 // so this test can also be used to detect issues with the "bun:test" type definitions
 import test_interop from "./test-interop.js";
@@ -4404,7 +4405,7 @@ describe("expect()", () => {
     try {
       fn();
     } catch (e) {
-      return ANY(e).message.replaceAll(/\x1B\[[0-9;]*m/g, "");
+      return stripVTControlCharacters(ANY(e).message);
     }
     return "did not throw";
   };
@@ -4518,11 +4519,9 @@ describe("expect()", () => {
         });
       }
 
-      test("a module namespace with no exports", async () => {
-        const emptyModule = "data:text/javascript,";
-        const namespace = await import(emptyModule);
-        expect(Object.prototype.toString.call(namespace)).toBe("[object Module]");
-        expect(namespace).toBeEmpty();
+      test("a module namespace with no exports", () => {
+        expect(Object.prototype.toString.call(emptyModuleNamespace)).toBe("[object Module]");
+        expect(emptyModuleNamespace).toBeEmpty();
       });
 
       test(`new URLSearchParams("a=b").toJSON()`, () => {

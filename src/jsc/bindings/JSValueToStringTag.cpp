@@ -4,8 +4,8 @@
 #include <JavaScriptCore/CallData.h>
 #include <JavaScriptCore/JSStringInlines.h>
 
-// `Object.prototype.toString.call(value) === "[object Object]"`, through the function object: the always-inline JSC::objectPrototypeToString is 5 KB larger.
-extern "C" [[ZIG_EXPORT(check_slow)]] bool JSC__JSValue__toStringTagIsObject(JSC::EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)
+// Whether `Object.prototype.toString.call(value)` is "[object Object]" or "[object Module]". Through the function object: the always-inline JSC::objectPrototypeToString is 5 KB larger.
+extern "C" [[ZIG_EXPORT(check_slow)]] bool JSC__JSValue__toStringTagIsObjectOrModule(JSC::EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -14,8 +14,9 @@ extern "C" [[ZIG_EXPORT(check_slow)]] bool JSC__JSValue__toStringTagIsObject(JSC
     JSC::JSValue tag = JSC::call(globalObject, toString, JSC::getCallData(toString), JSC::JSValue::decode(encodedValue), JSC::ArgList());
     RETURN_IF_EXCEPTION(scope, false);
 
-    JSC::JSString* objectObject = vm.smallStrings.objectObjectString();
-    if (tag == objectObject)
+    if (tag == vm.smallStrings.objectObjectString())
         return true;
-    RELEASE_AND_RETURN(scope, asString(tag)->equal(globalObject, objectObject));
+    auto view = asString(tag)->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    return view == "[object Object]"_s || view == "[object Module]"_s;
 }

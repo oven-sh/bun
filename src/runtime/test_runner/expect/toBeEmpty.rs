@@ -45,10 +45,10 @@ impl Expect {
                         anything_in_iterator,
                     )?;
                     pass = !any_properties_in_iterator;
-                } else if !matches!(value.js_type(), JSType::FinalObject | JSType::ModuleNamespaceObject)
-                    && !value.to_string_tag_is_object(global)?
+                } else if !matches!(value.js_type(), JSType::FinalObject | JSType::CompiledObject)
+                    && !value.to_string_tag_is_object_or_module(global)?
                 {
-                    // Another class, like a Date. A plain object or module namespace is exempt: `URLSearchParams.prototype.toJSON()` tags its result.
+                    // Another class, like a Date. A plain object is exempt (`URLSearchParams.prototype.toJSON()` tags its result), and "Module" is the tag of a module namespace.
                     pass = false;
                 } else {
                     let Some(_cell) = value.to_cell() else {

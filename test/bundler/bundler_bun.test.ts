@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect } from "bun:test";
+import { mkdirSync } from "node:fs";
 import { itBundled } from "./expectBundled";
 
 const nestedFunctions = /* js */ `
@@ -167,6 +168,69 @@ error: Hello World`,
       },
     },
   });
+  // The bundle and its map have one debug id. Each case runs the pair as it was built, then the bundle beside a map
+  // with another id.
+  for (const format of ["esm", "cjs"] as const) {
+    for (const sourceMap of ["external", "linked"] as const) {
+      itBundled(`bun/TargetBunSourcemapDebugId-${format}-${sourceMap}`, () => {
+        const ids = { bundle: "", map: "" };
+        const warnings = (stderr: string) =>
+          stderr.split("\n").filter(line => line.startsWith("warn: ") || line.startsWith("note: "));
+        return {
+          target: "bun",
+          format,
+          outdir: "/out",
+          sourceMap,
+          files: {
+            "/entry.ts": /* js */ `
+              function code() {
+                throw new Error("Hello World");
+              }
+              code();
+            `,
+          },
+          onAfterBundle(api) {
+            const map = JSON.parse(api.readFile("/out/entry.js.map"));
+            ids.bundle = map.debugId;
+            ids.map = "0000000000000000" + map.debugId.slice(16);
+            const bundle = api.readFile("/out/entry.js");
+            expect(bundle).toInclude(`\n//# debugId=${ids.bundle}\n`);
+            mkdirSync(api.join("other"), { recursive: true });
+            api.writeFile("/other/entry.js", bundle);
+            api.writeFile("/other/entry.js.map", JSON.stringify({ ...map, debugId: ids.map, sources: ["other.ts"] }));
+          },
+          run: [
+            {
+              file: "/out/entry.js",
+              exitCode: 1,
+              validate({ stderr }) {
+                expect(warnings(stderr)).toEqual([]);
+                expect(stderr).toInclude("error: Hello World");
+                expect(stderr).toMatch(/at code \(.*[\\/]entry\.ts:2:9\)/);
+              },
+            },
+            {
+              file: "/other/entry.js",
+              exitCode: 1,
+              validate({ stderr }) {
+                expect(warnings(stderr)).toEqual([
+                  expect.stringMatching(
+                    new RegExp(
+                      `^warn: Ignoring sourcemap ".*entry\\.js\\.map": its debugId "${ids.map}" is not the debugId "${ids.bundle}" that ".*entry\\.js" had when it was last loaded$`,
+                    ),
+                  ),
+                  "note: positions in this file stay unmapped until Bun loads it again beside a map with the same debugId",
+                ]);
+                expect(stderr).toInclude("error: Hello World");
+                expect(stderr).toInclude("entry.js:");
+                expect(stderr).not.toInclude("other.ts");
+              },
+            },
+          ],
+        };
+      });
+    }
+  }
   itBundled("bun/unicode comment", {
     target: "bun",
     files: {

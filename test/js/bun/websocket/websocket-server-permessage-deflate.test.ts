@@ -371,6 +371,47 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
     }
   });
 
+  // Without context takeover a message is first inflated in one shot, into 16 KiB. One that does not fit is left to zlib.
+  test.each([16383, 16384, 16385, 40000])("inflates a message of %d bytes", async n => {
+    await using server = startServer(true);
+    const peer = await connect(server, "permessage-deflate");
+    try {
+      expect(peer.extensions).toBe("permessage-deflate; client_no_context_takeover; server_no_context_takeover");
+      // The server's Number() ignores the padding, and only gets the number at the end if all of it arrived.
+      const replySize = 100 + (n % 100);
+      const request = Buffer.from(String(replySize).padStart(n, " \t\n\r"));
+      const reply = await peer.requestCompressed(
+        deflateRawSync(request, { finishFlush: constants.Z_SYNC_FLUSH }).subarray(0, -4),
+      );
+      expect(inflateWithoutContext(reply.payload).toString()).toBe(pseudoRandomText(replySize));
+    } finally {
+      peer.close();
+    }
+  });
+
+  // The fixture sends streams that only the one-shot inflater accepts.
+  test.concurrent.each([
+    ["in one shot if it fits 16 KiB", {}, { 259: "259", 16384: "16384", 16385: "refused" }],
+    [
+      "by zlib alone with BUN_FEATURE_FLAG_NO_LIBDEFLATE=1",
+      { BUN_FEATURE_FLAG_NO_LIBDEFLATE: "1" },
+      { 259: "refused", 16384: "refused", 16385: "refused" },
+    ],
+  ])("a message is inflated %s", async (_, env, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        path.join(import.meta.dir, "websocket-server-one-shot-inflate-fixture.ts"),
+        ...Object.keys(expected),
+      ],
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ results: JSON.parse(stdout), stderr, exitCode }).toEqual({ results: expected, stderr: "", exitCode: 0 });
+  });
+
   // If a message ends in a BFINAL=1 block, Safari fails the connection on the next message.
   describe.each([true, { compress: "dedicated", decompress: true }] as const)(
     "perMessageDeflate: %j never sets BFINAL",

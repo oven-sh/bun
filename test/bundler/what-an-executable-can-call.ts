@@ -191,13 +191,13 @@ function placesIn(elf: Image, wanted: (name: string) => boolean): Place[] {
         const page = here - (here % 4096) + distance * 4096;
         for (let next = at + 4; next < at + 20 && next + 4 <= end; next += 4) {
           const use = view.getUint32(next, true);
-          if (((use >>> 5) & 31) !== (word & 31)) continue;
           const isLoad = (use & 0xffc00000) >>> 0 === 0xf9400000;
           const isAdd = (use & 0xffc00000) >>> 0 === 0x91000000;
-          if (isLoad) found(nameAt(page + ((use >>> 10) & 0xfff) * 8), here);
-          else if (isAdd) found(nameAt(page + ((use >>> 10) & 0xfff)), here);
-          // `ldr x8, [x8, #16]` leaves something else in the register, so `ldr x0, [x8, #32]` after it reads no page.
-          if ((isLoad || isAdd) && (use & 31) === (word & 31)) break;
+          const readsIt = ((use >>> 5) & 31) === (word & 31);
+          if (isLoad && readsIt) found(nameAt(page + ((use >>> 10) & 0xfff) * 8), here);
+          else if (isAdd && readsIt) found(nameAt(page + ((use >>> 10) & 0xfff)), here);
+          // `ldr x8, [x8, #16]` leaves something else in the register, so `ldr x0, [x8, #32]` after it reads no page. So does `adrp x8, other`.
+          if ((isLoad || isAdd || (use & 0x1f000000) >>> 0 === 0x10000000) && (use & 31) === (word & 31)) break;
         }
       }
       continue;

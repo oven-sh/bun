@@ -453,7 +453,7 @@ pub mod vec {
     // Consolidates 11 hand-rolled `spare_capacity_mut().as_mut_ptr().cast::<u8>()`
     // + `set_len(len+n)` copies: `spare_capacity_mut` returns
     // `MaybeUninit<u8>` and every C-ABI fill site (read/recv/pread, simdutf,
-    // zlib, zstd, libdeflate, base64) needs `*mut u8` / `&mut [u8]`.
+    // zlib, zstd, base64) needs `*mut u8` / `&mut [u8]`.
 
     /// View `v[len..capacity]` as a write-only `&mut [u8]` for an FFI /
     /// syscall producer to fill. Pair with [`commit_spare`] (or use

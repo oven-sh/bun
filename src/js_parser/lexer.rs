@@ -2163,6 +2163,7 @@ impl<'a> Lexer<'a> {
 
         if strings::has_prefix_with_word_boundary(chunk, b"jsx") {
             if let Some(span) = PragmaArg::scan(chunk_start, b"jsx", chunk, allow_newline) {
+                self.debug_assert_span_in_source(span);
                 self.jsx_pragma._jsx = span;
                 return "jsx".len()
                     + if span.range.len > 0 {
@@ -2173,6 +2174,7 @@ impl<'a> Lexer<'a> {
             }
         } else if strings::has_prefix_with_word_boundary(chunk, b"jsxFrag") {
             if let Some(span) = PragmaArg::scan(chunk_start, b"jsxFrag", chunk, allow_newline) {
+                self.debug_assert_span_in_source(span);
                 self.jsx_pragma._jsx_frag = span;
                 return "jsxFrag".len()
                     + if span.range.len > 0 {
@@ -2183,6 +2185,7 @@ impl<'a> Lexer<'a> {
             }
         } else if strings::has_prefix_with_word_boundary(chunk, b"jsxRuntime") {
             if let Some(span) = PragmaArg::scan(chunk_start, b"jsxRuntime", chunk, allow_newline) {
+                self.debug_assert_span_in_source(span);
                 self.jsx_pragma._jsx_runtime = span;
                 return "jsxRuntime".len()
                     + if span.range.len > 0 {
@@ -2195,6 +2198,7 @@ impl<'a> Lexer<'a> {
             if let Some(span) =
                 PragmaArg::scan(chunk_start, b"jsxImportSource", chunk, allow_newline)
             {
+                self.debug_assert_span_in_source(span);
                 self.jsx_pragma._jsx_import_source = span;
                 return "jsxImportSource".len()
                     + if span.range.len > 0 {
@@ -2207,14 +2211,24 @@ impl<'a> Lexer<'a> {
             && chunk.starts_with(b" sourceMappingURL=")
         {
             // Check includes space for prefix
-            return PragmaArg::scan_source_mapping_url_value(
-                chunk_start,
-                chunk,
-                &mut self.source_mapping_url,
-            );
+            let span = PragmaArg::scan_source_mapping_url_value(chunk_start, chunk);
+            self.debug_assert_span_in_source(span);
+            // Only a comment that starts with the marker names the source map: `//#`, `//@`, `/*#` or `/*@`.
+            if chunk_start == self.start + 3 {
+                self.source_mapping_url = Some(span);
+            }
+            return " sourceMappingURL=".len() + span.text.len();
         }
 
         0
+    }
+
+    /// A reader of a pragma's range takes the text of that range from the source.
+    fn debug_assert_span_in_source(&self, span: js_ast::Span) {
+        debug_assert_eq!(
+            bstr::BStr::new(self.source.text_for_range(span.range)),
+            bstr::BStr::new(span.text.slice()),
+        );
     }
 
     pub(crate) fn range(&self) -> Range {
@@ -3435,11 +3449,7 @@ impl PragmaArg {
     // These can be extremely long, so we use SIMD.
     /// "//# sourceMappingURL=data:/adspaoksdpkz"
     ///                       ^^^^^^^^^^^^^^^^^^
-    pub(crate) fn scan_source_mapping_url_value(
-        chunk_start: usize,
-        chunk: &[u8],
-        result: &mut Option<js_ast::Span>,
-    ) -> usize {
+    pub(crate) fn scan_source_mapping_url_value(chunk_start: usize, chunk: &[u8]) -> js_ast::Span {
         const PREFIX: u32 = " sourceMappingURL=".len() as u32;
         let url_and_rest_of_code = &chunk[PREFIX as usize..]; // Slice containing only the potential argument
 
@@ -3467,7 +3477,7 @@ impl PragmaArg {
 
         let absolute_arg_start = chunk_start + PREFIX as usize;
 
-        *result = Some(js_ast::Span {
+        js_ast::Span {
             range: Range {
                 len: i32::try_from(url_len).expect("int cast"), // Correct length
                 loc: Loc {
@@ -3475,10 +3485,7 @@ impl PragmaArg {
                 }, // Correct start
             },
             text: js_ast::StoreStr::new(url),
-        });
-
-        // Return total length consumed from the start of the chunk
-        PREFIX as usize + url_len // Correct total length
+        }
     }
 
     pub(crate) fn scan(

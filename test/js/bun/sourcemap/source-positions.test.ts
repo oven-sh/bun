@@ -1257,7 +1257,10 @@ describe.concurrent("a loaded file with its own source map", () => {
   });
 
   // What node v26.13.0 reads: a `data:` URL that says `application/json` and ends its parameters with `base64`, and a
-  // path, which is a URL relative to the module. It does not read a URL with any other scheme.
+  // path, which is a URL relative to the module. It does not read a URL with any other scheme. The comment is a `//`
+  // comment that starts with `//# sourceMappingURL=` or `//@ sourceMappingURL=`, and only white space is after the
+  // URL on its line. The last such comment of the file counts, also when it has no URL to read. The forms that Bun
+  // reads in another way than Node.js are in docs/runtime/debugger.mdx.
   test("the URL of the comment is read the way Node.js reads it", async () => {
     const map = mapOf("cjs", "original.ts");
     const comment = (url: string) => `//# sourceMappingURL=${url}\n`;
@@ -1282,12 +1285,37 @@ describe.concurrent("a loaded file with its own source map", () => {
         { "k.js.map": map },
         "",
       ],
+      "the last of two comments, which text follows": [
+        comment("r.js.map") + `//# sourceMappingURL=s.js.map and more\n`,
+        { "r.js.map": map, "s.js.map": map },
+        "",
+      ],
+      "a comment, then a block comment with one in it": [
+        comment("t.js.map") + `/* //# sourceMappingURL=none.js.map */\n`,
+        { "t.js.map": map },
+        "original.ts",
+      ],
       "a comment that more code follows": [
         comment("l.js.map") + `exports.after = 1;\n`,
         { "l.js.map": map },
         "original.ts",
       ],
       "a string": [`exports.text = "//# sourceMappingURL=m.js.map";\n`, { "m.js.map": map }, ""],
+      "/*#": [`/*# sourceMappingURL=u.js.map */\n`, { "u.js.map": map }, ""],
+      "/*@": [`/*@ sourceMappingURL=v.js.map */\n`, { "v.js.map": map }, ""],
+      "a space before the #": [`// # sourceMappingURL=w.js.map\n`, { "w.js.map": map }, ""],
+      "no space after the #": [`//#sourceMappingURL=x.js.map\n`, { "x.js.map": map }, ""],
+      "two spaces after the #": [`//#  sourceMappingURL=y.js.map\n`, { "y.js.map": map }, ""],
+      "text before the //#": [`// see //# sourceMappingURL=z.js.map\n`, { "z.js.map": map }, ""],
+      "text after the URL": [`//# sourceMappingURL=aa.js.map and more\n`, { "aa.js.map": map }, ""],
+      // A quote is a character of the URL like any other.
+      "quotes around the URL": [`//# sourceMappingURL="ab.js.map"\n`, { "ab.js.map": map }, ""],
+      "quotes in the name of the file": [`//# sourceMappingURL='ac.js.map'\n`, { "'ac.js.map'": map }, "original.ts"],
+      "the last of two comments, which has quotes around its URL": [
+        comment("ad.js.map") + `//# sourceMappingURL="none.js.map"\n`,
+        { "ad.js.map": map },
+        "",
+      ],
       "data: with base64": [comment(dataUrl(map)), {}, "original.ts"],
       "data: with a charset before base64": [
         comment(dataUrl(map, "application/json;charset=utf-8;base64")),

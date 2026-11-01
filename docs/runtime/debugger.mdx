@@ -230,7 +230,7 @@ The switch works as in Node.js, with these differences:
 - `module.findSourceMap()` returns `undefined`.
 - Code from `eval` and `new Function` is not mapped.
 - Bun does not read an index map (a source map with `sections`).
-- Bun finds the comment with the rules of its bundler. For a comment that is not a line of the form `//# sourceMappingURL=<url>`, Bun and Node.js can disagree on whether it names a source map.
+- Bun reads the `sourceMappingURL` comment as Node.js does, except in three cases. Node.js accepts any one white space character between `//#` and `sourceMappingURL`, such as a tab. Bun accepts one space. Node.js skips white space between `=` and the URL. Bun reads no URL from such a comment. A block comment of the form `/*# sourceMappingURL=<url> */` names no source map. In Node.js, a `//# sourceMappingURL=<url>` comment before that block comment still names a source map. In Bun, the file then has no source map.
 - The switch does not change the positions of the modules in a bundle or in a [standalone executable](/compiler/executables). A file that such a program loads from the disk is mapped.
 - Bun has no `--no-enable-source-maps` flag and does not read `NODE_OPTIONS`.
 

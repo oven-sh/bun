@@ -77,6 +77,12 @@ void EmitAsyncDestroy(v8::Isolate* isolate, async_context asyncContext)
     (void)asyncContext;
 }
 
+#if OS(WINDOWS)
+CallbackScope::~CallbackScope()
+{
+}
+#endif
+
 v8::MaybeLocal<v8::Value> MakeCallback(v8::Isolate* isolate,
     v8::Local<v8::Object> recv,
     v8::Local<v8::Function> callback,

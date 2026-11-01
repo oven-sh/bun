@@ -12,6 +12,8 @@
 
 namespace v8 {
 
+class Array;
+
 namespace internal {
 enum ExternalPointerTag : uint16_t;
 }
@@ -21,6 +23,21 @@ enum PropertyAttribute {
     ReadOnly = 1 << 0,
     DontEnum = 1 << 1,
     DontDelete = 1 << 2,
+};
+
+enum PropertyFilter {
+    ALL_PROPERTIES = 0,
+    ONLY_WRITABLE = 1,
+    ONLY_ENUMERABLE = 2,
+    ONLY_CONFIGURABLE = 4,
+    SKIP_STRINGS = 8,
+    SKIP_SYMBOLS = 16,
+};
+
+enum class KeyConversionMode {
+    kConvertToString,
+    kKeepNumbers,
+    kNoNumbers,
 };
 
 BUN_EXPORT internal::ExternalPointerTag ToExternalPointerTag(uint16_t api_tag);
@@ -52,6 +69,11 @@ public:
     BUN_EXPORT int InternalFieldCount() const;
 
     BUN_EXPORT int GetIdentityHash();
+
+    BUN_EXPORT Local<Object> Clone();
+
+    BUN_EXPORT MaybeLocal<Array> GetOwnPropertyNames(Local<Context> context);
+    BUN_EXPORT MaybeLocal<Array> GetOwnPropertyNames(Local<Context> context, PropertyFilter filter, KeyConversionMode key_conversion = KeyConversionMode::kKeepNumbers);
 
 private:
     BUN_EXPORT Local<Data> SlowGetInternalField(int index);

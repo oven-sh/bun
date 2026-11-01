@@ -23,6 +23,18 @@ InternalFieldObject* InternalFieldObject::create(JSC::VM& vm, JSC::Structure* st
     return object;
 }
 
+InternalFieldObject* InternalFieldObject::createWithFieldsOf(JSC::VM& vm, JSC::Structure* structure, JSC::Butterfly* butterfly, const InternalFieldObject& source)
+{
+    auto object = new (NotNull, JSC::allocateCell<InternalFieldObject>(vm)) InternalFieldObject(vm, structure, butterfly, source);
+    object->finishCreation(vm);
+    return object;
+}
+
+JSC::Structure* InternalFieldObject::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+{
+    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+}
+
 template<typename Visitor>
 void InternalFieldObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {

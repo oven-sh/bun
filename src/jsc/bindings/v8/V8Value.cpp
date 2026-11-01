@@ -4,10 +4,14 @@
 #include "V8Integer.h"
 #include "V8HandleScope.h"
 #include "v8_compatibility_assertions.h"
+#include "napi_external.h"
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSArrayBuffer.h>
+#include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSBigInt.h>
 #include <JavaScriptCore/JSTypedArrays.h>
+#include <JavaScriptCore/MathCommon.h>
 
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::Value)
 
@@ -124,6 +128,32 @@ bool Value::IsUint8Array() const
     return value.isCell() && value.inherits<JSC::JSUint8Array>();
 }
 
+// Like IsArray, the next four are instance type checks in V8 that never unwrap a Proxy.
+bool Value::IsExternal() const
+{
+    JSC::JSValue value = localToJSValue();
+    return value.isCell() && value.inherits<Bun::NapiExternal>();
+}
+
+// JSC has one cell type for ArrayBuffer and SharedArrayBuffer.
+bool Value::IsArrayBuffer() const
+{
+    auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(localToJSValue());
+    return buffer && !buffer->isShared();
+}
+
+bool Value::IsArrayBufferView() const
+{
+    JSC::JSValue value = localToJSValue();
+    return value.isCell() && value.inherits<JSC::JSArrayBufferView>();
+}
+
+bool Value::IsSharedArrayBuffer() const
+{
+    auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(localToJSValue());
+    return buffer && buffer->isShared();
+}
+
 MaybeLocal<String> Value::ToString(Local<Context> context) const
 {
     Zig::GlobalObject* globalObject = context->globalObject();
@@ -163,11 +193,63 @@ MaybeLocal<Int32> Value::ToInt32(Local<Context> context) const
 Maybe<uint32_t> Value::Uint32Value(Local<Context> context) const
 {
     auto js_value = localToJSValue();
-    uint32_t value;
-    if (js_value.getUInt32(value)) {
-        return Just(value);
+    // Like V8, a number converts even while an exception is pending.
+    if (js_value.isInt32()) {
+        return Just(static_cast<uint32_t>(js_value.asInt32()));
     }
-    return Nothing<uint32_t>();
+    if (js_value.isDouble()) {
+        return Just(JSC::toUInt32(js_value.asDouble()));
+    }
+
+    Maybe<double> number = NumberValue(context);
+    if (!number.m_hasValue) {
+        return Nothing<uint32_t>();
+    }
+
+    // V8 gives 0 when a non-number converts to a negative Smi: https://github.com/nodejs/node/blob/v26.3.0/deps/v8/src/objects/objects.cc#L405-L413
+    if (auto smi = tryConvertToStrictInt32(number.m_value); smi && *smi < 0) {
+        return Just<uint32_t>(0);
+    }
+    return Just(JSC::toUInt32(number.m_value));
+}
+
+Maybe<int32_t> Value::Int32Value(Local<Context> context) const
+{
+    auto js_value = localToJSValue();
+    if (js_value.isInt32()) {
+        return Just(js_value.asInt32());
+    }
+
+    Maybe<double> number = NumberValue(context);
+    if (!number.m_hasValue) {
+        return Nothing<int32_t>();
+    }
+    return Just(JSC::toInt32(number.m_value));
+}
+
+Maybe<double> Value::NumberValue(Local<Context> context) const
+{
+    JSC::JSValue value = localToJSValue();
+    // Like V8, a number converts even while an exception is pending.
+    if (value.isNumber()) {
+        return Just(value.asNumber());
+    }
+
+    Zig::GlobalObject* globalObject = context->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    // JSC cannot run JS while an exception is pending.
+    RETURN_IF_EXCEPTION(scope, Nothing<double>());
+
+    double number = value.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, Nothing<double>());
+
+    return Just(number);
+}
+
+bool Value::BooleanValue(Isolate* isolate) const
+{
+    return localToJSValue().toBoolean(isolate->globalObject());
 }
 
 bool Value::StrictEquals(Local<Value> that) const

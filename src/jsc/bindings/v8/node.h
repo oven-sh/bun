@@ -41,6 +41,15 @@ BUN_EXPORT async_context EmitAsyncInit(v8::Isolate* isolate,
 BUN_EXPORT void EmitAsyncDestroy(v8::Isolate* isolate,
     async_context asyncContext);
 
+#if OS(WINDOWS)
+// Node's node.h makes an addon built without BUILDING_NODE_EXTENSION (uWebSockets.js) import this destructor. It never runs.
+class CallbackScope {
+public:
+    CallbackScope() = delete;
+    BUN_EXPORT ~CallbackScope();
+};
+#endif
+
 BUN_EXPORT v8::MaybeLocal<v8::Value> MakeCallback(v8::Isolate* isolate,
     v8::Local<v8::Object> recv,
     v8::Local<v8::Function> callback,

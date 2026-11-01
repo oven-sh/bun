@@ -8,6 +8,7 @@ import {
   expectRssDeltaBelow,
   isASAN,
   isBroken,
+  isGlibc,
   isMusl,
   isWindows,
   nodeExeMatchingAbi,
@@ -15,6 +16,7 @@ import {
   tmpdirSync,
 } from "harness";
 import assert from "node:assert";
+import { existsSync, readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import { basename, join } from "path";
 
@@ -182,6 +184,22 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       "[(() => { const { proxy, revoke } = Proxy.revocable([], {}); revoke(); return proxy; })()]",
     ])("matches Node for IsMap/IsArray/IsInt32/IsBigInt on %s", async args => {
       await checkSameOutput("test_v8_value_type_checks", args);
+    });
+
+    it("matches Node for IsExternal/IsArrayBuffer/IsArrayBufferView/IsSharedArrayBuffer on a matrix of values", async () => {
+      const lines = (await checkSameOutput("test_v8_value_external_and_buffer_type_checks")).split(/\r?\n/);
+      const answers = Object.fromEntries(lines.map(line => line.split(": ")));
+      const none = "IsExternal=0 IsArrayBuffer=0 IsArrayBufferView=0 IsSharedArrayBuffer=0";
+      expect(answers).toMatchObject({
+        "ArrayBuffer": "IsExternal=0 IsArrayBuffer=1 IsArrayBufferView=0 IsSharedArrayBuffer=0",
+        "SharedArrayBuffer": "IsExternal=0 IsArrayBuffer=0 IsArrayBufferView=0 IsSharedArrayBuffer=1",
+        "Uint8Array": "IsExternal=0 IsArrayBuffer=0 IsArrayBufferView=1 IsSharedArrayBuffer=0",
+        "DataView over an ArrayBuffer": "IsExternal=0 IsArrayBuffer=0 IsArrayBufferView=1 IsSharedArrayBuffer=0",
+        "External": "IsExternal=1 IsArrayBuffer=0 IsArrayBufferView=0 IsSharedArrayBuffer=0",
+        "ObjectTemplate instance with internal fields": none,
+        "Proxy of an ArrayBuffer": none,
+        "Proxy of an External": none,
+      });
     });
   });
   describe("Number", () => {
@@ -394,6 +412,14 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     it("BigInt::New creates a JS bigint with the given int64 value", async () => {
       await checkSameOutput("test_v8_bigint");
     });
+    it("BigInt::NewFromUnsigned creates a JS bigint with the given uint64 value", async () => {
+      const output = await checkSameOutput("test_v8_bigint_new_from_unsigned");
+      const values = [0n, 1n, 2n ** 32n, 2n ** 53n + 1n, 2n ** 63n, 2n ** 64n - 1n];
+      const native = values.map(value => `NewFromUnsigned(${value}): IsBigInt() = 1, IsNumber() = 0`);
+      const js = values.map(value => `typeof = bigint value = ${value}`);
+      // Called as a function, as a constructor, and with an exception pending.
+      expect(output.split(/\r?\n/)).toEqual([...native, ...js, ...native, ...js, ...native, "caught pending"]);
+    });
   });
 
   describe("String::NewFromUtf8Literal", () => {
@@ -444,6 +470,57 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     });
     it("can create Uint8Array/Uint32Array views with offset and length", async () => {
       await checkSameOutput("test_v8_typedarray");
+    });
+    it("ArrayBuffer and SharedArrayBuffer report ByteLength() and Data() like V8", async () => {
+      await checkSameOutput("test_v8_arraybuffer_accessors");
+    });
+    it("ArrayBuffer::Detach() detaches the buffer and its views", async () => {
+      const output = await checkSameOutput("test_v8_arraybuffer_detach");
+      expect(output).toContain("ByteLength() after Detach() = 0");
+      expect(output).toContain("bytes read through the store = 1 2 3 4 5 6 7 8");
+    });
+    // V8 aborts when an addon detaches a buffer that is not detachable, so this cannot be compared against Node.
+    it("ArrayBuffer::Detach() leaves a buffer attached when it cannot be detached", async () => {
+      const expected = [
+        "====== WebAssembly.Memory buffer",
+        "ByteLength() before Detach() = 65536",
+        "ByteLength() after Detach() = 65536",
+        "Data() != nullptr after Detach() = 1",
+        "byteLength = 65536 detached = false",
+        "still the memory's buffer = true",
+        "ByteLength() = 65536",
+        "Data() != nullptr = 1",
+        "Data()[0] = 42",
+        "Data()[1] = 0",
+        "Data()[2] = 0",
+        "Data()[3] = 0",
+        "Data() == GetBackingStore()->Data() = 1",
+        "====== SharedArrayBuffer",
+        "ByteLength() before Detach() = 8",
+        "ByteLength() after Detach() = 8",
+        "Data() != nullptr after Detach() = 1",
+        "byteLength = 8 bytes = 1,2,3,4,5,6,7,8",
+        "====== ArrayBuffer that a threadpool job is reading",
+        "ByteLength() before Detach() = 8",
+        "ByteLength() after Detach() = 8",
+        "Data() != nullptr after Detach() = 1",
+        "byteLength = 8 detached = false",
+        "bytes = 1,2,3,4,5,6,7,8",
+        "====== the same ArrayBuffer after the job",
+        "ByteLength() before Detach() = 8",
+        "ByteLength() after Detach() = 0",
+        "Data() != nullptr after Detach() = 0",
+        "byteLength = 0 detached = true",
+      ].join("\n");
+      const buildModes = [BuildMode.release, BuildMode.debug];
+      const outputs = await Promise.all(
+        buildModes.map(buildMode => runOn(Runtime.bun, buildMode, "test_v8_arraybuffer_detach_undetachable")),
+      );
+      for (const [i, output] of outputs.entries()) {
+        expect(output.replaceAll(/^\[\w+\].+$/gm, "").trim(), `addon built in ${BuildMode[buildModes[i]]} mode`).toBe(
+          expected,
+        );
+      }
     });
   });
 
@@ -522,6 +599,259 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       await checkSameOutput("test_uv_queue_work_on_current_event_loop");
     });
   });
+
+  describe("Value::Uint32Value", () => {
+    // one "value | line printed for it | ..." per value that the driver converted
+    const casesOf = (out: string) =>
+      out
+        .split("====== ")
+        .slice(1)
+        .map(section => section.trim().split(/\r?\n/).join(" | "));
+
+    it("converts values like V8, which gives 0 for a non-number that converts to a negative Smi", async () => {
+      const out = await checkSameOutput("test_v8_value_uint32_value");
+      expect(casesOf(out)).toEqual(
+        expect.arrayContaining([
+          // uWebSockets.js: app.listen(host, "3000", callback)
+          "'3000' | maybe.IsNothing() = 0 | maybe.FromJust() = 3000",
+          "-1 | maybe.IsNothing() = 0 | maybe.FromJust() = 4294967295",
+          "4294967296 | maybe.IsNothing() = 0 | maybe.FromJust() = 0",
+          "NaN | maybe.IsNothing() = 0 | maybe.FromJust() = 0",
+          // The JS ToUint32 operation gives 4294967295 for these four. V8 gives 0 for the two that convert to a Smi.
+          "'-1' | maybe.IsNothing() = 0 | maybe.FromJust() = 0",
+          "'-1.5' | maybe.IsNothing() = 0 | maybe.FromJust() = 4294967295",
+          "'-4294967297' | maybe.IsNothing() = 0 | maybe.FromJust() = 4294967295",
+          "object with valueOf returning -1 | maybe.IsNothing() = 0 | maybe.FromJust() = 0",
+          "Symbol | maybe.IsNothing() = 1 | threw TypeError",
+          "10n | maybe.IsNothing() = 1 | threw TypeError",
+          "object with throwing valueOf | maybe.IsNothing() = 1 | threw the valueOf error",
+        ]),
+      );
+    });
+
+    it("converts a number while an exception is pending", async () => {
+      const out = await checkSameOutput("test_v8_value_uint32_value_with_pending_exception");
+      expect(casesOf(out)).toEqual([
+        "3000 | maybe.IsNothing() = 0 | maybe.FromJust() = 3000 | caught pending",
+        "-1 | maybe.IsNothing() = 0 | maybe.FromJust() = 4294967295 | caught pending",
+        "1.5 | maybe.IsNothing() = 0 | maybe.FromJust() = 1 | caught pending",
+      ]);
+    });
+  });
+
+  describe("Value::Int32Value", () => {
+    it("converts values like the JS ToInt32 operation", async () => {
+      const out = await checkSameOutput("test_v8_value_int32_value");
+      // uWebSockets.js: the numbers in the options of app.ws()
+      expect(out).toContain("maybe.FromJust() = -1");
+    });
+  });
+
+  describe("Value::NumberValue", () => {
+    it("converts values like the JS ToNumber operation", async () => {
+      const out = await checkSameOutput("test_v8_value_number_value");
+      // every digit of the double that valueOf returned
+      expect(out).toContain("maybe.FromJust() = 77.900000000000006");
+    });
+  });
+
+  describe("Value::BooleanValue", () => {
+    it("converts values like the JS ToBoolean operation", async () => {
+      const out = await checkSameOutput("test_v8_value_boolean_value");
+      // the truthy ones: "0", "false", [], {}, 1n and a Symbol
+      expect(out.match(/ = 1$/gm)).toHaveLength(6);
+    });
+  });
+
+  describe("CFunctionInfo / CFunction", () => {
+    it("constructors store V8's fields inside the addon's object and FunctionTemplate::New takes the CFunction", async () => {
+      const output = await checkSameOutput("test_v8_function_template_c_function");
+      // the addon prints through the C runtime, which ends lines with \r\n on Windows
+      expect(output.split(/\r?\n/)).toEqual([
+        "type_info->return_info_.type_ == CTypeInfo::Type::kInt32 = 1",
+        "type_info->return_info_.flags_ == CTypeInfo::Flags::kClampBit = 1",
+        "type_info->repr_ == CFunctionInfo::Int64Representation::kBigInt = 1",
+        "type_info->arg_count_ = 3",
+        "type_info->arg_info_ == arg_info = 1",
+        "type_info_storage.guards_intact() = 1",
+        "c_function->address_ == address = 1",
+        "c_function->type_info_ == type_info = 1",
+        "c_function_storage.guards_intact() = 1",
+        "slow callback called with 40 and 2",
+        "add(40, 2) = 42",
+      ]);
+    });
+  });
+
+  describe("Object::GetOwnPropertyNames", () => {
+    it("returns the keys V8 returns for every PropertyFilter and KeyConversionMode", async () => {
+      const out = await checkSameOutput("test_v8_object_get_own_property_names");
+      // The two calls uWebSockets.js makes.
+      expect(out).toContain('object with a prototype, one-argument overload: 2 [number 8, string "own"]');
+      expect(out).toContain(
+        "mixed, SKIP_STRINGS: 4 [symbol(enumerable), symbol(hidden), symbol(readOnly), symbol(nonConfigurable)]",
+      );
+    });
+  });
+
+  describe("ArrayBuffer::NewBackingStore", () => {
+    it("calls the deleter once, when the addon destroys the store", async () => {
+      const output = await checkSameOutput("test_v8_new_backing_store");
+      // the addon prints through the C runtime, which ends lines with \r\n on Windows
+      expect(output.split(/\r?\n/)).toEqual([
+        "store->Data() == unique_owned.bytes = 1",
+        "unique_owned.deleter_calls = 0",
+        "unique_owned.deleter_calls = 1",
+        "copy->Data() == shared_owned.bytes = 1",
+        "shared_owned.deleter_calls = 0",
+        "shared_owned.deleter_calls = 1",
+        "store->Data() == zero_length.bytes = 1",
+        "zero_length.deleter_calls = 1",
+        "store->Data() == nullptr = 1",
+        "no_memory.deleter_calls + no_memory.unexpected_deleter_calls = 0",
+        "unexpected_deleter_calls = 0",
+      ]);
+    });
+
+    it("ArrayBuffer::New shares the store's memory and keeps the store until the buffer is detached or collected", async () => {
+      const output = await checkSameOutput("test_v8_array_buffer_from_backing_store");
+      expect(output.split(/\r?\n/)).toEqual([
+        "====== the addon drops its std::shared_ptr, JS holds 1 of 65 buffers",
+        "deleters of the 64 buffers that nothing refers to: 64 of 64 ran, 0 more than once",
+        "deleter calls for the buffer that JS holds = 0",
+        "the addon reads what JS wrote = 77",
+        "JS reads what the addon wrote = 200",
+        "GetBackingStore() has the addon's memory = true",
+        "byteLength = 8, detached = false",
+        "deleter calls after Detach() = 1",
+        "byteLength = 0, detached = true view length = 0",
+        "deleter calls after a second Detach() = 1",
+        "deleters after JS dropped the detached buffer and a collection ran: 65 of 65 ran, 0 more than once",
+        "====== the addon keeps its std::shared_ptr past Detach()",
+        "byteLength = 0, detached = true",
+        "deleter calls after Detach() and a collection = 0",
+        "the store still has the addon's memory = true",
+        "the addon reads what JS wrote = 42",
+        "deleter calls after the addon released the store = 1",
+        "====== two ArrayBuffers from one store",
+        "two objects = true",
+        "the second reads what JS wrote to the first = 11",
+        "deleter calls after Detach() of the first = 0",
+        "second: byteLength = 8, detached = false first byte = 11",
+        "deleter calls after Detach() of the second = 1",
+        "====== JS keeps a view and not the buffer",
+        "deleter calls while JS holds the view = 0",
+        "the view reads what the addon wrote = 123",
+        "deleter calls after Detach() of the view's buffer = 1",
+        "view length = 0",
+        "====== a store over zero bytes of the addon's memory",
+        "byteLength = 0, detached = false view length = 0",
+        "deleter calls while JS holds the buffer = 0",
+        "byteLength = 0, detached = true",
+        "deleter calls after Detach() = 1",
+        "====== a store over no memory",
+        "byteLength = 0, detached = false view length = 0",
+        "byteLength = 0, detached = true",
+        "====== once nothing refers to a buffer and a collection ran",
+        "deleters of the 69 stores with memory: 69 of 69 ran, 0 more than once",
+        "deleter calls for the store over no memory = 0",
+        "deleter calls without the store's data and length = 0",
+      ]);
+    });
+
+    // V8 calls the deleter without checking it, so this cannot be compared against Node.
+    it("has nothing to call when the deleter is null", async () => {
+      const expected = [
+        "the addon destroyed a store that no ArrayBuffer was made from",
+        "a collection ran while nothing refers to 8 of 9 buffers",
+        "the addon reads what JS wrote = 77",
+        "JS reads what the addon wrote = 200",
+        "byteLength = 0, detached = true",
+        "a collection ran after JS dropped the detached buffer",
+      ].join("\n");
+      const buildModes = [BuildMode.release, BuildMode.debug];
+      const outputs = await Promise.all(
+        buildModes.map(buildMode => runOn(Runtime.bun, buildMode, "test_v8_new_backing_store_null_deleter")),
+      );
+      for (const [i, output] of outputs.entries()) {
+        expect(output.replaceAll(/^\[\w+\].+$/gm, "").trim(), `addon built in ${BuildMode[buildModes[i]]} mode`).toBe(
+          expected,
+        );
+      }
+    });
+
+    // glibc 2.34 and later install their malloc checker beside libc.so.6.
+    const libc = isGlibc ? / (\/\S*\/)libc\.so\.6$/m.exec(readFileSync("/proc/self/maps", "utf8")) : null;
+    const mallocChecker = libc ? join(libc[1], "libc_malloc_debug.so.0") : "";
+
+    // With MALLOC_CHECK_ set, the checker's free(), which an addon's free() binds to, aborts on a foreign block.
+    it.skipIf(!existsSync(mallocChecker))(
+      "makes a store that the addon's operator delete frees while glibc's malloc checker is preloaded",
+      async () => {
+        const expected = [
+          "made.stores = 480",
+          "deleted.stores = 480",
+          "made.bytes = 6000",
+          "deleted.bytes = 6000",
+          "frames = 5520",
+        ].join("\n");
+        const env = {
+          ...bunEnv,
+          LD_PRELOAD: bunEnv.LD_PRELOAD ? `${mallocChecker}:${bunEnv.LD_PRELOAD}` : mallocChecker,
+          MALLOC_CHECK_: "3",
+        };
+        const buildModes = [BuildMode.release, BuildMode.debug];
+        const outputs = await Promise.all(
+          buildModes.map(buildMode =>
+            runOn(Runtime.bun, buildMode, "test_v8_backing_store_deleted_by_addon", undefined, undefined, env),
+          ),
+        );
+        for (const [i, output] of outputs.entries()) {
+          expect(output.replaceAll(/^\[\w+\].+$/gm, "").trim(), `addon built in ${BuildMode[buildModes[i]]} mode`).toBe(
+            expected,
+          );
+        }
+      },
+    );
+  });
+
+  describe("BackingStore", () => {
+    it("is deleted by the addon that owns it", async () => {
+      // On Windows the addon built with `node-gyp --debug` imports BackingStore::operator delete from the host.
+      const output = await checkSameOutput("test_v8_backing_store_deleted_by_addon");
+      expect(output.split(/\r?\n/)).toEqual([
+        "made.stores = 480",
+        "deleted.stores = 480",
+        "made.bytes = 6000",
+        "deleted.bytes = 6000",
+        "frames = 5520",
+      ]);
+    });
+  });
+
+  describe("Object::Clone", () => {
+    it("copies the prototype and the own properties of a plain object", async () => {
+      const out = await checkSameOutput("test_v8_object_clone");
+      // every object, the frozen one, and the accessor property without running its getter
+      expect(out.match(/same as the original's: true/g)).toHaveLength(5);
+      expect(out).toContain("extensible, sealed, frozen: false true true");
+      expect(out).toContain("getter calls during Clone(): 0");
+    });
+    it("gives the copy of a template instance internal fields of its own", async () => {
+      const out = await checkSameOutput("test_v8_object_clone_template_instance");
+      // once for ObjectTemplate::NewInstance() and once for FunctionTemplate::GetFunction()->NewInstance()
+      expect(
+        out.match(/copy after writing the original's fields: 2 internal fields: &b, "set on the copy"/g),
+      ).toHaveLength(2);
+      expect(out.match(/copies intact after collecting their originals: 100 of 100/g)).toHaveLength(2);
+      // the instance without an index key and the one with an index key, of both kinds
+      expect(
+        out.match(/copy made while an exception is pending: 2 internal fields, same aligned pointer: 1/g),
+      ).toHaveLength(4);
+      // each of those and a plain object per kind left the exception pending
+      expect(out.match(/: caught pending/g)).toHaveLength(6);
+    });
+  });
 });
 
 async function checkSameOutput(testName: string, args?: string, thisValue?: any) {
@@ -556,7 +886,14 @@ async function checkSameOutput(testName: string, args?: string, thisValue?: any)
  * @param jsArgs should eval() to an array
  * @param thisValue will be JSON stringified
  */
-async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, jsArgs?: string, thisValue?: any) {
+async function runOn(
+  runtime: Runtime,
+  buildMode: BuildMode,
+  testName: string,
+  jsArgs?: string,
+  thisValue?: any,
+  env: NodeJS.Dict<string> = bunEnv,
+) {
   if (runtime == Runtime.node) {
     assert(buildMode == BuildMode.release);
   }
@@ -583,7 +920,7 @@ async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, j
   const proc = spawn({
     cmd,
     cwd: baseDir,
-    env: bunEnv,
+    env,
     stdio: ["inherit", "pipe", "pipe"],
   });
   const [exitCode, out, err] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);

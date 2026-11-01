@@ -3,13 +3,17 @@
 // opens every name. So the scan has to read them all: that is the second expectation. The third: flow finds nothing that the front end left closed, which
 // would start the build over.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { test as oneAtATime } from "./supported";
 
 // supported.ts sets the limit for the first file of a process alone.
 raiseDefaultTimeout(120_000);
+
+// Each case builds and runs in a folder of its own, so they run at once. A debug build needs most of the limit of a case for one
+// build, and a case that runs out of time at once with others keeps its build running: there they run one after the other.
+const test = isDebug ? oneAtATime : oneAtATime.concurrent;
 
 const files = {
   "src/math.ts": `
@@ -150,31 +154,67 @@ const forms: Record<string, Record<string, string>> = {
   "the host runs the test files": { BUN_AOT_TEST_FILES_FROM_DISK: "1", BUN_AOT_TESTS_NAME_WHAT_THEY_USE: "1" },
 };
 
+/** `bun test` in a folder: what its test files print and how each test ends, and what a build says of its scans and of starting over. */
+async function runTests(folder: string, words: Record<string, string>, ...flags: string[]) {
+  const env = { ...bunEnv, ...words, BUN_JSC_logAOTPhaseTimes: "1" };
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], folder, env);
+  const log = stderr.split("\n");
+  return {
+    ended: {
+      printed: stdout.split("\n").filter(line => line && !line.startsWith("bun test ")),
+      results: [...stderr.matchAll(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/gm)].map(match => `${match[1]} ${match[2]}`),
+      // A run that fails says why there.
+      stderr: exitCode ? stderr : "",
+      exitCode,
+    },
+    // The first scan is that of the test files.
+    scan: log.find(line => line.startsWith("AOT test run | scan of ")),
+    startsOver: log.filter(line => line.startsWith("AOT build starts over")),
+  };
+}
+
+// How the line of a scan ends that leaves no module and no object open to every test file of the run.
+const leavesNothingOpen =
+  "| mocks any module false | hands on any module false | spies on objects from somewhere false";
+
 for (const [title, words] of Object.entries(forms)) {
   test(`spies that reach spyOn through helpers: ${title}`, async () => {
     using dir = tempDir("spies-through-helpers", files);
-    const lines = async (...flags: string[]) => {
-      const env = { ...bunEnv, ...words, BUN_JSC_logAOTPhaseTimes: "1" };
-      const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), env);
-      expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
-      const printed = stdout
-        .split("\n")
-        .filter(line => /^(tracker|taken out|net|roads|effects|method|restored) /.test(line));
-      const log = stderr.split("\n");
-      return {
-        printed,
-        // The first scan is that of the test files.
-        scan: log.find(line => line.startsWith("AOT test run | scan of ")),
-        startsOver: log.filter(line => line.startsWith("AOT build starts over")),
-      };
-    };
-    const [plain, compiled] = [await lines(), await lines("--aot")];
-    expect(plain.printed).toHaveLength(7);
-    expect(compiled.printed).toEqual(plain.printed);
+    const plain = await runTests(String(dir), words);
+    expect(plain.ended).toEqual({
+      printed: [
+        "tracker [3,4,1,101]",
+        "taken out [3,2,6,101]",
+        "net [7,7,7,101]",
+        "roads [3,4,6,101]",
+        "effects 4",
+        "method [3,4,3,101]",
+        "restored [3,4,6,101]",
+      ],
+      results: [
+        "pass a tracker made in a hook",
+        "pass a name taken out of what the factory returns",
+        "pass two levels of parameters and a list",
+        "pass modules of Bun through a list and a variable",
+        "pass a module of Bun under names that a file of the program exports too",
+        "pass a helper written with another extension",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+    const compiled = await runTests(String(dir), words, "--aot");
+    expect(compiled.ended).toEqual(plain.ended);
     // No helper is left whose names nobody can read.
-    expect(compiled.scan).toEndWith("spies on objects from somewhere false");
+    expect(compiled.scan).toEndWith(leavesNothingOpen);
     // TODO: where the host runs the test files flow still finds `kept` of src/math.ts.
-    if (!words.BUN_AOT_TEST_FILES_FROM_DISK) expect(compiled.startsOver).toEqual([]);
+    expect(compiled.startsOver).toEqual(
+      words.BUN_AOT_TEST_FILES_FROM_DISK
+        ? [
+            "AOT build starts over | replaced exports added: 1 in files, 0 in the library | math.ts:kept",
+            expect.stringMatching(/^AOT build starts over \| in all: /),
+          ]
+        : [],
+    );
   });
 }
 
@@ -206,19 +246,15 @@ test("a name read off it", async () => {
 for (const [title, words] of Object.entries(forms)) {
   test(`spies out of import("bun:test"): ${title}`, async () => {
     using dir = tempDir("spies-out-of-an-import-of-the-test-runner", byImport);
-    const lines = async (...flags: string[]) => {
-      const env = { ...bunEnv, ...words, BUN_JSC_logAOTPhaseTimes: "1" };
-      const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), env);
-      expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
-      return {
-        printed: stdout.split("\n").filter(line => /^(taken out|read off|restored) /.test(line)),
-        scan: stderr.split("\n").find(line => line.startsWith("AOT test run | scan of ")),
-      };
-    };
-    const [plain, compiled] = [await lines(), await lines("--aot")];
-    expect(plain.printed).toHaveLength(3);
-    expect(compiled.printed).toEqual(plain.printed);
-    expect(compiled.scan).toContain("| mocks any module false |");
-    expect(compiled.scan).toEndWith("spies on objects from somewhere false");
+    const plain = await runTests(String(dir), words);
+    expect(plain.ended).toEqual({
+      printed: ["taken out [3,4,4,101]", "read off [3,5,6,101]", "restored [3,4,6,101]"],
+      results: ["pass names taken out of it", "pass a name read off it"],
+      stderr: "",
+      exitCode: 0,
+    });
+    const compiled = await runTests(String(dir), words, "--aot");
+    expect(compiled.ended).toEqual(plain.ended);
+    expect(compiled.scan).toEndWith(leavesNothingOpen);
   });
 }

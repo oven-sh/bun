@@ -56,7 +56,7 @@ public:
     HandleScopeBuffer* globalHandles();
     // Null until the first v8::Global is created. Unlike globalHandles(), this never allocates.
     HandleScopeBuffer* globalHandlesIfCreated();
-    // Whether globalHandles() has disposed handles to release. Every scope that had V8 handles reads this when it closes.
+    // Whether globalHandles() has disposed handles to release.
     bool hasDisposedGlobalHandles() const { return m_hasDisposedGlobalHandles; }
     void setHasDisposedGlobalHandles(bool value) { m_hasDisposedGlobalHandles = value; }
 

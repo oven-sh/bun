@@ -12,24 +12,21 @@ namespace shim {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(HandleScopeBuffer);
 
-// The handles of v8::Globals, by state. A handle is in at most one of these.
+// The handles of v8::Globals, by state.
 struct GlobalHandleLists {
     WTF_MAKE_STRUCT_TZONE_ALLOCATED(GlobalHandleLists);
     WTF::HashSet<Handle*> live;
-    // Each keeps its value until no open scope has V8 handles: see createGlobalHandle().
     WTF::Vector<Handle*> disposed;
-    // Empty handles, for the next v8::Global.
     WTF::Vector<Handle*> free;
 };
 
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(GlobalHandleLists);
 
-// See releaseRetiredGlobalHandle(). Process-wide, because the v8::Global that points to a retired
-// handle is disposed in another VM, or on a thread that has none.
+// The handles of v8::Globals that outlived their buffer. Such a Global is disposed in another VM, or in none.
 struct RetiredGlobalHandles {
     WTF::Lock lock;
     WTF::HashSet<Handle*> handles WTF_GUARDED_BY_LOCK(lock);
-    // handles.size(), so that the lock is only taken once a buffer was freed with live handles.
+    // handles.size(), to read without the lock.
     std::atomic<unsigned> count { 0 };
 };
 
@@ -54,7 +51,6 @@ NEVER_INLINE void HandleScopeBuffer::destroyGlobalHandleLists()
     if (lists->live.isEmpty()) {
         return;
     }
-    // v8::Globals still point to these handles.
     auto& retired = retiredGlobalHandles();
     WTF::Locker locker { retired.lock };
     retired.handles.addAll(lists->live);
@@ -259,7 +255,6 @@ static bool hasV8Handles(Bun::HandleScopeImpl* scope)
 static bool isRetiredGlobalHandle(Handle* handle)
 {
     auto& retired = retiredGlobalHandles();
-    // Zero proves it without the lock: an address is retired, and counted, before its storage is freed.
     if (!retired.count.load()) {
         return false;
     }
@@ -274,15 +269,12 @@ TaggedPointer* HandleScopeBuffer::createGlobalHandle(TaggedPointer address)
     }
     auto& lists = *m_globalHandleLists;
     Handle* handle = lists.free.isEmpty() ? &createEmptyHandle() : lists.free.takeLast();
-    // A v8::Global still points to a retired address, and disposing it would dispose this handle,
-    // so the handle stays unused.
+    // The v8::Global that still points to a retired handle would dispose the next user of it.
     while (isRetiredGlobalHandle(handle)) {
         handle = &createEmptyHandle();
     }
     TaggedPointer* slot;
     {
-        // The GC visits the handles under this lock. Without it, a visit between the write barrier of the new value
-        // and the write of the handle sees an empty handle, and nothing makes the GC visit it again.
         WTF::Locker locker { m_owner->cellLock() };
         slot = createHandleFromExistingObject(address, handle);
     }
@@ -303,13 +295,6 @@ void HandleScopeBuffer::disposeGlobalHandle(TaggedPointer* slot)
     }
     m_globalHandleLists->disposed.append(handle);
     m_isolate->globalInternals()->setHasDisposedGlobalHandles(true);
-    if (hasV8Handles(m_isolate->globalObject()->m_currentHandleScopeImpl.get())) {
-        return;
-    }
-    // Never waits: a static v8::Global is destroyed at exit, when the thread that holds the lock may be gone.
-    if (auto locker = WTF::Locker<JSC::JSCellLock>::tryLock(m_owner->cellLock())) {
-        releaseDisposedGlobalHandles(locker);
-    }
 }
 
 bool HandleScopeBuffer::releaseRetiredGlobalHandle(TaggedPointer* slot)
@@ -318,7 +303,7 @@ bool HandleScopeBuffer::releaseRetiredGlobalHandle(TaggedPointer* slot)
     if (!retired.count.load()) {
         return false;
     }
-    // Never waits, like disposeGlobalHandle(). An address that stays retired is just never used again.
+    // Never waits: a static v8::Global is destroyed at exit, when the thread that holds the lock can be gone.
     if (!retired.lock.tryLock()) {
         return false;
     }

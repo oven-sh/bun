@@ -13,6 +13,7 @@ import {
   isMacOS,
   isPosix,
   isWindows,
+  nodeExeAtLeast,
   tempDir,
   tempDirWithFiles,
   tmpdirSync,
@@ -993,6 +994,105 @@ describe("copyFileSync", () => {
     await expect(fs.promises.copyFile(src, dest)).rejects.toThrow(expected);
   });
 
+  // libuv has no test of the source type. It copies `st_size` bytes, which is none for a device or a FIFO.
+  describe.skipIf(isWindows)("from a source that is not a regular file", () => {
+    const fixture = join(import.meta.dir, "fs-copyFile-non-regular-source-fixture.js");
+
+    // The file size limit stops a build that reads a device to EOF. A build that reads the FIFO blocks in the
+    // child, where the timeout of the test ends it.
+    async function run(exe: string) {
+      using dir = tempDir("copyfile-non-regular-source", {});
+      await using proc = Bun.spawn({
+        cmd: ["/bin/sh", "-c", `ulimit -f 1; exec "$0" "$1"`, exe, fixture],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+    }
+
+    // sendfile(2) on macOS, which libuv calls for a source that reports a size, fails with ENOTSUP.
+    const directoryCode = isMacOS ? "ENOTSUP" : "EISDIR";
+    const emptied = (path: string, mode: string) => `ok, ${path} is a file of 0 bytes with mode ${mode}`;
+    const untouched = "file.txt is a file of 11 bytes with mode 600";
+
+    // A device or a FIFO gives the results of an empty regular file with the same mode.
+    const withoutBytes = (source: string, mode: string) => [
+      `${source} to a new path: ${emptied("new.txt", mode)}`,
+      `${source} onto a file: ${emptied("file.txt", mode)}`,
+      `${source} onto a file with COPYFILE_EXCL: EEXIST, ${untouched}`,
+      `${source} into a missing directory: ENOENT, missing/new.txt is absent`,
+      `${source} onto a directory: EISDIR, destdir is a directory`,
+      `${source} onto a symlink to a file: ${emptied("file.txt", mode)}`,
+      `${source} onto a dangling symlink: ${emptied("target.txt", mode)}`,
+    ];
+    // The gate on macOS keeps a socket at ENOTSUP. Everywhere else open(2) fails, as in Node.js.
+    const socket = `a socket to a new path: ${isMacOS ? "ENOTSUP" : "ENXIO"}, new.txt is absent`;
+    const sameAsNode = [
+      ...withoutBytes("/dev/null", "666"),
+      ...withoutBytes("an empty file with mode 666", "666"),
+      ...withoutBytes("a FIFO", "640"),
+      ...withoutBytes("an empty file with mode 640", "640"),
+      `/dev/zero to a new path: ${emptied("new.txt", "666")}`,
+      `/dev/urandom to a new path: ${emptied("new.txt", "666")}`,
+      `a FIFO that holds bytes to a new path: ${emptied("new.txt", "640")}`,
+      "left in the FIFO: unread",
+      `a directory to a new path: ${directoryCode}, new.txt is absent`,
+      ...(isMacOS ? [] : [socket]),
+    ];
+    const differentFromNode = [
+      ...(isMacOS ? [socket] : []),
+      ...(isLinux
+        ? [
+            // The steps of a regular source: the destination gets the mode of the source. Node.js fails with
+            // EINVAL from ftruncate(2) and unlinks the FIFO.
+            "/dev/null onto a FIFO: ok, dest.fifo is a FIFO with mode 666",
+            "an empty file with mode 666 onto a FIFO: ok, dest.fifo is a FIFO with mode 666",
+            "a FIFO onto a FIFO: ok, dest.fifo is a FIFO with mode 640",
+            "an empty file with mode 640 onto a FIFO: ok, dest.fifo is a FIFO with mode 640",
+            // Refused before the destination is opened. Node.js reports EXDEV from FICLONE for the first, and
+            // success for the second.
+            "/dev/null to a new path with COPYFILE_FICLONE_FORCE: ENOTSUP, new.txt is absent",
+            "a FIFO onto itself with COPYFILE_FICLONE_FORCE: ENOTSUP, fifo is a FIFO with mode 640",
+          ]
+        : []),
+      // Refused before the destination is opened. Node.js opens and empties the destination first: it unlinks
+      // the file, and reports EEXIST and ENOENT for the next two.
+      `a directory onto a file: ${directoryCode}, ${untouched}`,
+      `a directory onto a file with COPYFILE_EXCL: ${directoryCode}, ${untouched}`,
+      `a directory into a missing directory: ${directoryCode}, missing/new.txt is absent`,
+      ...(isLinux
+        ? [
+            // Node.js copies st_size bytes from both: an empty file.
+            "a directory of size 0 to a new path: EISDIR, new.txt is absent",
+            "a regular file of size 0 to a new path: ok, new.txt is a file of 6 bytes with mode 444",
+          ]
+        : []),
+    ];
+
+    it("copies no bytes from a device or a FIFO, and refuses a directory before it opens the destination", async () => {
+      expect(await run(bunExe())).toEqual({
+        stdout: [...sameAsNode, ...differentFromNode],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // This test does not run Bun. It holds Node.js to the rows that the test above holds Bun to.
+    const node = nodeExeAtLeast("22.0.0");
+    it.skipIf(!node)("Node.js gives the same results, apart from the rows named as different", async () => {
+      const labels = differentFromNode.map(line => line.slice(0, line.indexOf(": ")));
+      const { stdout, stderr, exitCode } = await run(node!);
+      expect({
+        stdout: stdout.filter(line => !labels.some(label => line.startsWith(label + ": "))),
+        stderr,
+        exitCode,
+      }).toEqual({ stdout: sameAsNode, stderr: "", exitCode: 0 });
+    });
+  });
+
   // CopyFileW fails with ERROR_BAD_NET_NAME (or ERROR_BAD_NETPATH); neither is
   // in the Win32→errno table, so this is the UNKNOWN path.
   it.if(isWindows)("throws for a destination on a nonexistent UNC share", async () => {
@@ -1105,7 +1205,7 @@ it.concurrent("copyFile to an empty destination path fails with ENOENT in the pr
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   // An error for the source is still reported first.
-  expect(stdout).toBe(`ENOENT\n${isWindows ? "EPERM" : "ENOTSUP"}\n`);
+  expect(stdout).toBe(`ENOENT\n${isWindows ? "EPERM" : isMacOS ? "ENOTSUP" : "EISDIR"}\n`);
   expect(exitCode).toBe(0);
 });
 

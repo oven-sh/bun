@@ -743,7 +743,7 @@ fn cmd_load(repl: &mut Repl, args: &[u8]) -> ReplResult {
 
     repl.print(format_args!(
         "{}Loading {}...{}\n",
-        Color::DIM,
+        Color::GRAY,
         BStr::new(filename),
         Color::RESET
     ));
@@ -799,7 +799,7 @@ fn cmd_editor(repl: &mut Repl, _: &[u8]) -> ReplResult {
     }
     repl.print(format_args!(
         "{}// Entering editor mode (Ctrl+D to finish, Ctrl+C to cancel){}\n",
-        Color::DIM,
+        Color::GRAY,
         Color::RESET
     ));
     repl.input_mode = InputMode::Editor;
@@ -830,7 +830,7 @@ fn cmd_history(repl: &mut Repl, _: &[u8]) -> ReplResult {
         let i = i + start;
         repl.print(format_args!(
             "  {}{:>4}{}  {}\n",
-            Color::DIM,
+            Color::GRAY,
             i + 1,
             Color::RESET,
             BStr::new(entry)
@@ -1306,14 +1306,14 @@ impl<'a> Repl<'a> {
     fn get_prompt(&self) -> &'static [u8] {
         if self.input_mode != InputMode::Normal {
             if self.use_colors {
-                return concat!("\x1b[2m", "... ", "\x1b[0m").as_bytes();
+                return concat!("\x1b[90m", "... ", "\x1b[0m").as_bytes();
             } else {
                 return b"... ";
             }
         }
 
         if self.use_colors {
-            concat!("\x1b[2m", "\u{276f}", "\x1b[0m", " ").as_bytes()
+            concat!("\x1b[90m", "\u{276f}", "\x1b[0m", " ").as_bytes()
         } else {
             b"> "
         }
@@ -1377,7 +1377,7 @@ impl<'a> Repl<'a> {
 
         let ghost = self.drawn_suggestion();
         if !ghost.is_empty() {
-            self.write(Color::DIM.as_bytes());
+            self.write(Color::GRAY.as_bytes());
             self.write(ghost);
             self.write(Color::RESET.as_bytes());
         }
@@ -1729,7 +1729,7 @@ impl<'a> Repl<'a> {
 
         if actual_result.is_undefined() {
             if self.use_colors {
-                self.print(format_args!("{}undefined{}\n", Color::DIM, Color::RESET));
+                self.print(format_args!("{}undefined{}\n", Color::GRAY, Color::RESET));
             } else {
                 self.print(format_args!("undefined\n"));
             }
@@ -1763,7 +1763,7 @@ impl<'a> Repl<'a> {
         if strings::trim(code, b" \t\n\r").is_empty() {
             if print_result {
                 if self.use_colors {
-                    self.print(format_args!("{}undefined{}\n", Color::DIM, Color::RESET));
+                    self.print(format_args!("{}undefined{}\n", Color::GRAY, Color::RESET));
                 } else {
                     self.print(format_args!("undefined\n"));
                 }
@@ -1864,7 +1864,7 @@ impl<'a> Repl<'a> {
         if print_result {
             if actual_result.is_undefined() {
                 if self.use_colors {
-                    self.print(format_args!("{}undefined{}\n", Color::DIM, Color::RESET));
+                    self.print(format_args!("{}undefined{}\n", Color::GRAY, Color::RESET));
                 } else {
                     self.print(format_args!("undefined\n"));
                 }
@@ -1908,7 +1908,7 @@ impl<'a> Repl<'a> {
         if !result.is_undefined() {
             self.print_formatted_value(result);
         } else if self.use_colors {
-            self.print(format_args!("{}undefined{}\n", Color::DIM, Color::RESET));
+            self.print(format_args!("{}undefined{}\n", Color::GRAY, Color::RESET));
         } else {
             self.print(format_args!("undefined\n"));
         }
@@ -2071,7 +2071,7 @@ impl<'a> Repl<'a> {
         if self.use_colors {
             self.print(format_args!(
                 "{}Copied {} characters to clipboard{}\n",
-                Color::DIM,
+                Color::GRAY,
                 text.len(),
                 Color::RESET
             ));
@@ -2626,7 +2626,7 @@ impl<'a> Repl<'a> {
             InputMode::Editor => {
                 self.print(format_args!(
                     "{}// Editor mode cancelled{}\n",
-                    Color::DIM,
+                    Color::GRAY,
                     Color::RESET
                 ));
                 self.input_mode = InputMode::Normal;
@@ -2648,7 +2648,7 @@ impl<'a> Repl<'a> {
                 self.ctrl_c_pressed = true;
                 self.print(format_args!(
                     "{}(press Ctrl+C again to exit, or Ctrl+D){}\n",
-                    Color::DIM,
+                    Color::GRAY,
                     Color::RESET
                 ));
             }
@@ -2828,7 +2828,7 @@ impl<'a> Repl<'a> {
             self.leave_input(b"");
             self.print(format_args!(
                 "{}{} completions{}\n",
-                Color::DIM,
+                Color::GRAY,
                 len,
                 Color::RESET
             ));

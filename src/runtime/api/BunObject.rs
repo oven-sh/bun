@@ -1246,36 +1246,68 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
     {
         use core::ffi::c_void;
 
-        if path.len() > MAX_PATH_BYTES {
-            return Err(global_this.throw_invalid_arguments(format_args!("Path too long")));
+        if let Some(err) = node::types::Valid::path_too_long(path) {
+            use bun_sys_jsc::SystemErrorJsc as _;
+            return Err(global_this.throw_value(err.to_error_instance(global_this)));
         }
         node::types::Valid::path_null_bytes(path, global_this)?;
+        let throw = |err: sys::Error| {
+            use bun_jsc::SysErrorJsc as _;
+            let mut err = node::fs::error_for_caller([None, None], err);
+            // The error names the path as the caller wrote it, whichever text of it was opened.
+            if !err.path.is_empty() {
+                err.path = path.into();
+            }
+            global_this.throw_value(err.to_js(global_this))
+        };
         let mut buf = bun_paths::path_buffer_pool::get();
         let buf_len = buf.len();
-        let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<
-            bun_paths::resolve_path::platform::Auto,
-        >(
-            bun_core::working_directory_in_executable()
-                .unwrap_or_else(|| bun_paths::fs::FileSystem::instance().top_level_dir()),
-            &mut buf[..buf_len - 1],
-            &[path],
-        ) else {
-            return Err(global_this.throw_invalid_arguments(format_args!("Path too long")));
-        };
-        let graph = bun_standalone_graph::Graph::get_ref()
-            .filter(|_| bun_standalone_graph::is_bun_standalone_file_path(joined));
-        let embedded = graph.and_then(|graph| graph.find_ref(joined));
-        if graph.is_some_and(|graph| graph.find_dir(joined)) {
-            use bun_jsc::SysErrorJsc as _;
-            let err = sys::Error::from_code(bun_sys::E::EISDIR, sys::Tag::open).with_path(joined);
-            return Err(global_this.throw_value(err.to_js(global_this)));
+        // The system gets the path as written: the joined text drops `link/..`. `process.chdir` joins the same paths.
+        let in_executable = bun_core::working_directory_in_executable();
+        let relative = !bun_paths::is_absolute(path);
+        let starts_in_executable = relative && in_executable.is_some();
+        let mut graph = None;
+        let mut joined_len = None;
+        if let Some(standalone) = bun_standalone_graph::Graph::get_ref()
+            && !path.is_empty()
+            && (starts_in_executable || !relative)
+        {
+            match bun_paths::resolve_path::join_abs_string_buf_checked::<
+                bun_paths::resolve_path::platform::Auto,
+            >(
+                in_executable.unwrap_or(b"/"),
+                &mut buf[..buf_len - 1],
+                &[path],
+            ) {
+                Some(joined) => {
+                    if bun_standalone_graph::is_bun_standalone_file_path(joined) {
+                        graph = Some(standalone);
+                    }
+                    if graph.is_some() || starts_in_executable {
+                        joined_len = Some(joined.len());
+                    }
+                }
+                // The system has no working directory in the executable to start from.
+                None if starts_in_executable => {
+                    let err = sys::Error::from_code(bun_sys::E::ENAMETOOLONG, sys::Tag::open);
+                    return Err(throw(err.with_path(path)));
+                }
+                None => {}
+            }
         }
-
-        let path_len = joined.len();
+        let path_len = joined_len.unwrap_or_else(|| {
+            buf[..path.len()].copy_from_slice(path);
+            path.len()
+        });
         buf[path_len] = 0;
 
         // SAFETY: buf[path_len] == 0 written above
         let buf_z = bun_core::ZStr::from_buf(&buf[..], path_len);
+        let embedded = graph.and_then(|graph| graph.find_ref(buf_z.as_bytes()));
+        if graph.is_some_and(|graph| graph.find_dir(buf_z.as_bytes())) {
+            let err = sys::Error::from_code(bun_sys::E::EISDIR, sys::Tag::open);
+            return Err(throw(err.with_path(path)));
+        }
 
         // Conforming applications must specify either MAP_PRIVATE or MAP_SHARED.
         let flags = if options.shared {
@@ -1316,11 +1348,7 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
 
         let (map, delta) = match bun_sys::mmap_file(buf_z, flags, map_size, offset) {
             Ok(result) => result,
-            Err(err) => {
-                use bun_jsc::SysErrorJsc as _;
-                let err = node::fs::error_for_caller([None, None], err);
-                return Err(global_this.throw_value(err.to_js(global_this)));
-            }
+            Err(err) => return Err(throw(err)),
         };
 
         extern "C" fn munmap_dealloc(ptr: *mut c_void, size: *mut c_void) {

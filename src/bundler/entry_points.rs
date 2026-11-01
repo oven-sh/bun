@@ -208,7 +208,7 @@ impl MacroEntryPoint {
         entry.code_buffer[..label_len].copy_from_slice(macro_label_);
 
         let code_len: usize = 'brk: {
-            if import_path.base == b"bun" {
+            if import_path.dir.is_empty() && import_path.filename == b"bun" {
                 let mut cursor = std::io::Cursor::new(&mut entry.code_buffer[label_len..]);
                 write!(
                     &mut cursor,

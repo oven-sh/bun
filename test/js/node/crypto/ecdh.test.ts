@@ -215,8 +215,12 @@ test("ECDH.convertKey - supports different input and output encodings", () => {
 test("ECDH.convertKey - throws on invalid input", () => {
   // Invalid key
   expect(() => {
-    ECDH.convertKey("invalid-key", "prime256v1", "hex", "hex", "compressed");
-  }).toThrow("The argument 'encoding' is invalid for data of length 11. Received 'hex'");
+    ECDH.convertKey("0102030405", "prime256v1", "hex", "hex", "compressed");
+  }).toThrow("Failed to convert Buffer to EC_POINT");
+
+  // No hex digits are no bytes, and like Node the answer to an empty key is an empty string.
+  expect(ECDH.convertKey("invalid-key", "prime256v1", "hex", "hex", "compressed")).toBe("");
+  expect(ECDH.convertKey(Buffer.alloc(0), "prime256v1")).toBe("");
 
   // Invalid curve
   expect(() => {

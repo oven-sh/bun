@@ -199,7 +199,7 @@ JSValue unsignedBigIntToBuffer(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
 WebCore::BufferEncodingType getEncodingDefaultBuffer(JSGlobalObject* globalObject, ThrowScope& scope, JSValue encodingValue)
 {
     BufferEncodingType res = BufferEncodingType::buffer;
-    if (encodingValue.isUndefinedOrNull() || !encodingValue.isString()) {
+    if (!encodingValue.toBoolean(globalObject)) {
         return res;
     }
 
@@ -210,7 +210,13 @@ WebCore::BufferEncodingType getEncodingDefaultBuffer(JSGlobalObject* globalObjec
         return res;
     }
 
-    return parseEnumerationFromView<BufferEncodingType>(encodingString).value_or(BufferEncodingType::buffer);
+    auto encoding = parseEnumerationFromView<BufferEncodingType>(encodingString);
+    if (!encoding) {
+        ERR::UNKNOWN_ENCODING(scope, globalObject, encodingValue);
+        return res;
+    }
+
+    return *encoding;
 }
 
 ncrypto::EVPKeyPointer::PKFormatType parseKeyFormat(JSC::JSGlobalObject* globalObject, JSValue formatValue, WTF::ASCIILiteral optionName, std::optional<ncrypto::EVPKeyPointer::PKFormatType> defaultFormat)
@@ -593,18 +599,13 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
 }
 
 // maybe replace other getArrayBufferOrView
-GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject* globalObject, ThrowScope& scope, JSValue dataValue, ASCIILiteral argName, JSValue encodingValue, bool arrayBufferViewOnly)
+GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject* globalObject, ThrowScope& scope, JSValue dataValue, ASCIILiteral argName, JSValue encodingValue)
 {
     using Return = GCOwnedDataScope<std::span<const uint8_t>>;
 
     if (auto* view = dynamicDowncast<JSArrayBufferView>(dataValue)) {
         return { view, view->span() };
     }
-
-    if (arrayBufferViewOnly) {
-        ERR::INVALID_ARG_INSTANCE(scope, globalObject, argName, "Buffer, TypedArray, or DataView"_s, dataValue);
-        return { nullptr, {} };
-    };
 
     if (auto* arrayBuffer = dynamicDowncast<JSArrayBuffer>(dataValue)) {
         return { arrayBuffer, arrayBuffer->impl()->span() };
@@ -656,11 +657,6 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
 
         auto encoding = maybeEncoding.has_value() ? maybeEncoding.value() : BufferEncodingType::buffer;
 
-        if (encoding == BufferEncodingType::hex && dataString->length() % 2 != 0) {
-            Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, dataString->length()));
-            return {};
-        }
-
         auto dataView = dataString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -682,9 +678,21 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
         return view;
     }
 
+    if (auto* arrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
+        RefPtr<JSC::ArrayBuffer> impl = arrayBuffer->impl();
+        if (impl->isDetached()) {
+            throwTypeError(globalObject, scope, "Buffer is detached"_s);
+            return {};
+        }
+
+        auto* structure = globalObject->typedArrayStructure(JSC::TypeUint8, impl->isResizableOrGrowableShared());
+        size_t byteLength = impl->byteLength();
+        RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(globalObject, structure, WTF::move(impl), 0, byteLength));
+    }
+
     auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value);
     if (!view) {
-        ERR::INVALID_ARG_TYPE_INSTANCE(scope, globalObject, argName, "string"_s, "Buffer, TypedArray, or DataView"_s, value);
+        ERR::INVALID_ARG_TYPE_INSTANCE(scope, globalObject, argName, "string"_s, "ArrayBuffer, Buffer, TypedArray, or DataView"_s, value);
         return {};
     }
 

@@ -903,14 +903,9 @@ public:
 
     enum class CheckPublicKeyResult {
         NONE,
-#ifndef OPENSSL_IS_BORINGSSL
-        // Boringssl does not define DH_R_CHECK_PUBKEY_TOO_SMALL or TOO_LARGE
-        TOO_SMALL = DH_R_CHECK_PUBKEY_TOO_SMALL,
-        TOO_LARGE = DH_R_CHECK_PUBKEY_TOO_LARGE,
-        INVALID = DH_R_CHECK_PUBKEY_INVALID,
-#else
-        INVALID = DH_R_INVALID_PUBKEY,
-#endif
+        TOO_SMALL,
+        TOO_LARGE,
+        INVALID,
         CHECK_FAILED = 512,
     };
     // Check to see if the given public key is suitable for this DH instance.

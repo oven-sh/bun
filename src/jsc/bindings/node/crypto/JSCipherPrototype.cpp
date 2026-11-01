@@ -53,6 +53,18 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
     JSValue dataValue = callFrame->argument(0);
     JSValue encodingValue = callFrame->argument(1);
 
+    // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/cipher.js#L185-L191
+    if (dataValue.isString()) {
+        auto encoding = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encodingValue);
+        RETURN_IF_EXCEPTION(scope, {});
+        unsigned length = asString(dataValue)->length();
+        if (encoding == BufferEncodingType::hex && length % 2 != 0) {
+            return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, length));
+        }
+    } else if (!dataValue.inherits<JSArrayBufferView>()) {
+        return ERR::INVALID_ARG_TYPE_INSTANCE(scope, lexicalGlobalObject, "data"_s, "string"_s, "Buffer, TypedArray, or DataView"_s, dataValue);
+    }
+
     JSArrayBufferView* dataView = getArrayBufferOrView(lexicalGlobalObject, scope, dataValue, "data"_s, encodingValue);
     RETURN_IF_EXCEPTION(scope, {});
 

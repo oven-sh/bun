@@ -1004,12 +1004,14 @@ it("Cipheriv.update throws expected error for invalid data", () => {
   );
 });
 
-it("verifyOneShot should not accept strings for signatures", () => {
+it("verifyOneShot takes a string for the signature, like Node", () => {
   const data = Buffer.alloc(1);
+  const { publicKey } = crypto.generateKeyPairSync("ed25519");
+  expect(crypto.verify(null, data, publicKey, "oops")).toBe(false);
   expect(() => {
-    crypto.verify(null, data, "test", "oops");
+    crypto.verify(null, data, publicKey, 5);
   }).toThrow(
-    "The \"signature\" argument must be an instance of Buffer, TypedArray, or DataView. Received type string ('oops')",
+    'The "signature" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. Received type number (5)',
   );
 });
 
@@ -1882,4 +1884,157 @@ describe("the BoringSSL error queue", () => {
       opensslErrorStack: undefined,
     });
   });
+});
+
+describe.each([
+  ["an ArrayBuffer", bytes => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)],
+  [
+    "a SharedArrayBuffer",
+    bytes => {
+      const shared = new SharedArrayBuffer(bytes.length);
+      new Uint8Array(shared).set(bytes);
+      return shared;
+    },
+  ],
+])("%s is taken", (_, wrap) => {
+  it("by DiffieHellman", () => {
+    const peer = crypto.createDiffieHellman(64);
+    peer.generateKeys();
+    const dh = crypto.createDiffieHellman(wrap(peer.getPrime()), wrap(peer.getGenerator()));
+    expect([dh.getPrime(), dh.getGenerator()]).toEqual([peer.getPrime(), peer.getGenerator()]);
+    dh.generateKeys();
+    expect(dh.computeSecret(wrap(peer.getPublicKey()))).toEqual(peer.computeSecret(dh.getPublicKey()));
+    dh.setPublicKey(wrap(peer.getPublicKey()));
+    dh.setPrivateKey(wrap(peer.getPrivateKey()));
+    expect([dh.getPublicKey(), dh.getPrivateKey()]).toEqual([peer.getPublicKey(), peer.getPrivateKey()]);
+  });
+
+  it("by ECDH", () => {
+    const peer = crypto.createECDH("prime256v1");
+    peer.generateKeys();
+    const ecdh = crypto.createECDH("prime256v1");
+    ecdh.generateKeys();
+    expect(ecdh.computeSecret(wrap(peer.getPublicKey()))).toEqual(peer.computeSecret(ecdh.getPublicKey()));
+    ecdh.setPrivateKey(wrap(peer.getPrivateKey()));
+    expect(ecdh.getPublicKey()).toEqual(peer.getPublicKey());
+    expect(crypto.ECDH.convertKey(wrap(peer.getPublicKey()), "prime256v1", undefined, undefined, "compressed")).toEqual(
+      peer.getPublicKey(null, "compressed"),
+    );
+  });
+
+  it("by generatePrime and checkPrime", () => {
+    const prime = crypto.generatePrimeSync(32, {
+      add: wrap(Buffer.from([8])),
+      rem: wrap(Buffer.from([3])),
+      bigint: true,
+    });
+    expect(prime % 8n).toBe(3n);
+    expect(crypto.checkPrimeSync(wrap(Buffer.from([7])))).toBe(true);
+  });
+
+  it("by a cipher, except for update()", () => {
+    const [key, iv, aad, data] = [Buffer.alloc(16, 1), Buffer.alloc(12, 2), Buffer.alloc(4, 3), Buffer.alloc(8, 4)];
+    const expected = crypto.createCipheriv("aes-128-gcm", key, iv).setAAD(aad);
+    const cipher = crypto.createCipheriv("aes-128-gcm", wrap(key), wrap(iv)).setAAD(wrap(aad));
+    const encrypted = Buffer.concat([cipher.update(data), cipher.final()]);
+    expect(encrypted).toEqual(Buffer.concat([expected.update(data), expected.final()]));
+    expect(cipher.getAuthTag()).toEqual(expected.getAuthTag());
+    const decipher = crypto.createDecipheriv("aes-128-gcm", key, iv).setAAD(aad).setAuthTag(wrap(cipher.getAuthTag()));
+    expect(Buffer.concat([decipher.update(encrypted), decipher.final()])).toEqual(data);
+
+    expect(() => crypto.createCipheriv("aes-128-gcm", key, iv).update(wrap(data))).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining(
+          'The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView.',
+        ),
+      }),
+    );
+  });
+
+  it("as a signature and as a passphrase", () => {
+    const { privateKey, publicKey } = crypto.generateKeyPairSync("ed25519");
+    const data = Buffer.from("data");
+    expect(crypto.verify(null, data, publicKey, wrap(crypto.sign(null, data, privateKey)))).toBe(true);
+
+    const ec = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const signature = crypto.sign("sha256", data, ec.privateKey);
+    expect(crypto.createVerify("sha256").update(data).verify(ec.publicKey, wrap(signature))).toBe(true);
+
+    const passphrase = wrap(Buffer.from("secret"));
+    const pem = privateKey.export({ type: "pkcs8", format: "pem", cipher: "aes-256-cbc", passphrase });
+    expect(crypto.createPrivateKey({ key: pem, passphrase }).equals(privateKey)).toBe(true);
+    expect(crypto.createPrivateKey({ key: pem, passphrase: "secret" }).equals(privateKey)).toBe(true);
+  });
+});
+
+describe("encodings of DiffieHellman and ECDH", () => {
+  const dh = crypto.createDiffieHellman(64);
+  dh.generateKeys();
+  const ecdh = crypto.createECDH("prime256v1");
+  ecdh.generateKeys();
+
+  it.each([
+    ["dh.generateKeys", () => dh.generateKeys("nope")],
+    ["dh.getPrime", () => dh.getPrime("nope")],
+    ["dh.getGenerator", () => dh.getGenerator("nope")],
+    ["dh.getPublicKey", () => dh.getPublicKey("nope")],
+    ["dh.getPrivateKey", () => dh.getPrivateKey("nope")],
+    ["dh.computeSecret", () => dh.computeSecret(dh.getPublicKey(), null, "nope")],
+    ["ecdh.generateKeys", () => ecdh.generateKeys("nope")],
+    ["ecdh.getPublicKey", () => ecdh.getPublicKey("nope")],
+    ["ecdh.getPrivateKey", () => ecdh.getPrivateKey("nope")],
+    ["ecdh.computeSecret", () => ecdh.computeSecret(ecdh.getPublicKey(), null, "nope")],
+    ["ECDH.convertKey", () => crypto.ECDH.convertKey(ecdh.getPublicKey(), "prime256v1", undefined, "nope")],
+  ])("%s refuses an output encoding it does not know", (_, call) => {
+    expect(call).toThrow(expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING", message: "Unknown encoding: nope" }));
+  });
+
+  it("anything falsy, and 'buffer', ask for a Buffer", () => {
+    for (const encoding of [undefined, null, "", 0, false, "buffer"]) {
+      expect(dh.getGenerator(encoding)).toEqual(Buffer.from([2]));
+    }
+    expect(dh.getGenerator("HEX")).toBe("02");
+    expect(() => dh.getGenerator(5)).toThrow(expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }));
+  });
+
+  it("a hex string of odd length loses its last digit, like Buffer.from()", () => {
+    const other = crypto.createDiffieHellman(dh.getPrime());
+    other.setPublicKey("abc", "hex");
+    other.setPrivateKey("123", "hex");
+    expect([other.getPublicKey("hex"), other.getPrivateKey("hex")]).toEqual(["ab", "12"]);
+    expect(dh.computeSecret("abc", "hex")).toEqual(dh.computeSecret("ab", "hex"));
+
+    // update() checks it first.
+    expect(() => crypto.createCipheriv("aes-128-ctr", Buffer.alloc(16), Buffer.alloc(16)).update("abc", "hex")).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+  });
+});
+
+it("dh.computeSecret() says whether the other key is too small or too large", () => {
+  const dh = crypto.createDiffieHellman(64);
+  dh.generateKeys();
+  const p = BigInt("0x" + dh.getPrime("hex"));
+  const outcome = n => {
+    try {
+      return dh.computeSecret(n.toString(16).padStart(16, "0"), "hex").length;
+    } catch (e) {
+      return `${e.name} ${e.code}: ${e.message}`;
+    }
+  };
+  const tooSmall = "RangeError ERR_CRYPTO_INVALID_KEYLEN: Supplied key is too small";
+  const tooLarge = "RangeError ERR_CRYPTO_INVALID_KEYLEN: Supplied key is too large";
+  expect([0n, 1n, 2n, p - 2n, p - 1n, p].map(outcome)).toEqual([tooSmall, tooSmall, 8, 8, tooLarge, tooLarge]);
+});
+
+it.each(["7", ""])("checkPrime(%j) does not take a string", candidate => {
+  const error = expect.objectContaining({
+    code: "ERR_INVALID_ARG_TYPE",
+    message: expect.stringContaining(
+      'The "candidate" argument must be of type bigint or an instance of ArrayBuffer, TypedArray, Buffer, or DataView.',
+    ),
+  });
+  expect(() => crypto.checkPrimeSync(candidate)).toThrow(error);
+  expect(() => crypto.checkPrime(candidate, () => {})).toThrow(error);
 });

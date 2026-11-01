@@ -386,7 +386,8 @@ int BignumPointer::isPrime(int nchecks,
             },
             &innerCb);
     }
-    return BN_is_prime_ex(get(), nchecks, ctx.get(), cb.get());
+    // Not upstream: the candidate is the caller's, and fewer checks than this only suit one that BoringSSL drew at random.
+    return BN_is_prime_ex(get(), std::max(nchecks, BN_prime_checks_for_validation), ctx.get(), cb.get());
 }
 
 bool BignumPointer::generate(const PrimeConfig& params,
@@ -1414,14 +1415,11 @@ DHPointer::CheckPublicKeyResult DHPointer::checkPublicKey(
     if (DH_check_pub_key(dh_.get(), pub_key.get(), &codes) != 1) {
         return DHPointer::CheckPublicKeyResult::CHECK_FAILED;
     }
-#ifndef OPENSSL_IS_BORINGSSL
-    // Boringssl does not define DH_CHECK_PUBKEY_TOO_SMALL or TOO_LARGE
     if (codes & DH_CHECK_PUBKEY_TOO_SMALL) {
         return DHPointer::CheckPublicKeyResult::TOO_SMALL;
     } else if (codes & DH_CHECK_PUBKEY_TOO_LARGE) {
         return DHPointer::CheckPublicKeyResult::TOO_LARGE;
     }
-#endif
     if (codes != 0) {
         return DHPointer::CheckPublicKeyResult::INVALID;
     }

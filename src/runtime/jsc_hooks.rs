@@ -2026,6 +2026,16 @@ unsafe fn retroactively_report_discovered_tests(
 /// `Jest.runner.?.bun_test_root.onBeforePrint()` — flush the test reporter's
 /// line state before user `console.log` output interleaves with it.
 fn console_on_before_print() {
+    if crate::test_runner::jest::Jest::runner_ptr().is_some() {
+        console_on_before_print_in_test();
+    }
+}
+
+/// Two threads can print to different streams at once, so their calls need this lock. The runner's own code takes none.
+#[inline(never)]
+fn console_on_before_print_in_test() {
+    static LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
+    let _lock = LOCK.lock_guard();
     if let Some(runner) = crate::test_runner::jest::Jest::runner() {
         runner.bun_test_root.on_before_print();
     }

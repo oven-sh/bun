@@ -2046,7 +2046,6 @@ impl<'a> Repl<'a> {
             jsc::ConsoleObject::FormatOptions {
                 enable_colors: false,
                 add_newline: false,
-                flush: false,
                 quote_strings: true,
                 ordered_properties: false,
                 max_depth: 4,
@@ -2262,7 +2261,6 @@ impl<'a> Repl<'a> {
             jsc::ConsoleObject::FormatOptions {
                 enable_colors,
                 add_newline: true,
-                flush: false,
                 quote_strings: true,
                 ordered_properties: false,
                 max_depth: 4,
@@ -2296,7 +2294,6 @@ impl<'a> Repl<'a> {
             jsc::ConsoleObject::FormatOptions {
                 enable_colors: self.use_colors,
                 add_newline: true,
-                flush: false,
                 quote_strings: true,
                 ordered_properties: false,
                 max_depth: 4,

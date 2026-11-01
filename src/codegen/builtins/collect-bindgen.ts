@@ -290,15 +290,15 @@ function computeConversionUses(type: Type): UseSpec[] {
 // Whoever says what a member of a class answers has read it, its setter too, and writes `uses` for an operand that it changes.
 const saysResult = (type: Type): boolean => !(type instanceof AnyType) || type.isDeclaredResult;
 
+/** A value the body is handed as no cell: `b.any` is a cell as often as not. */
+const isNoCell = (type: Type): boolean => !(type instanceof AnyType) && isImmediate(type.parameterType.accepted);
+
 /** An instance of a class of a schema, which the body is handed as `&T`: the struct, never the wrapper. Absent, or one of several classes, or a class or a primitive, too. */
 function isClassReference(type: Type): boolean {
   if (type instanceof OptionalType || type instanceof DefaultType) return isClassReference(type.inner);
   if (type instanceof UnionType) {
     const alternatives = type.alternatives.map(({ type }) => type);
-    return (
-      alternatives.some(isClassReference) &&
-      alternatives.every(type => isClassReference(type) || isImmediate(type.parameterType.accepted))
-    );
+    return alternatives.some(isClassReference) && alternatives.every(type => isClassReference(type) || isNoCell(type));
   }
   return type instanceof ClassType;
 }
@@ -352,7 +352,7 @@ function computeReceiverUses(
   return [b.readsContents(), b.writesContents()];
 }
 
-/** The body of a member is handed the wrapper of its receiver. A class's `protoCaller` hands it too, to members that all run JavaScript. */
+/** The body of a member is handed the wrapper of its receiver, `passThis`. */
 const passesWrapperTo = (signature: Signature): boolean => signature instanceof Method && signature.passThis;
 
 function createReceiver(

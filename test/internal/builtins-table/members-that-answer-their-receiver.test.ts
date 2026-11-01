@@ -193,6 +193,7 @@ test("an argument that is an instance of a class is handed to the body as the st
       either: { args: { other: b.union({ other: Other, third: Third }) }, returns: b.i32 },
       orNull: { args: { other: b.union({ other: Other, none: b.null }) }, returns: b.i32 },
       orText: { args: { other: b.union({ other: Other, text: b.string }) }, returns: b.i32 },
+      orAny: { args: { other: b.union({ other: Other, ignored: b.any }) }, returns: b.i32 },
       watch: { args: { other: Other }, returns: b.any, capability: "js", throws: true },
     `),
   ).toEqual({
@@ -201,6 +202,7 @@ test("an argument that is an instance of a class is handed to the body as the st
     "%Thing%.prototype.either": { other: ["ReadsContents", "WritesContents"] },
     "%Thing%.prototype.orNull": { other: ["ReadsContents", "WritesContents"] },
     "%Thing%.prototype.orText": { other: ["Retains"] },
+    "%Thing%.prototype.orAny": { other: ["Retains"] },
     "%Thing%.prototype.watch": { other: ["Everything"] },
   });
 });

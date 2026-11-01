@@ -1,6 +1,7 @@
-import { expect } from "bun:test";
+import { afterEach, beforeEach, expect } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { runtimeEnvironment } from "./harness/flags";
@@ -9,6 +10,15 @@ import { describe, test as oneAtATime } from "./supported";
 
 // The tests run at once: each builds and runs in a folder of its own.
 const test = oneAtATime.concurrent;
+// A test keeps about two processors busy: a quarter as many tests as processors run at once, so half of the machine is left to the files beside this one. The others wait in a hook without a limit, where the time of a test does not run.
+let free = Math.max(2, availableParallelism() >> 2);
+const waiting: (() => void)[] = [];
+beforeEach(() => (free > 0 ? void free-- : new Promise<void>(resolve => waiting.push(resolve))), 0);
+afterEach(() => {
+  const next = waiting.shift();
+  if (next) next();
+  else free++;
+});
 // supported.ts sets the limit for the first file of a process alone. A debug build takes six minutes for one run over two layers.
 raiseDefaultTimeout(isDebug ? 1_800_000 : 120_000);
 

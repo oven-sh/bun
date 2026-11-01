@@ -663,6 +663,24 @@ describe("util", () => {
         },
       ],
       [
+        // A name that the table inherits is an entry. The snapshot and the message have own names only.
+        "a table that has a prototype",
+        `util.inspect.colors = { __proto__: { base: [96, 39] }, red: [95, 39] };
+         out.own = [slow("red"), fast("red")];
+         out.inherited = [slow("base"), fast("base")];
+         Object.getPrototypeOf(util.inspect.colors).base = [97, 39];
+         out.edited = [slow("base"), fast("base")];
+         out.fromObject = [slow("constructor"), fast("constructor")];
+         try { util.styleText(["nope"], "x", noValidate); } catch (error) { out.message = error.message; }`,
+        {
+          own: [sgr(95), sgr(95)],
+          inherited: [sgr(96), sgr(96)],
+          edited: [sgr(97), sgr(97)],
+          fromObject: [sgr("undefined", "undefined"), sgr("undefined", "undefined")],
+          message: "The argument 'format' must be one of: 'red'. Received 'nope'",
+        },
+      ],
+      [
         "calls that do not take the snapshot",
         `out.before = [slow("red"), onTerminal("red"), onPipe("red"), attempt(() => util.styleText("red", 1, noValidate))];
          colors.red = [91, 39];

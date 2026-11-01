@@ -1429,6 +1429,31 @@ error: Hello World`,
       },
     ],
   });
+  // Only the file names `node` and `bunx` select those roles. These names only end in them.
+  for (const name of ["fullnode", "mybunx"]) {
+    itBundled(`compile/BunBeBunEnvVar+${name}`, {
+      compile: true,
+      outfile: `/${name}`,
+      files: {
+        "/entry.ts": /* js */ `
+          console.log("This is compiled code");
+        `,
+      },
+      run: [
+        {
+          stdout: "This is compiled code",
+        },
+        {
+          // `--help` prints a different usage line in each role.
+          env: { BUN_BE_BUN: "1" },
+          args: ["--help"],
+          validate({ stdout }) {
+            expect(stdout).toContain("Usage: bun <command> ");
+          },
+        },
+      ],
+    });
+  }
 
   test("does not crash", async () => {
     await using dir = tempDir("bundler-compile-shadcn", {

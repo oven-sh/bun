@@ -1784,3 +1784,20 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(exitCode).toBe(0);
   });
 });
+
+describe.skipIf(isWindows)("Bun.write mode option", () => {
+  it("sets the permissions of a file it creates", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    const mode = file => fs.statSync(file).mode & 0o777;
+    // The test runs with a umask that does not clear owner bits, so 0o640 is distinguishable from the default.
+    for (const [name, data] of [
+      ["string", "hello"],
+      ["bytes", new Uint8Array([1, 2, 3])],
+      ["blob", new Blob(["hello"])],
+    ]) {
+      const file = join(String(dir), name + ".txt");
+      expect(await Bun.write(file, data, { mode: 0o600 })).toBeGreaterThan(0);
+      expect(mode(file)).toBe(0o600);
+    }
+  });
+});

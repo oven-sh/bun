@@ -782,7 +782,7 @@ pub unsafe fn spawn_process_posix(
             PosixStdio::Inherit => {
                 // A closed slot would inherit whatever fd is created later at that number (e.g. the ipc socketpair); libuv gives it /dev/null.
                 if closed_stdio[i] {
-                    actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;
+                    actions.open_z(fileno, c"/dev/null", flag, 0)?;
                 } else {
                     // process.stdout/stderr put O_NONBLOCK on the shared description; libuv clears it for child fds 0-2 too.
                     let _ = bun_sys::update_nonblocking(fileno, false);
@@ -790,7 +790,7 @@ pub unsafe fn spawn_process_posix(
                 }
             }
             PosixStdio::Ipc | PosixStdio::Ignore => {
-                actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;
+                actions.open_z(fileno, c"/dev/null", flag, 0)?;
             }
             PosixStdio::Path(path) => {
                 actions.open(fileno, path, flag | bun_sys::O::CREAT as u32, 0o664)?;

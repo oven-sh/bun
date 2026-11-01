@@ -878,7 +878,8 @@ impl RunCommand {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-const BUN_HASH_TAG: &[u8] = b".bun-tag-";
+/// What the marker of a patched copy, `.bun-tag-<hash of the patch>`, begins with.
+pub(crate) const BUN_HASH_TAG: &[u8] = b".bun-tag-";
 
 /// Length of `u64::MAX` formatted as lowercase hex (`ffffffffffffffff`).
 const MAX_HEX_HASH_LEN: usize = 16;

@@ -18,7 +18,7 @@ use crate::cache_publish::{RenameError, RenameRetry};
 use crate::lockfile::package;
 use crate::package_install::{
     BUN_TAG, Method as InstallMethod, Staging, StagingLock, StagingPath, Summary as InstallSummary,
-    rename_staging_into_place,
+    empty_in_place, rename_staging_into_place,
 };
 use crate::package_manager_real::Command;
 use crate::postinstall_optimizer;
@@ -753,7 +753,7 @@ impl<'a> Installer<'a> {
         {
             if tag == ResolutionTag::Folder {
                 // Nothing cleans up a staging path next to a folder, so delete it in place.
-                self.delete_local_store_package_in_place(entry_id);
+                let _ = self.delete_local_store_package_in_place(entry_id);
             } else {
                 let staging = self.staging_lock.get_or_init(StagingLock::acquire).mode;
                 // Don't wait, because a running script keeps its package open on Windows. Whatever
@@ -764,11 +764,11 @@ impl<'a> Installer<'a> {
         is_store_copy
     }
 
-    /// Deletes the `installed_marker` file first, because `delete_tree` can stop midway.
-    fn delete_local_store_package_in_place(&self, entry_id: StoreEntryId) {
+    /// Deletes the `installed_marker` file first, because a delete can be cut short.
+    fn delete_local_store_package_in_place(&self, entry_id: StoreEntryId) -> sys::Maybe<()> {
         let mut path = AutoAbsPath::init_top_level_dir();
         if self.append_store_path(&mut path, entry_id).is_err() {
-            return;
+            return Ok(());
         }
         let package_len = path.len();
         if is_link(path.slice_z()) == Some(false)
@@ -783,7 +783,7 @@ impl<'a> Installer<'a> {
             }
             path.set_length(package_len);
         }
-        let _ = Fd::cwd().delete_tree(path.slice());
+        empty_in_place(&sys::Dir::cwd(), path.slice_z())
     }
 
     /// Of `<project>/node_modules/.bun`, which `install_isolated_packages` looked at.
@@ -1749,7 +1749,7 @@ impl<'a> Installer<'a> {
                         .map_err(TaskError::LinkPackage)?;
                     link_in_place |= self
                         .clear_local_store_package(entry_id, staging, true)
-                        .is_err();
+                        .map_err(TaskError::LinkPackage)?;
                 }
             }
 
@@ -1791,11 +1791,13 @@ impl<'a> Installer<'a> {
                             let Err(err) = cloner.clone() else {
                                 break 'backend Ok(());
                             };
-                            backend = self.set_backend(match err.get_errno() {
-                                sys::Errno::EXDEV => InstallMethod::Copyfile,
-                                sys::Errno::EOPNOTSUPP => InstallMethod::Hardlink,
+                            backend = match err.get_errno() {
+                                sys::Errno::EXDEV => self.set_backend(InstallMethod::Copyfile),
+                                sys::Errno::EOPNOTSUPP => self.set_backend(InstallMethod::Hardlink),
+                                // The directory stays: linked into, file by file.
+                                sys::Errno::EEXIST if link_in_place => InstallMethod::Hardlink,
                                 _ => break 'backend Err(err),
-                            });
+                            };
                             continue 'backend;
                         }
                     }
@@ -2609,13 +2611,13 @@ impl<'a> Installer<'a> {
         ))
     }
 
-    /// Frees the final path, and the staging path of a dead install's rest. On an error, link in place.
+    /// Frees the final path, and the staging path of a dead install's rest. `Ok(true)`: link in place.
     fn clear_local_store_package(
         &self,
         entry_id: StoreEntryId,
         mode: Staging,
         wait: bool,
-    ) -> sys::Maybe<()> {
+    ) -> sys::Maybe<bool> {
         let mut final_ = AutoPath::init();
         self.append_store_path(&mut final_, entry_id)?;
         let mut staging = AutoPath::init();
@@ -2642,10 +2644,10 @@ impl<'a> Installer<'a> {
             moved = rename(final_.slice_z(), staging.slice_z());
         }
         if is_refused(&moved) {
-            self.delete_local_store_package_in_place(entry_id);
-            return moved.map_err(|refused| refused.err);
+            self.delete_local_store_package_in_place(entry_id)?;
+            return Ok(true);
         }
-        Fd::cwd().delete_tree(staging.slice())
+        Ok(Fd::cwd().delete_tree(staging.slice()).is_err())
     }
 
     /// Moves the package to its final path, which is what the next install checks before skipping

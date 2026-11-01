@@ -388,6 +388,7 @@ bitflags::bitflags! {
         const InsideNodeModules = 1 << 2;
     }
 }
+bun_core::assert_distinct_flag_bits!(Flags);
 impl Flags {
     #[inline]
     pub(crate) fn set_present(&mut self, flag: Flags, present: bool) {

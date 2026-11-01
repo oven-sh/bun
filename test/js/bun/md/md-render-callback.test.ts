@@ -111,6 +111,89 @@ describe("Bun.markdown.render", () => {
     expect(result).toBe('<img src="https://example.com/img.png" title="the title" alt="alt text" />');
   });
 
+  // A backslash escape and a character reference in a link destination or a
+  // link title stand for a character (CommonMark 6.3). The meta holds that
+  // character, like the attributes that html() writes.
+  describe("href, src and title have escapes and character references resolved", () => {
+    /** The meta of every link and image in the document. */
+    function metas(md: string | Buffer, opts?: any) {
+      const seen: [string, unknown][] = [];
+      const take = (name: string) => (children: string, meta: unknown) => (seen.push([name, meta]), children);
+      Markdown.render(md as string, { link: take("link"), image: take("image") }, opts);
+      return seen;
+    }
+
+    test.each([
+      [
+        "inline link",
+        String.raw`[wiki](<https://example.com/wiki/Foo_\(bar\)> "R&amp;D \"notes\"")`,
+        [["link", { href: "https://example.com/wiki/Foo_(bar)", title: 'R&D "notes"' }]],
+      ],
+      [
+        "character references",
+        String.raw`[a](/?a=1&amp;b=2&#38;c&#x3D;3 "&ouml;&#246;&#xF6;")`,
+        [["link", { href: "/?a=1&b=2&c=3", title: "ööö" }]],
+      ],
+      ["image", String.raw`![logo](a\_b.png "t\*t")`, [["image", { src: "a_b.png", title: "t*t" }]]],
+      [
+        "image in a link",
+        String.raw`[![alt](i\_1.png)](/u&amp;v)`,
+        [
+          ["image", { src: "i_1.png" }],
+          ["link", { href: "/u&v" }],
+        ],
+      ],
+      [
+        "full, collapsed and shortcut reference",
+        "[t][r] [r][] [r]\n\n" + String.raw`[r]: </a\_b> 'x &copy; y'`,
+        [
+          ["link", { href: "/a_b", title: "x © y" }],
+          ["link", { href: "/a_b", title: "x © y" }],
+          ["link", { href: "/a_b", title: "x © y" }],
+        ],
+      ],
+      [
+        "image by reference",
+        "![alt][r]\n\n" + String.raw`[r]: a\_b.png "R&amp;D"`,
+        [["image", { src: "a_b.png", title: "R&D" }]],
+      ],
+      [
+        "what is not an escape or a character reference stays",
+        String.raw`[a](a\b&nosuch;&c "\a&#;") [b](/x\&amp;y) [c](/x\\y)`,
+        [
+          ["link", { href: String.raw`a\b&nosuch;&c`, title: String.raw`\a&#;` }],
+          ["link", { href: "/x&amp;y" }],
+          ["link", { href: String.raw`/x\y` }],
+        ],
+      ],
+      // CommonMark 6.5: "Backslash-escapes do not work inside autolinks".
+      [
+        "a backslash in an autolink",
+        String.raw`<https://example.com/a\_b>`,
+        [["link", { href: String.raw`https://example.com/a\_b` }]],
+      ],
+    ] as const)("%s", (_, md, expected) => {
+      expect(metas(md)).toEqual(expected as any);
+      expect(metas(Buffer.from(md))).toEqual(expected as any);
+    });
+
+    // The parser reads a Buffer in place. It cuts the second destination after
+    // the callback of the first link has written an escape into it.
+    test("an escape that a callback writes into a later destination", () => {
+      const source = "x [a](/b-c) then [d](/eYZf) y\n";
+      const buffer = Buffer.from(source);
+      const hrefs: string[] = [];
+      Markdown.render(buffer, {
+        link: (children: string, { href }: any) => {
+          hrefs.push(href);
+          buffer.write(String.raw`\_`, source.indexOf("YZ"));
+          return children;
+        },
+      });
+      expect(hrefs).toEqual(["/b-c", "/e_f"]);
+    });
+  });
+
   test("code block callback with language metadata", () => {
     const result = Markdown.render("```js\nconsole.log('hi');\n```\n", {
       code: (children: string, meta: any) => `<pre lang="${meta?.language}">${children}</pre>`,
@@ -373,6 +456,33 @@ describe("Bun.markdown.render", () => {
       { autolinks: true },
     );
     expect(result).toContain("[www.example.com]");
+  });
+
+  // https://github.com/oven-sh/bun/issues/31936
+  test("link meta href has the same scheme as in html()", () => {
+    const cases = [
+      ["<email@example.com>", "mailto:email@example.com"],
+      ["email@example.com", "mailto:email@example.com"],
+      ["www.example.com", "http://www.example.com"],
+      ["<https://example.com>", "https://example.com"],
+      ["https://example.com", "https://example.com"],
+      ["<mailto:email@example.com>", "mailto:email@example.com"],
+      // Not an autolink: the destination stays as written.
+      ["[text](email@example.com)", "email@example.com"],
+      ["[text](www.example.com)", "www.example.com"],
+    ];
+    const hrefs: string[] = [];
+    Markdown.render(
+      cases.map(([md]) => md).join("\n\n") + "\n",
+      {
+        link: (children: string, { href }: any) => {
+          hrefs.push(href);
+          return children;
+        },
+      },
+      { autolinks: true },
+    );
+    expect(hrefs).toEqual(cases.map(([, href]) => href));
   });
 
   test("headings option provides id in heading meta", () => {

@@ -6,6 +6,16 @@ import { renderToString } from "react-dom/server";
 
 const Markdown = Bun.markdown;
 
+/** The Markdown of every example in a spec file of this directory. */
+function specExamples(file: string): string[] {
+  const content = readFileSync(join(import.meta.dir, file), "utf8").replace(/\r\n?/g, "\n");
+  const examples: string[] = [];
+  for (const match of content.matchAll(/^`{32} example\n([\s\S]*?)^\.$/gm)) {
+    examples.push(match[1].replaceAll("\u2192", "\t") + "\n");
+  }
+  return examples;
+}
+
 // Runs `script` in a child that is killed after 30s, so a super-linear
 // regression fails fast instead of hanging the test runner.
 async function expectRendersQuickly(script: string) {
@@ -1225,15 +1235,6 @@ describe("render() agrees with a fold over the react() tree", () => {
     return meta === undefined ? cb(children) : cb(children, meta);
   }
 
-  function specExamples(file: string): string[] {
-    const content = readFileSync(join(import.meta.dir, file), "utf8").replace(/\r\n?/g, "\n");
-    const examples: string[] = [];
-    for (const match of content.matchAll(/^`{32} example\n([\s\S]*?)^\.$/gm)) {
-      examples.push(match[1].replaceAll("\u2192", "\t") + "\n");
-    }
-    return examples;
-  }
-
   const callbackSets = [
     names,
     [],
@@ -1426,6 +1427,184 @@ describe("ansi renderer link and metadata control bytes", () => {
     expect(Markdown.ansi("[site](https://example.com/a)\n", { hyperlinks: true })).toContain(
       "\x1b]8;;https://example.com/a",
     );
+  });
+});
+
+// ============================================================================
+// A backslash escape and a character reference in a link destination or a link
+// title stand for a character (CommonMark 6.3), and an e-mail or `www.`
+// autolink has a scheme. html() writes that value into the attribute. react()
+// has to hand on the same value. render() does too: its output is compared
+// with a fold over the react() tree above.
+// ============================================================================
+
+describe("react() hands on the link destinations and link titles that html() writes", () => {
+  type Value = { a?: string; img?: string; title?: string };
+
+  /** The href and title of every `a`, and the src and title of every `img`. */
+  function fromReact(markdown: string | Buffer, options?: object): Value[] {
+    const found: Value[] = [];
+    const walk = (node: any) => {
+      if (Array.isArray(node)) return node.forEach(walk);
+      if (node == null || typeof node !== "object") return;
+      const { type, props } = node;
+      if (type === "a" && props.href !== undefined) found.push({ a: props.href, title: props.title });
+      if (type === "img") found.push({ img: props.src, title: props.title });
+      walk(props.children);
+    };
+    walk(Markdown.react(markdown as string, undefined, { ...options, reactVersion: 18 }));
+    return found;
+  }
+
+  // A model of how html() encodes a value for an attribute, which react() does
+  // not do: a title has `& < > "` escaped, a destination is percent-encoded too.
+  const escapeHtml = (value?: string) =>
+    value?.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+  const urlSafe = /[-A-Za-z0-9._~:/?#@!$()*+,;=%]/;
+  const escapeUrl = (value?: string) =>
+    value === undefined
+      ? undefined
+      : Array.from(Buffer.from(value), byte => {
+          const c = String.fromCharCode(byte);
+          if (c === "&") return "&amp;";
+          if (c === "'") return "&#x27;";
+          return urlSafe.test(c) ? c : "%" + byte.toString(16).toUpperCase().padStart(2, "0");
+        }).join("");
+  const asWritten = ({ a, img, title }: Value): Value => ({
+    a: escapeUrl(a),
+    img: escapeUrl(img),
+    title: escapeHtml(title),
+  });
+
+  /** The same values, as they are in the attributes of what html() writes. */
+  function fromHtml(markdown: string | Buffer, options?: object): Value[] {
+    const tags =
+      /<a href="(?<a>[^"]*)"(?: title="(?<title>[^"]*)")?>|<img src="(?<img>[^"]*)" alt="[^"]*"(?: title="(?<imgTitle>[^"]*)")? \/>/g;
+    return Array.from(Markdown.html(markdown as string, options).matchAll(tags), ({ groups }) => {
+      const { a, title, img, imgTitle } = groups!;
+      return { a, img, title: title ?? imgTitle };
+    });
+  }
+
+  // One test per 100 examples keeps each test near a second on a debug build.
+  const chunkSize = 100;
+  for (const [file, options] of [
+    ["spec.txt", {}],
+    ["spec-gfm.txt", {}],
+    ["spec-permissive-autolinks.txt", { autolinks: true }],
+    ["regressions.txt", {}],
+    ["coverage.txt", {}],
+  ] as const) {
+    const examples = specExamples(file);
+    for (let start = 0; start < examples.length; start += chunkSize) {
+      const chunk = examples.slice(start, start + chunkSize);
+      test(`${file} examples ${start + 1}-${start + chunk.length}`, () => {
+        const mismatches: unknown[] = [];
+        for (const markdown of chunk) {
+          // html() copies raw HTML, which can have an `<a>` or an `<img>` of its own.
+          if (/<(a|img)\s/i.test(markdown)) continue;
+          const react = fromReact(markdown, options).map(asWritten);
+          const html = fromHtml(markdown, options);
+          if (!Bun.deepEquals(react, html) && mismatches.length < 5) mismatches.push({ markdown, react, html });
+        }
+        expect(mismatches).toEqual([]);
+      });
+    }
+  }
+
+  // What the spec files do not have. The values are given, and are compared
+  // with html() too, so this also fails if the pattern above finds nothing.
+  test.each([
+    // An escape that is next to a link and not in it, or in another link.
+    [String.raw`a \* b [x](/y "t") &amp; ![i](/z)`, [{ a: "/y", title: "t" }, { img: "/z" }]],
+    [
+      String.raw`[a](/a "t") and [b](/b\_c "R&amp;D")`,
+      [
+        { a: "/a", title: "t" },
+        { a: "/b_c", title: "R&D" },
+      ],
+    ],
+    [String.raw`[a\_b &amp; c](/d) ![e\*f](/g)`, [{ a: "/d" }, { img: "/g" }]],
+    // In the title and not in the destination, and the other way around.
+    [
+      String.raw`[a](/a "t\*t") [b](</b&amp;c> 't')`,
+      [
+        { a: "/a", title: "t*t" },
+        { a: "/b&c", title: "t" },
+      ],
+    ],
+    // In another block, and in a cell of a table.
+    ["[a](/a\\_1)\n\n[b](/b)\n", [{ a: "/a_1" }, { a: "/b" }]],
+    ["[a](/a)\n\n[b](/b\\_1 'x&amp;y')\n", [{ a: "/a" }, { a: "/b_1", title: "x&y" }]],
+    [
+      "| h |\n|---|\n| [a](/a\\_1) [b](/b) |\n| [c](/c\\|d) |\n| [e](/e&amp;f) |\n",
+      [{ a: "/a_1" }, { a: "/b" }, { a: "/c|d" }, { a: "/e&f" }],
+    ],
+    [
+      "# [a](/a\\_1)\n\n- [b](/b&amp;c)\n\n> ![d](/d\\*e 'f&lt;g')\n",
+      [{ a: "/a_1" }, { a: "/b&c" }, { img: "/d*e", title: "f<g" }],
+    ],
+    // In a reference definition, which other links of the paragraph do not use.
+    [
+      "[a][r] ![b][r] [c](/c) [d][s] [e][t]\n\n[r]: </r\\_1> (t&copy;)\n[s]: /s\\_1 't'\n[t]: /t 'x&amp;y'\n",
+      [
+        { a: "/r_1", title: "t©" },
+        { img: "/r_1", title: "t©" },
+        { a: "/c" },
+        { a: "/s_1", title: "t" },
+        { a: "/t", title: "x&y" },
+      ],
+    ],
+    // What is left is an escape or a character reference again: it is resolved once.
+    [String.raw`[a](/x\&amp;y "\\\*&amp;lt;")`, [{ a: "/x&amp;y", title: String.raw`\*&lt;` }]],
+  ] as const)("%j", (markdown, expected) => {
+    for (const input of [markdown, Buffer.from(markdown)]) {
+      const react = fromReact(input);
+      expect(react).toEqual(expected as Value[]);
+      expect(react.map(asWritten)).toEqual(fromHtml(input));
+    }
+  });
+});
+
+// ============================================================================
+// ANSI renderer: a link destination, an image source and a title mean what
+// html() writes for them. Backslash escapes and character references are
+// resolved. A character reference can stand for a control byte, so those
+// bytes are stripped after the resolving, not before it.
+// ============================================================================
+
+describe("ansi renderer escapes and character references in link destinations and titles", () => {
+  test("are resolved", () => {
+    const md = String.raw`[wiki](<https://example.com/Foo_\(bar\)?a=1&amp;b=2>) and ![](a\_b.png "R&amp;D")` + "\n";
+    expect(Markdown.ansi(md, { colors: false })).toBe("wiki (https://example.com/Foo_(bar)?a=1&b=2) and [img] R&D\n");
+    const linked = Markdown.ansi(md, { hyperlinks: true });
+    expect(linked).toContain("\x1b]8;;https://example.com/Foo_(bar)?a=1&b=2\x1b\\");
+    expect(linked).toContain("\x1b]8;;a_b.png\x1b\\");
+
+    const byReference = "[a][r] ![b][r]\n\n" + String.raw`[r]: <https://example.com/a\_b> "R&amp;D"` + "\n";
+    expect(Markdown.ansi(byReference, { colors: false })).toBe("a (https://example.com/a_b) [img] b\n");
+  });
+
+  test("a character reference cannot put a control byte into the output", () => {
+    // `&#27;` is ESC, `&#7;` is BEL, `&#155;` is CSI. A line feed (`&#10;`)
+    // or a tab (`&#9;`) in a destination would break the OSC 8 sequence. Only
+    // these bytes go: what follows them is part of the address, as in html().
+    const linkMd = String.raw`[click](<x&#7;&#27;]52;c;Y3VybCBldmlsLnNoIHwgc2g=&#7;y&#10;z&#9;w&#155;31m>)` + "\n";
+    expect(Markdown.ansi(linkMd, { colors: false })).toBe("click (x]52;c;Y3VybCBldmlsLnNoIHwgc2g=yzw31m)\n");
+    expect(Markdown.ansi(linkMd, { hyperlinks: true })).toContain(
+      "\x1b]8;;x]52;c;Y3VybCBldmlsLnNoIHwgc2g=yzw31m\x1b\\",
+    );
+    expect(Markdown.ansi("[a](https://example.com/x&#27;]y/long/path)\n", { colors: false })).toBe(
+      "a (https://example.com/x]y/long/path)\n",
+    );
+
+    // The title is text: an escape sequence goes as a whole.
+    const imgMd = String.raw`![](<i&#27;]0;owned&#7;.png&#10;> "ti&#27;]0;owned&#7;tle")` + "\n";
+    expect(Markdown.ansi(imgMd, { colors: false })).toBe("[img] title\n");
+    expect(Markdown.ansi(imgMd, { hyperlinks: true })).toContain("\x1b]8;;i]0;owned.png\x1b\\");
+
+    const byReference = "[a][r]\n\n" + String.raw`[r]: <https://example.com/a&#10;b&#27;[31m> "t"` + "\n";
+    expect(Markdown.ansi(byReference, { colors: false })).toBe("a (https://example.com/ab[31m)\n");
   });
 });
 

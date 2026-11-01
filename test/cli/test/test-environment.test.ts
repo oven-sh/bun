@@ -1357,8 +1357,7 @@ describe.concurrent("test environment with the real", () => {
             left: false,
             innerWidth: 1024,
             matchMedia: false,
-            // happy-dom's classes belong to the package, which a process loads once. jsdom makes them for each window.
-            prototype: ${name === "happy-dom"},
+            prototype: false,
             documentOfA: false,
             sameDocument: false,
             window: true,
@@ -1370,6 +1369,74 @@ describe.concurrent("test environment with the real", () => {
       const { stdout, stderr, exitCode } = await bunTest(String(dir), "--isolate=modules");
       expect(stdout).toEqual([]);
       expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // happy-dom's windows share the package's classes. jsdom makes them for each window, but `jsdom.constructor` is the
+  // package's. The second window tells the runner which objects are the package's, so file b patches them again.
+  test.each([
+    ["jsdom", "--isolate"],
+    ["jsdom", "--isolate=modules"],
+    ["happy-dom", "--isolate"],
+    ["happy-dom", "--isolate=modules"],
+  ])(
+    "%s: with %s a file's changes to the package's classes are undone for the next file, #47658",
+    async (name, flag) => {
+      const patch = (file: string) => `
+        // Like @testing-library/user-event's setup(), which leaves the patch in place.
+        HTMLElement.prototype.focus = function patchedFocus() {
+          throw new Error("Could not determine window of node");
+        };
+        HTMLElement.prototype.left = "${file}";
+        Object.getPrototypeOf(Node.prototype).left = "${file}";
+        Object.getPrototypeOf(EventTarget.prototype).left = "${file}";
+        Object.defineProperty(Event.prototype, "type", { get: () => "patched", configurable: true });
+        Object.defineProperty(HTMLElement.prototype, "blur", { ...Object.getOwnPropertyDescriptor(HTMLElement.prototype, "blur"), writable: false });
+        delete Element.prototype.remove;
+        // happy-dom makes a Text class for each window, whose parent is the package's.
+        Text.prototype.left = "${file}";
+        Object.getPrototypeOf(Text.prototype).left = "${file}";
+        if (typeof happyDOM === "object") {
+          NodeFilter.SHOW_ELEMENT = 0;
+          Object.getPrototypeOf(happyDOM).abort = function patchedAbort() {};
+        }
+        if (typeof jsdom === "object") jsdom.constructor.prototype.left = "${file}";
+        expect(HTMLElement.prototype.fromPreload).toBe("preload");
+        expect(new Event("ping").type).toBe("patched");
+      `;
+      // After the file's tests, while the window closes.
+      const late = `
+        const prototype = HTMLElement.prototype;
+        afterAll(() => void setTimeout(() => (prototype.focus = function patchedLate() {}), 0));
+      `;
+      const check = `
+        expect(HTMLElement.prototype.focus.name).toBe("focus");
+        expect(Object.getOwnPropertyDescriptor(HTMLElement.prototype, "blur").writable).toBe(true);
+        expect("left" in HTMLElement.prototype).toBe(false);
+        expect("left" in Object.getPrototypeOf(EventTarget.prototype)).toBe(false);
+        expect("left" in Text.prototype).toBe(false);
+        expect(new Event("ping").type).toBe("ping");
+        expect(typeof Element.prototype.remove).toBe("function");
+        expect(NodeFilter.SHOW_ELEMENT).toBe(1);
+        if (typeof happyDOM === "object") expect(Object.getPrototypeOf(happyDOM).abort.name).toBe("abort");
+        if (typeof jsdom === "object") expect("left" in jsdom.constructor.prototype).toBe(false);
+        expect(HTMLElement.prototype.fromPreload).toBe("preload");
+        const popup = document.implementation.createHTMLDocument("popup");
+        const field = popup.createElement("textarea");
+        popup.body.append(field);
+        expect(() => field.focus()).not.toThrow();
+      `;
+      using dir = project({
+        "preload.js": `HTMLElement.prototype.fromPreload = "preload";`,
+        "a.test.js": `// ${VITEST} ${name}\ntest("a", () => { ${patch("a")} });\n${late}`,
+        "b.test.js": `// ${VITEST} ${name}\ntest("b", () => { ${check} ${patch("b")} });\n${late}`,
+        "c.test.js": `// ${VITEST} ${name}\ntest("c", () => { ${check} });`,
+      });
+      const { stdout, stderr, exitCode } = await bunTest(String(dir), flag, "--preload=./preload.js");
+      expect(stdout).toEqual([]);
+      expect(stderr).not.toContain("Unhandled error");
+      expect(summary(stderr)).toEqual(["3 pass", "0 fail"]);
       expect(exitCode).toBe(0);
     },
   );

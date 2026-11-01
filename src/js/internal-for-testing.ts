@@ -368,6 +368,7 @@ export const isolatedModuleCacheSourceType: (specifier: string) => string | null
   "createIsolatedModuleCacheSourceTypeForTesting",
 );
 export const Dequeue = require("internal/fifo");
+export const SavedProperties = require("internal/test/saved_properties");
 
 // node lib/internal/util.js normalizeEncoding: nullish and '' mean utf8, and
 // non-strings are undefined; the node edge cases are handled here.

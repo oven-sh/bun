@@ -24,8 +24,8 @@ use bun_sema::resolve::ScriptKind;
 use bun_sema::util::FxHashSet;
 use bun_threading::Guarded;
 use std::io::Write;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 macro_rules! pretty {
@@ -130,16 +130,48 @@ const OXLINT_AGENT_VARIABLES: [&[u8]; 12] = [
 
 /// True if oxlint would default to its `agent` format. If `AGENT` is set, only it decides, like everywhere in Bun.
 fn is_agent_for_oxlint() -> bool {
-    let get = |name: &[u8]| bun_core::getenv_z(&bun_core::ZBox::from_bytes(name));
-    let has = |name: &[u8], part: &[u8]| get(name).is_some_and(|it| strings::contains(it, part));
-    let is_set = |&name: &&[u8]| get(name).is_some_and(|it| !it.is_empty());
-    get(b"AGENT").is_none()
-        && (OXLINT_AGENT_VARIABLES.iter().any(is_set)
-            || has(b"PATH", b".pi/agent")
-            || has(b"PATH", b".pi\\agent")
-            || has(b"EDITOR", b"devin")
-            || has(b"TERM_PROGRAM", b"kiro"))
+    static IS_AGENT: OnceLock<bool> = OnceLock::new();
+    *IS_AGENT.get_or_init(|| {
+        let get = |name: &[u8]| bun_core::getenv_z(&bun_core::ZBox::from_bytes(name));
+        let has =
+            |name: &[u8], part: &[u8]| get(name).is_some_and(|it| strings::contains(it, part));
+        let is_set = |&name: &&[u8]| get(name).is_some_and(|it| !it.is_empty());
+        get(b"AGENT").is_none()
+            && (OXLINT_AGENT_VARIABLES.iter().any(is_set)
+                || has(b"PATH", b".pi/agent")
+                || has(b"PATH", b".pi\\agent")
+                || has(b"EDITOR", b"devin")
+                || has(b"TERM_PROGRAM", b"kiro"))
+    })
 }
+
+/// `is_oxlint` means the working directory's config is oxlint's. `is_native` means it has no config.
+pub(crate) fn format_of(
+    options: &Options,
+    environment: &Environment,
+    is_oxlint: bool,
+    is_native: bool,
+) -> Result<Format, Vec<u8>> {
+    let name: &[u8] = match &options.format {
+        Some(name) => &name[..],
+        // This format shows the code, so an agent doesn't have to open the files.
+        None if environment.is_ai_agent => b"agent",
+        None if is_oxlint && is_agent_for_oxlint() => b"agent",
+        None if is_oxlint && environment.is_github_action => b"github",
+        None if is_oxlint || is_native => b"default",
+        None => b"stylish",
+    };
+    Format::by_name(name, is_oxlint).ok_or_else(|| Format::unknown_format_error(name))
+}
+
+/// True if the report goes to a terminal: not to a pipe, and not to the file of `-o`.
+pub(crate) fn reports_to_terminal(options: &Options, environment: &Environment) -> bool {
+    environment.stdout.is_tty && options.output_file.is_none()
+}
+
+/// What a library that colors its text looks at, set so that it doesn't: [`Loader::prepare_realms`].
+pub(crate) const WITHOUT_COLORS: [(&[u8], &[u8]); 2] =
+    [(b"NO_COLOR", b"1"), (b"FORCE_COLOR", b"0")];
 
 /// Error text for `error`, an invalid config found while resolving a file that uses `loaded`. With an oxlint config the
 /// message goes to stdout and has to match oxlint's, so it isn't changed.
@@ -426,20 +458,6 @@ impl Run<'_> {
     fn emulates_oxlint(&self) -> bool {
         self.emulates_oxlint
             .unwrap_or_else(|| configs::emulates_oxlint(self.options.flavor, &self.environment.cwd))
-    }
-
-    /// `is_oxlint` means the working directory's config is oxlint's. `is_native` means it has no config.
-    fn format(&self, is_oxlint: bool, is_native: bool) -> Result<Format, Vec<u8>> {
-        let name: &[u8] = match &self.options.format {
-            Some(name) => &name[..],
-            // This format shows the code, so an agent doesn't have to open the files.
-            None if self.environment.is_ai_agent => b"agent",
-            None if is_oxlint && is_agent_for_oxlint() => b"agent",
-            None if is_oxlint && self.environment.is_github_action => b"github",
-            None if is_oxlint || is_native => b"default",
-            None => b"stylish",
-        };
-        Format::by_name(name, is_oxlint).ok_or_else(|| Format::unknown_format_error(name))
     }
 
     /// Returns the error for an option combination that ESLint's `cli.execute` rejects.
@@ -999,10 +1017,12 @@ impl Run<'_> {
             let run_state = (&linter, environment, &js_plugins);
             discover::list_as_eslint_8(run_state, &pool, patterns, extensions)
         }));
-        let format = match self.format(is_oxlint, is_native) {
+        let format = match format_of(options, environment, is_oxlint, is_native) {
             Ok(format) => format,
             Err(error) => return self.reject(&error),
         };
+        // The first call, if the working directory's config could not be read.
+        loader.prepare_realms(is_oxlint, is_native);
         let checks_types =
             options.type_check || cwd_config.as_ref().is_some_and(|it| it.checks_types);
         let config_wants_types = cwd_config.as_ref().and_then(|it| it.wants_types);
@@ -1536,12 +1556,13 @@ impl Run<'_> {
         let started = Instant::now();
         let with_help: format::WithHelp = &|result, only| context.with_help(result, only);
         let color = options.color.unwrap_or(environment.stdout.colors);
-        let to_terminal = environment.stdout.is_tty && options.output_file.is_none();
+        let to_terminal = reports_to_terminal(options, environment);
         let meta = format::Meta {
             help: (context.reads_help && context.help_on_demand).then_some(with_help),
             cwd: &environment.cwd,
             color,
-            links: color && to_terminal,
+            to_terminal,
+            escapes: format.escapes(to_terminal),
             width: match to_terminal {
                 true => (bun_core::output::File::from(bun_core::Fd::stdout()).winsize())
                     .map_or(0, |size| usize::from(size.col)),

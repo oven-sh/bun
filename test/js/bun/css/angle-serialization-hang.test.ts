@@ -16,17 +16,20 @@ import { bunEnv, bunExe } from "harness";
 
 const cases: [css: string, expected: string][] = [
   // Fuzzer repros: huge radian values in a known property, an unknown
-  // property (token list path), and an unparsed/invalid declaration.
+  // property, and an unparsed/invalid declaration. A value kept as tokens
+  // prints a long integer or a number with an exponent as written. There a
+  // huge angle reaches `Angle::to_css` only when its unit has an escape.
   ["a { rotate: 99999999999999999999999999999999999999999999999999rad }", "a{rotate:3.40282e38rad}"],
-  ["a { ro: 1.3157e308rad }", "a{ro:3.40282e38rad}"],
+  ["a { ro: 1.3157e308rad }", "a{ro:1.3157e308rad}"],
+  ["a { ro: 1e50ra\\64}", "a{ro:3.40282e38rad}"],
   [
     "a { rotate: 0.0000000000000000000000000000000000000\t00000000000000000000000000000000000200000000000000000000000000000001rad }",
     "a{rotate:0 00000000000000000000000000000000000200000000000000000000000000000001rad}",
   ],
   ["a { rotate: 0 2e32rad }", "a{rotate:0 2e32rad}"],
-  // Other paths that serialize an Angle: transform functions and filters.
+  // Another path that serializes an Angle: transform functions. `filter` is kept as tokens.
   ["a { transform: rotate(3.3e33rad) }", "a{transform:rotate(3.3e33rad)}"],
-  ["a { filter: hue-rotate(1e50rad) }", "a{filter:hue-rotate(3.40282e38rad)}"],
+  ["a { filter: hue-rotate(1e50rad) }", "a{filter:hue-rotate(1e50rad)}"],
   // calc() can produce a real infinity.
   ["a { rotate: calc(infinity * 1rad) }", "a{rotate:3.40282e38rad}"],
   // Sanity check: small radian values still switch to degrees when shorter.

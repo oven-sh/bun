@@ -52,8 +52,6 @@ pub enum ImportKind {
     /// A CSS "composes" property
     #[strum(serialize = "composes")]
     Composes = 9,
-    #[strum(serialize = "html_manifest")]
-    HtmlManifest = 10,
     #[strum(serialize = "internal")]
     Internal = 11,
 }
@@ -95,7 +93,6 @@ impl ImportKind {
             ImportKind::Url => b"url-token",
             ImportKind::Composes => b"composes",
             ImportKind::Internal => b"internal",
-            ImportKind::HtmlManifest => b"html_manifest",
         }
     }
 
@@ -113,7 +110,6 @@ impl ImportKind {
             ImportKind::Url => b"url()",
             ImportKind::Internal => b"<bun internal>",
             ImportKind::Composes => b"composes",
-            ImportKind::HtmlManifest => b"HTML import",
         }
     }
 

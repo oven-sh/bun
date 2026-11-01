@@ -5,7 +5,7 @@ import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { beforeAll, test } from "./supported";
+import { test } from "./supported";
 
 raiseDefaultTimeout(120_000);
 
@@ -67,7 +67,8 @@ const forms = {
 async function runTests(together: string[], words?: string) {
   using dir = tempDir("a-commonjs-file-that-begins-with-a-comment", files);
   const command = [bunExe(), "test", ...(words ? ["--aot"] : []), ...together.map(file => `./${file}`)];
-  const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words };
+  // All of stderr is compared. A shell that asks every build for its times must not reach the runs.
+  const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words, BUN_JSC_logAOTPhaseTimes: undefined };
   const { stdout, stderr, exitCode } = await run(command, String(dir), env);
   const ofTheBuild = /^AOT test run \| (.*)\n/gm;
   return {
@@ -94,13 +95,7 @@ function ran(together: string[], words?: string) {
   });
 }
 
-// The builds in layers take longest. They begin before the first test, and the builds of one program follow one another
-// beside them.
-beforeAll(() => {
-  const { words, runs } = forms["two layers"];
-  for (const together of runs) ran(together, words);
-});
-// A run whose tests a filter has left out ends before the file does.
+// A run that no test has waited for ends before the file does.
 afterAll(() => Promise.allSettled(commands.values()));
 
 /** What a run says of one test file: the lines that the file prints, and how its tests end. */
@@ -109,7 +104,11 @@ const saidOf = ({ printed }: Ran, file: string) => ({
   reported: printed.stderr.split("\n\n").filter(block => block.startsWith(`${file}:\n`)),
 });
 
-test("plain bun test reports each test file of a run under its name", async () => {
+// The builds in layers take longest. The first test of that form begins them, and the builds of one program follow one
+// another beside them. Where a filter leaves this test out, a test begins only the run that it waits for.
+test("what plain bun test prints over the test files that share a run: two layers", async () => {
+  const { words, runs } = forms["two layers"];
+  for (const together of runs) ran(together, words);
   const { printed } = await ran(withoutPackage);
   expect(printed.stdout).toMatchInlineSnapshot(`
     "bun test <version> (<revision>)

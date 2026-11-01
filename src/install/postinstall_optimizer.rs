@@ -205,7 +205,7 @@ impl List {
                 //
                 // Tree position doesn't matter here; the `.bin` linker redirects
                 // nested copies to the platform package as well (see
-                // `find_native_binlink_target_tree`).
+                // `native_binlink_target`).
                 PostinstallOptimizer::get_native_binlink_replacement_package_id(
                     resolutions,
                     metas,

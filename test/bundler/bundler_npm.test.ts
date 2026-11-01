@@ -55,17 +55,17 @@ describe("bundler", () => {
           "../entry.tsx",
         ],
         mappings: [
-          ["react.development.js:524:'getContextName'", "1:5646:at"],
+          ["react.development.js:524:'getContextName'", "1:5660:at"],
           ["react.development.js:2495:'actScopeDepth'", "23:4082:or++"],
-          ["react.development.js:696:''Component'", '1:7708:\'Component "%s"'],
-          ["entry.tsx:6:'\"Content-Type\"'", '100:18811:"Content-Type"'],
-          ["entry.tsx:11:'<html>'", "100:19065:void"],
-          ["entry.tsx:23:'await'", "100:19164:await"],
+          ["react.development.js:696:''Component'", '1:7722:\'Component "%s"'],
+          ["entry.tsx:6:'\"Content-Type\"'", '100:18851:"Content-Type"'],
+          ["entry.tsx:11:'<html>'", "100:19105:void"],
+          ["entry.tsx:23:'await'", "100:19204:await"],
         ],
       },
     },
     expectExactFilesize: {
-      "out/entry.js": 222012,
+      "out/entry.js": 222400,
     },
     run: {
       stdout: "<!DOCTYPE html><html><body><h1>Hello World</h1><p>This is an example.</p></body></html>",

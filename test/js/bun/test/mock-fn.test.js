@@ -2510,6 +2510,35 @@ if (isBun) {
       expect(spy).toHaveBeenCalledWith(0);
     });
 
+    // Code under test reaches the mock through the name, not through a property: `throw new Error(..)`.
+    test("spyOn a global class that is constructed by its name", () => {
+      const NativeError = Error;
+      const spy = spyOn(globalThis, "Error");
+      try {
+        const error = new Error("x");
+        expect(error).toBeInstanceOf(NativeError);
+        expect(error.message).toBe("x");
+        expect(spy.mock.calls).toEqual([["x"]]);
+        expect(spy.mock.instances[0]).toBe(error);
+        expect(spy.mock.contexts[0]).toBe(error);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(Error).toBe(NativeError);
+    });
+
+    test("a class stubbed over a global class is constructed by its name", () => {
+      class Stub extends Error {}
+      vi.stubGlobal("Error", Stub);
+      try {
+        const error = new Error("x");
+        expect(error).toBeInstanceOf(Stub);
+        expect(error.message).toBe("x");
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
     test("extending a mock", () => {
       const Base = jest.fn(function () {
         this.base = 1;

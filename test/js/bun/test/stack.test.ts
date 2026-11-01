@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, bunRun, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "node:path";
 
 test("name property is used for function calls in Error.stack", () => {
@@ -77,12 +77,52 @@ test("err.line and err.column are set", async () => {
         line: 3,
         column: 17,
         originalLine: 1,
-        originalColumn: 18,
+        originalColumn: 22,
       },
       null,
       2,
     ),
   );
+});
+
+// `Mine_` is as long as `Error`, so each pair of sites has the same columns.
+test("a native error is reported at the same columns as an error class of the program", async () => {
+  using dir = tempDir("stack-native-error-columns", {
+    "columns.mjs": `
+      const column = text =>
+        Number(/:(\\d+)\\)?$/.exec(text.split("\\n").find(line => line.includes("columns.mjs")).trim())[1]);
+      function surfaces(make) {
+        const stack = column(make().stack);
+        const prepare = Error.prepareStackTrace;
+        Error.prepareStackTrace = (error, sites) => sites[0].getColumnNumber();
+        const callSite = make().stack;
+        Error.prepareStackTrace = prepare;
+        return { stack, callSite, printed: column(Bun.inspect(make())), column: make().column };
+      }
+      class Mine_ extends Error {}
+      const native = [
+        surfaces(() => { const made = new Error(); made.kept = true; return made; }),
+        surfaces(() => { const made = new Error("m"); made.kept = true; return made; }),
+      ];
+      const own = [
+        surfaces(() => { const made = new Mine_(); made.kept = true; return made; }),
+        surfaces(() => { const made = new Mine_("m"); made.kept = true; return made; }),
+      ];
+      console.log(JSON.stringify({ native, own }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "columns.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { native, own } = JSON.parse(stdout);
+  expect(native).toEqual(own);
+  expect(exitCode).toBe(0);
 });
 
 test("throwing inside an error suppresses the error and prints the stack", async () => {

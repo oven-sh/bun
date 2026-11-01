@@ -458,10 +458,10 @@ describe("bytecode cache portability", () => {
           "sha256": "2a5d62fb4ca9d107e3a5bb2abe6a73f3c859a6f1a91c6c3d77653cb8c2053361",
         },
         "bun build --bytecode --minify all.js": {
-          "js": "918f169d30d5a87cc6fde0abb5827ea858fde09e1df59a30f24870eba2e67e9f",
+          "js": "440856e5139296d242bb2dab699710e1711de78c8c930a911f45434d387d568f",
           "jsc": {
-            "bytes": 1731912,
-            "sha256": "c1d13669a8b20b10ca0001c93e1a07cb6c14d00d1681dd5c092e3bfb0661aea0",
+            "bytes": 1732528,
+            "sha256": "f5fef03af4c6cff91696818fba9ec24e6794dbd784c4591020326749c1f87880",
           },
         },
         "bun build --bytecode --minify features.js": {
@@ -472,10 +472,10 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode --minify records.js": {
-          "js": "eba33198824cc48f618cb7be37d1321a9fa2daa7b3a1dee17bc67e9e81fc5a62",
+          "js": "6cdc6304d70299e3aaf59f713f12ac8d35f2ba7bc44494895c81031422bcf267",
           "jsc": {
-            "bytes": 81040,
-            "sha256": "2780bd7a3907288a5afa5502d3722e1ee76afaea848dada1404f937a48f1641b",
+            "bytes": 81064,
+            "sha256": "89a41dbee5dd383b5e373805032f5d6f31f47fb445c3ccd93454e9428484e64a",
           },
         },
         "bun build --bytecode acorn/dist/acorn.mjs": {

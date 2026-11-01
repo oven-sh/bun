@@ -152,7 +152,7 @@ test("describe/test", async () => {
     267 | 
     268 | test.failing("microtasks and rejections are drained after the test callback is executed", () => {
     269 |   Promise.reject(new Error("uh oh!"));
-                               ^
+                           ^
     error: uh oh!
         at <anonymous> (file:NN:NN)
     -------------------------------

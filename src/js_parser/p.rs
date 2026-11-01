@@ -4810,12 +4810,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             records.push(record);
             next = record.next;
         }
-        let mut index_of_alias: HashMap<Ref, u32> = HashMap::default();
-        for (index, record) in records.iter().enumerate() {
-            index_of_alias.insert(record.alias, index as u32);
-        }
+        records.reverse();
         let mut states = vec![State::Waiting; records.len()];
+        // Only an alias that names an alias written behind it needs this.
+        let mut index_of_alias: Option<HashMap<Ref, u32>> = None;
         let mut in_progress: Vec<u32> = Vec::new();
+        let mut names: Vec<&[u8]> = Vec::new();
         for first in 0..records.len() as u32 {
             if states[first as usize] != State::Waiting {
                 continue;
@@ -4824,7 +4824,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             'record: while let Some(&index) = in_progress.last() {
                 let record = records[index as usize];
                 states[index as usize] = State::InProgress;
-                let mut names: Vec<&[u8]> = Vec::new();
+                names.clear();
                 let mut root = record.target;
                 while let js_ast::ExprData::EDot(dot) = root.data {
                     names.push(dot.name.slice());
@@ -4834,30 +4834,45 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let is_skipped = record.is_export
                     && (record.scope.ts_namespace.is_some()
                         || self.is_export_to_eliminate(record.alias));
-                let mut members = match root.data {
-                    js_ast::ExprData::EIdentifier(first_name) if !is_skipped => {
-                        let first_name = self.load_name_from_ref(first_name.ref_);
-                        match self.find_ts_name_binding(record.scope, first_name) {
-                            crate::scan::scan_symbols::TsNameBinding::Symbol(bound) => {
-                                if let Some(&other) = index_of_alias.get(&bound) {
-                                    if states[other as usize] == State::Waiting {
-                                        in_progress.push(other);
-                                        continue 'record;
+                let mut members = None;
+                if let js_ast::ExprData::EIdentifier(first_name) = root.data
+                    && !is_skipped
+                {
+                    let first_name = self.load_name_from_ref(first_name.ref_);
+                    use crate::scan::scan_symbols::TsNameBinding;
+                    members = match self.find_ts_name_binding(record.scope, first_name) {
+                        TsNameBinding::Members(members) => Some(members),
+                        TsNameBinding::Nothing => None,
+                        TsNameBinding::Symbol(bound) => {
+                            match self.ref_to_ts_namespace_member.get(&bound) {
+                                Some(&js_ast::ts::Data::Namespace(members)) => Some(members),
+                                Some(_) => None,
+                                None => {
+                                    let is_constant = self.symbols[bound.inner_index() as usize]
+                                        .kind
+                                        == js_ast::symbol::Kind::Constant;
+                                    if is_constant {
+                                        let index_of_alias =
+                                            index_of_alias.get_or_insert_with(|| {
+                                                let mut indexes = HashMap::default();
+                                                for (index, record) in records.iter().enumerate() {
+                                                    indexes.insert(record.alias, index as u32);
+                                                }
+                                                indexes
+                                            });
+                                        if let Some(&other) = index_of_alias.get(&bound)
+                                            && states[other as usize] == State::Waiting
+                                        {
+                                            in_progress.push(other);
+                                            continue 'record;
+                                        }
                                     }
-                                }
-                                match self.ref_to_ts_namespace_member.get(&bound) {
-                                    Some(&js_ast::ts::Data::Namespace(members)) => Some(members),
-                                    _ => None,
+                                    None
                                 }
                             }
-                            crate::scan::scan_symbols::TsNameBinding::Members(members) => {
-                                Some(members)
-                            }
-                            crate::scan::scan_symbols::TsNameBinding::Nothing => None,
                         }
-                    }
-                    _ => None,
-                };
+                    };
+                }
                 for name in names.iter().rev() {
                     members = members.and_then(|members| {
                         let members: &js_ast::TSNamespaceMemberMap = &members;

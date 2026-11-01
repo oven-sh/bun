@@ -35,7 +35,7 @@ use std::io::Write;
 use bstr::BStr;
 use bun_collections::VecExt;
 use bun_collections::index_sort;
-use bun_collections::{DynamicBitSet, StringHashMap};
+use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::fmt as bfmt;
 use bun_core::string_joiner::StringJoiner;
 use bun_core::strings;
@@ -44,13 +44,169 @@ use bun_ast::ExportsKind;
 use bun_ast::ImportKind;
 use bun_ast::ImportRecordFlags;
 
+use crate::PathToSourceIndexMap::PathToSourceIndexMap;
 use crate::chunk::{Content as ChunkContent, ReferencePathStyle, SourceMapShiftTracking};
-use crate::options::Loader;
+use crate::options::{Loader, Target};
 use crate::{Chunk, Index, LinkerContext};
 
 #[inline]
 fn fmt_size(bytes: u64) -> bfmt::SizeFormatter {
     bfmt::size(bytes as usize, Default::default())
+}
+
+/// The "inputs" key of each record: its pretty path, or `<path> (browser)` when two graphs have it.
+struct InputKeys<'a> {
+    sources: &'a [bun_ast::Source<'a>],
+    /// By source index, the page whose record stands for a stub of a server graph. Else itself.
+    record_of: Vec<u32>,
+    /// By source index, a key that is not the pretty path. Empty when there is none.
+    renamed: Vec<Option<Box<[u8]>>>,
+    /// The build has more than one graph, so each record was given a key that no other has.
+    has_unique_keys: bool,
+}
+
+impl<'a> InputKeys<'a> {
+    /// `has_record` holds the sources that get a record in "inputs".
+    fn init(c: &'a LinkerContext, has_record: &DynamicBitSet) -> crate::Result<Self> {
+        let graph = c.parse_graph();
+        let sources = graph.input_files.items_source();
+        let mut keys = Self {
+            sources,
+            record_of: Vec::new(),
+            renamed: Vec::new(),
+            has_unique_keys: false,
+        };
+
+        let build_graphs = &graph.build_graphs;
+        let is_used = |(_, modules): &(Target, &PathToSourceIndexMap)| !modules.map.is_empty();
+        if build_graphs.iter().filter(is_used).count() < 2 {
+            return Ok(keys);
+        }
+        keys.has_unique_keys = true;
+        // The order of the claims: the build's target, the other server targets, the browser.
+        let main = c.options.target;
+        let used = || {
+            build_graphs
+                .iter()
+                .filter(is_used)
+                .map(|(target, _)| target)
+        };
+        let others = || used().filter(|&target| target != main);
+        let order: Vec<Target> = used()
+            .filter(|&target| target == main)
+            .chain(others().filter(|&target| target != Target::Browser))
+            .chain(others().filter(|&target| target == Target::Browser))
+            .collect();
+        // The graph of each module: the first one that holds it.
+        let mut target_of = vec![order[0]; sources.len()];
+        for &target in order.iter().rev() {
+            for &module in build_graphs[target].map.values() {
+                target_of[module as usize] = target;
+            }
+        }
+
+        let html = &graph.html_imports;
+        if !html.server_source_indices.is_empty() {
+            let loaders = graph.input_files.items_loader();
+            keys.record_of = (0..u32::try_from(sources.len()).expect("int cast")).collect();
+            let stubs = html.server_source_indices.iter();
+            for (&stub, &page) in stubs.zip(&html.html_source_indices) {
+                // The stub keeps its record when browser code loaded the file first (no page).
+                if has_record.is_set(page as usize) && loaders[page as usize] == Loader::Html {
+                    keys.record_of[stub as usize] = page;
+                }
+            }
+        }
+
+        // Graph by graph, each record claims its pretty path. A dropped module has no record.
+        let reachable = c.graph.reachable_files.slice();
+        let mut claimed: ArrayHashMap<&[u8], ()> = ArrayHashMap::new();
+        claimed.ensure_total_capacity(reachable.len())?;
+        let mut copies: Vec<u32> = Vec::new();
+        for &target in &order {
+            for source_index in reachable {
+                let i = source_index.get();
+                if i == Index::RUNTIME.get()
+                    || !has_record.is_set(i as usize)
+                    || target_of[i as usize] != target
+                    || keys.record_of(i) != i
+                {
+                    continue;
+                }
+                if claimed
+                    .get_or_put(sources[i as usize].path.pretty)?
+                    .found_existing
+                {
+                    copies.push(i);
+                }
+            }
+        }
+        // A copy takes the suffix of its graph, again while that key is taken (`a.js (browser)`).
+        let mut suffixed: StringHashMap<()> = StringHashMap::default();
+        for i in copies {
+            let graph = target_of[i as usize].naming_placeholder();
+            let mut key = [sources[i as usize].path.pretty, b" (", graph, b")"].concat();
+            while claimed.contains(&key.as_slice()) || suffixed.contains_key(key.as_slice()) {
+                key = [key.as_slice(), b" (", graph, b")"].concat();
+            }
+            suffixed.put(&key, ())?;
+            keys.rename(i, key);
+        }
+
+        Ok(keys)
+    }
+
+    fn rename(&mut self, source_index: u32, key: Vec<u8>) {
+        if self.renamed.is_empty() {
+            self.renamed.resize_with(self.sources.len(), || None);
+        }
+        self.renamed[source_index as usize] = Some(key.into_boxed_slice());
+    }
+
+    fn record_of(&self, source_index: u32) -> u32 {
+        self.record_of
+            .get(source_index as usize)
+            .copied()
+            .unwrap_or(source_index)
+    }
+
+    /// The pages of the stubs among `members`.
+    fn records_of_stubs(&self, members: &[u32]) -> Vec<u32> {
+        if self.record_of.is_empty() {
+            return Vec::new();
+        }
+        let record_of_stub = |&member: &u32| {
+            let record = self.record_of(member);
+            (record != member).then_some(record)
+        };
+        members.iter().filter_map(record_of_stub).collect()
+    }
+
+    fn get(&self, source_index: u32) -> &[u8] {
+        let record = self.record_of(source_index) as usize;
+        match self.renamed.get(record) {
+            Some(Some(key)) => key,
+            _ => self.sources[record].path.pretty,
+        }
+    }
+}
+
+/// Debug check: one object of the metafile of a build with more than one graph has no key twice.
+#[derive(Default)]
+struct WrittenKeys(StringHashMap<()>);
+
+impl WrittenKeys {
+    fn add(&mut self, keys: &InputKeys, key: &[u8]) {
+        if !cfg!(debug_assertions) || !keys.has_unique_keys {
+            return;
+        }
+        let is_repeat = bun_core::handle_oom(self.0.get_or_put(key)).found_existing;
+        debug_assert!(
+            !is_repeat,
+            "the metafile has the key {} twice",
+            BStr::new(key)
+        );
+    }
 }
 
 /// Generates the JSON fragment for a single output chunk.
@@ -59,6 +215,7 @@ fn generate_chunk_json(
     c: &LinkerContext,
     chunk: &Chunk,
     chunks: &[Chunk],
+    keys: &InputKeys,
 ) -> crate::Result<Box<[u8]>> {
     let mut json: Vec<u8> = Vec::new();
     // errdefer json.deinit() — handled by Drop on early return
@@ -77,13 +234,15 @@ fn generate_chunk_json(
     let mut first_chunk_input = true;
     let chunk_keys = chunk.files_with_parts_in_chunk.keys();
     let chunk_values = chunk.files_with_parts_in_chunk.values();
-    for (file_source_index, bytes_in_output) in chunk_keys.iter().zip(chunk_values.iter()) {
-        let file_source_index = *file_source_index;
+    let bytes_of = |member: usize| chunk_values[member].load(core::sync::atomic::Ordering::Relaxed);
+    let stub_records = keys.records_of_stubs(chunk_keys);
+    let mut written = WrittenKeys::default();
+    for (member, &file_source_index) in chunk_keys.iter().enumerate() {
         // Counters are `AtomicUsize` because they're populated by the parallel
         // codegen workers; metafile emission runs strictly after the
         // `group.wait()` join in `generate_chunks_in_parallel`, so a relaxed
         // load observes the final value.
-        let bytes_in_output = bytes_in_output.load(core::sync::atomic::Ordering::Relaxed);
+        let mut bytes_in_output = bytes_of(member);
         if file_source_index as usize >= sources.len() {
             continue;
         }
@@ -95,9 +254,22 @@ fn generate_chunk_json(
         if file_source.path.text.is_empty() {
             continue;
         }
-        let file_path = file_source.path.pretty;
-        if file_path.is_empty() {
+        if file_source.path.pretty.is_empty() {
             continue;
+        }
+
+        // A page and its stubs are one member. Only a Bun hashbang puts two of them in a chunk.
+        let record = keys.record_of(file_source_index);
+        if stub_records.contains(&record) {
+            let is_same_member = |&other: &u32| keys.record_of(other) == record;
+            if chunk_keys[..member].iter().any(is_same_member) {
+                continue;
+            }
+            for later in member + 1..chunk_keys.len() {
+                if is_same_member(&chunk_keys[later]) {
+                    bytes_in_output += bytes_of(later);
+                }
+            }
         }
 
         if !first_chunk_input {
@@ -105,8 +277,10 @@ fn generate_chunk_json(
         }
         first_chunk_input = false;
 
+        let key = keys.get(file_source_index);
+        written.add(keys, key);
         json.extend_from_slice(b"\n        ");
-        write_json_string(&mut json, file_path)?;
+        write_json_string(&mut json, key)?;
         write!(
             json,
             ": {{\n          \"bytesInOutput\": {}\n        }}",
@@ -170,7 +344,7 @@ fn generate_chunk_json(
             let entry_source = &sources[entry_source_index as usize];
             if !entry_source.path.text.is_empty() && !entry_source.path.pretty.is_empty() {
                 json.extend_from_slice(b",\n      \"entryPoint\": ");
-                write_json_string(&mut json, entry_source.path.pretty)?;
+                write_json_string(&mut json, keys.get(entry_source_index))?;
             }
         }
     }
@@ -234,6 +408,8 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
         }
     }
 
+    let keys = InputKeys::init(c, &seen_sources)?;
+
     // A split `import()` / `require()` record names its target's chunk
     // (`compute_cross_chunk_dependencies`); "entryPoint" adds the input.
     let mut entry_of_chunk: StringHashMap<u32> = StringHashMap::default();
@@ -244,6 +420,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
     }
 
     // Write inputs
+    let mut written = WrittenKeys::default();
     let mut source_index: u32 = 0;
     while (source_index as usize) < sources.len() {
         // (defer-style increment moved to end of loop body)
@@ -256,7 +433,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
         }
 
         // Skip runtime and other special files
-        if source_index == Index::RUNTIME.get() {
+        if source_index == Index::RUNTIME.get() || keys.record_of(source_index) != source_index {
             continue;
         }
 
@@ -265,10 +442,11 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
             continue;
         }
 
-        let path = source.path.pretty;
-        if path.is_empty() {
+        if source.path.pretty.is_empty() {
             continue;
         }
+        let path = keys.get(source_index);
+        written.add(&keys, path);
 
         if !first_input {
             j.push_static(b",");
@@ -307,7 +485,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
                 first_import = false;
 
                 j.push_static(b"\n        {\n          \"path\": ");
-                // Bundled imports use the target source's pretty path (same string as the
+                // Bundled imports use the key of the target source's record (same string as the
                 // "inputs" key). `record.path.text` is unreliable here: dedup can set
                 // `source_index` without rewriting the path. Externals/chunk refs fall through.
                 let import_path: &[u8] = 'path: {
@@ -315,11 +493,8 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
                         && record.source_index.get() != Index::RUNTIME.get()
                     {
                         let idx = record.source_index.get() as usize;
-                        if idx < sources.len() {
-                            let pretty = sources[idx].path.pretty;
-                            if !pretty.is_empty() {
-                                break 'path pretty;
-                            }
+                        if idx < sources.len() && !sources[idx].path.pretty.is_empty() {
+                            break 'path keys.get(idx as u32);
                         }
                     }
                     record.path.text
@@ -356,7 +531,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
                 {
                     j.push_static(b",\n          \"entryPoint\": ");
                     let mut buf: Vec<u8> = Vec::new();
-                    write_json_string(&mut buf, entry_source.path.pretty)?;
+                    write_json_string(&mut buf, keys.get(entry_point))?;
                     j.push_owned(buf.into_boxed_slice());
                 }
 
@@ -435,7 +610,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
         first_output = false;
 
         j.push_static(b"\n    ");
-        j.push_owned(generate_chunk_json(c, chunk, chunks)?);
+        j.push_owned(generate_chunk_json(c, chunk, chunks, &keys)?);
     }
 
     j.push_static(b"\n  }\n}\n");
@@ -921,53 +1096,10 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
                         }
                         if let Some(imp_path) = imp_path {
                             if let JsonValue::String(target) = imp_path {
-                                // Try to find the matching input key for this import
-                                // The import path may be absolute while input keys are relative
-                                // Or it may be a relative path like "../utils/logger.js"
+                                // An import of a dropped module can name no record.
                                 let target: &[u8] = target;
-
-                                // First, try exact match
-                                let mut matched_key: Option<&[u8]> = None;
                                 if inputs_obj.contains(target) {
-                                    matched_key = Some(target);
-                                } else {
-                                    // Try matching by basename or suffix
-                                    for (input_key, _) in inputs_obj.iter() {
-                                        // Check if target ends with the input key
-                                        if target.ends_with(input_key) {
-                                            // Make sure it's a path boundary (preceded by / or \ or start)
-                                            if target.len() == input_key.len()
-                                                || (target.len() > input_key.len()
-                                                    && (target[target.len() - input_key.len() - 1]
-                                                        == b'/'
-                                                        || target
-                                                            [target.len() - input_key.len() - 1]
-                                                            == b'\\'))
-                                            {
-                                                matched_key = Some(input_key);
-                                                break;
-                                            }
-                                        }
-                                        // Also check if input_key ends with target (for relative paths)
-                                        // e.g., target="../utils/logger.js" might match "src/utils/logger.js"
-                                        if strings::index_of(target, b"..").is_some() {
-                                            // This is a relative path, try matching just the filename parts
-                                            let target_base = bun_paths::basename(target);
-                                            let key_base = bun_paths::basename(input_key);
-                                            if target_base == key_base {
-                                                // Check if paths share common suffix
-                                                let target_without_dots = strip_parent_refs(target);
-                                                if input_key.ends_with(target_without_dots) {
-                                                    matched_key = Some(input_key);
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                if let Some(key) = matched_key {
-                                    let gop = imported_by.get_or_put(key)?;
+                                    let gop = imported_by.get_or_put(target)?;
                                     if !gop.found_existing {
                                         *gop.value_ptr = Vec::new();
                                     }
@@ -1636,18 +1768,4 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
     }
 
     Ok(md.into_boxed_slice())
-}
-
-/// Strips leading "../" sequences from a relative path.
-/// e.g., "../utils/logger.js" -> "utils/logger.js"
-fn strip_parent_refs(path: &[u8]) -> &[u8] {
-    let mut result = path;
-    while result.len() >= 3 && result.starts_with(b"../") {
-        result = &result[3..];
-    }
-    // Also handle ./ prefix
-    while result.len() >= 2 && result.starts_with(b"./") {
-        result = &result[2..];
-    }
-    result
 }

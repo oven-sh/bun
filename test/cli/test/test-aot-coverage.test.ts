@@ -253,13 +253,15 @@ test("bake", () => expect(bake() + nested() + hoisted()).toBe(5));
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // A row of the table is ` <file> | ...`. A debug build also lists the test file.
-    const files = [...(stdout + stderr).matchAll(/^ (\S+) +\|/gm)].map(row => row[1].replaceAll("\\", "/"));
-    return { cwd, flags, files: files.filter(file => !file.endsWith(".test.ts")), exitCode };
+    // A row of the table is ` <file> | % Funcs | % Lines | Uncovered Line #s`. A debug build also lists the test file.
+    const rows = [...(stdout + stderr).matchAll(/^ (\S+) +\|(.*)$/gm)]
+      .map(row => [row[1].replaceAll("\\", "/"), ...row[2].split("|").map(cell => cell.trim())])
+      .filter(([file]) => !file.endsWith(".test.ts"));
+    return { cwd, flags, rows, exitCode };
   };
-  const starts = { "node_modules/my-pkg": ["cake.ts"], "node_modules/my-pkg/tests": ["../cake.ts"] };
-  const runs = [[], ["--aot"]].flatMap(flags => Object.entries(starts).map(([cwd, files]) => ({ cwd, flags, files })));
+  const starts = { "node_modules/my-pkg": "cake.ts", "node_modules/my-pkg/tests": "../cake.ts" };
+  const runs = [[], ["--aot"]].flatMap(flags => Object.entries(starts).map(([cwd, file]) => ({ cwd, flags, file })));
   expect(await Promise.all(runs.map(({ cwd, flags }) => rows(cwd, flags)))).toEqual(
-    runs.map(run => ({ ...run, exitCode: 0 })),
+    runs.map(({ cwd, flags, file }) => ({ cwd, flags, rows: [[file, "100.00", "100.00", ""]], exitCode: 0 })),
   );
 });

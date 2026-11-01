@@ -30,6 +30,7 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve } from "node:path";
 import type { Sources } from "../glob-sources.ts";
+import { builtinUsesArguments, emitAotCodegen, guardInputs, hashTableInputs, type EngineSources } from "./aot.ts";
 import { generateBuildOptionsRs } from "./buildOptionsRs.ts";
 import { webkitVersionName, type CodegenFields } from "./config.ts";
 import { BuildError, assert } from "./error.ts";
@@ -41,12 +42,14 @@ import { generateXmlByteClass } from "./xmlByteClass.ts";
 
 // The individual emit functions take these four params. Bundled to keep
 // signatures short.
-interface Ctx {
+export interface Ctx {
   n: Ninja;
   cfg: CodegenFields;
   sources: Sources;
   o: CodegenOutputs;
   dirStamp: string;
+  /** The JavaScriptCore this graph builds against (deps/webkit.ts webkitEngineSources). Undefined: the graph has none (`mode: "codegen"`). */
+  engine?: EngineSources | undefined;
 }
 
 /**
@@ -228,6 +231,9 @@ export interface CodegenOutputs {
   /** Generated .cpp files. Compiled alongside handwritten C++ in bun.ts. */
   cppSources: string[];
 
+  /** Those of `cppSources` that are the table of built-ins. JavaScriptCore names its symbols, so WebKit's own programs link the objects too. */
+  builtinTableSources: string[];
+
   /**
    * Generated headers that are #included by hand-written .cpp files.
    * The PCH order-depends on all of these, and cxx waits on PCH — so
@@ -257,6 +263,14 @@ export interface CodegenOutputs {
   /** The `.incbin`'d blob — implicit input to the `.S` compile edge. */
   internalModulesBin: string;
 
+  /** What src/builtin_sources/archive.S `.incbin`s. Undefined in a graph without an engine. */
+  builtinSourcesArchive?: string;
+
+  /** What the bundled text of src/js calls the functions that it does not call as src/js does. */
+  bundledNamesOfModules: string;
+  /** The bundled text of src/runtime.bun.js. */
+  bundledHelpers: string;
+
   /**
    * Stamp output from `bun install` at repo root.
    * The esbuild tool and the cppbind lezer parser live here. Any
@@ -272,7 +286,7 @@ export interface CodegenOutputs {
  * Call after registerCodegenRules() and after registerDirStamps() (we use
  * the `mkdir_stamp` rule for the codegen dir).
  */
-export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources): CodegenOutputs {
+export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources, engine?: EngineSources): CodegenOutputs {
   n.comment("─── Codegen ───");
   n.blank();
 
@@ -286,14 +300,17 @@ export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources): Cod
     generatedTypes: [],
     rustInputs: [],
     cppSources: [],
+    builtinTableSources: [],
     cppHeaders: [],
     cppAll: [],
     internalModulesAsm: resolve(cfg.codegenDir, "InternalModuleRegistryConstants.S"),
     internalModulesBin: resolve(cfg.codegenDir, "InternalModuleRegistryConstants.bin"),
+    bundledNamesOfModules: resolve(cfg.codegenDir, "bundled_names_of_modules.txt"),
+    bundledHelpers: resolve(cfg.codegenDir, "runtime.out.js"),
     rootInstall,
   };
 
-  const ctx: Ctx = { n, cfg, sources, o, dirStamp };
+  const ctx: Ctx = { n, cfg, sources, o, dirStamp, engine };
 
   // Configure-time write (not a ninja edge — it's a constant manifest like
   // depVersionsHeader). bun_core `include!`s it, and bun_core/build.rs emits the
@@ -313,6 +330,7 @@ export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources): Cod
   o.rustInputs.push(xmlByteClass.rs);
   o.cppHeaders.push(xmlByteClass.h);
 
+  emitAotCodegen(ctx);
   emitBunError(ctx);
   emitStringMaps(ctx);
   emitRuntimeJs(ctx);
@@ -389,7 +407,7 @@ function emitPackageInstall(n: Ninja, cfg: CodegenFields, pkgDir: string): strin
 
 /**
 /** `--debug=ON` / `--debug=OFF` flag used by several scripts. */
-function debugFlag(cfg: CodegenFields): string {
+export function debugFlag(cfg: CodegenFields): string {
   return cfg.debug ? "--debug=ON" : "--debug=OFF";
 }
 
@@ -397,7 +415,7 @@ function debugFlag(cfg: CodegenFields): string {
  * Shell-quote args for a codegen rule command string. These rules wrap in
  * `cmd /c` on a Windows HOST, so quoting follows the host shell.
  */
-function shJoin(cfg: CodegenFields, args: string[]): string {
+export function shJoin(cfg: CodegenFields, args: string[]): string {
   return quoteArgs(args, cfg.host.os === "windows");
 }
 
@@ -534,13 +552,14 @@ function emitLintDocs({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
 function emitRuntimeJs({ n, cfg, o, dirStamp }: Ctx): void {
   const src = resolve(cfg.cwd, "src", "runtime.bun.js");
-  const out = resolve(cfg.codegenDir, "runtime.out.js");
+  const out = o.bundledHelpers;
 
   n.build({
     outputs: [out],
     rule: "esbuild",
     inputs: [src],
-    implicitInputs: [o.rootInstall],
+    // runtime.bun.js re-exports it.
+    implicitInputs: [resolve(cfg.cwd, "src", "runtime.js"), o.rootInstall],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
@@ -695,6 +714,10 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
   o.cppHeaders.push(...cppOutputs);
 }
 
+/** What says which types a native member may declare. */
+const declaredTypeInputs = (cfg: Ctx["cfg"]): string[] => [
+  resolve(cfg.cwd, "src", "codegen", "declared-type-checks.ts"),
+];
 function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "generate-host-exports.ts");
   const output = resolve(cfg.codegenDir, "generated_host_exports.rs");
@@ -784,7 +807,7 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.rustInputs.push(outputRs);
 }
 
-function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
+function emitJsModules({ n, cfg, sources, o, dirStamp, engine }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bundle-modules.ts");
 
   // InternalModuleRegistry.cpp is read by the script (for a sanity check).
@@ -793,6 +816,10 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   // ($makeErrorWithCode(N, ...)); without this dep an ErrorCode.ts edit leaves
   // stale error numbers in the JS bundles while the C++ enum regenerates.
   const errorCodeInput = resolve(cfg.cwd, "src", "jsc", "bindings", "ErrorCode.ts");
+  // internal-module-registry-scanner.ts reads the native module ids from this file.
+  const nativeModuleListInput = resolve(cfg.cwd, "src", "jsc", "modules", "NativeModuleList.h");
+  // replacements.ts reads the native globals' names from this file.
+  const globalObjectTableInput = resolve(cfg.cwd, "src", "jsc", "bindings", "ZigGlobalObject.lut.txt");
   // replacements.ts bakes js_classes.ts indices into every bundled module ($inherits(N, ...)).
   const jsClassesInput = resolve(cfg.cwd, "src", "jsc", "bindings", "js_classes.ts");
   // bundle-modules.ts hashes this header's entries into the builtins section (engineStamp).
@@ -819,6 +846,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "generated_builtin_module_key_index.rs"),
     o.internalModulesAsm,
     o.internalModulesBin,
+    o.bundledNamesOfModules,
   ];
   // generated.d.ts from bundle-modules.ts, WebCoreJSBuiltins.d.ts from the bundle-functions.ts it calls.
   const types = [resolve(cfg.typesDir, "generated.d.ts"), resolve(cfg.typesDir, "WebCoreJSBuiltins.d.ts")];
@@ -832,9 +860,12 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
       ...sources.jsCodegen,
       extraInput,
       errorCodeInput,
+      nativeModuleListInput,
+      globalObjectTableInput,
       jsClassesInput,
       builtinNamesInput,
     ],
+    implicitInputs: guardInputs({ cfg, engine }).filter(path => !sources.jsCodegen.includes(path)),
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
@@ -849,6 +880,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
         cfg.typesDir,
         typesOnlyFlag(cfg, sources),
         `--webkit-version=${webkitVersionName(cfg.webkitVersion)}`,
+        ...builtinUsesArguments({ cfg, engine }),
       ]),
     },
   });
@@ -905,7 +937,7 @@ function isCompiled(cfg: CodegenFields, src: string): boolean {
   return cfg.debug || cfg.assertions || !src.endsWith("_test.bind.ts");
 }
 
-function typesOnlyFlag(cfg: CodegenFields, sources: Sources): string {
+export function typesOnlyFlag(cfg: CodegenFields, sources: Sources): string {
   return `--types-only=${sources.bindgen
     .filter(src => !isCompiled(cfg, src))
     .map(src => basename(src))
@@ -913,7 +945,7 @@ function typesOnlyFlag(cfg: CodegenFields, sources: Sources): string {
 }
 
 /** Exported for test/internal/build-codegen-declared-outputs.test.ts. */
-export function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
+export function emitBindgen({ n, cfg, sources, o, dirStamp, engine }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bindgen.ts");
   const crates = new Map(sources.bindgen.map(src => [src, crateOf(src)]));
   const compiled = sources.bindgen.filter(src => isCompiled(cfg, src));
@@ -940,6 +972,7 @@ export function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
     outputs: [...cpp, ...headers, ...rust, types],
     rule: "codegen",
     inputs: [...sources.bindgen, ...sources.bindgenCodegen],
+    implicitInputs: [...declaredTypeInputs(cfg), ...guardInputs({ cfg, engine })],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
@@ -951,6 +984,7 @@ export function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
         typesOnlyFlag(cfg, sources),
         `--codegen-path=${cfg.codegenDir}`,
         `--types-path=${cfg.typesDir}`,
+        ...builtinUsesArguments({ cfg, engine }),
       ]),
     },
   });
@@ -972,7 +1006,7 @@ function pascalCase(s: string): string {
 }
 
 /** The Cargo package whose directory contains `file`. */
-function crateOf(file: string): string {
+export function crateOf(file: string): string {
   for (let dir = dirname(file); dir !== dirname(dir); dir = dirname(dir)) {
     const manifest = resolve(dir, "Cargo.toml");
     if (!existsSync(manifest)) continue;
@@ -990,7 +1024,7 @@ function crateOf(file: string): string {
  * perl script parses into JSC HashTableValue arrays. The TS wrapper adds
  * platform-specific #if preprocessing via TARGET_PLATFORM env var.
  */
-function emitObjectLuts({ n, cfg, o, dirStamp }: Ctx): void {
+function emitObjectLuts({ n, cfg, o, dirStamp, engine }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "create-hash-table.ts");
   const perlScript = resolve(cfg.cwd, "src", "codegen", "create_hash_table");
 
@@ -1028,12 +1062,12 @@ function emitObjectLuts({ n, cfg, o, dirStamp }: Ctx): void {
       outputs: [out],
       rule: "codegen",
       inputs: [src],
-      implicitInputs: [script, perlScript],
+      implicitInputs: [script, perlScript, ...hashTableInputs({ cfg, engine })],
       orderOnlyInputs: [dirStamp],
       vars: {
         cwd: cfg.cwd,
         desc: basename(out),
-        args: shJoin(cfg, [script, src, out]),
+        args: shJoin(cfg, [script, src, out, ...builtinUsesArguments({ cfg, engine })]),
       },
     });
     o.all.push(out);

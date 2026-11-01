@@ -16,6 +16,11 @@ impl Expect {
             self.matcher_prelude(global, this_value.to_js(), "toMatchObject", "<green>expected<r>")?;
         let expected = expected.to_js();
 
+        // Jest refuses a value that isn't an object. To Vitest it's one that doesn't match.
+        if not && !(received_object.is_object() && expected.is_object()) && this.is_vitest() {
+            return Ok(JSValue::UNDEFINED);
+        }
+
         if !received_object.is_object() {
             let signature: &str = get_signature("toMatchObject", "<green>expected<r>", not);
             return throw!(
@@ -32,7 +37,7 @@ impl Expect {
             );
         }
 
-        let mut pass = received_object.jest_deep_match(expected, global, true)?;
+        let (mut pass, received_object) = received_object.jest_deep_match(expected, global, not)?;
 
         if not {
             pass = !pass;

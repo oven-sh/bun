@@ -3,8 +3,10 @@ use bun_jsc::{JSValue, JsResult};
 
 use super::throw;
 use super::Expect;
+use super::Received;
 
 impl Expect {
+    #[optimize(size)]
     pub(crate) fn to_throw_error_matching_inline_snapshot(
         &self,
         this_value: JsWrapper<'_, Self>,
@@ -63,7 +65,7 @@ impl Expect {
             "toThrowErrorMatchingInlineSnapshot",
             "<green>properties<r><d>, <r>hint",
         )?;
-        let Some(value) = this.fn_to_err_string_or_undefined(global, received)? else {
+        let (Some(thrown), _) = this.get_value_as_to_throw(global, received)? else {
             let signature = Expect::get_signature("toThrowErrorMatchingInlineSnapshot", "", false);
             return throw!(
                 this,
@@ -75,7 +77,8 @@ impl Expect {
 
         this.inline_snapshot(
             global,
-            value,
+            this_value,
+            Received::Thrown(thrown),
             None,
             expected_slice,
             "toThrowErrorMatchingInlineSnapshot",

@@ -237,7 +237,7 @@ size_t CryptoAlgorithmAES_CTR::CounterBlockHelper::countToOverflowSaturating() c
     }
 
     countMinusOne &= ~sizeTypeMask;
-    if (countMinusOne.all()) {
+    if (countMinusOne.m_lo == std::numeric_limits<size_t>::max()) {
         // As all bits are set, adding one would result in an overflow.
         // Return size_t max instead.
         return std::numeric_limits<size_t>::max();
@@ -271,12 +271,6 @@ void CryptoAlgorithmAES_CTR::CounterBlockHelper::CounterBlockBits::set()
     using namespace CryptoAlgorithmAES_CTRInternal;
     m_hi = AllBitsSet;
     m_lo = AllBitsSet;
-}
-
-bool CryptoAlgorithmAES_CTR::CounterBlockHelper::CounterBlockBits::all() const
-{
-    using namespace CryptoAlgorithmAES_CTRInternal;
-    return m_hi == AllBitsSet && m_lo == AllBitsSet;
 }
 
 bool CryptoAlgorithmAES_CTR::CounterBlockHelper::CounterBlockBits::any() const

@@ -20,8 +20,8 @@ use smallvec::SmallVec;
 pub(crate) mod require_to_throw_message {
     use super::*;
 
-    const REQUIRE_TO_THROW_MESSAGE: Message =
-        Message::new("", "Require a message for \"{{matcher_name}}\".");
+    const REQUIRE_TO_THROW_MESSAGE: &Message =
+        &Message::new("", "Require a message for \"{{matcher_name}}\".");
 
     pub(crate) fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         let Some(jest_fn_call) = parse_expect_jest_fn_call(ctx.file, possible_jest_node) else {
@@ -43,11 +43,11 @@ pub(crate) mod require_to_throw_message {
 pub(crate) mod prefer_snapshot_hint {
     use super::*;
 
-    const MISSING_HINT: Message = Message::new("", "Snapshot is missing a hint.");
-    const HINT_MUST_BE_STRING: Message =
-        Message::new("", "Snapshot hint must be a string literal.");
-    const TOO_MANY_ARGUMENTS: Message =
-        Message::new("", "`toMatchSnapshot` takes at most two arguments.");
+    const MISSING_HINT: &Message = &Message::new("", "Snapshot is missing a hint.");
+    const HINT_MUST_BE_STRING: &Message =
+        &Message::new("", "Snapshot hint must be a string literal.");
+    const TOO_MANY_ARGUMENTS: &Message =
+        &Message::new("", "`toMatchSnapshot` takes at most two arguments.");
 
     pub(crate) const SNAPSHOT_MATCHERS: [&str; 2] =
         ["toMatchSnapshot", "toThrowErrorMatchingSnapshot"];
@@ -183,7 +183,7 @@ fn outer_text(e: Expr<'_>) -> &[u8] {
 pub(crate) mod no_alias_methods {
     use super::*;
 
-    const NO_ALIAS_METHODS: Message = Message::new("", "Unexpected alias \"{{name}}\"");
+    const NO_ALIAS_METHODS: &Message = &Message::new("", "Unexpected alias \"{{name}}\"");
 
     pub(crate) const ALIASES: [&str; 11] = [
         "toBeCalled",
@@ -234,7 +234,7 @@ pub(crate) mod no_alias_methods {
 pub(crate) mod no_restricted_matchers {
     use super::*;
 
-    const RESTRICTED_CHAIN: Message = Message::new("", "Use of `{{chain_call}}` is disallowed");
+    const RESTRICTED_CHAIN: &Message = &Message::new("", "Use of `{{chain_call}}` is disallowed");
 
     pub(crate) struct NoRestrictedMatchersConfig {
         /// Each matcher with its configured message.
@@ -303,11 +303,11 @@ pub(crate) mod no_restricted_matchers {
 pub(crate) mod prefer_called_with {
     use super::*;
 
-    const USE_CALLED_WITH: Message = Message::new(
+    const USE_CALLED_WITH: &Message = &Message::new(
         "",
         "Suggest using `toBeCalledWith()` or `toHaveBeenCalledWith()`.",
     );
-    const USE: Message = Message::new("", "Use `{{code}}`");
+    const USE: &Message = &Message::new("", "Use `{{code}}`");
 
     pub(crate) fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         let Some(jest_fn_call) = parse_expect_jest_fn_call(ctx.file, possible_jest_node) else {
@@ -334,7 +334,7 @@ pub(crate) mod prefer_called_with {
 pub(crate) mod prefer_strict_equal {
     use super::*;
 
-    const USE_TO_STRICT_EQUAL: Message = Message::new("", "Suggest using `toStrictEqual()`.");
+    const USE_TO_STRICT_EQUAL: &Message = &Message::new("", "Suggest using `toStrictEqual()`.");
 
     pub(crate) fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         let Some(jest_fn_call) = parse_expect_jest_fn_call(ctx.file, possible_jest_node) else {
@@ -361,7 +361,7 @@ pub(crate) mod prefer_strict_equal {
 pub(crate) mod prefer_to_have_been_called_times {
     use super::*;
 
-    const PREFER_TO_HAVE_BEEN_CALLED_TIMES: Message = Message::new(
+    const PREFER_TO_HAVE_BEEN_CALLED_TIMES: &Message = &Message::new(
         "",
         "Prefer `toHaveBeenCalledTimes()` over `toHaveLength()` when asserting mock call counts",
     );
@@ -404,7 +404,7 @@ pub(crate) mod prefer_to_have_been_called_times {
 pub(crate) mod prefer_to_have_length {
     use super::*;
 
-    const USE_TO_HAVE_LENGTH: Message = Message::new("", "Suggest using `toHaveLength()`.");
+    const USE_TO_HAVE_LENGTH: &Message = &Message::new("", "Suggest using `toHaveLength()`.");
 
     pub(crate) fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         let node = possible_jest_node.node;
@@ -470,7 +470,7 @@ pub(crate) mod prefer_to_have_length {
 pub(crate) mod prefer_expect_resolves {
     use super::*;
 
-    const EXPECT_RESOLVES: Message = Message::new(
+    const EXPECT_RESOLVES: &Message = &Message::new(
         "",
         "Prefer `await expect(...).resolves` over `expect(await ...)` syntax.",
     );
@@ -509,8 +509,8 @@ pub(crate) mod prefer_expect_resolves {
 pub(crate) mod no_interpolation_in_snapshots {
     use super::*;
 
-    const NO_INTERPOLATION_IN_SNAPSHOTS: Message =
-        Message::new("", "Do not use string interpolation inside of snapshots");
+    const NO_INTERPOLATION_IN_SNAPSHOTS: &Message =
+        &Message::new("", "Do not use string interpolation inside of snapshots");
 
     pub(crate) const INLINE_SNAPSHOT_MATCHERS: [&str; 2] = [
         "toMatchInlineSnapshot",
@@ -544,11 +544,11 @@ pub(crate) mod no_interpolation_in_snapshots {
 pub(crate) mod prefer_to_be {
     use super::*;
 
-    const USE_TO_BE: Message = Message::new("", "Use `toBe` when expecting primitive literals.");
-    const USE_TO_BE_UNDEFINED: Message = Message::new("", "Use `toBeUndefined` instead.");
-    const USE_TO_BE_DEFINED: Message = Message::new("", "Use `toBeDefined` instead.");
-    const USE_TO_BE_NULL: Message = Message::new("", "Use `toBeNull` instead.");
-    const USE_TO_BE_NAN: Message = Message::new("", "Use `toBeNaN` instead.");
+    const USE_TO_BE: &Message = &Message::new("", "Use `toBe` when expecting primitive literals.");
+    const USE_TO_BE_UNDEFINED: &Message = &Message::new("", "Use `toBeUndefined` instead.");
+    const USE_TO_BE_DEFINED: &Message = &Message::new("", "Use `toBeDefined` instead.");
+    const USE_TO_BE_NULL: &Message = &Message::new("", "Use `toBeNull` instead.");
+    const USE_TO_BE_NAN: &Message = &Message::new("", "Use `toBeNaN` instead.");
 
     #[derive(Copy, Clone)]
     enum PreferToBeKind {
@@ -748,7 +748,7 @@ pub(crate) mod prefer_to_be {
 pub(crate) mod prefer_to_contain {
     use super::*;
 
-    const USE_TO_CONTAIN: Message = Message::new("", "Suggest using `toContain()`.");
+    const USE_TO_CONTAIN: &Message = &Message::new("", "Suggest using `toContain()`.");
 
     pub(crate) fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         let Some(jest_expect_fn_call) = parse_expect_jest_fn_call(ctx.file, possible_jest_node)
@@ -885,8 +885,8 @@ impl<'a> ComparisonInExpect<'a> {
 pub(crate) mod prefer_comparison_matcher {
     use super::*;
 
-    const USE_TO_BE_COMPARISON: Message =
-        Message::new("", "Suggest using the built-in comparison matchers");
+    const USE_TO_BE_COMPARISON: &Message =
+        &Message::new("", "Suggest using the built-in comparison matchers");
 
     pub(crate) fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         let Some(comparison) = ComparisonInExpect::parse(ctx.file, possible_jest_node) else {
@@ -920,9 +920,9 @@ pub(crate) mod prefer_comparison_matcher {
 pub(crate) mod prefer_equality_matcher {
     use super::*;
 
-    const USE_EQUALITY_MATCHER: Message =
-        Message::new("", "Suggest using the built-in equality matchers.");
-    const USE: Message = Message::new("", "Use `{{eq_matcher}}`");
+    const USE_EQUALITY_MATCHER: &Message =
+        &Message::new("", "Suggest using the built-in equality matchers.");
+    const USE: &Message = &Message::new("", "Use `{{eq_matcher}}`");
 
     pub(crate) fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         let Some(comparison) = ComparisonInExpect::parse(ctx.file, possible_jest_node) else {
@@ -952,8 +952,8 @@ pub(crate) mod prefer_equality_matcher {
 pub(crate) mod no_unneeded_async_expect_function {
     use super::*;
 
-    const NO_UNNEEDED_ASYNC_EXPECT_FUNCTION: Message =
-        Message::new("", "Unnecessary async function wrapper");
+    const NO_UNNEEDED_ASYNC_EXPECT_FUNCTION: &Message =
+        &Message::new("", "Unnecessary async function wrapper");
 
     pub(crate) fn run<'a>(jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         let Some(parsed_expect_call) = parse_expect_jest_fn_call(ctx.file, jest_node) else {
@@ -1005,7 +1005,7 @@ pub(crate) mod no_large_snapshots {
     use super::no_interpolation_in_snapshots::INLINE_SNAPSHOT_MATCHERS;
     use super::*;
 
-    const TOO_LONG_SNAPSHOT: Message = Message::new("", "Snapshot is too long.");
+    const TOO_LONG_SNAPSHOT: &Message = &Message::new("", "Snapshot is too long.");
 
     /// oxlint's `no_snapshot` and `too_long_snapshot`.
     fn help(runner: Runner, is_none_expected: bool, line_limit: u32, line_count: u32) -> String {
@@ -1163,7 +1163,7 @@ pub(crate) mod no_large_snapshots {
 pub(crate) mod prefer_to_be_simply_bool {
     use super::*;
 
-    const USE_INSTEAD: Message = Message::new("", "Use `{{call_name}}` instead.");
+    const USE_INSTEAD: &Message = &Message::new("", "Use `{{call_name}}` instead.");
 
     pub(crate) fn run<'a>(
         possible_vitest_node: PossibleJestNode<'a>,

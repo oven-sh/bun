@@ -1,9 +1,12 @@
 const { validateAbortSignal } = require("internal/validators");
 
-let addAbortListener;
+let addAbortListener: typeof import("internal/abort_listener").default.addAbortListener | undefined;
 
 // listen({ signal }) for net.Server and http.Server: Node's addServerAbortSignalOption in lib/net.js.
-function addServerAbortSignalOption(self, options) {
+function addServerAbortSignalOption(
+  self: $Node.EventEmitter & { close(): unknown },
+  options: { signal?: AbortSignal } | null | undefined,
+) {
   if (options?.signal === undefined) {
     return;
   }

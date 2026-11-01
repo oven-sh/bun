@@ -4,7 +4,7 @@ use bun_lint::prelude::*;
 /// inline type qualifiers.
 pub struct NoImportTypeSideEffects;
 
-const USE_TOP_LEVEL_QUALIFIER: Message = Message::new(
+const USE_TOP_LEVEL_QUALIFIER: &Message = &Message::new(
     "useTopLevelQualifier",
     "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime. Convert this to a top-level type qualifier to properly remove the entire import.",
 );

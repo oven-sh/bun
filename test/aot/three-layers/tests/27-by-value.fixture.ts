@@ -1,0 +1,16 @@
+import { check } from "../src/show";
+import { getAt, putAt, inAt, delAt, forIn, ownNames } from "fake-shapes/more";
+import { makePoint, secret } from "fake-shapes";
+import { Vec2, makeItem } from "fake-typed";
+import { Square, makeUser, Vec3 } from "../src/models";
+const F = "27";
+const make = (): any[] => [makePoint(1, 2), new Vec2(1, 2), new Vec3(1, 2, 3), new Square("s", 2), makeUser(3), makeItem(1), { local: 1 }, [1, 2], "str", new Map([[1, 2]]), function f() {}];
+const keys: any[] = ["x", "name", "side", 0, 1, "0", -1, 1.5, "length", secret, Symbol.iterator, "toString", "constructor", "", "local", null, undefined, true, { toString() { return "x"; } }];
+check(F, "reads there and here", () => make().map(o => keys.map(k => { const a = getAt(o, k), b = o[k]; return (a === b ? "" : "DIFFERENT ") + typeof a; }).join()));
+check(F, "in", () => make().filter(o => typeof o === "object" || typeof o === "function").map(o => keys.map(k => (inAt(o, k) === k in o ? (k in o ? 1 : 0) : "DIFFERENT")).join("")));
+check(F, "stores of elements and odd names", () => make().filter(o => typeof o === "object").map(o => { const out: unknown[] = []; for (const k of [0, 5, "7", -1, 1.5, secret, "added", ""]) { try { out.push(putAt(o, k, String(k))); } catch (e) { out.push((e as Error).name); } } return [out.length, ownNames(o), forIn(o).length, Object.getOwnPropertySymbols(o).length, o[5], getAt(o, "5")]; }));
+check(F, "deletes", () => make().filter(o => typeof o === "object").map(o => { o.tmp = 1; o[3] = 3; return [delAt(o, "tmp"), delAt(o, 3), delAt(o, "x"), delete o.name, delAt(o, "nope"), ownNames(o)]; }));
+check(F, "descriptors", () => make().slice(0, 6).map(o => [Object.getOwnPropertyDescriptors(o), Object.isExtensible(o)]));
+check(F, "defineProperties, then the owner's code", () => { const v = new Vec3(1, 2, 3); Object.defineProperties(v, { x: { value: 10, writable: false, enumerable: false, configurable: true }, w: { get() { return 4; }, enumerable: true } }); let thrown = ""; try { v.scale(2); } catch (e) { thrown = (e as Error).name; } return [v.parts(), thrown, Object.keys(v), forIn(v), JSON.stringify(v), { ...v }]; });
+check(F, "objects above objects", () => { const base = new Square("base", 3), child = Object.create(base), grand = Object.create(child, { own: { value: 1, enumerable: true } }); child.side = 4; return [grand.area(), getAt(grand, "side"), forIn(grand), inAt(grand, "name"), Object.keys(grand), (() => { try { return grand.id; } catch (e) { return (e as Error).name; } })(), grand instanceof Square]; });
+check(F, "hasOwn and propertyIsEnumerable", () => make().slice(0, 6).map(o => ["x", "name", "area", "kind"].map(k => [Object.hasOwn(o, k), Object.prototype.hasOwnProperty.call(o, k), Object.prototype.propertyIsEnumerable.call(o, k)].map(Number).join("")).join()));

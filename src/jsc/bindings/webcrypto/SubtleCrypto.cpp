@@ -331,7 +331,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             JSObject* newValue = constructEmptyObject(&state);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             newValue->putDirect(vm, vm.propertyNames->name, nameValue);
-            newValue->putDirect(vm, Identifier::fromString(vm, "publicKey"_s), publicValue);
+            Bun::putDirectNamed(vm, newValue, "publicKey"_s, publicValue);
 
             auto params = convertDictionary<CryptoAlgorithmEcdhKeyDeriveParams>(state, newValue);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
@@ -347,7 +347,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             JSObject* newValue = constructEmptyObject(&state);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             newValue->putDirect(vm, vm.propertyNames->name, nameValue);
-            newValue->putDirect(vm, Identifier::fromString(vm, "publicKey"_s), publicValue);
+            Bun::putDirectNamed(vm, newValue, "publicKey"_s, publicValue);
 
             auto params = convertDictionary<CryptoAlgorithmX25519Params>(state, newValue);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
@@ -1025,6 +1025,7 @@ void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&&
             rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     // The 26 January 2017 version of the specification suggests we should perform the following task asynchronously
     // regardless what kind of keys it produces: https://www.w3.org/TR/WebCryptoAPI/#SubtleCrypto-method-generateKey
     // That's simply not efficient for AES, HMAC and EC keys. Therefore, we perform it as an async task only for RSA keys.
@@ -1287,6 +1288,7 @@ void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDa
             rejectImportKeyException(promise.releaseNonNull(), ec, msg, identifier);
     };
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     // The 11 December 2014 version of the specification suggests we should perform the following task asynchronously:
     // https://www.w3.org/TR/WebCryptoAPI/#SubtleCrypto-method-importKey
     // It is not beneficial for less time consuming operations. Therefore, we perform it synchronously.
@@ -1606,6 +1608,7 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                         rejectImportKeyException(promise.releaseNonNull(), ec, msg, identifier);
                 };
 
+                ncrypto::ClearErrorOnReturn clearErrorOnReturn;
                 // The following operation should be performed synchronously.
                 RELEASE_AND_RETURN(scope, importAlgorithm->importKey(format, WTF::move(keyData), *unwrappedKeyAlgorithm, extractable, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback)));
             }

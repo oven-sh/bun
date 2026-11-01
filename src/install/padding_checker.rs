@@ -28,64 +28,7 @@
 //! }
 //! ```
 //!
-//! There is one other way to introduce undefined memory into a struct, which this does not check for, and that is
-//! a union with unequal size fields.
-
-// Per-field `const _: () = assert!(offset_of!...)` proofs live next to each serialized
-// struct (e.g. `NpmPackage` / `PackageVersion` in npm.rs), and the `layout_asserts`
-// module below pins every serialized type's size/align against the on-disk spec.
-// The free function here is kept as the call-site-compatible entry point.
-
-/// Assertion that `T` has no uninitialized padding. See module docs.
-///
-/// The actual layout checking lives in the per-struct `const` offset asserts
-/// and `layout_asserts` pins; this function is a zero-cost call-site marker that
-/// documents intent. It takes a type-witness value (pass any value of `T` —
-/// or name `T` explicitly via turbofish and reference the fn item without calling).
-///
-/// The trait bound is intentionally *not* applied here: bounding the generic
-/// would force every `write_array<T>` caller to propagate
-/// `T: AssertNoUninitializedPadding`.
-#[inline(always)]
-pub fn assert_no_uninitialized_padding<T>(_type_witness: T) {
-    // Body intentionally empty — the per-type `const` layout asserts are the check.
-}
-
-// Reference: what a manual padding audit of a serialized type must establish:
-//
-// For each adjacent field pair (prev, field) in declaration order:
-//   const _: () = assert!(
-//       core::mem::offset_of!(T, field)
-//           == core::mem::offset_of!(T, prev) + core::mem::size_of::<PrevTy>(),
-//       concat!(
-//           "Expected no possibly uninitialized bytes of memory in '", stringify!(T),
-//           "', but found a byte gap between fields '", stringify!(prev), "' and '",
-//           stringify!(field), "'. This can be fixed by adding a padding field to the ",
-//           "struct like `_padding: [u8; N] = [0; N],` between these fields. For more ",
-//           "information, look at `padding_checker.rs`",
-//       ),
-//   );
-//
-// And for the trailing gap:
-//   const _: () = assert!(
-//       core::mem::offset_of!(T, last) + core::mem::size_of::<LastTy>()
-//           == core::mem::size_of::<T>(),
-//       concat!(
-//           "Expected no possibly uninitialized bytes of memory in '", stringify!(T),
-//           "', but found a byte gap at the end of the struct. This can be fixed by ",
-//           "adding a padding field to the struct like `_padding: [u8; N] = [0; N],` ",
-//           "at the end. For more information, look at `padding_checker.rs`",
-//       ),
-//   );
-//
-// Recursion rules:
-//   - struct / union field  → require `FieldTy: AssertNoUninitializedPadding`
-//   - [T; N] field          → require `T: AssertNoUninitializedPadding`
-//   - Option<T> field       → require `T: AssertNoUninitializedPadding`
-//   - pointer field         → compile_error!("Expected no pointer types in ...")
-//   - anything else         → ok
-//
-// Unions: recurse into field types but skip the offset-gap scan.
+//! `bun_core::impl_no_uninit!(Demo)` compiles only for the second `Demo`, and both `write_array`s take `T: NoUninit`. It also rejects a union with unequal size fields, so what holds a `bin::Value` or a `resolution::Value` is still written through an `unsafe` byte view.
 
 // ──────────────────────────────────────────────────────────────────────────
 // Cross-version layout pins
@@ -104,7 +47,7 @@ pub fn assert_no_uninitialized_padding<T>(_type_witness: T) {
 // little-endian and 8-byte pointer alignment).
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(all(target_pointer_width = "64", target_endian = "little"))]
-pub mod layout_asserts {
+mod layout_asserts {
     use core::mem::{align_of, size_of};
 
     macro_rules! pin {

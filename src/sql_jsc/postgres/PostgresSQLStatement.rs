@@ -6,11 +6,13 @@ use crate::postgres::signature::Signature;
 use crate::shared::cached_structure::{
     CachedStructure as PostgresCachedStructure, column_name_to_js, describe_statement,
 };
+use crate::shared::row_decoder::{RowColumn, RowDecoder, WireFormat};
 use crate::shared::sql_data_cell::{Flags as DataCellFlags, dedupe_columns};
 
 use bun_ptr::RefPtr;
 use bun_sql::postgres::postgres_protocol as protocol;
-use bun_sql::postgres::postgres_types::int4;
+use bun_sql::postgres::postgres_types::{self as types, int4};
+use bun_sql::shared::ColumnIdentifier;
 
 bun_core::declare_scope!(Postgres, visible);
 
@@ -25,6 +27,7 @@ pub struct PostgresSQLStatement {
     pub(crate) error_response: Option<Error>,
     pub(crate) needs_duplicate_check: bool,
     pub(crate) fields_flags: DataCellFlags,
+    pub(crate) row_decoder: RowDecoder,
 }
 
 impl Default for PostgresSQLStatement {
@@ -41,6 +44,7 @@ impl Default for PostgresSQLStatement {
             error_response: None,
             needs_duplicate_check: true,
             fields_flags: DataCellFlags::default(),
+            row_decoder: RowDecoder::default(),
         }
     }
 }
@@ -110,6 +114,38 @@ impl PostgresSQLStatement {
             dedupe_columns(self.fields.iter_mut().rev().map(|f| &mut f.name_or_index));
     }
 
+    pub(crate) fn create_row_decoder(&mut self, global_object: &JSGlobalObject, row_type: u32) {
+        use types::Tag as T;
+        self.check_for_duplicate_fields();
+        let columns: Option<Vec<RowColumn>> = self
+            .fields
+            .iter()
+            .map(|field| {
+                let ColumnIdentifier::Name(name) = &field.name_or_index else {
+                    return None;
+                };
+                let tag = field.type_tag();
+                let is_binary = field.binary || tag.is_binary_in(types::ResultFormats::Decodable);
+                let format = match (tag, is_binary) {
+                    (T::int4, true) => WireFormat::Int32,
+                    (T::float4, true) => WireFormat::Float32,
+                    (T::float8, true) => WireFormat::Float64,
+                    (T::bool, true) => WireFormat::Boolean,
+                    (T::timestamp | T::timestamptz, true) => WireFormat::TimestampMicroseconds,
+                    (T::text | T::varchar | T::bpchar | T::name, _)
+                    | (T::uuid | T::int8, false) => WireFormat::Text,
+                    _ => return None,
+                };
+                Some(RowColumn {
+                    name: name.slice().as_ptr(),
+                    name_length: name.slice().len() as u32,
+                    format,
+                })
+            })
+            .collect();
+        self.row_decoder = RowDecoder::new(global_object, row_type, columns.as_deref());
+    }
+
     // Note: returning
     // `&CachedStructure` here to avoid moving out of `self` (CachedStructure owns
     // a `Box<[ExternColumnIdentifier]>` and a `StrongOptional`, neither `Copy`).
@@ -156,6 +192,7 @@ impl PostgresSQLStatement {
         self.cached_structure = Default::default();
         self.needs_duplicate_check = true;
         self.fields_flags = Default::default();
+        self.row_decoder = Default::default();
         (
             core::mem::take(&mut self.parameters),
             core::mem::take(&mut self.fields),

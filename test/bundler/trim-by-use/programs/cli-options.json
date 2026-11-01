@@ -1,0 +1,1 @@
+{ "build": ["--compile-exec-argv=--smol"], "printsAsAnExecutable": true }

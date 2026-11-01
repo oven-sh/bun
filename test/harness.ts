@@ -7,13 +7,16 @@
 
 import * as numeric from "_util/numeric.ts";
 import { gc as bunGC, sleepSync, spawnSync, unsafe, which } from "bun";
-import { heapStats } from "bun:jsc";
+import { generateHeapSnapshotForDebugging, heapStats } from "bun:jsc";
 import { beforeAll, describe, expect } from "bun:test";
 import { execSync } from "child_process";
 import { readdir, writeFile } from "fs/promises";
 import fs, { closeSync, openSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join, sep } from "path";
+import { locksEnvironment } from "./aot/hardened";
+import { ownTemporaryFolder } from "./aot/harness/temporary-folders";
+import "./aot/harness/without-installing-packages";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
@@ -75,16 +78,6 @@ function detectASAN(): boolean {
   return basename(process.execPath).includes("bun-asan");
 }
 
-// A release build is not one. `--revision` can't tell for a debug build, which prints "-debug" either way.
-export const isCanary = detectCanary();
-
-function detectCanary(): boolean {
-  try {
-    return require("bun:internal-for-testing").crash_handler.getFeatureData().is_canary;
-  } catch {}
-  return Bun.spawnSync({ cmd: [process.execPath, "--revision"] }).stdout.includes("canary");
-}
-
 export const bunEnv: NodeJS.Dict<string> = {
   ...process.env,
   // Windows spells PATH `Path`. `{ ...bunEnv, PATH }` would then hold both, and which one a child
@@ -121,11 +114,35 @@ const ciEnv = { ...bunEnv };
 
 if (isASAN) {
   bunEnv.ASAN_OPTIONS ??= "allow_user_segv_handler=1:disable_coredump=0";
+  // libpas serves WTF's fastMalloc unless Malloc is set, and AddressSanitizer does not intercept libpas.
+  if (/[\\/]test[\\/]aot[\\/]/.test(Bun.main)) {
+    bunEnv.Malloc = "1";
+    // The slow unwinder aborts in a frame of compiled code and cuts the report off.
+    bunEnv.ASAN_OPTIONS += ":detect_leaks=0:fast_unwind_on_fatal=1";
+  }
 }
 
 if (isWindows) {
   bunEnv.SHELLOPTS = "igncr"; // Ignore carriage return
 }
+
+/**
+ * Spread over `bunEnv` for a child process. On macOS the system allocator then overwrites blocks when they are
+ * allocated and released, puts guard pages around large ones, checks its heap as it goes, aborts on the first error
+ * and prints the reason to stderr even when that is a pipe.
+ */
+export const strictSystemAllocatorEnv: Record<string, string> = isMacOS
+  ? {
+      MallocPreScribble: "1",
+      MallocScribble: "1",
+      MallocGuardEdges: "1",
+      MallocCheckHeapStart: "1",
+      MallocCheckHeapEach: "5000",
+      MallocCheckHeapAbort: "1",
+      MallocErrorAbort: "1",
+      MallocDebugReport: "crash",
+    }
+  : {};
 
 for (let key in bunEnv) {
   if (bunEnv[key] === undefined) {
@@ -135,6 +152,15 @@ for (let key in bunEnv) {
 
   if (key.startsWith("BUN_DEBUG_") && key !== "BUN_DEBUG_QUIET_LOGS") {
     delete ciEnv[key];
+    delete bunEnv[key];
+  }
+
+  // An executable that such a Bun compiles ahead of time does not start where the environment sets a variable that it
+  // never reads. A test that wants one of the few that it does read sets it itself.
+  if (
+    locksEnvironment &&
+    /^(BUN_DEBUG|BUN_JSC_|MIMALLOC_|BUN_CRASH_REPORT_URL$|BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING$)/i.test(key)
+  ) {
     delete bunEnv[key];
   }
 
@@ -157,7 +183,7 @@ for (let key in bunEnv) {
 delete bunEnv.BUN_INSPECT_CONNECT_TO;
 delete bunEnv.NODE_ENV;
 
-if (isDebug) {
+if (isDebug && !locksEnvironment) {
   // This makes debug build memory leak tests more reliable.
   // The code for dumping out the debug build transpiled source code has leaks.
   bunEnv.BUN_DEBUG_NO_DUMP = "1";
@@ -417,6 +443,83 @@ export async function expectMaxObjectTypeCount(
   expect(heapStats().objectTypeCounts[type] ?? 0).toBeLessThanOrEqual(count);
 }
 
+/** Reachability from GC roots, read from the debugging heap snapshot, which has no entry for conservative stack roots.
+ *  So unlike "was it finalized?", it only reports cells that something in the heap really holds.
+ *  Fixtures embed it as `${Heap}` with `generateHeapSnapshotForDebugging` from "bun:jsc" in scope. */
+export class Heap {
+  readonly #className = new Map<number, string>();
+  readonly #label = new Map<number, string>();
+  readonly #idOfAddress = new Map<bigint, number>();
+  /** Reachable cell -> [parent cell, edge] on a shortest path from a root. Roots map to undefined. */
+  readonly #reachedFrom = new Map<number, [number, string] | undefined>();
+  readonly #rootReason = new Map<number, string>();
+
+  /** `followers: false` skips "roots" that are only marked because another cell is (a WeakMap value for a marked key,
+   *  a cell its WeakHandleOwner keeps). The snapshot has no edge from that other cell, which only the stack may hold,
+   *  so also query the cells they depend on. */
+  constructor({ followers = true } = {}) {
+    const { nodes, edges, roots, nodeClassNames, edgeTypes, edgeNames, labels } =
+      generateHeapSnapshotForDebugging() as any;
+    for (let i = 0; i < nodes.length; i += 7) {
+      this.#className.set(nodes[i], nodeClassNames[nodes[i + 2]]);
+      if (labels[nodes[i + 4]]) this.#label.set(nodes[i], labels[nodes[i + 4]]);
+      this.#idOfAddress.set(BigInt(nodes[i + 5]), nodes[i]);
+    }
+    const outgoing = new Map<number, [number, string][]>();
+    for (let i = 0; i < edges.length; i += 4) {
+      const type = edgeTypes[edges[i + 2]];
+      const name = type === "Property" || type === "Variable" ? edgeNames[edges[i + 3]] : edges[i + 3];
+      let list = outgoing.get(edges[i]);
+      if (!list) outgoing.set(edges[i], (list = []));
+      list.push([edges[i + 1], type + ":" + name]);
+    }
+    const queue: number[] = [];
+    for (let i = 0; i < roots.length; i += 3) {
+      const reason = String(labels[roots[i + 1]] ?? roots[i + 1]);
+      // DOMGCOutput roots (e.g. a marked EventTarget's listeners) duplicate edges their owner already has.
+      if (this.#reachedFrom.has(roots[i]) || reason.includes("DOMGCOutput")) continue;
+      const isOnItsOwn = reason === "WeakSets" && String(labels[roots[i + 2]]).includes("pending activity");
+      if (!followers && (reason === "Output" || reason === "WeakSets") && !isOnItsOwn) continue;
+      this.#rootReason.set(roots[i], reason);
+      this.#reachedFrom.set(roots[i], undefined);
+      queue.push(roots[i]);
+    }
+    for (let i = 0; i < queue.length; i++)
+      for (const [child, edge] of outgoing.get(queue[i]) ?? [])
+        if (!this.#reachedFrom.has(child)) (this.#reachedFrom.set(child, [queue[i], edge]), queue.push(child));
+  }
+
+  /** Shortest path from a root to the cell at `address`, or undefined if no root reaches it. */
+  pathTo(address: bigint): string | undefined {
+    const id = this.#idOfAddress.get(address);
+    if (id === undefined || !this.#reachedFrom.has(id)) return undefined;
+    const describe = (cell: number) =>
+      this.#className.get(cell) + (this.#label.has(cell) ? "(" + this.#label.get(cell) + ")" : "");
+    const path: string[] = [];
+    let at = id;
+    for (let step = this.#reachedFrom.get(at); step; at = step[0], step = this.#reachedFrom.get(at))
+      path.unshift(`-${step[1]}-> ${describe(at)}`);
+    return [`root(${this.#rootReason.get(at)}) ${describe(at)}`, ...path].join(" ");
+  }
+
+  pathsTo(type: string): string[] {
+    const paths: string[] = [];
+    for (const [address, id] of this.#idOfAddress)
+      if (this.#className.get(id) === type && this.#reachedFrom.has(id)) paths.push(this.pathTo(address)!);
+    return paths;
+  }
+
+  counts(types: string[]): Record<string, number> {
+    const counts = Object.fromEntries(types.map(type => [type, 0]));
+    for (const id of this.#reachedFrom.keys()) {
+      const name = this.#className.get(id)!;
+      if (name in counts) counts[name]++;
+    }
+    return counts;
+  }
+}
+
+
 // ASAN's quarantine pins freed blocks and keeps RSS at peak.
 export function withoutAsanQuarantine(env: NodeJS.Dict<string>): NodeJS.Dict<string> {
   return {
@@ -630,7 +733,7 @@ export function tempDirWithFiles(
   basename: string,
   filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
 ): string {
-  const base = fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), basename + "_"));
+  const base = ownTemporaryFolder(fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), basename + "_")));
   makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
   return base;
 }
@@ -670,6 +773,16 @@ export function tempDir(
   const base = tempDirWithFiles(basename, filesOrAbsolutePathToCopyFolderFrom);
 
   return new DisposableString(base) as string & DisposableString & AsyncDisposable;
+}
+
+export function tempDirWithBunTypes(
+  basename: string,
+  filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
+): string & DisposableString & AsyncDisposable {
+  const dir = tempDir(basename, filesOrAbsolutePathToCopyFolderFrom);
+  fs.mkdirSync(join(String(dir), "node_modules", "@types"), { recursive: true });
+  fs.symlinkSync(join(import.meta.dir, "..", "packages", "bun-types"), join(String(dir), "node_modules", "@types", "bun"), "junction");
+  return dir;
 }
 
 /**
@@ -1019,7 +1132,7 @@ if (expect.extend)
           pass: false,
           message: () => `Received function did not throw`,
         };
-      } catch (e) {
+      } catch (e: any) {
         // expect(e).toBeInstanceOf(cls);
         if (!(e instanceof cls)) {
           return {
@@ -1056,7 +1169,7 @@ if (expect.extend)
           pass: false,
           message: () => `Received function did not throw`,
         };
-      } catch (e) {
+      } catch (e: any) {
         // expect(e).toBeInstanceOf(cls);
         if (!(e instanceof cls)) {
           return {
@@ -1087,7 +1200,7 @@ if (expect.extend)
       }
     },
     toBeLatin1String(actual: unknown) {
-      if ((actual as string).isLatin1()) {
+      if (require("bun:internal-for-testing").jscInternals.isLatin1String(actual)) {
         return {
           pass: true,
           message: () => `Expected ${actual} to be a Latin1 string`,
@@ -1100,7 +1213,7 @@ if (expect.extend)
       };
     },
     toBeUTF16String(actual: unknown) {
-      if ((actual as string).isUTF16()) {
+      if (require("bun:internal-for-testing").jscInternals.isUTF16String(actual)) {
         return {
           pass: true,
           message: () => `Expected ${actual} to be a UTF16 string`,
@@ -1342,17 +1455,6 @@ declare global {
      */
     toUnixString(): string;
   }
-
-  interface String {
-    /**
-     * **INTERNAL USE ONLY, NOT An API IN BUN**
-     */
-    isLatin1(): boolean;
-    /**
-     * **INTERNAL USE ONLY, NOT An API IN BUN**
-     */
-    isUTF16(): boolean;
-  }
 }
 
 Buffer.prototype.toUnixString = function () {
@@ -1479,7 +1581,7 @@ export async function describeWithContainer(
   }
 
   if (!isDockerServiceEnabled(actualService)) {
-    describe.todo(label);
+    describe.todo(label, () => {});
     return;
   }
 
@@ -1729,7 +1831,7 @@ export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
 }
 
 export function tmpdirSync(pattern: string = "bun.test."): string {
-  return fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), pattern));
+  return ownTemporaryFolder(fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), pattern)));
 }
 
 export async function runBunInstall(
@@ -1879,14 +1981,6 @@ export function disableAggressiveGCScope() {
   };
 }
 
-String.prototype.isLatin1 = function () {
-  return require("bun:internal-for-testing").jscInternals.isLatin1String(this);
-};
-
-String.prototype.isUTF16 = function () {
-  return require("bun:internal-for-testing").jscInternals.isUTF16String(this);
-};
-
 interface BunHarnessTestMatchers {
   toBeLatin1String(): void;
   toBeUTF16String(): void;
@@ -1970,7 +2064,9 @@ export function isGlibcVersionAtLeast(version: string): boolean {
   if (!glibcVersion) {
     return false;
   }
-  return Bun.semver.satisfies(glibcVersion, `>=${version}`);
+  // glibc reports two parts ("2.39"), which is not a semver version: satisfies() answers false for it.
+  const semver = /^\d+\.\d+$/.test(glibcVersion) ? `${glibcVersion}.0` : glibcVersion;
+  return Bun.semver.satisfies(semver, `>=${version}`);
 }
 
 let macOSVersion: string | undefined;

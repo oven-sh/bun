@@ -5,12 +5,12 @@ pub struct ConsistentThis {
     aliases: Vec<Box<[u8]>>,
 }
 
-const ALIAS_NOT_ASSIGNED_TO_THIS: Message = Message::new(
+const ALIAS_NOT_ASSIGNED_TO_THIS: &Message = &Message::new(
     "aliasNotAssignedToThis",
     "Designated alias '{{name}}' is not assigned to 'this'.",
 );
-const UNEXPECTED_ALIAS: Message =
-    Message::new("unexpectedAlias", "Unexpected alias '{{name}}' for 'this'.");
+const UNEXPECTED_ALIAS: &Message =
+    &Message::new("unexpectedAlias", "Unexpected alias '{{name}}' for 'this'.");
 
 /// The range of ESLint's `def.node`.
 fn span_of_definition(declaration: Declaration) -> Option<Span> {
@@ -38,7 +38,7 @@ impl ConsistentThis {
     }
 
     /// Returns the message for `name = value`, if it should be reported.
-    fn check_assignment(&self, name: Name, value: Expr, is_compound: bool) -> Option<Message> {
+    fn check_assignment(&self, name: Name, value: Expr, is_compound: bool) -> Option<&'static Message> {
         let is_this = value.tag() == ExprTag::This;
         match self.is_alias(name) {
             true => (!is_this || is_compound).then_some(ALIAS_NOT_ASSIGNED_TO_THIS),

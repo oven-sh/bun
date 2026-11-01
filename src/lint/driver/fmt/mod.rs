@@ -400,6 +400,7 @@ fn with_file<R>(
             emit_standard_class_fields: true,
             before_es2020: false,
             before_es2017: false,
+            runtime: None,
         };
         let program = how.verifies.then(|| Program::new(&hir, text, atoms));
         if needs_symbols {

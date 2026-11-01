@@ -1,0 +1,91 @@
+# A literal with numbers for keys is a table: it is read under an index that only the run knows. What the table lacks, what was deleted, redefined or inherited has to come out as in any object.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="tables-number-keys-read-variable-index.ts" displayPath="tables-number-keys-read-variable-index.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewDictionary
+    v1 = Integer integer=1
+    v2 = ToPropertyKey v1
+    v3 = NewClosure function=f1
+    v4 = Convert v3 declared={type=undefined|null|function|f1|f2|f3|f4|f5|f6|f7 flags=[OmitsNull, OmitsUndefined]}
+    ElemDefine v0, v2, v4
+    v6 = Integer integer=2
+    v7 = ToPropertyKey v6
+    v8 = NewClosure function=f2
+    v9 = Convert v8 declared={type=undefined|null|function|f1|f2|f3|f4|f5|f6|f7 flags=[OmitsNull, OmitsUndefined]}
+    ElemDefine v0, v7, v9
+    v11 = Integer integer=3
+    v12 = ToPropertyKey v11
+    v13 = NewClosure function=f3
+    v14 = Convert v13 declared={type=undefined|null|function|f1|f2|f3|f4|f5|f6|f7 flags=[OmitsNull, OmitsUndefined]}
+    ElemDefine v0, v12, v14
+    v16 = Integer integer=5
+    v17 = ToPropertyKey v16
+    v18 = NewClosure function=f4
+    v19 = Convert v18 declared={type=undefined|null|function|f1|f2|f3|f4|f5|f6|f7 flags=[OmitsNull, OmitsUndefined]}
+    ElemDefine v0, v17, v19
+    v21 = Integer integer=9
+    v22 = ToPropertyKey v21
+    v23 = NewClosure function=f5
+    v24 = Convert v23 declared={type=undefined|null|function|f1|f2|f3|f4|f5|f6|f7 flags=[OmitsNull, OmitsUndefined]}
+    ElemDefine v0, v22, v24
+    v26 = String string=""
+    v27 = Convert v26 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v28 = Integer
+    v29 = Convert v28 declared={type=number}
+    Jump -> next b1(v27, v29)
+  b1(v30: undefined|null|string, v31: number):
+    LoopHint
+    v33 = Increment v31
+    v34 = Convert v33 declared={type=number}
+    Jump -> next b1(v30, v34)
+}
+function f1 module=m0 position=357 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 module=m0 position=393 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="third" module=m0 position=429 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 module=m0 position=489 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 module=m0 position=524 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 module=m0 position=1817 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f7 module=m0 position=1849 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f8]
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f8]
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f8]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f8]
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f8]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f8]
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f8]
+# -- generated: f0
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: object = NewDictionary
+# CHECK-NEXT: v1: Object = AssumeType v0 provenType=Object
+# CHECK-NEXT: v2: 1 = Integer integer=1
+# CHECK-NEXT: v3: string|symbol = ToPropertyKey v2
+# CHECK-NEXT: v4: f1 = NewClosure function=f1 allocationSite=0
+# CHECK-NEXT: ElemDefine v1, v2, v4 accessSite=0
+# CHECK-NEXT: v6: 2 = Integer integer=2
+# CHECK-NEXT: v7: string|symbol = ToPropertyKey v6
+# CHECK-NEXT: v8: f2 = NewClosure function=f2 allocationSite=1
+# CHECK-NEXT: ElemDefine v1, v6, v8 accessSite=1
+# CHECK-NEXT: v10: 3 = Integer integer=3
+# CHECK-NEXT: v11: string|symbol = ToPropertyKey v10
+# CHECK-NEXT: v12: f3 = NewClosure function=f3 allocationSite=2
+# CHECK-NEXT: ElemDefine v1, v10, v12 accessSite=2
+# CHECK-NEXT: v14: 5 = Integer integer=5
+# CHECK-NEXT: v15: string|symbol = ToPropertyKey v14
+# CHECK-NEXT: v16: f4 = NewClosure function=f4 allocationSite=3
+# CHECK-NEXT: ElemDefine v1, v14, v16 accessSite=3
+# CHECK-NEXT: v18: 9 = Integer integer=9
+# CHECK-NEXT: v19: string|symbol = ToPropertyKey v18
+# CHECK-NEXT: v20: f5 = NewClosure function=f5 allocationSite=4
+# CHECK-NEXT: ElemDefine v1, v18, v20 accessSite=4
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: }

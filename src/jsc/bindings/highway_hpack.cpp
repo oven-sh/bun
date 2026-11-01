@@ -1,4 +1,4 @@
-// SIMD decoder for HPACK's Huffman code (RFC 7541 Appendix B). How it works: src/hpack/huffman_simd.md
+// SIMD decoder for HPACK's Huffman code (RFC 7541 Appendix B). How it works: src/hpack/HUFFMAN.md
 
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "highway_hpack.cpp"

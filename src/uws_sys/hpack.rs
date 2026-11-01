@@ -29,10 +29,10 @@ struct HpackField {
 /// `BunHpackResult`.
 #[repr(C)]
 enum HpackResult {
-    Field,
-    EndOfBlock,
-    Invalid,
-    TooLarge,
+    Field = 0,
+    EndOfBlock = 1,
+    Invalid = 2,
+    TooLarge = 3,
 }
 
 #[unsafe(no_mangle)]
@@ -40,7 +40,7 @@ extern "C" fn Bun__Hpack__create() -> *mut Hpack {
     bun_core::heap::into_raw(Box::new(Hpack {
         encoder: Encoder::with_history(),
         decoder: Decoder::new(),
-        block: Vec::new(),
+        block: Vec::with_capacity(256),
     }))
 }
 
@@ -68,7 +68,8 @@ unsafe extern "C" fn Bun__Hpack__encode(
     let (name, value) = unsafe { (c_slice(name, name_len), c_slice(value, value_len)) };
     let encoded = this.encoder.encode(&mut this.block, name, value, indexing);
     if encoded.is_err() {
-        this.encoder.encode_verbatim(&mut this.block, name, value);
+        this.encoder
+            .encode_verbatim(&mut this.block, name, value, indexing);
     }
 }
 

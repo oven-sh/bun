@@ -1,5 +1,4 @@
-//! HPACK, the header compression of HTTP/2 (RFC 7541). One [`Encoder`] and one [`Decoder`] per connection.
-
+#![doc = include_str!("README.md")]
 #![forbid(unsafe_code)]
 // A peer's bytes reach this crate and the release profile aborts on a panic.
 #![deny(

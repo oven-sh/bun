@@ -51,9 +51,9 @@ struct BunHpackField {
     uint32_t valueLength;
     int staticIndex;
 };
-enum BunHpackResult { BUN_HPACK_FIELD, BUN_HPACK_END_OF_BLOCK, BUN_HPACK_INVALID, BUN_HPACK_TOO_LARGE };
+enum BunHpackResult { BUN_HPACK_FIELD = 0, BUN_HPACK_END_OF_BLOCK = 1, BUN_HPACK_INVALID = 2, BUN_HPACK_TOO_LARGE = 3 };
 /* bun_hpack::Indexing */
-enum BunHpackIndexing : uint8_t { BUN_HPACK_ADD, BUN_HPACK_SKIP, BUN_HPACK_NEVER };
+enum BunHpackIndexing : uint8_t { BUN_HPACK_ADD = 0, BUN_HPACK_SKIP = 1, BUN_HPACK_NEVER = 2 };
 BunHpack *Bun__Hpack__create();
 void Bun__Hpack__destroy(BunHpack *hpack);
 void Bun__Hpack__setEncoderMaxCapacity(BunHpack *hpack, uint32_t maxCapacity);
@@ -1099,9 +1099,7 @@ inline void Http2Connection::writeHeaderBlock(Http2Response *stream, bool endStr
 }
 
 inline void Http2Connection::writeInformational(Http2Response *stream, std::string_view status) {
-    char code[3] = {'1', '0', '0'};
-    memcpy(code, status.data(), std::min<size_t>(status.size(), 3));
-    Bun__Hpack__encode(hpack, ":status", 7, code, 3, BUN_HPACK_SKIP);
+    Bun__Hpack__encode(hpack, ":status", 7, status.data(), std::min<size_t>(status.size(), 3), BUN_HPACK_SKIP);
     size_t length = 0;
     const char *block = Bun__Hpack__block(hpack, &length);
     writeFrame(http2::HEADERS, http2::END_HEADERS, stream->id, block, (uint32_t) length);

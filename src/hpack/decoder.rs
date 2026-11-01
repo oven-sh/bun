@@ -47,7 +47,7 @@ impl Decoder {
     /// Takes the SETTINGS_HEADER_TABLE_SIZE that the peer has acknowledged.
     pub fn set_max_capacity(&mut self, max_capacity: u32) {
         // Not every encoder says so when it grows its table. More room than it uses does no harm: its entries are the newest.
-        let grows = max_capacity > self.max_capacity;
+        let grows = max_capacity > self.max_capacity && self.capacity == self.max_capacity;
         self.max_capacity = max_capacity;
         self.set_capacity(if grows {
             max_capacity
@@ -89,7 +89,11 @@ impl Decoder {
             if capacity > self.max_capacity {
                 return Err(Error::Invalid);
             }
-            self.set_capacity(capacity);
+            self.capacity = capacity;
+            self.evict();
+        }
+        if *pos > 0 {
+            self.give_back();
         }
         Ok(())
     }
@@ -122,7 +126,7 @@ impl Decoder {
             }
         } else if let Some((name, _)) = static_table::get(index) {
             static_index = index as u8;
-            self.storage.bytes_mut().extend_from_slice(name);
+            self.storage.bytes_mut(name.len()).extend_from_slice(name);
         } else {
             let entry = self.entry(index).ok_or(Invalid)?;
             static_index = entry.static_index;
@@ -177,12 +181,13 @@ impl Decoder {
         let encoded = src.get(*pos..end).ok_or(Error::Invalid)?;
         *pos = end;
         if huffman {
-            return huffman::decode(encoded, self.storage.bytes_mut(), max_len);
+            let out = self.storage.bytes_mut(huffman::room(len, max_len));
+            return huffman::decode(encoded, out, max_len);
         }
         if len > max_len {
             return Err(Error::TooLarge);
         }
-        self.storage.bytes_mut().extend_from_slice(encoded);
+        self.storage.bytes_mut(len).extend_from_slice(encoded);
         Ok(())
     }
 
@@ -195,7 +200,11 @@ impl Decoder {
     fn set_capacity(&mut self, capacity: u32) {
         self.capacity = capacity;
         self.evict();
-        // The connection may send no field for a long time, so what left the table is given back now.
+        self.give_back();
+    }
+
+    /// The connection may send no field for a long time, so what left the table is given back at once.
+    fn give_back(&mut self) {
         self.storage.clear_scratch();
         let keep = self.entries.len() + SPARE_ENTRIES;
         if self.entries.capacity() / 4 > keep {
@@ -204,10 +213,9 @@ impl Decoder {
     }
 
     fn evict(&mut self) {
-        while self.table_size() > self.capacity as usize {
-            let Some(entry) = self.entries.pop_front() else {
-                return;
-            };
+        while self.table_size() > self.capacity as usize
+            && let Some(entry) = self.entries.pop_front()
+        {
             self.storage.release(entry.span);
         }
     }

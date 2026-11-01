@@ -139,6 +139,11 @@ fn an_added_field_larger_than_the_table_empties_it() {
     let fields = decode(&mut decoder, &hex("3f05 4003782d610131 4003782d62023232")).unwrap();
     assert_eq!(fields[1], (b"x-b".to_vec(), b"22".to_vec(), false));
     assert_eq!(decoder.table_size(), 0);
+
+    // Its name may come from an entry that goes with the rest.
+    let fields = decode(&mut decoder, &hex("4003782d610131 7e023232")).unwrap();
+    assert_eq!(fields[1], (b"x-a".to_vec(), b"22".to_vec(), false));
+    assert_eq!(decoder.table_size(), 0);
     assert_eq!(decode(&mut decoder, &hex("be")), Err(Error::Invalid));
 }
 
@@ -163,30 +168,49 @@ fn a_block_of_nothing_but_size_updates() {
 
 #[test]
 fn a_higher_max_capacity_needs_no_size_update() {
-    let mut decoder = Decoder::new();
-    decoder.set_max_capacity(8192);
-    // 60 entries of 100 bytes, then a reference to the oldest.
-    let mut block = Vec::new();
-    for i in 0..60 {
-        block.extend_from_slice(&[0x40, 4]);
-        block.extend_from_slice(format!("x-{i:02}").as_bytes());
-        block.push(64);
-        block.extend_from_slice(&[b'v'; 64]);
-    }
-    block.push(0x80 | (61 + 60));
-    let fields = decode(&mut decoder, &block).unwrap();
-    assert_eq!(fields.last().map(|field| &field.0[..]), Some(&b"x-00"[..]));
-    assert_eq!(decoder.table_size(), 6000);
+    for max_capacity in [8192, 1 << 31, u32::MAX] {
+        let mut decoder = Decoder::new();
+        decoder.set_max_capacity(max_capacity);
+        // 60 entries of 100 bytes, then a reference to the oldest.
+        let mut block = Vec::new();
+        for i in 0..60 {
+            block.extend_from_slice(&[0x40, 4]);
+            block.extend_from_slice(format!("x-{i:02}").as_bytes());
+            block.push(64);
+            block.extend_from_slice(&[b'v'; 64]);
+        }
+        block.push(0x80 | (61 + 60));
+        let fields = decode(&mut decoder, &block).unwrap();
+        assert_eq!(fields.last().map(|field| &field.0[..]), Some(&b"x-00"[..]));
+        assert_eq!(decoder.table_size(), 6000);
 
-    decoder.set_max_capacity(4096);
-    assert_eq!(decoder.table_size(), 4000);
+        decoder.set_max_capacity(4096);
+        assert_eq!(decoder.table_size(), 4000);
+    }
+}
+
+/// Neither its size nor where an entry is in it stops at 16 bits.
+#[test]
+fn a_table_of_more_than_64_kib() {
+    let mut decoder = Decoder::new();
+    decoder.set_max_capacity(1 << 17);
+    // 2048 bytes each as §4.1 counts them.
+    for i in 1..=40 {
+        let block = [hex("4001"), vec![i], hex("7fe00e"), vec![i; 2015]].concat();
+        assert!(decode(&mut decoder, &block).is_ok());
+        assert_eq!(decoder.table_size(), 2048 * usize::from(i));
+        // The newest, and a field that has its name.
+        let fields = decode(&mut decoder, &hex("be 0f2f00")).unwrap();
+        assert_eq!(fields[0], (vec![i], vec![i; 2015], false));
+        assert_eq!(fields[1], (vec![i], Vec::new(), false));
+    }
 }
 
 #[test]
-fn a_max_capacity_that_does_not_grow_keeps_the_capacity_the_peer_chose() {
+fn a_max_capacity_keeps_the_smaller_capacity_the_peer_chose() {
     // Three entries of 36 bytes.
     let three = hex("4003782d610131 4003782d610132 4003782d610133");
-    for max_capacity in [4096, 200] {
+    for max_capacity in [4096, 200, 8192] {
         let mut decoder = Decoder::new();
         // To 100 bytes, which hold two of them.
         assert!(decode(&mut decoder, &hex("3f45 82")).is_ok());
@@ -221,10 +245,89 @@ fn memory_stays_bounded() {
         // What the large field took is given back at the end of its block.
         let heap_sizes = (encoder.heap_size(), decoder.heap_size());
         assert!(
-            heap_sizes.0 < 18 * 1024 && heap_sizes.1 < 18 * 1024,
+            heap_sizes.0 < 8 * 1024 && heap_sizes.1 < 12 * 1024,
             "{i}: {heap_sizes:?}"
         );
     }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn a_table_that_has_turned_over_holds_little_more_than_its_entries() {
+    // The name comes from the table after the first time. "~" is sent as it is.
+    for (name_len, value_len, fill) in [
+        (4, 100, "v"),
+        (4, 300, "v"),
+        (4, 1900, "v"),
+        (4, 300, "~"),
+        (4, 1900, "~"),
+        (1900, 8, "v"),
+    ] {
+        let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new());
+        let name = "n".repeat(name_len);
+        for i in 0..600 {
+            let value = format!("{i:03}{}", fill.repeat(value_len - 3));
+            let block = encode(&mut encoder, &name, &value, Indexing::Add);
+            assert!(decode(&mut decoder, &block).is_ok());
+            let heap_sizes = (encoder.heap_size(), decoder.heap_size());
+            assert!(
+                heap_sizes.0 < 6 * 1024 && heap_sizes.1 < 7680,
+                "{name_len} {value_len} {fill} {i}: {heap_sizes:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_entry_takes_the_place_of_those_that_leave() {
+    let mut encoder = Encoder::new();
+    for i in 0..8 {
+        // Two of them fill the table.
+        let value = format!("{i}{}", "~".repeat(1990));
+        encode(&mut encoder, "a", &value, Indexing::Add);
+        assert!(encoder.heap_size() < 5 * 1024, "{i}");
+    }
+    assert_eq!(encoder.table_size(), 2 * 2024);
+}
+
+/// A released entry stays readable until the bytes are moved.
+#[test]
+fn the_front_is_reclaimed_at_a_quarter_of_a_small_table_and_at_half_of_a_large_one() {
+    for (len, readable) in [
+        (8, [true, false, true, false, false, false, false, false]),
+        (1024, [true, true, true, false, false, false, false, false]),
+        (4096, [true, true, true, false, true, false, false, false]),
+    ] {
+        let mut storage = storage::Storage::default();
+        let spans = readable.map(|_| {
+            storage.clear_scratch();
+            storage.bytes_mut(len).extend_from_slice(&vec![b'v'; len]);
+            let span = storage.scratch(1);
+            storage.keep_scratch();
+            span
+        });
+        let found = spans.map(|span| {
+            storage.release(span);
+            storage.clear_scratch();
+            storage.name_and_value(span).is_some()
+        });
+        assert_eq!(found, readable, "{len}");
+    }
+}
+
+#[test]
+fn a_large_table_grows_by_doubling() {
+    let mut storage = storage::Storage::default();
+    let (mut heap_size, mut changes) = (0, 0);
+    for _ in 0..1000 {
+        storage.clear_scratch();
+        storage.bytes_mut(1000).extend_from_slice(&[b'v'; 1000]);
+        storage.scratch(1);
+        storage.keep_scratch();
+        changes += usize::from(storage.heap_size() != heap_size);
+        heap_size = storage.heap_size();
+    }
+    assert!(changes < 20, "{changes}");
 }
 
 #[test]
@@ -241,6 +344,9 @@ fn a_short_huffman_string_takes_little_room() {
 fn a_table_that_turns_over_is_not_moved() {
     for (capacity, value_len) in [
         (4096, 1900),
+        (4096, 3000),
+        (4096, 3600),
+        (4096, 4000),
         (6000, 300),
         (8192, 1000),
         (8192, 4000),
@@ -266,7 +372,7 @@ fn a_table_that_turns_over_is_not_moved() {
                 // After every field: room can be made and given back within a block.
                 let (mut pos, mut done) = (0, false);
                 while !done {
-                    done = decoder.next(block, &mut pos).is_none();
+                    done = decoder.next(block, &mut pos).map(Result::unwrap).is_none();
                     let changed = decoder.heap_size() != heap_size;
                     changes += usize::from(i >= 6 * turnover && changed);
                     heap_size = decoder.heap_size();
@@ -278,8 +384,8 @@ fn a_table_that_turns_over_is_not_moved() {
 }
 
 /// Both tables against a plain list, while the table turns over a few times.
-fn check_lookups(capacity: u32, period: usize, fields: usize) {
-    let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new());
+fn check_lookups(seed: u64, capacity: u32, period: usize, fields: usize) {
+    let (mut encoder, mut decoder) = (Encoder::with_seed(seed), Decoder::new());
     encoder.set_max_capacity(capacity);
     let block = encode(&mut encoder, ":method", "GET", Indexing::Add);
     assert!(decode(&mut decoder, &block).is_ok());
@@ -315,16 +421,20 @@ fn check_lookups(capacity: u32, period: usize, fields: usize) {
             size -= name.len() + value.len() + 32;
         }
         check(&name, "", Indexing::Skip, 0x00, 4, name_index(&table));
-        let (name, value) = &table[0];
-        check(name, value, Indexing::Add, 0x80, 7, 61 + table.len());
+        for at in [0, i * 7 % table.len()] {
+            let (name, value) = &table[at];
+            check(name, value, Indexing::Add, 0x80, 7, 61 + table.len() - at);
+        }
     }
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn entries_are_found_until_they_are_evicted() {
-    check_lookups(4096, 120, 150);
-    check_lookups(1024, 30, 90);
+    for seed in 0..8 {
+        check_lookups(seed, 4096, 120, 150);
+        check_lookups(seed, 1024, 30, 90);
+    }
 }
 
 #[test]
@@ -388,6 +498,39 @@ fn a_field_the_size_of_the_table() {
         assert!(decode(&mut decoder, &block).is_ok());
         assert_eq!((encoder.table_size(), decoder.table_size()), (100, 100));
     }
+    // One byte less and it has to leave.
+    encoder.set_max_capacity(99);
+    let block = encode(&mut encoder, ":method", "GET", Indexing::Add);
+    assert!(decode(&mut decoder, &block).is_ok());
+    assert_eq!((encoder.table_size(), decoder.table_size()), (0, 0));
+}
+
+#[test]
+fn a_table_without_capacity() {
+    let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new());
+    let block = encode(&mut encoder, "x-a", "1", Indexing::Add);
+    assert!(decode(&mut decoder, &block).is_ok());
+    encoder.set_max_capacity(0);
+    decoder.set_max_capacity(0);
+    assert_eq!((encoder.table_size(), decoder.table_size()), (0, 0));
+    // The static table is still there, for fields and for names.
+    for (name, value, indexing, bytes) in [
+        (":status", "200", Indexing::Add, "20 88"),
+        ("server", "a", Indexing::Add, "76 811f"),
+        ("server", "a", Indexing::Skip, "0f27 811f"),
+        ("server", "a", Indexing::Never, "1f27 811f"),
+    ] {
+        let block = encode(&mut encoder, name, value, indexing);
+        assert_eq!(block, hex(bytes));
+        assert_eq!(encoder.table_size(), 0);
+        assert!(decode(&mut decoder, &block).is_ok());
+    }
+    // A peer may still ask for an entry (§4.4), with a name of its own or of the static table.
+    for block in ["4003782d610131", "410161"] {
+        assert!(decode(&mut decoder, &hex(block)).is_ok());
+        assert_eq!(decoder.table_size(), 0);
+    }
+    assert_eq!(decode(&mut decoder, &hex("be")), Err(Error::Invalid));
 }
 
 #[test]
@@ -410,15 +553,22 @@ fn size_updates_up_to_the_acknowledged_limit() {
         (&[4097], "3fe21f", "3fe31f"),
         (&[4097, 100], "3f45", "3f46"),
         (&[4097, 100, 1 << 16], "3fe1ff03", "3fe2ff03"),
+        (&[1 << 31], "3fe1ffffff07", "3fe2ffffff07"),
     ] {
-        let mut decoder = Decoder::new();
-        for &max_capacity in limits {
-            decoder.set_max_capacity(max_capacity);
+        // The limit is not the peer's to move: it is the same after an update to 0 or to 32 bytes.
+        for lower in ["", "20", "3f01"] {
+            let mut decoder = Decoder::new();
+            for &max_capacity in limits {
+                decoder.set_max_capacity(max_capacity);
+            }
+            let block = [hex(lower), hex(to_it), hex("4003782d610131")].concat();
+            assert!(decode(&mut decoder, &block).is_ok());
+            assert_eq!(decoder.table_size(), 36);
+            assert!(decode(&mut decoder, &hex(lower)).is_ok());
+            assert!(decode(&mut decoder, &hex(to_it)).is_ok());
+            let block = [hex(lower), hex(over_it)].concat();
+            assert_eq!(decode(&mut decoder, &block), Err(Error::Invalid));
         }
-        let block = [hex(to_it), hex("4003782d610131")].concat();
-        assert!(decode(&mut decoder, &block).is_ok());
-        assert_eq!(decoder.table_size(), 36);
-        assert_eq!(decode(&mut decoder, &hex(over_it)), Err(Error::Invalid));
     }
     // Under any limit once they are cut to 31 bits or taken for negative.
     for capacity in [1 << 31, (1 << 31) + 100, u32::MAX] {
@@ -642,30 +792,37 @@ fn eos_anywhere_in_a_huffman_string() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn a_lower_capacity_gives_memory_back() {
-    let mut decoder = Decoder::new();
-    decoder.set_max_capacity(65536);
-    // 1000 entries of 64 bytes as §4.1 counts them, each with a name of its own.
-    let name = |i: u8, j: u8, k: u8| [b'a' + i, b'a' + j, b'a' + k];
-    let mut block = Vec::new();
-    for (i, j, k) in (0..1000).map(|n| (n / 100, n / 10 % 10, n % 10)) {
-        block.extend([0x40, 3]);
-        block.extend(name(i as u8, j as u8, k as u8));
-        block.push(29);
-        block.extend([b'~'; 29]);
+    // This side lowers it, or the peer does with a size update.
+    for by_the_peer in [false, true] {
+        let mut decoder = Decoder::new();
+        decoder.set_max_capacity(65536);
+        // 1000 entries of 64 bytes as §4.1 counts them, each with a name of its own.
+        let name = |i: u8, j: u8, k: u8| [b'a' + i, b'a' + j, b'a' + k];
+        let mut block = Vec::new();
+        for (i, j, k) in (0..1000).map(|n| (n / 100, n / 10 % 10, n % 10)) {
+            block.extend([0x40, 3]);
+            block.extend(name(i as u8, j as u8, k as u8));
+            block.push(29);
+            block.extend([b'~'; 29]);
+        }
+        assert_eq!(decode(&mut decoder, &block).unwrap().len(), 1000);
+        assert_eq!(decoder.table_size(), 64_000);
+        let before = decoder.heap_size();
+
+        if by_the_peer {
+            assert!(decode(&mut decoder, &hex("3fe107")).is_ok());
+        } else {
+            decoder.set_max_capacity(1024);
+        }
+        let after = decoder.heap_size();
+        assert!(after < before / 4, "{before} {after}");
+
+        // The 16 newest are left.
+        let fields = decode(&mut decoder, &hex("be cd")).unwrap();
+        assert_eq!(fields[0].0, name(9, 9, 9));
+        assert_eq!(fields[1].0, name(9, 8, 4));
+        assert_eq!(decode(&mut decoder, &hex("ce")), Err(Error::Invalid));
     }
-    assert_eq!(decode(&mut decoder, &block).unwrap().len(), 1000);
-    assert_eq!(decoder.table_size(), 64_000);
-    let before = decoder.heap_size();
-
-    decoder.set_max_capacity(1024);
-    let after = decoder.heap_size();
-    assert!(after < before / 4, "{before} {after}");
-
-    // The 16 newest are left.
-    let fields = decode(&mut decoder, &hex("be cd")).unwrap();
-    assert_eq!(fields[0].0, name(9, 9, 9));
-    assert_eq!(fields[1].0, name(9, 8, 4));
-    assert_eq!(decode(&mut decoder, &hex("ce")), Err(Error::Invalid));
 }
 
 #[test]
@@ -734,6 +891,7 @@ fn malformed_blocks() {
         "008001 61",         // the same, Huffman coded
         "822182",            // size update after a field
         "82210161",          // the same, where 21 0161 could pass for a literal
+        "82310161",          // the same, where 31 0161 could pass for a never indexed one
         "8220",              // size update after a field, at the end
         "3fe21f",            // nothing but a size update to 4097
         "203f",              // a size update, then one that is cut off
@@ -781,8 +939,9 @@ fn field_length_limit() {
         if !fits {
             // Not even the size update.
             assert!(block.is_empty());
-            encoder.encode_verbatim(&mut block, name.as_bytes(), value.as_bytes());
+            encoder.encode_verbatim(&mut block, name.as_bytes(), value.as_bytes(), Indexing::Add);
         }
+        assert_eq!(representation(&block), "size update");
         let mut pos = 0;
         let decoded = Decoder::new()
             .next(&block, &mut pos)
@@ -797,6 +956,14 @@ fn field_length_limit() {
             }
         );
     }
+    // One string of that length, sent as it is.
+    let (name, mut block) = (vec![b'~'; MAX_FIELD_LEN], Vec::new());
+    let encoded = encoder.encode(&mut block, &name, b"1", Indexing::Add);
+    assert_eq!(encoded, Err(Error::TooLarge));
+    let encoded = encoder.encode(&mut block, &name, b"", Indexing::Add);
+    assert_eq!(encoded, Ok(()));
+    let field = (name, Vec::new(), false);
+    assert!(decode(&mut Decoder::new(), &block) == Ok(vec![field]));
 }
 
 #[test]
@@ -824,6 +991,8 @@ fn field_length_limit_however_the_strings_are_coded() {
         (MAX_FIELD_LEN, false, 1, true, false),
         (MAX_FIELD_LEN + 1, false, 1, true, false),
         (MAX_FIELD_LEN, true, 0, false, true),
+        (MAX_FIELD_LEN + 1, false, 0, false, false),
+        (MAX_FIELD_LEN + 1, true, 0, true, false),
     ] {
         let mut block = vec![0x00];
         block.extend(string(name_len, name_coded));
@@ -843,6 +1012,36 @@ fn field_length_limit_however_the_strings_are_coded() {
     let mut decoder = Decoder::new();
     assert_eq!(decode(&mut decoder, &block), Err(Error::TooLarge));
     assert!(decoder.heap_size() < 2 * MAX_FIELD_LEN);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn the_length_limit_is_on_the_string_not_on_its_code() {
+    // Some encoders Huffman-code whatever comes of it (Rust's h2, Python's hpack). 0xff takes 26 bits.
+    let value = vec![0xff; 21_000];
+    let mut code = Vec::new();
+    huffman::encode(&value, &mut code);
+    assert!(code.len() > MAX_FIELD_LEN);
+    let mut block = hex("00 0161");
+    integer::encode(&mut block, 0x80, 7, code.len() as u32);
+    block.extend(code);
+    let decoded = decode(&mut Decoder::new(), &block);
+    assert!(decoded == Ok(vec![(b"a".to_vec(), value, false)]));
+}
+
+#[test]
+fn a_verbatim_field_stays_never_indexed() {
+    for (indexing, never_index) in [
+        (Indexing::Add, false),
+        (Indexing::Skip, false),
+        (Indexing::Never, true),
+    ] {
+        let (mut encoder, mut block) = (Encoder::new(), Vec::new());
+        encoder.encode_verbatim(&mut block, b"x-a", b"1", indexing);
+        let field = (b"x-a".to_vec(), b"1".to_vec(), never_index);
+        assert_eq!(decode(&mut Decoder::new(), &block), Ok(vec![field]));
+        assert_eq!(encoder.table_size(), 0);
+    }
 }
 
 #[test]
@@ -908,7 +1107,7 @@ fn a_never_indexed_field_takes_its_name_from_the_tables() {
 fn capacity_changes_are_announced_with_their_low_point() {
     let mut encoder = Encoder::new();
     // It has 4096 bytes and takes no more.
-    for max_capacity in [4096, 65536] {
+    for max_capacity in [4096, 65536, 1 << 31, u32::MAX] {
         encoder.set_max_capacity(max_capacity);
         assert_eq!(
             encode(&mut encoder, ":method", "GET", Indexing::Add),
@@ -918,6 +1117,8 @@ fn capacity_changes_are_announced_with_their_low_point() {
     encoder.set_max_capacity(100);
     encoder.set_max_capacity(0);
     encoder.set_max_capacity(65536);
+    // The capacity it has by now. What it has yet to say stands.
+    encoder.set_max_capacity(4096);
     assert_eq!(
         encode(&mut encoder, ":method", "GET", Indexing::Add),
         hex("20 3fe11f 82")
@@ -933,7 +1134,7 @@ fn capacity_changes_are_announced_with_their_low_point() {
     assert_eq!(encoder.table_size(), 36);
     encoder.set_max_capacity(4096);
     let mut block = Vec::new();
-    encoder.encode_verbatim(&mut block, b"a", b"");
+    encoder.encode_verbatim(&mut block, b"a", b"", Indexing::Add);
     assert_eq!(block, hex("3f09 3fe11f 00 0161 00"));
 }
 
@@ -1048,7 +1249,8 @@ fn a_refused_field_leaves_the_table_and_the_history_alone() {
     let (mut block, value) = (Vec::new(), vec![b'~'; MAX_FIELD_LEN]);
     let refused = encoder.encode(&mut block, b"x-a", &value, Indexing::Add);
     assert_eq!(refused, Err(Error::TooLarge));
-    encoder.encode_verbatim(&mut block, b"x-a", &value);
+    encoder.encode_verbatim(&mut block, b"x-a", &value, Indexing::Add);
+    assert_eq!(block[..9], hex("00 03782d61 7f81ff03"));
     assert_eq!(encoder.table_size(), 36);
     // Neither pushed out 0.
     let block = encode(&mut encoder, "x-a", "0", Indexing::Add);
@@ -1104,6 +1306,32 @@ fn a_growing_history_keeps_its_order() {
     let mut add = |value| representation(&encode(&mut encoder, "x-a", value, Indexing::Add));
     assert_eq!(add("11"), "added");
     assert_eq!(add("10"), "skipped");
+    // Those two pushed out 11 and 12. After four more, 17 is the oldest.
+    skip_values(&mut encoder, 60..64);
+    let mut add = |value| representation(&encode(&mut encoder, "x-a", value, Indexing::Add));
+    assert_eq!(add("17"), "added");
+    assert_eq!(add("16"), "skipped");
+    assert_eq!(add("20"), "added");
+}
+
+#[test]
+fn the_history_is_allocated_once() {
+    let mut encoder = Encoder::with_history();
+    let heap_size = encoder.heap_size();
+    skip_values(&mut encoder, 0..100);
+    assert_eq!(encoder.heap_size(), heap_size);
+}
+
+#[test]
+fn history_goes_round() {
+    let mut encoder = Encoder::with_history();
+    // It holds 42, so the place of the oldest has gone round. 58 to 99 are left.
+    skip_values(&mut encoder, 0..100);
+    let mut add = |value| representation(&encode(&mut encoder, "x-a", value, Indexing::Add));
+    assert_eq!(add("57"), "skipped");
+    // That pushed out 58.
+    assert_eq!(add("59"), "added");
+    assert_eq!(add("58"), "skipped");
 }
 
 #[test]
@@ -1234,7 +1462,7 @@ fn rfc7541_c6_responses_with_eviction() {
     );
 }
 
-// From here on: the reproducers in ls-hpack's own history, by the commit that fixed each.
+// From here on: the reproducers in ls-hpack's own history, by the commit that fixed each: https://github.com/litespeedtech/ls-hpack/commit/<hash>
 
 /// test_int.c, with f427d19 and b692931: shifts of 35 bits, and of 15 by 28 as an `int`.
 #[test]
@@ -1579,6 +1807,12 @@ fn the_smallest_entries_there_are() {
         assert!(encoded.is_ok());
     }
     assert_eq!(block, hex("ff3a 00018300"));
+    // All leave in one step, the newest too. Tempesta FW stopped after five (403fa694).
+    encoder.set_max_capacity(0);
+    block.clear();
+    let encoded = encoder.encode(&mut block, &[255], b"", Indexing::Skip);
+    assert!(encoded.is_ok());
+    assert_eq!(block, hex("20 0001ff00"));
     // There is no entry of 32 bytes: a name has at least one.
     let decoded = decode(&mut Decoder::new(), &hex("400000"));
     assert_eq!(decoded, Err(Error::Invalid));
@@ -1594,4 +1828,61 @@ fn many_size_updates_in_a_row() {
     assert_eq!(decode(&mut decoder, &block).unwrap().len(), 2);
     // The entry from before them is gone.
     assert_eq!(decoder.table_size(), 36);
+}
+
+/// python-hpack took index 0 for the 62nd entry from the end of the dynamic table (50f48b0).
+#[test]
+fn index_0_with_entries_in_the_table() {
+    // Enough of them for an index that is off by 62 either way.
+    let block = [hex("4003782d610131").repeat(63), hex("80")].concat();
+    assert_eq!(decode(&mut Decoder::new(), &block), Err(Error::Invalid));
+}
+
+/// python-hpack kept a field that the static table has too out of the dynamic table (60087e7).
+#[test]
+fn an_added_field_that_the_static_table_has() {
+    let mut decoder = Decoder::new();
+    // :method: GET, with its name by index and spelled out.
+    let block = hex("4203474554 40073a6d6574686f6403474554 be bf");
+    assert_eq!(decode(&mut decoder, &block).unwrap().len(), 4);
+    assert_eq!(decoder.table_size(), 2 * 42);
+}
+
+/// ls-qpack compared such names without their lengths (e4187c5).
+#[test]
+#[cfg_attr(miri, ignore)]
+fn names_next_to_those_of_the_static_table() {
+    for (name, _) in (1..=static_table::LEN).filter_map(static_table::get) {
+        // A byte more, another byte or a byte less, at every place.
+        for at in 0..=name.len() {
+            let (head, tail) = name.split_at(at);
+            let rest = tail.get(1..).unwrap_or_default();
+            for near in [[head, b"x", tail], [head, b"x", rest], [head, b"", rest]] {
+                let near = near.concat();
+                let found = static_table::find_name(&near).is_some();
+                assert_eq!(found, near == name, "{}", near.escape_ascii());
+            }
+        }
+    }
+}
+
+#[test]
+fn a_name_whose_hash_is_a_static_index_is_not_that_name() {
+    // Found by search. `content-type` is entry 31 of the static table, which stands for its hash.
+    const SEED: u64 = 49_546_599;
+    assert_eq!(bun_wyhash::hash_with_seed(SEED, b"x-a") as u32, 31);
+
+    let (mut encoder, mut decoder) = (Encoder::with_seed(SEED), Decoder::new());
+    for (name, value, first_byte) in [
+        ("content-type", "a", 0x5f),
+        ("x-a", "a", 0x40),
+        ("x-a", "b", 0x7e),
+        ("content-type", "a", 0xc0),
+        ("x-a", "a", 0xbf),
+    ] {
+        let block = encode(&mut encoder, name, value, Indexing::Add);
+        assert_eq!(block[0], first_byte, "{name}: {value}");
+        let field = (name.as_bytes().to_vec(), value.as_bytes().to_vec(), false);
+        assert_eq!(decode(&mut decoder, &block), Ok(vec![field]));
+    }
 }

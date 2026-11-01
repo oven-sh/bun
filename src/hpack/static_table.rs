@@ -82,5 +82,11 @@ pub(crate) fn find_name(name: &[u8]) -> Option<(u32, u32)> {
 
 /// `indices` is what [`find_name`] gave for the name.
 pub(crate) fn find(indices: (u32, u32), value: &[u8]) -> Option<u32> {
-    (indices.0..indices.1).find(|&index| get(index).is_some_and(|entry| entry.1 == value))
+    // An empty literal is at address 1, where glibc's AVX-512 memcmp takes 80 ns to compare no bytes.
+    (indices.0..indices.1).find(|&index| {
+        get(index).is_some_and(|entry| match value {
+            [] => entry.1.is_empty(),
+            _ => entry.1 == value,
+        })
+    })
 }

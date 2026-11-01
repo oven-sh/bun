@@ -109,6 +109,13 @@ fn bench_hpack(c: &mut Criterion) {
             let values = &values[..IN_TABLE];
             encode(&mut group, id("encode/indexed"), values, Indexing::Add);
             decode(&mut group, id("decode/indexed"), values, Indexing::Add);
+            // One value again and again, like a token: the branch predictor learns it.
+            encode(
+                &mut group,
+                id("encode/never"),
+                &values[..1],
+                Indexing::Never,
+            );
         }
     }
     group.finish();

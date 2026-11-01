@@ -33,8 +33,8 @@ impl Storage {
     /// Drops the scratch space, so a `Span` of it is void, and reclaims what left the front.
     pub(crate) fn clear_scratch(&mut self) {
         self.bytes.truncate(self.end);
-        // Moves no more bytes than it frees, so this is O(1) per byte kept.
-        if self.start > 0 && self.start >= self.end - self.start {
+        // Moves at most four times the bytes it frees, so this is O(1) per byte kept.
+        if self.start > 0 && self.start >= self.front_limit() {
             self.bytes.drain(..self.start);
             self.origin += self.start as u64;
             self.end -= self.start;
@@ -45,19 +45,43 @@ impl Storage {
         }
     }
 
-    /// After [`Self::clear_scratch`], which leaves more room so as not to do this for every field.
+    /// How many bytes of entries that have left may stay at the front. A table of the default size is cheap to move.
+    fn front_limit(&self) -> usize {
+        let entries = self.entries_len();
+        if entries <= SPARE_CAPACITY {
+            entries / 4
+        } else {
+            entries
+        }
+    }
+
+    /// Gives spare capacity back, at the end of a block. Call [`Self::clear_scratch`] first: its own limit is looser because it runs for every field.
     pub(crate) fn shrink(&mut self) {
-        // The entries come to twice their bytes before `clear_scratch` reclaims the front, and a field needs room after them.
-        let keep = 2 * self.entries_len() + SPARE_CAPACITY;
+        // What the entries come to before `clear_scratch` reclaims the front, and a field needs room after them.
+        let keep = self.entries_len() + self.front_limit() + SPARE_CAPACITY;
         // Not for a large table: every block with a large field would move it here, and again to grow.
         if self.end <= 2 * SPARE_CAPACITY && self.bytes.capacity() > keep + SPARE_CAPACITY {
             self.bytes.shrink_to(keep);
         }
     }
 
-    /// The scratch space is written by appending to this.
-    pub(crate) fn bytes_mut(&mut self) -> &mut Vec<u8> {
+    /// The scratch space is written by appending to this, which has room for `len` more bytes.
+    pub(crate) fn bytes_mut(&mut self, len: usize) -> &mut Vec<u8> {
+        self.reserve(len);
         &mut self.bytes
+    }
+
+    fn reserve(&mut self, len: usize) {
+        let (used, capacity) = (self.bytes.len(), self.bytes.capacity());
+        if capacity - used >= len {
+            return;
+        }
+        // A table keeps the room it once had, and doubled it would be over what `shrink` leaves: cut back and doubled again, block after block.
+        if (SPARE_CAPACITY / 4..=4 * SPARE_CAPACITY).contains(&capacity) {
+            self.bytes.reserve_exact(len.max(capacity / 4));
+        } else {
+            self.bytes.reserve(len);
+        }
     }
 
     pub(crate) fn scratch_len(&self) -> usize {
@@ -104,6 +128,7 @@ impl Storage {
         let start = span.position.checked_sub(self.origin)? as usize;
         let name = start..start + span.name_len as usize;
         self.bytes.get(name.clone())?;
+        self.reserve(name.len());
         self.bytes.extend_from_within(name);
         Some(())
     }

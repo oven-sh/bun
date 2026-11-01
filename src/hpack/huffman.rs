@@ -1,4 +1,4 @@
-//! The Huffman code for string literals (§5.2, Appendix B).
+//! The Huffman code for string literals (§5.2, Appendix B). How it works: HUFFMAN.md
 
 use crate::{Error, Result};
 
@@ -108,7 +108,7 @@ const GROUP_LEN: usize = 7;
 /// How many bits fit 64 beside the 7 that may be pending.
 const GROUP_MAX_BITS: u32 = 57;
 
-/// Under this many bytes, groups do not pay: huffman_simd.md.
+/// Under this many bytes, groups do not pay: HUFFMAN.md.
 pub(crate) const GROUPS_MIN_LEN: usize = 128;
 
 /// The low `count` bits of `bits` are not written yet: under 8 after [`Pending::write`].
@@ -300,7 +300,7 @@ const KERNEL_MIN_BITS: usize = 40;
 /// A call of the SIMD kernel pays off from this many symbols on.
 const KERNEL_MIN_SYMBOLS: isize = 12;
 
-/// Its calls count as no further ahead than this, so that text it is of no use for ends them soon, whatever came before.
+/// The most credit that calls can build up, so that a long run of plain text does not pay for many wasted calls in what follows it.
 const KERNEL_MAX_CREDIT: isize = 64;
 
 struct Decoder<'a> {
@@ -371,7 +371,7 @@ impl Decoder<'_> {
         Ok(())
     }
 
-    /// All but the last 7 bytes or less of `src`, if not all.
+    /// Decodes while there are 8 bytes of `src` to load. [`Self::decode_tail`] does the rest, if the kernel left any.
     #[inline(always)]
     fn decode_full_windows(&mut self) -> Result<()> {
         while let Some(bytes) = self
@@ -539,12 +539,16 @@ fn find_long_code(window: u64) -> (u8, u8) {
     (0, 0)
 }
 
+/// How much [`decode`] appends at first, given the length of `src`.
+pub(crate) fn room(src_len: usize, max_len: usize) -> usize {
+    // The shortest code has 5 bits.
+    (src_len.saturating_mul(8) / 5).min(max_len.saturating_add(1)) + SPARE_OUT
+}
+
 /// Appends what `src` decodes to, at most `max_len` bytes.
 pub(crate) fn decode(src: &[u8], out: &mut Vec<u8>, max_len: usize) -> Result<()> {
     let start = out.len();
-    // The shortest code has 5 bits.
-    let max_symbols = (src.len().saturating_mul(8) / 5).min(max_len.saturating_add(1));
-    out.resize(start + max_symbols + SPARE_OUT, 0);
+    out.resize(start + room(src.len(), max_len), 0);
     let mut decoder = Decoder {
         src,
         bit_pos: 0,
@@ -556,7 +560,7 @@ pub(crate) fn decode(src: &[u8], out: &mut Vec<u8>, max_len: usize) -> Result<()
         .decode_full_windows()
         .and_then(|()| decoder.decode_tail());
     let written = decoder.written;
-    // Whatever comes after that many symbols.
+    // Too long wins over malformed.
     if written > max_len {
         return Err(Error::TooLarge);
     }

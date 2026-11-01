@@ -1272,7 +1272,7 @@ pub fn has_hpack_huffman_kernel() -> bool {
 /// What [`hpack_huffman_decode_short`] writes at a time: `kStoreBytes` in `highway_hpack.cpp`.
 pub const HPACK_HUFFMAN_SPARE_OUT: usize = 16;
 
-/// Returns the bit it stopped at and how many symbols it put in `out`, where it may overwrite [`HPACK_HUFFMAN_SPARE_OUT`] bytes more. See `src/hpack/huffman_simd.md`.
+/// Decodes HPACK Huffman codes of up to 8 bits from bit `bit_pos` of `src` on, until a longer code, the padding or the end of `out`. Returns the bit it stopped at and how many symbols it put in `out`, where it may overwrite [`HPACK_HUFFMAN_SPARE_OUT`] bytes more. See `src/hpack/HUFFMAN.md`.
 #[inline(always)]
 pub fn hpack_huffman_decode_short(
     src: &[u8],

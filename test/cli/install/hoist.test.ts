@@ -2096,6 +2096,98 @@ test.concurrent(
   },
 );
 
+// `pk/c/node_modules/b` is a link to `pk/b`, so the tree below that link and b's own tree are both `pk/b/node_modules`.
+// Without c's devDependencies, Bun <= 1.4.3 nested a package below the link.
+describe.concurrent("a package that Bun <= 1.4.3 nested below a self-contained workspace's link to a sibling", () => {
+  const graph = {
+    baz: { "1.0.0": {}, "2.0.0": {} },
+    foo: { "1.0.0": {}, "2.0.0": { dependencies: { bar: "2.0.0" } } },
+    bar: { "1.0.0": {}, "2.0.0": {} },
+  };
+  type Project = { root?: object; a: object; b: object; c?: object; dev: object };
+  const files = (server: { url: URL }, { root, a, b, c }: Project, devDependencies: object) => ({
+    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+    "package.json": JSON.stringify({
+      name: "app",
+      workspaces: { packages: ["pk/*"], selfContained: ["pk/c"] },
+      dependencies: root,
+    }),
+    "pk/a/package.json": JSON.stringify({ name: "a", dependencies: a }),
+    "pk/b/package.json": JSON.stringify({ name: "b", dependencies: b }),
+    "pk/c/package.json": JSON.stringify({
+      name: "c",
+      dependencies: { a: "workspace:*", b: "workspace:*", ...c },
+      devDependencies,
+    }),
+  });
+  const members = ["pk/a", "pk/b", "pk/c"];
+  const direct = { a: { baz: "1.0.0" }, b: { baz: "2.0.0" }, dev: { baz: "2.0.0" } };
+  const below = { a: { foo: "1.0.0", bar: "1.0.0" }, b: { foo: "2.0.0" } };
+  const filter = ["--filter", "c"];
+
+  test.each([
+    { title: "stays where b's own tree places it", nested: "pk/b/baz@2.0.0", stays: true, ...direct },
+    { title: "is removed if b loads the root's", nested: "pk/b/baz@2.0.0", root: { baz: "2.0.0" }, ...direct },
+    // Such an install never updates the package, so it would hide the one that c has for b.
+    { title: "is removed if --filter leaves out b's own tree", nested: "pk/b/baz@2.0.0", args: filter, ...direct },
+    {
+      title: "stays where a tree below b's own tree places it",
+      nested: "pk/b/foo/bar@2.0.0",
+      stays: true,
+      ...below,
+      dev: { bar: "2.0.0" },
+    },
+    {
+      title: "is removed from a package that b's own tree places",
+      nested: "pk/b/foo/bar@2.0.0",
+      root: { foo: "1.0.0", bar: "2.0.0" },
+      ...below,
+      dev: { foo: "2.0.0" },
+    },
+    {
+      title: "is removed with the package that it's in if --filter leaves out b's own tree",
+      nested: "pk/b/foo/bar@2.0.0",
+      root: { bar: "2.0.0" },
+      ...below,
+      c: { bar: "1.0.0" },
+      dev: { foo: "2.0.0" },
+      args: filter,
+    },
+  ])("$title", async ({ nested, stays = false, args = [], ...project }) => {
+    using server = await serveGraph(graph);
+    using clean = tempDir("hoist-older-sibling-clean", files(server, project, project.dev));
+    using machine = tempDir("hoist-older-sibling-machine", files(server, project, {}));
+    const [fresh, dir] = [String(clean), String(machine)];
+    await run(fresh, "install", "--lockfile-only");
+    await run(fresh, "install", "--production", ...args);
+
+    // Reproduce the old --production layout by installing without devDependencies in package.json.
+    await run(dir, "install", ...args);
+    expect(layout(dir, ...members)).toContain(nested);
+    await write(join(dir, "pk", "c", "package.json"), file(join(fresh, "pk", "c", "package.json")));
+    await write(join(dir, "bun.lock"), file(join(fresh, "bun.lock")));
+
+    await run(dir, "install", "--production", ...args);
+    expect(layout(dir, ...members)).toEqual(layout(fresh, ...members));
+    expect(layout(dir, ...members).includes(nested)).toBe(stays);
+    expect(await run(dir, "install", "--production", ...args)).toContain("(no changes)");
+  });
+
+  // The older layout is compared after any install that places a package and finds another one in place.
+  test("stays in a node_modules that no older version installed", async () => {
+    using server = await serveGraph(graph);
+    using project = tempDir("hoist-older-sibling-current", files(server, direct, direct.dev));
+    const dir = String(project);
+    await run(dir, "install");
+    const installed = layout(dir, ...members);
+    expect(installed).toContain("pk/b/baz@2.0.0");
+
+    rmSync(join(dir, "node_modules", "baz"), { recursive: true });
+    await run(dir, "install", "--production");
+    expect(layout(dir, ...members)).toEqual(installed);
+  });
+});
+
 // Whether a package in `pk/two/node_modules` is kept depends on what bun.lock now places there, not on the workspace's
 // name.
 describe.concurrent("packages nested in a workspace's node_modules", () => {

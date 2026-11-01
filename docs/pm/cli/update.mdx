@@ -26,6 +26,8 @@ bun update '@babel/*' '!@babel/core'
 
 Updated packages appear in the install summary as `↑ name old → new`, with `(v3.0.0 available)` when a newer major is out of range. Use `--dry-run` to preview.
 
+The summary also counts the `bun.lock` entries that the update removes: `Removed: 2`, or `2 packages removed` when the update installs nothing. An update removes an entry when, for example, the new version of a package drops a dependency. `bun.lock` has an entry for every platform, so the count can be higher than the number of folders that leave `node_modules`.
+
 ### How `package.json` is rewritten
 
 - `^1.1.0` → `^1.2.0`, `~1.1.0` → `~1.1.5`. Bun preserves the operator. With [`install.exact`](/runtime/bunfig#install-exact) or `--exact`, Bun writes an exact version instead.

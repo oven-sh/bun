@@ -610,43 +610,45 @@ describe("Bun.connect TLS hostname verification", () => {
 });
 
 // name-constraints-ca-cert.pem -> name-constraints-intermediate-cert.pem (nameConstraints
-// permitted;DNS:.allowed.test) -> name-constraints-<leaf>-cert.pem, all leaves sharing name-constraints-leaf-key.pem:
+// permitted;DNS:.allowed.test) -> name-constraints-<leaf>-cert.pem:
 //   inside:           CN=host.allowed.test,     subjectAltName=email:admin@allowed.test
 //   outside:          CN=outside.example.test,  subjectAltName=email:admin@allowed.test
 //   wildcard:         CN=*.example.test,        subjectAltName=email:admin@allowed.test
 //   partial-wildcard: CN=w*.example.test,       subjectAltName=email:admin@allowed.test
 //   nosan:            CN=legacy.allowed.test,   no subjectAltName extension
-const nameConstraintsCa = fs.readFileSync(path.join(fixturesDir, "name-constraints-ca-cert.pem"));
-const nameConstraintsIntermediate = fs.readFileSync(
-  path.join(fixturesDir, "name-constraints-intermediate-cert.pem"),
-  "utf8",
-);
-const nameConstraintsLeafKey = fs.readFileSync(path.join(fixturesDir, "name-constraints-leaf-key.pem"));
+// name-constraints-excluding-ca-cert.pem (a root with nameConstraints excluded;DNS:.blocked.test) ->
+// name-constraints-<leaf>-cert.pem:
+//   excluded:         CN=host.blocked.test,     subjectAltName=email:admin@allowed.test
+//   not-excluded:     CN=host.allowed.test,     subjectAltName=email:admin@allowed.test
+//   excluded-dns-san: CN=host.blocked.test,     subjectAltName=DNS:host.allowed.test
+// All leaves share name-constraints-leaf-key.pem.
+const nameConstraintsPem = (name: string) =>
+  fs.readFileSync(path.join(fixturesDir, `name-constraints-${name}.pem`), "utf8");
+// `ca` is what the client trusts. `chain` is what the server sends after its leaf.
+const permittingCa = { ca: nameConstraintsPem("ca-cert"), chain: nameConstraintsPem("intermediate-cert") };
+const excludingCa = { ca: nameConstraintsPem("excluding-ca-cert"), chain: "" };
 
-function connectWithNameConstraints(leaf: string, servername: string, rejectUnauthorized = true) {
-  type Result = { error: string } | { authorized: boolean; authorizationError: unknown };
+function connectWithNameConstraints(
+  leaf: string,
+  servername: string,
+  { issuer = permittingCa, rejectUnauthorized = true } = {},
+) {
+  type Result =
+    { error: { code: string | undefined; message: string } } | { authorized: boolean; authorizationError: unknown };
   return withServer(
     port => {
       const { promise, resolve } = Promise.withResolvers<Result>();
-      const socket = tls.connect(
-        { host: "127.0.0.1", port, servername, ca: nameConstraintsCa, rejectUnauthorized },
-        () => {
-          resolve({ authorized: socket.authorized, authorizationError: socket.authorizationError });
-          socket.destroy();
-        },
-      );
-      socket.on("error", err => {
-        resolve({ error: err.message });
+      const socket = tls.connect({ host: "127.0.0.1", port, servername, ca: issuer.ca, rejectUnauthorized }, () => {
+        resolve({ authorized: socket.authorized, authorizationError: socket.authorizationError });
+        socket.destroy();
+      });
+      socket.on("error", (err: NodeJS.ErrnoException) => {
+        resolve({ error: { code: err.code, message: err.message } });
         socket.destroy();
       });
       return promise;
     },
-    {
-      key: nameConstraintsLeafKey,
-      cert:
-        fs.readFileSync(path.join(fixturesDir, `name-constraints-${leaf}-cert.pem`), "utf8") +
-        nameConstraintsIntermediate,
-    },
+    { key: nameConstraintsPem("leaf-key"), cert: nameConstraintsPem(`${leaf}-cert`) + issuer.chain },
   );
 }
 
@@ -655,19 +657,33 @@ describe("tls.connect applies CA name constraints to the subject CN of a certifi
 
   test("a CN outside the permitted subtree fails certificate verification", async () => {
     assert.deepStrictEqual(await connectWithNameConstraints("outside", "outside.example.test"), {
-      error: "permitted subtree violation",
+      error: { code: "UNSPECIFIED", message: "permitted subtree violation" },
     });
   });
 
   test("a CN outside the permitted subtree is reported through authorizationError with rejectUnauthorized: false", async () => {
-    assert.deepStrictEqual(await connectWithNameConstraints("outside", "outside.example.test", false), {
-      authorized: false,
-      authorizationError: "UNSPECIFIED",
-    });
+    const result = await connectWithNameConstraints("outside", "outside.example.test", { rejectUnauthorized: false });
+    assert.deepStrictEqual(result, { authorized: false, authorizationError: "UNSPECIFIED" });
   });
 
   test("a CN inside the permitted subtree is accepted", async () => {
     assert.deepStrictEqual(await connectWithNameConstraints("inside", "host.allowed.test"), accepted);
+  });
+
+  test("a CN inside an excluded subtree fails certificate verification", async () => {
+    const result = await connectWithNameConstraints("excluded", "host.blocked.test", { issuer: excludingCa });
+    assert.deepStrictEqual(result, { error: { code: "UNSPECIFIED", message: "excluded subtree violation" } });
+  });
+
+  test("a CN outside the excluded subtree is accepted", async () => {
+    const result = await connectWithNameConstraints("not-excluded", "host.allowed.test", { issuer: excludingCa });
+    assert.deepStrictEqual(result, accepted);
+  });
+
+  // The DNS name is the name of this certificate, and the constraints apply to that name.
+  test("a CN inside an excluded subtree is not checked when the certificate has a DNS subjectAltName", async () => {
+    const result = await connectWithNameConstraints("excluded-dns-san", "host.allowed.test", { issuer: excludingCa });
+    assert.deepStrictEqual(result, accepted);
   });
 
   // OpenSSL's NAME_CONSTRAINTS_check_CN does not read a CN with a wildcard as a host name, so node accepts these chains.
@@ -681,7 +697,7 @@ describe("tls.connect applies CA name constraints to the subject CN of a certifi
   // no subjectAltName extension and a host name as its CN, whatever that name is.
   test("a CN inside the permitted subtree is rejected when the certificate has no subjectAltName at all", async () => {
     assert.deepStrictEqual(await connectWithNameConstraints("nosan", "legacy.allowed.test"), {
-      error: "Issuer has name constraints but leaf has no SANs",
+      error: { code: "UNSPECIFIED", message: "Issuer has name constraints but leaf has no SANs" },
     });
   });
 });

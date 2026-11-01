@@ -217,6 +217,43 @@ describe.skipIf(!supported)("bun test --aot", () => {
     );
   });
 
+  // JavaScriptCore binds an anonymous default export to the private name `*default*`. The class has the name "default"
+  // from the start, as a class with a written name has its name, and compiled code says the same.
+  test.concurrent("an anonymous default class is named, mocked and snapshotted as without --aot", async () => {
+    const files = {
+      "anonymous-class.ts": `export default class { m() {} }`,
+      "derived-class.ts": `export default class extends Object { constructor() { super(); return 1 as any; } }`,
+      "names.test.ts": `
+        import { expect, mock, test } from "bun:test";
+        import AnonymousClass from "./anonymous-class";
+        import DerivedClass from "./derived-class";
+        const element = (type: unknown) => ({ $$typeof: Symbol.for("react.element"), type, key: null, ref: null, props: {} });
+        const messageOf = (run: () => unknown) => { try { run(); } catch (error) { return (error as Error).message; } };
+        test("the name property", () => { expect(AnonymousClass.name).toBe("default"); });
+        test("a mock", () => { const mocked = mock(AnonymousClass as unknown as () => unknown); console.log(JSON.stringify([mocked.name, mocked.getMockName()])); });
+        test("the errors that name the class", () => { console.log(messageOf(() => (AnonymousClass as any)()) + " | " + messageOf(() => new DerivedClass())); });
+        test("a snapshot", () => { expect({ AnonymousClass, instance: new AnonymousClass(), element: element(AnonymousClass) }).toMatchSnapshot(); });
+      `,
+    };
+    using expectedDir = tempDir("test-aot", files);
+    using actualDir = tempDir("test-aot", files);
+    const [expected, actual] = await Promise.all([
+      runTests(String(expectedDir), false, ["--update-snapshots"]),
+      runTests(String(actualDir), true, ["--update-snapshots"]),
+    ]);
+    expect(actual).toEqual(expected);
+    expect(actual.stdout).toContain(`["default","default"]`);
+    expect(actual.stdout).toContain(
+      "Cannot call a class constructor default without |new| | Cannot return a non-object type in the constructor of a derived class default.",
+    );
+    expect(actual.stderr).toContain(" 4 pass");
+    const snapshot = join("__snapshots__", "names.test.ts.snap");
+    expect(readFileSync(join(String(actualDir), snapshot), "utf8")).toBe(
+      readFileSync(join(String(expectedDir), snapshot), "utf8"),
+    );
+    expect(readFileSync(join(String(actualDir), snapshot), "utf8")).toContain("[class default]");
+  });
+
   test.concurrent("other options work the same as without --aot", async () => {
     const { stderr } = await expectSameAsBunTest(
       {

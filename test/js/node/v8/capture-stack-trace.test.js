@@ -1184,7 +1184,8 @@ test.each([
   expect(run(callerArgumentRows)).toEqual(callerArgumentFirstFrames);
 });
 
-// `a` awaits `b` through Promise.race and `b` awaits `a`, so the await chain above `c` is a cycle.
+// `a` awaits `b` through Promise.race and `b` awaits `a`, so the await chain above `c` is a cycle. JSC follows a
+// Promise.race one time only, so a trace has `a` and `b` one time.
 const capturesUnderAwaitCycle = `
   const functionsOf = stack => stack.split("\\n").slice(1).map(line => line.trim().replace(/^at /, "").replace(/ \\(.*$/, "")).join(", ");
   class ErrorWithStack extends Error {
@@ -1236,40 +1237,53 @@ const startAtOnce = `run => run()`;
 // Two entries into the VM then resumed an async function: the one of `outer`, and the one of `c` inside its drain.
 const startInADrain = `run => void (async function outer() { await null; run(); require("bun:jsc").drainMicrotasks(); })()`;
 
-// With no limit on the await chain, a child does not return from the capture. Its timeout ends it before the test's timeout.
+// An await chain with no end keeps a child in the capture. Its timeout ends it before the test's timeout.
 test.each([
-  ["a node:vm context", inVmContext, startAtOnce],
-  ["the main context", inMainContext, startAtOnce],
-  ["a node:vm context, in a drain of microtasks that an async function runs", inVmContext, startInADrain],
-  ["the main context, in a drain of microtasks that an async function runs", inMainContext, startInADrain],
-])("Error.captureStackTrace returns under async functions that await each other, in %s", async (_, run, start) => {
-  const script = `
+  ["a node:vm context", inVmContext, startAtOnce, ""],
+  ["the main context", inMainContext, startAtOnce, ""],
+  [
+    "a node:vm context, in a drain of microtasks that an async function runs",
+    inVmContext,
+    startInADrain,
+    ", drainMicrotasks, outer",
+  ],
+  [
+    "the main context, in a drain of microtasks that an async function runs",
+    inMainContext,
+    startInADrain,
+    ", drainMicrotasks, outer",
+  ],
+])(
+  "Error.captureStackTrace returns under async functions that await each other, in %s",
+  async (_, run, start, behind) => {
+    const script = `
       globalThis.print = value => console.log(JSON.stringify(value));
       globalThis.start = ${start};
       const code = ${JSON.stringify(capturesUnderAwaitCycle)};
       ${run};
     `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: 4_000,
-    killSignal: "SIGKILL",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stderr, signalCode: proc.signalCode, exitCode }).toEqual({ stderr: "", signalCode: null, exitCode: 0 });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 4_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, signalCode: proc.signalCode, exitCode }).toEqual({ stderr: "", signalCode: null, exitCode: 0 });
 
-  // `c` runs from a microtask, so the await chain comes directly behind its frame. The trace has at most 10 frames of the cycle.
-  const fromC = expect.stringMatching(/^c, async a, async b(, async [ab]){0,7}$/);
-  expect(JSON.parse(stdout)).toEqual({
-    noCaller: fromC,
-    callerOnStack: fromC,
-    errorSubclass: fromC,
-    callerResumed: expect.stringMatching(/^async a, async b(, async [ab]){0,8}$/),
-    callerNotOnStack: "",
-  });
-});
+    // `c` runs from a microtask, so the await chain comes directly behind its frame.
+    const fromC = "c, async a, async b" + behind;
+    expect(JSON.parse(stdout)).toEqual({
+      noCaller: fromC,
+      callerOnStack: fromC,
+      errorSubclass: fromC,
+      callerResumed: "async a, async b" + behind,
+      callerNotOnStack: "",
+    });
+  },
+);
 
 // The getter of the context collects and then compiles functions, so the cells that the collection freed are in use
 // again before the trace is formatted. A collection drops the code of a function that did not run for 15 s. The JSC
@@ -1278,8 +1292,12 @@ const collectingGetterInVm = `import vm from "node:vm";
      const context = vm.createContext({ collect: () => Bun.gc(true), print: console.log });
      vm.runInContext(\`
        function compileMany() { for (let i = 0; i < 150; i++) new Function("a", "return a + " + i)(i); }
-       Object.defineProperty(Error, "prepareStackTrace", { get() { collect(); compileMany(); } });
-       var printFrames = target => print(target.stack.split("\\\\n").map(line => line.trim().split(" (")[0]).join(" | "));
+       var collections = 0;
+       Object.defineProperty(Error, "prepareStackTrace", { get() { collections++; collect(); compileMany(); } });
+       var printFrames = target => {
+         const frames = target.stack.split("\\\\n").map(line => line.trim().split(" (")[0]).join(" | ");
+         print("collections: " + collections + ", frames: " + frames);
+       };
      \`, context);`;
 const capturedUnderAwaitChain = (target, printFrames) => `
        async function leaf() {
@@ -1296,20 +1314,27 @@ test.concurrent.each([
     "Error.captureStackTrace(object) in that context",
     `${collectingGetterInVm}
      vm.runInContext(\`${capturedUnderAwaitChain("{}", "printFrames")}\`, context);`,
-    "Error | at leaf | at async mid | at async top",
+    "collections: 1, frames: Error | at leaf | at async mid | at async top",
   ],
   [
     "Error.captureStackTrace(error already read) in that context",
     `${collectingGetterInVm}
      vm.runInContext(\`${capturedUnderAwaitChain(`(error => (error.stack, error))(new RangeError("boom"))`, "printFrames")}\`, context);`,
-    "RangeError: boom | at leaf | at async mid | at async top",
+    "collections: 2, frames: RangeError: boom | at leaf | at async mid | at async top",
   ],
   [
     "Error.captureStackTrace(object of that context) in the main context",
     `${collectingGetterInVm}
      const objectOfContext = vm.runInContext("({})", context);
      ${capturedUnderAwaitChain("objectOfContext", `vm.runInContext("printFrames", context)`)}`,
-    "Error | at leaf | at async mid | at async top",
+    "collections: 1, frames: Error | at leaf | at async mid | at async top",
+  ],
+  [
+    "Error.captureStackTrace(error of that context, already read) in the main context",
+    `${collectingGetterInVm}
+     const errorOfContext = vm.runInContext('(error => (error.stack, error))(new RangeError("boom"))', context);
+     ${capturedUnderAwaitChain("errorOfContext", `vm.runInContext("printFrames", context)`)}`,
+    "collections: 2, frames: RangeError: boom | at leaf | at async mid | at async top",
   ],
 ])(
   "a node:vm Error.prepareStackTrace getter that collects cannot invalidate the trace of %s",
@@ -1322,6 +1347,50 @@ test.concurrent.each([
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({ stdout: expected, signalCode: null });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// No JS of the program runs between the capture and the last call site. With these options a collection starts at
+// every 13th slow allocation, drops the code of the suspended callers and overwrites each cell that it frees.
+test.concurrent(
+  "Error.captureStackTrace keeps the code of suspended async callers while it makes their call sites",
+  async () => {
+    const source = `
+      Error.prepareStackTrace = (_, sites) => sites.map(site => site.getFunctionName()).join();
+      function capture() {
+        const target = {};
+        Error.captureStackTrace(target);
+        return target.stack;
+      }
+      async function leaf() {
+        await null;
+        return capture();
+      }
+      let top = leaf;
+      for (let i = 0; i < 8; i++) {
+        top = (0, eval)("(next => async function awaits" + i + "() { return await next(); })")(top);
+      }
+      const seen = new Set();
+      for (let i = 0; i < 20; i++) seen.add(await top());
+      console.log([...seen].join(" | "));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: {
+        ...bunEnv,
+        BUN_JSC_forceCodeBlockToJettisonDueToOldAge: "1",
+        BUN_JSC_useZombieMode: "1",
+        BUN_JSC_slowPathAllocsBetweenGCs: "13",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({
+      stdout: "capture,leaf,awaits0,awaits1,awaits2,awaits3,awaits4,awaits5,awaits6,awaits7",
+      signalCode: null,
+    });
     expect(exitCode).toBe(0);
   },
 );

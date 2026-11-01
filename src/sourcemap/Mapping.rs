@@ -388,6 +388,10 @@ impl Lookup {
             }
 
             let name: &[u8] = &source_map.external_source_names[index];
+            // A `blob:` module has no directory to resolve the name from.
+            if !bun_paths::is_absolute(base_filename) {
+                return None;
+            }
 
             let mut buf = bun_paths::path_buffer_pool::get();
             // `platform::Auto` is

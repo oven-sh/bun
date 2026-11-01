@@ -215,6 +215,9 @@ impl ViWait {
         // SAFETY: heap-allocated by `to_js`; `finish` leaves the context before `root` releases the wrapper.
         unsafe { AbortHandle::arm_owner(this_ptr, cx.context()) };
 
+        // The first check runs below the JS that called this, so `waitFor()`, `waitUntil()` and `expect.poll()` count as
+        // timer controls: as in `FakeTimers::fire`, for a native call that `callback` makes.
+        let _entered = cx.vm().enter_event_loop_scope_without_checkpoint();
         if let Err(err) = this.poll(global, this_value, true) {
             match thrown_value(global, err) {
                 Ok(error) => this.settle(global, this_value, Err(error))?,

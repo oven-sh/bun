@@ -287,6 +287,27 @@ describe("bun", () => {
       antipattern: /scriptc/,
     });
   });
+  test("members of a workspace pattern with a group that crosses a separator", () => {
+    const script = (name: string) => ({ name, scripts: { present: `echo script-${name}` } });
+    const cwd = tempDirWithFiles("filter-group-separator", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["{apps/web,packages/*}", "@(tools/cli|libs/a/*)"] }),
+      "apps/web/package.json": JSON.stringify(script("web")),
+      "apps/other/package.json": JSON.stringify(script("other")),
+      "packages/one/package.json": JSON.stringify(script("one")),
+      "tools/cli/package.json": JSON.stringify(script("cli")),
+      "tools/internal/package.json": JSON.stringify(script("internal")),
+      "libs/a/core/package.json": JSON.stringify(script("core")),
+      // A pattern does not take these names, also in a group.
+      "packages/node_modules/package.json": JSON.stringify(script("modules")),
+      "packages/.git/package.json": JSON.stringify(script("git")),
+    });
+    runInCwdSuccess({
+      cwd,
+      pattern: "*",
+      target_pattern: [/script-web/, /script-one/, /script-cli/, /script-core/],
+      antipattern: [/script-other/, /script-internal/, /script-modules/, /script-git/],
+    });
+  });
   test("resolve package with missing name", () => {
     runInCwdSuccess({
       cwd: cwd_root,
@@ -1181,6 +1202,15 @@ describe.concurrent("a '!' entry in \"workspaces\"", () => {
     { workspaces: ["packages/*", "!packages/leg*/**"], members: appAndLib },
     // A path that's listed literally is kept.
     { workspaces: ["packages/lib", "!packages/lib"], members: ["packages/lib"] },
+    // a group with a separator in it, also with a separator or two after it
+    {
+      workspaces: ["packages/{app,lib,legacy/nested}"],
+      members: ["packages/app", "packages/legacy/nested", "packages/lib"],
+    },
+    { workspaces: ["{packages/app,packages/l*}"], members: ["packages/app", "packages/legacy", "packages/lib"] },
+    { workspaces: ["{packages/app,packages/lib}/"], members: appAndLib },
+    { workspaces: ["@(packages/app|packages/lib)//"], members: appAndLib },
+    { workspaces: ["{packages/*,other/lib}", "!packages/legacy"], members: ["other/lib", ...appAndLib] },
   ];
   test.each(configs.map(row => [JSON.stringify(row.workspaces), row] as const))(
     "bun run and bun install find the same members for %s",

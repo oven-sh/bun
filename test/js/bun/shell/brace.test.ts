@@ -1,6 +1,8 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { symlinkSync } from "node:fs";
+import { join } from "node:path";
 
 describe("$.braces", () => {
   test("no-op", () => {
@@ -157,6 +159,29 @@ describe("brace + glob composition", () => {
     const words = out.split(" ");
     expect(words).toContain("src/a.ts");
     expect(words).toContain("lib/b.ts");
+  });
+
+  test("src/{lib,b/c}/*.ts: a brace group with a separator in it", async () => {
+    using dir = tempDir("shell-brace-glob-separator", {
+      "src/lib/a.ts": "",
+      "src/b/c/index.ts": "",
+      "src/b/other.ts": "",
+    });
+    const out = (await $`echo src/{lib,b/c}/*.ts`.cwd(String(dir)).text()).trim().replaceAll("\\", "/");
+    // The matches go after the written-out words, as for `{lib,b}`. Without the matches this was "no matches found".
+    expect(out.split(" ").sort()).toEqual(["src/b/c/*.ts", "src/b/c/index.ts", "src/lib/*.ts", "src/lib/a.ts"]);
+  });
+
+  test.skipIf(isWindows)("{a,b/c}/lnkdir/*.ts: a link that is named after the group is followed", async () => {
+    using dir = tempDir("shell-brace-glob-separator-link", {
+      "a/real/x.ts": "",
+      "b/c/real/x.ts": "",
+    });
+    symlinkSync("real", join(String(dir), "a/lnkdir"), "dir");
+    symlinkSync("real", join(String(dir), "b/c/lnkdir"), "dir");
+    // As for `{a,b}/lnkdir/*.ts`: `lnkdir` is a path segment of its own.
+    const out = (await $`echo {a,b/c}/lnkdir/*.ts`.cwd(String(dir)).text()).trim();
+    expect(out.split(" ").sort()).toEqual(["a/lnkdir/*.ts", "a/lnkdir/x.ts", "b/c/lnkdir/*.ts", "b/c/lnkdir/x.ts"]);
   });
 
   test("an interpolated comma inside a brace group is one literal branch", async () => {

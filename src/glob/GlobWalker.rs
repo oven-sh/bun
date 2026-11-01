@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-use crate::matcher::{Dots, Shape};
+use crate::matcher::{Below, Dots, Shape, Token, token_at};
 use bun_alloc::AllocError;
 use bun_collections::AutoBitSet;
 use bun_core::Error;
@@ -247,6 +247,8 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     pub(crate) pattern_components: Vec<Component>,
     /// `Shape::of` each component's pattern, so matching an entry doesn't parse the groups again.
     component_shapes: Vec<Shape>,
+    /// Set if a component is a `SyntaxHint::Crossing`.
+    crossing: Option<Box<Crossing>>,
     pub matched_paths: MatchedMap,
 
     pub(crate) dot: bool,
@@ -586,7 +588,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         // Single-index sets (the initial WorkItem) may point to Dot/DotBack
         // or collapsible `**` runs. Multi-index sets only arise mid-traversal
         // after `**/X` boundaries and are already past any Dots.
-        let active: ComponentSet = 'set: {
+        // A crossing that ends here and goes on below also makes one, which `enter_crossing` splits.
+        let mut active: ComponentSet = 'set: {
             if work_item.active.count() == 1 {
                 let single: u32 =
                     u32::try_from(work_item.active.find_first_set().unwrap()).expect("int cast");
@@ -730,6 +733,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             iterator.set_name_filter(filter);
         }
 
+        if self.walker.crossing.is_some() {
+            let (dir_path, path) = (dir_path.as_bytes(), &work_item.path);
+            (self.walker).enter_crossing(&mut active, dir_path, work_item.crossing_path_len, path);
+        }
+
         self.iter_state = IterState::Directory(Directory {
             fd,
             iter: iterator,
@@ -754,7 +762,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         match comp.syntax_hint {
             // `*` and `**` match everything; a filter gains nothing and for `**`
             // would incorrectly hide subdirectories we need to recurse into.
-            SyntaxHint::Single | SyntaxHint::Double | SyntaxHint::Dot | SyntaxHint::DotBack => {
+            SyntaxHint::Single
+            | SyntaxHint::Double
+            | SyntaxHint::Dot
+            | SyntaxHint::DotBack
+            | SyntaxHint::Crossing => {
                 return None;
             }
             _ => {}
@@ -807,7 +819,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     // exact followed-link ancestor chain of this work item.
                     self.walker
                         .followed_links
-                        .truncate(work_item.followed_links_len);
+                        .truncate(work_item.followed_links_len as usize);
                     if let Some(link) = work_item.followed_link.take() {
                         self.walker.followed_links.push(link);
                     }
@@ -888,6 +900,16 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                     symlink_full_path_len - entry_start,
                                 )
                             };
+                            if let Some(crossing) = self.walker.crossing.as_deref() {
+                                // The name of the link is matched in its directory, which is read no more.
+                                let below = work_item.crossing_path_len;
+                                let name_len = u32::try_from(entry_name.len()).expect("int cast");
+                                crossing.enter(
+                                    &work_item_path[..entry_start],
+                                    below.saturating_sub(name_len),
+                                    below != NOT_IN_CROSSING,
+                                );
+                            }
 
                             self.iter_state = IterState::GetNext;
                             let maybe_dir_fd: Option<A::Handle> =
@@ -1276,10 +1298,12 @@ pub struct WorkItem<A: Accessor> {
     pub(crate) active: ComponentSet,
     pub(crate) kind: WorkItemKind,
     pub(crate) entry_start: u32,
+    /// For an item that has the crossing from a directory above: the length of the end of `path` that is below the directory in which the crossing starts.
+    pub(crate) crossing_path_len: u32,
     pub(crate) fd: Option<A::Handle>,
     /// `followed_links.len()` when this item was pushed: the length of its
     /// followed-link ancestor chain, restored by truncation when it is popped.
-    followed_links_len: usize,
+    followed_links_len: u32,
     /// The followed link this item descends into, pushed onto `followed_links`
     /// (after the truncation above) when it is popped.
     followed_link: Option<FollowedLink>,
@@ -1298,6 +1322,7 @@ impl<A: Accessor> WorkItem<A> {
             active,
             kind,
             entry_start: 0,
+            crossing_path_len: NOT_IN_CROSSING,
             fd: None,
             followed_links_len: 0,
             followed_link: None,
@@ -1323,6 +1348,9 @@ impl<A: Accessor> WorkItem<A> {
         }
     }
 }
+
+/// `WorkItem::crossing_path_len` of an item that has no crossing, or that the crossing starts in.
+const NOT_IN_CROSSING: u32 = u32::MAX;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
@@ -1376,6 +1404,8 @@ pub enum SyntaxHint {
     Dot,
     /// ../
     DotBack,
+    /// The path segments of a pattern in which a group has a separator inside. See `Crossing`.
+    Crossing,
 }
 
 impl SyntaxHint {
@@ -1425,7 +1455,10 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                 SyntaxHint::Double => log!("  **"),
                 SyntaxHint::Dot => log!("  ."),
                 SyntaxHint::DotBack => log!("  ../"),
-                SyntaxHint::Literal | SyntaxHint::WildcardFilepath | SyntaxHint::None => log!(
+                SyntaxHint::Literal
+                | SyntaxHint::WildcardFilepath
+                | SyntaxHint::None
+                | SyntaxHint::Crossing => log!(
                     "  hint={} component_str={}",
                     <&'static str>::from(cmp.syntax_hint),
                     bstr::BStr::new(cmp.pattern_slice(pattern))
@@ -1460,6 +1493,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             end_byte_of_basename_excluding_special_syntax: 0,
             pattern_components: Vec::new(),
             component_shapes: Vec::new(),
+            crossing: None,
             matched_paths: MatchedMap::default(),
             path_buf: bun_paths::path_buffer_pool::get(),
             workbuf: Vec::new(),
@@ -1469,7 +1503,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             _accessor: core::marker::PhantomData,
         };
 
-        Self::build_pattern_components(
+        this.crossing = Self::build_pattern_components(
             &mut this.pattern_components,
             &this.pattern,
             &mut this.end_byte_of_basename_excluding_special_syntax,
@@ -1781,6 +1815,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         if !self.dot
             && Self::starts_with_dot(filepath)
             && !Self::starts_with_dot(pattern_component.pattern_slice(&self.pattern))
+            && pattern_component.syntax_hint != SyntaxHint::Crossing
         {
             return false;
         }
@@ -1790,6 +1825,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
         match pattern_component.syntax_hint {
             SyntaxHint::Double | SyntaxHint::Single => true,
+            SyntaxHint::Crossing => self.eval_crossing(filepath, false).0,
             SyntaxHint::WildcardFilepath => {
                 match_wildcard_filepath(pattern_component.pattern_slice(&self.pattern), filepath)
             }
@@ -1826,6 +1862,11 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     /// Returns the child's active set (union of all recursion targets).
     /// Sets `add` if any index says the directory itself is a match.
     fn eval_dir(&self, active: &ComponentSet, entry_name: &[u8], add: &mut bool) -> ComponentSet {
+        if let Some(crossing) = self.crossing.as_deref()
+            && active.is_set(crossing.index as usize)
+        {
+            return self.eval_dir_crossing(active, crossing.index, entry_name, add);
+        }
         let mut child = self.make_set();
         let comps = &self.pattern_components;
         let len: u32 = u32::try_from(comps.len()).expect("int cast");
@@ -1892,6 +1933,12 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         let mut it = active.iterator::<true, true>();
         while let Some(idx) = it.next() {
             let comp = &comps[idx];
+            if comp.syntax_hint == SyntaxHint::Crossing {
+                if self.crossing_takes(entry_name) {
+                    return true;
+                }
+                continue;
+            }
             if self.match_pattern_impl(comp, entry_name) {
                 return true;
             }
@@ -1907,6 +1954,78 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         false
     }
 
+    /// `eval_dir` where the crossing is active. It is component `index`, and no other component is active with it.
+    #[cold]
+    #[inline(never)]
+    fn eval_dir_crossing(
+        &self,
+        active: &ComponentSet,
+        index: u32,
+        name: &[u8],
+        add: &mut bool,
+    ) -> ComponentSet {
+        debug_assert!(active.count() == 1);
+        let mut child = self.make_set();
+        let (ends, goes_on) = self.eval_crossing(name, true);
+        // It stays active in a directory that a path below can match in. What is after it goes on in a directory that it ends at.
+        if goes_on {
+            child.set(index as usize);
+        }
+        let is_last = index as usize == self.pattern_components.len() - 1;
+        if ends && is_last {
+            *add = true;
+        } else if ends {
+            child.set(self.normalize_idx(index + 1) as usize);
+        }
+        child
+    }
+
+    /// Notes `dir_path` as the directory that the walk reads now with `active`, for the work item with `path` and `crossing_path_len`.
+    #[inline(never)]
+    fn enter_crossing(
+        &mut self,
+        active: &mut ComponentSet,
+        dir_path: &[u8],
+        crossing_path_len: u32,
+        path: &[u8],
+    ) {
+        let Some(crossing) = self.crossing.as_deref() else {
+            return;
+        };
+        let index = crossing.index;
+        let is_active = active.is_set(index as usize);
+        crossing.enter(dir_path, crossing_path_len, is_active);
+        if !is_active || active.count() == 1 {
+            return;
+        }
+        // The crossing ends at this directory and goes on below it. What is after it reads the directory from an item of its own, as without the crossing.
+        let mut after = core::mem::replace(active, self.single_set(index));
+        after.unset(index as usize);
+        self.push_work_item(
+            WorkItem::new(Box::from(path), after, WorkItemKind::Directory),
+            None,
+        );
+    }
+
+    /// Returns true if the crossing ends at the entry `name` or can match a path below it. Only then is a link followed.
+    fn crossing_takes(&self, name: &[u8]) -> bool {
+        let (ends, goes_on) = self.eval_crossing(name, true);
+        ends || goes_on
+    }
+
+    /// `Crossing::eval` for the entry `name`. Only a `SyntaxHint::Crossing` component asks.
+    #[inline(never)]
+    fn eval_crossing(&self, name: &[u8], is_dir: bool) -> (bool, bool) {
+        let Some(crossing) = self.crossing.as_deref() else {
+            return (false, false);
+        };
+        if (self.is_ignored)(name) {
+            return (false, false);
+        }
+        let dots = if self.dot { Dots::Match } else { Dots::Hide };
+        crossing.eval(name, is_dir, dots)
+    }
+
     /// Subset of `active` whose components are non-wildcard literals that
     /// match `entry_name`. Used to descend into a symlinked directory that the
     /// pattern names explicitly even when `follow_symlinks` is off.
@@ -1918,9 +2037,18 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             let may_follow = match comp.syntax_hint {
                 SyntaxHint::Literal => true,
                 SyntaxHint::Double => false,
+                // As a `**`, a crossing that can match any number of directories goes through no link.
+                SyntaxHint::Crossing => {
+                    self.follow_matched_symlinks
+                        && self.crossing.as_deref().is_some_and(|it| !it.is_unbounded)
+                }
                 _ => self.follow_matched_symlinks,
             };
-            if may_follow && self.match_pattern_impl(comp, entry_name) {
+            let matches = || match comp.syntax_hint {
+                SyntaxHint::Crossing => self.crossing_takes(entry_name),
+                _ => self.match_pattern_impl(comp, entry_name),
+            };
+            if may_follow && matches() {
                 subset.set(idx);
             }
         }
@@ -2016,10 +2144,27 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
     /// Single push site: snapshots the followed-link ancestor chain (and the
     /// link `item` itself descends into) so the pop site can restore it.
+    // A call here would move the item one more time.
+    #[inline(always)]
     fn push_work_item(&mut self, mut item: WorkItem<A>, followed_link: Option<FollowedLink>) {
-        item.followed_links_len = self.followed_links.len();
+        item.followed_links_len = u32::try_from(self.followed_links.len()).expect("int cast");
         item.followed_link = followed_link;
+        if self.crossing.is_some() {
+            item.crossing_path_len = self.crossing_path_len_of(&item);
+        }
         self.workbuf.push(item);
+    }
+
+    /// Returns `WorkItem::crossing_path_len` for `item`, an entry of the directory that the walk reads now.
+    #[cold]
+    #[inline(never)]
+    fn crossing_path_len_of(&self, item: &WorkItem<A>) -> u32 {
+        match self.crossing.as_deref() {
+            Some(crossing) if item.active.is_set(crossing.index as usize) => {
+                crossing.path_len(work_item_logical_path(&item.path))
+            }
+            _ => NOT_IN_CROSSING,
+        }
     }
 
     /// Identify `Pending` ancestors in place (each is stat'd at most once) so
@@ -2181,16 +2326,28 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         Some(component)
     }
 
+    /// Returns true if the `(` at `at` can open a group: it is after one of `?*+@!`.
+    fn is_after_group_prefix(pattern: &[u8], at: u32) -> bool {
+        at != 0 && matches!(pattern[at as usize - 1], b'?' | b'*' | b'+' | b'@' | b'!')
+    }
+
+    /// Makes one component for each path segment of `pattern`. Returns the crossing, if the pattern has one.
     fn build_pattern_components(
         pattern_components: &mut Vec<Component>,
         pattern: &[u8],
         end_byte_of_basename_excluding_special_syntax: &mut u32,
         basename_excluding_special_syntax_component_idx: &mut u32,
-    ) -> Result<(), AllocError> {
+    ) -> Result<Option<Box<Crossing>>, AllocError> {
         let mut start_byte: u32 = 0;
         let pattern_len: u32 = u32::try_from(pattern.len()).expect("int cast");
 
         let mut prev_is_backslash = false;
+        // A separator after a `{` or a `@(` can be in a group. The tokens of the matcher say that, and this asks them once.
+        let mut may_be_in_group = false;
+        let mut is_asked = false;
+        // Where the first group with a separator inside starts, and where the path segment of the last one ends.
+        let mut crossing_at = (u32::MAX, 0);
+        let mut crossing = None;
         let mut saw_special = false;
         let mut i: u32 = 0;
         let mut width: u32 = 0;
@@ -2198,7 +2355,29 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             let c = pattern[i as usize];
             width = u32::from(strings::wtf8_byte_sequence_length(c));
 
-            if bun_core::path_sep::is_sep_native(c) {
+            let is_separator = bun_core::path_sep::is_sep_native(c);
+            if is_separator && may_be_in_group && !is_asked {
+                is_asked = true;
+                crossing_at = crossing_groups(pattern).unwrap_or(crossing_at);
+            }
+            // The path segments of those groups are one component. Before it and after it the pattern is cut as before.
+            if i >= crossing_at.0 {
+                crossing_at.0 = u32::MAX;
+                // A `!` that starts the pattern negates its first path segment, also as before: no crossing starts there.
+                if start_byte != 0 || crate::matcher::negations(pattern) == 0 {
+                    let (made, end) =
+                        push_crossing(pattern_components, pattern, start_byte, crossing_at.1);
+                    (crossing, saw_special) = (Some(made), true);
+                    if end == pattern_len {
+                        return Ok(crossing);
+                    }
+                    // A separator is at `end`.
+                    (start_byte, i) = (end + 1, end + 1);
+                    continue;
+                }
+            }
+
+            if is_separator {
                 let mut end_byte = i;
                 // is last char
                 if (i + width) as usize == pattern.len() {
@@ -2222,6 +2401,8 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                     continue;
                 }
                 prev_is_backslash = true;
+            } else if c == b'{' || (c == b'(' && Self::is_after_group_prefix(pattern, i)) {
+                may_be_in_group = true;
             }
             // TODO: Support other escaping glob syntax
             i += 1;
@@ -2247,7 +2428,261 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             *end_byte_of_basename_excluding_special_syntax = (i + width).min(pattern_len);
         }
 
-        Ok(())
+        Ok(crossing)
+    }
+}
+
+/// Returns `pattern` as the matcher reads it: on Windows a `\` is a separator for the walker and an escape for the matcher.
+fn for_matcher(pattern: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if cfg!(windows) && strings::contains_char(pattern, b'\\') {
+        let slash = |byte: &u8| if *byte == b'\\' { b'/' } else { *byte };
+        return pattern.iter().map(slash).collect::<Vec<u8>>().into();
+    }
+    pattern.into()
+}
+
+/// Returns where the first group of `pattern` with a separator inside starts, and where the path segment of the last one ends.
+#[cold]
+#[inline(never)]
+fn crossing_groups(pattern: &[u8]) -> Option<(u32, u32)> {
+    let pattern = &*for_matcher(pattern);
+    let shape = Shape::of(pattern);
+    let (mut first, mut segment_end) = (None, None);
+    let mut at = 0;
+    while at < pattern.len() {
+        let (token, end) = token_at(pattern, at, &shape);
+        match token {
+            Token::Group { first: inside } if has_separator(pattern, &shape, inside..end - 1) => {
+                first = first.or(Some(at));
+                segment_end = None;
+            }
+            Token::Literal if pattern[at] == b'/' && segment_end.is_none() => {
+                segment_end = Some(at)
+            }
+            _ => {}
+        }
+        at = end;
+    }
+    let index = |at: usize| u32::try_from(at).expect("int cast");
+    Some((index(first?), index(segment_end.unwrap_or(pattern.len()))))
+}
+
+/// Returns true if `part`, the inside of a group, has a `/` in its text at any depth: a literal one, one in a class, or an escaped one.
+fn has_separator(pattern: &[u8], shape: &Shape, part: core::ops::Range<usize>) -> bool {
+    let mut at = part.start;
+    while at < part.end {
+        let (token, end) = token_at(pattern, at, shape);
+        match token {
+            Token::Literal if pattern[at] == b'/' => return true,
+            // By its text, not by what it can match: `[!x]` and `[.-0]` stay one character of a name for the walker, as before.
+            Token::Class if strings::contains_char(&pattern[at..end], b'/') => return true,
+            Token::Escape if pattern[at + 1] == b'/' => return true,
+            // Go into it: its closer and the separators of its alternatives are literals here.
+            Token::Group { first } => at = first,
+            _ => at = end,
+        }
+    }
+    false
+}
+
+/// Returns true if the pattern has a `**`, or a `+(..)` or `*(..)` with a separator inside: it can match any number of directories.
+fn is_unbounded(pattern: &[u8], shape: &Shape) -> bool {
+    // The end of the outermost open group that repeats.
+    let mut repeats_until = 0;
+    let mut at = 0;
+    while at < pattern.len() {
+        let (token, end) = token_at(pattern, at, shape);
+        match token {
+            Token::Globstar => return true,
+            Token::Literal if pattern[at] == b'/' && at < repeats_until => return true,
+            Token::Group { first } => {
+                if matches!(pattern[at], b'+' | b'*') {
+                    repeats_until = repeats_until.max(end);
+                }
+                at = first;
+            }
+            _ => at = end,
+        }
+    }
+    false
+}
+
+/// Makes the crossing of `pattern` and its component, from the path segment that starts at `start_byte`. Returns it and where it ends.
+#[cold]
+#[inline(never)]
+fn push_crossing(
+    pattern_components: &mut Vec<Component>,
+    pattern: &[u8],
+    mut start_byte: u32,
+    mut end_byte: u32,
+) -> (Box<Crossing>, u32) {
+    // It starts at the first `**` before the group, so that no other component is active where it starts.
+    let doubles = |it: &Component| it.syntax_hint == SyntaxHint::Double;
+    if let Some(first_double) = pattern_components.iter().position(doubles) {
+        start_byte = pattern_components[first_double].start;
+        pattern_components.truncate(first_double);
+    }
+    let pattern_len = u32::try_from(pattern.len()).expect("int cast");
+    let from_start = &pattern[start_byte as usize..];
+    let is_after_separator = start_byte != 0;
+    let ended = |end: u32| {
+        Crossing::new(
+            &for_matcher(&from_start[..(end - start_byte) as usize]),
+            is_after_separator,
+        )
+    };
+    let (mut crossing, mut trailing_sep) = ended(end_byte);
+    let after = &pattern[end_byte as usize..];
+    let is_before_separators = after
+        .iter()
+        .all(|it| bun_core::path_sep::is_sep_native(*it));
+    // What a `!(` leaves out depends on all that follows it. What follows any number of directories is not one work item.
+    if end_byte != pattern_len
+        && (crossing.is_unbounded || is_before_separators || strings::contains(from_start, b"!("))
+    {
+        end_byte = pattern_len;
+        (crossing, trailing_sep) = ended(end_byte);
+    }
+    crossing.index = u32::try_from(pattern_components.len()).expect("int cast");
+    pattern_components.push(Component {
+        start: start_byte,
+        len: end_byte - start_byte,
+        syntax_hint: SyntaxHint::Crossing,
+        trailing_sep,
+        ..Default::default()
+    });
+    (Box::new(crossing), end_byte)
+}
+
+/// The path segments from the first group with a separator inside, or a `**` before it, to the last such group. The matcher reads them as one pattern, against the path of each entry below the directory that they start in.
+struct Crossing {
+    /// Position in `pattern_components`.
+    index: u32,
+    /// Those segments, with `/` for every separator and no empty segment.
+    pattern: Box<[u8]>,
+    shape: Shape,
+    /// Says which directories can have a match below them, if the matcher can say that of the pattern.
+    below: Option<Below>,
+    /// It can match any number of directories. Then it is the last component, and it goes through no link.
+    is_unbounded: bool,
+    entered: core::cell::RefCell<Entered>,
+}
+
+/// The directory that a walk reads now, as its crossing sees it.
+struct Entered {
+    /// The crossing is active in the directory.
+    is_active: bool,
+    /// The path of the directory from the one that the crossing starts in, with a separator after it.
+    path: Vec<u8>,
+    dir_len: usize,
+}
+
+impl Crossing {
+    /// `text` starts a path segment of a pattern. Also returns `Component::trailing_sep`: true if it ends with a separator.
+    fn new(text: &[u8], is_after_separator: bool) -> (Crossing, bool) {
+        // Only a `!` that starts a whole pattern negates, but the matcher reads `text` as one.
+        let bangs = crate::matcher::negations(text);
+        debug_assert!(is_after_separator || bangs == 0);
+        let mut pattern = Vec::with_capacity(text.len() + bangs);
+        for _ in 0..bangs {
+            pattern.extend_from_slice(b"\\!");
+        }
+        let rest = &text[bangs..];
+        let shape = Shape::of(rest);
+        let (mut at, mut is_after_segment) = (0, false);
+        while at < rest.len() {
+            let (token, end) = token_at(rest, at, &shape);
+            let ends_segment = token == Token::Literal && rest[at] == b'/';
+            // The components have no empty segment, so `a//b` is `a/b` here too.
+            if !(ends_segment && is_after_segment) {
+                pattern.extend_from_slice(&rest[at..end]);
+            }
+            (at, is_after_segment) = (end, ends_segment);
+        }
+        let trailing_sep = is_after_segment;
+        if trailing_sep {
+            pattern.pop();
+        }
+        let shape = Shape::of(&pattern);
+        let crossing = Crossing {
+            index: 0,
+            below: Below::of(&pattern, &shape),
+            is_unbounded: is_unbounded(&pattern, &shape),
+            entered: core::cell::RefCell::new(Entered {
+                is_active: false,
+                path: Vec::with_capacity(128),
+                dir_len: 0,
+            }),
+            pattern: pattern.into_boxed_slice(),
+            shape,
+        };
+        (crossing, trailing_sep)
+    }
+
+    /// Notes `dir_path` as the directory that the walk reads now. `below` is its `WorkItem::crossing_path_len`.
+    fn enter(&self, dir_path: &[u8], below: u32, is_active: bool) {
+        let is_separator = |byte: &u8| bun_core::path_sep::is_sep_native(*byte);
+        let mut entered = self.entered.borrow_mut();
+        entered.is_active = is_active;
+        if !is_active {
+            return;
+        }
+        let below = match below {
+            NOT_IN_CROSSING => 0,
+            below => below as usize,
+        };
+        debug_assert!(below <= dir_path.len());
+        entered.path.clear();
+        (entered.path).extend_from_slice(&dir_path[dir_path.len() - below..]);
+        if !entered.path.last().is_none_or(is_separator) {
+            entered.path.push(b'/');
+        }
+        // A `/` in a class of the pattern does not match a `\`.
+        resolve_path::platform_to_posix_in_place::<u8>(&mut entered.path);
+        entered.dir_len = entered.path.len();
+    }
+
+    /// Returns `WorkItem::crossing_path_len` for `path`, an entry of the directory that the walk reads now.
+    fn path_len(&self, path: &[u8]) -> u32 {
+        let entered = self.entered.borrow();
+        if !entered.is_active {
+            return NOT_IN_CROSSING;
+        }
+        let name_len = strings::basename(path).len();
+        // The directory of `path` is the one that the walk reads now.
+        debug_assert!({
+            let is_separator = |byte: &u8| bun_core::path_sep::is_sep_native(*byte);
+            let same = |(a, b): (&u8, &u8)| a == b || (is_separator(a) && is_separator(b));
+            let (parent, dir) = (
+                &path[..path.len() - name_len],
+                &entered.path[..entered.dir_len],
+            );
+            parent.len() >= dir.len() && parent.iter().rev().zip(dir.iter().rev()).all(same)
+        });
+        u32::try_from(entered.dir_len + name_len).expect("int cast")
+    }
+
+    /// For the entry `name` of the directory that the walk reads now: returns if the crossing ends at it and, for a directory, if a path below it can match.
+    #[cold]
+    #[inline(never)]
+    fn eval(&self, name: &[u8], is_dir: bool, dots: Dots) -> (bool, bool) {
+        let mut entered = self.entered.borrow_mut();
+        debug_assert!(entered.is_active);
+        let dir_len = entered.dir_len;
+        let path = &mut entered.path;
+        path.truncate(dir_len);
+        path.extend_from_slice(name);
+        let glob = &self.pattern;
+        let ends =
+            crate::matcher::match_prepared::<{ cfg!(windows) }>(glob, &self.shape, path, dots)
+                .matches();
+        if !is_dir {
+            return (ends, false);
+        }
+        path.push(b'/');
+        // Without a `Below`, a path below any directory may match.
+        let may_go_on = |below: &Below| below.may_match::<{ cfg!(windows) }>(glob, path, dots);
+        (ends, self.below.as_ref().is_none_or(may_go_on))
     }
 }
 

@@ -2305,10 +2305,10 @@ declare module "bun:test" {
      * expect({ kitchen: { area: 20 }}).toHaveProperty("kitchen.area", 20);
      * expect({ kitchen: { area: 20 }}).toHaveProperty(["kitchen", "area"], 20);
      *
-     * @param keyPath the expected property name or path, or an index
+     * @param keyPath the expected property name or path. Write an index as `"0"` or `[0]`, not as a bare number
      * @param value the expected property value, if provided
      */
-    toHaveProperty(keyPath: string | number | Array<string | number>, value?: unknown): R;
+    toHaveProperty(keyPath: string | Array<string | number>, value?: unknown): R;
 
     /**
      * Asserts that a value is "truthy".

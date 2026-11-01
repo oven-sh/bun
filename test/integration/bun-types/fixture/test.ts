@@ -328,6 +328,26 @@ describe("Matcher Overload Type Tests", () => {
     // @ts-expect-error - Expecting string | number | boolean, got object
     expect(mixedArr).toContainEqual<string | number | boolean>({ a: 1 });
   });
+
+  test("toHaveProperty", () => {
+    const key = "a" as string | number;
+    expect(obj).toHaveProperty("a");
+    expect(numArr).toHaveProperty("0", 1);
+    expect(numArr).toHaveProperty([0], 1);
+    expect({ a: numArr }).toHaveProperty(["a", 0], 1);
+    expect(obj).toHaveProperty([key]);
+    expect(obj).toHaveProperty(typeof key === "number" ? [key] : key);
+    // @ts-expect-error - A bare number is not a key path. The matcher throws for one.
+    expect(numArr).toHaveProperty(0);
+    // @ts-expect-error - Also with an expected value
+    expect(numArr).toHaveProperty(0, 1);
+    // @ts-expect-error - Also after .not
+    expect(numArr).not.toHaveProperty(5);
+    // @ts-expect-error - Also after .resolves
+    expect(Promise.resolve(numArr)).resolves.toHaveProperty(0);
+    // @ts-expect-error - A key that can be a number is refused. [key] is one key, and a string is a path.
+    expect(obj).toHaveProperty(key);
+  });
 });
 
 const mySpyOnObjectWithOptionalMethod: {

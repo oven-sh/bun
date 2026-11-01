@@ -270,8 +270,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // JSC reports the calls of the iteration protocol at the `of`. The source map knows the `of` where the iterable stands on another line than
-    // the last token in front of the `of`, and takes it back to that last token anywhere else.
+    // JSC reports the calls of the iteration protocol at the `of`. The source map knows the `of` only where it starts a line, and else names the token before it.
     fn iteration_position(&self, statement: StmtId, left: StmtId, iterable: ExprId) -> u32 {
         let hir = self.hir;
         if self.is_shown_without_source_map() {

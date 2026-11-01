@@ -438,8 +438,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     InFront::StartOfLiteral(start) => (start, start),
                     // JSC reports the copy of any other object at the `...`.
                     InFront::Property(_) if self.file.runs_as_written() => (prop.start, prop.start),
-                    // The source map knows the `...` where the object stands on another line than the property in front of it, and takes
-                    // it back to that property anywhere else.
+                    // The source map knows the `...` only where it starts a line, and else names the property in front of it.
                     InFront::Property(previous) => {
                         let in_front = self.file.last_mapped_value_position(hir[previous].value);
                         let value = self.file.first_position(prop.value);

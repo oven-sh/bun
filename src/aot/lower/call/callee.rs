@@ -406,8 +406,7 @@ impl FileLowering<'_, '_, '_, '_> {
         transpiled.is_some_and(|it| it.has_require_main_at(start))
     }
 
-    // JSC reports a call at the name that its callee ends in, and the call of any other callee at the end of the last token in front of the
-    // arguments, which is the `?.` of `f?.()`.
+    // JSC reports a call at the name its callee ends in, and the call of any other callee behind the callee: behind the `?.` of `f?.()`.
     pub(in crate::lower) fn call_position(&self, site: Call) -> u32 {
         if let Some(start) = self.find_start_of_require_printed_alone(site) {
             return start;
@@ -457,8 +456,7 @@ impl FileLowering<'_, '_, '_, '_> {
             .unwrap_or(end)
     }
 
-    // The position of `token` where Bun's transpiler maps it: where `behind`, which is mapped behind the token, stands on another line than
-    // `in_front`, the last mapping in front of it, and the token does too.
+    // Where Bun's transpiler maps `token`: only where `behind` and the token stand on another line than `in_front`, the last mapping in front.
     pub(in crate::lower) fn find_token_on_new_line(
         &self,
         token: FrameToken,
@@ -521,8 +519,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // JSC reports an access to a member at the `.`, the `?.` or the `[` behind the object. The source map knows that token where the name or the
-    // index behind it stands on another line than the last token of the object, and takes it back to that last token anywhere else.
+    // JSC reports a member at its `.`, `?.` or `[`. The source map knows that token only where it starts a line, and else names the object's last token.
     pub(in crate::lower) fn member_position(&self, access: ExprId) -> u32 {
         let hir = self.hir;
         let Some((object, _)) = hir.member_key(access) else {

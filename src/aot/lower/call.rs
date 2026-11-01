@@ -468,7 +468,6 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     // JSC reports `new X(..)` at its `new`, and what `Reflect.construct(X, ..)` constructs in place where it reports that call.
-    // Where Bun's transpiler prints the call `X(..)` for a `new`, its source map has the name at the `new`.
     fn construct_position(&self, expression: ExprId) -> u32 {
         match self.hir[expression].kind {
             ExprKind::New(_) => self.hir[expression].pos,

@@ -626,11 +626,7 @@ impl NewBuilder<'_, VLQSourceMap> {
         self.append_at_column(self.generated_column, original_line, original_column);
     }
 
-    /// [`add_source_mapping`](Self::add_source_mapping) for the name or index at `loc`, which the printer writes
-    /// right behind `token`: `output` ends with the `printed_len` bytes of that token.
-    ///
-    /// JSC reports a read of the member at the token. Where `loc` is on the source line of the mapping before it, a
-    /// lookup of the token finds that mapping and names the line. Where it is not, the token is mapped too.
+    /// `add_source_mapping(loc)` for what the printer writes right behind the `printed_len` bytes of `token`. Maps the token too where `loc` starts a line.
     #[inline(never)]
     pub fn add_source_mapping_behind(
         &mut self,
@@ -650,9 +646,7 @@ impl NewBuilder<'_, VLQSourceMap> {
         self.append_at_column(self.generated_column, original_line, original_column);
     }
 
-    /// Maps `token`, which the printer writes next, where `anchor` is on another source line than the mapping
-    /// before it. `anchor` is the position of what is mapped behind the token, or of the token itself
-    /// ([`FrameToken::Known`]). On one line nothing is added, and that is all the caller pays for.
+    /// Maps `token`, which the printer writes next, where `anchor` (what is mapped behind it, or the token itself) is on another source line than the mapping before.
     #[inline(always)]
     pub fn add_source_mapping_on_new_line(
         &mut self,
@@ -702,9 +696,7 @@ impl NewBuilder<'_, VLQSourceMap> {
         self.map_token_on_new_line(token, anchor, first, 0);
     }
 
-    /// [`add_source_mapping_on_new_line`](Self::add_source_mapping_on_new_line) for the token that stands `back`
-    /// bytes in front of `text`, where `text` is a piece of the source: the backquote of a template in front of
-    /// its first characters.
+    /// `add_source_mapping_on_new_line` for the token `back` bytes in front of `text`, a piece of the source: the backquote in front of a template's head.
     pub fn add_source_mapping_in_front_of_text_on_new_line(
         &mut self,
         text: &[u8],

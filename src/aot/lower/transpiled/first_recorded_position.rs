@@ -1307,8 +1307,7 @@ impl Constructor<'_> {
         First::Nothing
     }
 
-    /// The position of `token` where the printer maps it: where `behind`, which is mapped behind the token, stands
-    /// on another line than `in_front`, the last mapping in front of it, and the token does too.
+    /// Where the printer maps `token`: only where `behind` and the token stand on another line than `in_front`, the last mapping in front.
     fn find_token_on_new_line(
         &self,
         token: FrameToken,
@@ -1323,8 +1322,7 @@ impl Constructor<'_> {
         (!are_on_one_line(self.text, found, in_front)).then_some(found)
     }
 
-    /// What the source map names for the `.`, the `?.` or the `[` of a member: the token where it starts a line,
-    /// and the last mapping of the object anywhere else.
+    /// What the source map names for the `.`, `?.` or `[` of a member: the token where it starts a line, else the last mapping of the object.
     fn member_token(&self, member: Expr, object: Expr) -> Option<Loc> {
         let in_front = last_mapping(object)?;
         let behind = match member.data {
@@ -1409,8 +1407,7 @@ impl Constructor<'_> {
             let is_computed = property.flags.contains(PropertyFlag::IsComputed);
             let is_method = property.flags.contains(PropertyFlag::IsMethod);
             let found = if property.kind == G::PropertyKind::Spread {
-                // An object that begins with a spread begins as a copy, which is recorded at the `{`. Any other
-                // spread is recorded at its `...`, which has a mapping where it starts a line.
+                // A literal that begins with a spread begins as a copy, recorded at the `{`. Any other spread is recorded at its `...`, mapped where it starts a line.
                 let is_copy = index == 0 && !rest.iter().any(is_accessor);
                 let in_front = match index.checked_sub(1) {
                     Some(previous) => properties[previous].value.and_then(last_mapping),

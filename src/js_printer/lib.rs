@@ -2418,8 +2418,7 @@ pub(crate) mod __gated_printer {
                 .add_source_mapping(location, self.writer.slice());
         }
 
-        /// `add_source_mapping(location)` for the name or index that is printed right behind `token`, of which
-        /// `printed_len` bytes were just printed. The token is mapped too where `location` starts a line.
+        /// `add_source_mapping(location)` behind `token`, of which `printed_len` bytes were just printed. Maps the token too where `location` starts a line.
         #[inline]
         pub(crate) fn add_source_mapping_behind(
             &mut self,
@@ -3556,8 +3555,7 @@ pub(crate) mod __gated_printer {
                         self.print(b"?.");
                     }
                     if GENERATE_SOURCE_MAP {
-                        // JSC reports the call at the name its callee ends in, which is mapped. Behind any other
-                        // callee it reports the call in front of the `(`, and an optional one behind its `?.`.
+                        // JSC reports a call at the name its callee ends in, any other call in front of the `(`, and an optional one behind its `?.`.
                         let behind = || args.first().map_or(e.close_paren_loc, |arg| arg.loc);
                         if is_optional {
                             self.add_source_mapping_on_new_line(

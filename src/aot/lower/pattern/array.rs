@@ -14,8 +14,7 @@ pub(super) fn destructure_array(
     value: ValueId,
     mapped: u32,
 ) {
-    // The `[` of an assignment is the start of an expression, which the source map knows. It knows the `[` of a binding where that stands on
-    // another line than what is mapped in front of it.
+    // The `[` of an assignment starts an expression, which the source map knows. It knows the `[` of a binding only where that starts a line.
     // `const [[x]] = v`: both lists are reported at `const`, and an error quotes the one that was given no list.
     if let PatternNode::Binding(_) = node {
         let written = lowering.file.node_position(node);

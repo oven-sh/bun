@@ -1,10 +1,4 @@
-//! The tokens that JSC reports a stack frame at and that the tree has no position for.
-//!
-//! JSC reports a read of `a.b` at the `.`, a call of `f()()` behind `f()`, and `for (x of y)` at the `of`. The printer
-//! maps the name, the argument or the iterable behind such a token. A lookup of the token then finds the mapping in
-//! front of it, which names the right line as long as the token stands on that line. Where it does not, the printer
-//! maps the token itself. Its position is read from the source text here, by one rule for the printer and for whoever
-//! has to know what the printer maps (the ahead-of-time compiler).
+//! The tokens JSC reports a stack frame at that the tree has no position for. The printer maps one where it starts a line, and finds it in the source text here.
 
 use crate::Loc;
 
@@ -25,9 +19,7 @@ pub enum FrameToken {
 }
 
 impl FrameToken {
-    /// Where the token is in `source`, looking back from `anchor`, the position of what the printer maps behind it.
-    /// None where anything but blanks stands in between (and `(`, which the parser does not keep), and where the
-    /// token is not behind `first`: the text at `anchor` was then written somewhere else.
+    /// The token in `source`, looking back from `anchor` over blanks and `(`. None where anything else stands between, or the token is not behind `first`.
     pub fn find(self, source: &[u8], anchor: Loc, first: Loc) -> Option<Loc> {
         if self == FrameToken::Known {
             return Some(anchor);

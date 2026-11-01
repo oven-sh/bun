@@ -85,8 +85,7 @@ impl FileLowering<'_, '_, '_, '_> {
         (position, position)
     }
 
-    // JSC records the read of `name += value`, of `++name` and of a `name++` whose result is used where the name starts. It compiles a `name++`
-    // whose result nothing uses as `++name`, with the end of the name for the end of the `++`. The source map takes that to the start too.
+    // JSC records the read of an update where the name starts. A `name++` whose result nothing uses keeps the end of the name in text that runs as written.
     fn updated_read_position(&self, expression: ExprId, name: ExprId, is_result_used: bool) -> u32 {
         match self.hir[expression].kind {
             ExprKind::Unary {

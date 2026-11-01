@@ -85,8 +85,7 @@ bun_core::declare_scope!(cache, visible);
 /// Version 50: The body of a class with lowered class decorators names the class by the
 /// binding that holds what the decorators return.
 /// Version 51: A `bun:` specifier that names no builtin is printed as it is written.
-/// Version 52: A `.`, `?.`, `[`, `of`, backquote or the `(` of a call that starts a line is mapped, and
-/// the name of a constructor that is called without `new` is mapped to the `new`.
+/// Version 52: A token that JSC reports a frame at is mapped where it starts a line, and `Error()` printed for `new Error()` maps to the `new`.
 const EXPECTED_VERSION: u32 = 52;
 
 /// Source files smaller than this are not written to / read from the on-disk

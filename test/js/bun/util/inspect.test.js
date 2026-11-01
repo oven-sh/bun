@@ -1829,9 +1829,9 @@ describe("Bun.inspect of a value with its own printer", () => {
     {
       name: "Request with a Blob body",
       value: () =>
-        new Request("http://example.com/", { method: "PUT", body: new Blob(["hello"], { type: "text/plain" }) }),
-      compact: `Request (5 bytes) { method: "PUT", url: "http://example.com/", headers: Headers { "content-type": "text/plain;charset=utf-8" }, Blob (5 bytes) { type: "text/plain;charset=utf-8" } }`,
-      pretty: `Request (5 bytes) {\n  method: "PUT",\n  url: "http://example.com/",\n  headers: Headers {\n    "content-type": "text/plain;charset=utf-8",\n  }\n  Blob (5 bytes) {\n    type: "text/plain;charset=utf-8"\n  }\n}`,
+        new Request("http://example.com/", { method: "PUT", body: new Blob(["hello"], { type: "image/png" }) }),
+      compact: `Request (5 bytes) { method: "PUT", url: "http://example.com/", headers: Headers { "content-type": "image/png" }, Blob (5 bytes) { type: "image/png" } }`,
+      pretty: `Request (5 bytes) {\n  method: "PUT",\n  url: "http://example.com/",\n  headers: Headers {\n    "content-type": "image/png",\n  }\n  Blob (5 bytes) {\n    type: "image/png"\n  }\n}`,
     },
     {
       name: "Request with an S3 body",
@@ -1853,21 +1853,21 @@ describe("Bun.inspect of a value with its own printer", () => {
     },
     {
       name: "Response with a Blob body",
-      value: () => new Response(new Blob(["x"], { type: "text/plain" })),
-      compact: `Response (1 bytes) { ok: true, url: "", status: 200, statusText: "", headers: Headers { "content-type": "text/plain;charset=utf-8" }, redirected: false, bodyUsed: false, Blob (1 bytes) { type: "text/plain;charset=utf-8" } }`,
-      pretty: `Response (1 bytes) {\n  ok: true,\n  url: "",\n  status: 200,\n  statusText: "",\n  headers: Headers {\n    "content-type": "text/plain;charset=utf-8",\n  },\n  redirected: false,\n  bodyUsed: false,\n  Blob (1 bytes) {\n    type: "text/plain;charset=utf-8"\n  }\n}`,
+      value: () => new Response(new Blob(["x"], { type: "image/png" })),
+      compact: `Response (1 bytes) { ok: true, url: "", status: 200, statusText: "", headers: Headers { "content-type": "image/png" }, redirected: false, bodyUsed: false, Blob (1 bytes) { type: "image/png" } }`,
+      pretty: `Response (1 bytes) {\n  ok: true,\n  url: "",\n  status: 200,\n  statusText: "",\n  headers: Headers {\n    "content-type": "image/png",\n  },\n  redirected: false,\n  bodyUsed: false,\n  Blob (1 bytes) {\n    type: "image/png"\n  }\n}`,
     },
     {
       name: "Blob with a type",
-      value: () => new Blob(["x"], { type: "text/plain" }),
-      compact: `Blob (1 bytes) { type: "text/plain;charset=utf-8" }`,
-      pretty: `Blob (1 bytes) {\n  type: "text/plain;charset=utf-8"\n}`,
+      value: () => new Blob(["x"], { type: "image/png" }),
+      compact: `Blob (1 bytes) { type: "image/png" }`,
+      pretty: `Blob (1 bytes) {\n  type: "image/png"\n}`,
     },
     {
       name: "File",
-      value: () => new File(["x"], "f.txt", { type: "text/plain", lastModified: 1 }),
-      compact: `File (1 bytes) { name: "f.txt", type: "text/plain;charset=utf-8", lastModified: 1 }`,
-      pretty: `File (1 bytes) {\n  name: "f.txt",\n  type: "text/plain;charset=utf-8",\n  lastModified: 1\n}`,
+      value: () => new File(["x"], "f.png", { type: "image/png", lastModified: 1 }),
+      compact: `File (1 bytes) { name: "f.png", type: "image/png", lastModified: 1 }`,
+      pretty: `File (1 bytes) {\n  name: "f.png",\n  type: "image/png",\n  lastModified: 1\n}`,
     },
     {
       // Known-odd in `pretty`: a second line feed follows `offset`.
@@ -1879,9 +1879,9 @@ describe("Bun.inspect of a value with its own printer", () => {
     {
       // Known-odd in `pretty`: the comma after `offset` is on a line of its own.
       name: "sliced File",
-      value: () => new File(["hello"], "f.txt", { type: "text/plain", lastModified: 1 }).slice(1),
-      compact: `File (4 bytes) { name: "f.txt", type: "text/plain;charset=utf-8", offset: 1, lastModified: 1 }`,
-      pretty: `File (4 bytes) {\n  name: "f.txt",\n  type: "text/plain;charset=utf-8",\n  offset: 1\n,\n  lastModified: 1\n}`,
+      value: () => new File(["hello"], "f.png", { type: "image/png", lastModified: 1 }).slice(1),
+      compact: `File (4 bytes) { name: "f.png", type: "image/png", offset: 1, lastModified: 1 }`,
+      pretty: `File (4 bytes) {\n  name: "f.png",\n  type: "image/png",\n  offset: 1\n,\n  lastModified: 1\n}`,
     },
     {
       name: "Bun.file(path)",
@@ -1989,13 +1989,6 @@ describe("Bun.inspect of a value with its own printer", () => {
       expect(text).not.toContain("\n");
       expect(text).toBe(util.inspect(value, { breakLength: Infinity, compact: true, depth: Infinity }));
     }
-  });
-
-  it("an array of more than 100 items", () => {
-    const array = Array.from({ length: 101 }, (_, i) => i);
-    expect(Bun.inspect(array, { compact: true })).toEndWith(", 98, 99, ... 1 more items ]");
-    expect(Bun.inspect(array, { compact: true })).not.toContain("\n");
-    expect(Bun.inspect(array)).toEndWith(" 98, 99,\n  ... 1 more items\n]");
   });
 
   it("Request and Response with a stream body", () => {

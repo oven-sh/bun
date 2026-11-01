@@ -1,4 +1,5 @@
 // Where the formatter prints on one line, the options of a custom inspect method also hold breakLength and compact.
+// The row of the options in src/codegen/builtins/host/runtime-dependencies.builtins.ts names neither: a test of the engine counts the fields of that row.
 const custom = Symbol.for("nodejs.util.inspect.custom");
 class Seen {
   [custom](depth, options, inspect) {

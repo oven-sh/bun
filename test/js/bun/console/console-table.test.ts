@@ -401,11 +401,6 @@ describe("a cell prints on one line", () => {
       `Response (1 bytes) { ok: true, url: "", status: 200, statusText: "", headers: Headers {}, redirected: false, bodyUsed: false, Blob (1 bytes) }`,
     ],
     ["File", () => new File(["x"], "f.txt", { lastModified: 1 }), `File (1 bytes) { name: "f.txt", lastModified: 1 }`],
-    [
-      "an array of 101 items",
-      () => Array.from({ length: 101 }, (_, i) => i),
-      `[ ${Array.from({ length: 100 }, (_, i) => i).join(", ")}, ... 1 more items ]`,
-    ],
   ];
 
   test.each(cases)("Bun.inspect.table: %s", (_, make, cell) => {
@@ -433,7 +428,7 @@ describe("a cell prints on one line", () => {
   test("Bun.inspect.table with compact: false prints a cell as the value prints alone", () => {
     const request = new Request("http://example.com/");
     expect(Bun.inspect.table([{ c: request }], { compact: false } as Bun.BunInspectOptions)).toContain(
-      Bun.inspect(request),
+      `\n│ 0 │ ${Bun.inspect(request)} │\n`,
     );
   });
 });

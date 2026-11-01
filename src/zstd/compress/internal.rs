@@ -743,6 +743,18 @@ pub(crate) fn common_prefix(a: &[u8], b: &[u8]) -> usize {
 #[derive(Clone, Copy)]
 pub(crate) struct Near<'a>(&'a [u8]);
 
+/// What [`Near::compare_chunks`] does with the first 16 bytes, where most positions differ.
+#[derive(Clone, Copy, PartialEq, Eq, ConstParamTy)]
+pub(crate) enum First {
+    /// The same as with the others.
+    Alike,
+    /// They have code of their own.
+    Apart,
+    /// That code takes them 8 at a time. On x86-64, HTML and records take 5 to 13% less time where positions are only
+    /// added to the trees. Where matches are looked for, text takes 1% longer.
+    Words,
+}
+
 /// A bit for each of the 16 bytes that is not the same in both. A comparison of vectors.
 #[inline(always)]
 fn differences(bytes: &[u8; 16], match_bytes: &[u8; 16]) -> u32 {
@@ -902,7 +914,7 @@ impl<'a> Near<'a> {
     /// the order of what follows them. Only the sum of `match_pos` and `from` has to be a position.
     #[inline(always)]
     pub(crate) fn compare(self, pos: u32, match_pos: u32, from: u32) -> Common {
-        let mut len = match self.compare_chunks::<false>(pos, match_pos, from) {
+        let mut len = match self.compare_chunks::<{ First::Alike }>(pos, match_pos, from) {
             Ok(common) => return common,
             Err(len) => len,
         };
@@ -918,20 +930,20 @@ impl<'a> Near<'a> {
     }
 
     /// [`Self::compare`], 16 bytes at a time as long as there are as many. Fails with how many bytes are known to be in
-    /// common when there are not. With `FIRST_APART`, the first 16 bytes, where most differ, have code of their own.
+    /// common when there are not.
     #[inline(always)]
-    pub(crate) fn compare_chunks<const FIRST_APART: bool>(
+    pub(crate) fn compare_chunks<const FIRST: First>(
         self,
         pos: u32,
         match_pos: u32,
         from: u32,
     ) -> core::result::Result<Common, u32> {
-        self.compare_chunks_with::<FIRST_APART>(pos, self, match_pos, from)
+        self.compare_chunks_with::<FIRST>(pos, self, match_pos, from)
     }
 
     /// [`Self::compare_chunks`], for a match that is at `match_pos` in `other`.
     #[inline(always)]
-    pub(crate) fn compare_chunks_with<const FIRST_APART: bool>(
+    pub(crate) fn compare_chunks_with<const FIRST: First>(
         self,
         pos: u32,
         other: Self,
@@ -939,16 +951,22 @@ impl<'a> Near<'a> {
         from: u32,
     ) -> core::result::Result<Common, u32> {
         let mut len = from;
-        if FIRST_APART
+        let is_apart = match FIRST {
+            First::Alike => false,
+            First::Apart | First::Words => true,
+        };
+        if is_apart
             && let (Some(bytes), Some(match_bytes)) = (
                 self.chunk16(pos.wrapping_add(len)),
                 other.chunk16(match_pos.wrapping_add(len)),
             )
         {
-            let differ = differences(bytes, match_bytes);
-            if differ != 0 {
-                let len = len + differ.trailing_zeros();
-                return Ok(Common::within(len, match_bytes, bytes));
+            let common = match FIRST {
+                First::Words => Common::within_words(len, match_bytes, bytes),
+                First::Alike | First::Apart => Common::within_chunk(len, match_bytes, bytes),
+            };
+            if let Some(common) = common {
+                return Ok(common);
             }
             len += 16;
         }
@@ -959,7 +977,7 @@ impl<'a> Near<'a> {
             let differ = differences(bytes, match_bytes);
             if differ != 0 {
                 let first = differ.trailing_zeros();
-                if !FIRST_APART {
+                if !is_apart {
                     return Ok(Common::within(len + first, match_bytes, bytes));
                 }
                 // After 16 bytes that are the same, that takes longer than it saves.
@@ -1113,6 +1131,33 @@ impl Common {
         }
     }
 
+    /// [`Self::within`] after `from` bytes in common, unless the bytes are the same.
+    #[inline(always)]
+    fn within_chunk(from: u32, match_bytes: &[u8; 16], bytes: &[u8; 16]) -> Option<Self> {
+        let differ = differences(bytes, match_bytes);
+        (differ != 0).then(|| Self::within(from + differ.trailing_zeros(), match_bytes, bytes))
+    }
+
+    /// [`Self::within_chunk`], 8 bytes at a time.
+    #[inline(always)]
+    fn within_words(from: u32, match_bytes: &[u8; 16], bytes: &[u8; 16]) -> Option<Self> {
+        let (bytes, match_bytes) = (
+            u128::from_le_bytes(*bytes),
+            u128::from_le_bytes(*match_bytes),
+        );
+        for (half, from) in [(0, from), (64, from + 8)] {
+            let (word, match_word) = ((bytes >> half) as u64, (match_bytes >> half) as u64);
+            let differ = word ^ match_word;
+            if differ != 0 {
+                return Some(Self {
+                    len: from + (differ.trailing_zeros() >> 3),
+                    match_is_smaller: Some(match_word.swap_bytes() < word.swap_bytes()),
+                });
+            }
+        }
+        None
+    }
+
     #[inline(always)]
     pub(crate) const fn up_to_the_end(len: u32) -> Self {
         Self {
@@ -1252,8 +1297,8 @@ pub(crate) struct TreeInput<'a> {
     /// The current segment, up to where matches end. A position in it is an index minus `dict_limit`.
     pub(crate) near: Near<'a>,
     pub(crate) dict_limit: u32,
-    /// The older segment.
-    pub(crate) dict: Prefix<'a>,
+    /// The older segment, with which its buffer ends.
+    dict: Prefix<'a>,
     /// Whether there is enough of it for hints at what is about to be read to be worth giving.
     pub(crate) far: bool,
 }
@@ -1267,12 +1312,23 @@ impl<'a> TreeInput<'a> {
         iend: usize,
     ) -> Result<Self> {
         let near = Near::new(prefix.buf.sub(prefix.pos_of(dict_limit)..iend)?)?;
+        let older = dict.buf.get(..dict.pos_of(dict_limit));
+        let dict = Prefix {
+            buf: older.unwrap_or_default(),
+            base: dict.base,
+        };
         Ok(Self {
             near,
             dict_limit,
             dict,
             far: Self::is_far(near),
         })
+    }
+
+    /// The older segment, with which its buffer ends.
+    #[inline(always)]
+    pub(crate) const fn dict(&self) -> Prefix<'a> {
+        self.dict
     }
 
     /// What `far` is for a current segment.
@@ -1320,7 +1376,8 @@ impl<'a> TreeInput<'a> {
         u64::from(match_index) + u64::from(len) >= u64::from(self.dict_limit)
     }
 
-    /// [`Near::compare_chunks`] for the next 16 bytes alone, if the match has them in the older segment.
+    /// [`Near::compare_chunks`] for the next 16 bytes alone, if the match has them in the older segment. In words,
+    /// whatever the walk does in the current segment: there is one copy of this, out of line.
     #[inline(always)]
     fn compare_older(
         &self,
@@ -1328,23 +1385,14 @@ impl<'a> TreeInput<'a> {
         match_index: u32,
         from: u32,
     ) -> core::result::Result<Common, u32> {
-        if self.is_current(match_index, from) {
-            return Err(from);
-        }
-        let older = self.dict.buf.get(..self.dict.pos_of(self.dict_limit));
-        let match_pos = self.dict.pos_of(match_index + from);
+        let pos = self.dict.pos_of(match_index).wrapping_add(from as usize);
         let (Some(bytes), Some(match_bytes)) = (
             self.near.chunk16(ip.wrapping_add(from)),
-            older.and_then(|older| older.get(match_pos..)?.first_chunk()),
+            (self.dict.buf.get(pos..pos.wrapping_add(16))).and_then(<[u8]>::first_chunk),
         ) else {
             return Err(from);
         };
-        let differ = differences(bytes, match_bytes);
-        if differ == 0 {
-            return Err(from + 16);
-        }
-        let len = from + differ.trailing_zeros();
-        Ok(Common::within(len, match_bytes, bytes))
+        Common::within_words(from, match_bytes, bytes).ok_or(from + 16)
     }
 
     /// [`Near::compare`] wherever the match is, for what [`Near::compare_chunks`] leaves. Small, for a cheap call.
@@ -1424,9 +1472,10 @@ pub(crate) enum Hints {
 /// Goes down the tree whose root is `root` for the position `ip` of `input.near`, which `descent` is for and which
 /// becomes the root. `visit` is called with each position that is met on the way, which are all at least `low` and at
 /// most `nb_compares`, and what it has in common with `ip`, and returns whether to go on. Returns how many more positions
-/// could have been compared. `BY_HEAD` is whether to try [`Near::compare_head`], which is for ways down that are short.
+/// could have been compared. With [`First::Alike`], [`Near::compare_head`] is tried before [`Near::compare_chunks`], which
+/// is for ways down that are short.
 #[inline(always)]
-pub(crate) fn bt_walk<const BY_HEAD: bool, const HINTS: Hints>(
+pub(crate) fn bt_walk<const FIRST: First, const HINTS: Hints>(
     bt: &mut Nodes,
     input: &TreeInput<'_>,
     ip: u32,
@@ -1441,7 +1490,11 @@ pub(crate) fn bt_walk<const BY_HEAD: bool, const HINTS: Hints>(
     }
     let near = input.near;
     let dict_limit = input.dict_limit;
-    let head = near.chunk16(ip).filter(|_| BY_HEAD);
+    let by_head = match FIRST {
+        First::Alike => true,
+        First::Apart | First::Words => false,
+    };
+    let head = near.chunk16(ip).filter(|_| by_head);
     let mut match_index = root;
     while nb_compares != 0 && match_index >= low {
         let children = bt_children(bt, match_index);
@@ -1461,11 +1514,7 @@ pub(crate) fn bt_walk<const BY_HEAD: bool, const HINTS: Hints>(
         let common = match head.and_then(|head| near.compare_head(head, match_pos, from)) {
             Some(common) => common,
             None => {
-                let by_chunks = if BY_HEAD {
-                    near.compare_chunks::<false>(ip, match_pos, from)
-                } else {
-                    near.compare_chunks::<true>(ip, match_pos, from)
-                };
+                let by_chunks = near.compare_chunks::<FIRST>(ip, match_pos, from);
                 match by_chunks {
                     Ok(common) => common,
                     Err(from) => input.compare_rest(ip, match_index, from)?,
@@ -1609,9 +1658,12 @@ impl<'a> DictTree<'a> {
                 self.content.prefetch(pos.wrapping_add(from));
             }
             let match_pos = dict_match_index.wrapping_sub(self.low_limit);
-            let chunks = input
-                .near
-                .compare_chunks_with::<false>(ip, self.content, match_pos, from);
+            let chunks = input.near.compare_chunks_with::<{ First::Alike }>(
+                ip,
+                self.content,
+                match_pos,
+                from,
+            );
             let common = match chunks {
                 Ok(common) => common,
                 Err(from) => self.compare_rest(input, ip, dict_match_index, from)?,
@@ -2732,8 +2784,9 @@ mod tests {
                 let head = near.chunk16(POS).ok_or(BUG)?;
                 for from in [0, len / 2, len] {
                     for common in [
-                        near.compare_chunks::<false>(POS, 0, from),
-                        near.compare_chunks::<true>(POS, 0, from),
+                        near.compare_chunks::<{ First::Alike }>(POS, 0, from),
+                        near.compare_chunks::<{ First::Apart }>(POS, 0, from),
+                        near.compare_chunks::<{ First::Words }>(POS, 0, from),
                     ] {
                         assert_eq!(
                             common.map(|common| (common.len, common.match_is_smaller)),
@@ -2868,15 +2921,22 @@ mod tests {
                     let match_index = DICT_LIMIT - in_older;
                     for from in [0, len / 2, len] {
                         let match_pos = match_index.wrapping_sub(DICT_LIMIT);
-                        let common = match input.near.compare_chunks::<true>(IP, match_pos, from) {
-                            Ok(common) => common,
-                            Err(from) => input.compare_rest(IP, match_index, from)?,
-                        };
-                        assert_eq!(
-                            (common.len, common.match_is_smaller),
-                            (len, (IP + len < END).then_some(match_is_smaller)),
-                            "{in_older} {len} {from}"
-                        );
+                        let near = input.near;
+                        for by_chunks in [
+                            near.compare_chunks::<{ First::Alike }>(IP, match_pos, from),
+                            near.compare_chunks::<{ First::Apart }>(IP, match_pos, from),
+                            near.compare_chunks::<{ First::Words }>(IP, match_pos, from),
+                        ] {
+                            let common = match by_chunks {
+                                Ok(common) => common,
+                                Err(from) => input.compare_rest(IP, match_index, from)?,
+                            };
+                            assert_eq!(
+                                (common.len, common.match_is_smaller),
+                                (len, (IP + len < END).then_some(match_is_smaller)),
+                                "{in_older} {len} {from}"
+                            );
+                        }
                     }
                 }
             }

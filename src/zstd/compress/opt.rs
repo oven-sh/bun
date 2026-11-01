@@ -6,11 +6,11 @@ use core::mem;
 use super::hist;
 use super::huf::HufRepeat;
 use super::internal::{
-    BlockSrc, Common, Descent, DictMatchState, DictMode, DictTree, EntropyCTables, Hasher, Hints,
-    Match, MatchState, Near, Nodes, OptState, ParamSwitch, Prefix, PriceTable, RawSeq, RawSeqStore,
-    SeqStore, Strategy, TreeInput, ZSTD_OPT_NUM, bt_look_ahead, bt_nodes, bt_set_children, bt_walk,
-    hash3_of, index_overlap_check, ll_code, ml_code, new_rep, offset_to_offbase, table_get,
-    table_put,
+    BlockSrc, Common, Descent, DictMatchState, DictMode, DictTree, EntropyCTables, First, Hasher,
+    Hints, Match, MatchState, Near, Nodes, OptState, ParamSwitch, Prefix, PriceTable, RawSeq,
+    RawSeqStore, SeqStore, Strategy, TreeInput, ZSTD_OPT_NUM, bt_look_ahead, bt_nodes,
+    bt_set_children, bt_walk, hash3_of, index_overlap_check, ll_code, ml_code, new_rep,
+    offset_to_offbase, table_get, table_put,
 };
 use crate::common::{
     LL_BITS, MAX_LL, MAX_ML, MAX_OFF, MINMATCH, ML_BITS, ZSTD_BLOCKSIZE_MAX, ZSTD_REP_NUM,
@@ -588,9 +588,9 @@ impl<'a> Trees<'a> {
 
     /// Adds the position `ip` of `near`, which starts with `bytes`, to its tree. `visit` is called with each position
     /// that is met on the way, which are all at least `low`, and what it has in common with `ip`, and returns whether
-    /// to go on. Returns how many more positions could have been compared.
+    /// to go on. Returns how many more positions could have been compared. `FIRST` and `HINTS` are those of [`bt_walk`].
     #[inline(always)]
-    fn walk<const HINTS: Hints>(
+    fn walk<const FIRST: First, const HINTS: Hints>(
         &mut self,
         ip: u32,
         bytes: u64,
@@ -612,7 +612,7 @@ impl<'a> Trees<'a> {
         }
 
         let descent = Descent::new(self.bt, curr);
-        bt_walk::<false, HINTS>(
+        bt_walk::<FIRST, HINTS>(
             self.bt,
             &self.input,
             ip,
@@ -635,7 +635,7 @@ impl<'a> Trees<'a> {
         let mut match_end_idx = curr.wrapping_add(8 + 1);
         let mut best_length = 8u32;
 
-        self.walk::<HINTS>(ip, bytes, window_low, |match_index, common| {
+        self.walk::<{ First::Words }, HINTS>(ip, bytes, window_low, |match_index, common| {
             if common.len > best_length {
                 cold_path();
                 best_length = common.len;
@@ -734,7 +734,7 @@ impl<'a> Trees<'a> {
             {
                 return Ok(None);
             }
-            let dict = input.dict;
+            let dict = input.dict();
             (
                 dict.buf,
                 dict.pos_of(rep_index),
@@ -754,7 +754,7 @@ impl<'a> Trees<'a> {
         if input.dict_limit.wrapping_sub(index) < 4 {
             return Ok(true);
         }
-        let there = read_le32(input.dict.buf, input.dict.pos_of(index))?;
+        let there = read_le32(input.dict().buf, input.dict().pos_of(index))?;
         Ok(minmatch_differs(there, bytes, 3) == 0)
     }
 
@@ -901,7 +901,7 @@ impl<'a> Trees<'a> {
     ) -> Result<u32> {
         let curr = ip.wrapping_add(self.input.dict_limit);
         let mut is_over = false;
-        let left = self.walk::<{ Hints::All }>(ip, bytes, match_low, |match_index, common| {
+        let visit = |match_index: u32, common: Common| -> Result<bool> {
             if common.len > found.best_length {
                 if common.len > found.match_end_idx.wrapping_sub(match_index) {
                     found.match_end_idx = match_index.wrapping_add(common.len);
@@ -922,7 +922,8 @@ impl<'a> Trees<'a> {
                 }
             }
             Ok(true)
-        })?;
+        };
+        let left = self.walk::<{ First::Apart }, { Hints::All }>(ip, bytes, match_low, visit)?;
         Ok(if is_over { 0 } else { left })
     }
 

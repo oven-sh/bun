@@ -5,9 +5,9 @@ use core::num::NonZeroU32;
 use core::ops::Range;
 
 use super::internal::{
-    BlockSrc, CompressionParameters, Descent, DictMatchState, DictMode, DictTree, Hash8, Hasher,
-    Hints, K_SEARCH_STRENGTH, MatchState, Near, Nodes, Prefix, REPCODE1_TO_OFFBASE, RowTags,
-    SecondTagStats, SeqSink, SeqStore, Strategy, TreeInput, ZSTD_DUBT_UNSORTED_MARK,
+    BlockSrc, CompressionParameters, Descent, DictMatchState, DictMode, DictTree, First, Hash8,
+    Hasher, Hints, K_SEARCH_STRENGTH, MatchState, Near, Nodes, Prefix, REPCODE1_TO_OFFBASE,
+    RowTags, SecondTagStats, SeqSink, SeqStore, Strategy, TreeInput, ZSTD_DUBT_UNSORTED_MARK,
     ZSTD_ROW_HASH_CACHE_SIZE, bt_children, bt_look_ahead, bt_low, bt_nodes, bt_set_children,
     bt_walk, count_2segments, hash_ptr, hashed_swap, index_overlap_check, offbase_is_offset,
     offbase_to_offset, offset_to_offbase, table_get, table_put,
@@ -219,7 +219,7 @@ impl<'a> Dubt<'a> {
         let mut search_dict = true;
         match_index = table_get(self.hash_table, h);
         table_put(self.hash_table, h, curr);
-        let nb_compares = bt_walk::<true, { Hints::All }>(
+        let nb_compares = bt_walk::<{ First::Alike }, { Hints::All }>(
             self.bt,
             &self.input,
             ip,
@@ -420,7 +420,7 @@ fn sort_dubt1_in_dict(
     bt_low: u32,
     window_low: u32,
 ) -> Result<()> {
-    let older = input.dict;
+    let older = input.dict();
     let nothing = Prefix { buf: &[], base: 0 };
     let older = TreeInput::new(older, nothing, low_limit, older.pos_of(input.dict_limit))?;
     sort_dubt1(bt, &older, curr, nb_compares, bt_low, window_low)
@@ -438,7 +438,7 @@ fn sort_dubt1(
 ) -> Result<()> {
     // The next sorted candidate is in the first slot. The other one has the previous unsorted candidate.
     let [next_sorted, _] = bt_children(bt, curr);
-    bt_walk::<true, { Hints::All }>(
+    bt_walk::<{ First::Alike }, { Hints::All }>(
         bt,
         input,
         curr.wrapping_sub(input.dict_limit),

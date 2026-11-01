@@ -36,6 +36,8 @@ import {
   ED25519_IDENTITY,
   ED25519_SMALL_ORDER_POINTS,
   forgeryWithHonestR,
+  forgeryWithIdentityR,
+  forgeryWithKeyAsR,
   hexBytes,
   identityRSignature,
   zeroSignatureWithR,
@@ -1902,10 +1904,11 @@ describe("Ed25519 verify rejects small-order points", () => {
 
   test("a small-order public key imports but verifies nothing", () => {
     const results: Record<string, boolean> = {};
-    for (const { name, hex, message } of ED25519_SMALL_ORDER_POINTS) {
+    for (const { name, hex } of ED25519_SMALL_ORDER_POINTS) {
       const key = jwkKey(hex);
       expect(key.asymmetricKeyType).toBe("ed25519");
-      results[name] = verify(null, Buffer.from(message), key, zeroSignatureWithR(ED25519_IDENTITY));
+      const { message, signature } = forgeryWithIdentityR(hex);
+      results[name] = verify(null, message, key, signature);
     }
     expect(results).toEqual(Object.fromEntries(ED25519_SMALL_ORDER_POINTS.map(p => [p.name, false])));
   });
@@ -1933,9 +1936,10 @@ describe("Ed25519 verify rejects small-order points", () => {
 
   test("a small-order R is rejected", () => {
     const results: Record<string, boolean> = {};
-    for (const { name, hex, messageAsR } of ED25519_SMALL_ORDER_POINTS) {
-      if (messageAsR === undefined) continue;
-      results[name] = verify(null, Buffer.from(messageAsR), jwkKey(hex), zeroSignatureWithR(hex));
+    for (const { name, hex, canonical } of ED25519_SMALL_ORDER_POINTS) {
+      if (!canonical) continue;
+      const { message, signature } = forgeryWithKeyAsR(hex);
+      results[name] = verify(null, message, jwkKey(hex), signature);
     }
     expect(Object.keys(results)).toHaveLength(8);
     expect(results).toEqual(Object.fromEntries(Object.keys(results).map(name => [name, false])));

@@ -6,6 +6,8 @@ import {
   ED25519_IDENTITY,
   ED25519_SMALL_ORDER_POINTS,
   forgeryWithHonestR,
+  forgeryWithIdentityR,
+  forgeryWithKeyAsR,
   hexBytes,
   identityRSignature,
   zeroSignatureWithR,
@@ -587,15 +589,11 @@ describe("Ed25519", () => {
 
     it("imports a small-order public key and verifies nothing under it", async () => {
       const results: Record<string, boolean> = {};
-      for (const { name, hex, message } of ED25519_SMALL_ORDER_POINTS) {
+      for (const { name, hex } of ED25519_SMALL_ORDER_POINTS) {
         const key = await crypto.subtle.importKey("raw", hexBytes(hex), "Ed25519", true, ["verify"]);
         expect(key.type).toBe("public");
-        results[name] = await crypto.subtle.verify(
-          "Ed25519",
-          key,
-          zeroSignatureWithR(ED25519_IDENTITY),
-          encoder.encode(message),
-        );
+        const { message, signature } = forgeryWithIdentityR(hex);
+        results[name] = await crypto.subtle.verify("Ed25519", key, signature, message);
       }
       expect(results).toEqual(Object.fromEntries(ED25519_SMALL_ORDER_POINTS.map(p => [p.name, false])));
     });
@@ -613,10 +611,11 @@ describe("Ed25519", () => {
 
     it("rejects a small-order R", async () => {
       const results: Record<string, boolean> = {};
-      for (const { name, hex, messageAsR } of ED25519_SMALL_ORDER_POINTS) {
-        if (messageAsR === undefined) continue;
+      for (const { name, hex, canonical } of ED25519_SMALL_ORDER_POINTS) {
+        if (!canonical) continue;
         const key = await crypto.subtle.importKey("raw", hexBytes(hex), "Ed25519", false, ["verify"]);
-        results[name] = await crypto.subtle.verify("Ed25519", key, zeroSignatureWithR(hex), encoder.encode(messageAsR));
+        const { message, signature } = forgeryWithKeyAsR(hex);
+        results[name] = await crypto.subtle.verify("Ed25519", key, signature, message);
       }
       expect(Object.keys(results)).toHaveLength(8);
       expect(results).toEqual(Object.fromEntries(Object.keys(results).map(name => [name, false])));

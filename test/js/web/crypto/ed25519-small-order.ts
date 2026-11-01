@@ -1,94 +1,58 @@
 import { createHash } from "node:crypto";
 
-// Small-order Ed25519 points, in the RFC 8032 encoding, as a public key or as
-// the R half of a signature. The cofactorless verify equation
-// [S]B = R + [h]A holds for every message when A and R are small-order and
-// S = 0 (with h chosen to be a multiple of the point order), so a verifier
-// that does not reject these points accepts a forged signature for any
-// message under such a key. Node rejects all of them (nodejs/node#64026).
+// Small-order Ed25519 points, in the RFC 8032 encoding, as a public key A or
+// as the R half of a signature. The multiples of such a point repeat after at
+// most 8 steps. So the cofactorless verify equation [S]B = R + [h]A holds
+// with no private key when h = SHA-512(R || A || M) mod L has the right value
+// modulo 8, and a verifier that does not reject these points accepts a forged
+// signature. Node rejects all of them (nodejs/node#64026).
 //
-// `message` is a message for which the unfiltered equation holds with
-// R = identity and S = 0 (`messageAsR`: with R = A and S = 0).
+// Each forgery below searches for its own message. So every entry proves
+// that the unfiltered equation holds for it.
 
 export const ED25519_IDENTITY = "0100000000000000000000000000000000000000000000000000000000000000";
 
-export const ED25519_SMALL_ORDER_POINTS: { name: string; hex: string; message: string; messageAsR?: string }[] = [
-  { name: "identity", hex: ED25519_IDENTITY, message: "msg 0", messageAsR: "msg 0" },
-  {
-    name: "order 2",
-    hex: "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
-    message: "msg 1",
-    messageAsR: "msg 0",
-  },
-  {
-    name: "order 4 (a)",
-    hex: "0000000000000000000000000000000000000000000000000000000000000080",
-    message: "msg 0",
-    messageAsR: "msg 3",
-  },
-  {
-    name: "order 4 (b)",
-    hex: "0000000000000000000000000000000000000000000000000000000000000000",
-    message: "msg 1",
-    messageAsR: "msg 1",
-  },
-  {
-    name: "order 8 (a)",
-    hex: "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
-    message: "msg 1",
-    messageAsR: "msg 6",
-  },
-  {
-    name: "order 8 (b)",
-    hex: "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
-    message: "msg 1",
-    messageAsR: "msg 7",
-  },
-  {
-    name: "order 8 (c)",
-    hex: "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
-    message: "msg 1",
-    messageAsR: "msg 1",
-  },
-  {
-    name: "order 8 (d)",
-    hex: "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
-    message: "msg 7",
-    messageAsR: "msg 13",
-  },
-  // Non-canonical encodings of the same points. BoringSSL decodes y >= p
-  // (reduced mod p) and x = 0 with the sign bit set, so each of these is
-  // accepted as a public key. None of them can appear as R: ED25519_verify
-  // re-encodes R canonically and compares the bytes.
+// `canonical` is false for an encoding that only a lenient decoder accepts: y >= p (BoringSSL reduces it mod p),
+// or x = 0 with the sign bit set. Such an encoding can be a public key. It cannot be R, because ED25519_verify
+// encodes the R it computes canonically and compares the bytes.
+export const ED25519_SMALL_ORDER_POINTS: { name: string; hex: string; canonical: boolean }[] = [
+  { name: "identity", hex: ED25519_IDENTITY, canonical: true },
+  { name: "order 2", hex: "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", canonical: true },
+  { name: "order 4 (a)", hex: "0000000000000000000000000000000000000000000000000000000000000080", canonical: true },
+  { name: "order 4 (b)", hex: "0000000000000000000000000000000000000000000000000000000000000000", canonical: true },
+  { name: "order 8 (a)", hex: "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a", canonical: true },
+  { name: "order 8 (b)", hex: "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa", canonical: true },
+  { name: "order 8 (c)", hex: "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05", canonical: true },
+  { name: "order 8 (d)", hex: "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85", canonical: true },
   {
     name: "identity (x = 0, sign bit set)",
     hex: "0100000000000000000000000000000000000000000000000000000000000080",
-    message: "msg 0",
+    canonical: false,
   },
   {
     name: "order 2 (x = 0, sign bit set)",
     hex: "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-    message: "msg 0",
+    canonical: false,
   },
   {
     name: "identity (y = p + 1)",
     hex: "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
-    message: "msg 0",
+    canonical: false,
   },
   {
     name: "identity (y = p + 1, sign bit set)",
     hex: "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-    message: "msg 0",
+    canonical: false,
   },
   {
     name: "order 4 (y = p, sign bit set)",
     hex: "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-    message: "msg 8",
+    canonical: false,
   },
   {
     name: "order 4 (y = p)",
     hex: "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
-    message: "msg 8",
+    canonical: false,
   },
 ];
 
@@ -139,26 +103,44 @@ export function identityRSignature(privateJwk: { d?: string; x?: string }, messa
   return signature;
 }
 
+export type Ed25519Forgery = { message: Uint8Array; signature: Uint8Array };
+
+// The first "msg N" whose h = SHA-512(R || A || M) mod L satisfies `holds`.
+function forgedMessage(R: Uint8Array, A: Uint8Array, holds: (h: bigint) => boolean): Uint8Array {
+  for (let i = 0; i < 256; i++) {
+    const message = Uint8Array.from(Buffer.from(`msg ${i}`));
+    if (holds(scalarFromLE(createHash("sha512").update(R).update(A).update(message).digest()) % L)) return message;
+  }
+  throw new Error("no message satisfies the verify equation");
+}
+
+// A forged signature under the small-order public key `hex` with R = identity
+// and S = 0. [S]B = R + [h]A holds when [h]A is the identity, which is true
+// for every small-order A when h is a multiple of 8.
+export function forgeryWithIdentityR(hex: string): Ed25519Forgery {
+  const message = forgedMessage(hexBytes(ED25519_IDENTITY), hexBytes(hex), h => h % 8n === 0n);
+  return { message, signature: zeroSignatureWithR(ED25519_IDENTITY) };
+}
+
+// A forged signature under the small-order public key `hex` with R = A and
+// S = 0. R + [h]A = [h + 1]A is the identity when h + 1 is a multiple of 8.
+export function forgeryWithKeyAsR(hex: string): Ed25519Forgery {
+  const A = hexBytes(hex);
+  return { message: forgedMessage(A, A, h => (h + 1n) % 8n === 0n), signature: zeroSignatureWithR(hex) };
+}
+
 // RFC 8032, section 7.1, TEST 1: a seed and its public key [a]B, a point of prime order.
 export const ED25519_HONEST_SEED = "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60";
 const ED25519_HONEST_POINT = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
 
 // A forged signature under the small-order public key `hex` whose R is not
 // small-order, so that only the check on the public key can reject it.
-// R = [a]B and S = a for the honest scalar a above. The message is the first
-// "msg N" for which h = SHA-512(R || A || M) mod L is a multiple of 8. Then
-// [h]A is the identity for every small-order A, and the unfiltered equation
-// [S]B = R + [h]A holds.
-export function forgeryWithHonestR(hex: string): { message: Uint8Array; signature: Uint8Array } {
+// R = [a]B and S = a for the honest scalar a above, and h is a multiple of 8.
+// Then [h]A is the identity, and [S]B = R + [h]A holds.
+export function forgeryWithHonestR(hex: string): Ed25519Forgery {
   const R = hexBytes(ED25519_HONEST_POINT);
-  const A = hexBytes(hex);
   const signature = new Uint8Array(64);
   signature.set(R, 0);
   signature.set(scalarToLE(scalarOfSeed(hexBytes(ED25519_HONEST_SEED)) % L), 32);
-  for (let i = 0; i < 256; i++) {
-    const message = Uint8Array.from(Buffer.from(`msg ${i}`));
-    const h = scalarFromLE(createHash("sha512").update(R).update(A).update(message).digest()) % L;
-    if (h % 8n === 0n) return { message, signature };
-  }
-  throw new Error(`no message makes h a multiple of 8 for ${hex}`);
+  return { message: forgedMessage(R, hexBytes(hex), h => h % 8n === 0n), signature };
 }

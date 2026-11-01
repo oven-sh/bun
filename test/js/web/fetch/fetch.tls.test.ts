@@ -747,6 +747,39 @@ describe.concurrent("fetch-tls", () => {
     });
   });
 
+  // The fixtures are described in test/js/node/tls/node-tls-connect-hostname-verification.test.ts.
+  it("applies CA name constraints to the subject CN of a certificate without a DNS subjectAltName", async () => {
+    const pem = (name: string) =>
+      readFileSync(join(import.meta.dir, "../../node/tls/fixtures", `name-constraints-${name}.pem`), "utf8");
+    const outcomes: Record<string, string> = {};
+    const attempt = (leaf: string, servername: string) =>
+      createServer({ key: pem("leaf-key"), cert: pem(`${leaf}-cert`) + pem("intermediate-cert") }, async port => {
+        outcomes[leaf] = await fetch(`https://127.0.0.1:${port}`, {
+          keepalive: false,
+          tls: { ca: pem("ca-cert"), servername },
+        }).then(
+          res => res.text(),
+          error => error.code,
+        );
+      });
+    await Promise.all([
+      attempt("inside", "host.allowed.test"),
+      attempt("outside", "outside.example.test"),
+      attempt("wildcard", "www.example.test"),
+      attempt("partial-wildcard", "www.example.test"),
+      attempt("nosan", "legacy.allowed.test"),
+    ]);
+    expect(outcomes).toEqual({
+      inside: "Hello World",
+      outside: "PERMITTED_VIOLATION",
+      // As in node: OpenSSL does not read a CN with a wildcard as a host name, so the constraints do not apply to it.
+      wildcard: "Hello World",
+      "partial-wildcard": "Hello World",
+      // Bun only: node accepts a leaf that has no subjectAltName extension and a CN inside the permitted subtree.
+      nosan: "NAME_CONSTRAINTS_WITHOUT_SANS",
+    });
+  });
+
   it("fetch with invalid tls should throw", async () => {
     await createServer(CERT_EXPIRED, async port => {
       await Promise.all(

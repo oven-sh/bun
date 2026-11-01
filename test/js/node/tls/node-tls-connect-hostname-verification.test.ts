@@ -17,8 +17,11 @@ const serverKey = fs.readFileSync(path.join(fixturesDir, "agent1-key.pem"));
 const serverCert = fs.readFileSync(path.join(fixturesDir, "agent1-cert.pem"));
 const ca = fs.readFileSync(path.join(fixturesDir, "ca1-cert.pem"));
 
-async function withServer<T>(fn: (port: number) => Promise<T>): Promise<T> {
-  const server = tls.createServer({ key: serverKey, cert: serverCert }, c => c.end());
+async function withServer<T>(
+  fn: (port: number) => Promise<T>,
+  options: tls.TlsOptions = { key: serverKey, cert: serverCert },
+): Promise<T> {
+  const server = tls.createServer(options, c => c.end());
   server.listen(0);
   await once(server, "listening");
   try {
@@ -603,5 +606,82 @@ describe("Bun.connect TLS hostname verification", () => {
     } finally {
       listener.stop(true);
     }
+  });
+});
+
+// name-constraints-ca-cert.pem -> name-constraints-intermediate-cert.pem (nameConstraints
+// permitted;DNS:.allowed.test) -> name-constraints-<leaf>-cert.pem, all leaves sharing name-constraints-leaf-key.pem:
+//   inside:           CN=host.allowed.test,     subjectAltName=email:admin@allowed.test
+//   outside:          CN=outside.example.test,  subjectAltName=email:admin@allowed.test
+//   wildcard:         CN=*.example.test,        subjectAltName=email:admin@allowed.test
+//   partial-wildcard: CN=w*.example.test,       subjectAltName=email:admin@allowed.test
+//   nosan:            CN=legacy.allowed.test,   no subjectAltName extension
+const nameConstraintsCa = fs.readFileSync(path.join(fixturesDir, "name-constraints-ca-cert.pem"));
+const nameConstraintsIntermediate = fs.readFileSync(
+  path.join(fixturesDir, "name-constraints-intermediate-cert.pem"),
+  "utf8",
+);
+const nameConstraintsLeafKey = fs.readFileSync(path.join(fixturesDir, "name-constraints-leaf-key.pem"));
+
+function connectWithNameConstraints(leaf: string, servername: string, rejectUnauthorized = true) {
+  type Result = { error: string } | { authorized: boolean; authorizationError: unknown };
+  return withServer(
+    port => {
+      const { promise, resolve } = Promise.withResolvers<Result>();
+      const socket = tls.connect(
+        { host: "127.0.0.1", port, servername, ca: nameConstraintsCa, rejectUnauthorized },
+        () => {
+          resolve({ authorized: socket.authorized, authorizationError: socket.authorizationError });
+          socket.destroy();
+        },
+      );
+      socket.on("error", err => {
+        resolve({ error: err.message });
+        socket.destroy();
+      });
+      return promise;
+    },
+    {
+      key: nameConstraintsLeafKey,
+      cert:
+        fs.readFileSync(path.join(fixturesDir, `name-constraints-${leaf}-cert.pem`), "utf8") +
+        nameConstraintsIntermediate,
+    },
+  );
+}
+
+describe("tls.connect applies CA name constraints to the subject CN of a certificate without a DNS subjectAltName", () => {
+  const accepted = { authorized: true, authorizationError: null };
+
+  test("a CN outside the permitted subtree fails certificate verification", async () => {
+    assert.deepStrictEqual(await connectWithNameConstraints("outside", "outside.example.test"), {
+      error: "permitted subtree violation",
+    });
+  });
+
+  test("a CN outside the permitted subtree is reported through authorizationError with rejectUnauthorized: false", async () => {
+    assert.deepStrictEqual(await connectWithNameConstraints("outside", "outside.example.test", false), {
+      authorized: false,
+      authorizationError: "UNSPECIFIED",
+    });
+  });
+
+  test("a CN inside the permitted subtree is accepted", async () => {
+    assert.deepStrictEqual(await connectWithNameConstraints("inside", "host.allowed.test"), accepted);
+  });
+
+  // OpenSSL's NAME_CONSTRAINTS_check_CN does not read a CN with a wildcard as a host name, so node accepts these chains.
+  for (const leaf of ["wildcard", "partial-wildcard"]) {
+    test(`a ${leaf} CN is not held to the name constraints`, async () => {
+      assert.deepStrictEqual(await connectWithNameConstraints(leaf, "www.example.test"), accepted);
+    });
+  }
+
+  // Bun only: node accepts this chain. When a CA of the chain has name constraints, BoringSSL refuses a leaf that has
+  // no subjectAltName extension and a host name as its CN, whatever that name is.
+  test("a CN inside the permitted subtree is rejected when the certificate has no subjectAltName at all", async () => {
+    assert.deepStrictEqual(await connectWithNameConstraints("nosan", "legacy.allowed.test"), {
+      error: "Issuer has name constraints but leaf has no SANs",
+    });
   });
 });

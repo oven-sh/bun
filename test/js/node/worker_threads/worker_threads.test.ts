@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, nodeExeAtLeast, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -22,6 +22,7 @@ import wt, {
   Worker,
   workerData,
 } from "worker_threads";
+import { hasRefGrid } from "./message-port-ref-fixture.mjs";
 
 // Worker startup under debug/ASAN is slow enough that several tests here cannot
 // finish inside the 5s default.
@@ -1172,6 +1173,337 @@ test("hasRef() survives collection of the unreferenced peer", () => {
   port1.ref();
   expect({ afterListener, afterRefCycle: port1.hasRef() }).toEqual({ afterListener: true, afterRefCycle: true });
   port1.close();
+});
+
+// MessagePort.hasRef() after each order in message-port-ref-fixture.mjs. One boolean is the
+// answer of bun and of node (v26.3.0 and v26.12.1 agree on every row). [bun, node] marks an
+// order that node answers differently.
+const hasRefAfter: Record<string, boolean | [bun: boolean, node: boolean]> = {
+  // node unref()s a port when its last 'message' listener is removed, after ref() too:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/worker/io.js#L241-L246
+  "ref; on; off": false,
+  "on; ref; off": false,
+  "on; unref; ref; off": false,
+  "ref; addEventListener; removeEventListener": false,
+  "ref; addEventListener with a signal; abort": false,
+  "ref; once; msg": false,
+  "once; ref; msg": false,
+  "once; unref; ref; msg": false,
+  "ref; addEventListener once; msg": false,
+  "ref; addEventListener once; dispatchEvent": false,
+  "on; ref; off inside the listener; msg": false,
+  "ref; once f; once g; msg": false,
+  "ref; once; msg; hasRef() inside the listener": false,
+
+  "ref": true,
+  "on": true,
+  "ref; on f; on g; off f": true,
+  "ref; off (never added)": true,
+  "ref; on close; off close": true,
+  "ref; on messageerror; off messageerror": true,
+
+  "on; off; on": true,
+  "ref; on; off; on": true,
+  "ref; on; off; ref": true,
+  "ref; once; msg; on inside the listener": true,
+  "ref; once; msg; ref inside the listener": true,
+
+  "(nothing)": false,
+  "on; off": false,
+  "on; unref": false,
+  "ref; unref": false,
+  "once; msg": false,
+
+  // Different on purpose. node's removeAllListeners() deletes the listeners without telling
+  // the port, so node leaves the port ref'd and the process alive with no listener:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/event_target.js#L1029-L1039
+  // bun removes them one by one, so the port is released as off() on each releases it.
+  "on; removeAllListeners(message)": [false, true],
+  "on; removeAllListeners()": [false, true],
+  "ref; on; removeAllListeners(message)": [false, true],
+  "ref; on; removeAllListeners()": [false, true],
+  "on; ref; removeAllListeners(message) inside the listener; msg": [false, true],
+  "ref; on; removeAllListeners(close)": true,
+
+  // node refs a port again for its first 'message' listener. bun keeps the unref().
+  "unref; on": [false, true],
+  "on; unref; on g": false,
+
+  "onmessage = f": true,
+  "onmessage = f; onmessage = null": false,
+  "onmessage = f; onmessage = 'string'": false,
+  "onmessage = f; onmessage = {}": false,
+  "ref; onmessage = f; onmessage = null": false,
+  "onmessage = f; unref; onmessage = g": true,
+  "on f; unref; onmessage = g; onmessage = null": false,
+  "on f; onmessage = g; onmessage = {}; off f": false,
+  "onmessage = g; on f; removeEventListener f; onmessage = null": false,
+  // bun's onmessage setter unrefs the port for every value that is not a function. node
+  // counts a handler like a listener: it unrefs only when the last one goes, and its first
+  // assignment of any value counts as one.
+  "ref; onmessage = null": [false, true],
+  "on f; onmessage = null": [false, true],
+  "on f; onmessage = g; onmessage = null": [false, true],
+  "ref; on f; onmessage = null": [false, true],
+  "onmessage = {}": [false, true],
+  "onmessage = f; onmessage = {}; on g": [false, true],
+  "onmessage = null; ref; on f; off f": [false, true],
+};
+const hasRefColumn = (runtime: 0 | 1) =>
+  Object.fromEntries(
+    Object.entries(hasRefAfter).map(([row, answer]) => [row, typeof answer === "boolean" ? answer : answer[runtime]]),
+  );
+
+test("MessagePort.hasRef() after each order of ref(), unref() and 'message' listener changes", async () => {
+  expect(await hasRefGrid()).toEqual(hasRefColumn(0));
+});
+
+const nodeForHasRefGrid = nodeExeAtLeast("26.3.0");
+test.skipIf(!nodeForHasRefGrid)("node answers the same orders as the hasRef() table says", async () => {
+  await using proc = Bun.spawn({
+    cmd: [nodeForHasRefGrid!, join(import.meta.dir, "message-port-ref-fixture.mjs")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual(hasRefColumn(1));
+  expect(exitCode).toBe(0);
+});
+
+// Runs `script` in a fresh process and reports what it printed and how it ended. The script
+// must end by itself. Its unref'd timer never fires when nothing holds the loop. The timer
+// only bounds the failure: a process that stays alive.
+async function runUntilExit(script: string) {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `${script}\nsetTimeout(() => { console.log("still alive"); process.exit(1); }, 5_000).unref();`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  return { stdout, exitCode };
+}
+
+// End to end, one process per row: once the last 'message' listener is gone, nothing about
+// the port may hold the process open. The peer stays reachable in every row, because
+// collecting it would close the port (and release it) by itself.
+test.concurrent.each([
+  [
+    "ref(), on(), off()",
+    `port1.ref(); port1.on("message", f); port1.off("message", f); console.log("hasRef=" + port1.hasRef());`,
+    "hasRef=false\n",
+  ],
+  [
+    "once(), then ref()",
+    `port1.once("message", () => console.log("got")); port1.ref(); port2.postMessage(1);`,
+    "got\n",
+  ],
+  [
+    "once(), then unref(), then ref()",
+    `port1.once("message", () => console.log("got")); port1.unref(); port1.ref(); port2.postMessage(1);`,
+    "got\n",
+  ],
+  [
+    "on(), then ref(), and off() inside the listener",
+    `const h = () => { console.log("got"); port1.off("message", h); }; port1.on("message", h); port1.ref(); port2.postMessage(1);`,
+    "got\n",
+  ],
+])(
+  "a ref()'d port lets the process exit after its last 'message' listener is removed: %s",
+  async (_name, row, stdout) => {
+    const result = await runUntilExit(
+      `const { MessageChannel } = require("worker_threads");
+       const { port1, port2 } = new MessageChannel();
+       globalThis.keep = port2;
+       const f = () => {};
+       ${row}`,
+    );
+    expect(result).toEqual({ stdout, exitCode: 0 });
+  },
+);
+
+// The same release on a port of the global MessageChannel, in a process that never loads
+// node:worker_threads: there is no on()/once() there, only the EventTarget methods.
+test.concurrent("a ref()'d global MessageChannel port lets the process exit after its once listener ran", async () => {
+  const result = await runUntilExit(
+    `const { port1, port2 } = new MessageChannel();
+     globalThis.keep = port2;
+     port1.ref();
+     port1.addEventListener("message", () => console.log("got"), { once: true });
+     port2.postMessage(1);`,
+  );
+  expect(result).toEqual({ stdout: "got\n", exitCode: 0 });
+});
+
+// A listening port whose peer closed becomes collectable before the task that tells it
+// about the close runs, and that task holds the port only weakly. A port collected in that
+// window must give its loop ref back, or the process never exits. ref() hid this behind
+// its self-reference. After the release above, a port that listens again holds the loop
+// through its listener alone, like a port that never called ref().
+test.concurrent("a listening port collected before it hears of its peer's close lets the process exit", async () => {
+  const result = await runUntilExit(
+    `const { MessageChannel } = require("worker_threads");
+     const f = () => {}, g = () => {};
+     const shapes = [
+       port => { port.on("message", g); },
+       port => { port.ref(); port.on("message", f); port.off("message", f); port.on("message", g); },
+       port => { port.on("message", f); port.ref(); port.off("message", f); port.on("message", g); },
+     ];
+     (function () {
+       for (const shape of shapes) {
+         for (let i = 0; i < 20; i++) {
+           const { port1, port2 } = new MessageChannel();
+           shape(port2);
+           port1.close();
+         }
+       }
+     })();
+     Bun.gc(true);
+     Bun.gc(true);
+     console.log("done");`,
+  );
+  expect(result).toEqual({ stdout: "done\n", exitCode: 0 });
+});
+
+// The same window with the closing side on another thread, and no ref() anywhere. The main
+// thread waits in Atomics.wait() until the worker has closed its ends, then collects in the
+// same turn, so the listening ports go before their peer-close tasks can run.
+test.concurrent(
+  "a listening port collected before it hears of a close on another thread lets the process exit",
+  async () => {
+    const result = await runUntilExit(
+      `const { MessageChannel, Worker } = require("worker_threads");
+       const closed = new Int32Array(new SharedArrayBuffer(4));
+       const worker = new Worker(
+         \`const { parentPort, workerData } = require("worker_threads");
+          parentPort.once("message", ({ ports }) => {
+            for (const port of ports) port.close();
+            Atomics.store(workerData, 0, 1);
+            Atomics.notify(workerData, 0);
+          });\`,
+         { eval: true, workerData: closed },
+       );
+       (function () {
+         const ports = [];
+         for (let i = 0; i < 20; i++) {
+           const { port1, port2 } = new MessageChannel();
+           port1.on("message", () => {});
+           ports.push(port2);
+         }
+         worker.postMessage({ ports }, ports);
+       })();
+       Atomics.wait(closed, 0, 0);
+       Bun.gc(true);
+       Bun.gc(true);
+       console.log("done");`,
+    );
+    expect(result).toEqual({ stdout: "done\n", exitCode: 0 });
+  },
+);
+
+// The release also runs for a port whose wrapper is already collected: the abort algorithm
+// then holds the only other reference to it. On an ASAN build, Malloc=1 routes bmalloc to
+// the system allocator, so that ASAN sees a read of a freed port.
+test.concurrent("aborting the last 'message' listener of a collected ref()'d port releases the loop", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { getEventLoopStats } = require("bun:internal-for-testing");
+       const held = () => getEventLoopStats().numPolls;
+       const baseline = held();
+       const controllers = [];
+       (function () {
+         for (let i = 0; i < 50; i++) {
+           const controller = new AbortController();
+           const { port1 } = new MessageChannel();
+           port1.ref();
+           port1.addEventListener("message", () => {}, { signal: controller.signal });
+           controllers.push(controller);
+         }
+       })();
+       const whileListening = held() - baseline;
+       Bun.gc(true);
+       Bun.gc(true);
+       for (const controller of controllers) controller.abort();
+       console.log(JSON.stringify({ whileListening, afterAbort: held() - baseline }));`,
+    ],
+    env: isASAN
+      ? {
+          ...bunEnv,
+          Malloc: "1",
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+        }
+      : bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: '{"whileListening":100,"afterAbort":0}\n',
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// Same rule for parentPort: node's worker exits once the listeners are gone even if
+// the script ref()'d the port explicitly.
+test("a ref()'d parentPort whose last 'message' listener was removed lets the worker exit", async () => {
+  const w = new Worker(
+    `const { parentPort } = require("worker_threads");
+     const f = () => {};
+     parentPort.ref();
+     parentPort.on("message", f);
+     parentPort.off("message", f);
+     parentPort.postMessage(parentPort.hasRef());
+     // Never fires when the port released the loop; bounds the failure mode (a worker
+     // that stays alive) with a distinctive exit code.
+     setTimeout(() => process.exit(7), 2_000).unref();`,
+    { eval: true },
+  );
+  const hasRef = once(w, "message");
+  const exited = once(w, "exit");
+  expect({ hasRef: (await hasRef)[0], exitCode: (await exited)[0] }).toEqual({ hasRef: false, exitCode: 0 });
+});
+
+// The worker's process.stdin is fed by a port that is ref()'d once reading starts. Data
+// that is still buffered when EOF arrives has to keep the thread alive until it is
+// consumed (node's kWaitingStreams), so the stream may only drop its port listener (which
+// releases that ref) after it has been drained, not when the EOF message comes in.
+test("stdin data buffered behind a paused consumer is still delivered after EOF arrives", async () => {
+  const w = new Worker(
+    `const { parentPort } = require("worker_threads");
+     const seen = [];
+     process.stdin.on("data", chunk => {
+       seen.push(chunk.toString());
+       if (seen.length !== 1) return;
+       process.stdin.pause();
+       // Resume once EOF has been received, via unref'd timers only: the buffered data is
+       // then the one thing entitled to keep this thread alive. A thread that exits at EOF
+       // never gets here again and reports nothing.
+       const poll = () => {
+         if (process.stdin._readableState.ended) process.stdin.resume();
+         else setTimeout(poll, 1).unref();
+       };
+       setTimeout(poll, 1).unref();
+     });
+     process.stdin.on("end", () => parentPort.postMessage(seen));`,
+    { eval: true, stdin: true },
+  );
+  const reports: string[][] = [];
+  w.on("message", report => reports.push(report));
+  const exited = once(w, "exit");
+  w.stdin!.write("aaaaaaaaaa");
+  w.stdin!.write("bbbbbbbbbb");
+  w.stdin!.end();
+  const [exitCode] = await exited;
+  expect({ reports, exitCode }).toEqual({ reports: [["aaaaaaaaaa", "bbbbbbbbbb"]], exitCode: 0 });
 });
 
 // markAsUncloneable blocks *cloning*, not transfer: a marked port in the transfer

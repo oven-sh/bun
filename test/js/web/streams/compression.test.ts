@@ -347,6 +347,18 @@ describe("CompressionStream and DecompressionStream", () => {
       expect(out).toBe("payload");
     });
 
+    test("decompresses a zstd stream with many empty chunks in the middle of a frame", async () => {
+      const frame = zlib.zstdCompressSync(Buffer.from("a frame in two parts"));
+      const ds = new DecompressionStream("zstd");
+      const writer = ds.writable.getWriter();
+      const read = new Response(ds.readable).text();
+      await writer.write(frame.subarray(0, 10));
+      for (let i = 0; i < 20; i++) await writer.write(new Uint8Array(0));
+      await writer.write(frame.subarray(10));
+      await writer.close();
+      expect(await read).toBe("a frame in two parts");
+    });
+
     test("rejects trailing garbage after a zstd frame", async () => {
       const frame = zlib.zstdCompressSync(Buffer.from("hello"));
       const withJunk = Buffer.concat([frame, Buffer.from([0xde, 0xad, 0xbe, 0xef])]);

@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
+import { programDeps } from "../../scripts/build/deps/index.ts";
 import { mimalloc } from "../../scripts/build/deps/mimalloc.ts";
 import { webkit } from "../../scripts/build/deps/webkit.ts";
 import { fetchCliPath } from "../../scripts/build/fetch-cli.ts";
@@ -304,7 +305,10 @@ test("the libraries that never call back into JavaScript keep their arrays on a 
     expect(safeStackFlags(on, name)).toEqual(["-fsanitize=safe-stack"]);
     expect(safeStackFlags(off, name)).toEqual([]);
   }
-  for (const name of [...librariesThatCallBackIntoJavaScript, "mimalloc", "WebKit"] as const)
+  // The programs beside bun have no second stack.
+  const forOtherPrograms = programDeps.map(dep => dep.name);
+  expect(forOtherPrograms).toContain("zstd");
+  for (const name of [...librariesThatCallBackIntoJavaScript, "mimalloc", "WebKit", ...forOtherPrograms] as const)
     expect(safeStackFlags(on, name)).toEqual([]);
   expect(everyFlagOf(on).cxx).toContain("-DBUN_SAFE_STACK=1");
   expect(everyFlagOf(on).dependencyC).not.toContain("-fsanitize=safe-stack");

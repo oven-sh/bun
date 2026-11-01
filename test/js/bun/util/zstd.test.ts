@@ -13,6 +13,7 @@ import { bunEnv, bunExe, isASAN, isLinux, libcPathForDlopen, rss } from "harness
 import { readFileSync } from "node:fs";
 import zlib from "node:zlib";
 import path from "path";
+import frames from "./zstd-frames-fixture.json";
 
 // A hand-written empty frame: magic, a descriptor without a content size (so it goes through the
 // streaming decoder), the window descriptor (the decoder allocates a window of 2^windowLog bytes before
@@ -107,6 +108,75 @@ describe("Zstandard compression", async () => {
       `RSS grew by ${growthMiB.toFixed(1)} MiB over ${iterations} ${what} zstd decompressions after warmup`,
     ).toBeLessThan(10);
   }
+
+  describe("few literals whose codes are long", () => {
+    // How often each of how many symbols is there, out of 1536: a code of 5 bits for 48 times, of 9 bits for 3 times.
+    const upTo8Bits = [
+      [48, 8],
+      [6, 192],
+    ];
+    const upTo9Bits = [
+      [48, 8],
+      [6, 140],
+      [3, 104],
+    ];
+    let x = 1;
+    /** In a random order, but that each quarter, which is a Huffman stream of its own, starts with the longest codes. */
+    function literals(mix: number[][]) {
+      const input: number[] = [];
+      let symbol = 0;
+      for (const [count, nbSymbols] of mix) {
+        for (const end = symbol + nbSymbols; symbol < end; symbol++) input.push(...Array(count).fill(symbol));
+      }
+      const isRare = (other: number) => other >= symbol - mix.at(-1)![1];
+      for (let i = input.length - 1; i > 0; i--) {
+        x ^= x << 13;
+        x ^= x >>> 17;
+        x ^= x << 5;
+        const j = (x >>> 0) % (i + 1);
+        [input[i], input[j]] = [input[j], input[i]];
+      }
+      for (let start = 0; start < input.length; start += input.length / 4) {
+        for (let i = start, from = start + 8; i < start + 8; i++) {
+          while (!isRare(input[from])) from++;
+          if (!isRare(input[i])) [input[i], input[from]] = [input[from], input[i]];
+        }
+      }
+      return Uint8Array.from(input);
+    }
+
+    // Where a stream ends within a byte, which is what varies, is how many bits there are before more have to be read.
+    it.each([
+      [8, upTo8Bits],
+      [9, upTo9Bits],
+    ])("of up to %i bits", (_, mix) => {
+      for (let round = 0; round < 40; round++) {
+        const input = literals(mix);
+        const frame = zstdCompressSync(input);
+        expect(frame.length).toBeLessThan(1500);
+        expect(Buffer.compare(zstdDecompressSync(frame), input)).toBe(0);
+      }
+    });
+
+    it("with a table that later blocks use again", () => {
+      // Blocks of a target size end with a match.
+      const input = Buffer.concat(
+        Array.from({ length: 4 }, () => literals(upTo8Bits)).flatMap(part => [part, part.subarray(0, 64)]),
+      );
+      const ZSTD_c_targetCBlockSize = 130;
+      const frame = zlib.zstdCompressSync(input, { params: { [ZSTD_c_targetCBlockSize]: 1340 } });
+      // The blocks are after the magic number, the descriptor and a content size of 2 bytes.
+      expect(frame[4]).toBe(0x60);
+      const literalsTypes: number[] = [];
+      for (let at = 7, header = 0; !(header & 1); at += 3 + (header >> 3)) {
+        header = frame.readUIntLE(at, 3);
+        literalsTypes.push(frame[at + 3] & 3);
+      }
+      const [compressed, treeless] = [2, 3];
+      expect(literalsTypes).toEqual([compressed, treeless, treeless, treeless]);
+      expect(Buffer.compare(zstdDecompressSync(frame), input)).toBe(0);
+    });
+  });
 
   // Test with known zstd-compressed data
   describe("zstd CLI compatibility", () => {
@@ -271,6 +341,261 @@ describe("Zstandard compression", async () => {
       }
     });
   }
+});
+
+describe("decompressing frames whose size is known", () => {
+  let x = 0x9e3779b9;
+  const noise = (length: number) =>
+    Buffer.from(
+      Uint8Array.from({ length }, () => {
+        x ^= x << 13;
+        x ^= x >>> 17;
+        x ^= x << 5;
+        return x;
+      }),
+    );
+  const repeated = (period: Buffer, length: number) => Buffer.alloc(length, period);
+  // Blocks that are stored, blocks of one byte, blocks of a few long matches, and blocks of many short ones.
+  const pieces = [
+    noise(140_000),
+    Buffer.alloc(270_000, 7),
+    repeated(noise(1000), 140_000),
+    repeated(Buffer.from("one two three two one three "), 20_000),
+    repeated(noise(60_000), 200_000),
+    Buffer.from(noise(30_000).map(byte => 97 + (byte & 3) * ((byte >> 2) % 3))),
+    noise(9),
+  ];
+  const whole = Buffer.concat(pieces);
+
+  // "raw", "rle", or how many sequences a compressed block has. Or else how its literals are written, or how many it has.
+  function blocks(frame: Uint8Array, ofLiterals: boolean | "count" = false) {
+    const descriptor = frame[4];
+    const isSingleSegment = (descriptor >> 5) & 1;
+    let at = 5 + (1 - isSingleSegment) + [0, 1, 2, 4][descriptor & 3] + [isSingleSegment, 2, 4, 8][descriptor >> 6];
+    const kinds: (string | number)[] = [];
+    for (let isLast = 0; !isLast;) {
+      const header = frame[at] | (frame[at + 1] << 8) | (frame[at + 2] << 16);
+      at += 3;
+      isLast = header & 1;
+      const type = (header >> 1) & 3;
+      if (type === 2) {
+        const format = (frame[at] >> 2) & 3;
+        const bits =
+          frame[at] +
+          frame[at + 1] * 2 ** 8 +
+          frame[at + 2] * 2 ** 16 +
+          frame[at + 3] * 2 ** 24 +
+          frame[at + 4] * 2 ** 32;
+        let literals: number;
+        let count: number;
+        if ((frame[at] & 3) < 2) {
+          count = format === 1 ? (bits >> 4) & 0xfff : format === 3 ? (bits >> 4) & 0xfffff : frame[at] >> 3;
+          literals = [1, 2, 1, 3][format] + ((frame[at] & 3) === 0 ? count : 1);
+        } else {
+          const width = [10, 10, 14, 18][format];
+          count = Math.floor(bits / 2 ** 4) % 2 ** width;
+          literals = [3, 3, 4, 5][format] + (Math.floor(bits / 2 ** (4 + width)) % 2 ** width);
+        }
+        const [first, second, third] = frame.subarray(at + literals);
+        kinds.push(
+          ofLiterals === "count"
+            ? count
+            : ofLiterals
+              ? ["raw", "rle", "code", "same code"][frame[at] & 3]
+              : first < 128
+                ? first
+                : first < 255
+                  ? ((first - 128) << 8) + second
+                  : second + (third << 8) + 0x7f00,
+        );
+      } else {
+        kinds.push(["raw", "rle"][type]);
+      }
+      at += type === 1 ? 1 : header >> 3;
+    }
+    return kinds;
+  }
+
+  it("the frames have blocks of these kinds", () => {
+    expect(pieces.map(piece => blocks(zstdCompressSync(piece, { level: 1 })))).toEqual([
+      ["raw", "raw"],
+      [1, "rle", "rle"],
+      [1, 1],
+      [4],
+      [1, 1],
+      [3647],
+      ["raw"],
+    ]);
+  });
+
+  it.each([1, 3])("stretches of noise, runs and long matches in one frame of level %i", level => {
+    expect(zstdDecompressSync(zstdCompressSync(whole, { level })).equals(whole)).toBe(true);
+  });
+
+  it("the same in a frame each, whose blocks are let to write more or less", () => {
+    const frames = pieces.map((piece, i) =>
+      zlib.zstdCompressSync(piece, { params: { [zlib.constants.ZSTD_c_windowLog]: [17, 10, 20, 12][i % 4] } }),
+    );
+    expect(zstdDecompressSync(Buffer.concat(frames)).equals(whole)).toBe(true);
+    expect(zstdDecompressSync(Buffer.concat(frames.toReversed())).equals(Buffer.concat(pieces.toReversed()))).toBe(
+      true,
+    );
+  });
+
+  it.each([4097, 4100, 4222, 8200])("long matches from %i bytes back, which are copied in parts", period => {
+    const data = repeated(noise(period), 40_000);
+    const frame = zstdCompressSync(data, { level: 3 });
+    expect(zstdDecompressSync(frame).equals(data)).toBe(true);
+    expect(zlib.zstdDecompressSync(frame).equals(data)).toBe(true);
+  });
+
+  it.each([
+    [0xffff, 0, ["raw", "raw", "raw", "code", "code", "code,same code,same code,same code"]],
+    [0xffffffff, 0, ["raw", "code", "code", "code", "code", "code,code,code,same code"]],
+    [0xffffffff, 2, ["code", "code", "code", "code", "code", "code,code,same code,same code"]],
+  ])(
+    "literals that take many bits: the least of the bytes of a number up to %i, shifted by %i",
+    (mask, shift, written) => {
+      let x = 0x9e3779b9;
+      const kinds = [300, 1500, 3000, 6000, 20_000, 400_000].map(length => {
+        const data = Buffer.from(
+          Uint8Array.from({ length }, () => {
+            x ^= x << 13;
+            x ^= x >>> 17;
+            x ^= x << 5;
+            const y = x | ~mask;
+            return Math.min(y & 255, (y >> 8) & 255, (y >> 16) & 255, y >>> 24) >> shift;
+          }),
+        );
+        const frame = zstdCompressSync(data, { level: 1 });
+        expect(zstdDecompressSync(frame).equals(data)).toBe(true);
+        expect(zlib.zstdDecompressSync(frame).equals(data)).toBe(true);
+        return blocks(frame, true).join();
+      });
+      expect(kinds).toEqual(written);
+    },
+  );
+
+  it.each([1, 2, 8])("short matches from less than 16 bytes back, in one sequence out of %i", others => {
+    const data = noise(60_000);
+    // Where the first 24 bytes are a dictionary, these two reach into the part of it that matches are looked for in.
+    data.copyWithin(24, 9, 13);
+    data.copyWithin(29, 14, 18);
+    for (let at = 33, i = 0; at < data.length - 40; i++) {
+      at += 1 + (i % 7);
+      const offset = i % others === 0 || at < 320 ? 15 - (i % 15) : 16 + (i % 300);
+      for (const end = at + 3 + ((i + 2) % 31); at < end; at++) data[at] = data[at - offset];
+    }
+    const frame = zstdCompressSync(data, { level: 19 });
+    expect(blocks(frame)[0]).toBeGreaterThan(2_000);
+    expect(zstdDecompressSync(frame).equals(data)).toBe(true);
+    expect(zlib.zstdDecompressSync(frame).equals(data)).toBe(true);
+
+    // After a dictionary, and in a buffer that is written to from its start again.
+    const params = { [zlib.constants.ZSTD_c_compressionLevel]: 19, [zlib.constants.ZSTD_c_windowLog]: 10 };
+    const dictionary = data.subarray(0, 24);
+    const afterDictionary = zlib.zstdCompressSync(data.subarray(24), { params, dictionary });
+    expect(blocks(afterDictionary)[0]).toBeGreaterThan(32);
+    expect(zlib.zstdDecompressSync(afterDictionary, { dictionary }).equals(data.subarray(24))).toBe(true);
+    const inSmallWindow = zlib.zstdCompressSync(data, { params });
+    expect(blocks(inSmallWindow)[1]).toBeGreaterThan(32);
+    expect(zlib.zstdDecompressSync(inSmallWindow).equals(data)).toBe(true);
+  });
+
+  it("frames one after the other whose matches are in a dictionary", () => {
+    const dictionary = noise(20_000);
+    const piece = (i: number) => dictionary.subarray((i * 7919) % 19_000).subarray(0, 8 + (i % 9));
+    const data = Buffer.concat(Array.from({ length: 1_500 }, (_, i) => piece(i)));
+    const frame = zlib.zstdCompressSync(data, { dictionary });
+    expect(blocks(frame)[0]).toBeGreaterThan(1_000);
+    // There is room for all three, so each is decoded in one go to where the one before it ends.
+    const decoded = zlib.zstdDecompressSync(Buffer.concat([frame, frame, frame]), { dictionary, chunkSize: 1 << 17 });
+    expect(decoded.equals(Buffer.concat([data, data, data]))).toBe(true);
+  });
+
+  // Then a sequence waits until 8 more are decoded, so that what it copies can be fetched by then.
+  it("long matches from more than 16 MB back", () => {
+    const c = zlib.constants;
+    const piece = (i: number) => pieces[0].subarray((i * 7919) % 139_000).subarray(0, 40 + ((i * 31) % 300));
+    const data = Buffer.concat([
+      pieces[0],
+      Buffer.alloc(17 << 20),
+      ...Array.from({ length: 4_000 }, (_, i) => piece(i)),
+    ]);
+    const params = { [c.ZSTD_c_windowLog]: 25, [c.ZSTD_c_enableLongDistanceMatching]: 1 };
+    const frame = zlib.zstdCompressSync(data, { params });
+    const sequences = blocks(frame).filter(block => typeof block === "number" && block > 300);
+    expect(new Set(sequences.map(count => Number(count) % 8)).size).toBeGreaterThan(2);
+    expect(zstdDecompressSync(frame).equals(data)).toBe(true);
+    // In one go to where it is wanted, and by way of the decoder's own buffer.
+    expect(zlib.zstdDecompressSync(frame, { chunkSize: data.length }).equals(data)).toBe(true);
+    expect(zlib.zstdDecompressSync(frame).equals(data)).toBe(true);
+  });
+
+  // The C library keeps some of them in the output buffer, unless that has room for all of them.
+  describe("blocks of more than 64 KB of literals", () => {
+    // Noise of 6 bits, and after every 6 to 30 bytes of it, up to `end`, 5 to 8 bytes from `nearest` to `furthest` back.
+    function literalsAndMatches(length: number, end: number, nearest: number, furthest: number) {
+      const data = Buffer.alloc(length);
+      for (let at = 0, x = 0x9e3779b9; at < length; at++) {
+        x ^= x << 13;
+        x ^= x >>> 17;
+        x ^= x << 5;
+        data[at] = x & 63;
+      }
+      for (let at = furthest, i = 0; at < end - 64; i++) {
+        at += 6 + (i % 25);
+        const from = at - nearest - ((i * 7919) % (furthest - nearest));
+        data.copyWithin(at, from, from + 5 + (i % 4));
+        at += 5 + (i % 4);
+      }
+      return data;
+    }
+    const params = { [zlib.constants.ZSTD_c_compressionLevel]: 6, [zlib.constants.ZSTD_c_windowLog]: 17 };
+
+    it.each([128_000, 40_000])("with matches in the first %i bytes", end => {
+      const data = literalsAndMatches(128_000, end, 16, 56);
+      const frame = zstdCompressSync(data, { level: 3 });
+      expect(blocks(frame)).toEqual([expect.any(Number)]);
+      expect(blocks(frame)[0]).toBeGreaterThan(end / 40);
+      expect(blocks(frame, "count")[0]).toBeGreaterThan(1 << 16);
+      expect(zstdDecompressSync(frame).equals(data)).toBe(true);
+      expect(zlib.zstdDecompressSync(frame).equals(data)).toBe(true);
+    });
+
+    it("with matches in the older part of a buffer that is written to from its start again", () => {
+      const data = literalsAndMatches(900_000, 900_000, 70_000, 125_000);
+      const frame = zlib.zstdCompressSync(data, { params });
+      expect(blocks(frame).length).toBe(7);
+      // The buffer holds 3 blocks.
+      for (const sequences of blocks(frame).slice(3)) expect(sequences).toBeGreaterThan(3_000);
+      for (const literals of blocks(frame, "count")) expect(literals).toBeGreaterThan(1 << 16);
+      expect(zlib.zstdDecompressSync(frame).equals(data)).toBe(true);
+    });
+
+    it("with matches in a dictionary", () => {
+      const all = literalsAndMatches(250_000, 250_000, 70_000, 125_000);
+      const [dictionary, data] = [all.subarray(0, 125_000), all.subarray(125_000)];
+      const frame = zlib.zstdCompressSync(data, { params, dictionary });
+      expect(blocks(frame)).toEqual([expect.any(Number)]);
+      expect(blocks(frame)[0]).toBeGreaterThan(3_000);
+      expect(blocks(frame, "count")[0]).toBeGreaterThan(1 << 16);
+      expect(zlib.zstdDecompressSync(frame, { dictionary }).equals(data)).toBe(true);
+    });
+  });
+
+  it("a frame that makes more than it says is refused", () => {
+    for (const piece of pieces.filter(piece => piece.length >= 135_000)) {
+      const frame = zstdCompressSync(piece.subarray(0, 135_000), { level: 1 });
+      // The content size, 4 bytes of it from 64 KB on, after the magic number and the descriptor.
+      expect(frame.readUInt32LE(5)).toBe(135_000);
+      for (const size of [134_999, 131_072, 70_000]) {
+        const lying = Buffer.from(frame);
+        lying.writeUInt32LE(size, 5);
+        expect(() => zstdDecompressSync(lying)).toThrow("Decompression failed: DecompressionFailed");
+      }
+    }
+  });
 });
 
 // zstdDecompressSync sizes its output from the frame header when the content size is
@@ -776,15 +1101,14 @@ describe("sync compression argument handling", () => {
   }, 60_000);
 });
 
-// x64 builds target nehalem, so zstd picks its BMI2 kernels at run time. It used to ask CPUID in
-// every CCtx and DCtx init. CPUID is a VM exit under a hypervisor, about 2 us each, two per init.
-// arch_prctl(ARCH_SET_CPUID, 0) makes CPUID raise SIGSEGV on the calling thread, so a context that
-// still probes the CPU kills the child. The first context of each kind is allowed to probe.
+// CPUID is a VM exit under a hypervisor, about 2 us each. The C library once asked it twice in every
+// CCtx and DCtx init. arch_prctl(ARCH_SET_CPUID, 0) makes CPUID raise SIGSEGV on the calling thread,
+// so a context that probes the CPU kills the child. The first round trip loads what else may probe.
 describe("zstd context setup", () => {
   const canFaultOnCpuid =
     isLinux && process.arch === "x64" && /^flags\s*:.*\bcpuid_fault\b/m.test(readFileSync("/proc/cpuinfo", "utf8"));
 
-  it.skipIf(!canFaultOnCpuid)("asks CPUID once, not for each context", async () => {
+  it.skipIf(!canFaultOnCpuid)("does not ask CPUID", async () => {
     const script = `
       const { dlopen } = require("bun:ffi");
       const zlib = require("node:zlib");
@@ -1052,5 +1376,1652 @@ describe.concurrent("Zstandard HTTP compression", () => {
     expect(response.headers.get("Content-Encoding")).toBe("zstd");
     const echoed = await response.text();
     expect(echoed).toBe(testString);
+  });
+});
+
+// The compressor is a port of zstd 1.5.7, and gives the same bytes. The expected values are from the C library.
+describe("the output is that of zstd 1.5.7", () => {
+  const xorshift = (x: number) => () => {
+    x ^= x << 13;
+    x ^= x >>> 17;
+    x ^= x << 5;
+    return (x >>>= 0);
+  };
+
+  // Words, copies of earlier parts at all distances, noise and runs: something for every part of the compressor.
+  function sample(size: number, seed: number) {
+    const next = xorshift(seed >>> 0 || 1);
+    const words = [
+      "function ",
+      "return ",
+      "const ",
+      "zstd",
+      "\n  ",
+      "{",
+      "}",
+      "(",
+      ");",
+      "await ",
+      "=> ",
+      "length",
+      "0",
+    ].map(word => Buffer.from(word));
+    // Room for the last piece to overrun.
+    const out = new Uint8Array(size + 2048);
+    let at = 0;
+    while (at < size) {
+      const kind = next() % 16;
+      if (kind < 7) {
+        const word = words[next() % words.length];
+        out.set(word, at);
+        at += word.length;
+      } else if (kind < 11 && at > 8) {
+        const distance = 1 + (next() % Math.min(at, 1 << (next() % 20)));
+        const length = 3 + (next() % (1 << (next() % 10)));
+        if (distance >= length) out.copyWithin(at, at - distance, at - distance + length);
+        else for (let i = 0; i < length; i++) out[at + i] = out[at + i - distance];
+        at += length;
+      } else if (kind < 15) {
+        for (let n = 1 + (next() % 24); n > 0; n--) out[at++] = next() >>> (next() % 8 ? 27 : 24);
+      } else {
+        const length = 1 + (next() % 300);
+        out.fill(next(), at, at + length);
+        at += length;
+      }
+    }
+    return out.subarray(0, size);
+  }
+  const digest = (bytes: Uint8Array) => `${bytes.length} ${Bun.hash.xxHash64(bytes).toString(16)}`;
+  const c = zlib.constants;
+  // More than one job of the least size there is, for the workers.
+  const corpus = sample(700_000, 1);
+  const large = corpus.subarray(0, 300_000);
+  const small = corpus.subarray(300_000, 303_000);
+
+  // Not -1: node:zlib takes that for a parameter that is not set.
+  it.each([
+    [-100, "167967 45693a3bc89d2838, 2112 a1f04bdd2c75d853"],
+    [-7, "65641 25bb487794d2f45f, 1081 6841140ea417de55"],
+    [-2, "55329 a7cd8da33a4cce8b, 954 cb3a52b86b5193c7"],
+    [1, "46828 2a61d18b13a9df88, 824 3a3b2b799ed70f7b"],
+    [2, "45933 2795a6f87171faac, 811 bd7ae68cb7d95862"],
+    [3, "45122 344d3c35e5ad0340, 810 e35cec5c3500c856"],
+    [4, "45093 7634242fc968e2c3, 822 6b45b45a5d921bfc"],
+    [5, "44424 daecc1abec496995, 810 4489026b2c29b8dc"],
+    [6, "42948 a879387b2601910d, 809 b15c4cf338e1d77a"],
+    [7, "42675 1f9ad80ad0656d09, 804 603c9d665714a2"],
+    [8, "42562 26911127c1e54142, 804 603c9d665714a2"],
+    [9, "42562 26911127c1e54142, 807 bc69857972f7737c"],
+    [10, "42353 d560f70047c278d, 807 bc69857972f7737c"],
+    [11, "42124 cc37ec9a45f8d164, 808 95559a23325a524d"],
+    [12, "42124 cc37ec9a45f8d164, 806 5984ef401fd2141"],
+    [13, "42364 fd1a09c03715fc5f, 807 6648f2fa58a397d4"],
+    [14, "42287 87ee023408ff3e30, 807 6648f2fa58a397d4"],
+    [15, "42233 109ef580b5685e85, 804 52073852c548e55e"],
+    [16, "42522 3293e655be1b0330, 807 6648f2fa58a397d4"],
+    [17, "41809 7cb274a8772cd4cc, 806 b609660f6b3d21d9"],
+    [18, "41253 d616eadc7ae1a5de, 804 52073852c548e55e"],
+    [19, "18189 44c06af9c0a7b97f, 804 52073852c548e55e"],
+    [20, "18125 7c0ef33ba30541a2, 804 52073852c548e55e"],
+    [21, "18125 7c0ef33ba30541a2, 804 52073852c548e55e"],
+    [22, "18125 e1b7fc6756c67456, 804 52073852c548e55e"],
+  ])("at level %i", (level, expected) => {
+    const compress = (data: Uint8Array) =>
+      level > 0
+        ? zstdCompressSync(data, { level })
+        : zlib.zstdCompressSync(data, { params: { [c.ZSTD_c_compressionLevel]: level } });
+    // The highest levels are slow.
+    const data = level < 19 ? large : large.subarray(0, 140_000);
+    expect(`${digest(compress(data))}, ${digest(compress(small))}`).toBe(expected);
+  });
+
+  it("where blocks that are stored are between blocks that are compressed", () => {
+    const noise = new Uint8Array(200_000);
+    for (let i = 0, x = 9; i < noise.length; i++) {
+      x ^= x << 13;
+      x ^= x >>> 17;
+      x ^= x << 5;
+      noise[i] = x;
+    }
+    const data = Buffer.concat([large.subarray(0, 150_000), noise, large.subarray(150_000)]);
+    expect([1, 3, 6, 13, 16].map(level => digest(zstdCompressSync(data, { level })))).toEqual([
+      "248567 de53cc88abf776bf",
+      "245529 c13322b7116144a",
+      "245428 8fdcf68c52aa046d",
+      "244844 ad91ca42d335a19",
+      "244843 e1282705ef659832",
+    ]);
+  });
+
+  it("where blocks are nothing but literals", () => {
+    // The lesser of two bytes has no matches worth taking, and compresses. At negative levels literals are not compressed.
+    const data = new Uint8Array(300_000);
+    for (let i = 0, x = 5; i < data.length; i++) {
+      x ^= x << 13;
+      x ^= x >>> 17;
+      x ^= x << 5;
+      data[i] = Math.min(x & 255, (x >> 8) & 255);
+    }
+    const inOneCall = [1, 3, 9, 16].map(level => digest(zstdCompressSync(data, { level })));
+    const streamed = [-5, 1, 3, 9, 16].map(level =>
+      digest(zlib.zstdCompressSync(data, { params: { [c.ZSTD_c_compressionLevel]: level } })),
+    );
+    expect(inOneCall).toEqual([
+      "290920 e4a05b68a9febcae",
+      "290984 c04074b7a3113a0c",
+      "290920 e4a05b68a9febcae",
+      "290920 e4a05b68a9febcae",
+    ]);
+    expect(streamed).toEqual([
+      "300018 3aa98e9a8e545874",
+      "290920 e4a05b68a9febcae",
+      "290936 bdaff5fb067b174b",
+      "290920 e4a05b68a9febcae",
+      "290920 e4a05b68a9febcae",
+    ]);
+  });
+
+  const level = (level: number) => ({ [c.ZSTD_c_compressionLevel]: level });
+  const piece = (n: number, size: number) => corpus.subarray(500_000 + n * size, 500_000 + (n + 1) * size);
+  /** Records of a counter and the same `size` bytes. */
+  const counted = (size: number, count: number) =>
+    Buffer.concat(
+      Array.from({ length: count }, (_, i) => [Buffer.from(`${i}`.padStart(8, "0")), piece(0, size)]).flat(),
+    );
+
+  it("where records differ in a few fields", () => {
+    // What is before a position ends at a field, and may be the same again after it.
+    const flags: Uint8Array[] = [];
+    for (let i = 0, x = 7; i < 2_400; i++) {
+      x ^= x << 13;
+      x ^= x >>> 17;
+      x ^= x << 5;
+      flags.push(Buffer.from(`${x & 1}`), piece(i % 4, 80));
+    }
+    const flagged = Buffer.concat(flags);
+    const dictionary = flagged.subarray(0, 30_000);
+    const cases: [Buffer, zlib.ZstdOptions][] = [
+      // Hash chains.
+      [flagged.subarray(0, 16_000), { params: level(5) }],
+      [flagged.subarray(0, 16_000), { params: level(6) }],
+      [flagged.subarray(0, 16_000), { params: level(7) }],
+      [counted(100, 148), { params: level(8) }],
+      // Rows. From level 11 on, it is binary trees at these sizes.
+      [flagged, { params: level(6) }],
+      [flagged, { params: level(7) }],
+      [flagged, { params: level(9) }],
+      [flagged, { params: level(10) }],
+      [counted(100, 2_000), { params: level(10) }],
+      [counted(1_000, 200), { params: level(10) }],
+      [flagged, { params: { [c.ZSTD_c_strategy]: c.ZSTD_greedy } }],
+      // Rows of 64 that fill up.
+      [flagged, { params: { [c.ZSTD_c_strategy]: c.ZSTD_lazy2, [c.ZSTD_c_searchLog]: 6, [c.ZSTD_c_hashLog]: 12 } }],
+      // What is before the window is left behind, and what is in the dictionary is not: hash chains, then rows.
+      [flagged, { params: { ...level(8), [c.ZSTD_c_windowLog]: 12 } }],
+      [flagged, { params: { ...level(8), [c.ZSTD_c_windowLog]: 15 } }],
+      [flagged.subarray(30_000, 40_000), { params: { ...level(7), [c.ZSTD_c_windowLog]: 14 }, dictionary }],
+      [flagged.subarray(30_000, 40_000), { params: level(7), dictionary }],
+    ];
+    expect(cases.map(([data, options]) => digest(zlib.zstdCompressSync(data, options)))).toMatchInlineSnapshot(`
+      [
+        "249 f907d3f525b7aa81",
+        "243 de9085e2cdfac856",
+        "235 d670b708be78ef4c",
+        "225 854a885c1d8be4a5",
+        "1692 1de698fb782b56f9",
+        "1616 66239976b21d3320",
+        "1517 f00cc0a5a2e99559",
+        "1476 a94b01a6e016ad19",
+        "2460 ecb935f7ffd006fb",
+        "626 ee78b0ff57f42d3e",
+        "1497 d88328c87f134e60",
+        "1540 80ad275d9b5cea5a",
+        "2457 a55760737c90d6d0",
+        "1727 77731bfed55e726",
+        "104 61304d0540ed07df",
+        "115 f5c7d2c89a55ace1",
+      ]
+    `);
+  });
+
+  it("where the binary trees lead to what is before the current segment of the window", () => {
+    // Fields on both sides of 0x80, so that which record comes first depends on how bytes are compared.
+    const fields = (size: number, count: number) => {
+      const records = counted(size, count);
+      for (let i = 0, x = 5; i < records.length; i += 37) {
+        x ^= x << 13;
+        x ^= x >>> 17;
+        x ^= x << 5;
+        if (x & 3) records[i] = 0x78 + (x >>> 28);
+      }
+      return records;
+    };
+    const short = fields(100, 800);
+    const long = fields(1_000, 80);
+    const window = (level_: number, windowLog: number) => ({ ...level(level_), [c.ZSTD_c_windowLog]: windowLog });
+    const cases: [Buffer, zlib.ZstdOptions][] = [];
+    // After a dictionary.
+    for (const data of [short, long]) {
+      const dictionary = data.subarray(0, 30_000);
+      for (const n of [11, 13, 16]) cases.push([data.subarray(30_000, 80_000), { params: level(n), dictionary }]);
+    }
+    // In a buffer that is written to from its start again.
+    cases.push(
+      [short, { params: window(11, 14) }],
+      [short, { params: window(13, 14) }],
+      [long, { params: window(16, 15) }],
+    );
+    expect(cases.map(([data, options]) => digest(zlib.zstdCompressSync(data, options)))).toMatchInlineSnapshot(`
+      [
+        "3714 c51791f02b5ce6e2",
+        "3821 722f4103ea02c85",
+        "2886 7b33aadb1b4c6928",
+        "3000 f11a3c6cbaee134b",
+        "3238 8a4a2b286c782c0d",
+        "2254 d22a01e8a758fe5b",
+        "6664 47c6eea66da02b71",
+        "6845 9bca37c99d215a5d",
+        "3911 a4190024e0f41380",
+      ]
+    `);
+  });
+
+  /**
+   * Noise of so many bits. What follows the dictionary, which is the first 30,000 bytes, has pieces of it and of itself
+   * among the noise, three of the one for one of the other.
+   */
+  const withPieces = (bits: number, shortest = 4, longest = 15, mostlyOfTheDictionary = true) => {
+    const next = xorshift(5);
+    const all = Buffer.alloc(42_000);
+    for (let at = 0; at < all.length;) {
+      for (let n = 4 + (next() % 24); n > 0; n--) all[at++] = next() >>> (32 - bits);
+      if (at < 30_000) continue;
+      const ofTheDictionary = next() % 4 !== 0 ? mostlyOfTheDictionary : !mostlyOfTheDictionary;
+      const from = ofTheDictionary ? next() % 29_000 : 30_000 + (next() % (at - 30_000 + 1));
+      const length = shortest + (next() % (longest - shortest + 1));
+      all.copyWithin(at, from, from + length);
+      at += length;
+    }
+    return all;
+  };
+
+  it("where the rows of a dictionary have candidates and those of the input have none", () => {
+    // Rows of 16 entries up to level 8, then of 32 and of 64.
+    const digests = (all: Buffer) =>
+      [5, 6, 7, 9, 10].map(n =>
+        digest(zlib.zstdCompressSync(all.subarray(30_000), { params: level(n), dictionary: all.subarray(0, 30_000) })),
+      );
+    expect([6, 3].map(bits => digests(withPieces(bits)))).toEqual([
+      [
+        "7108 e6ce3932970435bf",
+        "7106 33de66f30821afb9",
+        "7105 94b0e055b688b475",
+        "7105 94b0e055b688b475",
+        "7105 94b0e055b688b475",
+      ],
+      [
+        "4799 cea9496d4270b5a1",
+        "4733 b9472094002e88fd",
+        "4685 d7691fb52ce63095",
+        "4623 2532b3477d8a5f2d",
+        "4624 856abd3827ed1af8",
+      ],
+    ]);
+  });
+
+  it("where there are literals before a match in the trees of a dictionary that is searched in place", () => {
+    // Few trees and few steps down them, so that it counts how many are left for the dictionary.
+    const crowded = (n: number) => ({ ...level(n), [c.ZSTD_c_hashLog]: 10, [c.ZSTD_c_searchLog]: 2 });
+    // From level 16 on, the tables of the dictionary are copied for more than 8 KB.
+    const digests = (all: Buffer) =>
+      [level(13), level(16), level(19), crowded(13), crowded(16)].map(params =>
+        digest(zlib.zstdCompressSync(all.subarray(30_000, 38_000), { params, dictionary: all.subarray(0, 30_000) })),
+      );
+    expect([withPieces(6, 3, 6, false), withPieces(5, 4, 15, false), withPieces(5, 3, 6, false)].map(digests)).toEqual([
+      [
+        "5719 406ca55e1f7a8e51",
+        "5723 638b7b1d34f5e7e4",
+        "5723 638b7b1d34f5e7e4",
+        "5775 e3985bd1b7f3cc06",
+        "5777 f4d41a4a3fe9753d",
+      ],
+      [
+        "4036 957012d8fbbad463",
+        "4032 4a494ca0f71ad17d",
+        "4032 4a494ca0f71ad17d",
+        "4216 9e7fdaed4122c373",
+        "4205 a05cfe9758c76e6c",
+      ],
+      [
+        "4895 2d4708a58b44a327",
+        "4897 1f4aad7c4526b8fd",
+        "4897 1f4aad7c4526b8fd",
+        "4919 5671cafb2cb68402",
+        "4917 92674bc1d6487eb",
+      ],
+    ]);
+  });
+
+  // Noise of 5 bits. After 30,000 bytes it has pieces from so far back, in turn, with one byte of each altered.
+  const withAlteredPieces = (distances: number[]) => {
+    const next = xorshift(5);
+    const all = Buffer.alloc(63_000);
+    for (let at = 0; at < 30_000; at++) all[at] = next() >>> 27;
+    for (let at = 30_000, n = 0; at < all.length; n++) {
+      for (let k = 1 + (next() % 12); k > 0; k--) all[at++] = next() >>> 27;
+      const from = at - distances[n % distances.length];
+      all.copyWithin(at, from, from + 16);
+      all[at + 4 + (next() % 8)] ^= 1 + (next() % 3);
+      at += 16;
+    }
+    return all;
+  };
+
+  it("where there are literals while a repeat offset leads into a dictionary", () => {
+    const compress = (all: Buffer, n: number, from: number, size: number) =>
+      zlib.zstdCompressSync(all.subarray(from, from + size), { params: level(n), dictionary: all.subarray(0, 30_000) });
+    const digests = (all: Buffer, size: number) => [13, 16].map(n => digest(compress(all, n, 30_000, size)));
+    const fromThreePlaces = withAlteredPieces([25_000, 12_345, 50]);
+    const fromNearby = withAlteredPieces([20]);
+    expect([
+      digests(fromThreePlaces, 8_000),
+      // The tables of the dictionary are copied for more than 8 KB from level 16 on, else for more than 32 KB.
+      digests(fromThreePlaces, 33_000),
+      // A piece goes on over the end of the dictionary.
+      digests(fromNearby, 9_000),
+    ]).toEqual([
+      ["2519 24ce676ed4360f6b", "2482 b0633ed5d69d3d65"],
+      ["10359 10c42f22fc137208", "10027 1fd5fb810e81ee70"],
+      ["2689 ac0ddc2b63fa3cf0", "2593 665843657aba87c4"],
+    ]);
+    // The offsets that a frame starts with, 1, 4 and 8, lead into the dictionary for its first 8 bytes.
+    const starts = (all: Buffer) =>
+      [13, 16].map(n =>
+        digest(Buffer.concat(Array.from({ length: 8 }, (_, start) => compress(all, n, 30_000 + start, 300)))),
+      );
+    expect([starts(fromThreePlaces), starts(fromNearby)]).toEqual([
+      ["1093 e9f462ba5074daef", "1061 d826405e9ce9c5d2"],
+      ["1044 9e83e945e3585cf6", "1018 d57ef3f0c34b3189"],
+    ]);
+  });
+
+  it("where there are literals while a repeat offset leads before the place where the buffer of a stream starts again", () => {
+    // Of the distances, one is just out of a window of 16 KB and one just in it.
+    const all = withAlteredPieces([16_450, 16_300, 9_000]);
+    const window = (n: number, windowLog: number) => ({ params: { ...level(n), [c.ZSTD_c_windowLog]: windowLog } });
+    expect(
+      [13, 14].map(windowLog => [13, 16, 19].map(n => digest(zlib.zstdCompressSync(all, window(n, windowLog))))),
+    ).toEqual([
+      ["38845 7721ae005eb10446", "38929 da0285f338ad0055", "38929 da0285f338ad0055"],
+      ["32494 857cd1a443168536", "32293 4e37f66382f2b3a3", "32293 4e37f66382f2b3a3"],
+    ]);
+  });
+
+  it("where the kind of data changes within a block, for rows of 64 entries", () => {
+    const next = xorshift(11);
+    // Many positions start like another one and go on otherwise.
+    const fewSymbols = (size: number) => Uint8Array.from({ length: size }, () => 65 + (next() >>> 30));
+    const noise = (size: number) => Uint8Array.from({ length: size }, () => next() >>> 24);
+    // What starts like another position goes on like it.
+    const records = (size: number, record: number) => counted(record, Math.ceil(size / record)).subarray(0, size);
+    const text = (size: number) => corpus.subarray(0, size);
+    const rowsOf64 = (strategy: number, hashLog: number) => ({
+      [c.ZSTD_c_strategy]: strategy,
+      [c.ZSTD_c_searchLog]: 6,
+      [c.ZSTD_c_hashLog]: hashLog,
+      [c.ZSTD_c_windowLog]: 17,
+    });
+    const cases: [Uint8Array[], Record<number, number>][] = [
+      [[fewSymbols(1 << 17)], level(10)],
+      [[text(1 << 17)], level(10)],
+      [[records(1 << 17, 100)], level(10)],
+      [[records(1 << 17, 600)], level(10)],
+      [[fewSymbols(80 << 10), records(48 << 10, 100)], level(10)],
+      [[fewSymbols(30_000), records(30_000, 100)], rowsOf64(c.ZSTD_lazy2, 12)],
+      [[records(30_000, 100), fewSymbols(30_000)], rowsOf64(c.ZSTD_lazy2, 12)],
+      [[fewSymbols(12_000), noise(30_000), fewSymbols(12_000)], rowsOf64(c.ZSTD_lazy2, 12)],
+      [[noise(20_000), text(30_000)], rowsOf64(c.ZSTD_lazy, 12)],
+      [[text(20_000), Buffer.alloc(20_000), text(20_000)], rowsOf64(c.ZSTD_lazy, 13)],
+      [[fewSymbols(20_000), records(20_000, 600), text(20_000)], rowsOf64(c.ZSTD_greedy, 12)],
+      // More than a block.
+      [[fewSymbols(125_000), records(40_000, 100), fewSymbols(20_000)], rowsOf64(c.ZSTD_lazy2, 14)],
+    ];
+    expect(cases.map(([data, params]) => digest(zlib.zstdCompressSync(Buffer.concat(data), { params }))))
+      .toMatchInlineSnapshot(`
+      [
+        "38882 e2cf1ebea8540fae",
+        "17398 f542e301793c6b24",
+        "1513 1e09820fa83c397",
+        "574 9c214dab588dfad4",
+        "26008 3a7c167a6f55827b",
+        "10030 3433cfd18a1e6b89",
+        "10066 f5047098fb382ae5",
+        "38583 6ec8f3e7937fbdfb",
+        "25171 39b72ef5650bbcd5",
+        "2868 4efe031f2810b3ce",
+        "9636 ec7bd23f67b5ae31",
+        "45730 6bb17dea79d5fff0",
+      ]
+    `);
+  });
+
+  it("where matches are far between, for the optimal parsers", () => {
+    const data = Buffer.alloc(100_000);
+    const next = xorshift(9);
+    const copy = (at: number, distance: number, length: number) => {
+      const end = Math.min(at + length, data.length);
+      while (at < end) data[at] = data[at++ - distance];
+      return end;
+    };
+    for (let at = 0, distance = 1; at < data.length;) {
+      if (at < 100 || next() % 300 !== 0) {
+        data[at++] = next() >> 8;
+        continue;
+      }
+      // From as far as the one before, from anywhere, or from one byte less far, which only counts right after a match.
+      const kind = next() % 4;
+      if (kind === 1 && distance > 1) distance--;
+      if (kind > 1) distance = 1 + (next() % Math.min(at, 1 << (3 + (next() % 15))));
+      at = copy(at, distance, next() % 8 === 0 ? 300 : 3 + (next() % 12));
+      if (next() % 2 === 0 && distance > 1) at = copy(at, distance - 1, 3 + (next() % 5));
+    }
+    const smallTables = { [c.ZSTD_c_minMatch]: 4, [c.ZSTD_c_hashLog]: 8, [c.ZSTD_c_chainLog]: 8 };
+    const cases: [Buffer | Uint8Array, Record<number, number>][] = [
+      [data, { [c.ZSTD_c_strategy]: c.ZSTD_btopt, [c.ZSTD_c_minMatch]: 3 }],
+      [data, { [c.ZSTD_c_compressionLevel]: 17 }],
+      [data, { [c.ZSTD_c_compressionLevel]: 19 }],
+      [data, { [c.ZSTD_c_strategy]: c.ZSTD_btultra, [c.ZSTD_c_minMatch]: 4 }],
+      [data, { [c.ZSTD_c_compressionLevel]: 19, [c.ZSTD_c_windowLog]: 12 }],
+      [data, { [c.ZSTD_c_compressionLevel]: 19, ...smallTables }],
+      [data, { [c.ZSTD_c_compressionLevel]: 19, ...smallTables, [c.ZSTD_c_enableLongDistanceMatching]: 1 }],
+      [large, { [c.ZSTD_c_strategy]: c.ZSTD_btopt, [c.ZSTD_c_windowLog]: 12 }],
+    ];
+    expect(cases.map(([data, params]) => digest(zlib.zstdCompressSync(data, { params })))).toEqual([
+      "89890 2e527bd77ff0248a",
+      "89813 167bd065007f9d2b",
+      "89828 46d69a88706923f0",
+      "89863 b3219cbfd91243e7",
+      "92097 87e40b8681136738",
+      "92667 ff08869afb33cf7b",
+      "90656 95d8a11469d222d9",
+      "57217 69a87c5b3e0a2b75",
+    ]);
+    const dictionary = data.subarray(0, 20_000);
+    const withDictionary = [3_000, 80_000].map(size => {
+      const params = { [c.ZSTD_c_compressionLevel]: 19 };
+      const options = { dictionary, params, pledgedSrcSize: size };
+      return digest(zlib.zstdCompressSync(data.subarray(20_000, 20_000 + size), options));
+    });
+    expect(withDictionary).toEqual(["2964 61e43e2a0511038c", "71053 b34a7f9afac77810"]);
+  });
+
+  it("with parameters", () => {
+    const cases: Record<string, Record<number, number>> = {
+      checksum: { [c.ZSTD_c_checksumFlag]: 1 },
+      noContentSize: { [c.ZSTD_c_contentSizeFlag]: 0 },
+      smallWindow: { [c.ZSTD_c_windowLog]: 12, [c.ZSTD_c_compressionLevel]: 7 },
+      hashChain: { [c.ZSTD_c_strategy]: c.ZSTD_lazy2, [c.ZSTD_c_windowLog]: 14, [c.ZSTD_c_searchLog]: 6 },
+      rows: { [c.ZSTD_c_strategy]: c.ZSTD_greedy, [c.ZSTD_c_searchLog]: 6, [c.ZSTD_c_minMatch]: 6 },
+      binaryTree: { [c.ZSTD_c_strategy]: c.ZSTD_btlazy2, [c.ZSTD_c_chainLog]: 14, [c.ZSTD_c_hashLog]: 13 },
+      optimal: { [c.ZSTD_c_strategy]: c.ZSTD_btopt, [c.ZSTD_c_targetLength]: 20, [c.ZSTD_c_minMatch]: 3 },
+      longDistance: { [c.ZSTD_c_enableLongDistanceMatching]: 1, [c.ZSTD_c_windowLog]: 20 },
+      longDistanceOptimal: {
+        [c.ZSTD_c_enableLongDistanceMatching]: 1,
+        [c.ZSTD_c_compressionLevel]: 16,
+        [c.ZSTD_c_ldmMinMatch]: 16,
+        [c.ZSTD_c_ldmHashLog]: 12,
+        [c.ZSTD_c_ldmBucketSizeLog]: 2,
+        [c.ZSTD_c_ldmHashRateLog]: 3,
+      },
+      // ZSTD_c_targetCBlockSize
+      smallBlocks: { 130: 2000, [c.ZSTD_c_compressionLevel]: 5 },
+      // ZSTD_c_format: ZSTD_f_zstd1_magicless
+      magicless: { 10: 1 },
+      workers: { [c.ZSTD_c_nbWorkers]: 2, [c.ZSTD_c_jobSize]: 1, [c.ZSTD_c_checksumFlag]: 1 },
+      workersOverlap: {
+        [c.ZSTD_c_nbWorkers]: 3,
+        [c.ZSTD_c_jobSize]: 1,
+        [c.ZSTD_c_overlapLog]: 9,
+        [c.ZSTD_c_windowLog]: 17,
+      },
+      workersLongDistance: {
+        [c.ZSTD_c_nbWorkers]: 2,
+        [c.ZSTD_c_jobSize]: 1,
+        [c.ZSTD_c_enableLongDistanceMatching]: 1,
+        [c.ZSTD_c_windowLog]: 18,
+      },
+    };
+    const results: Record<string, string> = {};
+    for (const [name, params] of Object.entries(cases)) {
+      const data = name.startsWith("workers") ? corpus : large;
+      const compressed = zlib.zstdCompressSync(data, { params });
+      results[name] = digest(compressed);
+      if (name !== "magicless") expect(zlib.zstdDecompressSync(compressed).equals(data)).toBe(true);
+    }
+    expect(results).toMatchInlineSnapshot(`
+      {
+        "binaryTree": "43844 a5c9eabbae2dd756",
+        "checksum": "44939 b9750b95ad15111d",
+        "hashChain": "48609 ad3f314838cea64",
+        "longDistance": "44645 1be0f74f50e4c2f1",
+        "longDistanceOptimal": "42035 826bf710d9511423",
+        "magicless": "44931 ef5be3a06c229e22",
+        "noContentSize": "44932 69582ab759972bd0",
+        "optimal": "42193 af8904ce81d257c5",
+        "rows": "43948 1c7f2cd5acfbb9eb",
+        "smallBlocks": "44603 b857325b812bea9c",
+        "smallWindow": "55906 6786884ad22d6b2d",
+        "workers": "108770 1df628af1e7dc077",
+        "workersLongDistance": "109211 732c0b64dad8574b",
+        "workersOverlap": "111826 bfab26c4004f255d",
+      }
+    `);
+  });
+
+  it("with every least length of a match, at the strategies that hash as many bytes", () => {
+    const dictionary = sample(20_000, 4);
+    const short = corpus.slice(400_000, 405_000);
+    short.set(dictionary.subarray(-600, -100), 1_000);
+    const results: Record<string, string> = {};
+    for (const [name, strategy] of [
+      ["fast", c.ZSTD_fast],
+      ["dfast", c.ZSTD_dfast],
+    ] as const) {
+      for (const minMatch of [3, 4, 5, 6, 7]) {
+        const params = { [c.ZSTD_c_strategy]: strategy, [c.ZSTD_c_minMatch]: minMatch };
+        const tables = (hashLog: number) => ({ [c.ZSTD_c_hashLog]: hashLog, [c.ZSTD_c_chainLog]: hashLog - 1 });
+        const compressed = [
+          zlib.zstdCompressSync(large, { params: { ...params, ...tables(16) } }),
+          zlib.zstdCompressSync(large, { params: { ...params, ...tables(10) } }),
+          zlib.zstdCompressSync(short, { params, dictionary, pledgedSrcSize: short.length }),
+        ];
+        results[`${name}, ${minMatch}`] = compressed.map(digest).join(", ");
+        expect(zlib.zstdDecompressSync(compressed[0]).equals(large)).toBe(true);
+        expect(zlib.zstdDecompressSync(compressed[1]).equals(large)).toBe(true);
+        expect(zlib.zstdDecompressSync(compressed[2], { dictionary }).equals(short)).toBe(true);
+      }
+    }
+    expect(results).toMatchInlineSnapshot(`
+      {
+        "dfast, 3": "44487 25e0622d3e12bfbd, 48050 558295cad240a785, 1005 858a418a2405d05a",
+        "dfast, 4": "44487 25e0622d3e12bfbd, 48050 558295cad240a785, 1005 858a418a2405d05a",
+        "dfast, 5": "44922 5901d333a7330ff9, 48936 4abcce7cd20aaf96, 1028 6aaf30fe0e09dd18",
+        "dfast, 6": "45343 386c1fe73dd038a9, 49635 2fa5fd5697de4709, 1032 46565d1807a0eaa6",
+        "dfast, 7": "46545 39a718fcbe68cb38, 51913 6367517af191ced2, 1089 8dde7dc61d61525b",
+        "fast, 3": "45605 bb8d5e0a2a6d89bc, 48410 b143a25a8491bf48, 1013 c8b68aa258a78281",
+        "fast, 4": "45605 bb8d5e0a2a6d89bc, 48410 b143a25a8491bf48, 1013 c8b68aa258a78281",
+        "fast, 5": "45771 fe9b40f28db9fd9, 49021 56c10ab35e811607, 1036 c3e106a367a73897",
+        "fast, 6": "46011 8660df15f934f2e1, 49559 90160f0d372cf91, 1040 78faf9395332bbf",
+        "fast, 7": "46936 560777669662bd37, 52350 c186154a65c5f997, 1088 538a72fd960bac79",
+      }
+    `);
+  });
+
+  it("where a block is one match, which is too short for the optimal parser to take at once", () => {
+    const digests = (data: Buffer, windowLog: number) =>
+      [16, 19, 22].map(level => {
+        const params = {
+          [c.ZSTD_c_compressionLevel]: level,
+          [c.ZSTD_c_windowLog]: windowLog,
+          [c.ZSTD_c_targetLength]: 4096,
+        };
+        const compressed = zlib.zstdCompressSync(data, { params });
+        expect(zlib.zstdDecompressSync(compressed).equals(data)).toBe(true);
+        return digest(compressed);
+      });
+    const periodic = Buffer.alloc(5_000, corpus.subarray(0, 700));
+    expect(digests(periodic, 10)).toEqual(Array(3).fill("163 571cb5ea10428fa7"));
+    expect(digests(periodic, 11)).toEqual(Array(3).fill("142 671efcd2063db130"));
+    expect(digests(Buffer.alloc(1_000), 10)).toEqual(Array(3).fill("19 bf47b44041ed0aa6"));
+  });
+
+  // Short input searches the tables of the dictionary, long input starts from a copy of them.
+  function withDictionary(dictionary: Uint8Array) {
+    const results: Record<string, string> = {};
+    for (const level of [-3, 1, 3, 5, 8, 13, 16, 19]) {
+      for (const size of [5_000, 150_000]) {
+        const data = corpus.slice(400_000, 400_000 + size);
+        data.set(dictionary.subarray(-600, -100), 1_000);
+        const options = { dictionary, params: { [c.ZSTD_c_compressionLevel]: level }, pledgedSrcSize: size };
+        const compressed = zlib.zstdCompressSync(data, options);
+        results[`${level}, ${size}`] = digest(compressed);
+        expect(zlib.zstdDecompressSync(compressed, { dictionary }).equals(data)).toBe(true);
+      }
+    }
+    return results;
+  }
+
+  it("with a dictionary that is only content", () => {
+    expect(withDictionary(sample(20_000, 4))).toMatchInlineSnapshot(`
+      {
+        "-3, 150000": "31691 a6cba8ed83f78cbe",
+        "-3, 5000": "1280 99e5c402823fdcad",
+        "1, 150000": "25367 4eed614674d852f5",
+        "1, 5000": "1042 c36ace4ccb9d37ab",
+        "13, 150000": "23771 c93a9f67de8b8c82",
+        "13, 5000": "988 6a7990046fc8b0de",
+        "16, 150000": "22992 c47f0966b096f185",
+        "16, 5000": "969 3be3d777b3ae4229",
+        "19, 150000": "22935 28de114f08f4bd22",
+        "19, 5000": "969 552f7abe774fa6ca",
+        "3, 150000": "24931 2feb8f5d9e046e54",
+        "3, 5000": "1028 6aaf30fe0e09dd18",
+        "5, 150000": "24343 c26404163f4b0830",
+        "5, 5000": "1002 6cf280704008a5eb",
+        "8, 150000": "23534 8b65e660bd8911a6",
+        "8, 5000": "973 f42818736cafcdfb",
+      }
+    `);
+  });
+
+  it("with a dictionary that has tables", () => {
+    // zstd --train --maxdict=1200, on 400 of these samples.
+    const dictionary = Buffer.from(
+      "N6Qw7CRPAAA5EKgmaQOIpOamUZ6YaYFWNK4FBYVp7RRHeEwRH2jGgTCmatsY1bd2V0loSVJyU2hzaXNTUlJIUminQwFAaTAYEstI" +
+        "FScAAATAhwSXlAeZRmKhICQIhcKgMCAQBgPCgCAYDAaAQWEgGBgOCWRJpPcCAAB0bWcj0zgoEAaDwXAwHA4MszhRamoRAAAAAQAA" +
+        "AAQAAAAIAAAACg1jb24XFBxYHlgKYXdhaXQgYXdhaXN0IAMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMD" +
+        "AwMDAwNubm5ubm5ubm5ubm5ubmxlbmd0aAgCHgZmdW5jdGlvbiBDDgQJFgCsIAMDAwMDAwMDKCgoKCgoPT09PT09PT0MDJMND8YY" +
+        "EgAKDAUNt5sCBQoIKN/f39/f39/f39/f39/f3/4aenN0ZHpzdGTBwcHBwcHBwcHBwcEwGwcJCAsfDROdHA8V6gMHGg89PT0wYXdh" +
+        "aXQgc3RkCA8MCwcIFhvWenN0ZAgPDAsHCAogIN/f3wkNBBcXBQ4WFRUbDQYbBBACCwILAgsCCwILY29uc3QgcmV0dXJuIGZ1bmN0" +
+        "aW9uID09PT09PT09PT09PT09PWF3YWl0IHQgdB4GHg0IBwMpO2F3YWl0ID0+IGZ1bmN0aW9uIGZ1bmN0aW9uIG5ubm5ubm5ubm5u" +
+        "bm5ubm5ubm5ubm5ubm5ubm5ubm57BvoUBvoUBvoCAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICw8PDw8PDw8PD" +
+        "w8PDw8PDw8PDw8PDw8PDw8MkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk" +
+        "JCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk" +
+        "JCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQ9PiBsZW5ndGhoowEX" +
+        "ImNvbnN0IB8IHRwHHgIYChUJBAgECAMYEg8bCxwDuQ4dDgYOjY2NC4IWBgcwKKCgoKB7KTswBgccAg8aEwIWDx4dGBUMFA8fCugK" +
+        "FxsfCB0cBx4CGAoADgt9ZnVuY3Rpb24gGRgLCBUbHAYaBwgQCxwQBQofGBgAAgMKgbcSHAkIHhwPGRwOcRsoPT4gMGNvbnN0IGZ1" +
+        "bmN0aW9uIBQOAiQWEAgUDRwUBBQIGwbP8MQYChIOBBQeHgsNDxALHMUXCBEaBADwxBgKEg4EFB4eCw0PEAscxRcIERoEAPDEGAoS" +
+        "DgRhd2FpdCBsZW5ndGhjb25zdCBsZW5ndGhsZW5ndGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGho" +
+        "aCh7e3t7e3t7e3t7e3t7e3t7e3t7e3toaGhoaGhoaGhokJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQ",
+      "base64",
+    );
+    expect(withDictionary(dictionary)).toMatchInlineSnapshot(`
+      {
+        "-3, 150000": "31674 a6f9cb1f5deb45f",
+        "-3, 5000": "1255 86e003673a214f0a",
+        "1, 150000": "25439 b187159ef67d798f",
+        "1, 5000": "967 7ab6c959cbc9173",
+        "13, 150000": "23377 807244f3412a1248",
+        "13, 5000": "918 51a5e4bbad4678c8",
+        "16, 150000": "23360 7e0e03d462f05b47",
+        "16, 5000": "918 51a5e4bbad4678c8",
+        "19, 150000": "23224 dbc52271327892b3",
+        "19, 5000": "916 a6838a535dce670d",
+        "3, 150000": "24745 9a4a4d7d66087c52",
+        "3, 5000": "942 2f652f811a065d94",
+        "5, 150000": "24209 a726791cfb67d565",
+        "5, 5000": "926 f64c220e68e0c73c",
+        "8, 150000": "24000 7f2abf062f75ff72",
+        "8, 5000": "913 b12d4bfdabcdaf2b",
+      }
+    `);
+
+    const compressed = zlib.zstdCompressSync(small, { dictionary });
+    expect(() => zlib.zstdDecompressSync(compressed)).toThrow(
+      expect.objectContaining({ code: "ZSTD_error_dictionary_wrong", errno: c.ZSTD_error_dictionary_wrong }),
+    );
+    const damaged = Buffer.from(dictionary);
+    damaged.fill(0xff, 8, 40);
+    expect(() => zlib.zstdCompressSync(small, { dictionary: damaged })).toThrow(
+      expect.objectContaining({ code: "ZSTD_error_memory_allocation", errno: c.ZSTD_error_memory_allocation }),
+    );
+  });
+
+  async function stream(params: Record<number, number>, flushes: boolean) {
+    const stream = zlib.createZstdCompress({ params });
+    const chunks: Buffer[] = [];
+    stream.on("data", chunk => chunks.push(chunk));
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    stream.on("end", resolve).on("error", reject);
+    stream.on("close", () => reject(new Error("closed before the end")));
+    for (let at = 0, n = 1; at < corpus.length; at += n, n = (n * 7) % 90_001) {
+      stream.write(corpus.subarray(at, at + n));
+      if (flushes && n % 3 === 0) stream.flush();
+    }
+    stream.end();
+    await promise;
+    return Buffer.concat(chunks);
+  }
+
+  it("in a stream with flushes", async () => {
+    const results: Record<string, string> = {};
+    for (const level of [1, 6, 12, 17]) {
+      results[level] = digest(await stream({ [c.ZSTD_c_compressionLevel]: level }, true));
+    }
+    expect(results).toMatchInlineSnapshot(`
+      {
+        "1": "111500 f8b357a7535f4d59",
+        "12": "99899 c7c64eb5fefd6b8c",
+        "17": "99325 43b1ca1d605f6a2a",
+        "6": "101943 73ac52aed8b6fec6",
+      }
+    `);
+  });
+
+  it("in a stream with workers", async () => {
+    for (const flushes of [false, true]) {
+      const compressed = await stream({ [c.ZSTD_c_nbWorkers]: 1, [c.ZSTD_c_jobSize]: 1 }, flushes);
+      expect(zlib.zstdDecompressSync(compressed).equals(corpus)).toBe(true);
+    }
+  });
+
+  it("in a stream with workers, after others were given up in the middle of a frame", async () => {
+    const params = { [c.ZSTD_c_nbWorkers]: 2, [c.ZSTD_c_jobSize]: 1 };
+    for (let i = 0; i < 4; i++) {
+      const abandoned = zlib.createZstdCompress({ params });
+      abandoned.write(corpus);
+      abandoned.destroy();
+    }
+    expect(zlib.zstdDecompressSync(await stream(params, false)).equals(corpus)).toBe(true);
+  });
+
+  async function flushed(params: Record<number, number>, sizes: number[]) {
+    const stream = zlib.createZstdCompress({ params });
+    const chunks: Buffer[] = [];
+    stream.on("data", chunk => chunks.push(chunk));
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    stream.on("end", resolve).on("error", reject);
+    stream.on("close", () => reject(new Error("closed before the end")));
+    let at = 0;
+    for (const size of sizes) {
+      stream.write(corpus.subarray(at, at + size));
+      stream.flush();
+      at += size;
+    }
+    stream.end();
+    await promise;
+    expect(zlib.zstdDecompressSync(Buffer.concat(chunks)).equals(corpus.subarray(0, at))).toBe(true);
+  }
+
+  it("in a stream with workers, where a flush does not cost as much as a whole job", async () => {
+    // A job makes room for one long distance match for each ldmMinMatch bytes. For a whole job that is 192 MB here.
+    await flushed(
+      {
+        [c.ZSTD_c_nbWorkers]: 1,
+        [c.ZSTD_c_jobSize]: 64 << 20,
+        [c.ZSTD_c_enableLongDistanceMatching]: 1,
+        [c.ZSTD_c_ldmMinMatch]: 4,
+      },
+      Array(200).fill(1000),
+    );
+  });
+
+  it("in a stream with workers, where a larger job than those before does not clear the tables", async () => {
+    // The table is 256 MB.
+    await flushed(
+      { [c.ZSTD_c_nbWorkers]: 4, [c.ZSTD_c_strategy]: c.ZSTD_fast, [c.ZSTD_c_hashLog]: 26 },
+      Array.from({ length: 300 }, (_, i) => i + 1),
+    );
+  });
+});
+
+// Frames from `decodecorpus`, zstd's own generator of anything the format allows, most of which no encoder makes, and
+// what zstd 1.5.7 makes of each of them, whole and damaged in nine ways, through `node:zlib` and through `Bun`.
+describe("frames that no encoder makes decode as with zstd 1.5.7", () => {
+  const digest = (output: Uint8Array) => `${output.length} ${Bun.hash.xxHash32(output).toString(16)}`;
+  const attempt = (decompress: (input: Buffer) => Uint8Array, input: Buffer) => {
+    try {
+      return digest(decompress(input));
+    } catch (error: any) {
+      return error.code.replace("ZSTD_error_", "");
+    }
+  };
+  function* damaged(frame: Buffer) {
+    for (let k = 1; k <= 6; k++) {
+      const copy = Buffer.from(frame);
+      copy[Math.floor((frame.length * k) / 7)] ^= 1 << ((k * 3) % 8);
+      yield copy;
+    }
+    yield frame.subarray(0, Math.floor((frame.length * 3) / 4));
+    yield frame.subarray(0, frame.length - 1);
+    yield Buffer.concat([frame, Buffer.from([0x28])]);
+  }
+
+  it("whole and damaged", () => {
+    for (const { frame: base64, results } of frames) {
+      const frame = Buffer.from(base64, "base64");
+      const actual: string[] = [];
+      for (const input of [frame, ...damaged(frame)]) {
+        actual.push(attempt(zlib.zstdDecompressSync, input), attempt(Bun.zstdDecompressSync, input));
+      }
+      expect({ frame: base64, results: actual.join(",") }).toEqual({ frame: base64, results });
+    }
+  });
+});
+
+describe("bugs of zstd 1.5.7", () => {
+  // Fixed by facebook/zstd cef5a5611: `windowLog - ldmHashRateLog` wrapped around, which made for a table of 8 GiB.
+  it("a hash rate above the window does not make for the largest table of long distance matches", async () => {
+    const script = `
+      const zlib = require("node:zlib");
+      const c = zlib.constants;
+      const input = Buffer.alloc(1024, "long distance ");
+      const output = zlib.zstdCompressSync(input, {
+        params: { [c.ZSTD_c_enableLongDistanceMatching]: 1, [c.ZSTD_c_ldmHashRateLog]: 11 },
+      });
+      console.log(input.equals(zlib.zstdDecompressSync(output)), process.resourceUsage().maxRSS < 4 * 1024 * 1024);
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: stderr.slice(0, 2000) }).toEqual({ stdout: "true true\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // Only a streaming decoder checked that. Decoded in one call, such a block could overwrite literals it had yet to read.
+  it("a compressed block that makes more than 128 KB is an error", () => {
+    const frame = Buffer.from("28b52ffd8050c6ff030040000041424344454647487500008dfb1f7a02540103340000030058", "hex");
+    expect(() => zlib.zstdDecompressSync(frame, { chunkSize: 262086 })).toThrow(
+      expect.objectContaining({ code: "ZSTD_error_corruption_detected" }),
+    );
+    expect(() => Bun.zstdDecompressSync(frame)).toThrow(expect.objectContaining({ code: "ERR_ZSTD" }));
+  });
+
+  // No decoder checked that. A streaming one keeps little more than the window, and gave whatever was there by then.
+  it("an offset beyond the window is an error once a streaming decoder has let go of what it is for", () => {
+    // A window of 1 KB, 1 KB each of "a", "b" and "c", then "xyz" and 4 bytes from 1500 bytes back.
+    const frame = Buffer.from("28b52ffd00000220006102200062022000635d00001878797a0154030a01df05", "hex");
+    expect(() => zlib.zstdDecompressSync(frame)).toThrow(
+      expect.objectContaining({ code: "ZSTD_error_corruption_detected" }),
+    );
+  });
+
+  // With workers, only a frame of one job was checked. Any other came out with the wrong size in its header.
+  it.each([-1, 1])("with workers, input that is %i off the pledged size is an error", async difference => {
+    const c = zlib.constants;
+    const input = Buffer.alloc(3 << 20, "several jobs ");
+    const stream = zlib.createZstdCompress({
+      pledgedSrcSize: input.length - difference,
+      params: { [c.ZSTD_c_nbWorkers]: 2, [c.ZSTD_c_jobSize]: 1 << 20 },
+    });
+    const { promise, resolve } = Promise.withResolvers();
+    stream.on("error", resolve).on("end", resolve).on("close", resolve).resume();
+    stream.write(input.subarray(0, 1000));
+    stream.end(input.subarray(1000));
+    expect(await promise).toMatchObject({ code: "ZSTD_error_srcSize_wrong" });
+  });
+});
+
+// Bugs that zstd has had, from its history up to October 2026. zstd 1.5.7 has none of them, and what is expected is what
+// it gives: they are here because the port does not follow the C code line by line. So Bun 1.4.4 passes them too, but for
+// bugs of its own: streams with workers lose their output, and a dictionary that a decoder cannot load goes unnoticed.
+describe("bugs that zstd has had", () => {
+  const c = zlib.constants;
+  const hex = (digits: string) => Buffer.from(digits.replaceAll(" ", ""), "hex");
+  const base64 = (text: string) => Buffer.from(text, "base64");
+  const repeated = (digits: string, count: number) => Buffer.alloc((digits.length / 2) * count, hex(digits));
+  const skippable = (size: number) => {
+    const frame = Buffer.alloc(8 + size, 7);
+    frame.writeUInt32LE(0x184d2a50, 0);
+    frame.writeUInt32LE(size, 4);
+    return frame;
+  };
+  /** xorshift32 */
+  function noise(length: number, seed: number, mask = 255) {
+    const bytes = Buffer.alloc(length);
+    for (let i = 0, x = seed >>> 0; i < length; i++) {
+      x ^= x << 13;
+      x ^= x >>> 17;
+      x ^= x << 5;
+      bytes[i] = x & mask;
+    }
+    return bytes;
+  }
+  function through(stream: zlib.ZstdCompress | zlib.ZstdDecompress, chunks: Iterable<Buffer>, flush = false) {
+    const { promise, resolve } = Promise.withResolvers<Buffer | string>();
+    const output: Buffer[] = [];
+    stream.on("data", chunk => output.push(chunk));
+    stream.on("error", (error: any) => resolve(error.code));
+    stream.on("end", () => resolve(Buffer.concat(output)));
+    stream.on("close", () => resolve("closed"));
+    for (const chunk of chunks) {
+      stream.write(chunk);
+      if (flush) stream.flush();
+    }
+    stream.end();
+    return promise;
+  }
+  function* pieces(bytes: Buffer, size: number) {
+    for (let i = 0; i < bytes.length; i += size) yield bytes.subarray(i, i + size);
+  }
+  const attempt = (decompress: () => Uint8Array) => {
+    try {
+      return Buffer.from(decompress());
+    } catch (error: any) {
+      if (typeof error.code !== "string") throw error;
+      return error.code as string;
+    }
+  };
+  /** By `Bun.zstdDecompressSync`, by `zlib.zstdDecompressSync`, and by a stream that gets little at a time. */
+  const decoded = async (frame: Buffer, options?: zlib.ZstdOptions) => [
+    attempt(() => Bun.zstdDecompressSync(frame)),
+    attempt(() => zlib.zstdDecompressSync(frame, options)),
+    await through(zlib.createZstdDecompress(options), pieces(frame, frame.length > 3000 ? 1000 : 1)),
+  ];
+  const hello = hex("28b52ffd200529000068656c6c6f");
+  const corrupt = "ZSTD_error_corruption_detected";
+
+  it.each<[string, Buffer, Buffer | string]>([
+    ["an empty compressed block", hex("28b52ffd00001500000000"), ""],
+    ["an empty raw block", hex("28b52ffd0000 010000"), ""],
+    ["an empty run", hex("28b52ffd0000 030000 09"), ""],
+    ["empty blocks between others", hex("28b52ffd0000 180000616263 000000 0200007a 190000646566"), "abcdef"],
+    [
+      "a run for a first block",
+      hex("28b52ffda400001000" + "020010 00".repeat(7) + "030010 00 f13e16e1"),
+      Buffer.alloc(1 << 20),
+    ],
+    ["no sequences, said in 2 bytes", hex("28b52ffd00008500006848656c6c6f20576f726c64210a8000"), "Hello World!\n"],
+    ["no sequences", hex("28b52ffd0000 2d0000 1861626300"), "abc"],
+    [
+      "a compressed block of 128 KB",
+      Buffer.concat([hex("28b52ffd0038050010ccff1f"), Buffer.alloc(131068), hex("00")]),
+      Buffer.alloc(131068),
+    ],
+    [
+      "copies that go too far at the end of a stream's buffer",
+      hex("28b52ffd04004c00001061610100002a800544000008620100002a20045d00000003400000646027b0e00c6762cee0"),
+      Buffer.concat([Buffer.alloc(517, "a"), Buffer.alloc(543, "b"), Buffer.from("aaa")]),
+    ],
+    [
+      "sequence sections of 3 and 4 bytes",
+      base64("KLUv/SQ8NQEA8IUIwsRwz9fAln5Ma6mLvMW22X9M8QWmVO+saZSJHANECgcAtASAQAqk"),
+      hex("8508c2c470cfd7c0967e".repeat(2) + "4c6ba98bbcc5b6d97f4c".repeat(2) + "f105a654efac6994891c".repeat(2)),
+    ],
+    [
+      "skippable frames before, between and after frames",
+      hex("502a4d1803000000010203 28b52ffd0000190000616263 5f2a4d1800000000 28b52ffd0000190000646566"),
+      "abcdef",
+    ],
+    ["a skippable frame longer than any buffer", Buffer.concat([skippable(200_000), hello]), "hello"],
+    ["a window of 128 MB", hex("28b52ffd0088190000616263"), "abc"],
+    ["a match for the byte before", hex("28b52ffd8000040000004d00001c0000610150010040"), "aaaa"],
+    ["a match that overlaps itself", hex("28b52ffd80000c00000045000010616201006d0e0b"), "abababababab"],
+    [
+      "a raw block of the size of the window",
+      Buffer.concat([hex("28b52ffd0000 012000"), Buffer.alloc(1024, "A")]),
+      Buffer.alloc(1024, "A"),
+    ],
+  ])("%s is decoded", async (_, frame, content) => {
+    const expected = Buffer.from(content);
+    expect(await decoded(frame)).toEqual([expected, expected, expected]);
+  });
+
+  it.each<[string, Buffer, string]>([
+    ["an offset of 0", hex("28b52ffd0000450000080002002f430bae"), corrupt],
+    ["a repeat offset that comes to 0", hex("28b52ffd000040000061626364656667683d000000015400010003"), corrupt],
+    ["a Huffman state that is cut short", hex("28b52ffd000055000072800104207e1f02aa00"), corrupt],
+    [
+      "bytes after no sequences, said in 2 bytes",
+      hex("28b52ffd00009500006848656c6c6f20576f726c64210a80000000"),
+      corrupt,
+    ],
+    ["a byte after no sequences", hex("28b52ffd0000 350000 186162630000"), corrupt],
+    ["less content than the header says", hex("28b52ffd200629000068656c6c6f"), corrupt],
+    ["more content than the header says", hex("28b52ffd200429000068656c6c6f"), corrupt],
+    [
+      "a raw block larger than the window",
+      Buffer.concat([hex("28b52ffd0000 092000"), Buffer.alloc(1025, "A")]),
+      corrupt,
+    ],
+    [
+      "the Huffman table of the block before, in the first",
+      hex("28b52ffd0000350000434000000000"),
+      "ZSTD_error_dictionary_corrupted",
+    ],
+    ["a window of 256 MB", hex("28b52ffd0090190000616263"), "ZSTD_error_frameParameter_windowTooLarge"],
+    ["the reserved bit", hex("28b52ffd0800190000616263"), "ZSTD_error_frameParameter_unsupported"],
+    ["the reserved bit of a frame in one segment", hex("28b52ffd2800010000"), "ZSTD_error_frameParameter_unsupported"],
+    ["the largest window there is a code for", hex("28b52ffd00ff010000"), "ZSTD_error_frameParameter_windowTooLarge"],
+    ["the sequence tables of the block before, in the first", hex("28b52ffd8000040000002d0000086101fc01"), corrupt],
+    ["a literal length code of 36", hex("28b52ffd800004000000350000086101402401"), corrupt],
+    ["an offset code of 32", hex("28b52ffd800004000000350000086101102001"), corrupt],
+    ["a match length code of 53", hex("28b52ffd800004000000350000086101043501"), corrupt],
+    [
+      "4 streams for 5 literals",
+      hex("28b52ffd8000050000004d0000568001811100000000"),
+      "ZSTD_error_literals_headerWrong",
+    ],
+    [
+      "Huffman weights that add up to more than 2^12",
+      hex("28b52ffd80001400000085000042010383cccc01010101010101010100"),
+      corrupt,
+    ],
+    ["the first repeat offset less 1, in the first sequence", hex("28b52ffd800003000000350000000150000181"), corrupt],
+    ["an offset of 2 after 1 byte", hex("28b52ffd8000040000003d0000096101440100b9"), corrupt],
+    ["a run of literals without its byte", hex("28b52ffd8000280000001d00008d0200"), corrupt],
+    ["compressed literals without a table", hex("28b52ffd80002800000025000002000000"), corrupt],
+    [
+      // CVE-2026-116591 of another decoder, where it got through on top of what the block before had left.
+      "Huffman weights with a table of 2^15 states",
+      Buffer.concat([
+        hex("28b52ffd003874060042b8320d1a00000090affaff030080ff7f"),
+        repeated("a594524a29", 37),
+        hex("a5941200ad5603eeffdfb31a1c1a00e0ff1f0fb19c5acf4de41d7bab995e0151a473d8b1f3394b67f6ab1aab1aab1a"),
+        ...[repeated("8c31c61863", 1365), hex("8c31"), repeated("638c31c618", 1365), hex("632c")],
+        ...[repeated("31c618638c", 1365), hex("3146"), repeated("31c618638c", 1365), hex("310600")],
+      ]),
+      corrupt,
+    ],
+  ])("%s is an error", async (_, frame, code) => {
+    expect(await decoded(frame)).toEqual(["ERR_ZSTD", code, code]);
+  });
+
+  it("what follows the last frame is refused or left alone", async () => {
+    const abc = Buffer.from("abc");
+    const frame = hex("28b52ffd0000190000616263");
+    const after = (rest: string) => decoded(Buffer.concat([frame, hex(rest)]));
+    expect(await after("ff")).toEqual(["ERR_ZSTD", abc, "ZSTD_error_prefix_unknown"]);
+    expect(await after("502a4d18ffffffff")).toEqual(["ERR_ZSTD", abc, abc]);
+    // 8 more than that wraps around.
+    expect(await decoded(hex("502a4d18f8ffffff"))).toEqual(["ERR_ZSTD", Buffer.alloc(0), Buffer.alloc(0)]);
+  });
+
+  it("what no frame starts with is refused before there are 4 bytes of it", async () => {
+    const after = async (first: string) => {
+      const stream = zlib.createZstdDecompress();
+      const { promise, resolve } = Promise.withResolvers<string>();
+      stream.on("error", (error: any) => resolve(error.code));
+      stream.write(hex(first), error => resolve((error as any)?.code ?? "more"));
+      try {
+        return await promise;
+      } finally {
+        stream.destroy();
+      }
+    };
+    expect(await Promise.all(["28", "28b52f", "50", "5f2a4d"].map(after))).toEqual(["more", "more", "more", "more"]);
+    const unknown = "ZSTD_error_prefix_unknown";
+    expect(await Promise.all(["000000", "29", "28b530", "4f2a4d"].map(after))).toEqual(Array(4).fill(unknown));
+  });
+
+  it("a first block cannot repeat the tables of the frame that was decoded before it", async () => {
+    const text = zlib.zstdCompressSync(noise(20_000, 18, 15));
+    for (const [frame, code] of [
+      [hex("28b52ffd800008000000350000834000010100"), "ZSTD_error_dictionary_corrupted"],
+      [hex("28b52ffd8000040000002d0000086101fc01"), corrupt],
+    ] as const) {
+      expect(Bun.zstdDecompressSync(text).length).toBe(20_000);
+      expect(zlib.zstdDecompressSync(text).length).toBe(20_000);
+      expect(await decoded(frame)).toEqual(["ERR_ZSTD", code, code]);
+      expect(await through(zlib.createZstdDecompress(), [text, frame])).toBe(code);
+    }
+  });
+
+  it.each([1000, 1017, 1023, 1024])(
+    "offsets up to the window are decoded after a stream's buffer has wrapped around: %i",
+    async distance => {
+      const input = Buffer.alloc(100_000, noise(distance, distance));
+      for (const level of [5, 13, 19]) {
+        const params = { [c.ZSTD_c_windowLog]: 10, [c.ZSTD_c_compressionLevel]: level };
+        const frame = zlib.zstdCompressSync(input, { params });
+        expect(frame.length).toBeLessThan(5000);
+        expect(await through(zlib.createZstdDecompress(), pieces(frame, 1))).toEqual(input);
+        expect(await through(zlib.createZstdDecompress(), [frame])).toEqual(input);
+      }
+    },
+  );
+
+  it("a larger window is decoded if allowed", async () => {
+    const [, sync, streamed] = await decoded(hex("28b52ffd0090190000616263"), {
+      params: { [c.ZSTD_d_windowLogMax]: 28 },
+    });
+    expect([sync, streamed]).toEqual([Buffer.from("abc"), Buffer.from("abc")]);
+  });
+
+  it("each bit of the checksum counts", async () => {
+    const frame = zlib.zstdCompressSync(noise(3000, 1, 15), { params: { [c.ZSTD_c_checksumFlag]: 1 } });
+    for (let bit = 0; bit < 32; bit++) {
+      const damaged = Buffer.from(frame);
+      damaged[frame.length - 4 + (bit >> 3)] ^= 1 << (bit & 7);
+      expect(attempt(() => zlib.zstdDecompressSync(damaged))).toBe("ZSTD_error_checksum_wrong");
+    }
+  });
+
+  it("a raw block comes out as it comes in", async () => {
+    const content = noise(100_000, 2);
+    const frame = zlib.zstdCompressSync(content);
+    const stream = zlib.createZstdDecompress();
+    const { promise, resolve, reject } = Promise.withResolvers<number>();
+    stream.once("data", chunk => resolve(chunk.length)).on("error", reject);
+    stream.on("close", () => reject(new Error("closed before any data")));
+    try {
+      stream.write(frame.subarray(0, 5000), () => stream.flush());
+      expect(await promise).toBeWithin(4000, 5000);
+    } finally {
+      stream.destroy();
+    }
+  });
+
+  const roundTrip = (input: Buffer, params: Record<number, number>, dictionary?: Buffer) => {
+    const frame = zlib.zstdCompressSync(input, { params, dictionary });
+    expect(zlib.zstdDecompressSync(frame, { dictionary }).equals(input)).toBe(true);
+    return frame;
+  };
+  const levels = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => from + i);
+
+  // facebook/zstd#3517
+  it("a block is split where 64 KB of literals come before a repeat offset", () => {
+    const input = noise(256 << 10, 2654435761, 127);
+    noise(32 << 10, 0xcafebabe, 3).copy(input);
+    const put = (at: number, values: number[]) => {
+      for (const skip of [0, 4]) values.forEach((value, i) => input.writeUInt32LE(value, (at + skip + i) * 4));
+    };
+    put(8 << 10, [0xffffffff, 0xeeeeeeee]);
+    put((24 << 10) + 2, [0xdddddddd, 0xcccccccc]);
+    put(32 << 10, [0xbbbbbbbb, 0xaaaaaaaa]);
+    expect(roundTrip(input, { [c.ZSTD_c_compressionLevel]: 19, [c.ZSTD_c_minMatch]: 7 }).length).toBe(210649);
+  });
+
+  // facebook/zstd#3212
+  const ZSTD_c_targetCBlockSize = 130;
+  it("literals and matches of more than 64 KB go in blocks of a target size", () => {
+    const input = Buffer.alloc(270_000);
+    noise(70_000, 12345, 127).copy(input);
+    for (let i = 70_000; i < 200_000; i++) input[i] = input[i - 1000];
+    noise(70_000, 777, 127).copy(input, 200_000);
+    for (const level of [1, 3, 7, 19]) {
+      roundTrip(input, { [c.ZSTD_c_compressionLevel]: level, [ZSTD_c_targetCBlockSize]: 1340 });
+    }
+  });
+
+  it("runs are coded as runs, but for the first block", () => {
+    const twoRuns = Buffer.concat([Buffer.alloc((256 << 10) - 2, "B"), Buffer.alloc(100 << 10, "A")]);
+    expect(Buffer.from(Bun.zstdCompressSync(twoRuns, { level: 1 })).toString("hex")).toBe(
+      "28b52ffda0fe8f05005400001042420100fbff39c0025c0000184241410100faff391002f37f0c41",
+    );
+    const runs = "02001000".repeat(6) + "03120a00";
+    const zeros = (level: number) =>
+      Buffer.from(Bun.zstdCompressSync(Buffer.alloc(1_000_000), { level })).toString("hex");
+    expect(zeros(1)).toBe("28b52ffd804840420f005400001000000100fbff39c002" + runs);
+    expect(zeros(3)).toBe("28b52ffda040420f005400001000000100fbff39c002" + runs);
+    expect(zeros(19)).toBe("28b52ffda040420f004c000008000100fcff391002" + runs);
+  });
+
+  it("what does not compress is not split", () => {
+    const input = noise(256 << 10, 99);
+    for (let chunk = 0; chunk < 32; chunk++) {
+      for (let i = chunk * 8192; i < (chunk + 1) * 8192; i += 43)
+        input[i] = chunk % 2 ? input[i] & 0x80 : input[i] | 0x80;
+    }
+    for (const level of [1, 3, 5, 9, 13, 16, 19, 22]) {
+      expect(Bun.zstdCompressSync(input, { level }).length).toBe(input.length + 9 + 2 * 3);
+    }
+  });
+
+  it("literals that Huffman coding makes longer are left as they are", () => {
+    const input = base64(
+      "KLUv/QRQFQQAZoYeHZByBTMAgCylAQAAAAAQ3rSu67renkkEAACAAACAFgAXABYAPAbsctt3bakp+jCTL8TBUCAMBAHAB/qINH48GBJqFKKYQCuWaqejAYm/HkwYO8iHxTOx0WQulspEBGEVN1ttJot1X2V//vv1OxoLTidSkpxSsxzjcgEBAFsWJDvL4y4=",
+    );
+    for (const level of levels(1, 22))
+      expect(roundTrip(input, { [c.ZSTD_c_compressionLevel]: level }).length).toBe(152);
+    expect(Bun.zstdDecompressSync(input).length).toBe(142);
+  });
+
+  it("there is no empty block after input of the pledged size", async () => {
+    const block = Buffer.alloc(128 << 10, "a");
+    const compressed = async (options: zlib.ZstdOptions) =>
+      ((await through(zlib.createZstdCompress(options), [block])) as Buffer).toString("hex");
+    expect(await compressed({ pledgedSrcSize: block.length })).toBe("28b52ffda0000002005500001061610100fbff39c002");
+    expect(await compressed({})).toBe("28b52ffd00585400001061610100fbff39c002010000");
+  });
+
+  it("tiny inputs", () => {
+    const compressed = (input: string | Buffer, level: number) =>
+      Buffer.from(Bun.zstdCompressSync(input, { level })).toString("hex");
+    for (const level of [1, 3, 19]) {
+      expect(compressed(Buffer.alloc(100), level)).toBe("28b52ffd206445000010000001003f012c");
+      expect(compressed("", level)).toBe("28b52ffd2000010000");
+      expect(compressed("a", level)).toBe("28b52ffd200109000061");
+    }
+    const abab = Buffer.alloc(20, "ab");
+    expect([1, 3, 19].map(level => compressed(abab, level))).toEqual([
+      "28b52ffd20144500001061620100790e0b",
+      "28b52ffd20144500001061620100790e0b",
+      "28b52ffd20144d0000186162610100cd6e08",
+    ]);
+    for (const length of levels(0, 40)) {
+      for (const input of [Buffer.alloc(length), Buffer.from(levels(1, length)), Buffer.alloc(length, "ab")]) {
+        for (const level of [-5, 1, 3, 6, 13, 19, 22]) roundTrip(input, { [c.ZSTD_c_compressionLevel]: level });
+      }
+    }
+  });
+
+  it("127, 128 and 129 sequences", () => {
+    const made = (total: number) => {
+      let x = 1;
+      const next = () => ((x = (Math.imul(x, 1103515245) + 12345) & 0x7fffffff), (x >> 16) & 255);
+      const bytes = Array.from({ length: 16 }, next);
+      while (bytes.length < total) {
+        const distance = 4 + (next() % 9);
+        for (let i = 0; i < 3; i++) bytes.push(bytes.at(-distance)!);
+        const byte = next();
+        bytes.push(byte === bytes.at(-distance) ? (byte + 1) & 255 : byte);
+      }
+      const frame = roundTrip(Buffer.from(bytes), { [c.ZSTD_c_compressionLevel]: 19 });
+      return `${frame.length} ${Bun.hash.xxHash64(frame).toString(16)}`;
+    };
+    expect([532, 536, 540].map(made)).toEqual(["237 675545151ba98499", "239 18edd3092b7b0659", "241 bf78b419d4d9bdc1"]);
+  });
+
+  it("literals and matches of about 64 KB", () => {
+    for (const literals of [65_535, 65_536, 65_537]) {
+      for (const match of [65_538, 65_539]) {
+        const input = Buffer.concat([
+          noise(literals + 10, literals),
+          noise(literals + 10, literals).subarray(0, match),
+        ]);
+        for (const level of [1, 3, 9, 19]) roundTrip(input, { [c.ZSTD_c_compressionLevel]: level });
+      }
+    }
+  });
+
+  it("level 0 is level 3", () => {
+    const input = noise(20_000, 3, 7);
+    expect(roundTrip(input, { [c.ZSTD_c_compressionLevel]: 0 })).toEqual(
+      roundTrip(input, { [c.ZSTD_c_compressionLevel]: 3 }),
+    );
+  });
+
+  it("the size of the output buffer does not show", () => {
+    for (const input of [Buffer.alloc(0), Buffer.from("a"), noise(200, 4, 7), noise(5000, 5, 7), noise(5000, 6)]) {
+      for (const level of [1, 3, 9, 19]) {
+        const params = { [c.ZSTD_c_compressionLevel]: level };
+        expect(zlib.zstdCompressSync(input, { params, chunkSize: 64 })).toEqual(roundTrip(input, params));
+      }
+    }
+  });
+
+  it("a match for the first position is found alike in one call and in a stream", () => {
+    const input = Buffer.from([...levels(0, 19), ...levels(0, 9)]);
+    for (const level of levels(1, 19)) {
+      expect(Buffer.from(Bun.zstdCompressSync(input, { level }))).toEqual(
+        roundTrip(input, { [c.ZSTD_c_compressionLevel]: level }),
+      );
+    }
+  });
+
+  it("the first block that counts comes after blocks too small to", async () => {
+    const input = noise(5000, 7, 15);
+    const stream = zlib.createZstdCompress({
+      pledgedSrcSize: input.length,
+      params: { [c.ZSTD_c_compressionLevel]: 22 },
+    });
+    const cuts = [0, 4, 9, 20, input.length];
+    const chunks = cuts.slice(1).map((to, i) => input.subarray(cuts[i], to));
+    expect(zlib.zstdDecompressSync((await through(stream, chunks, true)) as Buffer)).toEqual(input);
+  });
+
+  it("raw blocks between compressed ones", () => {
+    const input = Buffer.concat(levels(1, 3).flatMap(i => [noise(128 << 10, i, 7), noise(128 << 10, i + 10)]));
+    for (const level of [1, 3, 9, 19]) roundTrip(input, { [c.ZSTD_c_compressionLevel]: level });
+  });
+
+  it("a block of literals with a match for its last bytes", () => {
+    const input = noise(128 << 10, 19);
+    input.copy(input, input.length - 16, 1000, 1016);
+    for (const level of [16, 19, 22])
+      expect(roundTrip(input, { [c.ZSTD_c_compressionLevel]: level }).length).toBe(131084);
+  });
+
+  it("less input than the shortest long distance match", async () => {
+    const params = { [c.ZSTD_c_enableLongDistanceMatching]: 1, [c.ZSTD_c_ldmMinMatch]: 4096 };
+    const frames = [0, 1, 7, 63, 64, 4095].flatMap(length =>
+      [3, 19].map(level => roundTrip(noise(length, 21, 3), { ...params, [c.ZSTD_c_compressionLevel]: level })),
+    );
+    expect(Bun.MD5.hash(Buffer.concat(frames), "hex")).toStartWith("033266ef");
+
+    const input = noise(300, 22, 3);
+    const frame = (await through(zlib.createZstdCompress({ params }), pieces(input, 5), true)) as Buffer;
+    expect(`${frame.length} ${Bun.MD5.hash(frame, "hex").slice(0, 8)}`).toBe("504 1f230d95");
+    expect(zlib.zstdDecompressSync(frame)).toEqual(input);
+  });
+
+  it("the least and the most that parameters can be", () => {
+    const taken = (parameter: number, values: number[]) =>
+      values.filter(value => typeof attempt(() => roundTrip(hello, { [parameter]: value })) !== "string");
+    expect(taken(c.ZSTD_c_compressionLevel, [-200_000, -131_073, -131_072, 22, 23, 200_000])).toBeArrayOfSize(6);
+    expect(taken(c.ZSTD_c_windowLog, [9, 10, 31, 32])).toEqual([10, 31]);
+    expect(taken(c.ZSTD_c_enableLongDistanceMatching, [0, 1, 2, 3])).toEqual([0, 1, 2]);
+    expect(taken(c.ZSTD_c_ldmHashLog, [5, 6, 30, 31])).toEqual([6, 30]);
+    expect(taken(c.ZSTD_c_ldmMinMatch, [3, 4, 4096, 4097])).toEqual([4, 4096]);
+    expect(taken(c.ZSTD_c_ldmBucketSizeLog, [0, 1, 8, 9])).toEqual([0, 1, 8]);
+    expect(taken(c.ZSTD_c_ldmHashRateLog, [0, 25, 26])).toEqual([0, 25]);
+  });
+
+  describe("dictionaries", () => {
+    // `tests/dict-files/zero-weight-dict`
+    const zeroWeights = base64(
+      "N6Qw7P8g/wA2EBsBAS69U+gVvLDIxkg0+R20Td9JXrqkGW5ZfDAqCkIVpJJ/1SYRHsHu2M4pkpKSkpKSkjIF0wIgDAoHxYOiAYE+uwUEIMKpoI4m1OVZksMoCiFkjDGEECAAAEAAQGREAAAAABRwrVMUAAAATCGEjEHGDM3IDAAAAAEAAAAEAAAACAAAACAgjibU5VmSwygK",
+    );
+
+    it("whose Huffman table has symbols of weight 0", () => {
+      const skewed = noise(5000, 8).map((byte, i, all) => Math.min(byte, all[(i + 1) % all.length]));
+      for (const level of levels(1, 22)) {
+        for (const input of [zeroWeights, Buffer.from("0000000000000000000000000\n"), Buffer.from(skewed)]) {
+          roundTrip(input, { [c.ZSTD_c_compressionLevel]: level }, zeroWeights);
+        }
+      }
+    });
+
+    // A compressor only looks at its dictionary when it starts, and has one error for all that can go wrong with it.
+    const refused = ["ZSTD_error_memory_allocation", "ERR_ZLIB_INITIALIZATION_FAILED"];
+    const taken = (dictionary: Buffer) =>
+      [
+        attempt(() => zlib.zstdCompressSync("hello", { dictionary })),
+        attempt(() => zlib.zstdDecompressSync(hello, { dictionary })),
+      ].map(result => (typeof result === "string" ? result : "ok"));
+
+    it("whose repeat offsets reach no further than their content", () => {
+      const withOffset = (offset: number, at: number) => {
+        const dictionary = Buffer.from(zeroWeights);
+        dictionary.writeUInt32LE(offset, at);
+        return taken(dictionary);
+      };
+      for (const at of [130, 134, 138]) {
+        expect([withOffset(11, at), withOffset(12, at), withOffset(0, at)]).toEqual([["ok", "ok"], refused, refused]);
+      }
+    });
+
+    it("that are short", () => {
+      const input = noise(300, 9, 7);
+      const plain = zlib.zstdCompressSync(input);
+      for (const length of levels(1, 20)) {
+        const raw = noise(length, length, 7);
+        const frame = roundTrip(input, {}, raw);
+        if (length < 8) expect(frame).toEqual(plain);
+        // With the magic number, 8 bytes and more have to be a whole dictionary.
+        hex("37a430ec").copy(raw);
+        expect(taken(raw)).toEqual(length < 8 ? ["ok", "ok"] : refused);
+      }
+    });
+
+    it("that do not make the window of a stream of unknown size smaller", async () => {
+      const chunks = [Buffer.from("abc"), Buffer.from("def")];
+      const start = async (options: zlib.ZstdOptions) =>
+        ((await through(zlib.createZstdCompress(options), chunks)) as Buffer).toString("hex", 0, 6);
+      const dictionary = noise(1000, 20, 7);
+      expect(await start({ dictionary })).toBe("28b52ffd0058");
+      expect(await start({ dictionary, pledgedSrcSize: 6 })).toBe("28b52ffd2006");
+    });
+
+    it("of which the tables have no room for all", () => {
+      const dictionary = noise(17 << 20, 24, 15);
+      const params = { [c.ZSTD_c_compressionLevel]: 1 };
+      expect(roundTrip(dictionary.subarray(0, 10240), params, dictionary).length).toBe(5154);
+      expect(roundTrip(dictionary.subarray(-10240), params, dictionary).length).toBe(19);
+    });
+
+    it("that leave the window", async () => {
+      const dictionary = noise(10240, 10, 15);
+      const input = Buffer.alloc(10240);
+      for (let i = 0, x = 11; i < input.length; x = (x * 1103515245 + 12345) >>> 0) {
+        const length = 4 + ((x >>> 8) % 57);
+        const distance = [7, 300, 1000][(x >>> 16) % 3];
+        const from = (x >>> 4) % (dictionary.length - 64);
+        for (let k = 0; k < length && i < input.length; k++, i++) {
+          input[i] =
+            x % 5 === 0
+              ? (x >>> (k % 24)) & 15
+              : x % 5 === 1 || i < distance
+                ? dictionary[from + k]
+                : input[i - distance];
+        }
+      }
+      for (const strategy of levels(1, 9)) {
+        const params = { [c.ZSTD_c_windowLog]: 10, [c.ZSTD_c_strategy]: strategy, [c.ZSTD_c_checksumFlag]: 1 };
+        const frame = (await through(zlib.createZstdCompress({ dictionary, params }), pieces(input, 512))) as Buffer;
+        const decoder = zlib.createZstdDecompress({ dictionary, params: { [c.ZSTD_d_windowLogMax]: 10 } });
+        expect(await through(decoder, pieces(frame, 100))).toEqual(input);
+      }
+    });
+  });
+
+  describe("workers", () => {
+    it("whose overlap starts like a dictionary", async () => {
+      const input = noise(5 << 20, 12, 7);
+      for (const job of levels(1, 4)) hex("37a430ec").copy(input, (job << 20) - (1 << 14));
+      const params = {
+        [c.ZSTD_c_nbWorkers]: 2,
+        [c.ZSTD_c_jobSize]: 1 << 20,
+        [c.ZSTD_c_windowLog]: 17,
+        [c.ZSTD_c_overlapLog]: 6,
+      };
+      const frame = (await through(zlib.createZstdCompress({ params }), pieces(input, 300_000))) as Buffer;
+      expect(zlib.zstdDecompressSync(frame).equals(input)).toBe(true);
+    });
+
+    it("with long distance matching and a tiny dictionary", () => {
+      const input = noise(600_000, 13, 7);
+      for (const length of [1, 8, 63]) {
+        roundTrip(input, { [c.ZSTD_c_nbWorkers]: 2, [c.ZSTD_c_enableLongDistanceMatching]: 1 }, noise(length, 14));
+      }
+    });
+
+    // What Node 24 gives, with zstd 1.5.7.
+    it("make the same of input however it is cut", async () => {
+      const input = noise(3 << 20, 15, 7);
+      const options = { pledgedSrcSize: input.length, params: { [c.ZSTD_c_nbWorkers]: 2, [c.ZSTD_c_checksumFlag]: 1 } };
+      const cut = async (size: number) => {
+        const frame = (await through(zlib.createZstdCompress(options), pieces(input, size))) as Buffer;
+        return `${frame.length} ${Bun.MD5.hash(frame, "hex").slice(0, 8)}`;
+      };
+      expect(await cut(input.length)).toBe("1398674 d981d509");
+      for (const size of [1 << 20, 64 << 10, 1000]) expect(await cut(size)).toBe("1398687 a871b693");
+    });
+
+    it.each([
+      [3, 0],
+      [3, 1],
+      [16, 0],
+      [16, 1],
+    ])("make the same twice: level %i, long distance matching %i", async (level, longDistance) => {
+      const input = noise(3 << 19, 23, 7);
+      const params = {
+        [c.ZSTD_c_nbWorkers]: 2,
+        [c.ZSTD_c_jobSize]: 512 << 10,
+        [c.ZSTD_c_compressionLevel]: level,
+        [c.ZSTD_c_enableLongDistanceMatching]: longDistance,
+      };
+      const made = () => through(zlib.createZstdCompress({ params }), pieces(input, 100_000)) as Promise<Buffer>;
+      const [frame, again] = await Promise.all([made(), made()]);
+      expect(frame.equals(again)).toBe(true);
+      expect(zlib.zstdDecompressSync(frame).equals(input)).toBe(true);
+    });
+
+    it("with nothing left for the last job", async () => {
+      const input = noise(2 << 20, 16, 7);
+      const params = { [c.ZSTD_c_nbWorkers]: 2, [c.ZSTD_c_jobSize]: 512 << 10, [c.ZSTD_c_checksumFlag]: 1 };
+      const dictionary = noise(1000, 17, 7);
+      const frame = (await through(zlib.createZstdCompress({ params, dictionary }), [input])) as Buffer;
+      expect(zlib.zstdDecompressSync(frame, { dictionary }).equals(input)).toBe(true);
+    });
+  });
+
+  // Each input is one of many from its seed that gives other bytes once the check that it is for is taken out.
+  describe("the optimal parser", () => {
+    /** xorshift32 */
+    class Input {
+      bytes: number[] = [];
+      #x: number;
+      constructor(seed: number) {
+        this.#x = Math.imul(seed, 2654435761) >>> 0;
+      }
+      next() {
+        this.#x ^= this.#x << 13;
+        this.#x ^= this.#x >>> 17;
+        this.#x ^= this.#x << 5;
+        return (this.#x >>>= 0);
+      }
+      range(from: number, to: number) {
+        return from + (this.next() % (to - from + 1));
+      }
+      pick(values: number[]) {
+        return values[this.next() % values.length];
+      }
+      some(length: number) {
+        return Array.from({ length }, () => this.next() & 255);
+      }
+      noise(length: number) {
+        return this.add(this.some(length));
+      }
+      copy(offset: number, length: number) {
+        for (let i = 0; i < length; i++) this.bytes.push(this.bytes[this.bytes.length - offset]);
+        return this;
+      }
+      add(bytes: number[]) {
+        for (const byte of bytes) this.bytes.push(byte);
+        return this;
+      }
+      /** Many of these make one literal cheaper than none. */
+      shortMatchAndLiteral() {
+        return this.copy(this.range(50, Math.min(2000, this.bytes.length)), this.range(5, 14)).noise(1);
+      }
+    }
+    const digest = (frame: Buffer) => `${frame.length} ${Bun.hash.xxHash32(frame).toString(16)}`;
+
+    // The first block ends with a match in the dictionary, a little further back than the window is large. For the
+    // second block the dictionary is given up, and the same distance leads to the right bytes again.
+    it.each([
+      [26, false, "1520 a9ba4dd5"],
+      [10, false, "2316 30a8306d"],
+      [26, true, "9125 e0ee4a07"],
+    ])(
+      "a repeat offset beyond the window is not used once the dictionary is given up: %i, %p",
+      async (seed, known, expected) => {
+        const input = new Input(seed);
+        const windowLog = input.range(10, 12);
+        const window = 1 << windowLog;
+        const offset = window + input.range(1, 200);
+        const dictionarySize = input.range(offset + 50, 4 * window);
+        input.noise(dictionarySize);
+        const first = input.next() % 2 < 1 ? input.range(window >> 2, window - 50) : window;
+        const [length, after] = [input.range(8, 40), input.range(0, 5)];
+        input
+          .noise(first - length - after)
+          .copy(offset, length)
+          .noise(after);
+        for (let i = input.range(1, 6); i > 0; i--) input.noise(input.range(1, 250)).copy(offset, input.range(4, 40));
+        // From 8 KB on the tables of the dictionary are copied, and it is the older segment. Else it is attached.
+        const more = known ? 8300 + input.range(0, 2999) : input.range(1, 3000);
+        while (input.bytes.length - dictionarySize < first + more) {
+          if (input.next() % 3 < 1) input.copy(offset, input.range(4, 40));
+          else input.noise(input.range(1, 400));
+        }
+        const dictionary = Buffer.from(input.bytes).subarray(0, dictionarySize);
+        const source = Buffer.from(input.bytes).subarray(dictionarySize);
+        const params = {
+          [c.ZSTD_c_strategy]: input.range(c.ZSTD_btopt, c.ZSTD_btultra2),
+          [c.ZSTD_c_windowLog]: windowLog,
+          [c.ZSTD_c_minMatch]: input.range(3, 5),
+          [c.ZSTD_c_searchLog]: input.range(2, 6),
+        };
+        const stream = zlib.createZstdCompress({
+          params,
+          dictionary,
+          pledgedSrcSize: known ? source.length : undefined,
+        });
+        stream.write(source.subarray(0, first));
+        stream.flush();
+        const frame = (await through(stream, [source.subarray(first)])) as Buffer;
+        expect(digest(frame)).toBe(expected);
+        expect(zlib.zstdDecompressSync(frame, { dictionary }).equals(source)).toBe(true);
+      },
+    );
+
+    // facebook/zstd b0e8580dc. The input ends with `q 6 x 1`. `q 5 x 2` is a little before, so that the repeat offset
+    // gives `x` and not what follows, and `x 1` is far before.
+    it("does not look at the byte after the block for a literal that replaces the end of a match", () => {
+      const input = new Input(68);
+      const x = input.some(input.range(8, 40));
+      input
+        .noise(200)
+        .add(x)
+        .add([1])
+        .noise(input.pick([300, 5000, 40000]));
+      for (let i = input.range(30, 600); i > 0; i--) input.shortMatchAndLiteral();
+      const q = input.some(input.range(6, 20));
+      for (let i = input.range(0, 29); i > 0; i--) {
+        const [a, b] = [input.some(input.range(6, 20)), input.some(input.range(6, 20))];
+        for (const w of [3, 4])
+          input
+            .add(a)
+            .add([w])
+            .add(b)
+            .add([w + 10]);
+      }
+      input.add(q).add([5]).add(x).add([2]);
+      for (let i = input.range(0, 2); i > 0; i--) input.shortMatchAndLiteral();
+      input.add(q).add([6]).add(x).add([1]);
+      const params = {
+        [c.ZSTD_c_strategy]: input.range(c.ZSTD_btopt, c.ZSTD_btultra2),
+        [c.ZSTD_c_windowLog]: input.range(19, 21),
+        [c.ZSTD_c_searchLog]: input.range(3, 7),
+        [c.ZSTD_c_minMatch]: input.range(3, 5),
+        [c.ZSTD_c_targetLength]: input.pick([48, 64, 200, 999]),
+      };
+      expect(digest(roundTrip(Buffer.from(input.bytes), params))).toBe("41368 2e959c78");
+    });
+
+    // facebook/zstd 22574d848. Matches for `text` are short and overlap, as both copies of it are spoilt every so often,
+    // at other places. Its last byte is only in a third, short copy.
+    it("has room for a series that goes on to the last position a match can lead to, and a literal", () => {
+      const input = new Input(255);
+      const size = input.pick([4095, 4095, 4095, 4095, 4094, 4096, 4093, 4097]);
+      const text = input.some(size);
+      const step = input.range(40, 300);
+      const spoilt = (first: number) =>
+        text.map((byte, i) => (i === size - 1 || (i >= first && (i - first) % step === 0) ? byte ^ 0x55 : byte));
+      const end = text.slice(size - input.range(5, 40));
+      input.noise(100);
+      const far = input.next() % 2 < 1;
+      if (far) input.add(end).noise(input.pick([10, 1000, 20000]));
+      input
+        .add(spoilt(step >> 1))
+        .noise(20)
+        .add(spoilt(step - 1))
+        .noise(20);
+      for (let i = input.range(100, 900); i > 0; i--) input.shortMatchAndLiteral();
+      if (!far) input.add(end);
+      input.noise(input.range(12, 60)).add(text).noise(input.range(20, 400));
+      const params = {
+        [c.ZSTD_c_strategy]: input.range(c.ZSTD_btopt, c.ZSTD_btultra2),
+        [c.ZSTD_c_windowLog]: 20,
+        [c.ZSTD_c_searchLog]: input.range(3, 7),
+        [c.ZSTD_c_minMatch]: input.range(3, 5),
+        [c.ZSTD_c_targetLength]: input.pick([4095, 4096, 131072]),
+      };
+      expect(digest(roundTrip(Buffer.from(input.bytes), params))).toBe("5917 9ffc7ec4");
+    });
+
+    // facebook/zstd 4d8a2132d. No 4 bytes come twice before the last 9, which are a copy from far away that the small
+    // tables have lost by the position after its first, and half of the block is one byte, so that literals are cheap.
+    it("has a price for 128 KB of literals", () => {
+      const input = new Input(4);
+      const size = 128 << 10;
+      const last = [0, 0, 0, input.range(1, 254), 0, 0, 0, input.range(1, 254)];
+      last.push(input.next() % 3 < 1 ? 0 : input.range(1, 254));
+      const from = 4 * input.range(1, (size - 70000) >> 2);
+      const pairs = Array.from({ length: 254 * 254 }, (_, i) => [1 + Math.floor(i / 254), 1 + (i % 254)]);
+      for (let i = pairs.length - 1; i > 0; i--) {
+        const j = input.next() % (i + 1);
+        [pairs[i], pairs[j]] = [pairs[j], pairs[i]];
+      }
+      for (const pair of pairs) {
+        if (input.bytes.length === from) input.add(last);
+        if (input.add([0, 0]).add(pair).bytes.length >= size) break;
+      }
+      input.bytes.length = size - last.length;
+      input.bytes[input.bytes.length - 1] ||= 7;
+      input.add(last);
+      const params = {
+        [c.ZSTD_c_strategy]: input.range(c.ZSTD_btopt, c.ZSTD_btultra2),
+        [c.ZSTD_c_minMatch]: input.range(4, 6),
+        [c.ZSTD_c_windowLog]: 18,
+        [c.ZSTD_c_targetLength]: input.pick([48, 64, 256, 999]),
+        [c.ZSTD_c_hashLog]: input.range(14, 19),
+        [c.ZSTD_c_chainLog]: input.range(6, 8),
+        [c.ZSTD_c_searchLog]: 1,
+      };
+      expect(digest(roundTrip(Buffer.from(input.bytes), params))).toBe("81886 6893fa8c");
+    });
   });
 });

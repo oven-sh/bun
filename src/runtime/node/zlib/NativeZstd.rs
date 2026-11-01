@@ -1,14 +1,113 @@
 pub(crate) use _impl::NativeZstd;
 
+/// The `ZSTD_*` members of `zlib.constants`, in Node's order, for `ProcessBindingConstants.cpp`.
+mod constants {
+    use core::ffi::{CStr, c_char};
+
+    use bun_zstd::{
+        EndDirective, Error, Strategy, ZSTD_CLEVEL_DEFAULT, ZSTD_D_WINDOW_LOG_MAX, c_param,
+    };
+
+    struct Constant {
+        name: &'static CStr,
+        value: i32,
+    }
+
+    const fn named(name: &'static CStr, value: i32) -> Constant {
+        Constant { name, value }
+    }
+
+    const fn error(code: Error) -> Constant {
+        named(code.name(), code as i32)
+    }
+
+    static CONSTANTS: [Constant; 61] = [
+        named(c"ZSTD_e_continue", EndDirective::Continue as i32),
+        named(c"ZSTD_e_flush", EndDirective::Flush as i32),
+        named(c"ZSTD_e_end", EndDirective::End as i32),
+        named(c"ZSTD_fast", Strategy::Fast as i32),
+        named(c"ZSTD_dfast", Strategy::DFast as i32),
+        named(c"ZSTD_greedy", Strategy::Greedy as i32),
+        named(c"ZSTD_lazy", Strategy::Lazy as i32),
+        named(c"ZSTD_lazy2", Strategy::Lazy2 as i32),
+        named(c"ZSTD_btlazy2", Strategy::BtLazy2 as i32),
+        named(c"ZSTD_btopt", Strategy::BtOpt as i32),
+        named(c"ZSTD_btultra", Strategy::BtUltra as i32),
+        named(c"ZSTD_btultra2", Strategy::BtUltra2 as i32),
+        named(c"ZSTD_c_compressionLevel", c_param::COMPRESSION_LEVEL),
+        named(c"ZSTD_c_windowLog", c_param::WINDOW_LOG),
+        named(c"ZSTD_c_hashLog", c_param::HASH_LOG),
+        named(c"ZSTD_c_chainLog", c_param::CHAIN_LOG),
+        named(c"ZSTD_c_searchLog", c_param::SEARCH_LOG),
+        named(c"ZSTD_c_minMatch", c_param::MIN_MATCH),
+        named(c"ZSTD_c_targetLength", c_param::TARGET_LENGTH),
+        named(c"ZSTD_c_strategy", c_param::STRATEGY),
+        named(
+            c"ZSTD_c_enableLongDistanceMatching",
+            c_param::ENABLE_LONG_DISTANCE_MATCHING,
+        ),
+        named(c"ZSTD_c_ldmHashLog", c_param::LDM_HASH_LOG),
+        named(c"ZSTD_c_ldmMinMatch", c_param::LDM_MIN_MATCH),
+        named(c"ZSTD_c_ldmBucketSizeLog", c_param::LDM_BUCKET_SIZE_LOG),
+        named(c"ZSTD_c_ldmHashRateLog", c_param::LDM_HASH_RATE_LOG),
+        named(c"ZSTD_c_contentSizeFlag", c_param::CONTENT_SIZE_FLAG),
+        named(c"ZSTD_c_checksumFlag", c_param::CHECKSUM_FLAG),
+        named(c"ZSTD_c_dictIDFlag", c_param::DICT_ID_FLAG),
+        named(c"ZSTD_c_nbWorkers", c_param::NB_WORKERS),
+        named(c"ZSTD_c_jobSize", c_param::JOB_SIZE),
+        named(c"ZSTD_c_overlapLog", c_param::OVERLAP_LOG),
+        named(c"ZSTD_d_windowLogMax", ZSTD_D_WINDOW_LOG_MAX),
+        named(c"ZSTD_CLEVEL_DEFAULT", ZSTD_CLEVEL_DEFAULT),
+        named(c"ZSTD_error_no_error", 0),
+        error(Error::Generic),
+        error(Error::PrefixUnknown),
+        error(Error::VersionUnsupported),
+        error(Error::FrameParameterUnsupported),
+        error(Error::FrameParameterWindowTooLarge),
+        error(Error::CorruptionDetected),
+        error(Error::ChecksumWrong),
+        error(Error::LiteralsHeaderWrong),
+        error(Error::DictionaryCorrupted),
+        error(Error::DictionaryWrong),
+        error(Error::DictionaryCreationFailed),
+        error(Error::ParameterUnsupported),
+        error(Error::ParameterCombinationUnsupported),
+        error(Error::ParameterOutOfBound),
+        error(Error::TableLogTooLarge),
+        error(Error::MaxSymbolValueTooLarge),
+        error(Error::MaxSymbolValueTooSmall),
+        error(Error::StabilityConditionNotRespected),
+        error(Error::StageWrong),
+        error(Error::InitMissing),
+        error(Error::MemoryAllocation),
+        error(Error::WorkSpaceTooSmall),
+        error(Error::DstSizeTooSmall),
+        error(Error::SrcSizeWrong),
+        error(Error::DstBufferNull),
+        error(Error::NoForwardProgressDestFull),
+        error(Error::NoForwardProgressInputEmpty),
+    ];
+
+    /// The name of the constant at `index`, whose value goes to `value`, or null past the last one.
+    #[unsafe(no_mangle)]
+    extern "C" fn Bun__zstdConstant(index: usize, value: &mut f64) -> *const c_char {
+        let Some(constant) = CONSTANTS.get(index) else {
+            return core::ptr::null();
+        };
+        *value = f64::from(constant.value);
+        constant.name.as_ptr()
+    }
+}
+
 mod _impl {
     use core::cell::Cell;
-    use core::ffi::{c_int, c_uint, c_void};
+    use core::ffi::{c_int, c_uint};
     use core::ptr;
 
     use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
     use bun_jsc::{self as jsc, JSGlobalObject, JsCell, JsResult, StrongOptional, WorkPoolTask};
     use bun_ptr::RefPtr;
-    use bun_zstd::c; // `bun.c` translated-c-headers (ZSTD_* fns/consts live here)
+    use bun_zstd::{CCtx, DCtx, EndDirective, InBuffer, OutBuffer};
 
     use crate::node::node_zlib_binding::{CompressionStreamImpl as _, CountedKeepAlive, Error};
     use crate::node::util::validators;
@@ -92,8 +191,8 @@ mod _impl {
         /// Per-mode external-allocation footprint, fixed at construction.
         fn external_size_for(mode: NodeMode) -> usize {
             match mode {
-                NodeMode::ZSTD_COMPRESS => 5272,    // estimate of ZSTD_sizeof_CCtx
-                NodeMode::ZSTD_DECOMPRESS => 95968, // estimate of ZSTD_sizeof_DCtx
+                NodeMode::ZSTD_COMPRESS => CCtx::SIZE,
+                NodeMode::ZSTD_DECOMPRESS => DCtx::SIZE,
                 _ => 0,
             }
         }
@@ -194,8 +293,15 @@ mod _impl {
                 .stream
                 .with_mut(|s| s.init(pledged_src_size, dictionary));
             if err.is_error() {
+                // SAFETY: is_error() ⇔ msg is non-null; it points at a NUL-terminated C string.
+                let msg = unsafe { bun_core::ffi::cstr(err.msg) }.to_bytes();
                 self.emit_error(global, this_value, err);
-                return Ok(false);
+                return Err(global
+                    .err(
+                        jsc::ErrorCode::ZLIB_INITIALIZATION_FAILED,
+                        format_args!("{}", bstr::BStr::new(msg)),
+                    )
+                    .throw());
             }
 
             let Some(mut params_) = init_params_array_value.as_array_buffer(global) else {
@@ -243,25 +349,22 @@ mod _impl {
         }
     }
 
-    // `poll_ref` and `this_value` (Strong) clean up via their own Drop impls.
-    impl Drop for NativeZstd {
-        fn drop(&mut self) {
-            self.stream.with_mut(|s| match s.mode {
-                NodeMode::ZSTD_COMPRESS | NodeMode::ZSTD_DECOMPRESS => s.close(),
-                _ => {}
-            });
-        }
+    enum State {
+        Compress(Box<CCtx>),
+        Decompress(Box<DCtx>),
     }
 
     pub(crate) struct Context {
         pub(crate) mode: NodeMode,
-        // LIFETIMES.tsv: FFI → Option<*mut c_void> (ZSTD_createCCtx/DCtx; freed in deinit_state)
-        pub(crate) state: Option<*mut c_void>,
-        pub flush: c_int,
-        pub(crate) input: c::ZSTD_inBuffer,
-        pub(crate) output: c::ZSTD_outBuffer,
-        pub(crate) pledged_src_size: u64,
-        pub(crate) remaining: u64,
+        state: Option<State>,
+        flush: EndDirective,
+        // What `set_buffers` was given, which the caller keeps alive until the write is over.
+        input: *const [u8],
+        input_pos: usize,
+        output: *mut [u8],
+        output_pos: usize,
+        pledged_src_size: u64,
+        error: Option<bun_zstd::Error>,
     }
 
     impl Default for Context {
@@ -269,108 +372,55 @@ mod _impl {
             Self {
                 mode: NodeMode::NONE,
                 state: None,
-                flush: c::ZSTD_e_continue as c_int,
-                input: c::ZSTD_inBuffer {
-                    src: ptr::null(),
-                    size: 0,
-                    pos: 0,
-                },
-                output: c::ZSTD_outBuffer {
-                    dst: ptr::null_mut(),
-                    size: 0,
-                    pos: 0,
-                },
+                flush: EndDirective::Continue,
+                input: ptr::slice_from_raw_parts(ptr::dangling(), 0),
+                input_pos: 0,
+                output: ptr::slice_from_raw_parts_mut(ptr::dangling_mut(), 0),
+                output_pos: 0,
                 pledged_src_size: u64::MAX,
-                remaining: 0,
+                error: None,
             }
         }
     }
 
     impl Context {
-        /// zstd copies the dictionary into the context, so `dictionary` does not
-        /// need to outlive this call (unlike brotli's attach APIs).
-        fn load_dictionary(
-            dictionary: Option<&[u8]>,
-            load: impl FnOnce(*const c_void, usize) -> usize,
-        ) -> Error {
-            let Some(dict) = dictionary.filter(|d| !d.is_empty()) else {
-                return Error::OK;
-            };
-            let result = load(dict.as_ptr().cast(), dict.len());
-            if c::ZSTD_isError(result) > 0 {
-                return Error::init(
-                    c"Failed to load zstd dictionary".as_ptr(),
-                    -1,
-                    c"ERR_ZLIB_DICTIONARY_LOAD_FAILED".as_ptr(),
-                );
-            }
-            Error::OK
-        }
+        const DICTIONARY_LOAD_FAILED: Error = Error::init(
+            c"Failed to load zstd dictionary".as_ptr(),
+            -1,
+            c"ERR_ZLIB_DICTIONARY_LOAD_FAILED".as_ptr(),
+        );
 
+        /// The dictionary is copied into the context, so `dictionary` does not
+        /// need to outlive this call (unlike brotli's attach APIs).
         pub(crate) fn init(&mut self, pledged_src_size: u64, dictionary: Option<&[u8]>) -> Error {
             // Mirrors node's `state_.reset(ZSTD_createCCtx())`: free the previous
             // context first. `init` is JS-reachable twice on one handle.
-            if self.state.is_some() {
-                self.deinit_state();
-            }
+            self.state = None;
+            let dictionary = dictionary.unwrap_or_default();
             match self.mode {
                 NodeMode::ZSTD_COMPRESS => {
                     self.pledged_src_size = pledged_src_size;
-                    let state = c::ZSTD_createCCtx();
-                    if state.is_null() {
-                        return Error::init(
-                            c"Could not initialize zstd instance".as_ptr(),
-                            -1,
-                            c"ERR_ZLIB_INITIALIZATION_FAILED".as_ptr(),
-                        );
-                    }
-                    self.state = Some(state.cast());
+                    let mut state = Box::new(CCtx::new());
                     // Node loads the dictionary before setting the pledged size.
-                    // SAFETY: FFI — state is a valid CCtx allocated above.
-                    let err = Self::load_dictionary(dictionary, |d, n| unsafe {
-                        c::ZSTD_CCtx_loadDictionary(state, d, n)
-                    });
-                    if err.is_error() {
-                        // SAFETY: state is a valid CCtx allocated above.
-                        let _ = unsafe { c::ZSTD_freeCCtx(state) };
-                        self.state = None;
-                        return err;
+                    if state.load_dictionary(dictionary).is_err() {
+                        return Self::DICTIONARY_LOAD_FAILED;
                     }
-                    // SAFETY: state is non-null (checked above).
-                    let result =
-                        unsafe { c::ZSTD_CCtx_setPledgedSrcSize(state, pledged_src_size as _) };
-                    if c::ZSTD_isError(result) > 0 {
-                        // SAFETY: state is a valid CCtx allocated above.
-                        let _ = unsafe { c::ZSTD_freeCCtx(state) };
-                        self.state = None;
+                    if state.set_pledged_src_size(pledged_src_size).is_err() {
                         return Error::init(
                             c"Could not set pledged src size".as_ptr(),
                             -1,
                             c"ERR_ZLIB_INITIALIZATION_FAILED".as_ptr(),
                         );
                     }
+                    self.state = Some(State::Compress(state));
                     Error::OK
                 }
                 NodeMode::ZSTD_DECOMPRESS => {
-                    let state = c::ZSTD_createDCtx();
-                    if state.is_null() {
-                        return Error::init(
-                            c"Could not initialize zstd instance".as_ptr(),
-                            -1,
-                            c"ERR_ZLIB_INITIALIZATION_FAILED".as_ptr(),
-                        );
+                    let mut state = Box::new(DCtx::new());
+                    if state.load_dictionary(dictionary).is_err() {
+                        return Self::DICTIONARY_LOAD_FAILED;
                     }
-                    self.state = Some(state.cast());
-                    // SAFETY: FFI — state is a valid DCtx allocated above.
-                    let err = Self::load_dictionary(dictionary, |d, n| unsafe {
-                        c::ZSTD_DCtx_loadDictionary(state, d, n)
-                    });
-                    if err.is_error() {
-                        // SAFETY: state is a valid DCtx allocated above.
-                        let _ = unsafe { c::ZSTD_freeDCtx(state) };
-                        self.state = None;
-                        return err;
-                    }
+                    self.state = Some(State::Decompress(state));
                     Error::OK
                 }
                 _ => unreachable!(),
@@ -378,37 +428,20 @@ mod _impl {
         }
 
         pub(crate) fn set_params(&mut self, key: c_uint, value: u32) -> Error {
-            match self.mode {
-                NodeMode::ZSTD_COMPRESS => {
-                    // SAFETY: state is a valid CCtx set by init(); @bitCast u32→c_int is a same-size reinterpret.
-                    let result = unsafe {
-                        c::ZSTD_CCtx_setParameter(self.state_ptr().cast(), key, value as c_int)
-                    };
-                    if c::ZSTD_isError(result) > 0 {
-                        return Error::init(
-                            c"Setting parameter failed".as_ptr(),
-                            -1,
-                            c"ERR_ZSTD_PARAM_SET_FAILED".as_ptr(),
-                        );
-                    }
-                    Error::OK
-                }
-                NodeMode::ZSTD_DECOMPRESS => {
-                    // SAFETY: state is a valid DCtx set by init().
-                    let result = unsafe {
-                        c::ZSTD_DCtx_setParameter(self.state_ptr().cast(), key, value as c_int)
-                    };
-                    if c::ZSTD_isError(result) > 0 {
-                        return Error::init(
-                            c"Setting parameter failed".as_ptr(),
-                            -1,
-                            c"ERR_ZSTD_PARAM_SET_FAILED".as_ptr(),
-                        );
-                    }
-                    Error::OK
-                }
-                _ => unreachable!(),
+            let (key, value) = (key as i32, value as i32);
+            let result = match &mut self.state {
+                Some(State::Compress(state)) => state.set_parameter(key, value).map(drop),
+                Some(State::Decompress(state)) => state.set_parameter(key, value),
+                None => unreachable!(),
+            };
+            if result.is_err() {
+                return Error::init(
+                    c"Setting parameter failed".as_ptr(),
+                    -1,
+                    c"ERR_ZSTD_PARAM_SET_FAILED".as_ptr(),
+                );
             }
+            Error::OK
         }
 
         pub(crate) fn reset(&mut self) -> Error {
@@ -418,34 +451,11 @@ mod _impl {
             self.init(self.pledged_src_size, None)
         }
 
-        /// Frees the Zstd encoder/decoder state without changing mode.
-        /// Use close() for full cleanup that also sets mode to NONE.
-        fn deinit_state(&mut self) {
-            let _ = match self.mode {
-                // SAFETY: state was allocated by ZSTD_create{C,D}Ctx and not yet freed.
-                NodeMode::ZSTD_COMPRESS => unsafe { c::ZSTD_freeCCtx(self.state_ptr().cast()) },
-                // SAFETY: state was allocated by ZSTD_createDCtx and not yet freed.
-                NodeMode::ZSTD_DECOMPRESS => unsafe { c::ZSTD_freeDCtx(self.state_ptr().cast()) },
-                _ => unreachable!(),
-            };
-            self.state = None;
-        }
-
         pub(crate) fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
-            self.input.src = in_.map_or(ptr::null(), |p| p.as_ptr().cast());
-            self.input.size = in_.map_or(0, |p| p.len());
-            self.input.pos = 0;
-            match out {
-                Some(p) => {
-                    self.output.size = p.len();
-                    self.output.dst = p.as_mut_ptr().cast();
-                }
-                None => {
-                    self.output.size = 0;
-                    self.output.dst = ptr::null_mut();
-                }
-            }
-            self.output.pos = 0;
+            self.input = in_.unwrap_or_default();
+            self.input_pos = 0;
+            self.output = out.unwrap_or_default();
+            self.output_pos = 0;
         }
 
         pub(crate) fn flush_value_is_valid(flush: u32) -> bool {
@@ -453,164 +463,97 @@ mod _impl {
         }
 
         pub(crate) fn set_flush(&mut self, flush: c_int) {
-            self.flush = flush;
+            self.flush = match flush {
+                0 => EndDirective::Continue,
+                1 => EndDirective::Flush,
+                2 => EndDirective::End,
+                n => unreachable!("invalid ZSTD_EndDirective {n}"),
+            };
         }
 
         const ZSTD_MAGICNUMBER: [u8; 4] = 0xFD2FB528u32.to_le_bytes();
         const ZSTD_MAGIC_SKIPPABLE: [u8; 4] = 0x184D2A50u32.to_le_bytes();
 
-        /// True when the unconsumed input begins a zstd/skippable frame magic (or a prefix of one).
-        fn next_input_is_frame(&self) -> bool {
-            let n = (self.input.size - self.input.pos).min(4);
+        /// True when `input` begins a zstd/skippable frame magic (or a prefix of one).
+        fn is_frame_start(input: &[u8]) -> bool {
+            let n = input.len().min(4);
             if n == 0 {
                 return false;
             }
-            let mut head = [0u8; 4];
-            // SAFETY: input.src[pos..pos+n] lies within the slice installed by set_buffers.
-            unsafe {
-                ptr::copy_nonoverlapping(
-                    self.input.src.cast::<u8>().add(self.input.pos),
-                    head.as_mut_ptr(),
-                    n,
-                );
-            }
-            head[..n] == Self::ZSTD_MAGICNUMBER[..n]
+            let head = &input[..n];
+            *head == Self::ZSTD_MAGICNUMBER[..n]
                 || (head[0] & 0xF0 == Self::ZSTD_MAGIC_SKIPPABLE[0]
-                    && head[1..n] == Self::ZSTD_MAGIC_SKIPPABLE[1..n])
+                    && head[1..] == Self::ZSTD_MAGIC_SKIPPABLE[1..n])
         }
 
         pub(crate) fn do_work(&mut self) {
-            // A handle driven before `init()` has no CCtx/DCtx; zstd
-            // dereferences the context pointer unconditionally.
-            if self.state.is_none() {
+            // A handle driven before `init()` has no context.
+            let Some(state) = &mut self.state else {
                 return;
-            }
-            self.remaining = match self.mode {
-                // SAFETY: state is a valid CCtx; input/output point to caller-kept-alive buffers (set_buffers).
-                NodeMode::ZSTD_COMPRESS => unsafe {
-                    c::ZSTD_compressStream2(
-                        self.state_ptr().cast(),
-                        &raw mut self.output,
-                        &raw mut self.input,
-                        // cast c_int → ZSTD_EndDirective (c_uint)
-                        self.flush as c_uint,
-                    )
-                },
-                NodeMode::ZSTD_DECOMPRESS => {
-                    // SAFETY: state is a valid DCtx.
-                    let mut ret = unsafe {
-                        c::ZSTD_decompressStream(
-                            self.state_ptr().cast(),
-                            &raw mut self.output,
-                            &raw mut self.input,
-                        )
-                    };
-                    // ret == 0 is frame-complete; mirrors NativeZlib::do_work_inflate's GUNZIP loop.
-                    while ret == 0
-                        && self.output.pos < self.output.size
-                        && self.next_input_is_frame()
+            };
+            let mut input = InBuffer {
+                // SAFETY: `set_buffers` got it from a slice that the caller keeps alive until the write is over.
+                src: unsafe { &*self.input },
+                pos: self.input_pos,
+            };
+            let mut output = OutBuffer {
+                // SAFETY: as above, and nothing else writes to it until then.
+                dst: unsafe { &mut *self.output },
+                pos: self.output_pos,
+            };
+            let result = match state {
+                State::Compress(state) => {
+                    let mut ret = state.compress_stream2(&mut output, &mut input, self.flush);
+                    // With workers, a call returns after any progress. `zlib.ts` takes room left in
+                    // the output to mean that all the input is consumed.
+                    while ret.is_ok()
+                        && self.flush == EndDirective::Continue
+                        && input.pos < input.src.len()
+                        && output.pos < output.dst.len()
                     {
-                        // SAFETY: state is a valid DCtx; input/output point to caller-kept-alive buffers.
-                        ret = unsafe {
-                            c::ZSTD_decompressStream(
-                                self.state_ptr().cast(),
-                                &raw mut self.output,
-                                &raw mut self.input,
-                            )
-                        };
+                        ret = state.compress_stream2(&mut output, &mut input, self.flush);
                     }
                     ret
                 }
-                _ => unreachable!(),
-            } as u64;
+                State::Decompress(state) => {
+                    let mut ret = state.decompress_stream(&mut output, &mut input);
+                    // 0 is frame-complete; mirrors NativeZlib::do_work_inflate's GUNZIP loop.
+                    while ret == Ok(0)
+                        && output.pos < output.dst.len()
+                        && Self::is_frame_start(&input.src[input.pos..])
+                    {
+                        ret = state.decompress_stream(&mut output, &mut input);
+                    }
+                    ret
+                }
+            };
+            self.input_pos = input.pos;
+            self.output_pos = output.pos;
+            self.error = result.err();
         }
 
         pub(crate) fn write_result(&self) -> [u32; 2] {
             [
-                self.output.size - self.output.pos,
-                self.input.size - self.input.pos,
+                self.output.len() - self.output_pos,
+                self.input.len() - self.input_pos,
             ]
             .map(|n| u32::try_from(n).expect("int cast"))
         }
 
         pub(crate) fn get_error_info(&mut self) -> Error {
-            // Compute result, then clear `remaining`, then return.
-            let err = c::ZSTD_getErrorCode(self.remaining as usize);
-            let result = if err == 0 {
-                Error::OK
-            } else {
-                Error {
+            match self.error.take() {
+                None => Error::OK,
+                Some(err) => Error {
                     err: err as c_int,
-                    msg: c::ZSTD_getErrorString(err),
-                    code: match err {
-                        c::ZSTD_error_no_error => c"ZSTD_error_no_error",
-                        c::ZSTD_error_GENERIC => c"ZSTD_error_GENERIC",
-                        c::ZSTD_error_prefix_unknown => c"ZSTD_error_prefix_unknown",
-                        c::ZSTD_error_version_unsupported => c"ZSTD_error_version_unsupported",
-                        c::ZSTD_error_frameParameter_unsupported => {
-                            c"ZSTD_error_frameParameter_unsupported"
-                        }
-                        c::ZSTD_error_frameParameter_windowTooLarge => {
-                            c"ZSTD_error_frameParameter_windowTooLarge"
-                        }
-                        c::ZSTD_error_corruption_detected => c"ZSTD_error_corruption_detected",
-                        c::ZSTD_error_checksum_wrong => c"ZSTD_error_checksum_wrong",
-                        c::ZSTD_error_literals_headerWrong => c"ZSTD_error_literals_headerWrong",
-                        c::ZSTD_error_dictionary_corrupted => c"ZSTD_error_dictionary_corrupted",
-                        c::ZSTD_error_dictionary_wrong => c"ZSTD_error_dictionary_wrong",
-                        c::ZSTD_error_dictionaryCreation_failed => {
-                            c"ZSTD_error_dictionaryCreation_failed"
-                        }
-                        c::ZSTD_error_parameter_unsupported => c"ZSTD_error_parameter_unsupported",
-                        c::ZSTD_error_parameter_combination_unsupported => {
-                            c"ZSTD_error_parameter_combination_unsupported"
-                        }
-                        c::ZSTD_error_parameter_outOfBound => c"ZSTD_error_parameter_outOfBound",
-                        c::ZSTD_error_tableLog_tooLarge => c"ZSTD_error_tableLog_tooLarge",
-                        c::ZSTD_error_maxSymbolValue_tooLarge => {
-                            c"ZSTD_error_maxSymbolValue_tooLarge"
-                        }
-                        c::ZSTD_error_maxSymbolValue_tooSmall => {
-                            c"ZSTD_error_maxSymbolValue_tooSmall"
-                        }
-                        c::ZSTD_error_stabilityCondition_notRespected => {
-                            c"ZSTD_error_stabilityCondition_notRespected"
-                        }
-                        c::ZSTD_error_stage_wrong => c"ZSTD_error_stage_wrong",
-                        c::ZSTD_error_init_missing => c"ZSTD_error_init_missing",
-                        c::ZSTD_error_memory_allocation => c"ZSTD_error_memory_allocation",
-                        c::ZSTD_error_workSpace_tooSmall => c"ZSTD_error_workSpace_tooSmall",
-                        c::ZSTD_error_dstSize_tooSmall => c"ZSTD_error_dstSize_tooSmall",
-                        c::ZSTD_error_srcSize_wrong => c"ZSTD_error_srcSize_wrong",
-                        c::ZSTD_error_dstBuffer_null => c"ZSTD_error_dstBuffer_null",
-                        c::ZSTD_error_noForwardProgress_destFull => {
-                            c"ZSTD_error_noForwardProgress_destFull"
-                        }
-                        c::ZSTD_error_noForwardProgress_inputEmpty => {
-                            c"ZSTD_error_noForwardProgress_inputEmpty"
-                        }
-                        _ => c"ZSTD_error_GENERIC",
-                    }
-                    .as_ptr(),
-                }
-            };
-            self.remaining = 0;
-            result
+                    msg: err.message().as_ptr(),
+                    code: err.name().as_ptr(),
+                },
+            }
         }
 
         pub(crate) fn close(&mut self) {
-            // Idempotent: a handle that was never (successfully) initialized,
-            // or that was already closed, has no CCtx/DCtx to free.
-            if self.state.is_some() {
-                self.deinit_state();
-            }
+            self.state = None;
             self.mode = NodeMode::NONE;
-        }
-
-        #[inline]
-        fn state_ptr(&self) -> *mut c_void {
-            // Passes null through if unset.
-            self.state.unwrap_or(ptr::null_mut())
         }
     }
 

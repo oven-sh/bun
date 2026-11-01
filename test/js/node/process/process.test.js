@@ -776,7 +776,6 @@ it("process.versions", async () => {
     lolhtml: "lolhtml",
     ares: "cares",
     libdeflate: "libdeflate",
-    zstd: "zstd",
     lshpack: "lshpack",
   };
 
@@ -801,6 +800,9 @@ it("process.versions", async () => {
   // Node.js exposes the bundled SQLite version here; Bun should too.
   expect(process.versions).toHaveProperty("sqlite");
   expect(process.versions.sqlite).toMatch(/^3\.\d+\.\d+$/);
+
+  // The version of zstd that Bun's own implementation behaves like.
+  expect(process.versions.zstd).toBe("1.5.7");
 
   // The version of TypeScript that `bun check` behaves like.
   expect(process.versions.typescript).toMatch(/^\d+\.\d+\.\d+$/);

@@ -1,0 +1,2211 @@
+//! `zstd_decompress_block.c`: one compressed block, which is literals and the sequences that mix them with matches.
+
+use super::huf::{self, HufDTable};
+use super::seq_table::{
+    Cell, Codes, LL_CODES, ML_CODES, OF_CODES, OffsetTable, SeqTable, SeqTableRefs,
+    SeqTableSources, SeqTables, TableSource,
+};
+use core::cell;
+use core::hint::{Locality, prefetch_read};
+use core::ops::Range;
+
+use crate::common::bitstream::BitDStream;
+use crate::common::entropy::read_ncount;
+use crate::common::fse_decompress::Spread;
+use crate::common::{
+    BlockType, LL_FSE_LOG, LONGNBSEQ, MAX_LL, MAX_ML, MAX_OFF, MIN_CBLOCK_SIZE,
+    MIN_LITERALS_FOR_4_STREAMS, MIN_SEQUENCES_SIZE, MINMATCH, ML_FSE_LOG, OFF_FSE_LOG,
+    REP_START_VALUE, SymbolEncodingType, WILDCOPY_OVERLENGTH, ZSTD_BLOCKHEADERSIZE,
+    ZSTD_BLOCKSIZE_MAX, ZSTD_REP_NUM,
+};
+use crate::error::{Error, Result};
+use crate::util::{
+    BUG, SliceExt, append, append_within, copy, make_room, read_le16, read_le24, read_le32,
+};
+
+/// `blockProperties_t`
+pub(crate) struct BlockProperties {
+    pub(crate) block_type: BlockType,
+    pub(crate) last_block: bool,
+    pub(crate) orig_size: u32,
+}
+
+/// `ZSTD_getcBlockSize`: reads a block header, and returns how many bytes of input the block takes after it.
+pub(crate) fn get_c_block_size(src: &[u8]) -> Result<(usize, BlockProperties)> {
+    if src.len() < ZSTD_BLOCKHEADERSIZE {
+        return Err(Error::SrcSizeWrong);
+    }
+    let c_block_header = read_le24(src, 0)?;
+    let c_size = c_block_header >> 3;
+    let block_type = match (c_block_header >> 1) & 3 {
+        0 => BlockType::Raw,
+        1 => BlockType::Rle,
+        2 => BlockType::Compressed,
+        _ => BlockType::Reserved,
+    };
+    let properties = BlockProperties {
+        block_type,
+        last_block: c_block_header & 1 != 0,
+        orig_size: c_size,
+    };
+    match block_type {
+        BlockType::Rle => Ok((1, properties)),
+        BlockType::Reserved => Err(Error::CorruptionDetected),
+        _ => Ok((c_size as usize, properties)),
+    }
+}
+
+/// `ZSTD_entropyDTables_t`
+#[derive(Clone)]
+pub(crate) struct EntropyDTables {
+    pub(crate) seq: SeqTables,
+    pub(crate) huf_table: HufDTable,
+    pub(crate) workspace: Spread,
+}
+
+impl EntropyDTables {
+    pub(crate) const fn new() -> Self {
+        Self {
+            seq: SeqTables::new(),
+            huf_table: HufDTable::new(),
+            workspace: Spread::new(),
+        }
+    }
+}
+
+/// What precedes the contiguous output, for matches to reach into: `dictEnd` and `virtualStart`.
+#[derive(Clone, Copy)]
+pub(crate) enum ExtDict<'a> {
+    /// The content of a dictionary. Empty if there is none.
+    Dict(&'a [u8]),
+    /// The `len` bytes up to `end` of the buffer that the output goes to, which is the streaming decoder's and has
+    /// wrapped around. What is further back than `window` is being overwritten.
+    Within {
+        end: usize,
+        len: usize,
+        window: usize,
+    },
+}
+
+impl ExtDict<'_> {
+    #[inline(always)]
+    fn len(&self) -> usize {
+        match *self {
+            ExtDict::Dict(dict) => dict.len(),
+            ExtDict::Within { len, .. } => len,
+        }
+    }
+
+    /// The largest offset there can be, `in_prefix` bytes after it. In 1.5.7 that is all there is in either case, and
+    /// a frame whose offsets go beyond its window gets whatever copies that go too far have left there.
+    #[inline(always)]
+    fn reach(&self, in_prefix: usize) -> usize {
+        match *self {
+            ExtDict::Dict(dict) => in_prefix + dict.len(),
+            ExtDict::Within { len, window, .. } => window.min(in_prefix + len),
+        }
+    }
+
+    /// `memmove(&out[dst], dictEnd - back, len)`
+    #[inline]
+    fn copy_to(
+        &self,
+        out: &mut OutputBuffer<'_>,
+        dst: usize,
+        back: usize,
+        len: usize,
+        growth: Growth,
+    ) -> Result<()> {
+        match *self {
+            ExtDict::Dict(dict) => out.write(dst, dict.span(dict.len() - back, len)?, growth),
+            ExtDict::Within { end, .. } => {
+                let Growth::Zeros { limit } = growth else {
+                    return Err(BUG);
+                };
+                out.extend_to(dst + len, limit);
+                out.bytes().move_within(end - back, dst, len)
+            }
+        }
+    }
+}
+
+/// A buffer that output goes to.
+pub(crate) enum OutputBuffer<'a> {
+    Whole(&'a mut [u8]),
+    /// What has been written so far of a buffer, or somewhat more. It has the capacity for all that a block is let to
+    /// write.
+    Used(&'a mut Vec<u8>),
+}
+
+impl OutputBuffer<'_> {
+    #[inline(always)]
+    pub(crate) fn bytes(&mut self) -> &mut [u8] {
+        match self {
+            Self::Whole(bytes) => bytes,
+            Self::Used(bytes) => bytes,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn reborrow(&mut self) -> OutputBuffer<'_> {
+        match self {
+            Self::Whole(bytes) => OutputBuffer::Whole(bytes),
+            Self::Used(bytes) => OutputBuffer::Used(bytes),
+        }
+    }
+
+    /// Makes `bytes` reach `end`, and somewhat further if `limit` allows.
+    fn extend_to(&mut self, end: usize, limit: usize) {
+        if let Self::Used(bytes) = self
+            && bytes.len() < end
+        {
+            let ahead = (bytes.len() / 2).clamp(1 << 12, 1 << 17) + 2 * WILDCOPY_OVERLENGTH;
+            bytes.resize((end + ahead).min(limit), 0);
+        }
+    }
+
+    /// Where the `len` bytes from `start` on go.
+    fn room(&mut self, start: usize, len: usize, growth: Growth) -> Result<Room<'_>> {
+        if let Growth::Zeros { limit } = growth {
+            self.extend_to(start + len, limit);
+        }
+        match self {
+            Self::Used(bytes) if start + len > bytes.len() => {
+                if start > bytes.len() || !matches!(growth, Growth::Append) {
+                    return Err(BUG);
+                }
+                bytes.truncate(start);
+                Ok(Room::AtEnd(bytes))
+            }
+            _ => Ok(Room::There(self.bytes().span_mut(start, len)?)),
+        }
+    }
+
+    /// `memcpy(&self[start], from, from.len())`
+    pub(crate) fn write(&mut self, start: usize, from: &[u8], growth: Growth) -> Result<()> {
+        match self.room(start, from.len(), growth)? {
+            Room::There(room) => room.write_at(0, from),
+            Room::AtEnd(bytes) => append(bytes, from),
+        }
+    }
+
+    /// `memset(&self[start], byte, len)`
+    pub(crate) fn fill(
+        &mut self,
+        start: usize,
+        byte: u8,
+        len: usize,
+        growth: Growth,
+    ) -> Result<()> {
+        match self.room(start, len, growth)? {
+            Room::There(room) => room.fill(byte),
+            Room::AtEnd(bytes) if len > bytes.capacity() - start => return Err(BUG),
+            Room::AtEnd(bytes) => bytes.resize(start + len, byte),
+        }
+        Ok(())
+    }
+
+    /// [`copy_match_exact`]
+    fn repeat(&mut self, src: usize, dst: usize, len: usize, growth: Growth) -> Result<()> {
+        if src >= dst {
+            return Err(BUG);
+        }
+        if let Room::AtEnd(bytes) = self.room(dst, len, growth)? {
+            return in_whole_periods(dst - src, len, |_, chunk| append_within(bytes, src, chunk));
+        }
+        copy_match_exact(self.bytes(), src, dst, len)
+    }
+}
+
+/// What to do about a buffer that is `Used` only up to before the end of what is to be written.
+#[derive(Clone, Copy)]
+pub(crate) enum Growth {
+    /// Zeros up to there, and somewhat further if `limit` allows.
+    Zeros { limit: usize },
+    /// What is written becomes its end, without being zeroed first. Only where nothing that comes after what is being
+    /// written is of any use, as in output in one call.
+    Append,
+}
+
+enum Room<'a> {
+    There(&'a mut [u8]),
+    AtEnd(&'a mut Vec<u8>),
+}
+
+/// Where a block is written.
+pub(crate) struct BlockOutput<'a> {
+    /// Holds the contiguous output so far, from `prefix_start` to `start`.
+    pub(crate) buf: OutputBuffer<'a>,
+    pub(crate) prefix_start: usize,
+    pub(crate) start: usize,
+    /// How many bytes from `start` on may be written.
+    pub(crate) capacity: usize,
+    pub(crate) ext_dict: ExtDict<'a>,
+}
+
+/// `streaming_operation`
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Streaming {
+    No,
+    Yes,
+}
+
+/// `ZSTD_LITBUFFEREXTRASIZE`
+const LIT_BUFFER_EXTRA_SIZE: usize = 1 << 16;
+
+/// `ZSTD_litLocation_e`. The C code saves memory by keeping the literals of a block in the part of the output that the
+/// block has not reached yet. Here they never are, but where they would have been limits how far the block may write.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LitLocation {
+    NotInDst,
+    /// Past the largest block, so that is as far as the block may write.
+    InDst,
+    /// All but the last `LIT_BUFFER_EXTRA_SIZE` at the end of the block, where the output must not catch up with them.
+    Split,
+}
+
+/// `ZSTD_allocateLiteralsBuffer`
+fn lit_location(
+    block_size_max: usize,
+    dst_capacity: usize,
+    lit_size: usize,
+    streaming: Streaming,
+) -> LitLocation {
+    if streaming == Streaming::No
+        && dst_capacity > block_size_max + WILDCOPY_OVERLENGTH + lit_size + WILDCOPY_OVERLENGTH
+    {
+        LitLocation::InDst
+    } else if lit_size <= LIT_BUFFER_EXTRA_SIZE {
+        LitLocation::NotInDst
+    } else {
+        LitLocation::Split
+    }
+}
+
+/// The literals of a block, once decoded.
+struct Literals {
+    /// How many bytes of the block they take.
+    c_size: usize,
+    size: usize,
+    /// Where they start in the block, if they are stored there as they are with enough after them to copy in chunks.
+    /// Otherwise they are in the context's buffer.
+    in_src: Option<usize>,
+    location: LitLocation,
+}
+
+/// The state of a `ZSTD_DCtx` that lasts from block to block.
+pub(crate) struct BlockDecoder {
+    /// There once a block takes it.
+    scratch: Option<Box<Scratch>>,
+    pub(crate) rep: [u32; ZSTD_REP_NUM],
+    pub(crate) seq_sources: SeqTableSources,
+    pub(crate) huf_source: TableSource,
+    /// There is a Huffman table to repeat.
+    pub(crate) lit_entropy: bool,
+    /// There are sequence tables to repeat.
+    pub(crate) fse_entropy: bool,
+    pub(crate) ddict_is_cold: bool,
+}
+
+/// What it takes to decode blocks that are compressed.
+struct Scratch {
+    entropy: EntropyDTables,
+    /// Grows to the literals of the largest block so far, and `WILDCOPY_OVERLENGTH`.
+    lit_buffer: Vec<u8>,
+    /// Sequences are decoded that many at a time, after 3 that only stand for the last offsets.
+    batch: [RawSequence; 3 + 128],
+    /// Where a block that is all of a small output is decoded: with room to copy in chunks up to its end.
+    small_output: [u8; Self::MAX_SMALL_OUTPUT + WILDCOPY_OVERLENGTH],
+    /// All of `small_output` from here on is zeros.
+    small_output_used: usize,
+}
+
+thread_local! {
+    /// That of the last decoder that was dropped, without its literals and output, for the next one. Nothing depends on
+    /// what is in the tables, and it takes longer to clear new ones than to decode a small frame.
+    static SPARE_SCRATCH: cell::Cell<Option<Box<Scratch>>> = const { cell::Cell::new(None) };
+}
+
+impl Scratch {
+    const MAX_SMALL_OUTPUT: usize = 1 << 12;
+    /// A thread keeps no more than that for its next decoder.
+    const MAX_SPARE_LIT_BUFFER: usize = 1 << 14;
+
+    fn reserve_literals(&mut self, lit_size: usize) -> Result<()> {
+        make_room(
+            &mut self.lit_buffer,
+            lit_size + WILDCOPY_OVERLENGTH,
+            ZSTD_BLOCKSIZE_MAX + WILDCOPY_OVERLENGTH,
+        )
+    }
+
+    /// Makes `lit_buffer` long enough for `lit_size` literals.
+    fn extend_lit_buffer(&mut self, lit_size: usize) -> Result<()> {
+        let needed = lit_size + WILDCOPY_OVERLENGTH;
+        self.reserve_literals(lit_size)?;
+        if self.lit_buffer.len() < needed {
+            self.lit_buffer.resize(needed, 0);
+        }
+        // Literals are copied by more than there are: this much can be read along with the last ones.
+        self.lit_buffer.sub_mut(lit_size..needed)?.fill(0);
+        Ok(())
+    }
+
+    /// [`Self::extend_lit_buffer`], for literals that `write` writes from the start of the buffer on, all `lit_size` of
+    /// them: what the buffer gets longer by for them is then not cleared first.
+    fn write_literals(
+        &mut self,
+        lit_size: usize,
+        write: impl FnOnce(OutputBuffer<'_>, Growth) -> Result<()>,
+    ) -> Result<()> {
+        self.reserve_literals(lit_size)?;
+        write(OutputBuffer::Used(&mut self.lit_buffer), Growth::Append)?;
+        self.extend_lit_buffer(lit_size)
+    }
+}
+
+impl Drop for BlockDecoder {
+    fn drop(&mut self) {
+        if let Some(mut scratch) = self.scratch.take() {
+            scratch.lit_buffer.clear();
+            let used = core::mem::take(&mut scratch.small_output_used);
+            if used != 0
+                && let Some(used) = scratch.small_output.get_mut(..used)
+            {
+                used.fill(0);
+            }
+            if scratch.lit_buffer.capacity() > Scratch::MAX_SPARE_LIT_BUFFER {
+                scratch.lit_buffer = Vec::new();
+            }
+            // Not if the thread is at its end.
+            let _ = SPARE_SCRATCH.try_with(|spare| spare.set(Some(scratch)));
+        }
+    }
+}
+
+impl BlockDecoder {
+    pub(crate) const SCRATCH_SIZE: usize = size_of::<Scratch>();
+
+    pub(crate) const fn new() -> Self {
+        Self {
+            scratch: None,
+            rep: REP_START_VALUE,
+            seq_sources: SeqTableSources::all(TableSource::Local),
+            huf_source: TableSource::Local,
+            lit_entropy: false,
+            fse_entropy: false,
+            ddict_is_cold: false,
+        }
+    }
+
+    fn scratch(&mut self) -> &mut Scratch {
+        self.scratch.get_or_insert_with(|| {
+            let spare = SPARE_SCRATCH.try_with(cell::Cell::take).ok().flatten();
+            spare.unwrap_or_else(|| {
+                Box::new(Scratch {
+                    entropy: EntropyDTables::new(),
+                    lit_buffer: Vec::new(),
+                    batch: [RawSequence::EMPTY; _],
+                    small_output: [0; _],
+                    small_output_used: 0,
+                })
+            })
+        })
+    }
+
+    /// `ZSTD_decodeLiteralsBlock`
+    fn decode_literals_block(
+        &mut self,
+        src: &[u8],
+        dict_entropy: Option<&EntropyDTables>,
+        block_size_max: usize,
+        dst_capacity: usize,
+        streaming: Streaming,
+    ) -> Result<Literals> {
+        if src.len() < MIN_CBLOCK_SIZE {
+            return Err(Error::CorruptionDetected);
+        }
+        let first = src.at(0)?;
+        let lit_enc_type = SymbolEncodingType::from_bits(first);
+        let lhl_code = (first >> 2) & 3;
+        let expected_write_size = block_size_max.min(dst_capacity);
+
+        match lit_enc_type {
+            SymbolEncodingType::Repeat | SymbolEncodingType::Compressed => {
+                if lit_enc_type == SymbolEncodingType::Repeat && !self.lit_entropy {
+                    return Err(Error::DictionaryCorrupted);
+                }
+                if src.len() < 5 {
+                    return Err(Error::CorruptionDetected);
+                }
+                let lhc = read_le32(src, 0)? as usize;
+                let (single_stream, lh_size, lit_size, lit_c_size) = match lhl_code {
+                    2 => (false, 4, (lhc >> 4) & 0x3FFF, lhc >> 18),
+                    3 => (
+                        false,
+                        5,
+                        (lhc >> 4) & 0x3FFFF,
+                        (lhc >> 22) + (usize::from(src.at(4)?) << 10),
+                    ),
+                    _ => (lhl_code == 0, 3, (lhc >> 4) & 0x3FF, (lhc >> 14) & 0x3FF),
+                };
+                if lit_size > block_size_max {
+                    return Err(Error::CorruptionDetected);
+                }
+                if !single_stream && lit_size < MIN_LITERALS_FOR_4_STREAMS {
+                    return Err(Error::LiteralsHeaderWrong);
+                }
+                if lit_c_size + lh_size > src.len() {
+                    return Err(Error::CorruptionDetected);
+                }
+                if expected_write_size < lit_size {
+                    return Err(Error::DstSizeTooSmall);
+                }
+                let location = lit_location(block_size_max, dst_capacity, lit_size, streaming);
+                let compressed = src.span(lh_size, lit_c_size)?;
+
+                let huf_source = self.huf_source;
+                let scratch = self.scratch();
+                scratch.extend_lit_buffer(lit_size)?;
+                let Scratch {
+                    entropy,
+                    lit_buffer,
+                    ..
+                } = scratch;
+                let dst = lit_buffer.sub_mut(..lit_size)?;
+                let huf_result = if lit_enc_type == SymbolEncodingType::Repeat {
+                    let table = match (huf_source, dict_entropy) {
+                        (TableSource::Dict, Some(dict)) => &dict.huf_table,
+                        _ => {
+                            entropy.huf_table.prepare(
+                                lit_size,
+                                compressed.len(),
+                                !single_stream,
+                            )?;
+                            &entropy.huf_table
+                        }
+                    };
+                    if single_stream {
+                        huf::decompress_1x_using_dtable(dst, compressed, table)
+                    } else {
+                        huf::decompress_4x_using_dtable(dst, compressed, table)
+                    }
+                } else if single_stream {
+                    huf::decompress_1x1(
+                        &mut entropy.huf_table,
+                        dst,
+                        compressed,
+                        &mut entropy.workspace,
+                    )
+                } else {
+                    huf::decompress_4x_huf_only(
+                        &mut entropy.huf_table,
+                        dst,
+                        compressed,
+                        &mut entropy.workspace,
+                    )
+                };
+                if huf_result.is_err() {
+                    return Err(Error::CorruptionDetected);
+                }
+
+                self.lit_entropy = true;
+                if lit_enc_type == SymbolEncodingType::Compressed {
+                    self.huf_source = TableSource::Local;
+                }
+                Ok(Literals {
+                    c_size: lit_c_size + lh_size,
+                    size: lit_size,
+                    in_src: None,
+                    location,
+                })
+            }
+
+            SymbolEncodingType::Basic => {
+                let (lh_size, lit_size) = match lhl_code {
+                    1 => (2, usize::from(read_le16(src, 0)? >> 4)),
+                    3 => {
+                        if src.len() < 3 {
+                            return Err(Error::CorruptionDetected);
+                        }
+                        (3, (read_le24(src, 0)? >> 4) as usize)
+                    }
+                    _ => (1, usize::from(first >> 3)),
+                };
+                if lit_size > block_size_max {
+                    return Err(Error::CorruptionDetected);
+                }
+                if expected_write_size < lit_size {
+                    return Err(Error::DstSizeTooSmall);
+                }
+                if lh_size + lit_size + WILDCOPY_OVERLENGTH > src.len() {
+                    if lit_size + lh_size > src.len() {
+                        return Err(Error::CorruptionDetected);
+                    }
+                    let literals = src.span(lh_size, lit_size)?;
+                    self.scratch()
+                        .write_literals(lit_size, |mut to, growth| to.write(0, literals, growth))?;
+                    return Ok(Literals {
+                        c_size: lh_size + lit_size,
+                        size: lit_size,
+                        in_src: None,
+                        location: lit_location(block_size_max, dst_capacity, lit_size, streaming),
+                    });
+                }
+                Ok(Literals {
+                    c_size: lh_size + lit_size,
+                    size: lit_size,
+                    in_src: Some(lh_size),
+                    location: LitLocation::NotInDst,
+                })
+            }
+
+            SymbolEncodingType::Rle => {
+                let (lh_size, lit_size) = match lhl_code {
+                    1 => {
+                        if src.len() < 3 {
+                            return Err(Error::CorruptionDetected);
+                        }
+                        (2, usize::from(read_le16(src, 0)? >> 4))
+                    }
+                    3 => {
+                        if src.len() < 4 {
+                            return Err(Error::CorruptionDetected);
+                        }
+                        (3, (read_le24(src, 0)? >> 4) as usize)
+                    }
+                    _ => (1, usize::from(first >> 3)),
+                };
+                if lit_size > block_size_max {
+                    return Err(Error::CorruptionDetected);
+                }
+                if expected_write_size < lit_size {
+                    return Err(Error::DstSizeTooSmall);
+                }
+                let byte = src.at(lh_size)?;
+                self.scratch().write_literals(lit_size, |mut to, growth| {
+                    to.fill(0, byte, lit_size, growth)
+                })?;
+                Ok(Literals {
+                    c_size: lh_size + 1,
+                    size: lit_size,
+                    in_src: None,
+                    location: lit_location(block_size_max, dst_capacity, lit_size, streaming),
+                })
+            }
+        }
+    }
+
+    /// `ZSTD_decodeSeqHeaders`: returns how many sequences there are, and the size of the header.
+    fn decode_seq_headers(&mut self, src: &[u8]) -> Result<(usize, usize)> {
+        if src.len() < MIN_SEQUENCES_SIZE {
+            return Err(Error::SrcSizeWrong);
+        }
+        let mut ip = 0usize;
+        let mut nb_seq = usize::from(src.at(ip)?);
+        ip += 1;
+        if nb_seq > 0x7F {
+            if nb_seq == 0xFF {
+                if ip + 2 > src.len() {
+                    return Err(Error::SrcSizeWrong);
+                }
+                nb_seq = usize::from(read_le16(src, ip)?) + LONGNBSEQ;
+                ip += 2;
+            } else {
+                if ip >= src.len() {
+                    return Err(Error::SrcSizeWrong);
+                }
+                nb_seq = ((nb_seq - 0x80) << 8) + usize::from(src.at(ip)?);
+                ip += 1;
+            }
+        }
+
+        if nb_seq == 0 {
+            if ip != src.len() {
+                return Err(Error::CorruptionDetected);
+            }
+            return Ok((0, ip));
+        }
+
+        if ip + 1 > src.len() {
+            return Err(Error::SrcSizeWrong);
+        }
+        let modes = src.at(ip)?;
+        if modes & 3 != 0 {
+            return Err(Error::CorruptionDetected);
+        }
+        ip += 1;
+
+        let fse_entropy = self.fse_entropy;
+        self.scratch();
+        let Some(scratch) = &mut self.scratch else {
+            return Err(BUG);
+        };
+        let EntropyDTables { seq, workspace, .. } = &mut scratch.entropy;
+        ip += build_seq_table(
+            &mut seq.ll,
+            &mut self.seq_sources.ll,
+            SymbolEncodingType::from_bits(modes >> 6),
+            MAX_LL,
+            LL_FSE_LOG,
+            src.sub(ip..)?,
+            &LL_CODES,
+            workspace,
+            fse_entropy,
+        )
+        .map_err(|_| Error::CorruptionDetected)?;
+        ip += build_seq_table(
+            &mut seq.of,
+            &mut self.seq_sources.of,
+            SymbolEncodingType::from_bits(modes >> 4),
+            MAX_OFF,
+            OFF_FSE_LOG,
+            src.sub(ip..)?,
+            &OF_CODES,
+            workspace,
+            fse_entropy,
+        )
+        .map_err(|_| Error::CorruptionDetected)?;
+        ip += build_seq_table(
+            &mut seq.ml,
+            &mut self.seq_sources.ml,
+            SymbolEncodingType::from_bits(modes >> 2),
+            MAX_ML,
+            ML_FSE_LOG,
+            src.sub(ip..)?,
+            &ML_CODES,
+            workspace,
+            fse_entropy,
+        )
+        .map_err(|_| Error::CorruptionDetected)?;
+
+        Ok((nb_seq, ip))
+    }
+
+    /// `ZSTD_decompressBlock_internal`: returns the size of the block once decompressed.
+    pub(crate) fn decompress_block(
+        &mut self,
+        out: BlockOutput<'_>,
+        src: &[u8],
+        dict_entropy: Option<&EntropyDTables>,
+        block_size_max: usize,
+        streaming: Streaming,
+    ) -> Result<usize> {
+        let BlockOutput {
+            buf,
+            prefix_start,
+            start,
+            capacity,
+            ext_dict,
+        } = out;
+        if src.len() > block_size_max {
+            return Err(Error::SrcSizeWrong);
+        }
+
+        let literals =
+            self.decode_literals_block(src, dict_entropy, block_size_max, capacity, streaming)?;
+        let sequences = src.sub(literals.c_size..)?;
+
+        let total_history_size =
+            start - prefix_start + ext_dict.len() + capacity.min(block_size_max);
+        let mut use_prefetch_decoder = self.ddict_is_cold;
+        let (nb_seq, seq_h_size) = self.decode_seq_headers(sequences)?;
+        let sequences = sequences.sub(seq_h_size..)?;
+
+        if capacity == 0 && nb_seq > 0 {
+            return Err(Error::DstSizeTooSmall);
+        }
+
+        self.scratch();
+        let Self {
+            scratch: Some(scratch),
+            rep,
+            ..
+        } = self
+        else {
+            return Err(BUG);
+        };
+        let Scratch {
+            entropy,
+            lit_buffer,
+            batch,
+            small_output,
+            small_output_used,
+        } = &mut **scratch;
+        let dict_tables = dict_entropy.map(|dict| &dict.seq);
+        let is_history_long = total_history_size > MIN_FAR_HISTORY;
+        let tables = if nb_seq <= MAX_ONE_BY_ONE && !use_prefetch_decoder && !is_history_long {
+            entropy.seq.pick(self.seq_sources, dict_tables)
+        } else {
+            entropy.seq.gather(&mut self.seq_sources, dict_tables)
+        };
+
+        // With matches far back in a long history, it pays to know the sequences ahead of time. Which of two problems in
+        // a damaged block is reported depends on that too.
+        if !use_prefetch_decoder && is_history_long && nb_seq > 8 {
+            const MIN_SHARE: u32 = 7;
+            use_prefetch_decoder = long_offset_share(tables.of) >= MIN_SHARE;
+        }
+        self.ddict_is_cold = false;
+        if nb_seq > 0 {
+            self.fse_entropy = true;
+        }
+
+        let oend = if literals.location == LitLocation::InDst {
+            start + block_size_max + WILDCOPY_OVERLENGTH
+        } else {
+            start + capacity
+        };
+        let split = literals.location == LitLocation::Split;
+        let lits = match literals.in_src {
+            Some(start) => src.sub(start..)?,
+            None => lit_buffer.as_slice(),
+        };
+        // How many would be in the output buffer, if some.
+        let in_dst_size = if split {
+            literals.size - LIT_BUFFER_EXTRA_SIZE
+        } else {
+            literals.size
+        };
+        // A block that has that room where it goes needs no other place.
+        let is_small = start == prefix_start
+            && capacity <= Scratch::MAX_SMALL_OUTPUT
+            && capacity < block_size_max + WILDCOPY_OVERLENGTH
+            && literals.location == LitLocation::NotInDst
+            && matches!(ext_dict, ExtDict::Dict(_));
+        let (out, copy_to) = match buf {
+            OutputBuffer::Used(_) if streaming == Streaming::Yes => (buf, None),
+            buf if is_small => {
+                let used = capacity + WILDCOPY_OVERLENGTH;
+                *small_output_used = used.max(*small_output_used);
+                (
+                    OutputBuffer::Whole(small_output.sub_mut(..used)?),
+                    Some((buf, start)),
+                )
+            }
+            OutputBuffer::Whole(bytes) => (OutputBuffer::Whole(bytes.sub_mut(..oend)?), None),
+            // Sequences that are few can be long, and then what they make is best appended. A block whose literals are
+            // in `src` is let to write all there is room for. A frame before may have been let to write further.
+            OutputBuffer::Used(bytes)
+                if nb_seq > MAX_ONE_BY_ONE
+                    && oend - start <= 2 * (block_size_max + WILDCOPY_OVERLENGTH)
+                    || oend - start <= Scratch::MAX_SMALL_OUTPUT
+                    || bytes.len() > oend =>
+            {
+                if bytes.len() < oend {
+                    bytes.resize(oend, 0);
+                }
+                (OutputBuffer::Whole(bytes.sub_mut(..oend)?), None)
+            }
+            OutputBuffer::Used(_) => (buf, None),
+        };
+        let in_one_call = streaming == Streaming::No && matches!(out, OutputBuffer::Used(_));
+        let (start, prefix_start, oend) = match copy_to {
+            Some(_) => (0, 0, capacity),
+            None => (start, prefix_start, oend),
+        };
+        let mut exec = Executor {
+            out,
+            in_one_call,
+            oend,
+            op: start,
+            prefix_start,
+            ext_dict,
+            lits: lits.sub(..in_dst_size + WILDCOPY_OVERLENGTH)?,
+            split,
+            lits_extra: lits.sub(in_dst_size..literals.size + WILDCOPY_OVERLENGTH)?,
+            // `WILDCOPY_OVERLENGTH` short of how far the block is expected to write.
+            lit_end_in_dst: (start + capacity.min(block_size_max))
+                .wrapping_sub(WILDCOPY_OVERLENGTH),
+        };
+
+        if nb_seq > 0 {
+            let seq_state = SeqState::new(sequences, tables, rep)?;
+            let prev_offset = if use_prefetch_decoder {
+                exec.run::<true>(&seq_state, nb_seq, batch)?
+            } else {
+                exec.run::<false>(&seq_state, nb_seq, batch)?
+            };
+            *rep = prev_offset.map(|offset| offset as u32);
+        }
+        exec.last_literals()?;
+        let size = exec.op - start;
+        if let Some((mut to, start)) = copy_to {
+            to.write(start, exec.out.bytes().sub(..size)?, Growth::Append)?;
+        }
+        Ok(size)
+    }
+}
+
+/// `ZSTD_buildSeqTable`: returns the size of the table's description in `src`.
+fn build_seq_table<C: Cell, const N: usize>(
+    table: &mut SeqTable<C, N>,
+    source: &mut TableSource,
+    encoding_type: SymbolEncodingType,
+    max: u32,
+    max_log: u32,
+    src: &[u8],
+    codes: &Codes,
+    workspace: &mut Spread,
+    flag_repeat_table: bool,
+) -> Result<usize> {
+    match encoding_type {
+        SymbolEncodingType::Rle => {
+            let Some(&symbol) = src.first() else {
+                return Err(Error::SrcSizeWrong);
+            };
+            if u32::from(symbol) > max {
+                return Err(Error::CorruptionDetected);
+            }
+            table.build_rle(codes.at(usize::from(symbol))?);
+            *source = TableSource::Local;
+            Ok(1)
+        }
+        SymbolEncodingType::Basic => {
+            *source = TableSource::Predefined;
+            Ok(0)
+        }
+        SymbolEncodingType::Repeat => {
+            if !flag_repeat_table {
+                return Err(Error::CorruptionDetected);
+            }
+            Ok(0)
+        }
+        SymbolEncodingType::Compressed => {
+            let header = read_ncount(&mut workspace.counts, max, src)
+                .map_err(|_| Error::CorruptionDetected)?;
+            if header.table_log > max_log {
+                return Err(Error::CorruptionDetected);
+            }
+            table.build(
+                header.max_symbol_value as usize + 1,
+                codes,
+                header.table_log,
+                workspace,
+            )?;
+            *source = TableSource::Local;
+            Ok(header.size)
+        }
+    }
+}
+
+/// `ZSTD_getOffsetInfo`: how many of 256 offset codes have more than 22 bits.
+fn long_offset_share(of_table: &OffsetTable) -> u32 {
+    let count = of_table
+        .symbols()
+        .iter()
+        .filter(|symbol| symbol.nb_additional_bits > 22)
+        .count() as u32;
+    count << (OFF_FSE_LOG - of_table.table_log)
+}
+
+/// `seq_t`
+#[derive(Clone, Copy, Default)]
+struct Sequence {
+    lit_length: u32,
+    match_length: u32,
+    offset: usize,
+}
+
+/// A sequence whose offset is as it is coded: 1 to 3 for one of the last offsets, or 3 more than the offset.
+#[derive(Clone, Copy)]
+struct RawSequence {
+    offset_value: u32,
+    lit_length: u32,
+    /// Above `MINMATCH`.
+    match_length: u32,
+}
+
+impl RawSequence {
+    const EMPTY: Self = Self {
+        offset_value: 0,
+        lit_length: 0,
+        match_length: 0,
+    };
+}
+
+/// Where matches are, for `ZSTD_prefetchMatch`.
+struct History {
+    prefix_start: *const u8,
+    dict_end: *const u8,
+    /// How long the prefix is.
+    position: usize,
+}
+
+impl History {
+    /// Of the match of the next sequence, if its offset is not one of the last.
+    #[inline(always)]
+    fn prefetch(&mut self, lit_length: u32, match_length: u32, offset_value: u32) {
+        self.position += lit_length as usize;
+        let offset = offset_value.saturating_sub(3) as usize;
+        let base = if offset > self.position {
+            self.dict_end
+        } else {
+            self.prefix_start
+        };
+        let from = if offset == 0 {
+            self.dict_end
+        } else {
+            base.wrapping_add(self.position).wrapping_sub(offset)
+        };
+        prefetch_read(from, Locality::L1);
+        prefetch_read(from.wrapping_add(64), Locality::L1);
+        self.position += (match_length + MINMATCH) as usize;
+    }
+
+    /// The same, whatever its offset.
+    #[inline(always)]
+    fn prefetch_match(&mut self, sequence: Sequence) {
+        self.prefetch(
+            sequence.lit_length,
+            sequence.match_length - MINMATCH,
+            (sequence.offset as u32).saturating_add(3),
+        );
+    }
+}
+
+/// A copy of the start of a stream after zeroes, where it can be read as if its start were far. That it was not shows
+/// afterwards.
+struct PaddedStart([u8; Self::PADDING + Self::MAX_SIZE]);
+
+impl PaddedStart {
+    const PADDING: usize = 32;
+    const MAX_SIZE: usize = 224;
+
+    const fn new() -> Self {
+        Self([0; _])
+    }
+
+    /// Whether little enough is left of `bit_d`.
+    fn fits(bit_d: &BitDStream<'_>) -> bool {
+        bit_d.bytes().len() <= Self::MAX_SIZE && bit_d.bits_consumed <= 64
+    }
+
+    /// `bit_d` on the copy, which is new. It fits.
+    fn set(&mut self, bit_d: &BitDStream<'_>) -> Option<BitDStream<'_>> {
+        let src = bit_d.bytes();
+        self.0
+            .get_mut(Self::PADDING..Self::PADDING + src.len())?
+            .copy_from_slice(src);
+        // A stream of less than 8 bytes counts what it lacks as consumed.
+        let lacking = 8usize.saturating_sub(src.len()) as u32 * 8;
+        let pos = Self::PADDING + src.len() - 8;
+        BitDStream::resume(&self.0, pos, bit_d.bits_consumed.checked_sub(lacking)?).ok()
+    }
+
+    /// How many bits are left to read of the copy and of the zeroes.
+    fn bits_left(bit_d: &BitDStream<'_>) -> usize {
+        (bit_d.bytes().len() * 8).saturating_sub(bit_d.bits_consumed as usize)
+    }
+
+    fn is_reached(bit_d: &BitDStream<'_>) -> bool {
+        Self::bits_left(bit_d) == Self::PADDING * 8
+    }
+
+    fn is_passed(bit_d: &BitDStream<'_>) -> bool {
+        Self::bits_left(bit_d) < Self::PADDING * 8
+    }
+}
+
+/// Up to how many sequences it is not worth it to decode them by the batch.
+const MAX_ONE_BY_ONE: usize = 32;
+/// How many sequences `ZSTD_decompressSequencesLong_body` decodes ahead of the one that it executes.
+const ADVANCED_SEQS: usize = 8;
+/// A history that is longer is not all in a cache.
+const MIN_FAR_HISTORY: usize = 1 << 24;
+
+/// `seqState_t`
+#[derive(Clone, Copy)]
+struct SeqState<'a> {
+    bit_d: BitDStream<'a>,
+    state_ll: usize,
+    state_off: usize,
+    state_ml: usize,
+    tables: SeqTableRefs<'a>,
+    prev_offset: [usize; ZSTD_REP_NUM],
+}
+
+impl<'a> SeqState<'a> {
+    fn new(src: &'a [u8], tables: SeqTableRefs<'a>, rep: &[u32; ZSTD_REP_NUM]) -> Result<Self> {
+        let mut bit_d = BitDStream::new(src).map_err(|_| Error::CorruptionDetected)?;
+        // `ZSTD_initFseState`
+        let mut init = |table_log: u32| {
+            let state = bit_d.read_bits(table_log) as usize;
+            bit_d.reload();
+            state
+        };
+        let state_ll = init(tables.ll.table_log);
+        let state_off = init(tables.of.table_log);
+        let state_ml = init(tables.ml.table_log);
+        Ok(Self {
+            bit_d,
+            state_ll,
+            state_off,
+            state_ml,
+            tables,
+            prev_offset: rep.map(|offset| offset as usize),
+        })
+    }
+
+    /// Decodes sequences for as long as the start of the stream is far. Returns how many that is.
+    /// With `prefetch`, `history` follows the output, and what matches refer to is on its way to the cache.
+    ///
+    /// `more_bits` is for when it cannot be predicted which lengths come with additional bits.
+    #[inline(never)]
+    fn decode_batch(
+        &mut self,
+        prefetch: bool,
+        more_bits: bool,
+        out: &mut [RawSequence],
+        history: &mut History,
+    ) -> Result<usize> {
+        match (prefetch, more_bits) {
+            (false, false) => self.decode_batch_as::<false, false>(out, history),
+            (false, true) => self.decode_batch_as::<false, true>(out, history),
+            (true, false) => self.decode_batch_as::<true, false>(out, history),
+            (true, true) => self.decode_batch_as::<true, true>(out, history),
+        }
+    }
+
+    #[inline(always)]
+    fn decode_batch_as<const PREFETCH: bool, const MORE_BITS: bool>(
+        &mut self,
+        out: &mut [RawSequence],
+        history: &mut History,
+    ) -> Result<usize> {
+        /// The 64 bits that end at `position`, turned so that the next one to read is the highest. Those that are read
+        /// then go to the other end.
+        #[inline(always)]
+        fn load(containers: &[u8], position: u32) -> Option<u64> {
+            // Wraps around less than `FAR` bytes from the start.
+            let index = (position >> 3).wrapping_sub(FAR as u32) as usize;
+            let container = containers.get(index..index + 8)?;
+            let container = u64::from_le_bytes(container.try_into().ok()?);
+            Some(container.rotate_left(!position & 7))
+        }
+        /// A sequence takes at most 12 bytes.
+        const FAR: usize = 24;
+
+        let src = self.bit_d.bytes();
+        // A block is not that large.
+        if src.len() < FAR || src.len() >= 1 << 28 || self.bit_d.bits_consumed > 64 {
+            return Ok(0);
+        }
+        // How many bits are left to read, and 7.
+        let mut position = src.len() as u32 * 8 + 7 - self.bit_d.bits_consumed;
+        let containers = src.get(FAR - 8..).unwrap_or_default();
+        let Some(tables) = self.tables.side_by_side else {
+            return Ok(0);
+        };
+        let mut state_ll = self.state_ll as u32 & 511;
+        let mut state_ml = self.state_ml as u32 & 511;
+        let mut state_off = self.state_off as u32 & 255;
+
+        let room = out.len();
+        let mut slots = out.iter_mut();
+        let mut unused = 0;
+        for slot in slots.by_ref() {
+            let Some(mut bits) = load(containers, position) else {
+                unused = 1;
+                break;
+            };
+            // Nothing waits for a check, as it would for a mask.
+            let (Some(ll_cell), Some(ml_cell), Some(of_cell)) = (
+                tables.ll.table.get(state_ll as usize),
+                tables.ml.table.get(state_ml as usize),
+                tables.of.table.get(state_off as usize),
+            ) else {
+                unused = 1;
+                break;
+            };
+            let of_bits = u32::from(of_cell.nb_additional_bits);
+            let ml_bits = u32::from(ml_cell.nb_additional_bits);
+            let ll_bits = u32::from(ll_cell.nb_additional_bits);
+            let ll_nb_bits = u32::from(ll_cell.nb_bits);
+            let ml_nb_bits = u32::from(ml_cell.nb_bits);
+            let of_nb_bits = u32::from(of_cell.nb_bits);
+            let nb_all_bits =
+                (ml_bits + ll_bits + ll_nb_bits + ml_nb_bits) + (of_bits + of_nb_bits);
+
+            let mut match_length = u32::from(ml_cell.base_value);
+            let mut lit_length = u32::from(ll_cell.base_value);
+            let first_value = of_cell.first_value;
+            let mut loaded = bits;
+            bits = bits.rotate_left(of_bits);
+            let offset_value = first_value + (bits as u32 & (first_value - 1));
+            if MORE_BITS || ml_bits + ll_bits != 0 {
+                bits = bits.rotate_left(ml_bits);
+                match_length = tables.length(ml_cell.base_value, ml_cell.nb_additional_bits, bits);
+                // All has to fit in 57 bits with the 26 of the next states.
+                if of_bits + ml_bits + ll_bits >= 31 {
+                    let position = position - of_bits - ml_bits;
+                    bits = load(src, position + (FAR as u32 - 8) * 8).unwrap_or(0);
+                    loaded = bits.rotate_right(of_bits + ml_bits);
+                }
+                bits = bits.rotate_left(ll_bits);
+                lit_length = tables.length(ll_cell.base_value, ll_cell.nb_additional_bits, bits);
+            }
+            *slot = RawSequence {
+                offset_value,
+                lit_length,
+                match_length,
+            };
+            if PREFETCH {
+                history.prefetch(lit_length, match_length, offset_value);
+            }
+
+            position -= nb_all_bits;
+            bits = bits.rotate_left(ll_nb_bits);
+            state_ll =
+                u32::from(ll_cell.next_state) + (bits as u32 & u32::from(ll_cell.state_mask));
+            bits = bits.rotate_left(ml_nb_bits);
+            state_ml =
+                u32::from(ml_cell.next_state) + (bits as u32 & u32::from(ml_cell.state_mask));
+            // This is read last, and it is what the first bits of the next sequence depend on. So it does not wait
+            // for the rest to be read.
+            state_off = u32::from(of_cell.next_state)
+                + (loaded.rotate_left(nb_all_bits) as u32 & u32::from(of_cell.state_mask));
+        }
+
+        let count = room - slots.len() - unused;
+        if count > 0 {
+            self.bit_d = BitDStream::resume(src, (position >> 3) as usize - 8, !position & 7)?;
+            self.state_ll = state_ll as usize;
+            self.state_ml = state_ml as usize;
+            self.state_off = state_off as usize;
+        }
+        Ok(count)
+    }
+
+    /// Decodes the last sequence, far from the start of the stream.
+    fn decode_last(&mut self) -> Option<RawSequence> {
+        let ll_cell = self.tables.ll.table.get(self.state_ll)?;
+        let ml_cell = self.tables.ml.table.get(self.state_ml)?;
+        let of_cell = self.tables.of.table.get(self.state_off)?;
+        let of_bits = u32::from(of_cell.nb_additional_bits);
+        let ml_bits = u32::from(ml_cell.nb_additional_bits);
+        let ll_bits = u32::from(ll_cell.nb_additional_bits);
+        let offset_value = of_cell.first_value + self.bit_d.read_bits(of_bits) as u32;
+        let match_length = ml_cell.base_value() + self.bit_d.read_bits(ml_bits) as u32;
+        self.bit_d.reload();
+        let lit_length = ll_cell.base_value() + self.bit_d.read_bits(ll_bits) as u32;
+        Some(RawSequence {
+            offset_value,
+            lit_length,
+            match_length,
+        })
+    }
+
+    /// `ZSTD_decodeSequence`
+    #[inline(always)]
+    fn decode_sequence(&mut self, is_last_seq: bool) -> Sequence {
+        let ll_d_info = self.tables.ll.get(self.state_ll);
+        let ml_d_info = self.tables.ml.get(self.state_ml);
+        let of_d_info = self.tables.of.get(self.state_off);
+        let mut match_length = ml_d_info.base_value + MINMATCH;
+        let mut lit_length = ll_d_info.base_value;
+        let of_base = of_d_info.base_value as usize;
+        let ll_bits = u32::from(ll_d_info.nb_additional_bits);
+        let ml_bits = u32::from(ml_d_info.nb_additional_bits);
+        let of_bits = u32::from(of_d_info.nb_additional_bits);
+        let total_bits = ll_bits + ml_bits + of_bits;
+
+        let [prev0, prev1, prev2] = self.prev_offset;
+        let offset;
+        if of_bits > 1 {
+            offset = of_base + self.bit_d.read_bits_fast(of_bits) as usize;
+            self.prev_offset = [offset, prev0, prev1];
+        } else {
+            let ll0 = ll_d_info.base_value == 0;
+            if of_bits == 0 {
+                if ll0 {
+                    offset = prev1;
+                    self.prev_offset = [prev1, prev0, prev2];
+                } else {
+                    offset = prev0;
+                }
+            } else {
+                let code = of_base + usize::from(ll0) + self.bit_d.read_bits_fast(1) as usize;
+                let temp = match code {
+                    1 => prev1,
+                    2 => prev2,
+                    _ => prev0.wrapping_sub(1),
+                };
+                // 0 is not valid: it becomes an offset that no history is long enough for.
+                offset = temp.wrapping_sub(usize::from(temp == 0));
+                self.prev_offset = [offset, prev0, if code != 1 { prev1 } else { prev2 }];
+            }
+        }
+
+        if ml_bits > 0 {
+            match_length += self.bit_d.read_bits_fast(ml_bits) as u32;
+        }
+        const ACCUMULATOR_MIN: u32 = 57;
+        if total_bits >= ACCUMULATOR_MIN - (LL_FSE_LOG + ML_FSE_LOG + OFF_FSE_LOG) {
+            self.bit_d.reload();
+        }
+        if ll_bits > 0 {
+            lit_length += self.bit_d.read_bits_fast(ll_bits) as u32;
+        }
+
+        if !is_last_seq {
+            // `ZSTD_updateFseStateWithDInfo`
+            self.state_ll = usize::from(ll_d_info.next_state)
+                + self.bit_d.read_bits(u32::from(ll_d_info.nb_bits)) as usize;
+            self.state_ml = usize::from(ml_d_info.next_state)
+                + self.bit_d.read_bits(u32::from(ml_d_info.nb_bits)) as usize;
+            self.state_off = usize::from(of_d_info.next_state)
+                + self.bit_d.read_bits(u32::from(of_d_info.nb_bits)) as usize;
+            self.bit_d.reload();
+        }
+
+        Sequence {
+            lit_length,
+            match_length,
+            offset,
+        }
+    }
+}
+
+const NO_EXT: u8 = 0;
+const EXT_DICT: u8 = 1;
+const EXT_WITHIN: u8 = 2;
+
+/// Copies `N` bytes within `buf`, between positions that do not overflow. Whether they are in `buf`.
+#[inline(always)]
+fn copy_chunk<const N: usize>(buf: &mut [u8], src: usize, dst: usize) -> bool {
+    let Some(Ok(chunk)) = buf.get(src..src + N).map(<[u8; N]>::try_from) else {
+        return false;
+    };
+    let Some(to) = buf.get_mut(dst..dst + N) else {
+        return false;
+    };
+    to.copy_from_slice(&chunk);
+    true
+}
+
+/// The least offset value of a match that can be copied 16 bytes at a time.
+const MIN_FAR_OFFSET_VALUE: u32 = 16 + 3;
+/// How many literals a sequence can have for [`Executor::exec_batch`].
+const MAX_BATCH_LITERALS: u32 = 32;
+/// How long a match from closer can be for [`copy_short_close_match`].
+const MAX_CLOSE_MATCH: u32 = 32;
+
+/// Whether `sequences[index]` and the few after it look like they are for [`Executor::exec_batch`] with `CLOSE`.
+#[inline(always)]
+fn starts_close_run(sequences: &[RawSequence], index: usize) -> bool {
+    let Some(run) = sequences.get(index..index + 4) else {
+        return false;
+    };
+    (run.first()).is_some_and(|first| first.offset_value > 3)
+        && run.iter().all(|next| {
+            next.offset_value < MIN_FAR_OFFSET_VALUE
+                && next.lit_length <= MAX_BATCH_LITERALS
+                && next.match_length + MINMATCH <= MAX_CLOSE_MATCH
+        })
+}
+
+/// [`Executor::copy_close_match`] for what is short: `offset` is below 16, and up to 7 bytes more than `len` are written.
+/// Whether all that is in `buf`.
+#[inline(always)]
+fn copy_short_close_match(buf: &mut [u8], dst: usize, offset: usize, len: usize) -> bool {
+    /// For each offset below 8: what leaves as many bytes, what repeats them, and how many of the 8 are whole periods.
+    const REPEAT: [(u64, u64, usize); 8] = [
+        (0, 0, 8),
+        (0xFF, 0x0101_0101_0101_0101, 8),
+        (0xFFFF, 0x0001_0001_0001_0001, 8),
+        (0xFF_FFFF, 0x0001_0000_0100_0001, 6),
+        (0xFFFF_FFFF, 0x0000_0001_0000_0001, 8),
+        (0xFF_FFFF_FFFF, 1 | 1 << 40, 5),
+        (0xFFFF_FFFF_FFFF, 1 | 1 << 48, 6),
+        (0xFF_FFFF_FFFF_FFFF, 1 | 1 << 56, 7),
+    ];
+    let Some(src) = dst.checked_sub(offset).filter(|_| offset != 0) else {
+        return false;
+    };
+    let mut done = 0;
+    if let Some(&(mask, repeat, step)) = REPEAT.get(offset) {
+        let Some(Ok(bytes)) = buf.get(src..src + 8).map(<[u8; 8]>::try_from) else {
+            return false;
+        };
+        let pattern = (u64::from_le_bytes(bytes) & mask).wrapping_mul(repeat);
+        while done < len {
+            let Some(to) = buf.get_mut(dst + done..dst + done + 8) else {
+                return false;
+            };
+            to.copy_from_slice(&pattern.to_le_bytes());
+            done += step;
+        }
+    } else {
+        while done < len {
+            if !copy_chunk::<8>(buf, src + done, dst + done) {
+                return false;
+            }
+            done += 8;
+        }
+    }
+    true
+}
+
+/// `buf[dst + i] = buf[src + i]`, one after the other, so that a match repeats itself where it overlaps its copy.
+/// `src` is less than `dst`.
+#[cold]
+#[inline(never)]
+fn copy_match_exact(buf: &mut [u8], src: usize, dst: usize, len: usize) -> Result<()> {
+    in_whole_periods(dst - src, len, |done, chunk| {
+        buf.move_within(src, dst + done, chunk)
+    })
+}
+
+/// For a match of `len` bytes `offset` bytes back: `copy` gets how much of it is copied and how much to copy next, from
+/// where the match starts. What is copied so far is whole periods, so it can be copied again, twice as much each time.
+#[inline(always)]
+fn in_whole_periods(
+    offset: usize,
+    len: usize,
+    mut copy: impl FnMut(usize, usize) -> Result<()>,
+) -> Result<()> {
+    let mut done = 0;
+    while done < len {
+        let chunk = (offset + done).min(len - done);
+        copy(done, chunk)?;
+        done += chunk;
+    }
+    Ok(())
+}
+
+/// Makes the offset value of `sequences[index]`, which refers to one of the last offsets, what it refers to, or 0 if that
+/// is not valid, and returns it. The last offsets are those of the 3 sequences before, which are rewritten so that the
+/// same holds for the next sequence.
+#[inline(always)]
+fn resolve_offset(sequences: &mut [RawSequence], index: usize) -> u32 {
+    let Some([last2, last1, last0, this]) = index
+        .checked_sub(3)
+        .and_then(|first| sequences.get_mut(first..))
+        .and_then(<[RawSequence]>::first_chunk_mut)
+    else {
+        return 0;
+    };
+    let rep0 = last0.offset_value;
+    let rep1 = last1.offset_value;
+    let rep2 = last2.offset_value;
+    let reps = match this.offset_value - 1 + u32::from(this.lit_length == 0) {
+        0 => [rep0, rep1, rep2],
+        1 => [rep1, rep0, rep2],
+        2 => [rep2, rep0, rep1],
+        // An offset of 0 is not valid.
+        _ if rep0 == 1 + 3 => [0, rep0, rep1],
+        _ => [rep0 - 1, rep0, rep1],
+    };
+    [this.offset_value, last0.offset_value, last1.offset_value] = reps;
+    this.offset_value
+}
+
+/// What [`Executor::exec_batch`] works on. Positions in these fit in 32 bits, so that the compiler sees that nothing added
+/// to them overflows.
+struct BatchBuffers<'buf, 'a> {
+    /// Where in the output buffer `buf` starts.
+    start: usize,
+    buf: &'buf mut [u8],
+    lits: &'a [u8],
+    /// What comes right before `buf`, if anything of the common kind does: this or, of `buf`, `within`.
+    dict: &'a [u8],
+    within: Range<usize>,
+    /// [`ExtDict::Within::window`]
+    window: usize,
+    /// Where in `buf` the literals would be, which the output must not catch up with. What gets close to them is not of
+    /// the common kind. That is where `buf` ends, unless `within` is after it.
+    lit_ptr: usize,
+}
+
+/// Turns sequences into output.
+struct Executor<'buf, 'a> {
+    /// What is beyond `oend` is room for copies in chunks.
+    out: OutputBuffer<'buf>,
+    /// All the output is written in one call, so nothing that comes after `op` is of any use.
+    in_one_call: bool,
+    /// Where the output of the block has to end.
+    oend: usize,
+    op: usize,
+    prefix_start: usize,
+    ext_dict: ExtDict<'a>,
+    /// The literals that are left, up to `litBufferEnd`, and `WILDCOPY_OVERLENGTH` bytes after them.
+    lits: &'a [u8],
+    /// `litBufferLocation == ZSTD_split`: `lits` would be in the output buffer.
+    split: bool,
+    /// The literals that come after `lits` then, likewise.
+    lits_extra: &'a [u8],
+    /// Where in `buf` `lits` would end then.
+    lit_end_in_dst: usize,
+}
+
+impl<'a> Executor<'_, 'a> {
+    /// How `out` is to grow for `size` bytes that are written with exact copies: if with zeros, up to `limit` at most.
+    #[inline(always)]
+    fn growth(&self, size: usize, limit: usize) -> Growth {
+        /// Less is likely followed by more of the kind, which is copied in chunks where there is room.
+        const MIN_SIZE_TO_APPEND: usize = 256;
+        if self.in_one_call && size >= MIN_SIZE_TO_APPEND {
+            Growth::Append
+        } else {
+            Growth::Zeros { limit }
+        }
+    }
+
+    /// `litBufferEnd - litPtr`
+    #[inline(always)]
+    fn lits_left(&self) -> usize {
+        self.lits.len().saturating_sub(WILDCOPY_OVERLENGTH)
+    }
+
+    /// `litPtr`, if `split`: where in the output buffer `lits` would start.
+    #[inline(always)]
+    fn lit_ptr(&self) -> usize {
+        self.lit_end_in_dst.wrapping_sub(self.lits_left())
+    }
+
+    /// The same, for a while. A loop works on a copy that is a local variable and whose address nothing takes, which
+    /// can stay in registers. What is behind a reference is written and read again for every sequence.
+    #[inline(always)]
+    fn fork(&mut self) -> Executor<'_, 'a> {
+        Executor {
+            out: self.out.reborrow(),
+            ..*self
+        }
+    }
+
+    #[inline(always)]
+    fn join(&mut self, (op, lits, split): (usize, &'a [u8], bool)) {
+        (self.op, self.lits, self.split) = (op, lits, split);
+    }
+
+    #[inline(always)]
+    fn exec_sequence_end(&mut self, sequence: Sequence) -> Result<()> {
+        let mut fork = self.fork();
+        fork.exec_sequence_end_cold(sequence)?;
+        let state = (fork.op, fork.lits, fork.split);
+        self.join(state);
+        Ok(())
+    }
+
+    /// `ZSTD_execSequenceEnd` and `ZSTD_execSequenceEndSplitLitBuffer`: nothing is written past the sequence. Also what
+    /// `ZSTD_execSequence` does of a match that starts before the prefix.
+    #[cold]
+    #[inline(never)]
+    fn exec_sequence_end_cold(&mut self, sequence: Sequence) -> Result<()> {
+        let lit_length = sequence.lit_length as usize;
+        let mut match_length = sequence.match_length as usize;
+        let offset = sequence.offset;
+        let mut op = self.op;
+
+        if lit_length + match_length > self.oend - op {
+            return Err(Error::DstSizeTooSmall);
+        }
+        if lit_length > self.lits_left() {
+            return Err(Error::CorruptionDetected);
+        }
+        if self.split {
+            let lit_ptr = self.lit_ptr();
+            if op > lit_ptr && op < lit_ptr.wrapping_add(lit_length) {
+                return Err(Error::DstSizeTooSmall);
+            }
+        }
+
+        let growth = self.growth(lit_length + match_length, self.oend);
+        self.out.write(op, self.lits.sub(..lit_length)?, growth)?;
+        self.lits = self.lits.sub(lit_length..)?;
+        op += lit_length;
+        self.op = op + match_length;
+
+        let in_prefix = op - self.prefix_start;
+        let mut match_pos = op.wrapping_sub(offset);
+        if offset > in_prefix {
+            if offset > self.ext_dict.reach(in_prefix) {
+                return Err(Error::CorruptionDetected);
+            }
+            let back = offset - in_prefix;
+            if back >= match_length {
+                return self
+                    .ext_dict
+                    .copy_to(&mut self.out, op, back, match_length, growth);
+            }
+            // The match spans the two segments.
+            self.ext_dict
+                .copy_to(&mut self.out, op, back, back, growth)?;
+            op += back;
+            match_length -= back;
+            match_pos = self.prefix_start;
+        }
+        self.out.repeat(match_pos, op, match_length, growth)
+    }
+
+    /// `ZSTD_execSequence` and `ZSTD_execSequenceSplitLitBuffer`, if there is room to copy in chunks and the match is
+    /// in the prefix. Otherwise `None`, and what is changed is only output that the sequence is to overwrite.
+    ///
+    /// The conditions are such that the compiler sees that most of the `?` cannot fail.
+    #[inline(always)]
+    fn exec_sequence_fast<const SPLIT: bool>(&mut self, sequence: Sequence) -> Option<()> {
+        let lit_length = sequence.lit_length as usize;
+        let match_length = sequence.match_length as usize;
+        let offset = sequence.offset;
+        let op = self.op;
+        let lit_ptr = self.lit_ptr();
+
+        let room = self.out.bytes().get_mut(op..)?;
+        if lit_length + match_length + WILDCOPY_OVERLENGTH > room.len()
+            || lit_length + WILDCOPY_OVERLENGTH > self.lits.len()
+        {
+            return None;
+        }
+        if SPLIT {
+            // The output must not catch up with the literals.
+            let i_lit_end = lit_ptr.wrapping_add(lit_length);
+            if op + lit_length + match_length + WILDCOPY_OVERLENGTH > i_lit_end {
+                return None;
+            }
+        }
+
+        *room.first_chunk_mut::<16>()? = *self.lits.first_chunk()?;
+        if lit_length > 16 {
+            copy(
+                room.get_mut(16..lit_length)?,
+                self.lits.get(16..lit_length)?,
+            )
+            .ok()?;
+        }
+
+        let o_lit_end = op + lit_length;
+        let (before, room) = self.out.bytes().split_at_mut_checked(o_lit_end)?;
+        let in_prefix = o_lit_end - self.prefix_start;
+        let from = if offset > in_prefix {
+            // All of it in a dictionary, and then some to copy in chunks.
+            let ExtDict::Dict(dict) = self.ext_dict else {
+                return None;
+            };
+            let back = offset - in_prefix;
+            if back < match_length + 16 {
+                return None;
+            }
+            dict.get(dict.len().checked_sub(back)?..)?
+        } else {
+            before.get(before.len().checked_sub(offset)?..)?
+        };
+        if offset >= 16 {
+            // `ZSTD_wildcopy(ZSTD_no_overlap)`
+            *room.first_chunk_mut::<16>()? = *from.first_chunk()?;
+            if match_length > 16 {
+                let rounded = (match_length + 15) & !15;
+                if offset >= rounded {
+                    copy(room.get_mut(16..rounded)?, from.get(16..rounded)?).ok()?;
+                } else {
+                    let buf = self.out.bytes();
+                    copy_match_exact(buf, o_lit_end - offset, o_lit_end, match_length).ok()?;
+                }
+            }
+        } else {
+            self.copy_close_match(o_lit_end, offset, match_length)
+                .ok()?;
+        }
+
+        self.lits = self.lits.get(lit_length..)?;
+        self.op = o_lit_end + match_length;
+        Some(())
+    }
+
+    /// `ZSTD_overlapCopy8` and `ZSTD_wildcopy(ZSTD_overlap_src_before_dst)`: a match less than 16 bytes back, which is
+    /// not 0. Up to 16 bytes are written past its end.
+    #[inline(always)]
+    fn copy_close_match(&mut self, op: usize, offset: usize, match_length: usize) -> Result<()> {
+        /// The largest multiple of an offset that is at most 16.
+        const STEPS: [u8; 16] = [
+            16, 16, 16, 15, 16, 15, 12, 14, 16, 9, 10, 11, 12, 13, 14, 15,
+        ];
+        let buf = self.out.bytes();
+        // The `offset` bytes before the match, again and again.
+        let mut pattern = u128::from_le_bytes(*buf.array_at(op - offset)?);
+        let mut filled = offset as u32 * 8;
+        pattern &= !(u128::MAX << filled);
+        while filled < 128 {
+            pattern |= pattern << filled;
+            filled *= 2;
+        }
+        let pattern = pattern.to_le_bytes();
+        let step = usize::from(STEPS.at(offset)?);
+        let room = buf.span_mut(op, match_length + 16)?;
+        let mut done = 0;
+        while let Some(to) = room.get_mut(done..done + 16)
+            && done < match_length
+        {
+            to.copy_from_slice(&pattern);
+            done += step;
+        }
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn exec_sequence<const SPLIT: bool>(&mut self, sequence: Sequence) -> Result<()> {
+        match self.exec_sequence_fast::<SPLIT>(sequence) {
+            Some(()) => Ok(()),
+            None => self.exec_sequence_end(sequence),
+        }
+    }
+
+    /// The first sequence whose literals do not end among those that would be in the output buffer.
+    #[inline(always)]
+    fn exec_sequence_leaving_split(&mut self, sequence: Sequence) -> Result<()> {
+        let mut fork = self.fork();
+        fork.exec_sequence_leaving_split_cold(sequence)?;
+        let state = (fork.op, fork.lits, fork.split);
+        self.join(state);
+        Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn exec_sequence_leaving_split_cold(&mut self, mut sequence: Sequence) -> Result<()> {
+        let leftover_lit = self.lits_left();
+        if leftover_lit > 0 {
+            if leftover_lit > self.oend - self.op {
+                return Err(Error::DstSizeTooSmall);
+            }
+            let growth = self.growth(leftover_lit, self.oend);
+            self.out
+                .write(self.op, self.lits.sub(..leftover_lit)?, growth)?;
+            sequence.lit_length -= leftover_lit as u32;
+            self.op += leftover_lit;
+        }
+        self.split = false;
+        self.lits = self.lits_extra;
+        self.exec_sequence::<false>(sequence)
+    }
+
+    #[inline(always)]
+    fn exec_sequence_maybe_split(&mut self, sequence: Sequence) -> Result<()> {
+        if !self.split {
+            self.exec_sequence::<false>(sequence)
+        } else if sequence.lit_length as usize > self.lits_left() {
+            self.exec_sequence_leaving_split(sequence)
+        } else {
+            self.exec_sequence::<true>(sequence)
+        }
+    }
+
+    #[inline(always)]
+    fn batch_buffers(&mut self) -> BatchBuffers<'_, 'a> {
+        const MAX_BACK: usize = 3 << 30;
+        let start = self.prefix_start.max(self.op.saturating_sub(MAX_BACK));
+        let is_whole = start == self.prefix_start;
+        let (dict, within, window) = match self.ext_dict {
+            ExtDict::Dict(dict) if is_whole => (dict, 0..0, 0),
+            ExtDict::Within { end, len, window } if is_whole && end - len >= start => {
+                (&[][..], end - len - start..end - start, window)
+            }
+            _ => (&[][..], 0..0, 0),
+        };
+        let lits = self.lits.get(..u32::MAX as usize).unwrap_or(self.lits);
+        let lit_ptr = if self.split {
+            self.lit_ptr()
+        } else {
+            usize::MAX
+        };
+        let end = if within.is_empty() {
+            lit_ptr
+        } else {
+            usize::MAX
+        };
+        let buf = self.out.bytes();
+        let end = buf.len().min(start + u32::MAX as usize).min(end);
+        let buf = buf.get_mut(start..end).unwrap_or_default();
+        BatchBuffers {
+            start,
+            buf,
+            lits,
+            dict,
+            within,
+            window,
+            lit_ptr: lit_ptr.saturating_sub(start),
+        }
+    }
+
+    /// Executes `sequences` from `index` on, for as long as nothing is close to its end and they are of the common kind.
+    /// Returns the index of the first that is not, whose offset value then is no reference to one of the last offsets:
+    /// it is 0 if that is not valid.
+    ///
+    /// The last offsets are those of the 3 sequences before, which are rewritten for that where it takes it.
+    ///
+    /// `EXT` tells which kind [`Self::ext_dict`] is of, if matches in it are of the common kind. So are, with `CLOSE`, short
+    /// matches from less than 16 bytes back.
+    #[inline(never)]
+    fn exec_batch<const EXT: u8, const CLOSE: bool>(
+        &mut self,
+        sequences: &mut [RawSequence],
+        mut index: usize,
+    ) -> usize {
+        let op = self.op;
+        let BatchBuffers {
+            start,
+            buf,
+            lits,
+            dict,
+            within,
+            window,
+            lit_ptr,
+        } = self.batch_buffers();
+        let mut op = op.wrapping_sub(start) as u32;
+        let mut lit_pos = 0u32;
+
+        while let Some(raw) = sequences.get(index) {
+            let lit_length = raw.lit_length as usize;
+            let match_length = raw.match_length as usize + MINMATCH as usize;
+            let mut offset_value = raw.offset_value;
+            if offset_value < MIN_FAR_OFFSET_VALUE {
+                if offset_value <= 3 {
+                    offset_value = resolve_offset(sequences, index);
+                }
+                if offset_value < MIN_FAR_OFFSET_VALUE
+                    && !(CLOSE && offset_value > 3 && match_length <= MAX_CLOSE_MATCH as usize)
+                {
+                    break;
+                }
+            }
+
+            let o_lit_end = op as usize + lit_length;
+            let o_match_end = o_lit_end + match_length;
+            let lit_end = lit_pos as usize + lit_length;
+            if o_match_end + WILDCOPY_OVERLENGTH > buf.len()
+                || EXT == EXT_WITHIN && o_match_end + WILDCOPY_OVERLENGTH > lit_ptr
+                || lit_end + WILDCOPY_OVERLENGTH > lits.len()
+                || lit_length > MAX_BATCH_LITERALS as usize
+                || (EXT == NO_EXT || match_length > 64 || offset_value < MIN_FAR_OFFSET_VALUE)
+                    && offset_value as usize > o_lit_end + 3
+            {
+                break;
+            }
+            let (Some(to), Some(from)) = (
+                buf.get_mut(op as usize..op as usize + 32),
+                lits.get(lit_pos as usize..lit_pos as usize + 32),
+            ) else {
+                break;
+            };
+            if CLOSE && offset_value < MIN_FAR_OFFSET_VALUE {
+                to.copy_from_slice(from);
+                let offset = offset_value as usize - 3;
+                if !copy_short_close_match(buf, o_lit_end, offset, match_length) {
+                    break;
+                }
+                op = o_match_end as u32;
+                lit_pos = lit_end as u32;
+                index += 1;
+                continue;
+            }
+            if EXT == EXT_DICT && offset_value as usize > o_lit_end + 3 {
+                let back = offset_value as usize - 3 - o_lit_end;
+                let Some(match_pos) = dict.len().checked_sub(back) else {
+                    break;
+                };
+                let Some(([first, second], _)) = dict
+                    .get(match_pos..match_pos + 64)
+                    .map(<[u8]>::as_chunks::<32>)
+                else {
+                    break;
+                };
+                to.copy_from_slice(from);
+                let Some(to) = buf.get_mut(o_lit_end..o_lit_end + 32) else {
+                    break;
+                };
+                to.copy_from_slice(first);
+                if match_length > 32 {
+                    let Some(to) = buf.get_mut(o_lit_end + 32..o_lit_end + 64) else {
+                        break;
+                    };
+                    to.copy_from_slice(second);
+                }
+                op = o_match_end as u32;
+                lit_pos = lit_end as u32;
+                index += 1;
+                continue;
+            }
+            let mut match_end = o_lit_end + 3;
+            if EXT == EXT_WITHIN && offset_value as usize > o_lit_end + 3 {
+                let back = offset_value as usize - 3 - o_lit_end;
+                // All that gets copied is of the older part, which is more than the match.
+                if back > within.len() || back < 64 || offset_value as usize - 3 > window {
+                    break;
+                }
+                match_end += within.end;
+            }
+            to.copy_from_slice(from);
+            let match_pos = match_end - offset_value as usize;
+            let is_copied = if match_length > 64 {
+                copy_match_exact(buf, match_pos, o_lit_end, match_length).is_ok()
+            } else {
+                copy_chunk::<16>(buf, match_pos, o_lit_end)
+                    && copy_chunk::<16>(buf, match_pos + 16, o_lit_end + 16)
+                    && (match_length <= 32
+                        || copy_chunk::<16>(buf, match_pos + 32, o_lit_end + 32)
+                            && copy_chunk::<16>(buf, match_pos + 48, o_lit_end + 48))
+            };
+            if !is_copied {
+                break;
+            }
+
+            op = o_match_end as u32;
+            lit_pos = lit_end as u32;
+            index += 1;
+        }
+
+        self.op = op as usize + start;
+        self.lits = self.lits.get(lit_pos as usize..).unwrap_or_default();
+        index
+    }
+
+    /// Executes `sequences[index]` and those after it that are not for [`Self::exec_batch`]. Returns the index of the
+    /// first that is, or that [`starts_close_run`].
+    #[inline(never)]
+    fn exec_others(&mut self, sequences: &mut [RawSequence], first: usize) -> Result<usize> {
+        let mut exec = self.fork();
+        let mut index = first;
+        while let Some(&raw) = sequences.get(index) {
+            let mut offset_value = raw.offset_value;
+            if (1..=3).contains(&offset_value) {
+                offset_value = resolve_offset(sequences, index);
+            }
+            if index != first
+                && raw.lit_length <= MAX_BATCH_LITERALS
+                && (offset_value >= MIN_FAR_OFFSET_VALUE || starts_close_run(sequences, index))
+            {
+                break;
+            }
+            exec.exec_sequence_maybe_split(Sequence {
+                lit_length: raw.lit_length,
+                match_length: raw.match_length + MINMATCH,
+                offset: (offset_value as usize).wrapping_sub(3),
+            })?;
+            index += 1;
+        }
+        let exec = (exec.op, exec.lits, exec.split);
+        self.join(exec);
+        Ok(index)
+    }
+
+    /// `ZSTD_decompressSequencesLong_body` the way it is in C: a sequence is executed once [`ADVANCED_SEQS`] more are
+    /// decoded and their matches asked for. It is for long matches, which [`Self::run`] takes one at a time too, and knows
+    /// nothing of literals that would be in the output. Returns the last offsets.
+    #[inline(never)]
+    fn run_long_matches_ahead(
+        &mut self,
+        seq_state: &SeqState<'_>,
+        nb_seq: usize,
+    ) -> Result<[usize; ZSTD_REP_NUM]> {
+        let mut ahead = [Sequence::default(); ADVANCED_SEQS];
+        let ahead = ahead.sub_mut(..nb_seq.min(ADVANCED_SEQS))?;
+        let mut history = self.history();
+        let mut exec = self.fork();
+        let mut seq_state: SeqState<'_> = *seq_state;
+        let mut remaining = nb_seq;
+        for sequence in &mut *ahead {
+            *sequence = seq_state.decode_sequence(remaining == 1);
+            remaining -= 1;
+            history.prefetch_match(*sequence);
+        }
+        let mut oldest = 0;
+        while remaining > 0 {
+            let next = seq_state.decode_sequence(remaining == 1);
+            remaining -= 1;
+            history.prefetch_match(next);
+            let slot = ahead.at_mut(oldest)?;
+            exec.exec_sequence::<false>(*slot)?;
+            *slot = next;
+            oldest = (oldest + 1) % ADVANCED_SEQS;
+        }
+        if !seq_state.bit_d.is_at_end() {
+            return Err(Error::CorruptionDetected);
+        }
+        ahead.rotate_left(oldest);
+        for &sequence in &*ahead {
+            exec.exec_sequence::<false>(sequence)?;
+        }
+        let exec = (exec.op, exec.lits, exec.split);
+        self.join(exec);
+        Ok(seq_state.prev_offset)
+    }
+
+    /// `ZSTD_decompressSequences_body`, `ZSTD_decompressSequences_bodySplitLitBuffer` and, with `LONG`,
+    /// `ZSTD_decompressSequencesLong_body`. Returns the last offsets.
+    fn run<const LONG: bool>(
+        &mut self,
+        seq_state: &SeqState<'_>,
+        nb_seq: usize,
+        batch: &mut [RawSequence],
+    ) -> Result<[usize; ZSTD_REP_NUM]> {
+        if LONG
+            && self.op - self.prefix_start + self.ext_dict.len() > MIN_FAR_HISTORY
+            && seq_state.tables.matches_are_long()
+            && !self.split
+        {
+            return self.run_long_matches_ahead(seq_state, nb_seq);
+        }
+        // With `LONG`, the C code decodes that many sequences ahead, so it sees whether the stream ends where it should
+        // before it executes the last ones.
+        let mut ahead = [Sequence::default(); ADVANCED_SEQS];
+        let ahead = ahead.sub_mut(..if LONG { nb_seq.min(ADVANCED_SEQS) } else { 0 })?;
+        let mut start = None;
+        // There until decoding goes on from it.
+        let mut start = (!LONG).then_some(&mut start);
+        let mut seq_state: SeqState<'_> = *seq_state;
+
+        let more_bits = seq_state.tables.lengths_often_have_more_bits();
+
+        let mut remaining = nb_seq;
+        // Long copies go on while the next sequences are decoded, if that is what comes next. And a batch of a few
+        // sequences is not worth it. This loop knows nothing of literals that would be in the output.
+        if (seq_state.tables.matches_are_long() || nb_seq <= MAX_ONE_BY_ONE && !LONG) && !self.split
+        {
+            let mut exec = self.fork();
+            if LONG {
+                while remaining > ahead.len() {
+                    let sequence = seq_state.decode_sequence(remaining == 1);
+                    remaining -= 1;
+                    exec.exec_sequence::<false>(sequence)?;
+                }
+            } else {
+                // As for `fork`: `decode_batch` takes the address of `seq_state`. With `LONG`, HTML after a cold dictionary
+                // takes 7% longer with the copy.
+                let mut state = seq_state;
+                while remaining > ahead.len() {
+                    let sequence = state.decode_sequence(remaining == 1);
+                    remaining -= 1;
+                    exec.exec_sequence::<false>(sequence)?;
+                }
+                seq_state = state;
+            }
+            let exec = (exec.op, exec.lits, exec.split);
+            self.join(exec);
+        }
+        // Where decoding went on from a copy of the start of the stream, if it did.
+        let mut left_at = None;
+        while remaining > ahead.len() {
+            let mut count = 0;
+            if PaddedStart::fits(&seq_state.bit_d)
+                && let Some(start) = start.take()
+                && let Some(bit_d) = start.insert(PaddedStart::new()).set(&seq_state.bit_d)
+            {
+                left_at = Some((seq_state, remaining));
+                seq_state.bit_d = bit_d;
+            }
+            // The last sequence is followed by no state.
+            let room = (batch.len() - 4).min(remaining - ahead.len().max(1));
+            if room > 0 {
+                let history = &mut self.history();
+                let room = batch.span_mut(3, room)?;
+                count = seq_state.decode_batch(LONG, more_bits, room, history)?;
+            }
+            if left_at.is_some()
+                && count + 1 == remaining
+                && let Some(last) = seq_state.decode_last()
+            {
+                batch.put(3 + count, last)?;
+                count += 1;
+            }
+            let mut sequence = None;
+            if count == 0 {
+                sequence = Some(seq_state.decode_sequence(remaining == 1));
+            }
+            if let Some((state, at)) = left_at
+                && PaddedStart::is_passed(&seq_state.bit_d)
+            {
+                // What the C code makes of that depends on more than the bits.
+                seq_state = state;
+                for _ in remaining..at {
+                    seq_state.decode_sequence(false);
+                }
+                left_at = None;
+                continue;
+            }
+            match sequence {
+                Some(sequence) => {
+                    remaining -= 1;
+                    self.exec_sequence_maybe_split(sequence)?;
+                }
+                None => {
+                    remaining -= count;
+                    self.exec_all(batch.sub_mut(..3 + count)?, &mut seq_state.prev_offset)?;
+                }
+            }
+        }
+        let history = &mut self.history();
+        for sequence in &mut *ahead {
+            *sequence = seq_state.decode_sequence(remaining == 1);
+            remaining -= 1;
+            history.prefetch_match(*sequence);
+        }
+        let is_at_end = match left_at {
+            Some(_) => PaddedStart::is_reached(&seq_state.bit_d),
+            None => seq_state.bit_d.is_at_end(),
+        };
+        if !is_at_end {
+            return Err(Error::CorruptionDetected);
+        }
+        for &sequence in &*ahead {
+            self.exec_sequence_maybe_split(sequence)?;
+        }
+        Ok(seq_state.prev_offset)
+    }
+
+    fn history(&mut self) -> History {
+        let buf = self.out.bytes().as_ptr();
+        History {
+            prefix_start: buf.wrapping_add(self.prefix_start),
+            dict_end: match self.ext_dict {
+                ExtDict::Dict(dict) => dict.as_ptr_range().end,
+                ExtDict::Within { end, .. } => buf.wrapping_add(end),
+            },
+            position: self.op - self.prefix_start,
+        }
+    }
+
+    /// Executes `sequences` but the first 3, which are there to stand for the last offsets.
+    fn exec_all(
+        &mut self,
+        sequences: &mut [RawSequence],
+        prev_offset: &mut [usize; ZSTD_REP_NUM],
+    ) -> Result<()> {
+        for (last, offset) in sequences.iter_mut().zip(prev_offset.iter().rev()) {
+            last.offset_value = *offset as u32 + 3;
+        }
+        match self.ext_dict {
+            ExtDict::Dict(dict) if !dict.is_empty() => self.exec_in_turns::<EXT_DICT>(sequences),
+            ExtDict::Within { len, .. } if len != 0 => self.exec_in_turns::<EXT_WITHIN>(sequences),
+            _ => self.exec_in_turns::<NO_EXT>(sequences),
+        }?;
+        for (last, offset) in sequences.iter().rev().zip(prev_offset) {
+            *offset = last.offset_value as usize - 3;
+        }
+        Ok(())
+    }
+
+    /// Executes `sequences` but the first 3. `EXT` is for [`Self::exec_batch`].
+    #[inline(always)]
+    fn exec_in_turns<const EXT: u8>(&mut self, sequences: &mut [RawSequence]) -> Result<()> {
+        let mut index = 3;
+        let mut close = false;
+        while index < sequences.len() {
+            index = if close {
+                self.exec_batch::<EXT, true>(sequences, index)
+            } else {
+                self.exec_batch::<EXT, false>(sequences, index)
+            };
+            if index < sequences.len() {
+                index = self.exec_others(sequences, index)?;
+                close = (sequences.get(index))
+                    .is_some_and(|next| next.offset_value < MIN_FAR_OFFSET_VALUE);
+            }
+        }
+        Ok(())
+    }
+
+    /// The literals after the last sequence.
+    fn last_literals(&mut self) -> Result<()> {
+        let extra = if self.split { self.lits_extra } else { &[] };
+        let parts = [self.lits, extra]
+            .map(|part| part.get(..part.len().saturating_sub(WILDCOPY_OVERLENGTH)));
+        let parts = parts.map(Option::unwrap_or_default);
+        let size = parts.iter().map(|part| part.len()).sum::<usize>();
+        if size > self.oend - self.op {
+            return Err(Error::DstSizeTooSmall);
+        }
+        let growth = self.growth(size, self.op + size);
+        for part in parts {
+            if !part.is_empty() {
+                self.out.write(self.op, part, growth)?;
+                self.op += part.len();
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_close_matches_repeat_what_is_before_them() -> Result<()> {
+        const DST: usize = 20;
+        let start: Vec<u8> = (0..DST as u8).collect();
+        for offset in 1..16 {
+            for len in 1..=MAX_CLOSE_MATCH as usize {
+                let mut expected = start.clone();
+                for i in 0..len {
+                    expected.push(expected.at(DST - offset + i)?);
+                }
+                let mut buf = [start.as_slice(), &[0xEE; MAX_CLOSE_MATCH as usize + 8]].concat();
+                assert!(copy_short_close_match(&mut buf, DST, offset, len));
+                assert_eq!(
+                    *buf.sub(..DST + len)?,
+                    *expected,
+                    "{len} bytes from {offset} back"
+                );
+                assert!(buf.sub(DST + len + 7..)?.iter().all(|&byte| byte == 0xEE));
+                let too_short = buf.sub_mut(..DST + len - 1)?;
+                assert!(!copy_short_close_match(too_short, DST, offset, len));
+            }
+        }
+        assert!(!copy_short_close_match(&mut [0; 64], 3, 4, 5));
+        assert!(!copy_short_close_match(&mut [0; 64], 3, 0, 5));
+        Ok(())
+    }
+
+    #[test]
+    fn matches_in_a_dictionary_are_of_the_common_kind_wherever_the_output_starts() -> Result<()> {
+        let dict: Vec<u8> = (0..200).collect();
+        let lits = [b'l'; 64];
+        let sequence = |lit_length, match_length, offset: u32| RawSequence {
+            offset_value: offset + 3,
+            lit_length,
+            match_length: match_length - MINMATCH,
+        };
+        for prefix_start in [0, 50] {
+            let mut sequences = [
+                RawSequence::EMPTY,
+                RawSequence::EMPTY,
+                RawSequence::EMPTY,
+                sequence(0, 10, 150),
+                sequence(2, 40, 12 + 100),
+                sequence(1, 5, 4),
+                sequence(0, 8, 58 + 200),
+            ];
+            let expected = [
+                dict.sub(50..60)?,
+                b"ll",
+                dict.sub(100..140)?,
+                b"l",
+                &[137, 138, 139, b'l', 137],
+                dict.sub(..8)?,
+            ]
+            .concat();
+            let mut buf = [0xEE; 250];
+            let mut exec = Executor {
+                out: OutputBuffer::Whole(&mut buf),
+                in_one_call: true,
+                oend: 250,
+                op: prefix_start,
+                prefix_start,
+                ext_dict: ExtDict::Dict(&dict),
+                lits: &lits,
+                split: false,
+                lits_extra: &[],
+                lit_end_in_dst: 0,
+            };
+            assert_eq!(exec.exec_batch::<EXT_DICT, false>(&mut sequences, 3), 5);
+            assert_eq!(exec.exec_batch::<EXT_DICT, true>(&mut sequences, 5), 7);
+            assert_eq!(exec.op, prefix_start + expected.len());
+            assert_eq!(
+                *buf.sub(prefix_start..prefix_start + expected.len())?,
+                *expected
+            );
+            assert!(buf.sub(..prefix_start)?.iter().all(|&byte| byte == 0xEE));
+        }
+        Ok(())
+    }
+}

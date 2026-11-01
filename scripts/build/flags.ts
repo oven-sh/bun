@@ -26,7 +26,6 @@ export const safeStackDependencies: readonly DepName[] = [
   "libwebp",
   "lshpack",
   "zlib",
-  "zstd",
 ];
 
 export function usesSafeStack(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">): boolean {
@@ -296,7 +295,7 @@ export const globalFlags: Flag[] = [
   {
     // cmake's Release/RelWithDebInfo build types append this to
     // CMAKE_<LANG>_FLAGS_<TYPE> automatically. Deps only see globalFlags, so
-    // it must be here — otherwise every assert() in zstd/boringssl/mimalloc/etc.
+    // it must be here — otherwise every assert() in zlib/boringssl/mimalloc/etc.
     // stays live in release. (bun's own NDEBUG in `defines` below is
     // redundant after this, but harmless.)
     flag: "-DNDEBUG",

@@ -1,0 +1,2004 @@
+//! The part of `zstd_compress.c` that writes frames: `ZSTD_compressBegin`, `ZSTD_compressContinue`, `ZSTD_compressEnd`
+//! and what they need.
+
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+
+use super::block_entropy::{
+    build_entropy_statistics_and_estimate_sub_block_size, count_seq_store_literals_bytes,
+    count_seq_store_match_bytes, derive_seq_store_chunk, entropy_compress_seq_store,
+    literals_compression_is_disabled,
+};
+use super::fse::FseRepeat;
+use super::huf::{self, HufRepeat};
+use super::internal::{
+    BlockSrc, BufId, Buffers, CompressedBlockState, CompressionParameters, DictMatchState,
+    EntropyCTablesMetadata, HASH_READ_SIZE, LdmState, LongLengthType, MatchState, OptState,
+    ParamSwitch, Prefix, PriceTable, RawSeq, RawSeqStore, RowTags, SeqChunk, SeqStore, Strategy,
+    Table, TableFillPurpose, Window, ZSTD_CHUNKSIZE_MAX, ZSTD_CURRENT_MAX, ZSTD_DUBT_UNSORTED_MARK,
+    ZSTD_OPT_SIZE, ZSTD_SHORT_CACHE_TAG_BITS, ZSTD_WINDOW_START_INDEX, block_header, min_gain,
+    no_compress_block, offbase_is_repcode, offset_to_offbase, rle_compress_block, update_rep,
+};
+use super::literals::min_literals_to_compress;
+use super::params::{
+    CCtxParams, CParamMode, Format, MatchStateSizes, Workspace, WorkspaceNeeds,
+    adjust_c_params_internal, allocate_chain_table, cdict_indices_are_tagged, compress_bound,
+    cycle_log, get_c_params_from_cctx_params, max_nb_seq, resolve_row_match_finder_mode,
+    row_match_finder_used,
+};
+use super::superblock::compress_super_block;
+use super::{compress_block, double_fast, fast, lazy, ldm, opt, presplit, sequences};
+use crate::common::entropy::read_ncount;
+use crate::common::xxhash::Xxh64;
+use crate::common::{
+    BlockType, LITBITS, LL_FSE_LOG, MAX_LL, MAX_ML, MAX_OFF, MIN_CBLOCK_SIZE, ML_FSE_LOG,
+    OFF_FSE_LOG, ZSTD_BLOCKHEADERSIZE, ZSTD_BLOCKSIZE_MAX, ZSTD_CONTENTSIZE_UNKNOWN,
+    ZSTD_FRAMEHEADERSIZE_MAX, ZSTD_MAGIC_DICTIONARY, ZSTD_MAGICNUMBER, ZSTD_REP_NUM,
+    ZSTD_WINDOWLOG_ABSOLUTEMIN,
+};
+use crate::error::{Error, Result};
+use crate::util::{
+    SliceExt, append, append_at, highbit32, read_le32, reset_table, write_le16, write_le24,
+    write_le32, write_le64,
+};
+
+/// `ZSTD_compressionStage_e`
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CompressionStage {
+    Created,
+    Init,
+    Ongoing,
+    Ending,
+}
+
+/// `ZSTD_compResetPolicy_e`
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CompResetPolicy {
+    MakeClean,
+    /// The caller overwrites the tables.
+    LeaveDirty,
+}
+
+/// `ZSTD_indexResetPolicy_e`
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum IndexResetPolicy {
+    /// Indices go on from where they are, which makes the ones in the tables invalid without erasing them.
+    Continue,
+    Reset,
+}
+
+/// `ZSTD_resetTarget_e`
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ResetTarget {
+    CDict,
+    CCtx,
+}
+
+/// Some bytes of one of the [`Buffers`].
+#[derive(Clone, Copy)]
+pub(crate) struct Span {
+    pub(crate) buf: BufId,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+}
+
+impl Span {
+    #[inline]
+    const fn len(&self) -> usize {
+        self.end - self.start
+    }
+
+    #[inline]
+    const fn start_addr(&self) -> usize {
+        self.buf.start() + self.start
+    }
+
+    #[inline]
+    const fn end_addr(&self) -> usize {
+        self.buf.start() + self.end
+    }
+
+    #[inline]
+    fn bytes<'a>(&self, bufs: &Buffers<'a>) -> Result<&'a [u8]> {
+        bufs.get(self.buf).sub(self.start..self.end)
+    }
+}
+
+/// What the pointers of a `ZSTD_CCtx` lead to, that it does not own.
+#[derive(Clone, Copy)]
+pub(crate) struct Input<'a> {
+    pub(crate) bufs: Buffers<'a>,
+    pub(crate) cdict: Option<&'a CDict>,
+}
+
+/// Where a frame goes.
+pub(crate) enum Output<'a> {
+    Slice(&'a mut [u8]),
+    /// What is from `start` to `end` in `vec`, which has the capacity for it. Only what is asked for becomes part of its
+    /// length, as zeros, and what is appended: most of the room for a frame is never written to.
+    Spare {
+        vec: &'a mut Vec<u8>,
+        start: usize,
+        end: usize,
+    },
+}
+
+/// The header of a block, those of its literals and its sequences, the description of a Huffman table, and far more than
+/// any encoder wants beyond what it writes.
+const ROOM_TO_SPARE: usize = 1024;
+
+impl Output<'_> {
+    /// How many bytes there are from `pos` on.
+    fn room_from(&self, pos: usize) -> usize {
+        match self {
+            Output::Slice(slice) => slice.len().saturating_sub(pos),
+            Output::Spare { start, end, .. } => end.saturating_sub(*start + pos),
+        }
+    }
+
+    /// [`no_compress_block`] at `pos`, up to which the output is written.
+    fn store_block(&mut self, pos: usize, src: &[u8], last_block: bool) -> Result<usize> {
+        match self {
+            Output::Slice(slice) => no_compress_block(slice.sub_mut(pos..)?, src, last_block),
+            Output::Spare { vec, start, end } => {
+                let pos = *start + pos;
+                let size = ZSTD_BLOCKHEADERSIZE + src.len();
+                if pos + size > *end {
+                    return Err(Error::DstSizeTooSmall);
+                }
+                // Appended, which takes no zeros first.
+                let header = block_header(BlockType::Raw, src.len(), last_block);
+                let [header @ .., _] = header.to_le_bytes();
+                append_at(vec, pos, &header)?;
+                append(vec, src)?;
+                Ok(size)
+            }
+        }
+    }
+
+    /// What there is from `pos` on, or `needed` bytes of it at least.
+    fn from(&mut self, pos: usize, needed: usize) -> Result<&mut [u8]> {
+        match self {
+            Output::Slice(slice) => slice.sub_mut(pos..),
+            Output::Spare { vec, start, end } => {
+                let pos = *start + pos;
+                let len = pos.saturating_add(needed).min(*end);
+                if vec.len() < len {
+                    vec.resize(len, 0);
+                }
+                vec.sub_mut(pos..)
+            }
+        }
+    }
+}
+
+fn window_prefix<'a>(window: &Window, bufs: &Buffers<'a>) -> Prefix<'a> {
+    Prefix {
+        buf: bufs.get(window.base_buf),
+        base: window.base.wrapping_sub(window.base_buf.start()),
+    }
+}
+
+/// `ZSTD_bitmix`
+const fn bitmix(mut val: u64, len: u64) -> u64 {
+    val ^= val.rotate_right(49) ^ val.rotate_right(24);
+    val = val.wrapping_mul(0x9FB2_1C65_1E98_DF25);
+    val ^= (val >> 35).wrapping_add(len);
+    val = val.wrapping_mul(0x9FB2_1C65_1E98_DF25);
+    val ^ (val >> 28)
+}
+
+/// `ZSTD_invalidateMatchState`
+fn invalidate_match_state(ms: &mut MatchState) {
+    ms.window.clear();
+    ms.next_to_update = ms.window.dict_limit;
+    ms.loaded_dict_end = 0;
+    ms.opt.lit_length_sum = 0;
+    ms.has_dict_match_state = false;
+}
+
+/// `ZSTD_cwksp_mark_tables_dirty` and then `ZSTD_cwksp_mark_tables_clean`
+fn forget_unused_indices(ms: &mut MatchState) {
+    ms.hash_table.forget_rest();
+    ms.chain_table.forget_rest();
+    ms.hash_table3.forget_rest();
+}
+
+/// `ZSTD_reset_matchState`
+fn reset_match_state(
+    ms: &mut MatchState,
+    c_params: &CompressionParameters,
+    use_row_match_finder: ParamSwitch,
+    crp: CompResetPolicy,
+    force_reset_index: IndexResetPolicy,
+    for_who: ResetTarget,
+    src_size: Option<u64>,
+) -> Result<()> {
+    let sizes = MatchStateSizes::new(c_params, use_row_match_finder, for_who == ResetTarget::CCtx);
+
+    if force_reset_index == IndexResetPolicy::Reset {
+        ms.window = Window::new();
+    }
+    ms.hash_log3 = sizes.hash_log3;
+    invalidate_match_state(ms);
+
+    // As long as indices go on, the ones in the tables are too low to be valid.
+    let clean = force_reset_index == IndexResetPolicy::Reset && crp != CompResetPolicy::LeaveDirty;
+    let use_rows = row_match_finder_used(c_params.strat(), use_row_match_finder);
+    ms.hash_table.reset(sizes.h_size, clean)?;
+    ms.chain_table.reset(sizes.chain_size, clean)?;
+    ms.hash_table3.reset(sizes.h3_size, clean)?;
+    if force_reset_index == IndexResetPolicy::Reset {
+        forget_unused_indices(ms);
+    }
+
+    if use_rows {
+        ms.row_tags = match for_who {
+            ResetTarget::CCtx => lazy::row_tags_at_start(c_params, src_size),
+            ResetTarget::CDict => RowTags::Flat,
+        };
+        let tag_table_size = lazy::row_tag_table_size(ms.row_tags, sizes.h_size);
+        // In a context, a new salt instead of erasing the tags.
+        let is_new = (ms.tag_table).reset(tag_table_size, for_who == ResetTarget::CDict)?;
+        // The table suits the size of the input if that is known. Most of it is then read before it is written, for
+        // which the system would provide each page twice. Else the input may be too short to get to most of it.
+        if is_new && (src_size.is_some() || for_who == ResetTarget::CDict) {
+            ms.tag_table.fill(0);
+        }
+        ms.hash_salt = match for_who {
+            ResetTarget::CCtx => {
+                bitmix(ms.hash_salt, 8) ^ bitmix(u64::from(ms.hash_salt_entropy), 4)
+            }
+            ResetTarget::CDict => 0,
+        };
+        let row_log = c_params.search_log.clamp(4, 6);
+        ms.row_hash_log = c_params.hash_log - row_log;
+    }
+
+    ms.c_params = *c_params;
+    Ok(())
+}
+
+/// The part of `ZSTD_reset_matchState` that is for the optimal parser.
+fn reset_opt_state(opt: &mut OptState, block_size: usize) -> Result<()> {
+    reset_table(&mut opt.lit_freq, 1 << LITBITS, false)?;
+    reset_table(&mut opt.lit_length_freq, MAX_LL as usize + 1, false)?;
+    reset_table(&mut opt.match_length_freq, MAX_ML as usize + 1, false)?;
+    reset_table(&mut opt.off_code_freq, MAX_OFF as usize + 1, false)?;
+    let nb_positions = nb_opt_positions(block_size);
+    reset_table(&mut opt.match_table, nb_positions, false)?;
+    opt.price_table.resize(nb_positions)
+}
+
+/// How many positions the tables of the optimal parser have: `ZSTD_OPT_SIZE`, or fewer if no block is that long. One
+/// before each byte, one after the last, and one more that is only given a price.
+fn nb_opt_positions(block_size: usize) -> usize {
+    ZSTD_OPT_SIZE.min(block_size + 2)
+}
+
+/// `ZSTD_indexTooCloseToMax`: starting a frame this close to the limit would mean bringing indices down during it.
+fn index_too_close_to_max(w: &Window) -> bool {
+    const ZSTD_INDEXOVERFLOW_MARGIN: usize = 16 << 20;
+    w.next_src.wrapping_sub(w.base) > ZSTD_CURRENT_MAX as usize - ZSTD_INDEXOVERFLOW_MARGIN
+}
+
+/// `ZSTD_reduceTable_internal`
+fn reduce_table(table: &mut [u32], reducer_value: u32, preserve_mark: bool) {
+    let reducer_threshold = reducer_value.wrapping_add(ZSTD_WINDOW_START_INDEX);
+    for cell in table {
+        *cell = if preserve_mark && *cell == ZSTD_DUBT_UNSORTED_MARK {
+            ZSTD_DUBT_UNSORTED_MARK
+        } else if *cell < reducer_threshold {
+            0
+        } else {
+            *cell - reducer_value
+        };
+    }
+}
+
+/// `ZSTD_reduceIndex`
+fn reduce_index(ms: &mut MatchState, params: &CCtxParams, reducer_value: u32) {
+    forget_unused_indices(ms);
+    reduce_table(&mut ms.hash_table, reducer_value, false);
+    if allocate_chain_table(params.c_params.strat(), params.use_row_match_finder) {
+        let preserve_mark = params.c_params.strat() == Strategy::BtLazy2;
+        reduce_table(&mut ms.chain_table, reducer_value, preserve_mark);
+    }
+    if ms.hash_log3 != 0 {
+        reduce_table(&mut ms.hash_table3, reducer_value, false);
+    }
+}
+
+/// `ZSTD_overflowCorrectIfNeeded`
+fn overflow_correct_if_needed(ms: &mut MatchState, params: &CCtxParams, ip: usize, iend: usize) {
+    let cycle_log = cycle_log(params.c_params.chain_log, params.c_params.strat());
+    let max_dist = 1u32 << params.c_params.window_log;
+    if ms.window.need_overflow_correction(iend) {
+        let correction = ms.window.correct_overflow(cycle_log, max_dist, ip);
+        reduce_index(ms, params, correction);
+        ms.next_to_update = ms.next_to_update.saturating_sub(correction);
+        // Even if the dictionary is still within the window.
+        ms.loaded_dict_end = 0;
+        ms.has_dict_match_state = false;
+    }
+}
+
+/// `ZSTD_loadDictionaryContent`: makes `src` the start of the window, and indexes it.
+///
+/// The C code also indexes it for long distance matching if it is a prefix from the user, which there is none of here.
+fn load_dictionary_content(
+    ms: &mut MatchState,
+    params: &CCtxParams,
+    bufs: &Buffers<'_>,
+    mut src: Span,
+    tfp: TableFillPurpose,
+) -> Result<()> {
+    {
+        // Indices have to fit, along with a tag in the tables that have one.
+        let mut max_dict_size = ZSTD_CURRENT_MAX - ZSTD_WINDOW_START_INDEX;
+        if cdict_indices_are_tagged(&params.c_params) && tfp == TableFillPurpose::ForCDict {
+            let short_cache_max_dict_size =
+                (1u32 << (32 - ZSTD_SHORT_CACHE_TAG_BITS)) - ZSTD_WINDOW_START_INDEX;
+            max_dict_size = max_dict_size.min(short_cache_max_dict_size);
+        }
+        if src.len() > max_dict_size as usize {
+            src.start = src.end - max_dict_size as usize;
+        }
+    }
+
+    ms.window
+        .update(src.start_addr(), src.buf, src.len(), false);
+
+    {
+        // More than the tables can hold is not worth indexing.
+        let log = (params.c_params.hash_log + 3)
+            .max(params.c_params.chain_log + 1)
+            .min(31);
+        let max_dict_size = 1usize << log;
+        if src.len() > max_dict_size {
+            src.start = src.end - max_dict_size;
+        }
+    }
+
+    ms.next_to_update = ms.window.index_of(src.start_addr());
+    ms.loaded_dict_end = if params.force_window {
+        0
+    } else {
+        ms.window.index_of(src.end_addr())
+    };
+    ms.force_non_contiguous = false;
+
+    if src.len() <= HASH_READ_SIZE {
+        return Ok(());
+    }
+
+    overflow_correct_if_needed(ms, params, src.start_addr(), src.end_addr());
+
+    let prefix = window_prefix(&ms.window, bufs);
+    match params.c_params.strat() {
+        Strategy::Fast => fast::fill_hash_table(ms, prefix, src.end, tfp),
+        Strategy::DFast => double_fast::fill_double_hash_table(ms, prefix, src.end, tfp),
+        Strategy::Greedy | Strategy::Lazy | Strategy::Lazy2 => {
+            if params.use_row_match_finder == ParamSwitch::Enable {
+                ms.tag_table.fill(0);
+                lazy::row_update(ms, prefix, src.end - HASH_READ_SIZE)?;
+            } else {
+                lazy::insert_and_find_first_index(ms, prefix, src.end - HASH_READ_SIZE)?;
+            }
+        }
+        Strategy::BtLazy2 | Strategy::BtOpt | Strategy::BtUltra | Strategy::BtUltra2 => {
+            opt::update_tree(ms, prefix, src.end - HASH_READ_SIZE, src.end)?;
+        }
+    }
+
+    ms.next_to_update = ms.window.index_of(src.end_addr());
+    Ok(())
+}
+
+/// `ZSTD_dictNCountRepeat`: a table that has a code for every symbol can be used without checking.
+fn dict_ncount_repeat(
+    normalized_counter: &[i16],
+    dict_max_symbol_value: u32,
+    max_symbol_value: u32,
+) -> FseRepeat {
+    if dict_max_symbol_value < max_symbol_value {
+        return FseRepeat::Check;
+    }
+    let counts = normalized_counter
+        .iter()
+        .take(max_symbol_value as usize + 1);
+    if counts.into_iter().any(|&count| count == 0) {
+        return FseRepeat::Check;
+    }
+    FseRepeat::Valid
+}
+
+/// `ZSTD_loadCEntropy`: reads the tables of the dictionary `dict` into `bs`. Returns where its content starts.
+fn load_c_entropy(bs: &mut CompressedBlockState, dict: &[u8]) -> Result<usize> {
+    const CORRUPTED: Error = Error::DictionaryCorrupted;
+    let mut offcode_ncount = [0i16; MAX_OFF as usize + 1];
+    let mut dict_ptr = 8usize;
+    bs.entropy.huf.repeat_mode = HufRepeat::Check;
+
+    {
+        let stats = huf::read_ctable(&mut bs.entropy.huf.c_table, 255, dict.sub(dict_ptr..)?)
+            .map_err(|_| CORRUPTED)?;
+        // A table that has a code for every byte can be used without checking.
+        if !stats.has_zero_weights && stats.max_symbol_value == 255 {
+            bs.entropy.huf.repeat_mode = HufRepeat::Valid;
+        }
+        dict_ptr += stats.size;
+    }
+
+    let offcode_max_value = {
+        let header = read_ncount(&mut offcode_ncount, MAX_OFF, dict.sub(dict_ptr..)?)
+            .map_err(|_| CORRUPTED)?;
+        if header.table_log > OFF_FSE_LOG {
+            return Err(CORRUPTED);
+        }
+        (bs.entropy.fse.offcode_c_table)
+            .build(&offcode_ncount, MAX_OFF, header.table_log)
+            .map_err(|_| CORRUPTED)?;
+        dict_ptr += header.size;
+        header.max_symbol_value
+    };
+
+    {
+        let mut matchlength_ncount = [0i16; MAX_ML as usize + 1];
+        let header = read_ncount(&mut matchlength_ncount, MAX_ML, dict.sub(dict_ptr..)?)
+            .map_err(|_| CORRUPTED)?;
+        if header.table_log > ML_FSE_LOG {
+            return Err(CORRUPTED);
+        }
+        (bs.entropy.fse.matchlength_c_table)
+            .build(
+                &matchlength_ncount,
+                header.max_symbol_value,
+                header.table_log,
+            )
+            .map_err(|_| CORRUPTED)?;
+        bs.entropy.fse.matchlength_repeat_mode =
+            dict_ncount_repeat(&matchlength_ncount, header.max_symbol_value, MAX_ML);
+        dict_ptr += header.size;
+    }
+
+    {
+        let mut litlength_ncount = [0i16; MAX_LL as usize + 1];
+        let header = read_ncount(&mut litlength_ncount, MAX_LL, dict.sub(dict_ptr..)?)
+            .map_err(|_| CORRUPTED)?;
+        if header.table_log > LL_FSE_LOG {
+            return Err(CORRUPTED);
+        }
+        (bs.entropy.fse.litlength_c_table)
+            .build(&litlength_ncount, header.max_symbol_value, header.table_log)
+            .map_err(|_| CORRUPTED)?;
+        bs.entropy.fse.litlength_repeat_mode =
+            dict_ncount_repeat(&litlength_ncount, header.max_symbol_value, MAX_LL);
+        dict_ptr += header.size;
+    }
+
+    if dict_ptr + 12 > dict.len() {
+        return Err(CORRUPTED);
+    }
+    bs.rep = [
+        read_le32(dict, dict_ptr)?,
+        read_le32(dict, dict_ptr + 4)?,
+        read_le32(dict, dict_ptr + 8)?,
+    ];
+    dict_ptr += 12;
+
+    {
+        let dict_content_size = dict.len() - dict_ptr;
+        let mut offcode_max = MAX_OFF;
+        if dict_content_size <= u32::MAX as usize - (128 << 10) {
+            // The largest offset that a first block can have.
+            let max_offset = dict_content_size as u32 + (128 << 10);
+            offcode_max = highbit32(max_offset);
+        }
+        bs.entropy.fse.offcode_repeat_mode =
+            dict_ncount_repeat(&offcode_ncount, offcode_max_value, offcode_max.min(MAX_OFF));
+
+        for rep in bs.rep {
+            if rep == 0 || rep as usize > dict_content_size {
+                return Err(CORRUPTED);
+            }
+        }
+    }
+
+    Ok(dict_ptr)
+}
+
+/// `ZSTD_compress_insertDictionary`: returns the ID of the dictionary, which is 0 if it has none.
+fn compress_insert_dictionary(
+    bs: &mut CompressedBlockState,
+    ms: &mut MatchState,
+    params: &CCtxParams,
+    bufs: &Buffers<'_>,
+    dict: Option<Span>,
+    tfp: TableFillPurpose,
+) -> Result<u32> {
+    let Some(dict) = dict.filter(|dict| dict.len() >= 8) else {
+        return Ok(0);
+    };
+
+    bs.reset();
+
+    let bytes = dict.bytes(bufs)?;
+    if tfp == TableFillPurpose::ForCCtx || read_le32(bytes, 0)? != ZSTD_MAGIC_DICTIONARY {
+        load_dictionary_content(ms, params, bufs, dict, tfp)?;
+        return Ok(0);
+    }
+
+    // `ZSTD_loadZstdDictionary`
+    let dict_id = if params.f_params.no_dict_id_flag {
+        0
+    } else {
+        read_le32(bytes, 4)?
+    };
+    let e_size = load_c_entropy(bs, bytes)?;
+    let content = Span {
+        start: dict.start + e_size,
+        ..dict
+    };
+    load_dictionary_content(ms, params, bufs, content, tfp)?;
+    Ok(dict_id)
+}
+
+/// `ZSTD_CDict`: a dictionary that is indexed, ready to start frames with.
+pub(crate) struct CDict {
+    dict_content: Arc<Vec<u8>>,
+    match_state: MatchState,
+    c_block_state: Box<CompressedBlockState>,
+    dict_id: u32,
+    use_row_match_finder: ParamSwitch,
+}
+
+impl CDict {
+    /// `ZSTD_createCDict_advanced2`
+    pub(crate) fn new(dict: Arc<Vec<u8>>, original_cctx_params: &CCtxParams) -> Result<Self> {
+        let mut params = *original_cctx_params;
+        params.c_params = get_c_params_from_cctx_params(
+            &params,
+            ZSTD_CONTENTSIZE_UNKNOWN,
+            dict.len(),
+            CParamMode::CreateCDict,
+        );
+        params.use_row_match_finder =
+            resolve_row_match_finder_mode(params.use_row_match_finder, &params.c_params);
+
+        let mut cdict = Self {
+            dict_content: dict,
+            match_state: MatchState::new(),
+            c_block_state: Box::new(CompressedBlockState::new()),
+            dict_id: 0,
+            use_row_match_finder: params.use_row_match_finder,
+        };
+        reset_match_state(
+            &mut cdict.match_state,
+            &params.c_params,
+            params.use_row_match_finder,
+            CompResetPolicy::MakeClean,
+            IndexResetPolicy::Reset,
+            ResetTarget::CDict,
+            None,
+        )?;
+        let bufs = Buffers {
+            in_buff: &[],
+            user: &[],
+            dict: &cdict.dict_content,
+        };
+        cdict.dict_id = compress_insert_dictionary(
+            &mut cdict.c_block_state,
+            &mut cdict.match_state,
+            &params,
+            &bufs,
+            Some(Span {
+                buf: BufId::Dict,
+                start: 0,
+                end: cdict.dict_content.len(),
+            }),
+            TableFillPurpose::ForCDict,
+        )?;
+        Ok(cdict)
+    }
+
+    pub(crate) fn dict_content(&self) -> &[u8] {
+        &self.dict_content
+    }
+
+    pub(crate) const fn dict_id(&self) -> u32 {
+        self.dict_id
+    }
+
+    fn dict_match_state(&self) -> DictMatchState<'_> {
+        let window = &self.match_state.window;
+        let start = BufId::Dict.start();
+        DictMatchState {
+            ms: &self.match_state,
+            buf: &self.dict_content,
+            base: window.base.wrapping_sub(start),
+            end: window.next_src.wrapping_sub(start),
+        }
+    }
+
+    /// `ZSTD_shouldAttachDict`: whether to search the tables of the dictionary, rather than start from a copy of them.
+    pub(crate) fn should_attach(&self, params: &CCtxParams, pledged_src_size: u64) -> bool {
+        let cutoff: u64 = match self.match_state.c_params.strat() {
+            Strategy::Fast | Strategy::BtUltra | Strategy::BtUltra2 => 8 << 10,
+            Strategy::DFast => 16 << 10,
+            _ => 32 << 10,
+        };
+        (pledged_src_size <= cutoff || pledged_src_size == ZSTD_CONTENTSIZE_UNKNOWN)
+            && !params.force_window
+    }
+}
+
+/// `ZSTD_isRLE`: `src` is not empty.
+fn is_rle(src: &[u8]) -> bool {
+    let Some((&value, rest)) = src.split_first() else {
+        return false;
+    };
+    let (chunks, tail) = rest.as_chunks::<32>();
+    chunks.iter().all(|chunk| *chunk == [value; 32]) && tail.iter().all(|&b| b == value)
+}
+
+/// `ZSTD_maybeRLE`
+fn maybe_rle(seq_store: &SeqStore) -> bool {
+    seq_store.sequences.len() < 4 && seq_store.lit_len < 10
+}
+
+/// `writeBlockHeader`
+fn write_block_header(
+    op: &mut [u8],
+    c_size: usize,
+    block_size: usize,
+    last_block: bool,
+) -> Result<()> {
+    let c_block_header = if c_size == 1 {
+        block_header(BlockType::Rle, block_size, last_block)
+    } else {
+        block_header(BlockType::Compressed, c_size, last_block)
+    };
+    write_le24(op, 0, c_block_header)
+}
+
+/// `ZSTD_resolveRepcodeToRawOffset`
+fn resolve_repcode_to_raw_offset(rep: &[u32; ZSTD_REP_NUM], off_base: u32, ll0: bool) -> u32 {
+    let [rep0, ..] = *rep;
+    let adjusted_rep_code = off_base - 1 + u32::from(ll0);
+    match rep.get(adjusted_rep_code as usize) {
+        Some(&offset) => offset,
+        None => rep0.wrapping_sub(1),
+    }
+}
+
+/// `ZSTD_seqStore_resolveOffCodes`: a block that ends up uncompressed leaves the repeat offsets of the decoder,
+/// `d_repcodes`, behind those that the sequences were found with, `c_repcodes`. Where they disagree, the repeat codes
+/// of `chunk` are replaced by the offsets they stand for.
+fn seq_store_resolve_off_codes(
+    d_repcodes: &mut [u32; ZSTD_REP_NUM],
+    c_repcodes: &mut [u32; ZSTD_REP_NUM],
+    store: &mut SeqStore,
+    chunk: &SeqChunk,
+) -> Result<()> {
+    let sequences = store.sequences.sub_mut(chunk.seq_start..chunk.seq_end)?;
+    let long_lit_len_idx = if chunk.long_length_type == LongLengthType::LiteralLength {
+        chunk.long_length_pos as usize
+    } else {
+        sequences.len()
+    };
+    for (idx, seq) in sequences.iter_mut().enumerate() {
+        let ll0 = seq.lit_length == 0 && idx != long_lit_len_idx;
+        let off_base = seq.off_base;
+        if offbase_is_repcode(off_base) {
+            let d_raw_offset = resolve_repcode_to_raw_offset(d_repcodes, off_base, ll0);
+            let c_raw_offset = resolve_repcode_to_raw_offset(c_repcodes, off_base, ll0);
+            if d_raw_offset != c_raw_offset {
+                seq.off_base = offset_to_offbase(c_raw_offset);
+            }
+        }
+        update_rep(d_repcodes, seq.off_base, ll0);
+        update_rep(c_repcodes, off_base, ll0);
+    }
+    Ok(())
+}
+
+/// `ZSTD_writeFrameHeader`
+fn write_frame_header(
+    dst: &mut [u8],
+    params: &CCtxParams,
+    pledged_src_size: u64,
+    dict_id: u32,
+) -> Result<usize> {
+    let dict_id_size_code_length =
+        u32::from(dict_id > 0) + u32::from(dict_id >= 256) + u32::from(dict_id >= 65536);
+    let dict_id_size_code = if params.f_params.no_dict_id_flag {
+        0
+    } else {
+        dict_id_size_code_length
+    };
+    let checksum_flag = u32::from(params.f_params.checksum_flag);
+    let window_size = 1u32 << params.c_params.window_log;
+    let single_segment =
+        params.f_params.content_size_flag && u64::from(window_size) >= pledged_src_size;
+    let window_log_byte = ((params.c_params.window_log - ZSTD_WINDOWLOG_ABSOLUTEMIN) << 3) as u8;
+    let fcs_code = if params.f_params.content_size_flag {
+        u32::from(pledged_src_size >= 256)
+            + u32::from(pledged_src_size >= 65536 + 256)
+            + u32::from(pledged_src_size >= 0xFFFF_FFFF)
+    } else {
+        0
+    };
+    let frame_header_description_byte = (dict_id_size_code
+        + (checksum_flag << 2)
+        + (u32::from(single_segment) << 5)
+        + (fcs_code << 6)) as u8;
+    let mut pos = 0usize;
+
+    if dst.len() < ZSTD_FRAMEHEADERSIZE_MAX {
+        return Err(Error::DstSizeTooSmall);
+    }
+    if params.format == Format::Zstd1 {
+        write_le32(dst, 0, ZSTD_MAGICNUMBER)?;
+        pos = 4;
+    }
+    dst.put(pos, frame_header_description_byte)?;
+    pos += 1;
+    if !single_segment {
+        dst.put(pos, window_log_byte)?;
+        pos += 1;
+    }
+    match dict_id_size_code {
+        0 => {}
+        1 => {
+            dst.put(pos, dict_id as u8)?;
+            pos += 1;
+        }
+        2 => {
+            write_le16(dst, pos, dict_id as u16)?;
+            pos += 2;
+        }
+        _ => {
+            write_le32(dst, pos, dict_id)?;
+            pos += 4;
+        }
+    }
+    match fcs_code {
+        0 => {
+            if single_segment {
+                dst.put(pos, pledged_src_size as u8)?;
+                pos += 1;
+            }
+        }
+        1 => {
+            write_le16(dst, pos, (pledged_src_size - 256) as u16)?;
+            pos += 2;
+        }
+        2 => {
+            write_le32(dst, pos, pledged_src_size as u32)?;
+            pos += 4;
+        }
+        _ => {
+            write_le64(dst, pos, pledged_src_size)?;
+            pos += 8;
+        }
+    }
+    Ok(pos)
+}
+
+/// `ZSTD_writeLastEmptyBlock`
+pub(crate) fn write_last_empty_block(dst: &mut [u8]) -> Result<usize> {
+    if dst.len() < ZSTD_BLOCKHEADERSIZE {
+        return Err(Error::DstSizeTooSmall);
+    }
+    write_le24(dst, 0, block_header(BlockType::Raw, 0, true))?;
+    Ok(ZSTD_BLOCKHEADERSIZE)
+}
+
+/// `ZSTD_BuildSeqStore_e`
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BuildSeqStore {
+    Compress,
+    NoCompress,
+}
+
+/// The C code stops splitting at 196 parts, but the calls under way at that time each still add one, past the end of
+/// its array, in memory that happens to be free.
+const ZSTD_MAX_NB_BLOCK_SPLITS: usize = 196;
+const PARTITIONS_LEN: usize = ZSTD_MAX_NB_BLOCK_SPLITS + 20;
+
+/// `seqStoreSplits`
+struct SeqStoreSplits {
+    split_locations: [u32; PARTITIONS_LEN],
+    idx: usize,
+}
+
+/// The sizes of the buffers that streaming takes.
+pub(crate) struct BufferSizes {
+    pub(crate) buff_in_size: usize,
+    pub(crate) buff_out_size: usize,
+}
+
+/// The part of a `ZSTD_CCtx` that writes frames from blocks of input.
+pub(crate) struct FrameCompressor {
+    pub(crate) stage: CompressionStage,
+    pub(crate) applied_params: CCtxParams,
+    pub(crate) dict_id: u32,
+    pub(crate) dict_content_size: usize,
+    workspace: Workspace,
+    pub(crate) block_size_max: usize,
+    pub(crate) pledged_src_size_plus_one: u64,
+    pub(crate) consumed_src_size: u64,
+    pub(crate) produced_c_size: u64,
+    xxh_state: Xxh64,
+    is_first_block: bool,
+    initialized: bool,
+    seq_store: SeqStore,
+    ldm_state: LdmState,
+    ldm_sequences: RawSeqStore,
+    extern_seq_store: RawSeqStore,
+    /// `None` stands for [`INITIAL_BLOCK_STATE`].
+    prev_c_block: Option<Box<CompressedBlockState>>,
+    /// Made when the first block needs it.
+    next_c_block: Option<Box<CompressedBlockState>>,
+    match_state: MatchState,
+}
+
+static INITIAL_BLOCK_STATE: CompressedBlockState = CompressedBlockState::new();
+
+fn block_state(state: &Option<Box<CompressedBlockState>>) -> &CompressedBlockState {
+    state.as_deref().unwrap_or(&INITIAL_BLOCK_STATE)
+}
+
+fn block_state_mut(state: &mut Option<Box<CompressedBlockState>>) -> &mut CompressedBlockState {
+    state.get_or_insert_with(|| Box::new(CompressedBlockState::new()))
+}
+
+const fn empty_raw_seq_store() -> RawSeqStore {
+    RawSeqStore {
+        seq: Vec::new(),
+        pos: 0,
+        pos_in_sequence: 0,
+        size: 0,
+        capacity: 0,
+    }
+}
+
+impl FrameCompressor {
+    pub(crate) fn new() -> Self {
+        Self {
+            stage: CompressionStage::Created,
+            applied_params: CCtxParams::new(0),
+            dict_id: 0,
+            dict_content_size: 0,
+            workspace: Workspace::new(),
+            block_size_max: 0,
+            pledged_src_size_plus_one: 0,
+            consumed_src_size: 0,
+            produced_c_size: 0,
+            xxh_state: Xxh64::new(),
+            is_first_block: true,
+            initialized: false,
+            seq_store: SeqStore::new(),
+            ldm_state: LdmState::new(),
+            ldm_sequences: empty_raw_seq_store(),
+            extern_seq_store: empty_raw_seq_store(),
+            prev_c_block: None,
+            next_c_block: None,
+            match_state: MatchState::new(),
+        }
+    }
+
+    /// For jobs of workers, which stop if `cancelled` is set.
+    pub(crate) fn for_worker(cancelled: Arc<AtomicBool>) -> Self {
+        let mut worker = Self::new();
+        worker.match_state.cancelled = Some(cancelled);
+        worker
+    }
+
+    /// The next frame starts from nothing, as after a reset that failed.
+    pub(crate) fn forget(&mut self) {
+        self.initialized = false;
+    }
+
+    /// `ZSTD_resetCCtx_internal`
+    fn reset_internal(
+        &mut self,
+        params: &CCtxParams,
+        pledged_src_size: u64,
+        loaded_dict_size: usize,
+        crp: CompResetPolicy,
+        buffered: bool,
+    ) -> Result<BufferSizes> {
+        // Until this is through: if it fails, the next frame starts from nothing.
+        let initialized = core::mem::take(&mut self.initialized);
+        self.is_first_block = true;
+        self.applied_params = *params;
+        if self.applied_params.ldm_params.enable_ldm == ParamSwitch::Enable {
+            ldm::adjust_parameters(&mut self.applied_params.ldm_params, &params.c_params);
+        }
+        let params = self.applied_params;
+
+        let window_size = (1u64 << params.c_params.window_log)
+            .min(pledged_src_size)
+            .max(1) as usize;
+        let block_size = ZSTD_BLOCKSIZE_MAX.min(window_size);
+        let max_nb_seq = max_nb_seq(block_size, params.c_params.min_match);
+        let sizes = BufferSizes {
+            buff_out_size: if buffered {
+                compress_bound(block_size) + 1
+            } else {
+                0
+            },
+            buff_in_size: if buffered {
+                window_size + block_size
+            } else {
+                0
+            },
+        };
+        let max_nb_ldm_seq = ldm::get_max_nb_seq(params.ldm_params, block_size);
+
+        let index_too_close = index_too_close_to_max(&self.match_state.window);
+        let dict_too_big = loaded_dict_size > ZSTD_CHUNKSIZE_MAX as usize;
+        // Where indices start shows in where they get to the limit, which is where a dictionary is let go of.
+        if !initialized {
+            self.workspace = Workspace::new();
+        }
+        let new_workspace = self.workspace.reset(&WorkspaceNeeds {
+            c_params: &params.c_params,
+            ldm_params: &params.ldm_params,
+            use_row_match_finder: params.use_row_match_finder,
+            buff_in_size: sizes.buff_in_size,
+            buff_out_size: sizes.buff_out_size,
+            block_size,
+        });
+        let needs_index_reset = if index_too_close || dict_too_big || !initialized || new_workspace
+        {
+            IndexResetPolicy::Reset
+        } else {
+            IndexResetPolicy::Continue
+        };
+
+        // A context does not hold on for long to much more than it uses.
+        if new_workspace {
+            let ms = &mut self.match_state;
+            ms.hash_table = Table::new();
+            ms.chain_table = Table::new();
+            ms.hash_table3 = Table::new();
+            ms.tag_table = Table::new();
+            ms.opt.match_table = Vec::new();
+            ms.opt.price_table = PriceTable::default();
+        }
+
+        self.match_state.c_params = params.c_params;
+        self.pledged_src_size_plus_one = pledged_src_size.wrapping_add(1);
+        self.consumed_src_size = 0;
+        self.produced_c_size = 0;
+        if pledged_src_size == ZSTD_CONTENTSIZE_UNKNOWN {
+            self.applied_params.f_params.content_size_flag = false;
+        }
+        self.block_size_max = block_size;
+
+        self.xxh_state = Xxh64::new();
+        self.stage = CompressionStage::Init;
+        self.dict_id = 0;
+        self.dict_content_size = 0;
+
+        if let Some(prev_c_block) = &mut self.prev_c_block {
+            prev_c_block.reset();
+        }
+
+        reset_match_state(
+            &mut self.match_state,
+            &params.c_params,
+            params.use_row_match_finder,
+            crp,
+            needs_index_reset,
+            ResetTarget::CCtx,
+            (pledged_src_size != ZSTD_CONTENTSIZE_UNKNOWN).then_some(pledged_src_size),
+        )?;
+        if params.c_params.strat() >= Strategy::BtOpt {
+            reset_opt_state(&mut self.match_state.opt, block_size)?;
+        }
+
+        if params.ldm_params.enable_ldm == ParamSwitch::Enable {
+            let ldm_h_size = 1usize << params.ldm_params.hash_log;
+            reset_table(&mut self.ldm_state.hash_table, ldm_h_size, true)?;
+            reset_table(&mut self.ldm_sequences.seq, max_nb_ldm_seq, false)?;
+            self.ldm_sequences.capacity = max_nb_ldm_seq;
+            self.ldm_state.window = Window::new();
+            self.ldm_state.loaded_dict_end = 0;
+            let num_buckets =
+                1usize << (params.ldm_params.hash_log - params.ldm_params.bucket_size_log);
+            reset_table(&mut self.ldm_state.bucket_offsets, num_buckets, true)?;
+        } else {
+            self.ldm_state.hash_table = Vec::new();
+            self.ldm_state.bucket_offsets = Vec::new();
+            self.ldm_sequences = empty_raw_seq_store();
+        }
+
+        self.seq_store.set_limits(max_nb_seq, block_size);
+        self.reference_external_sequences(Vec::new());
+
+        self.initialized = true;
+        Ok(sizes)
+    }
+
+    /// `ZSTD_invalidateRepCodes`
+    pub(crate) fn invalidate_rep_codes(&mut self) {
+        block_state_mut(&mut self.prev_c_block).rep = [0; ZSTD_REP_NUM];
+    }
+
+    /// `ZSTD_resetCCtx_byAttachingCDict`
+    fn reset_by_attaching_cdict(
+        &mut self,
+        cdict: &CDict,
+        mut params: CCtxParams,
+        pledged_src_size: u64,
+        buffered: bool,
+    ) -> Result<BufferSizes> {
+        let window_log = params.c_params.window_log;
+        // The tables only have to hold the input.
+        params.c_params = adjust_c_params_internal(
+            cdict.match_state.c_params,
+            pledged_src_size,
+            cdict.dict_content.len(),
+            CParamMode::AttachDict,
+            params.use_row_match_finder,
+        );
+        params.c_params.window_log = window_log;
+        params.use_row_match_finder = cdict.use_row_match_finder;
+        let sizes = self.reset_internal(
+            &params,
+            pledged_src_size,
+            0,
+            CompResetPolicy::MakeClean,
+            buffered,
+        )?;
+
+        let cdict_window = &cdict.match_state.window;
+        let cdict_end = cdict_window.index_of(cdict_window.next_src);
+        let cdict_len = cdict_end.wrapping_sub(cdict_window.dict_limit);
+        if cdict_len != 0 {
+            let ms = &mut self.match_state;
+            ms.has_dict_match_state = true;
+            // The indices of the input have to be above those of the dictionary.
+            if ms.window.dict_limit < cdict_end {
+                ms.window.next_src = ms.window.base.wrapping_add(cdict_end as usize);
+                ms.window.clear();
+            }
+            ms.loaded_dict_end = ms.window.dict_limit;
+        }
+
+        self.dict_id = cdict.dict_id;
+        self.dict_content_size = cdict.dict_content.len();
+        block_state_mut(&mut self.prev_c_block).clone_from(&cdict.c_block_state);
+        Ok(sizes)
+    }
+
+    /// `ZSTD_resetCCtx_byCopyingCDict`
+    fn reset_by_copying_cdict(
+        &mut self,
+        cdict: &CDict,
+        mut params: CCtxParams,
+        pledged_src_size: u64,
+        buffered: bool,
+    ) -> Result<BufferSizes> {
+        /// `ZSTD_copyCDictTableIntoCCtx`
+        fn copy_table(dst: &mut [u32], src: &[u32], tagged: bool) -> Result<()> {
+            if tagged {
+                for (dst, &tagged_index) in dst.iter_mut().zip(src) {
+                    *dst = tagged_index >> ZSTD_SHORT_CACHE_TAG_BITS;
+                }
+                Ok(())
+            } else {
+                dst.write_at(0, src)
+            }
+        }
+
+        let cdict_c_params = cdict.match_state.c_params;
+        let window_log = params.c_params.window_log;
+        params.c_params = cdict_c_params;
+        params.c_params.window_log = window_log;
+        params.use_row_match_finder = cdict.use_row_match_finder;
+        let sizes = self.reset_internal(
+            &params,
+            pledged_src_size,
+            0,
+            CompResetPolicy::LeaveDirty,
+            buffered,
+        )?;
+
+        let src = &cdict.match_state;
+        let dst = &mut self.match_state;
+        forget_unused_indices(dst);
+        let tagged = cdict_indices_are_tagged(&cdict_c_params);
+        copy_table(&mut dst.hash_table, &src.hash_table, tagged)?;
+        copy_table(&mut dst.chain_table, &src.chain_table, tagged)?;
+        if row_match_finder_used(cdict_c_params.strat(), cdict.use_row_match_finder) {
+            dst.tag_table.write_at(0, &src.tag_table)?;
+            dst.row_tags = RowTags::Flat;
+            dst.hash_salt = src.hash_salt;
+        }
+        dst.hash_table3.fill(0);
+
+        dst.window = src.window;
+        dst.next_to_update = src.next_to_update;
+        dst.loaded_dict_end = src.loaded_dict_end;
+
+        self.dict_id = cdict.dict_id;
+        self.dict_content_size = cdict.dict_content.len();
+        block_state_mut(&mut self.prev_c_block).clone_from(&cdict.c_block_state);
+        Ok(sizes)
+    }
+
+    /// `ZSTD_compressBegin_internal`: `dict` is content to start the window with, when there is no `input.cdict`.
+    pub(crate) fn begin(
+        &mut self,
+        input: &Input<'_>,
+        dict: Option<Span>,
+        params: &CCtxParams,
+        pledged_src_size: u64,
+        buffered: bool,
+    ) -> Result<BufferSizes> {
+        if let Some(cdict) = input.cdict
+            && !cdict.dict_content.is_empty()
+        {
+            // `ZSTD_resetCCtx_usingCDict`
+            return if cdict.should_attach(params, pledged_src_size) {
+                self.reset_by_attaching_cdict(cdict, *params, pledged_src_size, buffered)
+            } else {
+                self.reset_by_copying_cdict(cdict, *params, pledged_src_size, buffered)
+            };
+        }
+
+        let dict_content_size = dict.map_or(0, |dict| dict.len());
+        let sizes = self.reset_internal(
+            params,
+            pledged_src_size,
+            dict_content_size,
+            CompResetPolicy::MakeClean,
+            buffered,
+        )?;
+        self.dict_id = match dict {
+            Some(_) => compress_insert_dictionary(
+                block_state_mut(&mut self.prev_c_block),
+                &mut self.match_state,
+                &self.applied_params,
+                &input.bufs,
+                dict,
+                TableFillPurpose::ForCCtx,
+            )?,
+            None => 0,
+        };
+        self.dict_content_size = dict_content_size;
+        Ok(sizes)
+    }
+
+    /// `ZSTD_referenceExternalSequences`: long distance matches for the input to come.
+    pub(crate) fn reference_external_sequences(&mut self, seq: Vec<RawSeq>) {
+        self.extern_seq_store = RawSeqStore {
+            pos: 0,
+            pos_in_sequence: 0,
+            size: seq.len(),
+            capacity: seq.len(),
+            seq,
+        };
+    }
+
+    /// Takes back what [`Self::reference_external_sequences`] was given.
+    pub(crate) fn take_external_sequences(&mut self) -> Vec<RawSeq> {
+        core::mem::replace(&mut self.extern_seq_store, empty_raw_seq_store()).seq
+    }
+
+    /// `ZSTD_blockState_confirmRepcodesAndEntropyTables`
+    fn confirm_repcodes_and_entropy_tables(&mut self) {
+        core::mem::swap(&mut self.prev_c_block, &mut self.next_c_block);
+    }
+
+    /// A table for offsets that comes from a dictionary is only known to be valid for the first block.
+    fn downgrade_offcode_repeat_mode(&mut self) {
+        if let Some(prev_c_block) = &mut self.prev_c_block {
+            let mode = &mut prev_c_block.entropy.fse.offcode_repeat_mode;
+            if *mode == FseRepeat::Valid {
+                *mode = FseRepeat::Check;
+            }
+        }
+    }
+
+    /// `ZSTD_buildSeqStore`
+    fn build_seq_store(&mut self, input: &Input<'_>, src: Span) -> Result<BuildSeqStore> {
+        Ok(match self.find_sequences(input, src)? {
+            Some((rep, last_ll_size)) => {
+                (self.seq_store).store_last_literals(src.bytes(&input.bufs)?, last_ll_size)?;
+                block_state_mut(&mut self.next_c_block).rep = rep;
+                BuildSeqStore::Compress
+            }
+            None => BuildSeqStore::NoCompress,
+        })
+    }
+
+    /// `ZSTD_buildSeqStore`, but for the repeat offsets after the block and the literals after the last sequence, which
+    /// are not stored: it returns the former and the number of the latter. `None` is `ZSTDbss_noCompress`.
+    fn find_sequences(
+        &mut self,
+        input: &Input<'_>,
+        src: Span,
+    ) -> Result<Option<([u32; ZSTD_REP_NUM], usize)>> {
+        let params = &self.applied_params;
+        let ms = &mut self.match_state;
+        let src_size = src.len();
+        if src_size < MIN_CBLOCK_SIZE + ZSTD_BLOCKHEADERSIZE + 1 + 1 {
+            if params.c_params.strat() >= Strategy::BtOpt {
+                ldm::skip_raw_seq_store_bytes(&mut self.extern_seq_store, src_size)?;
+            } else {
+                ldm::skip_sequences(
+                    &mut self.extern_seq_store,
+                    src_size,
+                    params.c_params.min_match,
+                )?;
+            }
+            return Ok(None);
+        }
+        self.seq_store.start_block(src_size)?;
+        ms.opt.literal_compression_mode = ParamSwitch::Auto;
+
+        {
+            // Not to spend too long catching up after incompressible data.
+            let curr = ms.window.index_of(src.start_addr());
+            if curr > ms.next_to_update.wrapping_add(384) {
+                let behind = curr.wrapping_sub(ms.next_to_update).wrapping_sub(384);
+                ms.next_to_update = curr - behind.min(192);
+            }
+        }
+
+        let window = ms.window;
+        let block = BlockSrc {
+            buf: input.bufs.get(window.base_buf),
+            base: window.base.wrapping_sub(window.base_buf.start()),
+            dict_buf: input.bufs.get(window.dict_buf),
+            dict_base: window.dict_base.wrapping_sub(window.dict_buf.start()),
+            start: src.start,
+            end: src.end,
+            dms: match input.cdict {
+                Some(cdict) if ms.has_dict_match_state => Some(cdict.dict_match_state()),
+                _ => None,
+            },
+            symbol_costs: &block_state(&self.prev_c_block).entropy,
+            ldm_seq_store: None,
+        };
+        let dict_mode = ms.dict_mode(block.dms.as_ref());
+        let use_row_match_finder = params.use_row_match_finder == ParamSwitch::Enable;
+        let mut rep_after = block_state(&self.prev_c_block).rep;
+        let rep = &mut rep_after;
+
+        let last_ll_size = if self.extern_seq_store.pos < self.extern_seq_store.size {
+            ldm::block_compress(
+                &mut self.extern_seq_store,
+                ms,
+                &mut self.seq_store,
+                rep,
+                use_row_match_finder,
+                &block,
+            )?
+        } else if params.ldm_params.enable_ldm == ParamSwitch::Enable {
+            let ldm_seq_store = &mut self.ldm_sequences;
+            ldm_seq_store.pos = 0;
+            ldm_seq_store.pos_in_sequence = 0;
+            ldm_seq_store.size = 0;
+            ldm::generate_sequences(
+                &mut self.ldm_state,
+                ldm_seq_store,
+                &params.ldm_params,
+                &input.bufs,
+                src.start,
+                src.end,
+            )?;
+            ldm::block_compress(
+                ldm_seq_store,
+                ms,
+                &mut self.seq_store,
+                rep,
+                use_row_match_finder,
+                &block,
+            )?
+        } else {
+            compress_block(
+                ms,
+                &mut self.seq_store,
+                rep,
+                &block,
+                params.c_params.strat(),
+                use_row_match_finder,
+                dict_mode,
+            )?
+        };
+        Ok(Some((rep_after, last_ll_size)))
+    }
+
+    /// Whether `ZSTD_compressLiterals` would leave `literals` as they are without a look at all of them. A block that is
+    /// nothing else then comes out larger than it went in: to find that out, the literals need not be copied and the
+    /// tables for the next block need not be made.
+    fn literals_stay_as_they_are(&self, literals: &[u8]) -> Result<bool> {
+        let prev_huf = &block_state(&self.prev_c_block).entropy.huf;
+        let strategy = self.applied_params.c_params.strat();
+        Ok(
+            literals.len() < min_literals_to_compress(strategy, prev_huf.repeat_mode)
+                || literals_compression_is_disabled(&self.applied_params)
+                || huf::samples_are_incompressible(literals)?,
+        )
+    }
+
+    /// `ZSTD_compressSeqStore_singleBlock`
+    fn compress_seq_store_single_block(
+        &mut self,
+        chunk: &SeqChunk,
+        d_rep: &mut [u32; ZSTD_REP_NUM],
+        c_rep: &mut [u32; ZSTD_REP_NUM],
+        dst: &mut [u8],
+        src: &[u8],
+        last_block: bool,
+        is_partition: bool,
+    ) -> Result<usize> {
+        const RLE_MAX_LENGTH: usize = 25;
+        let d_rep_original = *d_rep;
+        if is_partition {
+            seq_store_resolve_off_codes(d_rep, c_rep, &mut self.seq_store, chunk)?;
+        }
+
+        if dst.len() < ZSTD_BLOCKHEADERSIZE {
+            return Err(Error::DstSizeTooSmall);
+        }
+        let mut c_seqs_size = entropy_compress_seq_store(
+            &mut self.seq_store,
+            chunk,
+            &block_state(&self.prev_c_block).entropy,
+            &mut block_state_mut(&mut self.next_c_block).entropy,
+            &self.applied_params,
+            dst.sub_mut(ZSTD_BLOCKHEADERSIZE..)?,
+            src.len(),
+            None,
+        )?;
+
+        if !self.is_first_block && c_seqs_size < RLE_MAX_LENGTH && is_rle(src) {
+            // Decoders up to 1.4.3 do not take a first block that is a run.
+            c_seqs_size = 1;
+        }
+
+        let c_size = match c_seqs_size {
+            0 => {
+                *d_rep = d_rep_original;
+                no_compress_block(dst, src, last_block)?
+            }
+            1 => {
+                *d_rep = d_rep_original;
+                rle_compress_block(dst, src.at(0)?, src.len(), last_block)?
+            }
+            _ => {
+                self.confirm_repcodes_and_entropy_tables();
+                write_block_header(dst, c_seqs_size, src.len(), last_block)?;
+                ZSTD_BLOCKHEADERSIZE + c_seqs_size
+            }
+        };
+
+        self.downgrade_offcode_repeat_mode();
+        Ok(c_size)
+    }
+
+    /// `ZSTD_deriveBlockSplitsHelper`: splits the sequences from `start_idx` to `end_idx` in two if that looks
+    /// smaller, then each half likewise.
+    fn derive_block_splits_helper(
+        &mut self,
+        splits: &mut SeqStoreSplits,
+        start_idx: usize,
+        end_idx: usize,
+        entropy_metadata: &mut EntropyCTablesMetadata,
+    ) -> Result<()> {
+        const MIN_SEQUENCES_BLOCK_SPLITTING: usize = 300;
+        let mid_idx = (start_idx + end_idx) / 2;
+
+        if end_idx - start_idx < MIN_SEQUENCES_BLOCK_SPLITTING
+            || splits.idx >= ZSTD_MAX_NB_BLOCK_SPLITS
+        {
+            return Ok(());
+        }
+        let mut estimate = |from: usize, to: usize| -> Result<Result<usize>> {
+            let chunk = derive_seq_store_chunk(&self.seq_store, from, to)?;
+            let size = build_entropy_statistics_and_estimate_sub_block_size(
+                &mut self.seq_store,
+                &chunk,
+                &block_state(&self.prev_c_block).entropy,
+                &mut block_state_mut(&mut self.next_c_block).entropy,
+                &self.applied_params,
+                entropy_metadata,
+            );
+            match size {
+                // Not among what makes for no split: the C code allocates nothing here.
+                Err(Error::MemoryAllocation) => Err(Error::MemoryAllocation),
+                size => Ok(size),
+            }
+        };
+        let estimated_original_size = estimate(start_idx, end_idx)?;
+        let estimated_first_half_size = estimate(start_idx, mid_idx)?;
+        let estimated_second_half_size = estimate(mid_idx, end_idx)?;
+        let (Ok(original), Ok(first_half), Ok(second_half)) = (
+            estimated_original_size,
+            estimated_first_half_size,
+            estimated_second_half_size,
+        ) else {
+            return Ok(());
+        };
+        if first_half + second_half < original {
+            self.derive_block_splits_helper(splits, start_idx, mid_idx, entropy_metadata)?;
+            splits.split_locations.put(splits.idx, mid_idx as u32)?;
+            splits.idx += 1;
+            self.derive_block_splits_helper(splits, mid_idx, end_idx, entropy_metadata)?;
+        }
+        Ok(())
+    }
+
+    /// `ZSTD_compressBlock_splitBlock_internal`
+    fn compress_block_split_block_internal(
+        &mut self,
+        dst: &mut [u8],
+        src: &[u8],
+        last_block: bool,
+    ) -> Result<usize> {
+        let nb_seq = self.seq_store.sequences.len();
+        let block_size = src.len();
+        let mut c_size = 0usize;
+        let mut ip = 0usize;
+        let mut src_bytes_total = 0usize;
+
+        // `ZSTD_deriveBlockSplits`
+        let mut splits = SeqStoreSplits {
+            split_locations: [0; PARTITIONS_LEN],
+            idx: 0,
+        };
+        if nb_seq > 4 {
+            let mut entropy_metadata = EntropyCTablesMetadata::new();
+            self.derive_block_splits_helper(&mut splits, 0, nb_seq, &mut entropy_metadata)?;
+            splits.split_locations.put(splits.idx, nb_seq as u32)?;
+        }
+        let num_splits = splits.idx;
+        let partitions = &splits.split_locations;
+
+        let mut d_rep = block_state(&self.prev_c_block).rep;
+        let mut c_rep = d_rep;
+
+        if num_splits == 0 {
+            let whole = self.seq_store.whole();
+            return self.compress_seq_store_single_block(
+                &whole, &mut d_rep, &mut c_rep, dst, src, last_block, false,
+            );
+        }
+
+        let mut curr_seq_store =
+            derive_seq_store_chunk(&self.seq_store, 0, partitions.at(0)? as usize)?;
+        for i in 0..=num_splits {
+            let last_partition = i == num_splits;
+            let mut last_block_entire_src = false;
+
+            let mut src_bytes = count_seq_store_literals_bytes(&self.seq_store, &curr_seq_store)?
+                + count_seq_store_match_bytes(&self.seq_store, &curr_seq_store)?;
+            src_bytes_total += src_bytes;
+            let mut next_seq_store = curr_seq_store;
+            if last_partition {
+                // The last literals are in no sequence.
+                src_bytes += block_size - src_bytes_total;
+                last_block_entire_src = last_block;
+            } else {
+                next_seq_store = derive_seq_store_chunk(
+                    &self.seq_store,
+                    partitions.at(i)? as usize,
+                    partitions.at(i + 1)? as usize,
+                )?;
+            }
+
+            let c_size_chunk = self.compress_seq_store_single_block(
+                &curr_seq_store,
+                &mut d_rep,
+                &mut c_rep,
+                dst.sub_mut(c_size..)?,
+                src.span(ip, src_bytes)?,
+                last_block_entire_src,
+                true,
+            )?;
+
+            ip += src_bytes;
+            c_size += c_size_chunk;
+            curr_seq_store = next_seq_store;
+        }
+        // What the decoder ends up with, which is not what the sequences were found with if a part is uncompressed.
+        block_state_mut(&mut self.prev_c_block).rep = d_rep;
+        Ok(c_size)
+    }
+
+    /// `ZSTD_compressBlock_splitBlock`
+    fn compress_block_split_block(
+        &mut self,
+        dst: &mut [u8],
+        input: &Input<'_>,
+        src: Span,
+        last_block: bool,
+    ) -> Result<usize> {
+        let bytes = src.bytes(&input.bufs)?;
+        if self.build_seq_store(input, src)? == BuildSeqStore::NoCompress {
+            self.downgrade_offcode_repeat_mode();
+            return no_compress_block(dst, bytes, last_block);
+        }
+        self.compress_block_split_block_internal(dst, bytes, last_block)
+    }
+
+    /// `ZSTD_compressBlock_internal`: the content of a block, which is 1 byte for a run. Returns 0 if the block is
+    /// better left uncompressed.
+    fn compress_block_internal(
+        &mut self,
+        dst: &mut Output<'_>,
+        op: usize,
+        input: &Input<'_>,
+        src: Span,
+    ) -> Result<usize> {
+        const RLE_MAX_LENGTH: usize = 25;
+        let bytes = src.bytes(&input.bufs)?;
+
+        let c_size = match self.find_sequences(input, src)? {
+            None => Ok(0),
+            Some((rep, last_ll_size)) => {
+                let room = dst.room_from(op).saturating_sub(ZSTD_BLOCKHEADERSIZE);
+                // If they fit as they are, which spares thinking about what fails first. They stay out of the store.
+                let only_literals =
+                    self.seq_store.sequences.is_empty() && bytes.len() + 3 + 4 <= room;
+                let mut c_size = if only_literals && self.literals_stay_as_they_are(bytes)? {
+                    Ok(0)
+                } else {
+                    let store = &mut self.seq_store;
+                    let most = if only_literals {
+                        huf::room_for_quick_loops(bytes.len())
+                    } else {
+                        store.store_last_literals(bytes, last_ll_size)?;
+                        // A block that comes out no smaller than it went in is stored as it is, so it makes no
+                        // difference when an encoder runs out of that much room.
+                        (huf::room_for_quick_loops(store.lit_len)
+                            + sequences::max_size(store.sequences.len()))
+                        .min(bytes.len())
+                    };
+                    let next = block_state_mut(&mut self.next_c_block);
+                    next.rep = rep;
+                    let whole = store.whole();
+                    entropy_compress_seq_store(
+                        store,
+                        &whole,
+                        &block_state(&self.prev_c_block).entropy,
+                        &mut next.entropy,
+                        &self.applied_params,
+                        (dst.from(op, most + ROOM_TO_SPARE)?).sub_mut(ZSTD_BLOCKHEADERSIZE..)?,
+                        bytes.len(),
+                        only_literals.then_some(bytes),
+                    )
+                };
+                if !self.is_first_block
+                    && c_size.is_ok_and(|c_size| c_size < RLE_MAX_LENGTH)
+                    && is_rle(bytes)
+                {
+                    dst.from(op, ZSTD_BLOCKHEADERSIZE + 1)?
+                        .put(ZSTD_BLOCKHEADERSIZE, bytes.at(0)?)?;
+                    c_size = Ok(1);
+                }
+                c_size
+            }
+        };
+
+        if c_size.is_ok_and(|c_size| c_size > 1) {
+            self.confirm_repcodes_and_entropy_tables();
+        }
+        self.downgrade_offcode_repeat_mode();
+        c_size
+    }
+
+    /// `ZSTD_compressBlock_targetCBlockSize`
+    fn compress_block_target_c_block_size(
+        &mut self,
+        dst: &mut [u8],
+        input: &Input<'_>,
+        src: Span,
+        last_block: bool,
+    ) -> Result<usize> {
+        let bytes = src.bytes(&input.bufs)?;
+        let bss = self.build_seq_store(input, src)?;
+        let c_size = self.compress_block_target_c_block_size_body(dst, bytes, bss, last_block)?;
+        self.downgrade_offcode_repeat_mode();
+        Ok(c_size)
+    }
+
+    /// `ZSTD_compressBlock_targetCBlockSize_body`
+    fn compress_block_target_c_block_size_body(
+        &mut self,
+        dst: &mut [u8],
+        src: &[u8],
+        bss: BuildSeqStore,
+        last_block: bool,
+    ) -> Result<usize> {
+        if bss == BuildSeqStore::Compress {
+            if !self.is_first_block && maybe_rle(&self.seq_store) && is_rle(src) {
+                return rle_compress_block(dst, src.at(0)?, src.len(), last_block);
+            }
+            match compress_super_block(
+                &mut self.seq_store,
+                block_state(&self.prev_c_block),
+                block_state_mut(&mut self.next_c_block),
+                &self.applied_params,
+                dst,
+                src,
+                last_block,
+            ) {
+                Err(Error::DstSizeTooSmall) => {}
+                c_size => {
+                    let c_size = c_size?;
+                    let max_c_size = src
+                        .len()
+                        .wrapping_sub(min_gain(src.len(), self.applied_params.c_params.strat()));
+                    if c_size != 0 && c_size < max_c_size.wrapping_add(ZSTD_BLOCKHEADERSIZE) {
+                        self.confirm_repcodes_and_entropy_tables();
+                        return Ok(c_size);
+                    }
+                }
+            }
+        }
+        no_compress_block(dst, src, last_block)
+    }
+
+    /// `ZSTD_optimalBlockSize`: `src` is what remains of the input.
+    fn optimal_block_size(&self, src: &[u8], savings: i64) -> Result<usize> {
+        const SPLIT_LEVELS: [i32; 10] = [0, 0, 1, 2, 2, 3, 3, 4, 4, 4];
+        let block_size_max = self.block_size_max;
+        // Only full blocks are worth looking into.
+        if src.len() < 128 << 10 || block_size_max < 128 << 10 {
+            return Ok(src.len().min(block_size_max));
+        }
+        // Data that does not compress has to be in full blocks, for the output to stay within `compress_bound`.
+        if savings < 3 {
+            return Ok(128 << 10);
+        }
+        let split_level = SPLIT_LEVELS.at(self.applied_params.c_params.strat() as usize)?;
+        presplit::split_block(src.sub(..block_size_max)?, split_level)
+    }
+
+    /// `ZSTD_compress_frameChunk`
+    fn compress_frame_chunk(
+        &mut self,
+        dst: &mut Output<'_>,
+        start: usize,
+        input: &Input<'_>,
+        src: Span,
+        last_frame_chunk: bool,
+    ) -> Result<usize> {
+        let bytes = src.bytes(&input.bufs)?;
+        let mut ip = src.start;
+        let mut op = start;
+        let max_dist = 1u32 << self.applied_params.c_params.window_log;
+        let mut savings = self.consumed_src_size as i64 - self.produced_c_size as i64;
+
+        if self.applied_params.f_params.checksum_flag && !bytes.is_empty() {
+            self.xxh_state.update(bytes);
+        }
+
+        while ip < src.end {
+            self.match_state.check_cancelled()?;
+            let remaining = src.end - ip;
+            let block_size = self.optimal_block_size(bytes.sub(ip - src.start..)?, savings)?;
+            let last_block = last_frame_chunk && block_size == remaining;
+            let block = Span {
+                buf: src.buf,
+                start: ip,
+                end: ip + block_size,
+            };
+            if dst.room_from(op) < ZSTD_BLOCKHEADERSIZE + MIN_CBLOCK_SIZE + 1 {
+                return Err(Error::DstSizeTooSmall);
+            }
+
+            let ms = &mut self.match_state;
+            overflow_correct_if_needed(
+                ms,
+                &self.applied_params,
+                block.start_addr(),
+                block.end_addr(),
+            );
+            if (ms.window).dict_is_invalid(block.end_addr(), max_dist, ms.loaded_dict_end) {
+                ms.loaded_dict_end = 0;
+                ms.has_dict_match_state = false;
+            }
+            if (ms.window).enforce_max_dist(block.start_addr(), max_dist, ms.loaded_dict_end) {
+                ms.loaded_dict_end = 0;
+                ms.has_dict_match_state = false;
+            }
+            ms.next_to_update = ms.next_to_update.max(ms.window.low_limit);
+
+            // Parts, which take long to make anyway, get all the room there is.
+            let c_size = if self.applied_params.target_c_block_size != 0 {
+                let out = dst.from(op, usize::MAX)?;
+                self.compress_block_target_c_block_size(out, input, block, last_block)?
+            } else if self.applied_params.post_block_splitter == ParamSwitch::Enable {
+                let out = dst.from(op, usize::MAX)?;
+                self.compress_block_split_block(out, input, block, last_block)?
+            } else {
+                let c_size = self.compress_block_internal(dst, op, input, block)?;
+                if c_size == 0 {
+                    dst.store_block(op, block.bytes(&input.bufs)?, last_block)?
+                } else {
+                    let out = dst.from(op, ZSTD_BLOCKHEADERSIZE)?;
+                    write_block_header(out, c_size, block_size, last_block)?;
+                    c_size + ZSTD_BLOCKHEADERSIZE
+                }
+            };
+
+            savings += block_size as i64 - c_size as i64;
+            ip += block_size;
+            op += c_size;
+            self.is_first_block = false;
+        }
+
+        if last_frame_chunk && op > start {
+            self.stage = CompressionStage::Ending;
+        }
+        Ok(op - start)
+    }
+
+    /// `ZSTD_compressContinue_internal`
+    fn compress_continue_internal(
+        &mut self,
+        dst: &mut Output<'_>,
+        input: &Input<'_>,
+        src: Span,
+        last_frame_chunk: bool,
+    ) -> Result<usize> {
+        let mut fh_size = 0usize;
+        if self.stage == CompressionStage::Created {
+            return Err(Error::StageWrong);
+        }
+
+        if self.stage == CompressionStage::Init {
+            fh_size = write_frame_header(
+                dst.from(0, ZSTD_FRAMEHEADERSIZE_MAX)?,
+                &self.applied_params,
+                self.pledged_src_size_plus_one.wrapping_sub(1),
+                self.dict_id,
+            )?;
+            self.stage = CompressionStage::Ongoing;
+        }
+
+        if src.len() == 0 {
+            return Ok(fh_size);
+        }
+
+        let ms = &mut self.match_state;
+        if !(ms.window).update(
+            src.start_addr(),
+            src.buf,
+            src.len(),
+            ms.force_non_contiguous,
+        ) {
+            ms.force_non_contiguous = false;
+            ms.next_to_update = ms.window.dict_limit;
+        }
+        if self.applied_params.ldm_params.enable_ldm == ParamSwitch::Enable {
+            (self.ldm_state.window).update(src.start_addr(), src.buf, src.len(), false);
+        }
+
+        let c_size = self.compress_frame_chunk(dst, fh_size, input, src, last_frame_chunk)?;
+        self.consumed_src_size += src.len() as u64;
+        self.produced_c_size += (c_size + fh_size) as u64;
+        if self.pledged_src_size_plus_one != 0
+            && self.consumed_src_size + 1 > self.pledged_src_size_plus_one
+        {
+            return Err(Error::SrcSizeWrong);
+        }
+        Ok(c_size + fh_size)
+    }
+
+    /// `ZSTD_compressContinue`
+    pub(crate) fn compress_continue(
+        &mut self,
+        dst: &mut [u8],
+        input: &Input<'_>,
+        src: Span,
+    ) -> Result<usize> {
+        self.compress_continue_internal(&mut Output::Slice(dst), input, src, false)
+    }
+
+    /// `ZSTD_writeEpilogue`
+    fn write_epilogue(&mut self, dst: &mut [u8]) -> Result<usize> {
+        let mut op = 0usize;
+        if self.stage == CompressionStage::Created {
+            return Err(Error::StageWrong);
+        }
+
+        // An empty frame.
+        if self.stage == CompressionStage::Init {
+            op += write_frame_header(dst, &self.applied_params, 0, 0)?;
+            self.stage = CompressionStage::Ongoing;
+        }
+
+        if self.stage != CompressionStage::Ending {
+            // One last empty block, to mark the end of the frame.
+            if dst.len() - op < 3 {
+                return Err(Error::DstSizeTooSmall);
+            }
+            write_le24(dst, op, block_header(BlockType::Raw, 0, true))?;
+            op += ZSTD_BLOCKHEADERSIZE;
+        }
+
+        if self.applied_params.f_params.checksum_flag {
+            let checksum = self.xxh_state.digest() as u32;
+            if dst.len() - op < 4 {
+                return Err(Error::DstSizeTooSmall);
+            }
+            write_le32(dst, op, checksum)?;
+            op += 4;
+        }
+
+        self.stage = CompressionStage::Created;
+        Ok(op)
+    }
+
+    /// `ZSTD_compressEnd`
+    pub(crate) fn compress_end(
+        &mut self,
+        dst: &mut [u8],
+        input: &Input<'_>,
+        src: Span,
+    ) -> Result<usize> {
+        self.compress_end_to(&mut Output::Slice(dst), input, src)
+    }
+
+    /// [`Self::compress_end`] to either kind of output.
+    pub(crate) fn compress_end_to(
+        &mut self,
+        dst: &mut Output<'_>,
+        input: &Input<'_>,
+        src: Span,
+    ) -> Result<usize> {
+        const EPILOGUE_SIZE_MAX: usize = ZSTD_BLOCKHEADERSIZE + 4;
+        let c_size = self.compress_continue_internal(dst, input, src, true)?;
+        let end_result = self.write_epilogue(dst.from(c_size, EPILOGUE_SIZE_MAX)?)?;
+        if self.pledged_src_size_plus_one != 0
+            && self.pledged_src_size_plus_one != self.consumed_src_size + 1
+        {
+            return Err(Error::SrcSizeWrong);
+        }
+        Ok(c_size + end_result)
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use crate::common::ZSTD_WORKSPACETOOLARGE_MAXDURATION;
+    use crate::compress::params::{FrameParameters, Parameters};
+
+    /// With tables that are as small as can be, but for the hash table.
+    pub(crate) fn small_params(strategy: Strategy, hash_log: u32) -> CCtxParams {
+        let params = Parameters {
+            c_params: CompressionParameters {
+                window_log: 10,
+                chain_log: 6,
+                hash_log,
+                search_log: 1,
+                min_match: 4,
+                target_length: 0,
+                strategy: Some(strategy),
+            },
+            f_params: FrameParameters {
+                content_size_flag: false,
+                checksum_flag: false,
+                no_dict_id_flag: false,
+            },
+        };
+        CCtxParams::from_params(&params, 0)
+    }
+
+    /// It takes 3.5 GB through a context for where its indices stand to show in a frame.
+    #[test]
+    fn indices_start_again_where_the_c_code_makes_a_new_workspace() -> Result<()> {
+        const JOB_SIZE: u32 = 64;
+        let data = [0u8; JOB_SIZE as usize];
+        let input = Input {
+            bufs: Buffers {
+                in_buff: &[],
+                user: &data,
+                dict: &[],
+            },
+            cdict: None,
+        };
+        let src = Span {
+            buf: BufId::User,
+            start: 0,
+            end: data.len(),
+        };
+        let begin = |cctx: &mut FrameCompressor, hash_log| {
+            let params = small_params(Strategy::Fast, hash_log);
+            cctx.begin(&input, None, &params, u64::from(JOB_SIZE), false)
+        };
+        // Returns the index that the next byte would get.
+        let compress = |cctx: &mut FrameCompressor, hash_log| -> Result<u32> {
+            begin(cctx, hash_log)?;
+            cctx.compress_continue(&mut [0u8; 128], &input, src)?;
+            let window = &cctx.match_state.window;
+            Ok(window.index_of(window.next_src))
+        };
+        let after_jobs = |jobs: u32| ZSTD_WINDOW_START_INDEX + jobs * JOB_SIZE;
+
+        let worker = FrameCompressor::for_worker(Arc::new(AtomicBool::new(false)));
+        for mut cctx in [FrameCompressor::new(), worker] {
+            assert_eq!(compress(&mut cctx, 6)?, after_jobs(1));
+            assert_eq!(compress(&mut cctx, 6)?, after_jobs(2));
+            // Too small.
+            assert_eq!(compress(&mut cctx, 15)?, after_jobs(1));
+            // Much too large, for too long.
+            for _ in 1..ZSTD_WORKSPACETOOLARGE_MAXDURATION {
+                begin(&mut cctx, 6)?;
+            }
+            assert_eq!(compress(&mut cctx, 6)?, after_jobs(2));
+            assert_eq!(compress(&mut cctx, 6)?, after_jobs(1));
+            // As large as it takes, for however long.
+            for _ in 0..=ZSTD_WORKSPACETOOLARGE_MAXDURATION {
+                begin(&mut cctx, 6)?;
+            }
+            assert_eq!(compress(&mut cctx, 6)?, after_jobs(2));
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "takes minutes")]
+    fn second_tags_are_given_up_within_a_block() -> Result<()> {
+        const SIZE: usize = 1 << 17;
+        // Many positions start like another one and go on otherwise.
+        let mut state = 1u32;
+        let few_symbols = Vec::from_iter((0..SIZE).map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            b'A' + (state >> 30) as u8
+        }));
+        // What starts like another position goes on like it.
+        let records = Vec::from_iter((0..SIZE).map(|n| match n % 100 {
+            0 => (n / 100) as u8,
+            1 => (n / 25_600) as u8,
+            n => n as u8,
+        }));
+        let tags_after_a_block_of = |data: &[u8]| -> Result<RowTags> {
+            let input = Input {
+                bufs: Buffers {
+                    in_buff: &[],
+                    user: data,
+                    dict: &[],
+                },
+                cdict: None,
+            };
+            let src = Span {
+                buf: BufId::User,
+                start: 0,
+                end: data.len(),
+            };
+            let mut params = small_params(Strategy::Lazy2, 17);
+            params.c_params.window_log = 17;
+            params.c_params.search_log = 6;
+            params.use_row_match_finder = ParamSwitch::Enable;
+            let mut cctx = FrameCompressor::new();
+            cctx.begin(&input, None, &params, data.len() as u64, false)?;
+            assert!(cctx.match_state.row_tags != RowTags::Flat);
+            cctx.compress_continue(&mut vec![0; 2 * SIZE], &input, src)?;
+            Ok(cctx.match_state.row_tags)
+        };
+
+        assert!(tags_after_a_block_of(&few_symbols)? != RowTags::Flat);
+        assert!(tags_after_a_block_of(&records)? == RowTags::Flat);
+        // Over the whole block they rule out a lot, either way. There is no way back.
+        let (records, _) = records.split_at(16 << 10);
+        let (few_symbols, _) = few_symbols.split_at(112 << 10);
+        assert!(tags_after_a_block_of(&[few_symbols, records].concat())? != RowTags::Flat);
+        assert!(tags_after_a_block_of(&[records, few_symbols].concat())? == RowTags::Flat);
+        Ok(())
+    }
+}

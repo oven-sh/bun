@@ -327,5 +327,24 @@ pub fn vec_from_bytes<T: AnyBitPattern>(bytes: &[u8]) -> Option<alloc::vec::Vec<
     Some(elements.iter().map(|element| element.get()).collect())
 }
 
+/// `len` zeroed elements, as the allocator hands them out: it clears memory that it recycles, and leaves alone pages
+/// that are fresh from the system. `None` if there is no memory for them.
+#[cfg(any(test, feature = "alloc"))]
+pub fn try_zeroed_vec<T: Zeroable>(len: usize) -> Option<alloc::vec::Vec<T>> {
+    let layout = core::alloc::Layout::array::<T>(len).ok()?;
+    if layout.size() == 0 {
+        // Nothing to allocate: `len` is 0, or `T` has no bytes.
+        return Some(core::iter::repeat_with(zeroed::<T>).take(len).collect());
+    }
+    // SAFETY: the size of `layout` is not zero.
+    let ptr = unsafe { alloc::alloc::alloc_zeroed(layout) }.cast::<T>();
+    if ptr.is_null() {
+        return None;
+    }
+    // SAFETY: `ptr` comes from the global allocator with the layout of `[T; len]`, and all-zero bytes are `len` valid
+    // `T`s because `T: Zeroable`.
+    Some(unsafe { alloc::vec::Vec::from_raw_parts(ptr, len, len) })
+}
+
 #[cfg(test)]
 mod tests;

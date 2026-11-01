@@ -1962,25 +1962,11 @@ pub(crate) mod JSZstd {
 
     /// Boxed (trimmed to the bytes produced) so an empty result owns no memory, as `create_buffer_from_box` requires.
     fn compress_to_box(input: &[u8], level: i32) -> Result<Box<[u8]>, Failure> {
-        let max_size = bun_zstd::compress_bound(input.len());
-        // `ZSTD_compressBound` returns an error code for inputs over `ZSTD_MAX_INPUT_SIZE`.
-        if bun_zstd::is_error(max_size) {
-            return Err(Failure::Compression(b"Input is too large to compress"));
+        match bun_zstd::compress_alloc(input, level) {
+            Ok(output) => Ok(output.into_boxed_slice()),
+            Err(bun_zstd::Error::MemoryAllocation) => Err(Failure::OutOfMemory),
+            Err(err) => Err(Failure::Compression(err.message().to_bytes())),
         }
-
-        // Reserved, not zero-filled: zstd initializes exactly the bytes it reports.
-        let mut output: Vec<u8> = Vec::new();
-        output
-            .try_reserve_exact(max_size)
-            .map_err(|_| Failure::OutOfMemory)?;
-
-        if let bun_zstd::Result::Err(err) =
-            bun_zstd::compress_append(&mut output, input, Some(level))
-        {
-            return Err(Failure::Compression(err.as_bytes()));
-        }
-
-        Ok(output.into_boxed_slice())
     }
 
     fn decompress_to_box(input: &[u8]) -> Result<Box<[u8]>, Failure> {

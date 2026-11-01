@@ -97,16 +97,14 @@ impl StoredText {
 
     fn new(text: &[u8]) -> StoredText {
         let mut bytes = Vec::with_capacity(bun_zstd::compress_bound(text.len()));
-        match bun_zstd::compress_append(&mut bytes, text, Some(Self::FASTEST_LEVEL)) {
+        match bun_zstd::compress_append(&mut bytes, text, Self::FASTEST_LEVEL) {
             // Not `into_boxed_slice`: the allocator leaves what shrinks to no less than half its size where it is.
-            bun_zstd::Result::Success(_) if bytes.len() < text.len() => StoredText::Compressed {
+            Ok(_) if bytes.len() < text.len() => StoredText::Compressed {
                 bytes: bytes[..].into(),
                 length: text.len(),
                 text: OnceLock::new(),
             },
-            bun_zstd::Result::Success(_) | bun_zstd::Result::Err(_) => {
-                StoredText::Plain(text.into())
-            }
+            Ok(_) | Err(_) => StoredText::Plain(text.into()),
         }
     }
 }

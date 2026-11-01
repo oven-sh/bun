@@ -71,6 +71,12 @@ const noticedBy: Record<string, Row | Row[]> = {
     flags: ["--aot-validate"],
     programs: ["text-is-encoded-into-the-rest-of-a-view.ts"],
   },
+  // At default flags the walk over such a list is rewritten before the list can be kept unbuilt.
+  ListsOfBuiltinsEndWithWhatIsKept: {
+    folder: "strings",
+    flags: ["--aot-validate"],
+    programs: ["split-list-walked.ts"],
+  },
   // A loop that walks a view past its end: the fast version of the loop ends at the length of the view, and only the slow one answers undefined.
   CountedIndexesStayInRange: {
     folder: "loops-lists-changed",

@@ -21,6 +21,8 @@ export const binding = b.namespace({
       pendingValue: b.jsArray,
       bigint: b.bool,
       simple: b.bool,
+      internal: b.bool,
+      transactionStart: b.bool,
     },
     expected: { values: "values must be an array" },
     returns: PostgresSQLQuery,

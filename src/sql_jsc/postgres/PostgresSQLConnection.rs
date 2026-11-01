@@ -1759,6 +1759,38 @@ impl PostgresSQLConnection {
         self.pipelined_requests.get() > 0 || self.nonpipelinable_requests.get() > 0
     }
 
+    /// COMMIT waits for the user's results, BEGIN for a lost statement's retry (26000).
+    fn has_user_request_in_flight(&self) -> bool {
+        let requests = self.requests.get();
+        let written = requests
+            .len()
+            .saturating_sub(self.pending_requests.get() as usize);
+        requests
+            .iter()
+            .take(written)
+            .any(|request| !request.flags.get().internal)
+    }
+
+    /// The unwritten requests up to the next internal one: they waited for a start that was refused.
+    fn reject_unwritten_behind_refused_start(&self, error: JSValue) {
+        let unwritten: Vec<RefPtr<PostgresSQLQuery>> = {
+            let requests = self.requests.get();
+            let written = requests
+                .len()
+                .saturating_sub(self.pending_requests.get() as usize);
+            requests
+                .iter()
+                .skip(written)
+                .take_while(|request| !request.flags.get().internal)
+                .cloned()
+                .collect()
+        };
+        for request in unwritten {
+            self.reject_unwritten(&request, error);
+        }
+        error.ensure_still_alive();
+    }
+
     /// `None` too while the last request that is written waits for its turn to be stopped: with
     /// another one behind it, `stop_cancelled_head` could not ask for that.
     fn first_unwritten(&self) -> Option<RefPtr<PostgresSQLQuery>> {
@@ -1886,10 +1918,8 @@ impl PostgresSQLConnection {
             return self.remove_unwritten(&req);
         };
         let values = postgres_sql_query::js::binding_get_cached(this_value).unwrap_or_default();
-        let unnamed = self
-            .flags
-            .get()
-            .contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS);
+        // The connection's setting, or an internal request's.
+        let unnamed = !statement.is_named();
 
         match statement.status {
             StatementStatus::Failed => {
@@ -1905,7 +1935,10 @@ impl PostgresSQLConnection {
             // Replies go to the requests in queue order: nothing is written past this one.
             StatementStatus::Parsing => return false,
             StatementStatus::Prepared => {
-                if self.has_request_in_flight() && !self.can_pipeline() {
+                if self.has_request_in_flight()
+                    && (!self.can_pipeline()
+                        || (req.flags.get().internal && self.has_user_request_in_flight()))
+                {
                     return false;
                 }
                 if !self.stage(&req, values, statement.parameter_types()) {
@@ -2153,7 +2186,12 @@ impl PostgresSQLConnection {
                         self.count(&request, RequestCounter::None);
                         let request = request.ref_guard();
                         self.discard_request(&request);
+                        let refused_start = request.flags.get().transaction_start;
+                        let error = request.kept_error().filter(|error| error.is_error());
                         request.end_rejected(self.global());
+                        if refused_start && let Some(error) = error {
+                            self.reject_unwritten_behind_refused_start(error);
+                        }
                     } else if request.status.get() == QueryStatus::PartialResponse {
                         self.count(&request, RequestCounter::None);
                         // if is a partial response, just signal that the query is now complete

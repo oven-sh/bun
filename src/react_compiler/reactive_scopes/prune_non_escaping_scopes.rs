@@ -126,7 +126,8 @@ fn join_aliases(kind1: MemoizationLevel, kind2: MemoizationLevel) -> Memoization
 struct IdentifierNode {
     level: MemoizationLevel,
     memoized: bool,
-    dependencies: IndexSet<DeclarationId>,
+    /// Not in upstream: indices into `CollectState::operand_lists`, not a set of operands.
+    dependencies: SmallVec<[u32; 4]>,
     scopes: IndexSet<ScopeId>,
     seen: bool,
 }
@@ -135,6 +136,15 @@ struct IdentifierNode {
 struct ScopeNode {
     dependencies: Vec<DeclarationId>,
     seen: bool,
+}
+
+/// Not in upstream: the rvalues of one instruction, the dependencies of each of its lvalues.
+struct OperandList {
+    /// They are `CollectState::operand_ids[start..end]`.
+    start: u32,
+    end: u32,
+    /// `visit` was called on `CollectState::operand_ids[start..next]`.
+    next: u32,
 }
 
 // =============================================================================
@@ -146,6 +156,9 @@ struct CollectState {
     definitions: IdMap<DeclarationId, DeclarationId>,
     identifiers: IdMap<DeclarationId, IdentifierNode>,
     scopes: IdMap<ScopeId, ScopeNode>,
+    /// Indexed by `IdentifierNode::dependencies`.
+    operand_lists: Vec<OperandList>,
+    operand_ids: Vec<DeclarationId>,
     escaping_values: IndexSet<DeclarationId>,
     /// First invariant violation. The `()` visitor callbacks cannot return it.
     error: Option<CompilerError>,
@@ -157,6 +170,8 @@ impl CollectState {
             definitions: IdMap::new(),
             identifiers: IdMap::new(),
             scopes: IdMap::new(),
+            operand_lists: Vec::new(),
+            operand_ids: Vec::new(),
             escaping_values: IndexSet::new(),
             error: None,
         }
@@ -176,7 +191,7 @@ impl CollectState {
             IdentifierNode {
                 level: MemoizationLevel::Never,
                 memoized: false,
-                dependencies: IndexSet::new(),
+                dependencies: SmallVec::new(),
                 scopes: IndexSet::new(),
                 seen: false,
             },
@@ -929,6 +944,21 @@ impl<'a> CollectDependenciesVisitor<'a> {
         }
 
         // Add the operands as dependencies of all lvalues
+        let list_idx = if aliasing_lvalues.is_empty() || rvalue_data.is_empty() {
+            None
+        } else {
+            let start = state.operand_ids.len() as u32;
+            state
+                .operand_ids
+                .extend(rvalue_data.iter().map(|(_, operand_id)| *operand_id));
+            let end = state.operand_ids.len() as u32;
+            state.operand_lists.push(OperandList {
+                start,
+                end,
+                next: start,
+            });
+            Some(state.operand_lists.len() as u32 - 1)
+        };
         for lv in &aliasing_lvalues {
             let lvalue_decl_id = env.identifiers[lv.place_identifier.0 as usize].declaration_id;
             let lvalue_id = state.resolve(lvalue_decl_id);
@@ -938,16 +968,14 @@ impl<'a> CollectDependenciesVisitor<'a> {
                 .or_insert_with(|| IdentifierNode {
                     level: MemoizationLevel::Never,
                     memoized: false,
-                    dependencies: IndexSet::new(),
+                    dependencies: SmallVec::new(),
                     scopes: IndexSet::new(),
                     seen: false,
                 });
             node.level = join_aliases(node.level, lv.level);
-            for (_, operand_id) in &rvalue_data {
-                if *operand_id == lvalue_id {
-                    continue;
-                }
-                node.dependencies.insert(*operand_id);
+            // Not in upstream, which skips the lvalue itself: a visit of a seen node has no effect.
+            if let Some(list_idx) = list_idx {
+                node.dependencies.push(list_idx);
             }
 
             state.visit_operand(
@@ -1132,15 +1160,31 @@ fn compute_memoized_identifiers(
         node.seen = true;
         node.memoized = false;
         let level = node.level;
-        // Nothing reads these of a node that is seen.
-        let dependencies = std::mem::take(&mut node.dependencies);
+        // Nothing reads this of a node that is seen.
         let scopes = std::mem::take(&mut node.scopes);
 
         // Visit dependencies
+        let reads_result = level == MemoizationLevel::Conditional && !force_memoize;
         let mut has_memoized_dependency = false;
-        for dep in dependencies {
-            let is_dep_memoized = visit(dep, false, state, memoized, env)?;
-            has_memoized_dependency |= is_dep_memoized;
+        let mut nth = 0;
+        while let Some(&list_idx) = state.identifiers.get(id).unwrap().dependencies.get(nth) {
+            nth += 1;
+            let mut own = state.operand_lists[list_idx as usize].start;
+            loop {
+                let list = &mut state.operand_lists[list_idx as usize];
+                // Not in upstream: a node that reads no result skips operands already visited.
+                let at = if reads_result { own } else { list.next };
+                if at == list.end {
+                    break;
+                }
+                if reads_result {
+                    own = at + 1;
+                } else {
+                    list.next = at + 1;
+                }
+                let dep = state.operand_ids[at as usize];
+                has_memoized_dependency |= visit(dep, false, state, memoized, env)?;
+            }
         }
 
         if level == MemoizationLevel::Memoized

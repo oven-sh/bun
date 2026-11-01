@@ -1,6 +1,6 @@
 use bun_sema::bind::Parent;
 use bun_sema::hir::{
-    BinOp, Call, CallId, ExprId, ExprKind, PatId, PatKind, StmtId, StmtKind, end_of_expr,
+    BinOp, Call, CallId, ExprId, ExprKind, FnBody, PatId, PatKind, StmtId, StmtKind, end_of_expr,
 };
 
 use crate::builtins::BuiltinId;
@@ -46,7 +46,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 ExprKind::Index { index, .. } => index,
                 ExprKind::New(site)
                     if self.is_printed_without_parentheses(last, site)
-                        && !self.is_printed_as_call(hir[site]) =>
+                        && !self.is_printed_as_call(last, site) =>
                 {
                     hir[site].callee
                 }
@@ -79,7 +79,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 _ => self.call_position(hir[site]),
             };
         }
-        let reports_as_call = self.is_printed_as_call(hir[site])
+        let reports_as_call = self.is_printed_as_call(expression, site)
             || (hir[site].close_pos != u32::MAX
                 && !self.is_printed_without_parentheses(expression, site));
         match reports_as_call {
@@ -92,14 +92,14 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(in crate::lower) fn construction_start(&self, expression: ExprId) -> Option<u32> {
         let hir = self.hir;
         match hir[expression].kind {
-            ExprKind::New(site) if self.is_printed_as_call(hir[site]) => None,
+            ExprKind::New(site) if self.is_printed_as_call(expression, site) => None,
             _ => Some(hir[expression].pos),
         }
     }
 
-    /// `bun run` prints `new Error(x)` as `Error(x)`.
-    fn is_printed_as_call(&self, site: Call) -> bool {
-        let callee = self.skip_type_syntax(site.callee);
+    /// `bun run` prints `new Error(x)` as `Error(x)`, but not in tail position.
+    fn is_printed_as_call(&self, expression: ExprId, site: CallId) -> bool {
+        let callee = self.skip_type_syntax(self.hir[site].callee);
         matches!(self.hir[callee].kind, ExprKind::Ident(_))
             && !self.is_in_known_evaluation(callee)
             && self
@@ -121,6 +121,36 @@ impl FileLowering<'_, '_, '_, '_> {
                             | BuiltinId::Function
                     )
                 })
+            && !self.is_in_tail_position(expression)
+    }
+
+    /// As `Expr::any_in_tail_position` of the transpiler: by the syntax alone, whether or not a call there would be a tail call.
+    fn is_in_tail_position(&self, expression: ExprId) -> bool {
+        let hir = self.hir;
+        let mut last = expression;
+        loop {
+            let around = match self.bound.parent_of_expr(last) {
+                Parent::Expr(around) => around,
+                Parent::Stmt(statement) => {
+                    return matches!(hir[statement].kind, StmtKind::Return(_));
+                }
+                Parent::FnBody(function) => {
+                    return matches!(hir[function].body, FnBody::Expr(body) if body == last);
+                }
+                _ => return false,
+            };
+            match hir[around].kind {
+                _ if hir.type_assertion_operand(around) == Some(last) => {}
+                ExprKind::Cond { test, .. } if test != last => {}
+                ExprKind::Binary {
+                    op: BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma,
+                    right,
+                    ..
+                } if right == last => {}
+                _ => return false,
+            }
+            last = around;
+        }
     }
 
     /// `bun run` prints `new A()` as `new A` where nothing reads or calls the result in place.
@@ -394,6 +424,42 @@ mod tests {
         ];
         let expected = texts.map(|text| offset_of(source, text));
         assert_eq!(reported_positions(source, Opcode::Construct), expected);
+    }
+
+    #[test]
+    fn bare_construction_of_an_error_reports_as_a_call_except_in_tail_position() {
+        let at_new = [
+            "return new Error();",
+            "return a ? new Error() : a;",
+            "return a ? a : new Error();",
+            "return a || new Error();",
+            "return a && new Error();",
+            "return a ?? new Error();",
+            "return a(), new Error();",
+            "return (a ? (new Error() as any) : a)!;",
+            "try { return new Error(); } catch { return a; }",
+            "return () => new Error();",
+        ];
+        let at_callee = [
+            "throw new Error();",
+            "const error = new Error(); return error;",
+            "return [new Error()];",
+            "return a(new Error());",
+            "return (new Error() as any) ? a() : a;",
+            "return new Error() === a;",
+            "return a === new Error();",
+            "return (a.error = new Error());",
+            "return (error = new Error()) => error;",
+            "return () => { a.error = new Error(); };",
+        ];
+        for (bodies, text) in [(at_new, "new Error"), (at_callee, "Error")] {
+            for body in bodies {
+                let source = format!("export function probe(a: any) {{ {body} }}");
+                let expected = [offset_of(&source, text)];
+                let reported = reported_positions(&source, Opcode::Construct);
+                assert_eq!(reported, expected, "{body}");
+            }
+        }
     }
 
     #[test]

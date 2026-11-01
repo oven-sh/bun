@@ -306,9 +306,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.claim_call_result(call, value)
             }
             Tail::Yes { casts } => {
-                let position = self.file.find_position_of_returned_call(call);
                 let cast = TailCast {
-                    positions: std::slice::from_ref(&position),
+                    position: self.file.find_position_of_returned_call(call),
                     outer: casts,
                     breaks_no_int32_promise: self.enters_int32_promise_behind_return(casts)
                         && self.file.breaks_no_int32_promise(call),
@@ -491,7 +490,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let mut cast_positions: SmallVec<[DeclaredType; 4]> = SmallVec::new();
                 let mut next = casts;
                 while let Some(cast) = next {
-                    cast_positions.extend_from_slice(cast.positions);
+                    cast_positions.push(cast.position);
                     next = cast.outer;
                 }
                 let owes_no_proof = casts.is_some_and(|cast| cast.breaks_no_int32_promise);
@@ -506,7 +505,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             |position: &DeclaredType| position.flags.contains(PositionFlags::IS_INT32_PROMISE);
         let mut next = casts;
         while let Some(cast) = next {
-            if cast.positions.iter().any(is_promise) {
+            if is_promise(&cast.position) {
                 return true;
             }
             next = cast.outer;
@@ -564,9 +563,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.claim_call_result(call, value)
             }
             Tail::Yes { casts } => {
-                let position = self.file.find_position_of_returned_call(call);
                 let cast = TailCast {
-                    positions: std::slice::from_ref(&position),
+                    position: self.file.find_position_of_returned_call(call),
                     outer: casts,
                     breaks_no_int32_promise: self.enters_int32_promise_behind_return(casts)
                         && self.file.breaks_no_int32_promise(call),

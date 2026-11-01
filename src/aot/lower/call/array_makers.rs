@@ -132,9 +132,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.set_position(self.file.hir[call].pos);
             return self.claim_call_result(call, made);
         };
-        let position = self.file.find_position_of_returned_call(call);
         let cast = TailCast {
-            positions: std::slice::from_ref(&position),
+            position: self.file.find_position_of_returned_call(call),
             outer: casts,
             breaks_no_int32_promise: false,
         };

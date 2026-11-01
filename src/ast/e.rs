@@ -221,6 +221,9 @@ pub struct New {
     pub can_be_unwrapped_if_unused: CallUnwrap,
 
     pub close_parens_loc: crate::Loc,
+
+    /// `return new Error()` is not a tail call. `return Error()` is one, and it drops the frame of the function.
+    pub is_in_tail_position: bool,
 }
 impl Default for New {
     fn default() -> Self {
@@ -229,6 +232,7 @@ impl Default for New {
             args: bun_alloc::AstAlloc::vec(),
             can_be_unwrapped_if_unused: CallUnwrap::Never,
             close_parens_loc: crate::Loc::EMPTY,
+            is_in_tail_position: false,
         }
     }
 }

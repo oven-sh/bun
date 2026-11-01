@@ -618,9 +618,10 @@ describe("Bun.connect TLS hostname verification", () => {
 //   nosan:            CN=legacy.allowed.test,   no subjectAltName extension
 // name-constraints-excluding-ca-cert.pem (a root with nameConstraints excluded;DNS:.blocked.test) ->
 // name-constraints-<leaf>-cert.pem:
-//   excluded:         CN=host.blocked.test,     subjectAltName=email:admin@allowed.test
-//   not-excluded:     CN=host.allowed.test,     subjectAltName=email:admin@allowed.test
-//   excluded-dns-san: CN=host.blocked.test,     subjectAltName=DNS:host.allowed.test
+//   excluded:                 CN=host.blocked.test,  subjectAltName=email:admin@allowed.test
+//   not-excluded:             CN=host.allowed.test,  subjectAltName=email:admin@allowed.test
+//   excluded-dns-san:         CN=host.blocked.test,  subjectAltName=DNS:host.allowed.test
+//   excluded-dns-san-blocked: CN=host.blocked.test,  subjectAltName=DNS:host.blocked.test
 // All leaves share name-constraints-leaf-key.pem.
 const nameConstraintsPem = (name: string) =>
   fs.readFileSync(path.join(fixturesDir, `name-constraints-${name}.pem`), "utf8");
@@ -680,10 +681,17 @@ describe("tls.connect applies CA name constraints to the subject CN of a certifi
     assert.deepStrictEqual(result, accepted);
   });
 
-  // The DNS name is the name of this certificate, and the constraints apply to that name.
+  // The DNS name is the name of these two certificates, and the constraints apply to that name.
   test("a CN inside an excluded subtree is not checked when the certificate has a DNS subjectAltName", async () => {
     const result = await connectWithNameConstraints("excluded-dns-san", "host.allowed.test", { issuer: excludingCa });
     assert.deepStrictEqual(result, accepted);
+  });
+
+  test("a DNS subjectAltName inside an excluded subtree fails certificate verification", async () => {
+    const result = await connectWithNameConstraints("excluded-dns-san-blocked", "host.blocked.test", {
+      issuer: excludingCa,
+    });
+    assert.deepStrictEqual(result, { error: { code: "UNSPECIFIED", message: "excluded subtree violation" } });
   });
 
   // OpenSSL's NAME_CONSTRAINTS_check_CN does not read a CN with a wildcard as a host name, so node accepts these chains.

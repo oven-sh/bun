@@ -774,6 +774,7 @@ describe.concurrent("fetch-tls", () => {
       attempt("excluded", "host.blocked.test", excludingCa),
       attempt("not-excluded", "host.allowed.test", excludingCa),
       attempt("excluded-dns-san", "host.allowed.test", excludingCa),
+      attempt("excluded-dns-san-blocked", "host.blocked.test", excludingCa),
     ]);
     expect(outcomes).toEqual({
       inside: "Hello World",
@@ -785,8 +786,9 @@ describe.concurrent("fetch-tls", () => {
       nosan: "NAME_CONSTRAINTS_WITHOUT_SANS: Issuer has name constraints but leaf has no SANs",
       excluded: "EXCLUDED_VIOLATION: excluded subtree violation",
       "not-excluded": "Hello World",
-      // The DNS name is the name of this certificate. Its CN is not checked.
+      // The DNS name is the name of these two certificates. Their CN is not checked.
       "excluded-dns-san": "Hello World",
+      "excluded-dns-san-blocked": "EXCLUDED_VIOLATION: excluded subtree violation",
     });
   });
 

@@ -17,9 +17,8 @@
  * Usage:
  *   bun scripts/prefetch-deps.ts <prefetchDir>
  *
- * Enumerates variants on the dimensions that affect download URLs (asan, lto,
- * baseline, musl) for the current host os/arch. Variants without a published
- * artifact are skipped — better to over-enumerate and 404 than to miss one.
+ * No download depends on the target: the build image compiles for all of them, so this takes every dep's sources,
+ * also those of a dep that the host's own target leaves out.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -29,6 +28,9 @@ import { resolveConfig, type Config, type PartialConfig } from "./build/config.t
 import { resolveToolchain } from "./build/configure.ts";
 import { allDeps } from "./build/deps/index.ts";
 import { downloadWithRetry, extractTarGz, extractZip, prefetchPathForUrl } from "./build/download.ts";
+import { ICU_URL } from "./build/icu-source.ts";
+import { depSource } from "./build/source.ts";
+import { ensureWebKitSource } from "./build/webkit-source.ts";
 
 const dest = process.argv[2];
 if (dest === undefined) {
@@ -38,28 +40,8 @@ if (dest === undefined) {
 const byUrlDir = resolve(dest, "by-url");
 const extractedDir = resolve(dest, "extracted");
 
-// ───────────────────────────────────────────────────────────────────────────
-// Enumerate URL-affecting config variants for the current host.
-//
-// github-archive sources are config-independent, so one base config covers
-// them. WebKit prebuilt URL varies by (musl, baseline, debug|lto, asan).
-// Iterate the cross-product, dedupe URLs.
-// ───────────────────────────────────────────────────────────────────────────
-
 const toolchain = resolveToolchain();
-const base: PartialConfig = { buildType: "Release", ci: true, webkit: "prebuilt" };
-const baseCfg = resolveConfig(base, toolchain);
-
-const variants: PartialConfig[] = [];
-for (const asan of [false, true]) {
-  for (const lto of [false, true]) {
-    for (const baseline of baseCfg.x64 ? [false, true] : [false]) {
-      for (const abi of baseCfg.linux ? (["gnu", "musl"] as const) : [undefined]) {
-        variants.push({ ...base, asan, lto, baseline, ...(abi !== undefined && { abi }) });
-      }
-    }
-  }
-}
+const variants: PartialConfig[] = [{ buildType: "Release", ci: true }];
 
 interface Item {
   url: string;
@@ -102,9 +84,13 @@ for (const partial of variants) {
     continue;
   }
 
+  // The tree as configure puts it in the cache, where tryPrefetchExtracted() looks for it by the directory's name.
+  await ensureWebKitSource({ ...cfg, localDeps: { WebKit: resolve(extractedDir, basename(cfg.localDeps.WebKit!)) } });
+  add({ url: ICU_URL });
+
   for (const dep of allDeps) {
-    if (dep.enabled !== undefined && !dep.enabled(cfg)) continue;
-    const src = dep.source(cfg);
+    // WebKit and ICU, above, come out as `local`.
+    const src = depSource(cfg, dep);
     if (src.kind === "github-archive") {
       add({ url: `https://github.com/${src.repo}/archive/${src.commit}.tar.gz` });
     } else if (src.kind === "prebuilt") {

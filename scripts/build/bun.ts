@@ -476,9 +476,10 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
  * and how JSC compiles them): their sources, or with the prebuilt WebKit their
  * objects out of the tarball, linked with the WebKit and mimalloc bun links and
  * with bun's table of built-ins, which JavaScriptCore leaves to whoever links
- * it. On request (`--target=jsc`). `engine-test-programs` is what test/aot
- * runs, `jsc` and `testaot`: a default target in CI, which packs them beside
- * bun. With a tarball that has only the linked programs it is the fetch.
+ * it. On request (`--target=jsc`). `engine-test-programs` is what bun's tests
+ * run, `jsc`, `testaot` and `testFFI`: a default target in CI, which packs them
+ * beside bun. A tarball has `testFFI` linked; with one that has only the linked
+ * programs the target is the fetch.
  */
 function emitJscPrograms(
   n: Ninja,
@@ -512,7 +513,7 @@ function emitJscPrograms(
     objects.push(
       ...(program.cSources ?? []).map(src => cc(n, cfg, src, { flags: program.cflags ?? [], orderOnlyInputs })),
     );
-    const from = (["WebKit", "mimalloc"] as const).map(name => deps.get(name)!);
+    const from = (["WebKit", "icu", "mimalloc"] as const).flatMap(name => deps.get(name) ?? []);
     const depLink = lazyDepObjects(
       cfg,
       from.flatMap(d => d.objects),
@@ -525,7 +526,7 @@ function emitJscPrograms(
     // The file is `<name>[.exe]` at the build root, so `ninja <name>` already
     // names it on unix; Windows gets the suffix-less alias.
     if (cfg.windows) n.phony(program.name, [exe]);
-    if (program.name === "jsc" || program.name === "testaot") testPrograms.push(exe);
+    if (["jsc", "testaot", "testFFI"].includes(program.name)) testPrograms.push(exe);
   }
   n.phony("engine-test-programs", testPrograms.length > 0 ? testPrograms : deps.get("WebKit")!.outputs);
 }

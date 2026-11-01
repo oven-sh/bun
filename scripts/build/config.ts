@@ -12,10 +12,13 @@ import { homedir, arch as hostArch, platform as hostPlatform } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { locations, pins } from "./ci-images/spec.ts";
 import { NODEJS_ABI_VERSION, NODEJS_V8_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
+import { buildsIcu } from "./deps/icu.ts";
 import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { assert, BuildError } from "./error.ts";
+import { icuSourceDir } from "./icu-source.ts";
 import { resolveMacosSdkPath } from "./macos-sdk.ts";
 import { clangTargetArch, toolchainOverride } from "./tools.ts";
+import { webkitSourceDir } from "./webkit-source.ts";
 import { cyan, dim, green } from "./tty.ts";
 
 export type OS = "linux" | "darwin" | "windows" | "freebsd";
@@ -24,7 +27,11 @@ export type Abi = "gnu" | "musl" | "android";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
 /** `full` builds bun. `codegen` runs the code generators and nothing else; it resolves a {@link CodegenConfig}, not a {@link Config}. */
 export type Mode = "full" | "codegen";
-export type WebKitMode = "prebuilt" | "local";
+/**
+ * `source` compiles the pinned WebKit in this graph. `local` does the same with a checkout of yours. `prebuilt` links the
+ * libraries oven-sh/WebKit's CI published for the pinned commit. See deps/webkit.ts.
+ */
+export type WebKitMode = "source" | "local" | "prebuilt";
 /** The package manager for the package.json files the build installs. */
 export type PackageManager = "bun" | "npm";
 export type DebugInfo = "full" | "lines" | "none";
@@ -289,7 +296,8 @@ export interface Config {
   /**
    * Deps built from a local checkout instead of the pinned tarball, keyed by
    * dep name → absolute source dir. Set via `--local-deps=name=path[,...]`;
-   * `webkit: "local"` is the WebKit entry ($BUN_WEBKIT_PATH or vendor/WebKit).
+   * `webkit: "local"` is the WebKit entry ($BUN_WEBKIT_PATH or vendor/WebKit),
+   * and so is `webkit: "source"` (the tree webkit-source.ts fetches).
    * The checkout is used as-is: no fetch, no `.ref` stamp, and the dep's
    * `patches` are NOT applied (they target the pinned tarball; a fork
    * checkout is expected to carry whatever you're iterating on).
@@ -1217,9 +1225,18 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const vendorDir = resolve(cwd, "vendor");
 
   const localDeps = parseLocalDeps(partial.localDeps, cwd);
-  const webkit = partial.webkit ?? (localDeps.WebKit !== undefined ? "local" : "prebuilt");
+  const webkit = partial.webkit ?? (localDeps.WebKit !== undefined ? "local" : "source");
+  if (webkit !== "source" && webkit !== "local" && webkit !== "prebuilt") {
+    throw new BuildError(`Unknown webkit: ${webkit}`, { hint: "Use source, local or prebuilt" });
+  }
   if (webkit === "local") {
     localDeps.WebKit ??= expandLocalPath(process.env.BUN_WEBKIT_PATH || resolve(vendorDir, "WebKit"), cwd);
+  } else if (webkit === "source") {
+    assert(localDeps.WebKit === undefined, "webkit=source can't be combined with --local-deps=WebKit=<path>", {
+      hint: "A checkout of yours is built with --webkit=local",
+    });
+    localDeps.WebKit = webkitSourceDir(cacheDir, webkitVersion);
+    if (buildsIcu({ webkit, darwin })) localDeps.icu ??= icuSourceDir(cacheDir, webkitVersion);
   }
 
   // ─── Validation ───
@@ -1244,8 +1261,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   assert(!lockEnvironment || hardened, "lockEnvironment=true requires hardened=true");
   assert(!guardedPages || linux, "guardedPages=true requires os=linux");
   assert(
-    guardedPages === hardened || webkit === "local",
-    "guardedPages=" + guardedPages + " with hardened=" + hardened + " requires webkit=local",
+    guardedPages === hardened || webkit !== "prebuilt",
+    "guardedPages=" + guardedPages + " with hardened=" + hardened + " can't be combined with webkit=prebuilt",
     { hint: "The -hardened WebKit prebuilts are compiled with it, the others without" },
   );
   assert(
@@ -1253,26 +1270,26 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     "executeOnlyStart=false requires os=linux and abi=gnu or musl",
   );
   assert(
-    executeOnlyStart !== hardened || webkit === "local",
-    "executeOnlyStart=" + executeOnlyStart + " with hardened=" + hardened + " requires webkit=local",
+    executeOnlyStart !== hardened || webkit !== "prebuilt",
+    "executeOnlyStart=" + executeOnlyStart + " with hardened=" + hardened + " can't be combined with webkit=prebuilt",
     { hint: "The -hardened WebKit prebuilts are compiled without it, the others with it" },
   );
   const jit = partial.jit ?? true;
   assert(
-    jit || webkit === "local",
-    "jit=false requires webkit=local: there is no prebuilt WebKit without the JIT tiers",
+    jit || webkit !== "prebuilt",
+    "jit=false can't be combined with webkit=prebuilt: there is no prebuilt WebKit without the JIT tiers",
   );
   assert(jit || (partial.aot ?? true), "jit=false requires aot=true");
   assert(jit || (linux && x64), "jit=false requires os=linux and arch=x64");
   assert(jit || !(partial.trimmable ?? false), "jit=false can't be combined with trimmable=true");
   assert(
-    !hardened || webkit === "local" || (x64 && abi === "gnu" && release && !asan && !assertions && !fuzzilli),
-    "hardened=true requires a Linux x64 glibc release build without asan, assertions or fuzzilli, or webkit=local",
+    !hardened || webkit !== "prebuilt" || (x64 && abi === "gnu" && release && !asan && !assertions && !fuzzilli),
+    "hardened=true with webkit=prebuilt requires a Linux x64 glibc release build without asan, assertions or fuzzilli",
     { hint: "Those are the -hardened WebKit prebuilts there are (oven-sh/WebKit's .github/scripts/lanes.mjs)" },
   );
   assert(
-    (partial.webAssembly ?? true) || webkit === "local" || (hardened && lto && (partial.aot ?? true)),
-    "webAssembly=false requires hardened=true, lto=true and aot=true, or webkit=local",
+    (partial.webAssembly ?? true) || webkit !== "prebuilt" || (hardened && lto && (partial.aot ?? true)),
+    "webAssembly=false with webkit=prebuilt requires hardened=true, lto=true and aot=true",
     { hint: "That is the one WebKit prebuilt without WebAssembly (oven-sh/WebKit's .github/scripts/lanes.mjs)" },
   );
   assert(
@@ -1423,7 +1440,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       }
     }
     if (webkit === "local") {
-      throw new BuildError("Cross-compiling for Windows requires the prebuilt WebKit (webkit=local needs msbuild)", {
+      throw new BuildError("Cross-compiling a WebKit checkout for Windows is not supported (its ICU needs msbuild)", {
         hint: "Drop --webkit=local or build on a Windows host.",
       });
     }
@@ -1456,11 +1473,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // newer; only `-mmacosx-version-min` decides what the binary runs on).
   let ld64StripSwap: { ld: string; strip: string } | undefined;
   if (darwinCross) {
-    if (webkit === "local") {
-      throw new BuildError("Cross-compiling for macOS requires the prebuilt WebKit", {
-        hint: "Drop --webkit=local or build on a macOS host.",
-      });
-    }
     crossTarget = `${arm64 ? "arm64" : "x86_64"}-apple-macosx`;
     osxDeploymentTarget = partial.osxDeploymentTarget ?? MIN_OSX_DEPLOYMENT_TARGET;
     osxSysroot = resolveMacosSdkPath(partial.macosSdk, cacheDir, cwd);
@@ -1967,8 +1979,11 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (!cfg.ffi) features.push("ffi:off");
   if (!cfg.canary) features.push("canary:off");
   // Non-default modes — show so you notice when a build is unusual.
-  if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);
-  for (const name of Object.keys(cfg.localDeps)) if (name !== "WebKit") features.push(`local:${name}`);
+  if (cfg.webkit !== "source") features.push(`webkit:${cfg.webkit}`);
+  for (const [name, dir] of Object.entries(cfg.localDeps)) {
+    // Those in the cache are the pinned ones, which configure fetched.
+    if (name !== "WebKit" && !dir.startsWith(cfg.cacheDir + sep)) features.push(`local:${name}`);
+  }
   if (cfg.packageManager !== "bun") features.push(`package-manager:${cfg.packageManager}`);
   // Version pin overrides — show an identifying value so you catch "forgot
   // to revert my WebKit test branch" before the build goes weird. Strip the

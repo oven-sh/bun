@@ -10,7 +10,10 @@
  * targets ZSTD_DISABLE_ASM falls through to the C implementation.
  */
 
-import type { Dependency, DirectBuild } from "../source.ts";
+import { join } from "node:path";
+import type { Config } from "../config.ts";
+import { type Dependency, type DirectBuild, depBuildDir, depSourceDir } from "../source.ts";
+import { buildsIcu } from "./icu.ts";
 
 const ZSTD_COMMIT = "f8745da6ff1ad1e7bab384bd1f9d742439278e99";
 
@@ -30,6 +33,14 @@ const SOURCES = [
   "dictBuilder/cover", "dictBuilder/divsufsort", "dictBuilder/fastcover",
   "dictBuilder/zdict",
 ].map(s => `lib/${s}.c`);
+
+/** What of the `zstd` command trains a dictionary and compresses files. */
+const PROGRAM_SOURCES = ["zstdcli", "util", "timefn", "fileio", "fileio_asyncio", "dibio"].map(s => `programs/${s}.c`);
+
+/** The `zstd` command for the machine that builds, which compresses ICU's data (deps/icu.ts): the version whose decoder bun has. */
+export function hostZstdPath(cfg: Config): string {
+  return join(depBuildDir(cfg, "zstd"), `zstd${cfg.host.exeSuffix}`);
+}
 
 export const zstd: Dependency = {
   name: "zstd",
@@ -86,6 +97,26 @@ export const zstd: Dependency = {
       // wrap it in quotes. Avoids clashes with lshpack's copy.
       cflags: ["-DXXH_NAMESPACE=ZSTD_"],
     };
+    if (buildsIcu(cfg)) {
+      const src = depSourceDir(cfg, "zstd");
+      const inputs = [...SOURCES, ...PROGRAM_SOURCES].map(s => join(src, s));
+      spec.steps = [
+        {
+          outputs: [hostZstdPath(cfg)],
+          inputs,
+          cwd: src,
+          cmd: [
+            ...[cfg.hostCc, "-O2", "-w", "-pthread"],
+            ...["-DZSTD_MULTITHREAD", "-DZSTD_LEGACY_SUPPORT=0", "-DZSTD_DISABLE_ASM=1", "-DXXH_NAMESPACE=ZSTD_"],
+            ...["-DZSTD_NOBENCH", "-DZSTD_NOTRACE"],
+            ...["lib", "lib/common", "lib/dictBuilder"].map(dir => `-I${join(src, dir)}`),
+            ...["-o", hostZstdPath(cfg)],
+            ...inputs,
+          ],
+          desc: "zstd (for this machine)",
+        },
+      ];
+    }
     return spec;
   },
 

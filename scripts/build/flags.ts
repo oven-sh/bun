@@ -700,6 +700,8 @@ export const globalFlags: Flag[] = [
       `-ffile-prefix-map=${c.cwd}=.`,
       `-ffile-prefix-map=${c.vendorDir}=vendor`,
       `-ffile-prefix-map=${c.cacheDir}=cache`,
+      // The trees configure fetches into the cache. Last: of the prefixes that match, clang takes the last.
+      ...Object.entries(c.localDeps).map(([name, dir]) => `-ffile-prefix-map=${dir}=vendor/${name}`),
     ],
     when: c => c.unix && c.ci,
     desc: "Remap source paths in debug info (reproducible builds)",

@@ -268,7 +268,7 @@ In CI, we run our test suite with at least one target that is built with Address
 
 ## Building WebKit locally + Debug mode of JSC
 
-WebKit is not cloned by default (to save time and disk space). To clone and build WebKit locally, run:
+Every build compiles JavaScriptCore, from the commit pinned in `scripts/build/deps/webkit.ts`, which the build fetches by itself. JSC's code generators need `ruby`, `python3` and `perl` in your `PATH`. To work on WebKit itself, clone it and build that clone:
 
 ```bash
 # Clone WebKit into ./vendor/WebKit

@@ -387,7 +387,7 @@ function normalizeLf(s: string): string {
  * not a git repo. --ignore-whitespace / --ignore-space-change: patches are
  * authored against upstream which may have different trailing whitespace.
  */
-function applyPatch(dest: string, patchPath: string, patchBody: string): void {
+export function applyPatch(dest: string, patchPath: string, patchBody: string): void {
   const result = spawnSync("git", ["apply", "--ignore-whitespace", "--ignore-space-change", "--no-index", "-"], {
     cwd: dest,
     input: normalizeLf(patchBody),

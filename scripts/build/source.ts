@@ -17,7 +17,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { ar, cc, cxx, link, nasm, pch, type PrecompiledHeader } from "./compile.ts";
 import type { Config } from "./config.ts";
 import { assert } from "./error.ts";
@@ -468,10 +468,12 @@ export interface Provides {
  */
 export type DepName =
   | "WebKit"
+  | "bootstrap_cmds"
   | "boringssl"
   | "brotli"
   | "cares"
   | "highway"
+  | "icu"
   | "libdeflate"
   | "libjpeg-turbo"
   | "libuv"
@@ -843,11 +845,16 @@ export function resolveDep(
   const directSources: string[] = [];
   if (buildSpec.kind === "direct") {
     assert(
-      source.kind !== "github-archive" || (buildSpec.groups === undefined && buildSpec.steps === undefined),
-      `${dep.name}: groups/steps of a fetched dep are not declared as outputs of its fetch yet`,
+      source.kind !== "github-archive" || buildSpec.groups === undefined,
+      `${dep.name}: groups of a fetched dep are not declared as outputs of its fetch yet`,
     );
     for (const s of buildSpec.sources) {
       directSources.push(resolve(srcDir, typeof s === "string" ? s : s.path));
+    }
+    // What a generator reads of the tree. Its other inputs are outputs of other edges.
+    for (const step of buildSpec.steps ?? []) {
+      if (step.kind === "exe") continue;
+      directSources.push(...step.inputs.filter(input => input.startsWith(srcDir + sep)));
     }
     for (const h of Object.values(buildSpec.headers ?? {})) {
       if (typeof h !== "string") directSources.push(resolve(srcDir, h.from));
@@ -866,7 +873,7 @@ export function resolveDep(
   // For local/in-tree: source is already on disk.
   let sourceStamp: string | undefined;
   if (source.kind === "github-archive") {
-    sourceStamp = emitFetch(n, cfg, dep.name, source, patches, [...resolvedSources, ...directSources]);
+    sourceStamp = emitFetch(n, cfg, dep.name, source, patches, [...new Set([...resolvedSources, ...directSources])]);
   } else {
     // Local/in-tree: no .ref to write. Use the build system's manifest file
     // as the stamp — touching it triggers a rebuild.

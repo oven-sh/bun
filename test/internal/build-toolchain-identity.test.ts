@@ -91,6 +91,7 @@ test("an edge takes the identity of the tools it runs, and of no other", () => {
   const cfg = {
     buildDir,
     cwd: buildDir,
+    localDeps: {},
     windows: false,
     objSuffix: ".o",
     exeSuffix: "",

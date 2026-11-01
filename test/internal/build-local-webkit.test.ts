@@ -1,7 +1,7 @@
 /**
- * `--webkit=local` (scripts/build/deps/webkit.ts): a WebKit checkout compiled in bun's own ninja graph, described from
- * the checkout's own file lists. CI links the prebuilt WebKit, so nothing else exercises this. Configure-time only: no
- * compiler or ninja runs, and the "checkout" is a few files with the shape of WebKit's.
+ * WebKit compiled in bun's own ninja graph (scripts/build/deps/webkit.ts), described from the tree's own file lists: the
+ * pinned commit (`--webkit=source`, the default) or a checkout (`--webkit=local`). Configure-time only: no compiler or
+ * ninja runs, nothing is fetched, and the "checkout" is a few files with the shape of WebKit's.
  */
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
@@ -10,6 +10,8 @@ import { join, relative, resolve } from "node:path";
 
 import { cxx } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
+import { bootstrapCmds } from "../../scripts/build/deps/bootstrap-cmds.ts";
+import { icu } from "../../scripts/build/deps/icu.ts";
 import {
   jscPrograms,
   prebuiltHasProgramObjects,
@@ -33,6 +35,7 @@ import {
   type GenStep,
   type ResolvedDep,
 } from "../../scripts/build/source.ts";
+import { webkitSourceDir } from "../../scripts/build/webkit-source.ts";
 
 /** A fully-populated fake toolchain; resolveConfig never spawns any of these. */
 function mockToolchain(): Toolchain {
@@ -78,20 +81,47 @@ const linux = (partial: PartialConfig): Config =>
   );
 
 describe("which builds compile WebKit", () => {
-  test("only the -local profiles; CI and the defaults link the prebuilt", () => {
+  test("all but --webkit=prebuilt: the -local profiles a checkout, CI and the defaults the pinned commit", () => {
     const local = ["debug-local", "release-local"];
     for (const name of ["debug", "release", "release-asan", "ci-build", ...local]) {
-      expect([name, getProfile(name).webkit]).toEqual([name, local.includes(name) ? "local" : "prebuilt"]);
+      expect([name, getProfile(name).webkit]).toEqual([name, local.includes(name) ? "local" : undefined]);
     }
-    expect(linux({}).webkit).toBe("prebuilt");
-    expect(webkit.source(linux({})).kind).toBe("prebuilt");
-    expect(webkit.build(linux({}))).toEqual({ kind: "none" });
+    expect(linux({}).webkit).toBe("source");
+    const prebuilt = linux({ webkit: "prebuilt" });
+    expect(webkit.source(prebuilt).kind).toBe("prebuilt");
+    expect(webkit.build(prebuilt)).toEqual({ kind: "none" });
+  });
+
+  test("the pinned commit is a --local-deps entry too: a directory of the cache named by the commit", () => {
+    const cfg = linux({ cacheDir: join("/somewhere", "cache") });
+    expect(cfg.localDeps.WebKit).toBe(webkitSourceDir(resolve("/somewhere", "cache"), cfg.webkitVersion));
+    expect(cfg.localDeps.WebKit).toStartWith(resolve("/somewhere", "cache"));
+    expect(cfg.localDeps.WebKit).not.toBe(join(cfg.vendorDir, "WebKit"));
+    expect(depSource(cfg, webkit)).toMatchObject({ kind: "local", path: cfg.localDeps.WebKit });
+    const other = linux({ cacheDir: join("/somewhere", "cache"), webkitVersion: "0".repeat(40) });
+    expect(other.localDeps.WebKit).not.toBe(cfg.localDeps.WebKit);
+    expect(() => linux({ webkit: "source", localDeps: "WebKit=/elsewhere/WebKit" })).toThrow(
+      "webkit=source can't be combined with --local-deps=WebKit=<path>",
+    );
+  });
+
+  test("ICU is compiled with the pinned commit, for every target but macOS", () => {
+    expect(icu.enabled!(linux({}))).toBe(true);
+    expect(linux({}).localDeps.icu).toStartWith(linux({}).cacheDir);
+    expect(linux({ localDeps: "icu=/elsewhere/icu" }).localDeps.icu).toBe(resolve("/elsewhere", "icu"));
+    for (const mode of ["local", "prebuilt"] as const) {
+      expect(icu.enabled!(linux({ webkit: mode }))).toBe(false);
+      expect(linux({ webkit: mode }).localDeps.icu).toBeUndefined();
+    }
+    const mac = resolveConfig({ os: "darwin", arch: "aarch64", macosSdk: "/fake/sdk" }, mockToolchain());
+    expect(icu.enabled!(mac)).toBe(false);
+    expect(mac.localDeps.icu).toBeUndefined();
   });
 
   test("with the prebuilt, jsc and testaot are the tarball's objects linked here, where the tarball has them", () => {
     using dir = tempDir("build-prebuilt-programs", {});
     const buildDir = join(String(dir), "build");
-    const cfg = linux({ buildDir, cacheDir: join(String(dir), "cache"), buildType: "Release" });
+    const cfg = linux({ webkit: "prebuilt", buildDir, cacheDir: join(String(dir), "cache"), buildType: "Release" });
     const source = webkit.source(cfg);
     if (source.kind !== "prebuilt") throw new Error(`a ${source.kind} source`);
     const objects = (name: string) => `lib/lib${name}-objects.a`;
@@ -159,10 +189,23 @@ describe("which builds compile WebKit", () => {
     );
   });
 
-  test.skipIf(process.platform === "darwin")("macOS and Windows targets need their own host", () => {
-    expect(() =>
-      resolveConfig({ os: "darwin", arch: "aarch64", webkit: "local", macosSdk: "/fake/sdk" }, mockToolchain()),
-    ).toThrow(/Cross-compiling for macOS requires the prebuilt WebKit/);
+  test.skipIf(process.platform === "darwin")("for macOS on another host, Apple's migcom is built for that host", () => {
+    const mac = (partial: PartialConfig) =>
+      resolveConfig({ os: "darwin", arch: "aarch64", macosSdk: "/fake/sdk", ...partial }, mockToolchain());
+    expect(bootstrapCmds.enabled!(mac({}))).toBe(true);
+    expect(bootstrapCmds.enabled!(mac({ webkit: "local" }))).toBe(true);
+    expect(bootstrapCmds.enabled!(mac({ webkit: "prebuilt" }))).toBe(false);
+    expect(bootstrapCmds.enabled!(linux({}))).toBe(false);
+  });
+
+  test.skipIf(isWindows)("a checkout is not compiled for Windows on another host", () => {
+    const windows = (partial: PartialConfig) =>
+      resolveConfig({ os: "windows", arch: "x64", winsysroot: "/fake/winsysroot", ...partial }, mockToolchain());
+    expect(() => windows({ webkit: "local" })).toThrow(
+      /Cross-compiling a WebKit checkout for Windows is not supported/,
+    );
+    expect(windows({}).webkit).toBe("source");
+    expect(icu.enabled!(windows({}))).toBe(true);
   });
 
   test("WebKit's AoT files are at the same path in the tarball and in the checkout", () => {
@@ -174,7 +217,7 @@ describe("which builds compile WebKit", () => {
       join(aot, "tests"),
     ];
 
-    const prebuilt = linux({});
+    const prebuilt = linux({ webkit: "prebuilt" });
     const source = webkit.source(prebuilt);
     if (source.kind !== "prebuilt") throw new Error(`a ${source.kind} source`);
     const dest = source.destDir!;
@@ -847,7 +890,7 @@ describe("DirectBuild groups and steps", () => {
 describe("Provides.files", () => {
   function graph() {
     const dir = tempDir("build-provides-files", {});
-    const cfg = linux({ buildDir: join(String(dir), "build") });
+    const cfg = linux({ webkit: "prebuilt", buildDir: join(String(dir), "build") });
     const n = new Ninja({ buildDir: cfg.buildDir });
     registerAllRules(n, cfg);
     return { cfg, n, [Symbol.dispose]: () => dir[Symbol.dispose]() };

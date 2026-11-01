@@ -69,6 +69,27 @@ vi.mock("./leaf.js", () => ({ get token() { reads++; return "mock"; }, other: 2 
 import * as star from "./star.js";
 test("t", () => console.log("SEEN", Object.keys(star).sort().join(), reads, JSON.stringify(star), reads));`,
   },
+  // The run follows the first star of stars.js, which leads to a CommonJS file. The second is settled by the build, and what comes by it is found in the table alone.
+  "a star that the run follows beside one that it does not": {
+    "common.cjs": `exports.c = x => x + 2;`,
+    "starc.js": `export * from "./common.cjs";`,
+    "lib.js": `export function f(x) { return x + 7; }`,
+    "barrel.js": `export * from "./lib.js";`,
+    "stars.js": `export * from "./starc.js"; export * from "./barrel.js";`,
+    "x.test.js": `import { spyOn, test } from "bun:test";
+import * as starC from "./starc.js";
+import * as stars from "./stars.js";
+import { c, f } from "./stars.js";
+const made = name => name.split("").join("");
+test("t", () => {
+  console.log("SEEN", f(1), c(1), stars.f(1), starC.c(1), Object.keys(stars).join());
+  if (globalThis.never) spyOn(starC, made("c"));
+  const spy = spyOn(stars, made("f")).mockImplementation(() => "fake f");
+  console.log("SEEN", stars.f(1), f(1));
+  spy.mockRestore();
+  console.log("SEEN", stars.c(1), c(1), stars.f(1), f(1));
+});`,
+  },
   "no mock stands": {
     "leaf.js": `console.log("SEEN runs leaf"); export const x = "real";`,
     "barrel.js": `console.log("SEEN runs barrel"); export * from "./leaf.js"; export const own = "real";`,

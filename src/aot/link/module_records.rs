@@ -203,12 +203,23 @@ fn mock_may_answer_ahead_of_declaration(
         return false;
     }
     path.push(file);
+    // The run follows some stars of a file and not others: `export * from "./over-commonjs.js"; export * from "./lib.js"`. A name that comes by a star which it
+    // does not follow is found in the table alone.
+    let followed = graph.requests(file).iter();
+    let mut followed = followed.filter(|request| request.is_dynamic_star_export);
+    let is_found_by_run = followed.any(|request| {
+        request.target == ModuleRef::File(declaring_file)
+            || matches!(
+                graph.find_export(request.target, name, atoms),
+                ExportLookup::Found(_)
+            )
+    });
     let mut answer = false;
     for request in graph.requests(file) {
         let ModuleRef::File(target) = request.target else {
             continue;
         };
-        if !request.is_dynamic_star_export {
+        if !request.is_dynamic_star_export || !is_found_by_run {
             continue;
         }
         // The mock of the file that declares the name answers for the variable wherever it is handed on.

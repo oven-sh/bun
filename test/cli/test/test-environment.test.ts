@@ -1,7 +1,10 @@
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { mkdirSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
+
+// A debug build takes seconds to load the real jsdom and happy-dom.
+setDefaultTimeout(isASAN || isDebug ? 120_000 : 30_000);
 
 // Split in two because `bun test` scans a test file's whole text for these names, this file's included.
 const VITEST = "@vitest" + "-environment";

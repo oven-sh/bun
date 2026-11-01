@@ -31,6 +31,7 @@
 use core::alloc::{AllocError, Allocator, Layout};
 use core::cell::Cell;
 use core::mem::MaybeUninit;
+use core::pin::UnsafePinned;
 use core::ptr::NonNull;
 
 use crate::{MimallocArena, mimalloc};
@@ -63,8 +64,8 @@ pub struct AstAllocState {
     spill: *mut mimalloc::Heap,
     /// Backing storage for `spill` when no borrowed target was provided.
     owned_spill: Option<MimallocArena>,
-    /// Inline small-allocation buffer.
-    bump_chunk: [MaybeUninit<u8>; BUMP_CHUNK],
+    /// Inline small-allocation buffer. `UnsafePinned`: a later `&mut self` must not cover the lists in it.
+    bump_chunk: UnsafePinned<[MaybeUninit<u8>; BUMP_CHUNK]>,
 }
 
 impl AstAllocState {
@@ -114,8 +115,7 @@ impl AstAllocState {
         // SAFETY: `bump_cursor <= BUMP_CHUNK` (invariant: only advanced below
         // after the bounds check), so `add` is at most one-past-the-end.
         let cur = unsafe {
-            self.bump_chunk
-                .as_mut_ptr()
+            UnsafePinned::raw_get_mut(&raw mut self.bump_chunk)
                 .cast::<u8>()
                 .add(self.bump_cursor)
         };

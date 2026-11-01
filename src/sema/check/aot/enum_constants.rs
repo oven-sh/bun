@@ -47,20 +47,6 @@ struct PathMember {
     is_path_declared_here: bool,
 }
 
-/// What one part of a namespace exports is in scope in its other parts too, where no declaration
-/// of it stands around the name.
-fn is_declared_around(hir: &hir::File<'_>, declarations: &[Decl], name: ExprId) -> bool {
-    let mut around = hir.parent(hir.node(name));
-    while around.is_some() {
-        let mut declarations = declarations.iter();
-        if declarations.any(|&declaration| hir.parent(hir.node(declaration)) == around) {
-            return true;
-        }
-        around = hir.parent(around);
-    }
-    false
-}
-
 /// The object and the name of one link of a path that Bun's transpiler follows: `["name"]` is
 /// `.name` where the name is ASCII, and a link of an optional chain ends the path.
 pub fn find_link_followed_by_transpiler<'a>(
@@ -273,10 +259,13 @@ impl Checker<'_, '_> {
             end.member = files.canonical(files.resolve_alias_as(link, SymFlags::VALUE)?);
         }
         end.is_path_declared_here &= match bound.binding(first) {
+            // In sloppy code the variable that a function of a block leaves behind hides an enum.
             Binding::Symbol(symbol) => {
                 let symbol = bound.symbol(symbol);
+                let is_enum_or_namespace =
+                    |decl: &Decl| matches!(decl, Decl::Enum(_) | Decl::Module(_));
                 !symbol.flags.intersects(SymFlags::ALIAS)
-                    && is_declared_around(hir, symbol.decls, first)
+                    && symbol.decls.iter().any(is_enum_or_namespace)
             }
             Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => false,
         };

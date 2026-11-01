@@ -469,6 +469,8 @@ export const knownToday: Record<string, string> = {
     'each file: the build: 1 | import { Foo } from "./b.ts"; |     ^ | error: TS100150: Could not resolve: "./b.ts"; bundled: code bytes 342 -> 302, operations 20 -> 15, run-time operations 247 -> 246',
   "esbuild/ts: ts/ImportVsLocalCollisionMixed":
     'each file: the build: 6 | import { real } from "./other.ts"; |     ^ | error: TS100150: Could not resolve: "./other.ts"',
+  "esbuild/ts: ts/SiblingNamespaceEnumShadowedArgument":
+    'written prints "3 true\\n\\nexit 0", bun run "3 false\\n\\nexit 0"; bundled prints "3 true\\n\\nexit 0", bun run "3 false\\n\\nexit 0": bun run reads `M.Z` under the parameter `M` (#41984)',
   "esbuild/ts: ts/SideEffectsFalseWarningTypeDeclarations":
     'each file: the build: 2 | import"some-ts"; |     ^ | error: TS100151: Could not resolve: "some-ts". Maybe you need to "bun ; |     ^; bundled: code bytes 150 -> 12, operations 8 -> 0',
   "esbuild/ts: ts/TypeScriptDecorators":

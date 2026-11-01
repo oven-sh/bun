@@ -1,4 +1,4 @@
-// Members of an enum that hold negative numbers are raised to powers that are read out of a list. Plain Bun prints another output.
+// Members of an enum that hold negative numbers are raised to powers that are read out of a list.
 enum Numbers {
   Whole = -5,
   Half = -0.5,

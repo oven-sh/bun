@@ -54,6 +54,26 @@ impl ImportWatcher {
             .items::<"package_json", Option<&'static bun_watcher::PackageJSON>>()[index as usize]
     }
 
+    /// The paths of the watched files whose directory `in_dir` accepts, copied under the watcher's mutex.
+    pub fn watched_files(&self, mut in_dir: impl FnMut(&[u8]) -> bool) -> Vec<Box<[u8]>> {
+        let w = match self {
+            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => w,
+            ImportWatcher::None => return Vec::new(),
+        };
+        let _guard = w.mutex.lock_guard();
+        let paths = w.watchlist.items_file_path();
+        let kinds = w.watchlist.items_kind();
+        paths
+            .iter()
+            .zip(kinds)
+            .filter(|(path, kind)| {
+                **kind == bun_watcher::Kind::File
+                    && in_dir(bun_paths::dirname(path).unwrap_or_default())
+            })
+            .map(|(path, _)| Box::from(&**path))
+            .collect()
+    }
+
     #[inline]
     pub fn add_file_by_path_slow(&mut self, file_path: &[u8]) -> bool {
         match self {

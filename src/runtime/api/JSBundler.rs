@@ -256,6 +256,7 @@ pub(crate) mod js_bundler {
         pub(crate) windows_copyright: OwnedString,
         pub(crate) outfile: OwnedString,
         pub(crate) assets: Vec<Box<[u8]>>,
+        pub(crate) env_options: bool,
         pub(crate) autoload_dotenv: bool,
         pub(crate) autoload_bunfig: bool,
         pub(crate) autoload_tsconfig: bool,
@@ -285,6 +286,7 @@ pub(crate) mod js_bundler {
                 windows_copyright: OwnedString::default(),
                 outfile: OwnedString::default(),
                 assets: Vec::new(),
+                env_options: true,
                 autoload_dotenv: true,
                 autoload_bunfig: true,
                 autoload_tsconfig: false,
@@ -769,6 +771,20 @@ pub(crate) mod js_bundler {
                     let slice = arg.to_utf8(global_this)?;
                     this.assets.push(Box::from(slice.slice()));
                 }
+            }
+
+            if let Some(env_options) =
+                object.get_own(global_this, &BunString::static_("envOptions"))?
+                && !env_options.is_undefined()
+            {
+                if !env_options.is_boolean() {
+                    return Err(global_this.throw_invalid_property_type_value(
+                        b"compile.envOptions",
+                        b"boolean",
+                        env_options,
+                    ));
+                }
+                this.env_options = env_options == JSValue::TRUE;
             }
 
             if let Some(autoload_dotenv) =

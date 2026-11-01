@@ -578,8 +578,14 @@ unsafe fn configure_debugger(
         return;
     }
 
-    let unix: &'static [u8] = env_var::BUN_INSPECT.get().unwrap_or(b"");
-    let connect_to: &'static [u8] = env_var::BUN_INSPECT_CONNECT_TO.get().unwrap_or(b"");
+    let (unix, connect_to): (&'static [u8], &'static [u8]) = if bun_core::runtime_env_options() {
+        (
+            env_var::BUN_INSPECT.get().unwrap_or(b""),
+            env_var::BUN_INSPECT_CONNECT_TO.get().unwrap_or(b""),
+        )
+    } else {
+        (b"", b"")
+    };
 
     let set_breakpoint_on_first_line = !unix.is_empty() && unix.ends_with(b"?break=1");
     let wait_for_debugger = !unix.is_empty() && unix.ends_with(b"?wait=1");

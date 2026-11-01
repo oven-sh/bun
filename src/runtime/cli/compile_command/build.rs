@@ -328,6 +328,15 @@ fn check_request(request: &CompileRequest<'_, '_>) -> Result<Target, CompileFail
     if !has_compiler() {
         return Err(CompileFailure::NoCompiler);
     }
+    bun_standalone_graph::StandaloneModuleGraph::validate_env_options(
+        request.executable.target,
+        request.executable.executable_path,
+        !request
+            .executable
+            .flags
+            .contains(Flags::DISABLE_ENV_OPTIONS),
+    )
+    .map_err(CompileFailure::Executable)?;
     if !request.executable.target.is_default() {
         return Err(CompileFailure::CrossCompilation);
     }

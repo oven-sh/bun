@@ -3608,6 +3608,21 @@ static ARGV_STORAGE: Once<Vec<ZBox>> = Once::new();
 static ARGV_VIEW: Once<Vec<&'static ZStr>> = Once::new();
 static ARGV: RacyCell<&'static [&'static ZStr]> = RacyCell::new(&[]);
 static ARGV_INIT: std::sync::Once = std::sync::Once::new();
+static RUNTIME_ENV_OPTIONS: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(true);
+
+/// Whether startup options from the environment are enabled for this executable.
+#[inline]
+pub fn runtime_env_options() -> bool {
+    RUNTIME_ENV_OPTIONS.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// Apply the standalone executable's opt-out before parsing runtime arguments.
+/// Must run before argv is initialized or a VM is created.
+pub fn disable_runtime_env_options() {
+    debug_assert!(!ARGV_INIT.is_completed());
+    RUNTIME_ENV_OPTIONS.store(false, core::sync::atomic::Ordering::Relaxed);
+}
 
 /// Raw `(argc, argv)` as passed to `main` by the C runtime. Captured by
 /// [`init_argv`] before any other code runs. On glibc / macOS / Windows,
@@ -3701,7 +3716,9 @@ fn argv_view_init() {
     // ARGV_STORAGE is process-static via `Once`; `as_zstr` borrows for `'static`.
     let mut view: Vec<&'static ZStr> = storage.iter().map(ZBox::as_zstr).collect();
     // Splice BUN_OPTIONS tokens after argv[0].
-    if let Some(opts) = crate::env_var::BUN_OPTIONS.get() {
+    if runtime_env_options()
+        && let Some(opts) = crate::env_var::BUN_OPTIONS.get()
+    {
         let original_len = view.len();
         append_options_env::<&'static ZStr>(opts, &mut view);
         set_bun_options_argc(view.len() - original_len);

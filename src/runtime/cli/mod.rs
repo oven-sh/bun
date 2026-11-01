@@ -1050,16 +1050,23 @@ pub(crate) mod command {
         }
 
         // bun build --compile entry point
-        if !bun_core::env_var::feature_flag::BUN_BE_BUN::get().unwrap_or(false) {
-            if let Some(graph) = bun_standalone_graph::Graph::from_executable()? {
-                // Never taken for a plain `bun` binary; ~2 KB of argv-splice
-                // and ctx-setup code lives behind this cold call.
-                return boot_standalone(graph, log);
+        if let Some(graph) = bun_standalone_graph::Graph::from_executable(|flags| {
+            if flags
+                .contains(bun_standalone_graph::StandaloneModuleGraph::Flags::DISABLE_ENV_OPTIONS)
+            {
+                bun_core::disable_runtime_env_options();
+                return true;
             }
-            // Only `bun build --compile` removes the command line, so this file had a program.
-            if bun_removable_features::is_removed(bun_removable_features::Feature::Tools) {
-                bun_standalone_graph::Graph::exit_without_program();
-            }
+            !bun_core::env_var::feature_flag::BUN_BE_BUN::get().unwrap_or(false)
+        })? {
+            // Never taken for a plain `bun` binary; ~2 KB of argv-splice
+            // and ctx-setup code lives behind this cold call.
+            return boot_standalone(graph, log);
+        }
+        if !bun_core::env_var::feature_flag::BUN_BE_BUN::get().unwrap_or(false)
+            && bun_removable_features::is_removed(bun_removable_features::Feature::Tools)
+        {
+            bun_standalone_graph::Graph::exit_without_program();
         }
 
         // Fast path: `bun -v` / `bun --version` / `bun --revision`, the

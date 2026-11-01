@@ -1153,7 +1153,9 @@ bitflags::bitflags! {
         const HAS_LINKED_BYTECODE_PAYLOAD   = 1 << 13;
         /// After the linked-payload record: the record of the program compiled ahead of time (`compiled_program.rs`).
         const HAS_COMPILED_PROGRAM          = 1 << 14;
-        // _padding: u17
+        /// Ignore runtime options supplied through the environment, including BUN_BE_BUN.
+        const DISABLE_ENV_OPTIONS           = 1 << 15;
+        // _padding: u16
     }
 }
 
@@ -3215,6 +3217,29 @@ pub fn target_builtins(
     }
 }
 
+pub fn validate_env_options(
+    target: &CompileTarget,
+    self_exe_path: Option<&[u8]>,
+    env_options: bool,
+) -> Result<(), CompileError> {
+    if !env_options {
+        if !target.is_default() {
+            return Err(CompileError::fmt(format_args!(
+                "Disabling runtime environment options requires the default Bun target \"{}\"; received \"{}\".\nnote: Remove --target or compile.target to use the current Bun executable.",
+                CompileTarget::default(),
+                target,
+            )));
+        }
+        if let Some(path) = self_exe_path {
+            return Err(CompileError::fmt(format_args!(
+                "Disabling runtime environment options cannot be combined with custom executable path {}.\nnote: Remove --compile-executable-path or compile.executablePath to use the current Bun executable.",
+                bun_core::fmt::quote(path),
+            )));
+        }
+    }
+    Ok(())
+}
+
 pub fn to_executable(
     target: &CompileTarget,
     output_files: &[OutputFile],
@@ -3230,6 +3255,13 @@ pub fn to_executable(
     runtime_options: RuntimeOptions,
     additions: &mut ExecutableAdditions<'_>,
 ) -> crate::Result<CompileResult> {
+    if let Err(err) = validate_env_options(
+        target,
+        self_exe_path,
+        !flags.contains(Flags::DISABLE_ENV_OPTIONS),
+    ) {
+        return Ok(CompileResult::Err(err));
+    }
     #[cfg(windows)]
     let _ = root_dir;
     let GraphBytes { mut bytes, image } = match to_bytes(
@@ -3437,8 +3469,11 @@ pub fn to_executable(
 
 impl StandaloneModuleGraph {
     /// Loads the standalone module graph from the executable, allocates it on the heap,
-    /// sets it globally, and returns the pointer.
-    pub fn from_executable() -> crate::Result<Option<*mut StandaloneModuleGraph>> {
+    /// sets it globally, and returns the pointer. `should_load` inspects the
+    /// embedded flags before the graph is allocated or published globally.
+    pub fn from_executable(
+        should_load: impl FnOnce(Flags) -> bool,
+    ) -> crate::Result<Option<*mut StandaloneModuleGraph>> {
         #[cfg(target_os = "macos")]
         let data = macho::get_data();
         #[cfg(windows)]
@@ -3456,6 +3491,12 @@ impl StandaloneModuleGraph {
         let Some((base, len)) = data else {
             return Ok(None);
         };
+        let Some(offsets) = Self::read_offsets(base, len) else {
+            return Ok(None);
+        };
+        if !should_load(offsets.flags) {
+            return Ok(None);
+        }
         Self::from_payload(base, len, None)
     }
 

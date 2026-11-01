@@ -7,7 +7,7 @@ use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{basename, dirname};
 use bun_sema::hir::ExprKind;
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, is_module_call_of_plugin};
-use bun_sema::resolve::{CodeResolution, FinishedFile, SiteResolution};
+use bun_sema::resolve::{CodeResolution, ExternalKind, FinishedFile, SiteResolution};
 
 use crate::load::is_in_node_modules;
 
@@ -50,13 +50,18 @@ pub(crate) fn find_manual_mocks(
             continue;
         }
         let written = file.atoms.bytes(written);
+        let beside = |path: &[u8]| [dirname::<Posix>(path), b"/__mocks__/", basename(path)].concat();
         let candidate = match *resolution {
             SiteResolution::Constant(CodeResolution::File(module))
                 if module.host_module.is_none() && !is_in_node_modules(module.path) =>
             {
-                let (folder, name) = (dirname::<Posix>(module.path), basename(module.path));
-                [folder, b"/__mocks__/", name].concat()
+                beside(module.path)
             }
+            // The module lies in a program below this one, and its name stands as it is written.
+            SiteResolution::Constant(CodeResolution::External {
+                specifier: [b'.' | b'/', ..],
+                kind: ExternalKind::UncompiledCode,
+            }) => beside(&bun_sema::resolve::join(dirname::<Posix>(file.path), written)),
             _ if !written.starts_with(b".") && !written.starts_with(b"/") => {
                 let name = written.strip_prefix(b"node:").unwrap_or(written);
                 [working_directory, b"/__mocks__/", name].concat()

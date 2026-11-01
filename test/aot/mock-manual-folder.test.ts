@@ -95,7 +95,10 @@ test.concurrent.each(Object.keys(pins) as (keyof typeof pins)[])(
     const oneProgram = await run(dir, file, ["--aot"], "TestRunLayers:0");
     expect(oneProgram.seen).toEqual(plain.seen);
     expect(oneProgram.asked.length).toBe(file === "factory.test.ts" ? 0 : 1);
-    expect((await run(dir, file, ["--aot"], "TestRunLayers:2")).seen).toEqual(plain.seen);
+    // Over layers the module lies in a program below the test file's.
+    const layers = await run(dir, file, ["--aot"], "TestRunLayers:2");
+    expect(layers.seen).toEqual(plain.seen);
+    expect(layers.asked.length).toBe(oneProgram.asked.length);
   },
   240_000,
 );

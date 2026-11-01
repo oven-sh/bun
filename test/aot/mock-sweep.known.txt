@@ -7,99 +7,52 @@
 ~ cjs-jest-mock-none-in-test-loaded
 ~ cjs-jest-mock-none-preload
 ~ cjs-jest-mock-none-before-all
-~ cjs-jest-mock-folder-first
-~ cjs-jest-mock-folder-behind-imports
-~ cjs-jest-mock-folder-in-test-unloaded
-~ cjs-jest-mock-folder-in-test-loaded
-~ cjs-jest-mock-folder-preload
-~ cjs-jest-mock-folder-before-all
 ~ cjs-vi-mock-none-first
 ~ cjs-vi-mock-none-behind-imports
 ~ cjs-vi-mock-none-in-test-unloaded
 ~ cjs-vi-mock-none-in-test-loaded
 ~ cjs-vi-mock-none-preload
 ~ cjs-vi-mock-none-before-all
-~ cjs-vi-mock-folder-first
-~ cjs-vi-mock-folder-behind-imports
-~ cjs-vi-mock-folder-in-test-unloaded
-~ cjs-vi-mock-folder-in-test-loaded
-~ cjs-vi-mock-folder-preload
-~ cjs-vi-mock-folder-before-all
 ~ cjs-jest-doMock-none-first
 ~ cjs-jest-doMock-none-behind-imports
 ~ cjs-jest-doMock-none-in-test-unloaded
 ~ cjs-jest-doMock-none-in-test-loaded
 ~ cjs-jest-doMock-none-preload
 ~ cjs-jest-doMock-none-before-all
-~ cjs-jest-doMock-folder-first
-~ cjs-jest-doMock-folder-behind-imports
-~ cjs-jest-doMock-folder-in-test-unloaded
-~ cjs-jest-doMock-folder-in-test-loaded
-~ cjs-jest-doMock-folder-preload
-~ cjs-jest-doMock-folder-before-all
 ~ cjs-vi-doMock-none-first
 ~ cjs-vi-doMock-none-behind-imports
 ~ cjs-vi-doMock-none-in-test-unloaded
 ~ cjs-vi-doMock-none-in-test-loaded
 ~ cjs-vi-doMock-none-preload
 ~ cjs-vi-doMock-none-before-all
-~ cjs-vi-doMock-folder-first
-~ cjs-vi-doMock-folder-behind-imports
-~ cjs-vi-doMock-folder-in-test-unloaded
-~ cjs-vi-doMock-folder-in-test-loaded
-~ cjs-vi-doMock-folder-preload
-~ cjs-vi-doMock-folder-before-all
 ~ mjs-jest-mock-none-first
 ~ mjs-jest-mock-none-behind-imports
 ~ mjs-jest-mock-none-in-test-unloaded
 ~ mjs-jest-mock-none-in-test-loaded
 ~ mjs-jest-mock-none-preload
 ~ mjs-jest-mock-none-before-all
-~ mjs-jest-mock-folder-first
-~ mjs-jest-mock-folder-behind-imports
-~ mjs-jest-mock-folder-in-test-unloaded
-~ mjs-jest-mock-folder-in-test-loaded
-~ mjs-jest-mock-folder-preload
-~ mjs-jest-mock-folder-before-all
 ~ mjs-vi-mock-none-first
 ~ mjs-vi-mock-none-behind-imports
 ~ mjs-vi-mock-none-in-test-unloaded
 ~ mjs-vi-mock-none-in-test-loaded
 ~ mjs-vi-mock-none-preload
 ~ mjs-vi-mock-none-before-all
-~ mjs-vi-mock-folder-first
-~ mjs-vi-mock-folder-behind-imports
-~ mjs-vi-mock-folder-in-test-unloaded
-~ mjs-vi-mock-folder-in-test-loaded
-~ mjs-vi-mock-folder-preload
-~ mjs-vi-mock-folder-before-all
 ~ mjs-jest-doMock-none-first
 ~ mjs-jest-doMock-none-behind-imports
 ~ mjs-jest-doMock-none-in-test-unloaded
 ~ mjs-jest-doMock-none-in-test-loaded
 ~ mjs-jest-doMock-none-preload
 ~ mjs-jest-doMock-none-before-all
-~ mjs-jest-doMock-folder-first
-~ mjs-jest-doMock-folder-behind-imports
-~ mjs-jest-doMock-folder-in-test-unloaded
-~ mjs-jest-doMock-folder-in-test-loaded
-~ mjs-jest-doMock-folder-preload
-~ mjs-jest-doMock-folder-before-all
 ~ mjs-vi-doMock-none-first
 ~ mjs-vi-doMock-none-behind-imports
 ~ mjs-vi-doMock-none-in-test-unloaded
 ~ mjs-vi-doMock-none-in-test-loaded
 ~ mjs-vi-doMock-none-preload
 ~ mjs-vi-doMock-none-before-all
-~ mjs-vi-doMock-folder-first
-~ mjs-vi-doMock-folder-behind-imports
-~ mjs-vi-doMock-folder-in-test-unloaded
-~ mjs-vi-doMock-folder-in-test-loaded
-~ mjs-vi-doMock-folder-preload
-~ mjs-vi-doMock-folder-before-all
 cjs-jest-doMock-actual-before-all: one two
 cjs-jest-doMock-actual-in-test-unloaded: one two
 cjs-jest-doMock-actual-preload: one two
+cjs-jest-doMock-folder-in-test-loaded: one two
 cjs-jest-doMock-partial-before-all-user-alone: one two
 cjs-jest-doMock-partial-behind-imports-user-alone: one two
 cjs-jest-doMock-partial-first-user-alone: one two
@@ -119,6 +72,7 @@ cjs-jest-mock-actual-first: one two
 cjs-jest-mock-actual-in-test-unloaded: one two
 cjs-jest-mock-actual-preload: one two
 cjs-jest-mock-earlier-preload: one two
+cjs-jest-mock-folder-in-test-loaded: one two
 cjs-jest-mock-partial-before-all-user-alone: one two
 cjs-jest-mock-partial-behind-imports-user-alone: one two
 cjs-jest-mock-partial-first-user-alone: one two
@@ -157,6 +111,9 @@ cjs-vi-doMock-actual-preload: one two
 cjs-vi-doMock-earlier-behind-imports: one two
 cjs-vi-doMock-earlier-first: one two
 cjs-vi-doMock-earlier-in-test-loaded: one two
+cjs-vi-doMock-folder-behind-imports: one two
+cjs-vi-doMock-folder-first: one two
+cjs-vi-doMock-folder-in-test-loaded: one two
 cjs-vi-doMock-marked-behind-imports: one two
 cjs-vi-doMock-marked-first: one two
 cjs-vi-doMock-marked-in-test-loaded: one two
@@ -196,6 +153,7 @@ cjs-vi-mock-actual-first: one two
 cjs-vi-mock-actual-in-test-unloaded: one two
 cjs-vi-mock-actual-preload: one two
 cjs-vi-mock-earlier-preload: one two
+cjs-vi-mock-folder-in-test-loaded: one two
 cjs-vi-mock-partial-before-all-user-alone: one two
 cjs-vi-mock-partial-behind-imports-user-alone: one two
 cjs-vi-mock-partial-first-user-alone: one two
@@ -212,6 +170,7 @@ cjs-vi-mock-whole-in-test-unloaded-user-alone: one two
 mjs-jest-doMock-actual-before-all: one two
 mjs-jest-doMock-actual-in-test-unloaded: one two
 mjs-jest-doMock-actual-preload: one two
+mjs-jest-doMock-folder-in-test-loaded: one two
 mjs-jest-doMock-partial-before-all-user-alone: one two
 mjs-jest-doMock-partial-behind-imports-user-alone: one two
 mjs-jest-doMock-partial-first-user-alone: one two
@@ -231,6 +190,7 @@ mjs-jest-mock-actual-first: one two
 mjs-jest-mock-actual-in-test-unloaded: one two
 mjs-jest-mock-actual-preload: one two
 mjs-jest-mock-earlier-preload: one two
+mjs-jest-mock-folder-in-test-loaded: one two
 mjs-jest-mock-partial-before-all-user-alone: one two
 mjs-jest-mock-partial-behind-imports-user-alone: one two
 mjs-jest-mock-partial-first-user-alone: one two
@@ -269,6 +229,9 @@ mjs-vi-doMock-actual-preload: one two
 mjs-vi-doMock-earlier-behind-imports: one two
 mjs-vi-doMock-earlier-first: one two
 mjs-vi-doMock-earlier-in-test-loaded: one two
+mjs-vi-doMock-folder-behind-imports: one two
+mjs-vi-doMock-folder-first: one two
+mjs-vi-doMock-folder-in-test-loaded: one two
 mjs-vi-doMock-marked-behind-imports: one two
 mjs-vi-doMock-marked-first: one two
 mjs-vi-doMock-marked-in-test-loaded: one two
@@ -308,6 +271,7 @@ mjs-vi-mock-actual-first: one two
 mjs-vi-mock-actual-in-test-unloaded: one two
 mjs-vi-mock-actual-preload: one two
 mjs-vi-mock-earlier-preload: one two
+mjs-vi-mock-folder-in-test-loaded: one two
 mjs-vi-mock-partial-before-all-user-alone: one two
 mjs-vi-mock-partial-behind-imports-user-alone: one two
 mjs-vi-mock-partial-first-user-alone: one two

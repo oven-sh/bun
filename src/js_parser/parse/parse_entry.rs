@@ -286,6 +286,7 @@ impl<'a> Options<'a> {
                 vitest_globals: f.vitest_globals,
                 own_test_globals: f.own_test_globals,
                 no_macros: f.no_macros,
+                output_never_runs: f.output_never_runs,
                 commonjs_named_exports: f.commonjs_named_exports,
                 minify_syntax: f.minify_syntax,
                 is_library: f.is_library,
@@ -2600,6 +2601,17 @@ impl<'a> Parser<'a> {
         );
 
         let ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?;
+
+        // After `to_ast`: its import scan removes a TypeScript `import a = b.c` that nothing reads, and un-counts `b`.
+        if P::<TS, false>::ALLOW_MACROS && !p.macro_.refs.is_empty() {
+            crate::scan::scan_macro_refs::reject_macro_value_uses(
+                &p.macro_.refs,
+                &p.options.features,
+                &ast,
+                p.source,
+                p.log(),
+            );
+        }
 
         if reject_import_statements {
             // An empty range marks a parser-generated record, like the JSX runtime import.

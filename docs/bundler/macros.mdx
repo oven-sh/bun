@@ -51,6 +51,21 @@ Macros are import statements annotated with either:
 - `with { type: 'macro' }` — an import attribute, a Stage 4 ECMAScript proposal
 - `assert { type: 'macro' }` — an import assertion, an earlier incarnation of import attributes that has now been abandoned (but several browsers and runtimes already support it)
 
+Bun removes a macro import and replaces each call of the macro with its result. The import has no value at runtime. If a file still names the import outside of a call after Bun transpiles the file, the build fails. Bun replaces `typeof random` with `"undefined"`.
+
+```ts title="cli.tsx" icon="/icons/typescript.svg"
+import { random } from "./random.ts" with { type: "macro" };
+import { random as randomAtRuntime } from "./random.ts";
+
+console.log(random()); // Bun replaces this call with its result
+
+const alias = random; // error: "random" is a macro import and is not defined at runtime
+
+const atRuntime = randomAtRuntime; // a regular import has a value at runtime
+```
+
+To inline a constant, export a function that returns it and call that function. To use the same export at runtime, import it a second time under another name, without the attribute.
+
 ## Security considerations
 
 You must explicitly import a macro with `{ type: "macro" }` for it to run at bundle-time. These imports have no effect unless you call them, unlike regular JavaScript imports which may have side effects.
@@ -135,6 +150,17 @@ if (returnFalse()) {
   console.log("This code is eliminated");
 }
 ```
+
+Bun looks for the name of a macro import in each file separately, after it folds constants and removes dead code in that file. Tree shaking runs later and does not change which names are errors.
+
+- Bun removes the side of a constant condition that never runs, such as the body of `if (false)`. A name there is not an error.
+- Bun replaces `void random` with `undefined`. Bun removes a function expression that nothing uses, such as `(() => random);`. A name there is not an error.
+- Bun keeps the statement `random;`, so the name is an error.
+- Bun does not check whether anything calls a function or reads a variable. A name there is an error, also where a bundle drops that code.
+- `bun run` and `bun test` remove the code after a `return`, and so does `--minify-syntax`. `bun build` and `Bun.build` keep that code without the option, and the debugger keeps it too. `Bun.Transpiler` keeps it without the option, unless its `target` is `"bun"`. A name there is an error only where Bun keeps the code.
+- Which conditions are constant depends on the command, so a file can build with one command and fail with another. `bun run` and `bun test` replace a `const` that holds a literal and fold arithmetic such as `1 + 1`. A bundle from `bun build` or `Bun.build` does that only with `--minify-syntax`. `bun build`, `Bun.build` and `Bun.Transpiler` replace `process.env.NODE_ENV`, and `bun run` and `bun test` do not.
+
+`bun test --coverage`, `bun -p` and `bun repl` keep dead code, so they do not look for the name. Bun also does not look for the name in a file that a macro loads.
 
 ## Serializability
 

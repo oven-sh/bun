@@ -1179,6 +1179,8 @@ where
                 resp.write_header(b"content-type", &bun_http_types::MimeType::HTML.value);
                 resp.write_header(b"content-encoding", b"gzip");
                 resp.write_header_int(b"content-length", WELCOME_PAGE_HTML_GZ.len() as u64);
+                // `end(data)` writes a content-length of its own unless told this one is written.
+                resp.mark_wrote_content_length_header();
                 if ctx.method == Method::HEAD {
                     ctx.end_without_body(ctx.should_close_connection());
                 } else {
@@ -1191,6 +1193,7 @@ where
             resp.write_status(b"200 OK");
             resp.write_header(b"content-type", &bun_http_types::MimeType::TEXT.value);
             resp.write_header_int(b"content-length", MISSING_CONTENT.len() as u64);
+            resp.mark_wrote_content_length_header();
             ctx.flags.set_has_written_status(true);
             if ctx.method == Method::HEAD {
                 ctx.end_without_body(ctx.should_close_connection());

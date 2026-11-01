@@ -121,7 +121,11 @@ static constexpr ASCIILiteral betterSqlite3Remedy = "\nbetter-sqlite3 13 uses No
 WTF::String loaderErrorMessage(WTF::String&& loaderError, const WTF::String& filename)
 {
     // The Itanium mangling of every member of v8:: and node:: starts with one of these.
-    if (!loaderError.contains("_ZN2v8"_s) && !loaderError.contains("_ZNK2v8"_s) && !loaderError.contains("_ZN4node"_s) && !loaderError.contains("_ZNK4node"_s))
+    auto namesV8Symbol = [](const WTF::String& text) {
+        return text.contains("_ZN2v8"_s) || text.contains("_ZNK2v8"_s) || text.contains("_ZN4node"_s) || text.contains("_ZNK4node"_s);
+    };
+    // The loader repeats the path in its error. A path that has one of them in it proves nothing.
+    if (!namesV8Symbol(loaderError) || namesV8Symbol(filename))
         return WTF::move(loaderError);
     // Nothing registered before the loader failed, so the file name is the only sign of a better-sqlite3 build.
     bool isBetterSqlite3 = filename.endsWith("better_sqlite3.node"_s);

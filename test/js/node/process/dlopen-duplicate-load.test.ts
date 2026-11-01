@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { copyFileSync, mkdirSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, canBuildNodeAddons, isLinux, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, canBuildNodeAddons, isDebug, isLinux, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 // These tests share one node-gyp build of a few addons (the compile
@@ -38,6 +38,7 @@ describe.skipIf(!canBuildNodeAddons())("process.dlopen native addon", () => {
   let missingOtherFunctionPath: string;
   let missingOtherFunctionNamedPath: string;
   let missingBetterSqlite3Path: string;
+  let missingInV8NamedDirectoryPath: string;
   let notALibraryBetterSqlite3Path: string;
 
   beforeAll(() => {
@@ -443,6 +444,7 @@ if (!isMainThread) {
       missingOtherFunctionNamedPath = namedBetterSqlite3(missingOtherFunctionPath, "missing-other-function");
     }
     missingBetterSqlite3Path = join(dir, "missing", "better_sqlite3.node");
+    missingInV8NamedDirectoryPath = join(dir, "_ZN2v8", "better_sqlite3.node");
     mkdirSync(join(dir, "not-a-library"));
     notALibraryBetterSqlite3Path = join(dir, "not-a-library", "better_sqlite3.node");
     writeFileSync(notALibraryBetterSqlite3Path, "not a library");
@@ -902,19 +904,21 @@ if (!isMainThread) {
           },
         });
       },
-      // Like the --compile test in test/napi/napi.test.ts: CI copies and rewrites a bun of about 700 MB here.
-      30 * 1000,
+      // A debug build copies and rewrites itself here: 1.6 GB, which takes 15 s when the file is not cached.
+      isDebug ? 60_000 : undefined,
     );
 
     test.each([
       ["a missing file", () => missingBetterSqlite3Path],
+      // The loader repeats the path in its error, and this one has the start of a mangled v8:: name in it.
+      ["a missing file in a directory named _ZN2v8", () => missingInV8NamedDirectoryPath],
       ["a file that is not a library", () => notALibraryBetterSqlite3Path],
     ])("%s named better_sqlite3.node gets the loader's error", async (_, path) => {
       const { dlopen } = await loadEveryWay(path());
       expect(dlopen).toEqual({
         loaded: false,
         code: "ERR_DLOPEN_FAILED",
-        message: expect.not.stringMatching(/better-sqlite3|bun:sqlite/),
+        message: expect.not.stringMatching(/better-sqlite3|bun:sqlite|Bun does not export/),
       });
     });
 

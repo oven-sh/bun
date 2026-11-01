@@ -133,17 +133,41 @@ function getFunctionName(frame: string): string {
   return words.slice(operator < 0 ? -1 : operator).join(" ");
 }
 
+// The namespaces and the crates of allocators and containers: of what allocates for the function that called it.
+const containers = /^(WTF|bmalloc|std|alloc|core|hashbrown|smallvec|__rustc)$/;
+
 /**
- * Whether the function of a frame is an allocator or a container. The crate or the namespace that its name starts with says
- * whose a function is. A method of Rust has its type first: `<hashbrown::raw::RawTable<T>>::reserve_rehash`. The method of a
- * type that is in no crate, as a slice and a reference are, is taken for the language's own: `<[u8]>::to_vec`.
+ * The crate that has the code of a method of Rust, which a symbolizer writes `<Type>::method` or `<Type as Trait>::method`.
+ *
+ * The trait says it when it is written in a method, or when its crate is none of `containers`: the language has
+ * `<T as <[_]>::to_vec_in::ConvertVec>::to_vec` for every `T`, and Bun has `<&[u8] as bun_js_printer::PrintArg>::print_into`.
+ * Any other trait does not say it, for a crate may give a trait of the language to its own type. Then the type says it. A
+ * reference and a `dyn` are of the crate of what they are of. A slice, a tuple, a pointer and a number are the language's,
+ * which `core` stands for.
  */
+function getCrateOfMethod(method: string): string {
+  // Where the first `<` closes, and where ` as ` is in no other `<`.
+  let depth = 0;
+  let end = 0;
+  let cut = -1;
+  for (; end < method.length; end++) {
+    if (method[end] === "<") depth++;
+    else if (method[end] === ">" && --depth === 0) break;
+    else if (depth === 1 && method.startsWith(" as ", end)) cut = end;
+  }
+  const getCrate = (path: string) =>
+    path.startsWith("<") ? getCrateOfMethod(path) : (/^(\w+)::/.exec(path)?.[1] ?? "core");
+  const trait = cut < 0 ? "" : method.slice(cut + 4, end);
+  if (trait.startsWith("<") || (trait && !containers.test(getCrate(trait)))) return getCrate(trait);
+  return getCrate(method.slice(1, cut < 0 ? end : cut).replace(/^(?:&(?:mut )?|dyn )+/, ""));
+}
+
+/** Whether the function of a frame is an allocator or a container. The namespace or the crate of its code says it. */
 function isAllocator(frame: string): boolean {
   const name = getFunctionName(frame);
   if (/^(malloc|calloc|realloc|posix_memalign|aligned_alloc|pas_|bmalloc_|__rust_|__rdl_)/.test(name)) return true;
   if (/\boperator new(\[\])?$/.test(name)) return true;
-  const library = /^<*(\w+)::/.exec(name)?.[1];
-  return library ? /^(WTF|bmalloc|std|alloc|core|hashbrown|smallvec|__rustc)$/.test(library) : name.startsWith("<");
+  return containers.test(name.startsWith("<") ? getCrateOfMethod(name) : (/^(\w+)::/.exec(name)?.[1] ?? ""));
 }
 
 // Where a frame is, behind its function: an executable and an offset, or a file and a line. The path of the executable may have
@@ -404,6 +428,27 @@ testAnywhere.each(writtenRecords)(
     expect(getAllocatedBy(record)).toBe(allocatedBy);
   },
 );
+
+// Methods of Rust as a symbolizer wrote them for a small program, `app`. The crate has the code of the first ones. The language
+// has the code of the others, and names a type or a closure of the crate in them.
+const methodsOfACrate = [
+  "<[u8] as app::Checksum>::sums",
+  "<alloc::vec::Vec<app::Thing> as app::Checksum>::sums",
+  "<&app::Names as core::iter::traits::collect::IntoIterator>::into_iter",
+  "<&mut app::fill::{closure#0} as core::ops::function::FnMut<(usize,)>>::call_mut",
+  "<dyn app::Shape>::describe",
+  "<<app::Names>::later::{closure#0} as core::ops::function::FnOnce<()>>::call_once::{shim:vtable#0}",
+];
+const methodsOfTheLanguage = [
+  "<[app::Thing]>::to_vec",
+  "<app::Thing as <[_]>::to_vec_in::ConvertVec>::to_vec::<alloc::alloc::Global>",
+  "<alloc::vec::Vec<alloc::vec::Vec<u8>> as alloc::vec::spec_extend::SpecExtend<alloc::vec::Vec<u8>, core::iter::adapters::map::Map<core::slice::iter::Iter<u8>, <[u8] as app::Checksum>::parts::{closure#0}>>>::spec_extend",
+];
+
+testAnywhere("a method of Rust is a container's where the language has its code", () => {
+  expect(methodsOfACrate.filter(isAllocator)).toEqual([]);
+  expect(methodsOfTheLanguage.filter(method => !isAllocator(method))).toEqual([]);
+});
 
 test.skipIf(!isASAN).each(Object.keys(programs))(
   "%s",

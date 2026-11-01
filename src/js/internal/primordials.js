@@ -1,6 +1,7 @@
 // TODO: Use native code and JSC intrinsics for everything in this file.
 // Do not use this file for new code, many things here will be slow especailly when intrinsics for these operations is available.
 // It is primarily used for `internal/util`
+// `bun build --compile --aot` reads src/js/ahead-of-time/internal/primordials.js in place of this file: what changes here changes there.
 
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const ObjectFreeze = Object.freeze;
@@ -96,8 +97,7 @@ const SafeArrayIterator = createSafeIterator(ArrayPrototypeSymbolIterator, Array
 
 const PromisePrototypeThen = $Promise.prototype.$then;
 const PromiseResolve = Promise.$resolve.bind(Promise);
-// Shared scheduler for SafePromiseAllReturnVoid/ReturnArrayLike: `returnVal`
-// is null for the void variant (no result bookkeeping, resolves with nothing).
+// Shared scheduler for SafePromiseAllReturnVoid/ReturnArrayLike: `returnVal` is null for the void variant (no result bookkeeping, resolves with nothing).
 const safePromiseAllCollect = (promises, mapFn, returnVal) =>
   new Promise((resolve, reject) => {
     const { length } = promises;
@@ -160,17 +160,5 @@ export default {
   TypedArrayPrototypeGetByteOffset: getGetter(Uint8Array, "byteOffset"),
   TypedArrayPrototypeGetLength: getGetter(Uint8Array, "length"),
   TypedArrayPrototypeGetSymbolToStringTag: getGetter(Uint8Array, Symbol.toStringTag),
-  Uint8ClampedArray,
-  Uint8Array,
-  Uint16Array,
-  Uint32Array,
-  Int8Array,
-  Int16Array,
-  Int32Array,
-  Float16Array,
-  Float32Array,
-  Float64Array,
-  BigUint64Array,
-  BigInt64Array,
   uncurryThis,
 };

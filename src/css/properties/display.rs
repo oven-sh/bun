@@ -128,7 +128,7 @@ impl DisplayPair {
         }
 
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
 
         // 8 keys → if-chain over `eql_case_insensitive_ascii::<true>` (phf values
         // would have to be const-eval, and `VendorPrefix` bitflags are not).
@@ -239,7 +239,7 @@ pub enum DisplayInside {
 impl DisplayInside {
     fn parse(input: &mut Parser) -> css::Result<Self> {
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
 
         // 10 keys → if-chain over `eql_case_insensitive_ascii::<true>`.
         use bun_core::eql_case_insensitive_ascii as eq;

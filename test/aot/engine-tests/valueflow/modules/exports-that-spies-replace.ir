@@ -1,0 +1,57 @@
+# A reached call of spyOn replaces the exports that its operands may name: one export where the key is listed, every export of the module where it is not. An export that is marked as replaceable already
+# is not reported again, a call that nothing reaches reports nothing, and a module whose namespace object no spy is handed keeps its exports
+# RUN: valueflow-results
+# CHECK-NOT: replaced-export g0
+# CHECK: replaced-export g1
+# CHECK-NOT: replaced-export g2
+# CHECK: replaced-export g3
+# CHECK: replaced-export g4
+# CHECK-NOT: replaced-export g5
+
+module m0 path="main.test.js" displayPath="main.test.js" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}]
+module m1 path="listed.js" displayPath="listed.js" body=f1 exports=[{name="marked" variable=g0}, {name="named" variable=g1}, {name="other" variable=g2}]
+module m2 path="any.js" displayPath="any.js" body=f4 exports=[{name="first" variable=g3}, {name="second" variable=g4}]
+module m3 path="kept.js" displayPath="kept.js" body=f5 exports=[{name="kept" variable=g5}]
+entry module=m0
+variable g0 name="marked" module=m1 declared={type=anything} initialization=Function function=f2 flags=[IsReplaceable]
+variable g1 name="named" module=m1 declared={type=anything} initialization=Function function=f2
+variable g2 name="other" module=m1 declared={type=anything} initialization=Function function=f2
+variable g3 name="first" module=m2 declared={type=anything} initialization=Function function=f2
+variable g4 name="second" module=m2 declared={type=anything} initialization=Function function=f2
+variable g5 name="kept" module=m3 declared={type=anything} initialization=Function function=f2
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=BunTestSpyOn
+    v1 = ModuleNamespace module=m1
+    v2 = String string="marked"
+    v3 = Call v0, -, v1, v2
+    v4 = String string="named"
+    v5 = Call v0, -, v1, v4
+    v6 = ModuleNamespace module=m2
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="input" [isFreeName]
+    v9 = Call v0, -, v6, v8
+    v10 = ModuleNamespace module=m3
+    v11 = PropGet v10 key="kept"
+    Return v11
+}
+function f1 name="listed" module=m1 kind=Module results=[{type=anything}] {
+    Return
+}
+function f2 name="exported" results=[{type=anything}] {
+    Return
+}
+function f3 name="unreached" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=BunTestSpyOn
+    v1 = ModuleNamespace module=m3
+    v2 = String string="kept"
+    v3 = Call v0, -, v1, v2
+    Return
+}
+function f4 name="any" module=m2 kind=Module results=[{type=anything}] {
+    Return
+}
+function f5 name="kept" module=m3 kind=Module results=[{type=anything}] {
+    Return
+}

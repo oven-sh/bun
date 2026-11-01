@@ -6,8 +6,8 @@ use bun_lint::rule::Plugin;
 /// Disallow using `await` in `Promise` method parameters.
 pub struct NoAwaitInPromiseMethods;
 
-const NO_AWAIT_IN_PROMISE_METHODS: Message = Message::new("", "Promise in `Promise.{{method_name}}()` should not be awaited.");
-const REMOVE_AWAIT: Message = Message::new("", "Remove the `await`");
+const NO_AWAIT_IN_PROMISE_METHODS: &Message = &Message::new("", "Promise in `Promise.{{method_name}}()` should not be awaited.");
+const REMOVE_AWAIT: &Message = &Message::new("", "Remove the `await`");
 
 const METHODS: [&str; 4] = ["all", "allSettled", "any", "race"];
 

@@ -526,12 +526,11 @@ impl File<'_> {
     }
 
     /// The number of statements of each kind, if the binder counted them and all of them are nodes. That means none is
-    /// a `for` head that's an expression, a `with` object, or the `B` in `namespace A.B`.
+    /// a `for` head that's an expression, or the `B` in `namespace A.B`.
     fn counted_stmts(&self) -> Option<[u32; StmtTag::COUNT + 1]> {
         let counts = self.counted(kind_counts::STMTS)?;
         let heads = *(self.bound.kind_counts).get(kind_counts::EXPRESSION_LOOP_HEADS)?;
-        (heads == 0 && self.hir.with_bodies.is_empty() && counts[StmtTag::Module as usize + 1] < 2)
-            .then_some(counts)
+        (heads == 0 && counts[StmtTag::Module as usize + 1] < 2).then_some(counts)
     }
 
     /// Same for types. None may be an error with an operand that isn't a node.

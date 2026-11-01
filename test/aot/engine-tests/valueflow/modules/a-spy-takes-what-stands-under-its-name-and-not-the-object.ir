@@ -1,0 +1,30 @@
+# A spy keeps what stands under the name that it is given and may call it, and puts a function of its own there. It reads no other name and hands the object to nobody.
+# So nobody enters the function that the export beside it holds
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f2
+# CHECK: unreached f3
+
+module m0 path="main.test.js" displayPath="main.test.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="used.js" displayPath="used.js" body=f1 exports=[{name="beside" variable=g1}, {name="spiedOn" variable=g0}]
+entry module=m0
+variable g0 name="spiedOn" module=m1 declared={type=anything} initialization=Function function=f2 flags=[IsReplaceable]
+variable g1 name="beside" module=m1 declared={type=anything} initialization=Function function=f3
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=BunTestSpyOn
+    v1 = ModuleNamespace module=m1
+    v2 = String string="spiedOn"
+    v3 = Call v0, -, v1, v2
+    Return v3
+}
+function f1 name="used" module=m1 kind=Module results=[{type=anything}] {
+    Return
+}
+function f2 name="spiedOn" module=m1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="beside" module=m1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

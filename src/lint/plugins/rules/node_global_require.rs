@@ -5,7 +5,7 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 /// Require `require()` calls to be placed at top-level module scope.
 pub struct GlobalRequire;
 
-const GLOBAL_REQUIRE: Message = Message::new("", "Unexpected require().");
+const GLOBAL_REQUIRE: &Message = &Message::new("", "Unexpected require().");
 
 impl Rule for GlobalRequire {
     const META: Meta = Meta::oxlint(Plugin::Node, "global-require", Kind::Suggestion);

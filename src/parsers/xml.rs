@@ -79,7 +79,7 @@ impl XML {
     /// into `E::ObjectJSON` / `E::ArrayJSON` rows whose tape (and every string
     /// that does not borrow the source) lives in `bump`.
     pub fn parse<'a>(
-        source: &'a Source,
+        source: &'a Source<'a>,
         log: &mut Log,
         bump: &'a Bump,
         options: Options,
@@ -92,7 +92,7 @@ impl XML {
     /// the strings in the result are UTF-16 as well. `source` is only what
     /// diagnostics are attributed to and what the length limit is checked on.
     pub fn parse_utf16<'a>(
-        source: &'a Source,
+        source: &'a Source<'a>,
         units: &'a [u16],
         log: &mut Log,
         bump: &'a Bump,
@@ -103,7 +103,7 @@ impl XML {
     }
 
     fn parse_units<'a, U: Unit>(
-        source: &'a Source,
+        source: &'a Source<'a>,
         contents: &'a [U],
         log: &mut Log,
         bump: &'a Bump,
@@ -172,6 +172,13 @@ pub trait Unit: Copy + Eq + Ord + core::hash::Hash + Default + 'static {
     /// The units' storage, for tape strings (whose encoding tag says how
     /// to read them back).
     fn bytes(units: &[Self]) -> &[u8];
+    /// The highway structural-index kernel for this width.
+    fn structural_index_chunk(
+        chunk: &[Self],
+        base_offset: usize,
+        out: &mut [core::mem::MaybeUninit<u32>],
+        state: &mut [u64; 3],
+    ) -> usize;
     /// The fixed keys of the two output shapes, in this unit type.
     const KEY_TEXT: &'static [Self];
     const KEY_NAME: &'static [Self];
@@ -199,6 +206,15 @@ impl Unit for u8 {
     #[inline(always)]
     fn bytes(units: &[Self]) -> &[u8] {
         units
+    }
+    #[inline(always)]
+    fn structural_index_chunk(
+        chunk: &[Self],
+        base_offset: usize,
+        out: &mut [core::mem::MaybeUninit<u32>],
+        state: &mut [u64; 3],
+    ) -> usize {
+        bun_highway::xml_structural_index_chunk(chunk, base_offset, out, state)
     }
     const KEY_TEXT: &'static [Self] = b"#text";
     const KEY_NAME: &'static [Self] = b"name";
@@ -243,7 +259,16 @@ impl Unit for u16 {
     }
     #[inline(always)]
     fn bytes(units: &[Self]) -> &[u8] {
-        bytemuck::cast_slice(units)
+        bun_core::slice_as_bytes(units)
+    }
+    #[inline(always)]
+    fn structural_index_chunk(
+        chunk: &[Self],
+        base_offset: usize,
+        out: &mut [core::mem::MaybeUninit<u32>],
+        state: &mut [u64; 3],
+    ) -> usize {
+        bun_highway::xml_structural_index16_chunk(chunk, base_offset, out, state)
     }
     const KEY_TEXT: &'static [Self] = utf16!(b"#text");
     const KEY_NAME: &'static [Self] = utf16!(b"name");
@@ -789,7 +814,7 @@ struct Scanner<'a, 'log, U: Unit> {
     tag_degraded: bool,
 
     bump: &'a Bump,
-    source: &'a Source,
+    source: &'a Source<'a>,
     log: &'log mut Log,
 }
 
@@ -3121,7 +3146,7 @@ struct Parser<'a, 'log, U: Unit, S: Sink<'a, U>> {
 
 impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
     fn new(
-        source: &'a Source,
+        source: &'a Source<'a>,
         contents: &'a [U],
         log: &'log mut Log,
         bump: &'a Bump,

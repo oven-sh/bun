@@ -9,13 +9,13 @@ use bun_paths::{self as path, PathBuffer};
 use bun_semver::Version;
 use bun_sys::{self as sys, Dir, Fd};
 
+use bun_archive::{ArchiveAppender, ExtractOptions};
 use bun_install::install::{self as Install, DependencyID, ExtractData};
 use bun_install::integrity::Integrity;
 use bun_install::npm::{self as Npm};
 use bun_install::package_manager_real::PackageManager;
 use bun_install::package_manager_real::directories;
 use bun_install::resolution::{Resolution, Tag as ResolutionTag};
-use bun_libarchive::{ArchiveAppender, ExtractOptions};
 use bun_resolver::fs::FileSystem;
 
 use crate::cache_publish::{self, StagedEntry};
@@ -98,7 +98,7 @@ pub(crate) fn build_url(
         version,
         string_buf,
         // Format directly into the store's tail; no intermediate `String`.
-        |args| FileSystem::instance().dirname_store().print(args),
+        |args| FileSystem::get().dirname_store().print(args),
     )
 }
 
@@ -291,7 +291,7 @@ impl ExtractTarball {
                 }
             };
 
-            use bun_libarchive::Archiver;
+            use bun_archive::Archiver;
             let mut zlib_pool = Npm::Registry::BodyPool::get();
             zlib_pool.reset();
             // `defer Npm.Registry.BodyPool.release(zlib_pool)` → PoolGuard's Drop releases.
@@ -302,7 +302,7 @@ impl ExtractTarball {
                 0
             };
 
-            // libarchive gunzips on the fly (`BufferReadStream::open_read`),
+            // `extract_to_dir` gunzips on the fly,
             // so hand it the compressed bytes and never buffer the full tar.
             // Small tarballs still try libdeflate first for speed; the gzip
             // ISIZE trailer (size mod 2^32) is only trusted when small.
@@ -329,7 +329,7 @@ impl ExtractTarball {
                                 libdeflate::Encoding::Gzip,
                             );
                             // libdeflate only reads the first gzip member, so a tarball with more
-                            // than one member is left to libarchive.
+                            // than one member is left to `extract_to_dir`.
                             if result.status == libdeflate::Status::Success
                                 && result.read == tgz_bytes.len()
                             {
@@ -371,7 +371,7 @@ impl ExtractTarball {
                         fn on_first_directory_name(&mut self, first_dirname: &[u8]) {
                             debug_assert!(self.needs_first_dirname);
                             self.needs_first_dirname = false;
-                            *self.outdirname = FileSystem::instance()
+                            *self.outdirname = FileSystem::get()
                                 .dirname_store()
                                 .append(first_dirname)
                                 .expect("unreachable");
@@ -392,13 +392,14 @@ impl ExtractTarball {
                             depth_to_skip: 1,
                             log: PackageManager::verbose_install(),
                             skip_symlinks: true,
+                            new_destination: true,
                             ..Default::default()
                         },
                     )?;
 
                     let lockfile_tag = self.github_resolved.slice();
                     if !lockfile_tag.is_empty() {
-                        resolved = FileSystem::instance()
+                        resolved = FileSystem::get()
                             .dirname_store()
                             .append(lockfile_tag)
                             .expect("unreachable");
@@ -440,6 +441,7 @@ impl ExtractTarball {
                             depth_to_skip: 1,
                             npm: true,
                             log: PackageManager::verbose_install(),
+                            new_destination: true,
                             ..Default::default()
                         },
                     )?;
@@ -685,7 +687,7 @@ impl ExtractTarball {
                 }
             };
 
-            let url = FileSystem::instance()
+            let url = FileSystem::get()
                 .dirname_store()
                 .append(self.url.slice())?;
 
@@ -725,7 +727,7 @@ impl ExtractTarball {
                 );
             }
 
-            let ret_json_path = FileSystem::instance().dirname_store().append(json_path)?;
+            let ret_json_path = FileSystem::get().dirname_store().append(json_path)?;
 
             // Lands in `Task.data.*` (untagged `ManuallyDrop` union); freed by
             // `Task::deinit_payload()` at the `runTasks.rs` re-pool site, which

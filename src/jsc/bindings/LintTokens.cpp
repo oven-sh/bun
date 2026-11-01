@@ -171,6 +171,8 @@ JSObject* createToken(JSGlobalObject* globalObject, LintHost* host, LintTokenLis
     LintTokenShape::Kind shapeKind;
     if (host->isOxlint())
         shapeKind = isComment ? LintTokenShape::OxlintComment : LintTokenShape::OxlintToken;
+    else if (!host->isEspree() && host->hasStartEnd())
+        shapeKind = isRegex ? LintTokenShape::TypeScriptRegexWithStartEnd : LintTokenShape::TypeScriptTokenWithStartEnd;
     else if (!host->isEspree())
         shapeKind = isRegex ? LintTokenShape::TypeScriptRegex : LintTokenShape::TypeScriptToken;
     else if (isComment)
@@ -1516,6 +1518,8 @@ void initializeShapes(VM& vm, JSGlobalObject* globalObject, LintHost* host)
     JSCell* typeScriptLoc = createLazyValue(vm, lintTypeScriptLoc);
     initializeShape(vm, globalObject, host, LintTokenShape::TypeScriptToken, objectPrototype, typeScriptLoc, { typeKey, locKey, rangeKey, valueKey });
     initializeShape(vm, globalObject, host, LintTokenShape::TypeScriptRegex, objectPrototype, typeScriptLoc, { typeKey, locKey, rangeKey, regexKey, valueKey });
+    initializeShape(vm, globalObject, host, LintTokenShape::TypeScriptTokenWithStartEnd, objectPrototype, typeScriptLoc, { typeKey, locKey, startKey, endKey, rangeKey, valueKey });
+    initializeShape(vm, globalObject, host, LintTokenShape::TypeScriptRegexWithStartEnd, objectPrototype, typeScriptLoc, { typeKey, locKey, startKey, endKey, rangeKey, regexKey, valueKey });
 
     JSCell* oxlintLoc = createGetter(globalObject, "get loc"_s, jsLintOxlintLoc);
     initializeShape(vm, globalObject, host, LintTokenShape::OxlintToken, createClass(vm, globalObject, "Token"_s, 0), oxlintLoc, { typeKey, valueKey, regexKey, startKey, endKey, rangeKey, locKey });
@@ -1569,7 +1573,7 @@ void LintTokenState::reset()
 void addLintTokenFunctions(JSGlobalObject* globalObject, JSObject* native)
 {
     VM& vm = globalObject->vm();
-    native->putDirect(vm, Identifier::fromString(vm, "TokenStore"_s), LintHost::from(globalObject)->tokens.constructor.get());
+    Bun::putDirectNamed(vm, native, "TokenStore"_s, LintHost::from(globalObject)->tokens.constructor.get());
 }
 
 } // namespace Bun

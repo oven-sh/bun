@@ -28,6 +28,20 @@ use js_ast::OpCode as Op;
 // `visit_expr_in_out` are surfaced.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+    /// Ends a continuation whose visited target is no chain link. `Expr::can_be_inlined_from_property_access` has the same three arms.
+    fn settle_optional_chain(
+        chain: js_ast::OptionalChain,
+        target: &Data,
+    ) -> Option<js_ast::OptionalChain> {
+        let is_chain_link = match target {
+            Data::EDot(dot) => dot.optional_chain.is_some(),
+            Data::EIndex(index) => index.optional_chain.is_some(),
+            Data::ECall(call) => call.optional_chain.is_some(),
+            _ => false,
+        };
+        (chain == js_ast::OptionalChain::Start || is_chain_link).then_some(chain)
+    }
+
     // PERF(port:noalias): `e: &mut Expr` is lowered to a `noalias` LLVM param, so reads
     // through `e` can be cached in registers across child recursion. The by-value
     // `Expr -> Expr` shape moved 24B in + 24B out per frame; the in-place form moves 8B
@@ -980,6 +994,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ..Default::default()
             },
         );
+        if let Some(written) = e_.optional_chain {
+            e_.optional_chain = Self::settle_optional_chain(written, &e_.target.data);
+        }
 
         match e_.index.data {
             Data::EPrivateIdentifier(mut private) => {
@@ -1509,8 +1526,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
+        let mut chain = e_.optional_chain;
+        if let Some(written) = chain {
+            chain = Self::settle_optional_chain(written, &e_.target.data);
+            e_.optional_chain = chain;
+        }
+
         // `ns?.foo` on an import()/require() namespace local reads `foo`.
-        if e_.optional_chain == Some(js_ast::OptionalChain::Start)
+        if chain == Some(js_ast::OptionalChain::Start)
             && let Data::EIdentifier(id) = e_.target.data
             && p.dynamic_import_namespace_locals.contains_key(&id.ref_)
             && in_.assign_target == js_ast::AssignTarget::None
@@ -1529,7 +1552,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        if e_.optional_chain.is_none() {
+        if chain.is_none() {
             let opts = IdentifierOpts::default()
                 .with_is_call_target(is_call_target)
                 .with_is_template_tag(is_template_tag)
@@ -2047,6 +2070,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && drop_namespace_of_lowered_callee(&p.symbols, &mut e_.target)
         {
             p.did_apply_test_feature = true;
+        }
+
+        if let Some(written) = e_.optional_chain {
+            e_.optional_chain = Self::settle_optional_chain(written, &e_.target.data);
         }
 
         // `Promise.all([import("a"), …]).then(([{x}, ns]) => …)`

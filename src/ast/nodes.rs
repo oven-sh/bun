@@ -658,6 +658,7 @@ pub enum OptionalChain {
 
     /// "a?.b.c" => ".c" is OptionalChain::Continuation
     /// "(a?.b).c" => ".c" is None
+    /// "{}?.b.c" with minify_syntax => ".b" and ".c" are Continuation until the visit pass ends them
     Continuation,
 }
 

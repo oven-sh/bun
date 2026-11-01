@@ -1,5 +1,6 @@
+import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, rss, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 test("native ReadableStream reuses the pull buffer across small reads", async () => {
   // #getInternalBuffer used to rotate to a fresh autoAllocateChunkSize
@@ -114,61 +115,63 @@ test.skipIf(isWindows)("abandoned Bun.file().stream() reader does not leak its f
 const BYTES_TO_WRITE = 500_000;
 
 // https://github.com/oven-sh/bun/issues/12198
-test.skipIf(isWindows)(
-  "Absolute memory usage remains relatively constant when reading and writing to a pipe",
-  async () => {
-    async function write(bytes: number) {
-      const buf = Buffer.alloc(bytes, "foo");
-      await cat.stdin.write(buf);
+test.skipIf(isWindows)("reading and writing to a pipe does not accumulate ArrayBuffers or Uint8Arrays", async () => {
+  async function write(bytes: number) {
+    const buf = Buffer.alloc(bytes, "foo");
+    await cat.stdin.write(buf);
+  }
+  async function read(bytes: number) {
+    let i = 0;
+    while (i < bytes) {
+      const { done, value } = await r.read();
+      // When this test times out, the runner kills `cat`, its stdout closes,
+      // and every further read() resolves {done: true} at once. Without this
+      // check the abandoned loop spins in microtasks forever, the event loop
+      // never runs again, and no later test file makes progress.
+      if (done) throw new Error(`cat stdout closed after ${i} of ${bytes} bytes`);
+      i += value.length;
     }
-    async function read(bytes: number) {
-      let i = 0;
-      while (true) {
-        const { value } = await r.read();
-        i += value?.length ?? 0;
-        if (i >= bytes) {
-          return;
-        }
-      }
-    }
+  }
 
-    async function readAndWrite(bytes = BYTES_TO_WRITE) {
-      await Promise.all([write(bytes), read(bytes)]);
-    }
+  async function readAndWrite(bytes = BYTES_TO_WRITE) {
+    await Promise.all([write(bytes), read(bytes)]);
+  }
 
-    await using cat = Bun.spawn(["cat"], {
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    const r = cat.stdout.getReader() as any;
+  await using cat = Bun.spawn(["cat"], {
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const r = cat.stdout.getReader();
 
-    const rounds = 5000;
-
-    for (let i = 0; i < rounds; i++) {
-      await readAndWrite(BYTES_TO_WRITE);
-    }
+  // The #12198 leak stranded one 16 KB pull buffer per read(), about four
+  // ArrayBuffers per 500 KB round (bun 1.2.2: +437 per 100 rounds). Those
+  // buffers are never written, so their pages never reach RSS: the former
+  // RSS bounds passed on the leaking build even at 5000 rounds.
+  const rounds = 100;
+  function bufferCounts() {
     Bun.gc(true);
-    const before = rss();
+    const { ArrayBuffer = 0, Uint8Array = 0 } = heapStats().objectTypeCounts;
+    return { ArrayBuffer, Uint8Array };
+  }
 
-    for (let i = 0; i < rounds; i++) {
-      await readAndWrite();
-    }
-    Bun.gc(true);
-    const after = rss();
+  for (let i = 0; i < rounds; i++) {
+    await readAndWrite();
+  }
+  const before = bufferCounts();
 
-    for (let i = 0; i < rounds; i++) {
-      await readAndWrite();
-    }
-    Bun.gc(true);
-    const after2 = rss();
-    console.log({ after, after2 });
-    console.log(require("bun:jsc").heapStats());
-    console.log("RSS delta", ((after - before) | 0) / 1024 / 1024);
-    console.log("RSS total", (after / 1024 / 1024) | 0, "MB");
-    // ASAN's quarantine + shadow memory raise the absolute RSS floor and slow
-    // recycling of freed allocations; widen both bounds under bun-asan.
-    expect(after).toBeLessThan((isASAN ? 700 : 250) * 1024 * 1024);
-    expect(after).toBeLessThan(before * (isASAN ? 3 : 1.5));
-  },
-);
+  for (let i = 0; i < rounds; i++) {
+    await readAndWrite();
+  }
+  const after = bufferCounts();
+
+  for (let i = 0; i < rounds; i++) {
+    await readAndWrite();
+  }
+  const after2 = bufferCounts();
+
+  for (const type of ["ArrayBuffer", "Uint8Array"] as const) {
+    expect(after[type] - before[type]).toBeLessThan(rounds / 10);
+    expect(after2[type] - before[type]).toBeLessThan(rounds / 10);
+  }
+});

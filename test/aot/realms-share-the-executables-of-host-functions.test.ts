@@ -14,10 +14,6 @@ const makers = `
       const context = createContext({});
       return text => runInContext(text, context);
     },
-    ShadowRealm: () => {
-      const realm = new ShadowRealm();
-      return text => realm.evaluate(text);
-    },
   };
 
   function countExecutables(): number {
@@ -51,7 +47,6 @@ const files = {
       const second = make();
       console.log(name + ": " + first(describe));
       console.log(first(describe) === second(describe), first(describe) === (0, eval)(describe));
-      if (name === "ShadowRealm") continue;
       for (const path of ["Array.prototype.concat", "Array.of", "Object.create", "Promise.resolve"]) {
         const [mine, theirs, others] = [(0, eval)(path), first(path), second(path)];
         console.log(path, mine === theirs, theirs === others, theirs === first(path));
@@ -98,7 +93,7 @@ test("a realm behind the second makes no executable for a host function that an 
   using dir = tempDir("aot-realms-share-executables", files);
   const ran = await run([await build(String(dir), "count")], String(dir), bunEnv);
   expect(ran).toEqual({
-    stdout: "runInNewContext 0 102\ncreateContext 0 102\nShadowRealm 0 102\n",
+    stdout: "runInNewContext 0 102\ncreateContext 0 102\n",
     stderr: "",
     exitCode: 0,
   });

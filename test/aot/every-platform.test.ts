@@ -1,7 +1,7 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
-import { unsupported } from "./run-programs";
+import { unsupported } from "./harness/commands";
 
 const files = {
   "hello.ts": `
@@ -11,7 +11,7 @@ const files = {
     console.log("hello", JSON.stringify(sum(1000)), await later(21), [3, 1, 2].sort().join(), process.argv.slice(2).join());
   `,
   "hello.test.ts": `
-    import { expect, test } from "bun:test";
+    import { describe, expect, test } from "bun:test";
     test("adds", () => { expect([1, 2, 3].reduce((a, b) => a + b, 0)).toBe(6); });
   `,
 };
@@ -24,50 +24,52 @@ async function run(cwd: string, cmd: string[]) {
   return { stdout, stderr, exitCode, signalCode: proc.signalCode };
 }
 
-test("--aot is not refused on this platform", () => {
-  expect(unsupported).toBeUndefined();
+describe.concurrent("every platform", () => {
+  test("--aot is not refused on this platform", () => {
+    expect(unsupported).toBeUndefined();
+  });
+
+  test("bun build --compile --aot", async () => {
+    using dir = tempDir("aot-every-platform-build", files);
+    const built = await run(String(dir), [bunExe(), "build", "--compile", "--aot", "hello.ts", "--outfile", "hello"]);
+    expect({ ...built, stdout: "" }).toEqual({
+      stdout: "",
+      stderr: expect.not.stringContaining("error"),
+      exitCode: 0,
+      signalCode: null,
+    });
+    const ran = await run(String(dir), [join(String(dir), isWindows ? "hello.exe" : "hello"), "a", "b"]);
+    expect(ran).toEqual({
+      stdout: output + "a,b\n",
+      stderr: expect.stringContaining("[aot] image: "),
+      exitCode: 0,
+      signalCode: null,
+    });
+    expect(ran.stderr).toContain("[aot] module: ");
+  }, 300_000);
+
+  test("bun run --debug-aot", async () => {
+    using dir = tempDir("aot-every-platform-run", files);
+    const ran = await run(String(dir), [bunExe(), "run", "--debug-aot", "hello.ts", "a", "b"]);
+    expect(ran).toEqual({
+      stdout: output + "a,b\n",
+      stderr: expect.stringContaining("[aot] image: "),
+      exitCode: 0,
+      signalCode: null,
+    });
+    expect(ran.stderr).toContain("[aot] module: ");
+  }, 300_000);
+
+  test("bun test --debug-aot", async () => {
+    using dir = tempDir("aot-every-platform-test", files);
+    const ran = await run(String(dir), [bunExe(), "test", "--debug-aot", "hello.test.ts"]);
+    expect({ ...ran, stdout: "" }).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining("1 pass"),
+      exitCode: 0,
+      signalCode: null,
+    });
+    expect(ran.stderr).toContain("[aot] image: ");
+    expect(ran.stderr).toContain("[aot] module: ");
+  }, 300_000);
 });
-
-test("bun build --compile --aot", async () => {
-  using dir = tempDir("aot-every-platform-build", files);
-  const built = await run(String(dir), [bunExe(), "build", "--compile", "--aot", "hello.ts", "--outfile", "hello"]);
-  expect({ ...built, stdout: "" }).toEqual({
-    stdout: "",
-    stderr: expect.not.stringContaining("error"),
-    exitCode: 0,
-    signalCode: null,
-  });
-  const ran = await run(String(dir), [join(String(dir), isWindows ? "hello.exe" : "hello"), "a", "b"]);
-  expect(ran).toEqual({
-    stdout: output + "a,b\n",
-    stderr: expect.stringContaining("[aot] image: "),
-    exitCode: 0,
-    signalCode: null,
-  });
-  expect(ran.stderr).toContain("[aot] module: ");
-}, 300_000);
-
-test("bun run --debug-aot", async () => {
-  using dir = tempDir("aot-every-platform-run", files);
-  const ran = await run(String(dir), [bunExe(), "run", "--debug-aot", "hello.ts", "a", "b"]);
-  expect(ran).toEqual({
-    stdout: output + "a,b\n",
-    stderr: expect.stringContaining("[aot] image: "),
-    exitCode: 0,
-    signalCode: null,
-  });
-  expect(ran.stderr).toContain("[aot] module: ");
-}, 300_000);
-
-test("bun test --debug-aot", async () => {
-  using dir = tempDir("aot-every-platform-test", files);
-  const ran = await run(String(dir), [bunExe(), "test", "--debug-aot", "hello.test.ts"]);
-  expect({ ...ran, stdout: "" }).toEqual({
-    stdout: "",
-    stderr: expect.stringContaining("1 pass"),
-    exitCode: 0,
-    signalCode: null,
-  });
-  expect(ran.stderr).toContain("[aot] image: ");
-  expect(ran.stderr).toContain("[aot] module: ");
-}, 300_000);

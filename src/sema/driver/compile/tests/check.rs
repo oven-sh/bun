@@ -1,6 +1,7 @@
 use super::support::{
-    BuildSummary, DEPENDENCY_MANIFEST, FAILING_DEPENDENCY, IMPORTS_DEPENDENCY, TYPE_ERROR, check,
-    check_only, codes, with_defines, with_program, with_runtime_project,
+    BuildSummary, DEPENDENCY_MANIFEST, FAILING_DEPENDENCY, IMPORTS_DEPENDENCY, LacksBunTypes,
+    PROJECT, TYPE_ERROR, check, check_only, codes, project_disk, with_defines, with_host,
+    with_program, with_runtime_project,
 };
 use crate::{
     BuildDiagnostic, CompileRequest, Locator, Progress, check_and_lower, decide_roles,
@@ -680,4 +681,38 @@ fn export_stars_in_a_cycle_export_every_name() {
             assert_eq!(check_only(program).codes(), [2339]);
         });
     }
+}
+
+#[test]
+fn parameters_without_types_in_a_list_of_functions_close_no_cycle() {
+    let files = [
+        (
+            LacksBunTypes::DECLARATIONS,
+            "declare const provided: any;\n",
+        ),
+        ("main.ts", "provided([(a, b) => {}, (c, d) => {}]);\n"),
+    ];
+    let disk = project_disk(&files, 1);
+    with_host(&LacksBunTypes(&disk), PROJECT, "./main.ts", |program| {
+        let build = check(program, &|checker, _| checker.closed_cycle_count());
+        assert_eq!(build.codes(), [0; 0]);
+        assert_eq!(build.program.lowered, [(program.file("main.ts"), 0)]);
+    });
+}
+
+#[test]
+fn a_thread_gives_memory_back_under_a_hundred_times_in_a_long_check() {
+    let mut before = 30_000;
+    let mut is_due = |files_left: &usize| {
+        let is_due = crate::has_fallen_by_an_eighth(before, *files_left);
+        if is_due {
+            before = *files_left;
+        }
+        is_due
+    };
+    let due: Vec<usize> = (0..30_000).rev().filter(&mut is_due).collect();
+    assert_eq!(due.len(), 74);
+    assert_eq!(due[..4], [26_250, 22_969, 20_098, 17_586]);
+    assert_eq!(due[due.len() - 4..], [3, 2, 1, 0]);
+    assert!(!crate::has_fallen_by_an_eighth(0, 0));
 }

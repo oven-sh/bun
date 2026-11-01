@@ -32,7 +32,9 @@ unsafe extern "C" {
         substrings: *mut JSValue,
     );
     fn JSC__JSString__firstCharacters(this: &JSString, characters: *mut u16, capacity: u32) -> u32;
-    fn JSC__JSString__createUninitializedLatin1(
+    safe fn JSC__JSString__singleLatin1Character(global: &JSGlobalObject, character: u8)
+    -> JSValue;
+    fn JSC__JSString__tryCreateUninitializedLatin1(
         global: &JSGlobalObject,
         length: u32,
         characters: *mut *mut u8,
@@ -45,7 +47,6 @@ mod layout {
     pub(super) const FIBER: usize = 8;
     pub(super) const IS_ROPE: usize = 1;
     pub(super) const IS_SUBSTRING: usize = 2;
-    pub(super) const IS_8BIT: usize = 4;
     pub(super) const ROPE_LENGTH: usize = 16;
     /// The base of a substring is its second fiber, a pointer in two parts.
     pub(super) const FIBER1_LOWER: usize = 20;
@@ -146,10 +147,11 @@ impl JSString {
         })
     }
 
+    /// The width of a substring's characters is that of its base's storage now: a string that is used as a
+    /// property key takes the storage of an equal key, of either width.
     #[inline]
     fn latin1_characters_of_substring(&self, fiber: usize) -> Option<Latin1Characters<'_>> {
-        const SUBSTRING_OF_8BIT: usize = layout::IS_SUBSTRING | layout::IS_8BIT;
-        if fiber & SUBSTRING_OF_8BIT != SUBSTRING_OF_8BIT {
+        if fiber & layout::IS_SUBSTRING == 0 {
             return None;
         }
         // SAFETY: `fiber` says that this cell is a JSRopeString, which has these fields. The
@@ -161,15 +163,13 @@ impl JSString {
             let upper: u16 = self.read_at(layout::FIBER1_UPPER);
             let offset: u32 = self.read_at(layout::FIBER2_LOWER);
             let owner = &*(((upper as usize) << 32 | lower as usize) as *const JSString);
-            let text =
-                &*(owner.read_at::<usize>(layout::FIBER) as *const bun_core::WTFStringImplStruct);
+            let start = offset as usize;
             Some(Latin1Characters {
                 owner,
                 offset,
-                characters: core::slice::from_raw_parts(
-                    text.m_ptr.latin1.add(offset as usize),
-                    length as usize,
-                ),
+                characters: owner
+                    .flat_latin1_characters()?
+                    .get_unchecked(start..start + length as usize),
             })
         }
     }
@@ -220,6 +220,12 @@ impl JSString {
     /// `JSString::MaxLength`.
     pub const MAX_LENGTH: usize = i32::MAX as usize;
 
+    /// The string of one 8-bit character, which every VM already has.
+    #[inline]
+    pub fn single_latin1_character(global: &JSGlobalObject, character: u8) -> JSValue {
+        JSC__JSString__singleLatin1Character(global, character)
+    }
+
     /// A new 8-bit string of `length` characters (2 to [`JSString::MAX_LENGTH`]). SAFETY: `fill` writes all of them, and allocates nothing in the JavaScript heap.
     #[inline(always)]
     pub unsafe fn create_latin1_with(
@@ -227,14 +233,29 @@ impl JSString {
         length: usize,
         fill: impl FnOnce(*mut u8),
     ) -> JSValue {
+        // SAFETY: forwarded.
+        unsafe { Self::try_create_latin1_with(global, length, fill) }
+            .unwrap_or_else(|| bun_core::out_of_memory())
+    }
+
+    /// As [`create_latin1_with`](Self::create_latin1_with), `None` when the characters cannot be allocated.
+    #[inline(always)]
+    pub unsafe fn try_create_latin1_with(
+        global: &JSGlobalObject,
+        length: usize,
+        fill: impl FnOnce(*mut u8),
+    ) -> Option<JSValue> {
         assert!(length >= 2 && length <= Self::MAX_LENGTH);
         let mut characters = core::ptr::null_mut();
         // SAFETY: `characters` receives the address of `length` bytes that the new string owns.
         let string = unsafe {
-            JSC__JSString__createUninitializedLatin1(global, length as u32, &raw mut characters)
+            JSC__JSString__tryCreateUninitializedLatin1(global, length as u32, &raw mut characters)
         };
+        if string.is_empty() {
+            return None;
+        }
         fill(characters);
-        string
+        Some(string)
     }
 }
 

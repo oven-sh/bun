@@ -23,6 +23,7 @@
 #include <sched.h>
 #include <unistd.h>
 #endif
+#include <JavaScriptCore/HeapProfiler.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #if ENABLE(AOT)
 #include "BunAOTCompile.h"
@@ -85,6 +86,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_isASANEnabled, (JSC::JSGlobalObject * global
 #endif
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunction_heapProfilerHasSnapshot, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* heapProfiler = JSC::getVM(globalObject).heapProfiler();
+    return JSValue::encode(jsBoolean(heapProfiler && heapProfiler->mostRecentSnapshot()));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunction_readFreedStringUnderASAN, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
 #if ASAN_ENABLED
@@ -135,7 +142,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_aotBuiltinEntries, (JSC::JSGlobalObject * gl
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* result = constructEmptyObject(globalObject);
-    result->putDirect(vm, Identifier::fromString(vm, "hash"_s), jsEmptyString(vm));
+    Bun::putDirectNamed(vm, result, "hash"_s, jsEmptyString(vm));
     for (auto name : { "entries"_s, "classes"_s, "layouts"_s }) {
         JSArray* entries = constructEmptyArray(globalObject, nullptr);
         RETURN_IF_EXCEPTION(scope, {});

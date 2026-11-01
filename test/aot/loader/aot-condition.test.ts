@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import type { DirectoryTree } from "harness";
-import { describe, test } from "../supported";
+import { describe, test } from "../with-compiler";
 import { describeTree } from "./describe";
 
 const box = {

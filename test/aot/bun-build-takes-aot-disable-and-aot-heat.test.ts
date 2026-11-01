@@ -1,12 +1,14 @@
 // `bun build --compile --aot` takes --aot-disable=<names> and --aot-heat=<word>. Bun.build takes the same words as compile.aotDisable and compile.aotHeat.
 // One function reads both spellings, so the same words give the same executable, byte for byte, and a word that the one rejects the other rejects with the same sentence.
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
+import { unsupported } from "./harness/compiler";
 import { run } from "./harness/run";
-import { unsupported } from "./run-programs";
+import { inTurn } from "./harness/shared-builds";
+import { copyWithoutDebugInformation, withoutDebugInformation } from "./harness/without-debug-information";
 
 const files = {
   "app.ts": `class Point {
@@ -31,27 +33,56 @@ const printed = "333300\n";
 const executableIn = (folder: string) => join(folder, isWindows ? "app.exe" : "app");
 const hashOf = (path: string) => new Bun.CryptoHasher("sha256").update(readFileSync(path)).digest("hex");
 
-async function buildByCommand(root: string, label: string, flags: string[]) {
-  const folder = join(root, label);
-  mkdirSync(folder);
-  const built = await run([bunExe(), "build", "--compile", ...flags, "app.ts", "--outfile", join(folder, "app")], root);
-  return { ...built, executable: executableIn(folder) };
+const dir = tempDir("aot-disable-and-aot-heat", files);
+afterAll(() => dir[Symbol.dispose]());
+const root = String(dir);
+let folders = 0;
+
+function makeFolder() {
+  const label = `build-${folders++}`;
+  mkdirSync(join(root, label));
+  return { label, folder: join(root, label) };
 }
 
+const builtByCommand = new Map<string, ReturnType<typeof buildAnew>>();
+async function buildAnew(flags: string[]) {
+  const { folder } = makeFolder();
+  const built = await inTurn(() =>
+    run(
+      [
+        bunExe(),
+        "build",
+        "--compile",
+        ...flags,
+        ...withoutDebugInformation,
+        "app.ts",
+        "--outfile",
+        join(folder, "app"),
+      ],
+      root,
+    ),
+  );
+  return { ...built, executable: executableIn(folder) };
+}
+/** Once for each list of flags. */
+const buildByCommand = (flags: string[]) => builtByCommand.getOrInsertComputed(flags.join(" "), () => buildAnew(flags));
+
 /** `members`: the text of further members of `compile`. */
-async function buildByCall(root: string, label: string, members: string) {
-  const folder = join(root, label);
-  mkdirSync(folder);
+async function buildByCall(members: string) {
+  const { label, folder } = makeFolder();
+  const executablePath = copyWithoutDebugInformation
+    ? `executablePath: ${JSON.stringify(copyWithoutDebugInformation)}, `
+    : "";
   writeFileSync(
     join(folder, "build.ts"),
     `try {
-  await Bun.build({ entrypoints: ["./app.ts"], compile: { outfile: "./${label}/app", ${members} } as any });
+  await Bun.build({ entrypoints: ["./app.ts"], compile: { outfile: "./${label}/app", ${executablePath}${members} } as any });
 } catch (error) {
   console.log((error as Error).message);
 }
 `,
   );
-  const { stdout, stderr, exitCode } = await run([bunExe(), join(folder, "build.ts")], root);
+  const { stdout, stderr, exitCode } = await inTurn(() => run([bunExe(), join(folder, "build.ts")], root));
   expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   return { message: stdout, executable: executableIn(folder) };
 }
@@ -138,12 +169,10 @@ describe.skipIf(!!unsupported)("Bun.build", () => {
   test.concurrent.each(accepted)(
     "builds what the command line builds: %s",
     async (_, flags, members, changesTheCode) => {
-      using dir = tempDir("aot-disable-and-aot-heat", files);
-      const root = String(dir);
       const [byDefault, byCommand, byCall] = await Promise.all([
-        buildByCommand(root, "default", ["--aot"]),
-        buildByCommand(root, "command", ["--aot", ...flags]),
-        buildByCall(root, "call", `aot: true, ${members}`),
+        buildByCommand(["--aot"]),
+        buildByCommand(["--aot", ...flags]),
+        buildByCall(`aot: true, ${members}`),
       ]);
       expect({ exitCode: byCommand.exitCode, message: byCall.message }).toEqual({ exitCode: 0, message: "" });
       expect(hashOf(byCall.executable)).toBe(hashOf(byCommand.executable));
@@ -155,15 +184,13 @@ describe.skipIf(!!unsupported)("Bun.build", () => {
   test.concurrent.each(rejected)(
     "rejects what the command line rejects: %j",
     async (flags, members, flag, option, sentence) => {
-      using dir = tempDir("aot-disable-and-aot-heat", files);
-      const root = String(dir);
-      const byCommand = await buildByCommand(root, "command", ["--aot", ...flags]);
+      const byCommand = await buildByCommand(["--aot", ...flags]);
       expect({ stdout: byCommand.stdout, stderr: byCommand.stderr, exitCode: byCommand.exitCode }).toEqual({
         stdout: "",
         stderr: `error: ${flag}: ${sentence}\n`,
         exitCode: 1,
       });
-      const byCall = await buildByCall(root, "call", `aot: true, ${members}`);
+      const byCall = await buildByCall(`aot: true, ${members}`);
       expect(byCall.message).toBe(`${option}: ${sentence}\n`);
       expect([byCommand.executable, byCall.executable].filter(existsSync)).toEqual([]);
     },
@@ -179,19 +206,14 @@ describe.skipIf(!!unsupported)("Bun.build", () => {
       "compile.aotDisable",
     ],
   ] as [string[], string, string, string][])("without aot, rejects %j", async (flags, members, flag, option) => {
-    using dir = tempDir("aot-disable-and-aot-heat", files);
-    const root = String(dir);
-    const byCommand = await buildByCommand(root, "command", flags);
+    const byCommand = await buildByCommand(flags);
     expect({ stdout: byCommand.stdout, stderr: byCommand.stderr, exitCode: byCommand.exitCode }).toEqual({
       stdout: "",
       stderr: `error: ${flag} requires --aot\n`,
       exitCode: 1,
     });
-    for (const [label, aot] of [
-      ["absent", ""],
-      ["false", "aot: false, "],
-    ]) {
-      const byCall = await buildByCall(root, label, aot + members);
+    for (const aot of ["", "aot: false, "]) {
+      const byCall = await buildByCall(aot + members);
       expect(byCall.message).toBe(`${option} requires compile.aot: true\n`);
       expect(existsSync(byCall.executable)).toBe(false);
     }
@@ -207,19 +229,16 @@ describe.skipIf(!!unsupported)("Bun.build", () => {
     [`aotHeat: 1`, "compile.aotHeat", "string"],
     [`aotHeat: ["everything-is-cold"]`, "compile.aotHeat", "string"],
   ])("rejects a value of another type: %s", async (members, option, type) => {
-    using dir = tempDir("aot-disable-and-aot-heat", files);
-    const byCall = await buildByCall(String(dir), "call", `aot: true, ${members}`);
+    const byCall = await buildByCall(`aot: true, ${members}`);
     expect(byCall.message).toStartWith(`The "${option}" property must be of type ${type}`);
     expect(existsSync(byCall.executable)).toBe(false);
   });
 
-  test("takes every word that its type lists for aotHeat, and each gives another executable", async () => {
+  test.concurrent("takes every word that its type lists for aotHeat, and each gives another executable", async () => {
     const types = readFileSync(join(import.meta.dir, "..", "..", "packages", "bun-types", "bun.d.ts"), "utf8");
     const words = Array.from(/type AotHeat =([^;]+);/.exec(types)![1].matchAll(/"([^"]+)"/g), match => match[1]);
     expect(words).toContain("everything-is-cold");
-    using dir = tempDir("aot-disable-and-aot-heat", files);
-    const root = String(dir);
-    const built = await Promise.all(words.map(word => buildByCall(root, word, `aot: true, aotHeat: "${word}"`)));
+    const built = await Promise.all(words.map(word => buildByCall(`aot: true, aotHeat: "${word}"`)));
     expect(built.map(({ message }) => message)).toEqual(words.map(() => ""));
     expect(new Set(built.map(({ executable }) => hashOf(executable))).size).toBe(words.length);
     for (const { executable } of built)

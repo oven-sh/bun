@@ -3,11 +3,11 @@
 // A form of such a read that took 2 to 12 instructions more went unseen by ten sessions of a large application a side: the operation is counted here.
 // Each row names a reader of ./lone-reads-in-cold-code/main.ts and how many more instructions a call of it may take than a call of the function that reads nothing.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
-import { measureCommand } from "../analysis-scaling/measure-check";
+import { countsInstructions, measureCommand } from "../analysis-scaling/measure-check";
+import { built, spawned, withoutDebugInformation } from "../harness/commands";
 import { withSteadyCollections } from "../harness/counted-run";
-import { built, spawned, withoutDebugInformation } from "../run-programs";
 import { beforeAll, describe, test } from "../supported";
 
 const root = join(import.meta.dir, "lone-reads-in-cold-code");
@@ -26,8 +26,8 @@ const iterations = 2_000_000;
 const skipped =
   isDebug || isASAN
     ? "a debug or ASAN build counts other instructions"
-    : isWindows
-      ? "it counts with perf_event_open or /usr/bin/time -l"
+    : !countsInstructions()
+      ? "instructions are not counted here"
       : undefined;
 if (skipped) console.error(`SKIPPED: test/aot/perf/lone-reads-in-cold-code.test.ts: ${skipped}`);
 

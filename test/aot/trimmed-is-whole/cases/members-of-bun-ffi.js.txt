@@ -1,4 +1,5 @@
 // Bun.FFI is the object behind bun:ffi. A program names one of its members and calls it.
+//@ build --no-builtin-modules
 function attempt(work) {
   try {
     console.log("answers", typeof work());

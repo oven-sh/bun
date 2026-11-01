@@ -11,6 +11,7 @@ use bun_sema::hir::{
     self, Call, ExprId, ExprKind, Flags, FnId, FnKind, MemberKey, StmtId, StmtKind,
 };
 use bun_sema::program::{FileId, Files, Sym};
+use bun_sema::util::SharedSort;
 use rustc_hash::FxHashSet;
 
 use super::OwnFields;
@@ -118,7 +119,7 @@ impl FileLowering<'_, '_, '_, '_> {
             return OwnFields::default().finish();
         };
         let mut creations = creations.unwrap_or_default();
-        creations.sort_by_key(|it| (it.is_deferred, it.end, Reverse(it.start)));
+        creations.shared_sort_by_key(|it| (it.is_deferred, it.end, Reverse(it.start)));
 
         let limit = self.inputs.limits.get(LimitId::FieldsInKeyOrder);
         let mut created_names = FxHashSet::default();

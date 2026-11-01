@@ -1,4 +1,5 @@
 use super::mention_use::MentionUse;
+use super::module_cache::{is_module_cache, is_table_of_loaders};
 use super::resolver::{ExprState, ResolvedValue, Resolver};
 use crate::builtins::table::{
     self, BuiltinFlags, BuiltinId, BuiltinKind, CallsForTexts, Intrinsic,
@@ -134,8 +135,15 @@ impl Resolver<'_, '_> {
             } else if makes_value {
                 self.output.mentioned.push(id);
             }
+            if is_module_cache(id) {
+                self.note_use_of_module_cache(expr, id);
+            }
+            if is_table_of_loaders(id) {
+                self.note_use_of_table_of_loaders(expr, id);
+            }
             match self.classify_use(expr) {
                 MentionUse::Called(call) if self.is_import_site(call) => {}
+                MentionUse::Called(call) if self.asks_for_symbol_that_host_ignores(call, id) => {}
                 MentionUse::Called(call) => {
                     self.output.called.push(id);
                     if makes_require(id) && self.find_made_require(call).is_none() {
@@ -177,6 +185,24 @@ impl Resolver<'_, '_> {
         };
         self.find_texts_of(operand)
             .is_some_and(|texts| texts.iter().all(is_other))
+    }
+
+    // `Symbol.for("mine")`
+    fn asks_for_symbol_that_host_ignores(&self, call: ExprId, id: BuiltinId) -> bool {
+        let hir = self.input.hir;
+        let ExprKind::Call(call) = hir[call].kind else {
+            return false;
+        };
+        let Some(operand) = hir.ids(hir[call].args).next() else {
+            return false;
+        };
+        let names = self.input.names;
+        id == BuiltinId::SymbolFor
+            && !matches!(hir[operand].kind, ExprKind::Spread(_))
+            && self.find_texts_of(operand).is_some_and(|texts| {
+                let mut texts = texts.iter();
+                !texts.any(|&text| names.is_text_of_symbol_for_startup_loads(text))
+            })
     }
 
     // `process.on("exit", listener);`: the call itself says that the entry does not call what it calls for some texts alone.
@@ -234,7 +260,7 @@ impl Resolver<'_, '_> {
         }
     }
 
-    fn holds(&self, symbol: SymbolId, id: BuiltinId) -> bool {
+    pub(super) fn holds(&self, symbol: SymbolId, id: BuiltinId) -> bool {
         matches!(self.held.get(&symbol), Some(Some(held)) if held.path.id == id)
     }
 

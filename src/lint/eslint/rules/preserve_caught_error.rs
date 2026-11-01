@@ -10,27 +10,27 @@ pub struct PreserveCaughtError {
     error_class_names: Vec<(Box<[u8]>, usize)>,
 }
 
-const MISSING_CAUSE: Message = Message::new(
+const MISSING_CAUSE: &Message = &Message::new(
     "missingCause",
     "There is no `cause` attached to the symptom error being thrown.",
 );
-const INCORRECT_CAUSE: Message = Message::new(
+const INCORRECT_CAUSE: &Message = &Message::new(
     "incorrectCause",
     "The symptom error is being thrown with an incorrect `cause`.",
 );
-const INCLUDE_CAUSE: Message = Message::new(
+const INCLUDE_CAUSE: &Message = &Message::new(
     "includeCause",
     "Include the original caught error as the `cause` of the symptom error.",
 );
-const MISSING_CATCH_ERROR_PARAM: Message = Message::new(
+const MISSING_CATCH_ERROR_PARAM: &Message = &Message::new(
     "missingCatchErrorParam",
     "The caught error is not accessible because the catch clause lacks the error parameter. Start referencing the caught error using the catch parameter.",
 );
-const PARTIALLY_LOST_ERROR: Message = Message::new(
+const PARTIALLY_LOST_ERROR: &Message = &Message::new(
     "partiallyLostError",
     "Re-throws cannot preserve the caught error as a part of it is being lost due to destructuring.",
 );
-const CAUGHT_ERROR_SHADOWED: Message = Message::new(
+const CAUGHT_ERROR_SHADOWED: &Message = &Message::new(
     "caughtErrorShadowed",
     "The caught error is being attached as `cause`, but is shadowed by a closer scoped redeclaration.",
 );

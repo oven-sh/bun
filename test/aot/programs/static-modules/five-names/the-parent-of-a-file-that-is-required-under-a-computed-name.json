@@ -1,1 +1,0 @@
-{ "entryPoints": ["./child.cjs"], "skipInShell": "it needs Bun's modules" }

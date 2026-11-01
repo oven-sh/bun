@@ -1,0 +1,522 @@
+# `try .. catch` in the body of a `for..in` loop, in typed and untyped code.
+# @ts-ignore
+# FORM: AsRead
+# RUN: lower-to-air size f20
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="untyped-loops-with-a-try.js" displayPath="untyped-loops-with-a-try.js" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="main.ts" displayPath="main.ts" body=f19 requests=[{target=m0 completes=true isHoisted=true}, {target=m0 completes=true}] namespaceLayout=L(m1)
+entry module=m1
+layout L0 module=m0 position=2282 fields=[{key="addsInTheHandler" declared={type=undefined|null|function|f5 flags=[IsExpected]} flags=[IsRequired]}, {key="deletesInTheBody" declared={type=undefined|null|function|f3 flags=[IsExpected]} flags=[IsRequired]}, {key="deletesInTheHandler" declared={type=undefined|null|function|f4 flags=[IsExpected]} flags=[IsRequired]}, {key="firstThatWorks" declared={type=undefined|null|function|f2 flags=[IsExpected]} flags=[IsRequired]}, {key="nested" declared={type=undefined|null|function|f6 flags=[IsExpected]} flags=[IsRequired]}, {key="oneBehindTheOther" declared={type=undefined|null|function|f7 flags=[IsExpected]} flags=[IsRequired]}, {key="sweep" declared={type=undefined|null|function|f1 flags=[IsExpected]} flags=[IsRequired]}, {key="theLoopInTheTry" declared={type=undefined|null|function|f9 flags=[IsExpected]} flags=[IsRequired]}, {key="withFinally" declared={type=undefined|null|function|f8 flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[6, 3, 1, 2, 0, 4, 5, 8, 7] ownFieldCount=9
+layout L1 module=m1 position=1954 fields=[{key="a" declared={type=undefined|null|number|L2} flags=[IsRequired]}, {key="b" declared={type=undefined|null|number|L2} flags=[IsRequired]}, {key="c" declared={type=undefined|null|number|L2} flags=[IsRequired]}, {key="d" declared={type=undefined|null|number|L2} flags=[IsRequired]}] flags=[IsWrittenUnderDictionaryType] ownFieldCount=4
+layout L2 module=m1 position=1959 fields=[{key="options" declared={type=number}}] ownFieldCount=1
+data d0 root=Array{contents=undefined|null|string} module=m1
+data d1 root=Object{layout=L1 members=[{key="a" value=Object{layout=L2 members=[{key="options" value=Number{value=1}}]}}, {key="b" value=Object{layout=L2 members=[{key="options" value=Number{value=2}}]}}, {key="c" value=Object{layout=L2 members=[{key="options" value=Number{value=3}}]}}, {key="d" value=Object{layout=L2 members=[{key="options" value=Number{value=4}}]}}]} module=m1
+data d2 root=Array{contents=anything elements=[String{value="web"}]} module=m1
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="churn" module=m1 declared={type=f20 flags=[IsFromCompiler]} initialization=Function function=f20 flags=[IsImmutable]
+variable g2 name="m" module=m1 declared={type=anything|absent} flags=[IsImmutable]
+variable g3 name="fresh" module=m1 declared={type=undefined|null|function|absent|f25 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f5
+    v3 = Convert v2 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f9
+    v5 = Convert v4 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewObject layout=L0
+    v7 = Convert v1 declared={type=undefined|null|function|f2 flags=[IsExpected]}
+    PropDefine v6, v7 key="firstThatWorks"
+    v9 = Convert v3 declared={type=undefined|null|function|f5 flags=[IsExpected]}
+    PropDefine v6, v9 key="addsInTheHandler"
+    v11 = Convert v5 declared={type=undefined|null|function|f9 flags=[IsExpected]}
+    PropDefine v6, v11 key="theLoopInTheTry"
+    v13 = FinishObject v6
+    PutModuleVariable v13 variable=g0
+    v15 = Undefined
+    Return v15
+}
+function f1 name="sweep" module=m0 position=14 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="firstThatWorks" module=m0 position=289 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function, v1: undefined|null|object):
+    v2 = Undefined
+    v3 = Null
+    v4 = Boolean
+    v5 = Convert v4 declared={type=undefined|boolean flags=[IsExpected]}
+    v6 = Null
+    v7 = ForInOpen v1
+    Jump -> next b1(v3, v2, v5, v6, v2)
+  b1(v8, v9, v10, v11, v12):
+    LoopHint
+    v14 = ForInStep v7, v1
+    v15 = ResultAt v14 index=1
+    v16 = Convert v15 declared={type=undefined|null|string flags=[IsExpected]}
+    v17 = ElemGet v1, v16
+    Jump -> next b2()
+  b2() handler=b7(v10, v8, v17):
+    v18 = String string="bad"
+    Jump -> next b3(v17)
+  b3(v19) handler=b7(v10, v8, v19):
+    v20 = Call v0, -, v19 calleeName="func"
+    Jump -> next b4()
+  b4() handler=b7(v10, v20, v19):
+    v21 = Boolean boolean=true
+    v22 = Convert v21 declared={type=undefined|boolean flags=[IsExpected]}
+    Jump -> next b5()
+  b5() handler=b7(v22, v20, v19):
+    Jump -> next b6()
+  b6():
+    Jump -> next b8(v22, v20, v19, v11)
+  b7(v23, v24, v25) role=CatchHandler:
+    v26 = CatchValue
+    Jump -> next b8(v23, v24, v25, v26)
+  b8(v27, v28, v29, v30):
+    v31 = Convert v27 declared={type=boolean flags=[IsExpected]}
+    v32 = ToBoolean v31
+    Branch v32 -> taken b9(| 0), notTaken b10(| 0)
+  b9(v33):
+    v34 = Convert v33 declared={type=boolean flags=[IsExpected]}
+    v35 = String string=" at "
+    v36 = Add v28, v35
+    v37 = Add v36, v16
+    v38 = String string=" of "
+    v39 = Add v37, v38
+    v40 = Add v39, v29
+    v41 = Convert v40 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v41
+  b10(v42):
+    Jump -> next b1(v28, v29, v42, v30, v16)
+}
+function f3 name="deletesInTheBody" module=m0 position=731 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 name="deletesInTheHandler" module=m0 position=941 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 name="addsInTheHandler" module=m0 position=1131 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object, v1: undefined|null|function):
+    v2 = String string=""
+    v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]}
+    v4 = ForInOpen v0
+    Jump -> next b1(v3)
+  b1(v5):
+    LoopHint
+    v7 = ForInStep v4, v0
+    v8 = ResultAt v7 index=1
+    v9 = Convert v8 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b2()
+  b2() handler=b4():
+    Jump -> next b3()
+  b3():
+    Jump -> next b5(v5)
+  b4() role=CatchHandler:
+    v10 = String string="new"
+    v11 = Add v10, v9
+    v12 = Integer integer=1
+    ElemSet v0, v11, v12
+    v14 = String string="!"
+    v15 = Add v5, v14
+    v16 = Convert v15 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b5(v16)
+  b5(v17):
+    v18 = Add v17, v9
+    v19 = Convert v18 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b1(v19)
+}
+function f6 name="nested" module=m0 position=1354 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f7 name="oneBehindTheOther" module=m0 position=1634 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f8 name="withFinally" module=m0 position=1874 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f9 name="theLoopInTheTry" module=m0 position=2077 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object, v1: undefined|null|function):
+    v2 = String string=""
+    v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b1()
+  b1() handler=b7(v3):
+    v4 = ForInOpen v0
+    Jump -> next b2(v3)
+  b2(v5) handler=b7(v5):
+    LoopHint
+    v7 = ForInStep v4, v0
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Branch v8 -> taken b3(), notTaken b5()
+  b3() handler=b7(v5):
+    Jump -> next b4()
+  b4():
+    Jump -> next b8(v5)
+  b5() handler=b7(v5):
+    v10 = Convert v9 declared={type=undefined|null|string flags=[IsExpected]}
+    v11 = Call v1, -, v10 calleeName="act"
+    v12 = Add v5, v10
+    v13 = Convert v12 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b6()
+  b6() handler=b7(v13):
+    Jump -> next b2(v13)
+  b7(v14) role=CatchHandler:
+    v15 = String string="!"
+    v16 = Add v14, v15
+    v17 = Convert v16 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b8(v17)
+  b8(v18):
+    v19 = ForInOpen v0
+    Jump -> next b9(v18)
+  b9(v20):
+    LoopHint
+    v22 = ForInStep v19, v0
+    v23 = ResultAt v22
+    v24 = ResultAt v22 index=1
+    Branch v23 -> taken b10(), notTaken b11()
+  b10():
+    v25 = Convert v20 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v25
+  b11():
+    v26 = Convert v24 declared={type=undefined|null|string flags=[IsExpected]}
+    v27 = Add v20, v26
+    v28 = Convert v27 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b9(v28)
+}
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f16 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f17 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f19 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f21
+    v1 = Convert v0 declared={type=f21 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = GetModuleVariable variable=g0
+    v3 = Convert v2 declared={type=undefined|null|L0 flags=[IsExpected]}
+    PutModuleVariable v3 variable=g2
+    v5 = Data data=d0
+    v6 = Convert v5 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    v7 = NewClosure function=f22
+    v8 = Convert v7 declared={type=undefined|null|function|f22|f23|f24 flags=[OmitsNull, OmitsUndefined]}
+    v9 = NewClosure function=f23
+    v10 = Convert v9 declared={type=undefined|null|function|f23 flags=[OmitsNull, OmitsUndefined]}
+    v11 = NewClosure function=f24
+    v12 = Convert v11 declared={type=undefined|null|function|f24 flags=[OmitsNull, OmitsUndefined]}
+    v13 = NewClosure function=f25
+    v14 = Convert v13 declared={type=undefined|null|function|f25 flags=[OmitsNull, OmitsUndefined]}
+    PutModuleVariable v14 variable=g3
+    v16 = Data data=d1
+    v17 = String string="first, at once"
+    v18 = NewClosure function=f31
+    v19 = Call v1, -, v17, v18 calleeName="block"
+    v20 = String string="nothing throws"
+    v21 = NewArray v20, v8 contents=undefined|null|string|function|f22|f23|f24
+    v22 = String string="all throw"
+    v23 = NewArray v22, v10 contents=undefined|null|string|function|f22|f23|f24
+    v24 = String string="one throws"
+    v25 = NewArray v24, v12 contents=undefined|null|string|function|f22|f23|f24
+    v26 = NewArray v21, v23, v25 contents=undefined|null|Array<undefined|null|string|function|f22|f23|f24>
+    v27 = Convert v26 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|string|function|f22|f23|f24>> flags=[OmitsNull, OmitsUndefined]}
+    v28 = IteratorOpen v27
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v30 = IteratorResume v28
+    v31 = ResultAt v30 index=1
+    Jump -> next b2()
+  b2() handler=b6():
+    v32 = Convert v31 declared={type=undefined|null|Array<undefined|null|string|function|f22|f23|f24> flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v33 = IteratorOpen v32 elementCount=2 [isDestructuring]
+    Jump -> next b3()
+  b3() handler=b5():
+    v34 = IteratorResume v33 stepIndex=0
+    v35 = ResultAt v34 index=1
+    v36 = Convert v35 declared={type=undefined|null|string} illTypedCause=Assertion
+    v37 = IteratorResume v33 stepIndex=1
+    v38 = ResultAt v37 index=1
+    v39 = Convert v38 declared={type=undefined|null|function|f22|f23|f24} illTypedCause=Assertion
+    Jump -> next b4()
+  b4() handler=b6():
+    v40 = String string="a key added in the handler, "
+    v41 = Add v40, v36
+    v42 = NewClosure v39 function=f36
+    v43 = Call v1, -, v41, v42 calleeName="block"
+    v44 = String string="the loop in the try, "
+    v45 = Add v44, v36
+    v46 = NewClosure v39 function=f40
+    v47 = Call v1, -, v45, v46 calleeName="block"
+    Jump -> next b1()
+  b5() role=IterationCleanup subject=v33 handler=b6():
+    v48 = CatchException
+    Rethrow v48
+  b6() role=IterationCleanup subject=v28:
+    v49 = CatchException
+    Rethrow v49
+}
+function f20 name="churn" module=m1 position=509 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    v2 = Integer integer=1
+    v3 = Add v0, v2
+    v4 = Convert v3 declared={type=number}
+    v5 = Integer integer=2
+    v6 = Add v0, v5
+    v7 = Convert v6 declared={type=number}
+    v8 = Integer integer=3
+    v9 = Add v0, v8
+    v10 = Convert v9 declared={type=number}
+    v11 = Integer integer=4
+    v12 = Add v0, v11
+    v13 = Convert v12 declared={type=number}
+    v14 = Integer integer=5
+    v15 = Add v0, v14
+    v16 = Convert v15 declared={type=number}
+    v17 = Integer integer=6
+    v18 = Add v0, v17
+    v19 = Convert v18 declared={type=number}
+    v20 = Integer integer=7
+    v21 = Add v0, v20
+    v22 = Convert v21 declared={type=number}
+    v23 = Integer integer=8
+    v24 = Add v0, v23
+    v25 = Convert v24 declared={type=number}
+    v26 = Integer integer=9
+    v27 = Add v0, v26
+    v28 = Convert v27 declared={type=number}
+    v29 = Integer integer=10
+    v30 = Add v0, v29
+    v31 = Convert v30 declared={type=number}
+    v32 = Double number=1.5
+    v33 = Mul v0, v32
+    v34 = Convert v33 declared={type=number}
+    v35 = Double number=2.5
+    v36 = Mul v0, v35
+    v37 = Convert v36 declared={type=number}
+    v38 = Integer
+    v39 = Convert v38 declared={type=number}
+    Jump -> next b1(v4, v7, v10, v13, v16, v19, v22, v25, v28, v31, v34, v37, v39)
+  b1(v40: number, v41: number, v42: number, v43: number, v44: number, v45: number, v46: number, v47: number, v48: number, v49: number, v50: number, v51: number, v52: number):
+    LoopHint
+    v54 = Convert v52 declared={type=i32 flags=[IsExpected]}
+    v55 = Integer integer=2
+    v56 = Less v54, v55
+    Branch v56 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v57):
+    v58 = Convert v57 declared={type=i32 flags=[IsExpected]}
+    v59 = BitXor v41, v58
+    v60 = Add v40, v59
+    v61 = Convert v60 declared={type=number}
+    v62 = Integer integer=31
+    v63 = BitAnd v42, v62
+    v64 = Add v41, v63
+    v65 = Convert v64 declared={type=number}
+    v66 = Integer integer=1
+    v67 = BitOr v43, v66
+    v68 = Add v42, v67
+    v69 = Convert v68 declared={type=number}
+    v70 = BitXor v44, v61
+    v71 = Add v43, v70
+    v72 = Convert v71 declared={type=number}
+    v73 = BitAnd v45, v65
+    v74 = Add v44, v73
+    v75 = Convert v74 declared={type=number}
+    v76 = BitOr v46, v69
+    v77 = Add v45, v76
+    v78 = Convert v77 declared={type=number}
+    v79 = BitXor v47, v72
+    v80 = Add v46, v79
+    v81 = Convert v80 declared={type=number}
+    v82 = BitAnd v48, v75
+    v83 = Add v47, v82
+    v84 = Convert v83 declared={type=number}
+    v85 = BitOr v49, v78
+    v86 = Add v48, v85
+    v87 = Convert v86 declared={type=number}
+    v88 = BitXor v61, v81
+    v89 = Add v49, v88
+    v90 = Convert v89 declared={type=number}
+    v91 = Double number=0.5
+    v92 = Mul v51, v91
+    v93 = Add v50, v92
+    v94 = Convert v93 declared={type=number}
+    v95 = Double number=0.25
+    v96 = Mul v94, v95
+    v97 = Add v51, v96
+    v98 = Convert v97 declared={type=number}
+    v99 = Increment v58
+    v100 = Convert v99 declared={type=number}
+    Jump -> next b1(v61, v65, v69, v72, v75, v78, v81, v84, v87, v90, v94, v98, v100)
+  b3(v101):
+    v102 = ToBoolean v1
+    Branch v102 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v103):
+    v104 = GetModuleVariable variable=g1
+    v105 = Integer integer=63
+    v106 = BitAnd v40, v105
+    v107 = Integer integer=1
+    v108 = Sub v103, v107
+    v109 = Call v104, -, v106, v108 calleeName="churn"
+    v110 = Convert v109 declared={type=number}
+    v111 = Add v110, v41
+    v112 = Add v111, v42
+    v113 = Add v112, v43
+    v114 = Add v113, v44
+    v115 = Add v114, v45
+    v116 = Add v115, v46
+    v117 = Add v116, v47
+    v118 = Add v117, v48
+    v119 = Add v118, v49
+    v120 = Add v119, v50
+    v121 = Add v120, v51
+    v122 = Convert v121 declared={type=number}
+    Return v122
+  b5(v123):
+    v124 = Integer
+    v125 = GreaterEq v0, v124
+    Branch v125 -> taken b6(| 0), notTaken b7(| 0)
+  b6(v126):
+    v127 = Builtin builtin=GlobalThis
+    v128 = PropGet v127 key="Error" [isFreeName]
+    v129 = Convert v128 declared={type=builtin(Error) flags=[IsExpected]}
+    v130 = String string="thrown"
+    v131 = Construct v129, -, v130 calleeName="Error"
+    v132 = Convert v131 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    Throw v132
+  b7(v133):
+    v134 = Add v40, v41
+    v135 = Add v134, v42
+    v136 = Add v135, v43
+    v137 = Add v136, v44
+    v138 = Add v137, v45
+    v139 = Add v138, v46
+    v140 = Add v139, v47
+    v141 = Add v140, v48
+    v142 = Add v141, v49
+    v143 = Add v142, v50
+    v144 = Add v143, v51
+    v145 = Convert v144 declared={type=number}
+    Return v145
+}
+function f21 name="block" module=m1 position=224 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|function|f26|f27|f28|f29|f30|f31|f32|f33|f34|f35|f36|f37|f38|f39|f40|f41|f42|f43 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|function|f26|f27|f28|f29|f30|f31|f32|f33|f34|f35|f36|f37|f38|f39|f40|f41|f42|f43):
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = Call v1 calleeName="body"
+    Jump -> next b2()
+  b2():
+    Jump -> next b4()
+  b3() role=CatchHandler:
+    Jump -> next b4()
+  b4():
+    v3 = Undefined
+    Return v3
+}
+function f22 name="quiet" module=m1 position=1090 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] functionTypes=[f46] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f23 name="loud" module=m1 position=1128 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] functionTypes=[f47] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Undefined
+    Return v1
+}
+function f24 name="atB" module=m1 position=1186 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] functionTypes=[f48] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = String string="b"
+    v2 = GetModuleVariable variable=g1
+    v3 = PropGet v0 key="length"
+    v4 = Convert v3 declared={type=number} illTypedCause=Assertion
+    v5 = Integer integer=3
+    v6 = Call v2, -, v4, v5 calleeName="churn"
+    v7 = Undefined
+    Return v7
+}
+function f25 name="fresh" module=m1 position=1275 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f49] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L1
+    v1 = FinishObject v0
+    v2 = Convert v1 declared={type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}
+    Return v2
+}
+function f26 module=m1 position=2155 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f51] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f27 module=m1 position=2216 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f52] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f28 module=m1 position=2275 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f53] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f29 module=m1 position=2337 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f54] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f30 module=m1 position=2383 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f55] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f31 module=m1 position=2487 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f56] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g2
+    v1 = CheckInitialized v0 name="m"
+    v2 = Convert v1 declared={type=undefined|null|object flags=[IsExpected]}
+    v3 = PropGet v2 key="firstThatWorks"
+    v4 = Convert v3 declared={type=undefined|null|function flags=[IsExpected]}
+    v5 = NewClosure function=f44
+    v6 = Data data=d2
+    v7 = Call v4, v2, v5, v6 calleeKey="firstThatWorks" calleeName="m.firstThatWorks"
+    ReturnCall v7
+}
+function f32 module=m1 position=2562 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f57] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f33 module=m1 position=2792 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f22|f23|f24 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f59] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f34 module=m1 position=2881 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f22|f23|f24 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f60] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f35 module=m1 position=2980 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f22|f23|f24 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f61] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f36 module=m1 position=3061 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f22|f23|f24 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f62] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function|f22|f23|f24):
+    v1 = GetModuleVariable variable=g2
+    v2 = CheckInitialized v1 name="m"
+    v3 = Convert v2 declared={type=undefined|null|object flags=[IsExpected]}
+    v4 = PropGet v3 key="addsInTheHandler"
+    v5 = Convert v4 declared={type=undefined|null|function flags=[IsExpected]}
+    v6 = GetModuleVariable variable=g3
+    v7 = CheckInitialized v6 name="fresh"
+    v8 = Call v7 calleeName="fresh"
+    v9 = Convert v8 declared={type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}
+    v10 = Call v5, v3, v9, v0 calleeKey="addsInTheHandler" calleeName="m.addsInTheHandler"
+    ReturnCall v10
+}
+function f37 module=m1 position=3128 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f22|f23|f24 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f63] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f38 module=m1 position=3222 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f22|f23|f24 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f64] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f39 module=m1 position=3314 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f22|f23|f24 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f65] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f40 module=m1 position=3389 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f22|f23|f24 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f66] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function|f22|f23|f24):
+    v1 = GetModuleVariable variable=g2
+    v2 = CheckInitialized v1 name="m"
+    v3 = Convert v2 declared={type=undefined|null|object flags=[IsExpected]}
+    v4 = PropGet v3 key="theLoopInTheTry"
+    v5 = Convert v4 declared={type=undefined|null|function flags=[IsExpected]}
+    v6 = GetModuleVariable variable=g3
+    v7 = CheckInitialized v6 name="fresh"
+    v8 = Call v7 calleeName="fresh"
+    v9 = Convert v8 declared={type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}
+    v10 = Call v5, v3, v9, v0 calleeKey="theLoopInTheTry" calleeName="m.theLoopInTheTry"
+    ReturnCall v10
+}
+function f41 module=m1 position=3460 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f22|f23|f24 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f67] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f42 module=m1 position=3540 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f22|f23|f24 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f68] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f43 module=m1 position=3614 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f22|f23|f24 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f69] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f44 module=m1 position=2510 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = String string="got "
+    v2 = Add v1, v0
+    v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v3
+}
+function f45 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f46 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f58]
+function f47 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f46, f58]
+function f48 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f46, f58]
+function f49 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f50 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f51 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f45]
+function f52 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f45]
+function f53 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f45]
+function f54 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f45]
+function f55 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f45]
+function f56 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f45]
+function f57 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f45]
+function f58 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f50]
+function f59 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f45]
+function f60 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f45]
+function f61 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f45]
+function f62 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f45]
+function f63 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f45]
+function f64 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f45]
+function f65 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f45]
+function f66 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f45]
+function f67 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f45]
+function f68 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f45]
+function f69 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f45]
+# -- generated: churn
+# CHECK-LABEL: function {{*}}name="churn"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 189, patchpoints: 28, rare instructions: 836
+# CHECK-NEXT: end of function f20

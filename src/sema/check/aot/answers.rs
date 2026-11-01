@@ -37,6 +37,12 @@ pub struct QueryStatistics {
     pub members_gave_up: [u32; GaveUp::COUNT],
     /// See `Checker::closed_cycle_count`.
     pub closed_cycles: u32,
+    /// See `Checker::union_members_compared`.
+    pub union_members_compared: u64,
+    /// How often the type of a parameter, a variable, a result or an expression was inferred.
+    pub types_inferred: u64,
+    /// How often the uses of a parameter, a variable, `this` or an expression were walked.
+    pub usages_walked: u64,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -177,6 +183,14 @@ pub struct CheckedMember {
     pub checked: CheckedType,
     pub is_optional: bool,
     pub is_readonly: bool,
+}
+
+/// A member that a type and a base of it have under one name, with different types.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct MemberTypedOtherwise {
+    pub kind_in_base: ObjectMemberKind,
+    pub checked: TypeId,
+    pub in_base: TypeId,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

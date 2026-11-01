@@ -411,8 +411,8 @@ impl Bound<'_> {
         self.runtime.import_meta_may_be_modified
     }
 
-    /// The file writes `import.meta`, or a `require` or a `__filename` that is the file's own. Without one of them no expression in it is the
-    /// file's `require`, one made for the file, or `import.meta.require`.
+    /// The file writes `import.meta`, or a `require`, a `module` or a `__filename` that is the file's own. Without one of them no expression in it
+    /// is the file's `require`, one made for the file, or `import.meta.require`.
     pub fn may_name_own_require(&self) -> bool {
         self.runtime.may_name_own_require
     }
@@ -512,6 +512,14 @@ impl Bound<'_> {
         self.runtime.is_computed() && {
             let indexes = &self.runtime.early_error_redeclarations;
             indexes.binary_search(&(redeclaration as u32)).is_ok()
+        }
+    }
+
+    /// The imports whose names mean another symbol where the program runs, each with that symbol: `Declarations::takes_name_of_imports`.
+    pub fn names_taken_from_imports(&self) -> &[(SymbolId, SymbolId)] {
+        match self.runtime.is_computed() {
+            true => &self.runtime.declarations.names_taken_from_imports,
+            false => &[],
         }
     }
 

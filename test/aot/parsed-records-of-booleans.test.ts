@@ -1,11 +1,11 @@
 // JSON.parse makes a record where the names in the text are the fields of a record that typed code takes. Each value goes straight into its slot.
 // A boolean is as ordinary a value in JSON as a number, so a record with ten booleans may not cost much more to make than the same record with ten numbers in their place.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "node:path";
-import { measureCommand } from "./analysis-scaling/measure-check";
+import { countsInstructions, measureCommand } from "./analysis-scaling/measure-check";
+import { built, spawned } from "./harness/commands";
 import { withSteadyCollections } from "./harness/counted-run";
-import { built, spawned } from "./run-programs";
 import { test } from "./supported";
 
 const letters = [..."abcdefghij"];
@@ -53,8 +53,8 @@ export {};
 const skipped =
   isDebug || isASAN
     ? "a debug or ASAN build counts other instructions"
-    : isWindows
-      ? "it counts with perf_event_open or /usr/bin/time -l"
+    : !countsInstructions()
+      ? "instructions are not counted here"
       : undefined;
 if (skipped) console.error(`SKIPPED: test/aot/parsed-records-of-booleans.test.ts: ${skipped}`);
 

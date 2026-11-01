@@ -20,8 +20,8 @@ fn member_holder(id: BuiltinId) -> BuiltinId {
     }
 }
 
-struct KeyName {
-    name: BuiltinName,
+pub(super) struct KeyName {
+    pub(super) name: BuiltinName,
     mutability: Mutability,
     has_side_effects: bool,
 }
@@ -41,7 +41,9 @@ impl Resolver<'_, '_> {
             true => holder_mutability,
             false => holder_mutability.min(location.mutability),
         };
-        if location.holder != Some(object) {
+        if location.holder != Some(object)
+            || self.input.replaced.binary_search(&(found as u32)).is_ok()
+        {
             mutability = mutability.min(Mutability::ConstantUnlessWritten);
         }
         Some(BuiltinPath {
@@ -124,7 +126,7 @@ impl Resolver<'_, '_> {
         ExprState::of_path(self.find_global(name))
     }
 
-    fn find_key_name(&self, key: MemberKey) -> Option<KeyName> {
+    pub(super) fn find_key_name(&self, key: MemberKey) -> Option<KeyName> {
         match key {
             MemberKey::Name(name) => Some(KeyName {
                 name: self.input.names.get(name)?,

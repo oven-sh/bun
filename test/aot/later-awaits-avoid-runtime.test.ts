@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "./harness/run";
-import { test } from "./supported-with-counted-calls";
+import { test } from "./supported";
 
 // The promises are counted a list of free cells at a time, and the last list is lost: a block, which is 64 KB on some targets.
 const turns = 60_000;

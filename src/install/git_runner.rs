@@ -499,7 +499,7 @@ fn read_package_json(
             return Err(Error::InstallFailed);
         }
     };
-    let path = bun_resolver::fs::FileSystem::instance()
+    let path = bun_resolver::fs::FileSystem::get()
         .dirname_store()
         .append(json_path);
     package_dir.close();

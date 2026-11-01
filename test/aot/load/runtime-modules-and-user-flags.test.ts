@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
-import { slot, spawned } from "../run-programs";
+import { slot, spawned } from "../harness/commands";
 import { describe, test } from "../supported";
 
 const exe = (name: string) => name + (isWindows ? ".exe" : "");
@@ -78,7 +78,69 @@ const programsWithoutBunTypes: [name: string, source: string, build: Build, stdo
   ],
 ];
 
+const smallModules = ["node:events", "node:os", "node:punycode", "node:querystring", "node:string_decoder"];
+const optionSets: [name: string, compilerOptions: Record<string, boolean>][] = [
+  ["loose", { strict: false }],
+  [
+    "every option that only reports",
+    {
+      strict: true,
+      noUnusedLocals: true,
+      noUnusedParameters: true,
+      noImplicitReturns: true,
+      noImplicitOverride: true,
+      noFallthroughCasesInSwitch: true,
+      noUncheckedIndexedAccess: true,
+      exactOptionalPropertyTypes: true,
+      noPropertyAccessFromIndexSignature: true,
+      allowUnreachableCode: false,
+      allowUnusedLabels: false,
+    },
+  ],
+];
+
 describe.concurrent("compile/aot/load/runtime-modules-and-user-flags", () => {
+  test.each(optionSets)(
+    "the tsconfig.json of the program says nothing about Bun's modules: %s",
+    (_name, compilerOptions) =>
+      slot(async () => {
+        using dir = tempDir("aot-load-user-flags", {
+          "tsconfig.json": JSON.stringify({
+            compilerOptions: {
+              target: "ESNext",
+              module: "Preserve",
+              moduleResolution: "bundler",
+              noEmit: true,
+              types: [],
+              allowJs: true,
+              ...compilerOptions,
+            },
+          }),
+          "main.cjs": `console.log([${smallModules.map(name => `typeof require("${name}")`).join(", ")}].join());\n`,
+        });
+        const folder = String(dir);
+        const program = join(folder, exe("program"));
+        const built = await spawned(
+          [bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", program],
+          folder,
+          bunEnv,
+        );
+        const diagnostics = (built.stdout + built.stderr).split(/\r?\n/).filter(line => /^(error|warn)\b/.test(line));
+        expect({ diagnostics, exitCode: built.exitCode, signal: built.signal }).toEqual({
+          diagnostics: [],
+          exitCode: 0,
+          signal: null,
+        });
+        expect(await spawned([program], folder, COMPILED)).toEqual({
+          stdout: "function,object,object,object,object\n",
+          stderr: expect.any(String),
+          exitCode: 0,
+          signal: null,
+        });
+      }),
+    600_000,
+  );
+
   test.each(cases)(
     "%s",
     (_name, flags, source, argument, expected) =>

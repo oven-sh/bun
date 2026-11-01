@@ -1,1 +1,0 @@
-{ "skipInShell": "it asks for Bun.stdin, Bun.stdout and Bun.stderr, which the jsc shell does not provide" }

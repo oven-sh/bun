@@ -2,7 +2,7 @@
 // Only the value that the body uses is converted.
 
 // RUN(UNUSED): link
-// UNUSED: module [[entry]] path="{{*}}sloppy-written-this"
+// UNUSED: module [[entry]] path="{{*}}sloppy-written-this.cts"
 // UNUSED: function [[unused]] name="unused" module=[[entry]] {{*}}flags=[IsSloppy, HasThis, {{*}}thisType={type=anything}
 // UNUSED: b0([[this]]: anything):
 // UNUSED-NOT: ToThis
@@ -10,7 +10,7 @@
 // UNUSED: Return
 
 // RUN(USED): link
-// USED: module [[entry]] path="{{*}}sloppy-written-this"
+// USED: module [[entry]] path="{{*}}sloppy-written-this.cts"
 // USED: function [[used]] name="used" module=[[entry]] {{*}}flags=[IsSloppy, HasThis, {{*}}thisType={type=anything}
 // USED: b0([[this]]: anything):
 // USED-NOT: Convert [[this]]

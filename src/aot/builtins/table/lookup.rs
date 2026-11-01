@@ -51,6 +51,11 @@ impl BuiltinEntry {
     pub fn implemented_by(&self) -> &'static [RuntimeFunction] {
         self.dependencies().implemented_by
     }
+
+    /// What hangs on the operands of the entry, or on what is done with a value that it hands out.
+    pub fn guessed_functions(&self) -> &'static [RuntimeFunction] {
+        self.dependencies().guessed
+    }
 }
 
 pub fn class_data(class: BuiltinClass) -> &'static ClassData {
@@ -103,22 +108,18 @@ pub fn own_member(holder: BuiltinId, name: BuiltinName) -> Option<BuiltinId> {
 
 /// What the export `name` holds in the module whose `require` answers `module_object`.
 pub fn find_export(module_object: BuiltinId, name: BuiltinName) -> ExportLookup {
-    let held_by_namespace = match entry(module_object).module {
-        Some(module) => module_data(module).exports_held_by_namespace,
-        None => &[],
-    };
-    if held_by_namespace.contains(&name) {
-        return ExportLookup::HeldByNamespace;
+    if let Some(module) = entry(module_object).module.map(module_data) {
+        if module.exports_held_by_namespace.contains(&name) {
+            return ExportLookup::HeldByNamespace;
+        }
+        if module.exports_holding_module_object.contains(&name) {
+            return ExportLookup::Found(module_object);
+        }
     }
-    let Some(member) = own_member(canonical_id(module_object), name) else {
-        return ExportLookup::Unlisted;
-    };
-    let is_module_object = has_flag(member, BuiltinFlags::IS_DEFAULT_EXPORT);
-    ExportLookup::Found(if is_module_object {
-        module_object
-    } else {
-        member
-    })
+    match own_member(canonical_id(module_object), name) {
+        Some(member) => ExportLookup::Found(member),
+        None => ExportLookup::Unlisted,
+    }
 }
 
 pub fn global(name: BuiltinName) -> Option<BuiltinId> {
@@ -274,6 +275,18 @@ pub fn well_known_symbol(id: BuiltinId) -> Option<WellKnownSymbol> {
     Some(SYMBOL_CONSTANTS[position].2)
 }
 
+pub fn is_callable(id: BuiltinId) -> bool {
+    match entry(id).kind {
+        BuiltinKind::Constructor | BuiltinKind::Function | BuiltinKind::Method => true,
+        BuiltinKind::Prototype => canonical_id(id) == BuiltinId::FunctionPrototype,
+        BuiltinKind::Namespace
+        | BuiltinKind::Accessor
+        | BuiltinKind::DataProperty
+        | BuiltinKind::Constant
+        | BuiltinKind::NativeBinding => false,
+    }
+}
+
 pub fn is_legal_builtin_constant(id: BuiltinId) -> bool {
     let entry = entry(id);
     match entry.kind {
@@ -329,6 +342,11 @@ pub fn host_reads(context: HostReadContext) -> impl Iterator<Item = &'static Hos
 /// Whether `builtin`, which is a canonical id, makes its answer out of text or bytes, and may make it with the layouts of the type that the answer is written under.
 pub fn is_parser(builtin: BuiltinId) -> bool {
     PARSERS.binary_search(&builtin).is_ok()
+}
+
+/// Whether `builtin`, which is a canonical id, answers a query that settles to rows.
+pub fn answers_query(builtin: BuiltinId) -> bool {
+    QUERY_FUNCTIONS.binary_search(&builtin).is_ok()
 }
 
 /// The ways to call or construct `builtin`, which is a canonical id, so that nothing a program can see happens when nobody uses the result.

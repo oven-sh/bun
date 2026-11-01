@@ -1,4 +1,0 @@
-{
-  "skipInShell": "it uses what Bun provides and the jsc shell does not: Bun.gc and process",
-  "runWithASAN": "objects of the program are changed between two reads of one turn of a loop, and collections run between the turns"
-}

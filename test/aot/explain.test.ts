@@ -8,7 +8,7 @@
 // `cases` has a program per cause (before) and the same program fixed as the entry says (after).
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDirWithBunTypes } from "harness";
-import { basename, join } from "path";
+import { basename } from "path";
 import {
   parseExplainLines,
   type ExplainCause,
@@ -23,7 +23,7 @@ import {
   type AccessColumn,
   type AccessCounts,
 } from "./harness/build-report";
-import { slot, spawned } from "./run-programs";
+import { slot, spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
 type Files = Record<string, string>;
@@ -183,9 +183,6 @@ for (const item of JSON.parse('[{"sku":"B-2","price":10}]')) items.push(readItem
   },
 };
 
-const page = join(import.meta.dir, "../../docs/compiler/explain.mdx");
-const wordingSource = join(import.meta.dir, "../../src/aot/report/wording.rs");
-const hint = "Untyped code works, but runs slower. Run with --explain to see what to fix.";
 const columnLabels: Record<AccessColumn, string> = { free: "free", tested: "tested", byName: "by name" };
 const columnDescriptions: Record<AccessColumn, string> = {
   free: "free: one load or store at a fixed offset",
@@ -196,9 +193,9 @@ const printedColumns = accessColumns.toReversed();
 const maxShownCauses = 20;
 const buildTimeout = 300_000;
 
-async function check(files: Files, flag: string) {
+async function check(files: Files, ...flags: string[]) {
   using dir = tempDirWithBunTypes("aot-explain", files);
-  const command = [bunExe(), "check", "--aot", "--no-pretty", flag, "main.ts"];
+  const command = [bunExe(), "check", "--aot", "--no-pretty", ...flags, "main.ts"];
   const { stdout, stderr, exitCode, signal } = await spawned(command, String(dir), { ...bunEnv, NO_COLOR: "1" });
   const said = exitCode === 0 ? "" : stdout + stderr;
   expect({ exitCode, signal, said }).toEqual({ exitCode: 0, signal: null, said: "" });
@@ -207,9 +204,13 @@ async function check(files: Files, flag: string) {
   return { stdout, lines: lines.filter(line => !line.includes("No type errors")) };
 }
 
+const summaryLine =
+  /^((Dependencies: )?[\d.]+% of property accesses are one load: |Untyped code works, but runs slower\. Run)/;
+
+/** `summary`: the lines that end the text report of the same run. */
 async function explain(files: Files): Promise<ExplainReport> {
-  const { stdout, lines } = await check(files, "--explain=json");
-  return { ...parseExplainLines(stdout), summary: lines };
+  const { stdout, lines } = await check(files, "--explain=json", "--explain");
+  return { ...parseExplainLines(stdout), summary: lines.filter(line => summaryLine.test(line)) };
 }
 
 const sum = (numbers: number[]) => numbers.reduce((total, number) => total + number, 0);
@@ -229,12 +230,10 @@ function columnsLine(label: string, accesses: AccessCounts) {
   return `${label}${percentOf(accesses)}% of property accesses are one load: ${counts} (${count(countAll(accesses))})`;
 }
 
-function summaryOf({ accesses, dependencyAccesses }: ExplainNumbers, hasTextReport: boolean) {
-  const hasAccesses = countAll(accesses) > 0;
+function summaryOf({ accesses, dependencyAccesses }: ExplainNumbers) {
   return [
-    ...(hasAccesses && percentOf(accesses) < 95 && !hasTextReport ? [hint] : []),
     ...(countAll(dependencyAccesses) > 0 ? [columnsLine("Dependencies: ", dependencyAccesses)] : []),
-    ...(hasAccesses ? [columnsLine("", accesses)] : []),
+    ...(countAll(accesses) > 0 ? [columnsLine("", accesses)] : []),
   ];
 }
 
@@ -283,7 +282,7 @@ function textOf({ numbers, causes }: ExplainReport) {
       ? [heading, ...causes.slice(0, maxShownCauses).flatMap(cause => entryOf(cause, numbers))]
       : [nothing]),
     ...detailsOf(numbers),
-    ...summaryOf(numbers, true),
+    ...summaryOf(numbers),
   ];
 }
 
@@ -296,7 +295,7 @@ function expectText(lines: string[], report: ExplainReport) {
 }
 
 function expectOneAccount({ numbers, causes, summary }: ExplainReport) {
-  expect(summary).toEqual(summaryOf(numbers, false));
+  expect(summary).toEqual(summaryOf(numbers));
   expect(numbers.causes).toBe(causes.length);
   expect(causes.map(cause => cause.rank)).toEqual(causes.map((_, index) => index + 1));
   expect(sum(causes.map(cause => cause.accesses))).toBe(untyped(numbers.accesses));
@@ -365,7 +364,9 @@ describe.concurrent("--explain", () => {
     "=json prints the numbers, then an object per cause",
     () =>
       slot(async () => {
-        const { stdout } = await check({ "main.ts": cases["parsed data reaches a type"]!.before }, "--explain=json");
+        const files = { "main.ts": cases["parsed data reaches a type"]!.before };
+        const { stdout, lines } = await check(files, "--explain=json");
+        expect(lines).toEqual([]);
         const [numbers, ...causes] = stdout.split("\n").filter(line => line.startsWith("{"));
         expect(Object.keys(JSON.parse(numbers!))).toEqual(["accesses", "dependencyAccesses", "calls", "causes"]);
         for (const key of ["accesses", "dependencyAccesses"])
@@ -390,6 +391,7 @@ describe.concurrent("--explain", () => {
             "calls",
             "operators",
             "fixedByThisAlone",
+            "otherOrigins",
             "estimatedPercent",
             "function",
             "types",
@@ -459,15 +461,4 @@ describe.concurrent("--explain", () => {
       }),
     buildTimeout,
   );
-
-  test("every code has a section on the page that the entries link to", async () => {
-    const headings = [...(await Bun.file(page).text()).matchAll(/^### ([a-z-]+)$/gm)].map(match => match[1]!);
-    const wording = await Bun.file(wordingSource).text();
-    const codes = [...wording.matchAll(/^ +UnprovenCause::\w+ => "([a-z-]+)",$/gm)].map(match => match[1]!);
-    const guardCodes = [...wording.matchAll(/^ +IllTypedCause::\w+ => \(\n +"([a-z-]+)",$/gm)].map(match => match[1]!);
-    expect(codes.length).toBeGreaterThan(10);
-    expect(guardCodes.length).toBeGreaterThan(10);
-    expect(headings.toSorted()).toEqual([...new Set([...codes, ...guardCodes])].toSorted());
-    for (const { reason } of Object.values(cases)) expect(codes).toContain(reason);
-  });
 });

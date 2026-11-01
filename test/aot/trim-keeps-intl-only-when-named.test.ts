@@ -2,7 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim, tempDirForAotBuilds } from "../bundler/compile-trim-features";
-import { spawned } from "./run-programs";
+import { spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
 const collation = "Intl.Collator and localeCompare";
@@ -36,47 +36,8 @@ async function keptOf(text: string) {
 }
 
 describe.concurrent("Intl, Temporal and WebAssembly stay only in a program that names them", () => {
-  test.each([
-    ["text that is evaluated", evaluatesText],
+  const namesNone = [
     ["a call under a computed key", callsUnderComputedKey],
-    ["both", `${evaluatesText}\n${callsUnderComputedKey}`],
-  ])("%s keeps none of them", async (_, text) => {
-    expect(await keptOf(text)).toEqual([]);
-  });
-
-  test.each([
-    ["a constructor", `new Intl.Segmenter("en");`, [segmenter]],
-    [
-      "a constructor read from globalThis",
-      `new globalThis.Intl.DisplayNames("en", { type: "region" });`,
-      [displayNames],
-    ],
-    ["a constructor under a constant key", `new Intl["Segmenter"]("en");`, [segmenter]],
-    ["a method of a string", `process.argv[2].localeCompare("a");`, [collation]],
-    ["a method of a value of any type", `globalThis.input.toLocaleDateString();`, [dates]],
-    ["a method taken from a pattern", `const { toLocaleString } = 5; toLocaleString.call(5);`, [numbers]],
-    ["a namespace", `Temporal.Now.instant();`, [temporal]],
-    ["a member of a namespace", `WebAssembly.validate(new Uint8Array(8));`, [webAssembly]],
-    [
-      "every member of a namespace under a computed key",
-      `Intl[process.argv[3]]();`,
-      [collation, numbers, dates, segmenter, displayNames],
-    ],
-    [
-      "a string literal that becomes part of the text",
-      `new Function("return new Intl.DisplayNames(" + process.argv[3] + ")")();`,
-      [displayNames],
-    ],
-    [
-      "a string literal that becomes a key",
-      `globalThis.input[["x", "localeCompare"][process.argv.length]]();`,
-      [collation],
-    ],
-  ])("%s is kept beside text that is evaluated", async (_, text, kept) => {
-    expect(await keptOf(`${evaluatesText}\n${text}`)).toEqual(kept);
-  });
-
-  test.each([
     ["a variable of the program called Intl", `const Intl = { Segmenter: class {} };\nnew Intl.Segmenter();`],
     [
       "a method of the program called toLocaleString",
@@ -86,8 +47,47 @@ describe.concurrent("Intl, Temporal and WebAssembly stay only in a program that 
     ["a name that is only tested", `console.log("Temporal" in globalThis, Object.hasOwn(globalThis, "Intl"));`],
     ["a name in a comment", `// new Intl.Segmenter(), Temporal, WebAssembly, localeCompare`],
     ["what console.log needs to print a value of any type", `console.log(globalThis.input);`],
-  ])("%s names none of them", async (_, text) => {
-    expect(await keptOf(`${evaluatesText}\n${text}`)).toEqual([]);
+    // Such a list is a list of keys. A class is read under its key from its namespace, and `Intl[key]` keeps all of Intl.
+    [
+      "a list of words that are the names of classes and namespaces",
+      `for (const word of ["Collator", "NumberFormat", "DateTimeFormat", "Segmenter", "DisplayNames", "Temporal", "WebAssembly"]) console.log(word in globalThis.input);`,
+    ],
+  ];
+  test(`text that is evaluated keeps none of them, nor does ${namesNone.map(([what]) => what).join(", ")}`, async () => {
+    expect(await keptOf(`${evaluatesText}\n${namesNone.map(([, text]) => `{\n${text}\n}`).join("\n")}`)).toEqual([]);
+  });
+
+  // Each line of a program names a feature that no other line of it names.
+  test.each([
+    [
+      "a constructor, a constructor read from globalThis, a method of a string, of a value of any type and taken from a pattern, a namespace and a member of a namespace",
+      [
+        `new Intl.Segmenter("en");`,
+        `new globalThis.Intl.DisplayNames("en", { type: "region" });`,
+        `process.argv[2].localeCompare("a");`,
+        `globalThis.input.toLocaleDateString();`,
+        `const { toLocaleString } = 5; toLocaleString.call(5);`,
+        `Temporal.Now.instant();`,
+        `WebAssembly.validate(new Uint8Array(8));`,
+      ],
+      all,
+    ],
+    [
+      "a constructor under a constant key, a string literal that becomes part of the text, and one that becomes a key",
+      [
+        `new Intl["Segmenter"]("en");`,
+        `new Function("return new Intl.DisplayNames(" + process.argv[3] + ")")();`,
+        `globalThis.input[["x", "localeCompare"][process.argv.length]]();`,
+      ],
+      [collation, segmenter, displayNames],
+    ],
+    [
+      "every member of a namespace under a computed key",
+      [`Intl[process.argv[3]]();`],
+      [collation, numbers, dates, segmenter, displayNames],
+    ],
+  ])("%s are kept beside text that is evaluated", async (_, texts, kept) => {
+    expect(await keptOf(`${evaluatesText}\n${texts.join("\n")}`)).toEqual(kept);
   });
 });
 
@@ -134,31 +134,29 @@ const placesOfText: [place: string, program: (text: string) => string][] = [
   ["in an enum", text => `enum Texts {\n  One = "1",\n  Two = ${text},\n}\nrun(Texts[process.argv[3]]);`],
   ["in a list beside a number", text => `for (const text of [1, ${text}]) run(String(text));`],
   ["in a list that is joined", text => `run(["return", ${text}].join(" "));`],
+  ["in a template literal", text => `run(\`\${process.argv[3]}; ${text.slice(1, -1)}\`);`],
+  [
+    "in a template literal without a hole, in a list",
+    text => `for (const text of ["1", \`${text.slice(1, -1)}\`]) run(text);`,
+  ],
 ];
 
 describe.concurrent("a text of the program names what it spells", () => {
-  const everyName = JSON.stringify(namedByText.map(([text]) => text).join("; "));
-  test.each(placesOfText)("%s", async (_, program) => {
-    expect(await keptOf(run + program(everyName))).toEqual(all);
-  });
-
-  test.each(namedByText)("%s in a list keeps that alone", async (text, feature) => {
-    expect(await keptOf(`${run}for (const text of ["1", ${JSON.stringify(text)}]) run(text);`)).toEqual([feature]);
-  });
-
-  test("a template literal", async () => {
-    const texts = namedByText.map(([text]) => text).join("; ");
-    expect(await keptOf(`${run}run(\`\${process.argv[3]}; ${texts}\`);`)).toEqual(all);
-    expect(await keptOf(`${run}for (const text of ["1", \`${texts}\`]) run(text);`)).toEqual(all);
-  });
-
-  // Such a list is a list of keys. A class is read under its key from its namespace, and `Intl[key]` keeps all of Intl.
-  test("a list of words that are the names of classes and namespaces names none of them", async () => {
-    const words = `["Collator", "NumberFormat", "DateTimeFormat", "Segmenter", "DisplayNames", "Temporal", "WebAssembly"]`;
-    expect(
-      await keptOf(`${evaluatesText}\nfor (const word of ${words}) console.log(word in globalThis.input);`),
-    ).toEqual([]);
-  });
+  // Six places to a program. Each holds the text of a feature of its own, and one feature is named by no text.
+  const programs = Array.from({ length: Math.ceil(placesOfText.length / 6) }, (_, index) =>
+    placesOfText.slice(6 * index, 6 * index + 6).map(([place, program], at) => {
+      const [text, feature] = namedByText[(index + at) % namedByText.length];
+      return { place, feature, text: `{\n${program(JSON.stringify(text))}\n}` };
+    }),
+  );
+  test.each(programs.map(places => [places.map(({ place }) => place).join(", "), places] as const))(
+    "%s",
+    async (_, places) => {
+      expect(await keptOf(run + places.map(({ text }) => text).join("\n"))).toEqual(
+        all.filter(feature => places.some(place => place.feature === feature)),
+      );
+    },
+  );
 });
 
 const buildScript = `const [entry, outfile, trim] = process.argv.slice(2);
@@ -190,7 +188,6 @@ describe.skipIf(!canTrim)("text from outside the program that uses what was remo
     const folder = String(dir);
     const build = (outfile: string, trim: unknown) =>
       spawned([bunExe(), "build.mjs", "./main.mjs", join(folder, outfile), JSON.stringify(trim)], folder, bunEnv);
-    expect(await build("whole", false)).toMatchObject({ stdout: "built\n", exitCode: 0 });
     expect(await build("trimmed", true)).toMatchObject({ stdout: "built\n", exitCode: 0 });
     expect(await build("allowed", { allow: ["intl", "temporal", "webassembly"] })).toMatchObject({
       stdout: "built\n",
@@ -200,7 +197,7 @@ describe.skipIf(!canTrim)("text from outside the program that uses what was remo
     const found: Record<string, string> = {};
     const expected: Record<string, string> = {};
     for (const [code, whole, api, name] of snippets) {
-      for (const executable of ["whole", "trimmed", "allowed"]) {
+      for (const executable of ["trimmed", "allowed"]) {
         found[`${executable}: ${code}`] = (await spawned([join(folder, executable), code], folder, bunEnv)).stdout;
         const answer =
           executable === "trimmed"

@@ -70,7 +70,7 @@ fn define_layout(fragment: &mut FragmentBuilder, key: LayoutKey) {
 fn define_variable(fragment: &mut FragmentBuilder, key: VariableKey) {
     let name = fragment.strings.intern(b"x");
     let id = fragment.declare_variable(key);
-    let variable = synthetic_export_variable(name, ModuleId::default(), ExportWriter::Loader);
+    let variable = synthetic_export_variable(name, ModuleId::default(), ExportWriter::Loader, true);
     fragment.define_variable(id, variable);
 }
 
@@ -356,6 +356,7 @@ fn only_link_defines_synthetic_exports() {
                 module: prepared.modules.index_of(exporter),
                 name: atoms.intern(name),
                 is_known_member: false,
+                is_replaceable: false,
                 writer: ExportWriter::Body,
             };
             assert_eq!(variable_definition(&prepared, key), Some(definition));
@@ -403,6 +404,7 @@ fn copy_is_defined_where_the_file_has_a_face() {
             module: prepared.modules.index_of(face),
             name: projects.application.loaded.files().atoms.intern(b"a"),
             is_known_member: false,
+            is_replaceable: false,
             writer: ExportWriter::Face,
         };
         assert_eq!(variable_definition(&prepared, copy), Some(definition));
@@ -444,6 +446,7 @@ fn synthetic_export_of_two_projects_is_one_variable() {
             module: prepared.modules.index_of(exporter),
             name,
             is_known_member: false,
+            is_replaceable: false,
             writer: ExportWriter::Loader,
         };
         assert_eq!(variable_definition(&prepared, shared), Some(definition));
@@ -636,19 +639,21 @@ fn synthetic_export_variable_is_untyped_and_uninitialized() {
         ty: TypeTable::ANYTHING_OR_ABSENT,
         ..DeclaredType::untyped()
     };
+    // So does the variable for a name that a module of the library may lack.
     let writers = [
-        (ExportWriter::Loader, DeclaredType::untyped()),
-        (ExportWriter::Face, may_be_read_empty()),
-        (ExportWriter::Capture, may_be_read_empty()),
+        (ExportWriter::Loader, true, DeclaredType::untyped()),
+        (ExportWriter::Loader, false, may_be_read_empty()),
+        (ExportWriter::Face, true, may_be_read_empty()),
+        (ExportWriter::Capture, true, may_be_read_empty()),
     ];
-    for (writer, declared) in writers {
+    for (writer, is_known_member, declared) in writers {
         let expected = Variable {
             name: Some(name),
             module,
             declared,
             ..Variable::default()
         };
-        let variable = synthetic_export_variable(name, module, writer);
+        let variable = synthetic_export_variable(name, module, writer, is_known_member);
         assert_eq!(variable, expected, "{writer:?}");
         assert_eq!(
             variable.initialization,
@@ -668,7 +673,7 @@ fn name_that_a_body_stores_reads_undefined_until_then() {
         ..Variable::default()
     };
     assert_eq!(
-        synthetic_export_variable(name, module, ExportWriter::Body),
+        synthetic_export_variable(name, module, ExportWriter::Body, true),
         expected
     );
 }

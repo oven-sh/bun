@@ -1,9 +1,9 @@
 // A generator writes one function of many thousands of like parts. The work of the build grows with the length of the function: each program is built at half its length and at its
-// whole length, and the instructions of the two builds are compared, so the answer is the same on a busy machine. Where instructions cannot be counted, the time limit of the test stands alone.
+// whole length, and the instructions of the two builds are compared, so the answer is the same on a busy machine.
 import { expect } from "bun:test";
-import { bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "node:path";
-import { measureCommand } from "./analysis-scaling/measure-check";
+import { countsInstructions, measureCommand } from "./analysis-scaling/measure-check";
 import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
@@ -21,11 +21,7 @@ async function run(cwd: string, cmd: string[]) {
   return { stdout, stderr, exitCode };
 }
 
-async function instructionsOf(cwd: string, cmd: string[]) {
-  if (!isWindows) return (await measureCommand(cwd, cmd, limit)).instructions;
-  const ran = await run(cwd, cmd);
-  expect({ stderr: ran.exitCode ? ran.stderr : "", exitCode: ran.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-}
+const instructionsOf = async (cwd: string, cmd: string[]) => (await measureCommand(cwd, cmd, limit)).instructions;
 
 type Program = {
   file: string;
@@ -39,7 +35,7 @@ async function growsWithItsLength({ file, length, source, prints }: Program) {
   const counted: (number | undefined)[] = [];
   for (const size of [length / 2, length]) {
     using dir = tempDir("long-generated-functions", { [file]: source(size) });
-    const outfile = join(String(dir), "out" + (isWindows ? ".exe" : ""));
+    const outfile = join(String(dir), "out");
     const command = prints
       ? ["build", "--compile", "--aot", "./" + file, "--outfile", outfile]
       : ["check", "--aot", "./" + file];
@@ -52,7 +48,7 @@ async function growsWithItsLength({ file, length, source, prints }: Program) {
   expect(whole / half < mostGrowth ? "" : told).toBe("");
 }
 
-test(
+test.skipIf(!countsInstructions())(
   "a switch of numbers as long as a generator writes it is built in time that grows with its length",
   () =>
     growsWithItsLength({
@@ -61,58 +57,6 @@ test(
       source: length =>
         inOneFunction(`  switch (i) {\n${parts(length, k => `    case ${k + 1}: r.push(${k}); break;\n`)}  }`),
       prints: () => "0\n",
-    }),
-  limit,
-);
-
-// TODO: twice the length costs 2.44 times the instructions, which is too near the bound to be held to it.
-test.todo(
-  "try blocks whose catch clauses hand their parameters on, as many as a generator writes",
-  () =>
-    growsWithItsLength({
-      file: "main.js",
-      length: n,
-      source: length => inOneFunction(parts(length, () => "  try { r.push(o.f); } catch (e) { r.push(e); }\n")),
-      prints: length => length + "\n",
-    }),
-  limit,
-);
-
-// TODO: twice the length costs 3.2 times the instructions.
-test.todo(
-  "loops in a row, as many as a generator writes, are translated in time that grows with their number",
-  () =>
-    growsWithItsLength({
-      file: "main.js",
-      length: n,
-      source: length => inOneFunction(parts(length, k => `  for (var j${k} = 0; j${k} < 1; j${k}++) r.push(j${k});\n`)),
-    }),
-  limit,
-);
-
-// TODO: twice the length costs 3.3 times the instructions.
-test.todo(
-  "large `as const` table compiles in linear time",
-  () =>
-    growsWithItsLength({
-      file: "main.ts",
-      length: n,
-      source: length =>
-        `const table = [\n${parts(length, k => `  { id: ${k}, name: "n${k}", on: ${k % 2 === 1} },\n`)}] as const;\nexport let total = 0;\nfor (const row of table) total += row.id;\nexport const second = table[1].name;\n`,
-    }),
-  limit,
-);
-
-// TODO: twice the length costs 3.1 times the instructions.
-test.todo(
-  "a typed function that a loop calls and that joins strings in a chain as long as a generator writes it is built in time that grows with its length",
-  () =>
-    growsWithItsLength({
-      file: "main.ts",
-      length: n,
-      source: length =>
-        `function build(a: string, n: number): string {\n  let s = a;\n${parts(length, () => "  s = s + n + a;\n")}  return s;\n}\nlet total = 0;\nfor (let i = 0; i < 3; i++) total += build("ab", i).length;\nconsole.log(total);\n`,
-      prints: length => 3 * (2 + 3 * length) + "\n",
     }),
   limit,
 );

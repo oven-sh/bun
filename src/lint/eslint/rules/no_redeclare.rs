@@ -5,12 +5,12 @@ pub struct NoRedeclare {
     config: Config,
 }
 
-const REDECLARED: Message = Message::new("redeclared", "'{{id}}' is already defined.");
-const REDECLARED_AS_BUILTIN: Message = Message::new(
+const REDECLARED: &Message = &Message::new("redeclared", "'{{id}}' is already defined.");
+const REDECLARED_AS_BUILTIN: &Message = &Message::new(
     "redeclaredAsBuiltin",
     "'{{id}}' is already defined as a built-in global variable.",
 );
-const REDECLARED_BY_SYNTAX: Message = Message::new(
+const REDECLARED_BY_SYNTAX: &Message = &Message::new(
     "redeclaredBySyntax",
     "'{{id}}' is already defined by a variable declaration.",
 );

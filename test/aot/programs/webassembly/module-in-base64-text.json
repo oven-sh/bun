@@ -1,5 +1,0 @@
-{
-  "env": {
-    "BUN_JSC_crashIfInterpreterIsUsed": "1"
-  }
-}

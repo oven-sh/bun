@@ -1,11 +1,11 @@
 // Two forms of the language that say the same should cost about the same in compiled code. Each pair below names two loops of ./equivalent-syntax/main.ts
 // and how many more instructions per iteration the second may take than the first. Nothing is pinned: both sides are measured in the same executable.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
-import { measureCommand } from "../analysis-scaling/measure-check";
+import { countsInstructions, measureCommand } from "../analysis-scaling/measure-check";
+import { built, spawned, withoutDebugInformation } from "../harness/commands";
 import { withSteadyCollections } from "../harness/counted-run";
-import { built, spawned, withoutDebugInformation } from "../run-programs";
 import { beforeAll, describe, test } from "../supported";
 
 const root = join(import.meta.dir, "equivalent-syntax");
@@ -47,8 +47,8 @@ const pairs: [baseline: string, other: string, allowance: number, todo?: string]
 const skipped =
   isDebug || isASAN
     ? "a debug or ASAN build counts other instructions"
-    : isWindows
-      ? "it counts with perf_event_open or /usr/bin/time -l"
+    : !countsInstructions()
+      ? "instructions are not counted here"
       : undefined;
 if (skipped) console.error(`SKIPPED: test/aot/perf/equivalent-syntax.test.ts: ${skipped}`);
 

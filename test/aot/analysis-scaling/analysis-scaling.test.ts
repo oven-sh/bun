@@ -1,10 +1,9 @@
 import { expect } from "bun:test";
 import { isASAN, isDebug, isMusl, tempDir } from "harness";
 import { describe, test } from "../supported";
-import { measureLeast } from "./measure-check";
+import { measureCheck } from "./measure-check";
 import { shapes, type Shape } from "./shapes";
 
-const runs = 3;
 const allowedNoise = { instructions: 30_000_000, peakBytes: 64 * 1024 * 1024 };
 // The allowances were taken with glibc. A Bun that is linked with musl runs a quarter more instructions for the same work.
 const instructionsOfThisLibc = isMusl ? 4 / 3 : 1;
@@ -20,7 +19,7 @@ describe.skipIf(!!skipped)("bun check --aot cost per item", () => {
   const costsNoMoreThanAllowed = async (shape: Shape) => {
     const measure = async (count: number) => {
       using folder = tempDir("aot-analysis-scaling", shape.write(count));
-      return await measureLeast(String(folder), ["./main.ts"], runs);
+      return await measureCheck(String(folder), ["./main.ts"]);
     };
     const none = await measure(0);
     for (const count of shape.sizes) {
@@ -42,6 +41,5 @@ describe.skipIf(!!skipped)("bun check --aot cost per item", () => {
       expect(excessive).toEqual([]);
     }
   };
-  test.each(shapes.filter(shape => !shape.notYet))("$name", costsNoMoreThanAllowed, 600_000);
-  test.todo.each(shapes.filter(shape => shape.notYet))("$name ($notYet)", costsNoMoreThanAllowed, 600_000);
+  test.concurrent.each(shapes)("$name", costsNoMoreThanAllowed, 600_000);
 });

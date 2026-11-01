@@ -11,8 +11,9 @@ fn has_macro_type(hir: &File<'_>, attributes: ExprId) -> bool {
     hir.import_attribute(attributes, known::r#type) == Some(known::r#macro)
 }
 
+/// `import { m } from x with { type: "macro" }` is a syntax error that the parser recovers from: it names no module to run.
 pub(super) fn is_macro_import(hir: &File<'_>, import: ImportId) -> bool {
-    has_macro_type(hir, hir[import].attributes)
+    hir[import].spec.is_some() && has_macro_type(hir, hir[import].attributes)
 }
 
 pub(crate) fn is_runtime_import(hir: &File<'_>, import: ImportId) -> bool {
@@ -25,12 +26,13 @@ pub(crate) fn is_runtime_import(hir: &File<'_>, import: ImportId) -> bool {
 
 fn import_decls(hir: &File<'_>, import: ImportId) -> impl Iterator<Item = Decl> {
     let named = hir[import].named.iter().map(Decl::ImportSpec);
-    [Decl::ImportDefault(import), Decl::ImportNamespace(import)]
-        .into_iter()
-        .chain(named)
+    let default = (hir[import].default.is_some()).then_some(Decl::ImportDefault(import));
+    let namespace = (hir[import].namespace.is_some()).then_some(Decl::ImportNamespace(import));
+    default.into_iter().chain(namespace).chain(named)
 }
 
-pub(super) fn value_import_symbols(
+/// `NONE` for a name that the file also declares as a value: `import { A } from "m"; const A = 1;`. The import brings the type, and code that names `A` means the constant.
+fn symbols_of_value_imports(
     hir: &File<'_>,
     bound: &Bound<'_>,
     import: ImportId,
@@ -38,7 +40,14 @@ pub(super) fn value_import_symbols(
     import_decls(hir, import)
         .filter(move |decl| !matches!(*decl, Decl::ImportSpec(spec) if hir[spec].type_only))
         .map(move |decl| bound.declared_symbol(decl))
-        .filter(|symbol| symbol.is_some())
+}
+
+pub(super) fn value_import_symbols(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    import: ImportId,
+) -> impl Iterator<Item = SymbolId> {
+    symbols_of_value_imports(hir, bound, import).filter(|symbol| symbol.is_some())
 }
 
 pub(super) struct StatementSites {
@@ -146,8 +155,8 @@ fn is_unused_import(
     import: ImportId,
 ) -> bool {
     let mut has_binding = false;
-    for symbol in value_import_symbols(hir, bound, import) {
-        if uses.used_anywhere.contains(symbol.idx()) {
+    for symbol in symbols_of_value_imports(hir, bound, import) {
+        if symbol.is_some() && uses.used_anywhere.contains(symbol.idx()) {
             return false;
         }
         has_binding = true;

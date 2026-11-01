@@ -4,7 +4,7 @@ use super::*;
 use crate::program::code_test_host::{
     EMBEDDED_FILE_LOADER, HostEvent, StatementsHost, TEXT_LOADER, TestBuild, with_compile_context,
 };
-use crate::resolve::{CodeHost, HostResolution};
+use crate::resolve::{CodeHost, CodeResolution, HostResolution, SiteResolution};
 
 const GRAPH: &[(&str, &str)] = &[
     (
@@ -315,6 +315,62 @@ fn host_looks_once_at_a_file_that_is_folded_again() {
         let finished = HostEvent::FinishedFile((*path).into());
         assert_eq!(count(&events, &finished), 1, "{path}");
     }
+}
+
+#[test]
+fn import_is_followed_when_the_host_asks_for_it() {
+    const FILES: &[(&str, &str)] = &[
+        (
+            "/main.ts",
+            "import \"./first\"\nimport \"./never\"\nimport \"./late\"",
+        ),
+        ("/first.ts", "import \"./second\"\nimport \"./never\""),
+        ("/second.ts", ""),
+        ("/late.ts", ""),
+        ("/never.ts", ""),
+        ("/implied.ts", ""),
+        ("/declared.d.ts", ""),
+    ];
+    let host = StatementsHost {
+        implied: vec![(
+            "/main.ts",
+            vec![
+                HostResolution::Path(b"/implied.ts".into()),
+                HostResolution::Path(b"/declared.d.ts".into()),
+            ],
+        )],
+        followed_on_request: Some(&[
+            ("/main.ts", "/main.ts", "/first.ts"),
+            ("/first.ts", "/first.ts", "/second.ts"),
+            ("/second.ts", "/main.ts", "/late.ts"),
+        ]),
+        ..host_of(FILES)
+    };
+    let walked = walk(&host, &["/main.ts"]);
+    assert_eq!(
+        walked.paths(),
+        [
+            "/second.ts",
+            "/first.ts",
+            "/late.ts",
+            "/declared.d.ts",
+            "/main.ts"
+        ]
+    );
+    assert_eq!(walked.entry("/main.ts").targets, [1, 2, 3]);
+    assert_eq!(walked.entry("/first.ts").targets, [0]);
+    let events = host.events();
+    for path in ["/never.ts", "/implied.ts"] {
+        assert_eq!(count(&events, &read(path)), 0, "{path}");
+    }
+    with_code_files(&host, &["/main.ts"], |files| {
+        let code = find_entry(files, "/main.ts").code.lock();
+        let code = code.as_ref().expect("the file has code");
+        let erased = SiteResolution::Constant(CodeResolution::Erased);
+        let is_erased: Vec<bool> = code.resolutions.iter().map(|&it| it == erased).collect();
+        assert_eq!(is_erased, [false, true, false]);
+        assert_eq!(code.implied.len(), 1);
+    });
 }
 
 #[test]

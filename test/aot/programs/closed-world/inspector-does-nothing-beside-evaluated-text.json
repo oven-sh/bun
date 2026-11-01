@@ -1,1 +1,0 @@
-{"skipInShell": "it uses Buffer and node:inspector, which the jsc shell does not have", "mainThread": "inspector.open() throws in a Worker"}

@@ -8,7 +8,7 @@
 import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
-import { built, spawned } from "./run-programs";
+import { built, spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
 // `build(appends)` answers the length of the string it has built.

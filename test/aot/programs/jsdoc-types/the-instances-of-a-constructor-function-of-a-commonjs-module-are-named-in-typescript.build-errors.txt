@@ -1,1 +1,0 @@
-error: TS2344: Type '() => void' does not satisfy the constraint 'abstract new (...args: any) => any'.

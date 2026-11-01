@@ -29,18 +29,19 @@ fn find_builtin_name(hash: u64, bytes: &[u8]) -> Option<BuiltinName> {
         .copied()
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct StringTable {
     strings: StringList,
     ids: hashbrown::HashTable<StringId>,
 }
 
+#[derive(Clone)]
 enum StringList {
     Own(OwnStrings),
     Shared(SharedStringList),
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct OwnStrings {
     bytes: Vec<u8>,
     ends: Vec<usize>,
@@ -49,6 +50,7 @@ struct OwnStrings {
     builtin_names: Vec<Option<BuiltinName>>,
 }
 
+#[derive(Clone)]
 struct SharedStringList {
     known: Arc<StringsOfAllTables>,
     strings: Vec<Arc<SharedString>>,
@@ -211,6 +213,11 @@ impl StringTable {
         });
     }
 
+    /// For a table that waits with many others: nothing is added to it or looked up in it anymore.
+    pub fn forget_ids(&mut self) {
+        self.ids = Default::default();
+    }
+
     pub fn intern(&mut self, bytes: &[u8]) -> StringId {
         let joined = join_surrogate_pairs(bytes);
         let bytes = joined.as_deref().unwrap_or(bytes);
@@ -335,6 +342,7 @@ impl StringTable {
     }
 
     fn find_hashed(&self, hash: u64, bytes: &[u8]) -> Option<StringId> {
+        debug_assert_eq!(self.ids.len(), self.len(), "`forget_ids` was the end");
         self.ids.find(hash, |&id| self.get(id) == bytes).copied()
     }
 }

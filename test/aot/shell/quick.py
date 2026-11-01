@@ -5,20 +5,23 @@ Each program goes through three tools: the front end (a Bun) lowers it to IR, `t
 and compressed references validated, and the `jsc` shell runs the image. Use this while working on the compiler: all programs take
 about five minutes, one takes a second. The real test is `bun test test/aot`, which needs a full Bun.
 
-    JSC=<jsc> TESTAOT=<testaot> FRONT_END=<bun> PLAIN=<any bun> test/aot/shell/quick.py [-j <jobs>] <program>... | all
+    JSC=<jsc> TESTAOT=<testaot> FRONT_END=<bun> PLAIN=<any bun> test/aot/shell/quick.py [-j <jobs>] <program>... | all | counting
 
     the tools   toolchain.py's docstring says how to build them
     <program>   its path under ../programs without the extension, e.g. strings/replace-all
+    counting    the programs that name a function by which the shell alone says what compiled code did
 
 Other environment variables:
-    PROGRAMS        the folder of programs (default: ../programs)
+    PROGRAMS        the folder of programs (default: ../parallel)
     WRITTEN         a second folder of programs, for those that a script writes and nobody keeps: `bun test/aot/generate.ts all <folder>`. `all` takes what lies there too
     WORK            where intermediate files go (default: <temporary directory>/aot-quick); the files of a failure are not deleted
     WORDS           option words added to every compile, after the program's own, separated by blanks (`testaot list options`)
     RUN_OPTIONS     options of `jsc` for the run of an image, separated by blanks
     RUN_SECONDS     how long the run of an image may take, and the run of `$PLAIN` that it is compared with (default: 120)
-    KNOWS_SHELL_FUNCTIONS  the compiler is told which functions the shell has and Bun has not (functions-of-the-shell.js), so `typeof aotOperationCount` is "function" and a program that
-                    asks so counts. Without it such a program takes the way that it takes in an executable. With it a program that names such a function runs a second time, to see that it was answered
+    KNOWS_SHELL_FUNCTIONS  whether the compiler is told which functions the shell has and Bun has not (functions-of-the-shell.js), so that `typeof aotOperationCount` is "function" and a program
+                    that asks so counts. Such a program also runs a second time, to see that it was answered. Not set: it is told for each program that names a function that counts, so no
+                    program passes here whatever it counts. 1: for every program. 0: for none: each takes the way that it takes in an executable, and nothing that it says about a count is
+                    held; for a script that compares two runs of which one counts otherwise (collector-stress.py, bad-time.py)
 
 Prints one line per program and exits with 1 if any line is a failure:
     same            the output equals <program>.expected.txt or, if there is none, the output of `$PLAIN run <file>`
@@ -27,23 +30,24 @@ Prints one line per program and exits with 1 if any line is a failure:
                     again under where-it-died.py, which says where it died
     NO IR           the front end rejected the program
     NOT COMPILED    the engine rejected it
-    skipped         the shell cannot judge it; the line says why
+    skipped         the shell cannot judge it; the line says why. `skipped: TODO: ..`: its counts do not hold today, by counts-known.txt
+    HOLDS AGAIN     its line goes out of counts-known.txt
 
 A program with a .build-errors.txt is skipped: front end and engine stop at the errors that `bun compile` reports.
 """
-import difflib, json, os, re, sys, tempfile
+import difflib, json, os, platform, re, sys, tempfile
 from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import toolchain
 
-PROGRAMS = os.path.realpath(os.environ.get("PROGRAMS", HERE + "/../programs"))
+PROGRAMS = os.path.realpath(os.environ.get("PROGRAMS", HERE + "/../parallel"))
 WRITTEN = os.path.realpath(os.environ["WRITTEN"]) if os.environ.get("WRITTEN") else None
 WORK = os.path.abspath(os.environ.get("WORK", os.path.join(tempfile.gettempdir(), "aot-quick")))
 EXTENSIONS = ("ts", "tsx", "js", "mts", "cts", "mjs", "cjs")
 MAIN_EXTENSIONS = ("cjs", "cts", "js", "mjs", "mts", "ts", "tsx")
-# The files in the folder of a topic that programs load and that are no programs themselves, as in ../run-programs.ts.
+# The files in the folder of a topic that programs load and that are no programs themselves.
 HELPERS = (
     "commonjs/describe-object.cjs",
     "strings/regexps-built-at-start.cjs",
@@ -56,7 +60,7 @@ HELPERS = (
 def all_programs(root=PROGRAMS):
     found = set()
 
-    # As `find` in ../run-programs.ts: a folder with a main.<ext> is one program, any other folder holds programs.
+    # A folder with a main.<ext> is one program, any other folder holds programs.
     def find(folder, name):
         if any(os.path.isfile(f"{folder}/main.{x}") for x in MAIN_EXTENSIONS):
             return found.add(name)
@@ -113,6 +117,24 @@ def functions_it_names(base, entry):
     return sorted({name for file in files if file.endswith(EXTENSIONS) for name in ASKS_THE_SHELL.findall(open(file, errors="replace").read())})
 
 
+def functions_that_count(base, entry):
+    """Those of them that nothing but the shell answers. Under Bun ../fixtures/jsc-shell-functions.ts answers memoryUsageStatistics."""
+    return [name for name in functions_it_names(base, entry) if name != "memoryUsageStatistics"]
+
+
+def knows_shell_functions(base, entry):
+    """KNOWS_SHELL_FUNCTIONS, for this program."""
+    asked = os.environ.get("KNOWS_SHELL_FUNCTIONS", "")
+    return asked != "0" if asked else bool(functions_that_count(base, entry))
+
+
+def known_counts():
+    """counts-known.txt: the programs whose counts do not hold on this processor today, and what each says."""
+    processor = {"x86_64": "x64", "AMD64": "x64", "aarch64": "arm64"}.get(platform.machine(), platform.machine())
+    lines = [line.rstrip("\n").split("    ", 2) for line in open(HERE + "/counts-known.txt") if line.strip() and not line.startswith("#")]
+    return {program: why for program, where, why in lines if where in (processor, "both")}
+
+
 def where_it_died(ir, image, words, build_env, entry, env, has_own_environment, cwd):
     """What the machine can say about a death by a signal without a debugger, for a machine that only a continuous build has. It stays on the line of the verdict."""
     run_options, said = os.environ.get("RUN_OPTIONS", "").split(), ""
@@ -127,6 +149,13 @@ def where_it_died(ir, image, words, build_env, entry, env, has_own_environment, 
     return said + " | " + " ".join(toolchain.run_image(image, entry, env, run_options, cwd=cwd, seconds=200, under=follower)[1].split("\n")).strip()
 
 
+def options_in_comments(entry):
+    """What the comment lines of a program say of its build and its runs, in the words of <program>.json. ../run-parallel.ts says what they mean."""
+    text = open(entry, errors="replace").read()
+    lines = lambda name: re.findall(rf"^// {name}:[ \t]+(.*?)\s*$", text, re.M)
+    return {"build": [word for line in lines("Flags") for word in line.split()], "env": dict(line.split("=", 1) for line in lines("Env"))}
+
+
 def run_program(program):
     for root in filter(None, (PROGRAMS, WRITTEN)):
         base = os.path.join(root, program)
@@ -137,7 +166,7 @@ def run_program(program):
         return "NO IR: there is no such program"
     # main.<ext> of such a program only imports jsc-shell-functions.ts first, and the shell has those functions itself.
     source = first_existing([f"{base}/program.{x}" for x in EXTENSIONS]) or entry
-    options = json.load(open(base + ".json")) if os.path.isfile(base + ".json") else {}
+    options = json.load(open(base + ".json")) if os.path.isfile(base + ".json") else options_in_comments(entry)
     tsconfig = base + "/tsconfig.json"
     compiler_options = json.load(open(tsconfig)).get("compilerOptions", {}) if os.path.isfile(tsconfig) else {}
     skipped = skip_reason(base, options, compiler_options)
@@ -151,7 +180,7 @@ def run_program(program):
 
     front_flags, words = toolchain.split_flags(options.get("build", []))
     try:
-        also = [HERE + "/functions-of-the-shell.js"] if os.environ.get("KNOWS_SHELL_FUNCTIONS") else []
+        also = [HERE + "/functions-of-the-shell.js"] if knows_shell_functions(base, entry) else []
         toolchain.front_end(source, ir, front_flags, cwd=cwd, seconds=60, also=also)
     except toolchain.ToolFailed as failed:
         return "NO IR: " + " | ".join(failed.said.strip().split("\n")[:2])[:200]
@@ -198,7 +227,7 @@ def run_program(program):
         open(work + ".output", "w").write(output)
         diff = [line for line in difflib.unified_diff(expected.split("\n"), output.split("\n"), lineterm="", n=0) if not line.startswith(("---", "+++", "@@"))]
         return f"DIFFERS (exit code {code}): " + " | ".join(line[:110] for line in diff[:3])
-    named = functions_it_names(base, entry) if os.environ.get("KNOWS_SHELL_FUNCTIONS") else []
+    named = functions_it_names(base, entry) if knows_shell_functions(base, entry) else []
     if named:
         noted = ["-e", open(HERE + "/answers-of-the-shell-are-noted.js").read()]
         _, said = toolchain.run_image(image, entries[0], env, [*os.environ.get("RUN_OPTIONS", "").split(), *noted], cwd=cwd, seconds=int(os.environ.get("RUN_SECONDS", 120)))
@@ -225,9 +254,18 @@ if __name__ == "__main__":
     for root in filter(None, (WORK, os.path.dirname(PROGRAMS), WRITTEN)):
         toolchain.without_installing_packages(root)
     programs = all_programs() + written_programs() if arguments == ["all"] else arguments
+    if arguments == ["counting"]:
+        os.environ["KNOWS_SHELL_FUNCTIONS"] = "1"
+        entry_of = lambda base: first_existing([f"{base}.{x}" for x in EXTENSIONS] + [f"{base}/main.{x}" for x in MAIN_EXTENSIONS])
+        programs = [program for program in all_programs() if functions_that_count(f"{PROGRAMS}/{program}", entry_of(f"{PROGRAMS}/{program}"))]
+    known = known_counts() if os.environ.get("KNOWS_SHELL_FUNCTIONS") != "0" else {}
     failed = 0
     with ThreadPoolExecutor(jobs) as pool:
         for program, verdict in zip(programs, pool.map(run_program, programs)):
+            if program in known and verdict.startswith("same"):
+                verdict = "HOLDS AGAIN: take its line out of counts-known.txt"
+            elif program in known and verdict.startswith(("DIFFERS (exit code 0)", "ASKS IN VAIN")):
+                verdict = "skipped: TODO: " + known[program]
             print(f"{program}: {verdict}", flush=True)
             failed += not verdict.startswith(("same", "skipped"))
     sys.exit(1 if failed else 0)

@@ -1,6 +1,0 @@
-{
-  "env": {
-    "JSC_useConcurrentGC": "1",
-    "JSC_collectContinuously": "1"
-  }
-}

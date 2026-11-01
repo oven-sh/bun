@@ -1,1 +1,0 @@
-{ "skipInShell": "it asks for Event and EventTarget, which the jsc shell does not provide" }

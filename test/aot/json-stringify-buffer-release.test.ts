@@ -1,8 +1,10 @@
+// Runs alone: it judges by the memory that a program holds.
 // The compiled JSON.stringify writes into a buffer that the program keeps between calls. A large buffer is released at the end of
 // every call, whichever way the call ends: an 8-bit result, a 16-bit result, or a fallback to the generic writer.
 import { expect } from "bun:test";
 import { bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { reads } from "./harness/reads";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -51,6 +53,8 @@ test.skipIf(isASAN || isDebug)(
     const fallback = await measure("fallback");
     expect(latin1.length).toBeGreaterThan(18_000_000);
     const half = latin1.length / 2;
+    reads("what JSON.stringify of 16-bit text keeps", (wide.rss - latin1.rss) / 2 ** 20, half / 2 ** 20, "MB");
+    reads("what JSON.stringify by the fallback keeps", (fallback.rss - latin1.rss) / 2 ** 20, half / 2 ** 20, "MB");
     expect(wide.rss - latin1.rss).toBeLessThan(half);
     expect(fallback.rss - latin1.rss).toBeLessThan(half);
   },

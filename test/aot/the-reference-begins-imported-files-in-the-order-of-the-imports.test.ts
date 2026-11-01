@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { built, referenceEnv, spawned } from "./run-programs";
+import { built, spawned } from "./harness/commands";
+import { referenceEnv } from "./harness/shares";
 import { test } from "./supported";
 
 // What an executable prints is held to what `bun run` prints, so `bun run` has to print one thing. Here a module imports two bundles in the CommonJS format of

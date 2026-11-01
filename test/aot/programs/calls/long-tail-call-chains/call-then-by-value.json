@@ -1,6 +1,0 @@
-{
-  "build": [
-    "--aot-heat=everything-is-hot"
-  ],
-  "seconds": 30
-}

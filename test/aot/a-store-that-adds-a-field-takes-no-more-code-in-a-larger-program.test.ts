@@ -8,7 +8,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { built, slot, spawned, told } from "./run-programs";
+import { built, slot, spawned, told } from "./harness/commands";
 import { describe, test } from "./supported";
 
 const fieldsOfKind = 10;

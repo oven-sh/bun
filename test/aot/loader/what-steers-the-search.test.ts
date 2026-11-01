@@ -5,9 +5,14 @@ import { expect } from "bun:test";
 import { mkdirSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
-import { slot, spawned } from "../run-programs";
-import { describe, test } from "../supported";
+import { describe, test } from "../with-compiler";
 import { describeTree } from "./describe";
+
+async function spawned(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
+  await using proc = Bun.spawn({ cmd, cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
 
 type Case = {
   files: Record<string, string>;
@@ -132,33 +137,28 @@ async function run(folder: string, how: "plain" | "aot", it: Case) {
 
 describe.concurrent("compile/aot/what steers the search for a file", () => {
   for (const [name, it] of Object.entries(cases)) {
-    test(
-      name,
-      () =>
-        slot(async () => {
-          using dir = tempDir("aot-what-steers-the-search", { "tsconfig.json": tsconfig, ...it.files });
-          const folder = String(dir);
-          for (const [link, target] of Object.entries(it.links ?? {})) {
-            mkdirSync(dirname(join(folder, link)), { recursive: true });
-            symlinkSync(join(folder, target), join(folder, link), "junction");
-          }
-          for (const how of ["plain", "aot"] as const) {
-            const ran = await run(folder, how, it);
-            expect({
-              how,
-              stdout: ran.stdout,
-              stderr: ran.exitCode === 0 ? "" : ran.stderr,
-              exitCode: ran.exitCode,
-            }).toEqual({
-              how,
-              stdout: it.prints,
-              stderr: "",
-              exitCode: 0,
-            });
-          }
-        }),
-      600_000,
-    );
+    test(name, async () => {
+      using dir = tempDir("aot-what-steers-the-search", { "tsconfig.json": tsconfig, ...it.files });
+      const folder = String(dir);
+      for (const [link, target] of Object.entries(it.links ?? {})) {
+        mkdirSync(dirname(join(folder, link)), { recursive: true });
+        symlinkSync(join(folder, target), join(folder, link), "junction");
+      }
+      for (const how of ["plain", "aot"] as const) {
+        const ran = await run(folder, how, it);
+        expect({
+          how,
+          stdout: ran.stdout,
+          stderr: ran.exitCode === 0 ? "" : ran.stderr,
+          exitCode: ran.exitCode,
+        }).toEqual({
+          how,
+          stdout: it.prints,
+          stderr: "",
+          exitCode: 0,
+        });
+      }
+    });
   }
 });
 
@@ -166,26 +166,22 @@ describe.concurrent("compile/aot/what steers the search for a file", () => {
 test.each([
   ["nobody asks for it", [], "default\n"],
   ["--conditions asks for it", ["--conditions", "development"], "development\n"],
-] as const)(
-  'the "development" condition when %s',
-  async (_, flags, prints) => {
-    using dir = tempDir("aot-what-steers-the-search", {
-      "tsconfig.json": tsconfig,
-      ...printsLib,
-      "node_modules/lib/package.json": manifest({
-        exports: { development: "./development.js", production: "./production.js", default: "./default.js" },
-      }),
-      "node_modules/lib/development.js": says("development"),
-      "node_modules/lib/production.js": says("production"),
-      "node_modules/lib/default.js": says("default"),
-    });
-    const folder = String(dir);
-    const plain = await spawned([bunExe(), ...flags, "./main.js"], folder, bunEnv);
-    const compiled = await run(folder, "aot", { files: {}, flags: [...flags], prints });
-    expect([plain.stdout, compiled.stdout]).toEqual([prints, prints]);
-  },
-  600_000,
-);
+] as const)('the "development" condition when %s', async (_, flags, prints) => {
+  using dir = tempDir("aot-what-steers-the-search", {
+    "tsconfig.json": tsconfig,
+    ...printsLib,
+    "node_modules/lib/package.json": manifest({
+      exports: { development: "./development.js", production: "./production.js", default: "./default.js" },
+    }),
+    "node_modules/lib/development.js": says("development"),
+    "node_modules/lib/production.js": says("production"),
+    "node_modules/lib/default.js": says("default"),
+  });
+  const folder = String(dir);
+  const plain = await spawned([bunExe(), ...flags, "./main.js"], folder, bunEnv);
+  const compiled = await run(folder, "aot", { files: {}, flags: [...flags], prints });
+  expect([plain.stdout, compiled.stdout]).toEqual([prints, prints]);
+});
 
 test.each(["import", "require"] as const)(
   'what "imports" names is a module of Bun\'s own or a package, for %s',

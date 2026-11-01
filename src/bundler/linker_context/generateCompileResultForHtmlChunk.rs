@@ -37,8 +37,7 @@ use crate::{Chunk, CompileResult};
 // HTML `PendingPartRange` (exactly one per HTML chunk). Writes:
 // `chunk.compile_results_for_chunk[0]` (per-chunk disjoint). Reads
 // `c.parse_graph.input_files` / `c.graph` / `ctx.chunks` shared. Never forms
-// `&mut LinkerContext` — `c_ptr` stays raw; the HTML rewriter takes
-// `&LinkerContext`. See `generate_compile_result_for_js_chunk` for the
+// `&mut LinkerContext`. See `generate_compile_result_for_js_chunk` for the
 // `PendingPartRange: Send` justification.
 //
 /// # Safety
@@ -51,7 +50,7 @@ use crate::{Chunk, CompileResult};
 pub(crate) unsafe fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
     // SAFETY: `task` is the intrusive `task` field of a `PendingPartRange`
     // scheduled by `generate_chunks_in_parallel`; see the helper's contract.
-    let (part_range, _c_ptr, chunk_ptr, _worker) =
+    let (part_range, chunk_ptr, _worker) =
         unsafe { crate::linker_context_mod::pending_part_range_prologue(task) };
     let i = part_range.i as usize;
     let ctx: &GenerateChunkCtx = part_range.ctx;

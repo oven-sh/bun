@@ -1,7 +1,0 @@
-statement ReferenceError
-array-statement ReferenceError
-typeof-statement ReferenceError
-void-in-initializer ReferenceError
-left-of-comma-in-initializer ReferenceError
-annotated-call-statement ReferenceError
-array-statement-in-static-block ReferenceError

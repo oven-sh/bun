@@ -1,3 +1,0 @@
-{
-  "skipInShell": "it lists originalLine and originalColumn, which Error.captureStackTrace() defines in Bun and not in the jsc shell"
-}

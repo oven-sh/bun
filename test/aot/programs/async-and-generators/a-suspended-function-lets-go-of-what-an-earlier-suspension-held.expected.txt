@@ -1,7 +1,0 @@
-a local read between two suspensions: collected
-a local read between two suspensions, then cleared: collected
-a shared name, a name of the module read between two suspensions: collected
-a shared name of a block that is left between two suspensions: collected
-a local of a generator read between two yields: collected
-a shared name, an arrow function made and called in the operand: collected
-sum number

@@ -2,8 +2,8 @@ import { expect } from "bun:test";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
-import { built, spawned } from "../run-programs";
-import { test } from "../supported";
+import { built, spawned } from "../harness/commands";
+import { describe, test } from "../supported";
 import { runCopy, type SpawnResult } from "./edited-executable";
 
 const timeout = 300_000;
@@ -125,106 +125,104 @@ function expectAnswer({ stdout, exitCode }: SpawnResult) {
 
 const strip = isWindows ? null : Bun.which("strip");
 
-test.skipIf(!strip)(
-  "a stripped copy of this Bun is the same build",
-  async () => {
-    if (!hasIdentity) return;
-    using dir = tempDir("aot-carrier-stripped", files);
-    const folder = String(dir);
-    const copy = join(folder, "stripped");
-    const stripped = await spawned([strip!, ...(isMacOS ? ["-S"] : []), "-o", copy, bunExe()], folder, bunEnv);
-    expect(stripped.exitCode).toBe(0);
+describe.concurrent("the Bun that an executable is made of", () => {
+  test.skipIf(!strip || !hasIdentity)(
+    "a stripped copy of this Bun is the same build",
+    async () => {
+      using dir = tempDir("aot-carrier-stripped", files);
+      const folder = String(dir);
+      const copy = join(folder, "stripped");
+      const stripped = await spawned([strip!, ...(isMacOS ? ["-S"] : []), "-o", copy, bunExe()], folder, bunEnv);
+      expect(stripped.exitCode).toBe(0);
 
-    const identity = (file: Buffer) => {
-      const at = findIdentityOffset(file);
-      return file.subarray(at, at + 16);
-    };
-    expect(identity(readFileSync(copy)).equals(identity(readFileSync(bunExe())))).toBe(true);
+      const identity = (file: Buffer) => {
+        const at = findIdentityOffset(file);
+        return file.subarray(at, at + 16);
+      };
+      expect(identity(readFileSync(copy)).equals(identity(readFileSync(bunExe())))).toBe(true);
 
-    built(await build(folder, "./stripped"));
-    expectAnswer(await spawned([executablePath(folder, "out")], folder, bunEnv));
-  },
-  timeout,
-);
+      built(await build(folder, "./stripped"));
+      expectAnswer(await spawned([executablePath(folder, "out")], folder, bunEnv));
+    },
+    timeout,
+  );
 
-test(
-  "another link of the same run time is compiled onto, and the image names it",
-  async () => {
-    if (!hasIdentity) return;
-    using dir = tempDir("aot-carrier-another-link", files);
-    const folder = String(dir);
-    const other = readFileSync(bunExe());
-    flipIdentity(other);
-    built(await buildOnCarrier(folder, "another-link", other));
-    expectAnswer(await spawned([executablePath(folder, "out")], folder, bunEnv));
-  },
-  timeout,
-);
+  test.skipIf(!hasIdentity)(
+    "another link of the same run time is compiled onto, and the image names it",
+    async () => {
+      using dir = tempDir("aot-carrier-another-link", files);
+      const folder = String(dir);
+      const other = readFileSync(bunExe());
+      flipIdentity(other);
+      built(await buildOnCarrier(folder, "another-link", other));
+      expectAnswer(await spawned([executablePath(folder, "out")], folder, bunEnv));
+    },
+    timeout,
+  );
 
-function findDescriptionOfEngine(file: Buffer): number {
-  for (let at = file.indexOf("BUNAOTRT"); at >= 0; at = file.indexOf("BUNAOTRT", at + 1)) {
-    if (file.readUInt32LE(at + 8) === 32 + 4 * file.readUInt32LE(at + 12)) return at;
-  }
-  throw new Error("this Bun has no description of its run time");
-}
-
-test(
-  "the image takes the form that the run time's description names",
-  async () => {
-    if (!hasIdentity) return;
-    using dir = tempDir("aot-carrier-other-form", files);
-    const folder = String(dir);
-    const other = readFileSync(bunExe());
-    other[findDescriptionOfEngine(other) + 26] ^= 1;
-    built(await buildOnCarrier(folder, "other-form", other));
-    const { stdout, stderr, exitCode } = await spawned([executablePath(folder, "out")], folder, bunEnv);
-    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
-    expect(stderr).toStartWith("error: can't run this executable's compiled code");
-  },
-  timeout,
-);
-
-test.each(Object.keys(identityRemovals))(
-  "a Bun without an identity is rejected when the program is built: %s",
-  async name => {
-    if (!hasIdentity) return;
-    using dir = tempDir("aot-carrier-unidentified", files);
-    const folder = String(dir);
-    const other = readFileSync(bunExe());
-    identityRemovals[name]!(other, findIdentityOffset(other));
-    const { stderr, exitCode } = await buildOnCarrier(folder, "no-identity", other);
-    expect(stderr).toMatch(/^error: .*no-identity/m);
-    expect(exitCode).toBe(1);
-    expect(existsSync(executablePath(folder, "out"))).toBe(false);
-  },
-  timeout,
-);
-
-test(
-  "an image moved into another Bun is rejected at start",
-  async () => {
-    using dir = tempDir("aot-carrier-moved", files);
-    const folder = String(dir);
-    const compiled = await build(folder, null);
-    if (!hasIdentity) {
-      expect(compiled.stderr).toMatch(/^error:/m);
-      expect(compiled.exitCode).toBe(1);
-      return;
+  function findDescriptionOfEngine(file: Buffer): number {
+    for (let at = file.indexOf("BUNAOTRT"); at >= 0; at = file.indexOf("BUNAOTRT", at + 1)) {
+      if (file.readUInt32LE(at + 8) === 32 + 4 * file.readUInt32LE(at + 12)) return at;
     }
-    built(compiled);
+    throw new Error("this Bun has no description of its run time");
+  }
 
-    const original = readFileSync(executablePath(folder, "out"));
-    expectAnswer(await runCopy(folder, original, bunEnv));
+  test.skipIf(!hasIdentity)(
+    "the image takes the form that the run time's description names",
+    async () => {
+      using dir = tempDir("aot-carrier-other-form", files);
+      const folder = String(dir);
+      const other = readFileSync(bunExe());
+      other[findDescriptionOfEngine(other) + 26] ^= 1;
+      built(await buildOnCarrier(folder, "other-form", other));
+      const { stdout, stderr, exitCode } = await spawned([executablePath(folder, "out")], folder, bunEnv);
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+      expect(stderr).toStartWith("error: can't run this executable's compiled code");
+    },
+    timeout,
+  );
 
-    const moved = Buffer.from(original);
-    flipIdentity(moved);
-    expect(await runCopy(folder, moved, bunEnv)).toEqual({
-      stdout: "",
-      stderr:
-        "error: can't run this executable's compiled code: it was built for a different build of Bun than the one in this executable. Rebuild it\n",
-      exitCode: 1,
-      signal: null,
-    });
-  },
-  timeout,
-);
+  test.skipIf(!hasIdentity).each(Object.keys(identityRemovals))(
+    "a Bun without an identity is rejected when the program is built: %s",
+    async name => {
+      using dir = tempDir("aot-carrier-unidentified", files);
+      const folder = String(dir);
+      const other = readFileSync(bunExe());
+      identityRemovals[name]!(other, findIdentityOffset(other));
+      const { stderr, exitCode } = await buildOnCarrier(folder, "no-identity", other);
+      expect(stderr).toMatch(/^error: .*no-identity/m);
+      expect(exitCode).toBe(1);
+      expect(existsSync(executablePath(folder, "out"))).toBe(false);
+    },
+    timeout,
+  );
+
+  test(
+    "an image moved into another Bun is rejected at start",
+    async () => {
+      using dir = tempDir("aot-carrier-moved", files);
+      const folder = String(dir);
+      const compiled = await build(folder, null);
+      if (!hasIdentity) {
+        expect(compiled.stderr).toMatch(/^error:/m);
+        expect(compiled.exitCode).toBe(1);
+        return;
+      }
+      built(compiled);
+
+      const original = readFileSync(executablePath(folder, "out"));
+      expectAnswer(await runCopy(folder, original, bunEnv));
+
+      const moved = Buffer.from(original);
+      flipIdentity(moved);
+      expect(await runCopy(folder, moved, bunEnv)).toEqual({
+        stdout: "",
+        stderr:
+          "error: can't run this executable's compiled code: it was built for a different build of Bun than the one in this executable. Rebuild it\n",
+        exitCode: 1,
+        signal: null,
+      });
+    },
+    timeout,
+  );
+});

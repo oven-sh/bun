@@ -38,14 +38,12 @@ impl Default for Case<'_> {
 }
 
 fn default_options<'a>(log: &mut Log) -> BundleOptions<'a> {
-    let file_system = Fs::FileSystem::init(None).ok().expect("file system");
+    Fs::FileSystem::init(None).ok().expect("file system");
     let transform = api::TransformOptions {
         target: Some(api::Target::bun),
         ..Default::default()
     };
-    // SAFETY: `FileSystem::init` returns the process-lifetime instance, and tests do not keep this borrow.
-    let file_system = unsafe { &mut *file_system };
-    BundleOptions::from_api(file_system, log, transform)
+    BundleOptions::from_api(log, transform)
         .ok()
         .expect("default options")
 }
@@ -382,6 +380,14 @@ fn symbolic_link_option_is_copied() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn ignoring_annotations_ignores_declared_side_effects() {
+    assert!(!convert_code(|_| {}).ignores_declared_side_effects);
+    let ignoring = convert_code(|options| options.ignore_dce_annotations = true);
+    assert!(ignoring.ignores_declared_side_effects);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn written_configuration_path_is_absolute() {
     assert_eq!(convert_code(|_| {}).tsconfig_override, None);
     let code = convert_code(|options| {
@@ -389,13 +395,6 @@ fn written_configuration_path_is_absolute() {
     });
     let expected = b"/project/config/tsconfig.build.json".to_vec();
     assert_eq!(code.tsconfig_override, Some(expected));
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn computed_candidate_limit_stays_default() {
-    let default_limit = CodeOptions::bun_run(b"/project").max_computed_candidates;
-    assert_eq!(convert_code(|_| {}).max_computed_candidates, default_limit);
 }
 
 #[test]
@@ -725,16 +724,43 @@ fn embedded_names_are_those_of_bundle() {
         "/project/src/workers/w.ts",
         "/project/src/data.mjs",
         "/project/src/c.cjs",
+        "/project/src/page.html",
+        "/project/src/page.css",
     ];
+    let others = ["workers/w.js", "data.js", "c.js", "page.html", "page.css"];
     let (names, _) = embedded_names(&entry_points, |_| {});
     assert_eq!(
         names,
-        Some(byte_lists(&["main.js", "workers/w.js", "data.js", "c.js"]))
+        Some(byte_lists(&[&["main.js"], &others[..]].concat()))
     );
     let (names, _) = embedded_names(&entry_points, set_root_and_compile_name);
+    assert_eq!(names, Some(byte_lists(&[&["app"], &others[..]].concat())));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn first_script_starts_the_program() {
+    let order = |entry_points: &[&[u8]]| {
+        let case = Case {
+            entry_points,
+            ..Case::default()
+        };
+        convert(
+            case,
+            |_| {},
+            |result, log| (result.map(|it| it.entry_points), errors(log)),
+        )
+    };
     assert_eq!(
-        names,
-        Some(byte_lists(&["app", "workers/w.js", "data.js", "c.js"]))
+        order(&[b"a.css", b"b.html", b"x.js", b"y.ts"]),
+        (
+            Some(byte_lists(&["x.js", "a.css", "b.html", "y.ts"])),
+            Vec::new()
+        )
+    );
+    assert_eq!(
+        order(&[b"a.css", b"b.html"]),
+        (None, vec!["No output files to bundle".to_string()])
     );
 }
 

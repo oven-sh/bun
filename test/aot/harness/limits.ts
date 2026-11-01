@@ -10,7 +10,7 @@ export function limitsThatCanBeLowered(bun: string, env: Record<string, string |
 
 /**
  * Each of them at 0, 1 and 2, from the smallest value that it takes, and at that value. Below that a build with the compiler's own checks on does not come through, or two readers of one limit
- * no longer agree: each row of limits.def whose `smallest` is not 0 is work to do. AOT_WAYS=<name> in joined-programs.ts asks for all values of a limit all the same.
+ * no longer agree: each row of limits.def whose `smallest` is not 0 is work to do. `isAskedForAll` takes all values of a limit all the same.
  */
 export function limitsLowered(bun: string, env?: Record<string, string | undefined>, isAskedForAll = false): { name: string; flags: string[] }[] {
   return limitsThatCanBeLowered(bun, env).flatMap(limit =>

@@ -1,6 +1,6 @@
 import { isWindows, type DirectoryTree } from "harness";
 import { join } from "node:path";
-import { describe } from "../supported";
+import { describe } from "../with-compiler";
 import { testResolution, type Pin, type ResolutionCase } from "./resolution-cases";
 
 type Answer = string | null | [onImport: string, onRequire: string];

@@ -2,7 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { built, slot, spawned } from "./run-programs";
+import { built, slot, spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
 const source = `function half(n: number): number {

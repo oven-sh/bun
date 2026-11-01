@@ -1,19 +1,20 @@
-// docs/compiler/compatibility.mdx, "Libraries that are known not to work": a table of packages, what each does, and what you see in an executable.
+// libraries-known-not-to-work.md: a table of packages, what each does, and what you see in an executable. docs/compiler/libraries.mdx names the same packages.
 // Here each row has a small program that does what the package does. The program runs under plain Bun, is built with `bun compile`, and the
 // executable has to print the messages of the row, letter for letter. A row without a program fails, and so does a program without a row.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { slot, unsupported } from "./harness/commands";
 import { run } from "./harness/run";
-import { slot, unsupported } from "./run-programs";
 
-const page = readFileSync(join(import.meta.dir, "../../docs/compiler/compatibility.mdx"), "utf8");
-const section = page.slice(page.indexOf("\n## Libraries that are known not to work\n")).split("\n## ")[1];
+const read = (path: string) => readFileSync(join(import.meta.dir, path), "utf8");
+const section = read("libraries-known-not-to-work.md");
+const libraries = read("../../docs/compiler/libraries.mdx");
 
 const anchors = new Set(
   Array.from(
-    page.matchAll(/^#{2,3} (.+)$/gm),
+    (read("../../docs/compiler/compatibility.mdx") + libraries).matchAll(/^#{2,3} (.+)$/gm),
     ([, title]) =>
       "#" +
       title
@@ -261,63 +262,6 @@ const programs: Record<string, Program> = {
     },
     plain: "[object Object]\n",
   },
-  // As in the package: shimmer exports a function with the wrappers as members, and one of the objects it wraps is a prototype found at run time.
-  "async-listener": {
-    files: {
-      "main.js": `
-        const shimmer = require("./shimmer.js"), wrap = shimmer.wrap, massWrap = shimmer.massWrap;
-        function activator(original) {
-          return function () { console.log("wrapped"); return original.apply(this, arguments); };
-        }
-        wrap(process, "nextTick", activator);
-        const asynchronizers = ["setTimeout", "setInterval"];
-        if (global.setImmediate) asynchronizers.push("setImmediate");
-        massWrap(global, asynchronizers, activator);
-        massWrap(require("node:dns"), ["lookup", "resolve"], activator);
-        massWrap(require("node:fs"), ["stat", "readdir"], activator);
-        const proto = Object.getPrototypeOf(require("node:zlib").Deflate.prototype);
-        if (proto._transform) wrap(proto, "_transform", activator);
-        else if (proto.write && proto.flush && proto.end) massWrap(proto, ["write", "flush", "end"], activator);
-        setTimeout(() => console.log("ran"), 1);`,
-      "shimmer.js": `
-        function defineProperty(obj, name, value) {
-          const enumerable = !!obj[name] && obj.propertyIsEnumerable(name);
-          Object.defineProperty(obj, name, { configurable: true, enumerable, writable: true, value });
-        }
-        function shimmer() {}
-        function wrap(nodule, name, wrapper) {
-          if (!nodule || !nodule[name]) return;
-          const original = nodule[name], wrapped = wrapper(original, name);
-          defineProperty(wrapped, "__original", original);
-          defineProperty(nodule, name, wrapped);
-          return wrapped;
-        }
-        function massWrap(nodules, names, wrapper) {
-          if (!nodules) return;
-          else if (!Array.isArray(nodules)) nodules = [nodules];
-          nodules.forEach(function (nodule) {
-            names.forEach(function (name) {
-              wrap(nodule, name, wrapper);
-            });
-          });
-        }
-        shimmer.wrap = wrap;
-        shimmer.massWrap = massWrap;
-        module.exports = shimmer;`,
-    },
-    plain: "wrapped\nran\n",
-  },
-  "pirates": {
-    files: {
-      "main.js": `
-        const Module = require("node:module");
-        const oldLoader = Module._extensions[".js"];
-        Module._extensions[".js"] = function newLoader(mod, filename) { return oldLoader(mod, filename); };
-        console.log(require("./other.js"));`,
-      "other.js": `module.exports = "one";`,
-    },
-    plain: "one\n",
-  },
   "module-alias": {
     files: {
       "main.js": `
@@ -337,9 +281,9 @@ const programs: Record<string, Program> = {
         const Module = require("node:module");
         const original = Module.prototype.require;
         Module.prototype.require = function (id) { console.log("hooked", id); return original.call(this, id); };
-        console.log(typeof require("node:http").request);`,
+        console.log(typeof require("node:path").join);`,
     },
-    plain: "hooked node:http\nfunction\n",
+    plain: "hooked node:path\nfunction\n",
     compiled: "function\n",
   },
   "clear-module": {
@@ -389,6 +333,7 @@ const env = { ...bunEnv, NO_COLOR: "1" };
 describe.skipIf(!!unsupported)("libraries that are known not to work", () => {
   test("every row has a program, a line of the package's code and a rule on the page", () => {
     expect(rows.map(row => row.name).sort()).toEqual(Object.keys(programs).sort());
+    expect(rows.map(row => row.name).filter(name => !libraries.includes("`" + name))).toEqual([]);
     for (const { name, line, rule } of rows) {
       expect({ name, line: typeof line }).toEqual({ name, line: "string" });
       expect({ name, rule: anchors.has(rule!) }).toEqual({ name, rule: true });
@@ -448,9 +393,10 @@ describe.skipIf(!!unsupported)("libraries that are known not to work", () => {
       });
       expect(after.exitCode).toBe(1);
 
-      // Under `bun run --aot` the program runs from its source, with the built-in objects read-only as in an executable.
+      // Under `bun run --aot` the program runs from its source, with the built-in objects read-only as in an executable. Asked of the first row of each rule.
+      if (rows.find(row => row.rule === rule && row.name in programs)!.name !== name) return;
       const fromSource = await slot(() => run([bunExe(), "run", "--aot", "main.js"], cwd, env));
-      if (rule === "#loader-hooks" || name === "async-listener") expect(fromSource.stdout).toBe(plain);
+      if (rule === "#loader-hooks-and-the-module-cache") expect(fromSource.stdout).toBe(plain);
       else if (name !== "should")
         expect({ missing: missingIn(fromSource.stderr, atRunTime), said: fromSource.stderr }).toEqual({
           missing: [],

@@ -407,7 +407,7 @@
 # CHECK-NEXT: b0(v0: object):
 # CHECK-NEXT: v1 = RequireBuiltinModule runtimeModule=BunSqlite
 # CHECK-NEXT: v2 = NativeBinding builtin=NativeBindgenTimerBindTsMonotonicNowMs
-# CHECK-NEXT: v3 = LinkTimeConstant constant=6
+# CHECK-NEXT: v3 = LinkTimeConstant constant=3
 # CHECK-NEXT: v4 = LinkTimeConstant
 # CHECK-NEXT: v5 = HasJSType v0 first=4 last=2
 # CHECK-NEXT: v6 = HasJSType v0
@@ -874,7 +874,7 @@ function f26 module=m2 role=Library thisType={type=anything} parameters=[{type=o
   b0(v0: object):
     v1 = RequireBuiltinModule runtimeModule=BunSqlite
     v2 = NativeBinding builtin=NativeBindgenTimerBindTsMonotonicNowMs
-    v3 = LinkTimeConstant constant=6
+    v3 = LinkTimeConstant constant=3
     v4 = LinkTimeConstant
     v5 = HasJSType v0 first=4 last=2
     v6 = HasJSType v0

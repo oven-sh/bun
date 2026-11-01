@@ -3,11 +3,11 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { SourceMap } from "node:module";
 import { join } from "node:path";
 import { createHistogram, monitorEventLoopDelay } from "node:perf_hooks";
-import { everyCandidate, operandOrigin, Unavailable, type Candidate } from "../differential/instances";
+import { everyCandidate, openedCandidate, Unavailable, type Candidate, type Opened } from "../differential/instances";
 import type { Realm } from "../differential/members";
-import { isObject } from "../differential/table-description";
+import { isObject, type DumpedEntry } from "../differential/table-description";
 
-export type Opened = { value: object; close(): unknown };
+export type { Opened };
 export type Open = (realm: Realm) => Promise<Opened> | Opened;
 
 const keysFolder = join(import.meta.dir, "../../../js/node/test/fixtures/keys");
@@ -16,38 +16,23 @@ const createTLSOptions = () => ({ cert: readKey("agent1-cert.pem"), key: readKey
 const noop = () => {};
 const socketHandlers = { data: noop, close: noop, error: noop, drain: noop, end: noop, timeout: noop, connectError: noop, handshake: noop };
 
+const entriesByPath = new WeakMap<Realm, Map<string, DumpedEntry>>();
+
 export function bindingOf(realm: Realm, path: string): any {
-  const entry = realm.table.dump.entries.find(other => other.path === path);
+  const entry = entriesByPath.getOrInsertComputed(realm, () => new Map(realm.table.dump.entries.toReversed().map(other => [other.path, other]))).get(path);
   const value = entry && realm.valueOf(entry.token);
   if (value === undefined) throw new Unavailable(`this realm does not hand out ${path}`);
   return value;
 }
 
 function hostCandidate(realm: Realm, instanceOf: string, open: Open): Candidate {
-  let current: Opened | undefined;
-  return {
-    name: `host:${instanceOf}`,
-    kind: "Pristine",
-    instanceOf,
-    async prepare() {
-      try {
-        current = await open(realm);
-      } catch {
-        current = undefined;
-      }
-    },
-    create(log, operand) {
-      if (!current) throw new Unavailable(`no ${instanceOf} can be made`);
-      log.identify(current.value, operandOrigin(operand));
-      return current.value;
-    },
-    release() {
-      try {
-        void current?.close();
-      } catch {}
-      current = undefined;
-    },
-  };
+  return openedCandidate(`host:${instanceOf}`, instanceOf, async () => {
+    try {
+      return await open(realm);
+    } catch {
+      return undefined;
+    }
+  });
 }
 
 async function openTLSSocket(): Promise<Opened> {
@@ -164,19 +149,30 @@ const openCronJob: Open = () => {
 const pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
 
 // What a matcher of `expect.extend` is called on, or a member of it.
+let contextOfMatcher: object | undefined;
+let hasMatchers = false;
+
+// Once: each definition is a store to `expect`, and no call that is checked made it.
+function expectWithMatchers(): any {
+  const { expect } = jestOf();
+  if (hasMatchers) return expect;
+  hasMatchers = true;
+  expect.extend({
+    nativeContractMatcher(this: object) {
+      contextOfMatcher = this;
+      return { pass: true, message: () => "" };
+    },
+    nativeContractAsymmetric: () => ({ pass: true, message: () => "" }),
+  });
+  return expect;
+}
+
 function openMatcherContext(select: (context: any) => object): Open {
   return () => {
-    const { expect } = jestOf();
-    let context: object | undefined;
-    expect.extend({
-      nativeContractMatcher(this: object) {
-        context = select(this);
-        return { pass: true, message: () => "" };
-      },
-    });
-    expect(1).nativeContractMatcher();
-    if (context === undefined) throw new Unavailable("the matcher was not called");
-    return { value: context, close: noop };
+    contextOfMatcher = undefined;
+    expectWithMatchers()(1).nativeContractMatcher();
+    if (contextOfMatcher === undefined) throw new Unavailable("the matcher was not called");
+    return { value: select(contextOfMatcher), close: noop };
   };
 }
 
@@ -187,7 +183,8 @@ const openUDPSocket: Open = async () => {
 
 const openRedisClient: Open = () => {
   const client = new Bun.RedisClient("redis://127.0.0.1:1", { autoReconnect: false, enableOfflineQueue: false, connectionTimeout: 20 });
-  return { value: client, close: () => client.close() };
+  // It connects to a server that is not there, and refuses every command once that has failed.
+  return { value: client, close: () => client.close(), changesByItself: true };
 };
 
 const openS3Client: Open = () => ({
@@ -355,7 +352,7 @@ const openers: (Open & { className?: string })[] = [
   () => ({ value: new SourceMap({ version: 3, sources: ["a.js"], names: [], mappings: "AAAA", file: "b.js", sourceRoot: "" }), close: noop }),
   openMatcherContext(context => context),
   openMatcherContext(context => context.utils),
-  () => ({ value: (jestOf().expect.extend({ nativeContractAsymmetric: () => ({ pass: true, message: () => "" }) }), jestOf().expect.nativeContractAsymmetric()), close: noop }),
+  () => ({ value: expectWithMatchers().nativeContractAsymmetric(), close: noop }),
 ];
 
 // Makes one of each, tells the realm their prototypes, and adds the candidates.

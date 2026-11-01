@@ -1,5 +1,5 @@
-use bun_sema::atom::Atom;
-use bun_sema::bind::{Binding, ScopeId};
+use bun_sema::atom::{Atom, known};
+use bun_sema::bind::{Binding, CommonJsVariable, ScopeId};
 use bun_sema::hir::{ExprId, NodeData, PatId};
 use smallvec::SmallVec;
 
@@ -26,17 +26,42 @@ struct DynamicUse {
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(super) fn resolve_dynamic_binding(&mut self, identifier: ExprId) -> Option<DynamicBinding> {
-        let bound = self.file.bound;
-        let start = bound.dynamic_lookup_scope(NodeData::Expr(identifier))?;
         let name = self.file.identifier_name(identifier);
-        let declaring_scope = self.find_declaring_scope(bound.binding(identifier));
+        self.resolve_dynamic_name(identifier, self.file.bound.binding(identifier), name)
+    }
+
+    // The name is looked for from where `written` stands.
+    fn resolve_dynamic_name(
+        &mut self,
+        written: ExprId,
+        binding: Binding,
+        name: Atom,
+    ) -> Option<DynamicBinding> {
+        let bound = self.file.bound;
+        let start = bound.dynamic_lookup_scope(NodeData::Expr(written))?;
+        let declaring_scope = self.find_declaring_scope(binding);
         let search = ScopeObjectSearch {
             start,
-            until: bound.dynamic_lookup_end(identifier, declaring_scope),
+            until: bound.dynamic_lookup_end(written, declaring_scope),
             declaring_scope,
-            pos: self.file.hir[identifier].pos,
+            pos: self.file.hir[written].pos,
         };
         Some(self.search_scope_objects(search, name))
+    }
+
+    // The function and the receiver of `module.require(..)`, of which Bun's transpiler prints `require(..)`.
+    pub(in crate::lower) fn lower_require_printed_at(
+        &mut self,
+        module: ExprId,
+    ) -> (ValueId, Option<ValueId>) {
+        let (binding, name) = (Binding::CommonJs(CommonJsVariable::Require), known::require);
+        match self.resolve_dynamic_name(module, binding, name) {
+            Some(found) => {
+                let function = self.get_dynamic_target(binding, name, found.holder);
+                (function, Some(found.with_base))
+            }
+            None => (self.get_binding(binding, name), None),
+        }
     }
 
     pub(super) fn resolve_dynamic_pattern_name(

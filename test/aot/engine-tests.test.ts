@@ -1,8 +1,5 @@
-// Runs the engine's own tests in Bun's CI: the IR text tests and the native tests that were packed with the WebKit this
-// Bun was linked against. `testaot all` runs them in one go, which takes longer than the runner gives a file: the long
-// commands are test files of their own (./engine-test-commands.ts), and this file has the short ones.
-// engine-tests/ has the IR text tests that name entries of Bun's table of built-ins.
-// With a sanitizer they take several times as long: ./engine-tests-in-parts.ts runs them there.
+// `testaot`, the program that runs the engine's own tests, and `jsc` answer a wrong command line, a missing file and a damaged program as they should.
+// The tests themselves: ./engine/.
 //
 // Needs `testaot`, the `aot-tests` folder for two of the tests, and `jsc` for two: the engine's own tests want it in the
 // folder of `testaot`. shell/tools.ts says where each is looked for. A test whose tool is missing is skipped, and stderr
@@ -10,19 +7,17 @@
 //   $TESTAOT run <aot/tests>/passes/sink-allocations --jobs=1     one folder, serially, each path printed before it runs
 //   $TESTAOT native <filter> --part=2/4                           every fourth of the native tests whose name holds the filter, from the second on
 import { expect, test } from "bun:test";
-import { existsSync } from "fs";
 import { isASAN, isCI, isWindows, tempDir } from "harness";
 import { join } from "path";
 import {
   run,
   runTool,
-  unexplainedOnWindows,
   whyEngineTestsSkipped,
   whyNativeTestsSkipped,
   whyShellSkipped,
   whySkipped,
 } from "./engine-test-commands";
-import { freshSeed } from "./fresh-seed";
+import { freshSeed } from "./harness/shares";
 import { engineTests, jsc, scriptSkipReason } from "./shell/tools";
 
 const program = join(engineTests ?? "", "driver", "check-next.ir");
@@ -35,16 +30,6 @@ for (const why of new Set([whySkipped, whyEngineTestsSkipped, whyNativeTestsSkip
 test.skipIf(isWindows || (!isCI && process.env.AOT_TOOLS !== "required"))("no tool is missing", () => {
   expect([whyNativeTestsSkipped, whyShellSkipped, scriptSkipReason].filter(why => why !== undefined)).toEqual([]);
 });
-
-// It judges nothing: the log of a run on Windows is the only place where their output can be read.
-test.skipIf(!!whyEngineTestsSkipped || !isWindows).each(unexplainedOnWindows)(
-  "what %s prints on Windows",
-  async file => {
-    const folder = existsSync(join(engineTests!, file)) ? engineTests! : join(import.meta.dir, "engine-tests");
-    const { lines, stderr } = await run("run", join(folder, file), "--show-output");
-    console.error(`UNEXPLAINED ON WINDOWS ${file}:\n${[...lines, stderr].join("\n")}`);
-  },
-);
 
 test.skipIf(!!whyEngineTestsSkipped).each([
   ["an unknown list", ["list", "nothing"], 2],

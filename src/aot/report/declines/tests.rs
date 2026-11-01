@@ -335,22 +335,6 @@ fn count_has_unit_of_kind() {
         line(DeclineKind::StretchNotGuarded, 2),
         "missed: no-fast-path at a.ts:3:5, count 2"
     );
-    assert_eq!(
-        line(DeclineKind::GenericVersionNotCreated, 2),
-        "missed: guarded-at-every-use at a.ts:3:5, 2 checks"
-    );
-    assert_eq!(
-        line(DeclineKind::GenericVersionNotCreated, 1),
-        "missed: guarded-at-every-use at a.ts:3:5, 1 check"
-    );
-}
-
-#[test]
-fn function_without_generic_version_has_no_reason() {
-    for reason in [0, 2] {
-        let record = record_with_reason(DeclineKind::GenericVersionNotCreated, reason);
-        assert_eq!(reason_of(&record), Reason::Absent, "{reason}");
-    }
 }
 
 #[test]

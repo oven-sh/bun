@@ -61,6 +61,7 @@ struct Parts {
     lexical_owners: Vec<ScopeId>,
     arguments_objects: ArgumentsObjects,
     forms: Vec<BindingForm>,
+    imported_copies_of_body: Vec<SymbolId>,
     placements: Placements,
     captures: CapturePlan,
     captured: Vec<CapturedBinding>,
@@ -83,6 +84,8 @@ impl<'x, 's> Context<'x, 's> {
             holders_without_value: collect_holders_without_value(input),
         };
         let has_module_variables = match input.modules.kind(input.file) {
+            // A variable of the program is there once. What a closure of an earlier run names is what that run declared.
+            ModuleKind::SourceText if input.modules.runs_again(input.file) => false,
             ModuleKind::SourceText | ModuleKind::Data | ModuleKind::RuntimeSource => true,
             ModuleKind::CommonJs | ModuleKind::Runtime | ModuleKind::External => false,
         };
@@ -177,6 +180,7 @@ pub(super) fn analyze(input: &ScopeInput<'_, '_>) -> ScopeAnalysis {
         lexical_owners,
         arguments_objects,
         forms,
+        imported_copies_of_body: forms::find_imported_copies_of_body(&context),
         placements,
         captures,
         captured: sharing.captured,

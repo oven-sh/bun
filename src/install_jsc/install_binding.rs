@@ -48,8 +48,7 @@ pub(crate) fn parse_lockfile(cx: &mut JsScope<'_>, cwd: &[u8]) -> bun_jsc::JsRes
     // as long as we aren't migration from `package-lock.json`, leaving this undefined is okay
     let manager = vm.package_manager();
 
-    let load_result: LoadResult<'_> =
-        lockfile_.load_from_dir::<true>(*dir, Some(manager), &mut log);
+    let load_result: LoadResult = lockfile_.load_from_dir::<true>(*dir, Some(manager), &mut log);
 
     match load_result {
         LoadResult::Err(err) => {

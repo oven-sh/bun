@@ -82,6 +82,8 @@ function onlyFeatureOf(trimFeature: string, model: FeatureModel): FeatureName | 
 const running = new Set<number>();
 
 function endGroup(pid: number) {
+  // The group of process 1 or 0 would be everybody, or this process.
+  if (!(pid > 1)) return;
   try {
     process.kill(isWindows ? pid : -pid, "SIGKILL");
   } catch {}

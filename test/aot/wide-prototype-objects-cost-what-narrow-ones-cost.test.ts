@@ -8,8 +8,8 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { built, spawned } from "./run-programs";
-import { describe, test } from "./supported-with-counted-calls";
+import { built, spawned } from "./harness/commands";
+import { describe, test } from "./supported";
 
 const fillers = `
   function storeByKey(prototype, count) {

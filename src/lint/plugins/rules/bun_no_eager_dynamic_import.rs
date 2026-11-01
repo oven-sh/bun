@@ -7,7 +7,7 @@ use bun_lint::rule::Plugin;
 /// An `import()` that tells Vitest which module to mock is allowed. See `vi.mock()` in its API reference.
 pub struct NoEagerDynamicImport;
 
-const EAGER_IMPORT: Message = Message::new(
+const EAGER_IMPORT: &Message = &Message::new(
     "eagerImport",
     "This `import()` runs as soon as the module is imported. Call it where it is needed, or use an `import` statement.",
 );

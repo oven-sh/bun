@@ -3,10 +3,10 @@ import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
-import { withoutDebugInformation } from "../run-programs";
+import { withoutDebugInformation } from "../harness/commands";
 import { describe, test } from "../supported";
 import { buildProgram } from "./build-program";
-import { generateProgram, kinds, scenarios, useEverything, type Kind } from "./generate-program";
+import { generateProgram, kinds, scenarios, scenariosByName, useEverything, type Kind } from "./generate-program";
 import type { Measurement, Request } from "./measure-startup";
 
 const usedCount = 50;
@@ -20,11 +20,22 @@ const usedKinds = kinds.filter(kind => kind.name !== "built-in modules");
 const runs = 5;
 const rounds = 3;
 const allowedPrivateGrowth = process.platform === "darwin" ? 256 * 1024 : 64 * 1024;
+const allowedPageTableGrowth = 128 * 1024;
 const privateGrowthFactor: Record<string, number> = { request: 4, workers: 8, terminate: 32 };
 const scenariosWithOtherThreads = ["workers", "terminate"];
 let freeSlots = Math.max(1, Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism());
 const waiting: (() => void)[] = [];
 let hasSaidThatNothingCounts = false;
+let hasSaidThatPageTablesArePrivate = false;
+
+/** Where one of them comes without its page tables known, they count as private memory in all. */
+function leastMemory(all: Measurement[]) {
+  const areTablesKnown = all.every(m => m.pageTableBytes !== undefined);
+  return {
+    privateBytes: Math.min(...all.map(m => m.privateBytes + (areTablesKnown ? 0 : (m.pageTableBytes ?? 0)))),
+    pageTableBytes: areTablesKnown ? Math.min(...all.map(m => m.pageTableBytes!)) : undefined,
+  };
+}
 
 async function measure(request: Request): Promise<Measurement> {
   if (freeSlots > 0) freeSlots--;
@@ -56,13 +67,17 @@ async function measureLeast(executable: string, scenario: string): Promise<Measu
     hasSaidThatNothingCounts = true;
     console.error("SKIPPED: test/aot/startup-scaling: instructions: this machine has no hardware instruction counter; memory is measured");
   }
+  if (first.counter === "rusage" && first.pageTableBytes === undefined && !hasSaidThatPageTablesArePrivate) {
+    hasSaidThatPageTablesArePrivate = true;
+    console.error("SKIPPED: test/aot/startup-scaling: page tables: /usr/bin/footprint does not say how large they are; they count as private memory");
+  }
   const all = first.counter === "ptrace" ? [first] : [first, ...(await Promise.all(Array.from({ length: runs - 1 }, () => measure(request))))];
   const least = (select: (measurement: Measurement) => number) => Math.min(...all.map(select));
   return {
     ...first,
     instructions: least(m => m.instructions),
     allThreadsInstructions: least(m => m.allThreadsInstructions ?? m.instructions),
-    privateBytes: least(m => m.privateBytes),
+    ...leastMemory(all),
     residentBytes: least(m => m.residentBytes),
   };
 }
@@ -72,12 +87,12 @@ function leastOfBoth(one: Measurement, other: Measurement): Measurement {
     ...one,
     instructions: Math.min(one.instructions, other.instructions),
     allThreadsInstructions: Math.min(one.allThreadsInstructions!, other.allThreadsInstructions!),
-    privateBytes: Math.min(one.privateBytes, other.privateBytes),
+    ...leastMemory([one, other]),
     residentBytes: Math.min(one.residentBytes, other.residentBytes),
   };
 }
 
-type Variant = { flags?: string[]; privateGrowthFactor?: number; scenariosThatGrow?: string[]; residentBytesDifferFromRunToRun?: true };
+type Variant = { flags?: string[]; loadsByName?: true; privateGrowthFactor?: number; scenariosThatGrow?: string[]; residentBytesDifferFromRunToRun?: true };
 
 export function describeStartupScaling(label: string, isUnused: (kind: Kind, index: number) => boolean, variant: Variant = {}) {
   const unusedKinds = kinds.filter((kind, index) => isUnused(kind, index) && !kindsThatGrow.includes(kind.name));
@@ -91,7 +106,7 @@ export function describeStartupScaling(label: string, isUnused: (kind: Kind, ind
     beforeAll(async () => {
       folder = tempDir("aot-startup-scaling", {});
       const build = (name: "small" | "large", count: (kind: Kind) => number) =>
-        buildProgram(bunExe(), join(String(folder), name), generateProgram(usedKinds, usedCount, unusedKinds.map(kind => ({ kind, count: count(kind) }))), bunEnv, [...withoutDebugInformation(), ...(variant.flags ?? [])]);
+        buildProgram(bunExe(), join(String(folder), name), generateProgram(usedKinds, usedCount, unusedKinds.map(kind => ({ kind, count: count(kind) })), variant.loadsByName), bunEnv, [...withoutDebugInformation(), ...(variant.flags ?? [])]);
       const [small, large] = await Promise.all([build("small", () => smallCount), build("large", largeCount)]);
       expect({ small: small.error, large: large.error }).toEqual({ small: undefined, large: undefined });
       executables.small = small.executable;
@@ -99,22 +114,28 @@ export function describeStartupScaling(label: string, isUnused: (kind: Kind, ind
     }, 240_000);
     afterAll(() => folder?.[Symbol.dispose](), 240_000);
 
-    test.concurrent.each([...scenarios, useEverything].filter(scenario => !variant.scenariosThatGrow?.includes(scenario)))(
+    const measured: string[] = variant.loadsByName ? [...scenariosByName] : [...scenarios, useEverything];
+    test.concurrent.each(measured.filter(scenario => !variant.scenariosThatGrow?.includes(scenario)))(
       "%s",
       async scenario => {
         const measureBoth = () => Promise.all([measureLeast(executables.small, scenario), measureLeast(executables.large, scenario)]);
         const fileGrowth = statSync(executables.large).size - statSync(executables.small).size;
         const excessiveGrowth = (small: Measurement, large: Measurement) => {
+          const memoryFactor = (privateGrowthFactor[scenario] ?? 1) * (variant.privateGrowthFactor ?? 1);
+          const areTablesKnown = small.pageTableBytes !== undefined && large.pageTableBytes !== undefined;
+          const privateBytesOf = (m: Measurement) => m.privateBytes + (areTablesKnown ? 0 : (m.pageTableBytes ?? 0));
           const allowed = {
             instructions: Math.round(small.instructions * 0.02) + 30_000 + (small.counter === "rusage" ? 500_000 + Math.round(fileGrowth * 0.02) : 0),
             allThreadsInstructions: scenariosWithOtherThreads.includes(scenario) ? Math.round(small.allThreadsInstructions! * 0.08) + 300_000 + (small.counter === "rusage" ? 500_000 + Math.round(fileGrowth * 0.02) : 0) : Infinity,
-            privateBytes: allowedPrivateGrowth * (privateGrowthFactor[scenario] ?? 1) * (variant.privateGrowthFactor ?? 1),
+            privateBytes: allowedPrivateGrowth * memoryFactor,
+            pageTableBytes: allowedPageTableGrowth * memoryFactor,
             residentBytes: variant.residentBytesDifferFromRunToRun ? Infinity : 1024 * 1024 + Math.round(fileGrowth * 0.25),
           };
           const growth = {
             instructions: large.instructions - small.instructions,
             allThreadsInstructions: large.allThreadsInstructions! - small.allThreadsInstructions!,
-            privateBytes: large.privateBytes - small.privateBytes,
+            privateBytes: privateBytesOf(large) - privateBytesOf(small),
+            pageTableBytes: areTablesKnown ? large.pageTableBytes! - small.pageTableBytes! : 0,
             residentBytes: large.residentBytes - small.residentBytes,
           };
           return (Object.keys(growth) as (keyof typeof growth)[])

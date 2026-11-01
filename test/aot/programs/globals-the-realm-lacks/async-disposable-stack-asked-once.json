@@ -1,5 +1,0 @@
-{
-  "env": {
-    "BUN_JSC_useExplicitResourceManagement": "0"
-  }
-}

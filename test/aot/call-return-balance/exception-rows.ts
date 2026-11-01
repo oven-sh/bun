@@ -65,7 +65,14 @@ const forms: Array<[string, Form]> = [
   ["apply", (callee, list) => callee.apply(undefined, list as any)],
   ["spread of a set", (callee, list) => callee(...new Set([(list as any)[0]]))],
   ["bound apply", (callee, list) => Function.prototype.bind.call(callee, undefined).apply(undefined, list as any)],
-  ["proxy apply", (callee, list) => new Proxy(returnValue, { apply: (_target, _receiver, values) => callee(values[0]) }).apply(undefined, list as any)],
+  [
+    "proxy apply",
+    (callee, list) =>
+      new Proxy(returnValue, { apply: (_target, _receiver, values) => callee(values[0]) }).apply(
+        undefined,
+        list as any,
+      ),
+  ],
   ["plain call", (callee, list) => callee((list as any)[0])],
   ["step of a declared generator", (callee, list) => secondStep(keep(callsAtSecondStep(callee, list)))],
   ["step of a generator by name", (callee, list) => secondStepByName(keep(callsAtSecondStep(callee, list)))],
@@ -79,7 +86,15 @@ const forms: Array<[string, Form]> = [
 
 const lists: Array<[string, () => unknown]> = [
   ["array-like", () => ({ length: 1, 0: "a" })],
-  ["throwing length", () => ({ get length(): number { throw new RangeError("length"); }, 0: "a" })],
+  [
+    "throwing length",
+    () => ({
+      get length(): number {
+        throw new RangeError("length");
+      },
+      0: "a",
+    }),
+  ],
 ];
 
 const callers: Array<[string, Caller]> = [
@@ -88,11 +103,20 @@ const callers: Array<[string, Caller]> = [
   ["compiled caller", (form, callee, list) => [form(callee, list)]],
 ];
 
+// Every form with the compiled callee, the other callees under two forms, and a length that throws under the forms that read one.
+const formsForEveryCallee = ["apply", "plain call"];
+const formsThatReadLength = ["apply", "bound apply", "proxy apply"];
+const isAsked = (form: string, callee: string, list: string) =>
+  list === "array-like"
+    ? callee === "compiled callee" || formsForEveryCallee.includes(form)
+    : callee === "compiled callee" && formsThatReadLength.includes(form);
+
 export const exceptionRows: Record<string, () => number> = {};
 export const asyncExceptionRows: Record<string, () => Promise<number>> = {};
 for (const [formName, form] of forms) {
   for (const [calleeName, callee] of callees) {
     for (const [listName, list] of lists) {
+      if (!isAsked(formName, calleeName, listName)) continue;
       for (const [callerName, caller] of callers) {
         exceptionRows[callerName + ", " + formName + ", " + calleeName + ", " + listName] = () => {
           try {

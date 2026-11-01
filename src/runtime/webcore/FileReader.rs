@@ -604,6 +604,9 @@ impl FileReader {
             return;
         }
         self.done.set(true);
+        // Nothing is read into the buffer of a pull that was waiting.
+        self.pending_value
+            .with_mut(|p| p.clear_without_deallocation());
         self.reader().update_ref(false);
         if !self.reader().is_done() {
             self.reader().close();

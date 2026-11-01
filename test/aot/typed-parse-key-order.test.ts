@@ -1,10 +1,10 @@
 import { expect } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
-import { measureCommand } from "./analysis-scaling/measure-check";
+import { countsInstructions, measureCommand } from "./analysis-scaling/measure-check";
+import { slot, spawned, withoutDebugInformation } from "./harness/commands";
 import { withSteadyCollections } from "./harness/counted-run";
-import { slot, spawned, withoutDebugInformation } from "./run-programs";
 import { describe, test } from "./supported";
 
 const root = join(import.meta.dir, "typed-parse-key-order");
@@ -15,7 +15,7 @@ const programs = [
   { title: "a type of which the program makes no object", file: "bodies.ts", sumOfRound: 106.5, parsesInRound: 1 },
 ];
 
-describe.skipIf(isDebug || isASAN || isWindows)("compile/aot/typed-parse-key-order", () => {
+describe.skipIf(isDebug || isASAN || !countsInstructions())("compile/aot/typed-parse-key-order", () => {
   test.each(programs)(
     "a typed JSON.parse is no slower for keys in declaration order than in alphabetical order: $title",
     ({ file, sumOfRound, parsesInRound }) =>

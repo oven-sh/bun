@@ -8,7 +8,7 @@ use super::state::EnteredScope;
 use super::{
     BindingRef, DeadZone, LocalBinding, ScopeSlot, Storage, bindings, dead_zone, environments,
 };
-use crate::ir::{BlockId, LocalVariable, PositionFlags, Type, TypeTable, ValueId};
+use crate::ir::{BlockId, FunctionKey, LocalVariable, PositionFlags, Type, TypeTable, ValueId};
 use crate::lower::captures::Capture;
 use crate::lower::{FunctionLowering, convert, function};
 
@@ -108,6 +108,24 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 Storage::Field { .. } | Storage::Local => {}
             }
         }
+        if self.scopes.entered.len() == 1 && matches!(self.key, FunctionKey::ModuleBody(_)) {
+            self.create_imported_copies(&mut entry);
+        }
+    }
+
+    fn create_imported_copies(&mut self, entry: &mut ScopeEntry) {
+        let copies = self.file.scopes.imported_copies_of_body();
+        let copies: SmallVec<[SymbolId; 4]> = SmallVec::from_slice(copies);
+        for symbol in copies {
+            let variable = self.builder.create_variable(None);
+            let undefined = self.get_entry_undefined(entry);
+            self.builder.write_variable(variable, undefined);
+            let local = LocalBinding {
+                variable,
+                dead_zone: DeadZone::Never,
+            };
+            self.scopes.locals.insert(BindingRef::Symbol(symbol), local);
+        }
     }
 
     pub(in crate::lower) fn instantiate_functions(&mut self, scope: ScopeId) {
@@ -117,6 +135,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             if self.file.scopes.initial_function(symbol).is_some() {
                 continue;
             }
+            self.file.queries.note_idle_between_statements();
             let id = function::declare_source_function(self.file, function, None);
             let closure = self.emit_closure(id, None);
             let name = self.file.bound.symbol(symbol).name;

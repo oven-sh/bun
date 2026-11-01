@@ -1,13 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { slot, spawned, unsupported } from "../run-programs";
+import { slot, spawned, unsupported } from "../harness/commands";
 
 type Files = Record<string, string>;
 type Environment = Record<string, string>;
 
-const MODES = ["bundle", "aot"];
 const COMPILED = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
 const exe = (name: string) => name + (isWindows ? ".exe" : "");
 
@@ -20,27 +19,10 @@ if (!systemCC) {
 
 const PLUGIN = `#include <bun-native-bundler-plugin-api/bundler_plugin.h>
 #include <node_api.h>
-#include <stdlib.h>
-#include <string.h>
 NAPI_MODULE_EXPORT const char *BUN_PLUGIN_NAME = "aot-native-plugin";
-NAPI_MODULE_EXPORT void replace_text(const OnBeforeParseArguments *args, OnBeforeParseResult *result) {
-  if (result->fetchSourceCode(args, result) != 0) return;
-  char *text = malloc(result->source_len + 1);
-  memcpy(text, result->source_ptr, result->source_len);
-  for (size_t i = 0; i + 6 <= result->source_len; i++)
-    if (memcmp(text + i, "before", 6) == 0) memcpy(text + i, "after!", 6);
-  result->source_ptr = (uint8_t *)text;
-  result->plugin_source_code_context = text;
-  result->free_plugin_source_code_context = free;
-}
 NAPI_MODULE_EXPORT void read_as_typescript(const OnBeforeParseArguments *args, OnBeforeParseResult *result) {
   if (result->fetchSourceCode(args, result) != 0) return;
   result->loader = BUN_LOADER_TS;
-}
-NAPI_MODULE_EXPORT void report_error(const OnBeforeParseArguments *args, OnBeforeParseResult *result) {
-  static const char message[] = "the native plugin gave up";
-  BunLogOptions options = { sizeof(BunLogOptions), (const uint8_t *)message, sizeof(message) - 1, args->path_ptr, args->path_len, NULL, 0, BUN_LOG_LEVEL_ERROR, 0, 0, 0, 0 };
-  result->log(args, &options);
 }
 NAPI_MODULE_INIT() { return exports; }
 `;
@@ -86,32 +68,8 @@ async function expectInModes(modes: string[], files: Files, output: string, env:
   }
 }
 
-async function expectFailureInBothModes(files: Files, message: string, env: Environment) {
-  using dir = tempDir("aot-native-plugins", { "build.ts": BUILD, "tsconfig.json": TSCONFIG, ...files });
-  const folder = String(dir);
-  for (const mode of MODES) {
-    const program = join(folder, exe(mode));
-    const built = await spawned([bunExe(), "build.ts", program, mode], folder, { ...bunEnv, ...env });
-    expect({ mode, ...built, wrote: existsSync(program) }).toEqual({
-      mode,
-      stdout: expect.stringContaining(message),
-      stderr: expect.any(String),
-      exitCode: 1,
-      signal: null,
-      wrote: false,
-    });
-  }
-}
-
-const textProgram: Files = { "main.ts": 'console.log("before");\n' };
-
+// What else a native plugin does: ../build-plugins-native.test.ts.
 const successes: [name: string, modes: string[], files: Files, output: string][] = [
-  [
-    "changes the text",
-    MODES,
-    { ...textProgram, "plugins.ts": pluginsFile(onBeforeParse(/main\.ts$/, "replace_text")) },
-    "after!\n",
-  ],
   [
     "changes the loader",
     // No reference: `bun build` drops the loader a native plugin sets (get_source_code in src/bundler/ParseTask.rs).
@@ -122,25 +80,6 @@ const successes: [name: string, modes: string[], files: Files, output: string][]
       "plugins.ts": pluginsFile(onBeforeParse(/\.weird$/, "read_as_typescript")),
     },
     "42\n",
-  ],
-  [
-    "is not run over the text that a JS onLoad yields",
-    MODES,
-    {
-      "main.ts": 'import { word } from "./lib";\nconsole.log(word);\n',
-      "lib.ts": 'export const word: string = "on disk";\n',
-      "plugins.ts": pluginsFile(
-        `b.onLoad({ filter: ${/lib\.ts$/} }, () => ({ contents: 'export const word: string = "before";', loader: "ts" }));`,
-        onBeforeParse(/lib\.ts$/, "replace_text"),
-      ),
-    },
-    "before\n",
-  ],
-  [
-    "non-matching filter",
-    MODES,
-    { ...textProgram, "plugins.ts": pluginsFile(onBeforeParse(/other\.ts$/, "replace_text")) },
-    "before\n",
   ],
 ];
 
@@ -171,19 +110,6 @@ describe.concurrent.skipIf(!systemCC || !!unsupported)("compile/aot/load/native-
   test.each(successes)(
     "%s",
     (_, modes, files, output) => slot(() => expectInModes(modes, files, output, env)),
-    600_000,
-  );
-
-  test(
-    "reported error fails the build",
-    () =>
-      slot(() =>
-        expectFailureInBothModes(
-          { ...textProgram, "plugins.ts": pluginsFile(onBeforeParse(/main\.ts$/, "report_error")) },
-          "the native plugin gave up",
-          env,
-        ),
-      ),
     600_000,
   );
 });

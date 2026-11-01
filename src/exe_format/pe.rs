@@ -174,7 +174,7 @@ const IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY: u16 = 0x0080;
 pub const IMAGE_SUBSYSTEM_WINDOWS_GUI: u16 = 2;
 
 // Section name constant for exact comparison
-const BUN_SECTION_NAME: [u8; 8] = [b'.', b'b', b'u', b'n', 0, 0, 0, 0];
+pub(crate) const BUN_SECTION_NAME: [u8; 8] = [b'.', b'b', b'u', b'n', 0, 0, 0, 0];
 
 // Safe access helpers for unaligned views.
 // All header structs are `#[repr(C, packed)]` (align 1), so a bounds-checked byte
@@ -517,6 +517,17 @@ impl PEFile {
         Ok(())
     }
 
+    /// The least PointerToRawData among the sections that have data in the file. Without any: the end of the file.
+    fn first_raw_data(&self) -> Result<u32, Error> {
+        let end_of_file = u32::try_from(self.data.len()).expect("int cast");
+        Ok(self
+            .get_section_headers()?
+            .iter()
+            .filter(|section| section.size_of_raw_data > 0)
+            .map(|section| section.pointer_to_raw_data)
+            .fold(end_of_file, u32::min))
+    }
+
     /// Add a new section to the PE file for storing Bun module data
     pub fn add_bun_section(&mut self, data_to_embed: &[u8], holds_code: bool) -> Result<(), Error> {
         // 1. Strip Authenticode (before any addition)
@@ -532,7 +543,6 @@ impl PEFile {
 
         // 3. A template that is itself a compiled executable gives up its payload
         self.remove_bun_section()?;
-        let section_headers = self.get_section_headers()?;
 
         // Check if we can add another section
         if self.num_sections >= 96 {
@@ -548,20 +558,16 @@ impl PEFile {
             file_alignment,
         )?;
 
-        // Determine first_raw (min PointerToRawData among sections with raw data, else data.len)
-        let mut first_raw: u32 = u32::try_from(self.data.len()).expect("int cast");
-        for section in section_headers {
-            if section.size_of_raw_data > 0 {
-                if section.pointer_to_raw_data < first_raw {
-                    first_raw = section.pointer_to_raw_data;
-                }
-            }
+        // Where the data of the first section begins right behind the table, all data moves back.
+        if new_size_of_headers > self.first_raw_data()? {
+            crate::pe_ranges::make_room_for_a_section_header(self)
+                .map_err(|_| Error::InsufficientHeaderSpace)?;
         }
-
-        // Require new_size_of_headers <= first_raw
+        let first_raw = self.first_raw_data()?;
         if new_size_of_headers > first_raw {
             return Err(Error::InsufficientHeaderSpace);
         }
+        let section_headers = self.get_section_headers()?;
 
         // 5. Placement calculations
         // Recompute last_file_end and last_va_end after strip
@@ -689,6 +695,7 @@ impl PEFile {
 // directly access the .bun section from the current process memory without
 // loading the entire executable.
 unsafe extern "C" {
+    // Not `safe fn`: the first call fills two plain statics, a race from two threads.
     pub fn Bun__getStandaloneModuleGraphPELength() -> u64;
     pub fn Bun__getStandaloneModuleGraphPEData() -> *mut u8;
 }

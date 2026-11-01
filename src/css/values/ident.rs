@@ -36,8 +36,7 @@ macro_rules! arena_slice_newtype {
             ///
             /// NOTE: the borrow is tied to `&self`. Call sites that must return
             /// the slice with the `'static` placeholder lifetime (e.g.
-            /// `IdentOrRef::{debug_ident,as_str,as_original_string}`,
-            /// `SelectorParser::namespace_for_prefix`)
+            /// `IdentOrRef::{debug_ident,as_str,as_original_string}`)
             /// still go through the raw `v` field directly until `'bump` is threaded.
             #[inline]
             pub fn v(&self) -> &[u8] {
@@ -186,7 +185,7 @@ arena_slice_newtype! {
 impl DashedIdent {
     pub fn parse(input: &mut Parser) -> CssResult<DashedIdent> {
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         if !strings::starts_with(ident, b"--") {
             return Err(location.new_unexpected_token_error(Token::Ident(ident)));
         }
@@ -425,7 +424,7 @@ arena_slice_newtype! {
 impl CustomIdent {
     pub fn parse(input: &mut Parser) -> CssResult<CustomIdent> {
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         let valid = !is_reserved_custom_ident(ident);
 
         if !valid {

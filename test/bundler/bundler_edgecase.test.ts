@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { unsupported } from "../aot/run-programs";
+import { unsupported } from "../aot/harness/commands";
 import { type BundlerTestInput, decodeSourceMappingsLine, itBundled } from "./expectBundled";
 
 // A public path composes with the referenced file's path relative to the output

@@ -1,0 +1,229 @@
+# An element is read and tested, stored to on a way that is seldom taken, and read again behind that way: in a function without a loop, and in one turn of a loop that also calls.
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: check=MovedLoads
+# CHECK: 1904 0 1 2 3 4 5 6 3 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 3 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 3 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 3 56 57 58 59 60 61 62 63 0 1 3 6
+# CHECK: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="note" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="seen" module=m0 declared={type=undefined|null|absent|Array flags=[IsExpected]} flags=[IsImmutable]
+data d0 root=Array{contents=anything} module=m0
+data d1 root=Array{contents=anything} module=m0
+
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f3
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f4
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = Data data=d0
+    v7 = Convert v6 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v8 = Convert v7 declared={type=undefined|null|Array flags=[IsExpected]}
+    PutModuleVariable v8 variable=g1
+    v10 = Call v5 calleeName="marked"
+    v11 = Convert v10 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v12 = Integer
+    v13 = Convert v12 declared={type=number flags=[IsExpected]}
+    v14 = Integer
+    v15 = Convert v14 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v13, v15)
+  b2(v16, v17):
+    LoopHint
+    v19 = PropGet v11 key="length"
+    v20 = Convert v19 declared={type=number flags=[IsExpected]}
+    v21 = Less v17, v20
+    Branch v21 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v22):
+    Jump -> next b4()
+  b4():
+    v23 = Call v1, -, v11, v22 calleeName="twice"
+    v24 = Add v16, v23
+    v25 = Convert v24 declared={type=number flags=[IsExpected]}
+    Jump -> next b5()
+  b5():
+    v26 = Increment v22
+    v27 = Convert v26 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v25, v27)
+  b6(v28):
+    Jump -> next b7()
+  b7():
+    v29 = Builtin builtin=GlobalThis
+    v30 = PropGet v29 key="print" [isFreeName]
+    v31 = Convert v30 declared={type=undefined|null|f7 flags=[IsExpected]}
+    v32 = PropGet v11 key="join"
+    v33 = Convert v32 declared={type=undefined|null|f6 flags=[IsExpected]}
+    v34 = String string=" "
+    v35 = Call v33, v11, v34 calleeKey="join" calleeName="first.join"
+    v36 = Convert v35 declared={type=undefined|null|string flags=[IsExpected]}
+    v37 = Call v31, -, v16, v36 calleeName="print"
+    v38 = Call v5 calleeName="marked"
+    v39 = Convert v38 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v40 = Builtin builtin=GlobalThis
+    v41 = PropGet v40 key="print" [isFreeName]
+    v42 = Convert v41 declared={type=undefined|null|f7 flags=[IsExpected]}
+    v43 = Call v3, -, v39 calleeName="total"
+    v44 = Convert v43 declared={type=number flags=[IsExpected]}
+    v45 = PropGet v39 key="join"
+    v46 = Convert v45 declared={type=undefined|null|f6 flags=[IsExpected]}
+    v47 = String string=" "
+    v48 = Call v46, v39, v47 calleeKey="join" calleeName="second.join"
+    v49 = Convert v48 declared={type=undefined|null|string flags=[IsExpected]}
+    v50 = PropGet v8 key="join"
+    v51 = Convert v50 declared={type=undefined|null|f6 flags=[IsExpected]}
+    v52 = String string=" "
+    v53 = Call v51, v8, v52 calleeKey="join" calleeName="seen.join"
+    v54 = Convert v53 declared={type=undefined|null|string flags=[IsExpected]}
+    v55 = Call v42, -, v44, v49, v54 calleeName="print"
+    v56 = Undefined
+    Return v56
+}
+
+function f1 name="note" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g1
+    v2 = CheckInitialized v1 name="seen"
+    v3 = PropGet v2 key="length"
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    v5 = Integer integer=4
+    v6 = Less v4, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = GetModuleVariable variable=g1
+    v8 = CheckInitialized v7 name="seen"
+    v9 = PropGet v8 key="push"
+    v10 = Convert v9 declared={type=undefined|null|f5 flags=[IsExpected]}
+    v11 = Convert v0 declared={type=number flags=[IsExpected]}
+    v12 = Call v10, v8, v11 calleeKey="push" calleeName="seen.push"
+    Jump -> next b3()
+  b3():
+    v13 = Undefined
+    Return v13
+}
+
+function f2 name="twice" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|object, v1: anything):
+    Jump -> next b1()
+  b1():
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    v3 = ElemGet v0, v2
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    v5 = Integer integer=100
+    v6 = StrictEq v4, v5
+    Branch v6 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v7):
+    Jump -> next b3()
+  b3():
+    v8 = Integer integer=3
+    ElemSet v0, v2, v8
+    Jump -> next b5(v7)
+  b4(v10):
+    Jump -> next b5(v10)
+  b5(v11):
+    v12 = Integer integer=1000
+    v13 = Mul v11, v12
+    v14 = ElemGet v0, v2
+    v15 = Convert v14 declared={type=number flags=[IsExpected]}
+    v16 = Add v13, v15
+    Return v16
+}
+
+function f3 name="total" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] {
+  b0(v0: undefined|null|Array<number>):
+    Jump -> next b1()
+  b1():
+    v1 = Integer
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b2(v2, v4)
+  b2(v5, v6):
+    LoopHint
+    v8 = PropGet v0 key="length"
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    v10 = Less v6, v9
+    Branch v10 -> taken b3(| 0), notTaken b8(| 0)
+  b3(v11):
+    Jump -> next b4()
+  b4():
+    v12 = ElemGet v0, v11
+    v13 = Convert v12 declared={type=number flags=[IsExpected]}
+    v14 = Integer integer=100
+    v15 = StrictEq v13, v14
+    Branch v15 -> taken b5(), notTaken b6()
+  b5():
+    v16 = Integer integer=3
+    ElemSet v0, v11, v16
+    Jump -> next b6()
+  b6():
+    v18 = ElemGet v0, v11
+    v19 = Convert v18 declared={type=number flags=[IsExpected]}
+    v20 = Add v5, v19
+    v21 = Convert v20 declared={type=number flags=[IsExpected]}
+    v22 = GetModuleVariable variable=g0
+    v23 = Call v22, -, v21 calleeName="note"
+    Jump -> next b7()
+  b7():
+    v24 = Increment v11
+    v25 = Convert v24 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b2(v21, v25)
+  b8(v26):
+    Jump -> next b9()
+  b9():
+    v27 = Convert v5 declared={type=number flags=[IsExpected]}
+    Return v27
+}
+
+function f4 name="marked" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[IsExpected]}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Data data=d1
+    v1 = Convert v0 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v2 = Convert v1 declared={type=undefined|null|Array flags=[IsExpected]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v4)
+  b2(v5):
+    LoopHint
+    v7 = Integer integer=64
+    v8 = Less v5, v7
+    Branch v8 -> taken b3(| 0), notTaken b9(| 0)
+  b3(v9):
+    Jump -> next b4()
+  b4():
+    v10 = PropGet v2 key="push"
+    v11 = Convert v10 declared={type=undefined|null|f5 flags=[IsExpected]}
+    v12 = Integer integer=16
+    v13 = Mod v9, v12
+    v14 = Integer integer=7
+    v15 = StrictEq v13, v14
+    Branch v15 -> taken b5(), notTaken b6()
+  b5():
+    v16 = Integer integer=100
+    Jump -> next b7(v16)
+  b6():
+    Jump -> next b7(v9)
+  b7(v17):
+    v18 = Call v11, v2, v17 calleeKey="push" calleeName="list.push"
+    Jump -> next b8()
+  b8():
+    v19 = Increment v9
+    v20 = Convert v19 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v20)
+  b9(v21):
+    Jump -> next b10()
+  b10():
+    v22 = Convert v2 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    Return v22
+}
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

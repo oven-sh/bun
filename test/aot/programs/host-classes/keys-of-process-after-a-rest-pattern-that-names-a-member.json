@@ -1,4 +1,0 @@
-{
-  "skipInShell": "it uses what Bun provides and the jsc shell does not: console, Bun, process",
-  "alone": "the order of the keys of `process` follows from which members were read first, and the first entry point of a joined executable reads `process.env`"
-}

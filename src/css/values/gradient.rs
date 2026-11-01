@@ -109,7 +109,7 @@ pub enum Gradient {
 impl Gradient {
     pub(crate) fn parse(input: &mut css::Parser) -> Result<Gradient> {
         let location = input.current_source_location();
-        let func = input.expect_function_cloned()?;
+        let func = input.expect_function()?;
         input.parse_nested_block(|input_: &mut css::Parser| -> Result<Gradient> {
             crate::match_ignore_ascii_case! { func, {
                 b"linear-gradient" => Ok(Gradient::Linear(LinearGradient::parse(input_, VendorPrefix::NONE)?)),
@@ -630,7 +630,7 @@ pub enum WebKitGradient {
 impl WebKitGradient {
     fn parse(input: &mut css::Parser) -> Result<WebKitGradient> {
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         input.expect_comma()?;
 
         crate::match_ignore_ascii_case! { ident, {
@@ -1150,7 +1150,7 @@ pub struct WebKitColorStop {
 impl WebKitColorStop {
     fn parse(input: &mut css::Parser) -> Result<WebKitColorStop> {
         let location = input.current_source_location();
-        let function = input.expect_function_cloned()?;
+        let function = input.expect_function()?;
         input.parse_nested_block(|i: &mut css::Parser| -> Result<WebKitColorStop> {
             let position: f32 = crate::match_ignore_ascii_case! { function, {
                 b"color-stop" => {

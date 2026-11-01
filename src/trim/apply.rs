@@ -47,6 +47,11 @@ pub fn apply(executable: &mut dyn ImageBytes, plan: &TrimPlan) -> Result<TrimSum
     let format = editor.format();
     let sections = find_trim_sections(&editor)?;
     let is_cut_template = check_state_untrimmed(&mut editor, sections.state)?;
+    let given_back = if is_cut_template {
+        editor.give_back_cuts(&find_ranges_without_fill(plan))?
+    } else {
+        0
+    };
     let icu_ranges = remove_icu_items(&mut editor, plan)?;
     let mut removable = merge_removable_bytes(&plan.ranges, icu_ranges);
     if is_cut_template {
@@ -68,7 +73,7 @@ pub fn apply(executable: &mut dyn ImageBytes, plan: &TrimPlan) -> Result<TrimSum
     let removed_ranges: Vec<AddressRange> = removable.iter().map(|item| item.range).collect();
     editor.remove_relocations_in(&removed_ranges)?;
     write_removal_state(&mut editor, sections.state, plan)?;
-    let file_bytes_saved = editor.remove_ranges(&cut_plan.cuts)?;
+    let file_bytes_saved = (editor.remove_ranges(&cut_plan.cuts)?).saturating_sub(given_back);
     Ok(TrimSummary {
         removed: plan.removed(),
         cut_bytes: cut_plan.cut_bytes() - cut_bytes_of_table,
@@ -138,6 +143,11 @@ fn check_state_untrimmed(
     }
     let removal = &state[offset_of!(RemovableFeatureState, removal)..];
     Ok(removal.iter().any(|byte| *byte != 0))
+}
+
+fn find_ranges_without_fill(plan: &TrimPlan) -> Vec<AddressRange> {
+    let without_fill = plan.ranges.iter().filter(|range| !range.can_be_filled);
+    without_fill.map(|range| range.range).collect()
 }
 
 fn keep_file_backed_parts(

@@ -315,7 +315,7 @@ fn create_fragment_with_dropped_definitions(file: FileId) -> Fragment {
         let variable = unit
             .fragment
             .declare_variable(test_variable_key(file.0, index));
-        let definition = synthetic_export_variable(name, module, ExportWriter::Loader);
+        let definition = synthetic_export_variable(name, module, ExportWriter::Loader, true);
         unit.fragment.define_variable(variable, definition);
         let site = unit.fragment.add_type_site(TypeSite {
             module,

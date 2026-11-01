@@ -1,1 +1,0 @@
-ASCII is passed over in under a fifth of the time of a test

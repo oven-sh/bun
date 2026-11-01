@@ -1,1 +1,0 @@
-{ "skipInShell": "it asks for node:fs and node:util, which the jsc shell does not provide" }

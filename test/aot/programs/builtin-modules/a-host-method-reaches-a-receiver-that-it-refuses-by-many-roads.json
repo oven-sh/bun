@@ -1,1 +1,0 @@
-{ "skipInShell": "it asks for Blob, which the jsc shell does not provide" }

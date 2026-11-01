@@ -1,5 +1,7 @@
+use std::fmt::Write;
+
 use bstr::ByteSlice;
-use bun_sema::hir::{StmtId, StmtKind};
+use bun_sema::hir::{ExprKind, StmtId, StmtKind};
 use bun_sema::program::FileId;
 
 use super::testing::{default_settings, with_loaded_build};
@@ -428,4 +430,215 @@ fn files_that_hand_a_name_on_run_for_whoever_takes_it_from_a_package_without_sid
             );
         }
     }
+}
+
+#[test]
+fn files_that_hand_a_value_of_a_json_file_on_run_for_whoever_reads_it() {
+    let package = r#"{ "name": "lib", "version": "1.0.0", "sideEffects": ["./setup.mjs"] }"#;
+    let by_name = "globalThis.ready = true; export { version } from './package.json';";
+    let whole = "globalThis.ready = true; export { default as data } from './package.json';";
+    let cases = [
+        (by_name, "version", "version"),
+        (whole, "data", "data.version"),
+    ];
+    for (setup, name, read) in cases {
+        let main = format!("import {{ {name} }} from 'lib/barrel.mjs'; console.log({read});");
+        let barrel = format!("export {{ {name} }} from './setup.mjs';");
+        let files = [
+            ("main.mjs", main.as_str()),
+            ("node_modules/lib/package.json", package),
+            ("node_modules/lib/barrel.mjs", barrel.as_str()),
+            ("node_modules/lib/setup.mjs", setup),
+        ];
+        let lines = describe(&files).into_iter();
+        let left_out: Vec<String> = lines.filter(|line| line.ends_with(": left out")).collect();
+        assert_eq!(left_out, [""; 0], "{read}");
+    }
+}
+
+// Of each class of main.mjs that is left out: its name, whether what it extends is still checked, and how many of its keys are still converted.
+fn describe_unused_classes(files: &[(&str, &str)]) -> Vec<String> {
+    with_loaded_build(files, &default_settings(), |build, loaded| {
+        let Ok(bound) = build.bind_modules(loaded) else {
+            panic!("the modules were not bound");
+        };
+        let files = loaded.project(ProjectId::Application).loaded.files();
+        let file = files.by_path.get(b"/project/main.mjs").unwrap();
+        let hir = files.hir(file);
+        let declarations = &bound.projects.application.left_out.declarations;
+        let mut lines = Vec::new();
+        for statement in hir.ids(hir.body) {
+            let (class, is_left_out) = match hir[statement].kind {
+                StmtKind::Class(class) => (class, declarations.is_class_left_out(file, class)),
+                StmtKind::Var(declarators) => {
+                    let declarator = declarators.iter().next().unwrap();
+                    let ExprKind::Class(class) = hir[hir[declarator].init].kind else {
+                        continue;
+                    };
+                    let is_left_out = declarations.is_declarator_left_out(file, declarator);
+                    (class, is_left_out)
+                }
+                _ => continue,
+            };
+            if is_left_out {
+                let name = files.atoms.bytes(hir[class].name).as_bstr();
+                let is_checked = declarations.is_heritage_check_kept(file, class);
+                let members = hir[class].members.iter();
+                let keys = members
+                    .filter(|&member| declarations.is_key_conversion_kept(file, member))
+                    .count();
+                let mut line = format!("{name}{}", if is_checked { ": checked" } else { "" });
+                if keys > 0 {
+                    write!(line, ": {keys} keys").unwrap();
+                }
+                lines.push(line);
+            }
+        }
+        lines
+    })
+}
+
+const BASES: &str = "export class Declared {}\n\
+    export const constant = class {};\n\
+    export var variable = class {};\n\
+    export let stored = class {}; stored = {};\n\
+    if (globalThis.nothing) { var conditional = class {}; } export { conditional };\n\
+    export function ordinary() {}\n\
+    export const object = {};\n\
+    export default class {}";
+
+#[test]
+fn unused_class_is_left_out_whole_where_it_extends_a_class_or_null() {
+    let main = "import Default, * as bases from './bases.mjs';\n\
+        import { Declared, constant, variable } from './bases.mjs';\n\
+        class A {}\n\
+        class B extends A {}\n\
+        class C extends null {}\n\
+        class D extends class {} {}\n\
+        class E extends function () {} {}\n\
+        class F extends Array {}\n\
+        class G extends Declared {}\n\
+        class H extends constant {}\n\
+        class I extends variable {}\n\
+        class J extends bases.Declared {}\n\
+        class K extends Default {}\n\
+        var L = class L extends A {};\n\
+        class M extends L {}\n\
+        class N extends (typeof missing === 'string' ? A : null) {}";
+    assert_eq!(
+        describe_unused_classes(&[("main.mjs", main), ("bases.mjs", BASES)]),
+        [
+            "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N"
+        ]
+    );
+}
+
+#[test]
+fn unused_class_leaves_the_check_of_what_else_it_extends() {
+    let main = "import * as bases from './bases.mjs';\n\
+        import { stored, conditional, ordinary, object } from './bases.mjs';\n\
+        class A extends {} {}\n\
+        class B extends undefined {}\n\
+        class C extends (() => {}) {}\n\
+        class D extends Error {}\n\
+        class E extends Math {}\n\
+        class F extends Proxy {}\n\
+        class G extends stored {}\n\
+        class H extends conditional {}\n\
+        class I extends ordinary {}\n\
+        class J extends object {}\n\
+        class K extends bases.object {}\n\
+        class L extends later {}\n\
+        var later = class {};\n\
+        let replaced = class {}; replaced = 1;\n\
+        class M extends replaced {}\n\
+        var N = class N extends {} {};\n\
+        class O extends (typeof missing === 'string' ? Array : {}) {}";
+    let checked = "ABCDEFGHIJKLMNO"
+        .chars()
+        .map(|name| format!("{name}: checked"));
+    assert_eq!(
+        describe_unused_classes(&[("main.mjs", main), ("bases.mjs", BASES)]),
+        checked.collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn unused_class_leaves_the_check_of_an_import_whose_module_may_not_have_run() {
+    let main = "import { variable } from './late.mjs';\nclass A extends variable {}";
+    let late = "import './main.mjs';\nexport var variable = class {};";
+    assert_eq!(
+        describe_unused_classes(&[("main.mjs", main), ("late.mjs", late)]),
+        ["A: checked"]
+    );
+}
+
+#[test]
+fn what_an_unused_class_extends_stays_where_it_is_checked() {
+    let files = [
+        (
+            "main.mjs",
+            "import { make } from './a.mjs'; class Unused extends make {}",
+        ),
+        (
+            "a.mjs",
+            "export function make() {} export function other() {}",
+        ),
+    ];
+    assert_eq!(
+        describe(&files),
+        [
+            "main.mjs: ES [class Unused extends make {}]",
+            "a.mjs: ES []",
+        ]
+    );
+}
+
+#[test]
+fn unused_class_leaves_the_conversion_of_keys_that_may_be_objects() {
+    let main = "const text = 'a'; const first = {}; const second = {};\n\
+        class A { [text]() {} ['b']() {} [1] = 1; static [text]() {} }\n\
+        class B { [Symbol.iterator]() {} static [Symbol.hasInstance]() {} }\n\
+        class C { [first]() {} }\n\
+        class D { [first]() {} plain() {} [second] = 1; get [text]() { return 1; } }\n\
+        class E extends first { [second]() {} }\n\
+        var F = class F { [first]() {} };\n\
+        class G { static [first]() {} }\n\
+        class H { static ['prototype']() {} }\n\
+        class I { static ['prototype'] = 1; }";
+    assert_eq!(
+        describe_unused_classes(&[("main.mjs", main)]),
+        [
+            "A",
+            "B",
+            "C: 1 keys",
+            "D: 2 keys",
+            "E: checked: 1 keys",
+            "F: 1 keys"
+        ]
+    );
+}
+
+#[test]
+fn class_stored_under_a_name_that_nobody_reads_leaves_its_checks() {
+    let files = [
+        (
+            "main.cjs",
+            "const a = require('./a.cjs'); console.log(a.used);",
+        ),
+        (
+            "a.cjs",
+            "function Base() {}\n\
+            exports.A = class extends Base {};\n\
+            exports.B = class {};\n\
+            exports.used = 1;",
+        ),
+    ];
+    assert_eq!(
+        describe(&files),
+        [
+            "main.cjs: value []",
+            "a.cjs: names [exports.A = class extends Base {}; | exports.B = class {};]",
+        ]
+    );
 }

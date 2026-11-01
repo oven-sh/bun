@@ -1,5 +1,5 @@
 // RUN: link
-// CHECK: module [[entry]] path="{{*}}function-expression-name"
+// CHECK: module [[entry]] path="{{*}}function-expression-name.js"
 // CHECK: evalscope [[scope]] {{*}}{name="named" kind=FunctionName depth=[[depth]] operand=0}
 // CHECK: function [[named]] name="named" module=[[entry]] {{*}}TakesCallee
 // CHECK: b0([[this]]: anything, [[callee]]: function,

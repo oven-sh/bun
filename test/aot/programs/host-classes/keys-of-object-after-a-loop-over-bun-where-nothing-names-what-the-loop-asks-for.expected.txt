@@ -1,1 +1,0 @@
-length,name,prototype,hasOwn,groupBy,assign,getPrototypeOf,setPrototypeOf,getOwnPropertyDescriptor,getOwnPropertyDescriptors,getOwnPropertyNames,getOwnPropertySymbols,keys,defineProperty,defineProperties,create,seal,freeze,preventExtensions,isSealed,isFrozen,isExtensible,is,values,entries,fromEntries

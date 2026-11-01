@@ -6,7 +6,7 @@ pub(crate) const TYPE_ROOT: &[u8] = b"/$bun/packages/node_modules/@types";
 pub(crate) const GLOBALS_OF_TEST_RUNNER: &[u8] =
     b"/$bun/packages/node_modules/bun-types/test-globals.d.ts";
 
-const PACKAGES: &[u8] = b"/$bun/packages/node_modules/";
+pub(crate) const PACKAGES: &[u8] = b"/$bun/packages/node_modules/";
 const IN_ARCHIVE: &[u8] = b"types/";
 
 fn name_in_archive(path: &[u8]) -> Option<Vec<u8>> {

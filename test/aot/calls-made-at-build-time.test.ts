@@ -1,10 +1,12 @@
+// Runs alone: it judges by the memory that a build holds.
 // A built-in that the table calls deterministic is called while the program is built, where all its operands are constants, and its answer
 // stands in its place. The program does what it does in plain Bun, an error included, and the build does not make an answer that is too long to keep.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { built, slot, spawned } from "./harness/commands";
 import { compileCommand } from "./harness/flags";
-import { built, slot, spawned } from "./run-programs";
+import { reads } from "./harness/reads";
 import { describe, test } from "./supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
@@ -83,6 +85,7 @@ describe.concurrent("calls made at build time", () => {
           using _ = small.dir;
           const large = await build(`console.log(${expression}.length);\n`);
           using __ = large.dir;
+          reads(`a build that computes ${expression}`, large.peakMemory / small.peakMemory, 2, "times the peak");
           expect(large.peakMemory / small.peakMemory).toBeLessThan(2);
           expect((await spawned([large.executable], large.folder, env)).stdout).toBe("1073741824\n");
         }),

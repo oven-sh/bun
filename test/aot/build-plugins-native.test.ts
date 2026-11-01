@@ -5,7 +5,7 @@ import { rmSync } from "fs";
 import { bunEnv, isWindows, tempDir } from "harness";
 import { join, resolve } from "path";
 import { buildBothWays } from "./build-both-ways";
-import { spawned } from "./run-programs";
+import { spawned } from "./harness/commands";
 
 const systemCC = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 if (!systemCC || isWindows)

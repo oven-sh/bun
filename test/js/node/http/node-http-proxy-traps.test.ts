@@ -60,7 +60,7 @@ test("EventEmitter.call(proxy) performs every read and store in order", () => {
 
 test("Proxy traps seen by node:http match the expected output", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "../../../aot/programs/node-http-probes/http-proxy-traps.js")],
+    cmd: [bunExe(), join(import.meta.dir, "../../../aot/parallel/node-http/http-proxy-traps.js")],
     env: bunEnv,
     stdout: "pipe",
     stderr: "ignore",

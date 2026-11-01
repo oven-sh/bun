@@ -244,8 +244,16 @@ fn choose_functions(
 ) {
     let definitions = &input.units[unit as usize].function_definitions;
     for (merged, key, site) in merged_definitions(input.functions, unit, definitions) {
+        // Only the file that declares a function type records its parameters. Prefer that definition.
         if let FunctionKey::Signature(_) | FunctionKey::ClassSignature(_) = key.key {
-            sites[merged].get_or_insert(site);
+            let has_parameters = |site: DefinitionSite| {
+                let definitions = &input.units[site.unit as usize].function_definitions;
+                !definitions[site.index as usize].1.parameters.is_empty()
+            };
+            match sites[merged] {
+                Some(first) if has_parameters(first) || !has_parameters(site) => {}
+                Some(_) | None => sites[merged] = Some(site),
+            }
             continue;
         }
         let home = ProgramFile {
@@ -341,16 +349,19 @@ fn add_synthetic_exports(
         let merged = merged.expect("link declares every synthetic export and every copy");
         let definition = &mut variables[merged as usize];
         // A name that either project requires is tested when the module is linked.
-        let is_known_elsewhere = match *definition {
+        let (is_known_elsewhere, is_replaceable_elsewhere) = match *definition {
             Some(VariableDefinition::SyntheticExport {
-                is_known_member, ..
-            }) => is_known_member,
-            Some(VariableDefinition::Unit(_)) | None => true,
+                is_known_member,
+                is_replaceable,
+                ..
+            }) => (is_known_member, is_replaceable),
+            Some(VariableDefinition::Unit(_)) | None => (true, false),
         };
         *definition = Some(VariableDefinition::SyntheticExport {
             module,
             name: export.name,
             is_known_member: export.is_known_member && is_known_elsewhere,
+            is_replaceable: export.is_replaceable || is_replaceable_elsewhere,
             writer,
         });
     };
@@ -673,6 +684,7 @@ pub(super) fn synthetic_export_variable(
     name: StringId,
     module: ModuleId,
     writer: ExportWriter,
+    is_known_member: bool,
 ) -> Variable {
     let initialization = match writer {
         ExportWriter::Loader | ExportWriter::Face | ExportWriter::Capture => {
@@ -683,7 +695,13 @@ pub(super) fn synthetic_export_variable(
     let mut declared = DeclaredType::untyped();
     // The object may lack the name when the copies are taken: the copy stays empty, and the check of the importer tests for that.
     // An importer that the CommonJS file itself requires runs before the face has taken anything.
-    if matches!(writer, ExportWriter::Capture | ExportWriter::Face) {
+    // A module of the library may lack a name that some file binds. That file fails to link, and a file that reads the name off the namespace tests for the empty variable.
+    let may_stay_empty = match writer {
+        ExportWriter::Capture | ExportWriter::Face => true,
+        ExportWriter::Loader => !is_known_member,
+        ExportWriter::Body => false,
+    };
+    if may_stay_empty {
         declared.ty = TypeTable::ANYTHING_OR_ABSENT;
     }
     Variable {

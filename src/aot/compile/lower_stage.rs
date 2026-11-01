@@ -1,43 +1,53 @@
-use super::runtime_reach::{ReachInput, find_reached_runtime_code};
+use super::runtime_reach::{
+    Application, LoadedLibrary, ReachInput, ReachedRuntimeCode, find_reached_runtime_code,
+};
 use super::{BoundApplication, BoundBuild, BoundProject, Build, LoadedBuild, LoadedProject};
 use crate::builtins::BuiltinNames;
-use crate::diagnostics::{DiagnosticBuffer, Diagnostics, InternalError, LoadMessages, ProgramView};
+use crate::diagnostics::{
+    DiagnosticBuffer, Diagnostics, InternalError, LoadMessages, ProgramView, syntax_errors_of,
+};
 use crate::ir::generated::FunctionRole;
-use crate::ir::{FunctionId, FunctionKey, Id};
+use crate::ir::{FunctionId, FunctionKey, Id, extend_from_boxes};
 use crate::link::{KeyContext, LinkUnit, Rehoming};
+use crate::load::source_provider::WithoutServices;
 use crate::load::sources::parsed_source;
 use crate::load::{PerProject, ProjectId, Sources};
-#[cfg(bun_fuzzilli)]
-use crate::lower::LeftOutDeclarations;
 use crate::lower::{
-    DefinedObjectTypes, FileInputs, LibraryFunctions, LoweredFile, LoweringInputs, LoweringOptions,
-    RuntimeTranspiler, lower_file,
+    DefinedObjectTypes, FileInputs, LeftOutDeclarations, LibraryFunctions, LoweredFile,
+    LoweringInputs, LoweringOptions, PreparedFiles, RuntimeTranspiler, lower_file, prepare_file,
 };
 use crate::modules::{ApplicationGraph, Library, LinkedProject, ModuleGraph, ModuleRef, Shape};
 use crate::package_diagnostics::report_package_errors;
 use crate::report;
-use crate::statistics::{Counters, LimitId, Stage, StatisticId, Statistics};
+use crate::statistics::{Counters, Stage, StatisticId, Statistics};
 use bun_core::current_work;
 use bun_sema::atom::{Interner, known};
-use bun_sema::check::aot::{
-    DiagnosticClass, FileOrigin, FunctionRef, LeftOutBodies, QueryStatistics,
-};
+use bun_sema::bind::{Binding, CommonJsVariable};
+use bun_sema::check::aot::{FileOrigin, FunctionRef, LeftOutBodies, QueryStatistics};
 use bun_sema::config;
-use bun_sema::hir::DiagnosticKind;
-use bun_sema::program::{FileId, FileRole, Files, Run};
+use bun_sema::import_sites::ImportSiteKind;
+use bun_sema::program::{FileId, FileRole, Files, HostLoader, Run};
 use bun_sema::resolve::Options as CompilerOptions;
-use bun_sema::session::Session;
+use bun_sema::session::{Session, SessionSlot};
+use bun_sema::util::SharedSort;
 use bun_sema_driver::{
     self as driver, BuildDiagnostic, CheckedProgram, CompileRequest, Demotion, EntryPoints,
-    Incomplete, RoleDecision, decide_roles, keep_verified_roles, load_program_with_parsed_files,
-    run_on_one_thread_while,
+    Incomplete, RoleDecision, decide_roles, keep_verified_roles, load_program_of_loaded_files,
+    run_on_one_thread_while, run_on_threads_while,
 };
-use bun_threading::Guarded;
+use bun_threading::{Condvar, Guarded};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 
+const SOURCE_ORIGINS: [FileOrigin; 3] = [
+    FileOrigin::ProgramSource,
+    FileOrigin::TestedSource,
+    FileOrigin::DependencySource,
+];
+
+#[derive(Clone)]
 pub(crate) struct LoweredUnit {
     // A unit is a large record, and the list of what was lowered is copied and put in order on one thread.
     pub unit: Box<LinkUnit>,
@@ -46,17 +56,45 @@ pub(crate) struct LoweredUnit {
     pub queries: QueryStatistics,
 }
 
-/// What a build with `Preload` makes of Bun's own code for the placeholder. A program that leaves out the same takes it.
-#[cfg(bun_fuzzilli)]
 struct LoweredRuntime {
     key: RuntimeLoweringKey,
     checked: CheckedProgram<Option<LoweredUnit>>,
 }
 
+/// What a build with `Preload` makes of Bun's own code for the placeholder. A program that leaves out the same takes it.
 #[cfg(bun_fuzzilli)]
 static LOWERED_RUNTIME: Guarded<Option<LoweredRuntime>> = Guarded::new(None);
 
-#[cfg(bun_fuzzilli)]
+/// What the programs that share one load of Bun's own code have made of it. A program that leaves out the same takes a copy.
+#[derive(Default)]
+pub(crate) struct LoweredRuntimes(Guarded<Vec<LoweredRuntime>>);
+
+impl LoweredRuntimes {
+    /// A file has its number in one load.
+    pub(super) fn begin_load(&self) {
+        self.0.lock().clear();
+    }
+
+    fn find(&self, key: &RuntimeLoweringKey) -> Option<CheckedProgram<Option<LoweredUnit>>> {
+        let kept = self.0.lock();
+        let found = kept.iter().find(|it| it.key == *key)?;
+        Some(copy_of(&found.checked))
+    }
+
+    fn keep(&self, key: RuntimeLoweringKey, checked: &CheckedProgram<Option<LoweredUnit>>) {
+        let checked = copy_of(checked);
+        self.0.lock().push(LoweredRuntime { key, checked });
+    }
+}
+
+fn copy_of(checked: &CheckedProgram<Option<LoweredUnit>>) -> CheckedProgram<Option<LoweredUnit>> {
+    CheckedProgram {
+        lowered: checked.lowered.clone(),
+        diagnostics: checked.diagnostics.clone(),
+        incomplete: checked.incomplete.clone(),
+    }
+}
+
 #[derive(PartialEq, Eq)]
 struct RuntimeLoweringKey {
     /// `Interner::number`: one for each build.
@@ -81,6 +119,7 @@ enum WorldConfiguration<'a> {
 }
 
 struct WorldToLower<'a, 's> {
+    slot: &'s SessionSlot,
     session: &'s Session,
     index: usize,
     configuration: WorldConfiguration<'a>,
@@ -163,6 +202,63 @@ struct Worlds {
     demoted: Vec<Demotion>,
 }
 
+/// Which files of the application a world takes, known once it has decided their roles and before it lowers them.
+#[derive(Default, PartialEq)]
+struct WorldDecision {
+    // In order.
+    lowered: Vec<FileId>,
+    demoted: Vec<Demotion>,
+}
+
+/// The application's program is lowered beside the worlds. It starts once every world has decided.
+struct WorldDecisions {
+    decided: Guarded<Vec<Option<WorldDecision>>>,
+    has_decided: Condvar,
+}
+
+impl WorldDecisions {
+    fn new(worlds: usize) -> WorldDecisions {
+        WorldDecisions {
+            decided: Guarded::new((0..worlds).map(|_| None).collect()),
+            has_decided: Condvar::new(),
+        }
+    }
+
+    /// The first decision of a world counts.
+    fn decide(&self, world: usize, decision: WorldDecision) {
+        self.decided.lock()[world].get_or_insert(decision);
+        self.has_decided.notify_all();
+    }
+
+    fn wait_for_all(&self) -> WorldDecision {
+        let mut decided = self.decided.lock();
+        while decided.iter().any(Option::is_none) {
+            self.has_decided.wait_guarded(&mut decided);
+        }
+        let mut all = WorldDecision::default();
+        for decision in decided.iter_mut().flatten() {
+            all.lowered.append(&mut decision.lowered);
+            all.demoted.append(&mut decision.demoted);
+        }
+        all.lowered.sort_unstable();
+        all
+    }
+}
+
+/// A world that ends early takes no file.
+struct DecidesAtTheLatestOnDrop<'a>(&'a WorldDecisions, usize);
+
+impl Drop for DecidesAtTheLatestOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.decide(self.1, WorldDecision::default());
+    }
+}
+
+struct LoweredApplication {
+    decided: PerProject<DecidedProject>,
+    checked: PerProject<CheckedProgram<Option<LoweredUnit>>>,
+}
+
 struct LoweredWorld {
     world: Worlds,
     diagnostics: Diagnostics,
@@ -176,6 +272,8 @@ struct ProjectToLower<'a, 'b, 's> {
     keys: KeyContext<'a>,
     inputs: &'a LoweringInputs<'a>,
     threads: NonZeroUsize,
+    // `AotOptions::source_that_fits_in_memory`
+    source_that_fits_in_memory: Option<u64>,
     // --aot-sabotage=LoweringPanics
     panics: bool,
 }
@@ -188,6 +286,7 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
         project: ProjectId,
         inputs: &'a LoweringInputs<'a>,
         threads: NonZeroUsize,
+        source_that_fits_in_memory: Option<u64>,
     ) -> ProjectToLower<'a, 'b, 's> {
         ProjectToLower {
             loaded: loaded.project(project),
@@ -200,11 +299,17 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
             },
             inputs,
             threads,
+            source_that_fits_in_memory,
             panics: false,
         }
     }
 
     fn lower(&self) -> CheckedProgram<Option<LoweredUnit>> {
+        let pass_count = match (checker_passes_by_word(), self.source_that_fits_in_memory) {
+            (Some(count), _) => driver::PassCount::Exactly(count),
+            (None, Some(bytes)) => driver::PassCount::TwoAboveBytesOfText(bytes),
+            (None, None) => driver::PassCount::Exactly(1),
+        };
         let request = &CompileRequest {
             threads: self.threads,
             left_out_bodies: Some(&self.decided.left_out_bodies),
@@ -222,7 +327,9 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
                 assert!(!self.panics, "--aot-sabotage=LoweringPanics");
                 if !is_well_formed(self.loaded.loaded.files(), file)
                     || checker.found_early_error(file)
+                    || self.decided.roles.reported_early_error(file)
                 {
+                    self.inputs.prepared.wait_and_drop(file);
                     return Some(None);
                 }
                 let lowered = lower_file(self.inputs, checker, file)?;
@@ -240,8 +347,32 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
                 }
                 defined.publish_names_of_file(file);
             },
+            Some(&|file| {
+                let files = self.loaded.loaded.files();
+                prepare_file(self.inputs, files, file, || {
+                    is_well_formed(files, file) && !self.decided.roles.reported_early_error(file)
+                });
+            }),
+            &driver::Passes {
+                count: pass_count,
+                before_next: &|| self.inputs.defined_object_types.forget_names_of_types(),
+            },
         )
     }
+}
+
+// What the checker holds only grows, and at the end of this stage it is a third of all that the build holds: the most that a large
+// typed program's build holds anywhere. With two passes that is 500 MB less on 200 MB of source. The second pass works out again
+// what the first knew about the files that its own refer to: from a sixth to two thirds of the time of this stage. That is memory
+// for time, so there are two only where the run has measured its memory and the program does not fit: a build with room has one.
+// The word `TestRunCheckerPasses:<n>` of `BUN_DEBUG_TEST_AOT_WORDS` says how many there are, whatever the files are like.
+fn checker_passes_by_word() -> Option<usize> {
+    let words = bun_core::env_var::BUN_DEBUG_TEST_AOT_WORDS.get_not_empty();
+    let mut words = (words.into_iter()).flat_map(|words| bun_core::strings::split(words, b","));
+    words
+        .find_map(|word| word.strip_prefix(b"TestRunCheckerPasses:"))
+        .and_then(|digits| bun_core::fmt::parse_int::<usize>(digits, 10).ok())
+        .map(|passes| passes.max(1))
 }
 
 impl Build<'_> {
@@ -250,7 +381,58 @@ impl Build<'_> {
         loaded: &LoadedBuild<'_, '_>,
         bound: &BoundBuild<'_>,
     ) -> Vec<LinkUnit> {
-        let worlds = self.lower_worlds(loaded, &bound.projects.application);
+        let mut beside_worlds = None;
+        let application = &bound.projects.application;
+        let worlds = self.lower_worlds(loaded, application, &mut |build, wait_for_worlds| {
+            build.clock.start(Stage::Check);
+            // This asks nothing of the worlds, which take a while to decide.
+            let reached = build.find_reached_library_code(loaded, bound);
+            let worlds = wait_for_worlds();
+            let lowered = build.lower_application(loaded, bound, &worlds, &reached);
+            beside_worlds = Some((worlds, reached, lowered));
+        });
+        let (expected, reached, lowered) = beside_worlds.expect("it was called");
+        // The link comes on top of all that lowering has left.
+        let in_parallel = self.parallel_runner();
+        for project in [ProjectId::Application, ProjectId::Runtime] {
+            // SAFETY: the worlds and both projects are lowered, and what follows reads names and text alone.
+            unsafe { loaded.project(project).loaded.free_trees(&in_parallel) };
+            // SAFETY: as above, and what is lowered owns its data.
+            unsafe { loaded.project(project).loaded.free_checker(&in_parallel) };
+        }
+        // A world that does not lower a file it took has reported an error. The application cannot be lowered again: the first time frees trees.
+        debug_assert!(expected.lowered == worlds.lowered || self.diagnostics.has_errors());
+        debug_assert!(expected.demoted == worlds.demoted);
+        let LoweredApplication {
+            decided,
+            mut checked,
+        } = lowered;
+        self.held_library_code = reached.held;
+        self.count_aot_sources(loaded, &decided.application.roles);
+        let files = loaded.project(ProjectId::Application).loaded.files();
+        drop_reports_on_unloadable_modules(
+            files,
+            &bound.projects.application.graph,
+            &mut checked.application,
+        );
+        let unit_count =
+            checked.application.lowered.len() + checked.runtime.lowered.len() + worlds.units.len();
+        let mut units = Vec::with_capacity(unit_count);
+        checked.map(|project, checked| {
+            self.report_project(loaded, project, &decided, checked, &mut units);
+        });
+        units.extend(worlds.units);
+        units
+    }
+
+    /// Reports nothing, so that it can run before the worlds have reported.
+    fn lower_application(
+        &mut self,
+        loaded: &LoadedBuild<'_, '_>,
+        bound: &BoundBuild<'_>,
+        worlds: &WorldDecision,
+        reached: &ReachedRuntimeCode,
+    ) -> LoweredApplication {
         self.checked_elsewhere.clone_from(&worlds.lowered);
         self.clock.start(Stage::Check);
         let mut decided = loaded.projects.as_ref().map(|id, project| {
@@ -284,7 +466,7 @@ impl Build<'_> {
                     roles.roles[demotion.file.idx()] = FileRole::Inferred;
                     roles.demoted.push(demotion);
                 }
-                roles.demoted.sort_by_key(|demotion| demotion.file);
+                roles.demoted.shared_sort_by_key(|demotion| demotion.file);
                 roles.checked.extend_from_slice(&worlds.lowered);
                 roles.checked.sort_unstable();
                 roles.checked.dedup();
@@ -303,24 +485,6 @@ impl Build<'_> {
                 left_out_bodies,
             }
         });
-        self.count_aot_sources(loaded, &decided.application.roles);
-        let reach_input = ReachInput {
-            application: loaded.project(ProjectId::Application).loaded.files(),
-            application_graph: &bound.projects.application.graph,
-            runtime: loaded.project(ProjectId::Runtime).loaded.files(),
-            sources: &loaded.project(ProjectId::Runtime).sources,
-            graph: &bound.projects.runtime.graph,
-            names: loaded.builtin_names,
-            platform: self.platform,
-            can_load_code_at_run_time: loaded.can_load_code_at_run_time
-                && !(loaded.loads_code_by_unknown_names_alone
-                    && bound
-                        .projects
-                        .application
-                        .left_out
-                        .holds_every_load_by_unknown_name),
-        };
-        let reached = find_reached_runtime_code(&reach_input, &self.parallel_runner());
         let files_to_lower = &mut decided.runtime.files_to_lower;
         let unreached = files_to_lower
             .iter()
@@ -333,23 +497,48 @@ impl Build<'_> {
         self.clock.start(Stage::Lower);
         let left_out = PerProject {
             application: bound.projects.application.left_out.functions.clone(),
-            runtime: reached.left_out_functions,
+            runtime: reached.left_out_functions.clone(),
         };
-        let mut checked = self.lower_projects(loaded, bound, &decided, left_out);
-        let files = loaded.project(ProjectId::Application).loaded.files();
-        drop_reports_on_unloadable_modules(
-            files,
-            &bound.projects.application.graph,
-            &mut checked.application,
-        );
-        let unit_count =
-            checked.application.lowered.len() + checked.runtime.lowered.len() + worlds.units.len();
-        let mut units = Vec::with_capacity(unit_count);
-        checked.map(|project, checked| {
-            self.report_project(loaded, project, &decided, checked, &mut units);
-        });
-        units.extend(worlds.units);
-        units
+        let checked = self.lower_projects(loaded, bound, &decided, left_out);
+        LoweredApplication { decided, checked }
+    }
+
+    fn find_reached_library_code(
+        &self,
+        loaded: &LoadedBuild<'_, '_>,
+        bound: &BoundBuild<'_>,
+    ) -> ReachedRuntimeCode {
+        let library = LoadedLibrary {
+            files: loaded.project(ProjectId::Runtime).loaded.files(),
+            sources: &loaded.project(ProjectId::Runtime).sources,
+            graph: &bound.projects.runtime.graph,
+        };
+        let lacked_before = self.library_code_asked_for(&self.options.load);
+        let reach_input = ReachInput {
+            application: match loaded.library_code_asked {
+                Some(asked) => Application::Asks(asked),
+                None => Application::Bound {
+                    files: loaded.project(ProjectId::Application).loaded.files(),
+                    graph: &bound.projects.application.graph,
+                },
+            },
+            library: &library,
+            names: loaded.builtin_names,
+            platform: self.platform,
+            can_load_code_at_run_time: loaded.can_load_code_at_run_time
+                && !(loaded.loads_code_by_unknown_names_alone
+                    && bound
+                        .projects
+                        .application
+                        .left_out
+                        .holds_every_load_by_unknown_name),
+            further: &lacked_before,
+            keeps_code_without_names: loaded.keeps_library_code_without_names,
+            holds_guessed_code: loaded.holds_guessed_library_code,
+            holds_test_files_alone: loaded.library_code_asked.is_some(),
+        };
+        let known = (loaded.known_library_regions)();
+        find_reached_runtime_code(&reach_input, known, &self.parallel_runner())
     }
 
     /// The files under "aot" conditions that are compiled with their types. One that lost them to a type error does not count.
@@ -365,7 +554,14 @@ impl Build<'_> {
     /// A typed package is checked and lowered by a program of its own, under the `compilerOptions` of its `package.json`.
     /// Nothing of the application's configuration reaches it. Packages that say the same share one.
     /// So are the files whose `tsconfig.json` answers a program-wide option otherwise than the application's. Those that answer alike share one.
-    fn lower_worlds(&mut self, loaded: &LoadedBuild<'_, '_>, bound: &BoundProject<'_>) -> Worlds {
+    ///
+    /// Calls `meanwhile` once, on the calling thread. Its argument waits until every world has decided which files it takes.
+    fn lower_worlds(
+        &mut self,
+        loaded: &LoadedBuild<'_, '_>,
+        bound: &BoundProject<'_>,
+        meanwhile: &mut dyn FnMut(&mut Self, &mut dyn FnMut() -> WorldDecision),
+    ) -> Worlds {
         let left_out = &bound.left_out;
         let application = loaded.project(ProjectId::Application);
         let (files, host) = (application.loaded.files(), application.host);
@@ -376,8 +572,7 @@ impl Build<'_> {
         for &file in files.compiled_files() {
             let is_aot_source = files.compiled(file).is_some_and(|it| it.is_aot_source);
             let origin = application.loaded.origin(file);
-            let is_source =
-                origin == FileOrigin::ProgramSource || origin == FileOrigin::DependencySource;
+            let is_source = SOURCE_ORIGINS.contains(&origin);
             let other_project = (is_source && !is_aot_source)
                 .then(|| ProgramWideOptions::of_other_project(files, file))
                 .flatten();
@@ -385,7 +580,7 @@ impl Build<'_> {
             if !(is_of_typed_package || other_project.is_some())
                 || files.role(file) != FileRole::Checked
                 || bound.graph.shape(ModuleRef::File(file)) == Shape::AsToday
-                || files.entry_points().contains(&file)
+                || (is_of_typed_package && files.entry_points().contains(&file))
                 || files.hir(file).check_directive == Some(false)
                 || left_out.files.binary_search(&file).is_ok()
             {
@@ -418,7 +613,7 @@ impl Build<'_> {
             let configuration = WorldConfiguration::OfTypedPackages(config_path.as_deref());
             (configuration, &group[..])
         });
-        let of_projects = [FileOrigin::ProgramSource, FileOrigin::DependencySource]
+        let of_projects = SOURCE_ORIGINS
             .into_iter()
             .flat_map(|origin| (of_other_projects.iter()).filter(move |group| group.0 == origin))
             .map(|(origin, options, group)| {
@@ -427,8 +622,9 @@ impl Build<'_> {
         let to_lower: Vec<WorldToLower<'_, '_>> = (of_projects.chain(of_typed_packages))
             .zip(loaded.world_sessions)
             .enumerate()
-            .map(|(index, ((configuration, files), session))| WorldToLower {
-                session,
+            .map(|(index, ((configuration, files), slot))| WorldToLower {
+                slot,
+                session: slot.session(),
                 index,
                 configuration,
                 files,
@@ -436,6 +632,7 @@ impl Build<'_> {
             .collect();
         let mut worlds = Worlds::default();
         if to_lower.is_empty() {
+            meanwhile(self, &mut WorldDecision::default);
             return worlds;
         }
         let parsed_declarations = (to_lower.len() > 1).then(|| {
@@ -452,26 +649,37 @@ impl Build<'_> {
             can_load_code_at_run_time: loaded.can_load_code_at_run_time,
             loads_code_by_unknown_names_alone: loaded.loads_code_by_unknown_names_alone,
         };
-        let (options, provider, caches, limits) =
-            (self.options, self.provider, self.caches, &self.limits);
+        let (options, provider, caches, limits) = (
+            self.options,
+            self.provider,
+            self.caches,
+            self.limits.clone(),
+        );
         let lowered: Vec<Guarded<Option<LoweredWorld>>> =
             to_lower.iter().map(|_| Guarded::new(None)).collect();
+        let decisions = WorldDecisions::new(to_lower.len());
         let lower = |index: usize| {
-            let mut build = Build::new(options, provider, caches, limits.clone());
-            let mut world = Worlds::default();
-            build.lower_world(&inputs, &to_lower[index], &mut world);
-            *lowered[index].lock() = Some(LoweredWorld {
-                world,
-                diagnostics: build.diagnostics,
-                statistics: build.statistics,
-                has_withdrawn_trust: build.has_withdrawn_trust,
-            });
+            let _decides = DecidesAtTheLatestOnDrop(&decisions, index);
+            let lowered_world = {
+                let mut build = Build::new(options, provider, caches, limits.clone());
+                let mut world = Worlds::default();
+                let decide = |decision: WorldDecision| decisions.decide(index, decision);
+                build.lower_world(&inputs, &to_lower[index], &mut world, &decide);
+                LoweredWorld {
+                    world,
+                    diagnostics: build.diagnostics,
+                    statistics: build.statistics,
+                    has_withdrawn_trust: build.has_withdrawn_trust,
+                }
+            };
+            *lowered[index].lock() = Some(lowered_world);
+            // The program of a world is as large as all that its files import, and the application is still to be lowered.
+            // SAFETY: the build of the world is dropped, what is kept of it owns its data, and no other world has the slot.
+            unsafe { to_lower[index].slot.empty() };
         };
-        // A load started on a pool thread walks the files only after they are all parsed.
-        match to_lower.len() {
-            1 => lower(0),
-            count => (self.parallel_runner())(count, &lower),
-        }
+        run_on_threads_while(caches, self.threads.get(), to_lower.len(), &lower, || {
+            meanwhile(self, &mut || decisions.wait_for_all());
+        });
         for mut lowered in lowered {
             let lowered = lowered.get_mut().take().expect("each index is visited");
             self.diagnostics.merge(lowered.diagnostics);
@@ -490,6 +698,7 @@ impl Build<'_> {
         loaded: &WorldInputs<'_, '_, 's>,
         world: &WorldToLower<'_, 's>,
         worlds: &mut Worlds,
+        decide: &dyn Fn(WorldDecision),
     ) {
         let bound_application = loaded.bound;
         let application = &loaded.projects.application;
@@ -514,7 +723,7 @@ impl Build<'_> {
         // The application's program goes on with the files of a program that does not load.
         let parsed = loaded.parsed_declarations;
         let program =
-            load_program_with_parsed_files(world.session, application.host, &request, parsed);
+            load_program_of_loaded_files(world.session, application.host, &request, parsed, files);
         let Ok(program) = program else {
             return;
         };
@@ -525,11 +734,24 @@ impl Build<'_> {
         {
             return;
         }
+        let loader_of = |files: &Files<'_>, file: FileId| {
+            let loader = files.compiled(file).map(|compiled| compiled.loader);
+            loader.filter(|&loader| loader != HostLoader::default())
+        };
+        let mut read_with_loaders: FxHashMap<(&[u8], HostLoader), FileId> = FxHashMap::default();
+        for &file in files.compiled_files() {
+            if let Some(loader) = loader_of(files, file) {
+                read_with_loaders.insert((files.module(file).file_name(), loader), file);
+            }
+        }
         let to_application: Vec<Option<FileId>> = (0..world_files.modules.len())
             .map(|index| {
-                files
-                    .by_path
-                    .get(world_files.module(FileId(index as u32)).file_name())
+                let file = FileId(index as u32);
+                let path = world_files.module(file).file_name();
+                match loader_of(world_files, file) {
+                    Some(loader) => read_with_loaders.get(&(path, loader)).copied(),
+                    None => files.by_path.get(path),
+                }
             })
             .collect();
         let mut to_world: FxHashMap<FileId, FileId> = FxHashMap::default();
@@ -567,7 +789,11 @@ impl Build<'_> {
             builtin_names: loaded.builtin_names,
             can_load_code_at_run_time: loaded.can_load_code_at_run_time,
             loads_code_by_unknown_names_alone: loaded.loads_code_by_unknown_names_alone,
+            keeps_library_code_without_names: true,
+            holds_guessed_library_code: true,
+            library_code_asked: None,
             finish_asset_reads: &|| true,
+            known_library_regions: &|| None,
         };
         let Ok(bound) = self.bind_modules(&world_build) else {
             return;
@@ -606,6 +832,13 @@ impl Build<'_> {
                 worlds.demoted.push(Demotion { file, ..*demotion });
             }
         }
+        decide(WorldDecision {
+            lowered: (files_to_lower.iter())
+                .filter(|&&file| is_well_formed(world_files, file))
+                .filter_map(|file| to_application[file.idx()])
+                .collect(),
+            demoted: worlds.demoted.clone(),
+        });
         let is_typed =
             |file: &FileId| (world_files.compiled(*file)).is_some_and(|it| it.is_aot_source);
         self.checked_elsewhere = (world_files.compiled_files().iter().copied())
@@ -635,6 +868,7 @@ impl Build<'_> {
             },
             canonical_symbol: &|symbol| files.canonical(symbol),
         };
+        let fits = self.options.aot.source_that_fits_in_memory;
         let checked = self.with_inputs_for_reached_code(
             &world_build,
             &bound,
@@ -643,7 +877,7 @@ impl Build<'_> {
             left_out.functions.clone(),
             |inputs| {
                 let mut project =
-                    ProjectToLower::new(&world_build, &bound, &decided, id, inputs, threads);
+                    ProjectToLower::new(&world_build, &bound, &decided, id, inputs, threads, fits);
                 project.keys.rehoming = Some(&rehoming);
                 project.lower()
             },
@@ -666,7 +900,7 @@ impl Build<'_> {
             };
             self.diagnostics.add_buffer(view, lowered.diagnostics);
             self.statistics.add_counters(view, lowered.counters);
-            self.statistics.add_queries(lowered.queries);
+            self.statistics.add_queries(&lowered.queries);
             worlds.units.push(*lowered.unit);
             worlds.lowered.push(file);
         }
@@ -689,13 +923,15 @@ impl Build<'_> {
         let has_one_thread = self.threads == NonZeroUsize::MIN;
         #[cfg(bun_fuzzilli)]
         let keeps_runtime = self.is_preloading || LOWERED_RUNTIME.lock().is_some();
-        #[cfg(bun_fuzzilli)]
-        let runtime_key = keeps_runtime.then(|| RuntimeLoweringKey {
+        let create_key = || RuntimeLoweringKey {
             build: loaded.atoms.number(),
             files_to_lower: decided.runtime.files_to_lower.clone(),
             left_out_functions: left_out.runtime.clone(),
             left_out_declarations: bound.projects.runtime.left_out.declarations.clone(),
-        });
+        };
+        #[cfg(bun_fuzzilli)]
+        let runtime_key = keeps_runtime.then(create_key);
+        let key_among_programs = self.programs.is_some().then(create_key);
         self.with_inputs_for_reached_code(
             loaded,
             bound,
@@ -703,8 +939,9 @@ impl Build<'_> {
             &decided.application.roles,
             left_out.application,
             |inputs| {
+                let fits = self.options.aot.source_that_fits_in_memory;
                 let mut of_application =
-                    ProjectToLower::new(loaded, bound, decided, application, inputs, threads);
+                    ProjectToLower::new(loaded, bound, decided, application, inputs, threads, fits);
                 let words = &self.options.aot.option_words;
                 of_application.panics =
                     (words.iter()).any(|it| **it == *b"sabotage=LoweringPanics");
@@ -722,6 +959,7 @@ impl Build<'_> {
                             runtime,
                             inputs,
                             runtime_threads,
+                            fits,
                         );
                         #[cfg(bun_fuzzilli)]
                         if let Some(key) = runtime_key {
@@ -742,17 +980,29 @@ impl Build<'_> {
                                 },
                             };
                         }
-                        if has_one_thread {
+                        let kept = key_among_programs
+                            .as_ref()
+                            .and_then(|key| self.lowered_runtimes.find(key));
+                        if let Some(runtime) = kept {
                             return PerProject {
                                 application: of_application.lower(),
-                                runtime: of_runtime.lower(),
+                                runtime,
                             };
                         }
-                        let (runtime, application) = run_on_one_thread_while(
-                            self.caches,
-                            || of_runtime.lower(),
-                            || of_application.lower(),
-                        );
+                        let (runtime, application) = match has_one_thread {
+                            true => {
+                                let application = of_application.lower();
+                                (of_runtime.lower(), application)
+                            }
+                            false => run_on_one_thread_while(
+                                self.caches,
+                                || of_runtime.lower(),
+                                || of_application.lower(),
+                            ),
+                        };
+                        if let Some(key) = key_among_programs {
+                            self.lowered_runtimes.keep(key, &runtime);
+                        }
                         PerProject {
                             application,
                             runtime,
@@ -779,6 +1029,7 @@ impl Build<'_> {
         self.report_check_diagnostics(view, roles, checked.diagnostics, &checked.incomplete);
         self.diagnostics.add_load_messages(loaded.messages);
 
+        let mut lowered_units = Vec::with_capacity(checked.lowered.len());
         for (file, lowered) in checked.lowered {
             let Some(lowered) = lowered else {
                 if !self.diagnostics.has_errors() {
@@ -791,24 +1042,22 @@ impl Build<'_> {
             };
             self.diagnostics.add_buffer(view, lowered.diagnostics);
             self.statistics.add_counters(view, lowered.counters);
-            self.statistics.add_queries(lowered.queries);
+            self.statistics.add_queries(&lowered.queries);
             if project == ProjectId::Runtime && lowered.queries.closed_cycles != 0 {
                 self.circular_runtime_files
                     .push((file, lowered.queries.closed_cycles));
             }
-            units.push(*lowered.unit);
+            lowered_units.push(lowered.unit);
         }
+        extend_from_boxes(units, lowered_units, &in_parallel);
     }
 
     /// Unless somebody chose a thread count, no more threads than there is source text for: each thread has a checker of its own, which finds out again what the others know.
     fn threads_to_lower(&self, files: &Files<'_>, files_to_lower: &[FileId]) -> NonZeroUsize {
         const SOURCE_BYTES_PER_THREAD: usize = 256 << 10;
-        const MOST_USEFUL_THREADS: usize = 16;
         let texts = files_to_lower.iter();
         let source_bytes: usize = texts.map(|&file| files.module(file).hir.text.len()).sum();
-        let useful = source_bytes
-            .div_ceil(SOURCE_BYTES_PER_THREAD)
-            .min(MOST_USEFUL_THREADS);
+        let useful = source_bytes.div_ceil(SOURCE_BYTES_PER_THREAD);
         let useful = NonZeroUsize::new(useful).unwrap_or(NonZeroUsize::MIN);
         match self.options.aot.thread_count {
             Some(_) => self.threads,
@@ -823,12 +1072,14 @@ impl Build<'_> {
         diagnostics: Vec<BuildDiagnostic>,
         incomplete: &[Incomplete],
     ) {
+        if !self.options.load.takes_runtime_as_any {
+            self.diagnostics.note_places_of_type_errors(&diagnostics);
+        }
         let errors = report_package_errors(&mut self.diagnostics, view, diagnostics, roles);
         self.has_withdrawn_trust |= errors.has_withdrawn_trust;
         self.diagnostics
             .add_build_diagnostics(Stage::Check, errors.remaining);
-        self.diagnostics
-            .add_incomplete_files(incomplete, self.limits.get(LimitId::MaxNestingDepth));
+        self.diagnostics.add_incomplete_files(incomplete);
     }
 
     pub(crate) fn lowering_options(&self) -> LoweringOptions {
@@ -839,6 +1090,7 @@ impl Build<'_> {
             removable: self.options.removable,
             minifies_identifiers: self.options.minifies_identifiers,
             obfuscates: self.options.aot.obfuscates,
+            counts_executions: self.options.aot.counts_executions,
         }
     }
 
@@ -911,7 +1163,9 @@ impl Build<'_> {
             }
             (ProjectId::Application | ProjectId::Runtime, _) => DefinedObjectTypes::default(),
         };
-        let lowering_roles = roles_for_lowering(&roles.roles, files, self.options.aot.erases_types);
+        // Bun's own modules keep their types: no build of a user's is without them.
+        let erases_types = self.options.aot.erases_types && project == ProjectId::Application;
+        let lowering_roles = roles_for_lowering(&roles.roles, files, erases_types);
         let library = Library {
             project: LinkedProject {
                 files: loaded.project(ProjectId::Runtime).loaded.files(),
@@ -945,10 +1199,25 @@ impl Build<'_> {
         let compiled = files.compiled_files().iter().copied();
         let mut files_of_dependencies: Vec<FileId> = compiled.filter(is_in_dependency).collect();
         files_of_dependencies.sort_unstable();
-        let transpiler = RuntimeTranspiler::new(&match project {
-            ProjectId::Application => self.provider.enabled_features(),
-            ProjectId::Runtime => Vec::new(),
-        });
+        let default_define = RuntimeTranspiler::create_default_define();
+        let transpiler = match project {
+            ProjectId::Application => RuntimeTranspiler::new(
+                self.provider.define().unwrap_or(&default_define),
+                &self.provider.enabled_features(),
+                self.provider,
+            ),
+            // `bun run` does not print Bun's own modules.
+            ProjectId::Runtime => RuntimeTranspiler::new(&default_define, &[], &WithoutServices),
+        };
+        // Bun's own modules hand no FinalizationRegistry from one file to another.
+        let mut lowered_files = file_inputs.iter().flatten();
+        let makes_registries =
+            project == ProjectId::Application && lowered_files.any(FileInputs::makes_registries);
+        let reads_source_paths =
+            project == ProjectId::Application && reads_source_paths(files, sources);
+        if reads_source_paths {
+            sources.note_source_paths_at_run_time();
+        }
         then(&LoweringInputs {
             roles: &lowering_roles,
             checked_elsewhere: match project {
@@ -968,11 +1237,35 @@ impl Build<'_> {
             commonjs_exports: bound_project.graph.commonjs(),
             defined_object_types: &defined_object_types,
             files: &file_inputs,
+            makes_registries,
+            reads_source_paths,
+            replaced_builtins: &self.options.load.replaced_builtins,
             limits: &self.limits,
             transpiler: &transpiler,
+            prepared: &PreparedFiles::default(),
             options: self.lowering_options(),
         });
     }
+}
+
+// By what the names are bound to, in code that is not dead.
+fn reads_source_paths(files: &Files<'_>, sources: &Sources) -> bool {
+    files.compiled_files().iter().any(|&file| {
+        if !sources.has_source_path(file) {
+            return false;
+        }
+        let decisions = &files.analysis(file).decisions;
+        let mut names = files.bound(file).ident_bindings().iter();
+        let mut sites = files.analysis(file).import_sites.iter();
+        names.any(|&(name, binding)| {
+            matches!(
+                binding,
+                Binding::CommonJs(CommonJsVariable::Filename | CommonJsVariable::Dirname)
+            ) && !decisions.is_dead_expr(name)
+        }) || sites.any(|site| {
+            matches!(site.kind, ImportSiteKind::RequireResolve(call) if !decisions.is_dead_expr(call))
+        })
+    })
 }
 
 pub(crate) fn find_files_to_lower(compiled_files: &[FileId], roles: &RoleDecision) -> Vec<FileId> {
@@ -1034,10 +1327,8 @@ fn drop_reports_on_unloadable_modules(
 
 fn is_well_formed(files: &Files<'_>, file: FileId) -> bool {
     let module = files.module(file);
-    let mut diagnostics = module.hir.diagnostics.iter();
     let mut classes = module.bound.class_symbol.iter();
-    !diagnostics
-        .any(|it| it.kind == DiagnosticKind::Parse && it.class == DiagnosticClass::EarlyError)
+    syntax_errors_of(files.hir(file)).next().is_none()
         && !classes.any(|&it| it.is_some() && module.bound.symbol(it).name == known::missing)
 }
 

@@ -2,11 +2,11 @@
 // and how many more instructions per iteration the second may take than the first. Nothing is pinned: both sides are measured in the same executable.
 // A pair that is further apart today is listed as a todo, with what was last measured.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
-import { measureCommand } from "../analysis-scaling/measure-check";
+import { countsInstructions, measureCommand } from "../analysis-scaling/measure-check";
+import { built, spawned, withoutDebugInformation } from "../harness/commands";
 import { withSteadyCollections } from "../harness/counted-run";
-import { built, spawned, withoutDebugInformation } from "../run-programs";
 import { beforeAll, describe, test } from "../supported";
 
 const root = join(import.meta.dir, "equivalent-forms");
@@ -36,6 +36,21 @@ const programs: [entry: string, pairs: Pair[]][] = [
     [["methods assigned to the prototype of a function", "methods assigned to a variable that holds the prototype", 8]],
   ],
   ["names-in-a-list.js", [["a name found by a loop", "a name found by indexOf", 0]]],
+  [
+    "loops-behind-a-seldom-taken-path.js",
+    [
+      ["a list of eight", "a list of seven that gets its eighth in the loop", 1],
+      ["a list of eight beside a box", "a list of seven beside a box that gets its eighth in the loop", 1],
+    ],
+  ],
+  [
+    "bytes-copied-into-a-list-that-grows.ts",
+    [
+      ["from the first on", "from the last on", 1],
+      ["from the first on", "up to a count, tested above", 1],
+      ["in pairs, by one counter", "in pairs, by two counters that meet", 1],
+    ],
+  ],
   [
     "members-under-keys.js",
     [
@@ -76,6 +91,17 @@ const programs: [entry: string, pairs: Pair[]][] = [
   ["wrappers.js", [["a wrapper that is called", "a wrapper that is called through call", 4]]],
   ["errors.js", [["an error that is kept", "an error that is returned at once", 32]]],
   [
+    "strings.js",
+    [
+      ["a string made from scratch in each iteration", "a string made from scratch in each iteration inside a try", 16],
+      [
+        "a string made from scratch in each iteration",
+        "a string made from scratch in each iteration of a while loop",
+        16,
+      ],
+    ],
+  ],
+  [
     "creation-order.ts",
     [
       ["members stored in the order of their declarations", "members stored in the reverse order", 8],
@@ -107,13 +133,45 @@ const programs: [entry: string, pairs: Pair[]][] = [
       ["given members printed", "omitted members printed", 64, "249 | 802"],
     ],
   ],
+  [
+    "merged-options.ts",
+    [
+      ["members that a literal spells out", "members that two spreads bring behind a member of the literal", 2],
+      ["members that a literal spells out", "members that Object.assign brings to a literal with a member", 2],
+      [
+        "members that two spreads bring behind a member of the literal",
+        "members that two spreads bring under the interface of the defaults",
+        2,
+      ],
+      [
+        "members that Object.assign brings to a literal with a member",
+        "members that Object.assign brings to an empty literal under the interface of the defaults",
+        2,
+      ],
+      [
+        "members that two spreads bring behind a member of the literal",
+        "members that two spreads bring under what Required makes of the options",
+        2,
+      ],
+      [
+        "members that a literal gives numbers written in place",
+        "members that two spreads bring behind a member of the literal",
+        4,
+      ],
+      [
+        "members that a literal gives numbers written in place",
+        "members that Object.assign brings to a literal with a member",
+        4,
+      ],
+    ],
+  ],
 ];
 
 const skipped =
   isDebug || isASAN
     ? "a debug or ASAN build counts other instructions"
-    : isWindows
-      ? "it counts with perf_event_open or /usr/bin/time -l"
+    : !countsInstructions()
+      ? "instructions are not counted here"
       : undefined;
 if (skipped) console.error(`SKIPPED: test/aot/perf/equivalent-forms.test.ts: ${skipped}`);
 

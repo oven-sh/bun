@@ -1,1 +1,0 @@
-{ "skipWithASAN": "the bound of one second is for builds without AddressSanitizer" }

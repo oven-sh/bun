@@ -50,7 +50,7 @@ export default b.declarations(
     "process.report.getReport",
     "process.report.writeReport",
   ),
-  extendAll(["ConsoleTable", "StringWidth"], "console.table", "Bun.inspect"),
+  extendAll(["ConsoleTable", "StringWidth"], "console.table", "Bun.inspect", "Bun.inspect.table"),
   extendAll(
     ["ProcessBinding", "HttpParser", "NodeSmallModules", "Buffer", "Float64Array", "BigInt64Array"],
     "process.binding",
@@ -139,7 +139,8 @@ export default b.declarations(
   extendAll(["ProcessKill"], "process._kill", "process.kill"),
 
   extendAll(
-    ["ProcessOutputStreams", "ProcessStdout"],
+    // BunProcess.cpp openStandardSink() calls Bun.file(fd).writer() when a stream is first read.
+    ["ProcessOutputStreams", "ProcessStdout", "BunFile", "FileSink", "Bodies"],
     "console._stderr",
     "console._stdout",
     "process.stderr",

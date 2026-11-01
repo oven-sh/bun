@@ -25,7 +25,8 @@ impl Walker<'_, '_> {
         }
         let scope = bound.class_scope[class.idx()];
         let inner_name = bound.inner_class_symbol(class);
-        let mut slots = class::class_slots(hir, bound, self.input.compiled.settings, class);
+        let (settings, transpiled) = (self.input.compiled.settings, self.input.transpiled);
+        let mut slots = class::class_slots(hir, bound, settings, transpiled, class);
         slots.shared_sort_unstable();
         let source_constructor = hir[class].members.iter().find(|&member| {
             hir.runtime_member_kind(member) == MemberKind::Constructor
@@ -81,7 +82,13 @@ impl Walker<'_, '_> {
             self.push_function_code(function, inner);
         }
         self.push_task(slot_initialization(scope, ClassSlot::ClassObject), context);
-        self.push_members(class, instance_initializer, &slots, context);
+        let evaluates_fields =
+            class::assigns_fields_in_constructor(hir, bound, settings, transpiled, class);
+        let function_of_fields = match evaluates_fields {
+            true => constructor,
+            false => instance_initializer,
+        };
+        self.push_members(class, function_of_fields, &slots, context);
         self.push_initialization(inner_name, context);
         for &slot in &slots {
             match slot {
@@ -127,7 +134,7 @@ impl Walker<'_, '_> {
     fn push_members(
         &mut self,
         class: ClassId,
-        instance_initializer: WalkedFunctionId,
+        function_of_fields: WalkedFunctionId,
         slots: &[ClassSlot],
         context: Context,
     ) {
@@ -158,7 +165,7 @@ impl Walker<'_, '_> {
                 }
                 MemberKind::Property => {
                     if !node.flags.contains(Flags::STATIC) {
-                        self.push_field_initializer(member, instance_initializer);
+                        self.push_field_initializer(member, function_of_fields);
                     }
                 }
                 _ => continue,

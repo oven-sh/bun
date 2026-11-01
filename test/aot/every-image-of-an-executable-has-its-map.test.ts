@@ -3,7 +3,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDirWithBunTypes as tempDir } from "harness";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { built, slot, spawned } from "./run-programs";
+import { built, slot, spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
 const files = {
@@ -15,8 +15,8 @@ worker.onmessage = event => {
 worker.postMessage(20);
 `,
   "beside.ts": `declare var self: Worker;
-function twice(n: number) {
-  return n * 2;
+function twice(n: number): number {
+  return n <= 0 ? 0 : 2 + twice(n - 1);
 }
 self.onmessage = event => postMessage(twice(event.data));
 `,

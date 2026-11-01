@@ -9,6 +9,32 @@ const mayBeRemoved = (overload: DumpedOverload) =>
 
 export type LeftOut = { path: string; mode: CallMode; rule: string };
 
+const kindsIn = ({ isAnything, hasAnyObject, hasAnyFunction, hasPlainData, primitives, integers, stringLiterals, parts }: DumpedType) => [
+  isAnything,
+  hasAnyObject,
+  hasAnyFunction,
+  hasPlainData,
+  primitives,
+  integers,
+  stringLiterals.length > 0,
+  parts.map(part => [part.part, "class" in part ? part.class : ""]),
+];
+const claimsAbout = ({ mode, conversion, protocols, accepted, admitted, refused }: DumpedParameter) => [
+  mode,
+  conversion,
+  protocols,
+  kindsIn(accepted),
+  admitted && kindsIn(admitted),
+  kindsIn(refused),
+];
+
+// All that the compiler goes by when it decides whether a call may go with its unused result. Whether native code keeps to it is asked of every
+// entry without a compiler: differential.test.ts.
+function claimsOf(entry: DumpedEntry, overload: DumpedOverload): string {
+  const { mode, throws, onlyPropagatesErrors, capability, runsOnlyOperandCode, receiver, parameters } = overload;
+  return JSON.stringify([entry.kind, mode, throws, onlyPropagatesErrors, capability, runsOnlyOperandCode, receiver && claimsAbout(receiver), parameters.map(claimsAbout)]);
+}
+
 // With operands that nobody chose with care such an entry changes the machine, runs a text or starts something.
 function findRuleAgainst(entry: DumpedEntry, overloads: readonly DumpedOverload[]): string | null {
   const flag = entry.flags.find(flag => ["StartsInstance", "LoadsModuleByName", "EvaluatesText", "RunsUnseenCode", "IsCompilerHelper"].includes(flag));
@@ -130,14 +156,17 @@ export class CaseMaker {
         if (receiver !== null) for (const object of [receiver, ...otherReceivers]) expressions.add(`(${object})${member}`);
         continue;
       }
-      for (const list of this.#argumentListsOf(overload)) {
+      const [whole, ...others] = this.#argumentListsOf(overload);
+      // However the call is spelled, it is the same call to the compiler: the other spellings get the operands that the overload takes.
+      for (const list of [whole, ...others]) {
         const operands = list.join(", ");
-        expressions.add(mode === "Construct" ? `new ${callee}(${operands})` : `${callee}(${operands})`);
-        if (receiver === null) continue;
-        expressions.add(`(${receiver})${member}(${operands})`);
-        expressions.add(`${callee}.call(${[receiver, ...list].join(", ")})`);
+        if (receiver !== null) expressions.add(`(${receiver})${member}(${operands})`);
+        else expressions.add(mode === "Construct" ? `new ${callee}(${operands})` : `${callee}(${operands})`);
       }
-      const whole = this.#argumentListsOf(overload)[0];
+      if (receiver !== null) {
+        expressions.add(`${callee}(${whole.join(", ")})`);
+        expressions.add(`${callee}.call(${[receiver, ...whole].join(", ")})`);
+      }
       // Called where it is constructed, and constructed where it is called.
       expressions.add(mode === "Construct" ? `${callee}(${whole.join(", ")})` : `new ${callee}(${whole.join(", ")})`);
       if (receiver === null) continue;
@@ -149,9 +178,10 @@ export class CaseMaker {
     return [...expressions];
   }
 
-  make(dump: TableDump): { groups: Map<string, { module: string | null; expressions: string[] }>; leftOut: LeftOut[]; overloads: number } {
+  make(dump: TableDump): { modules: string[]; expressions: string[]; leftOut: LeftOut[]; overloads: number } {
     const groups = new Map<string, { module: string | null; expressions: string[] }>();
     const leftOut: LeftOut[] = [];
+    const claimsSeen = new Set<string>();
     let overloads = 0;
     for (const entry of dump.entries) {
       if (entry.sameObjectAs !== null) continue;
@@ -167,22 +197,26 @@ export class CaseMaker {
           leftOut.push({ path: entry.path, mode, rule: rule! });
           continue;
         }
-        overloads += removable;
+        // One entry stands for all that make the same claims.
+        const asked = ofMode.filter(overload => mayBeRemoved(overload) && !claimsSeen.has(claimsOf(entry, overload)));
+        if (asked.length === 0) {
+          leftOut.push({ path: entry.path, mode, rule: "an earlier entry makes the same claims" });
+          continue;
+        }
+        for (const overload of asked) claimsSeen.add(claimsOf(entry, overload));
+        overloads += asked.length;
         const holder = callee.module ?? entry.path.split(/[.[]/, 1)[0];
         let group = groups.get(holder);
         if (group === undefined) groups.set(holder, (group = { module: callee.module, expressions: [] }));
-        group.expressions.push(...this.#expressionsOf(entry, mode, callee.expression, ofMode));
+        group.expressions.push(...this.#expressionsOf(entry, mode, callee.expression, asked));
       }
     }
-    // A program costs a build, so the global holders with little to ask share theirs.
-    const shared: string[] = [];
-    for (const [holder, { module, expressions }] of groups) {
-      if (module !== null || expressions.length >= 100) continue;
-      shared.push(...expressions);
-      groups.delete(holder);
-    }
-    if (shared.length > 0) groups.set("small global holders", { module: null, expressions: shared });
-    return { groups, leftOut, overloads };
+    // A program costs a build, so all share a few. Each module has a name of its own there.
+    const modules = [...new Set([...groups.values()].flatMap(({ module }) => module ?? []))];
+    const expressions = [...groups.values()].flatMap(({ module, expressions }) =>
+      module === null ? expressions : expressions.map(expression => expression.replace(/\bMODULE\b/g, `MODULE_${modules.indexOf(module)}`)),
+    );
+    return { modules, expressions, leftOut, overloads };
   }
 }
 
@@ -211,21 +245,22 @@ function check(expression, unused, used) {
 }
 `;
 
-export function programOf(module: string | null, expressions: readonly string[]): string {
+const importsOf = (modules: readonly string[]) => modules.map((module, index) => `import * as MODULE_${index} from ${JSON.stringify(module)};\n`).join("");
+
+export function programOf(modules: readonly string[], expressions: readonly string[]): string {
   // A declaration in the top-level code that nothing reads, a statement in a function, and a value that is kept.
   const checks = expressions.map(
     expression =>
       `try {\n  const unread = ${expression};\n  declared = "returned";\n} catch (error) {\n  declared = describe(error);\n}\n` +
       `check(${JSON.stringify(expression)}, () => {\n  ${expression};\n}, () => {\n  globalThis.kept = ${expression};\n});\n`,
   );
-  const header = module === null ? "" : `import * as MODULE from ${JSON.stringify(module)};\n`;
-  return `${header}${prelude}${checks.join("")}console.log(lines.join("\\n"));\n`;
+  return `${importsOf(modules)}${prelude}${checks.join("")}console.log(lines.join("\\n"));\n`;
 }
 
 // Whole statements of the top-level code are left out where nothing uses what they declare, so each expression is also the one statement of
 // a module of its own: in a declaration that nothing reads and bare. The program loads the modules one after the other and says how that ended.
-export function modulesOf(module: string | null, expressions: readonly string[]): Record<string, string> {
-  const header = module === null ? "" : `import * as MODULE from ${JSON.stringify(module)};\n`;
+export function modulesOf(modules: readonly string[], expressions: readonly string[]): Record<string, string> {
+  const header = importsOf(modules);
   const files: Record<string, string> = {};
   const loads = expressions.map((expression, index) => {
     files[`declared-${index}.js`] = `${header}const unread = ${expression};\n`;

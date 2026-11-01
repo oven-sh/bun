@@ -15,7 +15,7 @@ use crate::hir::{
 };
 use crate::program::{FileId, Sym};
 use crate::types::TypeId;
-use crate::util::FxHashSet;
+use crate::util::{FxHashSet, SharedSort};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum StorePlace {
@@ -77,7 +77,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             let candidates = store_candidates(
                 hir,
                 bound,
-                index,
+                &index,
                 &[ThisOwner::Instance(class), ThisOwner::Static(class)],
                 bound.declared_symbol(Decl::Class(class)).some(),
                 bound.inner_class_symbol(class).some(),
@@ -111,7 +111,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let candidates = store_candidates(
             hir,
             bound,
-            index,
+            &index,
             &[ThisOwner::Function(function)],
             bound.declared_symbol(Decl::Fn(function)).some(),
             None,
@@ -153,7 +153,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let mut names: Vec<Atom> = stored
             .chain(candidates.prototype_accessor_names.iter().copied())
             .collect();
-        names.sort_unstable_by_key(|&name| self.atom_bytes(name));
+        names.shared_sort_unstable_by_key(|&name| self.atom_bytes(name));
         names.dedup();
         names
             .into_iter()
@@ -493,7 +493,7 @@ fn store_candidates(
     if is_binding_stable {
         stores.extend(binding_stores.map(binding_candidate));
     }
-    stores.sort_unstable_by_key(|candidate| (hir[candidate.store].pos, candidate.store));
+    stores.shared_sort_unstable_by_key(|candidate| (hir[candidate.store].pos, candidate.store));
     StoreCandidates {
         stores,
         prototype_accessor_names,

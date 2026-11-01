@@ -1,9 +1,0 @@
-typeof true
-typeof of a member true
-?? true
-|| true
-in true
-?. true
-a call true
-the whole list 1
-the whole list behind typeof true

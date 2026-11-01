@@ -1,3 +1,4 @@
+// Runs alone: it judges by a clock.
 // The time of a build does not hang on how a program is cut into files, functions and classes.
 //
 // Two programs in which each of N call sites may enter each of N functions. On one thread, so that the time is the work.

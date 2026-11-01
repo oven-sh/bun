@@ -1,6 +1,6 @@
 // The object that node:crypto takes from src/jsc/bindings/node/crypto/node_crypto_binding.cpp when it is evaluated. src/runtime/node/node_crypto_binding.bind.ts describes the other.
 import * as b from "bun-builtins-table";
-import { answers, bagOfFunctions, undeclaredClasses, undeclaredFunctions } from "./native-bags.ts";
+import { answers, bagOfFunctions, undeclaredClasses, undeclaredFunction, undeclaredFunctions } from "./native-bags.ts";
 
 const cppBinding = "%NodeCryptoBinding%";
 
@@ -42,13 +42,14 @@ export default b.declarations(
     "Verify",
     "Hmac",
     "Hash",
-    "ECDH",
     "DiffieHellman",
     "DiffieHellmanGroup",
     "Cipher",
     "KeyObject",
     "X509Certificate",
   ),
+  // node:crypto wraps this method on the prototype, and native code calls no method of it.
+  b.class(`${cppBinding}.ECDH`, { namesReadByNativeCodeOnPrototype: [], proto: { setPublicKey: undeclaredFunction } }),
   answers("native:Cpp:node_crypto_binding.cpp:createNodeCryptoBinding", b.builtin(cppBinding)),
 
   // They compute over bytes and keys, and call the callbacks that they are handed. None evaluates a text or loads a module.

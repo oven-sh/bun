@@ -1,7 +1,0 @@
-{
-  "env": {
-    "JSC_useDollarVM": "1"
-  },
-  "erased": "as plain Bun",
-  "onlyInShell": "$vm"
-}

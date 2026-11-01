@@ -18,7 +18,8 @@ use super::{
 };
 use crate::builtins::id::RuntimeFunction;
 use crate::builtins::{
-    BuiltinNames, ImportTargets, Platforms, ResolveInput, SourceDialect, resolve_file, table,
+    BuiltinNames, ImportTargets, Platforms, ReplacedMembersSought, ResolveInput, SourceDialect,
+    resolve_file, table,
 };
 use crate::compile::testing::lower_program;
 use crate::diagnostic_codes::Code;
@@ -75,6 +76,8 @@ fn with_runtime_source<R>(text: &str, then: impl FnOnce(&LibrarySource<'_, '_>) 
         names: &names,
         platform: Platforms::LINUX,
         dialect: SourceDialect::Runtime,
+        replaced: &[],
+        replaced_members_sought: ReplacedMembersSought::None,
     });
     then(&LibrarySource {
         hir: &hir,
@@ -133,6 +136,7 @@ fn lower_library_file_for(
         removable: Default::default(),
         minifies_identifiers: false,
         obfuscates: false,
+        counts_executions: false,
     };
     let mut lowered = lower_program(&files, options);
     assert_eq!(lowered.len(), 2, "the entry point and the library file");
@@ -488,6 +492,36 @@ fn type_error_leaves_expected_types() {
     let expected = DeclaredType::new(number, None, PositionFlags::default());
     assert_eq!(builtin.parameters, [expected]);
     assert_eq!(builtin.results, [expected]);
+}
+
+#[test]
+fn only_recursively_private_functions_hide_what_is_written_inside_them() {
+    let text = r#"
+        $visibility = "Private";
+        export function filter() { return function insidePrivate() { return function deeper() {}; }; }
+        $linkTimeConstant;
+        export function find() { return function* insideLinkTimeConstant() {}; }
+        $visibility = "PrivateRecursive";
+        export function findIndex() { return function insideRecursive() { return function deepest() {}; }; }
+        export function at() { return function insidePublic() {}; }
+    "#;
+    let fragment = lower_array_prototype(text).fragment;
+    for (name, hidden) in [
+        ("insidePrivate", false),
+        ("deeper", false),
+        ("insideLinkTimeConstant", false),
+        ("insideRecursive", true),
+        ("deepest", true),
+        ("insidePublic", false),
+    ] {
+        assert_eq!(is_hidden(header_named(&fragment, name)), hidden, "{name}");
+    }
+    for export_name in ["filter", "find", "findIndex"] {
+        assert!(
+            is_hidden(array_header(&fragment, export_name)),
+            "{export_name}"
+        );
+    }
 }
 
 #[test]

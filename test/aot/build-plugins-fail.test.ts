@@ -35,11 +35,13 @@ buildBothWays("compile/aot/plugins of Bun.build that fail", {
     fails: "onResolve gave up late",
   },
   "onLoad of the entry point throws": {
+    alone: true,
     files,
     plugins: [`build.onLoad({ filter: /main\\.ts$/ }, () => { throw new Error("no entry"); });`],
     fails: "no entry",
   },
   "onResolve of the entry point throws": {
+    alone: true,
     files,
     plugins: [`build.onResolve({ filter: /main/ }, () => { throw new Error("no entry"); });`],
     fails: "no entry",

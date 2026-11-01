@@ -1,6 +1,8 @@
+// Runs alone: it judges by the memory that a program holds.
 import { expect } from "bun:test";
 import { bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { reads } from "./harness/reads";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -102,6 +104,7 @@ test.skipIf(isASAN || isDebug)(
     for (const [name, sum] of Object.entries(sums)) {
       const ran = await run([executable, name], String(dir));
       const [printedSum, megabytesMore] = ran.stdout.trim().split(" ").map(Number);
+      reads(`sixteen times the turns of ${name}`, megabytesMore, 24, "MB more");
       expect({
         name,
         stderr: ran.stderr,

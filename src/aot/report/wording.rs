@@ -408,9 +408,6 @@ pub(super) fn decline_sentence(kind: DeclineKind) -> &'static str {
         DeclineKind::ResultNodeInterpreted => {
             "part of the type that a parse is written under is built by the generic parser, not compiled code"
         }
-        DeclineKind::GenericVersionNotCreated => {
-            "a function got no slow path, so values are guarded at every use instead of checked once"
-        }
     }
 }
 
@@ -621,7 +618,6 @@ pub(super) fn unseen_code_sentence(cause: UnseenCodeCause) -> &'static str {
         UnseenCodeCause::ProgramNotCompiled => "the program wasn't built with --aot",
         UnseenCodeCause::ReportMissing => "the compiler didn't report which APIs are used",
         UnseenCodeCause::FlowResultDisabled => "a developer option turned the analysis off",
-        UnseenCodeCause::FlowGaveUp => "the analysis hit a compiler limit",
         UnseenCodeCause::EvaluatesText => "the program calls eval() or new Function()",
         UnseenCodeCause::ImportsUncompiledCode => {
             "the program imports a module that isn't in the executable"
@@ -738,7 +734,6 @@ pub(super) fn missed_optimization_code(kind: DeclineKind) -> &'static str {
         DeclineKind::LoopBoundNotClamped => "bounds-checks-not-hoisted",
         DeclineKind::StretchNotGuarded => "no-fast-path",
         DeclineKind::ResultNodeInterpreted => "generic-parser",
-        DeclineKind::GenericVersionNotCreated => "guarded-at-every-use",
     }
 }
 
@@ -747,7 +742,6 @@ pub(super) fn trim_blocker_code(cause: UnseenCodeCause) -> &'static str {
         UnseenCodeCause::ProgramNotCompiled => "no-aot",
         UnseenCodeCause::ReportMissing => "no-report",
         UnseenCodeCause::FlowResultDisabled => "analysis-disabled",
-        UnseenCodeCause::FlowGaveUp => "limit-reached",
         UnseenCodeCause::EvaluatesText => "eval",
         UnseenCodeCause::ImportsUncompiledCode => "external-import",
         UnseenCodeCause::LoadsModuleByName | UnseenCodeCause::LoadsCodeByName => "dynamic-import",

@@ -6,7 +6,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { built, slot, spawned } from "../run-programs";
+import { built, slot, spawned } from "../harness/commands";
 import { describe, test } from "../supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };

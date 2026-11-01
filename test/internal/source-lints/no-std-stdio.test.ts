@@ -19,7 +19,7 @@ test("Rust sources linked into Bun do not use the streams of the standard librar
   // Not compiled into a release build: tests, debug output, Windows debug macros, and the message of the allocator.
   const known = new Map([
     ["src/aot/emit/tests.rs", 1],
-    ["src/aot/tests/ir_tests.rs", 4],
+    ["src/aot/tests/ir_tests.rs", 9],
     ["src/bun_alloc/lib.rs", 1],
     ["src/bun_core/Global.rs", 1],
     ["src/libuv_sys/libuv.rs", 1],

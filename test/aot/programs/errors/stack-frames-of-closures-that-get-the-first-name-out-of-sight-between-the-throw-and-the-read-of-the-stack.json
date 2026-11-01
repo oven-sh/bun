@@ -1,6 +1,0 @@
-{
-  "alone": "the first name that is given out of sight is the first of the whole executable",
-  "skipInVariant": {
-    "no-flow-results": "the stored output is that of calls which record their callee from the first name on; without the results of flow every call records it, and the frames are those of plain Bun"
-  }
-}

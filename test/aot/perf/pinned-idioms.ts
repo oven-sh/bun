@@ -5,8 +5,10 @@ import { bunEnv, bunExe, isASAN, isCI, isDebug, isMusl, isWindows, tempDir } fro
 import { join } from "path";
 import { measureCommand } from "../analysis-scaling/measure-check";
 import { withSteadyCollections } from "../harness/counted-run";
-import { isToldWhatToTake, slot, spawned, withoutDebugInformation } from "../run-programs";
+import { isToldWhatToTake } from "../harness/shares";
+import { slot, spawned, withoutDebugInformation } from "../harness/commands";
 import { describe, test } from "../supported";
+import { runsOfReading } from "./measure-idioms";
 import { writeUntypedIdioms } from "./untyped-idioms";
 
 const root = join(import.meta.dir, "idioms");
@@ -99,13 +101,14 @@ export function pinnedIdioms(part = 1, parts = 1) {
       return { count: run.instructions, printed: run.stdout };
     }
     async function aTurn(cmd: string[], n: number) {
-      const short = await instructions(cmd, n >> 2);
-      const long = await instructions(cmd, n);
+      const runs = runsOfReading(n);
+      const short = await instructions(cmd, runs.short);
+      const long = await instructions(cmd, runs.long);
       return {
         instructions:
           short.count === undefined || long.count === undefined
             ? undefined
-            : Math.round(((long.count - short.count) / (n - (n >> 2))) * 10) / 10,
+            : Math.round(((long.count - short.count) / (runs.long - runs.short)) * 10) / 10,
         printed: long.printed,
       };
     }

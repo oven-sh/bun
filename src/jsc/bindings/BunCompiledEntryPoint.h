@@ -2,17 +2,16 @@
 
 #include "root.h"
 
-namespace JSC {
-class JSModuleLoader;
-}
+#if ENABLE(AOT)
 
-namespace Zig {
-class GlobalObject;
-}
+#include <JavaScriptCore/AOTModuleHost.h>
 
 namespace Bun {
 
-// After the record of a compiled entry point has been evaluated: what the module `bun:main` does for an entry point that is not compiled.
-void lookForServerInEntryPoint(Zig::GlobalObject*, JSC::JSModuleLoader*, JSC::JSValue moduleRecord);
+// An entry point that is not compiled is the one import of the module `bun:main`. These stand for that module above a compiled one.
+bool isImportOfMainModule(JSC::JSGlobalObject*, JSC::AOT::ModuleID);
+void runMainModule(JSC::JSGlobalObject*, JSC::AOT::ModuleID entryPoint);
 
 } // namespace Bun
+
+#endif // ENABLE(AOT)

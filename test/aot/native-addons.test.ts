@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join, resolve } from "path";
-import { built, slot, spawned, unsupported } from "./run-programs";
+import { built, slot, spawned, unsupported } from "./harness/commands";
 
 const systemCC = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 const programs = join(import.meta.dir, "native-addons");
@@ -72,7 +72,17 @@ describe.skipIf(!systemCC || !!unsupported)("compile/aot/native-addons", () => {
         const executable = join(folder, name.replace(/\.\w+$/, isWindows ? ".exe" : ""));
         built(
           await spawned(
-            [bunExe(), "build", "--compile", "--aot", join(programs, name), "--outfile", executable],
+            // No program imports a built-in module. On Windows a function of the library makes process.env, where the path of the addon is.
+            [
+              bunExe(),
+              "build",
+              "--compile",
+              "--aot",
+              ...(isWindows ? [] : ["--no-builtin-modules"]),
+              join(programs, name),
+              "--outfile",
+              executable,
+            ],
             programs,
             bunEnv,
           ),

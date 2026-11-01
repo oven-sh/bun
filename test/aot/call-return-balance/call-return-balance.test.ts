@@ -1,8 +1,8 @@
-import { expect } from "bun:test";
+import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { cpSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { test } from "../supported";
+import { beforeAll, test } from "../supported";
 import { traceCallsAndReturns, whyTracingIsUnavailable } from "./trace-calls-and-returns";
 
 const knownUnbalanced: Record<string, number> = {};
@@ -42,12 +42,16 @@ function nameLookup(map: string, maps: string, executable: string) {
   };
 }
 
-async function traceRows(mode: string[]) {
-  using dir = tempDir("call-return-balance", {});
-  const folder = String(dir);
+const isSkipped = !!reason || isASAN || isDebug;
+const dir = tempDir("call-return-balance", {});
+const folder = String(dir);
+const executable = join(folder, "main");
+afterAll(() => dir[Symbol.dispose]());
+
+beforeAll(() => {
+  if (isSkipped) return;
   for (const file of ["main.ts", "untyped-rows.js", "typed-rows.ts", "exception-rows.ts"])
     cpSync(join(import.meta.dir, file), join(folder, file));
-  const executable = join(folder, "main");
   const built = Bun.spawnSync({
     cmd: [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable],
     cwd: folder,
@@ -58,7 +62,9 @@ async function traceRows(mode: string[]) {
     stderr: "",
     exitCode: 0,
   });
+});
 
+async function traceRows(mode: string[]) {
   const plain = Bun.spawnSync({ cmd: [executable, ...mode], env: bunEnv, stderr: "pipe" });
   expect({ stderr: plain.stderr.toString(), exitCode: plain.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   const { names } = JSON.parse(plain.stdout.toString()) as { names: string[] };
@@ -82,7 +88,7 @@ async function traceRows(mode: string[]) {
   return { names, windows: traced.windows, nameOf, changedRegisters };
 }
 
-test.skipIf(!!reason || isASAN || isDebug)(
+test.skipIf(isSkipped)(
   "every call is paired with a return, so the CPU return address predictor stays in sync",
   async () => {
     const { names, windows, nameOf, changedRegisters } = await traceRows([]);
@@ -105,7 +111,7 @@ test.skipIf(!!reason || isASAN || isDebug)(
   600_000,
 );
 
-test.skipIf(!!reason || isASAN || isDebug)(
+test.skipIf(isSkipped)(
   "native code gets its callee-saved registers back when an exception leaves a nested VM entry",
   async () => {
     const { changedRegisters } = await traceRows(["exceptions"]);

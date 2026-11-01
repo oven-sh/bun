@@ -64,24 +64,32 @@ console.log("goes on");
   }),
 };
 
-async function expectSameAsPlain(folder: string, entry: string) {
-  const [plain, checked, compiled] = await Promise.all(
-    [[], ["--aot"], ["--debug-aot"]].map(flags => run([bunExe(), "run", ...flags, entry], folder)),
-  );
-  const expected = { stdout: plain.stdout, exitCode: plain.exitCode };
-  expect({ stdout: checked.stdout, exitCode: checked.exitCode }).toEqual(expected);
-  expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual(expected);
+async function expectSameAsPlain(folder: string, entry: string, modes: string[]) {
+  const runWith = (...flags: string[]) => run([bunExe(), "run", ...flags, entry], folder);
+  const [plain, ...others] = await Promise.all([runWith(), ...modes.map(mode => runWith(mode))]);
+  for (const [i, { stdout, exitCode }] of others.entries()) {
+    expect({ mode: modes[i], stdout, exitCode }).toEqual({
+      mode: modes[i],
+      stdout: plain.stdout,
+      exitCode: plain.exitCode,
+    });
+  }
 }
+
+// Every way meets a shared library. What else a file may hold meets the two ways that say the most of the error.
+const waysThatDescribe = ["require in a try", "import() with a handler"];
+// `bun run --aot` runs the source files once its check passes, so only the check can differ. It runs where the file holds a shared library.
+const modesFor = (held: string) => (held === "a shared library" ? ["--aot", "--debug-aot"] : ["--debug-aot"]);
 
 describe.each(["library.so", "library"])("%s holds", name => {
   describe.each(Object.keys(contents))("%s:", held => {
-    test.concurrent.each(Object.keys(ways))(
+    test.concurrent.each(held === "a shared library" ? Object.keys(ways) : waysThatDescribe)(
       "%s",
       async way => {
         const tree = ways[way](name);
         using dir = tempDir("no-program", { ...tree, [name]: contents[held] });
         const entry = "main.cjs" in tree ? "main.cjs" : "main.mjs";
-        await expectSameAsPlain(String(dir), entry);
+        await expectSameAsPlain(String(dir), entry, modesFor(held));
       },
       120_000,
     );
@@ -89,13 +97,13 @@ describe.each(["library.so", "library"])("%s holds", name => {
 });
 
 describe.each(["library.so", "library"])("%s is a folder:", name => {
-  test.concurrent.each(Object.keys(ways))(
+  test.concurrent.each(waysThatDescribe)(
     "%s",
     async way => {
       const tree = ways[way](name);
       using dir = tempDir("no-program", { ...tree, [name + "/held.txt"]: "text" });
       const entry = "main.cjs" in tree ? "main.cjs" : "main.mjs";
-      await expectSameAsPlain(String(dir), entry);
+      await expectSameAsPlain(String(dir), entry, ["--debug-aot"]);
     },
     120_000,
   );

@@ -1,1 +1,0 @@
-{ "skipInShell": "it uses DOMException, AbortSignal and structuredClone" }

@@ -109,13 +109,23 @@ describe("which builds compile WebKit", () => {
     expect(prebuiltHasProgramObjects(cfg)).toBe(false);
     writeFileSync(join(source.destDir!, objects("testaot")), "");
     expect(prebuiltHasProgramObjects(cfg)).toBe(true);
+    // The ICU of the tarball keeps its data compressed. The objects of jsc hold what reads it; testaot gets it here, with
+    // zstd's decoder compiled for it alone: the objects of zstd that bun links want bun's run time in a hardened build.
     expect(
-      jscPrograms(cfg).map(({ name, sources, libs }) => [name, sources.map(s => relative(buildDir, s)), libs]),
+      jscPrograms(cfg).map(({ name, sources, cSources, libs, sourcesFrom }) => [
+        name,
+        [...sources, ...(cSources ?? [])].map(s => relative(buildDir, s)),
+        libs,
+        sourcesFrom,
+      ]),
     ).toEqual(
       ["jsc", "testaot"].map(name => [
         name,
-        [join("deps", "WebKit", "programs", name, "OutOfMemory.cpp")],
+        ["OutOfMemory.cpp", ...(name === "testaot" ? ["ICUData.cpp", "ZstdDecoder.c"] : [])].map(file =>
+          join("deps", "WebKit", "programs", name, file),
+        ),
         [join(source.destDir!, objects(name))],
+        name === "testaot" ? ["zstd"] : undefined,
       ]),
     );
     expect(webkit.provides(cfg).files).toEqual(expect.arrayContaining([objects("jsc"), objects("testaot")]));
@@ -295,6 +305,8 @@ const checkout = {
     set(JavaScriptCoreAOT_UNIFIED_SOURCE_LIST_FILES "aot/Sources.txt")
     set(JavaScriptCoreAOTCompiledForSize_UNIFIED_SOURCE_LIST_FILES "aot/SourcesCompiledForSize.txt")
     set(JavaScriptCoreAOTCompiledForSize_UNIFIED_SOURCE_BUNDLE_PREFIX "CompiledForSize")
+    set(JavaScriptCoreAOTCompiledForMinimumSize_UNIFIED_SOURCE_LIST_FILES "aot/SourcesCompiledForMinimumSize.txt")
+    set(JavaScriptCoreAOTCompiledForMinimumSize_UNIFIED_SOURCE_BUNDLE_PREFIX "CompiledForMinimumSize")
     set(JavaScriptCore_AOT_GENERATED_SOURCES_COMPILED_FOR_SIZE "\${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaEnumNames.cpp")
     list(APPEND JavaScriptCore_SOURCES \${JavaScriptCore_AOT_SCHEMA_GENERATED_SOURCES} \${JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_SOURCES})
     list(APPEND JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES "\${JavaScriptCore_AOT_GENERATED_DIR}")
@@ -312,6 +324,8 @@ const checkout = {
     AOT_CHECK_SOURCE_LISTS()`,
   "Source/JavaScriptCore/aot/Sources.txt": `aot/ir/AOTValue.cpp\n`,
   "Source/JavaScriptCore/aot/SourcesCompiledForSize.txt": `aot/ir/AOTVerifier.cpp\n`,
+  "Source/JavaScriptCore/aot/SourcesCompiledForMinimumSize.txt": `aot/ir/AOTDump.cpp\n`,
+  "Source/JavaScriptCore/aot/ir/AOTDump.cpp": "",
   "Source/JavaScriptCore/aot/ir/AOTVerifier.cpp": "",
   "Source/JavaScriptCore/aot/ir/AOTSchema.def": "",
   "Source/JavaScriptCore/aot/ir/generator/index.ts": "",
@@ -419,6 +433,7 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
       "B/JavaScriptCore/DerivedSources/Generated.cpp",
       "B/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-of-8-1.cpp",
       "B/JavaScriptCore/DerivedSources/unified-sources/CompiledForSizeUnifiedSource-of-8-1.cpp",
+      "B/JavaScriptCore/DerivedSources/unified-sources/CompiledForMinimumSizeUnifiedSource-of-8-1.cpp",
       "B/JavaScriptCore/DerivedSources/JSCBuiltins.cpp",
       "JSC/inspector/remote/socket/posix/RemoteInspectorSocketPOSIX.cpp",
       // What the generators of aot/ write.
@@ -449,7 +464,50 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
         "B/JavaScriptCore/DerivedSources/unified-sources/CompiledForSizeUnifiedSource-of-8-1.cpp",
         "JSC/aot/ir/AOTVerifier.cpp",
       ],
+      [
+        "B/JavaScriptCore/DerivedSources/unified-sources/CompiledForMinimumSizeUnifiedSource-of-8-1.cpp",
+        "JSC/aot/ir/AOTDump.cpp",
+      ],
     ]);
+  });
+
+  test("a release build gives the functions of a bundle compiled for size the attribute of its list", () => {
+    const attributesIn = (buildType: "Debug" | "Release") => {
+      const { spec, short } = describeBuild({ asan: false, buildType });
+      const sources = spec.groups!.find(g => g.name === "JavaScriptCore")!.sources;
+      return sources.flatMap(s =>
+        typeof s === "string"
+          ? []
+          : (s.cflags ?? []).filter(f => f.includes("force-attribute")).map(f => [short(s.path), f]),
+      );
+    };
+    expect(attributesIn("Release")).toEqual([
+      [
+        "B/JavaScriptCore/DerivedSources/unified-sources/CompiledForSizeUnifiedSource-of-8-1.cpp",
+        "-mllvm=-force-attribute=optsize",
+      ],
+      [
+        "B/JavaScriptCore/DerivedSources/unified-sources/CompiledForMinimumSizeUnifiedSource-of-8-1.cpp",
+        "-mllvm=-force-attribute=minsize",
+      ],
+      ["B/JavaScriptCore/DerivedSources/aot/AOTSchemaEnumNames.cpp", "-mllvm=-force-attribute=optsize"],
+    ]);
+    expect(attributesIn("Debug")).toEqual([]);
+  });
+
+  test("a release build does not unroll loops of unknown trip count in the sources of aot/ compiled for speed", () => {
+    const sourcesWithFlagIn = (buildType: "Debug" | "Release") => {
+      const { spec, short } = describeBuild({ asan: false, buildType });
+      const sources = spec.groups!.find(g => g.name === "JavaScriptCore")!.sources;
+      return sources.flatMap(s =>
+        typeof s !== "string" && (s.cflags ?? []).includes("-mllvm=-unroll-runtime=false") ? [short(s.path)] : [],
+      );
+    };
+    expect(sourcesWithFlagIn("Release")).toEqual([
+      "B/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-of-8-1.cpp",
+      "B/JavaScriptCore/DerivedSources/aot/AOTBuiltinTableEngineBindings.cpp",
+    ]);
+    expect(sourcesWithFlagIn("Debug")).toEqual([]);
   });
 
   test("--unified-sources=off compiles each source of aot/ by itself", () => {
@@ -626,6 +684,11 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
           "aot/SourcesCompiledForSize.txt": "aot/ir/AOTVerifier.cpp\naot/ir/AOTPrinter.cpp\n",
         },
         "aot/SourcesCompiledForSize.txt: not in ascending order",
+      ],
+      [
+        "a source in both lists of those compiled for size",
+        { "aot/SourcesCompiledForMinimumSize.txt": "aot/ir/AOTDump.cpp\naot/ir/AOTVerifier.cpp\n" },
+        "aot/ir/AOTVerifier.cpp: in aot/SourcesCompiledForSize.txt and in aot/SourcesCompiledForMinimumSize.txt",
       ],
       [
         "a folder of headers that is no include directory",

@@ -209,7 +209,7 @@ _ZN3hwy3armL26DetectAdditionalSveTargetsEl  [SVE]
 # ----------------------------------------------------------------------------
 # compiler-rt outline atomics. Each helper has both LSE and LDXR/STXR paths;
 # __aarch64_have_lse_atomics (= AT_HWCAP & HWCAP_ATOMICS) picks at runtime.
-# (61 symbols)
+# (62 symbols)
 # ----------------------------------------------------------------------------
 __aarch64_cas1_acq        [LSE]
 __aarch64_cas1_acq_rel    [LSE]
@@ -225,6 +225,7 @@ __aarch64_cas8_acq_rel    [LSE]
 __aarch64_cas8_rel        [LSE]
 __aarch64_cas8_relax      [LSE]
 __aarch64_ldadd1_acq_rel  [LSE]
+__aarch64_ldadd1_rel      [LSE]
 __aarch64_ldadd2_acq_rel  [LSE]
 __aarch64_ldadd4_acq      [LSE]
 __aarch64_ldadd4_acq_rel  [LSE]

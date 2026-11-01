@@ -233,6 +233,26 @@ fn every_well_known_symbol_has_name() {
 }
 
 #[test]
+fn functions_are_callable() {
+    for function in [
+        BuiltinId::MathAbs,
+        BuiltinId::Array,
+        BuiltinId::ArrayPrototypePush,
+        BuiltinId::FunctionPrototype,
+    ] {
+        assert!(is_callable(function), "{function:?}");
+    }
+    for other in [
+        BuiltinId::Math,
+        BuiltinId::ArrayPrototype,
+        BuiltinId::SymbolIterator,
+        BuiltinId::MathPI,
+    ] {
+        assert!(!is_callable(other), "{other:?}");
+    }
+}
+
+#[test]
 fn roots() {
     assert_eq!(root_of(BuiltinId::ArrayPrototypePush), BuiltinId::Array);
     assert_eq!(root_of(BuiltinId::Array), BuiltinId::Array);
@@ -338,7 +358,7 @@ fn members_of_locked_object_are_locked() {
     assert_mutability(&[BuiltinId::ErrorCaptureStackTrace], ConstantUnlessWritten);
 }
 
-const MEMBERS_LEFT_WRITABLE: [BuiltinId; 55] = [
+const MEMBERS_LEFT_WRITABLE: [BuiltinId; 65] = [
     BuiltinId::BufferPoolSize,
     BuiltinId::DateNow,
     BuiltinId::DateParse,
@@ -394,6 +414,16 @@ const MEMBERS_LEFT_WRITABLE: [BuiltinId; 55] = [
     BuiltinId::SetPrototypeIsSubsetOf,
     BuiltinId::SetPrototypeIsSupersetOf,
     BuiltinId::SetPrototypeIsDisjointFrom,
+    BuiltinId::IntlDateTimeFormatPrototypeFormat,
+    BuiltinId::IntlDateTimeFormatPrototypeFormatRange,
+    BuiltinId::IntlDateTimeFormatPrototypeFormatRangeToParts,
+    BuiltinId::IntlDateTimeFormatPrototypeFormatToParts,
+    BuiltinId::IntlDateTimeFormatPrototypeResolvedOptions,
+    BuiltinId::IntlNumberFormatPrototypeFormat,
+    BuiltinId::IntlNumberFormatPrototypeFormatRange,
+    BuiltinId::IntlNumberFormatPrototypeFormatRangeToParts,
+    BuiltinId::IntlNumberFormatPrototypeFormatToParts,
+    BuiltinId::IntlNumberFormatPrototypeResolvedOptions,
 ];
 
 #[test]

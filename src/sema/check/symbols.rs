@@ -240,7 +240,8 @@ impl<'p, 's> Checker<'p, 's> {
     fn resolve_type_of_symbol(&mut self, sym: Sym) -> TypeId {
         loop {
             let ty = self.resolve_type_of_symbol_once(sym);
-            if self.unwind_to != self.stack.len() || !self.retry_too_deep_query() {
+            if self.unwind_to != self.stack.len() || !self.retry_too_deep_query(Query::Symbol(sym))
+            {
                 return ty;
             }
             if let Some(known) = self.p.symbol_types.get(&self.task, &sym) {
@@ -865,6 +866,9 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // Nothing is known about `declare module "m";`.
             if self.files().is_shorthand_ambient_module_symbol(sym) {
+                return TypeId::ANY;
+            }
+            if self.p.aot_symbols().is_bun_module_without_values(sym) {
                 return TypeId::ANY;
             }
             return self.intern(TypeData::Anon {
@@ -3177,7 +3181,8 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> TypeId {
         // Destructuring `any` yields `any`, and nothing else is checked, not even a default.
         if self.is_any(parent_ty) {
-            return parent_ty;
+            let listed = self.type_predicate_listed_for_element_of_any(file, pat);
+            return listed.unwrap_or(parent_ty);
         }
         let hir = self.hir(file);
         let parent_ty = match self.bound(file).pat_parent[pat.idx()] {
@@ -4356,7 +4361,9 @@ impl<'p, 's> Checker<'p, 's> {
     fn resolve_return_type_of_fn(&mut self, file: FileId, func: FnId) -> TypeId {
         loop {
             let ty = self.resolve_return_type_of_fn_once(file, func);
-            if self.unwind_to != self.stack.len() || !self.retry_too_deep_query() {
+            if self.unwind_to != self.stack.len()
+                || !self.retry_too_deep_query(Query::Return(file, func))
+            {
                 return ty;
             }
             if let Some((known, _)) = self.p.fn_return_types.get(&self.task, &(file, func)) {
@@ -4727,6 +4734,7 @@ impl<'p, 's> Checker<'p, 's> {
         let info = self.bound(file).fns[func.idx()];
         let is_async = f.flags.contains(Flags::ASYNC);
         let mut aggregated_types: SmallVec<[TypeId; 4]> = SmallVec::new();
+        let mut listed: crate::util::FxHashSet<TypeId> = Default::default();
         // `functionHasImplicitReturn`
         let mut has_return_with_no_expression =
             info.end != UNREACHABLE && self.is_reachable(file, info.end);
@@ -4758,7 +4766,7 @@ impl<'p, 's> Checker<'p, 's> {
                 has_return_of_type_never = true;
             }
             ty = self.regular_in_const_context(file, expr, ty);
-            if !aggregated_types.contains(&ty) {
+            if !crate::util::is_listed(&aggregated_types, &mut listed, ty) {
                 aggregated_types.push(ty);
             }
         }
@@ -5010,7 +5018,7 @@ impl<'p, 's> Checker<'p, 's> {
             && self.reliability == 0
             // A frame that drops its diagnostics reports them when it is evaluated again.
             && !(self.reported.len() > reported
-                && self.frames.last().is_some_and(|frame| frame.drops_reported))
+                && (self.frames.last()).is_some_and(|frame| frame.marks.drops_reported()))
         {
             self.p.awaited_types.insert(&self.task, ty, awaited, stored);
         }

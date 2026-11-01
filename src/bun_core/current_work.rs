@@ -83,7 +83,8 @@ impl Record {
     }
 }
 
-static ALL_RECORDS: [Record; RECORDS] = [const { Record::new() }; RECORDS];
+/// Made when a thread first takes one.
+static ALL_RECORDS: OnceLock<Box<[Record]>> = OnceLock::new();
 /// The step that the build as a whole is at, and since when.
 static STEP_OF_BUILD: AtomicU8 = AtomicU8::new(0);
 static STEP_OF_BUILD_STARTED_AT: AtomicU64 = AtomicU64::new(0);
@@ -118,7 +119,8 @@ fn record_of_this_thread() -> Option<&'static Record> {
         return Some(record);
     }
     AT_END_OF_THREAD.try_with(|_| ()).ok()?;
-    let free = (ALL_RECORDS.iter())
+    let all = ALL_RECORDS.get_or_init(|| (0..RECORDS).map(|_| Record::new()).collect());
+    let free = (all.iter())
         .find(|record| !record.is_taken.load(Relaxed) && !record.is_taken.swap(true, Acquire));
     RECORD.set(free);
     free
@@ -246,7 +248,7 @@ pub fn describe_what_threads_are_compiling(buffer: &mut [u8]) -> usize {
         text.push_number(milliseconds_now().saturating_sub(started_at) / 1000);
         text.push_all(" s.\n");
     };
-    for record in &ALL_RECORDS {
+    for record in ALL_RECORDS.get().into_iter().flatten() {
         if let Some(step) = Step::from_raw(record.step.load(Relaxed)) {
             text.push_work("Still", Some(record), step);
             finish(&mut text, record.started_at.load(Relaxed));

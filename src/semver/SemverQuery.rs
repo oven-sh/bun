@@ -198,13 +198,11 @@ impl Clone for List {
             tail: None,
             next: None,
         };
-        if out.head.next.is_some() {
-            let mut tail = NonNull::from(&mut out.head);
-            // SAFETY: `tail` walks `out.head`'s exclusively-owned Box chain.
-            while let Some(next) = unsafe { tail.as_mut() }.next.as_deref_mut() {
-                tail = NonNull::from(next);
+        if let Some(mut tail) = out.head.next.as_deref_mut() {
+            while let Some(ref mut next) = tail.next {
+                tail = next;
             }
-            out.tail = Some(tail);
+            out.tail = Some(NonNull::from(tail));
         }
 
         let mut src = &self.next;
@@ -215,13 +213,11 @@ impl Clone for List {
                 tail: None,
                 next: None,
             }));
-            if slot.head.next.is_some() {
-                let mut tail = NonNull::from(&mut slot.head);
-                // SAFETY: `tail` walks `slot.head`'s exclusively-owned Box chain.
-                while let Some(next) = unsafe { tail.as_mut() }.next.as_deref_mut() {
-                    tail = NonNull::from(next);
+            if let Some(mut tail) = slot.head.next.as_deref_mut() {
+                while let Some(ref mut next) = tail.next {
+                    tail = next;
                 }
-                slot.tail = Some(tail);
+                slot.tail = Some(NonNull::from(tail));
             }
             src = &node.next;
             dst = &mut slot.next;
@@ -327,20 +323,18 @@ impl List {
             return Ok(());
         }
 
-        let mut tail = Box::new(Query {
+        let tail = Box::new(Query {
             range: *range,
             next: None,
         });
-
-        let tail_ptr = NonNull::from(&mut *tail);
 
         let last_tail: &mut Query = match self.tail {
             // SAFETY: self.tail aliases a Query owned by self.head.next chain; we hold &mut self.
             Some(mut p) => unsafe { p.as_mut() },
             None => &mut self.head,
         };
-        last_tail.next = Some(tail);
-        self.tail = Some(tail_ptr);
+        // Taken after the `Box` has moved: the move would invalidate an earlier pointer.
+        self.tail = Some(NonNull::from(&mut **last_tail.next.insert(tail)));
         Ok(())
     }
 }
@@ -388,13 +382,11 @@ impl Clone for Group {
             input: self.input,
             flags: self.flags,
         };
-        if out.head.next.is_some() {
-            let mut tail = NonNull::from(&mut out.head);
-            // SAFETY: `tail` walks `out.head`'s exclusively-owned Box chain.
-            while let Some(next) = unsafe { tail.as_mut() }.next.as_deref_mut() {
-                tail = NonNull::from(next);
+        if let Some(mut tail) = out.head.next.as_deref_mut() {
+            while let Some(ref mut next) = tail.next {
+                tail = next;
             }
-            out.tail = Some(tail);
+            out.tail = Some(NonNull::from(tail));
         }
         out
     }
@@ -525,15 +517,13 @@ impl Group {
         let mut new_tail = Box::new(List::default());
         new_tail.head.range = *range;
 
-        let new_tail_ptr = NonNull::from(&mut *new_tail);
-
         let prev_tail: &mut List = match self.tail {
             // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
             Some(mut p) => unsafe { p.as_mut() },
             None => &mut self.head,
         };
-        prev_tail.next = Some(new_tail);
-        self.tail = Some(new_tail_ptr);
+        // Taken after the `Box` has moved: the move would invalidate an earlier pointer.
+        self.tail = Some(NonNull::from(&mut **prev_tail.next.insert(new_tail)));
         Ok(())
     }
 
@@ -1071,5 +1061,30 @@ mod tests {
             let group = parse(bytes, SlicedString::init(bytes, bytes)).unwrap();
             assert_eq!(group.has_skipped(), expected, "{text:?}");
         }
+    }
+
+    #[test]
+    fn clone_caches_its_own_last_nodes() {
+        let bytes = b">=1.0.0 <2.0.0 || 3.0.0 || >=4.0.0 <5.0.0 <4.5.0";
+        let group = parse(bytes, SlicedString::init(bytes, bytes))
+            .unwrap()
+            .clone();
+        let mut list = &group.head;
+        loop {
+            let mut query = &list.head;
+            while let Some(next) = &query.next {
+                query = next;
+            }
+            assert_eq!(
+                list.tail.map(|tail| tail.as_ptr().cast_const()),
+                list.head.next.is_some().then_some(&raw const *query),
+            );
+            let Some(next) = &list.next else { break };
+            list = next;
+        }
+        assert_eq!(
+            group.tail.map(|tail| tail.as_ptr().cast_const()),
+            Some(&raw const *list),
+        );
     }
 }

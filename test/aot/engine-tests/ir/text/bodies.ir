@@ -155,7 +155,7 @@
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1 = RequireBuiltinModule runtimeModule=BunSqlite
 # CHECK-NEXT: v2 = HasJSType v0 first=2 last=4
-# CHECK-NEXT: v3 = LinkTimeConstant constant=6
+# CHECK-NEXT: v3 = LinkTimeConstant constant=3
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-NEXT: function f9 name="flagsAndPositions" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
@@ -342,7 +342,7 @@ function f8 name="externals" module=m1 role=Library thisType={type=anything} par
   b0(v0: anything):
     v1 = RequireBuiltinModule runtimeModule=BunSqlite
     v2 = HasJSType v0 first=2 last=4
-    v3 = LinkTimeConstant constant=6
+    v3 = LinkTimeConstant constant=3
     Return v2
 }
 function f9 name="flagsAndPositions" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {

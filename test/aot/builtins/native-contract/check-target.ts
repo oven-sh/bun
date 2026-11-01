@@ -1,30 +1,23 @@
 import type { Candidate } from "../differential/instances";
 import type { Realm } from "../differential/members";
-import { runSet } from "../differential/observe";
-import type { OperandSet, Run } from "../differential/runs";
+import { releaseKeptValues, undefinedCandidate } from "../differential/instances";
+import { Log } from "../differential/log";
+import { runSets, type RunOptions } from "../differential/observe";
+import { changesIn, type OperandSet, type Run } from "../differential/runs";
+import { findChangedBuiltinObjects, haveChangedAgain, lookingAtBuiltinObjectsInEveryCall, takeBack } from "../differential/snapshots";
 import { isObject, operandUses, type OperandUse } from "../differential/table-description";
-import { findOperandChanges, keyOfChange, type OperandChange } from "./changes";
+import { describeChangeOfBuiltinObject, findOperandChanges, keyOfChange, type OperandChange } from "./changes";
 import {
   collectNamesRead,
-  combinedSets,
   createSet,
+  kindsFor,
   optionBags,
+  kindsOfRealObjects,
   otherReceivers,
   setsAsWritten,
-  setsWithRealObjects,
   type NamesRead,
 } from "./operand-sets";
 import type { Target } from "./targets";
-
-// Whether the function had to do with the objects in one position of its arguments. That it changed none says little where it took none.
-export type PositionEvidence = {
-  returnedWithPrimitive: number;
-  returnedWithObject: number;
-  // Of the calls that returned with an object in the position, those in which a trap of the object ran.
-  returnedHavingLooked: number;
-  // With all else equal the outcome differs between two objects in the position, and with one of them the call returned.
-  outcomeDependsOnObject: boolean;
-};
 
 export type TargetReport = {
   name: string;
@@ -40,11 +33,14 @@ export type TargetReport = {
   // Per argument, the names that were looked for in it.
   namesRead: string[][];
   callsOperands: "Never" | "BeforeReturn" | "AfterReturn" | "Both";
-  positions: PositionEvidence[];
   changes: OperandChange[];
 };
 
 const maxBaseSets = 3;
+const positionsTriedInEveryCombination = 2;
+const setsPerWait = 64;
+// By their names these end what they are called on. Any other call leaves an operand that takes time to make for the next one.
+const endsItsReceiver = /(abort|close|destroy|detach|dispose|end|finish|kill|shutdown|stop|terminate)\w*(\/\d+)?$/i;
 const millisecondsPerTarget = 20_000;
 const usesDescriptors = /NodeJSFS|node_fs_binding|\bfs\b/;
 
@@ -54,10 +50,10 @@ usesDeclaring.StoresByKey.push("DefinesName", "TakesDescriptor");
 usesDeclaring.TakesDescriptor.push("DefinesName");
 usesDeclaring.DefinesName.push("TakesDescriptor");
 
-type Outcome = { set: OperandSet; didReturn: boolean; message: string; eventCount: number };
+type Outcome = { set: OperandSet; didReturn: boolean; message: string; kindOfResult: string; eventCount: number; usesReceiver: boolean };
 
-function describeResult(value: unknown): string {
-  return isObject(value) ? Object.prototype.toString.call(value) : `${typeof value} ${String(value).slice(0, 40)}`;
+function kindOf(value: unknown): string {
+  return isObject(value) ? Object.prototype.toString.call(value) : typeof value;
 }
 
 function messageOf({ completion }: Run): string {
@@ -91,15 +87,14 @@ function chooseBaseSets(outcomes: Outcome[]): OperandSet[] {
 
 class Checker {
   readonly report: TargetReport;
-  readonly outcomes: Outcome[] = [];
+  readonly outcomes = new Map<string, Outcome>();
   readonly names: NamesRead[];
   #seenSets = new Set<string>();
+  #options: RunOptions;
   #seenChanges = new Set<string>();
   #deadline = performance.now() + millisecondsPerTarget;
   #calledBeforeReturn = false;
   #calledAfterReturn = false;
-  // Per position, per set of the other operands: the outcomes with an object in the position, and whether one of them is a return.
-  #outcomesWithObjects: Map<string, { outcomes: Set<string>; hasReturn: boolean }>[];
 
   constructor(
     readonly realm: Realm,
@@ -107,8 +102,10 @@ class Checker {
     readonly onSet: ((name: string) => void) | undefined,
   ) {
     const { name, path, mode, isInTable, hasOwnReceiver, length, argumentCount } = target;
+    // A call that returns may have moved, cut or closed the file that a number names.
+    const mayReturn = !endsItsReceiver.test(name) && !usesDescriptors.test(path);
+    this.#options = { leavesOperandsAsMade: run => (mayReturn || run.completion.kind === "Threw") && changesIn(run).length === 0 };
     this.names = Array.from({ length: argumentCount }, () => new Map());
-    this.#outcomesWithObjects = Array.from({ length: argumentCount }, () => new Map());
     this.report = {
       name,
       path,
@@ -122,27 +119,22 @@ class Checker {
       isCutShort: false,
       namesRead: [],
       callsOperands: "Never",
-      positions: Array.from({ length: argumentCount }, () => ({
-        returnedWithPrimitive: 0,
-        returnedWithObject: 0,
-        returnedHavingLooked: 0,
-        outcomeDependsOnObject: false,
-      })),
       changes: [],
     };
   }
 
   async run(sets: OperandSet[]): Promise<void> {
-    for (const set of sets) {
-      if (this.#seenSets.has(set.name)) continue;
+    const unseen = sets.filter(set => !this.#seenSets.has(set.name) && this.#seenSets.add(set.name));
+    for (let start = 0; start < unseen.length; start += setsPerWait) {
       if (performance.now() > this.#deadline) {
         this.report.isCutShort = true;
-        return;
+        break;
       }
-      this.#seenSets.add(set.name);
-      this.onSet?.(set.name);
-      const run = await runSet(this.realm, this.target.invocation, set);
-      if (run) this.#add(run);
+      const together = unseen.slice(start, start + setsPerWait);
+      if (this.onSet) for (const { name } of together) this.onSet(name);
+      for (const run of await runSets(this.realm, this.target.invocation, together, this.#options)) {
+        if (run) this.#add(run);
+      }
     }
   }
 
@@ -152,9 +144,10 @@ class Checker {
     const didReturn = run.completion.kind === "Returned";
     if (didReturn) report.returned++;
     else report.threw++;
-    this.outcomes.push({ set: run.set, didReturn, message: messageOf(run), eventCount: run.log.events.length });
+    const kindOfResult = run.completion.kind === "Returned" ? kindOf(run.completion.value) : "";
+    const usesReceiver = run.log.events.some(({ origin, isDuringStep }) => origin.operand === "this" && !isDuringStep);
+    this.outcomes.set(run.set.name, { set: run.set, didReturn, message: messageOf(run), kindOfResult, eventCount: run.log.events.length, usesReceiver });
     this.names.forEach((names, position) => collectNamesRead(run, position, names));
-    this.#addEvidence(run, didReturn);
     for (const { trap, isLate, isDuringStep } of run.log.events) {
       if ((trap !== "apply" && trap !== "construct") || isDuringStep) continue;
       if (isLate) this.#calledAfterReturn = true;
@@ -169,29 +162,8 @@ class Checker {
     }
   }
 
-  #addEvidence(run: Run, didReturn: boolean): void {
-    const { receiver, arguments: candidates } = run.set;
-    const outcome = run.completion.kind === "Returned" ? `returned ${describeResult(run.completion.value)}` : `threw ${messageOf(run)}`;
-    this.report.positions.forEach((evidence, position) => {
-      if (!isObject(run.args[position])) {
-        if (didReturn) evidence.returnedWithPrimitive++;
-        return;
-      }
-      const others = [receiver, ...candidates.with(position, receiver)].map(({ name }) => name).join();
-      const seen = this.#outcomesWithObjects[position].getOrInsertComputed(others, () => ({ outcomes: new Set<string>(), hasReturn: false }));
-      seen.outcomes.add(outcome);
-      if (!didReturn) return;
-      seen.hasReturn = true;
-      evidence.returnedWithObject++;
-      if (run.log.events.some(({ origin, isDuringStep }) => origin.operand === position && !isDuringStep)) evidence.returnedHavingLooked++;
-    });
-  }
-
   finish(): TargetReport {
     const { report } = this;
-    report.positions.forEach((evidence, position) => {
-      evidence.outcomeDependsOnObject = this.#outcomesWithObjects[position].values().some(({ outcomes, hasReturn }) => hasReturn && outcomes.size > 1);
-    });
     report.namesRead = this.names.map(names => [...(names.get("") ?? [])]);
     if (this.#calledBeforeReturn) report.callsOperands = this.#calledAfterReturn ? "Both" : "BeforeReturn";
     else if (this.#calledAfterReturn) report.callsOperands = "AfterReturn";
@@ -205,22 +177,69 @@ function setsWithBags(base: OperandSet, names: NamesRead[]): OperandSet[] {
   );
 }
 
-export async function checkTarget(realm: Realm, target: Target, onSet?: (name: string) => void): Promise<TargetReport> {
+// A kind of real object is passed whole where the call ends in another way with the first of the kind than with a plain object.
+async function runWithRealObjects(checker: Checker, base: OperandSet): Promise<void> {
+  for (const position of base.arguments.keys()) {
+    const withObject = (candidate: Candidate) => createSet(base.receiver, base.arguments.with(position, candidate));
+    await checker.run(kindsOfRealObjects.map(([first]) => withObject(first)));
+    const { outcomes } = checker;
+    const ofPlainObject = outcomes.get(withObject(kindsOfRealObjects[0][0]).name);
+    await checker.run(
+      kindsOfRealObjects.flatMap(([first, ...others]) => {
+        const outcome = outcomes.get(withObject(first).name);
+        const isTold = outcome !== undefined && (outcome.didReturn !== ofPlainObject?.didReturn || outcome.message !== ofPlainObject.message || outcome.kindOfResult !== ofPlainObject.kindOfResult);
+        return isTold ? others.map(withObject) : [];
+      }),
+    );
+  }
+}
+
+async function checkSets(realm: Realm, target: Target, onSet?: (name: string) => void): Promise<TargetReport> {
   const checker = new Checker(realm, target, onSet);
   const withDescriptors = usesDescriptors.test(target.path);
   const receivers: Candidate[] = target.mode === "Call" || !target.hasOwnReceiver ? [...target.receivers, ...otherReceivers] : target.receivers;
   const [first, ...others] = receivers;
 
   await checker.run(setsAsWritten(target.path, first, target.argumentCount));
-  await checker.run(combinedSets(first, target.argumentCount, withDescriptors));
-  const baseSets = chooseBaseSets(checker.outcomes);
+  const kinds = kindsFor(withDescriptors);
+  const outcomesOf = (sets: OperandSet[]) => sets.flatMap(({ name }) => checker.outcomes.get(name) ?? []);
+  // One kind in every position, for a function that does not say which of its operands it refuses. Then, position by position, each kind in
+  // the sets that got furthest so far: with two positions that is every pair.
+  const uniform = [undefinedCandidate, ...kinds].map(kind => createSet(first, Array<Candidate>(target.argumentCount).fill(kind)));
+  await checker.run(uniform);
+  let furthest = target.argumentCount <= positionsTriedInEveryCombination ? uniform : chooseBaseSets(outcomesOf(uniform));
+  for (let position = 0; position < target.argumentCount; position++) {
+    const sets = furthest.flatMap(set => kinds.map(kind => createSet(first, set.arguments.with(position, kind))));
+    await checker.run(sets);
+    if (target.argumentCount > positionsTriedInEveryCombination) furthest = chooseBaseSets(outcomesOf([...furthest, ...sets]));
+  }
+  const baseSets = chooseBaseSets([...checker.outcomes.values()]);
   // Twice: the first round of objects with the names shows the names that are looked for one level down.
   for (let round = 0; round < 2; round++) {
     for (const base of baseSets) await checker.run(setsWithBags(base, checker.names));
   }
-  for (const base of baseSets) await checker.run(setsWithRealObjects(base));
-  for (const receiver of others) {
-    for (const base of baseSets) await checker.run([createSet(receiver, base.arguments)]);
+  if (baseSets.length > 0) await runWithRealObjects(checker, baseSets[0]);
+  const withOtherReceivers = others.flatMap(receiver => baseSets.map(base => createSet(receiver, base.arguments)));
+  await checker.run(withOtherReceivers);
+  // What is made or filled through `this` depends on the arguments.
+  if (baseSets.length > 0 && withOtherReceivers.some(({ name }) => checker.outcomes.get(name)?.usesReceiver)) {
+    const [{ arguments: base }] = baseSets;
+    const vectors = [...base.keys()].flatMap(position => kinds.map(kind => base.with(position, kind)));
+    await checker.run(others.flatMap(receiver => vectors.map(vector => createSet(receiver, vector))));
   }
+  releaseKeptValues();
   return checker.finish();
+}
+
+const logOfNoCall = new Log();
+
+export async function checkTarget(realm: Realm, target: Target, onSet?: (name: string) => void): Promise<TargetReport> {
+  const report = await checkSets(realm, target, onSet);
+  const changes = findChangedBuiltinObjects(logOfNoCall);
+  if (changes.length === 0) return report;
+  // Which of the calls it was shows when they are made once more.
+  takeBack(changes);
+  const again = await lookingAtBuiltinObjectsInEveryCall(() => checkSets(realm, target, onSet));
+  if (!haveChangedAgain(logOfNoCall, changes)) again.changes.push(...changes.map(describeChangeOfBuiltinObject));
+  return again;
 }

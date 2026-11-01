@@ -81,6 +81,7 @@ console.log([a, b, c, d, e, f, g, h, i, j].join("|"));`,
     prints: "1400\n",
   },
   "every way to import and to export again a module in a namespace": {
+    alone: true,
     files: {
       "main.ts": `// @ts-nocheck
 import fallback, { a, b as renamed } from "virtual:lib"; import * as all from "virtual:lib"; import { a as again, other, everything } from "./again"; const required = require("virtual:lib"); const late = await import("virtual:lib");

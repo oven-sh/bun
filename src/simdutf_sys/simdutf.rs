@@ -222,7 +222,7 @@ pub mod base64 {
             output: *mut u8,
             outlen: usize,
         ) -> SIMDUTFResult;
-        fn simdutf__base64_length_from_binary(length: usize, options: c_int) -> usize;
+        safe fn simdutf__base64_length_from_binary(length: usize, options: c_int) -> usize;
     }
 
     pub fn encode(input: &[u8], output: &mut [u8], is_urlsafe: bool) -> usize {
@@ -253,8 +253,7 @@ pub mod base64 {
     }
 
     pub fn encode_len(input: usize, is_urlsafe: bool) -> usize {
-        // SAFETY: pure length computation; no pointers dereferenced.
-        unsafe { simdutf__base64_length_from_binary(input, is_urlsafe as c_int) }
+        simdutf__base64_length_from_binary(input, is_urlsafe as c_int)
     }
 
     pub fn decode(input: &[u8], output: &mut [u8], is_urlsafe: bool) -> SIMDUTFResult {

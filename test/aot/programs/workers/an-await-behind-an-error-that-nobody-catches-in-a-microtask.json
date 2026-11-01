@@ -1,1 +1,0 @@
-{"entryPoints": ["./awaits-a-promise.js", "./awaits-a-thenable.js"], "skipInShell": "needs Workers"}

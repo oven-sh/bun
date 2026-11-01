@@ -8,7 +8,7 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { built, slot, spawned, unsupported } from "./run-programs";
+import { built, slot, spawned, unsupported } from "./harness/commands";
 
 const programs = [
   "strings/string-builder-in-the-frame.ts",
@@ -106,7 +106,7 @@ test.skipIf(!!unsupported || process.arch !== "arm64").each(programs)(
   "no instruction of %s is left to the core",
   async name => {
     await slot(async () => {
-      const program = join(import.meta.dir, "programs", name);
+      const program = join(import.meta.dir, "parallel", name);
       using dir = tempDir("aot-arm64-unpredictable", {});
       const folder = String(dir);
       const executable = join(folder, isWindows ? "entry.exe" : "entry");

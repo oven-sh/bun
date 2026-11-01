@@ -1,5 +1,5 @@
 // RUN: link
-// CHECK: module [[entry]] path="{{*}}mutable-binding-has-location"
+// CHECK: module [[entry]] path="{{*}}mutable-binding-has-location.js"
 // CHECK: evalscope [[scope]] flags=[IsInFunction, AllowsNewTarget] bindings=[{name="a" layout=[[layout]] field=0 operand=0}
 // CHECK-NOT: kind=EvalVariables
 // CHECK-NOT: kind=WithObject

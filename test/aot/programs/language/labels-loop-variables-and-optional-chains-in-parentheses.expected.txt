@@ -1,8 +1,0 @@
-continues to the outer of two labels: 3
-of three labels: 4
-a loop stores to a variable named using: 2
-a tag: a|b 1 this is the holder
-behind new: 5
-of nothing: TypeError
-of nothing: TypeError
-a loop stores to a variable named async: 4

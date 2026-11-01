@@ -102,7 +102,7 @@ pub(crate) unsafe extern "C" fn Bun__FFI__CString__transcode(
 }
 
 unsafe extern "C" {
-    fn Bun__FFI__CStringConstructor(global: *const JSGlobalObject) -> JSValue;
+    safe fn Bun__FFI__CStringConstructor(global: &JSGlobalObject) -> JSValue;
 }
 
 const DOM_CALL: DomCall = DomCall {
@@ -132,10 +132,11 @@ pub(crate) fn to_js(global_object: &JSGlobalObject) -> JSValue {
         );
     }
 
-    // SAFETY: `global_object` is a live JSC handle for the duration of the call.
-    object.put(global_object, b"CString", unsafe {
-        Bun__FFI__CStringConstructor(global_object)
-    });
+    object.put(
+        global_object,
+        b"CString",
+        Bun__FFI__CStringConstructor(global_object),
+    );
 
     // SAFETY: `put` is the C++-side `FFI__ptr__put` helper; global_object is live.
     unsafe { (DOM_CALL.put)(std::ptr::from_ref(global_object).cast_mut(), object) };

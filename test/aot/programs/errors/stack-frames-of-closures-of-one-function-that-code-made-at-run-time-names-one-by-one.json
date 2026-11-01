@@ -1,4 +1,0 @@
-{
-  "skipInVariants": "whether the build knows the callee of a call follows from the flags",
-  "alone": "which calls record their callee follows from what else is in the executable"
-}

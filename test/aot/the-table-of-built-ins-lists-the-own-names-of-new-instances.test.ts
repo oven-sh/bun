@@ -3,7 +3,7 @@
 // constructed, in a process of its own, and the own names of the instance are held against the table.
 import { expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { findBuiltinTable } from "./generate";
+import { findBuiltinTable } from "./harness/builtin-table";
 import { test } from "./supported";
 
 const title = "the table of built-ins lists the own names of a new instance of every class";

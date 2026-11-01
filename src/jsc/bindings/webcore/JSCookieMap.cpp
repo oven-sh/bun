@@ -168,10 +168,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
             Vector<Vector<String>> seqSeq;
 
             PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-            if (object->type() == JSC::CompiledObjectType)
-                object->methodTable()->getOwnPropertyNames(object, lexicalGlobalObject, propertyNames, DontEnumPropertiesMode::Include);
-            else
-                JSObject::getOwnPropertyNames(object, lexicalGlobalObject, propertyNames, DontEnumPropertiesMode::Include);
+            object->methodTable()->getOwnPropertyNames(object, lexicalGlobalObject, propertyNames, DontEnumPropertiesMode::Exclude);
             RETURN_IF_EXCEPTION(throwScope, {});
 
             for (const auto& propertyName : propertyNames) {

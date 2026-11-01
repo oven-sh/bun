@@ -16,6 +16,7 @@ pub(super) fn exported_variable_key(
 ) -> Option<VariableKey> {
     match binding {
         ExportBinding::Variable(symbol) => Some(VariableKey::Symbol(symbol)),
+        ExportBinding::Synthetic(_) if graph.lazy_export(binding).is_some() => None,
         ExportBinding::Synthetic(id) => {
             let export = graph.synthetic_export(id);
             // An ES module holds a copy of a name of a CommonJS file, unless nobody can tell the copy from the variable.
@@ -33,7 +34,12 @@ pub(super) fn exported_variable_key(
 pub(super) fn holds_exports_in_variable(graph: &ModuleGraph, module: ModuleRef) -> bool {
     match graph.shape(module) {
         Shape::Value => true,
-        Shape::EsModule | Shape::Names | Shape::AsToday => false,
+        // Text that the program evaluates: its face has the loader capture what it exports.
+        Shape::AsToday => match module {
+            ModuleRef::File(file) => graph.commonjs().face_captures(file),
+            _ => false,
+        },
+        Shape::EsModule | Shape::Names => false,
     }
 }
 
@@ -316,6 +322,27 @@ mod tests {
         let program = link_program(&[("main.js", main), LIBRARY]);
         assert!(has_function_named(&program, b"libraryFirst"));
         assert!(has_function_named(&program, b"librarySecond"));
+    }
+
+    #[test]
+    fn star_over_a_commonjs_file_that_hands_on_a_name_nothing_reads_links() {
+        let emitted = "'use strict';\n\
+            Object.defineProperty(exports, '__esModule', { value: true });\n\
+            exports.Unread = exports.first = void 0;\n\
+            exports.first = 1;\n\
+            exports.default = 2;\n\
+            var classes_1 = require('./classes.mjs');\n\
+            Object.defineProperty(exports, 'Unread', { enumerable: true, get: function () { return classes_1.Unread; } });\n";
+        let program = link_program(&[
+            (
+                "main.mjs",
+                "import { first } from './barrel.mjs';\nconsole.log(first);\n",
+            ),
+            ("barrel.mjs", "export * from './emitted.cjs';\n"),
+            ("emitted.cjs", emitted),
+            ("classes.mjs", "export class Unread {}\n"),
+        ]);
+        assert!(is_evaluated(&program, "classes.mjs"));
     }
 
     const ENTRY_POINT_WITH_EXPORTS: [(&str, &str); 2] = [

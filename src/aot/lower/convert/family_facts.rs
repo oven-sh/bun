@@ -2,7 +2,7 @@ use rustc_hash::FxHashSet;
 
 use crate::ir::{LayoutId, TypeId};
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct FamilyFacts {
     pub(crate) layouts_with_members_without_layout: Vec<LayoutId>,
     pub(crate) conversions: Vec<(TypeId, TypeId)>,

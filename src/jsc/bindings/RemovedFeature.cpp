@@ -83,13 +83,13 @@ static JSC::EncodedJSValue throwFeatureRemovedError(JSC::JSGlobalObject* globalO
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // A compiled program that refuses text refuses it with the interpreter too, so keeping the interpreter is no advice.
-    if (feature == static_cast<uint16_t>(JSC::RemovableFeature::Interpreter) && isCodeGenerationDisallowedByCompiledProgram()) {
+    // Where the flag or the compiled program refuses text it is refused with the interpreter too, so keeping the interpreter is no advice.
+    if (feature == static_cast<uint16_t>(JSC::RemovableFeature::Interpreter) && (isCodeGenerationDisallowedByFlags() || isCodeGenerationDisallowedByCompiledProgram())) {
         JSC::throwException(globalObject, scope, createCodeGenerationFromStringsError(globalObject));
         return {};
     }
     auto* error = JSC::createError(globalObject, messageOfRemovedFeature(api, feature));
-    error->putDirect(vm, JSC::Identifier::fromString(vm, "code"_s), JSC::jsString(vm, WTF::String("ERR_FEATURE_REMOVED"_s)));
+    Bun::putDirectNamed(vm, error, "code"_s, JSC::jsString(vm, WTF::String("ERR_FEATURE_REMOVED"_s)));
     JSC::throwException(globalObject, scope, error);
     return {};
 }
@@ -281,6 +281,9 @@ extern "C" JSC::EncodedJSValue Bun__createStandInForRemovedBinding(JSC::JSGlobal
 
 extern "C" JSC::EncodedJSValue Bun__createModuleNotCompiledInError(JSC::JSGlobalObject* globalObject, Bun::ErrorCode code, const BunString* specifier)
 {
+    // --trim took out what reads a file, so nothing here can say why the module fails to load. The compiled program then says that it was not found.
+    if (Bun::isAskingWhyFileFailsToLoad())
+        return {};
     WTF::String name = specifier->toWTFString(BunString::ZeroCopy);
     bool isPath = name.startsWith('/') || (name.length() > 2 && name[1] == ':' && (name[2] == '/' || name[2] == '\\'));
     // Neither a file nor a text is a module that --trim could have kept.

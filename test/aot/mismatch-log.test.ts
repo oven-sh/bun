@@ -1,5 +1,5 @@
-// The lines an executable writes about itself at run time: a value that fails a written type. docs/compiler/debugging.mdx describes
-// the two formats, the counts and the two environment variables.
+// The lines an executable writes about itself at run time: a value that fails a written type. Here: the two formats, the counts and the
+// two environment variables.
 import { expect } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
@@ -18,7 +18,7 @@ const tsconfig = JSON.stringify({
   },
 });
 
-// The program of docs/compiler/debugging.mdx.
+// A function with a number parameter that is called with a string.
 const visits = `function double(n: number): number {
   return n * 2;
 }

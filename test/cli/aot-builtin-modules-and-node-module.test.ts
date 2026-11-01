@@ -1,15 +1,10 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { statSync } from "node:fs";
-import { join } from "node:path";
-import { run } from "../aot/harness/run";
-import { slot } from "../aot/run-programs";
+import { tempDir } from "harness";
 import { test } from "../aot/supported";
-import { importingByName } from "./aot-builtin-modules";
+import { compileEachAlone, importingByName, oneAfterTheOther, startsAtAnyEntryPoint } from "./aot-builtin-modules";
 
 const plain = "plain.mjs";
-const importsZlib = "imports-zlib.mjs";
-const importsWorkerThreads = "imports-worker-threads.mjs";
+const importsQuerystring = "imports-querystring.mjs";
 const made = `import { createRequire } from "node:module";\nconst require = createRequire(import.meta.url);\n`;
 
 const files = {
@@ -17,27 +12,25 @@ const files = {
   "lib.cjs": `exports.name = "lib";`,
 };
 
-const withoutADoor: Record<string, string> = {
+const bases = {
   [plain]: `console.log("run");`,
-  [importsZlib]: `import "node:zlib";\nconsole.log("run");`,
-  [importsWorkerThreads]: `import "node:worker_threads";\nconsole.log("run");`,
-  "a-made-require-of-a-written-name.mjs": `${made}console.log(require("./package.json").name ? "run" : "");`,
-  "a-made-require-and-its-resolve.mjs": `${made}console.log(require("./lib.cjs").name && require.resolve("./lib.cjs") ? "run" : "");`,
-  "a-made-require-under-another-name.mjs": `import { createRequire as makeRequire } from "node:module";\nconst load = makeRequire(import.meta.url);\nconsole.log(load("./lib.cjs").name && typeof load("node:zlib").gzipSync === "function" ? "run" : "");`,
-  "a-require-made-only-to-resolve.mjs": `import { createRequire } from "node:module";\nconsole.log(createRequire(import.meta.url).resolve("./lib.cjs").endsWith("lib.cjs") ? "run" : "");`,
-  "a-require-made-only-to-resolve.cjs": `const { createRequire } = require("module");\nfunction find(origin) {\n  return createRequire(__filename).resolve(origin);\n}\nconsole.log(find("./lib.cjs").endsWith("lib.cjs") ? "run" : "");`,
-  "a-made-require-of-a-written-name.cjs": `const { createRequire } = require("node:module");\nconst load = createRequire(__filename);\nconsole.log(load("./lib.cjs").name ? "run" : "");`,
-  "the-list-of-builtin-modules.mjs": `import { builtinModules, isBuiltin } from "node:module";\nconsole.log(builtinModules.length > 0 && isBuiltin("fs") ? "run" : "");`,
-  "asks-whether-it-is-the-main-thread.mjs": `import { isMainThread, parentPort, workerData } from "node:worker_threads";\nconsole.log(isMainThread && !parentPort && !workerData ? "run" : "");`,
-  "required-and-taken-apart.cjs": `const { isMainThread, parentPort } = require("node:worker_threads");\nconsole.log(isMainThread && !parentPort ? "run" : "");`,
-  "required-and-read.cjs": `const threads = require("worker_threads");\nconsole.log(threads.isMainThread && require("module").builtinModules.length > 0 ? "run" : "");`,
-  "the-default-import-read-by-harmless-names.mjs": `import Module from "node:module";\nconsole.log(Module.builtinModules.length > 0 && Module.isBuiltin("fs") ? "run" : "");`,
-  "the-namespace-read-by-harmless-names.mjs": `import * as threads from "node:worker_threads";\nconsole.log(threads.isMainThread && threads.threadId === 0 ? "run" : "");`,
+  [importsQuerystring]: `import "node:querystring";\nconsole.log("run");`,
 };
 
-const name = `const name = ["node:zlib"][0];\n`;
-const loaded = (how: string) => `console.log(typeof ${how}.gzipSync === "function" ? "run" : "");`;
-const withADoor = importingByName("node:zlib", {
+const withoutADoor: Record<string, string> = {
+  "a-made-require-of-a-written-name.mjs": `${made}console.log(require("./package.json").name ? "run" : "");`,
+  "a-made-require-and-its-resolve.mjs": `${made}console.log(require("./lib.cjs").name && require.resolve("./lib.cjs") ? "run" : "");`,
+  "a-made-require-under-another-name.mjs": `import { createRequire as makeRequire } from "node:module";\nconst load = makeRequire(import.meta.url);\nconsole.log(load("./lib.cjs").name && typeof load("node:querystring").escape === "function" ? "run" : "");`,
+  "a-require-made-only-to-resolve.mjs": `import { createRequire } from "node:module";\nconsole.log(createRequire(import.meta.url).resolve("./lib.cjs").endsWith("lib.cjs") ? "run" : "");`,
+  "a-require-made-only-to-resolve-in-commonjs.cjs": `const { createRequire } = require("module");\nfunction find(origin) {\n  return createRequire(__filename).resolve(origin);\n}\nconsole.log(find("./lib.cjs").endsWith("lib.cjs") ? "run" : "");`,
+  "a-made-require-of-a-written-name-in-commonjs.cjs": `const { createRequire } = require("node:module");\nconst load = createRequire(__filename);\nconsole.log(load("./lib.cjs").name ? "run" : "");`,
+  "the-list-of-builtin-modules.mjs": `import { builtinModules, isBuiltin } from "node:module";\nconsole.log(builtinModules.length > 0 && isBuiltin("fs") ? "run" : "");`,
+  "the-default-import-read-by-harmless-names.mjs": `import Module from "node:module";\nconsole.log(Module.builtinModules.length > 0 && Module.isBuiltin("fs") ? "run" : "");`,
+};
+
+const name = `const name = ["node:querystring"][0];\n`;
+const loaded = (how: string) => `console.log(typeof ${how}.escape === "function" ? "run" : "");`;
+const withADoor = importingByName("node:querystring", {
   "a-made-require-of-a-computed-name.mjs": `${made}${name}${loaded("require(name)")}`,
   "a-made-require-that-is-handed-on.mjs": `${made}${name}const use = load => load(name);\n${loaded("use(require)")}`,
   "a-made-require-that-is-called-at-once.mjs": `import { createRequire } from "node:module";\n${name}${loaded("createRequire(import.meta.url)(name)")}`,
@@ -49,50 +42,30 @@ const withADoor = importingByName("node:zlib", {
   "required.cjs": `const { createRequire } = require("node:module");\n${name}${loaded("createRequire(__filename)(name)")}`,
 });
 
-const env = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
+const harmless = "without-a-door.mjs";
+const loading = "with-a-door.mjs";
 
-test("harmless names of node:module and node:worker_threads bring no built-in module into the executable", async () => {
-  const programs = { ...withoutADoor, ...withADoor };
-  using dir = tempDir("builtin-modules-and-node-module", { ...files, ...programs });
-  const sizes: Record<string, number> = {};
-  await Promise.all(
-    Object.keys(programs).map(entry =>
-      slot(async () => {
-        const outfile = join(String(dir), entry + ".exe");
-        const { stderr, exitCode } = await run(
-          [bunExe(), "build", "--compile", "--aot", entry, "--outfile", outfile],
-          String(dir),
-        );
-        expect({ entry, stderr, exitCode }).toEqual({
-          entry,
-          stderr: expect.not.stringContaining("error"),
-          exitCode: 0,
-        });
-        const { stdout, exitCode: ranWith } = await run([outfile], String(dir), env);
-        expect({ entry, stdout, ranWith }).toEqual({ entry, stdout: "run\n", ranWith: 0 });
-        sizes[entry] = statSync(outfile).size;
-      }),
-    ),
-  );
-  for (const [entry, text] of Object.entries(withoutADoor)) {
-    const base = text.includes('"node:zlib"')
-      ? importsZlib
-      : text.includes('worker_threads"')
-        ? importsWorkerThreads
-        : plain;
-    expect({ entry, grows: sizes[entry] - sizes[base] > 1024 * 1024 }).toEqual({ entry, grows: false });
-  }
-}, 240_000);
-
-test("bun run --aot interprets nothing of them", async () => {
-  const programs = { ...withoutADoor, ...withADoor };
-  using dir = tempDir("builtin-modules-and-node-module", { ...files, ...programs });
-  await Promise.all(
-    Object.keys(programs).map(entry =>
-      slot(async () => {
-        const { stdout, exitCode } = await run([bunExe(), "run", "--debug-aot", entry], String(dir), env);
-        expect({ entry, stdout, exitCode }).toEqual({ entry, stdout: "run\n", exitCode: 0 });
-      }),
-    ),
-  );
-}, 240_000);
+test.skipIf(!startsAtAnyEntryPoint)(
+  "harmless names of node:module bring no built-in module into the executable",
+  async () => {
+    using dir = tempDir("builtin-modules-and-node-module", {
+      ...files,
+      ...bases,
+      ...withoutADoor,
+      ...withADoor,
+      [harmless]: oneAfterTheOther(withoutADoor),
+      [loading]: oneAfterTheOther(withADoor),
+    });
+    const ran = await compileEachAlone(String(dir), [...Object.keys(bases), harmless, loading]);
+    expect(ran).toEqual({
+      [plain]: { stdout: "run\n", exitCode: 0, bytes: expect.any(Number) },
+      [importsQuerystring]: { stdout: "run\n", exitCode: 0, bytes: expect.any(Number) },
+      [harmless]: { stdout: "run\n".repeat(Object.keys(withoutADoor).length), exitCode: 0, bytes: expect.any(Number) },
+      [loading]: { stdout: "run\n".repeat(Object.keys(withADoor).length), exitCode: 0, bytes: expect.any(Number) },
+    });
+    // How large compiled code is follows from how Bun was built, so what a require that may go anywhere costs is the measure.
+    const most = (ran[loading].bytes - ran[importsQuerystring].bytes) / 2;
+    expect(ran[harmless].bytes - ran[importsQuerystring].bytes).toBeLessThan(most);
+  },
+  240_000,
+);

@@ -15,8 +15,6 @@ type File<'f> = (&'f str, [u32; 3]);
 const MAIN: &str = "/p/main.ts";
 const DEPENDENCY: &str = "/p/node_modules/x/index.js";
 const RUNTIME: &str = "node:fs";
-const HINT_LINE: &str =
-    "Untyped code works, but runs slower. Run with --explain to see what to fix.\n";
 
 struct Modules {
     records: Vec<AccessCountRecord>,
@@ -48,9 +46,8 @@ impl Modules {
         totals_of(&self.records, |module| self.origins[module.index()])
     }
 
-    fn summary(&self, has_text_report: bool, words: &[&str]) -> BString {
-        let words: Vec<Box<[u8]>> = words.iter().map(|word| word.as_bytes().into()).collect();
-        written(|out| write_lines(&self.totals(), has_text_report, &words, out))
+    fn access_lines(&self) -> BString {
+        written(|out| write_access_lines(&self.totals(), out))
     }
 
     fn details(&self, statistics: &Statistics) -> Option<BString> {
@@ -60,6 +57,7 @@ impl Modules {
             |module| self.origins[module.index()],
             statistics,
             limit_value_of,
+            |limit| u64::from(limit == LimitId::MaxTypeNodes) * 14,
             &PathPrinter::in_directory(native("/p")),
         );
         text.map(BString::from)
@@ -97,8 +95,12 @@ fn written(write: impl FnOnce(&mut Vec<u8>)) -> BString {
     BString::from(out)
 }
 
-fn summary(files: &[File<'_>]) -> BString {
-    Modules::new(files).summary(false, &[])
+fn access_lines(files: &[File<'_>]) -> BString {
+    Modules::new(files).access_lines()
+}
+
+fn summary(fixture: &ReportFixture<'_>) -> BString {
+    fixture.with_input(|input| written(|out| write_summary(input, out)))
 }
 
 fn untyped_note(demoted_files: u64) -> BString {
@@ -133,15 +135,17 @@ fn trim_causes(fixture: &ReportFixture<'_>) -> BString {
 }
 
 #[test]
-fn untyped_program_gets_hint() {
-    let line = "75% of property accesses are one load: 6 free, 0 tested, 2 by name (8)\n";
-    assert_eq!(summary(&[(MAIN, [2, 0, 6])]), format!("{HINT_LINE}{line}"));
+fn untyped_program_gets_one_line() {
+    assert_eq!(
+        access_lines(&[(MAIN, [2, 0, 6])]),
+        "75% of property accesses are one load: 6 free, 0 tested, 2 by name (8)\n"
+    );
 }
 
 #[test]
-fn typed_program_gets_no_hint() {
+fn typed_program_gets_one_line() {
     assert_eq!(
-        summary(&[(MAIN, [0, 0, 1])]),
+        access_lines(&[(MAIN, [0, 0, 1])]),
         "100% of property accesses are one load: 1 free, 0 tested, 0 by name (1)\n"
     );
 }
@@ -150,50 +154,47 @@ fn typed_program_gets_no_hint() {
 fn program_line_is_last() {
     let files = [(MAIN, [99, 0, 1204]), (DEPENDENCY, [6564, 0, 210])];
     let expected = [
-        "Built with developer options: --aot-validate\n",
-        HINT_LINE,
         "Dependencies: 3.1% of property accesses are one load: ",
         "210 free, 0 tested, 6,564 by name (6,774)\n",
         "92.4% of property accesses are one load: 1,204 free, 0 tested, 99 by name (1,303)\n",
     ];
+    assert_eq!(access_lines(&files), expected.concat());
+}
+
+#[test]
+fn dependencies_alone_get_one_line() {
+    let expected = [
+        "Dependencies: 3.1% of property accesses are one load: ",
+        "210 free, 0 tested, 6,564 by name (6,774)\n",
+    ];
     assert_eq!(
-        Modules::new(&files).summary(false, &["validate"]),
+        access_lines(&[(DEPENDENCY, [6564, 0, 210])]),
         expected.concat()
     );
 }
 
 #[test]
-fn dependencies_alone_get_no_hint() {
-    let expected = [
-        "Dependencies: 3.1% of property accesses are one load: ",
-        "210 free, 0 tested, 6,564 by name (6,774)\n",
-    ];
-    assert_eq!(summary(&[(DEPENDENCY, [6564, 0, 210])]), expected.concat());
-}
-
-#[test]
 fn runtime_modules_are_not_counted() {
-    assert_eq!(summary(&[]), "");
-    assert_eq!(summary(&[(RUNTIME, [1, 2, 3])]), "");
+    assert_eq!(access_lines(&[]), "");
+    assert_eq!(access_lines(&[(RUNTIME, [1, 2, 3])]), "");
 }
 
 #[test]
-fn hint_starts_below_threshold() {
+fn percentage_has_at_most_one_decimal() {
     assert_eq!(
-        summary(&[(MAIN, [1, 0, 19])]),
+        access_lines(&[(MAIN, [1, 0, 19])]),
         "95% of property accesses are one load: 19 free, 0 tested, 1 by name (20)\n"
     );
-    let line = "94.9% of property accesses are one load: 949 free, 0 tested, 51 by name (1,000)\n";
     assert_eq!(
-        summary(&[(MAIN, [51, 0, 949])]),
-        format!("{HINT_LINE}{line}")
+        access_lines(&[(MAIN, [51, 0, 949])]),
+        "94.9% of property accesses are one load: 949 free, 0 tested, 51 by name (1,000)\n"
     );
 }
 
 #[test]
-fn text_report_replaces_hint() {
+fn program_without_free_access_gets_one_line() {
     assert_eq!(
-        Modules::new(&[(MAIN, [2, 0, 0])]).summary(true, &[]),
+        access_lines(&[(MAIN, [2, 0, 0])]),
         "0% of property accesses are one load: 0 free, 0 tested, 2 by name (2)\n"
     );
 }
@@ -203,15 +204,17 @@ fn access_behind_test_of_another_access_is_free() {
     let mut modules = Modules::new(&[(MAIN, [1, 6, 1])]);
     modules.records[0].access_costs = [1, 1, 2, 4];
     assert_eq!(
-        modules.summary(true, &[]),
+        modules.access_lines(),
         "50% of property accesses are one load: 4 free, 3 tested, 1 by name (8)\n"
     );
 }
 
 #[test]
 fn tested_access_is_not_free() {
-    let line = "50% of property accesses are one load: 1 free, 1 tested, 0 by name (2)\n";
-    assert_eq!(summary(&[(MAIN, [0, 1, 1])]), format!("{HINT_LINE}{line}"));
+    assert_eq!(
+        access_lines(&[(MAIN, [0, 1, 1])]),
+        "50% of property accesses are one load: 1 free, 1 tested, 0 by name (2)\n"
+    );
 }
 
 #[test]
@@ -220,7 +223,7 @@ fn calls_change_no_percentage() {
     modules.records[0].calls = [7, 9, 0];
     assert_eq!(modules.totals().program.calls.total(), 16);
     assert_eq!(
-        modules.summary(true, &[]),
+        modules.access_lines(),
         "50% of property accesses are one load: 1 free, 0 tested, 1 by name (2)\n"
     );
 }
@@ -230,11 +233,36 @@ fn developer_options_come_first() {
     let words = ["validate", "check=verify-each-pass"];
     let options = "Built with developer options: --aot-validate --aot-check=verify-each-pass\n";
     let line = "0% of property accesses are one load: 0 free, 0 tested, 1 by name (1)\n";
-    assert_eq!(Modules::new(&[]).summary(false, &words), options);
-    assert_eq!(
-        Modules::new(&[(MAIN, [1, 0, 0])]).summary(false, &words),
-        format!("{options}{HINT_LINE}{line}")
-    );
+    let records = [counts(testing::PROGRAM, [1, 0, 0])];
+    let mut fixture = ReportFixture::new(ResultRecords {
+        access_counts: &records,
+        ..ResultRecords::default()
+    });
+    fixture.options.option_words = words.iter().map(|word| word.as_bytes().into()).collect();
+    assert_eq!(summary(&fixture), options);
+    fixture.options.explain = ExplainSet::TEXT;
+    assert_eq!(summary(&fixture), format!("{options}{line}"));
+}
+
+#[test]
+fn only_text_report_ends_with_access_lines() {
+    let records = [
+        counts(testing::PROGRAM, [2, 0, 6]),
+        counts(testing::DEPENDENCY, [1, 0, 0]),
+    ];
+    let mut fixture = ReportFixture::new(ResultRecords {
+        access_counts: &records,
+        ..ResultRecords::default()
+    });
+    assert_eq!(summary(&fixture), "");
+    fixture.options.explain = ExplainSet::all().difference(ExplainSet::TEXT);
+    assert_eq!(summary(&fixture), "");
+    fixture.options.explain = ExplainSet::all();
+    let lines = [
+        "Dependencies: 0% of property accesses are one load: 0 free, 0 tested, 1 by name (1)\n",
+        "75% of property accesses are one load: 6 free, 0 tested, 2 by name (8)\n",
+    ];
+    assert_eq!(summary(&fixture), lines.concat());
 }
 
 #[test]
@@ -348,7 +376,7 @@ fn five_untyped_files_are_all_listed() {
 #[test]
 fn details_need_counted_access() {
     let mut statistics = Statistics::default();
-    statistics.gave_up(LimitId::MaxValueFlowEdgesLogged, None);
+    statistics.gave_up(LimitId::MaxValueFlowSetMembers, None);
     assert_eq!(Modules::new(&[]).details(&statistics), None);
     assert_eq!(
         Modules::new(&[(RUNTIME, [1, 2, 3])]).details(&statistics),
@@ -359,17 +387,17 @@ fn details_need_counted_access() {
 #[test]
 fn details_end_with_reached_limits() {
     let mut statistics = Statistics::default();
-    statistics.gave_up(LimitId::MaxValueFlowEdgesLogged, None);
+    statistics.gave_up(LimitId::MaxValueFlowSetMembers, None);
     for _ in 0..3 {
         statistics.gave_up(LimitId::MaxTypeNodes, None);
     }
     let type_nodes = format!(
-        "  MaxTypeNodes = 1,200, hit 3 times (limits {})",
+        "  MaxTypeNodes = 1,200, hit 3 times, left 14 operations untyped (limits {})",
         LimitId::MaxTypeNodes.purpose()
     );
     let flow_edges = format!(
-        "  MaxValueFlowEdgesLogged = 2, hit 1 time (limits {})",
-        LimitId::MaxValueFlowEdgesLogged.purpose()
+        "  MaxValueFlowSetMembers = 2, hit 1 time, left nothing untyped (limits {})",
+        LimitId::MaxValueFlowSetMembers.purpose()
     );
     let expected = [
         "All property accesses, including dependencies:",
@@ -407,14 +435,14 @@ fn trim_causes_have_sentence_and_position() {
         unseen(UnseenCodeCause::RunsUnseenCode, Some(1)),
         unseen(UnseenCodeCause::ImportsUncompiledCode, Some(2)),
         unseen(UnseenCodeCause::LoadsModuleByName, Some(3)),
-        unseen(UnseenCodeCause::FlowGaveUp, None),
+        unseen(UnseenCodeCause::FlowResultDisabled, None),
     ];
     let sentences = [
         "the program calls eval() or new Function() (src/a.ts:2:14)",
         "the program can run code that isn't in the executable",
         "the program imports a module that isn't in the executable",
         "the program calls import() or require() with a dynamic path",
-        "the analysis hit a compiler limit",
+        "a developer option turned the analysis off",
     ];
     let lines = sentences
         .map(|sentence| format!("--trim kept APIs your code doesn't call because {sentence}\n"));
@@ -452,12 +480,9 @@ fn summary_starts_with_trim_causes() {
     });
     fixture.options.trim.removes_unused = true;
     fixture.options.option_words = vec![Box::from(&b"validate"[..])];
-    fixture.used_features.causes = vec![unseen(UnseenCodeCause::FlowGaveUp, None)];
-    let summary = |fixture: &ReportFixture<'_>| {
-        fixture.with_input(|input| written(|out| write_summary(input, out)))
-    };
+    fixture.used_features.causes = vec![unseen(UnseenCodeCause::FlowResultDisabled, None)];
     let start = [
-        "--trim kept APIs your code doesn't call because the analysis hit a compiler limit\n",
+        "--trim kept APIs your code doesn't call because a developer option turned the analysis off\n",
         "Built with developer options: --aot-validate\n",
     ];
     let levels = [
@@ -465,7 +490,7 @@ fn summary_starts_with_trim_causes() {
         "75% of property accesses are one load: 6 free, 0 tested, 2 by name (8)\n",
     ];
     let (start, levels) = (start.concat(), levels.concat());
-    assert_eq!(summary(&fixture), format!("{start}{HINT_LINE}{levels}"));
+    assert_eq!(summary(&fixture), start);
     fixture.options.explain = ExplainSet::TEXT;
     assert_eq!(summary(&fixture), format!("{start}{levels}"));
 }
@@ -483,7 +508,7 @@ fn details_entry_reads_names_and_limit_values() {
     let mut entries = Vec::new();
     fixture.with_input(|input| collect_details(input, &mut entries));
     let reached = format!(
-        "  MaxTypeNodes = 1,200, hit 1 time (limits {})",
+        "  MaxTypeNodes = 1,200, hit 1 time, left nothing untyped (limits {})",
         LimitId::MaxTypeNodes.purpose()
     );
     let expected = [

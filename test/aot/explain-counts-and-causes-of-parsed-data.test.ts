@@ -31,7 +31,8 @@ console.log(total);
 
 describe.concurrent("what is counted", () => {
   test("the reads of `parse`, `push` and `log` are parts of calls of built-ins: `item.price` is the one access", async () => {
-    const { count, exitCode } = await explain(items(`const saved: any = JSON.parse('{ "sku": "B-2", "price": 10 }');`));
+    const program = items(`const saved: any = JSON.parse('{ "sku": "B-2", "price": 10 }');`);
+    const { count, exitCode } = await explain(program, "--explain");
     expect({ count, exitCode }).toEqual({
       count: "0% of property accesses are one load: 0 free, 1 tested, 0 by name (1)",
       exitCode: 0,
@@ -41,6 +42,7 @@ describe.concurrent("what is counted", () => {
   test("a program that only calls built-ins has no access", async () => {
     const { count, exitCode } = await explain(
       `console.log(Math.max(1, 2), JSON.stringify([1]), [1, 2].map(n => n + 1).join());\n`,
+      "--explain",
     );
     expect({ count, exitCode }).toEqual({ count: undefined, exitCode: 0 });
   });

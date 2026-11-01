@@ -26,10 +26,13 @@ function sourceWith(objects: number) {
   return source + `function step${objects}() { return calls.length; }\nconsole.log(step0());\n`;
 }
 
+// A build that finds out that the program needs more of Bun's own code compiles again: the counts are those of the last run of the analysis.
 function countsOf(log: string) {
   const counts = { "statement runs": 0, nodes: 0, edges: 0 };
   for (const line of log.split("\n")) {
     if (!line.startsWith("AOT flow round ")) continue;
+    if (line.startsWith("AOT flow round 1 "))
+      for (const name of Object.keys(counts)) counts[name as keyof typeof counts] = 0;
     for (const column of line.split(" | "))
       for (const name of Object.keys(counts) as (keyof typeof counts)[])
         if (column.startsWith(name + " ")) counts[name] += Number(column.slice(name.length + 1));
@@ -43,18 +46,20 @@ test("one more object adds a few rules, nodes and edges", async () => {
     Object.fromEntries(sizes.map(size => [`objects${size}.js`, sourceWith(size)])),
   );
   const directory = String(dir);
-  const counts = [];
-  for (const size of sizes) {
-    const executable = join(directory, `objects${size}${isWindows ? ".exe" : ""}`);
-    const built = await run(
-      [bunExe(), "build", "--compile", "--aot", withThreads(1), `objects${size}.js`, "--outfile", executable],
-      directory,
-      { ...bunEnv, [buildEnvironment.logsPhaseTimes]: "1" },
-    );
-    expect(built.exitCode).toBe(0);
-    expect((await run([executable], directory, bunEnv)).stdout).toBe(`${size}\n`);
-    counts.push(countsOf(built.stderr + built.stdout));
-  }
+  // Side by side: each build has one thread.
+  const counts = await Promise.all(
+    sizes.map(async size => {
+      const executable = join(directory, `objects${size}${isWindows ? ".exe" : ""}`);
+      const built = await run(
+        [bunExe(), "build", "--compile", "--aot", withThreads(1), `objects${size}.js`, "--outfile", executable],
+        directory,
+        { ...bunEnv, [buildEnvironment.logsPhaseTimes]: "1" },
+      );
+      expect(built.exitCode).toBe(0);
+      expect((await run([executable], directory, bunEnv)).stdout).toBe(`${size}\n`);
+      return countsOf(built.stderr + built.stdout);
+    }),
+  );
   expect(counts[0].edges).toBeGreaterThan(0);
   for (const name of Object.keys(most) as (keyof typeof most)[]) {
     const added = (counts[1][name] - counts[0][name]) / (sizes[1] - sizes[0]);

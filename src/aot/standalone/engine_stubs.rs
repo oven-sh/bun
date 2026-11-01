@@ -30,9 +30,12 @@ functions_of_no_engine! {
         Bytes,
         *const c_void,
         unsafe extern "C" fn(*mut c_void),
+        unsafe extern "C" fn(*mut c_void, *const c_void) -> bool,
         *mut c_void,
         *const c_void,
-        *const c_void
+        *const c_void,
+        unsafe extern "C" fn(*mut c_void, u32) -> usize,
+        unsafe extern "C" fn(*mut c_void, u32, *mut u8)
     ) -> *mut c_void;
     fn Bun__AOT__resultSection(*const c_void, u32) -> Bytes;
     fn Bun__AOT__freeResult(*mut c_void);

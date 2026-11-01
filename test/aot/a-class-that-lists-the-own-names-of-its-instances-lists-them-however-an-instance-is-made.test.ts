@@ -4,7 +4,7 @@
 // the program below it, by Reflect.construct() for another new.target, by the operations of the language that make one without a call, and by the calls that no table of operands finds.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tls } from "harness";
-import { findBuiltinTable } from "./generate";
+import { findBuiltinTable } from "./harness/builtin-table";
 import { test } from "./supported";
 
 const table = findBuiltinTable(bunExe());

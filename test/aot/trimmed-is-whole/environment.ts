@@ -4,6 +4,7 @@ import { run as said } from "../harness/run";
 
 export const programs = {
   hello: `console.log("hello world");`,
+  prints: `console.log(process.env.FROM_DOT_ENV, process.env.OWN, { a: { b: { c: { d: { e: 1 } } } } });`,
   serve: `
     const server = Bun.serve({
       port: Number(process.env.PORT ?? 0),
@@ -102,7 +103,9 @@ export type Case = {
 export type Ran = { stdout: string; stderr: string; exit: string; answers: string; written: string };
 
 const everyProgram = Object.keys(programs) as Program[];
-export const programsOf = (it: Case) => it.programs ?? (it.signal ? (["serve"] as Program[]) : everyProgram.filter(program => program !== "reads" && program !== "fetches"));
+export const programsOf = (it: Case) =>
+  it.programs ??
+  (it.signal ? (["serve"] as Program[]) : everyProgram.filter(program => program !== "reads" && program !== "fetches"));
 
 export class Bench {
   #built = new Map<string, Promise<string>>();
@@ -119,7 +122,17 @@ export class Bench {
     readonly tls: { cert: string; key: string },
   ) {
     mkdirSync(join(folder, "source"), { recursive: true });
-    writeFileSync(join(folder, "source", "tsconfig.json"), JSON.stringify({ compilerOptions: { noImplicitAny: false, typeRoots: [join(import.meta.dir, "..", "..", "..", "packages")], types: ["bun-types"], skipLibCheck: true } }));
+    writeFileSync(
+      join(folder, "source", "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          noImplicitAny: false,
+          typeRoots: [join(import.meta.dir, "..", "..", "..", "packages")],
+          types: ["bun-types"],
+          skipLibCheck: true,
+        },
+      }),
+    );
     for (const [name, text] of Object.entries(programs)) writeFileSync(join(folder, "source", name + ".ts"), text);
   }
 
@@ -129,12 +142,19 @@ export class Bench {
     if (!built) {
       const outfile = join(this.folder, "built", String(this.#built.size), how, "app");
       mkdirSync(dirname(outfile), { recursive: true });
-      const trim = how === "trimmed" ? ["--trim", ...(this.trimWithout.length > 0 ? ["--trim-without=" + this.trimWithout.join(",")] : [])] : [];
+      const trim =
+        how === "trimmed"
+          ? ["--trim", ...(this.trimWithout.length > 0 ? ["--trim-without=" + this.trimWithout.join(",")] : [])]
+          : [];
       built = (async () => {
         if (this.#building >= this.buildsAtOnce) await new Promise<void>(resolve => this.#waitingToBuild.push(resolve));
         else this.#building++;
         try {
-          const build = await said([this.bun, "build", "--compile", "--aot", ...trim, ...flags, program + ".ts", "--outfile", outfile], join(this.folder, "source"), this.env);
+          const build = await said(
+            [this.bun, "build", "--compile", "--aot", ...trim, ...flags, program + ".ts", "--outfile", outfile],
+            join(this.folder, "source"),
+            this.env,
+          );
           if (build.exitCode !== 0) throw new Error(`${key}: the build failed: ${build.stderr}`);
           return outfile;
         } finally {
@@ -153,11 +173,19 @@ export class Bench {
       const fetch = (request: Request) => {
         const [, run, report] = /^\/report\/(\d+)(\/.*)$/.exec(new URL(request.url).pathname) ?? [];
         if (run) this.#reports.set(run, [...(this.#reports.get(run) ?? []), report]);
-        return new Response(`${request.headers.get("user-agent") === "own agent" ? "own agent" : "an agent"} ${request.headers.get("x-own")}`);
+        return new Response(
+          `${request.headers.get("user-agent") === "own agent" ? "own agent" : "an agent"} ${request.headers.get("x-own")}`,
+        );
       };
-      this.#servers = [Bun.serve({ port: 0, hostname: "127.0.0.1", fetch }), Bun.serve({ port: 0, hostname: "127.0.0.1", tls: this.tls, fetch })];
+      this.#servers = [
+        Bun.serve({ port: 0, hostname: "127.0.0.1", fetch }),
+        Bun.serve({ port: 0, hostname: "127.0.0.1", tls: this.tls, fetch }),
+      ];
     }
-    return { PLAIN_URL: `http://127.0.0.1:${this.#servers[0].port}/`, SECURE_URL: `https://localhost:${this.#servers[1].port}/` };
+    return {
+      PLAIN_URL: `http://127.0.0.1:${this.#servers[0].port}/`,
+      SECURE_URL: `https://localhost:${this.#servers[1].port}/`,
+    };
   }
 
   stop() {
@@ -165,33 +193,37 @@ export class Bench {
   }
 
   plain(text: string) {
-    return text
-      .replaceAll(this.folder, "<folder>")
-      .replace(/<folder>\/built\/\d+\/(whole|trimmed)/g, "<built>")
-      .replace(/<folder>\/run\/\d+/g, "<run>")
-      .replace(/\b(listening on |localhost:|127\.0\.0\.1:|\[::1\]:)\d+/g, "$1<port>")
-      .replace(/^(. )?Date: .*$/gim, "$1Date: <date>")
-      .replace(/\((node|bun):\d+\)/g, "($1:<pid>)")
-      .replace(/\b(CPU|Heap)\.[\d.]+(?=\.(cpuprofile|heapprofile|md)\b)/g, "$1.<when>")
-      .replace(/\bpid[ =:]+\d+/gi, "pid <pid>")
-      // Each executable has an id of its own, which a crash report names.
-      .replace(/^Build ID: [0-9a-f]{32}$/gm, "Build ID: <id>")
-      // So does what the registers held at a fault, and the code there.
-      .replace(/^Registers: .*$/gm, "Registers: <registers>")
-      .replace(/^Code at rip: .*$/gm, "Code at rip: <code>")
-      .replace(/\bFaults: \d+/g, "Faults: <count>")
-      // Only an executable that has the interpreter lets a Worker run a text apart from the compiled program.
-      .replace(/\b(disallowNonStaticCodeOnlyBesideCompiledCode)=(true|false)/g, "$1=<whether>")
-      .replace(/\b0x[0-9a-fA-F]+/g, "<address>")
-      .replace(/(https:\/\/bun\.report\/[^\/\s]+\/|\/report\/\d+\/[^\/\s]+\/)\S+/g, "$1<trace>")
-      .replace(/\b\d+(\.\d+)?\s?(ns|us|µs|ms|s|B|KB|KiB|MB|MiB|GB|GiB|TB)\b/g, "<amount>");
+    return (
+      text
+        .replaceAll(this.folder, "<folder>")
+        .replace(/<folder>\/built\/\d+\/(whole|trimmed)/g, "<built>")
+        .replace(/<folder>\/run\/\d+/g, "<run>")
+        .replace(/\b(listening on |localhost:|127\.0\.0\.1:|\[::1\]:)\d+/g, "$1<port>")
+        .replace(/^(. )?Date: .*$/gim, "$1Date: <date>")
+        .replace(/\((node|bun):\d+\)/g, "($1:<pid>)")
+        .replace(/\b(CPU|Heap)\.[\d.]+(?=\.(cpuprofile|heapprofile|md)\b)/g, "$1.<when>")
+        .replace(/\bpid[ =:]+\d+/gi, "pid <pid>")
+        // Each executable has an id of its own, which a crash report names.
+        .replace(/^Build ID: [0-9a-f]{32}$/gm, "Build ID: <id>")
+        // So does what the registers held at a fault, and the code there.
+        .replace(/^Registers: .*$/gm, "Registers: <registers>")
+        .replace(/^Code at (rip|pc): .*$/gm, "Code at $1: <code>")
+        .replace(/\bFaults: \d+/g, "Faults: <count>")
+        // Only an executable that has the interpreter lets a Worker run a text apart from the compiled program.
+        .replace(/\b(disallowNonStaticCodeOnlyBesideCompiledCode)=(true|false)/g, "$1=<whether>")
+        .replace(/\b0x[0-9a-fA-F]+/g, "<address>")
+        .replace(/(https:\/\/bun\.report\/[^\/\s]+\/|\/report\/\d+\/[^\/\s]+\/)\S+/g, "$1<trace>")
+        .replace(/\b\d+(\.\d+)?\s?(ns|us|µs|ms|s|B|KB|KiB|MB|MiB|GB|GiB|TB)\b/g, "<amount>")
+    );
   }
 
   #runs = 0;
   #looks = 0;
 
   async lookAt(pid: number, name: string) {
-    const services = ["amfid", "syspolicyd", "XprotectService", "taskgated", "trustd"].map(service => `process == "${service}"`).join(" OR ");
+    const services = ["amfid", "syspolicyd", "XprotectService", "taskgated", "trustd"]
+      .map(service => `process == "${service}"`)
+      .join(" OR ");
     const [processes, sample, log] = await Promise.all(
       [
         ["/bin/ps", "-o", "pid,stat,time,etime,comm", "-p", String(pid)],
@@ -199,15 +231,30 @@ export class Bench {
         ["/usr/bin/log", "show", "--last", "15s", "--style", "compact", "--predicate", services],
       ].map(async cmd => {
         try {
-          await using asked = Bun.spawn({ cmd, env: this.env, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 20_000, killSignal: "SIGKILL" });
+          await using asked = Bun.spawn({
+            cmd,
+            env: this.env,
+            stdin: "ignore",
+            stdout: "pipe",
+            stderr: "pipe",
+            timeout: 20_000,
+            killSignal: "SIGKILL",
+          });
           return (await Promise.all([asked.stdout.text(), asked.stderr.text()])).join("").trimEnd().split("\n");
         } catch (error) {
           return [`${cmd[0]}: ${error}`];
         }
       }),
     );
-    const callGraph = Math.max(0, sample.findIndex(line => line.startsWith("Call graph:")));
-    console.error([`SLOW: ${name}: after 10 s:`, ...processes, ...sample.slice(callGraph, callGraph + 60), ...log.slice(-40)].join("\n  "));
+    const callGraph = Math.max(
+      0,
+      sample.findIndex(line => line.startsWith("Call graph:")),
+    );
+    console.error(
+      [`SLOW: ${name}: after 10 s:`, ...processes, ...sample.slice(callGraph, callGraph + 60), ...log.slice(-40)].join(
+        "\n  ",
+      ),
+    );
   }
 
   async run(program: Program, how: "whole" | "trimmed", it: Case): Promise<Ran> {
@@ -226,8 +273,16 @@ export class Bench {
       writeFileSync(join(cwd, path), text.replaceAll("<run>", cwd).replaceAll("<certificate>", this.tls.cert));
     }
     const laid = new Set(readdirSync(cwd, { recursive: true }) as string[]);
-    const env: Record<string, string | undefined> = { ...this.env, PORT: "0", ...(program === "fetches" || reports ? this.servers() : {}) };
-    for (const [name, value] of Object.entries(it.env ?? {})) env[name] = value.replaceAll("<run>", cwd).replaceAll("<plain url>", env.PLAIN_URL ?? "").replaceAll("<report url>", env.PLAIN_URL + "report/" + number);
+    const env: Record<string, string | undefined> = {
+      ...this.env,
+      PORT: "0",
+      ...(program === "fetches" || reports ? this.servers() : {}),
+    };
+    for (const [name, value] of Object.entries(it.env ?? {}))
+      env[name] = value
+        .replaceAll("<run>", cwd)
+        .replaceAll("<plain url>", env.PLAIN_URL ?? "")
+        .replaceAll("<report url>", env.PLAIN_URL + "report/" + number);
     const args = (it.args ?? []).map(arg => arg.replaceAll("<run>", cwd));
     const streams = { stdin: it.stdin ?? "null", stdout: it.stdout ?? "pipe", stderr: it.stderr ?? "pipe" };
     const redirections = [
@@ -237,7 +292,14 @@ export class Bench {
     ].join(" ");
     writeFileSync(join(this.folder, "run", "stream-" + this.#runs + ".in"), "from a file\n");
     // Some cases end the program with a signal that dumps core. Where a core is a file, writing it holds up the cases that run beside it, and CI's runner fails a test file beside which one appears.
-    const cmd = ["/bin/sh", "-c", `ulimit -c 0 && exec "$@" ${redirections}`, join(this.folder, "run", "stream-" + this.#runs), executable, ...args];
+    const cmd = [
+      "/bin/sh",
+      "-c",
+      `ulimit -c 0 && exec "$@" ${redirections}`,
+      join(this.folder, "run", "stream-" + this.#runs),
+      executable,
+      ...args,
+    ];
     const usesTerminal = Object.values(streams).includes("terminal");
     let shown = "";
     const answers: string[] = [];
@@ -246,9 +308,17 @@ export class Bench {
       cwd,
       env,
       ...(usesTerminal
-        ? { terminal: { cols: 80, rows: 24, data: (_: unknown, data: Uint8Array) => void (shown += new TextDecoder().decode(data)) } }
+        ? {
+            terminal: {
+              cols: 80,
+              rows: 24,
+              data: (_: unknown, data: Uint8Array) => void (shown += new TextDecoder().decode(data)),
+            },
+          }
         : { stdin: streams.stdin === "pipe" ? "pipe" : "ignore", stdout: "pipe", stderr: "pipe" }),
-      ...(it.ipc ? { serialization: it.ipc, ipc: (message: unknown) => void answers.push("sent " + JSON.stringify(message)) } : {}),
+      ...(it.ipc
+        ? { serialization: it.ipc, ipc: (message: unknown) => void answers.push("sent " + JSON.stringify(message)) }
+        : {}),
     } as never) as Bun.Subprocess<"pipe", "pipe", "pipe">;
     // TODO: on macOS the first starts of a fresh trimmed executable have said nothing for more than ten seconds, while the whole one that
     // was started beside it answered. Why is not known. Until it is, a run has a minute, and the log names every run that took over ten seconds.
@@ -256,7 +326,8 @@ export class Bench {
     let timer = setTimeout(() => child.kill("SIGKILL"), 60_000);
     let looked: Promise<void> | undefined;
     const look = setTimeout(() => {
-      if (process.platform === "darwin" && !it.signal && this.#looks++ < 3) looked = this.lookAt(child.pid, `${program}, ${how}: ${it.name}`);
+      if (process.platform === "darwin" && !it.signal && this.#looks++ < 3)
+        looked = this.lookAt(child.pid, `${program}, ${how}: ${it.name}`);
     }, 10_000);
     let stdout = "";
     try {
@@ -288,15 +359,28 @@ export class Bench {
         }
         if (port) {
           const base = "http://127.0.0.1:" + port;
-          for (const [path, init] of [["/text"], ["/json"], ["/echo", { method: "POST", body: `{"title":"x"}`, headers: { "content-type": "application/json" } }], ["/nothing"]] as [string, RequestInit?][]) {
-            answers.push(await fetch(base + path, init).then(async answer => `${answer.status} ${await answer.text()}`, error => "no answer: " + error.code));
+          for (const [path, init] of [
+            ["/text"],
+            ["/json"],
+            ["/echo", { method: "POST", body: `{"title":"x"}`, headers: { "content-type": "application/json" } }],
+            ["/nothing"],
+          ] as [string, RequestInit?][]) {
+            answers.push(
+              await fetch(base + path, init).then(
+                async answer => `${answer.status} ${await answer.text()}`,
+                error => "no answer: " + error.code,
+              ),
+            );
           }
           child.kill(it.signal ?? "SIGTERM");
           // It has answered, so it has started. A server that the signal has stopped answers nothing more: it is ended ten seconds from here.
           clearTimeout(timer);
           timer = setTimeout(() => child.kill("SIGKILL"), 10_000);
           if (it.signal && (await Promise.race([child.exited, Bun.sleep(3000).then(() => "runs on")])) === "runs on") {
-            const answer = await fetch(base + "/text").then(async answer => `${answer.status} ${await answer.text()}`, () => "no answer");
+            const answer = await fetch(base + "/text").then(
+              async answer => `${answer.status} ${await answer.text()}`,
+              () => "no answer",
+            );
             // A server that answers nothing more is ending, and how long that takes depends on what else the machine does: it is waited for. Only one that still answers runs on.
             if (answer !== "no answer") {
               answers.push("runs on: " + answer);
@@ -314,8 +398,17 @@ export class Bench {
       }
       const exitCode = await child.exited;
       for (let waited = 0; reports && waited < 3000 && !this.#reports.has(number); waited += 50) await Bun.sleep(50);
-      if (reports) answers.push("reported " + (this.#reports.get(number) ?? []).map(report => report.replace(/^(\/[^\/]+\/).*?(\/ack)?$/, "$1<trace>$2")).join(" "));
-      const written = (readdirSync(cwd, { recursive: true }) as string[]).filter(path => !laid.has(path)).map(path => path.replace(/\d+/g, "N")).sort();
+      if (reports)
+        answers.push(
+          "reported " +
+            (this.#reports.get(number) ?? [])
+              .map(report => report.replace(/^(\/[^\/]+\/).*?(\/ack)?$/, "$1<trace>$2"))
+              .join(" "),
+        );
+      const written = (readdirSync(cwd, { recursive: true }) as string[])
+        .filter(path => !laid.has(path))
+        .map(path => path.replace(/\d+/g, "N"))
+        .sort();
       return {
         stdout: this.plain(usesTerminal ? shown : stdout),
         stderr: this.plain(await stderr),
@@ -337,7 +430,9 @@ export class Bench {
     const [whole, trimmed] = await Promise.all([this.run(program, "whole", it), this.run(program, "trimmed", it)]);
     if (it.numbersMayDiffer) {
       // The kernel hands a signal sent to the process to any of its threads.
-      for (const ran of [whole, trimmed]) for (const key of ["stdout", "stderr"] as const) ran[key] = ran[key].replace(/\d+/g, "N").replace(/^panic\([^)\n]*\): /gm, "panic: ");
+      for (const ran of [whole, trimmed])
+        for (const key of ["stdout", "stderr"] as const)
+          ran[key] = ran[key].replace(/\d+/g, "N").replace(/^panic\([^)\n]*\): /gm, "panic: ");
     }
     return { whole, trimmed };
   }

@@ -1,4 +1,0 @@
-{
-  "skipInShell": "it uses node:fs and classes of Bun",
-  "alone": "it adds properties to built-in objects"
-}

@@ -5,7 +5,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { built, slot, spawned, unsupported, withoutCoreDump } from "./run-programs";
+import { built, slot, spawned, unsupported, withoutCoreDump } from "./harness/commands";
 
 const program = `function atTheBrink(run) {
   try {

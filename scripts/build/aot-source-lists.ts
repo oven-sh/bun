@@ -6,7 +6,7 @@ import { writeIfChanged } from "./fs.ts";
 
 /** Paths are relative to JavaScriptCore, with `/`, in ascending order by code unit. */
 export interface AotSourceLists {
-  /** Without those that are compiled for size: people keep that list. */
+  /** Without those that are compiled for size: people keep those lists. */
   librarySources: string[];
   testSources: string[];
   includeDirectories: string[];
@@ -16,7 +16,8 @@ export interface AotSourceLists {
 }
 
 export interface DeclaredAotLists {
-  sourcesCompiledForSize: string[];
+  /** One list for each file of them. */
+  sourcesCompiledForSize: string[][];
   generatedSources: string[];
   generatedHeaders: string[];
   programSources: string[];
@@ -29,7 +30,7 @@ export interface DeclaredAotLists {
 export interface WrittenAotLists extends AotSourceLists, DeclaredAotLists {}
 
 const sourcesTxt = "aot/Sources.txt";
-const sourcesCompiledForSizeTxt = "aot/SourcesCompiledForSize.txt";
+const sourcesCompiledForSizeTxts = ["aot/SourcesCompiledForSize.txt", "aot/SourcesCompiledForMinimumSize.txt"];
 const aotCMake = "aot/AOT.cmake";
 const headerExtensions = [".h", ".def", ".inc"];
 const includedAotHeader = /#\s*include\s+["<](?:JavaScriptCore\/)?(AOT[\w+]*\.(?:h|def|inc))[">]/g;
@@ -85,7 +86,7 @@ export function readWrittenAotLists(javaScriptCore: string): WrittenAotLists {
       .filter(line => line !== "");
   return {
     librarySources: linesOf(sourcesTxt),
-    sourcesCompiledForSize: linesOf(sourcesCompiledForSizeTxt),
+    sourcesCompiledForSize: sourcesCompiledForSizeTxts.map(linesOf),
     testSources: evaluated.list("JavaScriptCore_AOT_TEST_SOURCES"),
     includeDirectories: evaluated
       .list("JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES")
@@ -188,7 +189,7 @@ export function computeAotSourceLists(
     ...declared.generatedSources,
     ...declared.programSources,
     ...declared.shellSources,
-    ...declared.sourcesCompiledForSize,
+    ...declared.sourcesCompiledForSize.flat(),
   ]);
   const sources = filesUnder(javaScriptCore, "aot", name => name.endsWith(".cpp")).filter(
     path => !listedElsewhere.has(path),
@@ -220,7 +221,7 @@ export function findAotSourceListProblems(javaScriptCore: string): string[] {
     ...written.generatedSources,
     ...written.programSources,
     ...written.shellSources,
-    ...written.sourcesCompiledForSize,
+    ...written.sourcesCompiledForSize.flat(),
   ]);
   const present = filesUnder(javaScriptCore, "aot", name => name.endsWith(".cpp"));
   const sources = present.filter(path => !listedElsewhere.has(path));
@@ -243,15 +244,20 @@ export function findAotSourceListProblems(javaScriptCore: string): string[] {
       written.includeDirectories,
       headerDirectories(javaScriptCore, written.generatedHeaders),
     ),
-    ...[...written.programSources, ...written.shellSources, ...written.sourcesCompiledForSize]
+    ...[...written.programSources, ...written.shellSources, ...written.sourcesCompiledForSize.flat()]
       .filter(path => !present.includes(path))
       .map(path => `${path}: listed, and there is no such file`),
-    ...written.sourcesCompiledForSize
-      .filter(isTestSource)
-      .map(path => `${path}: in ${sourcesCompiledForSizeTxt}, and is a source of testaot`),
-    ...(written.sourcesCompiledForSize.every((path, index, all) => index === 0 || all[index - 1]! < path)
-      ? []
-      : [`${sourcesCompiledForSizeTxt}: not in ascending order`]),
+    ...written.sourcesCompiledForSize.flatMap((sources, list) => [
+      ...sources
+        .filter(isTestSource)
+        .map(path => `${path}: in ${sourcesCompiledForSizeTxts[list]}, and is a source of testaot`),
+      ...(sources.every((path, index, all) => index === 0 || all[index - 1]! < path)
+        ? []
+        : [`${sourcesCompiledForSizeTxts[list]}: not in ascending order`]),
+    ]),
+    ...written.sourcesCompiledForSize[0]!.filter(path => written.sourcesCompiledForSize[1]!.includes(path)).map(
+      path => `${path}: in ${sourcesCompiledForSizeTxts.join(" and in ")}`,
+    ),
   ];
   const librarySources = sources.filter(path => !isTestSource(path));
   if (

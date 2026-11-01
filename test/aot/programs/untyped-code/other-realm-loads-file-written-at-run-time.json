@@ -1,1 +1,0 @@
-{ "build": ["--compile-inspector"], "skipInShell": "it loads a file through the module loader of the runtime, which the jsc shell does not have" }

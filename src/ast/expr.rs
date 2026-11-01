@@ -1835,6 +1835,7 @@ impl Data {
                     properties,
                     has_decorators: el.has_decorators,
                     should_lower_standard_decorators: el.should_lower_standard_decorators,
+                    assigns_fields_in_constructor: el.assigns_fields_in_constructor,
                     inner_class_ref: el.inner_class_ref,
                 });
                 Ok(Data::EClass(StoreRef::from_bump(item)))

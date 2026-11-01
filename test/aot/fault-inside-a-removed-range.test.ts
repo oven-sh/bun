@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isLinux, isMacOS, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { locksEnvironment } from "./hardened";
-import { withoutCoreDump } from "./run-programs";
+import { withoutCoreDump } from "./harness/commands";
 import { describe, test } from "./supported";
 
 // What `bun build --compile --aot` cuts out of the executable leaves a hole in its address space, which later mappings may fill.

@@ -1,4 +1,5 @@
-import { isASAN, isDebug, isWindows } from "harness";
+import { isASAN, isDebug } from "harness";
+import { countsInstructions } from "./analysis-scaling/measure-check";
 import { expectLinearInstructionCount } from "./long-functions-instructions";
 import { indexesUpTo, type Program } from "./long-functions-programs";
 import { test } from "./supported";
@@ -22,7 +23,7 @@ function writeAdditionsToOneVariable(count: number): Program {
   };
 }
 
-test.skipIf(isSlowBuild || isWindows).each([500, 1_000])(
+test.skipIf(isSlowBuild || !countsInstructions()).each([500, 1_000])(
   "the instructions of a build are linear in the number of compound assignments to a variable, from %d on",
   async count => {
     await expectLinearInstructionCount(count, writeAdditionsToOneVariable, 4.5);

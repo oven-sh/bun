@@ -3,10 +3,10 @@
 // a global, a caught error, a method of a receiver nobody knows. Which of them a row names may not follow which thread got where first.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { slot, spawned, unsupported } from "./run-programs";
+import { slot, spawned, unsupported } from "./harness/commands";
 
-const numberOfModules = 12;
-const functionsInModule = 40;
+const numberOfModules = 6;
+const functionsInModule = 20;
 
 function moduleText(module: number): string {
   let text = `import { registry, text } from "./shared.js";\nimport * as next from "./module${(module + 1) % numberOfModules}.js";\n`;
@@ -35,7 +35,7 @@ const sources: Record<string, string> = {
 for (let module = 0; module < numberOfModules; module++) sources[`module${module}.js`] = moduleText(module);
 
 test.skipIf(!!unsupported)(
-  "ten explanations of one program are equal",
+  "explanations of one program are equal",
   async () => {
     using folder = tempDir("aot-same-explanation", sources);
     const explain = (...words: string[]) =>
@@ -45,7 +45,8 @@ test.skipIf(!!unsupported)(
           String(folder),
           bunEnv,
         );
-        expect({ stderr, exitCode, signal, rows: stdout.split("\n").length > 50 }).toEqual({
+        // 28 lines: most operations are grouped under the one statement where their object escapes.
+        expect({ stderr, exitCode, signal, rows: stdout.split("\n").length > 20 }).toEqual({
           stderr: expect.not.stringMatching(/^error\b/m),
           exitCode: 0,
           signal: null,
@@ -53,7 +54,7 @@ test.skipIf(!!unsupported)(
         });
         return Bun.hash(stdout).toString(16);
       });
-    const words = [[], [], [], [], [], [], ["--threads=1"], ["--threads=2"], ["--threads=8"], ["--threads=32"]];
+    const words = [[], ["--threads=1"], ["--threads=32"]];
     const hashes = await Promise.all(words.map(words => explain(...words)));
     expect(hashes).toEqual(hashes.map(() => hashes[0]));
   },

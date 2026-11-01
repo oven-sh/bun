@@ -49,7 +49,7 @@ impl PageSelector {
 // ─── PageSelector parse ───────────────────────────────────────────────────
 impl PageSelector {
     pub fn parse(input: &mut css::Parser) -> css::Result<PageSelector> {
-        let name: Option<&'static [u8]> = input.try_parse(|i| i.expect_ident_cloned()).ok();
+        let name: Option<&'static [u8]> = input.try_parse(|i| i.expect_ident()).ok();
         let mut pseudo_classes: ArrayList<PagePseudoClass> = ArrayList::new();
 
         loop {
@@ -317,7 +317,7 @@ const _: () = {
 
         fn parse_value(
             this: &mut Self,
-            name: &[u8],
+            name: &'static [u8],
             input: &mut Parser,
         ) -> Result<Self::Declaration> {
             css::declaration::parse_declaration(
@@ -346,7 +346,7 @@ const _: () = {
 
         fn parse_prelude(
             _this: &mut Self,
-            name: &[u8],
+            name: &'static [u8],
             input: &mut Parser,
         ) -> Result<Self::Prelude> {
             let loc = input.current_source_location();

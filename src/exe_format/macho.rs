@@ -5,6 +5,7 @@ use crate::align_up as align_size;
 use crate::image::KnownSection;
 use crate::macho_types as macho;
 use crate::macho_types::{BlobIndex, CodeDirectory, CommandKind, SuperBlob, command_kind};
+use crate::mapped_file::{Blocks, FileBytes, ReadOnce};
 use crate::{read_struct, write_struct};
 
 use bun_core::env_var::feature_flag;
@@ -62,7 +63,7 @@ bun_core::oom_from_alloc!(MachoError);
 
 pub struct MachoFile {
     pub(crate) header: macho::mach_header_64,
-    pub(crate) data: Vec<u8>,
+    pub(crate) data: FileBytes,
     pub(crate) segment: macho::segment_command_64,
     pub(crate) section: macho::section_64,
 }
@@ -109,7 +110,7 @@ impl MachoFile {
         obj_file: &[u8],
         blob_to_embed_length: usize,
     ) -> Result<Box<MachoFile>, MachoError> {
-        let header = read_macho_header(obj_file)?;
+        read_macho_header(obj_file)?;
 
         let size_with_blob = obj_file.len() + blob_to_embed_length;
         let signature_capacity =
@@ -121,8 +122,18 @@ impl MachoFile {
             data.set_len(obj_file.len());
         }
 
+        MachoFile::over(FileBytes::Vector(data))
+    }
+
+    /// How many bytes a payload, the symbols of its code and a signature add to a template at the most.
+    pub fn room_for(template_size: usize, payload_size: usize, symbols_size: usize) -> usize {
+        let size = template_size + payload_size + 2 * symbols_size + (1 << 16);
+        size - template_size + MachoSigner::compute_signature_size(size as u64) + (1 << 16)
+    }
+
+    pub fn over(data: FileBytes) -> Result<Box<MachoFile>, MachoError> {
         Ok(Box::new(MachoFile {
-            header,
+            header: read_macho_header(&data)?,
             data,
             segment: bun_core::ffi::zeroed(),
             section: bun_core::ffi::zeroed(),
@@ -279,9 +290,11 @@ impl MachoFile {
         // content and one SHA-256 hash per new page. `buildAndSign` may grow further
         // to write the complete signature, but reserving this up front avoids the
         // common reallocation.
-        self.data.reserve(
-            usize::try_from(size_diff + num_of_new_pages * HASH_SIZE as u64).expect("int cast"),
-        );
+        if let FileBytes::Vector(vector) = &mut self.data {
+            vector.reserve(
+                usize::try_from(size_diff + num_of_new_pages * HASH_SIZE as u64).expect("int cast"),
+            );
+        }
 
         let linkedit_seg_idx = match linkedit_seg_idx {
             Some(idx) => idx,
@@ -290,11 +303,12 @@ impl MachoFile {
 
         let mut sig_size: usize = 0;
 
-        // SAFETY: we just reserved `size_diff` bytes; new_len <= capacity. The newly-exposed bytes
-        // are written below before being read (memmove + memset cover the whole range).
-        unsafe {
-            self.data
-                .set_len(prev_len + usize::try_from(size_diff).expect("int cast"));
+        let new_len = prev_len + usize::try_from(size_diff).expect("int cast");
+        match &mut self.data {
+            // SAFETY: we just reserved `size_diff` bytes; new_len <= capacity. The newly-exposed bytes
+            // are written below before being read (memmove + memset cover the whole range).
+            FileBytes::Vector(vector) => unsafe { vector.set_len(new_len) },
+            FileBytes::Mapping(_) => self.data.resize(new_len),
         }
 
         // Binary is:
@@ -512,6 +526,12 @@ impl MachoFile {
         Ok(())
     }
 
+    /// What `write_section` and `add_symbols` leave as the template has it.
+    fn bytes_of_template(&self) -> core::ops::Range<usize> {
+        size_of::<macho::mach_header_64>() + self.header.sizeofcmds as usize
+            ..self.section.offset as usize
+    }
+
     fn validate_segments(&self) -> Result<(), MachoError> {
         let mut prev_end: u64 = 0;
 
@@ -539,12 +559,104 @@ impl MachoFile {
     pub fn build_and_sign(&mut self, writer: &mut impl std::io::Write) -> crate::Result<usize> {
         if self.should_sign() {
             let mut signer = MachoSigner::init(core::mem::take(&mut self.data))?;
-            signer.sign(writer)
+            signer.sign(None)?;
+            writer.write_all(&signer.data)?;
+            Ok(signer.data.len())
         } else {
             self.build(writer)?;
             Ok(self.data.len())
         }
     }
+
+    /// As `build_and_sign`, at the start of `file`. `holds_template`: the file holds the bytes that `self` was made over.
+    /// A mapping is let go of as it is written, so the process never has the whole file in memory.
+    pub fn build_and_sign_into(
+        &mut self,
+        file: &bun_sys::File,
+        holds_template: bool,
+    ) -> crate::Result<usize> {
+        let held = match holds_template {
+            true => self.bytes_of_template(),
+            false => 0..0,
+        };
+        let output = FileOutput::new(file, held);
+        let data = if self.should_sign() {
+            let mut signer = MachoSigner::init(core::mem::take(&mut self.data))?;
+            let signed = signer.sign(Some(&output))?;
+            output.write(&signer.data[signed..], signed);
+            signer.data
+        } else {
+            let mut data = core::mem::take(&mut self.data);
+            let (bytes, _) = data.split_read_once(data.len());
+            for_each_run_in_parallel(bytes, &mut [], |run, _| {
+                for block in run.blocks(FileOutput::BLOCK_SIZE) {
+                    output.write(&block, block.offset());
+                }
+            });
+            data
+        };
+        output.finish()?;
+        Ok(data.len())
+    }
+}
+
+/// Where the bytes of a file go as soon as nothing needs them any more.
+struct FileOutput<'a> {
+    file: &'a bun_sys::File,
+    /// The offsets at which the file holds the right bytes already.
+    held: core::ops::Range<usize>,
+    error: bun_core::Mutex<Option<bun_sys::Error>>,
+}
+
+impl<'a> FileOutput<'a> {
+    const BLOCK_SIZE: usize = if cfg!(test) { 1 << 14 } else { 1 << 20 };
+
+    fn new(file: &'a bun_sys::File, held: core::ops::Range<usize>) -> Self {
+        FileOutput {
+            file,
+            held,
+            error: bun_core::Mutex::new(None),
+        }
+    }
+
+    fn write(&self, bytes: &[u8], offset: usize) {
+        let is_held = self.held.start <= offset && offset + bytes.len() <= self.held.end;
+        if !is_held && let Err(error) = self.file.pwrite_all(bytes, offset as i64) {
+            self.error.lock().get_or_insert(error);
+        }
+    }
+
+    fn finish(self) -> crate::Result<()> {
+        match self.error.lock().take() {
+            Some(error) => Err(std::io::Error::from_raw_os_error(error.errno as i32).into()),
+            None => Ok(()),
+        }
+    }
+}
+
+/// Calls `work` with runs of whole pages of `bytes`, and with the room for their hashes where there is any.
+fn for_each_run_in_parallel(
+    bytes: ReadOnce<'_>,
+    hashes: &mut [u8],
+    work: impl Fn(ReadOnce<'_>, &mut [u8]) + Sync,
+) {
+    let (runs, pages_per_run) = split_into_runs(bytes);
+    if hashes.is_empty() {
+        return bun_core::for_each_in_parallel(runs, |run| work(run, &mut []));
+    }
+    let runs = runs.zip(hashes.chunks_mut(pages_per_run * MachoSigner::SIGNATURE_HASH_SIZE));
+    bun_core::for_each_in_parallel(runs, |(run, hashes)| work(run, hashes));
+}
+
+/// `bytes` in runs of whole pages, about one for each thread, and the number of pages in every run but the last.
+fn split_into_runs(bytes: ReadOnce<'_>) -> (Blocks<'_>, usize) {
+    const PAGE_SIZE: usize = MachoSigner::SIGNATURE_PAGE_SIZE;
+    let pages_per_run = bytes
+        .len()
+        .div_ceil(PAGE_SIZE)
+        .div_ceil(usize::from(bun_core::get_thread_count()).clamp(1, 16))
+        .max(1024);
+    (bytes.blocks(pages_per_run * PAGE_SIZE), pages_per_run)
 }
 
 struct Shifter {
@@ -586,14 +698,14 @@ impl Shifter {
 }
 
 pub(crate) struct MachoSigner {
-    data: Vec<u8>,
+    data: FileBytes,
     sig_off: usize,
     linkedit_seg: macho::segment_command_64,
     text_seg: macho::segment_command_64,
 }
 
 impl MachoSigner {
-    fn init(data: Vec<u8>) -> Result<Box<MachoSigner>, MachoError> {
+    fn init(data: FileBytes) -> Result<Box<MachoSigner>, MachoError> {
         let obj: &[u8] = &data;
         let header_size = size_of::<macho::mach_header_64>();
         let header = read_macho_header(obj)?;
@@ -679,7 +791,9 @@ impl MachoSigner {
         super_blob_header_size + blob_index_size + code_dir_length
     }
 
-    fn sign(&mut self, writer: &mut impl std::io::Write) -> crate::Result<usize> {
+    /// Leaves the signed file in `self.data`. `output` gets what the signature covers, block by block as it is hashed,
+    /// and a mapping no longer has what `output` got. Returns where the signature starts.
+    fn sign(&mut self, output: Option<&FileOutput<'_>>) -> crate::Result<usize> {
         const PAGE_SIZE: usize = MachoSigner::SIGNATURE_PAGE_SIZE;
         const HASH_SIZE: usize = MachoSigner::SIGNATURE_HASH_SIZE;
 
@@ -739,20 +853,10 @@ impl MachoSigner {
         code_dir.exec_seg_limit = text_limit.swap_bytes();
         code_dir.exec_seg_flags = CS_EXECSEG_MAIN_BINARY.swap_bytes();
 
-        // Ensure space for signature
-        self.data.resize(aligned_sig_off + total_sig_size, 0);
-        // SAFETY: sig_off <= aligned_sig_off <= current len; spare bytes were just zeroed by resize.
-        unsafe {
-            self.data.set_len(self.sig_off);
-        }
-        // Zero spare capacity (mirrors @memset(self.data.unusedCapacitySlice(), 0) — already zeroed
-        // by resize(_, 0) above for the newly-grown region; explicitly zero in case resize shrank).
-        // SAFETY: spare_capacity_mut() returns the [len..capacity] slice; writing zeros is sound.
-        for b in self.data.spare_capacity_mut() {
-            b.write(0);
-        }
-
-        // Position writer at signature offset; extend the Vec directly.
+        // Nothing of the template's signature stays behind the new one.
+        self.data.resize(self.sig_off);
+        self.data.resize(aligned_sig_off + total_sig_size);
+        self.data.resize(self.sig_off);
 
         // Write signature components — SuperBlob / BlobIndex / CodeDirectory are
         // `NoUninit` (#[repr(C)] POD, no padding); byte-serialized verbatim into
@@ -764,22 +868,29 @@ impl MachoSigner {
 
         // Hash and write pages
         let hashes_start = self.data.len();
-        self.data.resize(hashes_start + hashes_size, 0);
-        let (hashed, hashes) = self.data.split_at_mut(hashes_start);
-        let pages_per_thread = total_pages
-            .div_ceil(usize::from(bun_core::get_thread_count()).clamp(1, 16))
-            .max(1024);
-        let page_runs = hashed[..self.sig_off].chunks(pages_per_thread * PAGE_SIZE);
-        let runs = page_runs.zip(hashes.chunks_mut(pages_per_thread * HASH_SIZE));
-        bun_core::for_each_in_parallel(runs, |(pages, hashes)| {
-            // The last partial page is hashed unpadded, as codesign does.
-            for (page, hash) in pages
-                .chunks(PAGE_SIZE)
-                .zip(hashes.as_chunks_mut::<HASH_SIZE>().0)
-            {
-                let mut digest = [0u8; HASH_SIZE];
-                sha256_hash(page, &mut digest);
-                hash.copy_from_slice(&digest);
+        self.data.resize(hashes_start + hashes_size);
+        let (hashed, signature) = match output {
+            Some(_) => self.data.split_read_once(self.sig_off),
+            None => {
+                let (hashed, signature) = self.data.split_at_mut(self.sig_off);
+                (ReadOnce::kept(hashed), signature)
+            }
+        };
+        let hashes = &mut signature[hashes_start - self.sig_off..];
+        for_each_run_in_parallel(hashed, hashes, |pages, hashes| {
+            const HASHES_OF_BLOCK: usize = FileOutput::BLOCK_SIZE / PAGE_SIZE * HASH_SIZE;
+            let blocks = pages.blocks(FileOutput::BLOCK_SIZE);
+            for (block, hashes) in blocks.zip(hashes.chunks_mut(HASHES_OF_BLOCK)) {
+                // The last partial page is hashed unpadded, as codesign does.
+                for (page, hash) in block
+                    .chunks(PAGE_SIZE)
+                    .zip(hashes.as_chunks_mut::<HASH_SIZE>().0)
+                {
+                    bun_sha_hmac::sha::SHA256::hash(page, hash);
+                }
+                if let Some(output) = output {
+                    output.write(&block, block.offset());
+                }
             }
         });
 
@@ -793,14 +904,8 @@ impl MachoSigner {
         if final_len > aligned_sig_off + total_sig_size {
             return Err(MachoError::OffsetOutOfRange.into());
         }
-        // SAFETY: final_len is bounded by the initialized length from resize above.
-        unsafe {
-            self.data.set_len(final_len);
-        }
-
-        // Write final binary
-        writer.write_all(&self.data)?;
-        Ok(self.data.len())
+        self.data.resize(final_len);
+        Ok(self.sig_off)
     }
 }
 
@@ -815,13 +920,6 @@ const CSMAGIC_EMBEDDED_SIGNATURE: u32 = 0xfade0cc0;
 const CSSLOT_CODEDIRECTORY: u32 = 0;
 const SEC_CODE_SIGNATURE_HASH_SHA256: u8 = 2;
 const CS_EXECSEG_MAIN_BINARY: u64 = 0x1;
-
-/// `bun.sha.SHA256.hash(bytes, out, null)`.
-#[inline]
-pub(crate) fn sha256_hash(bytes: &[u8], out: &mut [u8; 32]) {
-    // SAFETY: engine is null (default).
-    unsafe { bun_sha_hmac::sha::SHA256::hash(bytes, out, core::ptr::null_mut()) };
-}
 
 #[cfg(test)]
 mod tests {
@@ -873,5 +971,38 @@ mod tests {
             retype_uuid_command(&mut template, UNKNOWN_COMMAND);
             assert_eq!(write_payload(&template, payload_size), Ok(()));
         }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn bytes_that_outgrow_their_mapping_stay_whole_while_they_are_signed() {
+        use crate::mapped_file::MappedFile;
+        use crate::mapped_file::tests::TemporaryFile;
+
+        let template = toy_macho(Architecture::Aarch64);
+        let payload = vec![7; 0x20000];
+        let mut in_memory = MachoFile::init(&template, payload.len()).unwrap();
+        in_memory.write_section(&payload, false).unwrap();
+        let unsigned_size = in_memory.data.len();
+        let mut expected = Vec::new();
+        in_memory.build_and_sign(&mut expected).unwrap();
+
+        let template_file = TemporaryFile::create("outgrown-template", &template);
+        let room = |size: usize| unsigned_size - size.next_multiple_of(MappedFile::page_size());
+        let mapped = MappedFile::open_with_room(&template_file.0, room).unwrap();
+        let mut file = MachoFile::over(FileBytes::Mapping(mapped)).unwrap();
+        file.write_section(&payload, false).unwrap();
+        assert!(file.data.is_mapping());
+
+        let written = TemporaryFile::create("outgrown-output", &[]);
+        let flags = bun_sys::O::RDWR | bun_sys::O::CLOEXEC;
+        let output_file = bun_sys::File::open(&written.0, flags, 0).unwrap();
+        let output = FileOutput::new(&output_file, 0..0);
+        let mut signer = MachoSigner::init(core::mem::take(&mut file.data)).unwrap();
+        let signed = signer.sign(Some(&output)).unwrap();
+        output.finish().unwrap();
+        assert!(!signer.data.is_mapping());
+        assert!(*signer.data == *expected);
+        assert!(written.read() == expected[..signed]);
     }
 }

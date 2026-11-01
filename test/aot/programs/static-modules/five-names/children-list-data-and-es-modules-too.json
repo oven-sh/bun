@@ -1,1 +1,0 @@
-{ "entryPoints": ["./b.cjs", "./more.json"], "skipInShell": "it needs Bun's modules" }

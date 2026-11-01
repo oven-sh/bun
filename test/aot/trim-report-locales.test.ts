@@ -24,8 +24,12 @@ const notConstant = "all, because the locale isn't a constant";
 const leftOut = "all, because a call passes no locale, so the system's applies";
 
 describe.concurrent("locales", () => {
-  test.each([
-    ["a program that formats nothing", `console.log(1);`, "none"],
+  test("a program that formats nothing", async () => {
+    expect(await localesOf(`console.log(1);`)).toEqual(["none"]);
+  });
+
+  // One program. No two parts pass the same locale.
+  const constants = [
     ["toLocaleString of a number", `console.log((1234.5).toLocaleString("de"));`, "de"],
     ["toLocaleString of a BigInt", `console.log(10n.toLocaleString("de-AT"));`, "de-AT"],
     ["toLocaleDateString", `console.log(new Date(0).toLocaleDateString("fr"));`, "fr"],
@@ -44,21 +48,26 @@ describe.concurrent("locales", () => {
     ["new Intl.RelativeTimeFormat", `console.log(typeof new Intl.RelativeTimeFormat("pt-BR"));`, "pt-BR"],
     ["new Intl.DisplayNames", `console.log(typeof new Intl.DisplayNames("ko", { type: "region" }));`, "ko"],
     ["new Intl.Segmenter", `console.log(typeof new Intl.Segmenter("th"));`, "th"],
-    ["a list", `console.log(typeof new Intl.NumberFormat(["de", "en-US"]));`, "de, en-US"],
+    ["a list", `console.log(typeof new Intl.NumberFormat(["da", "en-GB"]));`, "da, en-GB"],
     ["a tag in another spelling", `console.log((1).toLocaleString("EN-us"));`, "en-US"],
     [
       "several calls",
-      `console.log((1).toLocaleString("de"), "a".localeCompare("b", "fr"), (2).toLocaleString("de"));`,
-      "de, fr",
+      `console.log((1).toLocaleString("cs"), "a".localeCompare("b", "el"), (2).toLocaleString("cs"));`,
+      "cs, el",
     ],
-    ["either arm of a choice", `console.log((1).toLocaleString(process.argv[2] ? "de" : "fr"));`, "de, fr"],
+    ["either arm of a choice", `console.log((1).toLocaleString(process.argv[2] ? "hu" : "ro"));`, "hu, ro"],
     [
       "a constant of the module, read in a function",
-      `const locale = "de";\nfunction show(value) {\n  return value.toLocaleString(locale);\n}\nconsole.log(show(1));`,
-      "de",
+      `const locale = "uk";\nfunction show(value) {\n  return value.toLocaleString(locale);\n}\nconsole.log(show(1));`,
+      "uk",
     ],
-  ])("%s", async (_, text, locales) => {
-    expect(await localesOf(text)).toEqual([locales]);
+  ];
+  test(`constants: ${constants.map(([what]) => what).join(", ")}`, async () => {
+    const [locales, ...more] = await localesOf(constants.map(([, text]) => text).join("\n"));
+    expect(more).toEqual([]);
+    const listed = locales.split(", ");
+    expect(constants.filter(([, , passed]) => !passed.split(", ").every(tag => listed.includes(tag)))).toEqual([]);
+    expect(listed.length).toBe(constants.flatMap(([, , passed]) => passed.split(", ")).length);
   });
 
   test.each([

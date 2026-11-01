@@ -2,7 +2,7 @@ import { expect } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
-import { built, slot, spawned } from "../run-programs";
+import { built, slot, spawned } from "../harness/commands";
 import { describe, test } from "../supported";
 
 const files = {
@@ -23,7 +23,7 @@ const files = {
   "adds.wasm": Buffer.from("0061736d0100000001070160027f7f017f030201000707010361646400000a09010700200020016a0b", "hex"),
   "broken.wasm": Buffer.from([0, 1, 2, 3]),
   "partly.wasm": readFileSync(
-    join(import.meta.dir, "..", "programs", "webassembly", "partly-interpreted-module", "module.wasm"),
+    join(import.meta.dir, "..", "parallel", "webassembly", "partly-interpreted-module", "module.wasm"),
   ),
   "interpreted.ts": `import brokenPath from "./broken.wasm";
 import partlyPath from "./partly.wasm";

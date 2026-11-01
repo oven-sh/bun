@@ -253,12 +253,9 @@ impl PostgresSQLQuery {
         };
 
         let vm = crate::jsc::VirtualMachine::get().as_mut();
-        let function = vm
-            .sql_state()
-            .postgresql_context
-            .on_query_reject_fn
-            .get()
-            .unwrap();
+        let Some(function) = vm.sql_state().postgresql_context.on_query_reject_fn.get() else {
+            return;
+        };
         let event_loop = vm.event_loop_mut();
         event_loop.run_callback(
             bun_event_loop::ContextId::NONE,
@@ -337,12 +334,9 @@ impl PostgresSQLQuery {
         };
 
         let vm = crate::jsc::VirtualMachine::get().as_mut();
-        let function = vm
-            .sql_state()
-            .postgresql_context
-            .on_query_resolve_fn
-            .get()
-            .unwrap();
+        let Some(function) = vm.sql_state().postgresql_context.on_query_resolve_fn.get() else {
+            return;
+        };
         let event_loop = vm.event_loop_mut();
 
         event_loop.run_callback(

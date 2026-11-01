@@ -7,6 +7,8 @@ export type Measurement = {
   allThreadsInstructions?: number;
   counter: "rusage" | "perf" | "ptrace" | "none";
   privateBytes: number;
+  /** On macOS, where /usr/bin/footprint answers. `privateBytes` is then without them, as it always is on Linux. */
+  pageTableBytes?: number;
   residentBytes: number;
 };
 export type Request = { command: string[]; env: Record<string, string | undefined>; afterMark?: boolean; forcePtrace?: boolean };
@@ -25,6 +27,13 @@ async function waitUntilStopped(isStopped: () => boolean, child: Bun.Subprocess,
     if (performance.now() > deadline) throw new Error(`${command.join(" ")} did not stop itself within ${timeoutSeconds} seconds`);
     await Bun.sleep(1);
   }
+}
+
+/** macOS counts the kernel's tables for the address space of a process as its footprint. */
+function measurePageTables(pid: number): number | undefined {
+  const { stdout } = Bun.spawnSync({ cmd: ["/usr/bin/footprint", String(pid)], stdout: "pipe", stderr: "ignore" });
+  const [, number, unit] = /^\s*([\d.]+) ([KMG]?)B\b.*\bpage table\s*$/m.exec(stdout.toString()) ?? [];
+  return number === undefined ? undefined : Math.round(Number(number) * 1024 ** " KMG".indexOf(unit));
 }
 
 async function measureWithRusage(request: Request): Promise<Measurement> {
@@ -46,7 +55,8 @@ async function measureWithRusage(request: Request): Promise<Measurement> {
   try {
     await waitUntilStopped(() => proc_pidinfo(child.pid, PROC_PIDTBSDINFO, 0, ptr(bsdInfo), sizeofBsdInfo) === sizeofBsdInfo && bsdInfo[pbi_status] === SSTOP, child, request.command);
     if (proc_pid_rusage(child.pid, RUSAGE_INFO_V4, ptr(usage))) throw new Error("proc_pid_rusage failed");
-    return { instructions: Number(usage[ri_instructions]), counter: "rusage", privateBytes: Number(usage[ri_phys_footprint]), residentBytes: Number(usage[ri_resident_size]) };
+    const pageTableBytes = measurePageTables(child.pid);
+    return { instructions: Number(usage[ri_instructions]), counter: "rusage", privateBytes: Number(usage[ri_phys_footprint]) - (pageTableBytes ?? 0), pageTableBytes, residentBytes: Number(usage[ri_resident_size]) };
   } finally {
     child.kill("SIGKILL");
     await child.exited;

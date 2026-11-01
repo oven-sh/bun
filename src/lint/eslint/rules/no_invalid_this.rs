@@ -7,7 +7,7 @@ pub struct NoInvalidThis {
     cap_is_constructor: bool,
 }
 
-const UNEXPECTED_THIS: Message = Message::new("unexpectedThis", "Unexpected 'this'.");
+const UNEXPECTED_THIS: &Message = &Message::new("unexpectedThis", "Unexpected 'this'.");
 
 /// `Program.sourceType === "module"`. `@typescript-eslint/parser` overwrites typescript-estree's value with the option
 /// it was given, so an `import` or `export` doesn't turn a script into a module.

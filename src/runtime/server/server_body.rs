@@ -614,11 +614,11 @@ impl AnyRoute {
         let cwd: &[u8] = if StandaloneModuleGraph::is_bun_standalone_file_path(path_slice) {
             StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes()
         } else {
-            FileSystem::instance().top_level_dir()
+            FileSystem::get().top_level_dir()
         };
 
-        let abs_path = FileSystem::instance().abs(&[path_slice]);
-        let mut relative_path = FileSystem::instance().relative(cwd, abs_path);
+        let abs_path = FileSystem::get().abs(&[path_slice]);
+        let mut relative_path = FileSystem::get().relative(cwd, abs_path);
 
         if relative_path.starts_with(b"./") {
             relative_path = &relative_path[2..];
@@ -999,7 +999,7 @@ impl ServePlugins {
         let bunfig_path: &[u8] = &global.bun_vm().transpiler.options.bunfig_path;
         // With no bunfig.toml, only `bake.config.ts` has plugins: their root is the project.
         let bunfig_folder: &[u8] = if bunfig_path.is_empty() {
-            FileSystem::instance().top_level_dir()
+            FileSystem::get().top_level_dir()
         } else {
             bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(bunfig_path)
         };

@@ -3,10 +3,10 @@ use bun_lint::prelude::*;
 /// Disallow unnecessary `catch` clauses.
 pub struct NoUselessCatch;
 
-const UNNECESSARY_CATCH_CLAUSE: Message =
-    Message::new("unnecessaryCatchClause", "Unnecessary catch clause.");
-const UNNECESSARY_CATCH: Message =
-    Message::new("unnecessaryCatch", "Unnecessary try/catch wrapper.");
+const UNNECESSARY_CATCH_CLAUSE: &Message =
+    &Message::new("unnecessaryCatchClause", "Unnecessary catch clause.");
+const UNNECESSARY_CATCH: &Message =
+    &Message::new("unnecessaryCatch", "Unnecessary try/catch wrapper.");
 
 impl Rule for NoUselessCatch {
     const META: Meta = Meta::eslint("no-useless-catch", Kind::Suggestion).recommended().hints();

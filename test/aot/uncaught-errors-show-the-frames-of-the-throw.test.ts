@@ -7,7 +7,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { built, spawned } from "./run-programs";
+import { built, spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
 const main = `

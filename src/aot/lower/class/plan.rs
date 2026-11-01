@@ -12,6 +12,7 @@ use super::{
 };
 use crate::ir::ClassSlot;
 use crate::lower::decorators::{self, InitializerLists};
+use crate::lower::transpiled::TranspiledFile;
 
 pub(in crate::lower) fn runtime_members(
     hir: &hir::File<'_>,
@@ -58,6 +59,25 @@ pub(in crate::lower) fn has_private_static_storage(hir: &hir::File<'_>, member: 
         && !is_declaration_only(node)
         && (node.flags.contains(Flags::ACCESSOR)
             || matches!(hir.runtime_member_key(member), PropKey::Private(_)))
+}
+
+/// A private field says by itself whether an object has it. A private method has no place in the object, so its brand is all that says so.
+pub(in crate::lower) fn brand_is_of_methods(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    class: ClassId,
+) -> bool {
+    let has_private_method = bound.runtime.is_computed()
+        && bound
+            .private_names_of_class(class)
+            .any(|(_, name)| !name.is_static && !matches!(name.members, PrivateMembers::Field(_)));
+    has_private_method
+        || runtime_members(hir, class).any(|member| {
+            let node = hir[member];
+            is_auto_accessor(hir, member)
+                && !node.flags.contains(Flags::STATIC)
+                && !is_declaration_only(node)
+        })
 }
 
 pub(in crate::lower) fn has_instance_brand(
@@ -274,6 +294,17 @@ fn plan_initializer_call(hir: &hir::File<'_>, bound: &Bound<'_>, plan: &mut Clas
         plan.instance_elements.remove(0);
         plan.this_binding_elements.insert(0, ClassElement::Brand);
     }
+    // The values of fields that are assigned are code of the constructor, as they are in what `bun run` prints.
+    let is_assigned =
+        |element: &ClassElement| matches!(element, ClassElement::AssignedField { .. });
+    if plan.field_semantics == FieldSemantics::Assign
+        && !plan.instance_elements.is_empty()
+        && plan.instance_elements.iter().all(is_assigned)
+    {
+        let assigned = std::mem::take(&mut plan.instance_elements);
+        plan.injected_elements.splice(0..0, assigned);
+        return;
+    }
     if plan.instance_elements.is_empty() {
         plan.initializer_call = InitializerCall::AtThisBinding;
         std::mem::swap(&mut plan.instance_elements, &mut plan.this_binding_elements);
@@ -284,17 +315,22 @@ pub(super) fn plan_class(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
     settings: &TranspileSettings,
+    transpiled: Option<&TranspiledFile>,
     class: ClassId,
 ) -> ClassPlan {
     let transform = compute_class_transform(hir, bound, class);
     let is_asked_to_assign = hir.has_typescript_semantics()
         && settings.use_define_for_class_fields == Some(false)
         && transform != ClassTransform::Standard;
-    // A field under a computed key stays a field, and with it every other field of the class. A parameter property is no field.
-    let has_computed_instance_key = runtime_members(hir, class).any(|member| {
-        has_computed_field_key(hir, member) && !hir[member].flags.contains(Flags::STATIC)
-    });
-    let field_semantics = if is_asked_to_assign && !has_computed_instance_key {
+    // A field under a key that the transpiler prints as neither a string nor a number stays a field, and with it every other field of the class.
+    // A parameter property is no field.
+    let keeps_fields = match transpiled {
+        Some(transpiled) => !transpiled.assigns_fields_of_class_at(hir[class].text_start),
+        None => runtime_members(hir, class).any(|member| {
+            has_computed_field_key(hir, member) && !hir[member].flags.contains(Flags::STATIC)
+        }),
+    };
+    let field_semantics = if is_asked_to_assign && !keeps_fields {
         FieldSemantics::Assign
     } else {
         FieldSemantics::Define
@@ -368,13 +404,43 @@ fn find_member_slot(
     }
 }
 
-pub(crate) fn class_slots(
+/// The constructor evaluates the values of the instance fields itself.
+pub(in crate::lower) fn assigns_fields_in_constructor(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
     settings: &TranspileSettings,
+    transpiled: Option<&TranspiledFile>,
+    class: ClassId,
+) -> bool {
+    let plan = plan_class(hir, bound, settings, transpiled, class);
+    let mut injected = plan.injected_elements.iter();
+    injected.any(|element| matches!(element, ClassElement::AssignedField { .. }))
+}
+
+/// The constructor evaluates the value of this field itself.
+pub(in crate::lower) fn is_evaluated_in_constructor(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    settings: &TranspileSettings,
+    transpiled: Option<&TranspiledFile>,
+    member: MemberId,
+) -> bool {
+    let Some(class) = bound.member_class(member) else {
+        return false;
+    };
+    let plan = plan_class(hir, bound, settings, transpiled, class);
+    let field = ClassElement::AssignedField { member };
+    plan.injected_elements.contains(&field)
+}
+
+pub(in crate::lower) fn class_slots(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    settings: &TranspileSettings,
+    transpiled: Option<&TranspiledFile>,
     class: ClassId,
 ) -> SmallVec<[ClassSlot; 4]> {
-    let plan = plan_class(hir, bound, settings, class);
+    let plan = plan_class(hir, bound, settings, transpiled, class);
     let mut slots: SmallVec<[ClassSlot; 4]> = smallvec![ClassSlot::ClassObject];
     if has_instance_brand(hir, bound, class) {
         slots.push(ClassSlot::ClassToken);

@@ -53,10 +53,7 @@ pub(crate) fn find_all_imported_parts_in_js_order<'a>(
     let ctx = Ctx {
         inner: crate::linker_context_mod::GenerateChunkCtx {
             chunk: bun_ptr::BackRef::new_mut(&mut chunks[0]),
-            // SAFETY: `this` is the live `&mut LinkerContext` for the link step.
-            c: unsafe {
-                bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(this))
-            },
+            c: bun_ptr::ParentRef::from_ref_mut(this),
             chunks: bun_ptr::BackRef::new(&*chunks),
         },
         chunk_of_file: &chunk_of_file,
@@ -99,8 +96,7 @@ fn run_walks<'a>(
         chunks: &'f [Chunk<'a>],
     }
     let walk_ctx = WalkCtx {
-        // SAFETY: `this` is the live `&mut LinkerContext` for the link step.
-        c: unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(this)) },
+        c: bun_ptr::ParentRef::from_ref_mut(this),
         plan,
         chunks,
     };

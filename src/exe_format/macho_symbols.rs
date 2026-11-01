@@ -11,6 +11,7 @@ use crate::{align_up, read_struct, write_struct};
 
 const SYMBOL_ENTRY_SIZE: usize = size_of::<nlist_64>();
 const INDIRECT_ENTRY_SIZE: usize = size_of::<u32>();
+const STRINGS_ALIGNMENT: usize = 8;
 const SIGNATURE_ALIGNMENT: usize = 16;
 const SEGMENT_ALIGNMENT: u64 = 16 * 1024;
 
@@ -26,6 +27,7 @@ struct SymbolCommands {
 struct LinkeditLayout {
     symbols_at: usize,
     indirect_at: usize,
+    indirect_end: usize,
     strings_at: usize,
     strings_end: usize,
     after_strings: usize,
@@ -48,6 +50,8 @@ fn find_ld_layout(commands: &SymbolCommands, length: usize) -> Option<LinkeditLa
     } else {
         dysymtab.indirectsymoff as usize
     };
+    let indirect_end =
+        indirect_at.checked_add(INDIRECT_ENTRY_SIZE * dysymtab.nindirectsyms as usize)?;
     let after_strings = signature.map_or(length, |(_, command)| command.dataoff as usize);
     let matches_ld_layout = dysymtab.ilocalsym == 0
         && dysymtab.iextdefsym == dysymtab.nlocalsym
@@ -59,8 +63,8 @@ fn find_ld_layout(commands: &SymbolCommands, length: usize) -> Option<LinkeditLa
         && dysymtab.nmodtab == 0
         && dysymtab.nextrefsyms == 0
         && symbols_at.checked_add(SYMBOL_ENTRY_SIZE * symtab.nsyms as usize)? == indirect_at
-        && indirect_at.checked_add(INDIRECT_ENTRY_SIZE * dysymtab.nindirectsyms as usize)?
-            == strings_at
+        && indirect_end <= strings_at
+        && strings_at - indirect_end < STRINGS_ALIGNMENT
         && strings_end <= after_strings
         && after_strings - strings_end < SIGNATURE_ALIGNMENT
         && after_strings <= length
@@ -74,6 +78,7 @@ fn find_ld_layout(commands: &SymbolCommands, length: usize) -> Option<LinkeditLa
     Some(LinkeditLayout {
         symbols_at,
         indirect_at,
+        indirect_end,
         strings_at,
         strings_end,
         after_strings,
@@ -140,6 +145,7 @@ impl MachoFile {
         let LinkeditLayout {
             symbols_at,
             indirect_at,
+            indirect_end,
             strings_at,
             strings_end,
             after_strings,
@@ -172,13 +178,14 @@ impl MachoFile {
         }
         tail.extend_from_slice(&self.data[locals_end..indirect_at]);
         let new_indirect_at = symbols_at + tail.len();
-        let indirect_table = &self.data[indirect_at..strings_at];
+        let indirect_table = &self.data[indirect_at..indirect_end];
         for index in indirect_table.as_chunks::<INDIRECT_ENTRY_SIZE>().0 {
             let index = u32::from_le_bytes(*index);
             let moves = index & INDIRECT_SYMBOL_LOCAL_OR_ABS == 0 && index >= dysymtab.nlocalsym;
             let new_index = index.checked_add(if moves { count } else { 0 })?;
             tail.extend_from_slice(&new_index.to_le_bytes());
         }
+        tail.extend_from_slice(&self.data[indirect_end..strings_at]);
         let new_strings_at = symbols_at + tail.len();
         tail.extend_from_slice(&self.data[strings_at..strings_end]);
         tail.extend_from_slice(symbols.names);
@@ -208,7 +215,7 @@ impl MachoFile {
         linkedit.filesize += growth;
         linkedit.vmsize = align_up(linkedit.filesize, SEGMENT_ALIGNMENT);
 
-        self.data.truncate(symbols_at);
+        self.data.resize(symbols_at);
         self.data.extend_from_slice(&tail);
         write_command(&mut self.data, symtab_at, &symtab);
         write_command(&mut self.data, dysymtab_at, &dysymtab);
@@ -228,6 +235,7 @@ mod tests {
     use crate::elf_symbols::tests::{CODE_OFFSET, encode_table, symbol};
     use crate::macho::MachoSigner;
     use crate::macho_types::{CPU_TYPE_ARM64, MH_EXECUTE, MH_MAGIC_64, SuperBlob, load_command};
+    use crate::mapped_file::FileBytes;
 
     const N_EXT: u8 = 0x01;
     const INDIRECT_SYMBOL_LOCAL: u32 = 0x8000_0000;
@@ -353,15 +361,24 @@ mod tests {
     }
 
     fn toy_macho() -> Vec<u8> {
+        toy_macho_with_indirect_table(&OLD_INDIRECT_TABLE)
+    }
+
+    fn toy_macho_with_indirect_table(indirect_table: &[u32]) -> Vec<u8> {
         let mut file: Vec<u8> = (0..SYMBOLS_OFFSET)
             .map(|offset| (offset % 251) as u8)
             .collect();
         for symbol in &OLD_SYMBOLS {
             append_struct(&mut file, symbol);
         }
-        append_struct(&mut file, &OLD_INDIRECT_TABLE);
+        for index in indirect_table {
+            append_struct(&mut file, index);
+        }
+        file.resize(file.len().next_multiple_of(STRINGS_ALIGNMENT), 0);
+        let strings_offset = file.len();
         file.extend_from_slice(OLD_STRINGS);
-        file.resize(SIGNATURE_OFFSET, 0);
+        let signature_offset = file.len().next_multiple_of(SIGNATURE_ALIGNMENT);
+        file.resize(signature_offset, 0);
         file.extend_from_slice(&SIGNATURE);
 
         let header = mach_header_64 {
@@ -379,7 +396,7 @@ mod tests {
             cmdsize: size_of::<symtab_command>() as u32,
             symoff: SYMBOLS_OFFSET as u32,
             nsyms: OLD_SYMBOLS.len() as u32,
-            stroff: STRINGS_OFFSET as u32,
+            stroff: strings_offset as u32,
             strsize: OLD_STRINGS.len() as u32,
         };
         let dysymtab = dysymtab_command {
@@ -391,13 +408,13 @@ mod tests {
             iundefsym: 3,
             nundefsym: 1,
             indirectsymoff: INDIRECT_OFFSET as u32,
-            nindirectsyms: OLD_INDIRECT_TABLE.len() as u32,
+            nindirectsyms: indirect_table.len() as u32,
             ..read_struct(&[0; size_of::<dysymtab_command>()])
         };
         let signature = linkedit_data_command {
             cmd: LC::CODE_SIGNATURE,
             cmdsize: size_of::<linkedit_data_command>() as u32,
-            dataoff: SIGNATURE_OFFSET as u32,
+            dataoff: signature_offset as u32,
             datasize: SIGNATURE.len() as u32,
         };
         write_command(&mut file, 0, &header);
@@ -454,12 +471,12 @@ mod tests {
     fn add_symbols(file: &[u8], table: &[u8]) -> (Option<()>, Vec<u8>) {
         let mut macho = MachoFile {
             header: read_at(file, 0),
-            data: file.to_vec(),
+            data: FileBytes::Vector(file.to_vec()),
             segment: read_struct(&[0; SEGMENT_COMMAND_SIZE]),
             section: read_struct(&[0; SECTION_SIZE]),
         };
         let result = macho.add_symbols(table, IMAGE_OFFSET);
-        (result, macho.data)
+        (result, macho.data.to_vec())
     }
 
     fn assert_linkedit_ends_file(file: &[u8]) {
@@ -534,6 +551,35 @@ mod tests {
     }
 
     #[test]
+    fn keeps_padding_between_indirect_table_and_strings() {
+        let old = toy_macho_with_indirect_table(&[3, INDIRECT_SYMBOL_LOCAL, 2]);
+        let (result, new) = add_symbols(&old, &toy_table());
+        assert_eq!(result, Some(()));
+
+        let symtab: symtab_command = read_at(&new, SYMTAB_COMMAND);
+        let dysymtab: dysymtab_command = read_at(&new, DYSYMTAB_COMMAND);
+        let signature: linkedit_data_command = read_at(&new, SIGNATURE_COMMAND);
+        let indirect_offset = dysymtab.indirectsymoff as usize;
+        let indirect_table: [u32; 4] = read_at(&new, indirect_offset);
+        assert_eq!(dysymtab.nindirectsyms, 3);
+        assert_eq!(indirect_table, [5, INDIRECT_SYMBOL_LOCAL, 4, 0]);
+        assert_eq!(
+            symtab.stroff as usize,
+            indirect_offset + size_of_val(&indirect_table)
+        );
+        assert_eq!(symtab.stroff as usize % STRINGS_ALIGNMENT, 0);
+        assert_eq!(symbol_name(&new, 3), b"Parser.parse");
+        assert_eq!(symbol_name(&new, 5), b"_malloc");
+        assert_eq!(new[signature.dataoff as usize..], SIGNATURE);
+        assert_linkedit_ends_file(&new);
+
+        assert_rejected(
+            &edit_dysymtab(&old, |dysymtab| dysymtab.nindirectsyms -= 1),
+            &toy_table(),
+        );
+    }
+
+    #[test]
     fn adds_symbols_without_signature() {
         let mut old = edit_signature(&toy_macho(), |command| command.cmd = LC::DATA_IN_CODE);
         old.truncate(SIGNATURE_OFFSET);
@@ -555,7 +601,7 @@ mod tests {
     fn payload_writer_moves_and_signs_symbols() {
         let mut macho = MachoFile::init(&toy_macho(), PAYLOAD.len()).unwrap();
         assert_eq!(macho.add_symbols(&toy_table(), IMAGE_OFFSET), Some(()));
-        let with_symbols = macho.data.clone();
+        let with_symbols = macho.data.to_vec();
         macho.write_section(&PAYLOAD, true).unwrap();
         let mut signed = Vec::new();
         let written = macho.build_and_sign(&mut signed).unwrap();
@@ -591,9 +637,9 @@ mod tests {
     fn rejects_file_with_payload() {
         let mut macho = MachoFile::init(&toy_macho(), PAYLOAD.len()).unwrap();
         macho.write_section(&PAYLOAD, true).unwrap();
-        let with_payload = macho.data.clone();
+        let with_payload = macho.data.to_vec();
         assert_eq!(macho.add_symbols(&toy_table(), IMAGE_OFFSET), None);
-        assert!(macho.data == with_payload);
+        assert!(*macho.data == *with_payload);
     }
 
     #[test]

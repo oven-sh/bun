@@ -17,7 +17,6 @@ export const neverEvaluated = [
   /^eval$/,
   /^Function$/,
   /^%(Async)?(Generator)?Function%/,
-  /^ShadowRealm/,
   /^WebAssembly/,
   /^Atomics\.(wait|waitAsync|pause|notify)$/,
   /^FinalizationRegistry/,

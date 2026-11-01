@@ -4,8 +4,9 @@ import { afterAll, expect } from "bun:test";
 import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { built, spawned } from "./harness/commands";
 import { buildFlags, compileCommand } from "./harness/flags";
-import { built, spawned } from "./run-programs";
+import { withoutDebugInformation } from "./harness/without-debug-information";
 import { beforeAll, describe, test } from "./supported";
 
 const sources = {
@@ -106,7 +107,13 @@ describe.each([
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
 
   beforeAll(async () => {
-    const command = [bunExe(), ...compileCommand, buildFlags.withoutFunctionSource, ...flags];
+    const command = [
+      bunExe(),
+      ...compileCommand,
+      ...withoutDebugInformation,
+      buildFlags.withoutFunctionSource,
+      ...flags,
+    ];
     built(await spawned([...command, "./main.ts", "--outfile", executable], folder, bunEnv));
     bytes = readFileSync(executable);
     const run = await spawned([executable], folder, bunEnv);

@@ -18,9 +18,9 @@
 // NESTED: layout {{*}}name="NestedSource"{{*}}supertypes=[{{*}}[[target]]]
 // NESTED: layout [[target]] name="NestedTarget"
 
-// RUN(ENTRY): link
-// ENTRY: layout {{*}}name="EntrySource"{{*}}supertypes=[{{*}}[[target]]]
-// ENTRY: layout [[target]] name="EntryTarget"
+// RUN(MAIN): link
+// MAIN: layout {{*}}name="EntrySource"{{*}}supertypes=[{{*}}[[target]]]
+// MAIN: layout [[target]] name="EntryTarget"
 
 // RUN(TUPLE): link
 // TUPLE: layout {{*}}name="TupleSource"{{*}}supertypes=[{{*}}[[target]]]

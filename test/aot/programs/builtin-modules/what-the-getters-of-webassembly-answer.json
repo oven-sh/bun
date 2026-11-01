@@ -1,1 +1,0 @@
-{ "skipInShell": "top-level await and console.log of arrays as Bun prints them" }

@@ -5,12 +5,12 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 
-const programs = join(import.meta.dir, "../../../aot/programs/library-modules");
+const programs = join(import.meta.dir, "../../../aot/parallel/library-modules");
 
 test.concurrent.each([
-  ["stream-reads-seen-without-a-proxy-receiver", { STREAM_MEMBERS: "all" }],
-  ["stream-members-replaced-by-what-is-not-a-function", { MESSAGES: "whole" }],
-  ["stream-operators-arrive-with-the-first-pipe", {}],
+  ["stream-reads-seen-without-proxy-receiver", { STREAM_MEMBERS: "all" }],
+  ["stream-members-replaced-by-not-function", { MESSAGES: "whole" }],
+  ["stream-operators-arrive-with-first-pipe", {}],
 ])(
   "%s",
   async (name, env) => {

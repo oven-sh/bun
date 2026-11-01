@@ -1,3 +1,0 @@
-{
-  "skipInShell": "it imports external modules, which the jsc shell does not have"
-}

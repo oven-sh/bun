@@ -1,6 +1,0 @@
-{
-  "alone": "it asks which file the executable was started as (import.meta.main, require.main, module.id, module.parent, process.argv[1])",
-  "entryPoints": ["./module.mjs", "./data.json", "./file.cjs"],
-  "env": { "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER": "1" },
-  "skipInShell": "it needs Bun's CommonJS modules"
-}

@@ -1,3 +1,0 @@
-{
-  "skipInShell": "it imports a .wasm file, which the shell's front end cannot load"
-}

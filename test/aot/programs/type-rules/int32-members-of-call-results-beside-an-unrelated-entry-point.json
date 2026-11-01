@@ -1,1 +1,0 @@
-{ "entryPoints": ["./same-names.ts", "./more-names.ts", "./other-kinds-of-types-with-fractions.ts"] }

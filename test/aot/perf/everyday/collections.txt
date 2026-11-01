@@ -110,6 +110,15 @@ function turn(i: number): number {
   });
   return sum;
 }
+//// map-filled-from-pairs-for-each
+const table: Map<number, number> = new Map([3, 1, 4, 1].map((value, index): [number, number] => [index, value]));
+function turn(i: number): number {
+  let sum = i & 1;
+  table.forEach((value, key) => {
+    sum += key + value;
+  });
+  return sum;
+}
 //// map-entries-to-an-object
 const stock = new Map([["tea", 3], ["milk", 2], ["bread", 4]]);
 function turn(i: number): number {
@@ -268,4 +277,105 @@ function turn(i: number): number {
   const queue = [0];
   while (queue.length) for (const next of graph.get(queue.shift()!)!) if (!seen.has(next)) seen.add(next), queue.push(next);
   return seen.size + (i & 1);
+}
+//// set-has-numbers-that-a-nearly-full-set-lacks
+const members = new Set<number>();
+for (let k = 0; k < 3000; k++) members.add(k * 3);
+function turn(i: number): number {
+  let hits = 0;
+  for (let k = 0; k < 100; k++) if (members.has(((i + k) % 3000) * 3 + 1)) hits++;
+  return hits;
+}
+//// set-has-numbers-of-a-nearly-full-set
+const members = new Set<number>();
+for (let k = 0; k < 3000; k++) members.add(k * 3);
+function turn(i: number): number {
+  let hits = 0;
+  for (let k = 0; k < 100; k++) if (members.has(((i + k) % 3000) * 3)) hits++;
+  return hits;
+}
+//// map-get-by-string-in-a-nearly-full-map
+const names = Array.from({ length: 192 }, (_, k) => "name" + k);
+const ranks = new Map<string, number>();
+for (let k = 0; k < 96; k++) ranks.set(names[k * 2]!, k);
+function turn(i: number): number {
+  let sum = 0;
+  for (let k = 0; k < 96; k++) sum += ranks.get(names[(i + k) % 192]!) ?? 9;
+  return sum;
+}
+//// set-has-numbers-that-it-lacks-one-call-at-a-time
+const members = new Set<number>();
+for (let k = 0; k < 1000; k++) members.add(k * 3);
+function lacks(key: number, depth: number): number {
+  if (depth > 0) return lacks(key, depth - 1);
+  return members.has(key) ? 0 : 1;
+}
+function other(key: number, depth: number): number {
+  return key + depth;
+}
+const askers = [lacks, other];
+function turn(i: number): number {
+  const ask = askers[i < 0 ? 1 : 0]!;
+  let hits = 0;
+  for (let k = 0; k < 100; k++) hits += ask(((i + k) % 1000) * 3 + 1, 1);
+  return hits;
+}
+//// map-get-of-numbers-one-call-at-a-time
+const ranks = new Map<number, number>();
+for (let k = 0; k < 1000; k++) ranks.set(k * 7, k);
+function rankOf(key: number, depth: number): number {
+  if (depth > 0) return rankOf(key, depth - 1);
+  return ranks.get(key) ?? -1;
+}
+function other(key: number, depth: number): number {
+  return key + depth;
+}
+const askers = [rankOf, other];
+function turn(i: number): number {
+  const ask = askers[i < 0 ? 1 : 0]!;
+  let sum = 0;
+  for (let k = 0; k < 100; k++) sum += ask(((i + k) % 1000) * 7, 1);
+  return sum;
+}
+//// map-get-by-string-among-a-hundred-keys-one-call-at-a-time
+const keys = Array.from({ length: 100 }, (_, k) => "key" + k);
+const ranks = new Map<string, number>();
+for (let k = 0; k < 100; k++) ranks.set(keys[k]!, k);
+function rankOf(key: string, depth: number): number {
+  if (depth > 0) return rankOf(key, depth - 1);
+  return ranks.get(key) ?? -1;
+}
+function other(key: string, depth: number): number {
+  return key.length + depth;
+}
+const askers = [rankOf, other];
+function turn(i: number): number {
+  const ask = askers[i < 0 ? 1 : 0]!;
+  let sum = 0;
+  for (let k = 0; k < 100; k++) sum += ask(keys[(i + k) % 100]!, 1);
+  return sum;
+}
+//// map-get-by-names-split-out-of-one-line-twice
+const line = process.env.NO_SUCH_LINE_OF_NAMES ?? "ann,bob,cy,dee,eve,fay,gus,hal,ivy,jon,kim,lee,max,ned,oda,pam";
+const ages = new Map<string, number>();
+line.split(",").forEach((name, k) => ages.set(name, k));
+const asked = line.split(",");
+function turn(i: number): number {
+  return ages.get(asked[i & 15]!) ?? 99;
+}
+//// set-written-in-a-function-asked-about-each-letter
+const letters = ["t", "h", "e", "q", "u", "i", "c", "k", "b", "r", "o", "w", "n", "f", "o", "x", "j", "u", "m", "p", "s", "o", "v", "e", "r", "a", "l", "a", "z", "y", "d", "g"];
+function turn(i: number): number {
+  const vowels = new Set(["a", "e", "i", "o", "u"]);
+  let count = i & 1;
+  for (let k = 0; k < letters.length; k++) if (vowels.has(letters[k]!)) count++;
+  return count;
+}
+//// map-written-in-a-function-asked-about-each-word
+const words = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "two", "four", "six", "eight", "ten", "one", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "two", "four", "six", "eight", "ten", "one"];
+function turn(i: number): number {
+  const values = new Map([["one", 1], ["two", 2], ["three", 3], ["four", 4], ["five", 5]]);
+  let sum = i & 1;
+  for (let k = 0; k < words.length; k++) sum += values.get(words[k]!) ?? 0;
+  return sum;
 }

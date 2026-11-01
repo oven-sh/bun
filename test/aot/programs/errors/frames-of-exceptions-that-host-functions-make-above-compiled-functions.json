@@ -1,1 +1,0 @@
-{ "mainThread": "nothing but AbortSignal.timeout() keeps its last await waiting, and that does not hold a Worker" }

@@ -58,6 +58,7 @@ try { console.log(require(process.cwd() + "/plugin.js")); } catch (error) { say(
 //@ file cwd/plugin.mjs "export default 'plugin ' + typeof HTMLRewriter;"
 try { console.log((await import(process.cwd() + "/plugin.mjs")).default); } catch (error) { say(error); }
 //// json-present-at-run-time
+//@ alone
 //@ ext cjs
 //@ file cwd/config.json "{\"a\": 1}"
 try { console.log(require(process.cwd() + "/config.json")); } catch (error) { say(error); }

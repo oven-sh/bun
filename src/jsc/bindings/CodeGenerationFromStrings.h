@@ -9,6 +9,7 @@
 
 #if !defined(BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS)
 extern "C" uint8_t Bun__codeGenerationFromStrings();
+extern "C" bool Bun__isCodeGenerationDisallowedByFlags();
 extern "C" bool Bun__isCodeGenerationDisallowedByTrimming();
 extern "C" bool Bun__isCodeGenerationDisallowedByCompiledProgram();
 extern "C" bool Bun__isCodeGenerationFromStringsStrictByFlags();
@@ -69,6 +70,16 @@ inline bool isCodeGenerationFromStringsStrictByFlags()
     return true;
 #else
     return Bun__isCodeGenerationFromStringsStrictByFlags();
+#endif
+}
+
+// The flag or the build refuses text, whatever else does in this process.
+inline bool isCodeGenerationDisallowedByFlags()
+{
+#if defined(BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS)
+    return true;
+#else
+    return Bun__isCodeGenerationDisallowedByFlags();
 #endif
 }
 

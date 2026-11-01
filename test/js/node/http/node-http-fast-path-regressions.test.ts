@@ -152,10 +152,11 @@ describe.concurrent("node:http server keeps its behavior on keep-alive connectio
   test(
     "req.socket.server = null: the response that finishes reads the keep-alive timeout of the server",
     async () => {
-      const result = await run("null-socket-server", threeRequests());
+      // The process serves what arrives in the turn of the event loop in which the error is thrown, so the client sends nothing more.
+      const result = await run("null-socket-server", [{ untilClose: get("/") }]);
       expect(result).toEqual({
-        // The process exits with the connection open: the client reads the first response or only the close.
-        responses: [result.responses[0] === "closed" ? "closed" : ok, "closed", "closed"],
+        // The process exits with the connection open: the client reads the response or only the close.
+        responses: [result.responses[0] === "" ? "" : ok],
         stderr: expect.stringMatching(/TypeError: null is not an object.*\s+at onResponseFinishHandleSocket \(/),
         exitCode: 1,
       });

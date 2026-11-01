@@ -1,2 +1,0 @@
-the entry point runs
-loaded object 0

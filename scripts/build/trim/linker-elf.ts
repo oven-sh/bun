@@ -77,7 +77,6 @@ export function elf(linker: Linker): LinkerFormat {
   let splitOrdinal = 0;
   const splitInPlace = (path: string) => splitMergeableSections(path, `${unnamedSectionPrefix}piece${splitOrdinal++}`);
   return {
-    relinksSameInputs: false,
     firstInputs: [],
     builtinModulesOutput: ".bun_builtins",
     isMovable,
@@ -98,8 +97,10 @@ export function elf(linker: Linker): LinkerFormat {
     },
     prepareCompiledObjects(objects) {
       for (const object of objects) splitInPlace(object);
-      return objects.length > 0;
+      return objects.length > 0 ? objects : undefined;
     },
+    withoutBitcode: path => path,
+    relinksSameInputs: () => false,
     compiledObjects(link) {
       const objects = listCompiledObjects(link);
       const empty = objects.filter(object => statSync(object).size === 0);
@@ -116,7 +117,12 @@ export function elf(linker: Linker): LinkerFormat {
       without: debuggerOnlyFlags,
     }),
     secondLinkArguments(order) {
-      writeFileSync(orderFile, order.groups.flatMap(group => group.names).join("\n") + "\n" + commandOrder, "latin1");
+      // What the command's file lists lies together: first of every group, then of no group.
+      const names = order.groups.flatMap(group => group.names);
+      const listed = new Set(commandOrder.split("\n"));
+      const isListed = (name: string) => listed.has(name);
+      const lines = [...names.filter(isListed), commandOrder, ...names.filter(name => !isListed(name))];
+      writeFileSync(orderFile, lines.join("\n") + "\n", "latin1");
       if (orderAt >= 0) return { last: [...commonFlags], replaced: new Map([[orderAt, orderFlag + orderFile]]) };
       return { last: [...commonFlags, orderFlag + orderFile, "-Wl,--no-warn-symbol-ordering"], replaced: new Map() };
     },

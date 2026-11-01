@@ -4,13 +4,7 @@ import { join } from "node:path";
 
 test("a map of headers that a program stores under kOutHeaders before the first header is the map of the message", async () => {
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      join(
-        import.meta.dir,
-        "../../../aot/programs/node-http-probes/a-map-of-headers-stored-before-the-first-header.js",
-      ),
-    ],
+    cmd: [bunExe(), join(import.meta.dir, "../../../aot/parallel/node-http/map-of-headers-stored-first-header.js")],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

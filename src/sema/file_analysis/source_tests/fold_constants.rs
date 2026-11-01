@@ -551,7 +551,10 @@ const PATHS_FROM_OWN_DIRECTORY: &[SpecifierRow] = &[
     (
         "a.cjs",
         r#"const path = require("path"); require(path.join(__dirname, x, "b.js"));"#,
-        Specifier::Pattern("", "b.js"),
+        Specifier::OneOf(
+            &[Specifier::Pattern("./", "/b.js")],
+            &Specifier::Pattern("", "b.js"),
+        ),
     ),
     (
         "a.cjs",

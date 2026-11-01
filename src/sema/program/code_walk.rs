@@ -1,16 +1,26 @@
 mod imported_constants;
+mod only_imported;
 
 use self::imported_constants::{NamesLookedUp, fold_files_that_import_constants_again};
-use super::code_barrels::{BarrelRequests, NOT_LOADED, erase_waiting_sites};
-use super::code_file::{finish_code_file, fold_code_file_again, is_finished_later, load_code_file};
+use self::only_imported::{LoadedBy, forget_files_that_another_loader_reads};
+use super::code_barrels::{
+    BarrelRequests, NOT_LOADED, erase_imports_not_followed, erase_waiting_sites,
+};
+use super::code_file::{
+    LoadInputs, finish_code_file, fold_code_file_again, import_meta_main, is_finished_later,
+    load_code_file,
+};
+use super::code_finish::find_answers_so_far;
 use super::code_imports::files_of;
 use super::code_load::{CodeEntry, CodeTarget, LoadKey, ParsedCodeFile};
 use super::code_types::predicted_type_files;
 use super::*;
+use crate::file_analysis::FileAnalysis;
+use crate::fold::StoredByMocks;
 use crate::import_sites::{ImportSiteKind, ImportSpecifier};
 use crate::resolve::{
-    CodeRead, DeclaredSideEffects, EnclosingPackage, HostPayload, TranspileSettings,
-    is_declaration_file_name,
+    CodeRead, DeclaredSideEffects, EnclosingPackage, FinishedFile, HostPayload, ParsedFile,
+    TranspileSettings, is_declaration_file_name,
 };
 use bun_threading::guarded::GuardedLock;
 use bun_threading::{Condvar, Mutex};
@@ -30,9 +40,13 @@ struct WalkedFile<'s, 'r> {
     parsed: Option<Box<ParsedCodeFile<'s, 'r>>>,
     targets: Vec<u32>,
     is_called_before_it_runs: bool,
+    stored_by_mocks: StoredByMocks<'s>,
+    loaded_by: LoadedBy,
     imported_requires: Vec<ImportedRequire>,
     imported_constants: Vec<ImportedConstant>,
     foldings_with_constants: u32,
+    /// `ParsedFile::version`
+    version: u32,
 }
 
 struct FileToRevisit<'s, 'r> {
@@ -56,6 +70,9 @@ struct WalkState<'s, 'r> {
     files: Vec<WalkedFile<'s, 'r>>,
     index_of: FxHashMap<LoadKey<'r>, u32>,
     found: Vec<u32>,
+    /// Files outside `node_modules`. They are read first: they lead to most other files, and to the files that plugins
+    /// read, which take the longest because plugins answer one at a time.
+    own_to_read: VecDeque<u32>,
     to_read: VecDeque<u32>,
     to_read_by_plugin: VecDeque<u32>,
     plugin_readers: usize,
@@ -67,7 +84,8 @@ struct WalkState<'s, 'r> {
     /// Every found file is parsed.
     is_drained: bool,
     is_finished: bool,
-    ready: Vec<(u32, Cow<'static, [u8]>)>,
+    /// In the order they were read. A file that waits here may be the only one that leads to a slow read.
+    ready: VecDeque<(u32, Cow<'static, [u8]>)>,
     deferred: Vec<u32>,
     in_progress: usize,
     to_revisit: Vec<FileToRevisit<'s, 'r>>,
@@ -80,7 +98,20 @@ struct WalkState<'s, 'r> {
 
 impl WalkState<'_, '_> {
     fn has_idle_threads(&self) -> bool {
-        self.to_read.is_empty() && self.ready.is_empty() && self.in_progress > 0
+        !self.has_files_to_read() && self.ready.is_empty() && self.in_progress > 0
+    }
+
+    fn has_files_to_read(&self) -> bool {
+        !self.own_to_read.is_empty() || !self.to_read.is_empty()
+    }
+
+    fn take_files_to_read(&mut self) -> Vec<u32> {
+        let queue = match self.own_to_read.is_empty() {
+            true => &mut self.to_read,
+            false => &mut self.own_to_read,
+        };
+        let count = queue.len().min(READ_BATCH_SIZE);
+        queue.drain(..count).collect()
     }
 }
 
@@ -126,7 +157,7 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             may_load_early: Condvar::new(),
         };
         let mut state = walk.state.lock();
-        for &entry_point in &self.entry_points {
+        for entry_point in self.entry_points() {
             walk.enqueue(&mut state, entry_point);
         }
         drop(state);
@@ -136,6 +167,13 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         let mut ordered = None;
         let mut put_in_order = || {
             erase_sites_nothing_asked_for(&mut state);
+            if self.host.follows_imports_on_request() {
+                for file in &mut state.files {
+                    if let Some(parsed) = &mut file.parsed {
+                        erase_imports_not_followed(&mut parsed.code, &mut file.targets);
+                    }
+                }
+            }
             import_what_is_required(self, &mut state);
             let mut files = order_files(self, std::mem::take(&mut state));
             compute_package_depths(&mut files.entries, &files.entry_points, &files.steps);
@@ -197,6 +235,7 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             entry_of_file: Vec::new(),
             is_in_types_program: Vec::new(),
             typed_files_with_other_code,
+            reads_code_on_request: self.host.follows_imports_on_request(),
         }
     }
 
@@ -214,7 +253,7 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         }
     }
 
-    fn key_of_read_code(&self, key: LoadKey<'r>) -> LoadKey<'r> {
+    pub(super) fn key_of_read_code<'k>(&self, key: LoadKey<'k>) -> LoadKey<'k> {
         if key.loader != HostLoader::default() {
             return key;
         }
@@ -245,14 +284,25 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             return index;
         }
         let index = state.files.len() as u32;
+        let known = context.find_loaded_before(target.key);
+        let mocks_any_file =
+            context.inputs.code.mocks_any_file || state.names_looked_up.mocks_any_file();
         state.files.push(WalkedFile {
             target,
             parsed: None,
             targets: Vec::new(),
-            is_called_before_it_runs: false,
-            imported_requires: Vec::new(),
-            imported_constants: Vec::new(),
+            is_called_before_it_runs: known.is_some_and(|it| it.compiled.is_called_before_it_runs),
+            stored_by_mocks: match mocks_any_file {
+                true => StoredByMocks::EveryExport,
+                false => known.map_or(StoredByMocks::Nothing, |it| it.compiled.stored_by_mocks),
+            },
+            loaded_by: LoadedBy::as_loaded_before(
+                known.is_some_and(|it| it.compiled.is_only_imported),
+            ),
+            imported_requires: known.map_or(Vec::new(), |it| it.hir.imported_requires.to_vec()),
+            imported_constants: known.map_or(Vec::new(), |it| it.hir.imported_constants.to_vec()),
             foldings_with_constants: 0,
+            version: 0,
         });
         let key = context.canonical_key(target.key);
         state.index_of.insert(key, index);
@@ -280,6 +330,10 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         let file = &mut state.files[index as usize];
         file.targets = vec![NOT_LOADED; parsed.code.targets.len()];
         file.parsed = Some(parsed);
+        file.version += 1;
+        if self.context.host.follows_imports_on_request() {
+            return self.follow_declaration_files(state, index);
+        }
         let mut barrels = std::mem::take(&mut state.barrels);
         barrels.add_parsed_file(index, requests, &mut |file, target| {
             let (file, target) = (file as usize, target as usize);
@@ -291,6 +345,93 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         state.barrels = barrels;
     }
 
+    fn follow(&self, state: &mut WalkState<'s, 'r>, file: u32, target: usize) {
+        if state.files[file as usize].targets[target] == NOT_LOADED {
+            let code_target = state.files[file as usize].code_targets()[target];
+            state.files[file as usize].targets[target] = self.enqueue(state, code_target);
+        }
+    }
+
+    // They hold no code, so no code decides whether they are read.
+    fn follow_declaration_files(&self, state: &mut WalkState<'s, 'r>, file: u32) {
+        for target in 0..state.files[file as usize].targets.len() {
+            let key = state.files[file as usize].code_targets()[target].key;
+            if self.context.is_types_only_target(key) {
+                self.follow(state, file, target);
+            }
+        }
+    }
+
+    /// `CodeHost::choose_imports_to_follow`. Returns whether there are new files to parse.
+    fn follow_chosen_imports(&self, state: &mut WalkState<'s, 'r>) -> bool {
+        let context = self.context;
+        if !context.host.follows_imports_on_request() {
+            return false;
+        }
+        let parsed_files = (0u32..).zip(&state.files);
+        let parsed_files =
+            parsed_files.filter_map(|(index, file)| Some((index, file, file.parsed.as_ref()?)));
+        let (indexes, files): (Vec<u32>, Vec<ParsedFile<'_, 's>>) = parsed_files
+            .map(|(index, file, parsed)| {
+                let file = ParsedFile {
+                    file: FinishedFile {
+                        path: file.target.key.path,
+                        loader: file.target.key.loader,
+                        hir: &parsed.parse.hir,
+                        bound: &parsed.parse.bound,
+                        analysis: &parsed.code.analyzed.analysis,
+                        atoms: &context.atoms,
+                        resolutions: &parsed.code.resolutions,
+                    },
+                    payload: parsed.payload.as_ref(),
+                    version: file.version,
+                };
+                (index, file)
+            })
+            .unzip();
+        let chosen = context.host.choose_imports_to_follow(&files);
+        drop(files);
+        for (position, path) in chosen {
+            let file = indexes[position as usize];
+            for target in 0..state.files[file as usize].targets.len() {
+                let key = state.files[file as usize].code_targets()[target].key;
+                if is_same_path(key.path, &path, context.is_case_sensitive) {
+                    self.follow(state, file, target);
+                }
+            }
+        }
+        !state.found.is_empty()
+    }
+
+    /// `CompileInputs::finds_entry_points`. Returns whether the program begins at more files than before.
+    fn begin_at_found_entry_points(&self, state: &mut WalkState<'s, 'r>) -> bool {
+        let context = self.context;
+        let Some(find) = context.inputs.finds_entry_points else {
+            return false;
+        };
+        let found = find(&WalkedCode::new(context, state));
+        let added: Vec<CodeTarget<'r>> = (found.iter())
+            .filter_map(|path| context.add_entry_point(path))
+            .collect();
+        for &entry_point in &added {
+            self.enqueue(state, entry_point);
+        }
+        if added.is_empty() {
+            return false;
+        }
+        // A file is folded with whether the program begins at it, and whether it begins nowhere else.
+        for entry_point in context.entry_points() {
+            let index = state.index_of[&context.canonical_key(entry_point.key)];
+            let parsed = state.files[index as usize].parsed.as_ref();
+            let folded_with = parsed.map(|it| it.code.analyzed.import_meta_main);
+            if folded_with.is_some_and(|known| known != import_meta_main(context, entry_point.key))
+            {
+                forget_parsed_file(state, index);
+            }
+        }
+        true
+    }
+
     /// Returns whether there are files to read. Releases the lock while it asks the host who reads the new files.
     fn queue_found_files<'w>(
         &'w self,
@@ -298,7 +439,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         start_plugin_reader: StartPluginReader<'_>,
     ) -> (LockedState<'w, 's, 'r>, bool) {
         if state.found.is_empty() {
-            let has_more = !state.to_read.is_empty();
+            let has_more = state.has_files_to_read();
             return (state, has_more);
         }
         let found = std::mem::take(&mut state.found);
@@ -313,7 +454,10 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         let mut state = self.state.lock();
         for ((index, path), is_read_by_plugin) in found.into_iter().zip(paths).zip(by_plugin) {
             if !is_read_by_plugin {
-                state.to_read.push_back(index);
+                match strings::contains(path, b"/node_modules/") {
+                    true => state.to_read.push_back(index),
+                    false => state.own_to_read.push_back(index),
+                }
                 continue;
             }
             let loader = state.files[index as usize].target.key.loader;
@@ -332,7 +476,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 self.has_to_read_by_plugin.notify_one();
             }
         }
-        let has_more = !state.to_read.is_empty();
+        let has_more = state.has_files_to_read();
         (state, has_more)
     }
 
@@ -403,10 +547,15 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         let mut state = self.state.lock();
         debug_assert!(state.is_drained && state.in_progress == 0);
         loop {
-            let goes_on = fold_files_that_import_constants_again(context, &mut state)
-                || forget_files_called_before_they_run(&mut state)
-                || forget_files_that_import_requires(&context.atoms, &mut state)
-                || finish_files(&mut state);
+            let learns_from_other_files = context.inputs.loaded_before.is_none()
+                && (fold_files_that_import_constants_again(context, &mut state)
+                    || forget_files_called_before_they_run(&mut state)
+                    || forget_files_that_import_requires(&context.atoms, &mut state)
+                    || forget_files_that_another_loader_reads(context, &mut state));
+            let goes_on = learns_from_other_files
+                || finish_files(&mut state)
+                || self.follow_chosen_imports(&mut state)
+                || self.begin_at_found_entry_points(&mut state);
             if !goes_on {
                 state.is_finished = true;
                 self.has_to_read.notify_all();
@@ -435,6 +584,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             file: FileToRevisit<'s, 'r>,
             target: CodeTarget<'r>,
             is_called_early: bool,
+            stored_by_mocks: StoredByMocks<'s>,
             constants: Vec<ImportedConstant>,
         }
         enum Outcome<'s, 'r> {
@@ -461,6 +611,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             Guarded::new(Some(Task {
                 target: walked.target,
                 is_called_early: walked.is_called_before_it_runs,
+                stored_by_mocks: walked.stored_by_mocks,
                 constants,
                 file,
             }))
@@ -487,6 +638,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                     task.target,
                     *loaded,
                     task.is_called_early,
+                    task.stored_by_mocks,
                     &task.constants,
                 );
                 match folded {
@@ -609,32 +761,32 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 state = self.state.lock();
                 state.has_plugin_reader = false;
                 self.has_to_read.notify_one();
-            } else if reads && !state.to_read.is_empty() && state.ready.len() <= MAX_READY_TEXTS {
-                let count = state.to_read.len().min(READ_BATCH_SIZE);
-                let batch: Vec<u32> = state.to_read.drain(..count).collect();
-                state.in_progress += count;
+            } else if reads && state.has_files_to_read() && state.ready.len() <= MAX_READY_TEXTS {
+                let batch = state.take_files_to_read();
+                state.in_progress += batch.len();
                 drop(state);
                 self.read(batch);
                 state = self.state.lock();
-            } else if processes && let Some((index, text)) = state.ready.pop() {
+            } else if processes && let Some((index, text)) = state.ready.pop_front() {
                 if state.ready.len() == MAX_READY_TEXTS {
                     self.has_to_read.notify_all();
                 }
                 let file = &state.files[index as usize];
                 let (target, is_called_early) = (file.target, file.is_called_before_it_runs);
+                let stored_by_mocks = file.stored_by_mocks;
+                let is_only_imported = file.loaded_by.is_import_alone();
                 let requires = file.imported_requires.clone();
                 let constants = file.imported_constants.clone();
                 drop(state);
                 let arena = *arena.get_or_insert_with(|| context.session.arena());
-                let parsed = Box::new(load_code_file(
-                    context,
-                    arena,
-                    target,
-                    text,
-                    is_called_early,
-                    &requires,
-                    &constants,
-                ));
+                let inputs = LoadInputs {
+                    is_called_before_it_runs: is_called_early,
+                    stored_by_mocks,
+                    is_only_imported,
+                    imported_requires: &requires,
+                    imported_constants: &constants,
+                };
+                let parsed = Box::new(load_code_file(context, arena, target, text, inputs));
                 state = self.state.lock();
                 self.add_parsed_file(&mut state, index, parsed, false);
                 let has_more;
@@ -647,7 +799,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                     self.has_changed.notify_all();
                 }
             } else if state.in_progress == 0
-                && state.to_read.is_empty()
+                && !state.has_files_to_read()
                 && state.to_read_by_plugin.is_empty()
             {
                 if !state.pending_assets.is_empty() {
@@ -738,7 +890,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
     fn read_one(&self, index: u32, path: &[u8]) {
         match self.context.host.read_code(path) {
             CodeRead::Text(text) => {
-                self.state.lock().ready.push((index, text));
+                self.state.lock().ready.push_back((index, text));
                 self.has_changed.notify_one();
             }
             CodeRead::Deferred => {
@@ -764,6 +916,115 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         let state = self.state.lock();
         let path_of = |&index: &u32| state.files[index as usize].target.key.path;
         files.iter().map(path_of).collect()
+    }
+}
+
+/// The files that are parsed, each under its place among `WalkState::files`.
+struct WalkedCode<'w, 's, 'r> {
+    session: &'s Session,
+    atoms: Interner<'s>,
+    files: &'w [WalkedFile<'s, 'r>],
+    answers: Vec<OnceLock<(Vec<CodeAnswer<'s>>, Vec<CodeAnswer<'s>>)>>,
+    entry_points: Vec<FileId>,
+    /// In the order that `order_files` gives them.
+    compiled_files: Vec<FileId>,
+}
+
+impl<'w, 's, 'r> WalkedCode<'w, 's, 'r> {
+    fn new(
+        context: &CodeLoadContext<'_, 's, 'r>,
+        state: &'w WalkState<'s, 'r>,
+    ) -> WalkedCode<'w, 's, 'r> {
+        let files = &state.files[..];
+        let entry_points: Vec<u32> = (context.entry_points().iter())
+            .map(|it| state.index_of[&context.canonical_key(it.key)])
+            .collect();
+        let mut compiled_files = Vec::with_capacity(files.len());
+        let mut seen = vec![false; files.len()];
+        let mut stack: Vec<(u32, usize)> = Vec::new();
+        for &root in &entry_points {
+            if !std::mem::replace(&mut seen[root as usize], true) {
+                stack.push((root, 0));
+            }
+            while let Some(top) = stack.last_mut() {
+                let (index, next) = *top;
+                match files[index as usize].targets.get(next) {
+                    Some(&reached) => {
+                        top.1 += 1;
+                        if reached != NOT_LOADED
+                            && !std::mem::replace(&mut seen[reached as usize], true)
+                        {
+                            stack.push((reached, 0));
+                        }
+                    }
+                    None => {
+                        if files[index as usize].parsed.is_some() {
+                            compiled_files.push(FileId(index));
+                        }
+                        stack.pop();
+                    }
+                }
+            }
+        }
+        WalkedCode {
+            session: context.session,
+            atoms: context.atoms,
+            files,
+            answers: files.iter().map(|_| OnceLock::new()).collect(),
+            entry_points: entry_points.into_iter().map(FileId).collect(),
+            compiled_files,
+        }
+    }
+
+    fn parsed(&self, file: FileId) -> &'w ParsedCodeFile<'s, 'r> {
+        let parsed = self.files[file.idx()].parsed.as_deref();
+        parsed.expect("a file without a tree")
+    }
+}
+
+impl<'s> CodeView<'s> for WalkedCode<'_, 's, '_> {
+    fn atoms(&self) -> &Interner<'s> {
+        &self.atoms
+    }
+
+    fn hir(&self, file: FileId) -> &hir::File<'s> {
+        &self.parsed(file).parse.hir
+    }
+
+    fn bound(&self, file: FileId) -> &Bound<'s> {
+        &self.parsed(file).parse.bound
+    }
+
+    fn analysis(&self, file: FileId) -> &FileAnalysis<'s> {
+        &self.parsed(file).code.analyzed.analysis
+    }
+
+    fn answers(&self, file: FileId) -> Option<(&[CodeAnswer<'s>], &[CodeAnswer<'s>])> {
+        let walked = &self.files[file.idx()];
+        let code = &walked.parsed.as_ref()?.code;
+        let (written, implied) = self.answers[file.idx()].get_or_init(|| {
+            let target_files: Vec<Option<FileId>> = (walked.targets.iter())
+                .map(|&target| (target != NOT_LOADED).then_some(FileId(target)))
+                .collect();
+            find_answers_so_far(&self.atoms, self.session.arena(), code, &target_files)
+        });
+        Some((written, implied))
+    }
+
+    fn file_name(&self, file: FileId) -> &[u8] {
+        self.files[file.idx()].target.key.path
+    }
+
+    fn entry_points(&self) -> &[FileId] {
+        &self.entry_points
+    }
+
+    fn compiled_files(&self) -> &[FileId] {
+        &self.compiled_files
+    }
+
+    fn host_payload(&self, file: FileId) -> Option<&(dyn std::any::Any + Send + Sync)> {
+        self.files[file.idx()].parsed.as_ref()?.payload.as_deref()
     }
 }
 
@@ -981,6 +1242,41 @@ struct OrderedFiles<'s, 'r> {
     steps: Vec<Vec<bool>>,
 }
 
+/// `CodeTarget::has_shared_type`: the statement that the loader comes to first decides for the later ones. It loads a graph level by level, each file in the
+/// order of its text, and what code asks for when it runs after that. Which thread read a file first has no say.
+fn share_modules_among_types(files: &mut [WalkedFile<'_, '_>], entry_points: VecDeque<u32>) {
+    let has_shared_type =
+        |file: &WalkedFile<'_, '_>| file.code_targets().iter().any(|it| it.has_shared_type);
+    if !files.iter().any(has_shared_type) {
+        return;
+    }
+    let mut first_forms: FxHashMap<&[u8], u32> = FxHashMap::default();
+    let mut seen = vec![false; files.len()];
+    let (mut level, mut later) = (VecDeque::new(), entry_points);
+    while let Some(index) = level.pop_front().or_else(|| later.pop_front()) {
+        if std::mem::replace(&mut seen[index as usize], true) {
+            continue;
+        }
+        for next in 0..files[index as usize].code_targets().len() {
+            let target = files[index as usize].code_targets()[next];
+            let mut reached = files[index as usize].targets[next];
+            if target.has_shared_type {
+                reached = *first_forms.entry(target.key.path).or_insert(reached);
+                let key = files[reached as usize].target.key;
+                let file = &mut files[index as usize];
+                file.targets[next] = reached;
+                if let Some(parsed) = &mut file.parsed {
+                    parsed.code.targets[next].key = key;
+                }
+            }
+            match target.is_loaded_with_importer {
+                true => level.push_back(reached),
+                false => later.push_back(reached),
+            }
+        }
+    }
+}
+
 fn order_files<'s, 'r>(
     context: &CodeLoadContext<'_, 's, 'r>,
     state: WalkState<'s, 'r>,
@@ -990,11 +1286,15 @@ fn order_files<'s, 'r>(
         index_of,
         ..
     } = state;
-    let mut roots: Vec<u32> = Vec::with_capacity(context.entry_points.len());
+    let entry_points = context.entry_points();
+    let indexes = entry_points.iter();
+    let indexes = indexes.map(|it| index_of[&context.canonical_key(it.key)]);
+    share_modules_among_types(&mut files, indexes.collect());
+    let mut roots: Vec<u32> = Vec::with_capacity(entry_points.len());
     let mut order: Vec<u32> = Vec::with_capacity(files.len());
     let mut seen = vec![false; files.len()];
     let mut stack: Vec<(u32, usize)> = Vec::new();
-    for entry_point in &context.entry_points {
+    for entry_point in &entry_points {
         let root = index_of[&context.canonical_key(entry_point.key)];
         roots.push(root);
         if !std::mem::replace(&mut seen[root as usize], true) {

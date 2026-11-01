@@ -6,7 +6,7 @@ import { afterAll, expect } from "bun:test";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
-import { built, spawned, withoutDebugInformation } from "../run-programs";
+import { built, spawned, withoutDebugInformation } from "../harness/commands";
 import { beforeAll, describe, test } from "../supported";
 
 const before = `(globalThis as any).loaded = "preloaded";\nconsole.log("before");\n`;
@@ -18,7 +18,6 @@ const files = {
   "with-server-plugins/bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
   "with-server-plugins/plugin.ts": `export default { name: "nothing", setup() {} };\n`,
   "api.ts": `await Bun.build({ entrypoints: ["entry.ts"], compile: { outfile: "by-api-without-function-source", aot: true, functionSource: false } });
-await Bun.build({ entrypoints: ["entry.ts"], compile: { outfile: "by-api-with-inspector", aot: true, inspector: true } });
 `,
   "api-error.ts": `try {
   await Bun.build({ entrypoints: ["entry.ts"], compile: { outfile: "rejected", ...JSON.parse(process.argv[2]) } });
@@ -29,13 +28,15 @@ await Bun.build({ entrypoints: ["entry.ts"], compile: { outfile: "by-api-with-in
 `,
 };
 
+// An executable that may load other code holds every built-in module. The program imports none.
+const open = "--no-builtin-modules";
 const builds: Record<string, string[]> = {
   "default": ["--aot"],
   "without-function-source": ["--aot", "--no-compile-function-source"],
   "obfuscated": ["--aot", "--obfuscate"],
-  "with-inspector": ["--aot", "--compile-inspector"],
-  "with-inspector-without-function-source": ["--aot", "--compile-inspector", "--no-compile-function-source"],
-  "embeds-inspect": ["--aot", "--compile-exec-argv=--inspect=127.0.0.1:0"],
+  "with-inspector": ["--aot", open, "--compile-inspector"],
+  "with-inspector-without-function-source": ["--aot", open, "--compile-inspector", "--no-compile-function-source"],
+  "embeds-inspect": ["--aot", open, "--compile-exec-argv=--inspect=127.0.0.1:0 --preload ./before.ts"],
   "not-compiled": [],
 };
 
@@ -75,10 +76,11 @@ const preloaded = { stdout: "before\nran preloaded\n", stderr: "", exitCode: 0, 
 
 beforeAll(async () => {
   folder = String(tempDir("aot-options-that-load-code", files));
-  for (const [name, flags] of Object.entries(builds)) {
-    built(await build(name, flags));
-  }
-  built(await spawned([bunExe(), "api.ts"], folder, bunEnv));
+  const all = [
+    ...Object.entries(builds).map(([name, flags]) => build(name, flags)),
+    spawned([bunExe(), "api.ts"], folder, bunEnv),
+  ];
+  for (const one of await Promise.all(all)) built(one);
 }, 600_000);
 
 const preloads = ["--preload ./before.ts", "-r ./before.ts", "--require ./before.ts", "--import ./before.ts"];
@@ -96,6 +98,7 @@ const loadCode = [
   ["--hot", "--hot"],
   ["--watch", "--watch"],
 ];
+const oneOfEach = loadCode.filter(([option], index) => loadCode.findIndex(([other]) => other === option) === index);
 const startTheDebugger = [
   ["--inspect", "--inspect"],
   ["--inspect", "--inspect=127.0.0.1:0"],
@@ -103,20 +106,10 @@ const startTheDebugger = [
   ["--inspect-brk", "--smol --inspect-brk=127.0.0.1:0"],
 ];
 
-describe.each([
-  "without-function-source",
-  "obfuscated",
-  "with-inspector-without-function-source",
-  "by-api-without-function-source",
-])("%s: code that is loaded when the executable starts", name => {
-  test.each(loadCode)("rejects %s in BUN_OPTIONS=%j", async (option, options) => {
+describe.concurrent("without-function-source: code that is loaded when the executable starts", () => {
+  const name = "without-function-source";
+  test.each(oneOfEach)("rejects %s in BUN_OPTIONS=%j", async (option, options) => {
     expect(await started(name, { BUN_OPTIONS: options })).toEqual(needsFunctionSource(option));
-  });
-
-  test("rejects the preload of a bunfig.toml", async () => {
-    expect(await started(name, {}, join(folder, "configured"))).toEqual(
-      needsFunctionSource(`"preload" in bunfig.toml`),
-    );
   });
 
   test("rejects the plugins that a bunfig.toml passes to servers", async () => {
@@ -130,34 +123,51 @@ describe.each([
     expect(await started(name, env)).toEqual(needsFunctionSource("BUN_INSPECT_PRELOAD"));
   });
 
-  test("runs alone where no option is passed", async () => {
-    expect(await started(name)).toEqual(alone);
-  });
-
   test("leaves what follows its name to the program", async () => {
     const args = [...loadCode, ...startTheDebugger].flatMap(([, options]) => options.split(" "));
     expect(await started(name, {}, folder, args)).toEqual(alone);
   });
 });
 
-describe.each(["default", "without-function-source", "obfuscated", "by-api-without-function-source"])(
-  "%s: the debugger",
-  name => {
-    test.each(startTheDebugger)("rejects %s in BUN_OPTIONS=%j", async (option, options) => {
-      expect(await started(name, { BUN_OPTIONS: options })).toEqual(needsInspector(option));
-    });
+describe.concurrent.each([
+  "without-function-source",
+  "obfuscated",
+  "with-inspector-without-function-source",
+  "by-api-without-function-source",
+])("%s", name => {
+  test("rejects --preload in BUN_OPTIONS", async () => {
+    expect(await started(name, { BUN_OPTIONS: "--preload ./before.ts" })).toEqual(needsFunctionSource("--preload"));
+  });
 
-    test("rejects BUN_INSPECT", async () => {
+  test("rejects the preload of a bunfig.toml", async () => {
+    expect(await started(name, {}, join(folder, "configured"))).toEqual(
+      needsFunctionSource(`"preload" in bunfig.toml`),
+    );
+  });
+
+  test("runs alone where no option is passed", async () => {
+    expect(await started(name)).toEqual(alone);
+  });
+});
+
+describe.concurrent("the debugger", () => {
+  test.each(startTheDebugger)("a default build rejects %s in BUN_OPTIONS=%j", async (option, options) => {
+    expect(await started("default", { BUN_OPTIONS: options })).toEqual(needsInspector(option));
+  });
+
+  test.each(["default", "without-function-source", "obfuscated", "by-api-without-function-source"])(
+    "%s rejects BUN_INSPECT",
+    async name => {
       expect(await started(name, { BUN_INSPECT: "ws://127.0.0.1:0/own" })).toEqual(needsInspector("BUN_INSPECT"));
-    });
+    },
+  );
 
-    test("ignores BUN_INSPECT_CONNECT_TO, which editors set for every process in their terminals", async () => {
-      expect(await started(name, { BUN_INSPECT_CONNECT_TO: "unix:///nobody-listens-here.sock" })).toEqual(alone);
-    });
-  },
-);
+  test("ignores BUN_INSPECT_CONNECT_TO, which editors set for every process in their terminals", async () => {
+    expect(await started("default", { BUN_INSPECT_CONNECT_TO: "unix:///nobody-listens-here.sock" })).toEqual(alone);
+  });
+});
 
-describe("a default build", () => {
+describe.concurrent("a default build", () => {
   test("runs", async () => {
     expect(await started("default")).toEqual(alone);
   });
@@ -192,7 +202,7 @@ describe("a default build", () => {
   });
 });
 
-describe.each(["with-inspector", "by-api-with-inspector"])("%s", name => {
+describe.concurrent.each(["with-inspector"])("%s", name => {
   test.each(preloads)("loads the file in BUN_OPTIONS=%j before the program", async options => {
     expect(await started(name, { BUN_OPTIONS: options })).toEqual(preloaded);
   });
@@ -210,7 +220,7 @@ describe.each(["with-inspector", "by-api-with-inspector"])("%s", name => {
   });
 });
 
-describe.each(["with-inspector", "with-inspector-without-function-source", "by-api-with-inspector"])("%s", name => {
+describe.concurrent.each(["with-inspector", "with-inspector-without-function-source"])("%s", name => {
   test("accepts BUN_INSPECT and runs the program", async () => {
     const { stdout, stderr, exitCode } = await started(name, { BUN_INSPECT: "ws://127.0.0.1:0/own" });
     expect(stderr).not.toContain("can't be used");
@@ -218,10 +228,10 @@ describe.each(["with-inspector", "with-inspector-without-function-source", "by-a
   });
 });
 
-test("--inspect in --compile-exec-argv is part of the build: it needs no --compile-inspector", async () => {
+test("--inspect in --compile-exec-argv is part of the build: it needs no --compile-inspector, and --preload may stand beside it", async () => {
   const { stdout, stderr, exitCode } = await started("embeds-inspect");
   expect(stderr).not.toContain("can't be used");
-  expect({ stdout, exitCode }).toEqual({ stdout: alone.stdout, exitCode: 0 });
+  expect({ stdout, exitCode }).toEqual({ stdout: preloaded.stdout, exitCode: 0 });
 });
 
 test("an executable that was not compiled ahead of time loads what it is told to", async () => {
@@ -229,7 +239,7 @@ test("an executable that was not compiled ahead of time loads what it is told to
   expect(await started("not-compiled", {}, join(folder, "configured"))).toEqual(preloaded);
 });
 
-describe("the build", () => {
+describe.concurrent("the build", () => {
   const onlyRunsCompiledCode = "because the executable only runs code that was compiled into it";
 
   test("rejects --compile-inspector without --aot", async () => {
@@ -261,11 +271,6 @@ describe("the build", () => {
       `error: --aot does not support ${option} in --compile-exec-argv ${onlyRunsCompiledCode}\n`,
     );
     expect(exitCode).toBe(1);
-  });
-
-  test("--compile-inspector takes --preload in --compile-exec-argv", async () => {
-    built(await build("embeds-preload", ["--aot", "--compile-inspector", "--compile-exec-argv=--preload ./before.ts"]));
-    expect(await started("embeds-preload")).toEqual(preloaded);
   });
 
   test("--no-compile-function-source is the flag in the message where --obfuscate is passed too", async () => {

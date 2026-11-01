@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
+import { built, slot, spawned } from "../harness/commands";
 import { describe, printIR, test, writesProgramInto } from "../harness/printed-ir";
-import { built, slot, spawned } from "../run-programs";
 
 const program = {
   "app.ts": `

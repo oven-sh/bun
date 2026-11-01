@@ -1,6 +1,6 @@
 import type { DirectoryTree } from "harness";
 import { delimiter, join } from "node:path";
-import { describe } from "../supported";
+import { describe } from "../with-compiler";
 import { packageFiles, testResolution, type Pin, type ResolutionCase } from "./resolution-cases";
 
 type Answer = string | null | [onImport: string | null, onRequire: string | null];

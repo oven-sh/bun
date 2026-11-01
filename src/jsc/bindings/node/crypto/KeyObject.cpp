@@ -967,6 +967,11 @@ JSValue KeyObject::toCryptoKey(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
     auto usagesBitmap = WebCore::SubtleCrypto::toCryptoKeyUsageBitmap(keyUsages);
 
     auto throwDOMException = [&](WebCore::ExceptionCode code, const String& message) -> JSValue {
+        // createDOMException() turns this code into JavaScript's own SyntaxError.
+        if (code == WebCore::SyntaxError) {
+            throwException(lexicalGlobalObject, scope, WebCore::createDOMExceptionObject(lexicalGlobalObject, code, message));
+            return {};
+        }
         WebCore::propagateException(*lexicalGlobalObject, scope, WebCore::Exception { code, message });
         return {};
     };
@@ -1190,20 +1195,18 @@ GCOwnedDataScope<WTF::StringView> getJwkStringView(JSGlobalObject* globalObject,
     return strView;
 }
 
-JSArrayBufferView* getDecodedJwkStringBuf(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* jwk, ASCIILiteral propName, ASCIILiteral keyName)
-{
-    auto strView = getJwkStringView(globalObject, scope, jwk, propName, keyName);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    auto* dataBuf = decodeJwkString(globalObject, scope, strView, keyName);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return dataBuf;
-}
-
 inline BignumPointer jwkBufToBn(JSArrayBufferView* buf)
 {
     return BignumPointer(reinterpret_cast<uint8_t*>(buf->vector()), buf->byteLength());
+}
+
+static BignumPointer jwkStringToBn(JSGlobalObject* globalObject, ThrowScope& scope, JSValue string, ASCIILiteral keyName)
+{
+    auto strView = asString(string)->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* dataBuf = decodeJwkString(globalObject, scope, strView, keyName);
+    RETURN_IF_EXCEPTION(scope, {});
+    return jwkBufToBn(dataBuf);
 }
 
 static bool hasRawPublicKey(const EVPKeyPointer& key, std::span<const uint8_t> expected)
@@ -1388,48 +1391,78 @@ __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobal
         return create(keyType, WTF::move(key));
     }
     case Kty::Rsa: {
-        auto nView = getJwkStringView(globalObject, scope, jwk, "n"_s, "key.n"_s);
+        // Node's ImportJWKRsaKey: https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_rsa.cc#L372
+        const ASCIILiteral invalidKey = "Invalid JWK RSA key"_s;
+        VM& vm = globalObject->vm();
+        JSValue nValue = jwk->get(globalObject, Identifier::fromString(vm, "n"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        auto eView = getJwkStringView(globalObject, scope, jwk, "e"_s, "key.e"_s);
+        JSValue eValue = jwk->get(globalObject, Identifier::fromString(vm, "e"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue dValue = jwk->get(globalObject, Identifier::fromString(vm, "d"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue othValue = jwk->get(globalObject, Identifier::fromString(vm, "oth"_s));
         RETURN_IF_EXCEPTION(scope, {});
 
-        auto* nBuf = decodeJwkString(globalObject, scope, nView, "key.n"_s);
-        RETURN_IF_EXCEPTION(scope, {});
-        auto* eBuf = decodeJwkString(globalObject, scope, eView, "key.e"_s);
-        RETURN_IF_EXCEPTION(scope, {});
+        // BoringSSL has no multi-prime RSA, so no "oth" is valid.
+        if (!nValue.isString() || !eValue.isString() || (!dValue.isUndefined() && !dValue.isString()) || !othValue.isUndefined()) {
+            ERR::CRYPTO_INVALID_JWK(scope, globalObject, invalidKey);
+            return {};
+        }
+
+        // The JWK itself decides whether private key material is present.
+        const bool isPrivate = dValue.isString();
+        if (keyType == CryptoKeyType::Private && !isPrivate) {
+            ERR::CRYPTO_INVALID_JWK(scope, globalObject, "JWK does not contain private key material"_s);
+            return {};
+        }
 
         MarkPopErrorOnReturn markPopError;
+
+        BignumPointer n = jwkStringToBn(globalObject, scope, nValue, "key.n"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+        BignumPointer e = jwkStringToBn(globalObject, scope, eValue, "key.e"_s);
+        RETURN_IF_EXCEPTION(scope, {});
 
         RSAPointer rsa(RSA_new());
         Rsa rsaView(rsa.get());
 
-        if (!rsaView.setPublicKey(jwkBufToBn(nBuf), jwkBufToBn(eBuf))) {
-            ERR::CRYPTO_INVALID_JWK(scope, globalObject, "Invalid JWK RSA key"_s);
+        if (!rsaView.setPublicKey(WTF::move(n), WTF::move(e))) {
+            ERR::CRYPTO_INVALID_JWK(scope, globalObject, invalidKey);
             return {};
         }
 
-        if (keyType == CryptoKeyType::Private) {
-            auto* dBuf = getDecodedJwkStringBuf(globalObject, scope, jwk, "d"_s, "key.d"_s);
+        if (isPrivate) {
+            JSValue pValue = jwk->get(globalObject, Identifier::fromString(vm, "p"_s));
             RETURN_IF_EXCEPTION(scope, {});
-            auto* pBuf = getDecodedJwkStringBuf(globalObject, scope, jwk, "p"_s, "key.p"_s);
+            JSValue qValue = jwk->get(globalObject, Identifier::fromString(vm, "q"_s));
             RETURN_IF_EXCEPTION(scope, {});
-            auto* qBuf = getDecodedJwkStringBuf(globalObject, scope, jwk, "q"_s, "key.q"_s);
+            JSValue dpValue = jwk->get(globalObject, Identifier::fromString(vm, "dp"_s));
             RETURN_IF_EXCEPTION(scope, {});
-            auto* dpBuf = getDecodedJwkStringBuf(globalObject, scope, jwk, "dp"_s, "key.dp"_s);
+            JSValue dqValue = jwk->get(globalObject, Identifier::fromString(vm, "dq"_s));
             RETURN_IF_EXCEPTION(scope, {});
-            auto* dqBuf = getDecodedJwkStringBuf(globalObject, scope, jwk, "dq"_s, "key.dq"_s);
-            RETURN_IF_EXCEPTION(scope, {});
-            auto* qiBuf = getDecodedJwkStringBuf(globalObject, scope, jwk, "qi"_s, "key.qi"_s);
+            JSValue qiValue = jwk->get(globalObject, Identifier::fromString(vm, "qi"_s));
             RETURN_IF_EXCEPTION(scope, {});
 
-            if (!rsaView.setPrivateKey(
-                    jwkBufToBn(dBuf),
-                    jwkBufToBn(qBuf),
-                    jwkBufToBn(pBuf),
-                    jwkBufToBn(dpBuf),
-                    jwkBufToBn(dqBuf),
-                    jwkBufToBn(qiBuf))) {
-                ERR::CRYPTO_INVALID_JWK(scope, globalObject, "Invalid JWK RSA key"_s);
+            if (!pValue.isString() || !qValue.isString() || !dpValue.isString() || !dqValue.isString() || !qiValue.isString()) {
+                ERR::CRYPTO_INVALID_JWK(scope, globalObject, invalidKey);
+                return {};
+            }
+
+            BignumPointer d = jwkStringToBn(globalObject, scope, dValue, "key.d"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            BignumPointer q = jwkStringToBn(globalObject, scope, qValue, "key.q"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            BignumPointer p = jwkStringToBn(globalObject, scope, pValue, "key.p"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            BignumPointer dp = jwkStringToBn(globalObject, scope, dpValue, "key.dp"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            BignumPointer dq = jwkStringToBn(globalObject, scope, dqValue, "key.dq"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            BignumPointer qi = jwkStringToBn(globalObject, scope, qiValue, "key.qi"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+
+            if (!rsaView.setPrivateKey(WTF::move(d), WTF::move(q), WTF::move(p), WTF::move(dp), WTF::move(dq), WTF::move(qi)) || !rsaView.checkPrimeProduct()) {
+                ERR::CRYPTO_INVALID_JWK(scope, globalObject, invalidKey);
                 return {};
             }
         }

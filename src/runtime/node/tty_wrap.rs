@@ -791,13 +791,15 @@ impl TTY {
     #[cfg(unix)]
     fn drain_writes(&self) {
         let fd = self.own_fd.get();
-        // Each write that is complete now, oldest first, with its status.
+        // The wrapper is strong here: a write is queued. It stays on this stack until each write that is complete now is told, whatever the first of them does to the handle.
+        let Some(this_value) = self.this_value.get().try_get() else {
+            return;
+        };
+        // The status of each write that is complete now, oldest first.
         let mut completed: Vec<i32> = Vec::new();
-        let drained = self.writes.with_mut(|q| {
-            let Some(q) = q.as_mut() else {
-                return true;
-            };
-            let failed = match sys::write(fd, q.bytes.slice()) {
+        let failed = self.writes.with_mut(|q| {
+            let q = q.as_mut()?;
+            match sys::write(fd, q.bytes.slice()) {
                 Ok(0) => Some(uv_errno(sys::E::EIO as u16)),
                 Ok(n) => {
                     q.bytes.wrote(n);
@@ -815,11 +817,21 @@ impl TTY {
                 }
                 Err(err) if err.get_errno() == sys::E::EAGAIN => None,
                 Err(err) => Some(uv_errno(err.errno)),
-            };
-            // libuv fails the write at the head and leaves the rest for `close()` to cancel. Here the rest gets the same answer: it waits for the same descriptor.
-            if let Some(status) = failed {
-                completed.extend(q.pending.drain(..).map(|_| status));
             }
+        });
+        if let Some(status) = failed {
+            self.read_what_came();
+            // libuv fails the write at the head and leaves the rest for `close()` to cancel. Here the rest gets the same answer: it waits for the same descriptor.
+            self.writes.with_mut(|q| {
+                if let Some(q) = q.as_mut() {
+                    completed.extend(q.pending.drain(..).map(|_| status));
+                }
+            });
+        }
+        let drained = self.writes.with_mut(|q| {
+            let Some(q) = q.as_mut() else {
+                return false;
+            };
             if q.pending.is_empty() {
                 q.bytes.reset();
             }
@@ -828,14 +840,29 @@ impl TTY {
         if drained {
             self.idle_write_poll();
         }
-        // The wrapper is strong here: a write was queued. It stays on this stack until each of these writes is told, whatever the first of them does to the handle.
-        let this_value = self.this_value.get().try_get();
         self.sync_wrapper_hold();
-        if let Some(this_value) = this_value {
-            for status in completed {
-                self.call_onwritecomplete(this_value, status);
+        for status in completed {
+            self.call_onwritecomplete(this_value, status);
+        }
+        this_value.ensure_still_alive();
+    }
+
+    /// libuv reads before it writes in one wakeup: what the other side sent, and its hangup, reach `onread` before the failure of a write does.
+    #[cfg(unix)]
+    fn read_what_came(&self) {
+        loop {
+            let flags = self.flags.get();
+            if !flags.contains(Flags::READING)
+                || flags.intersects(Flags::READER_DONE | Flags::CLOSED)
+            {
+                return;
             }
-            this_value.ensure_still_alive();
+            let before = self.bytes_read.get();
+            // SAFETY: the reader lives as long as the handle, and no borrow of it is held here, as when its own poll calls it.
+            unsafe { BufferedReader::read(self.reader.as_ptr()) };
+            if self.bytes_read.get() == before {
+                return;
+            }
         }
     }
 

@@ -1,6 +1,6 @@
 import { CString, dlopen, ptr } from "bun:ffi";
 import { afterAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isRoot, isWindows, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isRoot, isWindows, nodeExeOfReportedVersion, tempDir } from "harness";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs, { closeSync, constants, openSync, readFileSync } from "node:fs";
@@ -149,18 +149,6 @@ describe("ReadStream.prototype.setRawMode", () => {
   });
 });
 
-function nodeOfTheVersionOfBun(): string | null {
-  const node = nodeExe();
-  if (!node) return null;
-  try {
-    const probe = Bun.spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
-    return probe.exitCode === 0 && probe.stdout.toString().trim() === process.versions.node ? node : null;
-  } catch {
-    // A file that cannot be started: a script whose interpreter is gone, a binary of another architecture.
-    return null;
-  }
-}
-
 type PtyPhase = (
   terminal: Bun.Terminal,
   output: () => string,
@@ -286,7 +274,7 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
   // What is said to be as in Node runs under Node too, where the Node of the machine is the version that Bun says it is.
   const runtimes = [
     ["bun", bunExe()],
-    ["node", nodeOfTheVersionOfBun()],
+    ["node", nodeExeOfReportedVersion()],
   ] as const;
 
   test("process.stdin has Node's shape under a PTY", async () => {

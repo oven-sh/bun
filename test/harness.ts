@@ -259,6 +259,23 @@ export function nodeExeAtLeast(version: string): string | null {
   }
 }
 
+/**
+ * `nodeExe()`, or null when that Node.js is not the release that Bun reports (`process.versions.node`) or does not run.
+ * For a reference run whose expected output is that of this one release: the names and the libuv of Node.js change
+ * between its releases.
+ */
+export function nodeExeOfReportedVersion(): string | null {
+  const node = nodeExe();
+  if (!node) return null;
+  try {
+    const probe = spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
+    return probe.exitCode === 0 && probe.stdout.toString().trim() === process.versions.node ? node : null;
+  } catch {
+    // A file that cannot be started at all: a script whose interpreter is gone, a binary of another architecture.
+    return null;
+  }
+}
+
 let abiMatchingNode: Promise<string> | undefined;
 
 /**

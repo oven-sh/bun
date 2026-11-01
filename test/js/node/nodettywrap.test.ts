@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, nodeExeOfReportedVersion, tempDir } from "harness";
 import { closeSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { ReadStream, isatty } from "node:tty";
@@ -130,21 +130,9 @@ const namesFixture = `
 `;
 
 // The names of Node change between its versions: Node is asked where it is the version that Bun says it is.
-function nodeOfTheVersionOfBun(): string | null {
-  const node = nodeExe();
-  if (!node) return null;
-  try {
-    const probe = Bun.spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
-    return probe.exitCode === 0 && probe.stdout.toString().trim() === process.versions.node ? node : null;
-  } catch {
-    // A file that cannot be started: a script whose interpreter is gone, a binary of another architecture.
-    return null;
-  }
-}
-
 describe.each([
   ["bun", bunExe(), [...inBun, ...onlyInBun].sort()],
-  ["node", nodeOfTheVersionOfBun(), [...inBun, ...onlyInNode].sort()],
+  ["node", nodeExeOfReportedVersion(), [...inBun, ...onlyInNode].sort()],
 ] as const)("the names of the tty_wrap binding and of its handle (%s)", (name, runtime, members) => {
   test.skipIf(!runtime)("are the ones that are listed", async () => {
     await using proc = Bun.spawn({ cmd: [runtime!, "-e", namesFixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });

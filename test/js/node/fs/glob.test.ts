@@ -2,10 +2,11 @@
  * @note `fs.glob` et. al. are powered by {@link Bun.Glob}, which is extensively
  * tested elsewhere. These tests check API compatibility with Node.js.
  */
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { fsGlobPlainDepth } from "bun:internal-for-testing";
+import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { isMacOS, isWindows, tempDir, tempDirWithFiles, type DirectoryTree } from "harness";
 import fs from "node:fs";
-import { join, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 
 let tmp: string;
 beforeAll(() => {
@@ -303,7 +304,7 @@ describe("fs.globSync exclude with withFileTypes", () => {
 
 // The lists in the blocks below are the ones Node.js v26.12.1 returns for the same tree and the same call.
 
-type GlobOptions = { cwd: string; followSymlinks?: boolean; exclude?: string[] };
+type GlobOptions = { cwd: string; followSymlinks?: boolean; exclude?: string[]; maxDepth?: number | null };
 
 /** The lists of the three entry points, sorted, with "/" as the separator. */
 async function globAll(pattern: string | string[], options: GlobOptions) {
@@ -487,4 +488,385 @@ it("a literal exclude pattern in another case excludes on macOS and Windows only
   using dir = tempDir("fs-glob-exclude-case", { a: { "b.txt": "" } });
   const expected = isMacOS || isWindows ? [] : ["a/b.txt"];
   expect(await globAll("a/b.txt", { cwd: String(dir), exclude: ["A/B.TXT"] })).toEqual(fromAllThree(expected));
+});
+
+// The depth of a path is its number of segments below cwd: "f.txt" is 1, "d1/f.txt" is 2, cwd is 0.
+describe("maxDepth", () => {
+  const tree = { "f.txt": "", d1: { "f.txt": "", d2: { "f.txt": "", d3: { "f.txt": "" } } } };
+  const everyFile = ["d1/d2/d3/f.txt", "d1/d2/f.txt", "d1/f.txt", "f.txt"];
+  type Row = [pattern: string | string[], options: Omit<GlobOptions, "cwd">, expected: string[]];
+
+  const rows: Row[] = [
+    ["**/*.txt", { maxDepth: 0 }, []],
+    ["**/*.txt", { maxDepth: 1 }, ["f.txt"]],
+    ["**/*.txt", { maxDepth: 2 }, ["d1/f.txt", "f.txt"]],
+    ["**/*.txt", { maxDepth: 4 }, everyFile],
+    ["**", { maxDepth: 0 }, ["."]],
+    ["**", { maxDepth: 1 }, [".", "d1", "f.txt"]],
+    ["*", { maxDepth: 0 }, []],
+    // A pattern without a wildcard has the limit too.
+    ["d1/d2/f.txt", { maxDepth: 2 }, []],
+    ["d1/d2/f.txt", { maxDepth: 3 }, ["d1/d2/f.txt"]],
+    ["d1/*/f.txt", { maxDepth: 2 }, []],
+    ["d1/d2/**", { maxDepth: 2 }, ["d1/d2"]],
+    // The limit is on the path in the list, not on the directories that the pattern goes through.
+    ["d1/d2/../*.txt", { maxDepth: 2 }, ["d1/f.txt"]],
+    ["d1/d2/../*.txt", { maxDepth: 1 }, []],
+    [["d1/d2/d3/*.txt", "*.txt"], { maxDepth: 1 }, ["f.txt"]],
+    ["{d1,d1/d2}/*.txt", { maxDepth: 2 }, ["d1/f.txt"]],
+    ["**/*.txt", { maxDepth: 3, exclude: ["d1/d2/**"] }, ["d1/f.txt", "f.txt"]],
+    ["**/*.txt", { maxDepth: 2, exclude: ["d1/f.txt"] }, ["f.txt"]],
+  ];
+
+  it.each(rows)("%j %j", async (pattern, options, expected) => {
+    using dir = tempDir("fs-glob-max-depth", tree);
+    expect(await globAll(pattern, { cwd: String(dir), ...options })).toEqual(fromAllThree(expected));
+  });
+
+  it.each([Infinity, null, undefined])("%p is no limit", async maxDepth => {
+    using dir = tempDir("fs-glob-max-depth", tree);
+    expect(await globAll("**/*.txt", { cwd: String(dir), maxDepth })).toEqual(fromAllThree(everyFile));
+  });
+
+  it("counts from cwd, and a '..' in the path counts as a segment", async () => {
+    using dir = tempDir("fs-glob-max-depth", tree);
+    const cwd = join(String(dir), "d1");
+    expect({
+      below: await globAll("**/*.txt", { cwd, maxDepth: 1 }),
+      parent: await globAll("../*.txt", { cwd, maxDepth: 2 }),
+      parentOverLimit: await globAll("../*.txt", { cwd, maxDepth: 1 }),
+    }).toEqual({
+      below: fromAllThree(["f.txt"]),
+      parent: fromAllThree(["../f.txt"]),
+      parentOverLimit: fromAllThree([]),
+    });
+  });
+
+  it("limits an absolute pattern by the depth below cwd", async () => {
+    using dir = tempDir("fs-glob-max-depth", { root: tree, sibling: { "s.txt": "" } });
+    const cwd = join(String(dir), "root");
+    const absolute = (paths: string[]) => fromAllThree(paths.map(path => join(cwd, path).replaceAll(sep, "/")).sort());
+    expect({
+      below: await globAll(join(cwd, "**/*.txt"), { cwd, maxDepth: 2 }),
+      literal: await globAll(join(cwd, "d1/d2/f.txt"), { cwd, maxDepth: 2 }),
+      // The walk starts above cwd. A path beside cwd is as deep as its path from cwd, "../sibling/s.txt".
+      fromAbove: await globAll(join(String(dir), "*", "*.txt"), { cwd, maxDepth: 2 }),
+      beside: await globAll(join(String(dir), "sibling", "*.txt"), { cwd, maxDepth: 3 }),
+    }).toEqual({
+      below: absolute(["d1/f.txt", "f.txt"]),
+      literal: fromAllThree([]),
+      fromAbove: absolute(["f.txt"]),
+      beside: absolute(["../sibling/s.txt"]),
+    });
+  });
+
+  // Below cwd the walker never reaches a path past the limit, so the limit on a match is seen above and beside cwd.
+  // Each pattern goes through another place in the walker that adds a match.
+  it("limits every kind of match above and beside cwd", async () => {
+    using dir = tempDir("fs-glob-max-depth", { "top.txt": "", root: tree, sibling: { "s.txt": "" } });
+    const top = String(dir);
+    const cwd = join(top, "root");
+    const rows: [pattern: string, maxDepth: number, expected: string[]][] = [
+      // A directory that a last ** matches.
+      ["sibling/**", 1, []],
+      ["sibling/**", 2, ["sibling"]],
+      // An entry under a last **.
+      ["**", 0, ["root"]],
+      // A name after **.
+      ["**/*.txt", 1, ["root/f.txt"]],
+      // The directory that "**/.." matches, and its parent.
+      ["**/..", 0, []],
+      ["**/..", 1, ["", "root"]],
+      // A last wildcard.
+      ["*.txt", 1, []],
+      ["*.txt", 2, ["top.txt"]],
+    ];
+    const actual: Record<string, unknown> = {};
+    const expected: Record<string, unknown> = {};
+    for (const [pattern, maxDepth, list] of rows) {
+      // Not join(): it folds the "**/.." of a pattern.
+      actual[`${pattern} at ${maxDepth}`] = await globAll(`${top.replaceAll(sep, "/")}/${pattern}`, { cwd, maxDepth });
+      expected[`${pattern} at ${maxDepth}`] = fromAllThree(
+        list.map(path => join(top, path).replaceAll(sep, "/")).sort(),
+      );
+    }
+    expect(actual).toEqual(expected);
+  });
+
+  it("gives a path that leaves cwd and comes back the depth of where it ends", async () => {
+    using dir = tempDir("fs-glob-max-depth", { "top.txt": "", root: tree, sibling: { "s.txt": "" } });
+    const cwd = join(String(dir), "root");
+    expect({
+      // "../root/f.txt" is "f.txt": depth 1. The walk goes through "..", which is depth 1, so it needs 2.
+      back: await globAll("../root/*.txt", { cwd, maxDepth: 2 }),
+      cannotPassTheParent: await globAll("../root/*.txt", { cwd, maxDepth: 1 }),
+      everywhere: await globAll("../**/*.txt", { cwd, maxDepth: 2 }),
+    }).toEqual({
+      back: fromAllThree(["../root/f.txt"]),
+      cannotPassTheParent: fromAllThree([]),
+      everywhere: fromAllThree(["../root/d1/f.txt", "../root/f.txt", "../top.txt"]),
+    });
+  });
+
+  // Below cwd the depth comes from the path alone. It must be the depth that path.resolve() and path.relative() give,
+  // which is the rule of Node.js v26.12.1, and -1 where only that rule can tell.
+  describe("the depth of a path below cwd", () => {
+    const rows: [path: string, depth: number][] = [
+      [".", 0],
+      ["f.txt", 1],
+      ["d1/f.txt", 2],
+      ["d1/d2/d3", 3],
+      // "." and an empty segment add no depth.
+      ["./d1", 1],
+      ["d1/./d2", 2],
+      ["d1//d2", 2],
+      ["d1/", 1],
+      // A name that only starts with dots is a name.
+      ["..d1", 1],
+      ["d1/..d2", 2],
+      ["...", 1],
+      ["d1/.d2/...", 3],
+      // A ".." segment or an absolute path can leave cwd.
+      ["..", -1],
+      ["../", -1],
+      ["../d1", -1],
+      ["d1/..", -1],
+      ["d1/../d2", -1],
+      ["/", -1],
+      ["/d1", -1],
+      ...((isWindows
+        ? [
+            ["d1\\d2", 2],
+            ["d1\\..\\d2", -1],
+            ["\\d1", -1],
+            ["C:\\d1", -1],
+            // A name with ":" can be relative to a drive.
+            ["C:d1", -1],
+            ["d1\\a:b", -1],
+          ]
+        : [
+            // "\\" and ":" are characters of a name.
+            ["d1\\d2", 1],
+            ["d1\\..\\d2", 1],
+            ["C:d1", 1],
+            ["a:b/c", 2],
+          ]) as [string, number][]),
+    ];
+
+    it.each(rows)("%j is %d", (path, depth) => {
+      expect(fsGlobPlainDepth(path)).toBe(depth);
+      if (depth >= 0) {
+        const fromCwd = relative(tmp, resolve(tmp, path));
+        expect(fromCwd === "" ? 0 : fromCwd.split(sep).length).toBe(depth);
+      }
+    });
+  });
+
+  it("gives Dirents within the limit for withFileTypes", async () => {
+    using dir = tempDir("fs-glob-max-depth", tree);
+    const cwd = String(dir);
+    const options = { cwd, maxDepth: 2, withFileTypes: true } as const;
+    const paths = (dirents: fs.Dirent[]) =>
+      dirents.map(dirent => relative(cwd, join(dirent.parentPath, dirent.name)).replaceAll(sep, "/")).sort();
+    expect({
+      globSync: paths(fs.globSync("**/*.txt", options)),
+      "promises.glob": paths(await Array.fromAsync(fs.promises.glob("**/*.txt", options))),
+    }).toEqual({ globSync: ["d1/f.txt", "f.txt"], "promises.glob": ["d1/f.txt", "f.txt"] });
+  });
+
+  // The tree of the tests below. <top> in a pattern is the directory above cwd, and <TOP> is that directory in
+  // another case.
+  const above = { Top: { "top.txt": "", root: tree, sibling: { "s.txt": "" } } };
+  const spell = (pattern: string, dir: string) => {
+    const slashes = dir.replaceAll(sep, "/");
+    return pattern.replace("<top>", `${slashes}/Top`).replace("<TOP>", `${slashes}/TOP`);
+  };
+  // A volume that folds case reaches a directory by another spelling of its name. Windows and macOS do by default.
+  const volumeFoldsCase = (() => {
+    using dir = tempDir("fs-glob-max-depth", { probe: "" });
+    return fs.existsSync(join(String(dir), "PROBE"));
+  })();
+
+  describe("the Dirents of an absolute or '..' pattern", () => {
+    type Row = [pattern: string, maxDepth: number, expected: string[]];
+    // Each pattern goes through another place in the walker that adds a match.
+    const rows: Row[] = [
+      // A path without a wildcard: beside cwd, below it, and below it past the limit.
+      ["<top>/top.txt", 2, ["file ../top.txt"]],
+      ["<top>/root/f.txt", 1, ["file f.txt"]],
+      ["<top>/root/d1/d2/f.txt", 2, []],
+      // The directory that a last ** matches, then an entry under it.
+      ["<top>/sibling/**", 3, ["directory ../sibling", "file ../sibling/s.txt"]],
+      ["<top>/root/d1/**", 2, ["directory d1", "file d1/f.txt", "directory d1/d2"]],
+      // A name after **.
+      ["<top>/**/*.txt", 1, ["file f.txt"]],
+      // The directory that "**/.." matches, and its parent.
+      ["<top>/**/..", 1, ["directory ..", "directory ."]],
+      ["**/..", 2, ["directory .", "directory ..", "directory d1"]],
+      ["../root/**/..", 2, ["directory .", "directory ..", "directory d1"]],
+      // A last wildcard.
+      ["<top>/*", 2, ["directory .", "directory ../sibling", "file ../top.txt"]],
+    ];
+    // These patterns name cwd, or the directory above it, in another case. Only the file system can say that it is the
+    // same directory, so the async walker has to wait for it before it gives the match. Windows and macOS ask. On
+    // Linux the path alone says the depth.
+    const otherCaseRows: Row[] = [
+      // A path without a wildcard, within the limit and past it.
+      ["<top>/ROOT/f.txt", 1, ["file f.txt"]],
+      ["<top>/ROOT/f.txt", 0, []],
+      // The directory that a last ** matches, then an entry under it.
+      ["<top>/ROOT/**", 1, ["directory .", "file f.txt", "directory d1"]],
+      // A name after **.
+      ["<TOP>/**/root", 4, ["directory ."]],
+      // A last wildcard. Only "root" needs the file system: the two other entries are not below cwd.
+      ["<TOP>/*", 4, ["directory .", "directory ../sibling", "file ../top.txt"]],
+    ];
+
+    // globSync gives the expected Dirents, and the two async entry points give the Dirents of globSync in its order.
+    async function expectDirents(row: string, maxDepth: number, expected: string[]) {
+      using dir = tempDir("fs-glob-max-depth", above);
+      const cwd = join(String(dir), "Top", "root");
+      const pattern = spell(row, String(dir));
+      const options = { cwd, maxDepth, withFileTypes: true } as const;
+      const list = (dirents: (fs.Dirent | null)[]) =>
+        dirents.map(
+          dirent =>
+            dirent && {
+              name: dirent.name,
+              parentPath: dirent.parentPath,
+              type: dirent.isDirectory() ? "directory" : dirent.isFile() ? "file" : "other",
+            },
+        );
+      const globSync = list(fs.globSync(pattern, options));
+      const { promise, resolve, reject } = Promise.withResolvers<fs.Dirent[]>();
+      fs.glob(pattern, options, (err, dirents) => (err ? reject(err) : resolve(dirents)));
+      expect({
+        // Without case, because a pattern can name a directory in another case.
+        globSync: globSync.map(
+          dirent =>
+            dirent &&
+            `${dirent.type} ${relative(cwd.toLowerCase(), join(dirent.parentPath, dirent.name).toLowerCase()).replaceAll(sep, "/") || "."}`,
+        ),
+        glob: list(await promise),
+        "promises.glob": list(await Array.fromAsync(fs.promises.glob(pattern, options))),
+      }).toEqual({ globSync: expected, glob: globSync, "promises.glob": globSync });
+    }
+
+    it.each(rows)("%s at %d", expectDirents);
+    it.skipIf(!volumeFoldsCase).each(otherCaseRows)("%s at %d", expectDirents);
+  });
+
+  // Node.js gives a match when its walker finds it, and its walker does not go on before the consumer asks for the
+  // next one. So a directory that is a match comes before the walker reads that directory. The numbers are, for each
+  // match, how many directories the async walker had read when it gave the match.
+  describe("the time of a match of the async walker", () => {
+    type Row = [patterns: string[], maxDepth: number, expected: Record<string, number>];
+    const rows: Row[] = [[["<top>/root/**"], 2, { ".": 0, "f.txt": 1, "d1": 1, "d1/f.txt": 2, "d1/d2": 2 }]];
+    // With cwd in another case, the walker also waits at the match for the answer of the file system.
+    const otherCaseRows: Row[] = [
+      [["<top>/ROOT/**"], 2, { ".": 0, "f.txt": 1, "d1": 1, "d1/f.txt": 2, "d1/d2": 2 }],
+      [["<top>/ROOT/d1/**"], 3, { "d1": 0, "d1/f.txt": 1, "d1/d2": 1, "d1/d2/f.txt": 2, "d1/d2/d3": 2 }],
+      // The second pattern makes the walker read two more directories after the matches of the first one.
+      [
+        ["<TOP>/*", "<TOP>/*/*.txt"],
+        5,
+        { ".": 1, "../sibling": 1, "../top.txt": 1, "../sibling/s.txt": 2, "f.txt": 3 },
+      ],
+      // The walker finds the match of the second pattern first. It is past the limit.
+      [["<top>/sibling/s.txt", "<top>/ROOT/d1/d2/d3/f.txt"], 3, { "../sibling/s.txt": 0 }],
+    ];
+
+    async function expectReadBeforeEachMatch(patterns: string[], maxDepth: number, expected: Record<string, number>) {
+      using dir = tempDir("fs-glob-max-depth", above);
+      const cwd = join(String(dir), "Top", "root");
+      using readdir = spyOn(fs.promises, "readdir");
+      const readBefore: Record<string, number> = {};
+      const spelled = patterns.map(pattern => spell(pattern, String(dir)));
+      for await (const path of fs.promises.glob(spelled, { cwd, maxDepth })) {
+        const fromCwd = relative(cwd.toLowerCase(), resolve(cwd, path).toLowerCase()).replaceAll(sep, "/") || ".";
+        readBefore[fromCwd] = readdir.mock.calls.length;
+      }
+      expect(readBefore).toEqual(expected);
+    }
+
+    it.each(rows)("%j at %d", expectReadBeforeEachMatch);
+    it.skipIf(!volumeFoldsCase).each(otherCaseRows)("%j at %d", expectReadBeforeEachMatch);
+  });
+
+  it("does not read a directory at the limit", async () => {
+    using dir = tempDir("fs-glob-max-depth", { root: tree, sibling: { deep: { "t.txt": "" } } });
+    const cwd = join(String(dir), "root");
+    using readdirSync = spyOn(fs, "readdirSync");
+    using readdir = spyOn(fs.promises, "readdir");
+    const read = (spy: { mock: { calls: unknown[][] } }) =>
+      spy.mock.calls.map(([path]) => relative(String(dir), resolve(String(path))).replaceAll(sep, "/")).sort();
+
+    fs.globSync("**/*.txt", { cwd, maxDepth: 2 });
+    await Array.fromAsync(fs.promises.glob("**/*.txt", { cwd, maxDepth: 2 }));
+    expect({ globSync: read(readdirSync), "promises.glob": read(readdir) }).toEqual({
+      globSync: ["root", "root/d1"],
+      "promises.glob": ["root", "root/d1"],
+    });
+
+    // An absolute pattern that starts above cwd reads the directories down to cwd and nothing beside them.
+    readdirSync.mockClear();
+    readdir.mockClear();
+    fs.globSync(join(String(dir), "**", "*.txt"), { cwd, maxDepth: 1 });
+    await Array.fromAsync(fs.promises.glob(join(String(dir), "**", "*.txt"), { cwd, maxDepth: 1 }));
+    expect({ globSync: read(readdirSync), "promises.glob": read(readdir) }).toEqual({
+      globSync: ["", "root"],
+      "promises.glob": ["", "root"],
+    });
+
+    // A ".." pattern is not an absolute pattern: it does not read the directory above cwd at the limit.
+    readdirSync.mockClear();
+    readdir.mockClear();
+    fs.globSync("../**/*.txt", { cwd, maxDepth: 1 });
+    await Array.fromAsync(fs.promises.glob("../**/*.txt", { cwd, maxDepth: 1 }));
+    expect({ globSync: read(readdirSync), "promises.glob": read(readdir) }).toEqual({
+      globSync: [],
+      "promises.glob": [],
+    });
+  });
+
+  const outOfRange = 'The value of "options.maxDepth" is out of range.';
+  it.each([
+    [-1, RangeError, "ERR_OUT_OF_RANGE", `${outOfRange} It must be >= 0 && <= 9007199254740991. Received -1`],
+    [1.5, RangeError, "ERR_OUT_OF_RANGE", `${outOfRange} It must be an integer. Received 1.5`],
+    [NaN, RangeError, "ERR_OUT_OF_RANGE", `${outOfRange} It must be an integer. Received NaN`],
+    [
+      "1",
+      TypeError,
+      "ERR_INVALID_ARG_TYPE",
+      `The "options.maxDepth" property must be of type number. Received type string ('1')`,
+    ],
+  ] as const)("rejects %p", async (maxDepth, constructor, code, message) => {
+    const options = { cwd: tmp, maxDepth } as GlobOptions;
+    const thrown = (fn: () => unknown) => {
+      try {
+        fn();
+      } catch (err) {
+        return err as NodeJS.ErrnoException;
+      }
+    };
+    const errors = {
+      globSync: thrown(() => fs.globSync("**", options)),
+      glob: thrown(() => fs.glob("**", options, () => {})),
+      "promises.glob": await Array.fromAsync(fs.promises.glob("**", options)).then(
+        () => undefined,
+        (err: NodeJS.ErrnoException) => err,
+      ),
+    };
+    for (const error of Object.values(errors)) expect(error).toBeInstanceOf(constructor);
+    const report = (err: NodeJS.ErrnoException | undefined) => ({ code: err?.code, message: err?.message });
+    expect({
+      globSync: report(errors.globSync),
+      glob: report(errors.glob),
+      "promises.glob": report(errors["promises.glob"]),
+    }).toEqual({
+      globSync: { code, message },
+      glob: { code, message },
+      "promises.glob": { code, message },
+    });
+  });
 });

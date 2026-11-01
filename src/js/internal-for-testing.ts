@@ -174,6 +174,11 @@ export const memfd_create = $bindgen("node_fs_binding.bind.ts", "createMemfdForT
 
 export const createStatsForIno: (ino: bigint, big: boolean) => any = $bindgen("Stat.bind.ts", "createStatsForIno");
 
+// The depth that fs.glob's `maxDepth` gives a path below `cwd`, or -1 for a path that can leave `cwd`
+// (src/js/internal/fs/glob-depth-limiter.ts). The module is required on the call, so a test that does not ask pays
+// nothing.
+export const fsGlobPlainDepth = (path: string): number => require("internal/fs/glob-depth-limiter").plainDepth(path);
+
 export const setSyntheticAllocationLimitForTesting: (limit: number) => number = $bindgen(
   "virtual_machine_exports.bind.ts",
   "setSyntheticAllocationLimitForTesting",

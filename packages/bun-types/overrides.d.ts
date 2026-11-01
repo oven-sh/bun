@@ -349,6 +349,26 @@ declare module "node:fs/promises" {
   function exists(path: Bun.PathLike): Promise<boolean>;
 }
 
+declare module "node:fs" {
+  // @types/node has no `maxDepth` before its types for Node.js v26.9. Some versions of @types/node make the base
+  // interface `GlobOptions` generic and some do not, so the option is declared on the two interfaces that are never
+  // generic. The overloads for an options literal choose one of these two.
+  interface GlobOptionsWithFileTypes {
+    /**
+     * Maximum number of directory levels to traverse. The `cwd` directory has a depth of `0`.
+     * @default Infinity
+     */
+    maxDepth?: number | undefined;
+  }
+  interface GlobOptionsWithoutFileTypes {
+    /**
+     * Maximum number of directory levels to traverse. The `cwd` directory has a depth of `0`.
+     * @default Infinity
+     */
+    maxDepth?: number | undefined;
+  }
+}
+
 declare module "node:tls" {
   interface BunConnectionOptions extends Omit<ConnectionOptions, "key" | "ca" | "tls" | "cert"> {
     /**

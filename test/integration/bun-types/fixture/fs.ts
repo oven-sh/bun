@@ -20,3 +20,13 @@ watch(".", (eventType, filename) => {
 await Bun.file("sdf").exists();
 
 readdir(".", { recursive: true }, (err, files) => {});
+
+// `maxDepth` of fs.glob (Node.js v26.9)
+tsd.expectType<string[]>(fs.globSync("**/*.ts", { maxDepth: 1 }));
+tsd.expectType<fs.Dirent[]>(fs.globSync("**/*.ts", { maxDepth: 1, withFileTypes: true }));
+fs.glob("**/*.ts", { cwd: ".", maxDepth: 0 }, (err, matches) => {
+  tsd.expectType<string[]>(matches);
+});
+tsd.expectType<NodeJS.AsyncIterator<string>>(fs.promises.glob("**/*.ts", { maxDepth: 2 }));
+// @ts-expect-error
+fs.globSync("**/*.ts", { maxDepth: "1" });

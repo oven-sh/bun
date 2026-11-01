@@ -388,33 +388,43 @@ extern "C" fn Bun__onLoadNamespaceLength(key: &bun_core::String) -> i32 {
 /// The `namespace:` prefix of `specifier`, or `b""` if it has none
 /// (Windows drive-letter prefixes are not namespaces).
 fn extract_namespace(specifier: &[u8]) -> &[u8] {
-    let Some(colon) = bun_core::strings::index_of_char_usize(specifier, b':') else {
-        return b"";
-    };
-    if cfg!(windows)
-        && colon == 1
-        && specifier.len() > 3
-        && bun_paths::resolve_path::is_sep_any(specifier[2])
-        && ((specifier[0] > b'a' && specifier[0] < b'z')
-            || (specifier[0] > b'A' && specifier[0] < b'Z'))
-    {
-        return b"";
+    match namespace_colon(specifier) {
+        Some(colon) => &specifier[..colon],
+        None => b"",
     }
-    &specifier[..colon]
+}
+
+/// Where the `namespace:` of a bare `specifier` ends. A colon in a path or in a query starts no namespace.
+fn namespace_colon(specifier: &[u8]) -> Option<usize> {
+    if !bun_paths::is_package_path(specifier) {
+        return None;
+    }
+    let colon = bun_core::strings::index_of_char_usize(specifier, b':')?;
+    (colon < without_query(specifier).len()).then_some(colon)
+}
+
+/// `specifier` up to its query, cut where the resolver and the loader cut it.
+fn without_query(specifier: &[u8]) -> &[u8] {
+    let mut query: &[u8] = b"";
+    crate::virtual_machine::normalize_specifier_for_resolution(specifier, &mut query)
+}
+
+/// Whether an ASCII letter or a non-ASCII byte follows the last `.` of `specifier`.
+fn letter_follows_last_dot(specifier: &[u8]) -> bool {
+    bun_core::strings::last_index_of_char(specifier, b'.')
+        .and_then(|dot| specifier.get(dot + 1))
+        .is_some_and(|&c| c.is_ascii_alphabetic() || c > 127)
 }
 
 pub(crate) fn has_extension_or_namespace(specifier: &[u8]) -> bool {
-    if let Some(last_dot) = bun_core::strings::last_index_of_char(specifier, b'.') {
-        let ext = &specifier[last_dot + 1..];
-        // '.' followed by either a letter or a non-ascii character
-        // maybe there are non-ascii file extensions?
-        // we mostly want to cheaply rule out "../" and ".." and "./"
-        if !ext.is_empty()
-            && (ext[0].is_ascii_lowercase() || ext[0].is_ascii_uppercase() || ext[0] > 127)
-        {
-            return true;
-        }
+    if letter_follows_last_dot(specifier) || namespace_colon(specifier).is_some() {
+        return true;
     }
-    !bun_paths::is_absolute(specifier)
-        && bun_core::strings::index_of_char_usize(specifier, b':').is_some()
+    // A query cannot make the answer no: the letter test again, on the specifier without it.
+    let path = without_query(specifier);
+    if path.len() < specifier.len() && letter_follows_last_dot(path) {
+        return true;
+    }
+    // The extension of a file may start with a digit ("video.3gp"). In a bare name that is a version ("zod@3.0.0").
+    !bun_paths::is_package_path(specifier) && bun_paths::fs::PathName::init(path).ext.len() > 1
 }

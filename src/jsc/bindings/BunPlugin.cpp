@@ -10,6 +10,7 @@
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/FunctionCodeBlock.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSCInlines.h>

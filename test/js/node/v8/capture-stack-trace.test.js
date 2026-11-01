@@ -2157,6 +2157,40 @@ test("Error.captureStackTrace rejects a WebAssembly GC object", () => {
   expect(() => Error.captureStackTrace(struct)).toThrow(new TypeError("invalid_argument"));
 });
 
+// A store on a WebAssembly GC object aborts the process, so the fixture has a process of its own.
+test.concurrent("an assignment to a lazy stack ignores a WebAssembly GC object as the receiver", async () => {
+  const fixture = /* js */ `
+    // (type $s (struct (field (mut i32))))
+    // (func (export "mk") (result (ref null $s)) struct.new_default $s)
+    const bytes = new Uint8Array([
+      0, 0x61, 0x73, 0x6d, 1, 0, 0, 0,
+      1, 10, 2, 0x5f, 1, 0x7f, 1, 0x60, 0, 1, 0x63, 0,
+      3, 2, 1, 1,
+      7, 6, 1, 2, 0x6d, 0x6b, 0, 0,
+      10, 7, 1, 5, 0, 0xfb, 1, 0, 0x0b,
+    ]);
+    const struct = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
+    function notInStack() {}
+    const error = new Error("message");
+    // No frame is captured, so the stack stays the lazy accessor until the first read.
+    Error.captureStackTrace(error, notInStack);
+    const { set } = Object.getOwnPropertyDescriptor(error, "stack");
+    console.log(JSON.stringify([Reflect.set(error, "stack", "assigned", struct), typeof set.call(struct, "assigned"), error.stack]));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+    stdout: [true, "undefined", "Error: message"],
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("a stack taken while a CommonJS module loads names the frame of require() anonymous", async () => {
   using dir = tempDir("stack-while-commonjs-loads", {
     "main.cjs": `require("./child.cjs");`,

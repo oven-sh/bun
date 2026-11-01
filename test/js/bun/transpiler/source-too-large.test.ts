@@ -67,6 +67,64 @@ test("Bun.Transpiler reports the limit for every loader that records positions",
   });
 });
 
+// A buffer this long is not copied, and the loader is converted after the code is taken.
+// Not concurrent with the test above, so that one 2 GiB reservation exists at a time.
+test("Bun.Transpiler reads the buffer where it is once loader.toString() has detached it", async () => {
+  const { stdout, stderr, exitCode } = await run([
+    bunExe(),
+    "-e",
+    `
+      const transpiler = new Bun.Transpiler();
+      const results = {};
+      let input = new Uint8Array(${SIZE});
+      for (const detach of [false, true]) {
+        for (const [method, name] of [
+          ["transformSync", "js"],
+          ["transformSync", "text"],
+          ["scan", "js"],
+          ["scanImports", "js"],
+        ]) {
+          // The text loader has no limit: it would print all 2 GiB.
+          if (!detach && name === "text") continue;
+          // One at a time: the last one is freed by now.
+          if (input.byteLength === 0) input = new Uint8Array(${SIZE});
+          const loader = Object.assign(new String(name), {
+            toString() {
+              if (detach) input.buffer.transfer(0);
+              return name;
+            },
+          });
+          let result;
+          try {
+            result = transpiler[method](input, loader);
+          } catch (e) {
+            result = e.message;
+          }
+          results[[method, name, detach ? "detached" : "attached"].join(" ")] = result;
+        }
+      }
+      console.log(JSON.stringify(results, null, 2));
+    `,
+  ]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify(
+      {
+        "transformSync js attached": "File is too large to parse (2 GiB maximum)",
+        "scan js attached": "File is too large to parse (2 GiB maximum)",
+        "scanImports js attached": "File is too large to parse (2 GiB maximum)",
+        "transformSync js detached": new Bun.Transpiler().transformSync("", "js"),
+        "transformSync text detached": new Bun.Transpiler().transformSync("", "text"),
+        "scan js detached": new Bun.Transpiler().scan("", "js"),
+        "scanImports js detached": new Bun.Transpiler().scanImports("", "js"),
+      },
+      null,
+      2,
+    ),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // Each file is sparse: everything past the first line is a hole, so it takes no
 // disk space and reads back as NUL bytes. Reading it costs the child process
 // 2 GiB of memory (and, in debug builds, tens of seconds of allocator

@@ -54,11 +54,11 @@ function casesIn(project: typeof byName, name: string, orders: string[]) {
     );
 }
 
-// In none of these orders is anything loaded when the mock is made, so require() never answers the object that the factory made.
+// In none of these orders is anything loaded when the mock is made. Every require() answers the very object that the factory made, or its `default` where the object says that it is an ES module.
 function expectAnswersOfPlainBun(plain: string[]) {
   expect(plain.filter(line => !line.includes(": pass "))).toEqual([]);
-  expect(plain.filter(line => /[rR]=made\b/.test(line))).toEqual([]);
-  expect(plain.filter(line => line.startsWith("b ") && !/ [rR]=default$/.test(line))).toEqual([]);
+  expect(plain.filter(line => !line.startsWith("b ") && / [rR]=(?!made\b)/.test(line))).toEqual([]);
+  expect(plain.filter(line => line.startsWith("b ") && / [rR]=(?!default\b)/.test(line))).toEqual([]);
 }
 
 // One with code whose exports say `__esModule`, one with code, one of native code.

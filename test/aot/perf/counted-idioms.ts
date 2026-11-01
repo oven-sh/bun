@@ -8,6 +8,8 @@
 //   AOT_PERF=lower bun test test/aot/perf/counted-idioms-     writes every number that got better into the file
 //   AOT_PERF=cover ..                                         raises each pin to what is counted here: the same sources on another platform, where lists of free cells and tables are of other sizes
 //   AOT_PERF=update ..                                        rewrites the pins as counted: for a new idiom
+// A row may carry "owed": { <kind>: <count>, "why": .. }: a change, named in "why", made that kind more expensive in both forms, and the pin was left where it was.
+// Until that is fixed, the kind is held to the count written there. A higher count fails. So does meeting the pin again: then the mark should be removed.
 import { afterAll, expect } from "bun:test";
 import { readFileSync, rmSync, writeFileSync } from "fs";
 import { bunExe, isASAN, isDebug, tempDir } from "harness";
@@ -19,7 +21,7 @@ import { countedIdioms, forms, kinds, whatWasCounted, type Counted, type Counts,
 const pinsPath = join(import.meta.dir, "idiom-counts.json");
 const mode = process.env.AOT_PERF;
 /** A kind that is left out is 0. */
-type Pins = Record<string, Record<Form, Partial<Counts>>>;
+type Pins = Record<string, Record<Form, Partial<Counts>> & { owed?: Partial<Counts> & { why: string } }>;
 const readPins = (): Pins => JSON.parse(readFileSync(pinsPath, "utf8"));
 
 /** An idiom a line. */
@@ -27,7 +29,7 @@ function writePins(pins: Pins) {
   const withoutZeros = (counts: Partial<Counts>) => Object.fromEntries(kinds.filter(kind => counts[kind]).map(kind => [kind, counts[kind]]));
   const lines = Object.keys(pins)
     .sort()
-    .map(name => `${JSON.stringify(name)}: ${JSON.stringify({ typed: withoutZeros(pins[name].typed), untyped: withoutZeros(pins[name].untyped) })}`);
+    .map(name => `${JSON.stringify(name)}: ${JSON.stringify({ typed: withoutZeros(pins[name].typed), untyped: withoutZeros(pins[name].untyped), owed: pins[name].owed })}`);
   writeFileSync(pinsPath, `{\n${lines.join(",\n")}\n}\n`);
 }
 
@@ -84,18 +86,23 @@ export function countedIdiomsAgainstPins(part = 1, parts = 1) {
             expect(now.untyped.printed).toBe(now.typed.printed);
             const pin = pins[name];
             const merged = (choose: (pin: number, now: number) => number) =>
-              Object.fromEntries(
-                forms.map(form => [form, Object.fromEntries(kinds.map(kind => [kind, choose(pin?.[form][kind] ?? 0, mostOf(now[form])[kind])]))]),
-              ) as Pins[string];
+              ({
+                ...Object.fromEntries(
+                  forms.map(form => [form, Object.fromEntries(kinds.map(kind => [kind, choose(pin?.[form][kind] ?? 0, mostOf(now[form])[kind])]))]),
+                ),
+                owed: pin?.owed,
+              }) as Pins[string];
             if (mode === "update" || ((mode === "lower" || mode === "cover") && !pin)) return void (written[name] = merged((_, now) => now));
             if (!pin) return;
             if (mode === "lower") written[name] = merged(Math.min);
             if (mode === "cover") return void (written[name] = merged(Math.max));
             const over = forms.flatMap(form =>
               kindsJudged(now[form])
-                .filter(kind => now[form].counts[kind] > (pin[form][kind] ?? 0))
+                .filter(kind => now[form].counts[kind] > (pin.owed?.[kind] ?? pin[form][kind] ?? 0))
                 .map(kind => `${form}: ${now[form].counts[kind]} ${kind} in a thousand turns, pinned at ${pin[form][kind] ?? 0}`),
             );
+            const paid = kinds.filter(kind => pin.owed?.[kind] !== undefined && forms.every(form => now[form].counts[kind] <= (pin[form][kind] ?? 0)));
+            over.push(...paid.map(kind => `${kind}: the pin is met again: remove "owed"`));
             const counted = Object.fromEntries(forms.filter(form => over.some(line => line.startsWith(form))).map(form => [form, whatWasCounted(now[form].lines)]));
             expect({ over, counted }).toEqual({ over: [], counted: {} });
           }),

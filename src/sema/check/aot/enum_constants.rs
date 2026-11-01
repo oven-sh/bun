@@ -5,7 +5,9 @@ use crate::bind::{Binding, Decl, SymFlags};
 use crate::check::Checker;
 use crate::check::errors_enums_names::is_ambient_enum;
 use crate::fold::is_exact_power;
-use crate::hir::{self, BinOp, EnumMemberId, ExprFlags, ExprId, Kind, MemberKey, Node};
+use crate::hir::{
+    self, BinOp, EnumMemberId, ExprFlags, ExprId, Flags, FnBody, Kind, MemberKey, Node,
+};
 use crate::program::{FileId, Sym};
 use crate::types::EnumValue;
 use smallvec::SmallVec;
@@ -249,14 +251,26 @@ impl Checker<'_, '_> {
             member: root,
             is_path_declared_here: true,
         };
+        let (mut known_from, mut name_of_holder) = (0, Some(first));
         for &name in names.iter().rev() {
             end.holder = end.member;
-            if !files.flags(end.holder).intersects(SymFlags::NAMESPACE) {
+            let flags = files.flags(end.holder);
+            if !flags.intersects(SymFlags::NAMESPACE) {
                 return None;
+            }
+            let read = name_of_holder.take();
+            if flags.intersects(SymFlags::FUNCTION | SymFlags::CLASS) {
+                let restart = self.find_part_after_forgetting_block(file, end.holder, read);
+                known_from = known_from.max(restart.unwrap_or(0));
             }
             let link = files.namespace_member(end.holder, name)?;
             end.is_path_declared_here &= !files.flags(link).intersects(SymFlags::ALIAS);
             end.member = files.canonical(files.resolve_alias_as(link, SymFlags::VALUE)?);
+            let is_known = |&(of, declaration): &(FileId, Decl)| {
+                of == file && hir.start(hir.node(declaration)) >= known_from
+            };
+            end.is_path_declared_here &=
+                known_from == 0 || files.decls_of(end.member).iter().any(is_known);
         }
         end.is_path_declared_here &= match bound.binding(first) {
             // In sloppy code the variable that a function of a block leaves behind hides an enum.
@@ -270,6 +284,53 @@ impl Checker<'_, '_> {
             Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => false,
         };
         Some(end)
+    }
+
+    /// Bun's transpiler forgets a namespace in a block that exports a function or class of its name.
+    #[cold]
+    #[inline(never)]
+    fn find_part_after_forgetting_block(
+        &self,
+        file: FileId,
+        namespace: Sym,
+        read: Option<ExprId>,
+    ) -> Option<u32> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let declarations = self.files().decls_of(namespace);
+        let in_file = declarations.iter().filter(|&&(of, _)| of == file);
+        let placed = in_file.map(|&(_, declaration)| {
+            let node = hir.node(declaration);
+            (declaration, hir.start(node), hir.parent(node))
+        });
+        // A block behind the read takes nothing from a name that a declaration around the read binds.
+        let is_bound_around = |&name: &ExprId| match bound.binding(name) {
+            Binding::Symbol(symbol) => bound.symbol(symbol).parent.is_none(),
+            Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => false,
+        };
+        let bound_around = read.filter(is_bound_around);
+        let forgets_before = bound_around.map_or(u32::MAX, |name| hir::start_of(hir, name));
+        let forgets = |&(declaration, _, block): &(Decl, u32, Node)| {
+            let flags = bound.modifier_flags(hir, declaration);
+            let has_code = match declaration {
+                Decl::Fn(function) => !matches!(hir[function].body, FnBody::None),
+                Decl::Class(_) => true,
+                _ => false,
+            };
+            let is_export = flags.contains(Flags::EXPORT) && !flags.contains(Flags::AMBIENT);
+            let is_in_namespace = hir.kind(block) == Kind::ModuleBlock;
+            has_code && is_export && is_in_namespace && hir.start(block.row()) < forgets_before
+        };
+        let last = placed
+            .clone()
+            .filter(forgets)
+            .max_by_key(|&(_, start, _)| start);
+        let (_, forgotten_at, forgetting_block) = last?;
+        let parts = placed.filter(|&(declaration, start, block)| {
+            matches!(declaration, Decl::Enum(_) | Decl::Module(_))
+                && start > forgotten_at
+                && block != forgetting_block
+        });
+        Some(parts.map(|(_, start, _)| start).min().unwrap_or(u32::MAX))
     }
 
     fn is_global_number(&self, symbol: Sym) -> bool {

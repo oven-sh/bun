@@ -8,10 +8,21 @@ use crate::hir::{BinOp, Branches, ExprId, ExprKind, IdList, UnOp};
 use crate::import_sites::is_free_common_js;
 
 #[derive(Copy, Clone)]
-enum LogicalOperator {
+pub(super) enum LogicalOperator {
     And,
     Or,
     Nullish,
+}
+
+impl LogicalOperator {
+    pub(super) fn of(op: BinOp) -> Option<LogicalOperator> {
+        match op {
+            BinOp::And => Some(LogicalOperator::And),
+            BinOp::Or => Some(LogicalOperator::Or),
+            BinOp::Nullish => Some(LogicalOperator::Nullish),
+            _ => None,
+        }
+    }
 }
 
 impl<'s> Folder<'_, 's> {
@@ -103,7 +114,8 @@ impl<'s> Folder<'_, 's> {
             });
             return Folded::new(Value::from(type_name), self.folded(operand).effects);
         }
-        let type_of_literal = match self.hir[operand].kind {
+        let literal = self.skip_to_item_in_place(operand);
+        let type_of_literal = match self.hir[literal].kind {
             ExprKind::Fn(_) => Some(known::function),
             ExprKind::Regex { .. } => Some(known::object),
             _ => None,
@@ -135,11 +147,18 @@ impl<'s> Folder<'_, 's> {
                     BinOp::Or => LogicalOperator::Or,
                     _ => LogicalOperator::Nullish,
                 };
-                self.fold_logical(e, operator, left, right)
+                let folded = self.fold_logical(e, operator, left, right);
+                if let Value::Known(_) = folded.value {
+                    self.note_kept_by_bun_run(e);
+                }
+                folded
             }
             BinOp::Comma => {
                 self.copy_condition(e, right);
                 let (left, right) = (self.folded(left), self.folded(right));
+                if let Value::Known(_) = right.value {
+                    self.note_kept_by_bun_run(e);
+                }
                 Folded::new(right.value, left.effects.min(right.effects))
             }
             BinOp::EqEq | BinOp::EqEqEq => match self.find_main_module_equality(e) {
@@ -220,16 +239,7 @@ impl<'s> Folder<'_, 's> {
         left: ExprId,
         right: ExprId,
     ) -> Folded {
-        let is_decided_by_left = match op {
-            LogicalOperator::And => self.condition(left).map(|is_truthy| !is_truthy),
-            LogicalOperator::Or => self.condition(left),
-            LogicalOperator::Nullish => {
-                let is_nullish = self.is_nullish(left);
-                let is_nullish = is_nullish.or_else(|| self.is_nullish_in_bun_run(left));
-                is_nullish.map(|is_nullish| !is_nullish)
-            }
-        };
-        match is_decided_by_left {
+        match self.is_decided_by_left(op, left) {
             Some(true) => {
                 let is_excluded_by_bun_run = match op {
                     LogicalOperator::And | LogicalOperator::Or => {
@@ -262,6 +272,19 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
+    /// `left op right` has the value of `left`, or of `right`.
+    pub(super) fn is_decided_by_left(&self, op: LogicalOperator, left: ExprId) -> Option<bool> {
+        match op {
+            LogicalOperator::And => self.condition(left).map(|is_truthy| !is_truthy),
+            LogicalOperator::Or => self.condition(left),
+            LogicalOperator::Nullish => {
+                let is_nullish = self.is_nullish(left);
+                let is_nullish = is_nullish.or_else(|| self.is_nullish_in_bun_run(left));
+                is_nullish.map(|is_nullish| !is_nullish)
+            }
+        }
+    }
+
     fn is_left_addend(&self, e: ExprId) -> bool {
         let parent = self.parent_expr(e).map(|parent| self.hir[parent].kind);
         matches!(parent, Some(ExprKind::Binary { op: BinOp::Add, left, .. }) if left == e)
@@ -287,6 +310,9 @@ impl<'s> Folder<'_, 's> {
         self.exclude_operand(excluded, self.is_truthy_in_bun_run(test).is_some());
         self.copy_condition(e, selected);
         let (test, selected) = (self.folded(test), self.folded(selected));
+        if let Value::Known(_) = selected.value {
+            self.note_kept_by_bun_run(e);
+        }
         Folded::new(selected.value, test.effects.min(selected.effects))
     }
 

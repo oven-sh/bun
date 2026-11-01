@@ -1,6 +1,7 @@
 use super::Constant;
 use super::evaluate::Value;
 use super::folder::Folder;
+use super::folder_operators::LogicalOperator;
 use super::inputs::DefineValue;
 use crate::bind::CommonJsVariable;
 use crate::check::aot::has_export_from;
@@ -11,6 +12,34 @@ use crate::import_sites::is_free_common_js;
 
 fn is_logical(op: BinOp) -> bool {
     matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish)
+}
+
+pub(super) enum NullishByShape {
+    Known(bool),
+    SameAs(ExprId),
+    Unknown,
+}
+
+/// What `to_null_or_undefined` answers by the kind of a node alone.
+#[inline]
+pub(super) fn nullish_by_shape(kind: ExprKind) -> NullishByShape {
+    match kind {
+        ExprKind::Regex { .. }
+        | ExprKind::Fn(_)
+        | ExprKind::Class(_)
+        | ExprKind::Object(_)
+        | ExprKind::Array(_) => NullishByShape::Known(false),
+        ExprKind::Unary { op, .. } => NullishByShape::Known(op == UnOp::Void),
+        ExprKind::Binary {
+            op: BinOp::Comma,
+            right,
+            ..
+        } => NullishByShape::SameAs(right),
+        ExprKind::Binary { op, .. } if is_logical(op) => NullishByShape::Unknown,
+        ExprKind::Binary { .. } => NullishByShape::Known(false),
+        ExprKind::Assign { op: Some(op), .. } if !is_logical(op) => NullishByShape::Known(false),
+        _ => NullishByShape::Unknown,
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -42,7 +71,8 @@ impl<'s> Folder<'_, 's> {
             Constant::BigInt(_) => return false,
             Constant::String(text) => text,
         };
-        match self.hir[self.hir.skip_type_assertions(init)].kind {
+        let held = self.skip_to_item_in_place(self.hir.skip_type_assertions(init));
+        match self.hir[held].kind {
             ExprKind::String(_)
             | ExprKind::Ident(_)
             | ExprKind::Dot { .. }
@@ -125,15 +155,15 @@ impl<'s> Folder<'_, 's> {
                 _ => false,
             },
             ExprKind::Binary { op, left, right } => {
-                let is_either = |condition: bool| {
-                    [left, right]
-                        .map(|operand| self.is_truthy_in_bun_run(operand))
-                        .contains(&Some(condition))
+                let is_decided_by = |deciding: bool| {
+                    let conditions =
+                        [left, right].map(|operand| self.is_truthy_in_bun_run(operand));
+                    conditions.contains(&Some(deciding)) || conditions.iter().all(Option::is_some)
                 };
                 match op {
                     BinOp::Comma => is_known(right),
-                    BinOp::And => is_either(false),
-                    BinOp::Or => is_either(true),
+                    BinOp::And => is_decided_by(false),
+                    BinOp::Or => is_decided_by(true),
                     // `to_finite_number`
                     BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
                         [left, right].iter().all(|&operand| {
@@ -149,8 +179,26 @@ impl<'s> Folder<'_, 's> {
             | ExprKind::AsConst(expr)
             | ExprKind::NonNull(expr)
             | ExprKind::Instantiation { expr, .. } => is_known(expr),
+            ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Cond { .. } => {
+                self.tells_condition_by_what_is_in_place(e)
+            }
             _ => false,
         }
+    }
+
+    /// `(a(), 0) ? b : c` is `(a(), c)` to `bun run`, and `[a][0]` is `a`.
+    #[inline(never)]
+    fn tells_condition_by_what_is_in_place(&self, e: ExprId) -> bool {
+        let in_place = match self.hir[e].kind {
+            ExprKind::Cond { test, branches } => {
+                let branches = self.hir.branches(branches);
+                self.is_truthy_in_bun_run(test).map(|is_truthy| {
+                    if is_truthy { branches.yes } else { branches.no }
+                })
+            }
+            _ => self.find_item_in_place(e),
+        };
+        in_place.is_some_and(|operand| self.is_truthy_in_bun_run(operand).is_some())
     }
 
     /// `to_null_or_undefined`: an operator that always answers a number, a string or a boolean answers neither, whatever its operands are.
@@ -158,7 +206,7 @@ impl<'s> Folder<'_, 's> {
         let hir = self.hir;
         let mut e = e;
         loop {
-            e = hir.skip_type_assertions(e);
+            e = self.skip_to_item_in_place(hir.skip_type_assertions(e));
             let kind = hir[e].kind;
             if let ExprKind::Binary { op, .. } = kind
                 && is_logical(op)
@@ -173,25 +221,19 @@ impl<'s> Folder<'_, 's> {
             if let Some(DefineValue::Data(_)) = self.find_user_defined_value(e) {
                 return Some(false);
             }
-            return match kind {
-                ExprKind::Regex { .. }
-                | ExprKind::Fn(_)
-                | ExprKind::Class(_)
-                | ExprKind::Object(_)
-                | ExprKind::Array(_) => Some(false),
-                ExprKind::Unary { op, .. } => Some(op == UnOp::Void),
-                ExprKind::Binary {
-                    op: BinOp::Comma,
-                    right,
-                    ..
-                } => {
-                    e = right;
-                    continue;
-                }
-                ExprKind::Binary { .. } => Some(false),
-                ExprKind::Assign { op: Some(op), .. } => (!is_logical(op)).then_some(false),
-                _ => None,
-            };
+            if let ExprKind::Cond { test, branches } = kind {
+                let branches = hir.branches(branches);
+                e = match self.is_truthy_in_bun_run(test)? {
+                    true => branches.yes,
+                    false => branches.no,
+                };
+                continue;
+            }
+            match nullish_by_shape(kind) {
+                NullishByShape::Known(is_nullish) => return Some(is_nullish),
+                NullishByShape::SameAs(operand) => e = operand,
+                NullishByShape::Unknown => return None,
+            }
         }
     }
 
@@ -203,24 +245,106 @@ impl<'s> Folder<'_, 's> {
         left: ExprId,
         right: ExprId,
     ) {
-        let is_left_result = match op {
-            BinOp::And => self.is_truthy_in_bun_run(left).map(|is_truthy| !is_truthy),
-            BinOp::Or => self.is_truthy_in_bun_run(left),
-            _ => self
-                .is_nullish_in_bun_run(left)
-                .map(|is_nullish| !is_nullish),
-        };
-        let result = match is_left_result {
-            Some(true) => left,
-            Some(false) if self.is_literal_to_bun_run(left) => right,
-            Some(false) | None => return,
+        let Some(result) = self.find_operand_in_place_of_logical(op, left, right) else {
+            return;
         };
         if let Some(is_nullish) = self.is_nullish_in_bun_run(result) {
             self.nullish_logical_results.insert(e, is_nullish);
         }
     }
 
-    fn is_literal_to_bun_run(&self, e: ExprId) -> bool {
+    /// `visit_right_and_finish`: the operand that `bun run` puts in place of `left op right`. The right one stands there only where the left one does nothing.
+    pub(super) fn find_operand_in_place_of_logical(
+        &self,
+        op: BinOp,
+        left: ExprId,
+        right: ExprId,
+    ) -> Option<ExprId> {
+        let is_left_in_place = match op {
+            BinOp::And => self.is_truthy_in_bun_run(left).map(|is_truthy| !is_truthy),
+            BinOp::Or => self.is_truthy_in_bun_run(left),
+            _ => self
+                .is_nullish_in_bun_run(left)
+                .map(|is_nullish| !is_nullish),
+        };
+        match is_left_in_place? {
+            true => Some(left),
+            false => self.does_nothing_in_bun_run(left).then_some(right),
+        }
+    }
+
+    /// `to_boolean` and `to_null_or_undefined` find no side effect: in a literal that is no object, a function or a pattern.
+    fn does_nothing_in_bun_run(&self, e: ExprId) -> bool {
+        let held = self.skip_to_item_in_place(self.hir.skip_type_assertions(e));
+        matches!(
+            self.hir[held].kind,
+            ExprKind::Regex { .. } | ExprKind::Fn(_)
+        ) || self.is_literal_to_bun_run(held)
+    }
+
+    /// `bun run` keeps what runs in `(a(), 0)`, `[] && 1` and `[a()] ? 1 : 2`, so it has no literal there. It still knows each as a condition.
+    pub(super) fn note_kept_by_bun_run(&mut self, e: ExprId) {
+        if self.find_operand_in_place(e).is_some() {
+            return;
+        }
+        self.mark_folded_by_build_alone(e);
+        if self.tells_condition_by_shape(e) {
+            self.conditions_told_by_shape.insert(e.idx());
+        }
+    }
+
+    #[inline]
+    pub(super) fn is_folded_by_bun_run_alone(&self, e: ExprId) -> bool {
+        !self.folded_by_bun_run_alone.is_empty() && self.folded_by_bun_run_alone.contains(&e)
+    }
+
+    /// Nearly no file has a member read that `bun run` alone folds, so this stays out of the loop over the expressions.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn note_value_of_bun_run_alone(&mut self, e: ExprId) {
+        if self.takes_value_of_bun_run_alone(e) {
+            self.folded_by_bun_run_alone.insert(e);
+        }
+    }
+
+    /// The value of `e` is the value of a member read that `bun run` alone folds, or is computed from one.
+    fn takes_value_of_bun_run_alone(&self, e: ExprId) -> bool {
+        let hir = self.hir;
+        let of = |operand: ExprId| self.folded_by_bun_run_alone.contains(&operand);
+        match hir[e].kind {
+            ExprKind::Unary { operand, .. } => of(operand),
+            ExprKind::Binary {
+                op: BinOp::Comma,
+                right,
+                ..
+            } => of(right),
+            ExprKind::Binary { op, left, right } => match LogicalOperator::of(op) {
+                Some(operator) => match self.is_decided_by_left(operator, left) {
+                    Some(true) => of(left),
+                    Some(false) | None => of(right),
+                },
+                None => of(left) || of(right),
+            },
+            ExprKind::Cond { test, branches } => {
+                let branches = hir.branches(branches);
+                match self.condition(test) {
+                    Some(true) => of(branches.yes),
+                    Some(false) => of(branches.no),
+                    None => false,
+                }
+            }
+            ExprKind::Template { exprs } => hir.ids(exprs).any(of),
+            ExprKind::As { expr, .. }
+            | ExprKind::Satisfies { expr, .. }
+            | ExprKind::AsConst(expr)
+            | ExprKind::NonNull(expr)
+            | ExprKind::Instantiation { expr, .. } => of(expr),
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => of(obj),
+            _ => false,
+        }
+    }
+
+    pub(super) fn is_literal_to_bun_run(&self, e: ExprId) -> bool {
         matches!(self.folded(e).value, Value::Known(_)) && self.is_folded_by_bun_run(e)
     }
 
@@ -280,6 +404,9 @@ impl<'s> Folder<'_, 's> {
             | ExprKind::AsConst(expr)
             | ExprKind::NonNull(expr)
             | ExprKind::Instantiation { expr, .. } => by_build_alone(expr),
+            ExprKind::Dot { .. } | ExprKind::Index { .. } => {
+                self.find_item_in_place(e).is_some_and(by_build_alone)
+            }
             _ => false,
         }
     }

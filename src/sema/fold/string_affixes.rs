@@ -46,8 +46,16 @@ struct SharedPrefix {
 }
 
 impl<'s> Folder<'_, 's> {
+    /// What `bun run` alone folds names no file for a build, which reads the name where the program runs.
+    fn value_for_build(&self, e: ExprId) -> Value {
+        match self.is_folded_by_bun_run_alone(e) {
+            true => Value::Unknown,
+            false => self.folded(e).value,
+        }
+    }
+
     pub(super) fn find_specifier(&self, argument: ExprId) -> ImportSpecifier {
-        if let Value::Known(value) = self.folded(argument).value {
+        if let Value::Known(value) = self.value_for_build(argument) {
             return match self.evaluator.to_constant(value) {
                 Constant::String(text) => ImportSpecifier::Constant(text),
                 _ => ImportSpecifier::Unknown,
@@ -78,7 +86,7 @@ impl<'s> Folder<'_, 's> {
     fn expand(&self, e: ExprId) -> Expansion {
         let hir = self.hir;
         let e = hir.skip_type_assertions(e);
-        if let Value::Known(value) = self.folded(e).value {
+        if let Value::Known(value) = self.value_for_build(e) {
             return Expansion::Known(value);
         }
         match hir[e].kind {
@@ -181,7 +189,7 @@ impl<'s> Folder<'_, 's> {
         if !leading_addends.is_empty() {
             let values = leading_addends
                 .iter()
-                .map(|&addend| self.folded(addend).value);
+                .map(|&addend| self.value_for_build(addend));
             parts.push(match self.evaluator.add_all(values) {
                 Value::Known(sum) => Part::Known(sum),
                 Value::Unknown => Part::Unknown,
@@ -245,7 +253,7 @@ impl<'s> Folder<'_, 's> {
         let mut path = PathBelowFolder::default();
         let mut computed = None;
         for argument in arguments.by_ref() {
-            let Value::Known(value) = self.folded(argument).value else {
+            let Value::Known(value) = self.value_for_build(argument) else {
                 computed = Some(argument);
                 break;
             };
@@ -272,7 +280,7 @@ impl<'s> Folder<'_, 's> {
         let mut stack = vec![e];
         while let Some(candidate) = stack.pop() {
             let candidate = hir.skip_type_assertions(candidate);
-            if let Value::Known(value) = self.folded(candidate).value {
+            if let Value::Known(value) = self.value_for_build(candidate) {
                 if self.evaluator.is_string(value) {
                     return true;
                 }
@@ -526,8 +534,7 @@ impl<'s> Folder<'_, 's> {
 
     fn find_path_joining_function(&self, callee: ExprId) -> Option<Atom> {
         find_path_joining_function(self.hir, self.bound, callee, &|argument| match self
-            .folded(argument)
-            .value
+            .value_for_build(argument)
         {
             Value::Known(specifier) => Some(self.evaluator.to_constant(specifier)),
             Value::Unknown => None,

@@ -1,5 +1,5 @@
 use super::Constant;
-use super::children::TreeNode;
+use super::children::{TreeNode, push_children};
 use super::dead_code::DeadRoots;
 use super::evaluate::Value;
 use super::folder::Folder;
@@ -7,8 +7,8 @@ use super::inputs::DefineValue;
 use crate::atom::known;
 use crate::bind::{Binding, BindingKind, CommonJsVariable};
 use crate::hir::{
-    BinOp, ExprId, ExprKind, File, Flags, NameKind, PatId, PatKind, PropKey, PropKind, StmtId,
-    StmtKind, UnOp, VarKind,
+    BinOp, ExprId, ExprKind, File, Flags, IdList, NameKind, PatId, PatKind, PropKey, PropKind,
+    StmtId, StmtKind, UnOp, VarKind,
 };
 
 #[derive(Copy, Clone)]
@@ -60,6 +60,13 @@ impl Folder<'_, '_> {
         }
         let mut removal = Removal::default();
         (removal.parts).push((TreeNode::Expr(e), Rule::UndecidedTest));
+        self.removes_all(&mut removal)
+    }
+
+    /// `simplify_unused_expr` leaves nothing of it.
+    pub(super) fn is_dropped_where_unused_by_bun_run(&self, e: ExprId) -> bool {
+        let mut removal = Removal::default();
+        (removal.parts).push((TreeNode::Expr(e), Rule::UnusedValue));
         self.removes_all(&mut removal)
     }
 
@@ -128,6 +135,8 @@ impl Folder<'_, '_> {
         {
             return true;
         }
+        // `-1`, `1 + 1` and `1 < 2` are literals to `bun run` before it asks.
+        let is_literal = || self.is_literal_to_bun_run(e);
         match hir[e].kind {
             ExprKind::Missing
             | ExprKind::This
@@ -158,7 +167,7 @@ impl Folder<'_, '_> {
                 if !is_type_of_name {
                     push(&[operand]);
                 }
-                matches!(op, UnOp::Void | UnOp::Not | UnOp::Typeof)
+                matches!(op, UnOp::Void | UnOp::Not | UnOp::Typeof) || is_literal()
             }
             ExprKind::Binary { op, left, right } => {
                 let is_decided_by_left = match op {
@@ -178,6 +187,7 @@ impl Folder<'_, '_> {
                     | BinOp::And
                     | BinOp::Or
                     | BinOp::Nullish => true,
+                    _ if is_literal() => true,
                     BinOp::EqEq | BinOp::NotEq | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
                         match rule {
                             Rule::UnusedValue => {
@@ -196,6 +206,10 @@ impl Folder<'_, '_> {
                     _ => false,
                 }
             }
+            ExprKind::Template { exprs } => {
+                parts.extend(hir.ids(exprs).map(|part| (TreeNode::Expr(part), rule)));
+                is_literal()
+            }
             ExprKind::Cond { test, branches } => {
                 let branches = hir.branches(branches);
                 match self.is_truthy_in_bun_run(test) {
@@ -206,19 +220,23 @@ impl Folder<'_, '_> {
                 true
             }
             ExprKind::Array(items) => {
-                let spread_array = |item: ExprId| match hir[item].kind {
-                    ExprKind::Spread(inner) if matches!(hir[inner].kind, ExprKind::Array(_)) => {
-                        Some(inner)
-                    }
-                    _ => None,
-                };
-                let has_items = |array: ExprId| matches!(hir[array].kind, ExprKind::Array(items) if !items.is_empty());
-                // `[...[a], ...[]]` is `[a]`, and `[...[]]` stays as it is.
-                let inlines_arrays = hir.ids(items).filter_map(spread_array).any(has_items);
+                let inlines_arrays = inlines_spread_arrays(hir, items);
                 parts.extend(hir.ids(items).map(|item| {
-                    let part = spread_array(item).filter(|_| inlines_arrays);
-                    (TreeNode::Expr(part.unwrap_or(item)), rule)
+                    let part = spread_array(hir, item).filter(|_| inlines_arrays);
+                    (TreeNode::Expr(part.map_or(item, |(array, _)| array)), rule)
                 }));
+                true
+            }
+            // A member read of a literal is the member, or a literal itself. What was dropped beside it is evaluated no more.
+            ExprKind::Dot { .. } | ExprKind::Index { .. } => {
+                let item = self.find_item_in_place(e);
+                if item.is_none() && !is_literal() {
+                    return false;
+                }
+                if !removal.reads_module_or_exports {
+                    removal.reads_module_or_exports = self.names_module_or_exports_beside(e, item);
+                }
+                parts.extend(item.map(|item| (TreeNode::Expr(item), rule)));
                 true
             }
             ExprKind::Call(call) | ExprKind::New(call) if hir[call].is_pure => {
@@ -241,15 +259,42 @@ impl Folder<'_, '_> {
     }
 
     fn is_always_string(&self, e: ExprId) -> bool {
+        let e = self.skip_to_item_in_place(e);
         let defined = self.find_user_defined_value(e);
-        matches!(
-            self.hir[e].kind,
+        match self.hir[e].kind {
             ExprKind::String(_)
-                | ExprKind::Unary {
-                    op: UnOp::Typeof,
-                    ..
-                }
-        ) || matches!(defined, Some(DefineValue::Constant(Constant::String(_))))
+            | ExprKind::Unary {
+                op: UnOp::Typeof, ..
+            } => true,
+            // `"ab"[1]`
+            ExprKind::Dot { .. } | ExprKind::Index { .. } if self.is_literal_to_bun_run(e) => {
+                matches!(self.folded(e).value, Value::Known(text) if self.evaluator.is_string(text))
+            }
+            _ => matches!(defined, Some(DefineValue::Constant(Constant::String(_)))),
+        }
+    }
+
+    /// Whether what `bun run` drops of a member read names `module` or `exports`. Its walk goes on into `item` by itself.
+    fn names_module_or_exports_beside(&self, read: ExprId, item: Option<ExprId>) -> bool {
+        let mut pending = Vec::new();
+        push_children(self.hir, TreeNode::Expr(read), &mut pending);
+        while let Some(node) = pending.pop() {
+            let TreeNode::Expr(part) = node else {
+                push_children(self.hir, node, &mut pending);
+                continue;
+            };
+            if Some(part) == item {
+                continue;
+            }
+            if let ExprKind::Ident(_) = self.hir[part].kind
+                && let Binding::CommonJs(CommonJsVariable::Module | CommonJsVariable::Exports) =
+                    self.bound.binding(part)
+            {
+                return true;
+            }
+            push_children(self.hir, node, &mut pending);
+        }
+        false
     }
 
     /// `is_primitive_with_side_effects`
@@ -257,7 +302,7 @@ impl Folder<'_, '_> {
         let hir = self.hir;
         let mut pending = vec![e];
         while let Some(e) = pending.pop() {
-            let e = hir.skip_type_assertions(e);
+            let e = self.skip_to_item_in_place(hir.skip_type_assertions(e));
             if let Some(DefineValue::Constant(_)) = self.find_user_defined_value(e) {
                 continue;
             }
@@ -269,6 +314,8 @@ impl Folder<'_, '_> {
                 | ExprKind::String(_)
                 | ExprKind::BigInt(_)
                 | ExprKind::Unary { .. } => {}
+                // `[, a][0]`, `"ab"[1]` and `"ab".length`
+                ExprKind::Dot { .. } | ExprKind::Index { .. } if self.is_literal_to_bun_run(e) => {}
                 ExprKind::Binary { op, left, right } => match op {
                     BinOp::And | BinOp::Or | BinOp::Nullish => pending.extend([left, right]),
                     BinOp::Comma => pending.push(right),
@@ -283,6 +330,24 @@ impl Folder<'_, '_> {
         }
         true
     }
+}
+
+/// `inline_spread_of_array_literals`: the array literal of `...[a, b]` and its items.
+pub(super) fn spread_array(hir: &File<'_>, item: ExprId) -> Option<(ExprId, IdList<ExprId>)> {
+    let ExprKind::Spread(inner) = hir[item].kind else {
+        return None;
+    };
+    let inner = hir.skip_type_assertions(inner);
+    match hir[inner].kind {
+        ExprKind::Array(items) => Some((inner, items)),
+        _ => None,
+    }
+}
+
+/// `[...[a], ...[]]` is `[a]`, and `[...[]]` stays as it is.
+pub(super) fn inlines_spread_arrays(hir: &File<'_>, items: IdList<ExprId>) -> bool {
+    let mut arrays = hir.ids(items).filter_map(|item| spread_array(hir, item));
+    arrays.any(|(_, items)| !items.is_empty())
 }
 
 fn binds_a_name(hir: &File<'_>, pattern: PatId) -> bool {

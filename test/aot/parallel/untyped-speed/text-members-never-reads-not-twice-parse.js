@@ -7,7 +7,7 @@ const shelf = { name: "shelf", width: 3 },
   crate = { name: "crate", depth: 2, lid: true };
 const text = '{"id":7,"name":"row","ok":true}';
 let parse = JSON.parse;
-if (text.length > 1000) parse = String;
+if (process.argv.length > 99) parse = String;
 function direct(turns) {
   let sum = 0;
   for (let t = 0; t < turns; t++) {

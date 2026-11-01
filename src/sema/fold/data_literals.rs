@@ -14,15 +14,31 @@ const MAX_LINEAR_SEARCH_KEYS: usize = 8;
 impl<'s> Folder<'_, 's> {
     pub(super) fn note_array_literal(&mut self, e: ExprId, items: IdList<ExprId>) {
         let hir = self.hir;
-        if hir.ids(items).all(|item| self.is_data_part(item)) {
+        let is_data = hir.ids(items).all(|item| self.is_data_part(item));
+        if is_data && !self.holds_value_of_bun_run_alone(hir.ids(items)) {
             self.data_literals.insert(e.idx());
         }
     }
 
     pub(super) fn note_object_literal(&mut self, e: ExprId, props: Span<PropId>) {
-        if props.iter().all(|prop| self.is_data_property(prop)) {
+        let hir = self.hir;
+        let parts = props.iter().flat_map(|prop| {
+            let key = match hir.runtime_property_key(prop) {
+                PropKey::Computed(key) => Some(key),
+                _ => None,
+            };
+            key.into_iter().chain([hir[prop].value])
+        });
+        let is_data = props.iter().all(|prop| self.is_data_property(prop));
+        if is_data && !self.holds_value_of_bun_run_alone(parts) {
             self.data_literals.insert(e.idx());
         }
+    }
+
+    /// A value that `bun run` alone folds is no data of a build.
+    fn holds_value_of_bun_run_alone(&self, mut parts: impl Iterator<Item = ExprId>) -> bool {
+        !self.folded_by_bun_run_alone.is_empty()
+            && parts.any(|part| self.folded_by_bun_run_alone.contains(&part))
     }
 
     fn is_data_part(&self, e: ExprId) -> bool {

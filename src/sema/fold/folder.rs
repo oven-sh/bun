@@ -17,7 +17,7 @@ use crate::hir::{ExprId, File};
 use crate::hir_from_data::HostValue;
 use crate::import_sites::ImportSpecifier;
 use crate::session::Arena;
-use crate::util::{FxHashMap, PositionSet, SharedSort};
+use crate::util::{FxHashMap, FxHashSet, PositionSet, SharedSort};
 use std::cell::{Cell, OnceCell};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -85,6 +85,10 @@ pub(super) struct Folder<'a, 's> {
     pub(super) conditions_told_by_shape: PositionSet,
     pub(super) nullish_logical_results: FxHashMap<ExprId, bool>,
     pub(super) conditions: FxHashMap<ExprId, bool>,
+    /// The member reads of literals that `bun run` puts a member in place of, each with that member.
+    pub(super) replaced_by: FxHashMap<ExprId, ExprId>,
+    /// `bun run` folds what a build leaves as it is written: a member read of a literal, and what takes its value from one.
+    pub(super) folded_by_bun_run_alone: FxHashSet<ExprId>,
     pub(super) short_circuited_links: PositionSet,
     pub(super) call_errors: Vec<(ExprId, FoldError)>,
     pub(super) strings_over_limit: Vec<ExprId>,
@@ -130,6 +134,8 @@ pub(super) fn run<'s>(
         conditions_told_by_shape: PositionSet::new(hir.exprs.len()),
         nullish_logical_results: FxHashMap::default(),
         conditions: FxHashMap::default(),
+        replaced_by: FxHashMap::default(),
+        folded_by_bun_run_alone: FxHashSet::default(),
         short_circuited_links: PositionSet::new(hir.exprs.len()),
         call_errors: Vec::new(),
         strings_over_limit: Vec::new(),
@@ -173,6 +179,9 @@ impl<'s> Folder<'_, 's> {
             } else if let Value::Known(_) = folded.value {
                 self.values[index] = folded.value;
                 self.effects[index] = folded.effects;
+            }
+            if !self.folded_by_bun_run_alone.is_empty() {
+                self.note_value_of_bun_run_alone(e);
             }
         }
     }
@@ -218,6 +227,9 @@ impl<'s> Folder<'_, 's> {
     }
 
     pub(super) fn folded_value(&self, e: ExprId) -> FoldedValue {
+        if self.is_folded_by_bun_run_alone(e) {
+            return FoldedValue::Unknown;
+        }
         let folded = self.folded(e);
         match (folded.value, folded.effects) {
             (Value::Known(value), Effects::None) => {

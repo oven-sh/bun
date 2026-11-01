@@ -315,7 +315,13 @@ const SHORT_CIRCUITED_CHAINS: &[&str] = &[
     "const N = null; N?.a.b;",
 ];
 
-const EVALUATED_CHAINS: &[&str] = &["x?.a.b;", "0?.a;", "(null?.a).b;", "null.a;"];
+const EVALUATED_CHAINS: &[&str] = &[
+    "x?.a.b;",
+    "0?.a;",
+    "(null?.a).b;",
+    "null.a;",
+    "({ a: null }).a?.();",
+];
 
 const AFTER_EXITS: &[DeadCalls] = &[
     ("a.mjs", "function f() { return; a(); }", &["a"], &[]),
@@ -497,6 +503,88 @@ const CONSTANT_TESTS: &[DeadCalls] = &[
 const EFFECTS: &[DeadCalls] = &[
     ("a.mjs", "if (void f()) a(); else b();", &["a"], &["f", "b"]),
     ("a.mjs", "if ((f(), false)) a();", &["a"], &["f"]),
+];
+
+const MEMBER_READS_OF_LITERALS: &[DeadCalls] = &[
+    ("a.mjs", "if ({ b: 0 }.b) a(); else b();", &["a"], &["b"]),
+    ("a.mjs", "[1, 0][1] ? a() : b();", &["a"], &["b"]),
+    ("a.mjs", r#""ab".length === 2 || a();"#, &["a"], &[]),
+    ("a.mjs", r#""ab"[0] === "b" && a();"#, &["a"], &[]),
+    ("a.mjs", "[, 1][0] ?? a();", &[], &["a"]),
+    ("a.mjs", "if ([[]][0]) a(); else b();", &["b"], &["a"]),
+    (
+        "a.mjs",
+        "const K = [1, 0][1]; if (K) a(); else b();",
+        &["a"],
+        &["b"],
+    ),
+    ("a.mjs", "[a(), 0][1] ? b() : c();", &[], &["a", "b", "c"]),
+    ("a.mjs", "[module, /* @__PURE__ */ a(), 0][2];", &["a"], &[]),
+    (
+        "a.mjs",
+        "if ({ k: (f(), 0) }.k) a(); else b();",
+        &["a"],
+        &["f", "b"],
+    ),
+    (
+        "a.mjs",
+        "if ([void f()][0]) a(); else b();",
+        &["a"],
+        &["f", "b"],
+    ),
+    (
+        "a.mjs",
+        "const K = [(f(), 1)][0]; if (!K) a(); else b();",
+        &["a"],
+        &["f", "b"],
+    ),
+    (
+        "a.mjs",
+        "let v = [1, 0][1]; if (v) a(); else b();",
+        &["a"],
+        &["b"],
+    ),
+    (
+        "a.mjs",
+        "switch ([, 1][0]) { case 0: a(); break; default: b(); }",
+        &["a"],
+        &["b"],
+    ),
+    (
+        "a.mjs",
+        "if ([null?.a][0]) a(); else b();",
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.mjs",
+        "if ({ k: null?.a }.k) a(); else b();",
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.mjs",
+        "if ({ a: 1, b: 0 }.b) a(); else b();",
+        &[],
+        &["a", "b"],
+    ),
+];
+
+const VALUES_OF_BUN_RUN_ALONE: &[&str] = &[
+    "{ b: 0 }.b",
+    "[1, 0][1]",
+    "[, 1][0]",
+    r#""ab".length"#,
+    r#""ab"[0]"#,
+    r#""ab".length + 1"#,
+    "`${[1][0]}`",
+    "![0][0]",
+    "typeof [1][0]",
+    "typeof [function () {}][0]",
+    "(0, [1][0])",
+    "!(0, [[]][0])",
+    "!(x && [0][0])",
+    "[null][0]?.a",
 ];
 
 const TYPEOF_REQUIRE: &[DeadCalls] = &[
@@ -1662,6 +1750,27 @@ fn constants() {
 #[test]
 fn effects_stay() {
     check_dead_calls(EFFECTS);
+}
+
+#[test]
+fn member_reads_of_literals() {
+    check_dead_calls(MEMBER_READS_OF_LITERALS);
+    for &text in VALUES_OF_BUN_RUN_ALONE {
+        for program in [
+            format!("m({text});"),
+            format!("const K = {text}; m(K);"),
+            format!("m([{text}]);"),
+            format!("m({{ k: {text} }});"),
+        ] {
+            analyzed("a.mjs", &program, |s| {
+                let argument = only_argument(s, call_of(s, "m"));
+                assert_eq!(constant(s, argument), FoldedValue::Unknown, "{program}");
+                assert_eq!(data_value(s, argument), FoldedData::Unknown, "{program}");
+                assert!(!s.analysis.decisions.is_data_literal(argument), "{program}");
+                assert_nothing_dead(s, &program);
+            });
+        }
+    }
 }
 
 #[test]

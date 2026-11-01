@@ -2939,6 +2939,8 @@ declare module "bun" {
    *
    * A `Date` in the subset matches a `Date` with the same time value.
    * An `Error` in the subset matches an `Error` with the same message.
+   * A `Set` or a `Map` in the subset matches one of the same size whose
+   * members match. A function in the subset matches only itself.
    *
    * This also powers expect().toMatchObject in `bun:test`
    */

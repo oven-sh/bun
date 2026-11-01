@@ -61,6 +61,32 @@ describe("toMatchSnapshot errors", () => {
     expect(() => {
       expect({ a: new Error("x") }).toMatchSnapshot({ a: new Error("y") });
     }).toThrow("to match properties from received object");
+    expect(() => {
+      expect({ a: new Set([1]) }).toMatchSnapshot({ a: new Set([2]) });
+    }).toThrow("to match properties from received object");
+    expect(() => {
+      expect({ a: new Map([["k", 1]]) }).toMatchSnapshot({ a: new Map([["k", 2]]) });
+    }).toThrow("to match properties from received object");
+    expect(() => {
+      expect({ a: () => 1 }).toMatchSnapshot({ a: () => 1 });
+    }).toThrow("to match properties from received object");
+    expect(() => {
+      expect({ a: 1 }).toMatchSnapshot(expect.objectContaining({ b: 1 }));
+    }).toThrow("to match properties from received object");
+    expect(() => {
+      expect({ a: 1 }).toMatchInlineSnapshot(expect.any(Array), `{"a": 1}`);
+    }).toThrow("to match properties from received object");
+  });
+  it("should print the received value if the property matchers are one matcher", () => {
+    expect({ a: 1, b: "two" }).toMatchInlineSnapshot(
+      expect.objectContaining({ a: expect.any(Number) }),
+      `
+      {
+        "a": 1,
+        "b": "two",
+      }
+    `,
+    );
   });
   it("should throw if arguments are in the wrong order", () => {
     expect(() => {

@@ -603,7 +603,7 @@ interface CallSiteObject {
   column: number;
 }
 
-function prepareCallSites(_err: Error, callSites: NodeJS.CallSite[]) {
+function toCallSiteObjects(callSites: NodeJS.CallSite[]) {
   const result: CallSiteObject[] = [];
   for (let i = 0; i < callSites.length; i++) {
     const callSite = callSites[i];
@@ -632,6 +632,7 @@ function diff(actual, expected) {
   return require("internal/util/diff").diff(actual, expected);
 }
 
+let captureCallSites: (frameLimit: number, startFunction: Function) => NodeJS.CallSite[];
 function getCallSites(frameCount = 10, options) {
   // If options is not provided check if frameCount is an object
   if (options === undefined) {
@@ -652,27 +653,8 @@ function getCallSites(frameCount = 10, options) {
   // Using kDefaultMaxCallStackSizeToCapture as reference
   validateInteger(frameCount, "frameCount", 1, 200);
 
-  // Capture with our own prepareStackTrace so a user-installed
-  // Error.prepareStackTrace is never invoked, and so Error.stackTraceLimit
-  // does not influence the number of frames returned.
-  const target: { stack?: CallSiteObject[] } = {};
-  const savedPrepareStackTrace = Error.prepareStackTrace;
-  const savedStackTraceLimit = Error.stackTraceLimit;
-  try {
-    Error.prepareStackTrace = prepareCallSites;
-    // User code may have made stackTraceLimit non-writable; best-effort so the
-    // capture still runs and prepareStackTrace is always restored.
-    try {
-      Error.stackTraceLimit = frameCount;
-    } catch {}
-    Error.captureStackTrace(target, getCallSites);
-    return target.stack;
-  } finally {
-    Error.prepareStackTrace = savedPrepareStackTrace;
-    try {
-      Error.stackTraceLimit = savedStackTraceLimit;
-    } catch {}
-  }
+  captureCallSites ??= $newCppFunction("FormatStackTraceForJS.cpp", "jsFunctionCaptureCallSites", 2);
+  return toCallSiteObjects(captureCallSites(frameCount, getCallSites));
 }
 
 let lazySignals;

@@ -410,7 +410,6 @@ fn without_query(specifier: &[u8]) -> &[u8] {
 }
 
 /// Whether an ASCII letter or a non-ASCII byte follows the last `.` of `specifier`.
-/// Mostly a cheap way to rule out "../", ".." and "./".
 fn letter_follows_last_dot(specifier: &[u8]) -> bool {
     bun_core::strings::last_index_of_char(specifier, b'.')
         .and_then(|dot| specifier.get(dot + 1))

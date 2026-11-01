@@ -130,6 +130,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut func = func;
         func.flags.insert(flags::Function::IsUniqueFormalParameters);
         let args = func.args.slice();
+        let open_parens_loc = func.open_parens_loc;
         let value = p.new_expr(E::Function { func }, loc);
 
         // Enforce argument rules for accessors
@@ -149,6 +150,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             PropertyKind::Set => {
+                // JavaScriptCore refuses the `,` that a list as written can end with: `set x(v,) {}`.
+                p.parameter_lists_as_written
+                    .swap_remove(&open_parens_loc.start);
                 if args.len() != 1 {
                     let mut r = js_lexer::range_of_identifier(
                         p.source,

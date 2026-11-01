@@ -305,6 +305,19 @@ describe("transpiler cache", () => {
     );
     expect(newCacheCount()).toBe(0);
   });
+  test("a parameter list that holds a comment is the same from the cache", async () => {
+    // Above MINIMUM_CACHE_SIZE, so the second run prints what the first one stored.
+    const padding = "\n//" + Buffer.alloc(5 * 1024, "f").toString();
+    writeFileSync(
+      join(temp_dir, "a.js"),
+      `const text = String(function (/* token */ a) {});\nconsole.log(text.slice(text.indexOf("("), text.indexOf(")") + 1));` +
+        padding,
+    );
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("(/* token */ a)");
+    expect(newCacheCount()).toBe(1);
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("(/* token */ a)");
+    expect(newCacheCount()).toBe(0);
+  });
   test("--feature flag invalidates cache", () => {
     // feature() can only appear in an if/ternary, so wrap it
     const code = `import { feature } from "bun:bundle";\nif (feature("SUPER_SECRET")) console.log("enabled"); else console.log("disabled");`;

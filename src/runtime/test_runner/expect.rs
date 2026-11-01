@@ -1974,6 +1974,23 @@ pub(crate) struct CustomMatcherParamsFormatter {
     pub(crate) matcher_fn: JSValue,
 }
 
+/// The names of a list that the printer wrote as the source has it (`bun_ast::parameter_list_as_written`), joined as the printer joins them: the comments are no part of a name.
+fn names_of_parameter_list_as_written(after_open_paren: &[u8]) -> Option<Vec<u8>> {
+    let text = bun_ast::parameter_list_as_written::text_to_keep(after_open_paren)?;
+    let mut names = bun_ast::parameter_list_as_written::Names::new(text);
+    let mut joined = Vec::new();
+    while let Ok(Some(name)) = names.next_name() {
+        if !joined.is_empty() {
+            joined.extend_from_slice(b", ");
+        }
+        if name.is_rest {
+            joined.extend_from_slice(b"...");
+        }
+        joined.extend_from_slice(&text[name.start..name.end]);
+    }
+    Some(joined)
+}
+
 impl fmt::Display for CustomMatcherParamsFormatter {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         // try to detect param names from matcher_fn (user function) source code
@@ -1982,8 +1999,12 @@ impl fmt::Display for CustomMatcherParamsFormatter {
 
             let source: &[u8] = source_slice.slice();
             if let Some(lparen) = strings::index_of_char_usize(source, b'(') {
-                if let Some(rparen) = strings::index_of_char_pos(source, b')', lparen) {
-                    let params_str = &source[lparen + 1..rparen];
+                let as_written = names_of_parameter_list_as_written(&source[lparen + 1..]);
+                let params_str = match &as_written {
+                    Some(names) => Some(names.as_slice()),
+                    None => strings::index_of_char_pos(source, b')', lparen).map(|rparen| &source[lparen + 1..rparen]),
+                };
+                if let Some(params_str) = params_str {
                     let mut param_index: usize = 0;
                     for param_name in strings::split(params_str, b",") {
                         if param_index > 0 {

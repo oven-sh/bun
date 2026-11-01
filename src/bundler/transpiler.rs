@@ -1503,6 +1503,7 @@ impl<'a> Transpiler<'a> {
                     output_format: p_opts::Format::Esm,
                     transform_only: self.options.transform_only,
                     import_meta_glob: None,
+                    keep_parameter_lists_as_written: false,
                     import_meta_main_value: None,
                     lower_import_meta_main_for_node_js: false,
                     framework: None,
@@ -1630,6 +1631,7 @@ impl<'a> Transpiler<'a> {
                     // SAFETY: the resolver outlives the parse, which only calls it from this thread.
                     opts.import_meta_glob =
                         Some(unsafe { Resolver::import_meta_glob_host(&raw mut self.resolver) });
+                    opts.keep_parameter_lists_as_written = true;
                 }
 
                 // spec calls `transpiler.resolver.caches.js.parse`.
@@ -2483,6 +2485,7 @@ impl<'a> Transpiler<'a> {
             module_info,
             hmr_ref: ast.wrapper_ref,
             mangled_props: None,
+            parameter_lists_as_written: ast.kept_parameter_lists(),
             // The printer reads `opts.target` at
             // js_printer/lib.rs:6872 to gate the `var {require}=import.meta;`
             // hoist on `Target::Bun` — defaulting to `Browser` here regressed

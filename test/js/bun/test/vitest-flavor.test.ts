@@ -2150,6 +2150,35 @@ describe.concurrent("aroundEach and aroundAll", () => {
     });
   });
 
+  // The parameter is read from the text of the callback, and a parameter list that holds a comment is printed as it is written.
+  test("fixtures: the parameter list of a callback can hold comments", async () => {
+    const { log, results, errors, exitCode } = await runTests({
+      "a.test.js": `
+        import { test as base, describe, aroundEach } from "vitest";
+        const test = base.extend({ one: async ({}, use) => { await use("one"); } });
+        console.log(String((/* the context */ context) => {}));
+        describe("a list with no parameter", () => {
+          test("extended", (/* nothing is used */) => console.log("test without a parameter"));
+        });
+        describe("a parameter that is not a destructuring pattern", () => {
+          aroundEach((/* runs it */ runTest, /* the context */ context) => runTest());
+          test("extended", () => console.log("unreachable"));
+        });
+      `,
+    });
+    expect({ log, results, errors, exitCode }).toEqual({
+      log: ["(/* the context */ context) => {}", "test without a parameter"],
+      results: [
+        "(pass) a list with no parameter > extended",
+        "(fail) a parameter that is not a destructuring pattern > extended",
+      ],
+      errors: [
+        `error: The parameter that fixtures are destructured from must be an object destructuring pattern, received "context"`,
+      ],
+      exitCode: 1,
+    });
+  });
+
   test("skip() and test.fails", async () => {
     const { log, results, exitCode } = await runTests({
       "a.test.js": `

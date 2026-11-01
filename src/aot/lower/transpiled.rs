@@ -146,6 +146,7 @@ impl RuntimeTranspiler<'_> {
         options.tree_shaking = true;
         options.warn_about_unbundled_modules = false;
         options.use_define_for_class_fields = !request.assigns_class_fields;
+        options.keep_parameter_lists_as_written = true;
         let features = &mut options.features;
         features.standard_decorators = !request.has_legacy_decorators;
         features.allow_runtime = true;

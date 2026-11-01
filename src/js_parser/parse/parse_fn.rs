@@ -160,6 +160,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.s(S::Function { func }, loc))
     }
 
+    /// A comment was scanned after the `(` at `open_paren`. `key` is where the printer finds the list: see `bun_ast::parameter_list_as_written`.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn record_parameter_list_as_written(
+        &mut self,
+        key: bun_ast::Loc,
+        open_paren: bun_ast::Loc,
+    ) {
+        if !self.options.keep_parameter_lists_as_written {
+            return;
+        }
+        let contents: &'a [u8] = self.lexer.contents;
+        debug_assert_eq!(contents[open_paren.start as usize], b'(');
+        let after_open_paren = &contents[open_paren.start as usize + 1..];
+        if let Some(text) = js_ast::parameter_list_as_written::text_to_keep(after_open_paren) {
+            bun_core::handle_oom(
+                self.parameter_lists_as_written
+                    .put(key.start, js_ast::StoreStr::new(text)),
+            );
+        }
+    }
+
     pub(crate) fn parse_fn(
         &mut self,
         name: Option<js_ast::LocRef>,
@@ -362,6 +384,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.symbols[func.arguments_ref.inner_index() as usize].set_must_not_be_renamed(true);
         }
 
+        if p.lexer.has_comment_after(func.open_parens_loc) {
+            p.record_parameter_list_as_written(func.open_parens_loc, func.open_parens_loc);
+        }
         p.lexer.expect(T::TCloseParen)?;
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 

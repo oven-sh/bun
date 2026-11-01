@@ -63,6 +63,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.parse_paren_expr(
             loc,
+            loc,
             level,
             ParenExprOpts {
                 is_after_question_and_before_colon: flags == EFlags::AfterQuestionAndBeforeColon,
@@ -932,9 +933,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if p.is_ts_arrow_fn_jsx()? {
                 let _ =
                     p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+                let open_paren_loc = p.lexer.loc();
                 p.lexer.expect(T::TOpenParen)?;
                 return p.parse_paren_expr(
                     loc,
+                    open_paren_loc,
                     level,
                     ParenExprOpts {
                         force_arrow_fn: true,
@@ -965,9 +968,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             match p.try_skip_type_script_type_parameters_then_open_paren_with_backtracking()? {
                 SkipTypeParameterResult::DidNotSkipAnything => {}
                 result => {
+                    let open_paren_loc = p.lexer.loc();
                     p.lexer.expect(T::TOpenParen)?;
                     return p.parse_paren_expr(
                         loc,
+                        open_paren_loc,
                         level,
                         ParenExprOpts {
                             force_arrow_fn: result

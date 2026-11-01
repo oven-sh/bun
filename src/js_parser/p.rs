@@ -357,6 +357,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) stack_check: bun_core::StackCheck,
     /// `Parser::parse_only`: where what does not say so itself starts.
     pub(crate) starts_for_parse_only: Option<StartsForParseOnly>,
+    /// See `record_parameter_list_as_written`.
+    pub(crate) parameter_lists_as_written: js_ast::ParameterListsAsWritten,
 
     pub(crate) reported_stack_overflow: core::cell::Cell<bool>,
 
@@ -9460,6 +9462,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ts_enums,
             import_meta_ref: self.import_meta_ref,
             depends_on_more_than_source: self.depends_on_more_than_source(),
+            parameter_lists_as_written: core::mem::take(&mut self.parameter_lists_as_written),
 
             symbols,
             parts: parts_list,
@@ -9745,6 +9748,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             log,
             stack_check: bun_core::StackCheck::init(),
             starts_for_parse_only: None,
+            parameter_lists_as_written: Default::default(),
             reported_stack_overflow: core::cell::Cell::new(false),
             ts_infer_constraint_backtracks: Vec::new(),
             ts_conditional_arrow_attempts: Vec::new(),

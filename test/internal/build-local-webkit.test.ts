@@ -152,7 +152,9 @@ describe("which builds compile WebKit", () => {
   });
 
   test("in CI a file of the pinned trees is named as one of vendor/, however the compiler is given it", () => {
-    const cfg = linux({ ci: true, buildDir: "/work/build/release", cacheDir: "/opt/image/extracted" });
+    // A commit that no image has: a machine whose image has the pinned one reads it from there.
+    const webkitVersion = "0123456789abcdef0123456789abcdef01234567";
+    const cfg = linux({ ci: true, buildDir: "/work/build/release", cacheDir: "/opt/image/extracted", webkitVersion });
     const webkitDir = cfg.localDeps.WebKit!;
     expect(webkitDir).toStartWith(resolve("/opt/image/extracted") + sep);
     expect(computeFlags(cfg).cxxflags).toEqual(

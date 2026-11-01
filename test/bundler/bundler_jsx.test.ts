@@ -380,6 +380,53 @@ describe("bundler", () => {
       },
     });
 
+    describe.each(["cli", "api"] as const)("string shorthand attributes (%s)", backend => {
+      describe.each([false, true])("minify=%s", minify => {
+        itBundled(`jsx/PreserveStringShorthandAttributes-${backend}-${minify}`, {
+          files: {
+            "/in.jsx": `
+              const values = { "two words": "indexed" };
+              console.log(JSON.stringify(<div before="first" {"two words"} {""} {"1name"}
+                {"a:b:c"} {"a:"} {"-name"} {"quote\\\""} {"\\uD800"}
+                {"data-value"} {"ns:attr"} {"résumé"} {"𐐀"} {values["two words"]} after="last" />));
+            `,
+          },
+          backend,
+          jsx: { runtime: "preserve" },
+          minifyIdentifiers: minify,
+          minifySyntax: minify,
+          minifyWhitespace: minify,
+          // Braced shorthand attributes are a Bun syntax extension.
+          skipOnEsbuild: true,
+          onAfterBundle(api) {
+            const out = api.readFile("/out.js");
+            expect(out).toContain('data-value="data-value"');
+            expect(out).toContain('ns:attr="ns:attr"');
+            const { code } = transformSync(out, { loader: "jsx", jsxFactory: "h", charset: "utf8" });
+            api.writeFile("/out.js", `const h = (type, props) => props;\n${code}`);
+          },
+          run: {
+            stdout: JSON.stringify({
+              before: "first",
+              "two words": "indexed",
+              "": "",
+              "1name": "1name",
+              "a:b:c": "a:b:c",
+              "a:": "a:",
+              "-name": "-name",
+              'quote"': 'quote"',
+              "\uD800": "\uD800",
+              "data-value": "data-value",
+              "ns:attr": "ns:attr",
+              résumé: "résumé",
+              "𐐀": "𐐀",
+              after: "last",
+            }),
+          },
+        });
+      });
+    });
+
     itBundled("jsx/PreserveUnicodeNames", {
       files: {
         "/in.tsx": `export const element = <x-étiquette résumé="😺">你好</x-étiquette>;`,

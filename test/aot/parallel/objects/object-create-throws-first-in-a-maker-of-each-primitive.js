@@ -39,7 +39,7 @@ const attempt = (make, other) => {
     make(other);
     return "no throw";
   } catch (e) {
-    return e.constructor.name + " " + ran;
+    return e.constructor.name + " " + e.message + " " + ran;
   }
 };
 console.log(

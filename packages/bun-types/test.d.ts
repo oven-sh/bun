@@ -2306,6 +2306,8 @@ declare module "bun:test" {
      * expect({ kitchen: { area: 20 }}).toHaveProperty(["kitchen", "area"], 20);
      * expect({ [Symbol.iterator]: 1 }).toHaveProperty([Symbol.iterator], 1);
      *
+     * When `expect` comes from `"vitest"`, a Symbol in an array path does not match a symbol key, as in Vitest.
+     *
      * @param keyPath the expected property name or path, or an index
      * @param value the expected property value, if provided
      */

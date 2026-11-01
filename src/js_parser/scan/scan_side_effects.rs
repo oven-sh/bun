@@ -757,7 +757,7 @@ impl SideEffects {
     }
 
     pub(crate) fn is_primitive_with_side_effects<'a, const TS: bool, const SCAN: bool>(
-        p: &P<'a, TS, SCAN>,
+        p: &mut P<'a, TS, SCAN>,
         loc: bun_ast::Loc,
         data: &ExprData,
     ) -> bool {
@@ -809,8 +809,36 @@ impl SideEffects {
                 Op::Code::BinLogicalAnd | Op::Code::BinLogicalOr | Op::Code::BinNullishCoalescing
                 | Op::Code::BinLogicalAndAssign | Op::Code::BinLogicalOrAssign
                 | Op::Code::BinNullishCoalescingAssign => {
-                    Self::is_primitive_with_side_effects(p, e.left.loc, &e.left.data)
-                        && Self::is_primitive_with_side_effects(p, e.right.loc, &e.right.data)
+                    // A chain of these nests in `left`, so its links are taken in a loop.
+                    let stack_bottom = p.binary_expression_simplify_stack.len();
+                    let mut e = *e;
+                    while let ExprData::EBinary(left) = e.left.data
+                        && matches!(
+                            left.op,
+                            Op::Code::BinLogicalAnd
+                                | Op::Code::BinLogicalOr
+                                | Op::Code::BinNullishCoalescing
+                                | Op::Code::BinLogicalAndAssign
+                                | Op::Code::BinLogicalOrAssign
+                                | Op::Code::BinNullishCoalescingAssign
+                        )
+                    {
+                        p.binary_expression_simplify_stack
+                            .push(BinaryExpressionSimplifyVisitor { bin: e });
+                        e = left;
+                    }
+                    let mut is_primitive =
+                        Self::is_primitive_with_side_effects(p, e.left.loc, &e.left.data);
+                    loop {
+                        is_primitive = is_primitive
+                            && Self::is_primitive_with_side_effects(p, e.right.loc, &e.right.data);
+                        if !is_primitive || p.binary_expression_simplify_stack.len() == stack_bottom {
+                            break;
+                        }
+                        e = p.binary_expression_simplify_stack.pop().unwrap().bin;
+                    }
+                    p.binary_expression_simplify_stack.truncate(stack_bottom);
+                    is_primitive
                 }
                 Op::Code::BinComma => {
                     Self::is_primitive_with_side_effects(p, e.right.loc, &e.right.data)

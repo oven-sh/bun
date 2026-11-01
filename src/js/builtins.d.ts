@@ -557,6 +557,7 @@ declare function $ERR_INVALID_ASYNC_ID(name, value): RangeError;
 declare function $ERR_ASYNC_TYPE(name): TypeError;
 declare function $ERR_ASYNC_CALLBACK(name): TypeError;
 declare function $ERR_AMBIGUOUS_ARGUMENT(arg, message): TypeError;
+declare function $ERR_INVALID_FD(fd): RangeError;
 declare function $ERR_INVALID_FD_TYPE(type): TypeError;
 declare function $ERR_IP_BLOCKED(ip): Error;
 

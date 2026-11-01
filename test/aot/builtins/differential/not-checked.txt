@@ -65,7 +65,6 @@ CrashHandlerJscCrashHandlerTrap/0: the process ended or did not come back
 ExpectExtend/0: it differs in receiver
 FFIPrototypeClose/0: no set of operands selects it
 FFIPrototypeSymbols/0: no set of operands selects it
-FileInternalReadableStreamSourcePrototypeSetRawMode/0: the process ended or did not come back
 FrameworkFileSystemRouterPrototypeMatch/0: no set of operands selects it
 FrameworkFileSystemRouterPrototypeToJSON/0: no set of operands selects it
 HTMLBundlePrototypeIndex/0: no set of operands selects it
@@ -157,6 +156,7 @@ NativeFunctionsStatBindTsCreateStatsForIno/0: it is not called: a helper of Bun'
 NativeFunctionsSubprocessBindTsInjectStdioReadError/0: it is not called: it changes how the rest of the process behaves
 NativeFunctionsTrim_testingBindTsReadTrimTable/0: it is not called: it works on files that its operands name outside the folder of the test
 NativeFunctionsTrim_testingBindTsTrimExecutable/0: it is not called: it works on files that its operands name outside the folder of the test
+NativeFunctionsTty_wrapBindTsSetStdinRawMode/1: no set of operands selects it
 NativeFunctionsUdp_socketBindTsConnect/0: it is not called: it asks the name servers about every string that is no address, and waits for them
 NativeFunctionsUdp_socketBindTsDgramAdoptFd/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeFunctionsUdp_socketBindTsDgramBindFd/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too

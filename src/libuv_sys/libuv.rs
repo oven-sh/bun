@@ -1423,9 +1423,8 @@ impl Tty {
         let uv_ptr = core::ptr::from_mut(self).cast::<uv_tty_t>();
         // SAFETY: `uv` is the first `#[repr(C)]` field, sized for uv_tty_t.
         let rc = unsafe { uv_tty_init(loop_, uv_ptr, file, 0) };
-        // fd 0 is the process-static stdin tty (never freed, shared across
-        // threads by design); everything else is a heap tty owned by this thread.
-        if rc.0 == 0 && file != 0 {
+        // A heap tty owned by this thread, fd 0 too: the process-static stdin tty (never freed, shared across threads by design) is not initialised through here.
+        if rc.0 == 0 {
             open_handles::add_tty(uv_ptr);
         }
         rc

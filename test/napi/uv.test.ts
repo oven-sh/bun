@@ -154,8 +154,9 @@ describe.if(!isWindows)("uv stubs", () => {
     // uv_tty_reset_mode() restores. Restoring it succeeds (0); two threads
     // restoring it at once see UV_EBUSY (thousands of times per run on a
     // multi-core machine, possibly never on a single core, so only the absence
-    // of any other code is asserted); once the fd the snapshot was taken on is
-    // closed, the failure comes back libuv-style, as -errno.
+    // of any other code is asserted). The snapshot is taken through a
+    // descriptor of the stream's handle, as in libuv, so restoring it still
+    // succeeds once the program has closed fd 0.
     // The child reports through a file because all of its stdio is the pty.
     const resultPath = path.join(tempdir, "tty-reset-result.json");
     const decoder = new TextDecoder();
@@ -194,7 +195,7 @@ describe.if(!isWindows)("uv stubs", () => {
       isTTY: true,
       afterRaw: 0,
       concurrent: { busy: expect.any(Number), unexpected: 0 },
-      afterClose: -constants.errno.EBADF,
+      afterClose: 0,
     });
     expect(exitCode).toBe(0);
   });

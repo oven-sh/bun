@@ -9296,8 +9296,8 @@ fn qw_set_fd(qw: &mut bun_core::output::QuietWriter, fd: Fd) {
     }
 }
 
-/// Writes all of `bytes` to stdout or stderr, for a caller that has to know whether they got there. `Output` doesn't say.
-pub fn write_all_to_stdio(fd: Fd, mut bytes: &[u8]) -> Maybe<()> {
+/// Writes all of `bytes` before it returns, and waits in place for a nonblocking fd that is full. For a caller that has to know whether they got there: `Output` doesn't say for stdout and stderr.
+pub fn write_all_waiting(fd: Fd, mut bytes: &[u8]) -> Maybe<()> {
     while !bytes.is_empty() {
         match write(fd, bytes) {
             Ok(0) => return Err(Error::from_code(E::EIO, Tag::write)),
@@ -9321,7 +9321,7 @@ pub fn write_all_to_stdio(fd: Fd, mut bytes: &[u8]) -> Maybe<()> {
 /// Best-effort write-all loop. Returns `false` on I/O error / zero-write so
 /// `ScopedLogger::log` can disable the scope; "quiet" callers discard the bool.
 fn fd_write_all_quiet(fd: Fd, bytes: &[u8]) -> bool {
-    write_all_to_stdio(fd, bytes).is_ok()
+    write_all_waiting(fd, bytes).is_ok()
 }
 
 /// Concrete repr behind the opaque `bun_core::output::QuietWriterAdapter`

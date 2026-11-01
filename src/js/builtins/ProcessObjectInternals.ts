@@ -43,7 +43,7 @@ interface StdioWriteStream extends $Node.Writable {
   [Symbol.asyncIterator]?(): AsyncGenerator<never, void, unknown>;
 }
 
-/** `process.stdin`: a `tty.ReadStream` or an `fs.ReadStream`. */
+/** `process.stdin` where it is no terminal: an `fs.ReadStream`. A terminal gets a `tty.ReadStream`. */
 interface StdinStream extends $Node.Readable {
   fd: number;
   ref?(): this;
@@ -137,6 +137,50 @@ export function getNodeWorkerStdioStream(process: NodeJS.Process, fd: number, po
 
 export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boolean, fdType: BunProcessStdinFdType) {
   $assert(fd === 0);
+
+  // `isTTY` is from startup. Node asks at the first read, and fd 0 can be closed or replaced by then.
+  let isTerminalWithoutHandle = false;
+  if (isTTY && require("node:tty").isatty(fd)) {
+    let stdin: $Node.TTYReadStream | undefined;
+    try {
+      // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/bootstrap/switches/is_main_thread.js#L198-L203
+      stdin = new (require("node:tty").ReadStream)(fd);
+    } catch (err) {
+      // No descriptor is free for the handle (libuv needs none): stdin reads through the stream below, which needs none either.
+      if ((err as { code?: string } | null)?.code !== "ERR_TTY_INIT_FAILED") throw err;
+    }
+    if (stdin) return startTerminalStdin(stdin);
+    isTerminalWithoutHandle = true;
+  }
+
+  function startTerminalStdin(stdin: $Node.TTYReadStream) {
+    const readStop = () => {
+      const handle = stdin._handle as unknown as $Node.StreamWrapHandle | null;
+      if (!handle) return;
+      handle.reading = false;
+      stdin._readableState.reading = false;
+      handle.readStop();
+    };
+
+    // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/bootstrap/switches/is_main_thread.js#L248-L249: the `fd` of process.stdin stays, whatever becomes of the handle.
+    stdin.fd = fd;
+
+    // stdin starts out paused; tell the handle so nothing reads fd 0 yet.
+    readStop();
+
+    // pause() leaves the handle reading; stop it once the stream has settled.
+    stdin.on("pause", () => {
+      process.nextTick(onpause);
+    });
+
+    function onpause() {
+      const handle = stdin._handle as unknown as $Node.StreamWrapHandle | null;
+      if (handle?.reading && !stdin.readableFlowing) readStop();
+    }
+
+    return stdin;
+  }
+
   const native: ReadableStream<Uint8Array> = Bun.stdin.stream();
   const source: $Bindgen.FileInternalReadableStreamSource = native.$bunNativePtr;
 
@@ -175,8 +219,7 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     source?.updateRef?.(false);
   }
 
-  const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
-  const stream: StdinStream = new ReadStream(null, { fd, autoClose: false });
+  const stream: StdinStream = new (require("node:fs").ReadStream)(null, { fd, autoClose: false });
 
   const originalOn = stream.on;
 
@@ -200,6 +243,25 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
 
   stream.fd = fd;
 
+  if (isTerminalWithoutHandle) {
+    // It is still a terminal: `isTTY`, and a raw mode that takes no descriptor, as a handle of libuv has there.
+    const terminal = stream as StdinStream & { isTTY: boolean; isRaw: boolean; setRawMode(flag: boolean): unknown };
+    terminal.isTTY = true;
+    terminal.isRaw = false;
+    terminal.setRawMode = function (this: typeof terminal, flag: boolean) {
+      flag = !!flag;
+      const setStdinRawMode: (mode: number) => number = $bindgen("tty_wrap.bind.ts", "setStdinRawMode");
+      // libuv's UV_TTY_MODE_RAW_VT and UV_TTY_MODE_NORMAL.
+      const err = setStdinRawMode(flag ? 3 : 0);
+      if (err) {
+        this.emit("error", new (require("internal/shared").ErrnoException)(err, "setRawMode"));
+        return this;
+      }
+      this.isRaw = flag;
+      return this;
+    };
+  }
+
   // The descriptor belongs to the process: reading resumes after 'end' (see the
   // 'resume' handler) and children inherit it. Destroying stdin, which the
   // 'end' handler below does, must not close it.
@@ -207,8 +269,7 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     cb(err);
   };
 
-  // tty.ReadStream is supposed to extend from net.Socket.
-  // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods
+  // A pipe stdin is a net.Socket in Node; give the fs.ReadStream its ref/unref. So is a terminal whose handle could not be made.
   if (isTTY || fdType !== BunProcessStdinFdType.file) {
     stream.ref = function (this: StdinStream) {
       forceUnref = false;

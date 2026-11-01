@@ -19,6 +19,7 @@
     "@grpc/grpc-js": "1.12.0",
     "@grpc/proto-loader": "0.7.10",
     "@happy-dom/global-registrator": "17.0.3",
+    "@lydell/node-pty": "1.1.0",
     "@napi-rs/canvas": "0.1.91",
     "@nestjs/common": "11.0.3",
     "@nestjs/core": "11.0.3",

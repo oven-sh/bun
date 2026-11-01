@@ -222,6 +222,8 @@ pub enum Tag {
     /// An N-API addon's `uv_timer_t` (POSIX, where Bun emulates libuv).
     UvTimer,
     WorkerWaitsForRoom,
+    /// A write of a `tty_wrap.TTY` handle that waits, where the loop had no descriptor or no memory to watch its descriptor (POSIX).
+    TtyWriteRetry,
 }
 
 impl Tag {
@@ -267,7 +269,8 @@ impl Tag {
             | Tag::FakeTimersTick
             | Tag::ViWait
             | Tag::UvTimer
-            | Tag::WorkerWaitsForRoom => false,
+            | Tag::WorkerWaitsForRoom
+            | Tag::TtyWriteRetry => false,
         }
     }
 }

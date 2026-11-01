@@ -459,6 +459,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "subprocess.bind.ts": null,
   "test_context.bind.ts": null,
   "trim_testing.bind.ts": null,
+  "tty_wrap.bind.ts": null,
   "udp_socket.bind.ts": null,
   "upgrade_command.bind.ts": null,
   "valkey.bind.ts": "typeof Bun",

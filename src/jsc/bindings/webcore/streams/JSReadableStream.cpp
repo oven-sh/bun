@@ -451,7 +451,7 @@ void JSReadableStream::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    // Bun snapshots the ambient AsyncContext at construction; source callbacks restore it.
+    // Bun snapshots the ambient AsyncContext at construction; source callbacks restore it (src/jsc/STREAMS.md, "Async context").
     if (auto* asyncContextData = globalObject()->m_asyncContextData.get())
         m_asyncContext.set(vm, this, asyncContextData->getInternalField(0));
 }

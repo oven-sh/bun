@@ -7,8 +7,13 @@ import net from "node:net";
 import { Readable } from "node:stream";
 import {
   expected as directExpected,
+  expectedIn as directExpectedIn,
+  expectedStore as directExpectedStore,
   observe as directObserve,
+  observeStore as directObserveStore,
   shapes as directShapes,
+  store as directStore,
+  storeShapes as directStoreShapes,
 } from "../../web/streams/direct-stream-contract";
 import { baseHeaders, frame, RawH2, T } from "./serve-http2-helpers";
 
@@ -1357,6 +1362,46 @@ test("sync pull() under AsyncLocalStorage releases the request on end()", async 
   expect((counts.ReadableStream ?? 0) - baseline).toBeLessThan(10);
 });
 
+// The handler builds the body inside its AsyncLocalStorage.run() and returns. The server pulls the body afterwards, in the store the body was built in.
+describe("a Response body built inside the handler's AsyncLocalStorage.run()", () => {
+  const later = () => new Promise<void>(r => setImmediate(r));
+  const handlers: Record<string, (build: () => Response) => Response | Promise<Response>> = {
+    "a sync handler": build => directStore.run("request", build),
+    "an async handler, after an await": build => directStore.run("request", async () => (await later(), build())),
+  };
+  describe.each(Object.keys(handlers))("%s", handlerName => {
+    test.concurrent.each(Object.keys(directStoreShapes))("%s", async shapeName => {
+      const shape = directStoreShapes[shapeName];
+      const seen: string[] = [];
+      using server = Bun.serve({ port: 0, fetch: () => handlers[handlerName](() => new Response(shape.make(seen))) });
+      const body = await (await fetch(server.url)).text();
+      expect({ body, seen }).toEqual(directExpectedIn(shape, "request"));
+    });
+  });
+
+  // A handler runs in the store its server was started in, and so does a body it builds.
+  test.concurrent.each(Object.keys(directStoreShapes))(
+    "%s built by a handler of a server started inside run()",
+    async shapeName => {
+      const shape = directStoreShapes[shapeName];
+      const seen: string[] = [];
+      using server = directStore.run("app", () => Bun.serve({ port: 0, fetch: () => new Response(shape.make(seen)) }));
+      const body = await (await fetch(server.url)).text();
+      expect({ body, seen }).toEqual(directExpectedIn(shape, "app"));
+    },
+  );
+
+  // A body built with no store restores nothing, and the server's pull has no store of its own.
+  test.concurrent.each(Object.keys(directStoreShapes))("%s built with no store sees no store", async shapeName => {
+    const shape = directStoreShapes[shapeName];
+    const seen: string[] = [];
+    const response = new Response(shape.make(seen));
+    using server = Bun.serve({ port: 0, fetch: () => directStore.run("request", () => response) });
+    const body = await (await fetch(server.url)).text();
+    expect({ body, seen }).toEqual(directExpectedIn(shape, undefined));
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/36940
 // close() while the sink still holds unflushed bytes must put exactly one
 // chunked last-chunk (0\r\n\r\n) on the wire, whichever path performs the
@@ -2160,6 +2205,15 @@ describe("direct stream contract", () => {
       expect(got).toEqual(directExpected(shape));
     });
   });
+
+  describe("source callbacks run in the AsyncLocalStorage store the stream was built in", () => {
+    describe.each(Object.keys(directStoreShapes))("%s", shapeName => {
+      test.concurrent.each(Object.keys(consumers))("%s", async consumerName => {
+        const shape = directStoreShapes[shapeName];
+        expect(await directObserveStore(shape, consumers[consumerName])).toEqual(directExpectedStore(shape));
+      });
+    });
+  });
 });
 
 describe("direct stream edge cases over Bun.serve", () => {
@@ -2224,6 +2278,44 @@ describe("direct stream edge cases over Bun.serve", () => {
     await done.promise;
     await later();
     expect({ pulls: t.pulls, cancels: t.cancels.length }).toEqual({ pulls: 1, cancels: 1 });
+  });
+
+  // The abort reaches the source from the socket, outside any store.
+  test("client abort: cancel() and a generator's finally run in the AsyncLocalStorage store the body was built in", async () => {
+    const big = Buffer.alloc(256 * 1024, "x");
+    const bodies: Record<string, (closedIn: (store: string | undefined) => void) => BodyInit> = {
+      "cancel()": closedIn =>
+        new ReadableStream({
+          type: "direct",
+          async pull(c: any) {
+            c.write("first");
+            await c.flush();
+            // Keep writing until the socket pushes back, so the abort finds pull() parked on a write; 0 bytes means the peer is gone.
+            while (await c.write(big)) {}
+          },
+          cancel: () => closedIn(directStore.getStore()),
+        } as any),
+      "finally": closedIn =>
+        (async function* () {
+          try {
+            yield "first";
+            for (;;) yield big;
+          } finally {
+            closedIn(directStore.getStore());
+          }
+        })() as any,
+    };
+    const closedIn: Record<string, string | undefined> = {};
+    for (const [name, body] of Object.entries(bodies)) {
+      const closed = Promise.withResolvers<string | undefined>();
+      using server = Bun.serve({
+        port: 0,
+        fetch: () => directStore.run("request", () => new Response(body(closed.resolve))),
+      });
+      await abortAfter(server, "first");
+      closedIn[name] = await closed.promise;
+    }
+    expect(closedIn).toEqual({ "cancel()": "request", "finally": "request" });
   });
 
   test("client abort racing pull() resolution: exactly one of end / cancel is observed", async () => {

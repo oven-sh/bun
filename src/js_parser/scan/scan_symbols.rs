@@ -4,7 +4,42 @@ use crate::parser::FindSymbolResult;
 use bun_ast as js_ast;
 use bun_ast::{Ref, Scope};
 
+/// What a name is bound to, for [`P::bind_ts_import_equals_aliases`].
+pub(crate) enum TsNameBinding {
+    Symbol(Ref),
+    Members(js_ast::StoreRef<js_ast::TSNamespaceMemberMap>),
+    Nothing,
+}
+
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+    /// The scope walk of `find_symbol_with_record_usage`, without a use and without a new symbol.
+    pub(crate) fn find_ts_name_binding(
+        &self,
+        scope: js_ast::StoreRef<Scope>,
+        name: &[u8],
+    ) -> TsNameBinding {
+        let hash = Scope::get_member_hash(name);
+        let mut current = Some(scope);
+        while let Some(scope) = current {
+            if let Some(member) = scope.get_member_with_hash(name, hash) {
+                return TsNameBinding::Symbol(member.ref_);
+            }
+            if let Some(ts_namespace) = scope.ts_namespace {
+                let exported: &js_ast::TSNamespaceMemberMap = &ts_namespace.exported_members;
+                if let Some(member) = exported.get(name) {
+                    if member.data.is_enum() == ts_namespace.is_enum_scope {
+                        return match member.data {
+                            js_ast::ts::Data::Namespace(members) => TsNameBinding::Members(members),
+                            _ => TsNameBinding::Nothing,
+                        };
+                    }
+                }
+            }
+            current = scope.parent;
+        }
+        TsNameBinding::Nothing
+    }
+
     pub(crate) fn find_symbol(
         &mut self,
         loc: bun_ast::Loc,

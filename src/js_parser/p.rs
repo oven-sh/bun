@@ -152,6 +152,15 @@ impl<'a> ImportRecordList<'a> {
     }
 }
 
+/// `import X = A.B` in TypeScript, kept from the parse pass for [`P::bind_ts_import_equals_aliases`].
+pub(crate) struct TsImportEqualsAlias<'a> {
+    pub(crate) alias: Ref,
+    pub(crate) scope: js_ast::StoreRef<Scope>,
+    pub(crate) target: Expr,
+    pub(crate) is_export: bool,
+    pub(crate) next: Option<&'a TsImportEqualsAlias<'a>>,
+}
+
 /// See [`P::parser_snapshot`].
 pub(crate) struct ParserSnapshot<'a> {
     lexer: js_lexer::LexerSnapshot<'a>,
@@ -700,6 +709,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) ts_namespace_scopes: Vec<js_ast::StoreRef<js_ast::TSNamespaceScope>>,
     /// Companion list (sibling scopes share a map, so the scope list can't free it).
     pub(crate) ts_namespace_member_maps: Vec<js_ast::StoreRef<js_ast::TSNamespaceMemberMap>>,
+    /// Every `import X = A.B` of the file, newest first.
+    pub(crate) ts_import_equals_aliases: Option<&'a TsImportEqualsAlias<'a>>,
     /// When visiting expressions, namespace metadata is associated with the most
     /// recently visited node. If namespace metadata is present, "tsNamespaceTarget"
     /// will be set to the most recently visited node (as a way to mark that this
@@ -3399,6 +3410,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.hoist_symbols(self.module_scope_ref());
 
+        if TYPESCRIPT && self.ts_import_equals_aliases.is_some() {
+            self.bind_ts_import_equals_aliases();
+        }
+
         let mut generated_symbols_count: u32 = 3;
 
         if self.options.features.react_fast_refresh {
@@ -4777,6 +4792,89 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
         Ok(())
+    }
+
+    /// Gives each `import X = A.B` that names an enum or a namespace of this file the members of what it names.
+    #[cold]
+    #[inline(never)]
+    fn bind_ts_import_equals_aliases(&mut self) {
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        enum State {
+            Waiting,
+            InProgress,
+            Done,
+        }
+        let mut records: Vec<&'a TsImportEqualsAlias<'a>> = Vec::new();
+        let mut next = self.ts_import_equals_aliases;
+        while let Some(record) = next {
+            records.push(record);
+            next = record.next;
+        }
+        let mut index_of_alias: HashMap<Ref, u32> = HashMap::default();
+        for (index, record) in records.iter().enumerate() {
+            index_of_alias.insert(record.alias, index as u32);
+        }
+        let mut states = vec![State::Waiting; records.len()];
+        let mut in_progress: Vec<u32> = Vec::new();
+        for first in 0..records.len() as u32 {
+            if states[first as usize] != State::Waiting {
+                continue;
+            }
+            in_progress.push(first);
+            'record: while let Some(&index) = in_progress.last() {
+                let record = records[index as usize];
+                states[index as usize] = State::InProgress;
+                let mut names: Vec<&[u8]> = Vec::new();
+                let mut root = record.target;
+                while let js_ast::ExprData::EDot(dot) = root.data {
+                    names.push(dot.name.slice());
+                    root = dot.target;
+                }
+                // The bare name of an `export import` of a namespace has no binding to print.
+                let is_skipped = record.is_export
+                    && (record.scope.ts_namespace.is_some()
+                        || self.is_export_to_eliminate(record.alias));
+                let mut members = match root.data {
+                    js_ast::ExprData::EIdentifier(first_name) if !is_skipped => {
+                        let first_name = self.load_name_from_ref(first_name.ref_);
+                        match self.find_ts_name_binding(record.scope, first_name) {
+                            crate::scan::scan_symbols::TsNameBinding::Symbol(bound) => {
+                                if let Some(&other) = index_of_alias.get(&bound) {
+                                    if states[other as usize] == State::Waiting {
+                                        in_progress.push(other);
+                                        continue 'record;
+                                    }
+                                }
+                                match self.ref_to_ts_namespace_member.get(&bound) {
+                                    Some(&js_ast::ts::Data::Namespace(members)) => Some(members),
+                                    _ => None,
+                                }
+                            }
+                            crate::scan::scan_symbols::TsNameBinding::Members(members) => {
+                                Some(members)
+                            }
+                            crate::scan::scan_symbols::TsNameBinding::Nothing => None,
+                        }
+                    }
+                    _ => None,
+                };
+                for name in names.iter().rev() {
+                    members = members.and_then(|members| {
+                        let members: &js_ast::TSNamespaceMemberMap = &members;
+                        match members.get(name).map(|member| &member.data) {
+                            Some(&js_ast::ts::Data::Namespace(members)) => Some(members),
+                            _ => None,
+                        }
+                    });
+                }
+                if let Some(members) = members {
+                    self.ref_to_ts_namespace_member
+                        .insert(record.alias, js_ast::ts::Data::Namespace(members));
+                }
+                states[index as usize] = State::Done;
+                in_progress.pop();
+            }
+        }
     }
 
     // Generate a TypeScript namespace object for this namespace's scope. If this
@@ -6683,7 +6781,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loop {
             match &current.data {
                 js_ast::ExprData::EIdentifier(id) => {
-                    self.ignore_usage(id.ref_);
+                    // An `import X = A.B` alias keeps its use, so that its statement stays.
+                    let is_alias = TYPESCRIPT
+                        && self.symbols[id.ref_.inner_index() as usize].kind
+                            == js_ast::symbol::Kind::Constant;
+                    if !is_alias {
+                        self.ignore_usage(id.ref_);
+                    }
                 }
                 js_ast::ExprData::EDot(dot) => {
                     current = dot.target;
@@ -8334,6 +8438,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.scopes_in_order_for_enum.pop();
         }
 
+        debug_assert!(
+            self.ts_import_equals_aliases.is_none_or(|newest| {
+                (newest.alias.inner_index() as usize) < snapshot.symbols_len
+            })
+        );
+
         // Enum and namespace symbols also key `ref_to_ts_namespace_member`; a symbol
         // that later reuses the index must not inherit their namespace data.
         if self.symbols.len() > snapshot.symbols_len {
@@ -9882,6 +9992,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ref_to_ts_namespace_member: Default::default(),
             ts_namespace_scopes: Vec::new(),
             ts_namespace_member_maps: Vec::new(),
+            ts_import_equals_aliases: None,
             ts_namespace: RecentlyVisitedTSNamespace {
                 expr: null_expr_data(),
                 map: None,

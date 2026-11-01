@@ -72,6 +72,12 @@ afterAll(async () => {
 const BUN = bunExe();
 // With `bun -e`: prints the arguments as JSON, so a test sees where each one ends.
 const printArgv = "console.log(JSON.stringify(process.argv.slice(1)))";
+// The arguments that `word` gives in a folder with `files`. When the word fails: the error.
+const argvIn = async (files: string[], word: string) => {
+  using dir = tempDir("shell-argv", Object.fromEntries(files.map(file => [file, ""])));
+  const { stdout, stderr, exitCode } = await $`${BUN} -e ${printArgv} ${{ raw: word }}`.cwd(String(dir)).quiet();
+  return exitCode === 0 ? JSON.parse(stdout.toString()) : stderr.toString();
+};
 
 describe("bunshell", () => {
   describe("exit codes", async () => {
@@ -1297,6 +1303,65 @@ booga"
         chmodSync(noaccess, 0o755);
       }
     });
+
+    // As in sh, the whole word expands first, and then the pattern of each of its fields.
+    describe("in each field of a word that whitespace splits", () => {
+      test.each([
+        [["qa"], "*$(echo a b)", ["qa", "b"]],
+        [["qa", "b"], "*$(echo a b)", ["qa", "b"]],
+        [["qa"], "*`echo a b`", ["qa", "b"]],
+        [["qa"], "*$(echo a b)$(echo c d)", ["qa", "bc", "d"]],
+        [["qxa", "byc", "dz"], "q*$(echo a b)*$(echo c d)*", ["qxa", "byc", "dz"]],
+        [["qa", "bqc"], "$(echo a b)*$(echo c d)", ["a", "bqc", "d"]],
+        [["a.txt", "b.md"], "*.txt${U:- *.md}", ["a.txt", "b.md"]],
+        [["a.txt"], "*.txt${U:- x}", ["a.txt", "x"]],
+        [["qa"], '${U:-"" }*', ["", "qa"]],
+        // Each `$(...)` of the word runs before the first walk.
+        [[], 'n*$(echo ".txt x")$(touch new.txt)', ["new.txt", "x"]],
+        [[], "n*.txt${U:- $(touch new.txt)}", ["new.txt"]],
+        // A `*` that the script does not have is data in each field.
+        [["qa", "qb"], '*$(echo "a *b")', ["qa", "*b"]],
+        [["qa"], '"*"$(echo a b)', ["*a", "b"]],
+        // A field with no `*` of the script gets no walk, and a word with one field is as before.
+        [["qa"], "${U:+*.none}x$(echo a b)", ["xa", "b"]],
+        [["qa"], "*$(true)", ["qa"]],
+        // A pattern with no match fails the word, in each field.
+        [["qa"], "*zzz$(echo a b)", "bun: no matches found: *zzza\n"],
+        [["qa"], "*$(echo a zz)*$(echo b c)", "bun: no matches found: zz*b\n"],
+        [["qa"], "$(echo a b)*", "bun: no matches found: b*\n"],
+        // An error of the word comes before the walk of a field.
+        [["a.new"], '*.n$(echo "ew y")${V:?boom}', "bun: V: boom\n"],
+      ])("in %j, %s", async (files, word, expected) => {
+        expect(await argvIn(files, word)).toEqual(expected);
+      });
+
+      TestBuilder.command`echo hi > ${{ raw: "*$(echo a b)" }}; ls`
+        .ensureTempDir()
+        .file("qa", "")
+        .stderr("bun: ambiguous redirect: at `echo`\n")
+        .stdout("qa\n")
+        .runAsTest("a redirect target with two fields is ambiguous");
+
+      test.if(isPosix && !isRoot)(
+        "a walk that fails in a field after the first one reports the real error",
+        async () => {
+          await using dir = tempDir("glob-field-eacces", { "qa": "" });
+          const noaccess = join(dir, "noaccess");
+          mkdirSync(noaccess);
+          chmodSync(noaccess, 0o000);
+          try {
+            const { stdout, stderr, exitCode } = await $`echo q*$(echo a noaccess/)*`.cwd(String(dir)).quiet();
+            expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+              stdout: "",
+              stderr: expect.stringMatching(/^bun: Permission denied: .*noaccess/),
+              exitCode: 1,
+            });
+          } finally {
+            chmodSync(noaccess, 0o755);
+          }
+        },
+      );
+    });
   });
 
   describe("brace expansion", () => {
@@ -1341,6 +1406,48 @@ booga"
       const { stderr, exitCode } = await $`echo ${{ raw: word }}`.quiet().nothrow();
       expect(stderr.toString()).toBe("bun: unexpected token while expanding braces\n");
       expect(exitCode).toBe(1);
+    });
+
+    // As in bash, a group expands before the word splits: each variant has the fields of the word.
+    describe("in a word that whitespace splits", () => {
+      test.each([
+        [[], "{x,y}$(echo a b)", ["xa", "b", "ya", "b"]],
+        [[], "$(echo 1 2){a,b}", ["1", "2a", "1", "2b"]],
+        [[], "{a,b}${U:-c }", ["ac", "bc"]],
+        [[], "{a,b}${U:- c}", ["a", "c", "b", "c"]],
+        [[], "{a,$(echo 'b c')}", ["a", "b", "c"]],
+        [[], "{a$(echo 'x y'),b}", ["ax", "y", "b"]],
+        [[], "{a,${U:-b c}}", ["a", "b", "c"]],
+        [[], '{"",x}${U:- }y', ["", "y", "x", "y"]],
+        [[], '${U:-"" }{a,b}', ["", "a", "", "b"]],
+        // A pattern of a variant gets its walk.
+        [["qa"], "*$(echo a b){x,y}", ["qa", "bx", "qa", "by"]],
+        [["qa"], "q*${U:- }{a,b}", ["qa", "a", "qa", "b"]],
+        [["ax", "bx", "cx"], "{a,b,c}*$(echo x y)", ["ax", "y", "bx", "y", "cx", "y"]],
+        [["qa"], "{q*,zzz*}$(echo a b)", "bun: no matches found: zzz*a\n"],
+        // A group with no `,` is text.
+        [["qa"], "*$(echo a b){x},y", ["qa", "b{x},y"]],
+        [[], "{x}$(echo a b)", ["{x}a", "b"]],
+        [[], "a,b$(echo c d)", ["a,bc", "d"]],
+      ])("in %j, %s", async (files, word, expected) => {
+        expect(await argvIn(files, word)).toEqual(expected);
+      });
+
+      test("an interpolated value is data in each variant", async () => {
+        const values = ["{x,y}", "a,b", "\\", "\x01*", "\x01|", '\x01"'];
+        for (const value of values) {
+          const { stdout, stderr } = await $`${BUN} -e ${printArgv} {l,r}${value}$(echo 1 2)`.quiet();
+          expect(stderr.toString()).toBe("");
+          expect(JSON.parse(stdout.toString())).toEqual([`l${value}1`, "2", `r${value}1`, "2"]);
+        }
+      });
+
+      test("more variants than the limit fail the word", async () => {
+        const word = Buffer.alloc(17 * 5, "{a,b}").toString() + "$(echo 1 2)";
+        const { stderr, exitCode } = await $`echo ${{ raw: word }}`.quiet();
+        expect(stderr.toString()).toBe("bun: too many brace expansions (131072 > 65536)\n");
+        expect(exitCode).toBe(1);
+      });
     });
   });
 
@@ -1758,7 +1865,7 @@ booga"
             ["a", "", "b"],
             ["", ""],
             [""],
-            ["", "a", "b"],
+            ["", "a", "", "b"],
             [],
             ["x"],
           ]);
@@ -1822,23 +1929,18 @@ booga"
           ]);
         });
 
-        // A `{a,b}` or a `*` expands only in the last field of an argument. sh expands it in each field.
-        test("a brace group or a glob in a field that whitespace of a word ends is text", async () => {
-          expect(await argvOf("{a,b}${U:-c } *.none${U:-d } *.none${U:- e}")).toEqual([
-            "{a,b}c",
-            "*.noned",
-            "*.none",
-            "e",
-          ]);
-        });
-        test.failing("a brace group in a field that whitespace of a word ends", async () => {
+        // As in sh, a `{a,b}` or a `*` expands in each field of an argument.
+        test("a brace group in a field that whitespace of a word ends", async () => {
           expect(await argvOf("{a,b}${U:-c }")).toEqual(["ac", "bc"]);
         });
-        test.failing("a glob in a field that whitespace of a word ends", async () => {
-          using dir = tempDir("shell-word-glob", { "a.txt": "" });
-          const { stdout } = await $`${BUN} -e ${printArgv} ${{ raw: "*.txt${U:- }" }}`.cwd(String(dir));
-          expect(JSON.parse(stdout.toString())).toEqual(["a.txt"]);
+        test("a glob in a field that whitespace of a word ends", async () => {
+          expect(await argvIn(["a.txt"], "*.txt${U:- }")).toEqual(["a.txt"]);
         });
+        raw("echo *.none${U:-d }; echo *.none${U:- e}")
+          .ensureTempDir()
+          .stderr("bun: no matches found: *.noned\nbun: no matches found: *.none\n")
+          .exitCode(1)
+          .runAsTest("a glob with no match in a field that whitespace of a word ends");
 
         raw('S=é; echo ${S:-ü} ${U:-ü ö} "${U:-ü ö}" é${U:+ü}é')
           .stdout("é ü ö ü ö éé\n")

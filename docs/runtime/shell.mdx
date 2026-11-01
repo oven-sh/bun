@@ -370,7 +370,8 @@ These forms differ from `sh` in a few ways:
 - Three cases do not fail the command. After `export NAME` with no value, `${NAME?word}` sees `NAME` as set. `VAR=$(cmd "${NAME:?}")` prints the message, but the assignment succeeds. An assignment that is a member of a pipeline, as in `VAR=${NAME:?} | cmd`, is not expanded.
 - The value of a variable is one argument. Bun Shell does not split it at whitespace, and a `*` in it is not a glob. `${NAME:=a b}` is one argument.
 - A form in double quotes that expands to nothing gives no argument, as `"$NAME"` does.
-- A `*` or a `{a,b}` expands only in the last argument that a word gives. In `*.md${EXTRA:+ $EXTRA}`, the `*.md` stays as written when `EXTRA` is set. Put a space before the form.
+- A `*` in the word is a glob in each argument that has it. A glob with no match fails its command, where `sh` passes the pattern as text.
+- Beside a `{a,b}`, the word is expanded one time for all variants. In `{a,b}${NAME:-$(cmd)}`, `cmd` runs one time, where `bash` runs it two times.
 - An assignment before a command does not read an earlier one of the same command. In `A=1 B=${A:-2} cmd`, `B` is `2`.
 - Other `${...}` forms, such as `${#NAME}`, `${NAME%pattern}`, `${NAME/a/b}` and `${10}`, are not supported. Bun Shell does not expand them: the `$` is text, and the rest is read as ordinary shell syntax.
 - When a form has no closing `}`, Bun Shell reads every `${` of the script as text. When that script also has a `:?` or a `?` form, Bun Shell reports `Unclosed parameter expansion` and runs nothing.

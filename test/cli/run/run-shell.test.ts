@@ -222,6 +222,9 @@ const paramRows: ParamRow[] = [
   ["X=1; true \"${X:?}\" && echo RAN", "RAN\n"],
   ["X=v; ./args.sh ${X:-{}} \"${X:-{}}\" ${X:+{m}}", "<v}><v}><{m}>\n"],
   ["./args.sh ${X:={}}; ./args.sh \"$X\"", "<{}>\n<{>\n"],
+  ["./args.sh ar*${X:- } ar*.sh${X:- pack*} ${X:-ar*$(echo .sh b)}", "<args.sh><args.sh><package.json><args.sh><b>\n"],
+  ["./args.sh {a,b}${X:-c } {a,b}${X:- c} ${X:-\"\" }{a,b}", "<ac><bc><a><c><b><c><><a><><b>\n"],
+  ["./args.sh ar*${X:-$(echo .sh b)}{x,y} {a,${X:-b c}}", "<args.sh><bx><args.sh><by><a><b><c>\n"],
 ];
 
 // `--shell=system` runs bash when there is one. bash 3.2 (macOS) and dash give other results for a few rows.

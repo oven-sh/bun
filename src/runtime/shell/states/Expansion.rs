@@ -21,6 +21,7 @@ pub(crate) struct Expansion {
     pub(crate) state: ExpansionState,
     /// Index of the next sub-atom to expand. For `Atom::Simple` this is 0/1;
     /// for `Atom::Compound` it walks `c.atoms`.
+    /// After `finish_fields`: the entry of `meta_offsets` where the next field for `out` starts.
     pub(crate) word_idx: u32,
     /// Output sink the parent provided. The parent is reachable via
     /// `base.parent`, so the sink is just a buffer the parent reads back on
@@ -28,7 +29,7 @@ pub(crate) struct Expansion {
     pub out: ExpansionOut,
     /// Working buffer for the *current* word being assembled. When a word
     /// boundary is hit (IFS split / glob result), it is flushed into `out`
-    /// via `push_current_out`.
+    /// via `push_current_out`. A field that `end_field` ends with a [`FIELD_END`] stays here, for `finish_fields`.
     pub(crate) current_out: Vec<u8>,
     /// Byte offsets in `current_out` written by literal metacharacter atoms
     /// (`Asterisk`/`DoubleAsterisk`/`BraceBegin`/`Comma`/`BraceEnd`). Only
@@ -36,6 +37,7 @@ pub(crate) struct Expansion {
     /// `transition_to_glob_state`; metacharacter bytes from any other source
     /// (JS interpolation, quoted text, `$var`, command substitution) are data
     /// and must not change the expansion structure or broaden the glob.
+    /// [`FIELD_END`] entries are no offsets.
     pub(crate) meta_offsets: Vec<u32>,
     pub(crate) child_script: Option<NodeId>,
     /// Whether the in-flight command substitution was `"$(...)"` (no IFS
@@ -84,9 +86,104 @@ enum EarlierFields {
     InOut,
 }
 
+/// In `meta_offsets`, in place of the offset of a metacharacter: a field ended. The next entry is the offset in
+/// `current_out` where it ended. `end_field` adds the two entries when `finish_fields` is to expand the fields.
+const FIELD_END: u32 = u32::MAX;
+/// As [`FIELD_END`], for a field with a `""`.
+const FIELD_END_QUOTED_EMPTY: u32 = u32::MAX - 1;
+
+/// A field of `current_out`.
+struct Field<'a> {
+    bytes: &'a [u8],
+    /// The offsets of its metacharacters in `current_out`.
+    marks: &'a [u32],
+    /// Where it starts in `current_out`.
+    start: u32,
+    has_quoted_empty: bool,
+    /// No `FIELD_END` ends it: it is what `push_current_out` adds for an atom with no `FIELD_END`.
+    is_last: bool,
+}
+
+impl Field<'_> {
+    /// As `Expansion::has_glob_syntax`, for one field.
+    fn has_glob_syntax(&self) -> bool {
+        self.marks
+            .iter()
+            .any(|&mark| self.bytes[(mark - self.start) as usize] == b'*')
+    }
+}
+
+/// Fields of `current_out`, in order: `meta_offsets` has a [`FIELD_END`] after each one but the last.
+struct Fields<'a> {
+    current_out: &'a [u8],
+    /// The entries of `meta_offsets` from the next field on. `None`: the last field is given.
+    marks: Option<&'a [u32]>,
+    /// Where the next field starts in `current_out`.
+    start: usize,
+    has_quoted_empty: bool,
+}
+
+impl<'a> Fields<'a> {
+    /// The fields from the one whose entries start at `first_mark` in `meta_offsets`.
+    fn new(
+        current_out: &'a [u8],
+        meta_offsets: &'a [u32],
+        first_mark: usize,
+        has_quoted_empty: bool,
+    ) -> Fields<'a> {
+        Fields {
+            current_out,
+            marks: Some(&meta_offsets[first_mark..]),
+            // The entry before is the end of the field before.
+            start: first_mark
+                .checked_sub(1)
+                .map_or(0, |end| meta_offsets[end] as usize),
+            has_quoted_empty,
+        }
+    }
+}
+
+impl<'a> Iterator for Fields<'a> {
+    type Item = Field<'a>;
+
+    fn next(&mut self) -> Option<Field<'a>> {
+        let marks = self.marks?;
+        let field_end = marks
+            .iter()
+            .position(|&mark| mark >= FIELD_END_QUOTED_EMPTY);
+        let (marks, end, has_quoted_empty) = match field_end {
+            Some(at) => {
+                self.marks = Some(&marks[at + 2..]);
+                let end = marks[at + 1] as usize;
+                (&marks[..at], end, marks[at] == FIELD_END_QUOTED_EMPTY)
+            }
+            None => {
+                self.marks = None;
+                (marks, self.current_out.len(), self.has_quoted_empty)
+            }
+        };
+        let field = Field {
+            bytes: &self.current_out[self.start..end],
+            marks,
+            start: self.start as u32,
+            has_quoted_empty,
+            is_last: field_end.is_none(),
+        };
+        self.start = end;
+        Some(field)
+    }
+}
+
+/// In an atom for brace expansion, before a byte that is not text: a `*` of the script, [`FIELD_END_IN_BRACES`],
+/// [`FIELD_END_QUOTED_EMPTY_IN_BRACES`], or `BRACE_TAG` itself, which is then data.
+const BRACE_TAG: u8 = 0x01;
+const FIELD_END_IN_BRACES: u8 = b'|';
+const FIELD_END_QUOTED_EMPTY_IN_BRACES: u8 = b'"';
+
 /// The word of a `${NAME<op>word}` while it expands.
 struct WordFrame {
-    param: &'static ast::ParamExp,
+    /// `None`: the atoms of `node` itself, after the first [`FIELD_END`]. Only `idx` has a use then.
+    param: Option<&'static ast::ParamExp>,
     /// The next atom of the word.
     idx: u32,
     /// Where the word starts in `current_out`.
@@ -97,6 +194,20 @@ struct WordFrame {
     one_string: bool,
     /// `has_quoted_empty` before the word.
     had_quoted_empty: bool,
+}
+
+impl WordFrame {
+    /// The frame for the atoms of `node`, where `idx` is the one that gave the first [`FIELD_END`].
+    fn of_node(idx: u32) -> WordFrame {
+        WordFrame {
+            param: None,
+            idx,
+            start: 0,
+            meta_start: 0,
+            one_string: false,
+            had_quoted_empty: false,
+        }
+    }
 }
 
 /// The words that are open: a word in the word of another form puts that one in `outer`.
@@ -607,8 +718,7 @@ impl Expansion {
             },
             ast::Atom::Simple(_) => unreachable!("expand_simple_no_io leaves a Param"),
         };
-        // An assignment value and a `[[ ]]` operand are one string.
-        let one_string = me.assign_ctx || matches!(interp.node(me.base.parent), Node::CondExpr(_));
+        let one_string = Self::is_one_string(interp, me);
         match Self::open_word(interp, me, param, one_string) {
             Some(top) => Self::walk_words(
                 interp,
@@ -623,6 +733,11 @@ impl Expansion {
                 Yield::Next(this)
             }
         }
+    }
+
+    /// Whether the word of a form that is an atom of `node` is one string: an assignment value and a `[[ ]]` operand are.
+    fn is_one_string(interp: &Interpreter, me: &Expansion) -> bool {
+        me.assign_ctx || matches!(interp.node(me.base.parent), Node::CondExpr(_))
     }
 
     /// Appends the value of the parameter when that is the result. Else the word is the result: gives its frame.
@@ -670,7 +785,7 @@ impl Expansion {
         }
         me.current_out.truncate(len);
         Some(WordFrame {
-            param,
+            param: Some(param),
             idx: 0,
             start: len as u32,
             meta_start: me.meta_offsets.len() as u32,
@@ -684,25 +799,45 @@ impl Expansion {
     }
 
     /// Expands the open words, up to the end of the outermost one or to a `$(...)`, which `child_done` resumes from.
+    /// After a [`FIELD_END`], `next` has no step for the fields: the rest of the atoms of `node` expand here too, up to
+    /// `finish_fields`.
     #[cold]
     fn walk_words(interp: &Interpreter, this: NodeId, mut words: WordFrames) -> Yield {
         loop {
             let me = interp.as_expansion_mut(this);
-            let Some(atom) = words.top.param.word.get(words.top.idx as usize) else {
-                if !Self::close_word(me, &words.top) {
+            let node = me.node;
+            let atom = match words.top.param {
+                Some(param) => param.word.get(words.top.idx as usize),
+                None => match node.get() {
+                    ast::Atom::Compound(compound) => compound.atoms.get(words.top.idx as usize),
+                    ast::Atom::Simple(_) => None,
+                },
+            };
+            let Some(atom) = atom else {
+                let Some(param) = words.top.param else {
+                    return Self::finish_fields(interp, this);
+                };
+                if !Self::close_word(me, param, &words.top) {
                     return Yield::Next(this);
                 }
-                let Some(outer) = words.outer.pop() else {
-                    me.word_idx += 1;
-                    return Yield::Next(this);
+                words.top = match words.outer.pop() {
+                    Some(outer) => outer,
+                    None if Self::has_field_end(me) => WordFrame::of_node(me.word_idx),
+                    None => {
+                        me.word_idx += 1;
+                        return Yield::Next(this);
+                    }
                 };
-                words.top = outer;
                 words.top.idx += 1;
                 continue;
             };
             match atom {
                 ast::SimpleAtom::Param(param) => {
-                    if let Some(inner) = Self::open_word(interp, me, param, words.top.one_string) {
+                    let one_string = match words.top.param {
+                        Some(_) => words.top.one_string,
+                        None => Self::is_one_string(interp, me),
+                    };
+                    if let Some(inner) = Self::open_word(interp, me, *param, one_string) {
                         words.outer.push(core::mem::replace(&mut words.top, inner));
                         continue;
                     }
@@ -741,10 +876,10 @@ impl Expansion {
         }
     }
 
-    /// Ends a word. The word of a `=` is assigned and the word of a `?` is the error. `false`: `state` is an error.
-    fn close_word(me: &mut Expansion, frame: &WordFrame) -> bool {
+    /// Ends the word of `param`. The word of a `=` is assigned and the word of a `?` is the error. `false`: `state` is an error.
+    fn close_word(me: &mut Expansion, param: &ast::ParamExp, frame: &WordFrame) -> bool {
         if !matches!(
-            frame.param.op.action,
+            param.op.action,
             ast::ParamAction::Assign | ast::ParamAction::Error
         ) {
             return true;
@@ -756,7 +891,7 @@ impl Expansion {
 
         use std::io::Write as _;
         let mut message: Vec<u8> = Vec::new();
-        match (frame.param.op.action, frame.param.target) {
+        match (param.op.action, param.target) {
             (ast::ParamAction::Assign, ast::ParamTarget::Name(name)) => {
                 me.current_out.extend_from_slice(&word);
                 let value = EnvStr::init_ref_counted(word.into_boxed_slice());
@@ -780,7 +915,7 @@ impl Expansion {
                 message.extend_from_slice(b": ");
                 if !word.is_empty() {
                     message.extend_from_slice(&word);
-                } else if frame.param.op.colon {
+                } else if param.op.colon {
                     message.extend_from_slice(b"parameter null or not set");
                 } else {
                     message.extend_from_slice(b"parameter not set");
@@ -791,23 +926,236 @@ impl Expansion {
         false
     }
 
-    /// Ends the field in `current_out` before the end of the walk. With no bytes and no `""`, it is no argument.
+    /// Ends the field in `current_out` before the end of the walk. When the atom has a brace group of the script, or
+    /// `current_out` has a metacharacter of the script for a glob, the field stays there with a [`FIELD_END`]:
+    /// `finish_fields` expands it after the walk.
     fn end_field(me: &mut Expansion) {
+        let node = me.node;
+        let atom = node.get();
         if me.earlier_fields == EarlierFields::None {
             me.earlier_fields = EarlierFields::Empty;
-            let node = me.node;
-            if matches!(node.get(), ast::Atom::Compound(c)
+            if matches!(atom, ast::Atom::Compound(c)
                 if c.atoms.first().is_some_and(|a| matches!(a, ast::SimpleAtom::Tilde)))
             {
                 Self::apply_leading_tilde(me);
             }
         }
+        if !atom.has_brace_expansion() && (!atom.has_glob_expansion() || me.meta_offsets.is_empty())
+        {
+            return Self::add_ended_field(me);
+        }
+        // The field is of a `$(...)` that `next` started: `child_done` goes on in `walk_words`, as after one in the word of a form.
+        if let ExpansionState::CmdSubst(words @ None) = &mut me.state {
+            *words = Some(Box::new(WordFrames {
+                top: WordFrame::of_node(me.word_idx),
+                outer: Vec::new(),
+            }));
+        }
+        let field_end = if me.has_quoted_empty {
+            FIELD_END_QUOTED_EMPTY
+        } else {
+            FIELD_END
+        };
+        me.meta_offsets
+            .extend_from_slice(&[field_end, me.current_out.len() as u32]);
+        me.has_quoted_empty = false;
+    }
+
+    /// Whether `end_field` left a [`FIELD_END`].
+    fn has_field_end(me: &Expansion) -> bool {
+        me.meta_offsets
+            .iter()
+            .any(|&mark| mark >= FIELD_END_QUOTED_EMPTY)
+    }
+
+    /// Adds the field in `current_out`, which is not the last one, to `out`. With no bytes and no `""`, it is no argument.
+    fn add_ended_field(me: &mut Expansion) {
         if me.current_out.is_empty() && !me.has_quoted_empty {
             return;
         }
         Self::push_current_out(me);
         me.has_quoted_empty = false;
         me.earlier_fields = EarlierFields::InOut;
+    }
+
+    /// The end of the walk of an atom with a [`FIELD_END`]: after brace expansion, its fields go to `out`.
+    #[cold]
+    fn finish_fields(interp: &Interpreter, this: NodeId) -> Yield {
+        let me = interp.as_expansion_mut(this);
+        if me.node.get().has_brace_expansion() && !Self::expand_braces_of_fields(me) {
+            return Yield::Next(this);
+        }
+        me.word_idx = 0;
+        Self::add_fields(interp, this, false)
+    }
+
+    /// Brace expansion for an atom with a [`FIELD_END`]. The variants take the place of the atom in `current_out`, with
+    /// a `FIELD_END` between two of them, and each one has the field ends of the atom. `false`: `state` is an error.
+    /// `do_brace_expand` is inline in `next`, the step of each word: it stays as it is, for an atom with no `FIELD_END`.
+    fn expand_braces_of_fields(me: &mut Expansion) -> bool {
+        use bun_shell_parser::braces;
+        // As in `do_brace_expand`, a `{`, `,` or `}` that is not of the script is data. A `*` of the script and a
+        // field end go through the expansion behind a `BRACE_TAG`.
+        let mut tagged: Vec<u8> = Vec::with_capacity(me.current_out.len() + me.meta_offsets.len());
+        let marks = &me.meta_offsets[..];
+        let mut next_mark = 0usize;
+        for i in 0..=me.current_out.len() {
+            while let [field_end @ (FIELD_END | FIELD_END_QUOTED_EMPTY), end, ..] =
+                marks[next_mark..]
+                && end as usize == i
+            {
+                next_mark += 2;
+                let field_end = if field_end == FIELD_END {
+                    FIELD_END_IN_BRACES
+                } else {
+                    FIELD_END_QUOTED_EMPTY_IN_BRACES
+                };
+                tagged.extend_from_slice(&[BRACE_TAG, field_end]);
+            }
+            let Some(&b) = me.current_out.get(i) else {
+                break;
+            };
+            if marks.get(next_mark) == Some(&(i as u32)) {
+                next_mark += 1;
+                if b == b'*' {
+                    tagged.push(BRACE_TAG);
+                }
+            } else if matches!(b, b'{' | b'}' | b',' | b'\\') {
+                tagged.push(b'\\');
+            } else if b == BRACE_TAG {
+                tagged.push(BRACE_TAG);
+            }
+            tagged.push(b);
+        }
+        let mut lexer_output = if bun_core::is_all_ascii(&tagged) {
+            bun_core::handle_oom(braces::Lexer::tokenize(&tagged))
+        } else {
+            bun_core::handle_oom(
+                braces::NewLexer::<{ braces::StringEncoding::Wtf8 }>::tokenize(&tagged),
+            )
+        };
+        let count = braces::calculate_expanded_amount(&lexer_output.tokens[..]);
+        const MAX_BRACE_EXPANSIONS: u32 = 65536;
+        if count > MAX_BRACE_EXPANSIONS {
+            let msg = format!("too many brace expansions ({count} > {MAX_BRACE_EXPANSIONS})");
+            me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
+            return false;
+        }
+        if count == 0 {
+            // No group of the atom has a `,`: the atom is its one variant.
+            return true;
+        }
+        let mut variants: Vec<Vec<u8>> = (0..count).map(|_| Vec::new()).collect();
+        let arena = bun_alloc::Arena::new();
+        if let Err(e) = braces::expand(
+            &arena,
+            &mut lexer_output.tokens[..],
+            &mut variants[..],
+            lexer_output.contains_nested,
+        ) {
+            let msg = match e {
+                braces::ParserError::TooManyBraces => "too many braces in brace expansion",
+                braces::ParserError::UnexpectedToken => "unexpected token while expanding braces",
+                braces::ParserError::OutOfMemory => bun_core::out_of_memory(),
+            };
+            me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.as_bytes().into())));
+            return false;
+        }
+        drop(arena);
+
+        let between_variants = if me.has_quoted_empty {
+            FIELD_END_QUOTED_EMPTY
+        } else {
+            FIELD_END
+        };
+        me.current_out.clear();
+        me.meta_offsets.clear();
+        for (n, variant) in variants.iter().enumerate() {
+            if n != 0 {
+                me.meta_offsets
+                    .extend_from_slice(&[between_variants, me.current_out.len() as u32]);
+            }
+            let mut bytes = variant.iter().copied();
+            while let Some(b) = bytes.next() {
+                if b != BRACE_TAG {
+                    me.current_out.push(b);
+                    continue;
+                }
+                let end = me.current_out.len() as u32;
+                match bytes.next() {
+                    Some(b'*') => {
+                        me.meta_offsets.push(end);
+                        me.current_out.push(b'*');
+                    }
+                    Some(FIELD_END_IN_BRACES) => {
+                        me.meta_offsets.extend_from_slice(&[FIELD_END, end]);
+                    }
+                    Some(FIELD_END_QUOTED_EMPTY_IN_BRACES) => {
+                        me.meta_offsets
+                            .extend_from_slice(&[FIELD_END_QUOTED_EMPTY, end]);
+                    }
+                    Some(data) => me.current_out.push(data),
+                    None => {}
+                }
+            }
+        }
+        true
+    }
+
+    /// Adds the fields of `current_out` from `word_idx` on to `out`, up to one with a `*` of the script. That one is for
+    /// a glob walk: `on_glob_walk_done` adds its matches and comes back here, with `after_walk`, for the fields after it.
+    #[cold]
+    fn add_fields(interp: &Interpreter, this: NodeId, after_walk: bool) -> Yield {
+        let me = interp.as_expansion_mut(this);
+        if after_walk && interp.failed() {
+            // The script failed: the rest of the word is not expanded.
+            me.state = ExpansionState::Done;
+            return Yield::Next(this);
+        }
+        let current_out = core::mem::take(&mut me.current_out);
+        let meta_offsets = core::mem::take(&mut me.meta_offsets);
+        let last_has_quoted_empty = me.has_quoted_empty;
+        let mut first_mark = me.word_idx as usize;
+        let mut fields = Fields::new(
+            &current_out,
+            &meta_offsets,
+            first_mark,
+            last_has_quoted_empty,
+        );
+        if after_walk && let Some(walked) = fields.next() {
+            first_mark += walked.marks.len() + 2;
+        }
+        let mut pattern = None;
+        for field in fields {
+            if field.has_glob_syntax() {
+                pattern = Some(field);
+                break;
+            }
+            first_mark += field.marks.len() + 2;
+            me.current_out.extend_from_slice(field.bytes);
+            me.has_quoted_empty = field.has_quoted_empty;
+            if field.is_last {
+                Self::push_current_out(me);
+            } else {
+                Self::add_ended_field(me);
+            }
+        }
+        let Some(pattern) = pattern else {
+            me.state = ExpansionState::Done;
+            return Yield::Next(this);
+        };
+        // `transition_to_glob_state` walks what `current_out` has. After it, all fields are back there, and `word_idx`
+        // says which one has the walk.
+        me.current_out.extend_from_slice(pattern.bytes);
+        me.meta_offsets
+            .extend(pattern.marks.iter().map(|&mark| mark - pattern.start));
+        me.word_idx = first_mark as u32;
+        let walk = Self::transition_to_glob_state(interp, this);
+        let me = interp.as_expansion_mut(this);
+        me.current_out = current_out;
+        me.meta_offsets = meta_offsets;
+        me.has_quoted_empty = last_has_quoted_empty;
+        walk
     }
 
     /// Flush `current_out` into `out`
@@ -1023,7 +1371,10 @@ impl Expansion {
                 };
                 me.state = ExpansionState::Err(Box::new(shell_err));
             } else {
-                let msg = format!("no matches found: {}", bstr::BStr::new(&me.current_out));
+                let msg = format!(
+                    "no matches found: {}",
+                    bstr::BStr::new(Self::walked_field(me))
+                );
                 me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
             }
             Yield::Next(this).run(interp);
@@ -1037,9 +1388,27 @@ impl Expansion {
             for entry in result {
                 Self::push_variant(me, &entry);
             }
+            if Self::has_field_end(me) {
+                return Self::add_fields(interp, this, true).run(interp);
+            }
             me.state = ExpansionState::Done;
         }
         Yield::Next(this).run(interp);
+    }
+
+    /// The field of the glob walk. In an atom with a [`FIELD_END`], `add_fields` left all fields in `current_out`.
+    fn walked_field(me: &Expansion) -> &[u8] {
+        if !Self::has_field_end(me) {
+            return &me.current_out;
+        }
+        Fields::new(
+            &me.current_out,
+            &me.meta_offsets,
+            me.word_idx as usize,
+            false,
+        )
+        .next()
+        .map_or(&me.current_out, |field| field.bytes)
     }
 
     /// Take the error out of `state == Err(_)` (called by the parent on

@@ -186,6 +186,14 @@ describe("yield", async () => {
       );
     });
 
+    // The first `$(...)` ends a field of a word with a `*`, so the walk of the word goes on in `walk_words`.
+    test.concurrent("in a $(...) after a field end of a word with a *", async () => {
+      await expectRejection(
+        '$`echo *$(echo a b)$(echo x > ${new Blob(["x"])}; echo y); echo no`.quiet().nothrow()',
+        builtin,
+      );
+    });
+
     // This one always rejected (the error comes straight out of `.run()`), but
     // the interpreter was never finished and kept the event loop alive forever.
     test.concurrent("first command, and the process still exits", async () => {
@@ -303,6 +311,11 @@ describe("yield", async () => {
       // not spawn its command.
       test.concurrent("a member whose glob expansion completes after the failure", async () => {
         await expectRejection(`$\`${sleeper} * | ${bad}\`.quiet().nothrow()`, external);
+      });
+
+      // Each of the two fields of the word has a `*`. The walk of the second one must not start after the failure.
+      test.concurrent("a member whose glob expansion has one more field after the failure", async () => {
+        await expectRejection(`$\`${sleeper} \${{ raw: "*\${U:- }*" }} | ${bad}\`.quiet().nothrow()`, external);
       });
 
       test.concurrent("a member inside a subshell is killed", async () => {

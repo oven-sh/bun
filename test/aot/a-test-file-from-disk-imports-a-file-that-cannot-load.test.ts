@@ -3,9 +3,13 @@
 // file fails with what is wrong below: before a name that it imports is looked for, and before a file that it imports runs.
 // Each case is a folder of one project: a build costs as much for one case as for all of them.
 import { afterAll, expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { beforeAll, test } from "./supported";
+
+// One of the two builds takes a debug build of Bun longer than the limit that supported.ts sets.
+if (isDebug) raiseDefaultTimeout(900_000);
 
 const words: Record<string, Record<string, string>> = {
   "the test files from disk": { BUN_AOT_TEST_FILES_FROM_DISK: "1" },
@@ -121,8 +125,8 @@ const project = {
   ),
 };
 
-/** What the test files of one folder printed, and what the files that they import printed. */
-type Case = { errors: string[]; caught: string[]; ends: string[]; printed: string[] };
+/** What the test files of one folder printed, the errors between tests by test file, and what the files beside them printed. */
+type Case = { errors: Record<string, string[]>; caught: string[]; ends: string[]; printed: string[] };
 
 async function runTests(directory: string, env: Record<string, string>, ...flags: string[]) {
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--isolate", ...flags], directory, {
@@ -132,17 +136,18 @@ async function runTests(directory: string, env: Record<string, string>, ...flags
   // A test file of every folder fails, so the run ends with 1. What else has ended it says so on stderr alone.
   if (exitCode !== 1) console.error(stderr);
   const cases: Record<string, Case> = {};
-  const of = (folder: string) => (cases[folder] ??= { errors: [], caught: [], ends: [], printed: [] });
-  const withoutDirectory = stderr.replace(/[^\s'"]*\/(c\d+\/(?:src|tests)\/)/g, "$1");
+  const of = (folder: string) => (cases[folder] ??= { errors: {}, caught: [], ends: [], printed: [] });
+  const withoutDirectory = stderr.replaceAll("\\", "/").replace(/[^\s'"]*\/(c\d+\/(?:src|tests)\/)/g, "$1");
   // What a test file prints follows a line with its path. What the run prints at its end begins with the failed files, if it
   // lists them, and with the counts if not.
   const end = withoutDirectory.search(/^(?:\d+ tests failed:| *\d+ pass)$/m);
   const [underPaths, atEnd] =
     end < 0 ? [withoutDirectory, ""] : [withoutDirectory.slice(0, end), withoutDirectory.slice(end)];
-  const [, ...parts] = underPaths.split(/^(c\d+)\/tests\/\S+:$/m);
-  for (let index = 0; index < parts.length; index += 2) {
-    const [folder, text] = [of(parts[index]), parts[index + 1]];
-    folder.errors.push(...[...text.matchAll(/^-{31}\n([^]*?)\n-{31}$/gm)].map(match => match[1]));
+  const [, ...parts] = underPaths.split(/^(c\d+)\/tests\/(\S+):$/m);
+  for (let index = 0; index < parts.length; index += 3) {
+    const [folder, file, text] = [of(parts[index]), parts[index + 1], parts[index + 2]];
+    const errors = [...text.matchAll(/^-{31}\n([^]*?)\n-{31}$/gm)].map(match => match[1]);
+    if (errors.length) (folder.errors[file] ??= []).push(...errors);
     folder.caught.push(...(text.match(/^CAUGHT .*$/gm) ?? []));
     for (const [, result, title] of text.matchAll(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/gm))
       folder.ends.push(`${result} ${title}`);
@@ -164,8 +169,8 @@ async function runTests(directory: string, env: Record<string, string>, ...flags
   };
 }
 
-// `bun test --isolate <flags>` in the one project, once for each way of running it. The runs start together, and the cases
-// follow one another and only compare: the first case of a form waits for its build, which has run beside the one before it.
+// `bun test --isolate <flags>` in the one project, once for each way of running it. The runs start together, and a case waits
+// for the two that it compares. The cases are concurrent: one that runs alone and times out ends every child process.
 const ways: Record<string, [env: Record<string, string>, ...flags: string[]]> = {
   "bun test": [{}],
   ...Object.fromEntries(Object.entries(words).map(([form, env]) => [form, [env, "--aot"]])),
@@ -188,12 +193,12 @@ afterAll(async () => {
 });
 
 for (const form of Object.keys(words)) {
-  test.each(Object.keys(cannotLoad))(`${form}: a file that %s`, async name => {
+  test.concurrent.each(Object.keys(cannotLoad))(`${form}: a file that %s`, async name => {
     const folder = folderOf(name);
     const wrong = cannotLoad[name].wrong(folder);
     const plain = (await runs.get("bun test")!).cases[folder];
     expect(plain).toEqual({
-      errors: [wrong.printed],
+      errors: { "takes-a-name.test.js": [wrong.printed] },
       caught: [`CAUGHT ${wrong.message} | ${wrong.message} | true`],
       ends: ["pass a healthy file", "pass the load is caught twice"],
       printed: [],
@@ -201,10 +206,12 @@ for (const form of Object.keys(words)) {
     expect((await runs.get(form)!).cases[folder]).toEqual(plain);
   });
 
-  test(`${form}: the run of all the cases ends as under bun test`, async () => {
+  test.concurrent(`${form}: the run of all the cases ends as under bun test`, async () => {
     const count = Object.keys(cannotLoad).length;
     const plain = (await runs.get("bun test")!).whole;
-    expect(plain).toMatchObject({
+    expect(plain).toEqual({
+      // `bun test` lists the files that failed at its end where more than 20 tests pass.
+      failed: Object.keys(cannotLoad).map(name => `${folderOf(name)}/tests/takes-a-name.test.js`),
       counts: [`${2 * count} pass`, `${count} fail`, `${count} errors`, `${count} expect() calls`],
       ran: `Ran ${3 * count} tests across ${3 * count} files`,
       stdout: "",

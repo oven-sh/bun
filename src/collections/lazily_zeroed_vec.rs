@@ -1,89 +1,78 @@
+// Its user decodes images from anywhere, and a panic aborts the process.
+#![deny(clippy::indexing_slicing)]
+
 use core::mem::MaybeUninit;
 use core::ops::Range;
 
 use bun_alloc::AllocError;
 
-/// A `Vec<u8>` in the making that is written in any order. A block of it is filled with zeros when a byte of it is first
-/// asked for. Until then nothing is written to the block, so it takes no memory.
+use crate::DynamicBitSet;
+
+/// A `Vec<u8>` in the making. A block of it is zeroed, and takes memory, only once a byte of it is asked for.
 pub struct LazilyZeroedVec {
-    /// Empty, with room for `len` bytes.
-    bytes: Vec<u8>,
-    len: usize,
-    /// A bit for each block.
-    filled: Vec<u8>,
-    /// Every block that starts before this is filled.
-    filled_to: usize,
+    bytes: Box<[MaybeUninit<u8>]>,
+    /// Which blocks are zeroed.
+    zeroed: DynamicBitSet,
+    /// Every block that starts before this is zeroed.
+    zeroed_to: usize,
 }
 
-/// The least that a system hands out memory in, so a smaller one would save nothing.
-const BLOCK: usize = 4096;
+/// The least that a system hands out memory in. Less for Miri, which takes its time over every byte.
+const BLOCK: usize = if cfg!(miri) { 64 } else { 4096 };
 
 impl LazilyZeroedVec {
     #[inline]
     pub fn try_new(len: usize) -> Result<Self, AllocError> {
-        let (mut bytes, mut filled) = (Vec::new(), Vec::new());
-        bytes.try_reserve_exact(len).map_err(|_| AllocError)?;
-        let filled_len = len.div_ceil(BLOCK).div_ceil(8);
-        filled
-            .try_reserve_exact(filled_len)
-            .map_err(|_| AllocError)?;
-        filled.resize(filled_len, 0);
         Ok(Self {
-            bytes,
-            len,
-            filled,
-            filled_to: 0,
+            bytes: Box::try_new_uninit_slice(len).map_err(|_| AllocError)?,
+            zeroed: DynamicBitSet::init_empty(len.div_ceil(BLOCK))?,
+            zeroed_to: 0,
         })
     }
 
     /// `None` if `range` is not within the length.
     #[inline]
     pub fn get_mut(&mut self, range: Range<usize>) -> Option<&mut [u8]> {
-        if range.start > range.end || range.end > self.len {
-            return None;
+        self.bytes.get(range.start..range.end)?;
+        if range.end > self.zeroed_to && !range.is_empty() {
+            self.zero(range.start..range.end);
         }
-        if range.end > self.filled_to {
-            self.fill(&range);
-        }
-        // SAFETY: every block that has a byte of `range` is filled, because it starts before `filled_to` or by `fill()`,
-        // and `&mut [u8]` cannot take the value from a byte again.
-        Some(unsafe { self.bytes.spare_capacity_mut()[range].assume_init_mut() })
+        // SAFETY: each block that `range` reaches into starts before `zeroed_to` or was zeroed just now, and a
+        // `&mut [u8]` cannot undo that.
+        Some(unsafe { self.bytes.get_mut(range)?.assume_init_mut() })
     }
 
-    /// Fills the blocks that have a byte of `range`, which is within the length.
-    // Cold, or it is made a part of `get_mut()`, which is then too long to become a part of its caller.
+    // `#[cold]` keeps it out of `get_mut()`, which is inlined only while short. `#[inline]`: the caller's opt-level.
     #[cold]
     #[inline]
-    fn fill(&mut self, range: &Range<usize>) {
-        let bytes = &mut self.bytes.spare_capacity_mut()[..self.len];
-        for block in range.start / BLOCK..range.end.div_ceil(BLOCK) {
-            let (byte, bit) = (&mut self.filled[block / 8], 1 << (block % 8));
-            if *byte & bit == 0 {
-                let end = bytes.len().min((block + 1) * BLOCK);
-                bytes[block * BLOCK..end].fill(MaybeUninit::new(0));
-                *byte |= bit;
+    fn zero(&mut self, range: Range<usize>) {
+        let first = range.start / BLOCK;
+        let blocks = self.bytes.chunks_mut(BLOCK).skip(first);
+        for (index, block) in (first..range.end.div_ceil(BLOCK)).zip(blocks) {
+            if !self.zeroed.is_set(index) {
+                block.fill(MaybeUninit::new(0));
+                self.zeroed.set(index);
             }
         }
-        while self.filled_to < self.len {
-            let block = self.filled_to / BLOCK;
-            if self.filled[block / 8] & (1 << (block % 8)) == 0 {
-                break;
-            }
-            self.filled_to += BLOCK;
+        while self
+            .zeroed
+            .is_set_allow_out_of_bound(self.zeroed_to / BLOCK, false)
+        {
+            self.zeroed_to += BLOCK;
         }
     }
 
-    /// Fills the blocks that were never asked for.
+    /// Zeroes the blocks that were never asked for.
     #[inline]
     pub fn into_vec(mut self) -> Vec<u8> {
-        self.get_mut(0..self.len);
-        // SAFETY: every block is filled, and `try_new()` got room for `len` bytes.
-        unsafe { self.bytes.set_len(self.len) };
-        self.bytes
+        self.zero(0..self.bytes.len());
+        // SAFETY: every block is zeroed.
+        unsafe { self.bytes.assume_init() }.into_vec()
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
 
@@ -130,52 +119,34 @@ mod tests {
     }
 
     #[test]
-    fn how_far_it_is_filled_without_a_gap() {
+    fn how_far_it_is_zeroed_without_a_gap() {
         let mut vec = new(5 * BLOCK);
-        let mut filled_to = |start: usize| {
+        let mut zeroed_to = |start: usize| {
             assert_eq!(vec.get_mut(start..start + 2).unwrap(), [0; 2]);
-            vec.filled_to
+            vec.zeroed_to
         };
-        assert_eq!(filled_to(0), BLOCK);
-        assert_eq!(filled_to(BLOCK - 2), BLOCK);
+        assert_eq!(zeroed_to(0), BLOCK);
+        assert_eq!(zeroed_to(BLOCK - 2), BLOCK);
         // The third and the fourth block, with the second still to come.
-        assert_eq!(filled_to(3 * BLOCK - 1), BLOCK);
-        assert_eq!(filled_to(BLOCK), 4 * BLOCK);
-        assert_eq!(filled_to(5 * BLOCK - 2), 5 * BLOCK);
+        assert_eq!(zeroed_to(3 * BLOCK - 1), BLOCK);
+        assert_eq!(zeroed_to(BLOCK), 4 * BLOCK);
+        assert_eq!(zeroed_to(5 * BLOCK - 2), 5 * BLOCK);
         assert_eq!(vec.into_vec(), [0; 5 * BLOCK]);
     }
 
     #[test]
-    fn once_every_block_is_filled() {
+    fn once_every_block_is_zeroed() {
         let mut vec = new(2 * BLOCK + 1);
         for start in [2 * BLOCK, 0, BLOCK] {
             vec.get_mut(start..start + 1).unwrap()[0] = 7;
         }
-        assert!(vec.filled_to >= vec.len);
+        assert!(vec.zeroed_to >= vec.bytes.len());
         assert_eq!(vec.get_mut(BLOCK - 1..BLOCK + 2).unwrap(), [0, 7, 0]);
         assert!(vec.get_mut(0..2 * BLOCK + 2).is_none());
         vec.get_mut(1..2).unwrap()[0] = 8;
         let all = vec.into_vec();
         assert_eq!(all[..3], [7, 8, 0]);
         assert_eq!(all[2 * BLOCK - 1..], [0, 7]);
-    }
-
-    #[test]
-    fn more_blocks_than_a_byte_has_bits() {
-        let len = 19 * BLOCK;
-        let mut vec = new(len);
-        for block in [18, 0, 7, 8, 9, 3] {
-            vec.get_mut(block * BLOCK..block * BLOCK + 1).unwrap()[0] = block as u8 + 1;
-        }
-        let all = vec.into_vec();
-        for block in 0..19 {
-            let written = [18, 0, 7, 8, 9, 3].contains(&block);
-            assert_eq!(
-                all[block * BLOCK],
-                if written { block as u8 + 1 } else { 0 }
-            );
-            assert_eq!(all[block * BLOCK + 1..(block + 1) * BLOCK], [0; BLOCK - 1]);
-        }
     }
 
     #[test]
@@ -190,7 +161,18 @@ mod tests {
         assert!(vec.get_mut(0..usize::MAX).is_none());
         assert!(vec.get_mut(usize::MAX..usize::MAX).is_none());
         assert!(vec.get_mut(5..4).is_none());
+        // And asking for it zeroes nothing.
+        let mut untouched = new(3 * BLOCK);
+        assert!(untouched.get_mut(0..3 * BLOCK + 1).is_none());
+        assert_eq!(untouched.zeroed_to, 0);
         assert_eq!(vec.into_vec(), [0; BLOCK + 10]);
+    }
+
+    #[test]
+    fn no_byte_zeroes_no_block() {
+        let mut vec = new(2 * BLOCK);
+        assert_eq!(vec.get_mut(BLOCK + 1..BLOCK + 1).unwrap(), []);
+        assert_eq!(vec.zeroed.count(), 0);
     }
 
     #[test]

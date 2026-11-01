@@ -1392,6 +1392,7 @@ describe("empty usages on a private or secret key", () => {
     for (const error of errors) {
       expect(error).toBeInstanceOf(DOMException);
       expect({ name: error.name, code: error.code }).toEqual({ name: "SyntaxError", code: DOMException.SYNTAX_ERR });
+      expect(error.stack).toBeString();
     }
   });
 });

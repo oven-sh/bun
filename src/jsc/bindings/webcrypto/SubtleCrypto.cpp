@@ -58,7 +58,6 @@
 #include "CryptoKeyRSA.h"
 #include "BunString.h"
 #include "ErrorCode.h"
-#include "JSDOMException.h"
 #include "JSDOMExceptionHandling.h"
 #include "VectorSizeLimit.h"
 #include "node/crypto/CryptoUtil.h"
@@ -554,7 +553,9 @@ static void rejectWithException(Ref<DeferredPromise>&& passedPromise, ExceptionC
 {
     // createDOMException() turns this code into JavaScript's own SyntaxError.
     if (ec == SyntaxError) {
-        passedPromise->reject<IDLInterface<DOMException>>(DOMException::create(ec, msg.isEmpty() ? "A required parameter was missing or out-of-range"_s : msg));
+        passedPromise->rejectWithCallback([&](JSDOMGlobalObject& globalObject) {
+            return createDOMExceptionObject(&globalObject, ec, msg.isEmpty() ? "A required parameter was missing or out-of-range"_s : msg);
+        });
         return;
     }
     if (!msg.isEmpty()) {

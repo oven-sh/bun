@@ -1467,6 +1467,7 @@ interface $BunModules {
   "internal/freelist": $ModuleValue<typeof import("./internal/freelist")>;
   "internal/fs/binding": $ModuleValue<typeof import("./internal/fs/binding")>;
   "internal/fs/cp": $ModuleValue<typeof import("./internal/fs/cp")>;
+  "internal/fs/cp-symlink-dotdot": $ModuleValue<typeof import("./internal/fs/cp-symlink-dotdot")>;
   "internal/fs/cp-sync": $ModuleValue<typeof import("./internal/fs/cp-sync")>;
   "internal/fs/file_handles": $ModuleValue<typeof import("./internal/fs/file_handles")>;
   "internal/fs/glob": $ModuleValue<typeof import("./internal/fs/glob")>;

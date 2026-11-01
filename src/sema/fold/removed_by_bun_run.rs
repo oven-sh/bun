@@ -19,6 +19,12 @@ enum Rule {
     UndecidedTest,
 }
 
+#[derive(Copy, Clone)]
+pub(super) struct SpreadArray {
+    pub(super) operand: ExprId,
+    pub(super) items: IdList<ExprId>,
+}
+
 #[derive(Default)]
 struct Removal {
     parts: Vec<(TreeNode, Rule)>,
@@ -104,7 +110,7 @@ impl Folder<'_, '_> {
                 true
             }
             StmtKind::If { test, yes, no } => {
-                let condition = self.is_truthy_in_bun_run(test);
+                let condition = self.is_truthy_as_test_in_bun_run(test);
                 let rule = condition.map_or(Rule::UndecidedTest, |_| unused);
                 parts.push((TreeNode::Expr(test), rule));
                 let branches = [(yes, true), (no, false)];
@@ -170,6 +176,11 @@ impl Folder<'_, '_> {
                 matches!(op, UnOp::Void | UnOp::Not | UnOp::Typeof) || is_literal()
             }
             ExprKind::Binary { op, left, right } => {
+                // `bun run` has one literal in place of `a + b + c`.
+                if op == BinOp::Add && is_literal() {
+                    push(&self.collect_addends(e));
+                    return true;
+                }
                 let is_decided_by_left = match op {
                     BinOp::And => self.is_truthy_in_bun_run(left) == Some(false),
                     BinOp::Or => self.is_truthy_in_bun_run(left) == Some(true),
@@ -198,21 +209,25 @@ impl Folder<'_, '_> {
                             }
                         }
                     }
-                    // A string joined with "" is that string.
+                    // A string joined with "" is that string. `fold_string_addition` leaves `"é" + ""` alone.
                     BinOp::Add => [(left, right), (right, left)].iter().any(|&(text, empty)| {
                         self.is_always_string(text)
                             && matches!(hir[empty].kind, ExprKind::String(it) if it == known::empty)
+                            && !self.is_text_outside_ascii(text)
                     }),
                     _ => false,
                 }
             }
+            // `expr_can_be_removed_if_unused` lets a template go whose parts are primitives. `simplify_unused_expr` keeps one that is not folded.
             ExprKind::Template { exprs } => {
                 parts.extend(hir.ids(exprs).map(|part| (TreeNode::Expr(part), rule)));
-                is_literal()
+                let has_primitive_parts =
+                    || hir.ids(exprs).all(|part| self.is_always_primitive(part));
+                is_literal() || (matches!(rule, Rule::UndecidedTest) && has_primitive_parts())
             }
             ExprKind::Cond { test, branches } => {
                 let branches = hir.branches(branches);
-                match self.is_truthy_in_bun_run(test) {
+                match self.is_truthy_as_test_in_bun_run(test) {
                     Some(true) => push(&[test, branches.yes]),
                     Some(false) => push(&[test, branches.no]),
                     None => push(&[test, branches.yes, branches.no]),
@@ -220,10 +235,13 @@ impl Folder<'_, '_> {
                 true
             }
             ExprKind::Array(items) => {
-                let inlines_arrays = inlines_spread_arrays(hir, items);
+                let inlines_arrays = self.inlines_spread_arrays(items);
                 parts.extend(hir.ids(items).map(|item| {
-                    let part = spread_array(hir, item).filter(|_| inlines_arrays);
-                    (TreeNode::Expr(part.map_or(item, |(array, _)| array)), rule)
+                    let operand = self.find_spread_array(item).filter(|_| inlines_arrays);
+                    (
+                        TreeNode::Expr(operand.map_or(item, |spread| spread.operand)),
+                        rule,
+                    )
                 }));
                 true
             }
@@ -297,6 +315,29 @@ impl Folder<'_, '_> {
         false
     }
 
+    fn is_text_outside_ascii(&self, e: ExprId) -> bool {
+        matches!(self.folded(e).value, Value::Known(text) if self.evaluator.is_string_outside_ascii(text))
+    }
+
+    /// `inline_spread_of_array_literals`: the array literal that `bun run` holds behind `...`, as in `...[a, b]` and `...(0, [a, b])`. It is noted where the spread is folded: who asks whether a list is removed must not ask `held_by_bun_run`, which asks that.
+    #[inline]
+    pub(super) fn note_spread_array(&mut self, spread: ExprId, operand: ExprId) {
+        if let ExprKind::Array(items) = self.hir[self.held_by_bun_run(operand)].kind {
+            let array = SpreadArray { operand, items };
+            self.spread_arrays.insert(spread, array);
+        }
+    }
+
+    pub(super) fn find_spread_array(&self, item: ExprId) -> Option<SpreadArray> {
+        self.spread_arrays.get(&item).copied()
+    }
+
+    /// `[...[a], ...[]]` is `[a]`, and `[...[]]` stays as it is.
+    pub(super) fn inlines_spread_arrays(&self, items: IdList<ExprId>) -> bool {
+        let mut arrays = (self.hir.ids(items)).filter_map(|item| self.find_spread_array(item));
+        arrays.any(|spread| !spread.items.is_empty())
+    }
+
     /// `is_primitive_with_side_effects`
     fn is_always_primitive(&self, e: ExprId) -> bool {
         let hir = self.hir;
@@ -330,24 +371,6 @@ impl Folder<'_, '_> {
         }
         true
     }
-}
-
-/// `inline_spread_of_array_literals`: the array literal of `...[a, b]` and its items.
-pub(super) fn spread_array(hir: &File<'_>, item: ExprId) -> Option<(ExprId, IdList<ExprId>)> {
-    let ExprKind::Spread(inner) = hir[item].kind else {
-        return None;
-    };
-    let inner = hir.skip_type_assertions(inner);
-    match hir[inner].kind {
-        ExprKind::Array(items) => Some((inner, items)),
-        _ => None,
-    }
-}
-
-/// `[...[a], ...[]]` is `[a]`, and `[...[]]` stays as it is.
-pub(super) fn inlines_spread_arrays(hir: &File<'_>, items: IdList<ExprId>) -> bool {
-    let mut arrays = hir.ids(items).filter_map(|item| spread_array(hir, item));
-    arrays.any(|(_, items)| !items.is_empty())
 }
 
 fn binds_a_name(hir: &File<'_>, pattern: PatId) -> bool {

@@ -69,6 +69,13 @@ esm	=	js	if ([`a${1}`, 0][1]) module.exports = 1;
 esm	=	js	if ([undefined, 0][1]) module.exports = 1;
 esm	=	js	if ([NaN, 0][1]) module.exports = 1;
 esm	=	js	if ([Infinity, 0][1]) module.exports = 1;
+esm	=	js	if ([...(0, [1, 0])][1]) module.exports = 1;
+esm	=	js	if ([...(1 ? [1, 0] : [])][1]) module.exports = 1;
+esm	=	js	if ([...[[1, 0]][0]][1]) module.exports = 1;
+cjs	=	js	if ([...(a(), [1, 0])][1]) module.exports = 1;
+esm	=	js	[module, ...([...([...([...([...([...([...([...([...([...([...([...([...([...([...([...([...([...([...([...([...([...([...([...([...([] ? [0] : [])] ? [0] : [])] ? [0] : [])] ? [0] : [])] ? [0] : [])] ? [0] : [])] ? [0] : [])] ? [0] : [])] ? [0] : [])] ? [0] : [])] ? [0] : [])] ? [0] : [])] ? [0] : [])] ? [0] : [])] ? [0] : [])] ? [0] : [])] ? [0] : [])] ? [0] : [])] ? [0] : [])] ? [0] : [])] ? [0] : [])] ? [0] : [])] ? [0] : [])] ? [0] : [])] ? [0] : [])];
+cjs	=	js	[module, ...([...([...([...([...([...([...([...([...([...([...([...([...([...([...([...([...([...([...([...([...([...([...([...([...([], [])], [])], [])], [])], [])], [])], [])], [])], [])], [])], [])], [])], [])], [])], [])], [])], [])], [])], [])], [])], [])], [])], [])], [])], [])];
+cjs	=	js	if ([...(1 ? [] : [1]), 0][0]) module.exports = 1;
 cjs	=	js	if ([1, 0][2]) module.exports = 1;
 cjs	=	js	if ([1, 0]["1"]) module.exports = 1;
 cjs	=	js	if ([1, 0][1.5]) module.exports = 1;
@@ -215,6 +222,13 @@ esm	=	js	if ("ab"[0] === "b") this.a = 1;
 esm	=	js	typeof module == "ab"[1];
 esm	=	js	typeof module < "ab".length;
 esm	=	js	if (typeof module == "ab"[1]) {}
+esm	=	js	[module, -1];
+esm	=	js	[module, 1 + 1];
+esm	=	js	[module, -(1 + 1)];
+esm	=	js	[module, +"1"];
+esm	=	js	[module, "a" + "b"];
+esm	=	js	[...(0, [module])];
+esm	=	js	[module, ...(0, [1])];
 cjs	=	js	while ({ b: 0 }.b) module.exports = 1;
 cjs	=	js	var v = [module, 0][1];
 cjs	=	js	a([typeof module, 0][1]);
@@ -224,6 +238,66 @@ cjs	=	js	[module, a()][0];
 cjs	=	js	[0, module.id][0];
 cjs	=	js	[typeof module][0] + "a";
 cjs	=	js	if (typeof module == "ab".length) {}
+# A text that `bun run` holds in pieces, and one with a character outside ASCII, which it holds in 16 bits. It makes no number of the first and joins nothing to the second.
+# It joins `a + b + c` one `+` at a time.
+cjs	=	js	[module, -("a" + "b")];
+cjs	=	js	[module, -(0, "a" + "b")];
+cjs	=	js	if ([-("a" + "b"), 0][1]) module.exports = 1;
+cjs	=	js	if (-("a" + "b")) module.exports = 1;
+cjs	=	js	if ([1, 0][+("1" + "")]) module.exports = 1;
+esm	=	js	[module, -`a${"b" + "c"}`];
+esm	=	js	[module, -("a" + "b").length];
+cjs	=	js	[module, "é" + "a"];
+cjs	=	js	if (["é" + "a", 0][1]) module.exports = 1;
+cjs	=	js	if ("é" + "a" === "x") module.exports = 1;
+esm	=	js	var v = ("é" + "a") ?? module.exports;
+cjs	=	js	[module, "é" + ""];
+cjs	=	js	if ("é" + "" === "x") module.exports = 1;
+esm	=	js	[module, "" + "é"];
+esm	=	js	if ("" + "é" === "x") module.exports = 1;
+cjs	=	js	[module, `é${1}`];
+cjs	=	js	if (`é${1}` === "x") module.exports = 1;
+cjs	=	js	var v = `é${1}` ?? module.exports;
+esm	=	js	if ([`é${1}`, 0][1]) module.exports = 1;
+esm	=	js	var b; if ([`a${!b}`, 0][1]) module.exports = 1;
+cjs	=	js	var b; if ([`a${b}`, 0][1]) module.exports = 1;
+esm	=	js	var b; if (typeof (b ? `é${b}` : 1) ?? 0) {} else module.exports = 1;
+cjs	=	js	[module, "é" + 1];
+cjs	=	js	[module, 1 + "é"];
+cjs	=	js	[module, `a${"é"}`];
+esm	=	js	[module, "a" + "b" + "c" + "d"];
+esm	=	js	[module, 1 + 2 + "a"];
+esm	=	js	if ("a" + "b" + "c" === "abc") {} else module.exports = 1;
+cjs	=	js	if ("a" + "b" + "é" === "abé") {} else module.exports = 1;
+cjs	=	js	if ("a" + "" + "é" === "aé") {} else module.exports = 1;
+cjs	=	js	if ("" + "é" + "a" === "éa") {} else module.exports = 1;
+cjs	=	js	if (1 + 2 + "é" === "3é") {} else module.exports = 1;
+cjs	=	js	if (1 + "" + "é" === "1é") {} else module.exports = 1;
+# A BigInt. `bun run` reads no digits of one that is written with a radix: it joins it to no text, compares it with no other and does not ask whether it is zero.
+# It knows that one is a BigInt and not null.
+esm	=	js	[module, "a" + 10n];
+esm	=	js	[module, "a" + 0n];
+esm	=	js	[module, `a${1n}`];
+esm	=	js	[module, "a" + (0, 1n)];
+esm	=	js	if ("a" + 1n === "a1") {} else module.exports = 1;
+cjs	=	js	[module, "a" + 0x10n];
+cjs	=	js	[module, `a${0x10n}`];
+esm	=	js	if ([`a${0x10n}`, 0][1]) module.exports = 1;
+cjs	=	js	const b = 1n; [module, "a" + b];
+cjs	=	js	[module, "a" + -1n];
+cjs	=	js	if ("a" + "b" + 0x10n === "ab16") {} else module.exports = 1;
+cjs	=	js	if (("a" + "b" + 0x10n).length === 4) {} else module.exports = 1;
+cjs	=	js	if (0x10n) {} else module.exports = 1;
+cjs	=	js	if (0x10n && []) {} else module.exports = 1;
+cjs	=	js	if (0x10n ? [] : 0) {} else module.exports = 1;
+cjs	=	js	if (0x10n === 16n) {} else module.exports = 1;
+cjs	=	js	[module, +(0x10n === 16n)];
+esm	=	js	if (typeof 0x10n === "bigint") {} else module.exports = 1;
+esm	=	js	if (typeof (0, 0x10n) === "bigint") {} else module.exports = 1;
+esm	=	js	var v = 0x10n ?? module.exports;
+esm	=	js	if (0x10n == null) module.exports = 1;
+esm	=	js	if (undefined === 0x10n) module.exports = 1;
+cjs	=	js	if (0x10n == (a(), null)) module.exports = 1;
 # TypeScript.
 esm	=	ts	if (({ b: 0 } as any).b) module.exports = 1;
 esm	=	ts	if (({ b: 0 })!.b) module.exports = 1;
@@ -266,6 +340,81 @@ esm	=	js	if ((a(), 1) && 1) {} else module.exports = 1;
 esm	=	js	if ((a(), 0) || 0) module.exports = 1;
 esm	=	js	if (!((a(), 0) || 0)) {} else module.exports = 1;
 cjs	=	js	var v = (a(), null) ?? module.exports;
+# `&&` and `||` that `bun run` keeps. It asks the right side alone what one is as a condition. In a test, under `!` and in the test of `a ? b : c`,
+# `a && b` is `a` where `b` is true and does nothing, and `a || b` is `a` where `b` is false and does nothing.
+cjs	=	js	var v = ([] && 1) || module.exports;
+cjs	=	js	var v = (typeof a() && 2) || module.exports;
+cjs	=	js	var v = (typeof a() && []) || module.exports;
+cjs	=	js	var g = (typeof window && []) || module.exports;
+cjs	=	js	var v = (void a() || 0) && module.exports;
+cjs	=	js	var v = (void a() ?? 1) || module.exports;
+cjs	=	js	var v = [typeof a() && 2][0] || module.exports;
+esm	=	js	if (typeof a() && 2) {} else module.exports = 1;
+esm	=	js	if (typeof a() && /r/) {} else module.exports = 1;
+esm	=	js	if ((typeof a() && 2) && 3) {} else module.exports = 1;
+esm	=	js	if ([typeof a() && 2][0]) {} else module.exports = 1;
+esm	=	js	if (void a() || null) module.exports = 1;
+cjs	=	js	if (typeof a() && typeof a()) {} else module.exports = 1;
+cjs	=	js	if (typeof a() && []) {} else module.exports = 1;
+cjs	=	js	if (typeof a() && 0x10n) {} else module.exports = 1;
+cjs	=	js	if (typeof a() && 2 && typeof a()) {} else module.exports = 1;
+cjs	=	js	if (void a() || void a()) module.exports = 1;
+cjs	=	js	if ((a(), 0) || (a(), 0)) module.exports = 1;
+cjs	=	js	while (typeof a() && 0) module.exports = 1;
+esm	=	js	if (typeof module && 1) {} else { a(); }
+esm	=	js	if (!(typeof a() && 2)) module.exports = 1;
+esm	=	js	var v = !(typeof a() && 2) && module.exports;
+esm	=	js	[module, +!([] && 1)];
+cjs	=	js	[module, +!(typeof a() && 2)];
+esm	=	js	var v = ((typeof a() && 2) ? 0 : module.exports);
+cjs	=	js	var v = ((typeof a() && 2) ? module.exports : 0);
+esm	=	js	var v = (([] && 1) ? 1 : 0) || module.exports;
+esm	=	js	var v = (([] && 1) ? {} : null) ?? module.exports;
+esm	=	js	[module, ([] && 1) ? 0 : a()];
+esm	=	js	if ((([] && 1) ? [1, 0] : [])[1]) module.exports = 1;
+esm	=	js	if ([...(([] && 1) ? [1, 0] : [])][1]) module.exports = 1;
+cjs	=	js	var v = ((([] && 1) ? `t${a()}` : 0) + "b") ?? module.exports;
+# `bun run` asks what it has in place of an operator whether that is null or undefined: `x` for `!!x` where `x` is a boolean by its shape,
+# one template for a sum of templates and literals, and the other addend for a sum with "" where that addend is a text by its shape.
+esm	=	js	var b; var v = !!b ?? module.exports;
+esm	=	js	var b; var v = !(!b || !b) ?? module.exports;
+esm	=	js	var b; var v = !!(b === 1) ?? module.exports;
+cjs	=	js	var b; var v = !!(!b || !b) ?? module.exports;
+cjs	=	js	var b; var v = !!(!b && !b) ?? module.exports;
+cjs	=	js	var b; var v = !!(b ? !b : !b) ?? module.exports;
+cjs	=	js	var b, c; var v = !!(c = !b || !b) ?? module.exports;
+esm	=	js	var b; var v = !!(!b ?? !b) ?? module.exports;
+cjs	=	js	var b; var v = !!((!b || !b) ?? b) ?? module.exports;
+cjs	=	js	var b; var v = !(0, !(!b || !b)) ?? module.exports;
+cjs	=	js	var b; var v = !!(a(), !b || !b) ?? module.exports;
+cjs	=	js	var b; var v = !!(1 && (!b || !b)) ?? module.exports;
+esm	=	js	var b; var v = !!(0 && (!b || !b)) ?? module.exports;
+cjs	=	js	var b; var v = !!(0 || (!b || !b)) ?? module.exports;
+esm	=	js	var b; var v = !!(1 || (!b || !b)) ?? module.exports;
+cjs	=	js	var b; var v = !!(1 ? (!b || !b) : 0) ?? module.exports;
+cjs	=	js	var b; var v = !!(0 ? 0 : (!b || !b)) ?? module.exports;
+cjs	=	js	var b; var v = !!(null ?? (!b || !b)) ?? module.exports;
+esm	=	js	var b; var v = !!("x" ?? (!b || !b)) ?? module.exports;
+cjs	=	js	var b; var v = [!!(!b || !b)][0] ?? module.exports;
+esm	=	js	var v = (a() + "b") ?? module.exports;
+cjs	=	js	var v = (`t${a()}` + "b") ?? module.exports;
+cjs	=	js	var v = (`t${a()}` + 1) ?? module.exports;
+esm	=	js	var v = (a() + `t${a()}`) ?? module.exports;
+cjs	=	js	var v = ("a" + ("b" + `t${a()}`)) ?? module.exports;
+cjs	=	js	var v = ((1 ? `t${a()}` : 0) + "b") ?? module.exports;
+cjs	=	js	var v = (("x" && `t${a()}`) + "b") ?? module.exports;
+cjs	=	js	var v = ((0 || `t${a()}`) + "b") ?? module.exports;
+cjs	=	js	var v = ([`t${a()}`][0] + "b") ?? module.exports;
+esm	=	js	var v = (0x10n + `t${a()}`) ?? module.exports;
+esm	=	js	var v = (`a${1}` + "é") ?? module.exports;
+cjs	=	js	var v = { p: `${a()}` + 1 }.p ?? module.exports;
+cjs	=	js	var v = ("" + (a() ? "x" : "y")) ?? module.exports;
+cjs	=	js	var v = ("" + "" + (a() ? "x" : "y")) ?? module.exports;
+esm	=	js	var v = ("x" + (a() ? "x" : "y")) ?? module.exports;
+esm	=	js	var v = (0 + (a() ? "x" : "y")) ?? module.exports;
+esm	=	js	var v = ("" + a()) ?? module.exports;
+esm	=	js	var v = ("" + (a(), "s")) ?? module.exports;
+cjs	=	js	var b; var v = ("" + (b = "x")) ?? module.exports;
 # What only a build knows decides nothing.
 esm	=	js	if ([typeof Bun][0]) {} else module.exports = 1;
 cjs	=	js	if ({ b: Bun }.b) {} else module.exports = 1;
@@ -279,9 +428,6 @@ esm	cjs	js	if ([Math.PI, 0][1]) module.exports = 1;
 esm	cjs	js	if ([Object, 0][1]) module.exports = 1;
 esm	cjs	js	const c = (Math.PI, 0); if (c) module.exports = 1;
 esm	cjs	js	if (+(Math.PI, 0)) module.exports = 1;
-# Not yet: `bun run` asks `&&` and `||` that it keeps for a condition only where one stands as a condition and its right side does nothing.
-cjs	esm	js	var v = ([] && 1) || module.exports;
-cjs	esm	js	if ((a(), 0) || (a(), 0)) module.exports = 1;
 # Not yet: other values that `bun run` has in place.
 esm	cjs	js	if (new Array(1, 0)[1]) module.exports = 1;
 esm	cjs	js	if (new Object({ b: 0 }).b) module.exports = 1;
@@ -291,5 +437,8 @@ esm	cjs	ts	enum E { A = "ab" } if (E.A.length === 3) module.exports = 1;
 # Not yet: a constant whose initializer `bun run` computes to a text.
 esm	cjs	js	const s = typeof 1; if (s.length === 3) module.exports = 1;
 esm	cjs	js	const s = 1 ? "ab" : "cd"; if (s.length === 3) module.exports = 1;
-# Not yet: `bun run` leaves a text outside ASCII in two pieces. A build joins them.
-cjs	esm	js	if ("é" + "a" === "x") module.exports = 1;
+# Not yet: `bun run` keeps `!!x` and `"" + x` as they are written where `x` is no boolean and no text by its shape. A build does not ask for that shape.
+esm	cjs	js	var b; var v = !!(b || b) ?? module.exports;
+esm	cjs	js	var v = ("" + (a() || "y")) ?? module.exports;
+# Not yet: `bun run` compares two BigInts that are written with a radix where both are written the same.
+esm	cjs	js	if (0x10n === 0x10n) {} else module.exports = 1;

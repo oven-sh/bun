@@ -58,6 +58,10 @@ impl<'s> Folder<'_, 's> {
             ExprKind::This => self.fold_this(e),
             ExprKind::Call(call) => self.fold_call(e, hir[call]),
             ExprKind::ImportCall { args } => self.fold_import_call(args),
+            ExprKind::Spread(operand) => {
+                self.note_spread_array(e, operand);
+                Folded::UNKNOWN
+            }
             ExprKind::Array(items) => {
                 self.note_array_literal(e, items);
                 self.conditions.insert(e, true);
@@ -147,11 +151,7 @@ impl<'s> Folder<'_, 's> {
                     BinOp::Or => LogicalOperator::Or,
                     _ => LogicalOperator::Nullish,
                 };
-                let folded = self.fold_logical(e, operator, left, right);
-                if let Value::Known(_) = folded.value {
-                    self.note_kept_by_bun_run(e);
-                }
-                folded
+                self.fold_logical(e, operator, left, right)
             }
             BinOp::Comma => {
                 self.copy_condition(e, right);
@@ -253,6 +253,7 @@ impl<'s> Folder<'_, 's> {
             }
             Some(false) => {
                 self.copy_condition(e, right);
+                self.note_kept_by_bun_run(e);
                 let (left, right) = (self.folded(left), self.folded(right));
                 Folded::new(right.value, left.effects.min(right.effects))
             }
@@ -290,14 +291,19 @@ impl<'s> Folder<'_, 's> {
         matches!(parent, Some(ExprKind::Binary { op: BinOp::Add, left, .. }) if left == e)
     }
 
-    fn fold_addition(&self, outermost: ExprId) -> Folded {
+    fn fold_addition(&mut self, outermost: ExprId) -> Folded {
         if self.is_left_addend(outermost) {
             return Folded::UNKNOWN;
         }
         let addends = self.collect_addends(outermost);
-        let addends = addends.iter().map(|&addend| self.folded(addend));
-        let effects = addends.clone().map(|addend| addend.effects).min();
-        let sum = self.evaluator.add_all(addends.map(|addend| addend.value));
+        let folded = addends.iter().map(|&addend| self.folded(addend));
+        let effects = folded.clone().map(|addend| addend.effects).min();
+        let sum = self.evaluator.add_all(folded.map(|addend| addend.value));
+        if let Value::Known(_) = sum
+            && !self.is_sum_joined_by_bun_run(&addends)
+        {
+            self.mark_folded_by_build_alone(outermost);
+        }
         Folded::new(sum, effects.unwrap_or(Effects::Unknown))
     }
 
@@ -307,7 +313,8 @@ impl<'s> Folder<'_, 's> {
         };
         let Branches { yes, no } = branches;
         let (selected, excluded) = if is_true { (yes, no) } else { (no, yes) };
-        self.exclude_operand(excluded, self.is_truthy_in_bun_run(test).is_some());
+        let is_excluded_by_bun_run = self.is_truthy_as_test_in_bun_run(test).is_some();
+        self.exclude_operand(excluded, is_excluded_by_bun_run);
         self.copy_condition(e, selected);
         let (test, selected) = (self.folded(test), self.folded(selected));
         if let Value::Known(_) = selected.value {

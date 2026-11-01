@@ -2,7 +2,6 @@ use super::Constant;
 use super::evaluate::Value;
 use super::folder::{Effects, Folded, Folder};
 use super::known_to_bun_run::{NullishByShape, nullish_by_shape};
-use super::removed_by_bun_run::{inlines_spread_arrays, spread_array};
 use crate::atom::{Atom, known};
 use crate::hir::{
     BinOp, Chain, ExprId, ExprKind, File, IdList, MemberKey, NameKind, PropId, PropKey, PropKind,
@@ -51,16 +50,7 @@ fn is_never_nullish_as_written(hir: &File<'_>, e: ExprId) -> bool {
     let mut e = e;
     loop {
         e = hir.skip_type_assertions(e);
-        let kind = hir[e].kind;
-        if let ExprKind::True
-        | ExprKind::False
-        | ExprKind::Number(_)
-        | ExprKind::String(_)
-        | ExprKind::BigInt(_) = kind
-        {
-            return true;
-        }
-        match nullish_by_shape(kind) {
+        match nullish_by_shape(hir[e].kind) {
             NullishByShape::Known(is_nullish) => return !is_nullish,
             NullishByShape::SameAs(operand) => e = operand,
             NullishByShape::Unknown => return false,
@@ -219,7 +209,7 @@ impl Folder<'_, '_> {
     ) {
         let hir = self.hir;
         let mut lists: SmallVec<[(IdList<ExprId>, usize, bool); 4]> = SmallVec::new();
-        lists.push((items, 0, inlines_spread_arrays(hir, items)));
+        lists.push((items, 0, self.inlines_spread_arrays(items)));
         while let Some(list) = lists.last_mut() {
             let (items, next, inlines) = *list;
             if next == items.len() {
@@ -228,10 +218,10 @@ impl Folder<'_, '_> {
             }
             list.1 += 1;
             let item = hir.id_at(items, next);
-            match (hir[item].kind, spread_array(hir, item)) {
+            match (hir[item].kind, self.find_spread_array(item)) {
                 (ExprKind::Missing, _) => held.push(HeldItem::Hole),
-                (_, Some((_, inner))) if inlines => {
-                    lists.push((inner, 0, inlines_spread_arrays(hir, inner)));
+                (_, Some(spread)) if inlines => {
+                    lists.push((spread.items, 0, self.inlines_spread_arrays(spread.items)));
                 }
                 (ExprKind::Spread(_), _) => held.push(HeldItem::Spread),
                 _ => held.push(HeldItem::Item(item)),
@@ -400,7 +390,7 @@ impl Folder<'_, '_> {
             ExprKind::Dot { .. } | ExprKind::Index { .. } => self.find_item_in_place(e),
             ExprKind::Cond { test, branches } => {
                 let branches = hir.branches(branches);
-                let selected = self.is_truthy_in_bun_run(test).map(|is_truthy| {
+                let selected = self.is_truthy_as_test_in_bun_run(test).map(|is_truthy| {
                     if is_truthy { branches.yes } else { branches.no }
                 });
                 selected.filter(|_| self.is_dropped_where_unused_by_bun_run(test))

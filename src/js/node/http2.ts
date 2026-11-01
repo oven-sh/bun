@@ -2338,6 +2338,9 @@ function sendRstOnReady(this: Http2Stream, session: Http2Session, code: number) 
 function uncorkNT(stream: Http2Stream) {
   stream.uncork();
 }
+function readNothing(this: Http2Stream) {
+  this.read(0);
+}
 // Per-request AbortSignal handler: node destroys the stream with an AbortError when the signal
 // fires (lib/internal/http2/core.js request()).
 function abortRequestStream(this: Http2Stream, signal: AbortSignal) {
@@ -4277,6 +4280,12 @@ class ServerHttp2Session extends Http2Session {
           // After close(code) the stream is about to be destroyed, with no 'end' before that.
           if ((state == 7 || (stream.readableLength === 0 && !stream.rstCode)) && stream.readableFlowing === null) {
             stream.resume();
+          } else if (state == 7) {
+            // Like node's onStreamClose: nothing else ends a paused readable whose buffer is empty.
+            // Not before 'finish': this close can arrive inside end(), and the destroy() that
+            // follows 'end' would swallow 'finish'.
+            if (stream.writableFinished) stream.read(0);
+            else stream.once("finish", readNothing);
           }
         }
       }

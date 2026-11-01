@@ -1260,6 +1260,14 @@ Buffer<char> ExportChallenge(const char* input, size_t length);
 const EVP_MD* getDigestByName(const WTF::StringView name);
 const EVP_CIPHER* getCipherByName(const WTF::StringView name);
 
+// Not upstream.
+struct DigestName {
+    WTF::ASCIILiteral name;
+    const EVP_MD* (*digest)();
+};
+// The names in getHashes(). getDigestByName() looks through them first.
+std::span<const DigestName> getDigestNames();
+
 // Verify that the specified HKDF output length is valid for the given digest.
 // The maximum length for HKDF output for a given digest is 255 times the
 // hash size for the given digest algorithm.

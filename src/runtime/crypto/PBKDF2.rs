@@ -5,29 +5,35 @@ use bun_jsc::{JSGlobalObject, JSValue, Job, JobContext, JsResult, JsThread, Stro
 
 use crate::node::{StringOrBuffer, ThreadIsolated};
 
-use crate::crypto::evp::{self, Algorithm};
-
 pub(crate) struct PBKDF2 {
     iteration_count: u32,
     pub length: usize,
-    algorithm: Algorithm,
+    digest: Digest,
 }
 
-pub(crate) fn algorithm_from_digest(
-    global_this: &JSGlobalObject,
-    digest: &[u8],
-) -> JsResult<Algorithm> {
-    match evp::lookup_ignore_case(digest) {
-        Some(Algorithm::Shake128 | Algorithm::Shake256) | None => {}
-        Some(algorithm) if algorithm.md().is_none() => {}
-        Some(algorithm) => return Ok(algorithm),
+#[derive(Clone, Copy)]
+pub(crate) struct Digest(core::ptr::NonNull<boringssl::EVP_MD>);
+
+// SAFETY: BoringSSL's `EVP_MD`s are immutable statics. They hold no VM or JS state.
+unsafe impl Send for Digest {}
+
+unsafe extern "C" {
+    /// The lookup of `createHmac()` and the rest of `node:crypto`.
+    fn Bun__getDigestByName(name: *const u8, length: usize) -> *const boringssl::EVP_MD;
+}
+
+pub(crate) fn digest_by_name(global_this: &JSGlobalObject, name: &[u8]) -> JsResult<Digest> {
+    // SAFETY: `name` is valid for `name.len()` bytes, and the callee does not keep it.
+    let digest = unsafe { Bun__getDigestByName(name.as_ptr(), name.len()) };
+    match core::ptr::NonNull::new(digest.cast_mut()) {
+        Some(digest) => Ok(Digest(digest)),
+        None => Err(global_this
+            .err(
+                bun_jsc::ErrorCode::CRYPTO_INVALID_DIGEST,
+                format_args!("Invalid digest: {}", bstr::BStr::new(name)),
+            )
+            .throw()),
     }
-    Err(global_this
-        .err(
-            bun_jsc::ErrorCode::CRYPTO_INVALID_DIGEST,
-            format_args!("Invalid digest: {}", bstr::BStr::new(digest)),
-        )
-        .throw())
 }
 
 impl PBKDF2 {
@@ -37,7 +43,7 @@ impl PBKDF2 {
         salt: &[u8],
         iteration_count: u32,
         length: usize,
-        algorithm: Algorithm,
+        digest: Digest,
     ) -> JsResult<Self> {
         if salt.len() > i32::MAX as usize {
             return Err(global_this.throw_invalid_arguments(format_args!("salt is too long")));
@@ -48,12 +54,11 @@ impl PBKDF2 {
         Ok(PBKDF2 {
             iteration_count,
             length,
-            algorithm,
+            digest,
         })
     }
 
     pub(crate) fn run(&self, password: &[u8], salt: &[u8], output: &mut [u8]) -> bool {
-        let algorithm = self.algorithm;
         let iteration_count = self.iteration_count;
         let length = self.length;
 
@@ -65,7 +70,7 @@ impl PBKDF2 {
         }
         boringssl::ERR_clear_error();
         // SAFETY: password/salt point to valid slices for the given lengths;
-        // algorithm.md() returns a non-null EVP_MD; output is writable for `length` bytes.
+        // the digest is a non-null EVP_MD; output is writable for `length` bytes.
         let rc = unsafe {
             boringssl::PKCS5_PBKDF2_HMAC(
                 if !password.is_empty() {
@@ -77,7 +82,7 @@ impl PBKDF2 {
                 salt.as_ptr(),
                 salt.len(),
                 iteration_count as c_uint,
-                algorithm.md().unwrap(),
+                self.digest.0.as_ptr(),
                 length,
                 output.as_mut_ptr(),
             )

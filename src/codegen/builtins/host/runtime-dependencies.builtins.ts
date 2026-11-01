@@ -602,12 +602,6 @@ const nativeCalls = [
       },
       { file: inBindings("ProcessBindingUV.cpp"), caller: "jsErrname", onBehalfOf: ["process.binding"] },
       {
-        file: inBindings("node/crypto/CryptoGenRsaKeyPair.cpp"),
-        caller: "RsaKeyPairJobCtx::fromJS",
-        times: 2,
-        onBehalfOf: nodeCryptoBinding,
-      },
-      {
         file: inBindings("node/crypto/JSKeyObjectConstructor.cpp"),
         caller: "jsKeyObjectConstructor_from",
         onBehalfOf: nodeCryptoBinding,

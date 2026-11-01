@@ -260,36 +260,7 @@ describe("createHash", () => {
     },
   };
 
-  const unsupported = [
-    "id-rsassa-pkcs1-v1_5-with-sha3-224",
-    "id-rsassa-pkcs1-v1_5-with-sha3-256",
-    "id-rsassa-pkcs1-v1_5-with-sha3-384",
-    "id-rsassa-pkcs1-v1_5-with-sha3-512",
-    "md5withrsaencryption",
-    "ripemd",
-    "ripemd160withrsa",
-    "rsa-md5",
-    "rsa-ripemd160",
-    "rsa-sha1-2",
-    "rsa-sha3-224",
-    "rsa-sha3-256",
-    "rsa-sha3-384",
-    "rsa-sha3-512",
-    "rsa-sha512/224",
-    "rsa-sha512/256",
-    "rsa-sm3",
-    "sha1withrsaencryption",
-    "sha224withrsaencryption",
-    "sha256withrsaencryption",
-    "sha384withrsaencryption",
-    "sha512withrsaencryption",
-    "sha512-224withrsaencryption",
-    "sha512-256withrsaencryption",
-    "sm3",
-    "sm3withrsaencryption",
-    "ssl3-md5",
-    "ssl3-sha1",
-  ];
+  const unsupported = ["rsa-sm3", "sm3", "sm3withrsaencryption"];
 
   for (const name_ in nodeValues) {
     const name = name_.toLowerCase();
@@ -552,7 +523,7 @@ describe("createHash", () => {
       }
       console.log(JSON.stringify(out));
     `;
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "--no-deprecation", "-e", script], env: bunEnv, stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
       stdout: Object.fromEntries(

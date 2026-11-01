@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import path from "path";
+import { readKey } from "../test/common/fixtures";
 import { hashesFixture } from "./fixtures/sign.fixture.ts";
 const HashClasses = [MD5, MD4, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256];
 
@@ -225,6 +226,97 @@ describe("crypto.getCurves", () => {
   it("should return an array of strings", () => {
     expect(Array.isArray(crypto.getCurves())).toBe(true);
     expect(typeof crypto.getCurves()[0]).toBe("string");
+  });
+
+  it("is sorted", () => {
+    expect(crypto.getCurves()).toEqual(crypto.getCurves().toSorted());
+  });
+});
+
+describe("names of digests", () => {
+  const rsaKey = readKey("rsa_private.pem", "ascii");
+  // Every function that takes the name of a digest. The last two are for digests that RSA signs with.
+  const functions: [string, (name: string) => unknown][] = [
+    ["createHash", name => crypto.createHash(name).update("x").digest("hex")],
+    ["hash", name => crypto.hash(name, "x")],
+    ["createHmac", name => crypto.createHmac(name, "key").update("x").digest("hex")],
+    ["pbkdf2Sync", name => crypto.pbkdf2Sync("password", "salt", 1, 8, name).toString("hex")],
+    ["hkdfSync", name => Buffer.from(crypto.hkdfSync(name, "key", "salt", "info", 8)).toString("hex")],
+    ["sign", name => crypto.sign(name, Buffer.from("x"), rsaKey).toString("hex")],
+    ["createSign", name => crypto.createSign(name).update("x").sign(rsaKey, "hex")],
+  ];
+
+  describe.each([
+    ["sha256", ["Sha256", "RSA-SHA256", "rsa-sha256", "sha2-256", "SHA-256", "sha256withrsaencryption"]],
+    ["sha1", ["Sha1", "RSA-SHA1-2", "ssl3-sha1", "SHA1WITHRSAENCRYPTION"]],
+    ["md5", ["RSA-MD5", "rsa-md5", "ssl3-md5", "Md5WithRsaEncryption"]],
+    ["ripemd160", ["Ripemd160", "ripemd", "ripemd-160", "rmd160", "RMD160", "RSA-RIPEMD160", "ripemd160WithRSA"]],
+    ["sha512-256", ["Sha512-256", "sha2-512/256", "RSA-SHA512/256", "sha512-256WithRSAEncryption"]],
+    ["sha3-256", ["Sha3-256", "RSA-SHA3-256", "id-rsassa-pkcs1-v1_5-with-sha3-256"]],
+    ["md5-sha1", ["MD5-SHA1", "Md5-Sha1"]],
+  ])("of %s", (canonical, aliases) => {
+    it.each(functions)("in %s()", (_, call) => {
+      const expected = call(canonical);
+      expect(aliases.map(alias => [alias, call(alias)])).toEqual(aliases.map(alias => [alias, expected]));
+    });
+  });
+
+  it("of blake2b512, which HMAC takes too", () => {
+    for (const name of ["blake2b512", "BLAKE2b512", "blake2b-512"]) {
+      expect(crypto.createHmac(name, "k").update("x").digest("hex")).toBe(
+        "3d24b96bcbfb1458d029341f06c1be7861e8cc0408e507413ba4a59d74119164190d22eceb5060c276c23328ac181ddecde3d0c1a31d7d8ba81b59aaeae9e21e",
+      );
+      expect(Buffer.from(crypto.hkdfSync(name, "k", "s", "i", 16)).toString("hex")).toBe(
+        "ba92a70abe7a73fe77cb4c9c6beea370",
+      );
+      expect(crypto.createHash(name).update("x").digest("hex")).toBe(crypto.hash("blake2b512", "x"));
+    }
+  });
+
+  it("that only Bun has", () => {
+    for (const [name, canonical] of [
+      ["sha128", "sha1"],
+      ["sha-512_224", "sha512-224"],
+      ["sha-512224", "sha512-224"],
+      ["sha-512_256", "sha512-256"],
+      ["sha-512256", "sha512-256"],
+    ]) {
+      for (const [, call] of functions) expect(call(name)).toBe(call(canonical));
+    }
+    expect(crypto.pbkdf2Sync("password", "salt", 1, 8, "blake2b256").toString("hex")).toBe("2ae662d8acc3fd98");
+  });
+
+  it.each(functions)("that %s() does not know", (_, call) => {
+    for (const name of ["nope", "", "sha256 ", "sha-257", "rsa-sha", "sha256WithRSA", "\u017fha256"]) {
+      expect(() => call(name)).toThrow();
+    }
+  });
+
+  it("are all in getHashes()", () => {
+    const hashes = crypto.getHashes();
+    expect(hashes).toEqual([...new Set(hashes)].toSorted());
+    expect(hashes).toEqual(
+      expect.arrayContaining([
+        "RSA-SHA256",
+        "blake2b512",
+        "md5-sha1",
+        "rmd160",
+        "sha-256",
+        "sha256",
+        "sha512-256",
+        "ssl3-md5",
+      ]),
+    );
+    for (const name of hashes) {
+      const digest = crypto.createHash(name).update("x").digest("hex");
+      expect([name, crypto.hash(name, "x")]).toEqual([name, digest]);
+      expect([name, crypto.hash(name.toUpperCase(), "x")]).toEqual([name, digest]);
+      // Node's tests count on these two for every name in the list.
+      expect([name, crypto.pbkdf2Sync("password", "salt", 1, 8, name)]).toEqual([name, expect.any(Buffer)]);
+      expect([name, crypto.hkdfSync(name, "key", "salt", "info", 8)]).toEqual([name, expect.any(ArrayBuffer)]);
+    }
+    hashes.length = 0;
+    expect(crypto.getHashes()).not.toBeEmpty();
   });
 });
 

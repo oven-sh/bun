@@ -397,6 +397,15 @@ describe("RSA PKCS#1 v1.5 signatures", () => {
   });
 });
 
+test.each(["hash", "mgf1Hash"])("rsa-pss keys are no longer generated with options.%s", option => {
+  expect(() => crypto.generateKeyPairSync("rsa-pss", { modulusLength: 2048, [option]: "sha256" })).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_VALUE",
+      message: `The property 'options.${option}' is no longer supported. Received 'sha256'`,
+    }),
+  );
+});
+
 test("RSA-OAEP test vectors", () => {
   const { decryptionTests } = JSON.parse(fixtures.readSync("rsa-oaep-test-vectors.js", "utf8"));
 

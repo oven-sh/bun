@@ -1578,78 +1578,107 @@ const EVP_MD* getDigestByName(const WTF::StringView name)
     return digest;
 }
 
+// Not upstream: OpenSSL compares the names of digests without regard to case, and knows more of them than
+// EVP_get_digestbyname() in BoringSSL. These are the names in Node's getHashes(), in its order, for the digests
+// that BoringSSL has, and md4, which Node leaves to the legacy provider. Node's tests take a name in getHashes()
+// to work in pbkdf2() and hkdf() too, so SHAKE and BLAKE2s, which only createHash() and hash() have, are not here.
+static constexpr DigestName digestNames[] = {
+    { "RSA-MD5"_s, EVP_md5 },
+    { "RSA-RIPEMD160"_s, EVP_ripemd160 },
+    { "RSA-SHA1"_s, EVP_sha1 },
+    { "RSA-SHA1-2"_s, EVP_sha1 },
+    { "RSA-SHA224"_s, EVP_sha224 },
+    { "RSA-SHA256"_s, EVP_sha256 },
+    { "RSA-SHA3-224"_s, EVP_sha3_224 },
+    { "RSA-SHA3-256"_s, EVP_sha3_256 },
+    { "RSA-SHA3-384"_s, EVP_sha3_384 },
+    { "RSA-SHA3-512"_s, EVP_sha3_512 },
+    { "RSA-SHA384"_s, EVP_sha384 },
+    { "RSA-SHA512"_s, EVP_sha512 },
+    { "RSA-SHA512/224"_s, EVP_sha512_224 },
+    { "RSA-SHA512/256"_s, EVP_sha512_256 },
+    { "blake2b-512"_s, EVP_blake2b512 },
+    { "blake2b512"_s, EVP_blake2b512 },
+    { "id-rsassa-pkcs1-v1_5-with-sha3-224"_s, EVP_sha3_224 },
+    { "id-rsassa-pkcs1-v1_5-with-sha3-256"_s, EVP_sha3_256 },
+    { "id-rsassa-pkcs1-v1_5-with-sha3-384"_s, EVP_sha3_384 },
+    { "id-rsassa-pkcs1-v1_5-with-sha3-512"_s, EVP_sha3_512 },
+    { "md4"_s, EVP_md4 },
+    { "md5"_s, EVP_md5 },
+    { "md5-sha1"_s, EVP_md5_sha1 },
+    { "md5WithRSAEncryption"_s, EVP_md5 },
+    { "ripemd"_s, EVP_ripemd160 },
+    { "ripemd-160"_s, EVP_ripemd160 },
+    { "ripemd160"_s, EVP_ripemd160 },
+    { "ripemd160WithRSA"_s, EVP_ripemd160 },
+    { "rmd160"_s, EVP_ripemd160 },
+    { "sha-1"_s, EVP_sha1 },
+    { "sha-224"_s, EVP_sha224 },
+    { "sha-256"_s, EVP_sha256 },
+    { "sha-384"_s, EVP_sha384 },
+    { "sha-512"_s, EVP_sha512 },
+    { "sha-512/224"_s, EVP_sha512_224 },
+    { "sha-512/256"_s, EVP_sha512_256 },
+    { "sha1"_s, EVP_sha1 },
+    { "sha1WithRSAEncryption"_s, EVP_sha1 },
+    { "sha2-224"_s, EVP_sha224 },
+    { "sha2-256"_s, EVP_sha256 },
+    { "sha2-384"_s, EVP_sha384 },
+    { "sha2-512"_s, EVP_sha512 },
+    { "sha2-512/224"_s, EVP_sha512_224 },
+    { "sha2-512/256"_s, EVP_sha512_256 },
+    { "sha224"_s, EVP_sha224 },
+    { "sha224WithRSAEncryption"_s, EVP_sha224 },
+    { "sha256"_s, EVP_sha256 },
+    { "sha256WithRSAEncryption"_s, EVP_sha256 },
+    { "sha3-224"_s, EVP_sha3_224 },
+    { "sha3-256"_s, EVP_sha3_256 },
+    { "sha3-384"_s, EVP_sha3_384 },
+    { "sha3-512"_s, EVP_sha3_512 },
+    { "sha384"_s, EVP_sha384 },
+    { "sha384WithRSAEncryption"_s, EVP_sha384 },
+    { "sha512"_s, EVP_sha512 },
+    { "sha512-224"_s, EVP_sha512_224 },
+    { "sha512-224WithRSAEncryption"_s, EVP_sha512_224 },
+    { "sha512-256"_s, EVP_sha512_256 },
+    { "sha512-256WithRSAEncryption"_s, EVP_sha512_256 },
+    { "sha512WithRSAEncryption"_s, EVP_sha512 },
+    { "ssl3-md5"_s, EVP_md5 },
+    { "ssl3-sha1"_s, EVP_sha1 },
+};
+
+std::span<const DigestName> getDigestNames()
+{
+    return digestNames;
+}
+
 static const EVP_MD* findDigestByName(const WTF::StringView name)
 {
+    for (const auto& [candidate, digest] : digestNames) {
+        if (WTF::equalIgnoringASCIICase(name, candidate)) {
+            return digest();
+        }
+    }
+
     // Historically, "dss1" and "DSS1" were DSA aliases for SHA-1
     // exposed through the public API.
     if (name == "dss1"_s || name == "DSS1"_s) [[unlikely]] {
         return EVP_sha1();
     }
 
-    if (WTF::equalIgnoringASCIICase(name, "md5"_s)) {
-        return EVP_md5();
-    }
-
-    if (WTF::startsWithIgnoringASCIICase(name, "rsa-sha"_s)) {
-        auto bits = name.substring(7);
-        if (WTF::equalIgnoringASCIICase(bits, "1"_s)) {
-            return EVP_sha1();
-        }
-        if (WTF::equalIgnoringASCIICase(bits, "224"_s)) {
-            return EVP_sha224();
-        }
-        if (WTF::equalIgnoringASCIICase(bits, "256"_s)) {
-            return EVP_sha256();
-        }
-        if (WTF::equalIgnoringASCIICase(bits, "384"_s)) {
-            return EVP_sha384();
-        }
-        if (WTF::equalIgnoringASCIICase(bits, "512"_s)) {
-            return EVP_sha512();
-        }
-    }
-
-    if (WTF::startsWithIgnoringASCIICase(name, "sha"_s)) {
-        auto remain = name.substring(3);
-        if (remain.startsWith('-')) {
-            auto bits = remain.substring(1);
-            if (WTF::equalIgnoringASCIICase(bits, "1"_s)) {
-                return EVP_sha1();
-            }
-            if (WTF::equalIgnoringASCIICase(bits, "224"_s)) {
-                return EVP_sha224();
-            }
-            if (WTF::equalIgnoringASCIICase(bits, "256"_s)) {
-                return EVP_sha256();
-            }
-            if (WTF::equalIgnoringASCIICase(bits, "384"_s)) {
-                return EVP_sha384();
-            }
-
-            if (WTF::startsWithIgnoringASCIICase(bits, "512"_s)) {
-                auto moreBits = bits.substring(3);
-                if (moreBits.isEmpty()) {
-                    return EVP_sha512();
-                }
-                if (WTF::equalIgnoringASCIICase(moreBits, "/224"_s)) {
-                    return EVP_sha512_224();
-                }
-                if (WTF::equalIgnoringASCIICase(moreBits, "/256"_s)) {
-                    return EVP_sha512_256();
-                }
-
-                // backwards compatibility with what we supported before
-                // (not supported by node)
-                if (WTF::equalIgnoringASCIICase(moreBits, "256"_s) || WTF::equalIgnoringASCIICase(moreBits, "_256"_s)) {
-                    return EVP_sha512_256();
-                }
-            }
-        }
-
-        // backwards compatibility with what we supported before
-        // (not supported by node)
-        if (WTF::equalIgnoringASCIICase(remain, "128"_s)) {
-            return EVP_sha1();
+    // backwards compatibility with what we supported before
+    // (not supported by node)
+    static constexpr DigestName otherNames[] = {
+        { "blake2b256"_s, EVP_blake2b256 },
+        { "sha-512224"_s, EVP_sha512_224 },
+        { "sha-512256"_s, EVP_sha512_256 },
+        { "sha-512_224"_s, EVP_sha512_224 },
+        { "sha-512_256"_s, EVP_sha512_256 },
+        { "sha128"_s, EVP_sha1 },
+    };
+    for (const auto& [candidate, digest] : otherNames) {
+        if (WTF::equalIgnoringASCIICase(name, candidate)) {
+            return digest();
         }
     }
 

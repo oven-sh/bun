@@ -48,6 +48,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCurves, (JSC::JSGlobalObject * lexicalGlobalObject
     const size_t numCurves = EC_get_builtin_curves(nullptr, 0);
     Vector<EC_builtin_curve> curves(numCurves);
     EC_get_builtin_curves(curves.begin(), numCurves);
+    std::ranges::sort(curves, [](const auto& a, const auto& b) { return strcmp(OBJ_nid2sn(a.nid), OBJ_nid2sn(b.nid)) < 0; });
 
     JSArray* result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, numCurves);
     RETURN_IF_EXCEPTION(scope, {});
@@ -61,6 +62,29 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCurves, (JSC::JSGlobalObject * lexicalGlobalObject
     }
 
     return JSValue::encode(result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsGetHashes, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto names = ncrypto::getDigestNames();
+    JSArray* result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, names.size());
+    RETURN_IF_EXCEPTION(scope, {});
+
+    for (size_t i = 0; i < names.size(); i++) {
+        result->putDirectIndex(lexicalGlobalObject, i, JSC::jsNontrivialString(vm, names[i].name));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    return JSValue::encode(result);
+}
+
+// For pbkdf2(), which is in Rust.
+extern "C" const EVP_MD* Bun__getDigestByName(const Latin1Character* name, size_t length)
+{
+    return ncrypto::getDigestByName(WTF::StringView(std::span { name, length }));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsGetCiphers, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -320,6 +344,10 @@ __attribute__((minsize)) JSValue createNodeCryptoBinding(Zig::GlobalObject* glob
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getCurves"_s)),
         JSFunction::create(vm, globalObject, 0, "getCurves"_s, jsGetCurves, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "oneShotDigest"_s)),
+        JSFunction::create(vm, globalObject, 5, "oneShotDigest"_s, jsOneShotDigest, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getHashes"_s)),
+        JSFunction::create(vm, globalObject, 0, "getHashes"_s, jsGetHashes, ImplementationVisibility::Public, NoIntrinsic), 0);
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getCiphers"_s)),
         JSFunction::create(vm, globalObject, 0, "getCiphers"_s, jsGetCiphers, ImplementationVisibility::Public, NoIntrinsic), 0);
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getCipherInfo"_s)),

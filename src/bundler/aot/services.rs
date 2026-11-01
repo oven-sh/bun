@@ -332,6 +332,7 @@ impl SourceProvider for BundlerServices {
                     ExportsKind::Cjs => crate::options::Format::Cjs,
                     _ => crate::options::Format::Esm,
                 },
+                parameter_lists_as_written: tree.kept_parameter_lists(),
                 ..Default::default()
             };
             let printed = js_printer::print::<false>(

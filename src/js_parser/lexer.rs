@@ -157,6 +157,7 @@ pub struct LexerSnapshot<'a> {
     pub(crate) preserve_all_comments_before: bool,
     pub(crate) is_legacy_octal_literal: bool,
     pub(crate) is_log_disabled: bool,
+    pub(crate) last_comment_end: u32,
     pub(crate) code_point: CodePoint,
     pub(crate) identifier: &'a [u8],
     pub(crate) jsx_pragma: JSXPragma,
@@ -226,6 +227,7 @@ pub struct Lexer<'a> {
     pub(crate) is_legacy_octal_literal: bool,
     pub(crate) is_log_disabled: bool,
     pub(crate) comments_to_preserve_before: Vec<js_ast::G::Comment>,
+    pub(crate) last_comment_end: u32,
     pub(crate) code_point: CodePoint,
     pub(crate) identifier: &'a [u8],
     pub(crate) jsx_pragma: JSXPragma,
@@ -301,6 +303,12 @@ impl<'a> Lexer<'a> {
         bun_ast::usize2loc(self.start)
     }
 
+    /// A comment stands between the token at `loc` and the current token.
+    #[inline]
+    pub(crate) fn has_comment_after(&self, loc: Loc) -> bool {
+        self.last_comment_end > loc.start as u32
+    }
+
     #[cold]
     pub(crate) fn add_range_error_with_notes(
         &mut self,
@@ -342,6 +350,7 @@ impl<'a> Lexer<'a> {
             preserve_all_comments_before: self.preserve_all_comments_before,
             is_legacy_octal_literal: self.is_legacy_octal_literal,
             is_log_disabled: self.is_log_disabled,
+            last_comment_end: self.last_comment_end,
             code_point: self.code_point,
             identifier: self.identifier,
             jsx_pragma: self.jsx_pragma,
@@ -379,6 +388,7 @@ impl<'a> Lexer<'a> {
         self.preserve_all_comments_before = original.preserve_all_comments_before;
         self.is_legacy_octal_literal = original.is_legacy_octal_literal;
         self.is_log_disabled = original.is_log_disabled;
+        self.last_comment_end = original.last_comment_end;
         self.code_point = original.code_point;
         self.identifier = original.identifier;
         self.jsx_pragma = original.jsx_pragma;
@@ -1905,6 +1915,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn scan_comment_text(&mut self, for_pragma: bool) {
+        self.last_comment_end = self.end as u32;
         let text = &self.contents[self.start..self.end];
         let has_legal_annotation = text.len() > 2 && text[2] == b'!';
         let is_multiline_comment = text.len() > 1 && text[1] == b'*';
@@ -2268,6 +2279,7 @@ impl<'a> Lexer<'a> {
             is_legacy_octal_literal: false,
             is_log_disabled: false,
             comments_to_preserve_before: Vec::new(),
+            last_comment_end: 0,
             code_point: -1,
             identifier: b"",
             jsx_pragma: JSXPragma::default(),

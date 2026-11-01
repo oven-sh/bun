@@ -1380,6 +1380,9 @@ pub struct Options<'a> {
     pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List<bun_alloc::AstAlloc>>,
 
     pub mangled_props: Option<&'a crate::MangledProps>,
+
+    /// `Ast::kept_parameter_lists`.
+    pub parameter_lists_as_written: Option<&'a js_ast::ParameterListsAsWritten>,
 }
 
 impl<'a> Options<'a> {
@@ -1431,6 +1434,7 @@ impl<'a> Default for Options<'a> {
             has_dynamic_import_items: false,
             line_offset_tables: None,
             mangled_props: None,
+            parameter_lists_as_written: None,
         }
     }
 }
@@ -2454,14 +2458,75 @@ pub(crate) mod __gated_printer {
             }
         }
 
+        /// Prints the list that the parser kept at `key`, when each parameter still has the name its text gives it. `false`: nothing is printed.
+        #[cold]
+        #[inline(never)]
+        fn print_parameter_list_as_written(
+            &mut self,
+            lists: &js_ast::ParameterListsAsWritten,
+            key: bun_ast::Loc,
+            open_paren_loc: Option<bun_ast::Loc>,
+            args: &[G::Arg],
+        ) -> bool {
+            use js_ast::parameter_list_as_written::Names;
+
+            let Some(text) = lists.get(&key.start) else {
+                return false;
+            };
+            let text = text.slice();
+
+            let mut names = Names::new(text);
+            let mut ranges = Vec::with_capacity(args.len());
+            for arg in args {
+                let BindingData::BIdentifier(identifier) = &arg.binding.data else {
+                    return false;
+                };
+                let Ok(Some(name)) = names.next_name() else {
+                    return false;
+                };
+                if self.name_for_symbol(identifier.get().r#ref) != &text[name.start..name.end] {
+                    return false;
+                }
+                ranges.push(name.start..name.end);
+            }
+            if !matches!(names.next_name(), Ok(None)) {
+                return false;
+            }
+
+            if let Some(loc) = open_paren_loc {
+                self.add_source_mapping(loc);
+            }
+            self.print(b"(");
+            let mut printed = 0;
+            for (arg, name) in args.iter().zip(ranges) {
+                self.print(&*strings::crlf_as_lf(&text[printed..name.start]));
+                self.add_source_mapping(arg.binding.loc);
+                self.print(&text[name.start..name.end]);
+                printed = name.end;
+            }
+            self.print(&*strings::crlf_as_lf(&text[printed..]));
+            self.print(b")");
+            true
+        }
+
+        /// `as_written_key`: where the parser keeps the list of a function or of an arrow function.
         pub(crate) fn print_fn_args(
             &mut self,
             open_paren_loc: Option<bun_ast::Loc>,
+            as_written_key: bun_ast::Loc,
             args: &[G::Arg],
             has_rest_arg: bool,
             // is_arrow can be used for minifying later
             _is_arrow: bool,
         ) {
+            // Only what the runtime loads has such lists, and that is printed for Bun.
+            if IS_BUN_PLATFORM
+                && let Some(lists) = self.options.parameter_lists_as_written
+                && self.print_parameter_list_as_written(lists, as_written_key, open_paren_loc, args)
+            {
+                return;
+            }
+
             let wrap = true;
 
             if wrap {
@@ -2497,6 +2562,7 @@ pub(crate) mod __gated_printer {
         pub(crate) fn print_func(&mut self, func: &G::Fn) {
             self.print_fn_args(
                 Some(func.open_parens_loc),
+                func.open_parens_loc,
                 slice_of(func.args),
                 func.flags.contains(G::FnFlags::HasRestArg),
                 false,
@@ -3810,6 +3876,7 @@ pub(crate) mod __gated_printer {
 
                     self.print_fn_args(
                         if e.is_async { None } else { Some(expr.loc) },
+                        expr.loc,
                         &e.args,
                         e.has_rest_arg,
                         true,
@@ -7066,6 +7133,7 @@ pub(crate) mod __gated_printer {
             {
                 self.print_fn_args(
                     Some(func.open_parens_loc),
+                    bun_ast::Loc::EMPTY,
                     slice_of(func.args),
                     func.flags.contains(G::FnFlags::HasRestArg),
                     false,
@@ -7181,6 +7249,7 @@ pub(crate) mod __gated_printer {
                 }
                 self.print_fn_args(
                     Some(func.open_parens_loc),
+                    bun_ast::Loc::EMPTY,
                     slice_of(func.args),
                     func.flags.contains(G::FnFlags::HasRestArg),
                     false,

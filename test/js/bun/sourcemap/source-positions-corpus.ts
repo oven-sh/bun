@@ -1154,6 +1154,73 @@ export const cases: Record<string, Case> = {
  1|export { text };
 `,
   },
+  // The runtime prints a parameter list that holds a comment as it is written, on as many lines as it has.
+  "commented-parameters.cjs": {
+    functions: "2/3",
+    lines: `
+ 1|exports.first = function (
+ 1|  /* one */ a,
+ -|  // two
+ 1|  b,
+ -|) {
+ 1|  at();
+ -|};
+ 1|exports.never = function (/* one */ a,
+ 0|  b /* two */) {
+ 0|  at();
+ -|};
+ 1|exports.first(1, 2);
+ 1|function after() {
+ 1|  at();
+ -|}
+ 1|after();
+`,
+  },
+  "commented-parameters.mjs": {
+    functions: "2/2",
+    lines: `
+ 1|export const block = (
+ 1|  /* one */ a,
+ 1|  b, // two
+ -|) => {
+ 1|  at();
+ -|};
+ 1|export const expression = (
+ -|  // one
+ 1|  a,
+ 1|  /* two */ b,
+ 1|) => [a, b, at()].length;
+ 1|block(1, 2);
+ 1|expression(1, 2);
+`,
+  },
+  "commented-parameters.ts": {
+    functions: "3/3",
+    lines: `
+ 1|class Service {
+ 1|  constructor(
+ 1|    /* config.port */ port,
+ 1|    /* config.host */ host,
+ -|  ) {
+ 1|    at();
+ -|  }
+ 1|  method(/* the first */ a,
+ 1|    b) {
+ 1|    at();
+ -|  }
+ 1|  *each(
+ -|    // every value
+ 1|    ...values
+ -|  ) {
+ 1|    at();
+ 1|    yield* values;
+ -|  }
+ -|}
+ 1|const service = new Service(80, "localhost");
+ 1|service.method(1, 2);
+ 1|[...service.each(1, 2)];
+`,
+  },
   // Columns far from the start of the line.
   "wide.js": {
     functions: "0/0",
@@ -1205,6 +1272,11 @@ a {
 export const snapshots = `
 import { expect, test } from "bun:test";
 type Erased = number;
+const commented = function (
+  /* one */ a,
+  // two
+  b,
+) {};
 test("snapshots", () => {
   expect(1 as Erased).toMatchInlineSnapshot(«\`1\`»); expect("two").toMatchInlineSnapshot(«\`"two"\`»);
   expect(3)

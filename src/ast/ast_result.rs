@@ -10,8 +10,8 @@ use bun_collections::{ArrayHashMap, StringArrayHashMap, StringHashMap};
 
 use crate::runtime;
 use crate::{
-    CharFreq, ExportsKind, Expr, InlinedEnumValue, LocRef, NamedExport, NamedImport, Part, Range,
-    Ref, Scope, SlotCounts, StoreStr, Target,
+    CharFreq, ExportsKind, Expr, InlinedEnumValue, LocRef, NamedExport, NamedImport,
+    ParameterListsAsWritten, Part, Range, Ref, Scope, SlotCounts, StoreStr, Target,
 };
 
 use crate::part::List as PartList;
@@ -104,6 +104,8 @@ pub struct Ast<'a> {
     pub import_meta_ref: Ref,
     /// Output depends on more than the source text (macros, `import.meta.glob`), so don't cache it.
     pub depends_on_more_than_source: bool,
+    /// Filled for a module the runtime loads.
+    pub parameter_lists_as_written: ParameterListsAsWritten,
 }
 
 // `parts`/`symbols`/`import_records` are now `ArenaVec`s and need an allocator,
@@ -150,7 +152,13 @@ impl<'a> Ast<'a> {
             has_import_meta: false,
             import_meta_ref: Ref::NONE,
             depends_on_more_than_source: false,
+            parameter_lists_as_written: Default::default(),
         }
+    }
+
+    /// What the printer takes: `None` when no list is kept, so that it tests one pointer for each function.
+    pub fn kept_parameter_lists(&self) -> Option<&ParameterListsAsWritten> {
+        (!self.parameter_lists_as_written.is_empty()).then_some(&self.parameter_lists_as_written)
     }
 }
 

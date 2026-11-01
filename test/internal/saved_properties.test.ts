@@ -58,6 +58,15 @@ describe("SavedProperties", () => {
     expect("added" in Class.prototype).toBe(false);
   });
 
+  test("does not descend into the global object", () => {
+    const saved = new SavedProperties();
+    saved.save({ global: globalThis, Class: class {} }, true);
+    globalThis.leftByTheTest = 1;
+    saved.restore();
+    expect(globalThis.leftByTheTest).toBe(1);
+    delete globalThis.leftByTheTest;
+  });
+
   test("leaves alone what the filters name", () => {
     const root = { kept: 1, _internal: 1 };
     const saved = new SavedProperties((object, key) => typeof key !== "string" || !key.startsWith("_"));

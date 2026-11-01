@@ -48,6 +48,8 @@ function isSame(current: PropertyDescriptor, saved: PropertyDescriptor) {
 
 // Visits `root`, every function reachable from it and their prototypes, each once. An object that `root` holds is
 // visited only if `descendsIntoObjects`, or if it's a `prototype`. `found` returns where to put an object's properties.
+// The global object is visited only as the root: a window holds it as `global`, and what a file changes on it is
+// another snapshot's business, or gone with the file's global.
 function walk(
   root: object,
   descendsIntoObjects: boolean,
@@ -56,7 +58,7 @@ function walk(
   found: (object: object) => Properties | undefined,
 ) {
   function visit(object: object, descendsIntoObjects: boolean) {
-    if (seen.$has(object)) return;
+    if (seen.$has(object) || (object === globalThis && object !== root)) return;
     seen.$set(object, true);
     const properties = found(object);
     const keys = ownKeys(object);

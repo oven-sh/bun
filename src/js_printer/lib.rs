@@ -1495,7 +1495,7 @@ pub struct PrintJsonOptions<'a> {
 /// What [`print_json`] writes for the bytes of a string that are no sequence of UTF-8.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum IllFormedBytes {
-    /// U+FFFD, as `TextDecoder` reads them: for what is shown or sent.
+    /// U+FFFD where a lead byte starts no sequence: for what is shown or sent. A byte that is no lead byte (`80..BF`, `F8..FF`) is written as it is.
     #[default]
     Replace,
     /// The bytes: for a file that is written back, where what was not edited stays as it was read.

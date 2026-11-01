@@ -9,6 +9,42 @@ import { join } from "path";
 // shorter windows (the previous 32/50ms) can elapse before a single sample is
 // taken, leaving "No samples collected." in --cpu-prof-md output.
 describe.concurrent("--cpu-prof", () => {
+  test("an idle profile retains the full capture duration", async () => {
+    using dir = tempDir("cpu-prof-empty", {
+      "test.mjs": `
+        import { setTimeout as delay } from "node:timers/promises";
+        const started = performance.now();
+        // Elapsed idle time is the behavior under test, not a readiness condition.
+        await delay(25);
+        console.log(performance.now() - started);
+      `,
+    });
+    const before = performance.now();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-interval=1000000000", "--cpu-prof-name=empty.cpuprofile", "test.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const elapsed = performance.now() - before;
+    expect(stderr).toBe("");
+    const idleTime = Number(stdout.trim());
+    expect(idleTime).toBeGreaterThan(0);
+    expect(exitCode).toBe(0);
+
+    const profile = JSON.parse(readFileSync(join(String(dir), "empty.cpuprofile"), "utf8"));
+    // JSC attempts one sample before sleeping, even with a long sampling interval.
+    expect(profile.samples.length).toBe(profile.timeDeltas.length);
+    expect(profile.timeDeltas.every((delta: number) => Number.isFinite(delta) && delta >= 0)).toBe(true);
+    const nodeIds = new Set(profile.nodes.map((node: any) => node.id));
+    expect(profile.samples.every((id: number) => nodeIds.has(id))).toBe(true);
+    const duration = (profile.endTime - profile.startTime) / 1000;
+    expect(duration).toBeGreaterThanOrEqual(idleTime - 0.001);
+    expect(duration).toBeLessThanOrEqual(elapsed + 0.001);
+  });
+
   test("generates CPU profile with default name", async () => {
     using dir = tempDir("cpu-prof", {
       "test.js": `

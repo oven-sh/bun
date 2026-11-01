@@ -675,7 +675,7 @@ The string goes to the database as written, so `sql.unsafe` and `sql.file` take 
 
 Pass positional parameters as an array. Bun copies the array in the call, so a later change to it has no effect.
 
-With the SQLite adapter, parameters can also be an object of named parameters. A key works with or without its prefix: `{ ":id": 1 }` or `{ id: 1 }`. A parameter without a key is `NULL`, or an error if the connection sets `strict: true`.
+With the SQLite adapter, parameters can also be an object of named parameters. A key works with or without its prefix: `{ ":id": 1 }` or `{ id: 1 }`. A parameter without a key is `NULL`, or an error if the connection sets `strict: true`. With `strict: true`, a query whose placeholders get no values at all is an error too: `sql.unsafe("SELECT ?")` rejects with `Missing parameter "?1"`.
 
 ```ts
 const sql = new SQL({ adapter: "sqlite", filename: "myapp.db" });
@@ -1041,7 +1041,7 @@ const sql = new SQL({
   readwrite: true, // Allow read and write operations
 
   // SQLite data handling
-  strict: true, // Throw when a named parameter is missing
+  strict: true, // Throw when a parameter is missing
   safeIntegers: false, // true returns every integer as a BigInt (`bigint: true` does the same)
 
   // Callbacks

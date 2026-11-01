@@ -44,11 +44,8 @@ test.skipIf(!isPosix)("stdin: 'pipe' fd is closed on child exit without reading 
   }
   await Promise.all(children.map(p => p.exited));
 
-  // fd closes go through bun.Async.Closer on POSIX; give the close thread
-  // a moment — but do NOT invoke GC, since the bug was that cleanup only
-  // happened via Subprocess finalization.
-  for (let i = 0; i < 20 && countOpenFds() - baseline > N / 4; i++) await Bun.sleep(20);
-
+  // Do NOT invoke GC: the bug was that cleanup only happened via Subprocess
+  // finalization.
   const afterExit = countOpenFds() - baseline;
 
   // Keep `children` alive across the measurement so GC finalization cannot
@@ -56,8 +53,8 @@ test.skipIf(!isPosix)("stdin: 'pipe' fd is closed on child exit without reading 
   expect(children.length).toBe(N);
 
   // Without the fix every stdin pipe (one per child) is still open here,
-  // so `afterExit` ≈ N. Allow slack for a few async closes still in flight.
-  expect(afterExit).toBeLessThan(N / 4);
+  // so `afterExit` ≈ N.
+  expect(afterExit).toBe(0);
 });
 
 test("reading .stdin does not leak a native FileSink per spawn", async () => {

@@ -214,12 +214,19 @@ bitflags::bitflags! {
         const KEEP_ALIVE               = 1 << 10; // default true
         /// A read failed with a non-retry errno. Set before the bytes read ahead of the failure are delivered, so a pull from inside that delivery cannot read the fd past the error. Never cleared: `start()`, `unpause()` and `from()` keep it, and only a reader from `init()` reads again.
         const READ_FAILED              = 1 << 11;
+        /// fstat says that the fd is not a FIFO and not a socket. Only for an fd that the user names (`Bun.file()`): it can be a file, or a device whose close(2) blocks, and fstat cannot tell a pty from a serial line.
+        const NOT_A_PIPE               = 1 << 13;
     }
 }
 
 impl PosixFlags {
     pub(crate) const fn new() -> Self {
         Self::from_bits_truncate(PosixFlags::CLOSE_HANDLE.bits() | PosixFlags::KEEP_ALIVE.bits())
+    }
+
+    /// Whether the fd is a pipe, a socket or the pty of `Bun.Terminal`, which `PollOrFd::close_as` closes on the calling thread. A reader knows this before it has a poll.
+    pub(crate) const fn is_pipe(self) -> bool {
+        !self.intersects(PosixFlags::MEMFD.union(PosixFlags::NOT_A_PIPE))
     }
 }
 
@@ -341,10 +348,21 @@ impl PosixBufferedReader {
             debug_assert!(!self.flags.contains(PosixFlags::CLOSED_WITHOUT_REPORTING));
             self.flags.insert(PosixFlags::CLOSED_WITHOUT_REPORTING);
             if self.flags.contains(PosixFlags::CLOSE_HANDLE) {
-                let owner = std::ptr::from_mut(self).cast::<c_void>();
-                self.handle.close(Some(owner), None::<fn(*mut c_void)>);
+                Self::close_fd(&mut self.handle, self.flags, None, None::<fn(*mut c_void)>);
             }
         }
+    }
+
+    /// Every close of the fd of a reader. Not `PollOrFd::close`: the poll of a reader does not say what its fd is. Borrows `handle` alone, because `on_close_fn` can free the parent that embeds the reader.
+    fn close_fd<F>(
+        handle: &mut PollOrFd,
+        flags: PosixFlags,
+        ctx: Option<*mut c_void>,
+        on_close_fn: Option<F>,
+    ) where
+        F: FnOnce(*mut c_void),
+    {
+        handle.close_as(ctx, on_close_fn, true, flags.is_pipe());
     }
 
     pub fn get_fd(&self) -> Fd {
@@ -387,10 +405,10 @@ impl PosixBufferedReader {
                 // The handle is closed after the read regardless of result.
                 // `self.handle` owns the fd;
                 // borrow a non-owning `File` view so the temporary doesn't
-                // close it on drop (handle.close() below does).
+                // close it on drop (`close_fd` below does).
                 let result = sys::File::borrow(&fd)
                     .read_to_end_with_array_list(&mut self._buffer, sys::SizeHint::UnknownSize);
-                self.handle.close(None, None::<fn(*mut c_void)>);
+                Self::close_fd(&mut self.handle, self.flags, None, None::<fn(*mut c_void)>);
                 if let Err(err) = result {
                     bun_core::debug_warn!("error reading from memfd\n{}", err);
                     return self.buffer();
@@ -446,7 +464,9 @@ impl PosixBufferedReader {
         // runs without a receiver borrow.
         unsafe {
             if (*this).flags.contains(PosixFlags::CLOSE_HANDLE) {
-                (*this).handle.close(
+                Self::close_fd(
+                    &mut (*this).handle,
+                    (*this).flags,
                     Some(this.cast::<c_void>()),
                     // SAFETY: ctx is the live reader raw pointer passed above.
                     Some(|ctx: *mut c_void| Self::done(ctx.cast::<PosixBufferedReader>())),
@@ -554,7 +574,7 @@ impl PosixBufferedReader {
         if !is_pollable {
             self.buffer().clear();
             self.flags.remove(PosixFlags::IS_DONE);
-            self.handle.close(None, None::<fn(*mut c_void)>);
+            Self::close_fd(&mut self.handle, self.flags, None, None::<fn(*mut c_void)>);
             self.handle = PollOrFd::Fd(fd);
             return sys::Result::Ok(());
         }

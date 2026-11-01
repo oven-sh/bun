@@ -1353,6 +1353,36 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 // without a crate-cycle; `crate::run_main` re-exports it.
 // ──────────────────────────────────────────────────────────────────────────
 
+/// `--cpu-prof` and `--heap-prof`. `VirtualMachine::on_exit` writes the profiles.
+pub(crate) fn start_profilers(vm: &mut VirtualMachine, ctx: &ContextData) {
+    // ── CPU profiler ────────────────────────────────────────────────────
+    if ctx.runtime_options.cpu_prof.enabled {
+        let opts = &ctx.runtime_options.cpu_prof;
+        vm.cpu_profiler_config = Some(bun_jsc::bun_cpu_profiler::CPUProfilerConfig {
+            name: opts.name,
+            dir: opts.dir,
+            md_format: opts.md_format,
+            json_format: opts.json_format,
+            interval: opts.interval,
+        });
+        bun_jsc::bun_cpu_profiler::set_sampling_interval(opts.interval);
+        // SAFETY: `vm.jsc_vm` set in `init`.
+        bun_jsc::bun_cpu_profiler::start_cpu_profiler(unsafe { &mut *vm.jsc_vm });
+        bun_analytics::features::cpu_profile.fetch_add(1, Ordering::Relaxed);
+    }
+
+    // ── Heap profiler ───────────────────────────────────────────────────
+    if ctx.runtime_options.heap_prof.enabled {
+        let opts = &ctx.runtime_options.heap_prof;
+        vm.heap_profiler_config = Some(bun_jsc::bun_heap_profiler::HeapProfilerConfig {
+            name: opts.name,
+            dir: opts.dir,
+            text_format: opts.text_format,
+        });
+        bun_analytics::features::heap_snapshot.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 /// Everything [`Run::start`] needs; built on the stack at the end of
 /// `RunCommand::boot` / `boot_standalone`.
 pub(crate) struct Run<'a> {
@@ -1400,12 +1430,16 @@ impl Run<'_> {
     /// Wire `--eval`/`--print`
     /// node-module globals and `--expose-gc` into the JSC global object.
     fn add_conditional_globals(global: &JSGlobalObject, ctx: &ContextData) {
+        unsafe extern "C" {
+            safe fn Bun__NodeVM__setNewContextsHaveGC(value: bool);
+        }
         let ro = &ctx.runtime_options;
         if !ro.eval.script.is_empty() {
             bun_jsc::cpp::Bun__ExposeNodeModuleGlobals(global);
         }
         if ro.expose_gc {
             bun_jsc::cpp::JSC__JSGlobalObject__addGc(global);
+            Bun__NodeVM__setNewContextsHaveGC(true);
         }
     }
 
@@ -1425,32 +1459,7 @@ impl Run<'_> {
         vm.hot_reload = ctx.debug.hot_reload;
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
 
-        // ── CPU profiler ────────────────────────────────────────────────────
-        if ctx.runtime_options.cpu_prof.enabled {
-            let opts = &ctx.runtime_options.cpu_prof;
-            vm.cpu_profiler_config = Some(bun_jsc::bun_cpu_profiler::CPUProfilerConfig {
-                name: opts.name,
-                dir: opts.dir,
-                md_format: opts.md_format,
-                json_format: opts.json_format,
-                interval: opts.interval,
-            });
-            bun_jsc::bun_cpu_profiler::set_sampling_interval(opts.interval);
-            // SAFETY: `vm.jsc_vm` set in `init`.
-            bun_jsc::bun_cpu_profiler::start_cpu_profiler(unsafe { &mut *vm.jsc_vm });
-            bun_analytics::features::cpu_profile.fetch_add(1, Ordering::Relaxed);
-        }
-
-        // ── Heap profiler ───────────────────────────────────────────────────
-        if ctx.runtime_options.heap_prof.enabled {
-            let opts = &ctx.runtime_options.heap_prof;
-            vm.heap_profiler_config = Some(bun_jsc::bun_heap_profiler::HeapProfilerConfig {
-                name: opts.name,
-                dir: opts.dir,
-                text_format: opts.text_format,
-            });
-            bun_analytics::features::heap_snapshot.fetch_add(1, Ordering::Relaxed);
-        }
+        start_profilers(vm, ctx);
 
         Self::add_conditional_globals(global, ctx);
 

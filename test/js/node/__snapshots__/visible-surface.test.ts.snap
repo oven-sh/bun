@@ -3497,6 +3497,10 @@ util[MIMEParams][prototype][constructor] = util[MIMEParams]
 util[MIMEParams][prototype][Symbol(Symbol.iterator)] c-w function
 util[MIMEParams][prototype][Symbol(Symbol.iterator)] = util[MIMEParams][prototype][entries]
 util[MIMEParams][prototype][Symbol(Symbol.toStringTag)] c-- string
+util[diff] cew function
+util[diff]: function function name="diff" length=2 above=Function extensible=true
+util[diff][length] c-- number
+util[diff][name] c-- string
 util[isArray] cew function
 util[isArray]: function native name="isArray" length=1 above=Function extensible=true
 util[isArray][length] c-- number

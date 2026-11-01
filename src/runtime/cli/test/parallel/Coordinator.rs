@@ -48,8 +48,7 @@ pub(crate) struct Coordinator<'a> {
     // [:null]?[*:0]const u8 — null-sentinel-terminated slice of C strings;
     // backing storage has a null at [len] for execve-style consumers.
     pub(crate) argv: Box<[bun_spawn::CStrPtr]>,
-    /// One envp per worker slot — same base, with that slot's JEST_WORKER_ID
-    /// and BUN_TEST_WORKER_ID appended.
+    /// One envp per worker slot — same base, with that slot's `WORKER_ID_VARIABLES`.
     pub(crate) envps: Vec<bun_dotenv::NullDelimitedEnvMap>,
 
     pub(crate) workers: &'a mut [Worker],
@@ -94,7 +93,6 @@ pub(crate) struct Coordinator<'a> {
     /// `bun test --aot` over several programs. All of `workers` count as spawned; a slot with no process takes a part when one is ready.
     pub(crate) parts: Option<Box<Parts>>,
     pub(crate) live_workers: u32,
-    pub(crate) crashed_files: Vec<u32>,
     pub(crate) aborted: Option<u32>,
     /// Plain `bun test` runs these files in its own process: there is no `--parallel`, or it comes to one worker. They run in workers
     /// because their programs are several, one after another, and the run ends as it does in one process.
@@ -197,6 +195,10 @@ pub(crate) struct FileTestRecords {
     /// `TestDone` payloads past the formatted line; see `runner::decode_test_case`.
     pub(crate) tests: Vec<Box<[u8]>>,
     pub(crate) elapsed_ns: u64,
+    /// Unix time in milliseconds, or 0 if the file never started.
+    pub(crate) started_unix_ms: i64,
+    /// The name and message of the failing test case that stands for what the file didn't get to run.
+    pub(crate) unfinished: Option<(&'static [u8], Box<[u8]>)>,
 }
 
 /// Consecutive pre-`.ready` exits a worker slot tolerates before the slot
@@ -337,8 +339,23 @@ impl<'a> Coordinator<'a> {
         for (idx, ms) in &running {
             self.reporter.summary().fail += 1;
             self.reporter.summary().files += 1;
-            self.mark_crashed(*idx, *ms);
+            self.mark_cut_short(
+                *idx,
+                *ms,
+                b"(interrupted)",
+                b"interrupted while still running",
+            );
             self.files_done += 1;
+        }
+        for w in self.workers.iter() {
+            for idx in w.range.lo..w.range.hi {
+                if let Some(file) = self.test_records.get_mut(idx as usize) {
+                    file.unfinished = Some((
+                        b"(aborted)",
+                        b"interrupted before it started".as_slice().into(),
+                    ));
+                }
+            }
         }
         if !running.is_empty() {
             bun_core::pretty_errorln!("<r>\n<red>Interrupted<r> while still running:");
@@ -921,7 +938,7 @@ impl<'a> Coordinator<'a> {
                 Output::flush();
             }
             frame::Kind::FileDone => {
-                let mut nums = [0u32; 9];
+                let mut nums = [0u32; 10];
                 for n in nums.iter_mut() {
                     *n = rd.u32();
                 }
@@ -934,6 +951,7 @@ impl<'a> Coordinator<'a> {
                     expectations,
                     skipped_label,
                     files,
+                    shuffled,
                     unhandled,
                 ] = nums;
                 let elapsed_ns = rd.u64();
@@ -947,6 +965,8 @@ impl<'a> Coordinator<'a> {
                 let growth = rd_growth + largest_child.max(self.take_highest_of_children(w));
                 if let Some(file) = self.test_records.get_mut(idx as usize) {
                     file.elapsed_ns = elapsed_ns;
+                    file.started_unix_ms = bun_core::time::milli_timestamp()
+                        - (file.elapsed_ns / bun_core::time::NS_PER_MS) as i64;
                 }
 
                 w.read_output_written_so_far();
@@ -983,6 +1003,7 @@ impl<'a> Coordinator<'a> {
                     summary.expectations += expectations;
                     summary.skipped_because_label += skipped_label;
                     summary.files += files;
+                    summary.shuffled += shuffled;
                 }
                 self.reporter.jest.unhandled_errors_between_tests += unhandled;
                 self.record_timing(idx, w.dispatched_at);
@@ -1093,6 +1114,7 @@ impl<'a> Coordinator<'a> {
         w.reap_pending = true;
     }
 
+    #[optimize(size)]
     fn run_pending_reaps(&mut self) {
         let n = self.spawned_count as usize;
         for i in 0..n {
@@ -1115,6 +1137,7 @@ impl<'a> Coordinator<'a> {
         }
     }
 
+    #[optimize(size)]
     fn reap_worker(&mut self, slot: usize, status: &SpawnStatus) {
         // SAFETY: `slot < spawned_count <= workers.len()`; fresh root derivation, like each reborrow below.
         let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
@@ -1124,6 +1147,7 @@ impl<'a> Coordinator<'a> {
         if let Some(reservation) = &mut self.reservation {
             reservation.worker_ends(slot);
         }
+        w.read_output_written_so_far();
         self.flush_captured(w);
         // Exited before the IPC handshake. `inflight` is None for these, so
         // the mid-file handling below never fires; the per-slot cap is what
@@ -1206,6 +1230,8 @@ impl<'a> Coordinator<'a> {
             if is_panic_status(status) {
                 self.abort_on_worker_startup_panic(status);
             }
+        } else if is_panic_status(status) && self.stop_reason != Some(StopReason::WorkerPanicked) {
+            self.abort_on_idle_worker_panic(status);
         }
 
         // SAFETY: fresh derivation — `abort_on_worker_panic` above retags the slots.
@@ -1313,15 +1339,26 @@ impl<'a> Coordinator<'a> {
         self.reporter.summary().fail += 1;
         self.reporter.summary().files += 1;
         self.files_done += 1;
-    }
-
-    fn mark_crashed(&mut self, file_idx: u32, elapsed_ms: i64) {
-        self.crashed_files.push(file_idx);
         if let Some(file) = self.test_records.get_mut(file_idx as usize) {
-            file.elapsed_ns = u64::try_from(elapsed_ms).unwrap_or(0) * bun_core::time::NS_PER_MS;
+            file.unfinished = Some((b"(aborted)", reason.into()));
         }
     }
 
+    fn mark_cut_short(
+        &mut self,
+        file_idx: u32,
+        elapsed_ms: i64,
+        name: &'static [u8],
+        message: &[u8],
+    ) {
+        if let Some(file) = self.test_records.get_mut(file_idx as usize) {
+            file.elapsed_ns = u64::try_from(elapsed_ms).unwrap_or(0) * bun_core::time::NS_PER_MS;
+            file.started_unix_ms = bun_core::time::milli_timestamp() - elapsed_ms.max(0);
+            file.unfinished = Some((name, message.into()));
+        }
+    }
+
+    #[optimize(size)]
     fn account_crash(
         &mut self,
         file_idx: u32,
@@ -1336,7 +1373,12 @@ impl<'a> Coordinator<'a> {
         );
         self.reporter.summary().fail += 1;
         self.reporter.summary().files += 1;
-        self.mark_crashed(file_idx, bun_core::time::milli_timestamp() - dispatched_at);
+        self.mark_cut_short(
+            file_idx,
+            bun_core::time::milli_timestamp() - dispatched_at,
+            b"(worker crashed)",
+            b"worker process crashed before reporting results",
+        );
         self.files_done += 1;
         if self.bail > 0 && self.reporter.summary().fail >= self.bail {
             self.bail_out();
@@ -1378,6 +1420,23 @@ impl<'a> Coordinator<'a> {
         );
         Output::flush();
         self.terminate_workers_after_panic(b"aborted: worker panicked during startup");
+    }
+
+    /// Like `abort_on_worker_panic`, for a worker that was idle or exiting after `.shutdown`.
+    /// Every file may already have passed, so the crash is counted as its own error.
+    fn abort_on_idle_worker_panic(&mut self, status: &SpawnStatus) {
+        self.break_dots();
+        let mut buf = [0u8; 32];
+        bun_core::pretty_error!(
+            concat!(
+                "\n<red>error<r>: a test worker process crashed with <b>{}<r> while it was not running a test file.\n",
+                "This indicates a bug in Bun or in a native addon, not in the test itself. Aborting.\n",
+            ),
+            bstr::BStr::new(describe_status(&mut buf, status)),
+        );
+        Output::flush();
+        self.reporter.jest.unhandled_errors_between_tests += 1;
+        self.terminate_workers_after_panic(b"aborted: worker panicked between files");
     }
 
     fn terminate_workers_after_panic(&mut self, sweep_reason: &'static [u8]) {
@@ -1456,6 +1515,9 @@ impl<'a> Coordinator<'a> {
                 self.reporter.summary().fail += 1;
                 self.reporter.summary().files += 1;
                 self.files_done += 1;
+                if let Some(file) = self.test_records.get_mut(idx as usize) {
+                    file.unfinished = Some((b"(aborted)", reason.into()));
+                }
             }
         }
         Output::flush();
@@ -1608,7 +1670,6 @@ impl<'a> Coordinator<'a> {
             let reason = describe_failed_build(&mut buf, &status);
             while let Some(file_idx) = range.pop_front() {
                 self.keep_timing(file_idx);
-                self.mark_crashed(file_idx, 0);
                 self.account_unfinished(file_idx, &reason);
             }
             Output::flush();

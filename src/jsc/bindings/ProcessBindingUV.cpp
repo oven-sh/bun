@@ -4,6 +4,7 @@
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/ThrowScope.h"
 #include "ZigGlobalObject.h"
+#include "headers.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/JSMap.h"
 #include "JavaScriptCore/JSMapInlines.h"
@@ -174,7 +175,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetErrorMap, (JSGlobalObject * globalObject, JSC::Cal
         RETURN_IF_EXCEPTION(scope, {});
         arr->putDirectIndex(globalObject, 1, JSC::jsString(vm, String(entry.description)));
         RETURN_IF_EXCEPTION(scope, {});
-        map->set(globalObject, JSC::jsNumber(entry.value), arr);
+        JSC__JSMap__set(map, globalObject, JSValue::encode(JSC::jsNumber(entry.value)), JSValue::encode(arr));
         RETURN_IF_EXCEPTION(scope, {});
     }
 

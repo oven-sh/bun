@@ -73,6 +73,8 @@ impl ErrorCode {
     /// Formats `args` into a `bun.String`, hands it to
     /// `Bun__createErrorWithCode`, and returns the constructed Error JSValue.
     /// The C++ side picks the ctor / `.name` / `.code` from `errors[self.0]`.
+    #[cold]
+    #[inline(never)]
     pub fn fmt<G: GlobalObjectRef + ?Sized>(self, global: &G, args: Arguments<'_>) -> JSValue {
         let message = bun_core::String::create_format(args);
         // `G` is one of the two `#[repr(C)]` opaque ZST `JSGlobalObject`

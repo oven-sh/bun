@@ -91,7 +91,7 @@ fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> boo
         server_components, allow_unresolved, macro_remap, inject, framework, dev_server,
         hot_module_reloading, ignore_module_resolution_errors, disable_transpilation, repl_mode,
         react_compiler_parse_test_pragmas,
-        loaders: _, jsx: _, react_compiler: _, root_dir: _, preserve_symlinks: _,
+        loaders: _, jsx: _, react_compiler: _, react_compiler_filter: _, root_dir: _, preserve_symlinks: _,
         tsconfig_override: _, main_fields: _, transform_options: _, external: _, packages: _,
         extension_order: _, main_field_extension_order: _, no_macros: _, custom_conditions: _,
         entry_naming: _, compile_entry_point_name: _, force_node_env: _,
@@ -112,7 +112,8 @@ fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> boo
         deprecated_namespace_object_setters: _, bytecode_depth: _, optimize_bytecode: _,
         bytecode_order: _, compile_target_builtins: _, metafile: _, metafile_json_path: _,
         metafile_markdown_path: _, serve_plugins: _, bunfig_path: _, unwrap_commonjs_packages: _,
-        supports_multiple_outputs: _, rewrite_jest_for_tests: _, code_coverage: _, debugger: _,
+        supports_multiple_outputs: _, rewrite_jest_for_tests: _, vitest_globals: _,
+        test_file_imports_vitest: _, own_test_globals: _, code_coverage: _, debugger: _,
     } = options;
 
     let is_development_server = framework.is_some() || !dev_server.is_null() || *hot_module_reloading;
@@ -286,6 +287,7 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         entry_texts: Vec::new(),
         omits_builtin_modules: input.aot.omits_builtin_modules,
         runs_tests: input.aot.runs_tests,
+        has_globals_of_vitest: input.aot.has_globals_of_vitest,
         takes_runtime_as_any: false,
         errors_with_bun_types: None,
         library_code_lacked: Default::default(),

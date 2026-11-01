@@ -1495,17 +1495,8 @@ DataPointer DHPointer::computeSecret(const BignumPointer& peer) const
     auto dp = DataPointer::Alloc(size());
     if (!dp) return {};
 
-    int size = DH_compute_key(static_cast<uint8_t*>(dp.get()), peer.get(), dh_.get());
-    if (size < 0) return {};
-
-    // The size of the computed key can be smaller than the size of the DH key.
-    // We want to make sure that the key is correctly padded.
-    if (static_cast<size_t>(size) < dp.size()) {
-        const size_t padding = dp.size() - size;
-        uint8_t* data = static_cast<uint8_t*>(dp.get());
-        memmove(data + padding, data, size);
-        memset(data, 0, padding);
-    }
+    // Not upstream, which calls DH_compute_key and puts back the leading zeros that it strips.
+    if (DH_compute_key_padded(static_cast<uint8_t*>(dp.get()), peer.get(), dh_.get()) < 0) return {};
 
     return dp;
 }
@@ -3292,6 +3283,13 @@ bool EVPKeyCtxPointer::setRsaOaepMd(const Digest& md)
     return EVP_PKEY_CTX_set_rsa_oaep_md(ctx_.get(), md_ptr) > 0;
 }
 
+bool EVPKeyCtxPointer::setRsaMgf1Md(const Digest& md)
+{
+    if (!md || !ctx_) return false;
+    const EVP_MD* md_ptr = md;
+    return EVP_PKEY_CTX_set_rsa_mgf1_md(ctx_.get(), md_ptr) > 0;
+}
+
 bool EVPKeyCtxPointer::setRsaPadding(int padding)
 {
     return setRsaPadding(ctx_.get(), padding, std::nullopt);
@@ -3420,7 +3418,7 @@ DataPointer CipherImpl(const EVPKeyPointer& key,
 {
     if (!key) return {};
     EVPKeyCtxPointer ctx = key.newCtx();
-    if (!ctx || init(ctx.get()) <= 0 || !ctx.setRsaPadding(params.padding) || (params.digest != nullptr && !ctx.setRsaOaepMd(params.digest))) {
+    if (!ctx || init(ctx.get()) <= 0 || !ctx.setRsaPadding(params.padding) || (params.digest != nullptr && !ctx.setRsaOaepMd(params.digest)) || (params.mgf1_digest != nullptr && !ctx.setRsaMgf1Md(params.mgf1_digest))) {
         return {};
     }
 
@@ -3479,6 +3477,23 @@ const Rsa::PrivateKey Rsa::getPrivateKey() const
     RSA_get0_factors(rsa_, &key.p, &key.q);
     RSA_get0_crt_params(rsa_, &key.dp, &key.dq, &key.qi);
     return key;
+}
+
+// Not upstream: there is no loop over getOtherPrimeInfos(), which is empty with BoringSSL, and nothing is multiplied
+// for a modulus that BoringSSL refuses to use or a factor that is longer than the modulus.
+bool Rsa::checkPrimeProduct() const
+{
+    const auto pub = getPublicKey();
+    const auto priv = getPrivateKey();
+    if (pub.n == nullptr || priv.p == nullptr || priv.q == nullptr) return false;
+    const unsigned bits = BN_num_bits(pub.n);
+    if (bits > OPENSSL_RSA_MAX_MODULUS_BITS || BN_num_bits(priv.p) > bits || BN_num_bits(priv.q) > bits) return false;
+    auto product = BignumPointer::New();
+    BignumCtxPointer ctx(BN_CTX_new());
+    if (!product || !ctx || BN_mul(product.get(), priv.p, priv.q, ctx.get()) != 1) {
+        return false;
+    }
+    return BN_cmp(product.get(), pub.n) == 0;
 }
 
 const std::optional<Rsa::PssParams> Rsa::getPssParams() const

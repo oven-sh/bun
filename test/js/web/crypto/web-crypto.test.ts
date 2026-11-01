@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { createCipheriv, createSecretKey, type webcrypto } from "node:crypto";
+import { createCipheriv, createSecretKey, KeyObject, type webcrypto } from "node:crypto";
 
 type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
 type HmacImportParams = webcrypto.HmacImportParams;
@@ -1192,6 +1192,27 @@ describe("SubtleCrypto.deriveBits length", () => {
     });
   });
 
+  it("takes the length as an [EnforceRange] unsigned long", async () => {
+    const key = await crypto.subtle.importKey("raw", enc.encode("secret"), "HKDF", false, ["deriveBits"]);
+    const hkdf = { name: "HKDF", hash: "SHA-256", salt: enc.encode("salt"), info: enc.encode("info") };
+    const results: Record<string, string> = {};
+    for (const length of [16, 16.9, "16", NaN, -1, 2 ** 32, 2 ** 32 + 16, Infinity, "x", {}]) {
+      results[Bun.inspect(length)] = await probe(crypto.subtle.deriveBits(hkdf, key, length as number));
+    }
+    expect(results).toEqual({
+      "16": "f6d2",
+      "16.9": "f6d2",
+      '"16"': "f6d2",
+      NaN: "TypeError",
+      "-1": "TypeError",
+      "4294967296": "TypeError",
+      "4294967312": "TypeError",
+      Infinity: "TypeError",
+      '"x"': "TypeError",
+      "{}": "TypeError",
+    });
+  });
+
   // deriveKey(derivedKeyType: HKDF) has no inherent key length, so the entire shared
   // secret must become the imported HKDF key; a derivedKeyType with a concrete length
   // (AES-GCM 256) must still flow that length through.
@@ -1303,6 +1324,26 @@ describe("OKP spki/pkcs8 cross-curve import", () => {
   });
 });
 
+it.each([
+  ["ECDSA", "sign"],
+  ["ECDH", "deriveBits"],
+] as const)("%s: a pkcs8 key without its optional public key is exported with it", async (name, usage) => {
+  const algorithm = { name, namedCurve: "P-256" };
+  const { privateKey } = await crypto.subtle.generateKey(algorithm, true, [usage]);
+  const { d } = await crypto.subtle.exportKey("jwk", privateKey);
+  // A PrivateKeyInfo whose ECPrivateKey (RFC 5915) is only the version and the private key.
+  const withoutPublicKey = Buffer.concat([
+    Buffer.from("3041020100301306072a8648ce3d020106082a8648ce3d030107042730250201010420", "hex"),
+    Buffer.from(d!, "base64url"),
+  ]);
+  const imported = await crypto.subtle.importKey("pkcs8", withoutPublicKey, algorithm, true, [usage]);
+  expect(Buffer.from(await crypto.subtle.exportKey("pkcs8", imported))).toEqual(
+    Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey)),
+  );
+  // The key itself stays as it came.
+  expect(KeyObject.from(imported).export({ format: "der", type: "pkcs8" })).toEqual(withoutPublicKey);
+});
+
 // importKey's empty-usages guard got Node's message; the same predicate in
 // generateKey, deriveKey's inner import and unwrapKey's inner import still
 // carried the empty-message SyntaxError.
@@ -1338,6 +1379,23 @@ describe("empty usages on a private or secret key", () => {
       deriveKey: "SyntaxError: Usages cannot be empty when importing a secret key.",
       unwrapKey: "SyntaxError: Usages cannot be empty when importing a secret key.",
     });
+  });
+
+  it("the SyntaxError is a DOMException", async () => {
+    const errors = await Promise.all(
+      [
+        crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, []),
+        crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["sign"]),
+        crypto.subtle.importKey("raw", new Uint8Array(16), "AES-GCM", false, ["sign"]),
+        (async () => createSecretKey(new Uint8Array(16)).toCryptoKey("AES-GCM", false, []))(),
+        (async () => createSecretKey(new Uint8Array(16)).toCryptoKey("AES-GCM", false, ["sign"]))(),
+      ].map(promise => promise.catch(e => e)),
+    );
+    for (const error of errors) {
+      expect(error).toBeInstanceOf(DOMException);
+      expect({ name: error.name, code: error.code }).toEqual({ name: "SyntaxError", code: DOMException.SYNTAX_ERR });
+      expect(error.stack).toBeString();
+    }
   });
 });
 
@@ -1448,8 +1506,8 @@ describe("CryptoKey.usages ordering", () => {
   });
 });
 
-// getRandomValues takes integer-typed views only; every other ArrayBufferView-ish
-// argument raises TypeMismatchError rather than being filled.
+// getRandomValues takes integer-typed views only; every other ArrayBufferView
+// raises TypeMismatchError rather than being filled.
 describe("crypto.getRandomValues argument types", () => {
   const integerViews = [
     ["Int8Array", () => new Int8Array(4)],
@@ -1461,6 +1519,9 @@ describe("crypto.getRandomValues argument types", () => {
     ["Uint32Array", () => new Uint32Array(4)],
     ["BigInt64Array", () => new BigInt64Array(4)],
     ["BigUint64Array", () => new BigUint64Array(4)],
+    // Node and the specification refuse these two.
+    ["Uint8Array on a SharedArrayBuffer", () => new Uint8Array(new SharedArrayBuffer(4))],
+    ["Uint8Array on a resizable ArrayBuffer", () => new Uint8Array(new ArrayBuffer(4, { maxByteLength: 8 }))],
   ] as const;
 
   for (const [name, make] of integerViews) {
@@ -1475,9 +1536,6 @@ describe("crypto.getRandomValues argument types", () => {
     ["Float32Array", () => new Float32Array(4)],
     ["Float64Array", () => new Float64Array(4)],
     ["DataView", () => new DataView(new ArrayBuffer(4))],
-    ["ArrayBuffer", () => new ArrayBuffer(4)],
-    ["SharedArrayBuffer", () => new SharedArrayBuffer(4)],
-    ["plain object", () => ({})],
   ] as const;
 
   for (const [name, make] of rejected) {
@@ -1486,6 +1544,36 @@ describe("crypto.getRandomValues argument types", () => {
         expect.objectContaining({
           name: "TypeMismatchError",
           message: "The data argument must be an integer-type TypedArray",
+        }),
+      );
+    });
+  }
+
+  // Web IDL's conversion of the argument to an ArrayBufferView comes first.
+  const notConverted = [
+    ["ArrayBuffer", () => new ArrayBuffer(4)],
+    ["SharedArrayBuffer", () => new SharedArrayBuffer(4)],
+    ["plain object", () => ({})],
+  ] as const;
+
+  it("needs an argument", () => {
+    // @ts-expect-error
+    expect(() => crypto.getRandomValues()).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_MISSING_ARGS",
+        message: 'The "array" argument must be specified',
+      }),
+    );
+  });
+
+  for (const [name, make] of notConverted) {
+    it(`rejects ${name} with TypeError`, () => {
+      expect(() => crypto.getRandomValues(make() as any)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: "Failed to execute 'getRandomValues' on 'Crypto': 1st argument is not an ArrayBufferView.",
         }),
       );
     });
@@ -1598,6 +1686,36 @@ describe("JWK import validation", () => {
       notBase64: "DataError",
       shortX: "DataError",
       shortD: "DataError",
+    });
+  });
+
+  it("RSA private keys need the n that is p times q, and no oth", async () => {
+    const algorithm = {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 1024,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    };
+    const { privateKey } = await crypto.subtle.generateKey(algorithm, true, ["sign", "verify"]);
+    const jwk = await crypto.subtle.exportKey("jwk", privateKey);
+    const { kty, n, e } = jwk;
+    const importJwk = (members: JsonWebKey) =>
+      crypto.subtle.importKey("jwk", { ...jwk, ...members }, algorithm, true, ["sign"]);
+
+    expect({
+      unchanged: await rejection(importJwk({})),
+      n: await rejection(importJwk({ n: jwk.d })),
+      p: await rejection(importJwk({ p: jwk.q })),
+      q: await rejection(importJwk({ q: jwk.p })),
+      oth: await rejection(importJwk({ oth: [] })),
+      publicOth: await rejection(crypto.subtle.importKey("jwk", { kty, n, e, oth: [] }, algorithm, true, ["verify"])),
+    }).toEqual({
+      unchanged: "resolved",
+      n: "DataError",
+      p: "DataError",
+      q: "DataError",
+      oth: "DataError",
+      publicOth: "DataError",
     });
   });
 

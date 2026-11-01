@@ -1,0 +1,28 @@
+[package]
+name = "bun-plugin-tailwind"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+# Not a member of Bun's workspace: this crate is only built to publish the npm package.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "3.8.5", default-features = false, features = ["napi4"] }
+napi-derive = "3.5.4"
+bun-native-plugin = { path = "../../bun-native-plugin-rs" }
+rustc-hash = "2.1.1"
+fast-glob = "0.4.3"
+# v4.3.3. Tailwind does not publish this crate, so the commit of the release tag is pinned.
+tailwindcss-oxide = { git = "https://github.com/tailwindlabs/tailwindcss", rev = "c2b24dd15fed1c59dd521bd86082f520c9f5ad0d" }
+
+[build-dependencies]
+napi-build = "2.3.1"
+
+[profile.release]
+lto = true
+strip = "symbols"

@@ -3590,7 +3590,7 @@ static JSObject* shallowCopyForDeepMatch(JSGlobalObject* globalObject, ThrowScop
         object->methodTable()->getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Include);
     RETURN_IF_EXCEPTION(scope, nullptr);
     for (const auto& name : names) {
-        if (isError && ErrorInstance::isLazilyMaterialized(vm, name))
+        if (isError && (name == vm.propertyNames->message || ErrorInstance::isLazilyMaterialized(vm, name)))
             continue;
         PropertyDescriptor descriptor;
         bool exists = object->getOwnPropertyDescriptor(globalObject, name, descriptor);
@@ -3603,8 +3603,8 @@ static JSObject* shallowCopyForDeepMatch(JSGlobalObject* globalObject, ThrowScop
         copy->methodTable()->defineOwnProperty(copy, globalObject, name, descriptor, false);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
-    // A getter of the class can need the private fields of `object`, which the copy does not have.
-    if (isError && !copy->getDirect(vm, vm.propertyNames->message)) {
+    // The message can be a getter that needs the private fields of `object`, which the copy does not have.
+    if (isError) {
         JSValue message = object->getIfPropertyExists(globalObject, vm.propertyNames->message);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (message)

@@ -85,6 +85,18 @@ describe("property matchers leave the received value as it was", () => {
       return this.#body.text;
     }
   }
+  class OwnGetterError extends Error {
+    #body = { text: "boom" };
+    code = "E_FOO";
+    constructor() {
+      super();
+      Object.defineProperty(this, "message", {
+        get(this: OwnGetterError) {
+          return this.#body.text;
+        },
+      });
+    }
+  }
   const deepFreeze = <T extends object>(object: T): T => {
     Object.values(object).forEach(value => typeof value === "object" && deepFreeze(value));
     return Object.freeze(object);
@@ -164,6 +176,10 @@ describe("property matchers leave the received value as it was", () => {
     ],
     "a field of an Error whose message is a getter that reads a private field": () => [
       new ApiError(),
+      { code: any(String) },
+    ],
+    "a field of an Error whose message is an own getter that reads a private field": () => [
+      new OwnGetterError(),
       { code: any(String) },
     ],
     "a matcher on the received side": () => [{ a: any(Number), b: 1 }, { a: 5 }],

@@ -22,7 +22,7 @@ await $`cat < ${response} | wc -c`; // 1256
 
 - **Cross-platform**: works on Windows, Linux & macOS. Instead of installing `rimraf` or `cross-env`, you can use Bun Shell. It implements common shell commands like `ls`, `cd`, and `rm` natively.
 - **Familiar**: Bun Shell is a bash-like shell that supports redirection, pipes, and environment variables.
-- **Globs**: Bun Shell supports glob patterns natively, including `**`, `*`, and `{expansion}`.
+- **Globs**: Bun Shell supports glob patterns natively, including `**`, `*`, and `{expansion}`. In a word that has a `*`, it also supports `?` and `[abc]`.
 - **Template literals**: Template literals execute shell commands and interpolate variables and expressions.
 - **Safety**: Bun Shell escapes all strings by default, preventing shell injection attacks.
 - **JavaScript interop**: Use `Response`, `ArrayBuffer`, `Blob`, `Bun.file(path)` and other JavaScript objects as stdin, stdout, and stderr.
@@ -512,6 +512,8 @@ console.log($.escape('$(foo) `bar` "baz"'));
 // => "\$(foo) \`bar\` \"baz\""
 ```
 
+`$.escape` quotes a value that has a `!` or a `^`. A `-` stays as it is, so inside a `[...]` pattern of the script it makes a range. To match the characters of a value there, interpolate the value: `` $`ls [${value}]*` ``.
+
 To skip escaping, wrap the string in a `{ raw: 'str' }` object:
 
 ```js
@@ -579,6 +581,21 @@ await $`ls ${userInput}`;
 
 Here, Bun Shell treats `userInput` as a single string, so `ls` tries to read the
 contents of a single directory named `my-file.txt; rm -rf /`.
+
+Glob characters in an interpolated value are literal too. So are a quoted or backslash-escaped character, the value of a shell variable, and the output of `$(...)`. Only the `*`, `?`, `[...]` and `{...}` that you write in the script itself are patterns.
+
+```js
+import { $ } from "bun";
+
+const name = "[ab]";
+
+await $`ls [ab]*.txt`; // files that start with "a" or "b"
+await $`ls ${name}*.txt`; // files that start with "[ab]"
+await $`ls [${name}]*.txt`; // files that start with "[", "a", "b" or "]"
+await $`ls "app/[slug]"/*.tsx`; // quote a name that has brackets
+```
+
+Unlike bash, Bun Shell expands `?` and `[...]` only in a word that also has a `*`. A leading `!` is the character `!`. Bun Shell has no POSIX classes such as `[[:digit:]]`: write `[0-9]`.
 
 ### Security considerations
 

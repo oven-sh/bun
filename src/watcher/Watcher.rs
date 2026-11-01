@@ -230,10 +230,38 @@ impl Watcher {
         if !self.running.load() {
             return;
         }
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        self.report_truncations(event_count);
         let events = &mut self.watch_events[..event_count];
         let changed = &self.changed_filepaths[..changed_count];
         WatcherTrace::write_events(&self.watchlist, events, changed);
         (self.on_file_update)(self.ctx, events, changed, &self.watchlist);
+    }
+
+    /// kqueue reports a truncation as `NOTE_ATTRIB` alone, like `chmod`: a changed size is a write.
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    fn report_truncations(&mut self, event_count: usize) {
+        for event in &mut self.watch_events[..event_count] {
+            let index = event.index as usize;
+            // `index` is the kevent's udata, which can outlive a `swap_remove` in `flush_evictions`.
+            if index >= self.watchlist.len()
+                || self.watchlist.items_kind()[index] != WatchItemKind::File
+                || !event.op.intersects(Op::METADATA | Op::WRITE)
+            {
+                continue;
+            }
+            let Some(size) = file_size(self.watchlist.items_fd()[index]) else {
+                continue;
+            };
+            let sizes = self.watchlist.items_mut::<"size", u64>();
+            if sizes[index] != size {
+                sizes[index] = size;
+                // 0 is the `open(O_TRUNC)` of a save: its `write()` follows and is reported.
+                if size != 0 {
+                    event.op |= Op::WRITE;
+                }
+            }
+        }
     }
 
     pub fn start(&mut self) -> Result<(), crate::Error> {
@@ -458,7 +486,11 @@ impl Watcher {
                 if (item as usize) < self.watchlist.len() {
                     let moved_fd = self.watchlist.items_fd()[item as usize];
                     if moved_fd.is_valid() {
-                        self.add_file_descriptor_to_kqueue_without_checks(moved_fd, item as usize);
+                        self.add_file_descriptor_to_kqueue_without_checks(
+                            moved_fd,
+                            item as usize,
+                            self.watchlist.items_kind()[item as usize],
+                        );
                     }
                 }
             }
@@ -494,9 +526,10 @@ impl Watcher {
         &mut self,
         fd: Fd,
         watchlist_id: usize,
+        kind: WatchItemKind,
     ) {
         use libc::{EV_ADD, EV_CLEAR, EV_ENABLE, EVFILT_VNODE, kevent as KEvent};
-        use libc::{NOTE_DELETE, NOTE_RENAME, NOTE_WRITE};
+        use libc::{NOTE_ATTRIB, NOTE_DELETE, NOTE_RENAME, NOTE_WRITE};
 
         // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
         let mut event: KEvent = bun_core::ffi::zeroed();
@@ -505,7 +538,12 @@ impl Watcher {
         // we want to know about the vnode
         event.filter = EVFILT_VNODE as _;
 
-        event.fflags = (NOTE_WRITE | NOTE_RENAME | NOTE_DELETE) as _;
+        let mut fflags = NOTE_WRITE | NOTE_RENAME | NOTE_DELETE;
+        // For `report_truncations`.
+        if kind == WatchItemKind::File {
+            fflags |= NOTE_ATTRIB;
+        }
+        event.fflags = fflags as _;
 
         // id
         event.ident = usize::try_from(fd.native()).expect("int cast");
@@ -556,8 +594,11 @@ impl Watcher {
             Cow::Borrowed(unsafe { bun_collections::detach_lifetime(file_path) })
         };
 
+        // Before the registration: a truncation that has an event then differs from this size.
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
+        let size = file_size(fd).unwrap_or(0);
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id, WatchItemKind::File);
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let eventlist_index = {
             // inotify needs a trailing NUL. When
@@ -591,6 +632,8 @@ impl Watcher {
             kind: WatchItemKind::File,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index,
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+            size,
         });
         Ok(FdOwnership::Watcher)
     }
@@ -638,7 +681,11 @@ impl Watcher {
         let watchlist_id = self.watchlist.len();
 
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
+        self.add_file_descriptor_to_kqueue_without_checks(
+            fd,
+            watchlist_id,
+            WatchItemKind::Directory,
+        );
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let eventlist_index = {
             let mut buf = bun_paths::path_buffer_pool::get();
@@ -678,6 +725,8 @@ impl Watcher {
             package_json: None,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index,
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+            size: 0,
         });
         Ok((self.watchlist.len() - 1) as WatchItemIndex)
     }
@@ -979,6 +1028,11 @@ impl Watcher {
     }
 }
 
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+fn file_size(fd: Fd) -> Option<u64> {
+    sys::fstat(fd).ok().map(|stat| stat.st_size as u64)
+}
+
 // ─── WatchEvent ───────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Default)]
@@ -1068,6 +1122,9 @@ pub struct WatchItem {
     pub package_json: Option<&'static PackageJSON>,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub eventlist_index: platform::EventListIndex,
+    /// The size of the file at the last read, or 0 when the first read failed. See `Watcher::report_truncations`.
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    pub size: u64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

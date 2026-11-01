@@ -1506,8 +1506,8 @@ describe("CryptoKey.usages ordering", () => {
   });
 });
 
-// getRandomValues takes integer-typed views only; every other ArrayBufferView-ish
-// argument raises TypeMismatchError rather than being filled.
+// getRandomValues takes integer-typed views only; every other ArrayBufferView
+// raises TypeMismatchError rather than being filled.
 describe("crypto.getRandomValues argument types", () => {
   const integerViews = [
     ["Int8Array", () => new Int8Array(4)],
@@ -1567,6 +1567,17 @@ describe("crypto.getRandomValues argument types", () => {
       "is a view on a SharedArrayBuffer, which is not allowed",
     ],
   ] as const;
+
+  it("needs an argument", () => {
+    // @ts-expect-error
+    expect(() => crypto.getRandomValues()).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_MISSING_ARGS",
+        message: "Failed to execute 'getRandomValues' on 'Crypto': 1 argument required, but only 0 present.",
+      }),
+    );
+  });
 
   for (const [name, make, why] of notConverted) {
     it(`rejects ${name} with TypeError`, () => {

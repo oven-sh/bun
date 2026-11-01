@@ -41,15 +41,15 @@ const bufferTypes = [
   Float64Array,
 ];
 
-// getRandomValues takes integer-typed views only, so fill through a Uint8Array
-// view to cover the ArrayBuffer/SharedArrayBuffer/Float* cases too.
+// getRandomValues takes integer-typed views on unshared memory only, so copy from a Uint8Array
+// to cover the ArrayBuffer/SharedArrayBuffer/Float* cases too.
 function randomFilled(bufferType: (typeof bufferTypes)[number], length: number) {
   const buffer = new (bufferType as any)(length);
   const bytes =
     buffer instanceof ArrayBuffer || buffer instanceof SharedArrayBuffer
       ? new Uint8Array(buffer)
       : new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-  crypto.getRandomValues(bytes);
+  bytes.set(crypto.getRandomValues(new Uint8Array(bytes.length)));
   return buffer;
 }
 

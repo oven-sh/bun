@@ -13,15 +13,25 @@ impl Crypto {
     pub(crate) fn get_random_values<'a>(
         &self,
         cx: &mut JsScope<'a>,
-        array: JsLocal<'a>,
+        array: Option<JsLocal<'a>>,
     ) -> bindgen::Result<'a, JsLocal<'a>> {
         let global = cx.global();
-        let js_type = array.to_js().js_type();
+        let Some(array) = array else {
+            return Err(global
+                .err(
+                    bun_jsc::ErrorCode::MISSING_ARGS,
+                    format_args!(
+                        "Failed to execute 'getRandomValues' on 'Crypto': 1 argument required, but only 0 present."
+                    ),
+                )
+                .throw()
+                .into());
+        };
         // Web IDL's conversion to an ArrayBufferView that is neither [AllowShared] nor [AllowResizable].
         let view = array
             .to_js()
             .as_array_buffer(global)
-            .filter(|_| js_type != JSType::ArrayBuffer);
+            .filter(|view| view.typed_array_type != JSType::ArrayBuffer);
         let refused = match &view {
             None => Some("is not an ArrayBufferView"),
             Some(view) if view.shared => {
@@ -34,20 +44,16 @@ impl Crypto {
         };
         if let Some(refused) = refused {
             return Err(global
-                .err(
-                    bun_jsc::ErrorCode::INVALID_ARG_TYPE,
-                    format_args!(
-                        "Failed to execute 'getRandomValues' on 'Crypto': 1st argument {refused}."
-                    ),
-                )
-                .throw()
+                .throw_invalid_arguments(format_args!(
+                    "Failed to execute 'getRandomValues' on 'Crypto': 1st argument {refused}."
+                ))
                 .into());
         }
 
         // https://w3c.github.io/webcrypto/#Crypto-method-getRandomValues accepts only integer-typed views.
-        let array_buffer = view.filter(|_| {
+        let array_buffer = view.filter(|view| {
             matches!(
-                js_type,
+                view.typed_array_type,
                 JSType::Int8Array
                     | JSType::Uint8Array
                     | JSType::Uint8ClampedArray

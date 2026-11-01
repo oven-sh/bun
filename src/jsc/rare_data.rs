@@ -127,7 +127,7 @@ impl Default for EntropyCache {
 }
 impl EntropyCache {
     pub(crate) const BUFFERED_UUIDS_COUNT: usize = 16;
-    pub const SIZE: usize = Self::BUFFERED_UUIDS_COUNT * 128;
+    pub(crate) const SIZE: usize = Self::BUFFERED_UUIDS_COUNT * 128;
 
     pub(crate) fn fill(&mut self) {
         bun_boringssl::rand_bytes(&mut self.cache);

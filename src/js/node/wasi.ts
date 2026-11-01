@@ -1663,7 +1663,7 @@ class WASI {
       },
       random_get: (bufPtr: number, bufLen: number) => {
         this.refreshMemory();
-        // getRandomValues refuses a view on shared memory, so it fills an array of its own.
+        // getRandomValues refuses a view on shared memory, so fill a fresh array and copy it in.
         new Uint8Array(this.memory.buffer, bufPtr, bufLen).set(crypto.getRandomValues(new Uint8Array(bufLen)));
         return WASI_ESUCCESS;
       },

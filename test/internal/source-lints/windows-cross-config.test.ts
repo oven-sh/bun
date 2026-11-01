@@ -123,6 +123,14 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     expect(plain.cxxflags).not.toContain("-fno-split-lto-unit");
   });
 
+  test("bun's link lets several objects weak-reference one of bun's hooks", () => {
+    // ThinLTO imports WTF's RunLoop::TimerBase::start() into JSC modules, and lld-link otherwise calls the second
+    // weak external of WTFTimer__update a duplicate symbol.
+    expect(computeFlags(resolveWindowsCross({ lto: true, baseline: false })).ldflags).toContain(
+      "/lld-allow-duplicate-weak",
+    );
+  });
+
   test("the link uses the LLVM toolchain's lld-link, with and without LTO", () => {
     for (const lto of [true, false]) {
       expect(resolveWindowsCross({ lto, baseline: false }).ld).toBe("/fake/llvm/bin/lld-link");

@@ -32,7 +32,7 @@ impl Rule for EnforceNodeProtocolUsage {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        match Settings::new(file.settings()).node_version() {
+        match Settings::of(file).node_version() {
             None => Some(None),
             // Upstream throws if the setting isn't a valid version.
             Some(node_version) => Some(Some(version_of(node_version.as_str()?)?)),

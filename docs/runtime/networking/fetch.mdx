@@ -378,6 +378,7 @@ Bun's fetch implementation includes several specific error cases:
 - Using a request body with GET/HEAD methods throws an error (which is expected for the fetch API)
 - Using the `proxy` and `unix` options together throws an error
 - Connection failures reject with a `TypeError` whose `code` is the socket error (`ECONNREFUSED`, `ECONNRESET`, `ETIMEDOUT`, `ENOTFOUND`, ...). The message starts with the code.
+- On Linux, a response with no `Content-Length` and no chunked encoding completes only when the server ends the connection with a FIN (on TLS, a `close_notify`). If the connection is reset first, the body read rejects with `ECONNRESET`, even when every byte of the body arrived. Node's `fetch` resolves such a body. This is about the connection that Bun itself holds (a proxy in between can hide a reset or add one), and a server avoids it when it sends `Content-Length` or uses chunked encoding.
 - TLS certificate validation failures when `rejectUnauthorized` is true (or undefined)
 - S3 operations may throw specific errors related to authentication or permissions
 

@@ -812,6 +812,29 @@ pub(super) fn find_evicted_modules(
         (evicted.named_by_copies).extend(in_folder.map(ModuleRef::File));
     }
     add_files_named_below_files_left_to_loader(input, modules, &mut evicted);
+    // A copy links to a name through the files that hand it on, and the loader asks each of them for it: `export { isUpKey } from "./lib/key"`.
+    let mut handing_on: Vec<ModuleRef> = evicted.named_by_copies.iter().copied().collect();
+    while let Some(module) = handing_on.pop() {
+        let ModuleRef::File(file) = module else {
+            continue;
+        };
+        let Some(scan) = scans.find(file) else {
+            continue;
+        };
+        let sites = input.files.analysis(file).import_sites.iter();
+        for (site, answer) in sites.zip(&scan.sites) {
+            let hands_on = matches!(
+                site.kind,
+                ImportSiteKind::ExportFrom(_) | ImportSiteKind::ExportStar(_)
+            );
+            if let ScannedSite::Module(source) = *answer
+                && hands_on
+                && evicted.named_by_copies.insert(source)
+            {
+                handing_on.push(source);
+            }
+        }
+    }
     let forms: Vec<ModuleRef> = (evicted.named_by_copies.iter())
         .flat_map(|&it| modules.forms_of(it))
         .collect();

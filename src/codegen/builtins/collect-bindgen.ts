@@ -21,6 +21,7 @@ import {
   ArrayType,
   ClassType,
   Constant,
+  DefaultType,
   DictionaryType,
   FunctionDefinition,
   Getter,
@@ -28,6 +29,7 @@ import {
   Method,
   OptionalType,
   RefType,
+  UnionType,
   RestType,
   Signature,
   Type,
@@ -288,9 +290,12 @@ function computeConversionUses(type: Type): UseSpec[] {
 // Whoever says what a member of a class answers has read it, its setter too, and writes `uses` for an operand that it changes.
 const saysResult = (type: Type): boolean => !(type instanceof AnyType) || type.isDeclaredResult;
 
-/** An instance of a class of a schema, which the body is handed as `&T`: the struct, never the wrapper. */
-const isClassReference = (type: Type): boolean =>
-  type instanceof ClassType || (type instanceof OptionalType && type.inner instanceof ClassType);
+/** An instance of a class of a schema, which the body is handed as `&T`: the struct, never the wrapper. Absent, or one of several classes, too. */
+function isClassReference(type: Type): boolean {
+  if (type instanceof OptionalType || type instanceof DefaultType) return isClassReference(type.inner);
+  if (type instanceof UnionType) return type.alternatives.every(({ type }) => isClassReference(type));
+  return type instanceof ClassType;
+}
 
 // What a body can do with an argument. One handed an instance of a class as `&T` can neither keep the wrapper nor answer it, like a getter its receiver.
 function computeBodyUses(type: Type, capability: Capability, isRead: boolean, result: TypeSpec): readonly UseSpec[] {
@@ -411,7 +416,7 @@ function createField(
   const uses = { ...columns.uses } as Record<string, readonly UseSpec[]>;
   for (const { name, type } of args) {
     uses[name] = [
-      ...(columns.uses?.[name] ?? computeBodyUses(type, capability, isRead, signature.returns.resultType)),
+      ...(columns.uses?.[name] ?? computeBodyUses(type, capability, isRead, result)),
       ...computeConversionUses(type),
     ];
   }

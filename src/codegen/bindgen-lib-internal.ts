@@ -2833,8 +2833,6 @@ export type Capability = "none" | "heap" | "js";
 export interface SignatureOptions extends SignatureColumns, EntryColumns {
   args?: Record<string, Type>;
   returns?: Type;
-  /** Set by the class for `returns: b.this`. */
-  answersReceiver?: boolean;
   capability?: Capability;
   /** The body returns `Result<T, E>` for any `E: bindgen::IntoError`. */
   throws?: boolean;
@@ -2902,9 +2900,8 @@ export class Signature {
   readonly answersReceiver: boolean;
   /** `hasThisValue`: the body is also handed its own JS object. `isProperty`: JS can call it, so each argument is converted from a JS value. */
   constructor(options: FunctionOptions & FunctionField & ConstructOptions, hasThisValue = false, isProperty = true) {
-    this.answersReceiver = options.answersReceiver ?? false;
+    this.answersReceiver = (options as { [answersReceiverKey]?: boolean })[answersReceiverKey] ?? false;
     this.columns = columnsOf(options, [
-      "answersReceiver",
       "args",
       "returns",
       "capability",
@@ -3596,6 +3593,8 @@ export const selfType = new SelfType();
 /** `b.this`: the result is the receiver itself. A member with it is passed its wrapper, and the table takes it to hand the wrapper back and keep nothing of it. */
 class ReceiverType extends SelfType {}
 export const thisType = new ReceiverType();
+/** Only the class sets it, when it resolves `returns: b.this`. */
+const answersReceiverKey = Symbol("answersReceiver");
 
 /** As a result: the wrapper, `JsWrapper<'a, T>`. As an argument: `&'a T`. */
 export class ClassType extends NamedType {
@@ -3720,19 +3719,20 @@ export class ClassType extends NamedType {
     };
     const answersReceiver = (type: Type | undefined): boolean =>
       type === thisType || (type instanceof OptionalType && type.inner === thisType);
-    const resolve = <T extends SignatureOptions>(signature: T): T => {
+    // `passThis` of a member, which a constructor has not: b.this takes the wrapper of an instance.
+    const resolve = <T extends SignatureOptions & { passThis?: boolean }>(signature: T, isStatic = true): T => {
       for (const [name, type] of Object.entries(signature.args ?? {})) {
         assert(!answersReceiver(type), `${name}: b.this is a result: an argument of the class is b.self`);
       }
       if (answersReceiver(signature.returns)) {
+        assert(!isStatic, "returns: b.this is the result of a member with a receiver: a static member has none");
         assert(signature.passThis, "returns: b.this takes passThis: the body answers the wrapper it is handed");
       }
       return {
         ...signature,
         args: Object.fromEntries(Object.entries(signature.args ?? {}).map(([name, type]) => [name, own(type)])),
-        ...(signature.returns
-          ? { returns: own(signature.returns), answersReceiver: answersReceiver(signature.returns) }
-          : {}),
+        ...(signature.returns ? { returns: own(signature.returns) } : {}),
+        [answersReceiverKey]: answersReceiver(signature.returns),
       };
     };
     this.illegalConstructor = options.construct === "illegal";
@@ -3793,7 +3793,7 @@ export class ClassType extends NamedType {
         );
         assert(!(isStatic && wellKnownSymbol(name)), `${name}: an @@ key is a property of the prototype`);
         const fn = new FunctionDefinition(
-          overloads.map(overload => new Method(name, resolve(overload), isStatic, this.sharedThis)),
+          overloads.map(overload => new Method(name, resolve(overload, isStatic), isStatic, this.sharedThis)),
         );
         fn.name = name;
         return fn;

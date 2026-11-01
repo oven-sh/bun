@@ -3,7 +3,7 @@
 // opens every name. So the scan has to read them all: that is the second expectation. The third: flow finds nothing that the front end left closed, which
 // would start the build over.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test as oneAtATime } from "./supported";
@@ -11,8 +11,9 @@ import { test as oneAtATime } from "./supported";
 // supported.ts sets the limit for the first file of a process alone.
 raiseDefaultTimeout(120_000);
 
-// Each case builds and runs in a folder of its own, so they run at once.
-const test = oneAtATime.concurrent;
+// Each case builds and runs in a folder of its own, so they run at once. A debug build needs most of the limit of a case for one
+// build, and a case that runs out of time at once with others keeps its build running: there they run one after the other.
+const test = isDebug ? oneAtATime : oneAtATime.concurrent;
 
 const files = {
   "src/math.ts": `

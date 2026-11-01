@@ -708,3 +708,734 @@ code();`;
   expect(stderr).toMatch(/error: boom\n +at code \(.*:3:9\)\n/);
   expect(exitCode).toBe(1);
 });
+
+// JSC keeps the frames of an error until its stack is made into text: when error.stack is
+// read or assigned, when structuredClone() copies the error, when a collection finds a frame
+// whose function is dead. After that the printer reads the frames from the "    at ..." lines
+// of that text. It prints what it prints for an error that still has its frames.
+describe("frames read from the error.stack string", () => {
+  const join = (...parts) => parts.join(process.platform === "win32" ? "\\" : "/");
+
+  const withFrames = frames => {
+    const error = new Error("boom");
+    error.stack = ["Error: boom", ...frames.map(frame => `    at ${frame}`)].join("\n");
+    return error;
+  };
+  const printedFrames = text =>
+    text
+      .split("\n")
+      .map(line => line.trim())
+      .filter(line => line.startsWith("at "));
+  const printedLines = frames => Bun.inspect(withFrames(frames)).trimEnd().split("\n");
+
+  // What the printer read a line as: [name, URL, line, column], or null if it prints no frame
+  // for the line. The printer colors each of the four in its own way, and a line that is cut
+  // at the wrong place can still print as the same text.
+  const read = stack => {
+    const error = new Error("boom");
+    error.stack = stack;
+    const printed = Bun.inspect(error, { colors: true })
+      .split("\n")
+      .filter(line => Bun.stripANSI(line).trimStart().startsWith("at "));
+    return printed.map(line => {
+      const frame = line.slice(line.indexOf("at ") + "at ".length);
+      const open = frame.indexOf("\x1b[2m (\x1b[0m");
+      const location =
+        open === -1 ? frame : frame.slice(open + "\x1b[2m (\x1b[0m".length, frame.lastIndexOf("\x1b[2m)"));
+      const position = location.search(/(\x1b\[0m\x1b\[2m:)?\x1b\[0m\x1b\[33m/);
+      const [lineNumber, column] = Array.from(location.matchAll(/\x1b\[33m(\d+)/g), match => Number(match[1]));
+      return [
+        open === -1 ? "" : Bun.stripANSI(frame.slice(0, open)),
+        Bun.stripANSI(position === -1 ? location : location.slice(0, position)),
+        lineNumber,
+        column,
+      ].filter(field => field !== undefined);
+    });
+  };
+  // The line is between two others, so it also shows if it ends the stack.
+  const readBetween = frame =>
+    read(withFrames(["first (/fake/first.js:1:1)", frame, "last (/fake/last.js:9:9)"]).stack);
+
+  describe.each([
+    {
+      name: "a name and a location",
+      frames: {
+        "thrower (/fake/lib.mjs:2:13)": ["thrower", "/fake/lib.mjs", 2, 13],
+        "async load (/fake/main.mjs:4:3)": ["async load", "/fake/main.mjs", 4, 3],
+        "new Loader (/fake/main.mjs:4:3)": ["new Loader", "/fake/main.mjs", 4, 3],
+        "<anonymous> (/fake/main.cjs:1:2)": ["<anonymous>", "/fake/main.cjs", 1, 2],
+        "async <anonymous> (/fake/main.cjs:1:2)": ["async <anonymous>", "/fake/main.cjs", 1, 2],
+        "Object.<anonymous> (/fake/main.cjs:1:2)": ["Object.<anonymous>", "/fake/main.cjs", 1, 2],
+        "Loader.load [as run] (/fake/lib.js:1:2)": ["Loader.load [as run]", "/fake/lib.js", 1, 2],
+        // A stack has "native" or "unknown" for a frame with no URL.
+        "map (native:17:41)": ["map", "", 17, 41],
+        "run (unknown:3:4)": ["run", "", 3, 4],
+        "global code (/fake/main.js:12:1)": ["", "/fake/main.js", 12, 1],
+        " (/fake/lib.js:3:4)": ["", "/fake/lib.js", 3, 4],
+      },
+    },
+    {
+      name: "a location alone: module-level code",
+      frames: {
+        "/fake/lib.mjs:4:1": ["", "/fake/lib.mjs", 4, 1],
+        "file:///fake/lib.mjs:4:1": ["", "file:///fake/lib.mjs", 4, 1],
+        "async file:///fake/main.mjs:3:7": ["", "file:///fake/main.mjs", 3, 7],
+        "node:internal/main/run_main_module:36:49": ["", "node:internal/main/run_main_module", 36, 49],
+        "C:\\Users\\me\\app\\index.js:1:2": ["", "C:\\Users\\me\\app\\index.js", 1, 2],
+      },
+    },
+    {
+      name: "no line, or no column: none is made up",
+      frames: {
+        "second (node:child_process)": ["second", "node:child_process"],
+        "third (/fake/lib.js:7)": ["third", "/fake/lib.js", 7],
+        "/fake/main.mjs:7": ["", "/fake/main.mjs", 7],
+        "/fake/main.mjs": ["", "/fake/main.mjs"],
+        "new Promise (<anonymous>)": ["new Promise", "<anonymous>"],
+        "async Promise.all (index 0)": ["async Promise.all", "index 0"],
+        "<parse> (/fake/bad.js:3)": ["<parse>", "/fake/bad.js", 3],
+        "<parse> (:4)": ["<parse>", "", 4],
+      },
+    },
+    {
+      // JSC's frames do not list a call into native code, so the printer does not print one for an error that has them.
+      name: "a native call, which has no line, is not a frame",
+      frames: {
+        "unknown": null,
+        "native": null,
+        "first (native)": null,
+        "parse (unknown)": null,
+        "<parse> (:0)": null,
+        "empty ()": null,
+        "": null,
+      },
+    },
+    {
+      name: "parentheses in the location",
+      frames: {
+        "vm:module(0):1:2": ["", "vm:module(0)", 1, 2],
+        "/fake/app/(group)/page.ts:7:10": ["", "/fake/app/(group)/page.ts", 7, 10],
+        "named (vm:module(0):8:9)": ["named", "vm:module(0)", 8, 9],
+        "named (/fake/module(0).js:6:7)": ["named", "/fake/module(0).js", 6, 7],
+        "render (/fake/app/(group)/page.js:5:3)": ["render", "/fake/app/(group)/page.js", 5, 3],
+        "render (/fake/to (copy)/page.js:5:3)": ["render", "/fake/to (copy)/page.js", 5, 3],
+        "C:\\Program Files (x86)\\app\\index.js:1:2": ["", "C:\\Program Files (x86)\\app\\index.js", 1, 2],
+        "main (C:\\Program Files (x86)\\app\\index.js:3:4)": ["main", "C:\\Program Files (x86)\\app\\index.js", 3, 4],
+        "vm:module(0)": ["", "vm:module(0)"],
+        "/fake/app/(group)": ["", "/fake/app/(group)"],
+        "named (vm:module(0))": ["named", "vm:module(0)"],
+        "named (/fake/app/(group))": ["named", "/fake/app/(group)"],
+      },
+    },
+    {
+      name: "parentheses in the name",
+      frames: {
+        "method (with parens) (/fake/lib.js:2:3)": ["method (with parens)", "/fake/lib.js", 2, 3],
+        "Object.a (b) (/fake/to (copy)/lib.js:4:5)": ["Object.a (b)", "/fake/to (copy)/lib.js", 4, 5],
+        "eval (eval at run (/fake/lib.js:1:2), <anonymous>:3:4)": [
+          "eval",
+          "eval at run (/fake/lib.js:1:2), <anonymous>",
+          3,
+          4,
+        ],
+      },
+    },
+    {
+      name: "parentheses that do not balance: the first ` (` opens the location",
+      frames: {
+        "render (/fake/half(open/lib.js:1:7)": ["render", "/fake/half(open/lib.js", 1, 7],
+        "render (/fake/half)shut/lib.js:1:7)": ["render", "/fake/half)shut/lib.js", 1, 7],
+        "half(open (/fake/lib.js:1:7)": ["half(open", "/fake/lib.js", 1, 7],
+      },
+    },
+    {
+      name: "colons and digits in the URL that are not a position",
+      frames: {
+        "load (http://localhost:3000/app.js)": ["load", "http://localhost:3000/app.js"],
+        "http://localhost:3000/app.js:10:5": ["", "http://localhost:3000/app.js", 10, 5],
+        "worker (blob:9f86d081-884c-4d65-a2f4-1a2b3c4d5e6f)": ["worker", "blob:9f86d081-884c-4d65-a2f4-1a2b3c4d5e6f"],
+        "wasm://wasm/0a1b2c3d:wasm-function[3]:0x1a": ["", "wasm://wasm/0a1b2c3d:wasm-function[3]:0x1a"],
+        "odd (/fake/lib.js:7abc)": ["odd", "/fake/lib.js:7abc"],
+        "odd (/fake/lib.js:+7:2)": ["odd", "/fake/lib.js:+7", 2],
+        "odd (/fake/lib.js:1:)": ["odd", "/fake/lib.js:1:"],
+        "odd (/fake/lib.js::1)": ["odd", "/fake/lib.js:", 1],
+      },
+    },
+    {
+      // A line and a column count from 1.
+      name: "a 0, or a number that is too large, is no line or no column",
+      frames: {
+        "zero (/fake/lib.js:2:0)": ["zero", "/fake/lib.js", 2],
+        "zero (/fake/lib.js:0:5)": ["zero", "/fake/lib.js"],
+        "zero (/fake/lib.js:0)": ["zero", "/fake/lib.js"],
+        "large (/fake/lib.js:2147483647:2147483647)": ["large", "/fake/lib.js", 2147483647, 2147483647],
+        "large (/fake/lib.js:1:2147483648)": ["large", "/fake/lib.js", 1],
+        "large (/fake/lib.js:2147483648:1)": ["large", "/fake/lib.js"],
+      },
+    },
+    {
+      name: "a line that is not `name (location)` is a location",
+      frames: {
+        "method(/fake/lib.js:1:2)": ["", "method(/fake/lib.js:1:2)"],
+        "(/fake/lib.js:1:2)": ["", "(/fake/lib.js:1:2)"],
+        "name (/fake/lib.js:1:2) and more": ["", "name (/fake/lib.js:1:2) and more"],
+        "a) (b": ["", "a) (b"],
+        "()": ["", "()"],
+        ")": ["", ")"],
+        "(": ["", "("],
+        ":": ["", ":"],
+      },
+    },
+    {
+      name: "text that is not ASCII",
+      frames: {
+        "café (/fake/café (copie)/(groupe)/página.js:2:3)": ["café", "/fake/café (copie)/(groupe)/página.js", 2, 3],
+        "描画 (/fake/プロジェクト (コピー)/(グループ)/ページ.ts:7:10)": [
+          "描画",
+          "/fake/プロジェクト (コピー)/(グループ)/ページ.ts",
+          7,
+          10,
+        ],
+        "/fake/プロジェクト/(グループ)/ページ.ts:7:10": ["", "/fake/プロジェクト/(グループ)/ページ.ts", 7, 10],
+      },
+    },
+  ])("$name", ({ frames }) => {
+    test.each(Object.entries(frames))("%j", (frame, fields) => {
+      expect(readBetween(frame)).toEqual([
+        ["first", "/fake/first.js", 1, 1],
+        ...(fields ? [fields] : []),
+        ["last", "/fake/last.js", 9, 9],
+      ]);
+    });
+  });
+
+  test("every frame of a stack is read, whatever comes before it", () => {
+    const frames = [
+      "thrower (/fake/lib.mjs:2:13)",
+      "/fake/lib.mjs:4:1",
+      "unknown",
+      "load (/fake/main.mjs:4:3)",
+      "async file:///fake/main.mjs:7:1",
+      "",
+      "node:internal/main/run_main_module:36:49",
+    ];
+    expect(read(withFrames(frames).stack)).toEqual([
+      ["thrower", "/fake/lib.mjs", 2, 13],
+      ["", "/fake/lib.mjs", 4, 1],
+      ["load", "/fake/main.mjs", 4, 3],
+      ["", "file:///fake/main.mjs", 7, 1],
+      ["", "node:internal/main/run_main_module", 36, 49],
+    ]);
+  });
+
+  test("CRLF line endings", () => {
+    expect(read("Error: boom\r\n    at thrower (/fake/lib.mjs:2:13)\r\n    at /fake/lib.mjs:4:1\r\n")).toEqual([
+      ["thrower", "/fake/lib.mjs", 2, 13],
+      ["", "/fake/lib.mjs", 4, 1],
+    ]);
+  });
+
+  test("a frame line starts with four spaces and `at `", () => {
+    expect(
+      read(
+        "at first (/fake/lib.js:1:1)\n\tat second (/fake/lib.js:2:2)\n  at third (/fake/lib.js:3:3)\n    at fourth (/fake/lib.js:4:4)",
+      ),
+    ).toEqual([["fourth", "/fake/lib.js", 4, 4]]);
+  });
+
+  test("a stack with more frames than the printer holds", () => {
+    const frames = Array.from({ length: 40 }, (_, i) => `/fake/lib.mjs:${i + 1}:1`);
+    expect(printedFrames(Bun.inspect(withFrames(frames)))).toEqual(frames.slice(0, 32).map(frame => `at ${frame}`));
+  });
+
+  // bun does not print these frames for an error that has its frames.
+  test("the frames of the tick queue are hidden", () => {
+    expect(
+      read(withFrames(["callback (/fake/main.mjs:2:3)", "unknown", "processTicksAndRejections (native:7:39)"]).stack),
+    ).toEqual([["callback", "/fake/main.mjs", 2, 3]]);
+  });
+
+  describe("source preview", () => {
+    const files = {
+      app: { "(group)": { "page.js": "// line 1\n// line 2\nconst page = 3;\n" } },
+      "to (copy)": { "lib.js": "// line 1\nconst lib = 2;\n" },
+      "half(open": { "lib.js": "const half = 1;\n" },
+      "plain.js": "const plain = 1;\n",
+    };
+
+    test("is of the file that a location or a name with parentheses is for", () => {
+      using dir = tempDir("inspect-error-stack-string", files);
+      const page = join(String(dir), "app", "(group)", "page.js");
+      const lib = join(String(dir), "to (copy)", "lib.js");
+      const half = join(String(dir), "half(open", "lib.js");
+      const plain = join(String(dir), "plain.js");
+      expect({
+        location: printedLines([`render (${page}:3:7)`]),
+        locationOnly: printedLines([`${page}:3:7`]),
+        locationWithSpace: printedLines([`render (${lib}:2:7)`]),
+        locationNotBalanced: printedLines([`render (${half}:1:7)`]),
+        name: printedLines([`method (with parens) (${plain}:1:7)`]),
+      }).toEqual({
+        location: [
+          "1 | // line 1",
+          "2 | // line 2",
+          "3 | const page = 3;",
+          "          ^",
+          "error: boom",
+          `      at render (${page}:3:7)`,
+        ],
+        locationOnly: [
+          "1 | // line 1",
+          "2 | // line 2",
+          "3 | const page = 3;",
+          "          ^",
+          "error: boom",
+          `      at ${page}:3:7`,
+        ],
+        locationWithSpace: [
+          "1 | // line 1",
+          "2 | const lib = 2;",
+          "          ^",
+          "error: boom",
+          `      at render (${lib}:2:7)`,
+        ],
+        locationNotBalanced: ["1 | const half = 1;", "          ^", "error: boom", `      at render (${half}:1:7)`],
+        name: ["1 | const plain = 1;", "          ^", "error: boom", `      at method (with parens) (${plain}:1:7)`],
+      });
+    });
+
+    test("is of the first frame that has a line, with a caret if it has a column", () => {
+      using dir = tempDir("inspect-error-stack-string", files);
+      const lib = join(String(dir), "to (copy)", "lib.js");
+      expect({
+        noLine: printedLines([`first (${lib})`]),
+        lineOnly: printedLines([`first (${lib}:2)`]),
+        thirdFrame: printedLines(["first (native)", lib, `third (${lib}:2:7)`]),
+      }).toEqual({
+        noLine: ["error: boom", `      at first (${lib})`],
+        lineOnly: ["1 | // line 1", "2 | const lib = 2;", "", "error: boom", `      at first (${lib}:2)`],
+        thirdFrame: [
+          "1 | // line 1",
+          "2 | const lib = 2;",
+          "          ^",
+          "error: boom",
+          `      at ${lib}`,
+          `      at third (${lib}:2:7)`,
+        ],
+      });
+    });
+
+    // In front of a caret the printer writes a space for each column.
+    test.each([
+      // "1 | const plain = 1;"
+      [16, "                   ^"],
+      [17, "                    ^"],
+      [18, ""],
+      [2147483647, ""],
+    ])("has a caret for column %d only if it is under the line or right after it", (column, caret) => {
+      using dir = tempDir("inspect-error-stack-string", files);
+      const plain = join(String(dir), "plain.js");
+      expect({
+        name: printedLines([`render (${plain}:1:${column})`]),
+        location: printedLines([`${plain}:1:${column}`]),
+      }).toEqual({
+        name: ["1 | const plain = 1;", caret, "error: boom", `      at render (${plain}:1:${column})`],
+        location: ["1 | const plain = 1;", caret, "error: boom", `      at ${plain}:1:${column}`],
+      });
+    });
+  });
+
+  describe.concurrent("in a program", () => {
+    const run = async (files, args, env = {}) => {
+      using dir = tempDir("inspect-error-stack-string", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        cwd: String(dir),
+        env: { ...bunEnv, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const junit = Bun.file(join(String(dir), "junit.xml"));
+      return { dir: String(dir), stdout, stderr, exitCode, junit: (await junit.exists()) ? await junit.text() : "" };
+    };
+
+    // Each flow prints an error, makes its stack into text, and prints the error again.
+    const print = `
+      const before = {};
+      const after = {};
+      function print(name, error, makeText = error => void error.stack) {
+        before[name] = Bun.inspect(error);
+        makeText(error);
+        after[name] = Bun.inspect(error);
+      }
+      function inFunction(name, makeText) {
+        print(name, new Error("boom"), makeText);
+      }
+    `;
+    const flows = {
+      "flows.mjs": `
+        import { readFileSync } from "node:fs";
+        ${print}
+        const tick = () => new Promise(resolve => process.nextTick(resolve));
+
+        print("module", new Error("boom"));
+        inFunction("function");
+        (function () {
+          print("anonymous function", new Error("boom"));
+        })();
+        new (class Thrower {
+          constructor() {
+            print("constructor", new Error("boom"));
+          }
+        })();
+        ({
+          get value() {
+            print("getter", new Error("boom"));
+          },
+        }).value;
+        [0].map(function each() {
+          print("array callback", new Error("boom"));
+        });
+        try {
+          JSON.parse("{");
+        } catch (error) {
+          print("JSON.parse", error);
+        }
+        try {
+          readFileSync("does-not-exist");
+        } catch (error) {
+          print("fs.readFileSync", error);
+        }
+        try {
+          null.property;
+        } catch (error) {
+          print("TypeError", error);
+        }
+        inFunction("structuredClone of the error", error => void structuredClone(error));
+        // A collection makes the text when the function of a frame is dead.
+        let collected;
+        (function inDeadFunction() {
+          collected = new Error("boom");
+        })();
+        print("a collection", collected, () => Bun.gc(true));
+        (function inFunction() {
+          const original = new Error("boom");
+          before["the clone that structuredClone makes"] = Bun.inspect(original);
+          after["the clone that structuredClone makes"] = Bun.inspect(structuredClone(original));
+        })();
+
+        await tick();
+        print("module after a tick", new Error("boom"));
+        inFunction("function after a tick");
+        await (async function asyncFunction() {
+          await tick();
+          print("async function after a tick", new Error("boom"));
+        })();
+        await new Promise(resolve =>
+          process.nextTick(function callback() {
+            print("tick callback", new Error("boom"));
+            resolve();
+          }),
+        );
+        await new Promise(resolve =>
+          setTimeout(function callback() {
+            print("timer callback", new Error("boom"));
+            resolve();
+          }, 0),
+        );
+        await Promise.resolve().then(function reaction() {
+          print("promise reaction", new Error("boom"));
+        });
+        async function inner() {
+          await tick();
+          throw new Error("boom");
+        }
+        async function outer() {
+          await inner();
+        }
+        await (async () => {
+          await outer();
+        })().catch(error => print("async callers", error));
+
+        Error.prepareStackTrace = (error, sites) => error + sites.map(site => "\\n    at " + site).join("");
+        inFunction("Error.prepareStackTrace");
+        Error.prepareStackTrace = undefined;
+
+        print("eval", (0, eval)("new Error('boom')"));
+        console.log(JSON.stringify({ before, after }));
+      `,
+      "flows.cjs": `
+        ${print}
+        print("module", new Error("boom"));
+        inFunction("function");
+        (function () {
+          print("anonymous function", new Error("boom"));
+        })();
+        process.nextTick(function callback() {
+          print("tick callback", new Error("boom"));
+          setTimeout(function callback() {
+            print("timer callback", new Error("boom"));
+            console.log(JSON.stringify({ before, after }));
+          }, 0);
+        });
+      `,
+      "flows.test.js": `
+        import { expect, test } from "bun:test";
+        ${print}
+        test("flows", async () => {
+          print("test", new Error("boom"));
+          inFunction("function");
+          await new Promise(resolve => process.nextTick(resolve));
+          print("test after a tick", new Error("boom"));
+          try {
+            expect(1).toBe(2);
+          } catch (error) {
+            print("expect", error);
+          }
+          console.log(JSON.stringify({ before, after }));
+        });
+      `,
+    };
+
+    test.each([
+      // A stack that eval() wrote has another name and column for its frame than the frame has.
+      { args: ["flows.mjs"], flows: 21, different: ["eval"] },
+      { args: ["flows.cjs"], flows: 5, different: [] },
+      { args: ["test", "flows.test.js"], flows: 4, different: [] },
+    ])(
+      "an error prints the same before and after its stack is made into text: bun $args",
+      async ({ args, flows: count, different }) => {
+        const { stdout, exitCode } = await run(flows, args);
+        const { before, after } = JSON.parse(stdout.trimEnd().split("\n").at(-1));
+        const names = Object.keys(before);
+        expect({
+          flows: names.length,
+          different: names.filter(name => after[name] !== before[name]),
+          after: Object.fromEntries(names.filter(name => !different.includes(name)).map(name => [name, after[name]])),
+        }).toEqual({
+          flows: count,
+          different,
+          after: Object.fromEntries(names.filter(name => !different.includes(name)).map(name => [name, before[name]])),
+        });
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    // https://github.com/oven-sh/bun/issues/18357
+    test("an error that structuredClone() copied keeps its frames", async () => {
+      const { dir, stdout, stderr, exitCode } = await run(
+        {
+          "repro-error-clone.ts": [
+            "function okay() {",
+            '  const error = new Error("OKAY");',
+            "  console.error(error);",
+            "}",
+            "",
+            "function broken() {",
+            '  const error = new Error("BROKEN");',
+            "  structuredClone(error);",
+            "  console.error(error);",
+            "}",
+            "",
+            "function main() {",
+            "  okay();",
+            "  broken();",
+            "}",
+            "",
+            "main();",
+            "",
+          ].join("\n"),
+        },
+        ["repro-error-clone.ts"],
+      );
+      // The line of each frame. The column of `new Error` is another one in a stack than in a frame.
+      const frames = printedFrames(stderr.replaceAll("\\", "/").replaceAll(dir.replaceAll("\\", "/") + "/", "")).map(
+        frame => frame.replace(/:\d+(\)?)$/, "$1"),
+      );
+      expect({ stdout, frames }).toEqual({
+        stdout: "",
+        frames: [
+          "at okay (repro-error-clone.ts:2)",
+          "at main (repro-error-clone.ts:13)",
+          "at repro-error-clone.ts:17",
+          "at broken (repro-error-clone.ts:7)",
+          "at main (repro-error-clone.ts:14)",
+          "at repro-error-clone.ts:17",
+        ],
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("error.stack, Bun.inspect and the uncaught error have the frames of a module that require() loads", async () => {
+      // require() puts the module-level frame of lib.mjs in the middle of the stack, with
+      // load() and the module-level frame of main.mjs below it.
+      const { dir, stdout, stderr, exitCode } = await run(
+        {
+          "lib.mjs": ["function thrower() {", '  throw new Error("boom");', "}", "thrower();", ""].join("\n"),
+          "main.mjs": [
+            'import { createRequire } from "node:module";',
+            "const require = createRequire(import.meta.url);",
+            "function load() {",
+            '  require("./lib.mjs");',
+            "}",
+            "try {",
+            "  load();",
+            "} catch (e) {",
+            "  console.log(JSON.stringify({ stack: e.stack, inspect: Bun.inspect(e) }));",
+            "  throw e;",
+            "}",
+            "",
+          ].join("\n"),
+        },
+        ["main.mjs"],
+      );
+      const { stack, inspect } = JSON.parse(stdout);
+
+      // The frames of require() itself are between lib.mjs and load(). A debug build has more of them.
+      const prefix = dir.replaceAll("\\", "/") + "/";
+      const ownFrames = text =>
+        printedFrames(text.replaceAll("\\", "/").replaceAll(prefix, "")).filter(line => line.includes(".mjs"));
+      const own = ownFrames(stack);
+      expect(own).toEqual([
+        expect.stringMatching(/^at thrower \(lib\.mjs:2:\d+\)$/),
+        "at lib.mjs:4:1",
+        expect.stringMatching(/^at load \(main\.mjs:4:\d+\)$/),
+        expect.stringMatching(/^at main\.mjs:7:\d+$/),
+      ]);
+      expect({ inspect: ownFrames(inspect), uncaught: ownFrames(stderr) }).toEqual({ inspect: own, uncaught: own });
+      expect(exitCode).toBe(1);
+    });
+
+    // JSC makes the stack of a SyntaxError into text when the parser makes the error. Its first frame has a line and no column.
+    test("a SyntaxError of the parser has a frame with a line and no column", async () => {
+      const { dir, stdout, stderr, exitCode } = await run(
+        {
+          "bad.cjs": '// line 1\n"".match(/[a-0]/);\n',
+          "main.cjs": 'try {\n  require("./bad.cjs");\n} catch (error) {\n  console.log(Bun.inspect(error));\n}\n',
+        },
+        ["main.cjs"],
+      );
+      expect({
+        stderr,
+        printed: stdout.replaceAll(dir, "<dir>").replaceAll("\\", "/").split("\n").slice(0, 5),
+      }).toEqual({
+        stderr: "",
+        printed: [
+          "1 | // line 1",
+          '2 | "".match(/[a-0]/);',
+          "",
+          "SyntaxError: Invalid regular expression: range out of order in character class",
+          "      at <parse> (<dir>/bad.cjs:2)",
+        ],
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // The GitHub Actions annotation is for the first frame.
+    test.each([
+      {
+        name: "has the position of a first frame that has one",
+        frames: ["first (/fake/app/(group)/page.js:3:4)", "second (node:child_process)"],
+        annotation: /^::error file=(.*[\\/])?app[\\/]\(group\)[\\/]page\.js,line=3,col=4,title=error: boom::/,
+      },
+      {
+        name: "has no column for a first frame that has only a line",
+        frames: ["first (/fake/lib.js:7)", "second (node:child_process)"],
+        annotation: /^::error file=(.*[\\/])?lib\.js,line=7,title=error: boom::/,
+      },
+      {
+        name: "has no file for a first frame that has no line",
+        frames: ["first (node:child_process)", "second (/fake/lib.js:3:4)"],
+        annotation: /^::error title=error: boom::/,
+      },
+    ])("the annotation of an uncaught error $name", async ({ frames, annotation }) => {
+      const { stdout, stderr, exitCode } = await run(
+        {},
+        [
+          "-e",
+          `const error = new Error("boom"); error.stack = ${JSON.stringify(withFrames(frames).stack)}; throw error;`,
+        ],
+        { GITHUB_ACTIONS: "true", GITHUB_WORKSPACE: "/fake" },
+      );
+      expect({
+        stdout,
+        frames: printedFrames(stderr),
+        annotation: stderr.split("\n").find(line => line.startsWith("::error ")),
+      }).toEqual({
+        stdout: "",
+        frames: frames.map(frame => `at ${frame}`),
+        annotation: expect.stringMatching(annotation),
+      });
+      expect(exitCode).toBe(1);
+    });
+
+    test("the body of a JUnit failure has the frames", async () => {
+      const frames = [
+        "first (native)",
+        "second (node:child_process)",
+        "third (file:///fake/lib.js:7)",
+        "vm:module(0):7:10",
+      ];
+      const { junit, exitCode } = await run(
+        {
+          "fails.test.js": `
+            import { test } from "bun:test";
+            test("fails", async () => {
+              await 1;
+              const error = new Error("boom");
+              error.stack = ${JSON.stringify(withFrames(frames).stack)};
+              throw error;
+            });
+          `,
+        },
+        ["test", "--reporter=junit", "--reporter-outfile=junit.xml", "fails.test.js"],
+      );
+      const body = /<failure[^>]*>([^]*?)<\/failure>/.exec(junit)?.[1] ?? "";
+      expect(printedFrames(body.replaceAll("&#10;", "\n"))).toEqual([
+        "at second (node:child_process)",
+        "at third (file:///fake/lib.js:7)",
+        "at vm:module(0):7:10",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("the development error page of Bun.serve has -1 for a line or a column that a frame does not have", async () => {
+      const frames = [
+        "first (native)",
+        "second (http://localhost:3000/app.js)",
+        "third (file:///fake/lib.js:7)",
+        "vm:module(0):7:10",
+      ];
+      const { stdout, exitCode } = await run(
+        {
+          "server.js": `
+            const server = Bun.serve({
+              port: 0,
+              hostname: "127.0.0.1",
+              development: true,
+              fetch() {
+                const error = new Error("boom");
+                error.stack = ${JSON.stringify(withFrames(frames).stack)};
+                throw error;
+              },
+            });
+            const html = await (await fetch(server.url)).text();
+            const payload = JSON.parse(/<script id="__bunfallback" type="application\\/json">([^<]*)<\\/script>/.exec(html)[1]);
+            console.log(JSON.stringify(payload.problems.exceptions[0].stack.frames));
+            server.stop(true);
+            // The error of the handler was reported as an unhandled rejection, which sets the exit code.
+            process.exit(0);
+          `,
+        },
+        ["server.js"],
+      );
+      expect(JSON.parse(stdout.trimEnd().split("\n").at(-1))).toMatchObject([
+        { function_name: "second", file: "http://localhost:3000/app.js", position: { line: -1, column: -1 } },
+        { function_name: "third", file: "file:///fake/lib.js", position: { line: 7, column: -1 } },
+        { function_name: "", file: "vm:module(0)", position: { line: 7, column: 10 } },
+      ]);
+      expect(exitCode).toBe(0);
+    });
+  });
+});

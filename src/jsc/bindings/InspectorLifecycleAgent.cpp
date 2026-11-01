@@ -104,8 +104,11 @@ void InspectorLifecycleAgent::reportError(ZigException& exception)
 
     for (size_t i = 0; i < exception.stack.frames_len; i++) {
         ZigStackFrame* frame = &exception.stack.frames_ptr[i];
+        // The frontend reads each pair as a position that counts from 1.
+        if (frame->position.line_zero_based < 0)
+            continue;
         lineColumns->addItem(frame->position.line_zero_based + 1);
-        lineColumns->addItem(frame->position.column_zero_based + 1);
+        lineColumns->addItem(std::max(frame->position.column_zero_based, 0) + 1);
         urls->addItem(frame->source_url.toWTFString());
     }
 

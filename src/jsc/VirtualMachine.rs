@@ -6927,7 +6927,8 @@ impl VirtualMachine {
                     }
                 };
             }
-            if has_name && !frame.position.is_invalid() {
+            // A frame read from `error.stack` can have a file and no line.
+            if has_name && (!file.is_empty() || frame.position.line.is_valid()) {
                 pretty_write!(
                     "<r>      <d>at <r>{}<d> (<r>{}<d>)<r>\n",
                     frame.name_formatter(allow_ansi_colors),
@@ -7167,6 +7168,8 @@ impl VirtualMachine {
                     || frame.source_url.eq_ascii(b"unknown")
                     || frame.source_url.eq_ascii(b"[unknown]")
                     || frame.source_url.starts_with_ascii(b"[source:")
+                    // Read from `error.stack`, which has no line for it.
+                    || (frame.remapped && !frame.position.line.is_valid())
                 {
                     top_frame_is_builtin = true;
                     continue;
@@ -7184,19 +7187,20 @@ impl VirtualMachine {
         }
 
         let already_remapped = frames[top].remapped;
+        // A frame with no line has nothing to map or to preview.
+        let has_line = frames[top].position.line.is_valid();
         let resolved = {
             let top_source_url = frames[top].source_url.to_utf8();
-            let maybe_lookup: Option<bun_sourcemap::mapping::Lookup> = if already_remapped {
+            let maybe_lookup: Option<bun_sourcemap::mapping::Lookup> = if !has_line {
+                None
+            } else if already_remapped {
                 Some(bun_sourcemap::mapping::Lookup {
                     mapping: bun_sourcemap::mapping::Mapping {
                         generated: bun_sourcemap::LineColumnOffset::default(),
+                        // Direct copy, so that a frame with no column keeps having none.
                         original: bun_sourcemap::LineColumnOffset {
-                            lines: bun_sourcemap::Ordinal::from_zero_based(
-                                frames[top].position.line.zero_based().max(0),
-                            ),
-                            columns: bun_sourcemap::Ordinal::from_zero_based(
-                                frames[top].position.column.zero_based().max(0),
-                            ),
+                            lines: frames[top].position.line,
+                            columns: frames[top].position.column,
                         },
                         source_index: 0,
                         name_index: -1,
@@ -7684,7 +7688,7 @@ impl VirtualMachine {
                 let mut top_frame: Option<&crate::ZigStackFrame<'_>> = frames.first();
                 if self.hide_bun_stackframes {
                     for frame in frames {
-                        if frame.position.is_invalid()
+                        if !frame.position.line.is_valid()
                             || frame.source_url.starts_with_ascii(b"bun:")
                             || frame.source_url.starts_with_ascii(b"node:")
                         {
@@ -7697,7 +7701,7 @@ impl VirtualMachine {
 
                 let trimmed = source.trimmed_text();
 
-                if top_frame.is_none() || top_frame.unwrap().position.is_invalid() {
+                if top_frame.is_none() || !top_frame.unwrap().position.line.is_valid() {
                     did_print_name = true;
                     let clamped = &trimmed[..trimmed.len().min(MAX_LINE_LENGTH)];
                     let hl = bun_core::fmt::fmt_javascript(
@@ -7759,11 +7763,13 @@ impl VirtualMachine {
                         pretty_write!(writer, "<r><b>{} |<r> {}\n", display_line, hl)?;
 
                         let col = top.position.column.zero_based();
-                        if clamped.len() < MAX_LINE_LENGTH_WITH_DIVOT
-                            || (col as usize) > MAX_LINE_LENGTH_WITH_DIVOT
+                        // A caret is under the printed line, or right after it.
+                        if col >= 0
+                            && (col as usize) <= clamped.len()
+                            && (clamped.len() < MAX_LINE_LENGTH_WITH_DIVOT
+                                || (col as usize) > MAX_LINE_LENGTH_WITH_DIVOT)
                         {
-                            let indent =
-                                max_line_number_pad + b" | ".len() as u64 + col.max(0) as u64;
+                            let indent = max_line_number_pad + b" | ".len() as u64 + col as u64;
                             splat_space(writer, indent)?;
                             pretty_write!(writer, "<red><b>^<r>\n")?;
                         } else {
@@ -8150,16 +8156,25 @@ impl VirtualMachine {
 
         let mut has_location = false;
         if let Some(frame) = top_frame {
-            if !frame.position.is_invalid() {
+            if frame.position.line.is_valid() {
                 let source_url = frame.source_url.to_utf8();
                 let file = crate::ZigStackFrame::relative_source_url(dir, source_url.slice());
-                let _ = write!(
-                    writer,
-                    "\n::error file={},line={},col={},title=",
-                    bun_core::fmt::github_action_property(file),
-                    frame.position.line.one_based(),
-                    frame.position.column.one_based(),
-                );
+                let _ = if frame.position.column.is_valid() {
+                    write!(
+                        writer,
+                        "\n::error file={},line={},col={},title=",
+                        bun_core::fmt::github_action_property(file),
+                        frame.position.line.one_based(),
+                        frame.position.column.one_based(),
+                    )
+                } else {
+                    write!(
+                        writer,
+                        "\n::error file={},line={},title=",
+                        bun_core::fmt::github_action_property(file),
+                        frame.position.line.one_based(),
+                    )
+                };
                 has_location = true;
             }
         }

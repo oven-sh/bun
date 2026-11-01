@@ -1,15 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import {
-  checkPrime,
-  checkPrimeSync,
-  generatePrime,
-  generatePrimeSync,
-  randomBytes,
-  randomFill,
-  randomFillSync,
-  randomInt,
-  randomUUID,
-} from "crypto";
+import { checkPrime, checkPrimeSync, randomBytes, randomFill, randomFillSync, randomInt, randomUUID } from "crypto";
 import { statSync } from "fs";
 import { bunEnv, bunExe, isCI, isLinux, isMacOS, isMusl, tempDir } from "harness";
 import { join } from "path";
@@ -337,45 +327,35 @@ describe("checkPrime candidate handling", () => {
   });
 });
 
-describe.concurrent("generatePrime with safe and add/rem", () => {
-  // BoringSSL's BN_generate_prime_ex search for safe primes on a progression
-  // (probable_prime_dh_safe) never checks the size of what it walks to and
-  // trial-divides small candidates by themselves, so every size below ~13 bits
-  // returned the same 13-bit value (7523 for the progressions below), and with
-  // an odd `add` it drifted off the progression and frequently never returned.
-  // BignumPointer::generate() now walks the progression itself the way
-  // OpenSSL's search (the one behind Node's results) does, except that it keeps
-  // stepping after a Miller-Rabin failure where OpenSSL restarts from a new
-  // random value; see the comment on generateSafePrimeInProgression. Generation
-  // happens in a subprocess with a kill guard so that the never-returning
-  // inputs fail instead of wedging the test runner (the async form would
-  // otherwise leave a threadpool thread spinning forever).
-  // Every case goes through generatePrimeSync and through generatePrime (the
-  // threadpool job) `runs` times each (default 1). Results are indexed
-  // [form][case][run].
-  type Case = { bits: number; add: bigint; rem?: bigint; runs?: number };
-  type Form = "generatePrimeSync" | "generatePrime";
-  const forms: Form[] = ["generatePrimeSync", "generatePrime"];
-  type Results = Record<Form, bigint[][]>;
+describe.concurrent("generatePrime with add and rem", () => {
+  // BoringSSL's two searches for a prime p == rem (mod add) do not end for many add and rem, and below about 13 bits
+  // they return one fixed value that is too large. BignumPointer::generate() runs OpenSSL's search for both values of
+  // `safe`, so the results are the ones that Node gives. Each case runs `runs` times through generatePrimeSync and a
+  // quarter of that through generatePrime (the threadpool job, which is slower to reach), in a subprocess with a kill
+  // guard: a search that does not end wedges the process or a thread.
+  type Case = { bits: number; safe?: boolean; add: bigint; rem?: bigint; runs?: number };
+  const forms = ["generatePrimeSync", "generatePrime"] as const;
+  // [form][case][run]: the prime, or the code of the error.
+  type Results = Record<(typeof forms)[number], (bigint | string)[][]>;
 
-  const label = (c: Case) => `${c.bits} bits, add ${c.add}${c.rem === undefined ? "" : `, rem ${c.rem}`}`;
+  const label = (c: Case) =>
+    `${c.bits} bits,${c.safe ? " safe," : ""} add ${c.add}${c.rem === undefined ? "" : `, rem ${c.rem}`}`;
 
-  async function generateSafePrimes(cases: Case[]): Promise<Results> {
-    const serialized = JSON.stringify(cases, (_, v) => (typeof v === "bigint" ? String(v) : v));
+  async function generatePrimes(cases: Case[]): Promise<Results> {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `const { generatePrime, generatePrimeSync } = require("crypto");
-         const cases = ${serialized};
+         const cases = ${JSON.stringify(cases, (_, v) => (typeof v === "bigint" ? String(v) : v))};
          const options = c => ({
-           safe: true,
            bigint: true,
+           safe: c.safe === true,
            add: BigInt(c.add),
            ...(c.rem === undefined ? {} : { rem: BigInt(c.rem) }),
          });
          const forms = {
-           generatePrimeSync: c => Promise.resolve(generatePrimeSync(c.bits, options(c))),
+           generatePrimeSync: async c => generatePrimeSync(c.bits, options(c)),
            generatePrime: c => new Promise((resolve, reject) =>
              generatePrime(c.bits, options(c), (err, p) => (err ? reject(err) : resolve(p)))),
          };
@@ -385,7 +365,8 @@ describe.concurrent("generatePrime with safe and add/rem", () => {
              out[form] = [];
              for (const c of cases) {
                const primes = [];
-               for (let i = 0; i < (c.runs ?? 1); i++) primes.push(String(await forms[form](c)));
+               const runs = Math.ceil((c.runs ?? 1) / (form === "generatePrime" ? 4 : 1));
+               for (let i = 0; i < runs; i++) primes.push(await forms[form](c).then(String, e => e.code));
                out[form].push(primes);
              }
            }
@@ -401,47 +382,49 @@ describe.concurrent("generatePrime with safe and add/rem", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stderr, signalCode: proc.signalCode, exitCode }).toEqual({ stderr: "", signalCode: null, exitCode: 0 });
-    const out: Record<Form, string[][]> = JSON.parse(stdout);
-    const toBigInts = (form: string[][]) => form.map(primes => primes.map(BigInt));
-    return { generatePrimeSync: toBigInts(out.generatePrimeSync), generatePrime: toBigInts(out.generatePrime) };
+    const out: Record<string, string[][]> = JSON.parse(stdout);
+    const parse = (form: string[][]) => form.map(primes => primes.map(p => (/^\d+$/.test(p) ? BigInt(p) : p)));
+    return { generatePrimeSync: parse(out.generatePrimeSync), generatePrime: parse(out.generatePrime) };
   }
 
-  // For sizes this small the set of possible results is fixed: the first safe
-  // prime on the progression at or after a random `bits`-bit start. As in
-  // OpenSSL, the result is one bit wider than requested when the start is past
-  // the last safe prime of that size (263 for 8 bits; 5 for 2 bits, where no
-  // safe prime exists). Node returns exactly these sets for the first five
-  // rows. The last row pins the two branches Node's output cannot: every 4-bit
-  // start lands on 17 (a start of 9 first projects to 7, below 4 bits, and has
-  // to be stepped up), 17 passes the sieve but (17 - 1) / 2 = 8 is not prime,
-  // and the walk has to step on through 27 and 37 to 47; Node restarts from a
-  // fresh 4-bit value here and never returns.
-  //
-  // `variesBetweenCalls` pools both forms' results. With these run counts the
-  // chance that a row with several allowed values returns the same one on every
-  // call is below 1e-8 per row (the likeliest 8-bit value has probability 3/8,
-  // the two 4-bit values 1/2 each). Runs are kept low because under a debug
-  // build every call pays the full Miller-Rabin confirmation of two primes.
-  const smallCases: Array<[Case, bigint[]]> = [
-    [{ bits: 8, add: 12n, rem: 11n, runs: 10 }, [167n, 179n, 227n, 263n]],
-    [{ bits: 8, add: 4n, rem: 3n, runs: 10 }, [167n, 179n, 227n, 263n]],
-    [{ bits: 4, add: 4n, rem: 3n, runs: 14 }, [11n, 23n]],
-    [{ bits: 3, add: 4n, rem: 3n, runs: 2 }, [7n]],
-    [{ bits: 2, add: 2n, rem: 1n, runs: 2 }, [5n]],
-    [{ bits: 4, add: 10n, rem: 7n, runs: 10 }, [47n]],
+  // Every value that Node v26.12.1 returns for the case, and no other. The first row is an assertion of Node's own
+  // test-crypto-prime.js, which Bun skips (it is behind a check of process.versions.openssl). A search that walks on
+  // past a candidate that is not prime, where OpenSSL draws a new start, returns 43 there once in five calls, and an
+  // 18-bit prime for the second row: 40 calls of each miss that less than once in 10,000 runs.
+  // On main, ten of these rows gave one value of 13 to 20 bits on every call, six did not end, and the last threw.
+  const valueCases: Array<[Case, bigint[]]> = [
+    [{ bits: 4, add: 15n, rem: 13n, runs: 32 }, [13n]],
+    [{ bits: 12, add: 3688n, rem: 2557n, runs: 32 }, [2557n]],
+    [{ bits: 8, add: 7n, rem: 3n, runs: 16 }, [157n, 199n, 227n, 241n]],
+    [{ bits: 8, add: 11n, rem: 4n, runs: 48 }, [191n, 257n]],
+    [{ bits: 8, add: 255n, rem: 254n, runs: 2 }, [509n]],
+    [{ bits: 8, add: 128n, rem: 1n, runs: 2 }, [257n]],
+    [{ bits: 16, add: 32769n, rem: 2n, runs: 2 }, [32771n]],
+    // The start is below the size for some draws, and the search adds `add` once: 5 and 7 are not results.
+    [{ bits: 4, add: 12n, rem: 5n, runs: 12 }, [17n]],
+    [{ bits: 5, add: 24n, rem: 7n, runs: 12 }, [31n]],
+    [{ bits: 2, add: 2n, rem: 1n, runs: 2 }, [3n]],
+    [{ bits: 8, safe: true, add: 12n, rem: 11n, runs: 16 }, [167n, 179n, 227n, 263n]],
+    [{ bits: 8, safe: true, add: 4n, rem: 3n, runs: 16 }, [167n, 179n, 227n, 263n]],
+    [{ bits: 4, safe: true, add: 4n, rem: 3n, runs: 24 }, [11n, 23n]],
+    [{ bits: 10, safe: true, add: 5n, runs: 24 }, [563n, 863n, 983n]],
+    [{ bits: 3, safe: true, add: 4n, rem: 3n, runs: 2 }, [7n]],
+    [{ bits: 3, safe: true, add: 4n, rem: 1n, runs: 2 }, [5n]],
+    // 3 is on the progression and is not a safe prime: the search starts at 5.
+    [{ bits: 2, safe: true, add: 2n, rem: 1n, runs: 2 }, [5n]],
   ];
 
-  it("small sizes return the next safe prime on the progression, not a fixed 13-bit value", async () => {
-    const results = await generateSafePrimes(smallCases.map(([c]) => c));
-    const summary = smallCases.map(([c, allowed], i) => ({
+  it("small sizes return the values that Node returns, not one fixed value", async () => {
+    const results = await generatePrimes(valueCases.map(([c]) => c));
+    const summary = valueCases.map(([c, allowed], i) => ({
       case: label(c),
       unexpected: Object.fromEntries(
-        forms.map(form => [form, [...new Set(results[form][i].filter(p => !allowed.includes(p)))]]),
+        forms.map(form => [form, [...new Set(results[form][i].filter(p => !allowed.includes(p as bigint)))]]),
       ),
       variesBetweenCalls: new Set(forms.flatMap(form => results[form][i])).size > 1,
     }));
     expect(summary).toEqual(
-      smallCases.map(([c, allowed]) => ({
+      valueCases.map(([c, allowed]) => ({
         case: label(c),
         unexpected: { generatePrimeSync: [], generatePrime: [] },
         variesBetweenCalls: allowed.length > 1,
@@ -449,73 +432,64 @@ describe.concurrent("generatePrime with safe and add/rem", () => {
     );
   });
 
-  // Inputs the old search never returned from or answered incorrectly: an odd
-  // `add` took it off the progression (and hung it whenever the random start
-  // shared a factor with `add`), `add` without `rem` must use OpenSSL's
-  // safe-prime default residue of 3, `add: 1n` divided by zero internally, and
-  // the only 3-bit safe prime that is 1 (mod 4) is 5, whose (p - 1) / 2 is 2.
-  //
-  // The last row has `add` as wide as the requested size, so every 16-bit start
-  // projects onto the same value (32771) and the search is deterministic. The
-  // progression's first safe prime from there is 1736759 (21 bits), which is
-  // what stepping past failed candidates returns; restarting from a new random
-  // start after a failure (OpenSSL, and BoringSSL's old search) retests the same
-  // first candidate forever, so Node and the old code both hang on this input.
-  // Third element: expected bit length when it is not the requested size.
-  const residueCases: Array<[Case, bigint, number?]> = [
-    [{ bits: 64, add: 5n }, 3n],
-    [{ bits: 64, add: 5n, rem: 3n }, 3n],
-    [{ bits: 64, add: 5n, rem: 2n }, 2n],
-    [{ bits: 64, add: 7n, rem: 2n }, 2n],
-    [{ bits: 64, add: 4n }, 3n],
-    [{ bits: 64, add: 4n, rem: 3n }, 3n],
-    [{ bits: 64, add: 12n, rem: 11n }, 11n],
-    [{ bits: 64, add: 1n, rem: 0n }, 0n],
-    [{ bits: 3, add: 4n, rem: 1n }, 1n],
-    [{ bits: 16, add: 32769n, rem: 2n }, 2n, 21],
+  // On main four of these rows worked (add 12 without safe, and add 4, 12 and 2^33 with safe), the row with add 1
+  // threw, and the others did not end. The two rows of 128 bits with add 5 are the other block of
+  // test-crypto-prime.js that Bun skips: a missing rem is 1, and 3 for a safe prime. In the rows with a power of two,
+  // add is almost as wide as the size.
+  const sizedCases: Case[] = [
+    { bits: 32, add: 3n, rem: 1n },
+    { bits: 64, add: 30n },
+    { bits: 64, add: 30n, rem: 7n },
+    { bits: 32, add: 12n, rem: 5n },
+    { bits: 128, add: 5n },
+    { bits: 40, add: 2n ** 33n, rem: 1n },
+    { bits: 67, add: 2n ** 63n, rem: 1n },
+    { bits: 128, add: 2n ** 120n, rem: 1n },
+    { bits: 128, safe: true, add: 5n },
+    { bits: 64, safe: true, add: 5n, rem: 2n },
+    { bits: 64, safe: true, add: 7n, rem: 2n },
+    { bits: 64, safe: true, add: 4n },
+    { bits: 64, safe: true, add: 12n, rem: 11n },
+    { bits: 64, safe: true, add: 1n, rem: 0n },
+    { bits: 40, safe: true, add: 2n ** 33n, rem: 3n },
   ];
 
-  it("terminates and honors add/rem, including odd add and a missing rem", async () => {
-    const results = await generateSafePrimes(residueCases.map(([c]) => c));
-    const describePrime = (c: Case, [p]: bigint[]) => ({
-      bits: p.toString(2).length,
-      residue: p % c.add,
-      safePrime: checkPrimeSync(p) && checkPrimeSync((p - 1n) / 2n),
-    });
-    const summary = residueCases.map(([c], i) => ({
+  it("ends, and returns a prime of the requested size with the requested residue", async () => {
+    const results = await generatePrimes(sizedCases);
+    const describePrime = (c: Case, [p]: (bigint | string)[]) =>
+      typeof p === "string"
+        ? p
+        : {
+            bits: p.toString(2).length,
+            residue: p % c.add,
+            prime: checkPrimeSync(p) && (!c.safe || checkPrimeSync((p - 1n) / 2n)),
+          };
+    const summary = sizedCases.map((c, i) => ({
       case: label(c),
       ...Object.fromEntries(forms.map(form => [form, describePrime(c, results[form][i])])),
     }));
     expect(summary).toEqual(
-      residueCases.map(([c, rem, resultBits = c.bits]) => {
-        const expected = { bits: resultBits, residue: rem, safePrime: true };
+      sizedCases.map(c => {
+        const expected = { bits: c.bits, residue: c.rem ?? (c.safe ? 3n : 1n), prime: true };
         return { case: label(c), generatePrimeSync: expected, generatePrime: expected };
       }),
     );
   });
 
-  it("safe without add, and add without safe, still go through BN_generate_prime_ex", async () => {
-    const safe = generatePrimeSync(64, { safe: true, bigint: true });
-    expect([safe.toString(2).length, checkPrimeSync(safe), checkPrimeSync((safe - 1n) / 2n)]).toEqual([64, true, true]);
-
-    const { promise, resolve, reject } = Promise.withResolvers<bigint>();
-    generatePrime(64, { add: 12n, rem: 11n, bigint: true }, (err, p) => (err ? reject(err) : resolve(p)));
-    const onProgression = await promise;
-    expect([onProgression.toString(2).length, onProgression % 12n, checkPrimeSync(onProgression)]).toEqual([
-      64,
-      11n,
-      true,
+  it("a search that cannot start fails with the BoringSSL error, as in Node", async () => {
+    const cases: Case[] = [
+      { bits: 64, add: 0n },
+      { bits: 64, safe: true, add: 0n },
+      { bits: 1, add: 1n },
+      { bits: 1, safe: true, add: 1n },
+    ];
+    const results = await generatePrimes(cases);
+    expect(cases.map((c, i) => [label(c), ...forms.map(form => results[form][i][0])])).toEqual([
+      [label(cases[0]), "ERR_OSSL_BN_DIV_BY_ZERO", "ERR_OSSL_BN_DIV_BY_ZERO"],
+      [label(cases[1]), "ERR_OSSL_BN_DIV_BY_ZERO", "ERR_OSSL_BN_DIV_BY_ZERO"],
+      [label(cases[2]), "ERR_OSSL_BN_BITS_TOO_SMALL", "ERR_OSSL_BN_BITS_TOO_SMALL"],
+      [label(cases[3]), "ERR_OSSL_BN_BITS_TOO_SMALL", "ERR_OSSL_BN_BITS_TOO_SMALL"],
     ]);
-  });
-
-  it("a generation that fails (add 0) throws the BoringSSL error, as in Node", async () => {
-    const options = { safe: true, add: 0n, bigint: true };
-    const expected = expect.objectContaining({ code: "ERR_OSSL_BN_DIV_BY_ZERO" });
-    expect(() => generatePrimeSync(64, options)).toThrow(expected);
-
-    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
-    generatePrime(64, options, (err, p) => (err ? resolve(err) : reject(new Error(`returned ${p}`))));
-    expect(await promise).toEqual(expected);
   });
 });
 

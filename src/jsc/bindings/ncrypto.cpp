@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <limits>
 #if OPENSSL_VERSION_MAJOR >= 3
 #include <openssl/provider.h>
 #endif
@@ -385,97 +386,91 @@ int BignumPointer::isPrime(int nchecks,
 }
 
 namespace {
-// The first 1024 odd primes: the depth of BoringSSL's own trial division, which
-// also uses only the first half for candidates of up to 1024 bits.
-constexpr std::array<uint16_t, 1024> makeSafePrimeSievePrimes()
+// OpenSSL's primes[]: the first 2048 primes.
+constexpr std::array<uint16_t, 2048> makeSievePrimes()
 {
-    std::array<uint16_t, 1024> primes {};
+    std::array<uint16_t, 2048> primes {};
+    std::array<bool, 17864> composite {};
     size_t count = 0;
-    for (unsigned n = 3; count < primes.size(); n += 2) {
-        bool isPrime = true;
-        for (size_t i = 0; i < count; i++) {
-            unsigned divisor = primes[i];
-            if (divisor * divisor > n) break;
-            if (n % divisor == 0) {
-                isPrime = false;
-                break;
-            }
-        }
-        if (isPrime) primes[count++] = static_cast<uint16_t>(n);
+    for (unsigned n = 2; count < primes.size(); n++) {
+        if (composite[n]) continue;
+        primes[count++] = static_cast<uint16_t>(n);
+        for (unsigned multiple = n * n; multiple < composite.size(); multiple += n)
+            composite[multiple] = true;
     }
     return primes;
 }
-constexpr auto kSafePrimeSievePrimes = makeSafePrimeSievePrimes();
+constexpr auto kSievePrimes = makeSievePrimes();
+static_assert(kSievePrimes.front() == 2 && kSievePrimes.back() == 17863);
 
-// True when a sieve prime r divides p (p % r == 0) or (p - 1) / 2 (p % r == 1).
-// Stops once r * r > p so that a small p or (p - 1) / 2 that is itself in the
-// table is not rejected.
-bool safePrimeCandidateHasSmallFactor(const BIGNUM* p)
+// OpenSSL's calc_trial_divisions().
+constexpr int sieveDepth(int bits)
 {
-    std::optional<BN_ULONG> word = BignumPointer::GetWord(p);
-    size_t depth = BN_num_bits(p) > 1024 ? kSafePrimeSievePrimes.size() : kSafePrimeSievePrimes.size() / 2;
-    for (size_t i = 0; i < depth; i++) {
-        BN_ULONG r = kSafePrimeSievePrimes[i];
-        if (word && r * r > *word) return false;
-        if (BN_mod_word(p, r) <= 1) return true;
-    }
-    return false;
+    if (bits <= 512) return 64;
+    if (bits <= 1024) return 128;
+    if (bits <= 2048) return 384;
+    if (bits <= 4096) return 1024;
+    return 2048;
 }
 
-// Replaces BN_generate_prime_ex(safe = 1, add): BoringSSL's probable_prime_dh_safe
-// steps q by add / 2 (so p leaves the progression for odd add), never checks the
-// size it ends on, and trial-divides small candidates by themselves, returning
-// one fixed 13-bit value for every size below that. This is OpenSSL's
-// probable_prime_dh(safe = 1) search, which Node's results come from: a random
-// bits-bit start moved onto p == rem (mod add), then stepped by add. One
-// difference: a candidate that fails Miller-Rabin is stepped past, where OpenSSL
-// draws a new start. Every value Node can return remains reachable, and the
-// search also terminates when add is nearly as wide as bits, where every start
-// projects onto the same value and OpenSSL retests one candidate forever. As in
-// OpenSSL, the result has at least bits bits (more once that size's safe primes
-// run out) and a progression with no safe prime in it never terminates. The walk
-// uses a scratch value so that a failure (add == 0) leaves out untouched.
-bool generateSafePrimeInProgression(BIGNUM* out, int bits, const BIGNUM* add, const BIGNUM* rem, BN_GENCB* cb)
+// OpenSSL's search for a prime p == rem (mod add), with and without `safe`: probable_prime_dh() and the loop of BN_generate_prime_ex2().
+// https://github.com/nodejs/node/blob/v26.12.1/deps/openssl/openssl/crypto/bn/bn_prime.c#L155-L196 and #L545-L617
+bool generatePrimeOnProgression(BIGNUM* rnd, int bits, bool safe, const BIGNUM* add, const BIGNUM* rem, BN_GENCB* cb)
 {
     BignumCtxPointer ctx(BN_CTX_new());
-    BignumPointer candidate = BignumPointer::New();
     BignumPointer t = BignumPointer::New();
-    BignumPointer q = BignumPointer::New();
-    if (!ctx || !candidate || !t || !q) return false;
-    BIGNUM* p = candidate.get();
+    if (!ctx || !t) return false;
 
-    // OpenSSL's default residue for safe primes is 3: with 1, (p - 1) / 2 would
-    // be a multiple of add / 2.
-    if (!BN_rand(p, bits, BN_RAND_TOP_ONE, BN_RAND_BOTTOM_ODD)
-        || !BN_mod(t.get(), p, add, ctx.get())
-        || !BN_sub(p, p, t.get())
-        || !(rem != nullptr ? BN_add(p, p, rem) : BN_add_word(p, 3))) {
-        return false;
-    }
-    // Moving onto the progression can take p below 2^(bits - 1); one step puts
-    // it back above the random start.
-    if (BN_num_bits(p) < static_cast<unsigned>(bits) && !BN_add(p, p, add)) return false;
+    constexpr BN_ULONG wordMax = std::numeric_limits<BN_ULONG>::max();
+    const int depth = sieveDepth(bits);
+    const BN_ULONG addWord = BN_get_word(add);
+    const BN_ULONG maxDelta = std::min(wordMax - kSievePrimes[depth - 1], wordMax - addWord);
+    std::array<uint16_t, kSievePrimes.size()> mods;
 
-    // Unsigned: on a never-terminating progression the per-step increment
-    // would overflow an int within minutes.
-    unsigned candidates = 0;
-    for (;;) {
-        // Every step, not only sieve survivors: on a progression the sieve
-        // always rejects (an odd prime dividing add with rem % r <= 1), this
-        // call is the walk's only cancellation point for whileScriptAllowed.
-        if (!BN_GENCB_call(cb, BN_GENCB_GENERATED, static_cast<int>(candidates++))) return false;
-        if (!safePrimeCandidateHasSmallFactor(p)) {
-            // do_trial_division = 0: the sieve above already covered p and q.
-            int result = BN_is_prime_fasttest_ex(p, BN_prime_checks_for_generation, ctx.get(), 0, cb);
-            if (result < 0) return false;
-            if (result == 1) {
-                if (!BN_rshift1(q.get(), p)) return false;
-                result = BN_is_prime_fasttest_ex(q.get(), BN_prime_checks_for_generation, ctx.get(), 0, cb);
-                if (result < 0) return false;
-                if (result == 1) return BN_copy(out, p) != nullptr;
-            }
+    // Unsigned: a search that never ends would overflow an int.
+    for (unsigned draws = 0;; draws++) {
+        if (!BN_rand(rnd, bits, BN_RAND_TOP_ONE, BN_RAND_BOTTOM_ODD)
+            || !BN_mod(t.get(), rnd, add, ctx.get())
+            || !BN_sub(rnd, rnd, t.get())
+            || !(rem ? BN_add(rnd, rnd, rem) : BN_add_word(rnd, safe ? 3 : 1)))
+            return false;
+        // As in OpenSSL, no start is below 3 (5 with `safe`): generatePrimeSync(2, { add: 2n, rem: 0n }) does not end, as in Node.
+        if ((BN_num_bits(rnd) < static_cast<unsigned>(bits) || BN_get_word(rnd) < (safe ? 5u : 3u)) && !BN_add(rnd, rnd, add))
+            return false;
+
+        for (int i = 1; i < depth; i++) {
+            BN_ULONG mod = BN_mod_word(rnd, kSievePrimes[i]);
+            if (mod == static_cast<BN_ULONG>(-1)) return false;
+            mods[i] = static_cast<uint16_t>(mod);
         }
-        if (!BN_add(p, p, add)) return false;
+
+        BN_ULONG delta = 0;
+        for (int i = 1; i < depth;) {
+            const BN_ULONG prime = kSievePrimes[i];
+            if (bits <= 31 && delta <= 0x7fffffff && prime * prime > BN_get_word(rnd) + delta) break;
+            // mod == 1 means that prime divides (rnd - 1) / 2.
+            const BN_ULONG mod = (mods[i] + delta) % prime;
+            if (safe ? mod > 1 : mod != 0) {
+                i++;
+                continue;
+            }
+            // Not in OpenSSL, whose sieve cannot be stopped: a progression with no prime is rejected here 2^64 / add times for each draw.
+            if (!BN_GENCB_call(cb, BN_GENCB_GENERATED, static_cast<int>(draws))) return false;
+            delta += addWord;
+            if (delta > maxDelta) break;
+            i = 1;
+        }
+        if (delta > maxDelta) continue;
+        if (!BN_add_word(rnd, delta)) return false;
+
+        if (!BN_GENCB_call(cb, BN_GENCB_GENERATED, static_cast<int>(draws))) return false;
+        int isPrime = BN_is_prime_fasttest_ex(rnd, BN_prime_checks_for_generation, ctx.get(), 0, cb);
+        if (isPrime == 1 && safe) {
+            if (!BN_rshift1(t.get(), rnd)) return false;
+            isPrime = BN_is_prime_fasttest_ex(t.get(), BN_prime_checks_for_generation, ctx.get(), 0, cb);
+        }
+        if (isPrime < 0) return false;
+        if (isPrime == 1) return true;
     }
 }
 } // namespace
@@ -500,8 +495,8 @@ bool BignumPointer::generate(const PrimeConfig& params,
             &innerCb);
     }
     // bits < 2 falls through so that BN_generate_prime_ex reports BN_R_BITS_TOO_SMALL.
-    if (params.safe && params.add && params.bits >= 2) {
-        return generateSafePrimeInProgression(get(), params.bits, params.add.get(), params.rem.get(), cb.get());
+    if (params.add && params.bits >= 2) {
+        return generatePrimeOnProgression(get(), params.bits, params.safe, params.add.get(), params.rem.get(), cb.get());
     }
 
     // BoringSSL searches forever where OpenSSL refuses: candidates have the top two bits set, the safe primes 11 and 23 do not.

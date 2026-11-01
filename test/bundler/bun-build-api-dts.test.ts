@@ -481,9 +481,12 @@ export {
     const { stdout, stderr, exitCode } = await build(String(dir), options);
     expect(stderr).toBe("");
     const { logs, typed } = JSON.parse(stdout);
-    expect({ logs, typed: withoutModulePaths(typed) }).toEqual({
+    // On Windows the comment above a module of `files` is its path from the drive, behind `../` for each directory.
+    const withoutModulePathsOnWindows = isWindows ? withoutModulePaths : (text: string) => text;
+    expect({ logs, typed: withoutModulePathsOnWindows(typed) }).toEqual({
       logs: [],
-      typed: `interface Options {
+      typed: withoutModulePathsOnWindows(`// index.ts
+interface Options {
   n: number;
 }
 export type { Options };
@@ -493,7 +496,7 @@ function util(options: Options): string {
 export {
   util
 };
-`,
+`),
     });
     expect(exitCode).toBe(0);
   });

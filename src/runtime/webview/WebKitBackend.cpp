@@ -481,6 +481,8 @@ void HostClient::rejectAllAndMarkDead(const WTF::String& reason)
         settleSlot(g, v, v->m_pendingScreenshot, false, err);
         settleSlot(g, v, v->m_pendingMisc, false, err);
         v->m_closed = true;
+        // A view with nothing in flight has no promise to carry the reason.
+        v->m_closedReason = reason;
     }
     viewsById.clear();
     updateKeepAlive();

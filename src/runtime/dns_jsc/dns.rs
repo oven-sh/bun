@@ -2643,7 +2643,7 @@ pub(crate) mod internal {
     }
 
     fn after_result_entries(req: *mut Request, results: Option<Box<[ResultEntry]>>, err: c_int) {
-        let guard = global_cache().lock();
+        let mut guard = global_cache().lock();
 
         // SAFETY: `req` is the heap-allocated cache entry; its mutable fields are
         // only touched under `global_cache().lock()`, which is held here.
@@ -2658,6 +2658,13 @@ pub(crate) mod internal {
             (*req).result = Some(RequestResult { info, err });
             let notify = core::mem::take(&mut (*req).notify);
             (*req).refcount -= 1;
+            // Every waiter gave up while the lookup ran (`freeaddrinfo` invalidated
+            // the entry): nothing reads this result and no lookup may join it.
+            if (*req).refcount == 0 && !(*req).valid {
+                guard.remove(req);
+                Request::deinit(req);
+                return;
+            }
             notify
         };
 
@@ -3179,7 +3186,12 @@ pub(crate) mod internal {
         // SAFETY: `req` is a live cache entry; refcount/valid are only mutated
         // under `global_cache().lock()`, which is held here.
         unsafe {
-            if err != 0 {
+            // A failed connect, or a waiter that gave up while the lookup still ran
+            // (`result` unset), invalidates the entry: the next lookup of this name
+            // starts a fresh request instead of joining this one. A running lookup
+            // keeps its own reference and frees the entry when it completes (see
+            // `after_result_entries`).
+            if err != 0 || (*req).result.is_none() {
                 (*req).valid = false;
             }
             DNS_CACHE_ERRORS.fetch_add((err != 0) as usize, Ordering::Relaxed);

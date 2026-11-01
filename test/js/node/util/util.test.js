@@ -897,6 +897,24 @@ describe("util.debuglog", () => {
     expect(exitCode).toBe(0);
   });
 
+  it.concurrent("treats a . in NODE_DEBUG as a literal character", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const util = require("node:util");
+         console.log(util.debuglog("a.b").enabled, util.debuglog("aXb").enabled);`,
+      ],
+      env: { ...bunEnv, NODE_DEBUG: "a.b" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("true false\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   it.concurrent("calls the callback with a disabled logger when the first use is a call", async () => {
     const env = { ...bunEnv };
     delete env.NODE_DEBUG;

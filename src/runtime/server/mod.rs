@@ -8,6 +8,7 @@ use core::sync::atomic::Ordering;
 use bun_io::KeepAlive;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
+use bun_uws_sys::app::FilterEvent;
 use bun_uws_sys::app::c as uws_app_c;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsResult};
@@ -492,10 +493,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.pending_requests.set(self.pending_requests.get() + 1);
     }
 
-    /// uWS filter: `+2` at TCP accept (before any TLS handshake), `-2` on
-    /// `HttpContext::onClose` / `HttpResponse::upgrade()` — see
-    /// `AsyncSocketData::filteredAccept`. Feeds [`Self::active_connection_count`].
-    /// `-3` / `+3`: a node:http tunnel becomes idle / has bytes to send again. `-4`: it closes idle.
+    /// uWS connection filter: counts the accepted connections and the idle tunnels. Feeds [`Self::active_connection_count`].
     extern "C" fn on_connection_filter(
         _socket: *mut uws_sys::us_socket_t,
         opened: i32,
@@ -503,13 +501,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     ) {
         // SAFETY: `user_data` is the `*mut Self` registered in `listen()`; the server outlives every socket in its app.
         let this = unsafe { &*user_data.cast::<Self>() };
-        // Count from accept (2 / -2), not from open (1 / -1): a TLS socket still handshaking will dispatch once that completes.
-        match opened {
-            2 => {
+        // Count from accept, not from open: a TLS socket still handshaking will dispatch once that completes.
+        match FilterEvent::from_repr(opened) {
+            Some(FilterEvent::Accepted) => {
                 this.note_connection_opened();
                 return;
             }
-            3 => {
+            Some(FilterEvent::TunnelBusy) => {
                 this.note_tunnel_idle(false);
                 // With a listener open, the loop ref is the user's to drop (`server.unref()`).
                 if !this.has_listener() {
@@ -517,13 +515,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
                 return;
             }
-            -3 => this.note_tunnel_idle(true),
-            -4 => {
+            Some(FilterEvent::TunnelIdle) => this.note_tunnel_idle(true),
+            Some(FilterEvent::IdleTunnelClosed) => {
                 this.note_tunnel_idle(false);
                 this.note_connection_closed();
             }
-            -2 => this.note_connection_closed(),
-            _ => return,
+            Some(FilterEvent::AcceptedClosed) => this.note_connection_closed(),
+            Some(FilterEvent::Opened | FilterEvent::Closed) | None => return,
         }
         if !this.has_loop_holding_connections() && !this.has_listener() {
             this.deinit_if_we_can();

@@ -11,7 +11,7 @@ const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, dra
     lenientHttpFlags: number,
     maxHeaderSize: number,
     onClientError: (ssl: boolean, socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
-    onConnection?: (socketHandle: any) => undefined,
+    onConnection?: (socketHandle: any, secured: boolean) => undefined,
   ) => void;
   setServerAppFlags: (
     server: any,

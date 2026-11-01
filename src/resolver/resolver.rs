@@ -460,6 +460,20 @@ pub use bun_watcher::AnyResolveWatcher;
 // runtime fn-pointer alongside the context — `init` produces the
 // `AnyResolveWatcher` erased shim.
 
+/// Returned by [`Resolver::enter_fresh_generation`]. Puts the generation back on drop.
+pub struct FreshGeneration {
+    generation: NonNull<Generation>,
+    previous: Generation,
+}
+
+impl Drop for FreshGeneration {
+    fn drop(&mut self) {
+        // SAFETY: points at `Resolver::generation`. The resolver outlives the
+        // guard: the frame that called `enter_fresh_generation` holds both.
+        unsafe { *self.generation.as_ptr() = self.previous };
+    }
+}
+
 pub struct Resolver<'a> {
     pub opts: options::BundleOptions,
     // NOTE: `fs` / `log` are raw aliasing
@@ -2746,45 +2760,88 @@ impl<'a> Resolver<'a> {
         first_bust || second_bust
     }
 
-    /// bust both the named file and a parent directory, because `./hello` can resolve
-    /// to `./hello.js` or `./hello/index.js`
-    pub fn bust_dir_cache_from_specifier(
-        &mut self,
-        import_source_file: &[u8],
-        specifier: &[u8],
-    ) -> bool {
-        if bun_paths::is_absolute(specifier) {
-            return self.bust_dir_cache_and_parent(specifier);
+    /// Moves the resolver to a generation newer than every cached listing,
+    /// for one more lookup after a miss. Each listing that lookup consults is
+    /// read again, unless the directory is unchanged, and a cached "no such
+    /// directory" is checked against its parent's listing. The guard puts the
+    /// generation back when it drops.
+    pub fn enter_fresh_generation(&mut self) -> FreshGeneration {
+        let previous = self.generation;
+        self.generation = bun_core::next_generation();
+        FreshGeneration {
+            generation: NonNull::from(&mut self.generation),
+            previous,
         }
-
-        if !(specifier.starts_with(b"./") || specifier.starts_with(b"../")) {
-            return false;
-        }
-        if !bun_paths::is_absolute(import_source_file) {
-            return false;
-        }
-
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let Some(joined) = bun_paths::join_abs_string_buf_checked(
-            bun_paths::dirname_platform(import_source_file, bun_paths::Platform::AUTO),
-            &mut buf[..],
-            &[specifier],
-            bun_paths::Platform::AUTO,
-        ) else {
-            // Too long to be a cache key (see `dir_info_cached_maybe_log`).
-            return false;
-        };
-        self.bust_dir_cache_and_parent(joined)
     }
 
-    fn bust_dir_cache_and_parent(&mut self, path: &[u8]) -> bool {
-        // On Windows the dirname of `a\hello\` is `a\hello`, so strip first.
-        let path = strings::without_trailing_slash_windows_path(path);
-        let dir = bun_paths::dirname_platform(path, bun_paths::Platform::AUTO);
+    /// At a fresh generation, after a miss: the facts that each `DirInfo` from
+    /// `dir` up to the root took from its listing are checked against the
+    /// listing as it is now, and the importer's own `package.json` against the
+    /// file. A level that is stale is dropped, with every level below it (they
+    /// point at it as their parent), so the next lookup builds them again.
+    pub fn drop_stale_dir_info_chain(&mut self, dir: &[u8]) {
+        if !bun_paths::is_absolute(dir) {
+            return;
+        }
+        let mut levels: Vec<DirInfoRef> = Vec::new();
+        let mut topmost_stale: Option<usize> = None;
+        let mut level = self.read_dir_info_ignore_error(dir);
+        while let Some(info) = level {
+            levels.push(info);
+            if self.dir_info_is_stale(info, levels.len() == 1) {
+                topmost_stale = Some(levels.len());
+            }
+            level = info.get_parent();
+        }
+        if let Some(count) = topmost_stale {
+            for info in &levels[..count] {
+                self.bust_dir_cache(info.abs_path);
+            }
+        }
+    }
 
-        let a = self.bust_dir_cache(dir);
-        let b = self.bust_dir_cache(path);
-        a || b
+    /// Compares what the `DirInfo` took from its listing with the listing at
+    /// the resolver's generation. `check_package_json_bytes` also compares the
+    /// parsed `package.json` with the file, for the importer's own directory.
+    fn dir_info_is_stale(&mut self, info: DirInfoRef, check_package_json_bytes: bool) -> bool {
+        let kind_of = |this: &Self, name: &'static [u8]| {
+            info.get_entry(this.generation, name)
+                .map(|e| e.entry().kind(this.rfs_ref(), this.store_fd))
+        };
+        if !info.is_node_modules()
+            && info.has_node_modules() != (kind_of(self, b"node_modules") == Some(Fs::EntryKind::Dir))
+        {
+            return true;
+        }
+        if self.opts.load_package_json
+            && info.package_json().is_some()
+                != (kind_of(self, b"package.json") == Some(Fs::EntryKind::File))
+        {
+            return true;
+        }
+        if self.opts.load_tsconfig_json
+            && info.tsconfig_json().is_some()
+                != (kind_of(self, b"tsconfig.json") == Some(Fs::EntryKind::File)
+                    || kind_of(self, b"jsconfig.json") == Some(Fs::EntryKind::File))
+        {
+            return true;
+        }
+        if check_package_json_bytes
+            && let Some(package_json) = info.package_json()
+        {
+            let on_disk = bun_sys::File::openat(
+                FD::cwd(),
+                package_json.source.path.text,
+                bun_sys::O::RDONLY,
+                0,
+            )
+            .and_then(|file| file.read_to_end());
+            return match on_disk {
+                Ok(bytes) => bytes[..] != package_json.source_contents[..],
+                Err(_) => false,
+            };
+        }
+        false
     }
 
     pub(crate) fn load_node_modules(
@@ -3714,7 +3771,9 @@ impl<'a> Resolver<'a> {
 
         if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
             if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                if entries.generation >= self.generation {
+                if entries.generation >= self.generation
+                    || entries.keep_if_current(open_dir, self.generation)
+                {
                     dir_entries_option = cached_entry;
                     needs_iter = false;
                 } else {
@@ -3744,6 +3803,10 @@ impl<'a> Resolver<'a> {
             // covers a typical node_modules package dir; larger dirs still
             // rehash from there (cheap relative to starting at 0).
             new_entry.data.reserve(64);
+            if in_place.is_some() {
+                new_entry.identity =
+                    Fs::file_system::ListingIdentity::read(open_dir).unwrap_or_default();
+            }
 
             let mut dir_iterator = bun_sys::iterate_dir(open_dir);
             // Hoist the `FilenameStore` singleton resolve out of the per-entry loop
@@ -4540,23 +4603,63 @@ impl<'a> Resolver<'a> {
         let top_result = self
             .dir_cache_mut()
             .get_or_put(path_without_trailing_slash)?;
-        if self.dir_cache_status_is_final(top_result.status) {
-            return Ok(self
-                .dir_cache_mut()
-                .at_index(top_result.index)
-                .map(DirInfoRef::from_slot));
+        match top_result.status {
+            allocators::ItemStatus::Exists => {
+                return Ok(self
+                    .dir_cache_mut()
+                    .at_index(top_result.index)
+                    .map(DirInfoRef::from_slot));
+            }
+            allocators::ItemStatus::NotFound => {
+                if self.generation == 0 {
+                    return Ok(None);
+                }
+                // SAFETY: `rfs_ptr()` points at the process-global RealFS singleton.
+                let _entries_unlock = unsafe { &*self.rfs_ptr() }.entries_mutex.lock_guard();
+                if self.not_found_still_holds_locked(path_without_trailing_slash) {
+                    return Ok(None);
+                }
+            }
+            allocators::ItemStatus::Unknown => {}
         }
 
         self.dir_info_cached_miss(enable_logging, input_path, top_result)
     }
 
-    /// A cached "no such directory" holds only at generation 0. A lookup at a
-    /// newer generation (a bundle, or the runtime's retry after a miss) opens
-    /// the directory again, as it reads every listing again.
-    #[inline]
-    fn dir_cache_status_is_final(&self, status: allocators::ItemStatus) -> bool {
-        status == allocators::ItemStatus::Exists
-            || (status == allocators::ItemStatus::NotFound && self.generation == 0)
+    /// `path` is cached as "no such directory". At generation 0 that holds.
+    /// A lookup at a newer generation reads the parent's listing again (when
+    /// the parent changed) and asks it: no entry of that name, and the
+    /// answer holds without a system call. A parent that is cached as missing
+    /// itself is asked the same question. The caller holds `entries_mutex`.
+    fn not_found_still_holds_locked(&mut self, path: &[u8]) -> bool {
+        if self.generation == 0 {
+            return true;
+        }
+        let parent = bun_paths::dirname_platform(path, bun_paths::Platform::AUTO);
+        if parent.is_empty() || parent.len() >= path.len() {
+            return true;
+        }
+        let parent_key = strings::without_trailing_slash_windows_path(parent);
+        let Ok(parent_result) = self.dir_cache_mut().get_or_put(parent_key) else {
+            return true;
+        };
+        match parent_result.status {
+            allocators::ItemStatus::Exists => {
+                let Some(parent_info) = self
+                    .dir_cache_mut()
+                    .at_index(parent_result.index)
+                    .map(DirInfoRef::from_slot)
+                else {
+                    return true;
+                };
+                let base = bun_paths::basename(path);
+                parent_info
+                    .get_entries_ref_locked(self.generation)
+                    .is_none_or(|entries| entries.get(base).is_none())
+            }
+            allocators::ItemStatus::NotFound => self.not_found_still_holds_locked(parent_key),
+            allocators::ItemStatus::Unknown => false,
+        }
     }
 
     /// Cold tail of [`dir_info_cached_maybe_log`]: the directory walk +
@@ -4630,7 +4733,10 @@ impl<'a> Resolver<'a> {
             debug_assert!(top.as_ptr() == root_path.as_ptr());
             let result = self.dir_cache_mut().get_or_put(top)?;
 
-            if self.dir_cache_status_is_final(result.status) {
+            if result.status == allocators::ItemStatus::Exists
+                || (result.status == allocators::ItemStatus::NotFound
+                    && self.not_found_still_holds_locked(top))
+            {
                 top_parent = result;
                 break;
             }
@@ -4672,7 +4778,7 @@ impl<'a> Resolver<'a> {
 
         if top == root_path {
             let result = self.dir_cache_mut().get_or_put(root_path)?;
-            if self.dir_cache_status_is_final(result.status) {
+            if result.status != allocators::ItemStatus::Unknown {
                 top_parent = result;
             } else {
                 if i >= queue.len() {
@@ -4928,7 +5034,10 @@ impl<'a> Resolver<'a> {
 
             if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
                 if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                    if entries.generation >= self.generation {
+                    if entries.generation >= self.generation
+                        || (open_dir.is_valid()
+                            && entries.keep_if_current(open_dir, self.generation))
+                    {
                         dir_entries_option = cached_entry;
                         needs_iter = false;
                     } else {
@@ -4958,6 +5067,10 @@ impl<'a> Resolver<'a> {
                 // covers a typical node_modules package dir; larger dirs
                 // still rehash from there (cheap relative to starting at 0).
                 new_entry.data.reserve(64);
+                if in_place.is_some() && open_dir.is_valid() {
+                    new_entry.identity =
+                        Fs::file_system::ListingIdentity::read(open_dir).unwrap_or_default();
+                }
 
                 // A permission-denied ancestor has no fd to enumerate; its
                 // entry set stays empty.

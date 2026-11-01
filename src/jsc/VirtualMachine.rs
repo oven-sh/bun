@@ -5573,7 +5573,8 @@ impl VirtualMachine {
         let mut may_retry_from_root = self.finds_entry_points_by_path && !is_special_source;
         let mut source_before_root: Option<&[u8]> = None;
         let mut has_read_folders_again = false;
-        let generation_before = self.transpiler.resolver.generation;
+        // Set on the first miss, for the lookups after it. Dropped after the loop.
+        let mut fresh_generation: Option<bun_resolver::FreshGeneration> = None;
         let result: crate::CrateResult<bun_resolver::Result> = loop {
             let import_kind = if is_esm {
                 bun_ast::ImportKind::Stmt
@@ -5621,73 +5622,45 @@ impl VirtualMachine {
                         may_retry_from_root = true;
                     }
 
-                    // The lookup runs again at a fresh generation: every
-                    // listing it consults is read again in place, and a cached
-                    // "no such directory" is checked again. That covers a file
-                    // written into a package, a package added to a
-                    // `node_modules`, and a target of an exports map, a
-                    // tsconfig path or NODE_PATH that appeared after the
-                    // listing was read.
-                    //
-                    // A `DirInfo` is not stamped, so its facts (a
-                    // `node_modules` or a config file next to the importer)
-                    // come only from a bust. The importer's folder is busted
-                    // as before, and for an absolute specifier the folder it
-                    // names.
-                    if bun_paths::is_absolute(normalized_specifier) {
-                        if let Some(dir) = bun_paths::dirname(normalized_specifier) {
-                            // `load_as_file` caches the listing under the specifier's own slashes, so bust that key too.
-                            self.transpiler.resolver.bust_dir_cache(
-                                bun_paths::string_paths::without_trailing_slash_windows_path(dir),
-                            );
-                            let mut buf = bun_paths::path_buffer_pool::get();
-                            if dir.len() <= buf.len() {
-                                let normalized = bun_paths::string_paths::normalize_slashes_only(
-                                    &mut buf[..],
-                                    dir,
-                                    bun_paths::SEP,
-                                );
-                                self.transpiler.resolver.bust_dir_cache(
-                                    bun_paths::string_paths::without_trailing_slash_windows_path(
-                                        normalized,
-                                    ),
-                                );
-                            }
+                    // The folder of a module of an executable stands for a folder on disk, and that is where the resolver has looked.
+                    let is_in_executable =
+                        bun_options_types::standalone_path::is_bun_standalone_file_path(
+                            source_to_use,
+                        );
+                    let folder_on_disk = match self.standalone_module_graph {
+                        Some(graph) if is_in_executable => {
+                            let root = graph.root_on_disk();
+                            let base = root.as_deref().unwrap_or(top_level_dir);
+                            let mut folders = graph
+                                .directories_of_importer(source_to_use, base)
+                                .into_iter();
+                            let resolver = &mut self.transpiler.resolver;
+                            let found = folders
+                                .find(|it| resolver.read_dir_info_ignore_error(it).is_some());
+                            Some(found.unwrap_or_else(|| top_level_dir.to_vec()))
                         }
-                    } else {
-                        // The folder of a module of an executable stands for a folder on disk, and that is where the resolver has looked.
-                        let is_in_executable =
-                            bun_options_types::standalone_path::is_bun_standalone_file_path(
-                                source_to_use,
-                            );
-                        let folder_on_disk = match self.standalone_module_graph {
-                            Some(graph) if is_in_executable => {
-                                let root = graph.root_on_disk();
-                                let base = root.as_deref().unwrap_or(top_level_dir);
-                                let mut folders = graph
-                                    .directories_of_importer(source_to_use, base)
-                                    .into_iter();
-                                let resolver = &mut self.transpiler.resolver;
-                                let found = folders
-                                    .find(|it| resolver.read_dir_info_ignore_error(it).is_some());
-                                Some(found.unwrap_or_else(|| top_level_dir.to_vec()))
-                            }
-                            _ => None,
-                        };
-                        let importer_dir = folder_on_disk.as_deref().unwrap_or(source_to_use);
-                        if bun_paths::is_absolute(importer_dir) {
-                            self.transpiler.resolver.bust_dir_cache(
-                                bun_paths::string_paths::without_trailing_slash_windows_path(
-                                    importer_dir,
-                                ),
-                            );
+                        _ => None,
+                    };
+                    let resolver = &mut self.transpiler.resolver;
+                    fresh_generation = Some(resolver.enter_fresh_generation());
+                    resolver
+                        .drop_stale_dir_info_chain(folder_on_disk.as_deref().unwrap_or(source_to_use));
+                    if let Some(dir) = bun_paths::dirname(normalized_specifier)
+                        .filter(|_| bun_paths::is_absolute(normalized_specifier))
+                    {
+                        resolver.drop_stale_dir_info_chain(dir);
+                    }
+                    // `require.resolve(id, { paths })` looks in each of these, not from the importer.
+                    if let Some(paths) = resolver.custom_dir_paths {
+                        for path in paths {
+                            let path = path.to_utf8();
+                            resolver.drop_stale_dir_info_chain(path.slice());
                         }
                     }
-                    self.transpiler.resolver.generation = bun_core::next_generation();
                 }
             }
         };
-        self.transpiler.resolver.generation = generation_before;
+        drop(fresh_generation);
         let result = result?;
 
         if !self.macro_mode {

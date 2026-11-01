@@ -198,6 +198,66 @@ describe.concurrent("a file or package created after the resolver read its direc
     expect(req("late-pkg")).toBe("late");
   });
 
+  test("a node_modules created in an ancestor of the importer after a miss", async () => {
+    using dir = tempDir("runtime-cache-late-ancestor-node-modules", {
+      "app/src/lib/main.js": "",
+    });
+    const root = String(dir);
+    const req = createRequire(path.join(root, "app", "src", "lib", "main.js"));
+
+    expect(() => req("late-pkg")).toThrow("Cannot find module 'late-pkg'");
+    mkdirSync(path.join(root, "app", "node_modules", "late-pkg"), { recursive: true });
+    writeFileSync(path.join(root, "app", "node_modules", "late-pkg", "index.js"), `module.exports = "late";`);
+    expect(req("late-pkg")).toBe("late");
+  });
+
+  test("a package installed under a `paths` entry after a miss", async () => {
+    using dir = tempDir("runtime-cache-late-paths-root", {
+      "other/.keep": "",
+      "main.js": "",
+    });
+    const root = String(dir);
+    const req = createRequire(path.join(root, "main.js"));
+    const other = path.join(root, "other");
+
+    expect(() => req.resolve("late-pkg", { paths: [other] })).toThrow("Cannot find module 'late-pkg'");
+    mkdirSync(path.join(other, "node_modules", "late-pkg"), { recursive: true });
+    writeFileSync(path.join(other, "node_modules", "late-pkg", "index.js"), `module.exports = "late";`);
+    expect(req.resolve("late-pkg", { paths: [other] })).toBe(path.join(other, "node_modules", "late-pkg", "index.js"));
+  });
+
+  test("an imports entry added to the package.json next to the importer after a miss", async () => {
+    using dir = tempDir("runtime-cache-edited-package-json", {
+      "package.json": `{ "name": "app", "imports": { "#a": "./a.js" } }`,
+      "a.js": `module.exports = "a";`,
+      "b.js": `module.exports = "b";`,
+      "main.js": "",
+    });
+    const root = String(dir);
+    const req = createRequire(path.join(root, "main.js"));
+
+    expect(req("#a")).toBe("a");
+    expect(() => req("#b")).toThrow("Cannot find module '#b'");
+    writeFileSync(path.join(root, "package.json"), `{ "name": "app", "imports": { "#a": "./a.js", "#b": "./b.js" } }`);
+    expect(req("#b")).toBe("b");
+  });
+
+  test("a link in node_modules whose target is created after a miss", async () => {
+    using dir = tempDir("runtime-cache-link-target-later", {
+      "node_modules/.keep": "",
+      "main.js": "",
+    });
+    const root = String(dir);
+    const req = createRequire(path.join(root, "main.js"));
+    const target = path.join(root, "store", "linked");
+    link(target, path.join(root, "node_modules", "linked"));
+
+    expect(() => req("linked")).toThrow("Cannot find module 'linked'");
+    mkdirSync(target, { recursive: true });
+    writeFileSync(path.join(target, "index.js"), `module.exports = "linked";`);
+    expect(req("linked")).toBe("linked");
+  });
+
   test("a file added under the directory an exports map points at", async () => {
     using dir = tempDir("runtime-cache-late-exports-target", {
       "node_modules/@pk/lib/package.json": `{ "name": "@pk/lib", "exports": { "./*": "./dist/*.js" } }`,

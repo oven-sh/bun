@@ -50,7 +50,8 @@ pub use tsconfig_json::TSConfigJSON;
 /// Re-export so dependents can spell `bun_resolver::install_types::AutoInstaller`.
 pub use ::bun_install_types::resolver_hooks as install_types;
 pub use resolver::{
-    AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, Resolver, module_type_from_ext,
+    AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, FreshGeneration, Resolver,
+    module_type_from_ext,
 };
 pub use result::{
     DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
@@ -703,6 +704,7 @@ pub mod fs {
         DirEntry, DirEntryIterator, Entry, EntryCache, EntryKind, EntryKindResolver, EntryLookup,
         FilenameStoreAppender, dir_entry,
     };
+    pub(crate) use crate::fs_full::ListingIdentity;
 
     use bun_core::Generation;
     use bun_paths::strings;
@@ -1005,9 +1007,12 @@ pub mod fs {
         ) -> crate::CrateResult<DirEntry> {
             let mut iter = bun_sys::iterate_dir(handle);
             let mut dir = DirEntry::init(dir_, generation);
-            // A listing read again in place has about as many entries as before.
             if let Some(prev) = prev_map.as_deref() {
+                // A listing read again has about as many entries as before, and
+                // records what the directory looks like so the next newer
+                // generation can keep it without a read.
                 dir.data.reserve(prev.count());
+                dir.identity = ListingIdentity::read(handle).unwrap_or_default();
             }
 
             if store_fd {
@@ -1136,6 +1141,19 @@ pub mod fs {
                     let _ = bun_sys::close(h);
                 }
             });
+
+            if let Some(existing) = in_place {
+                // SAFETY: BSSMap-owned `DirEntry`; `entries_mutex` held.
+                if unsafe { &mut *existing }.keep_if_current(handle, generation) {
+                    let slot = std::ptr::from_mut::<EntriesOption>(
+                        self.entries
+                            .at_index(cache_result.index)
+                            .expect("the slot that `in_place` was taken from"),
+                    );
+                    // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
+                    return Ok(unsafe { &mut *slot });
+                }
+            }
 
             // if we get this far, it's a real directory, so we can just store the dir name.
             // An in-place refresh always keeps the slot's existing interned name: callers
@@ -1493,6 +1511,11 @@ pub mod fs {
                     let _close_guard = scopeguard::guard(handle, |h| {
                         let _ = bun_sys::close(h);
                     });
+                    // SAFETY: see above.
+                    if unsafe { &mut *e_ptr }.keep_if_current(handle, generation) {
+                        // SAFETY: BSSMap-owned slot; outlives caller.
+                        return Some(unsafe { &mut *result_ptr });
+                    }
                     // SAFETY: see above — exclusive `&mut` on the prev map for the duration of `readdir`.
                     let prev = Some(unsafe { &mut (*e_ptr).data });
                     match self.readdir(false, prev, dir, generation, handle, &mut ()) {
@@ -1662,6 +1685,7 @@ pub mod fs {
     }
 
     pub mod file_system {
+        pub(crate) use crate::fs_full::ListingIdentity;
         pub use super::{DirEntry, DirnameStore, Entry, EntryKind, FilenameStore, RealFS};
         pub mod real_fs {
             pub use crate::fs::EntriesOption;

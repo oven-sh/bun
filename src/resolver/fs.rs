@@ -141,6 +141,10 @@ pub struct Entry {
 
     pub mutex: Mutex,
     pub need_stat: AtomicBool,
+    /// The directory listed this entry as a symlink, or did not say what it
+    /// is. Such an entry is stat'ed again when a newer generation keeps its
+    /// listing without a read: its target can have appeared since.
+    pub(crate) is_link: AtomicBool,
 
     abs_path: OnceLock<Interned>,
 }
@@ -348,12 +352,57 @@ impl DirEntryIterator for () {
     fn next<R: EntryKindResolver>(&mut self, _fs: &R, _entry: &Entry, _fd: Fd) {}
 }
 
+/// What `fstat` said about a directory when its listing was read again. A
+/// later reader at a newer generation keeps the listing without a read when
+/// the directory still says the same.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct ListingIdentity {
+    ino: u64,
+    mtime_ns: i64,
+    /// The last change was well before the read. A change right after the
+    /// read can share the mtime of one right before it on a file system with
+    /// a coarse clock, so an identity taken that close to a change is not
+    /// trusted.
+    settled: bool,
+}
+
+impl ListingIdentity {
+    const SETTLED_AFTER_NS: i128 = 2 * bun_core::time::NS_PER_S as i128;
+
+    pub(crate) fn read(fd: Fd) -> Option<Self> {
+        let stat = bun_sys::PosixStat::init(&bun_sys::fstat(fd).ok()?);
+        let mtime = stat.mtime();
+        let mtime_ns = mtime
+            .sec
+            .saturating_mul(bun_core::time::NS_PER_S as i64)
+            .saturating_add(mtime.nsec);
+        let settled =
+            bun_core::time::nano_timestamp() - mtime_ns as i128 > Self::SETTLED_AFTER_NS;
+        Some(Self {
+            ino: stat.ino,
+            mtime_ns,
+            settled,
+        })
+    }
+
+    /// The directory behind `fd` is the one that was read, and nothing was
+    /// added, removed or renamed in it since.
+    pub(crate) fn still_current(&self, fd: Fd) -> bool {
+        self.settled
+            && Self::read(fd)
+                .is_some_and(|now| now.ino == self.ino && now.mtime_ns == self.mtime_ns)
+    }
+}
+
 pub struct DirEntry {
     // `dir` is interned in
     // DirnameStore (a process-lifetime BSSList), so `&'static` is correct.
     pub dir: &'static [u8],
     pub fd: Fd,
     pub(crate) generation: Generation,
+    /// Set by a read at a newer generation than the one before it. The first
+    /// read of a directory does not stat it.
+    pub(crate) identity: ListingIdentity,
     pub data: dir_entry::EntryMap,
 }
 
@@ -363,8 +412,28 @@ impl DirEntry {
             dir,
             data: dir_entry::EntryMap::default(),
             generation,
+            identity: ListingIdentity::default(),
             fd: Fd::INVALID,
         }
+    }
+
+    /// A reader at a newer generation holds the open directory. True when
+    /// the listing can stand for it as it is, and stamps it with the
+    /// generation. A symlink in it is stat'ed again by its next reader, as
+    /// after a read. The caller holds `entries_mutex`.
+    pub(crate) fn keep_if_current(&mut self, fd: Fd, generation: Generation) -> bool {
+        if !self.identity.still_current(fd) {
+            return false;
+        }
+        self.generation = generation;
+        for &entry in self.data.values() {
+            // SAFETY: EntryStore-owned pointer, valid for the life of the process.
+            let entry = unsafe { &*entry };
+            if entry.is_link.load(Ordering::Relaxed) {
+                entry.need_stat.store(true, Ordering::Release);
+            }
+        }
+        true
     }
 
     // Compatibility wrapper for callers outside the `readdir` hot loop —
@@ -462,6 +531,7 @@ impl DirEntry {
                             || Some(existing.cache().kind) != found_kind,
                         Ordering::Release,
                     );
+                    existing.is_link.store(found_kind.is_none(), Ordering::Relaxed);
                     break 'brk existing_ptr;
                 }
             }
@@ -508,6 +578,7 @@ impl DirEntry {
                 // contains a directory with over 11,000 entries in it and running "stat"
                 // for each entry was a big performance issue for that package.
                 addr_of_mut!((*p).need_stat).write(AtomicBool::new(found_kind.is_none()));
+                addr_of_mut!((*p).is_link).write(AtomicBool::new(found_kind.is_none()));
                 addr_of_mut!((*p).cache).write(core::cell::Cell::new(EntryCache {
                     symlink: Interned::EMPTY,
                     // if found_kind is null, we have set need_stat above, so we

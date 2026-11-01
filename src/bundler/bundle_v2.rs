@@ -2738,7 +2738,8 @@ pub mod bv2_impl {
                 }
             }
 
-            let mut had_busted_dir_cache = false;
+            // A miss is looked up once more at a fresh generation when hot reloading.
+            let mut fresh_generation: Option<_resolver::FreshGeneration> = None;
             let resolve_result = loop {
                 // SAFETY: see `transpiler` note above.
                 match unsafe { &mut *transpiler }.resolver.resolve(
@@ -2748,22 +2749,14 @@ pub mod bv2_impl {
                 ) {
                     Ok(r) => break r,
                     Err(err) => {
-                        // Only perform directory busting when hot-reloading is enabled
                         if err == _resolver::Error::ModuleNotFound {
                             if let Some(dev) = &self.dev_server {
-                                if !had_busted_dir_cache {
-                                    // Only re-query if we previously had something cached.
+                                if fresh_generation.is_none() {
                                     // SAFETY: see `transpiler` note above.
-                                    if unsafe { &mut *transpiler }
-                                        .resolver
-                                        .bust_dir_cache_from_specifier(
-                                            &import_record.source_file,
-                                            &import_record.specifier,
-                                        )
-                                    {
-                                        had_busted_dir_cache = true;
-                                        continue;
-                                    }
+                                    let resolver = &mut unsafe { &mut *transpiler }.resolver;
+                                    fresh_generation = Some(resolver.enter_fresh_generation());
+                                    resolver.drop_stale_dir_info_chain(source_dir);
+                                    continue;
                                 }
 
                                 // Tell Bake's Dev Server to wait for the file to be imported.
@@ -2889,6 +2882,7 @@ pub mod bv2_impl {
                     }
                 }
             };
+            drop(fresh_generation);
 
             let out_source_index: Option<Index>;
 
@@ -6823,7 +6817,8 @@ pub mod bv2_impl {
                     }
                 }
 
-                let mut had_busted_dir_cache = false;
+                // A miss is looked up once more at a fresh generation when watching.
+                let mut fresh_generation: Option<_resolver::FreshGeneration> = None;
                 let resolve_result: _resolver::Result<'a> = 'inner: loop {
                     match transpiler.resolver.resolve_with_framework(
                         source_dir,
@@ -6846,24 +6841,19 @@ pub mod bv2_impl {
                                 )
                             };
 
-                            // Only perform directory busting when hot-reloading is enabled
                             if err == _resolver::Error::ModuleNotFound {
                                 if self.bun_watcher.is_some() {
-                                    if !had_busted_dir_cache {
+                                    if fresh_generation.is_none() {
                                         bun_core::scoped_log!(
                                             watcher,
-                                            "busting dir cache {} -> {}",
+                                            "looking up {} -> {} again at a fresh generation",
                                             bstr::BStr::new(&source.path.text),
                                             bstr::BStr::new(&import_record.path.text)
                                         );
-                                        // Only re-query if we previously had something cached.
-                                        if transpiler.resolver.bust_dir_cache_from_specifier(
-                                            source.path.text,
-                                            import_record.path.text,
-                                        ) {
-                                            had_busted_dir_cache = true;
-                                            continue 'inner;
-                                        }
+                                        let resolver = &mut transpiler.resolver;
+                                        fresh_generation = Some(resolver.enter_fresh_generation());
+                                        resolver.drop_stale_dir_info_chain(source_dir);
+                                        continue 'inner;
                                     }
                                     if let Some(dev) = self.dev_server {
                                         // Tell DevServer about the resolution failure.
@@ -7017,6 +7007,7 @@ pub mod bv2_impl {
                         }
                     }
                 };
+                drop(fresh_generation);
                 let mut resolve_result = resolve_result;
                 // if there were errors, lets go ahead and collect them all
                 if last_error.is_some() {

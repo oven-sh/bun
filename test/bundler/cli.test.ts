@@ -398,6 +398,19 @@ describe.concurrent("--sourcemap never writes next to the entry point", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("bare --sourcemap with --outdir writes a linked map", async () => {
+    using dir = tempDir("build-sourcemap-outdir", fixture);
+    const { stdout, stderr, exitCode } = await build(String(dir), "src/entry.js", "--outdir=dist", "--sourcemap");
+    expect(stderr).toBe("");
+    expect(stdout).toContain("entry.js.map");
+    expect(exitCode).toBe(0);
+
+    const after = tree(String(dir));
+    expect(Object.keys(after)).toEqual(["dist/entry.js", "dist/entry.js.map", ...Object.keys(fixture)]);
+    expect(after["dist/entry.js"]).toContain("//# sourceMappingURL=entry.js.map");
+    for (const file of Object.keys(fixture)) expect(after[file]).toBe(fixture[file]);
+  });
+
   test.each(["linked", "external"])("--sourcemap=%s without --outdir or --outfile is an error", async kind => {
     using dir = tempDir("build-sourcemap-stdout-error", fixture);
     const { stdout, stderr, exitCode } = await build(

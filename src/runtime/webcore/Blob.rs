@@ -75,6 +75,17 @@ pub(crate) fn is_valid_blob_type(slice: &[u8]) -> bool {
     slice.iter().all(|&c| matches!(c, 0x20..=0x7E))
 }
 
+/// WebIDL `[Clamp] long long` of a Number (https://webidl.spec.whatwg.org/#abstract-opdef-converttoint).
+#[inline]
+fn clamp_long_long(number: JSValue) -> i64 {
+    if number.is_int32() {
+        return i64::from(number.as_int32());
+    }
+    const MAX: f64 = bun_jsc::MAX_SAFE_INTEGER as f64;
+    // NaN passes through `clamp` and `round_ties_even`, and `as` makes it 0.
+    number.as_double().clamp(-MAX, MAX).round_ties_even() as i64
+}
+
 /// Result delivered to `ReadBytesHandler::on_read_bytes`.
 pub(crate) enum ReadBytesResult {
     /// global-allocator-owned by the callback.
@@ -1785,7 +1796,7 @@ impl BlobExt for Blob {
         };
 
         if start.is_number() {
-            let start = start.to_int64();
+            let start = clamp_long_long(start);
             if start < 0 {
                 relative_start = start.saturating_add(size_i64).max(0);
             } else {
@@ -1794,7 +1805,7 @@ impl BlobExt for Blob {
         }
 
         if end.is_number() {
-            let end = end.to_int64();
+            let end = clamp_long_long(end);
             if end < 0 {
                 relative_end = end.saturating_add(size_i64).max(0);
             } else {

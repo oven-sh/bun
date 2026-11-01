@@ -543,7 +543,7 @@ impl Run<'_> {
         if let Some(error) = config.error.as_ref().filter(|_| route != Route::Eslint) {
             return Err(Fatal(invalid_config(loader, &loaded, error)));
         }
-        if route == Route::Unsupported && config.route_without_processor(&path) == Route::Eslint {
+        if route == Route::Unsupported && config.routes_to_eslint(&path) {
             context.needs_eslint.lock().push((path, loaded.flavor));
             return Ok(Linted {
                 results: Vec::new(),
@@ -709,9 +709,7 @@ impl Run<'_> {
                 });
         let (for_eslint, with_processor): (Vec<Target>, Vec<Target>) = (unsupported.into_iter())
             .partition(|it| match &it.status {
-                Status::Matched(config) => {
-                    config.route_without_processor(&it.path) == Route::Eslint
-                }
+                Status::Matched(config) => config.routes_to_eslint(&it.path),
                 _ => false,
             });
         let because: &[u8] = b"only an ESLint config can have a processor";
@@ -1126,7 +1124,9 @@ impl Run<'_> {
             });
             self.out.stdout.push(b'\n');
             // The printed config is the same whether a rule is built in or runs in JavaScript, so add a note.
-            if let FileConfig::Matched(config) = &config {
+            if let FileConfig::Matched(config) = &config
+                && !config.routes_to_eslint(&path)
+            {
                 let on = (config.js_rules.iter()).filter(|it| it.severity != Severity::Off);
                 let ids: Vec<&[u8]> = on.map(|it| &it.configured.rule.id[..]).collect();
                 if !ids.is_empty() {

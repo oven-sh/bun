@@ -117,6 +117,8 @@ describe("mv", async () => {
     const failed = { exitCode: 2 /* ENOENT */, stdout: "", left: ["dest"] };
 
     expect(await mv(["missing", "a"], ["a"])).toEqual({ ...failed, stderr: missing("missing"), moved: ["a"] });
+    // Two failures that the same worker sees.
+    expect(await mv(["m1", "a", "m2"], ["a"])).toEqual({ ...failed, stderr: missing("m1", "m2"), moved: ["a"] });
     expect(await mv(["a", "missing", "b"], ["a", "b"])).toEqual({
       ...failed,
       stderr: missing("missing"),
@@ -345,11 +347,13 @@ describe("mv", async () => {
     });
 
     // The workers finish in any order. `mv` still names the failed sources in the order of its operands, and the
-    // first of them gives the exit code. Here the worker that has `missing` finishes last: it copies `big` first.
+    // first of them gives the exit code. The worker that has `missing` copies the 500 files of `big` first, so the
+    // worker that has `f/x` is done long before it: a report in the order the workers finish names `x` first.
     test.skipIf(skip)("reports the sources that fail in the order of the operands", async () => {
       const [src, dst] = crossDevicePair("order");
       try {
-        writeFileSync(join(src, "big"), Buffer.alloc(64 * 1024 * 1024, "x"));
+        mkdirSync(join(src, "big"));
+        for (let i = 0; i < 500; i++) writeFileSync(join(src, "big", `f${i}`), "");
         const small = Array.from({ length: 8 }, (_, i) => `s${i}`);
         for (const name of [...small, "f"]) writeFileSync(join(src, name), name);
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""reference-holding-members.py <seed>: random strict TypeScript programs about typed objects whose members hold objects, strings, functions,
-arrays, maps and sets, or null | undefined | nothing in their place. Every program reads, stores, swaps, clears, compares and reads through such members, in loops, closures,
-async functions and generators, with collections in between, and prints what it sees. The answer does not depend on when anything is collected."""
+"""reference-holding-members.py <seed>: Random strict TypeScript programs about typed objects whose members hold
+objects, strings, functions, arrays, maps and sets, or null, undefined or nothing instead.
+"""
 import random, sys, os
 
 HEAD = r'''const G: any = globalThis;

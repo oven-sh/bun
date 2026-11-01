@@ -203,8 +203,8 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
 
     JSValue options = callFrame->argument(1);
 
-    std::optional<int32_t> keyLengthOpt = std::nullopt;
-    std::optional<int32_t> ivLengthOpt = std::nullopt;
+    std::optional<uint32_t> keyLengthOpt = std::nullopt;
+    std::optional<uint32_t> ivLengthOpt = std::nullopt;
     if (!options.isUndefined()) {
         V::validateObject(scope, lexicalGlobalObject, options, "options"_s);
         RETURN_IF_EXCEPTION(scope, {});
@@ -215,14 +215,14 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
         JSValue ivLengthValue = optionsObj->get(lexicalGlobalObject, Identifier::fromString(vm, "ivLength"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (!keyLengthValue.isUndefined()) {
-            int32_t length = 0;
-            V::validateInt32(scope, lexicalGlobalObject, keyLengthValue, "keyLength"_s, jsUndefined(), jsUndefined(), &length);
+            uint32_t length = 0;
+            V::validateUint32(scope, lexicalGlobalObject, keyLengthValue, "options.keyLength"_s, jsUndefined(), &length);
             RETURN_IF_EXCEPTION(scope, {});
             keyLengthOpt = length;
         }
         if (!ivLengthValue.isUndefined()) {
-            int32_t length = 0;
-            V::validateInt32(scope, lexicalGlobalObject, ivLengthValue, "ivLength"_s, jsUndefined(), jsUndefined(), &length);
+            uint32_t length = 0;
+            V::validateUint32(scope, lexicalGlobalObject, ivLengthValue, "options.ivLength"_s, jsUndefined(), &length);
             RETURN_IF_EXCEPTION(scope, {});
             ivLengthOpt = length;
         }
@@ -244,13 +244,14 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
         return JSValue::encode(jsUndefined());
     }
 
-    int32_t keyLength = cipher.getKeyLength();
-    int32_t ivLength = cipher.getIvLength();
+    uint32_t keyLength = cipher.getKeyLength();
+    uint32_t ivLength = cipher.getIvLength();
     int32_t blockSize = cipher.getBlockSize();
     ASCIILiteral modeLabel = cipher.getModeLabel();
     String name = cipher.getName();
 
     if (keyLengthOpt.has_value() || ivLengthOpt.has_value()) {
+        ncrypto::ClearErrorOnReturn clearErrorOnReturn;
         auto ctx = ncrypto::CipherCtxPointer::New();
         if (!ctx.init(cipher, true)) {
             return JSValue::encode(jsUndefined());
@@ -264,7 +265,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
         }
 
         if (ivLengthOpt.has_value()) {
-            int32_t length = ivLengthOpt.value();
+            uint32_t length = ivLengthOpt.value();
             if (cipher.isCcmMode()) {
                 if (length < 7 || length > 13) {
                     return JSValue::encode(jsUndefined());

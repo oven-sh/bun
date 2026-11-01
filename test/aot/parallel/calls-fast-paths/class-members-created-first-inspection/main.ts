@@ -1,4 +1,5 @@
 // Counts heap cells to show that a class's methods and prototype are created only when something first looks at them.
+// Prints what the compiler saves: functions and structures
 import "../../../fixtures/jsc-shell-functions.ts";
 import "./program.ts";
 /* Output:

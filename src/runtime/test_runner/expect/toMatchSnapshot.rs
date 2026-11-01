@@ -2,10 +2,12 @@ use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSValue, JsResult};
 
 use super::Expect;
+use super::Received;
 use super::get_signature;
 use super::throw;
 
 impl Expect {
+    #[optimize(size)]
     pub(crate) fn to_match_snapshot(
         &self,
         this_value: JsWrapper<'_, Self>,
@@ -92,6 +94,6 @@ impl Expect {
             "<green>properties<r><d>, <r>hint",
         )?;
 
-        this.snapshot(global, value, property_matchers, hint.slice(), "toMatchSnapshot")
+        this.snapshot(global, Received::Value(value), property_matchers, hint.slice(), "toMatchSnapshot")
     }
 }

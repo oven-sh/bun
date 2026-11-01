@@ -162,9 +162,13 @@ export interface Partition {
   edges: FeatureEdge[];
   layoutRank: Uint16Array;
   groups: Group[];
+  /** The first this many of `groups` have only features that no compiled program has, so they are removed together. */
+  groupsOutsidePrograms: number;
   groupOfSet: Map<number, number>;
   removableBytes: Map<number, number>;
   featuresNearMinimum: number[];
+  /** The sections that are in the image without a known reference. */
+  unexplained: number[];
   unexplainedBytes: number;
   failures: PartitionFailure[];
 }

@@ -15,10 +15,12 @@ mod code_types;
 mod code_walk;
 mod explain_files;
 mod projects;
+mod retire;
 
 pub use self::code_file::byte_range_of_node;
 pub use self::code_graph::*;
 pub use self::code_load::{CompileInputs, MainModule};
+pub use self::retire::{ModuleCell, ReadingNoTrees, ReadingTask};
 
 use self::code_load::{
     BuildFile, CodeFiles, CodeLoadContext, CompileLoad, RootTables, TypesQuestion,
@@ -325,29 +327,6 @@ fn read_types_file(host: &dyn Host, is_part: bool, path: &[u8]) -> Cow<'static, 
     match is_part {
         true => host.read_part_seen_by_every_file(path),
         false => host.read_source(path),
-    }
-}
-
-/// Entry in the list of all modules. A `Module` is thousands of bytes, so it's boxed in the arena of the thread that
-/// loaded it and never moved. The `UnsafeCell` lets `Files::free_tree` mutate it through `&Files`.
-pub struct ModuleCell<'s>(std::cell::UnsafeCell<ArenaBox<'s, Module<'s>>>);
-
-// SAFETY: a module is only mutated through `&mut Files`, or by `Files::free_tree`.
-unsafe impl Sync for ModuleCell<'_> {}
-
-impl<'s> std::ops::Deref for ModuleCell<'s> {
-    type Target = Module<'s>;
-    #[inline(always)]
-    fn deref(&self) -> &Module<'s> {
-        // SAFETY: see above.
-        unsafe { &*self.0.get() }
-    }
-}
-
-impl<'s> std::ops::DerefMut for ModuleCell<'s> {
-    #[inline(always)]
-    fn deref_mut(&mut self) -> &mut Module<'s> {
-        self.0.get_mut()
     }
 }
 
@@ -4344,6 +4323,19 @@ impl<'s> Included<'_, 's> {
     where
         's: 'r,
     {
+        self.visits_from(resolver, is_requested, None)
+    }
+
+    /// `visits`. `is_walked_from`: the only files whose `rootTasks` count, listed like `is_requested`. `None`: all do.
+    fn visits_from<'r>(
+        &self,
+        resolver: &Resolver<'r>,
+        is_requested: &[bool],
+        is_walked_from: Option<&[bool]>,
+    ) -> Vec<Vec<Visit>>
+    where
+        's: 'r,
+    {
         let project_resolvers = ProjectResolvers::new();
         let &Included {
             host,
@@ -4411,6 +4403,9 @@ impl<'s> Included<'_, 's> {
             |file: FileId| (modules[file.idx()].edges.iter()).any(|edge| is_requested[edge.idx()]);
         let mut seen = vec![false; modules.len()];
         for (first, reason) in tasks {
+            if is_walked_from.is_some_and(|is_walked_from| !is_walked_from[first.idx()]) {
+                continue;
+            }
             if let Some((reason, name)) = reason.filter(|_| is_requested[first.idx()]) {
                 visit(first, reason, name);
             }
@@ -4779,13 +4774,29 @@ impl<'s> Included<'_, 's> {
         }
     }
 
+    /// The files that the code of a compile build refers to, directly or through others, with one more entry after the
+    /// files. The build reads the rest of its project for what they declare for every file, and the program has none of them.
+    fn reached_from_code(&self) -> Vec<bool> {
+        let compiled = (0u32..).zip(self.modules);
+        let compiled = compiled.filter(|(_, module)| module.compiled.is_some());
+        let mut pending: Vec<FileId> = compiled.map(|(file, _)| FileId(file)).collect();
+        let mut is_reached = vec![false; self.modules.len() + 1];
+        while let Some(file) = pending.pop() {
+            if !std::mem::replace(&mut is_reached[file.idx()], true) {
+                pending.extend(self.modules[file.idx()].edges);
+            }
+        }
+        is_reached
+    }
+
     /// `addProcessingDiagnosticsForFileCasing`, wherever `collectFiles` calls it. `respelled`: the
     /// files it reached under more than one spelling of their name. `case_variants`: the names that differ
-    /// only in case, where that makes them the names of different files.
+    /// only in case, where that makes them the names of different files. In a compile build only `reached_from_code` counts.
     fn file_casing_errors(
         &self,
         respelled: &[FileId],
         case_variants: &[Vec<(&[u8], FileId)>],
+        is_compile_build: bool,
     ) -> Vec<Explanation> {
         if respelled.is_empty() && case_variants.is_empty() {
             return Vec::new();
@@ -4797,7 +4808,8 @@ impl<'s> Included<'_, 's> {
         }
         let resolving = Session::new();
         let resolver = Resolver::new(&resolving, self.host, self.options);
-        let visits = self.visits(&resolver, &is_requested);
+        let reached_from_code = is_compile_build.then(|| self.reached_from_code());
+        let visits = self.visits_from(&resolver, &is_requested, reached_from_code.as_deref());
         let differs = |file: FileId, to_file: &[&Visit], visit: &Visit, is_referred_to: bool| {
             let (existing, name) = (
                 displayed_path(&to_file[0].name),
@@ -5489,8 +5501,10 @@ impl<'s> Files<'s> {
 
         let early_prefetch: OnceLock<Prefetch> = OnceLock::new();
         let mut find_root_files = Some(|| {
-            let waits_for_its_name =
-                |path: &[u8]| compile.is_some_and(|it| it.host.is_seen_only_by_name(path));
+            let waits_for_its_name = |path: &[u8]| {
+                options.roots_read_when_named.contains(path)
+                    || compile.is_some_and(|it| it.host.is_seen_only_by_name(path))
+            };
             let (roots, listed_roots): (&[Vec<u8>], Option<&'s [Vec<u8>]>) = match root_file_names {
                 RootFileNames::Listed(roots) => (roots, None),
                 RootFileNames::Unlisted(list) => {
@@ -5553,8 +5567,12 @@ impl<'s> Files<'s> {
                     }
                     Err(code) => {
                         missing_roots.push(root);
-                        let message = reference_problem(options, code, root);
-                        without_file.push((because(IncludeReason::RootFile(index), root), message));
+                        // The code of a compile build says what the program is made of. The list of its project doesn't.
+                        if compile.is_none() {
+                            let message = reference_problem(options, code, root);
+                            let reason = IncludeReason::RootFile(index);
+                            without_file.push((because(reason, root), message));
+                        }
                     }
                 }
             }
@@ -6478,7 +6496,7 @@ impl<'s> Files<'s> {
             }
         });
         let mut modules: ArenaVec<'s, ModuleCell<'s>> = vec_from_iter_in(
-            (modules.into_iter()).map(|module| ModuleCell(module.unwrap().into())),
+            (modules.into_iter()).map(|module| ModuleCell::new(module.unwrap())),
             arena,
         );
         let mut summaries: Vec<ModuleSummary<'s>> = (summaries.into_iter())
@@ -6527,22 +6545,21 @@ impl<'s> Files<'s> {
         let ambient_with_relative_reexports =
             std::mem::take(&mut *ambient_with_relative_reexports.lock());
         let reexports_relatively = |spec: Atom| ambient_with_relative_reexports.contains(&spec);
+        let imports_from_one = |hir: &hir::File<'s>, bound: &Bound<'s>| match bound.is_unbound {
+            _ if ambient_with_relative_reexports.is_empty() => false,
+            // The tree of a module that waits may be gone. These are the names in its import and export statements.
+            true => bound.specifiers.iter().any(|&it| reexports_relatively(it)),
+            false => {
+                hir.imports.iter().any(|it| reexports_relatively(it.spec))
+                    || hir.exports.iter().any(|it| reexports_relatively(it.spec))
+            }
+        };
         // `Files::new_symbol` adds symbols that no file declares to the first file's symbols, so
         // the first file is never a leaf.
         for (i, summary) in summaries.iter().enumerate().skip(1) {
             if summary.may_be_leaf && !is_referred_to[i].load(Ordering::Relaxed) {
                 let module = &mut modules[i];
-                let imports_from_one = !ambient_with_relative_reexports.is_empty()
-                    && (module
-                        .hir
-                        .imports
-                        .iter()
-                        .any(|it| reexports_relatively(it.spec))
-                        || module
-                            .hir
-                            .exports
-                            .iter()
-                            .any(|it| reexports_relatively(it.spec)));
+                let imports_from_one = imports_from_one(&module.hir, &module.bound);
                 module.is_leaf = !imports_from_one && !summary.lists_declarations_for_every_task;
                 module.is_read_by_every_task =
                     !imports_from_one && summary.lists_declarations_for_every_task;
@@ -6553,17 +6570,7 @@ impl<'s> Files<'s> {
             .zip(&modules)
             .filter(|it| it.0.may_be_unread);
         for (summary, module) in may_be_unread {
-            summary.is_unread_unless_reached = ambient_with_relative_reexports.is_empty()
-                || !(module
-                    .hir
-                    .imports
-                    .iter()
-                    .any(|it| reexports_relatively(it.spec))
-                    || module
-                        .hir
-                        .exports
-                        .iter()
-                        .any(|it| reexports_relatively(it.spec)));
+            summary.is_unread_unless_reached = !imports_from_one(&module.hir, &module.bound);
         }
         // What is bound looks into what it refers to.
         let waits = |file: usize| {
@@ -6615,7 +6622,7 @@ impl<'s> Files<'s> {
             |unbound: &Guarded<(bool, &mut ModuleCell<'s>, &mut ModuleSummary<'s>)>| {
                 let unbound = unbound.lock();
                 match unbound.0 {
-                    true => unbound.1.hir.text.len(),
+                    true => unbound.1.hir.source_len as usize,
                     false => 0,
                 }
             };
@@ -6639,6 +6646,7 @@ impl<'s> Files<'s> {
             keep_list(session, &mut module.hir.jsdoc_param_errors);
             module.bound.symbols.transfer_to(arena);
             summary.symbols = module.bound.symbols.len();
+            summary.type_nodes = module.hir.types.len() as u32;
         });
         drop(unbound);
         CodeLoadContext::finish(build);
@@ -6705,7 +6713,9 @@ impl<'s> Files<'s> {
         let (output_path_errors, common_source_directory) =
             output_path_errors(&included, &summaries, &mut include_errors);
         program_errors.extend(output_path_errors);
-        for (at, problem) in included.file_casing_errors(&respelled, &case_variants) {
+        let casing_errors =
+            included.file_casing_errors(&respelled, &case_variants, compile.is_some());
+        for (at, problem) in casing_errors {
             match at {
                 Some((file, start, end)) => include_errors.push((file, start, end, problem)),
                 None => program_errors.push(problem),
@@ -7105,8 +7115,8 @@ impl<'s> Files<'s> {
             module.bound = parse.bound.share(arena);
             return;
         }
-        // The tree of a module that waits may lack the bodies of its functions.
-        let text = match module.bound.is_bound_in_part {
+        // A module that waits has given up its tree, and its text unless other programs share it.
+        let text = match module.bound.is_bound_in_part || module.hir.text.is_empty() {
             true => host.read_source(path),
             false => std::mem::take(&mut module.hir.text),
         };
@@ -7230,19 +7240,40 @@ impl<'s> Files<'s> {
         let cell = &self.modules[file.idx()];
         debug_assert!(cell.is_leaf || cell.is_read_by_every_task);
         // SAFETY: no file refers to it, so no other task reads its HIR.
-        let module: &mut Module<'s> = unsafe { &mut *cell.0.get() };
+        let module: &mut Module<'s> = unsafe { &mut *cell.module.get() };
         // The load has left a stub of a module that was never bound.
         if module.bound.symbols.len() > 0 || !module.hir.stmts.is_empty() {
+            if module.hir.owns_its_lists() {
+                // SAFETY: caller contract, and no other program shares the cells of a file that owns its lists.
+                unsafe { module.hir.clear_caches() };
+            }
             module.hir = stub_of(&mut module.hir);
             module.bound = Bound::empty_in(module.hir.arena());
         }
         module.transient_symbols.clear();
     }
 
+    /// Frees most of the HIR and of the binder's tables of every file. What is small waits for the end of the session.
+    ///
+    /// # Safety
+    /// Every task has ended, and nothing reads a tree again. `index` is below `modules.len()`, and no two threads pass
+    /// the same.
+    pub unsafe fn free_long_lists(&self, index: usize) {
+        self.forget_what_went(index);
+        // SAFETY: caller contract.
+        let module: &mut Module<'s> = unsafe { &mut *self.modules[index].module.get() };
+        if module.hir.owns_its_lists() {
+            // SAFETY: caller contract, and no other program shares the cells of a file that owns its lists.
+            unsafe { module.hir.clear_caches() };
+        }
+        module.hir.free_long_lists();
+        module.bound.free_long_lists();
+    }
+
     /// The load of a build leaves the text of a source file that no code loads with the file.
     pub unsafe fn settle_text(&self, file: FileId, is_read: bool) {
         // SAFETY: nothing else reads or writes the module now.
-        let module: &mut Module<'s> = unsafe { &mut *self.modules[file.idx()].0.get() };
+        let module: &mut Module<'s> = unsafe { &mut *self.modules[file.idx()].module.get() };
         match is_read {
             true => keep_list(self.session, &mut module.hir.text),
             false => module.hir.text = Cow::default(),
@@ -7313,7 +7344,8 @@ impl<'s> Files<'s> {
                 }
             }
         };
-        Self::load_parsed(
+        let waits_alone = parse.bound.is_unbound && !parse.is_shared;
+        let mut loaded = Self::load_parsed(
             arena,
             host,
             resolver,
@@ -7325,7 +7357,19 @@ impl<'s> Files<'s> {
             Ok(parse),
             (build, None),
             resolve_ahead,
-        )
+        );
+        // A project lists far more files than a program reads, and the load holds them all until the last is in.
+        // `bind_reached` reads a module that waits again, so what is left of one does not grow with its text.
+        if waits_alone {
+            let hir = &mut loaded.module.hir;
+            if hir.owns_its_lists() {
+                // SAFETY: the file is of this load alone, and no other thread has seen it yet.
+                unsafe { hir.clear_caches() };
+            }
+            hir.free_long_lists();
+            hir.text = Cow::default();
+        }
+        loaded
     }
 
     /// `parseTask.load`: a library is given `SourceFileMetaData{ImpliedNodeFormat: CommonJS}`,
@@ -7915,7 +7959,7 @@ impl<'s> Files<'s> {
         self.order_code_files(&mut seen, &mut libs, &mut others);
         if self.options.orders_files_as_listed {
             let path_of = |file: FileId| self.modules[file.idx()].file_name();
-            others.sort_by(|&left, &right| compare_as_listed(path_of(left), path_of(right)));
+            others.shared_sort_by(|&left, &right| compare_as_listed(path_of(left), path_of(right)));
         }
         libs.shared_sort_by_cached_key(|&file| self.default_lib_file_priority(file));
         libs.extend(others);
@@ -8158,6 +8202,12 @@ impl<'s> Files<'s> {
             self.modules_resolved_at_merge = self
                 .arena
                 .alloc_slice_fill_iter(at_merge.map(|links| links.0));
+        }
+        for (index, module) in self.modules.iter().enumerate() {
+            let file = FileId(index as u32);
+            for &(import, taker) in module.bound.names_taken_from_imports() {
+                self.placeholders.push((Sym { file, id: import }, taker));
+            }
         }
         // Each file is visited once, however many of its names are redirected.
         let mut placeholders =
@@ -9603,7 +9653,7 @@ impl<'s> Files<'s> {
     }
 
     /// `Options::declarations_of_last_resort`
-    pub(crate) fn is_of_last_resort(&self, file: FileId) -> bool {
+    pub fn is_of_last_resort(&self, file: FileId) -> bool {
         let path = &self.options.declarations_of_last_resort;
         !path.is_empty() && self.module(file).path.text == &path[..]
     }

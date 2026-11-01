@@ -184,6 +184,27 @@ const dir = tempDir("source-positions", {
   "entry.ts": programs.map(({ file }) => `import "./${file}";\n`).join(""),
   "compiled.ts": `import "./probe.cjs";\nawait import("./entry.ts");\n`,
   "run.ts": `await load(${JSON.stringify(programs.map(({ file }) => `./${file}`))});\n`,
+  // The program of a second executable, for the last group of tests. It says where a function of its own is and
+  // loads the first file it is given, turns source maps on, and does both again with the second file.
+  "executable/main.cjs": [
+    `function bundled() {`,
+    `  throw new Error("bundled");`,
+    `}`,
+    `function firstFrame(f) {`,
+    `  try {`,
+    `    f();`,
+    `  } catch (e) {`,
+    `    return e.stack.split("\\n")[1].trim();`,
+    `  }`,
+    `}`,
+    `const [off, on] = process.argv.slice(2).map(file => require("node:path").resolve(file));`,
+    `const out = { bundled: [firstFrame(bundled)], loaded: [firstFrame(require(off).boom)] };`,
+    `process.setSourceMapsEnabled(true);`,
+    `out.bundled.push(firstFrame(bundled));`,
+    `out.loaded.push(firstFrame(require(on).boom));`,
+    `console.log(JSON.stringify(out));`,
+    ``,
+  ].join("\n"),
 });
 afterAll(() => dir[Symbol.dispose]());
 const root = String(dir);
@@ -225,6 +246,7 @@ async function bundle(name: string) {
 
 // Everything runs once, here and not in a hook: a hook has the time limit of one test.
 const compiled = join(root, isWindows ? "compiled.exe" : "compiled");
+const loadsFromDisk = join(root, isWindows ? "loads-from-disk.exe" : "loads-from-disk");
 const [table, { logs: diagnostics }] = await Promise.all([
   run("test", [
     bunExe(),
@@ -248,6 +270,11 @@ const [table, { logs: diagnostics }] = await Promise.all([
   Bun.build({ entrypoints: [join(root, "compiled.ts")], compile: { outfile: compiled }, sourcemap: "inline" }).then(
     () => run("compiled", [compiled]),
   ),
+  Bun.build({
+    entrypoints: [join(root, "executable", "main.cjs")],
+    compile: { outfile: loadsFromDisk },
+    sourcemap: "inline",
+  }),
 ]);
 const lcov = readFileSync(join(root, "coverage", "lcov.info"), "utf8");
 const junit = readFileSync(join(root, "junit.xml"), "utf8");
@@ -619,8 +646,13 @@ describe.concurrent("a loaded file with its own source map", () => {
       }
     };
   `;
-  async function run(cwd: string, args: string[], env: Record<string, string | undefined> = bunEnv) {
-    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env, stdout: "pipe", stderr: "pipe" });
+  async function run(
+    cwd: string,
+    args: string[],
+    env: Record<string, string | undefined> = bunEnv,
+    executable = bunExe(),
+  ) {
+    await using proc = Bun.spawn({ cmd: [executable, ...args], cwd, env, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // A path of Windows has "\", which JSON writes twice.
     const tidy = (text: string) =>
@@ -816,6 +848,46 @@ describe.concurrent("a loaded file with its own source map", () => {
     ]);
   });
 
+  // While a debugger listens, Bun puts a source map of its own at the end of each module that loads, for the
+  // debugger, and the mappings of the module go to the table from the code that does that. stderr is not compared:
+  // the inspector says there where it listens, when it starts before the program ends.
+  test("with --inspect, require() reads it with --enable-source-maps, and not without", async () => {
+    using dir = tempDir("own-source-map-inspector", {
+      ...withMap("lib.js"),
+      "main.cjs": `
+        ${firstFrame}
+        console.log(firstFrame(require("./lib.js").boom));
+      `,
+    });
+    const [withTheFlag, without] = await Promise.all([
+      run(String(dir), ["--inspect=127.0.0.1:0", "--enable-source-maps", "main.cjs"]),
+      run(String(dir), ["--inspect=127.0.0.1:0", "main.cjs"]),
+    ]);
+    expect([withTheFlag, without].map(({ stdout, exitCode }) => ({ stdout, exitCode }))).toEqual([
+      { stdout: `at boom (<dir>/lib.ts:${inOriginal.boom})\n`, exitCode: 0 },
+      { stdout: `at boom (<dir>/lib.js:${transpiled.cjs.boom})\n`, exitCode: 0 },
+    ]);
+  });
+
+  // What is bundled into an executable is not a file that it loads, and the switch changes nothing for it: a frame is
+  // where the executable's own source map puts it. A file that the executable loads from disk is a loaded file.
+  test("an executable reads it for a file that it loads from disk, and what is bundled stays where it is", async () => {
+    using dir = tempDir("own-source-map-executable", { ...withMap("off.js"), ...withMap("on.js") });
+    const result = printed(await run(String(dir), ["off.js", "on.js"], bunEnv, loadsFromDisk));
+    // The path in a frame of the executable is relative to where the executable was built.
+    if (result.stdout) result.stdout.bundled = result.stdout.bundled.map(position);
+    expect(result).toEqual({
+      // Each is [while source maps are off, after they are turned on].
+      stdout: {
+        // `Error` of `new Error("bundled")`.
+        bundled: ["executable/main.cjs:2:13", "executable/main.cjs:2:13"],
+        loaded: [`at boom (<dir>/off.js:${transpiled.cjs.boom})`, `at boom (<dir>/on.ts:${inOriginal.boom})`],
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // node v26.13.0: `/[\\/]node_modules[\\/]/` on the path, when the module loads and again when a stack is read.
   test("a module in node_modules is left out unless nodeModules is set", async () => {
     using dir = tempDir("own-source-map-node-modules", {
@@ -994,6 +1066,60 @@ describe.concurrent("a loaded file with its own source map", () => {
       snapshot: "  expect(add(1, 2)).toMatchInlineSnapshot(`3`);",
       junit: "3",
       exitCode: 0,
+    });
+  });
+
+  // A profile is of the code that ran. `spin` runs for 100 ms, which is long enough to be sampled on every platform.
+  test("--cpu-prof says where a function is in the loaded file", async () => {
+    const lib = [
+      `exports.spin = function spin(ms) {`,
+      `  const end = performance.now() + ms;`,
+      `  while (performance.now() < end) {}`,
+      `  return new Error("spun").stack.split("\\n")[1].trim();`,
+      `};`,
+      `//# sourceMappingURL=lib.js.map`,
+      ``,
+    ];
+    using dir = tempDir("own-source-map-cpu-profile", {
+      "lib.js": lib.join("\n"),
+      // Each line is ten lines further down in `lib.ts`.
+      "lib.js.map": JSON.stringify({
+        version: 3,
+        sources: ["lib.ts"],
+        names: [],
+        mappings: lineMappings(lib.slice(0, -2).map((_, i) => i + 11)),
+      }),
+      "main.cjs": `console.log(JSON.stringify(require("./lib.js").spin(100)));`,
+    });
+    const result = await run(String(dir), [
+      "--enable-source-maps",
+      "--cpu-prof",
+      "--cpu-prof-name=profile.cpuprofile",
+      "main.cjs",
+    ]);
+    expect(printed(result)).toEqual({ stdout: "at spin (<dir>/lib.ts:14:1)", stderr: "", exitCode: 0 });
+    const { nodes } = JSON.parse(readFileSync(join(String(dir), "profile.cpuprofile"), "utf8"));
+    const spin: { url: string; lineNumber: number }[] = nodes
+      .map((node: any) => node.callFrame)
+      .filter((callFrame: any) => callFrame.functionName === "spin");
+    // The file and the line, which is from 0, of each node that is of `spin`.
+    expect([...new Set(spin.map(({ url, lineNumber }) => `${url.split("/").at(-1)}:${lineNumber}`))]).toEqual([
+      "lib.js:0",
+    ]);
+  });
+
+  // The parser says where the text that it was given is wrong. No map is asked.
+  test("where a module that does not parse is wrong is a place in the loaded file", async () => {
+    using dir = tempDir("own-source-map-syntax-error", {
+      "bad.js": `function (\n//# sourceMappingURL=bad.js.map\n`,
+      "bad.js.map": JSON.stringify({ version: 3, sources: ["bad.ts"], names: [], mappings: lineMappings([11, 12]) }),
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--enable-source-maps", "bad.js"]);
+    // The lines that say where: one for each of the two things that the parser finds wrong.
+    expect({ stdout, stderr: stderr.split("\n").filter(line => /^\s+at /.test(line)), exitCode }).toEqual({
+      stdout: "",
+      stderr: ["    at <dir>/bad.js:1:10", "    at <dir>/bad.js:2:32"],
+      exitCode: 1,
     });
   });
 

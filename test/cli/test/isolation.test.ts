@@ -290,36 +290,41 @@ describe.concurrent("bun test --isolate", () => {
     },
   );
 
+  // What `tsc --sourceMap` makes of a file that throws on its line 4, `Error` at column 13.
+  const libWithSourceMap = {
+    "lib.js": [
+      `"use strict";`,
+      `Object.defineProperty(exports, "__esModule", { value: true });`,
+      `exports.boom = boom;`,
+      `function boom() {`,
+      `    throw new Error("kaboom");`,
+      `}`,
+      `//# sourceMappingURL=lib.js.map`,
+      ``,
+    ].join("\n"),
+    "lib.js.map": JSON.stringify({
+      version: 3,
+      sources: ["lib.ts"],
+      names: [],
+      mappings: ";;AAEA,oBAEC;AAFD,SAAgB,IAAI;IAClB,MAAM,IAAI,KAAK,CAAC,QAAQ,CAAC,CAAC;AAC5B,CAAC",
+    }),
+  };
+  // Goes into a test file: where `f` throws, with the folder of the test file taken out.
+  const firstFrame = `
+    function firstFrame(f: () => void) {
+      try {
+        f();
+      } catch (e: any) {
+        return e.stack.split("\\n")[1].trim().replace(import.meta.dir, "<dir>").replaceAll("\\\\", "/");
+      }
+    }
+  `;
+
   // A module that an earlier file loaded is not transpiled again, and a module's own source map is read when the
   // module is transpiled.
   test("with --isolate, a file's process.setSourceMapsEnabled() is for the modules that the file loads", async () => {
-    const firstFrame = `
-      function firstFrame(f: () => void) {
-        try {
-          f();
-        } catch (e: any) {
-          return e.stack.split("\\n")[1].trim().replace(import.meta.dir, "<dir>").replaceAll("\\\\", "/");
-        }
-      }
-    `;
     using dir = tempDir("isolate-source-maps-module", {
-      // What `tsc --sourceMap` makes of a file that throws on its line 4, `Error` at column 13.
-      "lib.js": [
-        `"use strict";`,
-        `Object.defineProperty(exports, "__esModule", { value: true });`,
-        `exports.boom = boom;`,
-        `function boom() {`,
-        `    throw new Error("kaboom");`,
-        `}`,
-        `//# sourceMappingURL=lib.js.map`,
-        ``,
-      ].join("\n"),
-      "lib.js.map": JSON.stringify({
-        version: 3,
-        sources: ["lib.ts"],
-        names: [],
-        mappings: ";;AAEA,oBAEC;AAFD,SAAgB,IAAI;IAClB,MAAM,IAAI,KAAK,CAAC,QAAQ,CAAC,CAAC;AAC5B,CAAC",
-      }),
+      ...libWithSourceMap,
       "a-off.test.ts": `
         import { test, expect } from "bun:test";
         import { boom } from "./lib.js";
@@ -353,6 +358,60 @@ describe.concurrent("bun test --isolate", () => {
       ["./a-off.test.ts", "./b-on.test.ts", "./c-off.test.ts"],
     );
     expect(stderr).toContain("3 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  // The switch goes back off before each file, and the preload turns it on again. So the second file asks for the
+  // module the way the first one did, and takes it from the cache with its source map.
+  test("with --isolate, a module that a file loads after a preload's process.setSourceMapsEnabled() is cached for the next file", async () => {
+    const testFile = (isCached: boolean) => `
+      import { test, expect } from "bun:test";
+      import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
+      import { join } from "node:path";
+      ${firstFrame}
+      test("the stack is in the original file", async () => {
+        expect(process.sourceMapsEnabled).toBe(true);
+        expect(isolatedModuleCacheSourceType(join(import.meta.dir, "lib.js")))${isCached ? ".not" : ""}.toBeNull();
+        const { boom } = await import("./lib.js");
+        expect(firstFrame(boom)).toBe("at boom (<dir>/lib.ts:4:13)");
+      });
+    `;
+    using dir = tempDir("isolate-source-maps-preload", {
+      ...libWithSourceMap,
+      "preload.ts": `process.setSourceMapsEnabled(true);`,
+      "a.test.ts": testFile(false),
+      "b.test.ts": testFile(true),
+    });
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate", "--preload", "./preload.ts"],
+      ["./a.test.ts", "./b.test.ts"],
+    );
+    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  // Files that share a global share the switch, as they share any other state of the process.
+  test("without --isolate, a file's process.setSourceMapsEnabled() is still on in the next file", async () => {
+    using dir = tempDir("isolate-off-source-maps-switch", {
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        test("this file turns the switch on", () => {
+          expect(process.sourceMapsEnabled).toBe(false);
+          process.setSourceMapsEnabled(true);
+        });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        test("the switch is still on", () => {
+          expect(process.sourceMapsEnabled).toBe(true);
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), [], ["./a.test.ts", "./b.test.ts"]);
+    expect(stderr).toContain("2 pass");
     expect(stderr).toContain("0 fail");
     expect(exitCode).toBe(0);
   });
